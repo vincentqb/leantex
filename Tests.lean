@@ -373,7 +373,11 @@ def main (args : List String) : IO UInt32 := do
     let brute := bruteBest items target
     t s!"kp optimal ({name})" (kpCost.isSome && kpCost == brute && !kpBreaks.isEmpty)
 
-  -- hyphenation: expectations are lualatex \showhyphens output (the oracle)
+  -- Hyphenation. Expectations are real TeX \showhyphens output with the SAME
+  -- pattern set the engine embeds (luatex + hyph-en-us.tex, hyphenmins 2/3);
+  -- plain lualatex is a different oracle because TeX Live maps `english` to
+  -- hyphen.tex, Knuth's frozen subset. \showhyphens lists every admissible
+  -- break, not one chosen rendering. Full 552-word check: scripts/hyphen-diff.sh
   let pats := Hyphen.load
   let hyph (w : String) : String := Id.run do
     let breaks := Hyphen.hyphenate pats w
@@ -395,6 +399,14 @@ def main (args : List String) : IO UInt32 := do
   t "hyphen exception dictionary" (hyph "associate" == "as-so-ciate")
   t "hyphen short word untouched" (hyph "cat" == "cat")
   t "hyphen capitalized" (hyph "Paragraph" == "Para-graph")
+  -- These three pin the pattern set: Knuth's hyphen.tex gives def-i-ni-tion,
+  -- mono-tone, and no break at all in toolchain.
+  t "hyphen set is ushyphmax (definition)" (hyph "definition" == "de-f-i-n-i-tion")
+  t "hyphen set is ushyphmax (monotone)" (hyph "monotone" == "mo-not-one")
+  t "hyphen set is ushyphmax (toolchain)" (hyph "toolchain" == "tool-chain")
+  -- leftMin=2 / rightMin=3 are enforced, so no break may strand 1 letter or 2.
+  t "hyphen respects hyphenmins" ((Hyphen.hyphenate pats "typesetting").all
+    fun p => p ≥ 2 && p + 3 ≤ 11)
 
   -- font parsing on the system font
   match ← findFont with

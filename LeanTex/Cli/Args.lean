@@ -11,6 +11,7 @@ inductive Cmd where
   | version
   | build (file : String)
   | dump (file : String)
+  | hyphenate (words : List String) (file : Option String)
   deriving Repr, BEq
 
 structure Config where
@@ -35,6 +36,8 @@ private def colorMode : String → Option ColorMode
 def parse (argv : List String) : Except String Config := do
   let mut cfg : Config := { cmd := .help }
   let mut cmd : Option Cmd := none
+  let mut hyphenWords : List String := []
+  let mut hyphenFile : Option String := none
   let mut args := argv
   repeat
     match args with
@@ -53,6 +56,13 @@ def parse (argv : List String) : Except String Config := do
           cfg := { cfg with color := c }
           args := rest'
         | [] => throw "'--color' needs a mode: auto | always | never"
+      | "--file" =>
+        match cmd, rest with
+        | some (.hyphenate _ _), f :: rest' =>
+          hyphenFile := some f
+          args := rest'
+        | some (.hyphenate _ _), [] => throw "'--file' needs a path"
+        | _, _ => throw "'--file' applies to 'hyphenate'"
       | _ =>
         if let some n := vCount a then
           cfg := { cfg with verbosity := min 3 (cfg.verbosity + n) }
@@ -64,11 +74,13 @@ def parse (argv : List String) : Except String Config := do
           throw s!"unknown flag '{a}'"
         else
           match cmd with
+          | some (.hyphenate _ _) => hyphenWords := hyphenWords ++ [a]
           | some _ => throw s!"unexpected argument '{a}'"
           | none =>
             match a with
             | "help" => cmd := some .help
             | "version" => cmd := some .version
+            | "hyphenate" => cmd := some (.hyphenate [] none)
             | "build" | "dump" =>
               match args with
               | f :: rest' =>
@@ -78,7 +90,12 @@ def parse (argv : List String) : Except String Config := do
             | _ => throw s!"unknown command '{a}'"
   if cfg.quiet && cfg.verbosity > 0 then
     throw "choose one of -q and -v"
-  return { cfg with cmd := cmd.getD .help }
+  match cmd with
+  | some (.hyphenate _ _) =>
+    if hyphenWords.isEmpty && hyphenFile.isNone then
+      throw "'hyphenate' needs words or --file <path>"
+    return { cfg with cmd := .hyphenate hyphenWords hyphenFile }
+  | _ => return { cfg with cmd := cmd.getD .help }
 
 def helpText : String :=
   "leantex — a fast, certified, modern LaTeX-lookalike engine
@@ -86,10 +103,12 @@ def helpText : String :=
 usage: leantex [flags] <command>
 
 commands:
-  build <file>   compile a document to PDF
-  dump <file>    print the elaborated document structure (debugging)
-  version        print version
-  help           show this help
+  build <file>            compile a document to PDF
+  dump <file>             print the elaborated document structure (debugging)
+  hyphenate <word>...     show hyphenation points, one word per line
+  hyphenate --file <path> hyphenate each word in a file
+  version                 print version
+  help                    show this help
 
 flags:
   -q, --quiet    errors only

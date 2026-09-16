@@ -24,7 +24,11 @@ the private reference corpus abstractly.
 
 - `lake build` — proofs are checked here; a broken theorem is a broken build.
 - `lake test` — golden corpus + property tests. Run both before declaring done.
-- Performance claims come only from the bench harness (vs lualatex on the
+- `lake exe Tests --update` — regenerate goldens after an intended IR change.
+- Deeper oracles, not in `lake test` (too slow / need TeX): run
+  `scripts/kp-fuzz.lean` when touching line breaking, and
+  `scripts/hyphen-diff.sh` when touching hyphenation.
+- Performance claims come only from `scripts/bench.sh` (vs lualatex on the
   corpus), never from reasoning about the code.
 
 ## Conventions

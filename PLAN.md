@@ -22,8 +22,10 @@ median on this host): 1 KB is 14 ms vs lualatex 486 ms; generated 129 KB /
 30 pages is 573 ms vs 982 ms. Evidence and caveats live in `bench/README.md`.
 
 Next: the proofs unit before M3 — remove `partial` from parser/elaborator/layout
-and prove front-end termination/determinism plus Knuth–Plass optimality. The
-brute-force oracle stays as an independent executable check.
+and prove front-end termination/determinism plus Knuth–Plass optimality. Two
+executable oracles stay as independent checks and should be run when touching
+their subjects: `scripts/kp-fuzz.lean` (randomized differential vs brute-force
+optimum; 2000 paragraphs pass) and `scripts/hyphen-diff.sh` (vs real TeX).
 
 ## Why not TeX-compatible
 
@@ -134,6 +136,25 @@ Zero-config by intent: good defaults, flags for the rest, nothing required.
 - Color: auto on TTY, `NO_COLOR` respected, `--color always|never|auto`.
 - Exit codes are the API: 0 ok · 1 document errors · 2 assertions failed ·
   3 usage · 4 internal.
+
+## Hyphenation
+
+American English, Liang patterns from `hyph-en-us.tex` (ushyphmax: Knuth's
+frozen `hyphen.tex` plus Gerard Kuiken's additions — a strict superset, 4938
+patterns vs 4447), hyphenmins 2/3, embedded as generated Lean data with the
+upstream licence notice preserved. Regenerate with
+`scripts/gen-hyphen-data.py`.
+
+Why the superset: it offers strictly more admissible break points, which is
+what reduces loose and overfull lines — the quality axis that matters here.
+The cost is that leantex legitimately differs from a default `lualatex` run,
+which loads `hyphen.tex` (TeX Live's `language.dat` maps `english` to it, "do
+not change!").
+
+So the oracle must load the matching set: `scripts/hyphen-diff.sh` runs luatex
+with `\input hyph-en-us` and compares word for word (552/552 exact as of
+2026-09-15). Comparing against plain `lualatex` produces ~3% spurious
+mismatches. `\showhyphens` lists every admissible break, not one rendering.
 
 ## Architecture
 
@@ -246,5 +267,9 @@ fonts surface as request values the driver fulfills:
   reserved for `--porcelain` JSONL, an `-v/-vv/-vvv` ladder, `NO_COLOR`
   respected, exit codes as API, zero required configuration. LaTeX-style
   console verbosity is an anti-goal.
+- 2026-09-15: hyphenation ships the ushyphmax (`hyph-en-us.tex`) pattern set,
+  not Knuth's frozen `hyphen.tex`, for the extra admissible breaks. Verified
+  faithful against luatex loaded with the same patterns (552/552 words).
+  Recorded because a default `lualatex` comparison looks like ~3% failures.
 - 2026-09-15: the in-repo test corpus is synthetic only; real documents stay
   private and local. Acceptance bars run locally, CI runs the dummies.

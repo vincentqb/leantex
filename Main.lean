@@ -169,6 +169,34 @@ def dump (ui : Ui) (file : String) : IO UInt32 := do
     IO.print (Ir.dump doc diags)
     return (if countErrors diags > 0 then 1 else 0)
 
+/-- Insert `-` at each hyphenation point: the `hyphenate` command's output
+format, and what the lualatex differential harness compares. -/
+def showHyphens (pats : Hyphen.Patterns) (word : String) : String := Id.run do
+  let breaks := Hyphen.hyphenate pats word
+  let mut out := ""
+  for (c, i) in word.toList.zipIdx do
+    if i > 0 && breaks.contains i then
+      out := out.push '-'
+    out := out.push c
+  return out
+
+def hyphenate (ui : Ui) (words : List String) (file : Option String) : IO UInt32 := do
+  let mut all := words
+  if let some path := file then
+    let contents ← try
+      pure (some (← IO.FS.readFile path))
+    catch e =>
+      ui.diag { severity := .error, code := "E0001", message := s!"cannot read '{path}': {e}" }
+      pure none
+    let some contents := contents | return 1
+    all := all ++ (contents.splitOn "\n").filterMap fun line =>
+      let w := line.trimAscii.toString
+      if w.isEmpty then none else some w
+  let pats := Hyphen.load
+  for w in all do
+    IO.println (showHyphens pats w)
+  return 0
+
 def main (argv : List String) : IO UInt32 := do
   match parse argv with
   | .error msg =>
@@ -188,3 +216,5 @@ def main (argv : List String) : IO UInt32 := do
       build (← Ui.mk' cfg) file
     | .dump file =>
       dump (← Ui.mk' cfg) file
+    | .hyphenate words file =>
+      hyphenate (← Ui.mk' cfg) words file
