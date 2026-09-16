@@ -1003,25 +1003,66 @@ end
 
 /-- Underline rules for one set line: a second walk over its segs, aligned by
 gaps, so it can ride as its own `LineOut` at the same baseline — the PDF
-writer's x-tracking stays linear and link rectangles see no extra runs. The
-rule sits at the font's own `post` metrics (with a conventional fallback when
-the font declares none) and is interrupted where a glyph's ink actually
-crosses the band the rule occupies — `Font.inkAt`, from the outline — with a
-gap of twice the thickness on each side, so `q` keeps its rule under the bowl
-and clears it only at the stem. Adjacent interruptions merge. Empty when the
-line has no underlined run, so the common case allocates nothing. -/
+writer's x-tracking stays linear and link rectangles see no extra runs. Each
+rule sits at its run's own normalized `post` metrics (`Font.band`) and is
+interrupted where glyph ink crosses the band — `Font.inkAt`, from the
+outline — with a gap of twice the owning run's rule thickness on each side.
+Obstructions are collected in line coordinates across the whole line first,
+every glyph run contributing whether or not it is underlined, so ink that
+reaches over a run boundary — a negative-sidebearing italic descender, or a
+descender's clearance spilling past its own advance — clears the
+neighbouring rule too. An obstruction is judged against the band of the run
+that owns the glyph; the clearance dilation absorbs the small band
+differences between adjacent faces. Empty when the line has no underlined
+run, so the common case allocates nothing. -/
 private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     Array Seg := Id.run do
   unless segs.any (fun s => match s with
       | .run _ _ _ _ _ _ true => true
       | _ => false) do
     return #[]
-  let mut out : Array Seg := #[]
+  -- Pass 1: obstruction intervals in line coordinates, each glyph's
+  -- ink-in-band intervals scaled to its run's size plus the clearance.
+  let mut obs : Array (Sp × Sp) := #[]
+  let mut x : Sp := 0
   for seg in segs do
     match seg with
-    | .gap w => out := out.push (.gap w)
-    | .rule w _ _ _ => out := out.push (.gap w)
-    | .run fontIdx color _ w glyphs size underline =>
+    | .gap w => x := x + w
+    | .rule w _ _ _ => x := x + w
+    | .run fontIdx _ _ w glyphs size _ =>
+      let font := fs.get fontIdx
+      let sz := if size == 0 then lineSize else size
+      let upem : Int := font.unitsPerEm
+      let thick := (font.band).2 * sz / upem
+      let mut gx : Sp := x
+      for (g, _) in glyphs do
+        for (ilo, ihi) in font.inkAt g do
+          obs := obs.push (gx + ilo * sz / upem - 2 * thick,
+            gx + ihi * sz / upem + 2 * thick)
+        gx := gx + scaledAt sz font (font.widths[g]?.getD 0)
+      x := x + w
+  -- Merge: sorted by the low bound, `min`/`max` so no ordering assumption
+  -- survives into the result.
+  let sorted := obs.qsort fun a b => a.1 < b.1
+  let mut merged : Array (Sp × Sp) := #[]
+  for (lo, hi) in sorted do
+    match merged.back? with
+    | some (plo, phi) =>
+      if lo ≤ phi then merged := merged.pop.push (min plo lo, max phi hi)
+      else merged := merged.push (lo, hi)
+    | none => merged := merged.push (lo, hi)
+  -- Pass 2: rules under the underlined runs, minus the obstructions.
+  let mut out : Array Seg := #[]
+  x := 0
+  for seg in segs do
+    match seg with
+    | .gap w =>
+      out := out.push (.gap w)
+      x := x + w
+    | .rule w _ _ _ =>
+      out := out.push (.gap w)
+      x := x + w
+    | .run fontIdx color _ w _ size underline =>
       if !underline then
         out := out.push (.gap w)
       else
@@ -1032,30 +1073,18 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
         let top := bandPos * sz / upem
         let thick := bandThick * sz / upem
         let raise := top - thick
-        -- Skip intervals within [0, w], merged: each glyph's ink-in-band
-        -- intervals, scaled to the run's size, plus the clearance either side.
-        let mut skips : Array (Sp × Sp) := #[]
-        let mut x : Sp := 0
-        for (g, _) in glyphs do
-          let adv := scaledAt sz font (font.widths[g]?.getD 0)
-          for (ilo, ihi) in font.inkAt g do
-            let lo := max 0 (x + ilo * sz / upem - 2 * thick)
-            let hi := min w (x + ihi * sz / upem + 2 * thick)
-            if lo < hi then
-              match skips.back? with
-              | some (plo, phi) =>
-                if lo ≤ phi then skips := skips.pop.push (plo, max phi hi)
-                else skips := skips.push (lo, hi)
-              | none => skips := skips.push (lo, hi)
-          x := x + adv
-        let mut cur : Sp := 0
-        for (lo, hi) in skips do
-          if lo > cur then
-            out := out.push (.rule (lo - cur) thick raise color)
-          out := out.push (.gap (hi - max lo cur))
-          cur := hi
-        if w > cur then
-          out := out.push (.rule (w - cur) thick raise color)
+        let mut cur : Sp := x
+        for (olo, ohi) in merged do
+          let lo := max olo x
+          let hi := min ohi (x + w)
+          if lo < hi then
+            if lo > cur then
+              out := out.push (.rule (lo - cur) thick raise color)
+            out := out.push (.gap (hi - max lo cur))
+            cur := hi
+        if x + w > cur then
+          out := out.push (.rule (x + w - cur) thick raise color)
+      x := x + w
   return out
 
 /-- Place one paragraph's lines from precomputed breakpoints. -/

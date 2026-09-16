@@ -793,6 +793,39 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       let (cqRules, cqWidth) := coverage serifSet "\\underline{q}"
       t "cff underlined q keeps rule under its bowl"
         (cqRules > cqWidth * 2 / 5 && cqRules < cqWidth)
+      -- Obstructions live in line coordinates, so ink reaching over a run
+      -- boundary clears the neighbouring rule. Both directions: the italic
+      -- g's negative left sidebearing reaches back into the upright a's
+      -- rule, and an upright g's clearance spills forward past its advance
+      -- into the underlined a that follows it.
+      let itPath := testFonts ++ "/SourceSerifPro-RegularIt.otf"
+      if ← System.FilePath.pathExists itPath then
+        match Font.parse (← IO.FS.readBinFile itPath) with
+        | .error e => failures ref s!"underline italic parse: {e}"
+        | .ok serifIt =>
+          let mixedSet : Font.FontSet := {
+            fonts := #[serif, serifIt]
+            index := ((List.range 3).flatMap fun slot =>
+              [((slot, false, false), 0), ((slot, true, false), 0),
+               ((slot, false, true), 1), ((slot, true, true), 1)]).toArray
+          }
+          let firstRunAndRule (src : String) : Dim.Sp × Dim.Sp := Id.run do
+            let lines := ((outOf mixedSet src).pages.flatMap (·.lines))
+            let runW := ((lines[0]?.map (·.segs)).getD #[]).filterMap fun s =>
+              match s with
+              | .run _ _ _ w _ _ _ => some w
+              | _ => none
+            let ruleW := ((lines[1]?.map (·.segs)).getD #[]).filterMap fun s =>
+              match s with
+              | .rule w _ _ _ => some w
+              | _ => none
+            return (runW[0]?.getD 0, ruleW[0]?.getD 0)
+          let (aW, aRule) := firstRunAndRule "\\underline{a\\textit{g}}"
+          t "italic overhang clears the rule across the style boundary"
+            (aW > 0 && aRule > 0 && aRule < aW)
+          let (gW, gRule) := firstRunAndRule "\\textit{g}\\underline{a}"
+          t "a neighbouring run's descender clears the adjacent rule"
+            (gW > 0 && gRule > 0 && gRule < (firstRunAndRule "\\textit{a}\\underline{a}").2)
   else
     failures ref s!"underline: {serifPath} missing from the checkout"
   -- Truncated font data: forcing the lazy ink of every descender-ish glyph
