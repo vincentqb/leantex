@@ -160,6 +160,30 @@ went with it, and the empty list is now deleted. An unknown `\page` key
 today is E-diagnosed like any other; a future declared-ahead key gets a
 design decision then, not a dormant list now.
 
+2026-09-16 — the second-round review: two corrections to the entry below,
+and its last findings closed. The entry below records the `\title` typo's
+E0313 as closed; that held on one line and failed on two — the `.unclosed`
+recovery searched only the command's own line, so `\title[never closes`
+with its group on the next line still died as a fatal E0304 + E0313 with
+no output. The recovery (`skipOptArg`, shared with `\section`) now takes
+the group wherever the line break falls, and a declaration with no group
+left is skipped whole with W0312, never an error. The same entry defends
+unknown environments staying paragraph boundaries because "guessing
+block-ness from a body's shape would make paragraph structure depend on
+the wrapper's content"; that rationale is withdrawn — it rejects exactly
+the mechanism the `@input:` exemption in the same clause uses. One rule
+now: the body's shape decides, so an inline unknown environment stays in
+its sentence and a block one breaks it, through the same argument scan
+either way. With them: a skipped preamble command's junk stops at the
+next construct rather than the next line, so a declaration sharing the
+malformed command's line survives and the misdirecting W0304 is gone for
+good; `\section[short]{long}` — the one optional-argument site the shared
+scanner had not reached — goes through it with the same never-fatal
+recovery; and Compat's `sayOnce` keys are namespaced (`ctrl:`/`spec:`/
+`beamer:`) with a pre-commit check that rejects any future flat warn-once
+key in either store. Every behavioural fix carries a test that failed
+before it.
+
 2026-09-16 — the M5 slice's review findings closed, root causes first.
 One bracket-argument scan existed in four copies that disagreed about two
 rules, and the missing halves each lost content silently: an unclosed `[`
