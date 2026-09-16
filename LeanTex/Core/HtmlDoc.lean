@@ -237,7 +237,7 @@ mutual
 carries the *meaning* where one exists (`<strong>`, `<em>`, `<code>`) and
 onto a class otherwise. The accumulator threads through the sibling walk:
 `inlineNode x ++ rest` copied the tail at every element. -/
-def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Array Node :=
+private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Array Node :=
   match x with
   | .text s => acc.push (Html.text s)
   | .math display src =>
@@ -285,7 +285,7 @@ def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Array Node :
 
 /-- The list companion keeps the recursion structural; a `flatMap` over the
 children would hide the call behind a lambda. -/
-def inlineNodesInto (cfg : Config) (acc : Array Node) : List Inline → Array Node
+private def inlineNodesInto (cfg : Config) (acc : Array Node) : List Inline → Array Node
   | [] => acc
   | x :: rest => inlineNodesInto cfg (inlineNodeInto cfg acc x) rest
 
@@ -370,11 +370,11 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       #[("class", "spaced"), ("style", style)]
 
 /-- The accumulator threads through the sibling walk, as in `inlineNodesInto`. -/
-def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
+private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
   | [] => acc
   | b :: rest => blockNodesInto cfg (acc.push (blockNode cfg b)) rest
 
-def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node
+private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node
   | [] => acc
   | item :: rest =>
     listItemsInto cfg (acc.push (Html.elem "li" (listItem cfg item.toList))) rest

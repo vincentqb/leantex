@@ -181,7 +181,7 @@ mutual
 building each subtree's string and concatenating (`render k ++ rest`) copies
 the tail at every sibling, which is quadratic in the sibling count — the
 `#[x] ++ rest` trap in its String form. -/
-def renderInto (acc : String) (n : Node) (indent : Nat) : String :=
+private def renderInto (acc : String) (n : Node) (indent : Nat) : String :=
   let pad := "".pushn ' ' (2 * indent)
   match n with
   | .text s => acc ++ pad ++ escapeText s ++ "\n"
@@ -201,7 +201,7 @@ def renderInto (acc : String) (n : Node) (indent : Nat) : String :=
         ++ pad ++ "</" ++ tag ++ ">\n"
 
 /-- Render without surrounding whitespace, for content inside a line. -/
-def inlineRenderInto (acc : String) (n : Node) : String :=
+private def inlineRenderInto (acc : String) (n : Node) : String :=
   match n with
   | .text s => acc ++ escapeText s
   | .style css => acc ++ "<style>" ++ rawPayload "</style" css ++ "</style>"
@@ -213,11 +213,11 @@ def inlineRenderInto (acc : String) (n : Node) : String :=
 
 -- The list companions make the recursion structural: a `map` over the
 -- children hides the call behind a lambda the checker cannot see through.
-def renderListInto (acc : String) : List Node → Nat → String
+private def renderListInto (acc : String) : List Node → Nat → String
   | [], _ => acc
   | k :: rest, indent => renderListInto (renderInto acc k indent) rest indent
 
-def inlineRenderListInto (acc : String) : List Node → String
+private def inlineRenderListInto (acc : String) : List Node → String
   | [] => acc
   | k :: rest => inlineRenderListInto (inlineRenderInto acc k) rest
 
