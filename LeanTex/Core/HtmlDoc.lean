@@ -248,14 +248,14 @@ def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Array Node :
       #[("class", if display then "math math-display" else "math"),
         ("data-tex", src)])
   | .styled st body =>
+    let kids := inlineNodesInto cfg #[] body.toList
     match st with
-    | .bold => acc.push (Html.elem "strong" (inlineNodesInto cfg #[] body.toList))
-    | .italic => acc.push (Html.elem "em" (inlineNodesInto cfg #[] body.toList))
-    | .emph => acc.push (Html.elem "em" (inlineNodesInto cfg #[] body.toList))
-    | .mono => acc.push (Html.elem "code" (inlineNodesInto cfg #[] body.toList))
-    | .normal => inlineNodesInto cfg acc body.toList
-    | other => acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
-        #[("class", styleClass other)])
+    | .bold => acc.push (Html.elem "strong" kids)
+    | .italic => acc.push (Html.elem "em" kids)
+    | .emph => acc.push (Html.elem "em" kids)
+    | .mono => acc.push (Html.elem "code" kids)
+    | .normal => acc ++ kids
+    | other => acc.push (Html.elem "span" kids #[("class", styleClass other)])
   | .colored c name body =>
     -- A named colour becomes a custom-property reference with the literal as
     -- fallback, so the token really is the styling API: a host page can
