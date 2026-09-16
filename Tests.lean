@@ -1012,13 +1012,16 @@ def main (args : List String) : IO UInt32 := do
   t "args flag after command" (parse ["build", "--color", "never", "a.tex"] ==
     .ok { cmd := .build "a.tex", color := .never })
   t "args emit list" ((parse ["build", "--emit", "pdf,html", "a.tex"]).map (·.emit) ==
-    .ok #[.pdf, .html])
+    .ok (some #[.pdf, .html]))
   t "args emit eq after command"
-    ((parse ["build", "--emit=html", "a.tex"]).map (·.emit) == .ok #[.html])
-  t "args emit default is pdf" ((parse ["build", "a.tex"]).map (·.emit) == .ok #[.pdf])
+    ((parse ["build", "--emit=html", "a.tex"]).map (·.emit) == .ok (some #[.html]))
+  t "args emit default is pdf"
+    ((parse ["build", "a.tex"]).map (·.effectiveEmit #[]) == .ok #[.pdf])
   t "args emit bad" ((parse ["build", "--emit", "ps", "a.tex"]).isOk == false)
   t "args css after command"
-    ((parse ["build", "--css", "bulma", "a.tex"]).map (·.css) == .ok .bulma)
+    ((parse ["build", "--css", "bulma", "a.tex"]).map (·.css) == .ok (some .bulma))
+  t "args css default is own"
+    ((parse ["build", "a.tex"]).map (·.effectiveCss none) == .ok .own)
   t "args css bad" ((parse ["build", "--css", "tailwind", "a.tex"]).isOk == false)
   t "args math boundary"
     ((parse ["build", "--math-boundary", "katex", "a.tex"]).map (·.mathBoundary) ==

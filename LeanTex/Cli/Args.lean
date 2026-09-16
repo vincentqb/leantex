@@ -35,12 +35,13 @@ structure Config where
   quiet : Bool := false
   porcelain : Bool := false
   color : ColorMode := .auto
-  emit : Array Emit := #[.pdf]
-  /-- Whether `--emit` was given explicitly: an explicit flag outranks the
-  output name and the document's `\output`. -/
-  emitSet : Bool := false
-  css : CssChoice := .own
-  cssSet : Bool := false
+  /-- Backends from an explicit `--emit`, which outranks the output name and
+  the document's `\output`; `none` when the flag was not given. The resolved
+  answer is `effectiveEmit`. -/
+  emit : Option (Array Emit) := none
+  /-- Stylesheet from an explicit `--css`; `none` when the flag was not
+  given. The resolved answer is `effectiveCss`. -/
+  css : Option CssChoice := none
   /-- `-o`: an output file (its extension picks the backend) or a directory. -/
   output : Option String := none
   watch : Bool := false
@@ -119,7 +120,7 @@ def parse (argv : List String) : Except String Config := do
         | m :: rest' =>
           let some es := emitList m
             | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html"
-          cfg := { cfg with emit := es, emitSet := true }
+          cfg := { cfg with emit := some es }
           args := rest'
         | [] => throw "'--emit' needs a list: pdf, html"
       | "--css" =>
@@ -127,7 +128,7 @@ def parse (argv : List String) : Except String Config := do
         | m :: rest' =>
           let some c := cssChoice m
             | throw s!"invalid --css '{m}'; expected own, bulma, or none"
-          cfg := { cfg with css := c, cssSet := true }
+          cfg := { cfg with css := some c }
           args := rest'
         | [] => throw "'--css' needs a mode: own | bulma | none"
       | "--math-boundary" =>
@@ -156,11 +157,11 @@ def parse (argv : List String) : Except String Config := do
           let m := (a.drop "--emit=".length).toString
           let some es := emitList m
             | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html"
-          cfg := { cfg with emit := es, emitSet := true }
+          cfg := { cfg with emit := some es }
         else if a.startsWith "--css=" then
           let m := (a.drop "--css=".length).toString
           let some c := cssChoice m | throw s!"invalid --css '{m}'; expected own, bulma, or none"
-          cfg := { cfg with css := c, cssSet := true }
+          cfg := { cfg with css := some c }
         else if a.startsWith "--output=" then
           cfg := { cfg with output := some (a.drop "--output=".length).toString }
         else if a.startsWith "--font-dir=" then
@@ -220,17 +221,20 @@ def emitOfPath (o : String) : Option Emit :=
 /-- Backends to run: explicit `--emit` > the output name > the document's
 `\output{ formats = ... }` > PDF. -/
 def Config.effectiveEmit (cfg : Config) (docFormats : Array String) : Array Emit :=
-  if cfg.emitSet then cfg.emit
-  else if let some e := cfg.output.bind emitOfPath then #[e]
-  else
-    let ds := docFormats.filterMap emitOne
-    if ds.isEmpty then cfg.emit else ds
+  match cfg.emit with
+  | some es => es
+  | none =>
+    if let some e := cfg.output.bind emitOfPath then #[e]
+    else
+      let ds := docFormats.filterMap emitOne
+      if ds.isEmpty then #[.pdf] else ds
 
 /-- Stylesheet: explicit `--css` > the document's `\output{ css = ... }` >
 the default. -/
 def Config.effectiveCss (cfg : Config) (docCss : Option String) : CssChoice :=
-  if cfg.cssSet then cfg.css
-  else (docCss.bind cssChoice).getD cfg.css
+  match cfg.css with
+  | some c => c
+  | none => (docCss.bind cssChoice).getD .own
 
 /-- Where a backend writes. A directory keeps the source's stem; a file
 naming this backend's extension is used as-is; anything else (the other
