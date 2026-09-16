@@ -296,6 +296,43 @@ private def skipOptArg (ctx : Ctx) (name : String) (raws : Array Raw)
       | _ => break
     return (j, true)
 
+/-- The body of an unknown environment without its arguments: leading `[...]`
+runs and `{...}` groups on the `\begin` line are the environment's own
+arguments (`\begin{banner}{Logo}`), not content. A group or bracket on a
+later line is content — LaTeX's own argument scanning stops looking there
+too. Also returns the position of an unclosed `[`, for the caller to warn
+about; its run is kept as content. -/
+private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
+    Array Raw × Option Pos := Id.run do
+  let mut i := 0
+  for _ in [0:body.size] do
+    match scanBracketArg body i beginPos with
+    | .took k => i := k
+    | .unclosed bpos => return (body.extract i body.size, some bpos)
+    | .content =>
+      let j := skipSpaces body i
+      match body[j]? with
+      | some (.group _ gpos) =>
+        if gpos.line == beginPos.line then i := j + 1 else break
+      | _ => break
+  return (body.extract i body.size, none)
+
+/-- A body without its edge spaces: the newline after `\begin{...}` and the
+one before `\end{...}` belong to the dropped wrapper, not to the sentence
+the body splices into. -/
+private def trimEdgeSpaces (raws : Array Raw) : Array Raw := Id.run do
+  let mut a := 0
+  for r in raws do
+    match r with
+    | .space => a := a + 1
+    | _ => break
+  let mut b := raws.size
+  for _ in [0:raws.size] do
+    match raws[b - 1]? with
+    | some .space => b := b - 1
+    | _ => break
+  return raws.extract a b
+
 /-- A command whose group never materialised after an unclosed `[` is
 dropped whole: W0310 already named the typo, and one skipped declaration
 must not fail the build or bleed into the next construct as stray content. -/
@@ -474,7 +511,14 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             (help := "see PLAN.md for planned environments")
           acc := flushText acc sb
           sb := ""
-          acc := acc ++ (← elabInlines ctx body)
+          -- The arguments on the `\begin` line go with the wrapper here
+          -- too: an inline unknown environment obeys the same scanner as a
+          -- block one, and its edge spaces belong to the wrapper's source
+          -- lines, not the sentence.
+          let (kept, unclosed) := dropEnvArgs body pos
+          if let some bpos := unclosed then
+            warnUnclosed ctx s!"'\\begin\{{name}}'" bpos
+          acc := acc ++ (← elabInlines ctx (trimEdgeSpaces kept))
       | .verb s _ =>
         -- Verbatim inside inline content: kept as mono text, spaces held as
         -- no-break spaces, lines separated by forced breaks.
@@ -772,27 +816,6 @@ private def isArgument (cur : Array Raw) : Bool := Id.run do
     | _ => return false
   return false
 
-/-- The body of an unknown environment without its arguments: leading `[...]`
-runs and `{...}` groups on the `\begin` line are the environment's own
-arguments (`\begin{banner}{Logo}`), not content. A group or bracket on a
-later line is content — LaTeX's own argument scanning stops looking there
-too. Also returns the position of an unclosed `[`, for the caller to warn
-about; its run is kept as content. -/
-private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
-    Array Raw × Option Pos := Id.run do
-  let mut i := 0
-  for _ in [0:body.size] do
-    match scanBracketArg body i beginPos with
-    | .took k => i := k
-    | .unclosed bpos => return (body.extract i body.size, some bpos)
-    | .content =>
-      let j := skipSpaces body i
-      match body[j]? with
-      | some (.group _ gpos) =>
-        if gpos.line == beginPos.line then i := j + 1 else break
-      | _ => break
-  return (body.extract i body.size, none)
-
 /-- `\par` ends a paragraph wherever it stands, a scope group included:
 `{A \par B}` is `{A}\par{decls B}`, the declarations active at the break
 re-applied to what follows. So `{\Huge Title \par}` sets one line and stops,
@@ -907,8 +930,15 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .env n body _ =>
           -- The synthetic \input wrapper is provenance, not structure: an
           -- inline fragment splices into the paragraph that includes it,
-          -- and only a file holding block content breaks one.
-          if (Parse.inputEnvFile? n).isSome then bodyIsBlock body else true
+          -- and only a file holding block content breaks one. An unknown
+          -- environment is judged the same way — its wrapper is unknowable,
+          -- so its body's shape decides, and an inline body stays in its
+          -- sentence.
+          if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
+          else
+            blockEnvs.contains n || mathEnvs.contains n
+              || n == "tabular" || n == "tabular*"
+              || (reservedEnv.lookup n).isSome || bodyIsBlock body
         | .verb _ _ => true
         | _ => false
       if !isBoundary then

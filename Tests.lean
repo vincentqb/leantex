@@ -1579,6 +1579,24 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
        (s.splitOn "Head").length == 2 && !s.toList.contains '2' && !s.toList.contains 'X'
      | _ => false)
 
+/-- The paragraph boundary, judged from a body's shape: an unknown
+environment follows the same rule as the `@input:` wrapper — an inline body
+stays in its sentence, block content breaks it. -/
+def envBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  t "an inline unknown environment stays in its paragraph"
+    (match (elabStr "A sentence with \\begin{highlight}x\\end{highlight} in the middle.").1.body with
+     | #[.para xs] => Ir.plainText xs == "A sentence with x in the middle."
+     | _ => false)
+  t "an unknown environment holding block content is a boundary"
+    ((elabStr "before\n\\begin{aside}one\n\ntwo\n\\end{aside}\nafter").1.body ==
+      #[.para #[.text "before"], .para #[.text "one"], .para #[.text "two"],
+        .para #[.text "after"]])
+  t "an inline unknown environment's begin-line argument goes with the wrapper"
+    (match (elabStr "Take \\begin{banner}{Logo}the text\\end{banner} along.").1.body with
+     | #[.para xs] => Ir.plainText xs == "Take the text along."
+     | _ => false)
+
 /-- The optional-argument recovery, fed the malformed across line breaks:
 an unclosed `[` never turns into a fatal error however the lines fall — the
 group the author wrote is found on its own line or the next, a command with
@@ -1696,6 +1714,7 @@ def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
      | #[.para xs] => Ir.plainText xs == "[1] a caption line"
      | _ => false)
   optArgChecks ref
+  envBoundaryChecks ref
 
 def utf8Checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
