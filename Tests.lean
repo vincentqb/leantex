@@ -1868,6 +1868,23 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "elab trailing content warns" (((elabStr
     "\\begin{document}x\\end{document} y").2.map (·.code)) == #["W0001"])
 
+  -- The synthetic \input wrapper carries provenance, and must not invent
+  -- structure the file does not have: an inline fragment stays in its
+  -- paragraph; a file with paragraph breaks is block content.
+  let ip : Pos := {}
+  let inlineInput : Array Parse.Raw :=
+    #[.word "A" ip, .space,
+      .env (Parse.inputEnv "sub.tex") #[.word "with" ip, .space, .word "words" ip] ip,
+      .space, .word "B" ip]
+  t "inline input does not split its paragraph"
+    ((Elab.runRaws "t" inlineInput).1.body == #[.para #[.text "A with words B"]])
+  let blockInput : Array Parse.Raw :=
+    #[.word "A" ip, .space,
+      .env (Parse.inputEnv "sub.tex") #[.word "one" ip, .par ip, .word "two" ip] ip]
+  t "an input file with paragraphs is block content"
+    ((Elab.runRaws "t" blockInput).1.body ==
+      #[.para #[.text "A"], .para #[.text "one"], .para #[.text "two"]])
+
   -- verbatim: lexically blind content, kept literally as its own block.
   let verbSrc := "\\begin{verbatim}\ndef f(n):\n    return n\n\nf(2)  # two spaces\n\\end{verbatim}"
   t "elab verbatim is a block, content untouched"

@@ -883,7 +883,11 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
            | some (_, cmd) => bodyIsBlock cmd.body
            | none =>
              titleCtrls.contains n || n == "maketitle" || n == "titlepage")
-        | .env _ _ _ => true
+        | .env n body _ =>
+          -- The synthetic \input wrapper is provenance, not structure: an
+          -- inline fragment splices into the paragraph that includes it,
+          -- and only a file holding block content breaks one.
+          if (Parse.inputEnvFile? n).isSome then bodyIsBlock body else true
         | .verb _ _ => true
         | _ => false
       if !isBoundary then
