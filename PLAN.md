@@ -12,32 +12,99 @@ pipeline. flashtex sets the speed bar.
 
 ## Status
 
-**Where it is.** PDF 2.0 output is real: justified paragraphs with
+**Where it is.** Two backends are real. PDF 2.0: justified paragraphs with
 Knuth–Plass and Liang hyphenation, font families with true bold/italic/mono
-faces, named colours, font-relative design tokens, page geometry, document
-metadata, and layout assertions that fail the build. Measured by
-`scripts/bench.sh`: 1 KB in ~17 ms against lualatex's ~481 ms; a generated
-129 KB / 30 pages in ~579 ms against ~980 ms.
+faces, the `\tiny`–`\Huge` size scale, small caps, named colours,
+font-relative design tokens, page geometry, running head/foot, hyperlinks as
+link annotations, document metadata, and layout assertions that fail the
+build. HTML5: a typed tree with a certified escaper, semantic markup, tokens
+as CSS custom properties, `--css bulma` interop, one self-contained file.
+Measured by `scripts/bench.sh`: 1 KB in ~16 ms against lualatex's ~478 ms; a
+generated 129 KB / 30 pages in ~588 ms against ~968 ms.
 
 **Where it is going.** This plan now covers one engine with **two surfaces**
 (tex primary, markdown as sugar) and **two backends** (PDF and HTML,
-including slides). The HTML backend is next after M3c because it needs no
-layout engine, and it is what makes the site, the talks, and theorem-bound
-documents reachable.
+including slides).
 
-**Immediately next.** M3c — headers/footers (the last `\page` key),
-hyperlinks with PDF link annotations, and block-level user commands (a
-`\define` body producing `\block` reports E0312 today, which is what the
-resume fixture still hits). Then M4, the HTML backend.
+**Immediately next.** M4b theorem environments, or M5 slides. Slides were
+blocked on the size scale, which now exists.
 
 **Open, tracked, not hidden.** `Elab.elabInlines`/`elabBlocks` are still
 `partial`; the Knuth–Plass optimality theorem is held empirically by
-`scripts/kp-fuzz.lean`. Both are detailed in the 2026-09-15 M2 entry below
-and neither is on the critical path for HTML.
+`scripts/kp-fuzz.lean`. Both are detailed in the 2026-09-15 M2 entry below.
+Small caps are synthesised rather than drawn, and math is still emitted as
+source. The resume acceptance run is clean on both backends.
 
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-15 — four latent no-ops found by rendering the same fixture through
+both backends and looking at the output. Each was accepted by the elaborator
+and then silently discarded, which is the failure mode this engine exists to
+avoid, and none was visible to `lake test`.
+
+The `\tiny`–`\Huge` scale did nothing: the PDF dropped size styles and HTML
+emitted a class with no rule. The scale now lives in the IR because both
+backends read it and must agree; HTML generates its rules from that table so
+the two cannot drift. Boxes and glyph runs carry the size they were measured
+at, so a paragraph may mix sizes, and vertical space follows the tallest run
+on a line.
+
+`\,` and its siblings were mapped to Unicode code points and set as
+characters. No Type 1-derived face has a glyph at U+2009, so every one was
+dropped — three times in the resume, around the separator they were spacing.
+They are kerns now: width, no glyph, never a breakpoint.
+
+`\scshape` did nothing. The PDF path synthesises small caps by splitting a
+word into runs that carry their own size; HTML asks for `font-variant-caps`
+so the browser can use a face's real ones. The two mechanisms differ on
+purpose.
+
+A palette name coloured to the end of its enclosing group, so
+`\primary{Alex} Doe` painted Doe too. It binds a following group as its
+argument now, and keeps the declaration reading when there is none.
+
+Two decisions came out of this. `\hfill` on a line it shares with the fill
+that runs out a paragraph now takes the whole leftover instead of half:
+LaTeX splits it, and a row of dates that stops halfway to the margin is not
+what anyone means. And a stretched row broken by `\\` becomes a column of
+rows in HTML, because a `<br>` cannot end a flex line — Chromium does not
+treat one as a flex item, so no stylesheet fixes it and the break has to be
+structural.
+
+Two process notes. Writing the first test that reads produced PDF bytes
+immediately caught a regression in the same change: a default value on a new
+constructor field turned `.run idx _ _ _ glyphs` into a pattern matching only
+`size = 0`, so glyph collection found nothing and one face was embedded where
+six belonged — with the whole suite green. Default values on inductive fields
+let patterns under-specify silently and are not used here. Separately, `build`
+and `dump` took the *next token* as their filename, so every flag written
+after the command was eaten as the file; `--color` had been broken that way
+since M0 and no test caught it, because every test passed flags before the
+command.
+
+2026-09-15 — M4 landed: the HTML backend. `Html` builds a typed tree and
+`HtmlDoc` turns a `Doc` into a page. Nothing concatenates tag strings, and
+two theorems say what the escaper buys: escaped content carries no `<`, so no
+text node can open a tag, and an escaped attribute value carries no quote.
+`style`/`script` payloads are checked for their own terminator instead,
+because CSS and JS do not follow element-content rules. Tokens become CSS
+custom properties and a named colour becomes `var(--name, literal)`, so the
+tokens really are the styling API for both backends. `--css bulma` binds them
+to `--bulma-*` without shipping the framework; `--css none` emits semantic
+markup only. Running content warns (W0007) rather than vanishing, and math
+rides in `data-tex` with `--math-boundary` for an optional renderer.
+
+2026-09-15 — M3c landed: hyperlinks reach the PDF as Link annotations, with
+adjacent runs sharing a destination merged into one rectangle per line.
+Running content became `\runninghead`/`\runningfoot` taking inline content
+rather than a `\page{header = ...}` key, because a key/value declaration
+cannot carry `\hfill` or a `\pagenumber` placeholder; placeholders resolve
+once the page count is known. A `\define` body may now produce blocks, and
+`\\[len]` carries extra space after a break — with the bracket required to be
+adjacent, where LaTeX skips spaces and so swallows the bracket of a line that
+legitimately starts with one.
 
 2026-09-15 — plan refined for HTML, slides, themes, and theorems. The leanmd
 workstream merges in: markdown becomes a second surface defined by
@@ -577,14 +644,18 @@ is evidence, not a theorem.
   faces; `\palette` named colours via `\textcolor{name}{...}` and bare
   declarations; `\tokens` font-relative lengths (ex/em) with derived tokens;
   `\block[before = token]` spacing; `\hfill`; text symbols.
-  M3c: headers/footers, hyperlinks, block-level user commands.
+  M3c (done): `\runninghead`/`\runningfoot` with `\pagenumber`/`\pagecount`,
+  hyperlinks as PDF Link annotations, block-producing `\define` bodies,
+  `\\[len]`. Plus the size scale, small caps, and fixed-width kerns, which
+  were declared in M3b and implemented nowhere.
   Acceptance (local, private corpus): the resume ported, one page asserted,
   side-by-side at least as good as the lualatex original, its external check
   scripts retired. CI equivalent: `tests/corpus/resume.tex`.
-- M4 HTML backend: typed tree, certified escaping, semantic HTML5,
-  tokens → CSS custom properties, self-contained single-file output, `--css
-  bulma` interop, markdown alternate emission. Math emitted as source with an
-  optional client-side boundary until M6.
+- M4 HTML backend (done, less markdown emission): typed tree, certified
+  escaping, semantic HTML5, tokens → CSS custom properties, self-contained
+  single-file output, `--css bulma` interop. Math emitted as source with an
+  optional client-side boundary until M6. Markdown alternate emission moves to
+  M7 with the rest of the markdown surface.
   Acceptance (local, private corpus): one personal-site page side by side
   against the current generator. CI equivalent: a synthetic site page.
 - M4b theorem environments: the eight environments, per-section numbering,
