@@ -24,7 +24,8 @@ center
       styled bold
         styled size:Huge
           color primary #7C3AED
-            text "Alex Doe"
+            text "Alex"
+          text " Doe"
     linebreak 675/1000ex plus 270/1000ex minus 135/1000ex
     color muted #71717A
       text "alex@example.org · example.org · github.com/adoe"
@@ -41,11 +42,11 @@ block before 1800/1000ex plus 720/1000ex minus 360/1000ex
     fill
     color muted #71717A
       text "2021–present"
-      linebreak
-      color muted #71717A
-        styled italic
-          text "Platform"
-      text " "
+    linebreak
+    color muted #71717A
+      styled italic
+        text "Platform"
+    text " "
 list unordered
   item
     para
@@ -63,7 +64,8 @@ block before 1800/1000ex plus 720/1000ex minus 360/1000ex
     text " "
     fill
     color muted #71717A
-      text "2017–2021 "
+      text "2017–2021"
+    text " "
 list unordered
   item
     para
@@ -80,6 +82,7 @@ block before 1800/1000ex plus 720/1000ex minus 360/1000ex
     text " "
     fill
     color muted #71717A
-      text "2013–2017 "
+      text "2013–2017"
+    text " "
 -- diagnostics
 (none)

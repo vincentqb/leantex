@@ -138,7 +138,9 @@ def baseCss (doc : Doc) : String :=
   ".centered { text-align: center; }\n" ++
   ".fill { flex: 1 1 auto; }\n" ++
   ".spaced { margin-top: var(--sep, 1.4rem); }\n" ++
-  ".entry { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline; }\n" ++
+  ".entry, .entry-row { display: flex; flex-wrap: wrap; gap: 0.4rem;\n" ++
+  "  align-items: baseline; }\n" ++
+  ".entry-rows { display: flex; flex-direction: column; }\n" ++
   ".sans { font-family: var(--font-sans); }\n" ++
   -- The browser uses the face's own small caps when it has them and synthesises
   -- otherwise, which is the better of the two mechanisms; the PDF path can only
@@ -217,11 +219,33 @@ private def hasFill (xs : Array Inline) : Bool :=
     | .fill => true
     | _ => false
 
+/-- Split inline content at each `\\`. A stretched row is a column of rows, one
+per break, because `\hfill` stretches within a line: a `<br>` cannot end a flex
+line, so the break has to be structural. -/
+private def splitAtBreaks (xs : Array Inline) : Array (Array Inline) := Id.run do
+  let mut out : Array (Array Inline) := #[]
+  let mut cur : Array Inline := #[]
+  for x in xs do
+    match x with
+    | .linebreak _ =>
+      out := out.push cur
+      cur := #[]
+    | other => cur := cur.push other
+  return out.push cur
+
 partial def blockNode (cfg : Config) (b : Block) : Node :=
   match b with
   | .para content =>
-    let attrs := if hasFill content then #[("class", "entry")] else #[]
-    Html.elem "p" (inlines cfg content) attrs
+    if hasFill content then
+      let rows := splitAtBreaks content
+      if rows.size == 1 then
+        Html.elem "p" (inlines cfg content) #[("class", "entry")]
+      else
+        Html.elem "p" (rows.map fun r =>
+          Html.elem "span" (inlines cfg r) #[("class", "entry-row")])
+          #[("class", "entry-rows")]
+    else
+      Html.elem "p" (inlines cfg content)
   | .section level _ title =>
     let tag := match level with
       | 1 => "h2"

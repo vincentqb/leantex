@@ -631,6 +631,21 @@ def main (args : List String) : IO UInt32 := do
   let (barePage, _) := HtmlDoc.emit { css := .none } htmlDoc
   t "css none emits no style element" ((barePage.splitOn "<style>").length == 1)
 
+  -- A stretched row broken by `\\` becomes a column of rows. A <br> cannot end
+  -- a flex line, so the break has to be structural or the second line lands
+  -- beside the first -- where the PDF puts it below.
+  let (rowDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "left \\hfill right\\\\second\\end{document}")
+  let (rowPage, _) := HtmlDoc.emit {} rowDoc
+  t "broken stretched row becomes rows"
+    ((rowPage.splitOn "class=\"entry-row\"").length == 3)
+  t "broken stretched row keeps no br" ((rowPage.splitOn "<br>").length == 1)
+  -- An unbroken one stays a single row.
+  let (oneRowDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "left \\hfill right\\end{document}")
+  t "unbroken stretched row stays one row"
+    (((HtmlDoc.emit {} oneRowDoc).1.splitOn "class=\"entry\"").length == 2)
+
   -- \hfill and control-symbol spaces
   -- \hfill takes no argument but still swallows the following space: a space
   -- after the stretch would be visible at the far margin.
@@ -660,6 +675,19 @@ def main (args : List String) : IO UInt32 := do
     | _ => false)
   t "palette unknown name" (errCodes ("\\documentclass{article}\\palette{a = #fff}" ++
     "\\begin{document}\\textcolor{nope}{x}\\end{document}") == ["E0326"])
+  -- A palette name binds a following group as its argument. It used to colour
+  -- everything to the end of the group, so `\primary{Alex} Doe` painted Doe too.
+  let palSrc (body : String) : Ir.Doc :=
+    (Elab.run "t" ("\\documentclass{article}\\palette{mut = #888888}" ++
+      "\\begin{document}" ++ body ++ "\\end{document}")).1
+  t "palette name takes its group as an argument"
+    ((palSrc "\\mut{in} out").body == #[.para #[
+      .colored { r := 0x88, g := 0x88, b := 0x88 } (some "mut") #[.text "in"],
+      .text " out"]])
+  t "palette name with no group runs to the end of the group"
+    ((palSrc "{\\mut in} out").body == #[.para #[
+      .colored { r := 0x88, g := 0x88, b := 0x88 } (some "mut") #[.text "in"],
+      .text " out"]])
   t "palette wrong type" (errCodes ("\\documentclass{article}\\palette{a = 3pt}" ++
     "\\begin{document}x\\end{document}") == ["E0323"])
   t "palette cannot shadow builtin" (errCodes

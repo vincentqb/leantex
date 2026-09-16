@@ -455,12 +455,22 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           | _, _ =>
             diag ctx "E0304" "'\\textcolor' needs {name} and {content}" pos
         else if let some c := ctx.palette.find? name then
-          -- A palette name used as a declaration colours the rest of the group.
-          let rest ← elabInlines ctx (raws.extract i raws.size)
-          acc := flushText acc sb
-          sb := ""
-          acc := acc.push (.colored c (some name) rest)
-          i := raws.size
+          -- With a group, that group is the argument: `\primary{Alex}` means
+          -- colour Alex, which is what it looks like. Without one it is a
+          -- declaration colouring the rest of the group, as `\bfseries` does.
+          let j := skipSpaces raws i
+          match raws[j]? with
+          | some (.group body _) =>
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (.colored c (some name) (← elabInlines ctx body))
+            i := j + 1
+          | _ =>
+            let rest ← elabInlines ctx (raws.extract i raws.size)
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (.colored c (some name) rest)
+            i := raws.size
         else if let some style := declStyles.lookup name then
           let declCtx := if style == Style.mono then { ctx with literalText := true } else ctx
           let rest ← elabInlines declCtx (raws.extract i raws.size)
