@@ -127,6 +127,19 @@ private def unitScale : String → Option (Int × Nat)
   | "pc" => some (12 * spPerPt, 1)
   | _ => none
 
+/-- The unit table is one system, not seven constants: bp is the PDF point
+(leantex's pt), an inch is 72 of them, a pica 12, cm and mm follow from
+1 in = 2.54 cm exactly, and sp is the fixed point itself. A typo in any one
+entry breaks a relation here. -/
+theorem unitScale_consistent :
+    unitScale "bp" = unitScale "pt" ∧
+    unitScale "pt" = (unitScale "sp").map (fun u => (spPerPt * u.1, u.2)) ∧
+    unitScale "in" = (unitScale "pt").map (fun u => (72 * u.1, u.2)) ∧
+    unitScale "pc" = (unitScale "pt").map (fun u => (12 * u.1, u.2)) ∧
+    unitScale "cm" = (unitScale "in").map (fun u => (100 * u.1, 254 * u.2)) ∧
+    unitScale "mm" = (unitScale "cm").map (fun u => (u.1, 10 * u.2)) := by
+  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [unitScale, spPerPt]
+
 /-- A single length term: a number with an absolute or font-relative unit. -/
 def parseLength (s : String) : Option Length :=
   let s := s.trimAscii.toString
