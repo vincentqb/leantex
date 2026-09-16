@@ -623,7 +623,7 @@ American English, Liang patterns from `hyph-en-us.tex` (ushyphmax: Knuth's
 frozen `hyphen.tex` plus Gerard Kuiken's additions — a strict superset, 4938
 patterns vs 4447), hyphenmins 2/3, embedded as generated Lean data with the
 upstream licence notice preserved. Regenerate with
-`scripts/gen-hyphen-data.py`.
+`lake env lean --run scripts/gen-hyphen-data.lean`.
 
 Why the superset: it offers strictly more admissible break points, which is
 what reduces loose and overfull lines — the quality axis that matters here.

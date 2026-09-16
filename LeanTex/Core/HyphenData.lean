@@ -1,6 +1,6 @@
 /-
 Generated from hyph-en-us.tex (hyph-utf8); do not edit by hand.
-Regenerate with: python3 scripts/gen-hyphen-data.py
+Regenerate with: lake env lean --run scripts/gen-hyphen-data.lean
 
 title: Hyphenation patterns for American English
 copyright: Copyright (C) 1990, 2004, 2005 Gerard D.C. Kuiken
