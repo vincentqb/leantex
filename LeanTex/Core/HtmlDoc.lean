@@ -368,6 +368,10 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let style := s!"margin-top: {cssLength before.width}"
     Html.elem "div" (blockNodesInto cfg #[] body.toList)
       #[("class", "spaced"), ("style", style)]
+  | .verbatim s =>
+    -- `<pre>` preserves the raw lines; the escaper makes the content inert.
+    Html.elem "pre" #[Html.elem "code"
+      #[Html.text (String.intercalate "\n" (verbatimLines s).toList)]]
 
 /-- The accumulator threads through the sibling walk, as in `inlineNodesInto`. -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node

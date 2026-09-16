@@ -298,6 +298,11 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   -- Without an \hfill the last line stays ragged: the fill still fills.
   t "no hfill leaves the last line short"
     (brokenLine.size == 2 && brokenLine[1]! < geom.textWidth)
+  -- Verbatim: one set line per code line, interior blank lines included —
+  -- a blank line inside a code block used to have no feasible break and
+  -- could vanish with everything after it.
+  t "verbatim sets one line per code line, blanks included"
+    ((measureOf "\\begin{verbatim}\na\n\nb\n\\end{verbatim}").size == 3)
 
 /-- `\\style` and its two backends. Its own function: `main` is a single `do`
 block and Lean's elaboration budget for one block is spent. -/
@@ -1685,6 +1690,16 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     (degDs.isEmpty && degDoc.body == #[.para #[.styled .bold #[.text "PhD"]]])
   t "elab trailing content warns" (((elabStr
     "\\begin{document}x\\end{document} y").2.map (·.code)) == #["W0001"])
+
+  -- verbatim: lexically blind content, kept literally as its own block.
+  let verbSrc := "\\begin{verbatim}\ndef f(n):\n    return n\n\nf(2)  # two spaces\n\\end{verbatim}"
+  t "elab verbatim is a block, content untouched"
+    ((elabStr verbSrc).1.body == #[.verbatim "\ndef f(n):\n    return n\n\nf(2)  # two spaces\n"] &&
+     (elabStr verbSrc).2.isEmpty)
+  t "verbatim lines trim the delimiters, keep blanks and indentation"
+    (Ir.verbatimLines "\nabc\n  in\n\nz\n  " == #["abc", "  in", "", "z"])
+  t "verbatim inline form holds spaces as no-break spaces"
+    (Ir.verbatimInlines "\na  b\n" == #[.text "a\u00a0\u00a0b"])
 
 def kpChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

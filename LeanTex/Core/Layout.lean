@@ -1,3 +1,4 @@
+import Std.Data.HashSet
 import LeanTex.Core.Dim
 import LeanTex.Core.Font
 import LeanTex.Core.Hyphen
@@ -998,6 +999,13 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- bare `\vspace` after a list adds to the list's `topsep`, as in LaTeX.
     let a := a.vskip (a.resolve before)
     collectBlocks a pats fs body indent
+  | .verbatim s =>
+    -- Code lines, kept literally, at 4/5 of the body size (the
+    -- \footnotesize convention for code frames — an 80-column line fits a
+    -- 16:9 slide). No hyphenation patterns: the engine must never invent a
+    -- hyphen inside an identifier.
+    collectPara a none fs #[.styled .mono (Ir.verbatimInlines s)] indent false
+      (a.geom.fontSize * 4 / 5)
 
 end
 
@@ -1230,6 +1238,15 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       cache := c
       if let some l := l? then lines := lines.push l
     out := out.set! i { lines := lines }
-  { pages := out, diags := diags }
+  -- One report per problem: the same missing glyph or overfull shape in
+  -- thirty code blocks is one thing to fix, not thirty lines of console.
+  let mut seen : Std.HashSet (String × String) := {}
+  let mut unique : Array Diag := #[]
+  for d in diags do
+    let key := (d.code, d.message)
+    unless seen.contains key do
+      seen := seen.insert key
+      unique := unique.push d
+  { pages := out, diags := unique }
 
 end LeanTex.Core.Layout

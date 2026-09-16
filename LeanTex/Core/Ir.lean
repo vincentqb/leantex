@@ -186,7 +186,35 @@ inductive Block where
   | center (body : Array Block)
   /-- `\block[before = <len>]{...}`: content with declared space above. -/
   | spaced (before : SymGlue) (body : Array Block)
+  /-- `{verbatim}` content, kept literally: lines, spaces, and all. Both
+  backends set it in the mono face and neither reflows it. -/
+  | verbatim (content : String)
   deriving Repr, BEq, Inhabited
+
+/-- Verbatim content, line-split: the newline after `\begin{verbatim}` and
+the blank indentation before `\end{verbatim}` delimit; everything between is
+content, interior blank lines included. -/
+def verbatimLines (s : String) : Array String := Id.run do
+  let s := if s.startsWith "\n" then (s.drop 1).toString
+    else if s.startsWith "\r\n" then (s.drop 2).toString else s
+  let mut lines := ((s.splitOn "\n").map fun l =>
+    if l.endsWith "\r" then (l.dropEnd 1).toString else l).toArray
+  if let some last := lines.back? then
+    if last.trimAscii.isEmpty then lines := lines.pop
+  return lines
+
+/-- Verbatim content as inline text, for a backend that sets lines rather
+than reading the string whole: spaces become no-break spaces so indentation
+survives layout as fixed kerns, lines join by forced breaks, and a blank line
+keeps one no-break space so the break before it still sets a line. -/
+def verbatimInlines (s : String) : Array Inline := Id.run do
+  let mut out : Array Inline := #[]
+  for line in verbatimLines s do
+    unless out.isEmpty do
+      out := out.push (.linebreak {})
+    let kept := String.ofList (line.toList.map fun c => if c == ' ' then '\u00a0' else c)
+    out := out.push (.text (if kept.isEmpty then "\u00a0" else kept))
+  return out
 
 /-- How an element kind looks, from `\style{element}{...}`. Every field a
 backend used to hard-code is here instead, so a design lives in the document.
@@ -369,6 +397,9 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
   | .spaced before body =>
     s!"{ind}block before {dumpGlue before}\n" ++ dumpBlocks (ind ++ "  ") body
+  | .verbatim s =>
+    s!"{ind}verbatim\n" ++ String.join ((verbatimLines s).toList.map
+      fun l => s!"{ind}  {l.quote}\n")
 
 end
 

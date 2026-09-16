@@ -93,7 +93,7 @@ def pageSizes : List (String × (Sp × Sp)) :=
    ("a5", (Dim.pt 420, Dim.pt 595))]
 
 def reservedEnv : List (String × String) :=
-  [("frame", "M5"), ("verbatim", "M5"), ("external", "M5"), ("tikzpicture", "M8")]
+  [("frame", "M5"), ("external", "M5"), ("tikzpicture", "M8")]
 
 def argStyles : List (String × Style) :=
   [("textbf", .bold), ("textit", .italic), ("texttt", .mono), ("emph", .emph)]
@@ -357,9 +357,12 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           acc := flushText acc sb
           sb := ""
           acc := acc ++ (← elabInlines ctx body)
-      | .verb _ pos =>
-        warnOnce ctx "verbatim" "W0307" "'{verbatim}' is not implemented yet" pos
-          (help := "planned for M5; see PLAN.md")
+      | .verb s _ =>
+        -- Verbatim inside inline content: kept as mono text, spaces held as
+        -- no-break spaces, lines separated by forced breaks.
+        acc := flushText acc sb
+        sb := ""
+        acc := acc.push (.styled .mono (Ir.verbatimInlines s))
         i := i + 1
       | .ctrl name pos =>
         i := i + 1
@@ -747,6 +750,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
            | some (_, cmd) => bodyIsBlock cmd.body
            | none => false)
         | .env _ _ _ => true
+        | .verb _ _ => true
         | _ => false
       if !isBoundary then
         unless cur.isEmpty && isSpaceOrPar r do
@@ -864,6 +868,9 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             warnOnce ctx n "W0302" s!"unknown environment '\{{n}}'; its body is kept" pos
               (help := "see PLAN.md for planned environments")
             blocks := blocks ++ (← elabBlocks ctx (dropEnvArgs body pos))
+        | .verb s _ =>
+          i := i + 1
+          blocks := blocks.push (.verbatim s)
         | _ =>
           i := i + 1
     else
