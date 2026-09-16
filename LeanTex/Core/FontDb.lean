@@ -121,15 +121,31 @@ def probe (path : String) : IO (Option Face) := do
     return none
 
 /-- All installed faces, classified. Cached by the caller. `dirs` adds to the
-built-in locations rather than replacing them. -/
+built-in locations rather than replacing them. Probing opens and reads every
+installed face, so chunks of files are probed in parallel; joining in chunk
+order keeps the face array exactly what the sequential scan produced, which
+matters because resolution prefers earlier faces on ties. -/
 def scan (dirs : List String := []) : IO (Array Face) := do
-  let mut faces : Array Face := #[]
+  let mut files : Array String := #[]
   for d in searchDirs ++ (← extraDirs) ++ dirs do
     let p := System.FilePath.mk d
     if ← p.pathExists then
-      for file in ← listFonts p 4 do
+      files := files ++ (← listFonts p 4)
+  let chunk := 64
+  let mut tasks : Array (Task (Except IO.Error (Array Face))) := #[]
+  for i in [0:(files.size + chunk - 1) / chunk] do
+    let slice := files.extract (i * chunk) ((i + 1) * chunk)
+    tasks := tasks.push (← IO.asTask do
+      let mut fs : Array Face := #[]
+      for file in slice do
         if let some face ← probe file then
-          faces := faces.push face
+          fs := fs.push face
+      return fs)
+  let mut faces : Array Face := #[]
+  for t in tasks do
+    match t.get with
+    | .ok fs => faces := faces ++ fs
+    | .error e => throw e
   return faces
 
 private def norm (s : String) : String :=
