@@ -2,6 +2,13 @@ name = "leantex"
 defaultTargets = ["leantex"]
 testDriver = "Tests"
 
+[leanOptions]
+weak."linter.extra" = true
+weak."linter.extra.dupNamespace" = true
+weak."linter.extra.unnecessarySeqFocus" = true
+weak."linter.extra.unreachableTactic" = true
+weak."linter.redundantVisibility" = true
+
 [[lean_lib]]
 name = "LeanTex"
 

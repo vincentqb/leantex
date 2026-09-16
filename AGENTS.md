@@ -25,6 +25,8 @@ in this repo; refer to the private reference corpus abstractly.
 
 - `lake build` — proofs are checked here; a broken theorem is a broken build.
 - `lake test` — golden corpus + property tests. Run both before declaring done.
+- `git config core.hooksPath scripts/hooks` — one-time: installs the
+  pre-commit hook (build with warnings-as-failures + convention checks).
 - `lake exe Tests --update` — regenerate goldens after an intended IR change.
 - Deeper oracles, not in `lake test` (too slow / need TeX): run
   `scripts/kp-fuzz.lean` when touching line breaking, and
@@ -63,6 +65,9 @@ in this repo; refer to the private reference corpus abstractly.
   (`scripts/kp-fuzz.lean`) is evidence, not a theorem — say which one you have.
 - Comments: nearly none. Names and tests carry the what; a comment only for a
   why the code cannot say.
+- Linters: the core linters plus the `linter.extra` set run inside
+  `lake build` (enabled in `lakefile.toml`); a warning fails the pre-commit
+  hook, and `linter.missingDocs` stays off deliberately.
 - In-repo tests and fixtures are synthetic, and synthetic means invented: no
   text, topics, or distinctive design values (fonts, spacing constants,
   palettes) copied from the private corpus. Placeholder names, `example.org`
