@@ -30,7 +30,7 @@ in this repo; refer to the private reference corpus abstractly.
 - `lake exe Tests --update` — regenerate goldens after an intended IR change.
 - Deeper oracles, not in `lake test` (too slow / need TeX): run
   `scripts/kp-fuzz.lean` when touching line breaking,
-  `scripts/hyphen-diff.sh` when touching hyphenation, and
+  `scripts/hyphen-diff.lean` when touching hyphenation, and
   `scripts/fontcache-check.lean` when touching the font scan or its cache
   (it replaces a font under the same name and checks the answer follows
   the file).

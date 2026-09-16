@@ -631,7 +631,7 @@ The cost is that leantex legitimately differs from a default `lualatex` run,
 which loads `hyphen.tex` (TeX Live's `language.dat` maps `english` to it, "do
 not change!").
 
-So the oracle must load the matching set: `scripts/hyphen-diff.sh` runs luatex
+So the oracle must load the matching set: `scripts/hyphen-diff.lean` runs luatex
 with `\input hyph-en-us` and compares word for word (552/552 exact as of
 2026-09-15). Comparing against plain `lualatex` produces ~3% spurious
 mismatches. `\showhyphens` lists every admissible break, not one rendering.

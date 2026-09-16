@@ -799,7 +799,7 @@ def main (args : List String) : IO UInt32 := do
   -- pattern set the engine embeds (luatex + hyph-en-us.tex, hyphenmins 2/3);
   -- plain lualatex is a different oracle because TeX Live maps `english` to
   -- hyphen.tex, Knuth's frozen subset. \showhyphens lists every admissible
-  -- break, not one chosen rendering. Full 552-word check: scripts/hyphen-diff.sh
+  -- break, not one chosen rendering. Full 552-word check: scripts/hyphen-diff.lean
   let pats := Hyphen.load
   let hyph (w : String) : String := Id.run do
     let breaks := Hyphen.hyphenate pats w
