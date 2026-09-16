@@ -280,6 +280,12 @@ where
     for p in pkgs do
       if p == "geometry" then
         out := out ++ (← geometry (opt.getD "") pos)
+      else if p == "parskip" then
+        -- The package sets `\parskip` to half a line plus 2pt and drops the
+        -- indent; the half line is what changes the page.
+        let native := "\\page{ parskip = 0.6em plus 2pt }"
+        became "\\usepackage{parskip}" native pos
+        out := out ++ (← synthAt native pos)
       else if nativePackages.contains p then
         became s!"\\usepackage\{{p}}" "nothing: the engine does this itself" pos
       else
@@ -292,8 +298,22 @@ where
     let cls := rawSrc (args.getD 0 #[])
     if articleClasses.contains cls then
       let o := match opt with | some o => s!"[{o}]" | none => ""
-      became s!"\\documentclass\{{cls}}" s!"\\documentclass{o}\{article}" pos
-      return some (← synthAt s!"\\documentclass{o}\{article}" pos, k)
+      -- A LaTeX class separates paragraphs by indent, not by a skip: its
+      -- `\parskip` is zero unless the KOMA `parskip=` option asks for half a
+      -- line or a full one. The engine's own default is a skip, so the
+      -- class declares what LaTeX would have.
+      let komaSkip := (opt.getD "").splitOn "," |>.findSome? fun kv =>
+        match (kv.splitOn "=").map (·.trimAscii.toString) with
+        | ["parskip", v] =>
+          if v.startsWith "full" then some "1.2em plus 0.24em"
+          else if v.startsWith "half" then some "0.6em plus 0.12em"
+          else if v == "false" || v == "never" then some "0pt"
+          else some "0.6em plus 0.12em"
+        | ["parskip"] => some "1.2em plus 0.24em"
+        | _ => none
+      let native := s!"\\documentclass{o}\{article}\\page\{ parskip = {komaSkip.getD "0pt"} }"
+      became s!"\\documentclass\{{cls}}" native pos
+      return some (← synthAt native pos, k)
     else if cls == "beamer" then
       let o := match opt with | some o => s!"[{o}]" | none => ""
       became "\\documentclass{beamer}" s!"\\documentclass{o}\{slides}" pos
@@ -347,6 +367,11 @@ where
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
       match ctrlName args[0] with
+      | some "parskip" =>
+        -- TeX's own paragraph glue is a page property here, not a token.
+        let native := s!"\\page\{ parskip = {lengthSrc args[1]} }"
+        became "\\setlength{\\parskip}" native pos
+        return some (← synthAt native pos, k)
       | some n =>
         let native := s!"\\tokens\{ {n} = {lengthSrc args[1]} }"
         became s!"\\setlength\{\\{n}}" native pos

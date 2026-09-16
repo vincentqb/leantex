@@ -14,6 +14,10 @@ structure PageSpec where
   /-- Line spacing as a factor over the default 1.2, in thousandths, so
   `\linespread{1.04}` has a home. -/
   leading : Nat := 1000
+  /-- The gap between peer paragraphs, with its rubber; `none` is the
+  engine's default. LaTeX classes declare `0pt`, `\parskip` and the parskip
+  package their own. -/
+  parskip : Option SymGlue := none
   deriving Repr, BEq, Inhabited
 
 /-- An sRGB colour. -/
@@ -53,14 +57,15 @@ structure Palette where
 def Palette.find? (p : Palette) (name : String) : Option Color :=
   (p.entries.find? (·.1 == name)).map (·.2)
 
-/-- Font families a document asks for, as declared by `\fonts`. `dir` is a
-directory of font files the document ships, relative to the document, so a
-document that carries its fonts renders the same on every host. -/
+/-- Font families a document asks for, as declared by `\fonts`. `dirs` are
+directories of font files the document ships, relative to the document, so a
+document that carries its fonts renders the same on every host. Every `dir`
+declared is kept: fontspec's `Path=` may name a different one per face. -/
 structure FontSpec where
   body : Option String := none
   sans : Option String := none
   mono : Option String := none
-  dir : Option String := none
+  dirs : Array String := #[]
   deriving Repr, BEq, Inhabited
 
 /-- What to build, as declared by `\output`: the document carries its own
@@ -273,6 +278,31 @@ private def hex2 (v : UInt8) : String :=
 
 mutual
 
+/-- The characters of inline content with every mark stripped: what a URL or
+a palette key built from a parameter is worth as text. -/
+def plainText (xs : Array Inline) : String :=
+  plainTextList xs.toList
+
+def plainTextList (xs : List Inline) : String :=
+  match xs with
+  | [] => ""
+  | x :: rest => plainTextOne x ++ plainTextList rest
+
+def plainTextOne (x : Inline) : String :=
+  match x with
+  | .text s => s
+  | .math _ src => src
+  | .styled _ body => plainTextList body.toList
+  | .colored _ _ body => plainTextList body.toList
+  | .link _ body => plainTextList body.toList
+  | .underline body => plainTextList body.toList
+  | .fill | .pageNumber | .pageCount => ""
+  | .linebreak _ => " "
+
+end
+
+mutual
+
 def dumpInlines (ind : String) (xs : Array Inline) : String :=
   dumpInlineList ind xs.toList
 
@@ -351,7 +381,10 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
   let head := s!"class {doc.docClass}{opts}\n"
   let page :=
     s!"page {doc.page.width.toPtString}x{doc.page.height.toPtString} " ++
-    s!"vmargin {doc.page.vmargin.toPtString} hmargin {doc.page.hmargin.toPtString}\n"
+    s!"vmargin {doc.page.vmargin.toPtString} hmargin {doc.page.hmargin.toPtString}" ++
+    (match doc.page.parskip with
+      | some g => s!" parskip {dumpGlue g}"
+      | none => "") ++ "\n"
   let metaLine (label : String) (v : Option String) : String :=
     match v with
     | some s => s!"meta {label} {s.quote}\n"
@@ -362,7 +395,7 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
 "
     | none => ""
   let fontLines :=
-    fontLine "dir" doc.fonts.dir ++
+    String.join (doc.fonts.dirs.toList.map fun d => fontLine "dir" (some d)) ++
     fontLine "body" doc.fonts.body ++ fontLine "sans" doc.fonts.sans ++
     fontLine "mono" doc.fonts.mono
   let paletteLines := String.join (doc.palette.entries.toList.map fun (n, c) =>

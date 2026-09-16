@@ -45,6 +45,44 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-16 — the resume matches its lualatex build line for line, at
+natural glue, and fits its page. The gap under the name was 28pt too wide
+and the page ran to two. Five causes, each a rule TeX has and the engine
+did not:
+
+- Vertical space after a line was that line's own leading, so a `\Huge` title
+  pushed the next line a Huge leading down. TeX's rule: the distance is the
+  leading of the line being placed, unless the previous depth plus this
+  height plus `\lineskip` is more. Heights are cap height (OS/2 `sCapHeight`,
+  now parsed) and depths the font's descent, per run in its own face — the
+  `hhea` ascent reserves room for accents and would space every body line
+  apart.
+- `\par` inside a scope group became a forced break, so `{\Huge Name \par}`
+  set an empty Huge line. It now ends the paragraph, and the group's
+  declarations carry into what follows: `{A \par B}` is `{A}\par{decls B}`.
+- Vertical glue summed or replaced by accident. Now LaTeX's rules: `\vspace`
+  is a `\vskip` and adds; an element's own space (a list's `topsep`, above
+  and below; a heading's `before`) is an `\addvspace` and takes the larger
+  against glue already owed; `parskip` is paid only when nothing was declared.
+  The block walk owes a gap and pays it when the next line comes.
+- `parskip` was a constant 6pt. It is a page property with rubber
+  (`\page{ parskip = ... }`); a LaTeX class declares 0pt (KOMA's `parskip=`
+  option, the parskip package and `\setlength{\parskip}` declare theirs), so
+  LaTeX-written documents get LaTeX's spacing and native ones keep the
+  engine's default.
+- Skips carried no rubber into layout. Now a skip is glue, and a page is set
+  like a line: skips shrink within their limits before a break is taken
+  (reported as N0200 at -v), never stretch. The rubber the resume was written
+  with — `1.8ex plus 0.8ex minus 0.4ex` — finally does the job it was for:
+  the resume fits at natural glue now, but with 33pt of shrink in reserve.
+
+Two more the same session made visible. A built-in tested before the user's
+definitions shadowed `\link` silently, so the document's underlined link
+macro never ran — the document's names now come first, and only
+`builtinNames` are reserved (W0303). And `\href{#1}` printed the parameter's
+name, because URL arguments were read as source text; `argText` substitutes
+the caller's text. `dir` became `dirs`: fontspec names a `Path=` per face.
+
 2026-09-16 — the fixtures were not portable, and the test suite was not
 hermetic. `tests/corpus/resume.tex` failed on a Mac with E0403 `Nimbus Roman`:
 not a Mac problem and not a font-installation problem — the fixture named

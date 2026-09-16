@@ -375,6 +375,47 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre "\\linespread{1.04}")).1.page.leading == 1040)
   t "compat heads become one running head"
     ((elabStr (pre "\\ihead{L}\\ohead{\\thepage}")).1.head.map (·.any (· == .pageNumber)) == some true)
+  -- `\par` ends a paragraph inside a scope group, with the group's
+  -- declarations carried into what follows; a command's argument group is
+  -- not a scope and is left to the command.
+  t "par in a scope group ends the paragraph"
+    ((elabStr "{\\Huge a \\par} b").1.body ==
+      #[.para #[.styled (.size "Huge") #[.text "a "]], .para #[.text "b"]])
+  t "par in a scope group carries the declarations"
+    ((elabStr "{\\bfseries a \\par b}").1.body ==
+      #[.para #[.styled .bold #[.text "a "]], .para #[.styled .bold #[.text "b"]]])
+  t "a blank line in a scope group is a paragraph end too"
+    ((elabStr "{\\bfseries a\n\nb}").1.body.size == 2)
+  t "par in an argument group is the command's"
+    ((elabStr "\\emph{a \\par b}").1.body.size == 1)
+  -- The document's definitions win over every built-in it may redefine;
+  -- the ones it may not are refused with W0303, never shadowed silently.
+  let (own, ownDs) := elabStr ("\\documentclass{article}" ++
+    "\\define \\link(u: text, l: text) {\\href{\\u}{\\underline{\\l}}}" ++
+    "\\begin{document}\\link{https://example.org}{here}\\end{document}")
+  t "a defined link wins over the built-in"
+    (ownDs.isEmpty && own.body ==
+      #[.para #[.link "https://example.org" #[.underline #[.text "here"]]]])
+  t "a parameter inside a URL is the caller's text"
+    (own.body == #[.para #[.link "https://example.org" #[.underline #[.text "here"]]]])
+  t "a reserved built-in cannot be redefined"
+    ((warnCodes ("\\documentclass{article}\\define \\textbf(x: content) {\\emph{\\x}}" ++
+      "\\begin{document}\\textbf{a}\\end{document}")) == ["W0303"])
+  -- LaTeX classes space paragraphs by indent: their parskip is zero unless
+  -- KOMA's option or the parskip package says otherwise.
+  t "compat koma class declares parskip zero"
+    ((elabStr ("\\documentclass{scrartcl}\\begin{document}x\\end{document}")).1.page.parskip ==
+      some { width := Dim.Length.ofSp 0 })
+  t "compat koma parskip=half is half a line"
+    (((elabStr ("\\documentclass[parskip=half]{scrartcl}\\begin{document}x\\end{document}")).1.page.parskip.map
+      (·.width.em)) == some 600)
+  t "compat parskip package"
+    (((elabStr ("\\documentclass{article}\\usepackage{parskip}\\begin{document}x\\end{document}")).1.page.parskip.map
+      (·.width.em)) == some 600)
+  t "compat setlength parskip"
+    ((elabStr (pre "\\setlength{\\parskip}{4pt}")).1.page.parskip == some { width := Dim.Length.ofSp (Dim.pt 4) })
+  t "a native article keeps the engine's parskip"
+    ((elabStr "\\documentclass{article}\\begin{document}x\\end{document}").1.page.parskip == none)
   -- \newcommand and \NewDocumentCommand become \define, with #k as \ak.
   let (ndc, ndcDs) := elabStr ("\\documentclass{article}" ++
     "\\NewDocumentCommand{\\role}{m o}{\\textbf{#1}\\IfValueT{#2}{ (#2)}}" ++
@@ -590,14 +631,16 @@ def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) :
   let post := "\\begin{document}x\\end{document}"
   let d1 := (elabStr (pre ++ "\\setmainfont[Path=fonts/]{SourceSerifPro-Regular.otf}" ++ post)).1.fonts
   t "compat Path before the name"
-    (d1.dir == some "fonts/" && d1.body == some "SourceSerifPro-Regular.otf")
+    (d1.dirs == #["fonts/"] && d1.body == some "SourceSerifPro-Regular.otf")
   let d2 := (elabStr (pre ++ "\\setsansfont{Open Sans}[Path = fonts/, BoldFont = OpenSans-Bold.ttf]"
     ++ post)).1.fonts
-  t "compat Path after the name" (d2.dir == some "fonts/" && d2.sans == some "Open Sans")
+  t "compat Path after the name" (d2.dirs == #["fonts/"] && d2.sans == some "Open Sans")
   let d3 := (elabStr (pre ++ "\\babelfont{rm}[Path=fonts/]{SourceSerifPro-Regular.otf}" ++ post)).1.fonts
-  t "compat babelfont Path" (d3.dir == some "fonts/" && d3.body == some "SourceSerifPro-Regular.otf")
+  t "compat babelfont Path" (d3.dirs == #["fonts/"] && d3.body == some "SourceSerifPro-Regular.otf")
+  let d5 := (elabStr (pre ++ "\\setmainfont{A.otf}[Path=serif/]\\setsansfont{B.otf}[Path=sans/]" ++ post)).1.fonts
+  t "a Path per face keeps every directory" (d5.dirs == #["serif/", "sans/"])
   let d4 := (elabStr (pre ++ "\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }" ++ post)).1.fonts
-  t "fonts dir" (d4.dir == some "fonts" && d4.body == some "Source Serif Pro")
+  t "fonts dir" (d4.dirs == #["fonts"] && d4.body == some "Source Serif Pro")
   t "fonts dir wrong type" (errCodes (pre ++ "\\fonts{ dir = 12 }" ++ post) == ["E0323"])
   let plain : FontDb.Face := {
     path := "/x/a.otf"
@@ -610,6 +653,88 @@ def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) :
   let condensed : FontDb.Face := { plain with path := "/x/b.otf", subfamily := "Condensed Bold" }
   t "plain face beats a condensed sibling"
     ((FontDb.resolve #[condensed, plain] "X" { bold := true }).map (·.1.path) == some "/x/a.otf")
+
+/-- Vertical spacing is TeX's, checked on the placed lines. Own function,
+same elaboration-budget reason as the others. -/
+def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
+    (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
+  let t := check ref
+  let ysOf (g : Layout.Geom) (src : String) : Array Dim.Sp :=
+    -- Text lines only: an underline rule rides a sibling line at the same y.
+    ((Layout.run g oneFace none (Elab.run "t" src).1).pages.flatMap (·.lines)).filterMap fun l =>
+      if l.segs.any (fun s => match s with | .run .. => true | _ => false) then some l.y else none
+  let pagesOf (g : Layout.Geom) (src : String) : Nat :=
+    (Layout.run g oneFace none (Elab.run "t" src).1).pages.size
+  let body := geom.fontSize
+  let leading := Layout.leadingFor body geom.leading
+  let scaled (sz : Dim.Sp) (units : Int) : Dim.Sp := units * sz / font.unitsPerEm
+  -- Interline: body lines sit one leading apart, and a body line after a
+  -- Huge one is one body leading below it plus what the Huge line hangs
+  -- under its baseline — not a Huge leading.
+  let plain := ysOf geom "a\n\nb"
+  t "peers sit a leading plus parskip apart"
+    (plain.size == 2 && plain[1]! - plain[0]! == leading + (geom.parskip.resolve body 0).width)
+  let huge := ysOf geom "{\\Huge Title \\par}\n\nbody"
+  let hugeSize := body * 2488 / 1000
+  let hugeDepth := scaled hugeSize (-font.descent)
+  let bodyHeight := scaled body font.capHeight
+  t "a Huge title ends one paragraph, not two lines" (huge.size == 2)
+  t "the line after a Huge title is spaced by TeX's rule"
+    (huge.size == 2 && huge[1]! - huge[0]! ==
+      max leading (hugeDepth + bodyHeight + Dim.pt 1) + (geom.parskip.resolve body 0).width)
+  t "the line after a Huge title is not a Huge leading away"
+    (huge.size == 2 && huge[1]! - huge[0]! < Layout.leadingFor hugeSize geom.leading)
+  t "the first line hangs the title's own height below the margin"
+    (huge.size == 2 && huge[0]! == geom.vmargin + max (scaled body font.ascent) (scaled hugeSize font.capHeight))
+  -- Gaps: `\vspace` is the gap in place of parskip and adds to other declared
+  -- glue; an element's own space (a list's topsep, a heading's before) takes
+  -- the larger against what is owed, as LaTeX's `\addvspace` does.
+  let vs := ysOf geom "a\n\n\\vspace{20pt}\nb"
+  t "a bare vspace replaces parskip" (vs.size == 2 && vs[1]! - vs[0]! == leading + Dim.pt 20)
+  let blk := ysOf geom "a\n\n\\block[before = 20pt]{b}"
+  t "block before is the gap" (blk.size == 2 && blk[1]! - blk[0]! == leading + Dim.pt 20)
+  let listSrc (mid : String) := "\\documentclass{article}\\style{itemize}{ before = 10pt }" ++
+    "\\begin{document}a\\begin{itemize}\\item b\\end{itemize}" ++ mid ++ "c\\end{document}"
+  let ls := ysOf geom (listSrc "")
+  t "list topsep stands above the list" (ls.size == 3 && ls[1]! - ls[0]! == leading + Dim.pt 10)
+  t "list topsep stands below the list too" (ls.size == 3 && ls[2]! - ls[1]! == leading + Dim.pt 10)
+  let lv := ysOf geom (listSrc "\\vspace{7pt}")
+  t "a vspace after a list adds to its topsep"
+    (lv.size == 3 && lv[2]! - lv[1]! == leading + Dim.pt 17)
+  let secSrc := "\\documentclass{article}\\style{itemize}{ before = 10pt }" ++
+    "\\style{section}{ before = 15pt, after = 4pt }" ++
+    "\\begin{document}\\begin{itemize}\\item b\\end{itemize}\\section{S}c\\end{document}"
+  let sec := ysOf geom secSrc
+  t "a heading after a list takes the larger space, not the sum"
+    (sec.size == 3 && sec[1]! - sec[0]! ==
+      max (Layout.leadingFor (Layout.sectionSize geom 1) geom.leading)
+        (scaled body (-font.descent) + scaled (Layout.sectionSize geom 1) font.capHeight + Dim.pt 1)
+      + Dim.pt 15)
+  -- parskip is a page property with rubber.
+  let g0 := ysOf { geom with parskip := { width := Dim.Length.ofSp 0 } } "a\n\nb"
+  t "parskip zero sets peers one leading apart" (g0.size == 2 && g0[1]! - g0[0]! == leading)
+  let (pDoc, pDs) := elabStr ("\\documentclass{article}\\page{ parskip = 3pt plus 1pt minus 1pt }" ++
+    "\\begin{document}x\\end{document}")
+  t "page parskip declared" (pDs.isEmpty && pDoc.page.parskip ==
+    some { width := Dim.Length.ofSp (Dim.pt 3), stretch := Dim.Length.ofSp (Dim.pt 1),
+           shrink := Dim.Length.ofSp (Dim.pt 1) })
+  -- A page is set like a line: skips shrink, within their limits, before a
+  -- break is taken; beyond them the page breaks.
+  let firstY := geom.vmargin + scaled body font.ascent
+  let three := "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc"
+  let natural := firstY + 2 * (leading + Dim.pt 20) + scaled body (-font.descent)
+  let tight : Layout.Geom := { geom with pageH := natural - Dim.pt 10 + geom.vmargin }
+  t "within its shrink the page holds" (pagesOf tight three == 1)
+  let ys := ysOf tight three
+  t "the shrunk page moves later lines up, in proportion"
+    (ys.size == 3 && ys[0]! == firstY && ys[2]! < firstY + 2 * (leading + Dim.pt 20) &&
+      ys[1]! - ys[0]! == leading + Dim.pt 20 - Dim.pt 5 && ys[2]! - ys[1]! == leading + Dim.pt 20 - Dim.pt 5)
+  t "a shrunk page says so"
+    ((Layout.run tight oneFace none (Elab.run "t" three).1).diags.any (·.code == "N0200"))
+  let tooTight : Layout.Geom := { geom with pageH := natural - Dim.pt 20 + geom.vmargin }
+  t "beyond its shrink the page breaks" (pagesOf tooTight three == 2)
+  t "an unshrunk page says nothing"
+    (!(Layout.run geom oneFace none (Elab.run "t" three).1).diags.any (·.code == "N0200"))
 
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
@@ -1186,6 +1311,7 @@ def main (args : List String) : IO UInt32 := do
       t "font greek" (font.gid 'α' |>.isSome)
       t "font missing emoji" (font.gid '🎉' |>.isNone)
       t "font family" (font.family == "Open Sans")
+      t "font cap height from OS/2" (font.capHeight == 1462)
       t "font not bold" (!font.isBold && !font.isItalic)
 
       -- A parser is fed arbitrary files, so it has to be total over them. Every
@@ -1307,6 +1433,7 @@ def main (args : List String) : IO UInt32 := do
 
       lineChecks ref geom oneFace
       underlineChecks ref geom oneFace font
+      spacingChecks ref geom oneFace font
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then

@@ -14,7 +14,9 @@ structure Geom where
   hmargin : Sp := inch 1
   vmargin : Sp := inch 1
   fontSize : Sp := pt 10
-  parskip : Sp := pt 6
+  /-- The gap between peer paragraphs. The default is the engine's own; a
+  document declares its own through `\page{ parskip = ... }`. -/
+  parskip : SymGlue := { width := Dim.Length.ofSp (pt 6) }
   listIndent : Sp := pt 15
   leading : Nat := 1000
   deriving Repr
@@ -29,7 +31,8 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     pageH := spec.height
     hmargin := spec.hmargin
     vmargin := spec.vmargin
-    leading := spec.leading }
+    leading := spec.leading
+    parskip := spec.parskip.getD base.parskip }
 
 def leadingFor (size : Sp) (factor : Nat := 1000) : Sp := size * 6 / 5 * factor / 1000
 
@@ -655,37 +658,116 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
 
 -- Page assembly ----------------------------------------------------------------
 
+/-- Page assembly state. A page is set the way a line is: its lines are
+boxes, the vertical skips between them are glue, and `y` is the baseline of
+the last line at the glue's natural size. Shrink is applied to the whole
+page when it closes, so `shrinkAbove` remembers, per line, how much glue
+above it can give. -/
 private structure B where
   geom : Geom
   ascent : Sp
   descent : Sp
+  /-- Body cap height in sp: the height of a line as TeX would measure it
+  from its glyphs. `ascent` reserves room for accents and would push every
+  line apart. -/
+  capHeight : Sp
   /-- Body x-height in sp, so `ex` tokens resolve against the real font. -/
   xHeight : Sp := 0
   pages : Array PageOut := #[]
   cur : PageOut := {}
+  /-- Baseline of the last line placed, at natural glue. -/
   y : Sp := 0
+  /-- Depth of the last line placed. -/
+  prevDepth : Sp := 0
+  /-- Vertical glue since the last line, not yet laid. -/
+  skip : Glue := {}
+  /-- Per line of the current page: total shrink in the glue above it. -/
+  shrinkAbove : Array Sp := #[]
+  /-- Total shrink in the glue laid on the current page. -/
+  pageShrink : Sp := 0
+  /-- How far the current page overflows at natural glue: what closing it
+  must take out of the shrink. -/
+  needed : Sp := 0
   diags : Array Diag := #[]
 
-private def B.freshY (b : B) : Sp := b.geom.vmargin + b.ascent
+/-- TeX's `\lineskip`: the least space between a line's depth and the next
+line's height when the leading cannot hold them apart. -/
+private def lineskip : Sp := pt 1
 
-private def B.breakPage (b : B) : B :=
-  { b with pages := b.pages.push b.cur, cur := {}, y := b.freshY }
+/-- Close the current page. A page that overflowed at natural size within
+its shrink is set to fit: every line moves up by its share of the shrink
+above it, the glue set at one ratio like a justified line's. -/
+private def B.finishPage (b : B) : B :=
+  let lines := if b.needed > 0 && b.pageShrink > 0 then
+      (b.cur.lines.zip b.shrinkAbove).map fun (l, above) =>
+        { l with y := l.y - above * b.needed / b.pageShrink }
+    else b.cur.lines
+  let diags := if b.needed > 0 then b.diags.push {
+      severity := .note
+      code := "N0200"
+      message := s!"page {b.pages.size + 1} set {b.needed / 65536}pt short: its skips gave " ++
+        s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink"
+    } else b.diags
+  { b with pages := b.pages.push { lines := lines }, cur := {}, shrinkAbove := #[],
+           pageShrink := 0, needed := 0, skip := {}, diags := diags }
 
-/-- Place one line. Vertical space follows the tallest run on it, not the
-paragraph's nominal size: a line carrying `\Huge` needs the extra height both
-above its baseline and below it, or it collides with its neighbours. -/
-private def B.placeLine (b : B) (x : Sp) (size : Sp) (segs : Array Seg) (w : Sp) : B :=
+/-- A line that shares its baseline with the last one (underline rules)
+rides with it, including its share of the page's shrink. -/
+private def B.pushSibling (b : B) (l : LineOut) : B :=
+  { b with cur := { lines := b.cur.lines.push l },
+           shrinkAbove := b.shrinkAbove.push (b.shrinkAbove.back?.getD 0) }
+
+private def B.commit (b : B) (line : LineOut) (depth above overflow : Sp) : B :=
+  { b with cur := { lines := b.cur.lines.push line }
+           shrinkAbove := b.shrinkAbove.push above
+           pageShrink := above
+           needed := max b.needed overflow
+           y := line.y
+           prevDepth := depth
+           skip := {} }
+
+/-- Place one line. Its height and depth follow the tallest run on it, not
+the paragraph's nominal size: a line carrying `\Huge` needs room above its
+baseline and below it, or it collides with its neighbours.
+
+The baseline distance is TeX's: the leading of the line being placed, unless
+the previous line's depth plus this line's height plus `lineskip` is more.
+So a Huge title is followed at the body's leading plus what the title hangs
+below its baseline, not at the Huge leading — the next line's size decides,
+as it does in TeX where `\baselineskip` is read when a line is appended.
+
+A page fills at natural glue until a line will not fit even with every skip
+above it fully shrunk; then the page closes (shrunk to fit if it overflowed)
+and the line opens the next, its pending glue discarded as TeX discards glue
+at the top of a page. Glue is never stretched: the bottom is ragged. -/
+private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
+    (w : Sp) : B :=
   let nominal := if size == 0 then b.geom.fontSize else size
-  let tallest := segs.foldl (fun acc s => match s with
-    | .run _ _ _ _ _ sz _ => max acc sz
-    | _ => acc) nominal
-  let b := if tallest > nominal then
-      { b with y := b.y + b.ascent * (tallest - nominal) / nominal } else b
-  let descent := b.descent * tallest / nominal
-  let b := if b.y + descent > b.geom.pageH - b.geom.vmargin then b.breakPage else b
-  let line : LineOut := { x := x, y := b.y, size := size, segs := segs, setWidth := w }
-  { b with cur := { lines := b.cur.lines.push line },
-           y := b.y + leadingFor tallest b.geom.leading }
+  -- Each run measured in its own face: a sans title is as tall as the sans
+  -- says, not as the body face would be at that size.
+  let (tallest, height, depth) := segs.foldl (fun (acc : Sp × Sp × Sp) s => match s with
+    | .run idx _ _ _ _ sz _ =>
+      let font := fs.get idx
+      let sz := if sz == 0 then nominal else sz
+      (max acc.1 sz, max acc.2.1 (scaledAt sz font font.capHeight.toNat),
+       max acc.2.2 (scaledAt sz font (-font.descent).toNat))
+    | _ => acc) (nominal, b.capHeight * nominal / b.geom.fontSize,
+                 b.descent * nominal / b.geom.fontSize)
+  let bottom := b.geom.pageH - b.geom.vmargin
+  let mk (y : Sp) : LineOut := { x := x, y := y, size := size, segs := segs, setWidth := w }
+  let firstY := b.geom.vmargin + max b.ascent height
+  if b.cur.lines.isEmpty then
+    b.commit (mk firstY) depth 0 0
+  else
+    let interline := max (leadingFor tallest b.geom.leading) (b.prevDepth + height + lineskip)
+    let y := b.y + b.skip.width + interline
+    let overflow := y + depth - bottom
+    let above := b.pageShrink + b.skip.shrink
+    if overflow ≤ above then
+      b.commit (mk y) depth above overflow
+    else
+      let b := b.finishPage
+      b.commit (mk firstY) depth 0 0
 
 private def B.warnOverfull (b : B) : B :=
   { b with diags := b.diags.push {
@@ -715,31 +797,56 @@ private structure ParaJob where
 them in document order, so the page builder stays sequential and the output
 does not depend on task scheduling. -/
 private inductive Op where
-  | skip (dy : Sp)
+  | skip (g : Glue)
   | para (job : ParaJob)
 
+/-- The block walk owes a gap before the next line rather than emitting one
+as it goes, because what the gap is depends on everything declared between
+two lines. The rules are LaTeX's. `\vspace` is a `\vskip`: it adds. An
+element's own space — a heading's `before`, a list's `topsep` — is an
+`\addvspace`: against glue already owed it takes the larger, so a list's
+bottom space and the heading after it do not stack. `parskip`, the default
+between peers, is paid only when nothing was declared. `wantDefault` marks a
+peer boundary, `owed` is the glue sequence, `flushGap` pays it when the next
+line comes. -/
 private structure Acc where
   geom : Geom
   xHeight : Sp
   styles : Ir.Styles := {}
-  /-- Space a heading asked for below itself; the next block takes it in
-  place of `parskip`. -/
-  pendingAfter : Option Sp := none
+  wantDefault : Bool := false
+  owed : Array Glue := #[]
   ops : Array Op := #[]
   hyphCache : Std.HashMap String (List Nat) := {}
 
-private def Acc.skip (a : Acc) (dy : Sp) : Acc :=
-  { a with ops := a.ops.push (.skip dy) }
+/-- A declared length with its rubber: `1.8ex plus 0.8ex minus 0.4ex` keeps
+all three parts, so a page can take up the slack the author allowed. -/
+private def Acc.resolve (a : Acc) (g : SymGlue) : Glue :=
+  g.resolve a.geom.fontSize a.xHeight
 
-/-- The gap before a peer block: a heading's declared `after` if one is
-pending, else `parskip`. -/
-private def Acc.peerGap (a : Acc) : Acc :=
-  match a.pendingAfter with
-  | some dy => { a with ops := a.ops.push (.skip dy), pendingAfter := none }
-  | none => a.skip a.geom.parskip
+private def Acc.parskip (a : Acc) : Glue := a.resolve a.geom.parskip
 
-private def Acc.resolve (a : Acc) (g : SymGlue) : Sp :=
-  g.width.resolve a.geom.fontSize a.xHeight
+/-- The next line is a peer of the last: the default gap, unless something
+is declared. -/
+private def Acc.wantGap (a : Acc) : Acc := { a with wantDefault := true }
+
+/-- `\vskip`: glue the document asked for, on top of whatever is owed. -/
+private def Acc.vskip (a : Acc) (g : Glue) : Acc :=
+  { a with owed := a.owed.push g }
+
+/-- `\addvspace`: an element's own space. Against glue already owed it takes
+the larger (by natural width, as LaTeX compares them), so two elements
+meeting do not pay both their spaces. -/
+private def Acc.addvspace (a : Acc) (g : Glue) : Acc :=
+  match a.owed.back? with
+  | some last => if last.width < g.width then { a with owed := a.owed.pop.push g } else a
+  | none => { a with owed := #[g] }
+
+/-- Emit the gap owed, just before a line is placed. -/
+private def Acc.flushGap (a : Acc) : Acc :=
+  let a := if a.owed.isEmpty then
+      (if a.wantDefault then { a with ops := a.ops.push (.skip a.parskip) } else a)
+    else { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
+  { a with wantDefault := false, owed := #[] }
 
 private def Acc.style (a : Acc) (element : String) : Ir.ElementStyle :=
   (a.styles.find? element).getD {}
@@ -750,6 +857,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (bullet : Option (Nat × Array (Nat × Char × Sp)) := none)
     (marker : Option (Array Inline) := none)
     (rule : Option (Sp × Ir.Color) := none) : Acc :=
+  let a := a.flushGap
   let (items, ds, cache, extras) :=
     itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache
   -- A declared marker is content: set as a line of its own, unjustified, so
@@ -785,7 +893,7 @@ private def collectBlockList (a : Acc) (pats : Option Hyphen.Patterns) (fs : Fon
   match blocks with
   | [] => a
   | blk :: rest =>
-    let a := if first then a else a.peerGap
+    let a := if first then a else a.wantGap
     let a := collectBlock a pats fs blk indent
     collectBlockList a pats fs rest indent false
 
@@ -795,7 +903,7 @@ private def collectItem (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
   match item with
   | [] => a
   | blk :: rest =>
-    let a := if first then a else a.skip a.geom.parskip
+    let a := if first then a else a.wantGap
     let a := match blk, first with
       | .para content, true =>
         collectPara a pats fs content indent false a.geom.fontSize
@@ -812,7 +920,7 @@ private def collectItems (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- Items are peers separated by the declared gap. The default is none,
     -- as it was: a list is one block, and its leading is its rhythm.
     let a := match first, st.gap with
-      | false, some g => a.skip (a.resolve g)
+      | false, some g => a.addvspace (a.resolve g)
       | _, _ => a
     let a := collectItem a pats fs item.toList indent true st
     collectItems a pats fs rest indent false st
@@ -826,7 +934,7 @@ private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : Font
     let a := match blk with
       | .para content => collectPara a pats fs content indent true a.geom.fontSize
       | _ => collectBlock a pats fs blk indent
-    collectCentered a pats fs rest indent
+    collectCentered (if rest.isEmpty then a else a.wantGap) pats fs rest indent
 
 private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (blk : Block) (indent : Sp) : Acc :=
@@ -837,7 +945,8 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let element := match level with
       | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
     let st := a.style element
-    let a := a.skip ((st.before.map a.resolve).getD a.geom.parskip)
+    -- Undeclared, a heading stands twice the default gap above its body.
+    let a := a.addvspace ((st.before.map a.resolve).getD (a.parskip.add a.parskip))
     -- A declared font template wraps the title; without one, headings set in
     -- the bold face of the body family at the level's size.
     let a := match st.font with
@@ -848,26 +957,27 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
         collectPara a pats fs title indent false (sectionSize a.geom level)
           (baseStyle := { bold := true })
           (rule := st.rule.map fun (r : Ir.Color × Option String) => (pt 6 / 10, r.1))
-    { a with pendingAfter := st.after.map a.resolve }
+    match st.after with
+    | some g => a.vskip (a.resolve g)
+    | none => a
   | .list ordered items =>
     let st := a.style (if ordered then "enumerate" else "itemize")
-    let a := match st.before, a.ops.back? with
-      | some g, some (.skip _) => { a with ops := a.ops.pop.push (.skip (a.resolve g)) }
-      | some g, _ => a.skip (a.resolve g)
-      | none, _ => a
-    let indent := indent + (st.indent.map a.resolve).getD a.geom.listIndent
-    collectItems a pats fs items.toList indent true st
+    -- LaTeX's `topsep`: the declared space stands above the list and below it.
+    let a := match st.before with
+      | some g => a.addvspace (a.resolve g)
+      | none => a
+    let indent := indent + (st.indent.map fun g => (a.resolve g).width).getD a.geom.listIndent
+    let a := collectItems a pats fs items.toList indent true st
+    match st.before with
+    | some g => a.addvspace (a.resolve g)
+    | none => a
   | .center body =>
     collectCentered a pats fs body.toList indent
   | .spaced before body =>
-    -- Declared space above the block, resolved against the body font. It is
-    -- the gap, not an addition to one: the peer gap already pushed is replaced,
-    -- which is what `\vspace` between paragraphs means in LaTeX and what
-    -- `\block[before = ...]` was designed to say.
-    let g := before.resolve a.geom.fontSize a.xHeight
-    let a := match a.ops.back? with
-      | some (.skip _) => { a with ops := a.ops.pop.push (.skip g.width) }
-      | _ => a.skip g.width
+    -- Declared space above the block, resolved against the body font: the
+    -- gap in place of the default, added to any other declared glue — a
+    -- bare `\vspace` after a list adds to the list's `topsep`, as in LaTeX.
+    let a := a.vskip (a.resolve before)
     collectBlocks a pats fs body indent
 
 end
@@ -964,18 +1074,17 @@ private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) 
         if ruleW > 0 then
           segs := segs ++ #[Seg.gap gap, Seg.rule ruleW thickness (b.xHeight / 2) color]
           w := width
-    b := b.placeLine x j.size segs w
+    b := b.placeLine fs x j.size segs w
     -- The line's underlines, as a sibling at the same baseline. Pushed after
     -- `placeLine` so a page break has already decided where the text landed;
     -- the rules land beside it, adding no vertical space.
     let uSegs := underlineSegs fs j.size segs
     unless uSegs.isEmpty do
       if let some last := b.cur.lines.back? then
-        let uLine : LineOut :=
+        b := b.pushSibling
           { x := last.x, y := last.y, size := last.size, segs := uSegs, setWidth := 0 }
-        b := { b with cur := { lines := b.cur.lines.push uLine } }
     if let some extra := j.extras[brk]? then
-      b := { b with y := b.y + extra }
+      b := { b with skip := { b.skip with width := b.skip.width + extra } }
     prev := brk
     first := false
   return b
@@ -1015,22 +1124,24 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
   -- so the tasks race on nothing; joining in document order below keeps the
   -- output independent of scheduling.
-  let staged : Array (Sum Sp (ParaJob × Task (Array Nat))) := acc.ops.map fun op =>
+  let staged : Array (Sum Glue (ParaJob × Task (Array Nat))) := acc.ops.map fun op =>
     match op with
-    | .skip dy => .inl dy
+    | .skip g => .inl g
     | .para j => .inr (j, Task.spawn fun _ => kp j.items j.target)
   let b0 : B := {
     geom := geom
     ascent := scale font.ascent
     descent := scale (-font.descent)
+    capHeight := scale font.capHeight
     xHeight := xHeight
   }
-  let mut b := { b0 with y := b0.freshY }
+  let mut b := b0
   for s in staged do
     match s with
-    | .inl dy => b := { b with y := b.y + dy }
+    | .inl g => b := { b with skip := b.skip.add g }
     | .inr (j, t) => b := placePara fs b j t.get
-  let pages := b.pages.push b.cur
+  b := b.finishPage
+  let pages := b.pages
   -- Running content is laid out per page once the count is known, into the
   -- margin, so it never disturbs the body it annotates.
   let total := pages.size

@@ -71,7 +71,7 @@ a key/value block: running head and foot. -/
 def runningCtrl : List String := ["runninghead", "runningfoot"]
 
 def pageKeys : List String :=
-  ["size", "width", "height", "margin", "vmargin", "hmargin", "leading"]
+  ["size", "width", "height", "margin", "vmargin", "hmargin", "leading", "parskip"]
 
 /-- Page keys that are declared but not implemented yet, with the milestone
 that will land them. Reported as pending, never as a type error. -/
@@ -224,6 +224,26 @@ private def skipReservedArgs (raws : Array Raw) (i : Nat) : Nat := Id.run do
 -- site's arguments are themselves inline content. Nontermination is
 -- impossible by design (a body sees only earlier definitions), but the
 -- checker cannot see that yet: de-partialing is scheduled proof work.
+/-- An argument read as text — a URL, a palette key — with the command's
+parameters substituted: inside `\define \link(url, text) {\href{\url}...}`,
+`\url` is the caller's text, not the two characters `\url`. `rawSrc` alone
+would print the parameter's name. -/
+private def argText (ctx : Ctx) (raws : Array Raw) : String :=
+  let one (r : Raw) : String :=
+    match r with
+    | .ctrl n _ =>
+      match ctx.args.find? (·.1 == n) with
+      | some (_, some inlines) => Ir.plainText inlines
+      | some (_, none) => ""
+      | none => Parse.rawSrcOne r
+    | _ => Parse.rawSrcOne r
+  -- The same substitution one group deep: a URL is never nested further.
+  let flat (r : Raw) : String :=
+    match r with
+    | .group body _ => "{" ++ String.join (body.toList.map one) ++ "}"
+    | _ => one r
+  (String.join (raws.toList.map flat)).trimAscii.toString
+
 mutual
 
 /-- Bind a user command's declared parameters from the call site. Returns the
@@ -337,7 +357,25 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         i := i + 1
       | .ctrl name pos =>
         i := i + 1
-        if name == "hfill" then
+        -- The document's own names come first: a parameter, then a defined
+        -- command. Built-ins the document cannot redefine are exactly
+        -- `builtinNames`, refused with W0303 at the definition; every other
+        -- built-in yields to a definition, silently, as in LaTeX. Order here
+        -- is the whole mechanism — a built-in tested earlier would shadow
+        -- the definition without a word.
+        if let some (_, binding) := ctx.args.find? (·.1 == name) then
+          acc := flushText acc sb
+          sb := ""
+          if let some inlines := binding then
+            acc := acc ++ inlines
+        else if let some (k, cmd) := lookupUser ctx name then
+          acc := flushText acc sb
+          sb := ""
+          let (bindings, j) ← takeArgs ctx cmd name raws i pos
+          i := j
+          let callCtx : Ctx := { ctx with limit := k, args := bindings }
+          acc := acc ++ (← elabInlines callCtx cmd.body)
+        else if name == "hfill" then
           acc := flushText acc sb
           sb := ""
           acc := acc.push .fill
@@ -376,7 +414,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             if let some .space := raws[i]? then i := i + 1 else break
         else if let some lit := escapes.lookup name then
           sb := sb ++ lit
-        else if (lookupUser ctx name).isNone && (Lex.textSymbols.lookup name).isSome then
+        else if (Lex.textSymbols.lookup name).isSome then
           -- A document may define a symbol's name for itself; its definition
           -- wins, so the symbol only fires when nothing shadows it.
           sb := sb ++ (Lex.textSymbols.lookup name).getD ""
@@ -420,12 +458,12 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             i := j2 + 1
             acc := flushText acc sb
             sb := ""
-            acc := acc.push (.link (rawSrc urlRaw) (← elabInlines ctx body))
+            acc := acc.push (.link (argText ctx urlRaw) (← elabInlines ctx body))
           | some (.group urlRaw _), _ =>
             -- One argument: the URL is also the text, which is the common case
             -- for a bare link and saves writing it twice.
             i := j + 1
-            let url := rawSrc urlRaw
+            let url := argText ctx urlRaw
             acc := flushText acc sb
             sb := ""
             acc := acc.push (.link url #[.text url])
@@ -445,7 +483,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           match raws[j]?, raws[j2]? with
           | some (.group cname _), some (.group body _) =>
             i := j2 + 1
-            let key := (rawSrc cname).trimAscii.toString
+            let key := argText ctx cname
             match ctx.palette.find? key with
             | some c =>
               acc := flushText acc sb
@@ -498,18 +536,6 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
               diag ctx "E0306" "expected a parameter reference like {\\team}" pos
           | _, _ =>
             diag ctx "E0304" "'\\ifgiven' needs {\\param} and {content}" pos
-        else if let some (_, binding) := ctx.args.find? (·.1 == name) then
-          acc := flushText acc sb
-          sb := ""
-          if let some inlines := binding then
-            acc := acc ++ inlines
-        else if let some (k, cmd) := lookupUser ctx name then
-          acc := flushText acc sb
-          sb := ""
-          let (bindings, j) ← takeArgs ctx cmd name raws i pos
-          i := j
-          let callCtx : Ctx := { ctx with limit := k, args := bindings }
-          acc := acc ++ (← elabInlines callCtx cmd.body)
         else if let some milestone := reservedCtrl.lookup name then
           diag ctx "E0307" s!"'\\{name}' is not implemented yet" pos
             (help := s!"planned for {milestone}; see PLAN.md")
@@ -583,6 +609,56 @@ private def sectionLevel : String → Option Nat
   | "subsubsection" => some 3
   | _ => none
 
+/-- A declaration standing in a group applies to the rest of the group:
+`\Huge`, `\bfseries`, a palette name used bare. -/
+private def isDeclaration (ctx : Ctx) : Raw → Bool
+  | .ctrl n _ => (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
+  | _ => false
+
+private def isParRaw : Raw → Bool
+  | .par _ => true
+  | .ctrl "par" _ => true
+  | _ => false
+
+/-- Is a group here an argument? It is when, looking back over spaces and
+earlier argument groups, a control word or an `[option]` precedes it; a group
+standing on its own is a scope. -/
+private def isArgument (cur : Array Raw) : Bool := Id.run do
+  let mut k := cur.size
+  for _ in [0:cur.size] do
+    match cur[k - 1]? with
+    | some .space => k := k - 1
+    | some (.group _ _) => k := k - 1
+    | some (.ctrl _ _) => return true
+    | some (.sym ']' _) => return true
+    | _ => return false
+  return false
+
+/-- `\par` ends a paragraph wherever it stands, a scope group included:
+`{A \par B}` is `{A}\par{decls B}`, the declarations active at the break
+re-applied to what follows. So `{\Huge Title \par}` sets one line and stops,
+where a forced break would have set an empty Huge line after it. A part that
+holds only declarations and space sets nothing and is dropped. -/
+private def splitAtPars (ctx : Ctx) (body : Array Raw) (pos : Pos) : Array Raw := Id.run do
+  let hasContent (rs : Array Raw) : Bool :=
+    rs.any fun r => !(isSpaceOrPar r || isDeclaration ctx r)
+  let mut out : Array Raw := #[]
+  let mut decls : Array Raw := #[]
+  let mut pre : Array Raw := #[]
+  for r in body do
+    if isParRaw r then
+      if hasContent pre then
+        out := out.push (.group pre pos)
+      out := out.push r
+      pre := decls
+    else
+      if isDeclaration ctx r then
+        decls := decls.push r
+      pre := pre.push r
+  if hasContent pre then
+    out := out.push (.group pre pos)
+  return out
+
 private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   let mut cur := cur
   repeat
@@ -599,10 +675,17 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
 partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
   let mut blocks : Array Block := #[]
   let mut cur : Array Raw := #[]
+  let mut raws := raws
   let mut i := 0
   repeat
     if h : i < raws.size then
       let r := raws[i]
+      -- A scope group holding a paragraph end is spliced open first, so the
+      -- `\par` inside it is the boundary it is everywhere else.
+      if let .group body pos := r then
+        if body.any isParRaw && !isArgument cur then
+          raws := raws.extract 0 i ++ splitAtPars ctx body pos ++ raws.extract (i + 1) raws.size
+          continue
       let isBoundary : Bool :=
         match r with
         | .par _ => true
@@ -804,6 +887,8 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       match Decl.parseDecimal f with
       | some (m, s) => spec := { spec with leading := (m * 1000 / s).toNat }
       | none => diag ctx "E0323" s!"'leading' in \\page expects a factor like 1.04, got '{f}'" pos
+    | "parskip", .glue g => spec := { spec with parskip := some g }
+    | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
     | key, v =>
       if key == "header" || key == "footer" then
         -- The feature exists, just not as a page key: running content is
@@ -835,7 +920,8 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
     | "sf", .str f => spec := { spec with sans := some f }
     | "mono", .str f => spec := { spec with mono := some f }
     | "tt", .str f => spec := { spec with mono := some f }
-    | "dir", .str d => spec := { spec with dir := some d }
+    | "dir", .str d =>
+      spec := if spec.dirs.contains d then spec else { spec with dirs := spec.dirs.push d }
     | key, v =>
       if fontKeys.contains key then
         let expected := if key == "dir" then "a quoted directory" else "a quoted family name"

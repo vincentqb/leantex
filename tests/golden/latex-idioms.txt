@@ -1,5 +1,5 @@
 class article [paper=letter,fontsize=10pt]
-page 612x792 vmargin 36 hmargin 54
+page 612x792 vmargin 36 hmargin 54 parskip 0
 font dir "fonts/"
 font body "SourceSerifPro-Regular.otf"
 font sans "OpenSans-Regular.ttf"
@@ -28,7 +28,6 @@ center
           color primary #0F766E
             text "Alex"
           text " Doe "
-          linebreak
   block before 1800/1000ex plus 800/1000ex minus 400/1000ex
   para
     color muted #72727F
@@ -81,7 +80,7 @@ para
     text "genuinely groundbreaking"
   text " by a jury."
 -- diagnostics
-note[N0100] 5:1 \documentclass{scrartcl} → \documentclass[paper=letter,fontsize=10pt]{article}
+note[N0100] 5:1 \documentclass{scrartcl} → \documentclass[paper=letter,fontsize=10pt]{article}\page{ parskip = 0pt }
 note[N0100] 7:1 \usepackage{babel} → nothing: the engine does this itself
 note[N0100] 8:1 \babelfont → \fonts{ dir = "fonts/", body = "SourceSerifPro-Regular.otf" }
 note[N0100] 9:1 \babelfont → \fonts{ dir = "fonts/", sans = "OpenSans-Regular.ttf" }

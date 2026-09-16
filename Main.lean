@@ -138,12 +138,12 @@ def buildFontSet (ui : Ui) (file : String) (spec : Ir.FontSpec) :
         return .ok ({ fonts := #[f], index := singleFaceIndex }, #[], path)
   let mut diags : Array Diag := #[]
   let mut docDirs : List String := []
-  if let some d := spec.dir then
+  for d in spec.dirs do
     let d := if d.endsWith "/" && d.length > 1 then (d.dropEnd 1).toString else d
     let p := System.FilePath.mk d
     let p := if p.isAbsolute then p else ((System.FilePath.mk file).parent.getD ".") / p
     if ← p.isDir then
-      docDirs := [p.toString]
+      docDirs := docDirs ++ [p.toString]
     else
       diags := diags.push {
         severity := .warning

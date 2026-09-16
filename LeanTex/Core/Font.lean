@@ -20,6 +20,9 @@ structure Font where
   isFixedPitch : Bool
   weight : Nat
   xHeight : Int
+  /-- OS/2 sCapHeight: how tall a line of text is, as TeX measures it from the
+  glyphs. `ascent` is the room the font reserves for accents, not that. -/
+  capHeight : Int
   cmap : Array (UInt32 × UInt32 × UInt32)  -- (startChar, endChar, startGid), sorted
   widths : Array Nat                        -- advance width per gid, font units
   numGlyphs : Nat
@@ -315,14 +318,17 @@ def parse (data : ByteArray) : Except String Font := do
   let weight := cls.weight
   -- OS/2 sxHeight (version 2+); tokens in `ex` need it. Falls back to half
   -- the em, which is the conventional approximation.
-  let xHeight := match findTable data "OS/2" with
+  let os2Metric (off : Nat) (fallback : Int) : Int := match findTable data "OS/2" with
     | some t =>
       let version := if t.offset + 2 ≤ data.size then u16 data t.offset else 0
-      if version ≥ 2 && t.offset + 88 ≤ data.size then
-        let v := i16 data (t.offset + 86)
-        if v > 0 then v else (unitsPerEm : Int) / 2
-      else (unitsPerEm : Int) / 2
-    | none => (unitsPerEm : Int) / 2
+      if version ≥ 2 && t.offset + off + 2 ≤ data.size then
+        let v := i16 data (t.offset + off)
+        if v > 0 then v else fallback
+      else fallback
+    | none => fallback
+  let xHeight := os2Metric 86 ((unitsPerEm : Int) / 2)
+  -- Seven tenths of the em is where capitals top out in most text faces.
+  let capHeight := os2Metric 88 ((unitsPerEm : Int) * 7 / 10)
   let upem := if unitsPerEm == 0 then 1000 else unitsPerEm
   -- post underline metrics: FWords at offsets 8 and 10.
   let (upos, uthick) := match findTable data "post" with
@@ -350,6 +356,7 @@ def parse (data : ByteArray) : Except String Font := do
     isFixedPitch := isFixedPitch
     weight := weight
     xHeight := xHeight
+    capHeight := capHeight
     cmap := cmap
     widths := widths
     numGlyphs := numGlyphs
