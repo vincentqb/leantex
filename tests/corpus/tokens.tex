@@ -1,0 +1,37 @@
+% Synthetic M3b fixture: named lengths, including font-relative units and
+% tokens derived from earlier tokens. Invented content and design values.
+\documentclass{article}
+
+\fonts{ body = "DejaVu Serif" }
+
+\tokens{
+  rhythm = 2ex plus 0.5ex minus 0.25ex,
+  sep    = 0.75 * rhythm,
+  bind   = 0.4 * rhythm,
+  slab   = 18pt,
+}
+
+\assert{ pages == 1 }
+
+\begin{document}
+
+\section{Declared spacing}
+
+Tokens are declared once and used by name, so no loose decimals appear where
+the spacing is applied. A token may scale an earlier one.
+
+\block[before = sep]{
+Separated from the paragraph above by one \texttt{sep}, which is
+three quarters of the base rhythm and therefore font-relative.
+}
+
+\block[before = bind]{
+Bound more tightly using \texttt{bind}, a smaller multiple of the same
+rhythm. Text symbols work too: a \middot b \endash c \ldots
+}
+
+\block[before = slab]{
+Separated by an absolute 18pt instead, mixing units in one document.
+}
+
+\end{document}

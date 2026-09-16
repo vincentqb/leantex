@@ -2,6 +2,12 @@ class article [paper=letter, fontsize=10pt]
 page 612x792 vmargin 36 hmargin 54
 font body "Source Serif 4"
 font sans "Source Sans 3"
+palette primary #7C3AED
+palette ink #18181B
+palette muted #71717A
+token rhythm 1500/1000ex plus 600/1000ex minus 300/1000ex
+token sep 900/1000ex plus 360/1000ex minus 180/1000ex
+token bind 675/1000ex plus 270/1000ex minus 135/1000ex
 meta title "Alex Doe — Resume"
 meta author "Alex Doe"
 assert pages == 1
@@ -11,11 +17,30 @@ center
     styled sans
       styled bold
         styled size:Huge
-          text "Alex Doe"
+          color #7C3AED
+            text "Alex Doe"
     linebreak
-    text "[bind] alex@example.org example.org github.com/adoe"
+    text "[bind] "
+    color #71717A
+      text "alex@example.org · example.org · github.com/adoe"
 section* 1
   text "Experience"
+para
+  text "[before = 2 * sep] "
+  styled bold
+    text "Example Corp"
+  text "  |  "
+  styled bold
+    text "Staff Engineer"
+  text " "
+  fill
+  color #71717A
+    text "2021--present"
+    linebreak
+    color #71717A
+      styled italic
+        text "Platform"
+    text "  "
 list unordered
   item
     para
@@ -23,20 +48,36 @@ list unordered
   item
     para
       text "Deleted more code than was added, on purpose, twice."
+para
+  text "[before = 2 * sep] "
+  styled bold
+    text "Widgets Ltd"
+  text "  |  "
+  styled bold
+    text "Engineer"
+  text " "
+  fill
+  color #71717A
+    text "2017--2021  "
 list unordered
   item
     para
       text "Shipped widgets; measured them; shipped better widgets."
 section* 1
   text "Education"
+para
+  text "[before = 2 * sep] "
+  styled bold
+    text "Example University"
+  text "  |  "
+  styled bold
+    text "PhD, Applied Mathematics"
+  text " "
+  fill
+  color #71717A
+    text "2013--2017  "
 -- diagnostics
-error[E0307] 16:1 '\tokens' is not implemented yet | help: planned for M3; see PLAN.md
-error[E0307] 22:1 '\palette' is not implemented yet | help: planned for M3; see PLAN.md
 error[E0307] 28:1 'header' in \page is not implemented yet | help: planned for M3; see PLAN.md
-error[E0301] 55:24 unknown command '\primary' | help: define it with \define, or see PLAN.md for planned commands
-error[E0301] 56:3 unknown command '\muted' | help: define it with \define, or see PLAN.md for planned commands
-error[E0301] 56:27 unknown command '\middot' | help: define it with \define, or see PLAN.md for planned commands
-error[E0301] 56:47 unknown command '\middot' | help: define it with \define, or see PLAN.md for planned commands
-error[E0307] 46:3 '\block' is not implemented yet | help: planned for M3; see PLAN.md
-error[E0307] 46:3 '\block' is not implemented yet | help: planned for M3; see PLAN.md
-error[E0307] 46:3 '\block' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0312] 46:3 '\block' is not allowed here | help: it is a block-level command: use it between paragraphs, not inside inline content or a command body
+error[E0312] 46:3 '\block' is not allowed here | help: it is a block-level command: use it between paragraphs, not inside inline content or a command body
+error[E0312] 46:3 '\block' is not allowed here | help: it is a block-level command: use it between paragraphs, not inside inline content or a command body

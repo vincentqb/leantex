@@ -1,0 +1,31 @@
+% Synthetic M3b fixture: named colours from \palette, used both as
+% \textcolor{name}{...} and as bare declarations. Invented content and design.
+\documentclass{article}
+
+\fonts{ body = "DejaVu Serif", sans = "DejaVu Sans" }
+
+\palette{
+  primary = #7C3AED,
+  ink     = #18181B,
+  muted   = #71717A,
+  warn    = #B45309,
+}
+
+\assert{ pages == 1 }
+
+\begin{document}
+
+\section{\textcolor{primary}{A coloured heading}}
+
+Ordinary text stays black. \textcolor{primary}{This clause is primary} and
+\textcolor{muted}{this one is muted}, then black resumes.
+
+{\muted A declaration colours the rest of its group, including
+\textbf{bold inside the group}.}
+
+\begin{itemize}
+  \item \textcolor{warn}{Warning-coloured item} with a black tail.
+  \item Short hex works too: \textcolor{ink}{ink}.
+\end{itemize}
+
+\end{document}

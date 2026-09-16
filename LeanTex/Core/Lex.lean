@@ -21,6 +21,15 @@ structure Token where
   pos : Pos
   deriving Repr, BEq
 
+/-- Text symbols. The table lives in the lexer because it also decides the
+space-swallowing rule above: these names take no argument, so the space after
+them is content. The elaborator reads the same table for replacement text. -/
+def textSymbols : List (String × String) :=
+  [("middot", "·"), ("bullet", "•"), ("endash", "–"),
+   ("emdash", "—"), ("ldots", "…"), ("dots", "…"),
+   ("times", "×"), ("copyright", "©"), ("degree", "°"),
+   ("nbsp", " "), ("thinspace", " ")]
+
 /-- The special characters are fixed forever: no catcode reprogramming. -/
 def special (c : Char) : Bool :=
   c == '\\' || c == '{' || c == '}' || c == '$' || c == '%' ||
@@ -116,11 +125,14 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
               toks := toks.push ⟨.ctrl name, here⟩
               pos := posOver cs i j pos
               i := j
-              -- swallow whitespace after a control word, unless it is a blank line
-              let k := scanWhile cs i isWs
-              if k > i && newlines cs i k < 2 then
-                pos := posOver cs i k pos
-                i := k
+              -- A control word swallows the whitespace after it, so
+              -- `\textbf {x}` introduces no space. Symbols take no argument,
+              -- so eating the space would turn `a \middot b` into "a ·b".
+              unless (textSymbols.lookup name).isSome do
+                let k := scanWhile cs i isWs
+                if k > i && newlines cs i k < 2 then
+                  pos := posOver cs i k pos
+                  i := k
           else
             toks := toks.push ⟨.ctrl (String.ofList [c1]), here⟩
             pos := posOver cs i (i + 2) pos

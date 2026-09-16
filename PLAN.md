@@ -47,9 +47,11 @@ Determinism needs no proof: every stage is a pure Lean function, so it is
 definitional. The claims worth real work are termination, totality (no
 panicking index), and optimality.
 
-Next: M3b — `\fonts` selection, `\tokens` with symbolic (ex/em) lengths,
-`\palette` and color, `\block` spacing, headers/footers. Or the elaborator
-termination unit above; either order works.
+Next: M3c — headers/footers (the last `\page` key), hyperlinks with PDF link
+annotations, and block-level user commands (a `\define` body that produces
+`\block` currently reports E0312, which is what the resume fixture still
+hits). Then M4 math. The elaborator termination unit remains open and
+independent.
 
 2026-09-15 — M3a landed: the declaration layer. `\page` (size, width, height,
 margin, vmargin, hmargin) resolves once into layout geometry via
@@ -62,6 +64,43 @@ one diagnostic code per failure mode: unknown key names the known ones, wrong
 type names what it wanted, and a declared-but-unimplemented key (`header`)
 reports as pending with its milestone rather than as a type error. Verified
 by Poppler: A5 page size, all four metadata fields, PDF 2.0.
+
+2026-09-15 — M3b landed: the document surface a designed page needs.
+
+`\fonts{ body/sans/mono }` selects installed families. Faces are discovered
+natively — `FontDb` reads only each file's header plus its name, OS/2, head
+and post tables, classifying 55 faces in ~35 ms. Resolution is weight-aware
+rather than a bold flag, so URW Bookman's "Demi" (usWeightClass 600) is
+correctly its bold face, and a plain face beats a same-family Condensed
+variant; italic is categorical and never silently replaced by upright. Layout
+resolves each style to a font index carried on boxes, penalties and runs; the
+PDF emits one Identity-H CID font per *used* face with its own ToUnicode (12
+declared, 6 embedded in the fonts fixture) and switches faces by closing and
+reopening the TJ array.
+
+`\palette` declares named sRGB colours, usable as `\textcolor{name}{...}` or
+as bare declarations that colour the rest of their group; colour rides on runs
+and emits `rg`, and a colour change closes the TJ array the way a font change
+does.
+
+`\tokens` declares named lengths that may be font-relative (`2ex plus 0.5ex`)
+or derived from an earlier token (`sep = 0.75 * rhythm`). Entries are walked
+one at a time, because parsing the block in one shot leaves in-block
+references unresolved. Resolution happens at layout against the real font size
+and OS/2 x-height, which is why `Dim.Length` keeps em/ex parts symbolic —
+tokens are declared before any font is chosen. `\block[before = sep]` applies
+one; `\hfill` pushes trailing content to the margin (the dated-entry shape).
+
+Text symbols (`\middot`, `\endash`, `\ldots`, …) live in the *lexer*,
+because they also bend the space-swallowing rule: a control word normally eats
+the following whitespace so `\textbf {x}` adds no space, but a symbol takes no
+argument, so eating it turns `a \middot b` into "a ·b" — a wart, not a
+feature. `\hfill` keeps swallowing, since a space after the stretch would be
+visible at the far margin.
+
+The resume fixture is down from 14 diagnostics to two distinct ones: the
+`header` page key, and `\block` inside a `\define` body. W0002 "styles are
+not rendered" is gone.
 
 ## Why not TeX-compatible
 
@@ -250,8 +289,11 @@ is evidence, not a theorem.
   `pages <op> N` and `fonts.all_embedded`, checked against the shipped page
   tree — a failing assertion exits 2 and writes no PDF. Declaration parser
   with per-key diagnostics (unknown key, wrong type, unreadable value).
-  M3b: `\fonts` selection, `\tokens` (symbolic lengths, ex/em), `\palette`
-  and color, `\block` spacing, headers/footers, hyperlinks.
+  M3b (done): `\fonts` family selection with real bold/italic/mono/sans
+  faces; `\palette` named colours via `\textcolor{name}{...}` and bare
+  declarations; `\tokens` font-relative lengths (ex/em) with derived tokens;
+  `\block[before = token]` spacing; `\hfill`; text symbols.
+  M3c: headers/footers, hyperlinks, block-level user commands.
   Acceptance (local, private corpus): the resume ported, one page asserted,
   side-by-side at least as good as the lualatex original, its external check
   scripts retired. CI equivalent: `tests/corpus/resume.tex`.

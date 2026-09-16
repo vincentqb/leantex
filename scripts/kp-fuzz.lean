@@ -46,15 +46,15 @@ private def randItems (g : Gen) : Array Item × Gen := Id.run do
           shrink := Dim.pt (sw / 3 + 1)
         })
       else if kind < 9 then
-        items := items.push (.pen (Dim.pt 3) hyphenPenalty true #[])
+        items := items.push (.pen (Dim.pt 3) hyphenPenalty true 0 Ir.Color.black #[])
       else
         items := items.push (.glue { fil := true })
-        items := items.push (.pen 0 forcedCost false #[])
+        items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
     let (w, g') := g.next 60
     g := g'
-    items := items.push (.box (Dim.pt (w + 10)) #[])
+    items := items.push (.box (Dim.pt (w + 10)) 0 Ir.Color.black #[])
   items := items.push (.glue { fil := true })
-  items := items.push (.pen 0 forcedCost false #[])
+  items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   return (items, g)
 
 private def seqCost (items : Array Item) (target : Dim.Sp) (breaks : List Nat) :

@@ -50,7 +50,7 @@ private def usedGlyphs (fontIdx numGlyphs : Nat) (pages : Array PageOut) :
   for p in pages do
     for l in p.lines do
       for s in l.segs do
-        if let .run idx glyphs := s then
+        if let .run idx _ glyphs := s then
           if idx == fontIdx then
             for (g, c) in glyphs do
               if h : g < seen.size then
@@ -70,6 +70,7 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
   let mut s := "BT\n"
   let mut curFont : Int := -1
   let mut curSize : Sp := -1
+  let mut curColor : Ir.Color := Ir.Color.black
   for l in page.lines do
     if l.segs.isEmpty then
       continue
@@ -78,14 +79,20 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
     let mut inArray := false
     for seg in l.segs do
       match seg with
-      | .run idx glyphs =>
-        if curFont != idx || curSize != l.size then
+      | .run idx color glyphs =>
+        -- Neither Tf nor rg may appear inside a TJ array, so a change in
+        -- either closes the array and reopens it after.
+        if curFont != idx || curSize != l.size || curColor != color then
           if inArray then
             s := s ++ "] TJ\n"
             inArray := false
-          s := s ++ s!"/F{(remap[idx]?.getD 0) + 1} {l.size.toPtString} Tf\n"
-          curFont := idx
-          curSize := l.size
+          if curFont != idx || curSize != l.size then
+            s := s ++ s!"/F{(remap[idx]?.getD 0) + 1} {l.size.toPtString} Tf\n"
+            curFont := idx
+            curSize := l.size
+          if curColor != color then
+            s := s ++ s!"{color.pdfComponents} rg\n"
+            curColor := color
         unless inArray do
           s := s.push '['
           inArray := true

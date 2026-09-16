@@ -29,7 +29,8 @@ def errCodes (s : String) : List String :=
   ((elabStr s).2.filter (·.severity == .error)).toList.map (·.code)
 
 def goldenNames : List String :=
-  ["paragraphs", "layout", "declared", "fonts", "resume", "talk"]
+  ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
+   "resume", "talk"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -45,14 +46,14 @@ def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
   let mut items : Array Layout.Item := #[]
   for p in ps do
     match p with
-    | .W w => items := items.push (.box (Dim.pt w) 0 #[])
+    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black #[])
     | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
-    | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true 0 #[])
+    | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true 0 Ir.Color.black #[])
     | .B =>
       items := items.push (.glue { fil := true })
-      items := items.push (.pen 0 Layout.forcedCost false 0 #[])
+      items := items.push (.pen 0 Layout.forcedCost false 0 Ir.Color.black #[])
   items := items.push (.glue { fil := true })
-  items := items.push (.pen 0 Layout.forcedCost false 0 #[])
+  items := items.push (.pen 0 Layout.forcedCost false 0 Ir.Color.black #[])
   return items
 
 def W (w : Int) : Piece := .W w
@@ -344,8 +345,8 @@ def main (args : List String) : IO UInt32 := do
 
   -- elab: diagnostics
   t "elab unknown command" (errCodes "\\frobnicate" == ["E0301"])
-  t "elab reserved M3" (errCodes ("\\documentclass{article}\\tokens{a = 1pt}" ++
-    "\\begin{document}x\\end{document}") == ["E0307"])
+  t "elab reserved M5" (errCodes ("\\documentclass{article}\\figure{x}" ++
+    "\\begin{document}y\\end{document}") == ["E0307"])
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
   t "elab redefine builtin" (errCodes "\\define \\textbf() {x}\n\\begin{document}y\\end{document}" ==
     ["E0303"])
@@ -463,6 +464,90 @@ def main (args : List String) : IO UInt32 := do
     ((Check.all shipped #[mkAssert (.pages .eq 1), mkAssert (.pages .eq 2),
       mkAssert (.pages .lt 1)]).size == 2)
 
+  -- \tokens: font-relative lengths, derived tokens, and \block spacing
+  let tokSrc := "\\documentclass{article}\n" ++
+    "\\tokens{ rhythm = 2ex plus 0.5ex, sep = 0.75 * rhythm, slab = 18pt }\n" ++
+    "\\begin{document}\\block[before = sep]{x}\\end{document}"
+  let (tokDoc, tokDs) := elabStr tokSrc
+  t "tokens source clean" tokDs.isEmpty
+  t "tokens ex is symbolic" (tokDoc.tokens.find? "rhythm" ==
+    some { width := { ex := 2000 }, stretch := { ex := 500 } })
+  t "tokens derived scales earlier" (tokDoc.tokens.find? "sep" ==
+    some { width := { ex := 1500 }, stretch := { ex := 375 } })
+  t "tokens absolute" (tokDoc.tokens.find? "slab" ==
+    some { width := Dim.Length.ofSp (Dim.pt 18) })
+  t "block carries declared spacing" (tokDoc.body.any fun b =>
+    match b with
+    | .spaced before _ => before.width.ex == 1500
+    | _ => false)
+  -- A bare name is a well-formed value of the wrong type (E0323); text that
+  -- parses as nothing at all is E0321. Both rejected, code says which.
+  t "tokens reject wrong type" (errCodes ("\\documentclass{article}\\tokens{ a = wat }" ++
+    "\\begin{document}x\\end{document}") == ["E0323"])
+  t "tokens reject junk" (errCodes
+    ("\\documentclass{article}\\tokens{ a = 3 furlongs }" ++
+     "\\begin{document}x\\end{document}") == ["E0321"])
+  t "block unknown key" (errCodes ("\\documentclass{article}" ++
+    "\\begin{document}\\block[after = 1pt]{x}\\end{document}") == ["E0322"])
+  t "block needs a body" (errCodes ("\\documentclass{article}" ++
+    "\\begin{document}\\block\\end{document}") == ["E0304"])
+
+  -- Length resolution against real font metrics
+  t "length resolve ex" ((Dim.Length.mk 0 0 1000).resolve (Dim.pt 10) (Dim.pt 5) ==
+    Dim.pt 5)
+  t "length resolve em" ((Dim.Length.mk 0 1500 0).resolve (Dim.pt 10) (Dim.pt 5) ==
+    Dim.pt 15)
+  t "length resolve mixed"
+    ((Dim.Length.mk (Dim.pt 2) 1000 1000).resolve (Dim.pt 10) (Dim.pt 4) == Dim.pt 16)
+
+  -- text symbols keep the space after them, unlike other control words
+  t "symbol keeps space" (toks "a \\middot b" ==
+    [.word "a", .space, .ctrl "middot", .space, .word "b"])
+  t "command still eats space" (toks "a \\textbf b" ==
+    [.word "a", .space, .ctrl "textbf", .word "b"])
+  let (symDoc, symDs) := elabStr "a \\middot b \\ldots"
+  t "symbol elaborates" (symDs.isEmpty && symDoc.body ==
+    #[.para #[.text "a · b …"]])
+
+  -- \hfill and control-symbol spaces
+  -- \hfill takes no argument but still swallows the following space: a space
+  -- after the stretch would be visible at the far margin.
+  let (fillDoc, fillDs) := elabStr "a \\hfill b"
+  t "hfill source clean" fillDs.isEmpty
+  t "hfill becomes an inline fill" (fillDoc.body ==
+    #[.para #[.text "a ", .fill, .text "b"]])
+  t "thin space escape" ((elabStr "a\\,b").1.body ==
+    #[.para #[.text "a b"]])
+
+  -- \palette and colour
+  let palSrc := "\\documentclass{article}\n" ++
+    "\\palette{ primary = #7C3AED, short = #abc }\n" ++
+    "\\begin{document}\\textcolor{primary}{x} {\\short y} z\\end{document}"
+  let (palDoc, palDs) := elabStr palSrc
+  t "palette source clean" palDs.isEmpty
+  t "palette parsed" (palDoc.palette.find? "primary" ==
+    some { r := 0x7C, g := 0x3A, b := 0xED })
+  t "palette short hex expands" (palDoc.palette.find? "short" ==
+    some { r := 0xAA, g := 0xBB, b := 0xCC })
+  t "palette textcolor wraps" (palDoc.body.any fun b =>
+    match b with
+    | .para content => content.any fun x =>
+      match x with
+      | .colored c body => c.r == 0x7C && body.size == 1
+      | _ => false
+    | _ => false)
+  t "palette unknown name" (errCodes ("\\documentclass{article}\\palette{a = #fff}" ++
+    "\\begin{document}\\textcolor{nope}{x}\\end{document}") == ["E0326"])
+  t "palette wrong type" (errCodes ("\\documentclass{article}\\palette{a = 3pt}" ++
+    "\\begin{document}x\\end{document}") == ["E0323"])
+  t "palette cannot shadow builtin" (errCodes
+    ("\\documentclass{article}\\palette{textbf = #fff}" ++
+     "\\begin{document}x\\end{document}") == ["E0303"])
+  t "color value parsed" (Decl.parseValue "#7C3AED" == some (.color 0x7C 0x3A 0xED))
+  t "color rejects bad hex" (Decl.parseValue "#12345" == none)
+  t "color pdf components" ((Ir.Color.mk 255 0 128).pdfComponents == "1 0 0.502")
+  t "color black components" (Ir.Color.black.pdfComponents == "0 0 0")
+
   -- \fonts declarations and family resolution
   let fontsSrc := "\\documentclass{article}\n" ++
     "\\fonts{ body = \"DejaVu Serif\", sf = \"DejaVu Sans\" }\n" ++
@@ -534,7 +619,7 @@ def main (args : List String) : IO UInt32 := do
       let hyOut := Layout.run narrow oneFace (some pats) hyDoc
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ glyphs => glyphs.any (·.2 == '-')
+          | .run _ _ glyphs => glyphs.any (·.2 == '-')
           | .gap _ => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
@@ -548,7 +633,7 @@ def main (args : List String) : IO UInt32 := do
         p.lines.any (·.size == Dim.pt 14)
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ glyphs => glyphs.any (·.2 == '–')
+          | .run _ _ glyphs => glyphs.any (·.2 == '–')
           | .gap _ => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker

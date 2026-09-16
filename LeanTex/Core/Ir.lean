@@ -13,6 +13,43 @@ structure PageSpec where
   hmargin : Sp := inch 1
   deriving Repr, BEq, Inhabited
 
+/-- An sRGB colour. -/
+structure Color where
+  r : UInt8
+  g : UInt8
+  b : UInt8
+  deriving Repr, BEq, Inhabited
+
+def Color.black : Color := { r := 0, g := 0, b := 0 }
+
+/-- PDF wants components in 0–1; three decimals is finer than 8-bit input. -/
+def Color.pdfComponents (c : Color) : String :=
+  let f (v : UInt8) : String :=
+    let milli := (v.toNat * 1000 + 127) / 255
+    if milli == 0 then "0" else if milli == 1000 then "1"
+    else
+      let frac := toString milli
+      let frac := ("".pushn '0' (3 - frac.length)) ++ frac
+      "0." ++ (frac.dropEndWhile (· == '0')).toString
+  s!"{f c.r} {f c.g} {f c.b}"
+
+/-- Named lengths declared by `\tokens`, in declaration order so a later
+token may be defined in terms of an earlier one. -/
+structure Tokens where
+  entries : Array (String × SymGlue) := #[]
+  deriving Repr, BEq, Inhabited
+
+def Tokens.find? (t : Tokens) (name : String) : Option SymGlue :=
+  (t.entries.find? (·.1 == name)).map (·.2)
+
+/-- Named colours declared by `\palette`. -/
+structure Palette where
+  entries : Array (String × Color) := #[]
+  deriving Repr, BEq, Inhabited
+
+def Palette.find? (p : Palette) (name : String) : Option Color :=
+  (p.entries.find? (·.1 == name)).map (·.2)
+
 /-- Font families a document asks for, as declared by `\fonts`. -/
 structure FontSpec where
   body : Option String := none
@@ -93,6 +130,9 @@ inductive Inline where
   | text (s : String)
   | math (display : Bool) (src : String)
   | styled (style : Style) (body : Array Inline)
+  | colored (color : Color) (body : Array Inline)
+  /-- `\hfill`: stretch that pushes what follows to the far margin. -/
+  | fill
   | linebreak
   deriving Repr, BEq, Inhabited
 
@@ -101,6 +141,8 @@ inductive Block where
   | section (level : Nat) (starred : Bool) (title : Array Inline)
   | list (ordered : Bool) (items : Array (Array Block))
   | center (body : Array Block)
+  /-- `\block[before = <len>]{...}`: content with declared space above. -/
+  | spaced (before : SymGlue) (body : Array Block)
   deriving Repr, BEq, Inhabited
 
 structure Doc where
@@ -108,10 +150,29 @@ structure Doc where
   classOptions : String := ""
   page : PageSpec := {}
   fonts : FontSpec := {}
+  palette : Palette := {}
+  tokens : Tokens := {}
   info : Meta := {}
   asserts : Array Assertion := #[]
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
+
+/-- Render a symbolic glue the way it was declared, so goldens show intent
+rather than a resolved number. -/
+def dumpGlue (g : SymGlue) : String :=
+  let part (l : Length) : String :=
+    let bits := (if l.sp != 0 then [s!"{l.sp.toPtString}pt"] else []) ++
+      (if l.em != 0 then [s!"{l.em}/1000em"] else []) ++
+      (if l.ex != 0 then [s!"{l.ex}/1000ex"] else [])
+    if bits.isEmpty then "0" else String.intercalate "+" bits
+  let base := part g.width
+  let plus := if g.stretch == ({} : Length) then "" else s!" plus {part g.stretch}"
+  let minus := if g.shrink == ({} : Length) then "" else s!" minus {part g.shrink}"
+  base ++ plus ++ minus
+
+private def hex2 (v : UInt8) : String :=
+  let d := "0123456789ABCDEF".toList
+  String.ofList [d[v.toNat / 16]!, d[v.toNat % 16]!]
 
 -- Display-only printers. Structural recursion through `List`, so no `partial`.
 
@@ -132,6 +193,9 @@ def dumpInline (ind : String) (x : Inline) : String :=
     let kind := if d then "display" else "inline"
     s!"{ind}math {kind} {src.quote}\n"
   | .styled st body => s!"{ind}styled {st.label}\n" ++ dumpInlines (ind ++ "  ") body
+  | .colored c body =>
+    s!"{ind}color #{hex2 c.r}{hex2 c.g}{hex2 c.b}\n" ++ dumpInlines (ind ++ "  ") body
+  | .fill => s!"{ind}fill\n"
   | .linebreak => s!"{ind}linebreak\n"
 
 end
@@ -162,6 +226,8 @@ def dumpBlock (ind : String) (b : Block) : String :=
     let kind := if ordered then "ordered" else "unordered"
     s!"{ind}list {kind}\n" ++ dumpItems (ind ++ "  ") items.toList
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
+  | .spaced before body =>
+    s!"{ind}block before {dumpGlue before}\n" ++ dumpBlocks (ind ++ "  ") body
 
 end
 
@@ -192,6 +258,10 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
   let fontLines :=
     fontLine "body" doc.fonts.body ++ fontLine "sans" doc.fonts.sans ++
     fontLine "mono" doc.fonts.mono
+  let paletteLines := String.join (doc.palette.entries.toList.map fun (n, c) =>
+    s!"palette {n} #{hex2 c.r}{hex2 c.g}{hex2 c.b}\n")
+  let tokenLines := String.join (doc.tokens.entries.toList.map fun (n, g) =>
+    s!"token {n} {dumpGlue g}\n")
   let infoLines :=
     metaLine "title" doc.info.title ++ metaLine "author" doc.info.author ++
     metaLine "subject" doc.info.subject ++ metaLine "keywords" doc.info.keywords
@@ -203,6 +273,6 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
       "-- diagnostics\n(none)\n"
     else
       "-- diagnostics\n" ++ String.join (diags.toList.map dumpDiag)
-  head ++ page ++ fontLines ++ infoLines ++ asserts ++ body ++ ds
+  head ++ page ++ fontLines ++ paletteLines ++ tokenLines ++ infoLines ++ asserts ++ body ++ ds
 
 end LeanTex.Core.Ir

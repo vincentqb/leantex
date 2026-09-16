@@ -1,0 +1,17 @@
+% Synthetic fixture: \hfill pushes trailing content to the right margin, the
+% shape a dated entry needs. Invented content.
+\documentclass{article}
+
+\fonts{ body = "DejaVu Serif" }
+
+\assert{ pages == 1 }
+
+\begin{document}
+
+\textbf{Example Corp} \,|\, \textbf{Staff Engineer} \hfill 2021--present
+
+A following paragraph, so the entry above is not the last line on the page.
+
+Left edge \hfill centre-ish \hfill right edge
+
+\end{document}

@@ -19,6 +19,7 @@ structure Font where
   isItalic : Bool
   isFixedPitch : Bool
   weight : Nat
+  xHeight : Int
   cmap : Array (UInt32 × UInt32 × UInt32)  -- (startChar, endChar, startGid), sorted
   widths : Array Nat                        -- advance width per gid, font units
   numGlyphs : Nat
@@ -208,6 +209,16 @@ def parse (data : ByteArray) : Except String Font := do
         if w == 0 then (if isBold then 700 else 400) else w
       else if isBold then 700 else 400
     | none => if isBold then 700 else 400
+  -- OS/2 sxHeight (version 2+); tokens in `ex` need it. Falls back to half
+  -- the em, which is the conventional approximation.
+  let xHeight := match findTable data "OS/2" with
+    | some t =>
+      let version := if t.offset + 2 ≤ data.size then u16 data t.offset else 0
+      if version ≥ 2 && t.offset + 88 ≤ data.size then
+        let v := i16 data (t.offset + 86)
+        if v > 0 then v else (unitsPerEm : Int) / 2
+      else (unitsPerEm : Int) / 2
+    | none => (unitsPerEm : Int) / 2
   return {
     data := data
     isCff := isCff
@@ -222,6 +233,7 @@ def parse (data : ByteArray) : Except String Font := do
     isItalic := isItalic
     isFixedPitch := isFixedPitch
     weight := weight
+    xHeight := xHeight
     cmap := cmap
     widths := widths
     numGlyphs := numGlyphs

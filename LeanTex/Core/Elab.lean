@@ -32,6 +32,10 @@ structure Ctx where
   user : Array UserCmd := #[]
   limit : Nat := 0
   args : Array (String × Option (Array Inline)) := #[]
+  /-- Palette names usable as colour commands, from `\palette`. -/
+  palette : Palette := {}
+  /-- Named lengths from `\tokens`. -/
+  tokens : Tokens := {}
 
 structure ESt where
   diags : Array Diag := #[]
@@ -49,13 +53,13 @@ private def diag (ctx : Ctx) (code msg : String) (pos : Option Pos)
   } }
 
 def reservedCtrl : List (String × String) :=
-  [("tokens", "M3"), ("palette", "M3"),
-   ("block", "M3"), ("href", "M3"), ("link", "M3"), ("hfill", "M3"),
+  [("href", "M3"), ("link", "M3"),
    ("vspace", "M3"), ("noindent", "M3"),
    ("fontfallback", "M5"), ("figure", "M5"), ("note", "M5")]
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
-def declCtrl : List String := ["page", "pdfmeta", "assert", "fonts"]
+def declCtrl : List String :=
+  ["page", "pdfmeta", "assert", "fonts", "palette", "tokens"]
 
 def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin", "header", "footer"]
@@ -90,15 +94,19 @@ def declStyles : List (String × Style) :=
 
 def escapes : List (String × String) :=
   [("%", "%"), ("{", "{"), ("}", "}"), ("$", "$"), ("&", "&"), ("#", "#"),
-   ("_", "_"), ("~", "~"), (" ", " ")]
+   ("_", "_"), ("~", "~"), (" ", " "),
+   -- Control-symbol spaces, TeX's spelling. Fixed widths, so they are text.
+   (",", "\u2009"), (":", "\u2005"), (";", "\u2004")]
 
 def blockOnly : List String :=
-  ["section", "subsection", "subsubsection", "item", "documentclass", "define"]
+  ["section", "subsection", "subsubsection", "item", "documentclass", "define",
+   "block"]
 
 def builtinNames : List String :=
-  ["begin", "end", "par", "define", "ifgiven", "documentclass"] ++
+  ["begin", "end", "par", "define", "ifgiven", "documentclass", "textcolor"] ++
   blockOnly ++ (escapes.map (·.1)) ++ (argStyles.map (·.1)) ++
-  (declStyles.map (·.1)) ++ (reservedCtrl.map (·.1))
+  (declStyles.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl ++
+  (Lex.textSymbols.map (·.1))
 
 private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) := Id.run do
   let mut k := ctx.limit
@@ -256,12 +264,18 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         i := i + 1
       | .ctrl name pos =>
         i := i + 1
-        if name == "\\" || name == "par" then
+        if name == "hfill" then
+          acc := flushText acc sb
+          sb := ""
+          acc := acc.push .fill
+        else if name == "\\" || name == "par" then
           acc := flushText acc sb
           sb := ""
           acc := acc.push .linebreak
         else if let some lit := escapes.lookup name then
           sb := sb ++ lit
+        else if let some sym := Lex.textSymbols.lookup name then
+          sb := sb ++ sym
         else if let some style := argStyles.lookup name then
           let j := skipSpaces raws i
           match raws[j]? with
@@ -277,6 +291,31 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             i := j + 1
           | _ =>
             diag ctx "E0304" s!"'\\{name}' needs an argument" pos
+        else if name == "textcolor" then
+          let j := skipSpaces raws i
+          let j2 := skipSpaces raws (j + 1)
+          match raws[j]?, raws[j2]? with
+          | some (.group cname _), some (.group body _) =>
+            i := j2 + 1
+            let key := (rawSrc cname).trimAscii.toString
+            match ctx.palette.find? key with
+            | some c =>
+              acc := flushText acc sb
+              sb := ""
+              acc := acc.push (.colored c (← elabInlines ctx body))
+            | none =>
+              diag ctx "E0326" s!"'{key}' is not in the palette" pos
+                (help := s!"declared: {String.intercalate ", "
+                  (ctx.palette.entries.toList.map (·.1))}")
+          | _, _ =>
+            diag ctx "E0304" "'\\textcolor' needs {name} and {content}" pos
+        else if let some c := ctx.palette.find? name then
+          -- A palette name used as a declaration colours the rest of the group.
+          let rest ← elabInlines ctx (raws.extract i raws.size)
+          acc := flushText acc sb
+          sb := ""
+          acc := acc.push (.colored c rest)
+          i := raws.size
         else if let some style := declStyles.lookup name then
           let rest ← elabInlines ctx (raws.extract i raws.size)
           acc := flushText acc sb
@@ -359,6 +398,8 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           i := skipReservedArgs raws i
         else if blockOnly.contains name then
           diag ctx "E0312" s!"'\\{name}' is not allowed here" pos
+            (help := "it is a block-level command: use it between paragraphs, " ++
+              "not inside inline content or a command body")
         else
           diag ctx "E0301" s!"unknown command '\\{name}'" pos
             (help := "define it with \\define, or see PLAN.md for planned commands")
@@ -396,6 +437,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         match r with
         | .par _ => true
         | .ctrl "par" _ => true
+        | .ctrl "block" _ => true
         | .ctrl n _ => (sectionLevel n).isSome
         | .env n _ _ =>
           n == "itemize" || n == "enumerate" || n == "center" ||
@@ -415,6 +457,46 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           i := i + 1
         | .ctrl "par" _ =>
           i := i + 1
+        | .ctrl "block" pos =>
+          i := i + 1
+          -- \block[before = <len>]{content}
+          let mut before : SymGlue := {}
+          let mut j := skipSpaces raws i
+          if let some (.sym '[' _) := raws[j]? then
+            let mut optSrc : Array Raw := #[]
+            j := j + 1
+            for _ in [j:raws.size] do
+              match raws[j]? with
+              | some (.sym ']' _) =>
+                j := j + 1
+                break
+              | some r' =>
+                optSrc := optSrc.push r'
+                j := j + 1
+              | none => break
+            let (opts, ds) := Decl.parseBlock ctx.file (rawSrc optSrc) pos "block"
+              ctx.tokens.entries
+            modify fun st => { st with diags := st.diags ++ ds }
+            for e in opts do
+              match e.key, e.value with
+              | "before", .glue g => before := g
+              | "before", .dim d => before := { width := Dim.Length.ofSp d }
+              | key, v =>
+                if key == "before" then
+                  modify fun st => { st with
+                    diags := st.diags.push (Decl.wrongType ctx.file "block" key
+                      "a length" v pos) }
+                else
+                  modify fun st => { st with
+                    diags := st.diags.push (Decl.unknownKey ctx.file "block" key
+                      ["before"] pos) }
+            j := skipSpaces raws j
+          match raws[j]? with
+          | some (.group body _) =>
+            i := j + 1
+            blocks := blocks.push (.spaced before (← elabBlocks ctx body))
+          | _ =>
+            diag ctx "E0304" "'\\block' needs a {body}" pos
         | .ctrl n pos =>
           i := i + 1
           let level := (sectionLevel n).getD 1
@@ -560,6 +642,48 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
           diags := st.diags.push (Decl.unknownKey ctx.file "fonts" key fontKeys pos) }
   return spec
 
+/-- `\tokens{...}`: named lengths. Entries are walked one at a time so a
+token may be defined by scaling an earlier one (`sep = 0.6 * rhythm`);
+parsing the block in one shot would leave those references unresolved. -/
+private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
+    EM Tokens := do
+  let mut acc : Array (String × SymGlue) := toks.entries
+  for entry in Decl.splitEntries src do
+    match Decl.splitEntry entry with
+    | none =>
+      diag ctx "E0320" s!"invalid entry in \\tokens: {entry.quote}" pos
+        (help := "entries look like: name = length")
+    | some (key, valueSrc) =>
+      match Decl.parseValue valueSrc acc with
+      | some (.glue g) => acc := acc.push (key, g)
+      | some (.dim d) => acc := acc.push (key, { width := Dim.Length.ofSp d })
+      | some v =>
+        modify fun st => { st with
+          diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
+            "a length (10pt, 1.5ex, 0.6 * other)" v pos) }
+      | none =>
+        diag ctx "E0321" s!"cannot read length for '{key}': {valueSrc.quote}" pos
+          (help := "lengths look like 10pt, 1.5ex, 2em, or 0.6 * other-token")
+  return { entries := acc }
+
+/-- `\palette{...}`: named colours. Every entry becomes usable both as
+`\textcolor{name}{...}` and as a bare `\name` declaration. -/
+private def applyPalette (ctx : Ctx) (pal : Palette) (entries : Array Decl.Entry)
+    (pos : Pos) : EM Palette := do
+  let mut pal := pal
+  for e in entries do
+    match e.value with
+    | .color r g b =>
+      if builtinNames.contains e.key then
+        diag ctx "E0303" s!"palette name '{e.key}' collides with a built-in command" pos
+      else
+        pal := { pal with entries := pal.entries.push (e.key, ⟨r, g, b⟩) }
+    | v =>
+      modify fun st => { st with
+        diags := st.diags.push (Decl.wrongType ctx.file "palette" e.key
+          "a color like #7C3AED" v pos) }
+  return pal
+
 /-- `\pdfmeta{...}`: PDF document information. -/
 private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     (pos : Pos) : EM Meta := do
@@ -628,6 +752,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut classOptions := ""
   let mut page : PageSpec := {}
   let mut fonts : FontSpec := {}
+  let mut palette : Palette := {}
+  let mut tokens : Tokens := {}
   let mut info : Meta := {}
   let mut asserts : Array Assertion := #[]
   let mut textDiagged := false
@@ -708,6 +834,12 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             if name == "assert" then
               if let some a ← parseAssert ctx src pos then
                 asserts := asserts.push a
+            else if name == "tokens" then
+              -- Parses its own entries one at a time; a generic pre-parse
+              -- would reject `0.6 * rhythm` before the reference resolves.
+              let tk ← applyTokens ctx tokens src pos
+              tokens := tk
+              ctx := { ctx with tokens := tk }
             else
               let (entries, ds) := Decl.parseBlock ctx.file src pos name
               modify fun st => { st with diags := st.diags ++ ds }
@@ -715,6 +847,10 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                 page ← applyPage ctx page entries pos
               else if name == "fonts" then
                 fonts ← applyFonts ctx fonts entries pos
+              else if name == "palette" then
+                let pal ← applyPalette ctx palette entries pos
+                palette := pal
+                ctx := { ctx with palette := pal }
               else
                 info ← applyMeta ctx info entries pos
           | _ =>
@@ -741,6 +877,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     classOptions := classOptions
     page := page
     fonts := fonts
+    palette := palette
+    tokens := tokens
     info := info
     asserts := asserts
     body := blocks

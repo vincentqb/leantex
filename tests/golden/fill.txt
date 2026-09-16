@@ -1,0 +1,23 @@
+class article
+page 612x792 vmargin 72 hmargin 72
+font body "DejaVu Serif"
+assert pages == 1
+para
+  styled bold
+    text "Example Corp"
+  text "  |  "
+  styled bold
+    text "Staff Engineer"
+  text " "
+  fill
+  text "2021--present"
+para
+  text "A following paragraph, so the entry above is not the last line on the page."
+para
+  text "Left edge "
+  fill
+  text "centre-ish "
+  fill
+  text "right edge"
+-- diagnostics
+(none)
