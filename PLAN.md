@@ -30,8 +30,10 @@ broken in parallel.
 (tex primary, markdown as sugar) and **two backends** (PDF and HTML,
 including slides).
 
-**Immediately next.** M4b theorem environments, or M5 slides. Slides were
-blocked on the size scale, which now exists.
+**Immediately next.** The rest of M5: overlays with dim-not-hide semantics,
+speaker notes, the ≈3 KB HTML deck controller, `--emit reveal`. The first
+coherent M5 slice landed 2026-09-16: frames, verbatim, title frames, and
+slides geometry, best-effort over a real beamer deck.
 
 **Open, tracked, not hidden.** `Elab.takeArgs`/`elabInlines`/`elabBlocks`
 are `partial` — three, not the two an earlier entry claimed; an audit found
@@ -157,6 +159,58 @@ pending with its milestone rather than as a type error; its last entry
 went with it, and the empty list is now deleted. An unknown `\page` key
 today is E-diagnosed like any other; a future declared-ahead key gets a
 design decision then, not a dormant list now.
+
+2026-09-16 — the first coherent M5 slice: the real beamer talk compiles
+best-effort to both backends, 66 errors to zero, and every remaining
+diagnostic names its construct once and the file that holds it. The load
+divided into invariants, each now pinned by a test:
+
+- Unsupported configuration is skipped whole. Beamer templating
+  (`\usetheme`, `\setbeamercovered`, `\addtobeamertemplate`, …), TeX's macro
+  layer (`\def`, `\newenvironment`, `\ifdefined…\fi`), `\directlua`, and
+  `\setmathfont` each consume their own arguments and warn once — never an
+  unknown-command error plus a stray-content cascade per construct.
+- Content survives what the engine cannot render. Unknown environments keep
+  their body (arguments on the `\begin` line go with the wrapper), reserved
+  constructs warn once per name instead of erroring, `\textcolor` with an
+  unresolvable key keeps its words, and overlay specifications strip to
+  beamer's own handout semantics: everything shown, one warning.
+- `{verbatim}` is a first-class block set literally: no reflow, no invented
+  hyphens, spaces as no-break kerns, a blank line still a line (a forced
+  break into an empty line has no feasible predecessor and the breaker
+  dropped it — re-introduced once to watch the test fail). 4/5 body size,
+  the code-frame convention that fits 80 columns on a 16:9 slide.
+- A frame is an IR block and a page boundary (Principle 9): one `<section>`
+  of the HTML deck, one page of the PDF handout, sections between frames
+  their own divider pages, spill to a continuation page rather than a clip.
+  Titles come from the adjacent group — adjacent meaning no paragraph
+  break, where LaTeX's own argument scanning stops — or `\frametitle`.
+  `\title`/`\author`/… store from preamble or body; `\maketitle` sets a
+  centered title frame and feeds the PDF Info dictionary. The slides class
+  fills beamer's stage (160×90 mm at 16:9) unless `\page` says otherwise.
+- Math environments carry their source whole and tables degrade to rows of
+  cells, so `&` never reaches inline elaboration as a reserved-character
+  error. TikZ is skipped with one honest warning, never spilt as source.
+- `\input` files ride in a synthetic wrapper environment, so a diagnostic
+  names the file that holds the construct — flat splicing had 21 of the
+  talk's diagnostics pointing into the main file at lines it does not have.
+- A fontspec face name ("Family Light") resolves via family+subfamily when
+  no family matches: the named weight serves as regular, its italic sibling
+  comes along, and a bold request degrades with the existing warning rather
+  than silently substituting a heavier face.
+
+Measured on the private deck: 0 errors, 24 distinct warnings each naming
+one construct, 52 pages against the lualatex build's 54 (which include
+overlay steps), ~80% of the word count surviving (the gap is math set as
+source, dropped page-number furniture, and unrendered tikz labels), 150 ms
+PDF, 173 ms HTML. Layout on the 30-page bench is 151 ms against the 149 ms
+recorded before the slice. Honest degradation, recorded: `\centering` and
+frame options are dropped with a warning, math is source text, tables are
+rows, tikz diagrams and speaker notes are absent, and a handful of exotic
+glyphs the Fira faces lack are warned per character (per-glyph fallback is
+M8). Found, not chased: every `FontDb.scanRoots` rewrites the shared disk
+cache with only its own roots, so a test run evicts the system entries and
+the next build re-probes ~2900 faces (~340 ms).
 
 2026-09-16 — two section headings rendered in poppler and Ghostscript and
 not in macOS Preview. The PDF built on the Mac was byte-identical to the one

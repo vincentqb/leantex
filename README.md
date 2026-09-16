@@ -62,8 +62,9 @@ Open Sans — see the license files there), so they build on any machine:
 ```
 
 `declared.tex`, `layout.tex`, and `paragraphs.tex` name no font and take the
-machine's default sans. `talk.tex` and `theme-modern.tex` exercise slide
-features that are not implemented yet and stop with E0307.
+machine's default sans. `talk.tex` and `deck.tex` are slide decks: each
+frame is one `<section>` of the HTML deck and one page of the PDF handout.
+`theme-modern.tex` sketches the M5b theme bundle and does not build yet.
 
 Builds and runs on Linux and macOS. On the Amazon Linux 2 host the engine is
 developed on, the `LEAN_CC`/`LIBRARY_PATH` exports in AGENTS.md work around an
