@@ -140,6 +140,10 @@ def baseCss (doc : Doc) : String :=
   ".spaced { margin-top: var(--sep, 1.4rem); }\n" ++
   ".entry { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline; }\n" ++
   ".sans { font-family: var(--font-sans); }\n" ++
+  -- The browser uses the face's own small caps when it has them and synthesises
+  -- otherwise, which is the better of the two mechanisms; the PDF path can only
+  -- synthesise.
+  ".sc { font-variant-caps: small-caps; }\n" ++
   sizeRules ++
   ".math { font-family: \"Latin Modern Math\", \"STIX Two Math\", math; }\n" ++
   "@media print {\n" ++

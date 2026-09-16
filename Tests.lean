@@ -810,6 +810,19 @@ def main (args : List String) : IO UInt32 := do
       t "no-break space is an unbreakable interword space"
         (widthOf "a\\nbsp b" > plainW)
 
+      -- Small caps are synthesised: lowercase raised and set smaller, in runs
+      -- that carry their own size. `\scshape` used to do nothing at all.
+      let scOut := Layout.run geom oneFace none (Elab.run "t" "\\scshape aB").1
+      let scRuns := (scOut.pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
+        match s with
+        | .run _ _ _ _ glyphs size => some (glyphs.map (·.2), size)
+        | .gap _ => none)
+      t "small caps raises lowercase"
+        (scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
+      t "small caps sets the raised run smaller"
+        (scRuns.any (·.2 == geom.fontSize * Layout.smallCapScale / 1000) &&
+         scRuns.any (·.2 == geom.fontSize))
+
       -- `\hfill` on a paragraph's last line must reach the margin. The
       -- line-running fill is also fil glue, and sharing the leftover with it
       -- puts the right-hand text halfway there -- which is what LaTeX does and

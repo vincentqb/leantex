@@ -80,6 +80,9 @@ structure TextStyle where
   /-- Size relative to the surrounding text, per mille. Absolute rather than
   compounding, as in LaTeX: `\large\Large` is Large, not the product. -/
   scale : Nat := 1000
+  /-- Set as small caps. Applies to the word, not the face: see
+  `smallCapRuns`. -/
+  smallcaps : Bool := false
   deriving Repr, BEq, Inhabited
 
 private inductive Tk where
@@ -97,19 +100,52 @@ private structure FlattenSt where
 private def warn (st : FlattenSt) (code msg : String) : FlattenSt :=
   { st with diags := st.diags.push { severity := .warning, code := code, message := msg } }
 
+/-- Small caps, relative to the surrounding size. Synthesised: the faces we can
+count on ship no small-caps variant and the sfnt reader does not apply `smcp`,
+so lowercase becomes uppercase set smaller. Real small caps are drawn, not
+scaled, so this is a stand-in until a face's own feature can be used. -/
+def smallCapScale : Nat := 800
+
+/-- Split a small-caps word so each run carries its own size: capitals stay,
+lowercase is raised and set at `smallCapScale`. The runs are separate words
+with no glue between them, so they set as one unbreakable unit -- which also
+means a small-caps word is not hyphenated. -/
+private def smallCapRuns (sty : TextStyle) (cur : Array Char) : Array Tk := Id.run do
+  let mut out : Array Tk := #[]
+  let mut run : Array Char := #[]
+  let mut lower := false
+  for c in cur do
+    let isLower := c.isLower
+    if !run.isEmpty && isLower != lower then
+      let s := if lower then { sty with scale := sty.scale * smallCapScale / 1000 } else sty
+      out := out.push (.word s run)
+      run := #[]
+    lower := isLower
+    run := run.push (if isLower then c.toUpper else c)
+  unless run.isEmpty do
+    let s := if lower then { sty with scale := sty.scale * smallCapScale / 1000 } else sty
+    out := out.push (.word s run)
+  return out
+
+private def pushWord (st : FlattenSt) (sty : TextStyle) (cur : Array Char) : FlattenSt :=
+  if sty.smallcaps then
+    { st with toks := st.toks ++ smallCapRuns sty cur }
+  else
+    { st with toks := st.toks.push (.word sty cur) }
+
 private def pushText (st : FlattenSt) (sty : TextStyle) (s : String) : FlattenSt := Id.run do
   let mut st := st
   let mut cur : Array Char := #[]
   for c in s.toList do
     if c == ' ' then
       if !cur.isEmpty then
-        st := { st with toks := st.toks.push (.word sty cur) }
+        st := pushWord st sty cur
         cur := #[]
       st := { st with toks := st.toks.push (.space sty) }
     else
       cur := cur.push c
   if !cur.isEmpty then
-    st := { st with toks := st.toks.push (.word sty cur) }
+    st := pushWord st sty cur
   return st
 
 /-- Apply one markup style to the active text style. Size-only styles do not
@@ -120,7 +156,7 @@ private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
   | .emph => { sty with italic := !sty.italic }
   | .mono => { sty with slot := 2 }
   | .sans => { sty with slot := 1 }
-  | .smallcaps => sty
+  | .smallcaps => { sty with smallcaps := true }
   | .normal => {}
   | .size n => match Ir.sizeScale.lookup n with
     | some k => { sty with scale := k }
