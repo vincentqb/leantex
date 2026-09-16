@@ -16,6 +16,19 @@ def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit := 
 
 def bytes (l : List UInt8) : ByteArray := ⟨l.toArray⟩
 
+/-- xorshift64*: deterministic, dependency-free (as in scripts/kp-fuzz.lean).
+Returns the new state and the output value. -/
+def nextRand (s : UInt64) : UInt64 × UInt64 :=
+  let x := s ^^^ (s >>> 12)
+  let x := x ^^^ (x <<< 25)
+  let x := x ^^^ (x >>> 27)
+  (x, x * 2685821657736338717)
+
+/-- Draw a value below `bound`, threading the state. -/
+def rand (s : UInt64) (bound : Nat) : Nat × UInt64 :=
+  let (s', v) := nextRand s
+  ((v % UInt64.ofNat bound).toNat, s')
+
 def errKindAt (bs : ByteArray) : Option (Nat × ErrKind) :=
   (validate bs).map fun e => (e.offset, e.kind)
 
@@ -862,6 +875,87 @@ def pdfStreamChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   -- line; the underline's rule-only sibling line places nothing.
   t "pdf moves the pen across a wide gap with Tm" ((gapText.splitOn " Tm\n").length == 4)
 
+/-- Dimension evidence beyond the fixed vectors in `main`.
+
+Cross-unit tests: every unit the table relates must parse to the same sp
+(the theorem `Decl.unitScale_consistent` pins the table's fractions; these
+pin the string-level wiring, including signs and `sp` itself).
+
+Round-trip property test (generator: xorshift64*, 2000 values uniform in
+±2³¹ sp): `toPtString` rounds to the nearest thousandth of a pt, so parsing
+the printed value back must land within 33 sp (32.768 sp of print rounding
+plus under 1 sp of parse truncation) and must never change unit kind. -/
+def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  t "dim 1pc is 12pt" (Decl.parseValue "1pc" == Decl.parseValue "12pt")
+  t "dim 6pc is 1in" (Decl.parseValue "6pc" == Decl.parseValue "1in")
+  t "dim 72bp is 1in" (Decl.parseValue "72bp" == Decl.parseValue "1in")
+  t "dim 65536sp is 1pt" (Decl.parseValue "65536sp" == Decl.parseValue "1pt")
+  t "dim 10mm is 1cm" (Decl.parseValue "10mm" == Decl.parseValue "1cm")
+  t "dim negative is exact" (Decl.parseValue "-0.5in" == some (.dim (-(Dim.inch 1) / 2)))
+  t "dim negative em is exact"
+    (Decl.parseLength "-0.25em" == some { em := -250 })
+
+  -- toPtString: exact thirds round to the nearest thousandth, tiny values
+  -- collapse to "0" without a stray sign, halves round away from zero.
+  t "sp pt string thirds" ((Dim.pt 1 / 3).toPtString == "0.333")
+  t "sp pt string negative thirds" ((-(Dim.pt 1) / 3).toPtString == "-0.333")
+  t "sp pt string eighth" (((8192 : Dim.Sp)).toPtString == "0.125")
+  t "sp pt string tiny is unsigned zero" (((-26 : Dim.Sp)).toPtString == "0")
+  t "sp pt string half milli rounds up" (((4096 : Dim.Sp)).toPtString == "0.063")
+
+  let mut s : UInt64 := 0xA0761D6478BD642F
+  let mut worst : Nat := 0
+  let mut failed : Option String := none
+  for _ in [0:2000] do
+    let (mag, s') := rand s (2 ^ 32)
+    s := s'
+    let x : Dim.Sp := (mag : Int) - 2 ^ 31
+    match Decl.parseLength (x.toPtString ++ "pt") with
+    | some l =>
+      let err := (l.sp - x).natAbs
+      worst := max worst err
+      unless l.em == 0 && l.ex == 0 && err ≤ 33 do
+        failed := some s!"dim round-trip: {x} printed {x.toPtString}, reparsed {l.sp} (err {err})"
+    | none => failed := some s!"dim round-trip: {x} printed {x.toPtString}, which did not parse"
+  if let some msg := failed then failures ref msg
+  t "dim round-trip error reaches the print rounding bound" (worst > 20)
+
+/-- Differential fuzz of the UTF-8 validator against the core decoder
+(generator: xorshift64*, 400 byte strings — half raw random bytes of length
+0–15, half a valid encoded string with one byte overwritten): `validate`
+must accept exactly what `String.fromUTF8?` decodes. The fixed vectors in
+`main` pin the error kinds and offsets; this pins the accept/reject boundary
+where no fixed vector was written. -/
+def utf8FuzzChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let samples : Array String :=
+    #["hello", "naïve", "αβγδε", "🎉🌍", "a\nb\nc", "τεχ — done", "𝔸𝔹ℂ"]
+  let mut s : UInt64 := 0xE7037ED1A0B428DB
+  let mut failed : Option String := none
+  for i in [0:400] do
+    let (mode, s') := rand s 2
+    s := s'
+    let mut v : ByteArray := ByteArray.empty
+    if mode == 0 then
+      let (len, s') := rand s 16
+      s := s'
+      for _ in [0:len] do
+        let (b, s') := rand s 256
+        s := s'
+        v := v.push (UInt8.ofNat b)
+    else
+      let (which, s') := rand s samples.size
+      s := s'
+      v := samples[which]!.toUTF8
+      let (at_, s') := rand s v.size
+      s := s'
+      let (b, s'') := rand s' 256
+      s := s''
+      v := v.set! at_ (UInt8.ofNat b)
+    unless (validate v == none) == (String.fromUTF8? v).isSome do
+      failed := some s!"utf8 fuzz case {i}: validate and core decoder disagree on {v.toList}"
+  if let some msg := failed then failures ref msg
+
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
@@ -894,6 +988,7 @@ def main (args : List String) : IO UInt32 := do
       ("range", bytes [0xF4, 0x90, 0x80, 0x80]), ("trunc", bytes [0xC3])] do
     t s!"utf8 agrees with core ({name})"
       ((validate v == none) == (String.fromUTF8? v).isSome)
+  utf8FuzzChecks ref
 
   -- args
   t "args empty is help" (parse [] == .ok { cmd := .help })
@@ -1081,6 +1176,7 @@ def main (args : List String) : IO UInt32 := do
 
   -- dim
   t "sp pt string" ((Dim.pt 10).toPtString == "10" && (Dim.pt 3 / 2).toPtString == "1.5")
+  dimChecks ref
 
   -- knuth–plass: DP result equals brute-force minimum over all break sequences
   let cases : List (String × Array Layout.Item × Dim.Sp) := [
