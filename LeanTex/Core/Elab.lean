@@ -112,7 +112,9 @@ def blockOnly : List String :=
    "block"]
 
 def builtinNames : List String :=
-  ["begin", "end", "par", "define", "ifgiven", "documentclass", "textcolor"] ++
+  ["begin", "end", "par", "define", "ifgiven", "documentclass", "textcolor",
+   -- Underline is native; a document's own \varul (soul-style) is ignored.
+   "underline", "uline", "ul", "varul"] ++
   blockOnly ++ (escapes.map (·.1)) ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl ++
   (Lex.textSymbols.map (·.1))
@@ -391,6 +393,22 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             acc := flushText acc sb
             sb := ""
             acc := acc.push (.styled style #[.text s])
+            i := j + 1
+          | _ =>
+            diag ctx "E0304" s!"'\\{name}' needs an argument" pos
+        else if name == "underline" || name == "uline" then
+          -- Drawn, not a face change, so not a Style: one group, like \textbf.
+          let j := skipSpaces raws i
+          match raws[j]? with
+          | some (.group body _) =>
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (.underline (← elabInlines ctx body))
+            i := j + 1
+          | some (.word s _) =>
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (.underline #[.text s])
             i := j + 1
           | _ =>
             diag ctx "E0304" s!"'\\{name}' needs an argument" pos

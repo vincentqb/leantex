@@ -23,6 +23,13 @@ structure Font where
   cmap : Array (UInt32 × UInt32 × UInt32)  -- (startChar, endChar, startGid), sorted
   widths : Array Nat                        -- advance width per gid, font units
   numGlyphs : Nat
+  /-- `post` underline metrics, font units. Zero means the font said nothing;
+  the consumer supplies a fallback. -/
+  underlinePosition : Int
+  underlineThickness : Int
+  /-- Per-gid: does the glyph reach below the underline's top edge? A missing
+  or short `glyf`/`loca` means no glyph descends, never a panic. -/
+  descenders : Array Bool
   deriving Inhabited
 
 /-- A bounded byte read. Out of range is 0 rather than a panic: this parser is
@@ -218,6 +225,54 @@ def classify (data : ByteArray) : Except String Class := do
     | none => if isBold then 700 else 400
   return { psName, family, subfamily, isBold, isItalic, isFixedPitch, weight }
 
+/-- Characters whose glyphs hang below an underline in an ordinary text face:
+the descending letters, the punctuation that reaches down, and letters
+carrying a below-attached diacritic. The CFF stand-in: CFF charstrings have
+no cheap per-glyph bounding box, so the character answers for its glyph. -/
+def descenderChars : String :=
+  "gjpqy,;()[]{}@QçÇşŞţŢņŅģĢķĶļĻŗŖșȘțȚąĄęĘįĮųŲḑḐṣṢẉẈ"
+
+/-- Descender bits for a CFF face: mark the glyph of every descender
+character the cmap can reach. -/
+private def cffDescenders (cmap : Array (UInt32 × UInt32 × UInt32))
+    (numGlyphs : Nat) : Array Bool := Id.run do
+  let mut out : Array Bool := Array.replicate numGlyphs false
+  for c in descenderChars.toList do
+    let x := UInt32.ofNat c.toNat
+    for (s, e, g) in cmap do
+      if s ≤ x && x ≤ e then
+        let gid := (g + (x - s)).toNat % 0x10000
+        if gid < out.size then
+          out := out.set! gid true
+  return out
+
+/-- Descender bits for a TrueType face, from each glyph header's own `yMin`
+(byte offset 4: after numberOfContours and xMin). A missing or short table
+means "no glyph descends" -- this is decoration, not correctness. -/
+private def trueTypeDescenders (data : ByteArray) (head : Table)
+    (numGlyphs : Nat) (threshold : Int) : Array Bool := Id.run do
+  let none' := Array.replicate numGlyphs false
+  let some loca := findTable data "loca" | return none'
+  let some glyf := findTable data "glyf" | return none'
+  unless fits data loca && fits data glyf do return none'
+  let longFormat := u16 data (head.offset + 50) == 1
+  let entrySize := if longFormat then 4 else 2
+  unless (numGlyphs + 1) * entrySize ≤ loca.length do return none'
+  let offAt (g : Nat) : Nat :=
+    if longFormat then u32 data (loca.offset + 4 * g)
+    else 2 * u16 data (loca.offset + 2 * g)
+  let mut out : Array Bool := Array.mkEmpty numGlyphs
+  for g in [0:numGlyphs] do
+    let o1 := offAt g
+    let o2 := offAt (g + 1)
+    -- An empty glyph (space) has no outline and no descender; a header that
+    -- overruns its table is read as one.
+    if o2 ≤ o1 || o1 + 10 > glyf.length then
+      out := out.push false
+    else
+      out := out.push (i16 data (glyf.offset + o1 + 4) < threshold)
+  return out
+
 def parse (data : ByteArray) : Except String Font := do
   if data.size < 12 then
     throw "not a font file"
@@ -268,6 +323,18 @@ def parse (data : ByteArray) : Except String Font := do
         if v > 0 then v else (unitsPerEm : Int) / 2
       else (unitsPerEm : Int) / 2
     | none => (unitsPerEm : Int) / 2
+  let upem := if unitsPerEm == 0 then 1000 else unitsPerEm
+  -- post underline metrics: FWords at offsets 8 and 10.
+  let (upos, uthick) := match findTable data "post" with
+    | some t =>
+      if t.offset + 12 ≤ data.size then (i16 data (t.offset + 8), i16 data (t.offset + 10))
+      else ((0 : Int), (0 : Int))
+    | none => (0, 0)
+  -- A glyph descends when its box reaches below the rule's top edge; a font
+  -- that declares no position gets the conventional tenth of an em.
+  let threshold := if upos == 0 then -((upem : Int) / 10) else upos
+  let descenders := if isCff then cffDescenders cmap numGlyphs
+    else trueTypeDescenders data head numGlyphs threshold
   return {
     data := data
     isCff := isCff
@@ -286,6 +353,9 @@ def parse (data : ByteArray) : Except String Font := do
     cmap := cmap
     widths := widths
     numGlyphs := numGlyphs
+    underlinePosition := upos
+    underlineThickness := uthick
+    descenders := descenders
   }
 
 /-- Glyph id for a scalar, or `none` (missing glyph). Binary search. -/
@@ -311,6 +381,11 @@ def Font.advance (f : Font) (c : Char) : Nat :=
   match f.gid c with
   | some g => f.widths[g]?.getD 0
   | none => 0
+
+/-- Does this glyph reach below the underline's top edge? Decides where the
+rule is interrupted; a gid past the table does not descend. -/
+def Font.descends (f : Font) (g : Nat) : Bool :=
+  f.descenders[g]?.getD false
 
 /-- The faces a document typesets with. Index 0 is always the body regular
 face; `Style` resolves to an index at layout time. -/

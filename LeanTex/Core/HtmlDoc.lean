@@ -171,7 +171,9 @@ def baseCss (doc : Doc) : String :=
   "li { margin: 0.25rem 0; }\n" ++
   "li::marker { color: var(--muted); }\n" ++
   "a { color: var(--accent); text-decoration-thickness: 1px;\n" ++
-  "    text-underline-offset: 2px; }\n" ++
+  "    text-decoration-skip-ink: auto; text-underline-offset: 0.15em; }\n" ++
+  "u { text-decoration: underline; text-decoration-skip-ink: auto;\n" ++
+  "    text-underline-offset: 0.15em; }\n" ++
   "a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\n" ++
   "code, pre { font-family: var(--font-mono); font-size: 0.925em; }\n" ++
   "pre { background: var(--tint); padding: 0.9rem 1rem; overflow-x: auto;\n" ++
@@ -241,6 +243,10 @@ def inlineNode (cfg : Config) (x : Inline) : Array Node :=
     #[Html.elem "span" (inlineNodes cfg body.toList) #[("style", value)]]
   | .link url body =>
     #[Html.elem "a" (inlineNodes cfg body.toList) #[("href", url)]]
+  | .underline body =>
+    -- skip-ink is the browser's native form of the PDF path's invariant: the
+    -- rule breaks where a descender crosses it.
+    #[Html.elem "u" (inlineNodes cfg body.toList)]
   | .fill => #[Html.elem "span" #[] #[("class", "fill")]]
   -- Page furniture has no meaning in a continuous document.
   | .pageNumber => #[]

@@ -117,7 +117,7 @@ added newlines, because in HTML a newline collapses to a space and would
 appear before punctuation that follows a nested element. -/
 def phrasingTags : List String :=
   ["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "span", "a", "strong", "em",
-   "code", "figcaption", "dt", "dd", "th", "td", "title", "caption", "label"]
+   "code", "u", "figcaption", "dt", "dd", "th", "td", "title", "caption", "label"]
 
 def elem (tag : String) (kids : Array Node := #[])
     (attrs : Array (String × String) := #[]) : Node :=

@@ -50,7 +50,7 @@ private def usedGlyphs (fontIdx numGlyphs : Nat) (pages : Array PageOut) :
   for p in pages do
     for l in p.lines do
       for s in l.segs do
-        if let .run idx _ _ _ glyphs _ := s then
+        if let .run idx _ _ _ glyphs _ _ := s then
           if idx == fontIdx then
             for (g, c) in glyphs do
               if h : g < seen.size then
@@ -91,7 +91,7 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
           inArray := true
         let unit := if curSize == 0 then l.size else curSize
         s := s ++ s!"{(-(w * 1000 / unit) : Int)}"
-      | .run idx color _ w glyphs segSize =>
+      | .run idx color _ w glyphs segSize _ =>
         x := x + w
         let size := if segSize == 0 then l.size else segSize
         if glyphs.isEmpty then
@@ -158,7 +158,7 @@ private def linkRects (geom : Geom) (page : PageOut) :
     let pad := l.size
     for seg in l.segs do
       match seg with
-      | .run _ _ link w _ segSize =>
+      | .run _ _ link w _ segSize _ =>
         let size := if segSize == 0 then l.size else segSize
         let y0 := geom.pageH - l.y - size / 4
         let y1 := geom.pageH - l.y + size * 4 / 5

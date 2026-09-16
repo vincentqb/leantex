@@ -25,7 +25,7 @@ def nativePackages : List String :=
    "fontspec", "url", "scrlayer-scrpage", "inputenc", "fontenc", "lmodern",
    "amsmath", "amssymb", "unicode-math", "parskip", "titlesec", "fancyhdr",
    "textcomp", "csquotes", "polyglossia", "graphicx", "booktabs", "array",
-   "calc", "etoolbox", "xparse", "kvoptions", "setspace"]
+   "calc", "etoolbox", "xparse", "kvoptions", "setspace", "soul"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=
@@ -399,6 +399,23 @@ where
     became "\\vspace" native pos
     return some (← synthAt native pos, k)
   | "thepage" => return some (#[.ctrl "pagenumber" pos], start)
+  | "ul" =>
+    -- soul's plain underline; the native draws it from the font's metrics
+    -- and skips descenders, which is what \varul existed to fake.
+    became "\\ul" "\\underline" pos
+    return some (#[.ctrl "underline" pos], start)
+  | "varul" =>
+    -- \varul<depth>[raise][thickness]{text}, the xparse spelling built on
+    -- soul. The options tune a hand-drawn rule; the native reads the font's
+    -- own underline metrics, so they are dropped.
+    let mut j := skipSpaces raws start
+    if let some (.word w _) := raws[j]? then
+      if w.startsWith "<" && w.endsWith ">" then
+        j := j + 1
+    let (_, j1) := takeOpt raws j
+    let (_, j2) := takeOpt raws j1
+    became "\\varul" "\\underline" pos
+    return some (#[.ctrl "underline" pos], j2)
   | "IfValueT" | "IfValueTF" => return some (#[.ctrl "ifgiven" pos], start)
   | "ExplSyntaxOn" =>
     -- expl3 is TeX's programming layer. Nothing in it is document content,

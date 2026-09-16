@@ -35,7 +35,7 @@ def leadingFor (size : Sp) (factor : Nat := 1000) : Sp := size * 6 / 5 * factor 
 
 inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-      (glyphs : Array (Nat × Char × Sp)) (size : Sp)
+      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (underline : Bool)
   | glue (g : Glue)
   | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Sp))
@@ -49,7 +49,7 @@ inductive Seg where
   /-- A glyph run. `width` is carried so link rectangles and alignment can be
   computed without re-measuring against the font. -/
   | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-      (glyphs : Array (Nat × Char)) (size : Sp)
+      (glyphs : Array (Nat × Char)) (size : Sp) (underline : Bool)
   | gap (w : Sp)
   /-- A horizontal rule, `w` wide and `thickness` thick, on the baseline plus
   `raise`. The heading rule of a designed section, filling its line. -/
@@ -88,6 +88,8 @@ structure TextStyle where
   /-- Set as small caps. Applies to the word, not the face: see
   `smallCapRuns`. -/
   smallcaps : Bool := false
+  /-- Under a drawn underline; the run carries it into the set line. -/
+  underline : Bool := false
   deriving Repr, BEq, Inhabited
 
 private inductive Tk where
@@ -189,6 +191,7 @@ private def flattenOne (st : FlattenSt) (sty : TextStyle) (x : Inline) : Flatten
   | .styled s body => flatten st (applyStyle sty s) body
   | .colored c _ body => flatten st { sty with color := c } body
   | .link url body => flatten st { sty with link := some url } body
+  | .underline body => flatten st { sty with underline := true } body
   -- Placeholders are substituted before layout; reaching here means the
   -- document used one outside running content.
   | .pageNumber => pushText st sty "?"
@@ -230,7 +233,7 @@ def fixedSpace (c : Char) : Option (Nat × Nat) :=
 /-- One word → items: boxes split by hyphenation points (flagged penalties
 carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph). -/
 private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat)
-    (color : Ir.Color) (link : Option String)
+    (color : Ir.Color) (link : Option String) (underline : Bool)
     (font : Font) (chars : Array Char) (missing : Array Char)
     (cache : Std.HashMap String (List Nat)) :
     Array Item × Array Char × Std.HashMap String (List Nat) := Id.run do
@@ -241,7 +244,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
   let mut box : Array (Nat × Char × Sp) := #[]
   let mut boxW : Sp := 0
   let flush (items : Array Item) (box : Array (Nat × Char × Sp)) (w : Sp) : Array Item :=
-    if box.isEmpty then items else items.push (.box w fontIdx color link box size)
+    if box.isEmpty then items else items.push (.box w fontIdx color link box size underline)
   let mut i := 0
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
@@ -292,7 +295,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
           items := flush items box boxW
           box := #[]
           boxW := 0
-          items := items.push (.box (size * num / den) fontIdx color link #[] size)
+          items := items.push (.box (size * num / den) fontIdx color link #[] size underline)
           i := i + 1
         | none =>
         if c == '\u00a0' then
@@ -301,7 +304,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
           box := #[]
           boxW := 0
           items := items.push
-            (.box (scaledAt size font (font.advance ' ')) fontIdx color link #[] size)
+            (.box (scaledAt size font (font.advance ' ')) fontIdx color link #[] size underline)
           i := i + 1
         else
         match glyphOf size font c with
@@ -347,7 +350,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       let idx := fs.lookup sty.slot sty.bold sty.italic
       let sz := size * sty.scale / 1000
       let (ws, m, c') :=
-        wordItems pats sz idx sty.color sty.link (fs.get idx) chars missing cache
+        wordItems pats sz idx sty.color sty.link sty.underline (fs.get idx) chars missing cache
       missing := m
       cache := c'
       items := items ++ ws
@@ -398,7 +401,7 @@ def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   match items[j]? with
   | some (.glue _) =>
     match items[j-1]? with
-    | some (.box _ _ _ _ _ _) => j > 0
+    | some (.box _ _ _ _ _ _ _) => j > 0
     | _ => false
   | some (.pen _ cost _ _ _ _) => cost < 10000
   | _ => false
@@ -422,7 +425,7 @@ def measure (items : Array Item) (a j : Nat) : Measure := Id.run do
   let mut m : Measure := {}
   for k in [a:j] do
     match items[k]! with
-    | .box w _ _ _ _ _ => m := { m with natural := m.natural + w }
+    | .box w _ _ _ _ _ _ => m := { m with natural := m.natural + w }
     | .glue g => m := { m with
         natural := m.natural + g.width
         stretch := m.stretch + g.stretch
@@ -487,7 +490,7 @@ def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
   pforced := pforced.push 0
   for k in [0:n] do
     let (dw, dst, dsh, dfil) : Sp × Sp × Sp × Nat := match items[k]! with
-      | .box w _ _ _ _ _ => (w, 0, 0, 0)
+      | .box w _ _ _ _ _ _ => (w, 0, 0, 0)
       | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0)
       | .pen _ _ _ _ _ _ => (0, 0, 0, 0)
     pw := pw.push (pw[k]! + dw)
@@ -598,11 +601,12 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let mut width : Sp := 0
   for k in [a:j] do
     match items[k]! with
-    | .box w fontIdx color link glyphs size =>
+    | .box w fontIdx color link glyphs size underline =>
       -- The declared width is authoritative, as it already is in `measure`: a
       -- kern is a box with a width and no glyphs, and recomputing from the
       -- advances would silently set it to zero.
-      segs := segs.push (.run fontIdx color link w (glyphs.map fun (g, c, _) => (g, c)) size)
+      segs := segs.push
+        (.run fontIdx color link w (glyphs.map fun (g, c, _) => (g, c)) size underline)
       width := width + w
     | .glue g =>
       let setW : Sp :=
@@ -632,12 +636,12 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   if let some (.pen w _ _ fontIdx color glyphs) := items[j]? then
     if !glyphs.isEmpty then
       -- A hyphenation point sits inside a word, so the hyphen is set at the
-      -- size of the run it interrupts.
-      let inherited := segs.foldl (fun acc s => match s with
-        | .run _ _ _ _ _ sz => if sz != 0 then sz else acc
-        | _ => acc) 0
+      -- size (and under the underline) of the run it interrupts.
+      let (inherited, inheritedUl) := segs.foldl (fun acc s => match s with
+        | .run _ _ _ _ _ sz ul => (if sz != 0 then sz else acc.1, ul)
+        | _ => acc) ((0 : Sp), false)
       segs := segs.push
-        (.run fontIdx color none w (glyphs.map fun (g, c, _) => (g, c)) inherited)
+        (.run fontIdx color none w (glyphs.map fun (g, c, _) => (g, c)) inherited inheritedUl)
       width := width + w
   -- drop trailing gaps (paragraph-final fill)
   let mut segs' := segs
@@ -673,7 +677,7 @@ above its baseline and below it, or it collides with its neighbours. -/
 private def B.placeLine (b : B) (x : Sp) (size : Sp) (segs : Array Seg) (w : Sp) : B :=
   let nominal := if size == 0 then b.geom.fontSize else size
   let tallest := segs.foldl (fun acc s => match s with
-    | .run _ _ _ _ _ sz => max acc sz
+    | .run _ _ _ _ _ sz _ => max acc sz
     | _ => acc) nominal
   let b := if tallest > nominal then
       { b with y := b.y + b.ascent * (tallest - nominal) / nominal } else b
@@ -868,8 +872,62 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
 
 end
 
+/-- Underline rules for one set line: a second walk over its segs, aligned by
+gaps, so it can ride as its own `LineOut` at the same baseline — the PDF
+writer's x-tracking stays linear and link rectangles see no extra runs. The
+rule sits at the font's own `post` metrics (with a conventional fallback when
+the font declares none) and is interrupted around any glyph that reaches
+below its top edge, a gap of twice the thickness on each side. Empty when the
+line has no underlined run, so the common case allocates nothing. -/
+private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
+    Array Seg := Id.run do
+  unless segs.any (fun s => match s with
+      | .run _ _ _ _ _ _ true => true
+      | _ => false) do
+    return #[]
+  let mut out : Array Seg := #[]
+  for seg in segs do
+    match seg with
+    | .gap w => out := out.push (.gap w)
+    | .rule w _ _ _ => out := out.push (.gap w)
+    | .run fontIdx color _ w glyphs size underline =>
+      if !underline then
+        out := out.push (.gap w)
+      else
+        let font := fs.get fontIdx
+        let sz := if size == 0 then lineSize else size
+        let top := if font.underlinePosition == 0 then -(sz / 10)
+          else font.underlinePosition * sz / font.unitsPerEm
+        let thick := if font.underlineThickness == 0 then sz / 20
+          else font.underlineThickness * sz / font.unitsPerEm
+        let raise := top - thick
+        -- Skip intervals within [0, w], merged: descender glyphs plus the
+        -- clearance either side.
+        let mut skips : Array (Sp × Sp) := #[]
+        let mut x : Sp := 0
+        for (g, _) in glyphs do
+          let adv := scaledAt sz font (font.widths[g]?.getD 0)
+          if font.descends g then
+            let lo := max 0 (x - 2 * thick)
+            let hi := min w (x + adv + 2 * thick)
+            match skips.back? with
+            | some (plo, phi) =>
+              if lo ≤ phi then skips := skips.pop.push (plo, max phi hi)
+              else skips := skips.push (lo, hi)
+            | none => skips := skips.push (lo, hi)
+          x := x + adv
+        let mut cur : Sp := 0
+        for (lo, hi) in skips do
+          if lo > cur then
+            out := out.push (.rule (lo - cur) thick raise color)
+          out := out.push (.gap (hi - max lo cur))
+          cur := hi
+        if w > cur then
+          out := out.push (.rule (w - cur) thick raise color)
+  return out
+
 /-- Place one paragraph's lines from precomputed breakpoints. -/
-private def placePara (b : B) (j : ParaJob) (breaks : Array Nat) : B := Id.run do
+private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B := Id.run do
   let mut b := { b with diags := b.diags ++ j.diags }
   let geom := b.geom
   let width := j.target
@@ -894,7 +952,7 @@ private def placePara (b : B) (j : ParaJob) (breaks : Array Nat) : B := Id.run d
       | none, some (bulletFont, bg) =>
         let bw := bg.foldl (fun acc (_, _, adv) => acc + adv) 0
         segs := #[Seg.run bulletFont Ir.Color.black none bw
-          (bg.map fun (g, c, _) => (g, c)) j.size, Seg.gap sep] ++ segs
+          (bg.map fun (g, c, _) => (g, c)) j.size false, Seg.gap sep] ++ segs
         x := x - bw - sep
         w := w + bw + sep
       | none, none => pure ()
@@ -907,6 +965,15 @@ private def placePara (b : B) (j : ParaJob) (breaks : Array Nat) : B := Id.run d
           segs := segs ++ #[Seg.gap gap, Seg.rule ruleW thickness (b.xHeight / 2) color]
           w := width
     b := b.placeLine x j.size segs w
+    -- The line's underlines, as a sibling at the same baseline. Pushed after
+    -- `placeLine` so a page break has already decided where the text landed;
+    -- the rules land beside it, adding no vertical space.
+    let uSegs := underlineSegs fs j.size segs
+    unless uSegs.isEmpty do
+      if let some last := b.cur.lines.back? then
+        let uLine : LineOut :=
+          { x := last.x, y := last.y, size := last.size, segs := uSegs, setWidth := 0 }
+        b := { b with cur := { lines := b.cur.lines.push uLine } }
     if let some extra := j.extras[brk]? then
       b := { b with y := b.y + extra }
     prev := brk
@@ -927,6 +994,7 @@ def substPageOne (n total : Nat) : Inline → Inline
   | .styled st body => .styled st (substPageList n total body.toList).toArray
   | .colored c nm body => .colored c nm (substPageList n total body.toList).toArray
   | .link u body => .link u (substPageList n total body.toList).toArray
+  | .underline body => .underline (substPageList n total body.toList).toArray
   | other => other
 
 def substPageList (n total : Nat) : List Inline → List Inline
@@ -961,7 +1029,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   for s in staged do
     match s with
     | .inl dy => b := { b with y := b.y + dy }
-    | .inr (j, t) => b := placePara b j t.get
+    | .inr (j, t) => b := placePara fs b j t.get
   let pages := b.pages.push b.cur
   -- Running content is laid out per page once the count is known, into the
   -- margin, so it never disturbs the body it annotates.

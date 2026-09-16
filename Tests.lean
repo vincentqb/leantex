@@ -49,7 +49,7 @@ def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
   let mut items : Array Layout.Item := #[]
   for p in ps do
     match p with
-    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10))
+    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10) false)
     | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
     | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true 0 Ir.Color.black #[])
     | .B =>
@@ -252,7 +252,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   let scOut := Layout.run geom oneFace none (Elab.run "t" "\\scshape aB").1
   let scRuns := (scOut.pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
     match s with
-    | .run _ _ _ _ glyphs size => some (glyphs.map (·.2), size)
+    | .run _ _ _ _ glyphs size _ => some (glyphs.map (·.2), size)
     | _ => none)
   t "small caps raises lowercase"
     (scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
@@ -440,6 +440,78 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ms := (← IO.monoMsNow) - t0
   t "families dedupes" (fams'.size ≤ real.size)
   t s!"families is fast on the real scan ({ms} ms for {real.size} faces)" (ms < 200)
+
+/-- Native underline: a decoration never breaks a glyph. Drawn from the
+font's own `post` metrics and interrupted around descenders in the PDF path;
+`text-decoration-skip-ink` is the browser's spelling of the same invariant.
+Own function, same elaboration-budget reason as the others. -/
+def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
+    (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
+  let t := check ref
+  -- IR shape
+  t "underline ir shape" ((elabStr "\\underline{a}").1.body ==
+    #[.para #[.underline #[.text "a"]]])
+  t "uline is underline" ((elabStr "\\uline{b}").1.body ==
+    #[.para #[.underline #[.text "b"]]])
+  -- The font's own glyph extents decide what descends.
+  let gidOf (c : Char) : Nat := (font.gid c).getD 0
+  t "descends g" (font.descends (gidOf 'g'))
+  t "descends y" (font.descends (gidOf 'y'))
+  t "descends not a" (!font.descends (gidOf 'a'))
+  t "descends not x-height b" (!font.descends (gidOf 'b'))
+  t "descends comma" (font.descends (gidOf ','))
+  -- Layout: rule segs under the underlined run, split around descenders.
+  let outOf (src : String) : Layout.Out :=
+    Layout.run geom oneFace none (Elab.run "t" src).1
+  let rulesOf (src : String) : Array (Dim.Sp × Dim.Sp) :=
+    ((outOf src).pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
+      match s with
+      | .rule w th _ _ => some (w, th)
+      | _ => none)
+  t "underline emits a rule" ((rulesOf "\\underline{ab}").size ≥ 1)
+  t "plain text emits no rule" ((rulesOf "ab").isEmpty)
+  -- A descender inside the word splits the rule into pieces around it, so a
+  -- one-word underline with an interior 'g' carries at least two.
+  t "underline splits around a descender" ((rulesOf "\\underline{aga}").size ≥ 2)
+  -- The skip is real: the pieces cover strictly less than the set width.
+  let agaRules := (rulesOf "\\underline{aga}").foldl (fun acc (w, _) => acc + w) (0 : Dim.Sp)
+  let agaWidth := (((outOf "\\underline{aga}").pages.flatMap (·.lines))[0]?.map
+    (·.setWidth)).getD 0
+  t "underline leaves a gap at the descender" (0 < agaRules && agaRules < agaWidth)
+  -- A run that is nothing but descenders is nothing but gap.
+  t "underline under gy alone is all gap" ((rulesOf "\\underline{gy}").isEmpty)
+  -- The rules ride their own line at the text line's baseline, so the PDF
+  -- writer's x-tracking stays linear and link rectangles see no extra runs.
+  let abLines := ((outOf "\\underline{ab}").pages.flatMap (·.lines))
+  t "underline rules ride a second line at the same y"
+    (abLines.size == 2 && abLines[0]!.y == abLines[1]!.y &&
+     abLines[1]!.segs.all fun s => match s with
+      | .run .. => false
+      | _ => true)
+  -- HTML: <u> plus the skip-ink stylesheet; links get the same treatment.
+  let (uPage, _) := HtmlDoc.emit {} (elabStr "\\underline{x}").1
+  t "html underline is u" ((uPage.splitOn "<u>x</u>").length == 2)
+  t "html u skips ink"
+    ((uPage.splitOn "u { text-decoration: underline; text-decoration-skip-ink: auto;").length == 2)
+  t "html links skip ink" ((uPage.splitOn "text-decoration-skip-ink").length ≥ 3)
+  -- Compat: soul's \ul and the xparse \varul spelling become the native.
+  t "compat ul" ((elabStr "\\ul{x}").1.body == #[.para #[.underline #[.text "x"]]])
+  t "compat varul drops its options"
+    ((elabStr "\\varul<5>[0.2ex][0.1ex]{x}").1.body ==
+      #[.para #[.underline #[.text "x"]]])
+  t "compat varul without options"
+    ((elabStr "\\varul{x}").1.body == #[.para #[.underline #[.text "x"]]])
+  t "compat soul is a note"
+    ((elabStr ("\\documentclass{article}\\usepackage{soul}" ++
+      "\\begin{document}x\\end{document}")).2.all (·.severity == .note))
+  -- A document's own \varul definition loses to the native, with the
+  -- existing built-in warning saying so.
+  let redef := elabStr ("\\documentclass{article}" ++
+    "\\NewDocumentCommand{\\varul}{ O{} m }{#2}" ++
+    "\\begin{document}\\varul{y}\\end{document}")
+  t "document varul definition is ignored"
+    ((redef.2.filter (·.severity == .warning)).any (·.code == "W0303") &&
+     redef.1.body == #[.para #[.underline #[.text "y"]]])
 
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
@@ -1081,7 +1153,7 @@ def main (args : List String) : IO UInt32 := do
       let hyOut := Layout.run narrow oneFace (some pats) hyDoc
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ _ _ glyphs _ => glyphs.any (·.2 == '-')
+          | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '-')
           | .gap _ | .rule .. => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
@@ -1095,7 +1167,7 @@ def main (args : List String) : IO UInt32 := do
         p.lines.any (·.size == Dim.pt 14)
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ _ _ glyphs _ => glyphs.any (·.2 == '–')
+          | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '–')
           | .gap _ | .rule .. => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
@@ -1136,6 +1208,7 @@ def main (args : List String) : IO UInt32 := do
       t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
 
       lineChecks ref geom oneFace
+      underlineChecks ref geom oneFace font
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then

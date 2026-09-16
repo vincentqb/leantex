@@ -154,6 +154,9 @@ inductive Inline where
   /-- `\href{url}{body}`: a hyperlink. Becomes an `<a>` in HTML and a Link
   annotation in PDF, so the URL rides the IR rather than a backend. -/
   | link (url : String) (body : Array Inline)
+  /-- `\underline{...}`: a drawn decoration, not a face change, so it is not a
+  `Style`. Both backends interrupt the rule where a descender crosses it. -/
+  | underline (body : Array Inline)
   /-- `\hfill`: stretch that pushes what follows to the far margin. -/
   | fill
   /-- Running-content placeholders, resolved once page count is known. -/
@@ -209,6 +212,8 @@ def fillOne (content : Array Inline) : Inline → Inline
     .styled st (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .colored c n body =>
     .colored c n (if body.isEmpty then content else (fillList content body.toList).toArray)
+  | .underline body =>
+    .underline (if body.isEmpty then content else (fillList content body.toList).toArray)
   | other => other
 
 def fillList (content : Array Inline) : List Inline → List Inline
@@ -287,6 +292,8 @@ def dumpInline (ind : String) (x : Inline) : String :=
     s!"{ind}color {tag}\n" ++ dumpInlines (ind ++ "  ") body
   | .link url body =>
     s!"{ind}link {url.quote}\n" ++ dumpInlines (ind ++ "  ") body
+  | .underline body =>
+    s!"{ind}underline\n" ++ dumpInlines (ind ++ "  ") body
   | .fill => s!"{ind}fill\n"
   | .pageNumber => s!"{ind}pagenumber\n"
   | .pageCount => s!"{ind}pagecount\n"
