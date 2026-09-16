@@ -595,6 +595,23 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((koma.1.styles.find? "itemize").bind (·.marker)).isSome)
   t "compat thispagestyle empty starts running content on page 2" (koma.1.runningFrom == 2)
 
+  -- A diagnostic inside an \input file names that file, not the including
+  -- one, in the body and in the preamble both.
+  let sub (file src : String) : Array Parse.Raw :=
+    (Parse.parse file (Lex.lex file src).1).1
+  let (inDoc, inDs) := Elab.runRaws "main.tex"
+    #[Parse.Raw.env (Parse.inputEnv "sub.tex")
+        (sub "sub.tex" "\\begin{mystery}kept\\end{mystery}") ⟨1, 1⟩]
+  t "input body diagnostics name the included file"
+    ((inDs.filterMap (·.span)).any (·.file == "sub.tex") &&
+     inDoc.body == #[.para #[.text "kept"]])
+  let (_, preDs) := Elab.runRaws "main.tex"
+    (#[Parse.Raw.env (Parse.inputEnv "pre.tex") (sub "pre.tex" "\\mystery{x}") ⟨1, 1⟩] ++
+      sub "main.tex" "\\begin{document}y\\end{document}")
+  t "input preamble diagnostics name the included file"
+    ((preDs.filterMap (·.span)).any (·.file == "pre.tex") &&
+     !(preDs.filterMap (·.span)).any (·.file == "main.tex"))
+
   styleChecks ref
   htmlLayoutChecks ref
 

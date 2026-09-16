@@ -253,7 +253,9 @@ def readInput (dir : System.FilePath) (name : String) (pos : Pos) :
     let text ← IO.FS.readFile path
     let (toks, lexDs) := Lex.lex path.toString text
     let (sub, parseDs) := Parse.parse path.toString toks
-    return (sub, lexDs ++ parseDs)
+    -- Wrapped, not spliced flat: a diagnostic inside the file must name the
+    -- file, and the wrapper is what carries that name to the elaborator.
+    return (#[.env (Parse.inputEnv path.toString) sub pos], lexDs ++ parseDs)
   else
     let d : Diag := {
       severity := .warning

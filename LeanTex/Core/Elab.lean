@@ -115,6 +115,15 @@ def mathEnvs : List String :=
 def titleCtrls : List String :=
   ["title", "subtitle", "author", "institute", "date"]
 
+/-- Preamble file markers, spliced around an `\input`'s declarations so the
+flat preamble walk knows which file it is reading. `@` never lexes into a
+control word, so no document can forge one. -/
+private def fileMarker (f : String) : String := "@file:" ++ f
+
+private def fileMarkerFile? (name : String) : Option String :=
+  if name.startsWith "@file:" then some ((name.drop "@file:".length).toString)
+  else none
+
 def argStyles : List (String × Style) :=
   [("textbf", .bold), ("textit", .italic), ("texttt", .mono), ("emph", .emph)]
 
@@ -366,7 +375,11 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         i := i + 1
       | .env name body pos =>
         i := i + 1
-        if mathEnvs.contains name then
+        if let some f := Parse.inputEnvFile? name then
+          acc := flushText acc sb
+          sb := ""
+          acc := acc ++ (← elabInlines { ctx with file := f } body)
+        else if mathEnvs.contains name then
           acc := flushText acc sb
           sb := ""
           acc := acc.push (.math true (rawSrc body))
@@ -912,7 +925,11 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
               diag ctx "E0304" s!"'\\{n}' needs a \{title}" pos
         | .env n body pos =>
           i := i + 1
-          if mathEnvs.contains n then
+          if let some f := Parse.inputEnvFile? n then
+            -- An \input file's blocks, elaborated under its own name so a
+            -- diagnostic points at the file that holds the construct.
+            blocks := blocks ++ (← elabBlocks { ctx with file := f } body)
+          else if mathEnvs.contains n then
             blocks := blocks.push (.para #[.math true (rawSrc body)])
           else if n == "tabular" || n == "tabular*" then
             -- Rows survive as lines, cells as fixed-space-separated content:
@@ -1362,6 +1379,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
         | _ => #[]
       (raws.extract 0 idx, bodyRaws, raws.extract (idx + 1) raws.size)
     | none => (#[], raws, #[])
+  let mut preamble := preamble
   let mut ctx : Ctx := { file := file }
   let mut docClass := "article"
   let mut classOptions := ""
@@ -1381,6 +1399,16 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   repeat
     if h : i < preamble.size then
       let r := preamble[i]
+      -- An \input wrapper in the preamble splices open between file markers,
+      -- so its declarations process in place and its diagnostics name the
+      -- file that holds them.
+      if let .env n wrapped pos := r then
+        if let some f := Parse.inputEnvFile? n then
+          preamble := preamble.extract 0 i ++
+            #[Raw.ctrl (fileMarker f) pos] ++ wrapped ++
+            #[Raw.ctrl (fileMarker ctx.file) pos] ++
+            preamble.extract (i + 1) preamble.size
+          continue
       match r with
       | .space => i := i + 1
       | .par _ => i := i + 1
@@ -1449,7 +1477,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           i := j + 1
       | .ctrl name pos =>
         i := i + 1
-        if runningCtrl.contains name then
+        if let some f := fileMarkerFile? name then
+          ctx := { ctx with file := f }
+        else if runningCtrl.contains name then
           -- `[from = 2]` keeps the opening page clean, as a title page is.
           let mut j := skipSpaces preamble i
           if let some (.sym '[' _) := preamble[j]? then

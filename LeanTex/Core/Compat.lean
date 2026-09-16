@@ -727,7 +727,16 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     modify fun st => { st with bodyNext := false }
     return .group (← rewriteList (inBody || isBody) body #[] body.toList 0 0) p
   | .env n body p => do
-    return .env n (← rewriteList inBody body #[] body.toList 0 0) p
+    -- An `\input` wrapper switches the file its diagnostics name.
+    match Parse.inputEnvFile? n with
+    | some f =>
+      let saved := (← get).file
+      modify fun st => { st with file := f }
+      let body' ← rewriteList inBody body #[] body.toList 0 0
+      modify fun st => { st with file := saved }
+      return .env n body' p
+    | none =>
+      return .env n (← rewriteList inBody body #[] body.toList 0 0) p
   | r => pure r
 
 end

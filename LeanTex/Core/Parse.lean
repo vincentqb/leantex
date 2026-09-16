@@ -157,6 +157,15 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
 /-! `Raw` back to source text. Declaration blocks and lengths are parsed from
 this string, so it must round-trip what the lexer accepted. -/
 
+/-- The synthetic environment the driver wraps an `\input` file's content in,
+so every stage downstream knows which file a position belongs to. The name
+starts with `@`, which no control word can lex, so no document can forge one. -/
+def inputEnv (file : String) : String := "@input:" ++ file
+
+def inputEnvFile? (name : String) : Option String :=
+  if name.startsWith "@input:" then some ((name.drop "@input:".length).toString)
+  else none
+
 mutual
 
 def rawSrc (raws : Array Raw) : String :=
