@@ -73,10 +73,6 @@ def runningCtrl : List String := ["runninghead", "runningfoot"]
 def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin", "leading", "parskip"]
 
-/-- Page keys that are declared but not implemented yet, with the milestone
-that will land them. Reported as pending, never as a type error. -/
-def pagePending : List (String × String) := []
-
 def metaKeys : List String := ["title", "author", "subject", "keywords"]
 
 def fontKeys : List String := ["body", "sans", "mono", "rm", "sf", "tt", "dir"]
