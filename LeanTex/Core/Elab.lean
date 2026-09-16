@@ -49,13 +49,13 @@ private def diag (ctx : Ctx) (code msg : String) (pos : Option Pos)
   } }
 
 def reservedCtrl : List (String × String) :=
-  [("fonts", "M3"), ("tokens", "M3"), ("palette", "M3"),
+  [("tokens", "M3"), ("palette", "M3"),
    ("block", "M3"), ("href", "M3"), ("link", "M3"), ("hfill", "M3"),
    ("vspace", "M3"), ("noindent", "M3"),
    ("fontfallback", "M5"), ("figure", "M5"), ("note", "M5")]
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
-def declCtrl : List String := ["page", "pdfmeta", "assert"]
+def declCtrl : List String := ["page", "pdfmeta", "assert", "fonts"]
 
 def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin", "header", "footer"]
@@ -65,6 +65,8 @@ that will land them. Reported as pending, never as a type error. -/
 def pagePending : List (String × String) := [("header", "M3"), ("footer", "M3")]
 
 def metaKeys : List String := ["title", "author", "subject", "keywords"]
+
+def fontKeys : List String := ["body", "sans", "mono", "rm", "sf", "tt"]
 
 /-- Named page sizes, in sp. -/
 def pageSizes : List (String × (Sp × Sp)) :=
@@ -535,6 +537,29 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           diags := st.diags.push (Decl.unknownKey ctx.file "page" key pageKeys pos) }
   return spec
 
+/-- `\fonts{...}`: family names per slot. `rm`/`sf`/`tt` are accepted as
+aliases so a LaTeX habit does not become an error. -/
+private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry)
+    (pos : Pos) : EM FontSpec := do
+  let mut spec := spec
+  for e in entries do
+    match e.key, e.value with
+    | "body", .str f => spec := { spec with body := some f }
+    | "rm", .str f => spec := { spec with body := some f }
+    | "sans", .str f => spec := { spec with sans := some f }
+    | "sf", .str f => spec := { spec with sans := some f }
+    | "mono", .str f => spec := { spec with mono := some f }
+    | "tt", .str f => spec := { spec with mono := some f }
+    | key, v =>
+      if fontKeys.contains key then
+        modify fun st => { st with
+          diags := st.diags.push (Decl.wrongType ctx.file "fonts" key
+            "a quoted family name" v pos) }
+      else
+        modify fun st => { st with
+          diags := st.diags.push (Decl.unknownKey ctx.file "fonts" key fontKeys pos) }
+  return spec
+
 /-- `\pdfmeta{...}`: PDF document information. -/
 private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     (pos : Pos) : EM Meta := do
@@ -602,6 +627,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut docClass := "article"
   let mut classOptions := ""
   let mut page : PageSpec := {}
+  let mut fonts : FontSpec := {}
   let mut info : Meta := {}
   let mut asserts : Array Assertion := #[]
   let mut textDiagged := false
@@ -687,6 +713,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               modify fun st => { st with diags := st.diags ++ ds }
               if name == "page" then
                 page ← applyPage ctx page entries pos
+              else if name == "fonts" then
+                fonts ← applyFonts ctx fonts entries pos
               else
                 info ← applyMeta ctx info entries pos
           | _ =>
@@ -712,6 +740,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     docClass := docClass
     classOptions := classOptions
     page := page
+    fonts := fonts
     info := info
     asserts := asserts
     body := blocks

@@ -1,5 +1,7 @@
 class article [paper=letter, fontsize=10pt]
 page 612x792 vmargin 36 hmargin 54
+font body "Source Serif 4"
+font sans "Source Sans 3"
 meta title "Alex Doe — Resume"
 meta author "Alex Doe"
 assert pages == 1
@@ -28,7 +30,6 @@ list unordered
 section* 1
   text "Education"
 -- diagnostics
-error[E0307] 10:1 '\fonts' is not implemented yet | help: planned for M3; see PLAN.md
 error[E0307] 16:1 '\tokens' is not implemented yet | help: planned for M3; see PLAN.md
 error[E0307] 22:1 '\palette' is not implemented yet | help: planned for M3; see PLAN.md
 error[E0307] 28:1 'header' in \page is not implemented yet | help: planned for M3; see PLAN.md

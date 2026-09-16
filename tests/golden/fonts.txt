@@ -1,0 +1,46 @@
+class article
+page 612x792 vmargin 72 hmargin 72
+font body "DejaVu Serif"
+font sans "DejaVu Sans"
+font mono "DejaVu Sans Mono"
+meta title "Faces"
+assert pages == 1
+assert fonts.all_embedded
+section 1
+  text "Faces"
+para
+  text "Body text is set in the serif family. "
+  styled bold
+    text "This clause is bold"
+  text " and "
+  styled italic
+    text "this clause is italic"
+  text ", while "
+  styled bold
+    styled italic
+      text "this one is both"
+  text ". Inline "
+  styled mono
+    text "monospaced code"
+  text " switches family, and "
+  styled sans
+    text "a sans run"
+  text " does too."
+list unordered
+  item
+    para
+      styled bold
+        text "Bold label"
+      text " followed by ordinary text."
+  item
+    para
+      styled emph
+        text "Emphasis"
+      text " toggles italic, so "
+      styled emph
+        text "nested "
+        styled emph
+          text "emphasis"
+      text " returns upright."
+-- diagnostics
+(none)

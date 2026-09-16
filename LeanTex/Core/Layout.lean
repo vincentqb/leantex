@@ -32,9 +32,10 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
 def leadingFor (size : Sp) : Sp := size * 6 / 5
 
 inductive Item where
-  | box (w : Sp) (glyphs : Array (Nat × Char × Sp))
+  | box (w : Sp) (fontIdx : Nat) (glyphs : Array (Nat × Char × Sp))
   | glue (g : Glue)
-  | pen (w : Sp) (cost : Int) (flagged : Bool) (glyphs : Array (Nat × Char × Sp))
+  | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat)
+      (glyphs : Array (Nat × Char × Sp))
   deriving Repr, Inhabited
 
 def forcedCost : Int := -10000
@@ -42,7 +43,7 @@ def forcedCost : Int := -10000
 def hyphenPenalty : Int := 50
 
 inductive Seg where
-  | run (glyphs : Array (Nat × Char))
+  | run (fontIdx : Nat) (glyphs : Array (Nat × Char))
   | gap (w : Sp)
   deriving Repr, Inhabited
 
@@ -64,59 +65,73 @@ structure Out where
 
 -- Flattening: inlines → word/space/break tokens ------------------------------
 
+/-- A resolved text style: which family slot, and the bold/italic bits. -/
+structure TextStyle where
+  slot : Nat := 0
+  bold : Bool := false
+  italic : Bool := false
+  deriving Repr, BEq, Inhabited
+
 private inductive Tk where
-  | word (chars : Array Char)
-  | space
+  | word (style : TextStyle) (chars : Array Char)
+  | space (style : TextStyle)
   | brk
   deriving Repr
 
 private structure FlattenSt where
   toks : Array Tk := #[]
-  warnedStyle : Bool := false
   warnedMath : Bool := false
   diags : Array Diag := #[]
 
 private def warn (st : FlattenSt) (code msg : String) : FlattenSt :=
   { st with diags := st.diags.push { severity := .warning, code := code, message := msg } }
 
-private def pushText (st : FlattenSt) (s : String) : FlattenSt := Id.run do
+private def pushText (st : FlattenSt) (sty : TextStyle) (s : String) : FlattenSt := Id.run do
   let mut st := st
   let mut cur : Array Char := #[]
   for c in s.toList do
     if c == ' ' then
       if !cur.isEmpty then
-        st := { st with toks := st.toks.push (.word cur) }
+        st := { st with toks := st.toks.push (.word sty cur) }
         cur := #[]
-      st := { st with toks := st.toks.push .space }
+      st := { st with toks := st.toks.push (.space sty) }
     else
       cur := cur.push c
   if !cur.isEmpty then
-    st := { st with toks := st.toks.push (.word cur) }
+    st := { st with toks := st.toks.push (.word sty cur) }
   return st
+
+/-- Apply one markup style to the active text style. Size-only styles do not
+change the face; `\normalfont` resets to the body face. -/
+private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
+  | .bold => { sty with bold := true }
+  | .italic => { sty with italic := true }
+  | .emph => { sty with italic := !sty.italic }
+  | .mono => { sty with slot := 2 }
+  | .sans => { sty with slot := 1 }
+  | .smallcaps => sty
+  | .normal => {}
+  | .size _ => sty
 
 mutual
 
-private def flatten (st : FlattenSt) (xs : Array Inline) : FlattenSt :=
-  flattenList st xs.toList
+private def flatten (st : FlattenSt) (sty : TextStyle) (xs : Array Inline) : FlattenSt :=
+  flattenList st sty xs.toList
 
-private def flattenList (st : FlattenSt) (xs : List Inline) : FlattenSt :=
+private def flattenList (st : FlattenSt) (sty : TextStyle) (xs : List Inline) : FlattenSt :=
   match xs with
   | [] => st
-  | x :: rest => flattenList (flattenOne st x) rest
+  | x :: rest => flattenList (flattenOne st sty x) sty rest
 
-private def flattenOne (st : FlattenSt) (x : Inline) : FlattenSt :=
+private def flattenOne (st : FlattenSt) (sty : TextStyle) (x : Inline) : FlattenSt :=
   match x with
-  | .text s => pushText st s
+  | .text s => pushText st sty s
   | .linebreak => { st with toks := st.toks.push .brk }
   | .math _ src =>
     let st := if st.warnedMath then st
       else { warn st "W0003" "math is typeset as plain text until M4" with warnedMath := true }
-    pushText st src
-  | .styled _ body =>
-    let st := if st.warnedStyle then st
-      else { warn st "W0002" "styles are not rendered yet (single font until M3)" with
-        warnedStyle := true }
-    flatten st body
+    pushText st sty src
+  | .styled s body => flatten st (applyStyle sty s) body
 
 end
 
@@ -142,8 +157,8 @@ def bulletGlyphs (size : Sp) (font : Font) : Array (Nat × Char × Sp) :=
 
 /-- One word → items: boxes split by hyphenation points (flagged penalties
 carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph). -/
-private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (font : Font)
-    (chars : Array Char) (missing : Array Char)
+private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat)
+    (font : Font) (chars : Array Char) (missing : Array Char)
     (cache : Std.HashMap String (List Nat)) :
     Array Item × Array Char × Std.HashMap String (List Nat) := Id.run do
   let mut missing := missing
@@ -153,7 +168,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (font : Font)
   let mut box : Array (Nat × Char × Sp) := #[]
   let mut boxW : Sp := 0
   let flush (items : Array Item) (box : Array (Nat × Char × Sp)) (w : Sp) : Array Item :=
-    if box.isEmpty then items else items.push (.box w box)
+    if box.isEmpty then items else items.push (.box w fontIdx box)
   let mut i := 0
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
@@ -186,7 +201,8 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (font : Font)
             items := flush items box boxW
             box := #[]
             boxW := 0
-            items := items.push (.pen hyphW hyphenPenalty true (hyphenGlyph size font))
+            items := items.push
+              (.pen hyphW hyphenPenalty true fontIdx (hyphenGlyph size font))
           match glyphOf size font c' with
           | some g =>
             box := box.push g
@@ -208,7 +224,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (font : Font)
           items := flush items box boxW
           box := #[]
           boxW := 0
-          items := items.push (.pen 0 hyphenPenalty false #[])
+          items := items.push (.pen 0 hyphenPenalty false fontIdx #[])
     else
       break
   items := flush items box boxW
@@ -218,26 +234,29 @@ private def interword (size : Sp) (font : Font) : Glue :=
   let w := scaledAt size font (font.advance ' ')
   { width := w, stretch := w / 2, shrink := w / 3 }
 
-private def itemsOfInlines (pats : Option Hyphen.Patterns) (size : Sp) (font : Font)
-    (xs : Array Inline) (cache : Std.HashMap String (List Nat)) :
+private def itemsOfInlines (pats : Option Hyphen.Patterns) (size : Sp) (fs : FontSet)
+    (baseStyle : TextStyle) (xs : Array Inline) (cache : Std.HashMap String (List Nat)) :
     Array Item × Array Diag × Std.HashMap String (List Nat) := Id.run do
-  let st := flatten {} xs
+  let st := flatten {} baseStyle xs
   let mut items : Array Item := #[]
   let mut missing : Array Char := #[]
   let mut cache := cache
   for tk in st.toks do
     match tk with
-    | .word chars =>
-      let (ws, m, c') := wordItems pats size font chars missing cache
+    | .word sty chars =>
+      let idx := fs.lookup sty.slot sty.bold sty.italic
+      let (ws, m, c') := wordItems pats size idx (fs.get idx) chars missing cache
       missing := m
       cache := c'
       items := items ++ ws
-    | .space => items := items.push (.glue (interword size font))
+    | .space sty =>
+      let idx := fs.lookup sty.slot sty.bold sty.italic
+      items := items.push (.glue (interword size (fs.get idx)))
     | .brk =>
       items := items.push (.glue { fil := true })
-      items := items.push (.pen 0 forcedCost false #[])
+      items := items.push (.pen 0 forcedCost false 0 #[])
   items := items.push (.glue { fil := true })
-  items := items.push (.pen 0 forcedCost false #[])
+  items := items.push (.pen 0 forcedCost false 0 #[])
   let mut diags := st.diags
   for c in missing do
     diags := diags.push {
@@ -264,9 +283,9 @@ def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   match items[j]? with
   | some (.glue _) =>
     match items[j-1]? with
-    | some (.box _ _) => j > 0
+    | some (.box _ _ _) => j > 0
     | _ => false
-  | some (.pen _ cost _ _) => cost < 10000
+  | some (.pen _ cost _ _ _) => cost < 10000
   | _ => false
 
 structure Measure where
@@ -280,7 +299,7 @@ def lineStart (items : Array Item) (start : Nat) : Nat := Id.run do
   for _ in [a:items.size] do
     match items[a]? with
     | some (.glue _) => a := a + 1
-    | some (.pen _ cost _ _) => if cost ≥ 10000 then break else a := a + 1
+    | some (.pen _ cost _ _ _) => if cost ≥ 10000 then break else a := a + 1
     | _ => break
   return a
 
@@ -288,14 +307,14 @@ def measure (items : Array Item) (a j : Nat) : Measure := Id.run do
   let mut m : Measure := {}
   for k in [a:j] do
     match items[k]! with
-    | .box w _ => m := { m with natural := m.natural + w }
+    | .box w _ _ => m := { m with natural := m.natural + w }
     | .glue g => m := { m with
         natural := m.natural + g.width
         stretch := m.stretch + g.stretch
         shrink := m.shrink + g.shrink
         fil := m.fil || g.fil }
-    | .pen _ _ _ _ => pure ()
-  if let some (.pen w _ _ _) := items[j]? then
+    | .pen _ _ _ _ _ => pure ()
+  if let some (.pen w _ _ _ _) := items[j]? then
     m := { m with natural := m.natural + w }
   return m
 
@@ -315,7 +334,7 @@ def lineDemerits (items : Array Item) (m : Measure) (target : Sp) (j : Nat) : In
     else (10 + b) ^ 2
   let penTerm : Int :=
     match items[j]? with
-    | some (.pen _ cost _ _) =>
+    | some (.pen _ cost _ _ _) =>
       if cost ≤ forcedCost then 0
       else if cost > 0 then cost ^ 2
       else -(cost ^ 2)
@@ -324,12 +343,12 @@ def lineDemerits (items : Array Item) (m : Measure) (target : Sp) (j : Nat) : In
 
 def isForced (items : Array Item) (k : Nat) : Bool :=
   match items[k]? with
-  | some (.pen _ cost _ _) => cost ≤ forcedCost
+  | some (.pen _ cost _ _ _) => cost ≤ forcedCost
   | _ => false
 
 def isFlagged (items : Array Item) (k : Nat) : Bool :=
   match items[k]? with
-  | some (.pen _ _ flagged _) => flagged
+  | some (.pen _ _ flagged _ _) => flagged
   | _ => false
 
 def doubleHyphenDemerits : Int := 10000
@@ -353,9 +372,9 @@ def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
   pforced := pforced.push 0
   for k in [0:n] do
     let (dw, dst, dsh, dfil) : Sp × Sp × Sp × Nat := match items[k]! with
-      | .box w _ => (w, 0, 0, 0)
+      | .box w _ _ => (w, 0, 0, 0)
       | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0)
-      | .pen _ _ _ _ => (0, 0, 0, 0)
+      | .pen _ _ _ _ _ => (0, 0, 0, 0)
     pw := pw.push (pw[k]! + dw)
     ps := ps.push (ps[k]! + dst)
     pk := pk.push (pk[k]! + dsh)
@@ -363,7 +382,7 @@ def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
     pforced := pforced.push (pforced[k]! + (if isForced items k then 1 else 0))
   let measureAt (a j : Nat) : Measure :=
     let penW : Sp := match items[j]? with
-      | some (.pen w _ _ _) => w
+      | some (.pen w _ _ _ _) => w
       | _ => 0
     { natural := pw[j]! - pw[a]! + penW
       stretch := ps[j]! - ps[a]!
@@ -455,13 +474,13 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let mut width : Sp := 0
   for k in [a:j] do
     match items[k]! with
-    | .box _ glyphs =>
+    | .box _ fontIdx glyphs =>
       let mut run : Array (Nat × Char) := #[]
       let mut w : Sp := 0
       for (g, c, adv) in glyphs do
         run := run.push (g, c)
         w := w + adv
-      segs := segs.push (.run run)
+      segs := segs.push (.run fontIdx run)
       width := width + w
     | .glue g =>
       let setW : Sp :=
@@ -486,11 +505,11 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
         overfull := true
       segs := segs.push (.gap (max 0 setW))
       width := width + max 0 setW
-    | .pen _ _ _ _ => pure ()
+    | .pen _ _ _ _ _ => pure ()
   -- breaking at a penalty appends its glyphs (the hyphen)
-  if let some (.pen w _ _ glyphs) := items[j]? then
+  if let some (.pen w _ _ fontIdx glyphs) := items[j]? then
     if !glyphs.isEmpty then
-      segs := segs.push (.run (glyphs.map fun (g, c, _) => (g, c)))
+      segs := segs.push (.run fontIdx (glyphs.map fun (g, c, _) => (g, c)))
       width := width + w
   -- drop trailing gaps (paragraph-final fill)
   let mut segs' := segs
@@ -531,13 +550,14 @@ private def B.warnOverfull (b : B) : B :=
     message := "overfull line (no feasible break)"
   } }
 
-private def typesetPara (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+private def typesetPara (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
-    (bullet : Option (Array (Nat × Char × Sp)) := none) : B := Id.run do
+    (baseStyle : TextStyle := {})
+    (bullet : Option (Nat × Array (Nat × Char × Sp)) := none) : B := Id.run do
   let mut b := b
   let geom := b.geom
   let width := geom.textWidth - indent
-  let (items, ds, cache) := itemsOfInlines pats size font inlines b.hyphCache
+  let (items, ds, cache) := itemsOfInlines pats size fs baseStyle inlines b.hyphCache
   b := { b with diags := b.diags ++ ds, hyphCache := cache }
   let breaks := kp items width
   let mut prev := 0
@@ -552,10 +572,10 @@ private def typesetPara (b : B) (pats : Option Hyphen.Patterns) (font : Font)
     let mut segs := segs
     let mut w := w
     if first then
-      if let some bg := bullet then
+      if let some (bulletFont, bg) := bullet then
         let bw := bg.foldl (fun acc (_, _, adv) => acc + adv) 0
         let sep := geom.fontSize * 2 / 5
-        segs := #[Seg.run (bg.map fun (g, c, _) => (g, c)), Seg.gap sep] ++ segs
+        segs := #[Seg.run bulletFont (bg.map fun (g, c, _) => (g, c)), Seg.gap sep] ++ segs
         x := x - bw - sep
         w := w + bw + sep
     b := b.placeLine x size segs w
@@ -573,21 +593,21 @@ def sectionSize (geom : Geom) : Nat → Sp
 mutual
 
 /-- Typeset a block sequence, spacing peers by `parskip`. -/
-def typesetBlocks (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+def typesetBlocks (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (blocks : Array Block) (indent : Sp) : B :=
-  typesetBlockList b pats font blocks.toList indent true
+  typesetBlockList b pats fs blocks.toList indent true
 
-def typesetBlockList (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+def typesetBlockList (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (blocks : List Block) (indent : Sp) (first : Bool) : B :=
   match blocks with
   | [] => b
   | blk :: rest =>
     let b := if first then b else { b with y := b.y + b.geom.parskip }
-    let b := typesetBlock b pats font blk indent
-    typesetBlockList b pats font rest indent false
+    let b := typesetBlock b pats fs blk indent
+    typesetBlockList b pats fs rest indent false
 
 /-- One list item: its leading paragraph carries the marker. -/
-def typesetItem (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+def typesetItem (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (item : List Block) (indent : Sp) (first : Bool) : B :=
   match item with
   | [] => b
@@ -595,48 +615,51 @@ def typesetItem (b : B) (pats : Option Hyphen.Patterns) (font : Font)
     let b := if first then b else { b with y := b.y + b.geom.parskip }
     let b := match blk, first with
       | .para content, true =>
-        typesetPara b pats font content indent false b.geom.fontSize
-          (bullet := some (bulletGlyphs b.geom.fontSize font))
-      | _, _ => typesetBlock b pats font blk indent
-    typesetItem b pats font rest indent false
+        typesetPara b pats fs content indent false b.geom.fontSize
+          (bullet := some (0, bulletGlyphs b.geom.fontSize fs.body))
+      | _, _ => typesetBlock b pats fs blk indent
+    typesetItem b pats fs rest indent false
 
-def typesetItems (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+def typesetItems (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (items : List (Array Block)) (indent : Sp) : B :=
   match items with
   | [] => b
   | item :: rest =>
-    let b := typesetItem b pats font item.toList indent true
-    typesetItems b pats font rest indent
+    let b := typesetItem b pats fs item.toList indent true
+    typesetItems b pats fs rest indent
 
 /-- Centered content: paragraphs center, anything else nests unchanged. -/
-def typesetCentered (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+def typesetCentered (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (body : List Block) (indent : Sp) : B :=
   match body with
   | [] => b
   | blk :: rest =>
     let b := match blk with
-      | .para content => typesetPara b pats font content indent true b.geom.fontSize
-      | _ => typesetBlock b pats font blk indent
-    typesetCentered b pats font rest indent
+      | .para content => typesetPara b pats fs content indent true b.geom.fontSize
+      | _ => typesetBlock b pats fs blk indent
+    typesetCentered b pats fs rest indent
 
-def typesetBlock (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+def typesetBlock (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (blk : Block) (indent : Sp) : B :=
   match blk with
   | .para content =>
-    typesetPara b pats font content indent false b.geom.fontSize
+    typesetPara b pats fs content indent false b.geom.fontSize
   | .section level _ title =>
     let b := { b with y := b.y + b.geom.parskip }
-    typesetPara b pats font title indent false (sectionSize b.geom level)
+    -- Headings set in the bold face of the body family.
+    typesetPara b pats fs title indent false (sectionSize b.geom level)
+      (baseStyle := { bold := true })
   | .list _ items =>
-    typesetItems b pats font items.toList (indent + b.geom.listIndent)
+    typesetItems b pats fs items.toList (indent + b.geom.listIndent)
   | .center body =>
-    typesetCentered b pats font body.toList indent
+    typesetCentered b pats fs body.toList indent
 
 end
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. -/
-def run (geom : Geom) (font : Font) (pats : Option Hyphen.Patterns) (doc : Doc) : Out :=
+def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc) : Out :=
+  let font := fs.body
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
   let b : B := {
     geom := geom
@@ -644,7 +667,7 @@ def run (geom : Geom) (font : Font) (pats : Option Hyphen.Patterns) (doc : Doc) 
     descent := scale (-font.descent)
   }
   let b := { b with y := b.freshY }
-  let b := typesetBlocks b pats font doc.body 0
+  let b := typesetBlocks b pats fs doc.body 0
   let pages := b.pages.push b.cur
   { pages := pages, diags := b.diags }
 

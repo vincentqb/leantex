@@ -28,7 +28,8 @@ def elabStr (s : String) : Ir.Doc × Array Diag :=
 def errCodes (s : String) : List String :=
   ((elabStr s).2.filter (·.severity == .error)).toList.map (·.code)
 
-def goldenNames : List String := ["paragraphs", "layout", "declared", "resume", "talk"]
+def goldenNames : List String :=
+  ["paragraphs", "layout", "declared", "fonts", "resume", "talk"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -44,14 +45,14 @@ def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
   let mut items : Array Layout.Item := #[]
   for p in ps do
     match p with
-    | .W w => items := items.push (.box (Dim.pt w) #[])
+    | .W w => items := items.push (.box (Dim.pt w) 0 #[])
     | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
-    | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true #[])
+    | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true 0 #[])
     | .B =>
       items := items.push (.glue { fil := true })
-      items := items.push (.pen 0 Layout.forcedCost false #[])
+      items := items.push (.pen 0 Layout.forcedCost false 0 #[])
   items := items.push (.glue { fil := true })
-  items := items.push (.pen 0 Layout.forcedCost false #[])
+  items := items.push (.pen 0 Layout.forcedCost false 0 #[])
   return items
 
 def W (w : Int) : Piece := .W w
@@ -343,8 +344,8 @@ def main (args : List String) : IO UInt32 := do
 
   -- elab: diagnostics
   t "elab unknown command" (errCodes "\\frobnicate" == ["E0301"])
-  t "elab reserved M3" (errCodes "\\documentclass{article}\\fonts{a}\\begin{document}x\\end{document}" ==
-    ["E0307"])
+  t "elab reserved M3" (errCodes ("\\documentclass{article}\\tokens{a = 1pt}" ++
+    "\\begin{document}x\\end{document}") == ["E0307"])
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
   t "elab redefine builtin" (errCodes "\\define \\textbf() {x}\n\\begin{document}y\\end{document}" ==
     ["E0303"])
@@ -462,6 +463,36 @@ def main (args : List String) : IO UInt32 := do
     ((Check.all shipped #[mkAssert (.pages .eq 1), mkAssert (.pages .eq 2),
       mkAssert (.pages .lt 1)]).size == 2)
 
+  -- \fonts declarations and family resolution
+  let fontsSrc := "\\documentclass{article}\n" ++
+    "\\fonts{ body = \"DejaVu Serif\", sf = \"DejaVu Sans\" }\n" ++
+    "\\begin{document}x\\end{document}"
+  let (fDoc, fDs) := elabStr fontsSrc
+  t "fonts source clean" fDs.isEmpty
+  t "fonts body" (fDoc.fonts.body == some "DejaVu Serif")
+  t "fonts sf alias maps to sans" (fDoc.fonts.sans == some "DejaVu Sans")
+  t "fonts mono unset" (fDoc.fonts.mono == none)
+  t "fonts wrong type" (errCodes ("\\documentclass{article}\\fonts{ body = 12 }" ++
+    "\\begin{document}x\\end{document}") == ["E0323"])
+  t "fonts unknown key" (errCodes ("\\documentclass{article}\\fonts{ script = \"X\" }" ++
+    "\\begin{document}x\\end{document}") == ["E0322"])
+
+  let faces ← FontDb.scan
+  t "fontdb finds faces" (faces.size > 0)
+  t "fontdb finds dejavu" ((FontDb.families faces).any (· == "DejaVu Serif"))
+  -- The plain face must win over same-family condensed/extra variants.
+  match FontDb.resolve faces "DejaVu Serif" { bold := true } with
+  | some (face, exact) =>
+    t "fontdb bold is exact" exact
+    t "fontdb bold is not condensed"
+      ((face.path.splitOn "Condensed").length == 1)
+    t "fontdb bold flagged" face.bold
+  | none => failures ref "fontdb: DejaVu Serif Bold not found"
+  match FontDb.resolve faces "DejaVu Serif" { bold := true, italic := true } with
+  | some (face, exact) => t "fontdb bold italic" (exact && face.bold && face.italic)
+  | none => failures ref "fontdb: DejaVu Serif BoldItalic not found"
+  t "fontdb unknown family" (FontDb.resolve faces "No Such Family Here" {} |>.isNone)
+
   -- font parsing on the system font
   match ← findFont with
   | none =>
@@ -476,6 +507,18 @@ def main (args : List String) : IO UInt32 := do
       t "font advance A" (font.advance 'A' > 0)
       t "font greek" (font.gid 'α' |>.isSome)
       t "font missing emoji" (font.gid '🎉' |>.isNone)
+      t "font family" (font.family == "DejaVu Sans")
+      t "font not bold" (!font.isBold && !font.isItalic)
+
+      -- A one-face set: every slot and variant maps to index 0.
+      let oneFace : Font.FontSet := {
+        fonts := #[font]
+        index := ((List.range 3).flatMap fun slot =>
+          [((slot, false, false), 0), ((slot, true, false), 0),
+           ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
+      }
+      t "fontset lookup body" (oneFace.lookup 0 false false == 0)
+      t "fontset lookup falls back" (oneFace.lookup 2 true true == 0)
 
       -- layout: hyphenation is materialized only at a chosen break; headings
       -- and list markers carry visual structure into the positioned page.
@@ -488,10 +531,10 @@ def main (args : List String) : IO UInt32 := do
         vmargin := Dim.pt 10
         fontSize := Dim.pt 10
       }
-      let hyOut := Layout.run narrow font (some pats) hyDoc
+      let hyOut := Layout.run narrow oneFace (some pats) hyDoc
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run glyphs => glyphs.any (·.2 == '-')
+          | .run _ glyphs => glyphs.any (·.2 == '-')
           | .gap _ => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
@@ -500,12 +543,12 @@ def main (args : List String) : IO UInt32 := do
         "\\begin{itemize}\\item A list item.\\end{itemize}"
       let (visualDoc, visualDs) := Elab.run "t" visualSrc
       t "layout visual source clean" visualDs.isEmpty
-      let visualOut := Layout.run ({} : Layout.Geom) font (some pats) visualDoc
+      let visualOut := Layout.run ({} : Layout.Geom) oneFace (some pats) visualDoc
       let hasSectionSize := visualOut.pages.any fun p =>
         p.lines.any (·.size == Dim.pt 14)
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run glyphs => glyphs.any (·.2 == '–')
+          | .run _ glyphs => glyphs.any (·.2 == '–')
           | .gap _ => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
@@ -514,9 +557,9 @@ def main (args : List String) : IO UInt32 := do
       let (doc, eds) := Elab.run "t" "hello world, a small pdf self check"
       t "pdf source clean" eds.isEmpty
       let geom : Layout.Geom := {}
-      let out := Layout.run geom font none doc
+      let out := Layout.run geom oneFace none doc
       t "pdf one page" (out.pages.size == 1)
-      let pdf := Pdf.write geom font out.pages
+      let pdf := Pdf.write geom oneFace out.pages
       t "pdf header" (String.fromUTF8! (pdf.extract 0 8) == "%PDF-2.0")
       t "pdf eof" (String.fromUTF8! (pdf.extract (pdf.size - 6) pdf.size) == "%%EOF\n")
       match checkXref pdf with

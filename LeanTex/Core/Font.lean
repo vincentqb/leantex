@@ -13,6 +13,12 @@ structure Font where
   descent : Int
   lineGap : Int
   psName : String
+  family : String
+  subfamily : String
+  isBold : Bool
+  isItalic : Bool
+  isFixedPitch : Bool
+  weight : Nat
   cmap : Array (UInt32 × UInt32 × UInt32)  -- (startChar, endChar, startGid), sorted
   widths : Array Nat                        -- advance width per gid, font units
   numGlyphs : Nat
@@ -106,26 +112,42 @@ private def parseCmap (b : ByteArray) (t : Table) : Array (UInt32 × UInt32 × U
     | some off => return parseCmap4 b off
     | none => return #[]
 
-private def parseName (b : ByteArray) (t : Table) : String := Id.run do
+/-- Read one `name` table record. Prefers the typographic name (id 16/17)
+over the legacy family/subfamily (id 1/2) when both are present. -/
+private def parseNameId (b : ByteArray) (t : Table) (wanted : Nat) : Option String := Id.run do
   let n := u16 b (t.offset + 2)
   let strBase := t.offset + u16 b (t.offset + 4)
+  let mut best : Option String := none
   for k in [0:n] do
     let entry := t.offset + 6 + 12 * k
-    let nameId := u16 b (entry + 6)
-    if nameId == 6 then
+    if u16 b (entry + 6) == wanted then
       let len := u16 b (entry + 8)
       let off := strBase + u16 b (entry + 10)
       let platform := u16 b entry
       if off + len ≤ b.size then
-        if platform == 1 then
-          return String.ofList ((b.extract off (off + len)).toList.map fun c => Char.ofNat c.toNat)
-        else
-          -- UTF-16BE: PostScript names are ASCII, take low bytes
-          let mut s := ""
-          for j in [0:len/2] do
-            s := s.push (Char.ofNat (u16 b (off + 2 * j) % 128))
-          return s
-  return "Embedded"
+        let s :=
+          if platform == 1 then
+            String.ofList ((b.extract off (off + len)).toList.map fun c => Char.ofNat c.toNat)
+          else Id.run do
+            -- UTF-16BE; font names here are effectively Latin-1
+            let mut acc := ""
+            for j in [0:len / 2] do
+              let cp := u16 b (off + 2 * j)
+              if cp != 0 then
+                acc := acc.push (Char.ofNat cp)
+            return acc
+        if best.isNone then
+          best := some s
+  return best
+
+private def nameOf (b : ByteArray) (t : Option Table) (ids : List Nat)
+    (fallback : String) : String :=
+  match t with
+  | none => fallback
+  | some tbl =>
+    match ids.findSome? (parseNameId b tbl) with
+    | some s => if s.isEmpty then fallback else s
+    | none => fallback
 
 def parse (data : ByteArray) : Except String Font := do
   if data.size < 12 then
@@ -155,9 +177,37 @@ def parse (data : ByteArray) : Except String Font := do
     return w
   let cmap := parseCmap data cmapT
   let cmap := cmap.qsort fun a b => a.1 < b.1
-  let psName := match findTable data "name" with
-    | some t => parseName data t
-    | none => "Embedded"
+  let nameT := findTable data "name"
+  let psName := nameOf data nameT [6] "Embedded"
+  let family := nameOf data nameT [16, 1] psName
+  let subfamily := nameOf data nameT [17, 2] "Regular"
+  let lowerSub := subfamily.toLower
+  -- OS/2 fsSelection is authoritative when present; the subfamily string is
+  -- the fallback, and covers fonts that call oblique faces "Oblique".
+  let fsSelection := match findTable data "OS/2" with
+    | some t => if t.offset + 64 ≤ data.size then some (u16 data (t.offset + 62)) else none
+    | none => none
+  let macStyle := u16 data (head.offset + 44)
+  let isBold := match fsSelection with
+    | some fs => fs % 64 ≥ 32 || macStyle % 2 == 1
+    | none => (lowerSub.splitOn "bold").length > 1 || macStyle % 2 == 1
+  let isItalic := match fsSelection with
+    | some fs => fs % 2 == 1 || macStyle / 2 % 2 == 1
+    | none =>
+      (lowerSub.splitOn "italic").length > 1 || (lowerSub.splitOn "oblique").length > 1
+        || macStyle / 2 % 2 == 1
+  let isFixedPitch := match findTable data "post" with
+    | some t => if t.offset + 20 ≤ data.size then u32 data (t.offset + 16) != 0 else false
+    | none => false
+  -- OS/2 usWeightClass (100–900). Families ship weights, not a bold flag:
+  -- "Demi" at 600 is a family's bold face even when the BOLD bit is clear.
+  let weight := match findTable data "OS/2" with
+    | some t =>
+      if t.offset + 6 ≤ data.size then
+        let w := u16 data (t.offset + 4)
+        if w == 0 then (if isBold then 700 else 400) else w
+      else if isBold then 700 else 400
+    | none => if isBold then 700 else 400
   return {
     data := data
     isCff := isCff
@@ -166,6 +216,12 @@ def parse (data : ByteArray) : Except String Font := do
     descent := descent
     lineGap := lineGap
     psName := psName
+    family := family
+    subfamily := subfamily
+    isBold := isBold
+    isItalic := isItalic
+    isFixedPitch := isFixedPitch
+    weight := weight
     cmap := cmap
     widths := widths
     numGlyphs := numGlyphs
@@ -195,4 +251,28 @@ def Font.advance (f : Font) (c : Char) : Nat :=
   | some g => f.widths[g]?.getD 0
   | none => 0
 
+/-- The faces a document typesets with. Index 0 is always the body regular
+face; `Style` resolves to an index at layout time. -/
+structure FontSet where
+  fonts : Array Font
+  /-- (family slot, bold, italic) → index into `fonts`. -/
+  index : Array ((Nat × Bool × Bool) × Nat) := #[]
+  deriving Inhabited
+
+namespace FontSet
+
+def body (fs : FontSet) : Font := fs.fonts[0]!
+
+def get (fs : FontSet) (i : Nat) : Font := fs.fonts[i]?.getD fs.body
+
+/-- Slot 0 = body/serif, 1 = sans, 2 = mono. -/
+def lookup (fs : FontSet) (slot : Nat) (bold italic : Bool) : Nat :=
+  match fs.index.find? fun e => e.1 == (slot, bold, italic) with
+  | some (_, i) => i
+  | none =>
+    match fs.index.find? fun e => e.1 == (slot, false, false) with
+    | some (_, i) => i
+    | none => 0
+
+end FontSet
 end LeanTex.Core.Font

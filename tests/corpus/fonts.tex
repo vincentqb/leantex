@@ -1,0 +1,32 @@
+% Synthetic M3b fixture: font families and real bold/italic faces.
+% Invented content; DejaVu is chosen because it ships with the test host and
+% carries all four variants of each family.
+\documentclass{article}
+
+\fonts{
+  body = "DejaVu Serif",
+  sans = "DejaVu Sans",
+  mono = "DejaVu Sans Mono",
+}
+
+\pdfmeta{ title = "Faces" }
+
+\assert{ pages == 1 }
+\assert{ fonts.all_embedded }
+
+\begin{document}
+
+\section{Faces}
+
+Body text is set in the serif family. \textbf{This clause is bold} and
+\textit{this clause is italic}, while \textbf{\textit{this one is both}}.
+Inline \texttt{monospaced code} switches family, and {\sffamily a sans run}
+does too.
+
+\begin{itemize}
+  \item \textbf{Bold label} followed by ordinary text.
+  \item \emph{Emphasis} toggles italic, so \emph{nested \emph{emphasis}}
+  returns upright.
+\end{itemize}
+
+\end{document}

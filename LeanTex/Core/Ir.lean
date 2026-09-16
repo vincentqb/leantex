@@ -13,6 +13,13 @@ structure PageSpec where
   hmargin : Sp := inch 1
   deriving Repr, BEq, Inhabited
 
+/-- Font families a document asks for, as declared by `\fonts`. -/
+structure FontSpec where
+  body : Option String := none
+  sans : Option String := none
+  mono : Option String := none
+  deriving Repr, BEq, Inhabited
+
 /-- PDF document information, as declared by `\pdfmeta`. -/
 structure Meta where
   title : Option String := none
@@ -100,6 +107,7 @@ structure Doc where
   docClass : String := "article"
   classOptions : String := ""
   page : PageSpec := {}
+  fonts : FontSpec := {}
   info : Meta := {}
   asserts : Array Assertion := #[]
   body : Array Block := #[]
@@ -176,6 +184,14 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
     match v with
     | some s => s!"meta {label} {s.quote}\n"
     | none => ""
+  let fontLine (label : String) (v : Option String) : String :=
+    match v with
+    | some f => s!"font {label} {f.quote}
+"
+    | none => ""
+  let fontLines :=
+    fontLine "body" doc.fonts.body ++ fontLine "sans" doc.fonts.sans ++
+    fontLine "mono" doc.fonts.mono
   let infoLines :=
     metaLine "title" doc.info.title ++ metaLine "author" doc.info.author ++
     metaLine "subject" doc.info.subject ++ metaLine "keywords" doc.info.keywords
@@ -187,6 +203,6 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
       "-- diagnostics\n(none)\n"
     else
       "-- diagnostics\n" ++ String.join (diags.toList.map dumpDiag)
-  head ++ page ++ infoLines ++ asserts ++ body ++ ds
+  head ++ page ++ fontLines ++ infoLines ++ asserts ++ body ++ ds
 
 end LeanTex.Core.Ir
