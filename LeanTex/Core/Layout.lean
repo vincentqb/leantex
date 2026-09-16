@@ -1005,8 +1005,10 @@ end
 gaps, so it can ride as its own `LineOut` at the same baseline — the PDF
 writer's x-tracking stays linear and link rectangles see no extra runs. The
 rule sits at the font's own `post` metrics (with a conventional fallback when
-the font declares none) and is interrupted around any glyph that reaches
-below its top edge, a gap of twice the thickness on each side. Empty when the
+the font declares none) and is interrupted where a glyph's ink actually
+crosses the band the rule occupies — `Font.inkAt`, from the outline — with a
+gap of twice the thickness on each side, so `q` keeps its rule under the bowl
+and clears it only at the stem. Adjacent interruptions merge. Empty when the
 line has no underlined run, so the common case allocates nothing. -/
 private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     Array Seg := Id.run do
@@ -1025,25 +1027,27 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
       else
         let font := fs.get fontIdx
         let sz := if size == 0 then lineSize else size
+        let upem : Int := font.unitsPerEm
         let top := if font.underlinePosition == 0 then -(sz / 10)
-          else font.underlinePosition * sz / font.unitsPerEm
+          else font.underlinePosition * sz / upem
         let thick := if font.underlineThickness == 0 then sz / 20
-          else font.underlineThickness * sz / font.unitsPerEm
+          else font.underlineThickness * sz / upem
         let raise := top - thick
-        -- Skip intervals within [0, w], merged: descender glyphs plus the
-        -- clearance either side.
+        -- Skip intervals within [0, w], merged: each glyph's ink-in-band
+        -- intervals, scaled to the run's size, plus the clearance either side.
         let mut skips : Array (Sp × Sp) := #[]
         let mut x : Sp := 0
         for (g, _) in glyphs do
           let adv := scaledAt sz font (font.widths[g]?.getD 0)
-          if font.descends g then
-            let lo := max 0 (x - 2 * thick)
-            let hi := min w (x + adv + 2 * thick)
-            match skips.back? with
-            | some (plo, phi) =>
-              if lo ≤ phi then skips := skips.pop.push (plo, max phi hi)
-              else skips := skips.push (lo, hi)
-            | none => skips := skips.push (lo, hi)
+          for (ilo, ihi) in font.inkAt g do
+            let lo := max 0 (x + ilo * sz / upem - 2 * thick)
+            let hi := min w (x + ihi * sz / upem + 2 * thick)
+            if lo < hi then
+              match skips.back? with
+              | some (plo, phi) =>
+                if lo ≤ phi then skips := skips.pop.push (plo, max phi hi)
+                else skips := skips.push (lo, hi)
+              | none => skips := skips.push (lo, hi)
           x := x + adv
         let mut cur : Sp := 0
         for (lo, hi) in skips do

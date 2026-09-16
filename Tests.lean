@@ -600,9 +600,12 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"families is linear ({ms} ms for {many.size} faces)" (ms < 200)
 
 /-- Native underline: a decoration never breaks a glyph. Drawn from the
-font's own `post` metrics and interrupted around descenders in the PDF path;
-`text-decoration-skip-ink` is the browser's spelling of the same invariant.
-Own function, same elaboration-budget reason as the others. -/
+font's own `post` metrics and interrupted only where a glyph's outline ink
+actually crosses the rule's band — `q` keeps its rule under the bowl and
+clears it at the stem; `text-decoration-skip-ink` is the browser's spelling
+of the same invariant. Both outline formats are exercised: Open Sans is
+TrueType `glyf`, Source Serif Pro is CFF Type 2 charstrings. Own function,
+same elaboration-budget reason as the others. -/
 def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
   let t := check ref
@@ -611,41 +614,112 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     #[.para #[.underline #[.text "a"]]])
   t "uline is underline" ((elabStr "\\uline{b}").1.body ==
     #[.para #[.underline #[.text "b"]]])
-  -- The font's own glyph extents decide what descends.
+  -- The font's own glyph outlines decide what interrupts the rule.
   let gidOf (c : Char) : Nat := (font.gid c).getD 0
   t "descends g" (font.descends (gidOf 'g'))
   t "descends y" (font.descends (gidOf 'y'))
   t "descends not a" (!font.descends (gidOf 'a'))
   t "descends not x-height b" (!font.descends (gidOf 'b'))
   t "descends comma" (font.descends (gidOf ','))
-  -- Layout: rule segs under the underlined run, split around descenders.
-  let outOf (src : String) : Layout.Out :=
-    Layout.run geom oneFace none (Elab.run "t" src).1
-  let rulesOf (src : String) : Array (Dim.Sp × Dim.Sp) :=
-    ((outOf src).pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
+  t "descends parens" (font.descends (gidOf '(') && font.descends (gidOf ')'))
+  -- Ink is an interval, not the whole advance: q's stem crosses the band on
+  -- the right of its bowl, so its interval starts past the advance midpoint
+  -- and is far narrower than the glyph.
+  let qAdv : Int := font.widths[gidOf 'q']?.getD 0
+  let qInk := font.inkAt (gidOf 'q')
+  t "q ink is a narrow interval, not the advance"
+    (qInk.size == 1 && qInk.all fun (lo, hi) =>
+      lo > qAdv / 2 && hi - lo < qAdv / 3)
+  -- Double-storey g crosses the band twice: the ear side and the tail loop.
+  t "g ink is two intervals" ((font.inkAt (gidOf 'g')).size == 2)
+  -- Layout: rule segs under the underlined run, split around actual ink.
+  let outOf (fs : Font.FontSet) (src : String) : Layout.Out :=
+    Layout.run geom fs none (Elab.run "t" src).1
+  let rulesOf (fs : Font.FontSet) (src : String) : Array (Dim.Sp × Dim.Sp) :=
+    ((outOf fs src).pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
       match s with
       | .rule w th _ _ => some (w, th)
       | _ => none)
-  t "underline emits a rule" ((rulesOf "\\underline{ab}").size ≥ 1)
-  t "plain text emits no rule" ((rulesOf "ab").isEmpty)
-  -- A descender inside the word splits the rule into pieces around it, so a
-  -- one-word underline with an interior 'g' carries at least two.
-  t "underline splits around a descender" ((rulesOf "\\underline{aga}").size ≥ 2)
-  -- The skip is real: the pieces cover strictly less than the set width.
-  let agaRules := (rulesOf "\\underline{aga}").foldl (fun acc (w, _) => acc + w) (0 : Dim.Sp)
-  let agaWidth := (((outOf "\\underline{aga}").pages.flatMap (·.lines))[0]?.map
-    (·.setWidth)).getD 0
-  t "underline leaves a gap at the descender" (0 < agaRules && agaRules < agaWidth)
-  -- A run that is nothing but descenders is nothing but gap.
-  t "underline under gy alone is all gap" ((rulesOf "\\underline{gy}").isEmpty)
+  let widthOf (fs : Font.FontSet) (src : String) : Dim.Sp :=
+    (((outOf fs src).pages.flatMap (·.lines))[0]?.map (·.setWidth)).getD 0
+  let coverage (fs : Font.FontSet) (src : String) : Dim.Sp × Dim.Sp :=
+    ((rulesOf fs src).foldl (fun acc (w, _) => acc + w) (0 : Dim.Sp),
+     widthOf fs src)
+  t "underline emits a rule" ((rulesOf oneFace "\\underline{ab}").size ≥ 1)
+  t "plain text emits no rule" ((rulesOf oneFace "ab").isEmpty)
+  -- A descender inside the word splits the rule into pieces around its
+  -- stroke, so a one-word underline with an interior 'q' carries at least
+  -- two, and the pieces cover strictly less than the set width.
+  t "underline splits around a descender" ((rulesOf oneFace "\\underline{aqa}").size ≥ 2)
+  let (aqaRules, aqaWidth) := coverage oneFace "\\underline{aqa}"
+  t "underline leaves a gap at the descender" (0 < aqaRules && aqaRules < aqaWidth)
+  -- The load-bearing shape of the invariant: a lone underlined q keeps its
+  -- rule under the bowl — most of the advance — rather than losing all of
+  -- it, and the gap at the stem is real.
+  let (qRules, qWidth) := coverage oneFace "\\underline{q}"
+  t "underlined q keeps rule under its bowl" (qRules > qWidth * 2 / 5)
+  t "underlined q still clears its stem" (qRules < qWidth)
+  -- Adjacent descenders each interrupt only at their own stroke: gy keeps
+  -- rule under g's bowl and between the strokes, where the whole-advance
+  -- skip left nothing at all.
+  let (gyRules, gyWidth) := coverage oneFace "\\underline{gy}"
+  t "underline under gy keeps some rule" (0 < gyRules && gyRules < gyWidth)
+  -- Punctuation that reaches down interrupts too.
+  t "underline splits at a comma" ((rulesOf oneFace "\\underline{a,a}").size ≥ 2)
+  -- A longer word with spread descenders: interrupted more than once, most
+  -- of the rule intact.
+  let (genRules, genWidth) := coverage oneFace "\\underline{genuinely}"
+  t "genuinely keeps most of its rule"
+    ((rulesOf oneFace "\\underline{genuinely}").size ≥ 3 &&
+     genRules > genWidth / 2 && genRules < genWidth)
   -- The rules ride their own line at the text line's baseline, so the PDF
   -- writer's x-tracking stays linear and link rectangles see no extra runs.
-  let abLines := ((outOf "\\underline{ab}").pages.flatMap (·.lines))
+  let abLines := ((outOf oneFace "\\underline{ab}").pages.flatMap (·.lines))
   t "underline rules ride a second line at the same y"
     (abLines.size == 2 && abLines[0]!.y == abLines[1]!.y &&
      abLines[1]!.segs.all fun s => match s with
       | .run .. => false
       | _ => true)
+  -- The CFF path (Type 2 charstrings) answers the same questions from its
+  -- own outlines.
+  let serifPath := testFonts ++ "/SourceSerifPro-Regular.otf"
+  if ← System.FilePath.pathExists serifPath then
+    match Font.parse (← IO.FS.readBinFile serifPath) with
+    | .error e => failures ref s!"underline cff parse: {e}"
+    | .ok serif =>
+      let sgid (c : Char) : Nat := (serif.gid c).getD 0
+      let sqAdv : Int := serif.widths[sgid 'q']?.getD 0
+      let sqInk := serif.inkAt (sgid 'q')
+      t "cff q ink is a narrow interval, not the advance"
+        (sqInk.size == 1 && sqInk.all fun (lo, hi) =>
+          lo > sqAdv / 2 && hi - lo < sqAdv / 3)
+      t "cff g ink is two intervals" ((serif.inkAt (sgid 'g')).size == 2)
+      t "cff a has no ink in the band" ((serif.inkAt (sgid 'a')).isEmpty)
+      let serifSet : Font.FontSet := {
+        fonts := #[serif]
+        index := ((List.range 3).flatMap fun slot =>
+          [((slot, false, false), 0), ((slot, true, false), 0),
+           ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
+      }
+      let (cqRules, cqWidth) := coverage serifSet "\\underline{q}"
+      t "cff underlined q keeps rule under its bowl"
+        (cqRules > cqWidth * 2 / 5 && cqRules < cqWidth)
+  else
+    failures ref s!"underline: {serifPath} missing from the checkout"
+  -- Truncated font data: forcing the lazy ink of every descender-ish glyph
+  -- on every truncation that still parses must return a verdict, never
+  -- panic — and can only report less ink, never a strike through it.
+  match ← findFont with
+  | some fontData =>
+    let mut forced := 0
+    for k in [0:64] do
+      match Font.parse (fontData.extract 0 (fontData.size * k / 64)) with
+      | .error _ => pure ()
+      | .ok f =>
+        for c in "gqy,()".toList do
+          forced := forced + (f.inkAt ((f.gid c).getD 0)).size
+    t s!"ink is total over truncations (forced {forced} interval sets)" true
+  | none => pure ()
   -- HTML: <u> plus the skip-ink stylesheet; links get the same treatment.
   let (uPage, _) := HtmlDoc.emit {} (elabStr "\\underline{x}").1
   t "html underline is u" ((uPage.splitOn "<u>x</u>").length == 2)

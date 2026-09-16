@@ -1,6 +1,9 @@
 import LeanTex.Core.Diag
+import LeanTex.Core.Ink
 
 namespace LeanTex.Core.Font
+
+open LeanTex.Core.Ink
 
 /-- A parsed sfnt font: the metrics the layout engine needs, the char→glyph
 map, and the raw bytes for embedding. Pure data; loading the file is the
@@ -30,48 +33,13 @@ structure Font where
   the consumer supplies a fallback. -/
   underlinePosition : Int
   underlineThickness : Int
-  /-- Per-gid: does the glyph reach below the underline's top edge? A missing
-  or short `glyf`/`loca` means no glyph descends, never a panic. -/
-  descenders : Array Bool
+  /-- Per-gid, lazily: merged x-intervals (font units) of glyph ink inside
+  the band the underline rule occupies, from the glyph's own outline. Empty
+  means the rule runs unbroken under the glyph. Decoding happens on first
+  use, so a document with no underline never pays for it; malformed or
+  truncated outline data reads as empty, never a panic. -/
+  underlineInk : Array (Thunk (Array (Int × Int)))
   deriving Inhabited
-
-/-- A bounded byte read. Out of range is 0 rather than a panic: this parser is
-fed arbitrary files, and a reader that aborts the process on a short table is
-not a parser. `parse` separately rejects a font whose tables do not fit, so a
-truncated file gets a diagnostic instead of quietly reading zeros. -/
-private def u8 (b : ByteArray) (i : Nat) : Nat :=
-  if h : i < b.size then (b[i]).toNat else 0
-
-private def u16 (b : ByteArray) (i : Nat) : Nat := u8 b i * 256 + u8 b (i + 1)
-
-private def u32 (b : ByteArray) (i : Nat) : Nat :=
-  ((u8 b i * 256 + u8 b (i + 1)) * 256 + u8 b (i + 2)) * 256 + u8 b (i + 3)
-
-private def i16 (b : ByteArray) (i : Nat) : Int :=
-  let v := u16 b i
-  if v ≥ 0x8000 then (v : Int) - 0x10000 else v
-
-private structure Table where
-  offset : Nat
-  length : Nat
-
-private def findTable (b : ByteArray) (tag : String) : Option Table := Id.run do
-  if b.size < 12 then
-    return none
-  let n := u16 b 4
-  let tagBytes := tag.toUTF8
-  for k in [0:n] do
-    let entry := 12 + 16 * k
-    if entry + 16 > b.size then
-      return none
-    if b.extract entry (entry + 4) == tagBytes then
-      return some ⟨u32 b (entry + 8), u32 b (entry + 12)⟩
-  return none
-
-/-- Does a table's declared extent fit inside the file? A table that does not is
-a broken font, and saying so beats reading zeros off the end of it. -/
-private def fits (b : ByteArray) (t : Table) : Bool :=
-  t.offset + t.length ≤ b.size
 
 private def parseCmap4 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × UInt32) := Id.run do
   let segX2 := u16 b (off + 6)
@@ -230,14 +198,14 @@ def classify (data : ByteArray) : Except String Class := do
 
 /-- Characters whose glyphs hang below an underline in an ordinary text face:
 the descending letters, the punctuation that reaches down, and letters
-carrying a below-attached diacritic. The CFF stand-in: CFF charstrings have
-no cheap per-glyph bounding box, so the character answers for its glyph. -/
+carrying a below-attached diacritic. The conservative stand-in for a glyph
+whose outline could not be decoded: the character answers for its glyph, and
+the whole advance is cleared, as the old skip did. -/
 def descenderChars : String :=
   "gjpqy,;()[]{}@QçÇşŞţŢņŅģĢķĶļĻŗŖșȘțȚąĄęĘįĮųŲḑḐṣṢẉẈ"
 
-/-- Descender bits for a CFF face: mark the glyph of every descender
-character the cmap can reach. -/
-private def cffDescenders (cmap : Array (UInt32 × UInt32 × UInt32))
+/-- The glyphs `descenderChars` reaches through the cmap. -/
+private def heuristicDescenders (cmap : Array (UInt32 × UInt32 × UInt32))
     (numGlyphs : Nat) : Array Bool := Id.run do
   let mut out : Array Bool := Array.replicate numGlyphs false
   for c in descenderChars.toList do
@@ -247,33 +215,6 @@ private def cffDescenders (cmap : Array (UInt32 × UInt32 × UInt32))
         let gid := (g + (x - s)).toNat % 0x10000
         if gid < out.size then
           out := out.set! gid true
-  return out
-
-/-- Descender bits for a TrueType face, from each glyph header's own `yMin`
-(byte offset 4: after numberOfContours and xMin). A missing or short table
-means "no glyph descends" -- this is decoration, not correctness. -/
-private def trueTypeDescenders (data : ByteArray) (head : Table)
-    (numGlyphs : Nat) (threshold : Int) : Array Bool := Id.run do
-  let none' := Array.replicate numGlyphs false
-  let some loca := findTable data "loca" | return none'
-  let some glyf := findTable data "glyf" | return none'
-  unless fits data loca && fits data glyf do return none'
-  let longFormat := u16 data (head.offset + 50) == 1
-  let entrySize := if longFormat then 4 else 2
-  unless (numGlyphs + 1) * entrySize ≤ loca.length do return none'
-  let offAt (g : Nat) : Nat :=
-    if longFormat then u32 data (loca.offset + 4 * g)
-    else 2 * u16 data (loca.offset + 2 * g)
-  let mut out : Array Bool := Array.mkEmpty numGlyphs
-  for g in [0:numGlyphs] do
-    let o1 := offAt g
-    let o2 := offAt (g + 1)
-    -- An empty glyph (space) has no outline and no descender; a header that
-    -- overruns its table is read as one.
-    if o2 ≤ o1 || o1 + 10 > glyf.length then
-      out := out.push false
-    else
-      out := out.push (i16 data (glyf.offset + o1 + 4) < threshold)
   return out
 
 def parse (data : ByteArray) : Except String Font := do
@@ -336,11 +277,26 @@ def parse (data : ByteArray) : Except String Font := do
       if t.offset + 12 ≤ data.size then (i16 data (t.offset + 8), i16 data (t.offset + 10))
       else ((0 : Int), (0 : Int))
     | none => (0, 0)
-  -- A glyph descends when its box reaches below the rule's top edge; a font
-  -- that declares no position gets the conventional tenth of an em.
-  let threshold := if upos == 0 then -((upem : Int) / 10) else upos
-  let descenders := if isCff then cffDescenders cmap numGlyphs
-    else trueTypeDescenders data head numGlyphs threshold
+  -- A glyph interrupts the rule where its ink crosses the band the rule
+  -- occupies: [position - thickness, position], with the conventional tenth
+  -- of an em (and a twentieth thick) when the font declares nothing. A glyph
+  -- whose outline the decoder does not cover falls back to the character
+  -- heuristic and clears its whole advance — conservative, never wrong by
+  -- striking through ink.
+  let bandHi := if upos == 0 then -((upem : Int) / 10) else upos
+  let bandLo := bandHi - (if uthick ≤ 0 then (upem : Int) / 20 else uthick)
+  let src := Ink.Src.make data isCff numGlyphs
+  let fallback := heuristicDescenders cmap numGlyphs
+  let underlineInk : Array (Thunk (Array (Int × Int))) := Id.run do
+    let mut ink : Array (Thunk (Array (Int × Int))) := Array.mkEmpty numGlyphs
+    for g in [0:numGlyphs] do
+      ink := ink.push (Thunk.mk fun _ =>
+        match src.inkAt g bandLo bandHi with
+        | some iv => iv
+        | none =>
+          if fallback[g]?.getD false then #[(0, (widths[g]?.getD 0 : Int))]
+          else #[])
+    return ink
   return {
     data := data
     isCff := isCff
@@ -362,7 +318,7 @@ def parse (data : ByteArray) : Except String Font := do
     numGlyphs := numGlyphs
     underlinePosition := upos
     underlineThickness := uthick
-    descenders := descenders
+    underlineInk := underlineInk
   }
 
 /-- Glyph id for a scalar, or `none` (missing glyph). Binary search. -/
@@ -389,10 +345,17 @@ def Font.advance (f : Font) (c : Char) : Nat :=
   | some g => f.widths[g]?.getD 0
   | none => 0
 
-/-- Does this glyph reach below the underline's top edge? Decides where the
-rule is interrupted; a gid past the table does not descend. -/
+/-- The x-intervals (font units) where this glyph's ink crosses the underline
+band. Empty means the rule runs unbroken; a gid past the table has no ink.
+Forces the lazy decode; the answer is memoized in the font. -/
+def Font.inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
+  match f.underlineInk[g]? with
+  | some t => t.get
+  | none => #[]
+
+/-- Does this glyph interrupt the underline anywhere? -/
 def Font.descends (f : Font) (g : Nat) : Bool :=
-  f.descenders[g]?.getD false
+  !(f.inkAt g).isEmpty
 
 /-- The faces a document typesets with. Index 0 is always the body regular
 face; `Style` resolves to an index at layout time. -/
