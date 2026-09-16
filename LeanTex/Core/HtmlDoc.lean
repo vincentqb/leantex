@@ -65,6 +65,16 @@ def tokenVars (doc : Doc) : String :=
      | none => [])
   String.intercalate "\n" (palette ++ tokens ++ fonts)
 
+/-- Size rules generated from the IR's scale, so the two backends cannot drift
+apart on what `\Huge` means. `em` rather than `rem`: sizes nest. -/
+private def sizeRules : String :=
+  String.join (Ir.sizeScale.map fun (name, k) =>
+    s!".size-{name} \{ font-size: {k / 1000}.{padLeft (k % 1000) 3}em; }\n")
+where
+  padLeft (n w : Nat) : String :=
+    let s := toString n
+    "".pushn '0' (w - min w s.length) ++ s
+
 /-- The base stylesheet. Small on purpose: a generated document should not
 ship a framework to use four of its rules. Dark mode is a variant of the same
 token set, not an inversion hack. -/
@@ -129,6 +139,8 @@ def baseCss (doc : Doc) : String :=
   ".fill { flex: 1 1 auto; }\n" ++
   ".spaced { margin-top: var(--sep, 1.4rem); }\n" ++
   ".entry { display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: baseline; }\n" ++
+  ".sans { font-family: var(--font-sans); }\n" ++
+  sizeRules ++
   ".math { font-family: \"Latin Modern Math\", \"STIX Two Math\", math; }\n" ++
   "@media print {\n" ++
   "  body { background: #fff; color: #000; padding: 0; }\n" ++

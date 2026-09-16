@@ -33,7 +33,7 @@ def leadingFor (size : Sp) : Sp := size * 6 / 5
 
 inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-      (glyphs : Array (Nat × Char × Sp))
+      (glyphs : Array (Nat × Char × Sp)) (size : Sp)
   | glue (g : Glue)
   | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Sp))
@@ -47,7 +47,7 @@ inductive Seg where
   /-- A glyph run. `width` is carried so link rectangles and alignment can be
   computed without re-measuring against the font. -/
   | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-      (glyphs : Array (Nat × Char))
+      (glyphs : Array (Nat × Char)) (size : Sp)
   | gap (w : Sp)
   deriving Repr, Inhabited
 
@@ -77,6 +77,9 @@ structure TextStyle where
   color : Ir.Color := Ir.Color.black
   /-- Destination of the enclosing `\href`, if any. -/
   link : Option String := none
+  /-- Size relative to the surrounding text, per mille. Absolute rather than
+  compounding, as in LaTeX: `\large\Large` is Large, not the product. -/
+  scale : Nat := 1000
   deriving Repr, BEq, Inhabited
 
 private inductive Tk where
@@ -119,7 +122,9 @@ private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
   | .sans => { sty with slot := 1 }
   | .smallcaps => sty
   | .normal => {}
-  | .size _ => sty
+  | .size n => match Ir.sizeScale.lookup n with
+    | some k => { sty with scale := k }
+    | none => sty
 
 mutual
 
@@ -184,7 +189,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
   let mut box : Array (Nat × Char × Sp) := #[]
   let mut boxW : Sp := 0
   let flush (items : Array Item) (box : Array (Nat × Char × Sp)) (w : Sp) : Array Item :=
-    if box.isEmpty then items else items.push (.box w fontIdx color link box)
+    if box.isEmpty then items else items.push (.box w fontIdx color link box size)
   let mut i := 0
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
@@ -269,14 +274,15 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     match tk with
     | .word sty chars =>
       let idx := fs.lookup sty.slot sty.bold sty.italic
+      let sz := size * sty.scale / 1000
       let (ws, m, c') :=
-        wordItems pats size idx sty.color sty.link (fs.get idx) chars missing cache
+        wordItems pats sz idx sty.color sty.link (fs.get idx) chars missing cache
       missing := m
       cache := c'
       items := items ++ ws
     | .space sty =>
       let idx := fs.lookup sty.slot sty.bold sty.italic
-      items := items.push (.glue (interword size (fs.get idx)))
+      items := items.push (.glue (interword (size * sty.scale / 1000) (fs.get idx)))
     | .fill =>
       -- Stretchable but not a legal breakpoint on its own.
       items := items.push (.glue { fil := true })
@@ -314,7 +320,7 @@ def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   match items[j]? with
   | some (.glue _) =>
     match items[j-1]? with
-    | some (.box _ _ _ _ _) => j > 0
+    | some (.box _ _ _ _ _ _) => j > 0
     | _ => false
   | some (.pen _ cost _ _ _ _) => cost < 10000
   | _ => false
@@ -338,7 +344,7 @@ def measure (items : Array Item) (a j : Nat) : Measure := Id.run do
   let mut m : Measure := {}
   for k in [a:j] do
     match items[k]! with
-    | .box w _ _ _ _ => m := { m with natural := m.natural + w }
+    | .box w _ _ _ _ _ => m := { m with natural := m.natural + w }
     | .glue g => m := { m with
         natural := m.natural + g.width
         stretch := m.stretch + g.stretch
@@ -403,7 +409,7 @@ def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
   pforced := pforced.push 0
   for k in [0:n] do
     let (dw, dst, dsh, dfil) : Sp × Sp × Sp × Nat := match items[k]! with
-      | .box w _ _ _ _ => (w, 0, 0, 0)
+      | .box w _ _ _ _ _ => (w, 0, 0, 0)
       | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0)
       | .pen _ _ _ _ _ _ => (0, 0, 0, 0)
     pw := pw.push (pw[k]! + dw)
@@ -505,13 +511,13 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let mut width : Sp := 0
   for k in [a:j] do
     match items[k]! with
-    | .box _ fontIdx color link glyphs =>
+    | .box _ fontIdx color link glyphs size =>
       let mut run : Array (Nat × Char) := #[]
       let mut w : Sp := 0
       for (g, c, adv) in glyphs do
         run := run.push (g, c)
         w := w + adv
-      segs := segs.push (.run fontIdx color link w run)
+      segs := segs.push (.run fontIdx color link w run size)
       width := width + w
     | .glue g =>
       let setW : Sp :=
@@ -540,7 +546,13 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   -- breaking at a penalty appends its glyphs (the hyphen)
   if let some (.pen w _ _ fontIdx color glyphs) := items[j]? then
     if !glyphs.isEmpty then
-      segs := segs.push (.run fontIdx color none w (glyphs.map fun (g, c, _) => (g, c)))
+      -- A hyphenation point sits inside a word, so the hyphen is set at the
+      -- size of the run it interrupts.
+      let inherited := segs.foldl (fun acc s => match s with
+        | .run _ _ _ _ _ sz => if sz != 0 then sz else acc
+        | _ => acc) 0
+      segs := segs.push
+        (.run fontIdx color none w (glyphs.map fun (g, c, _) => (g, c)) inherited)
       width := width + w
   -- drop trailing gaps (paragraph-final fill)
   let mut segs' := segs
@@ -571,10 +583,20 @@ private def B.freshY (b : B) : Sp := b.geom.vmargin + b.ascent
 private def B.breakPage (b : B) : B :=
   { b with pages := b.pages.push b.cur, cur := {}, y := b.freshY }
 
+/-- Place one line. Vertical space follows the tallest run on it, not the
+paragraph's nominal size: a line carrying `\Huge` needs the extra height both
+above its baseline and below it, or it collides with its neighbours. -/
 private def B.placeLine (b : B) (x : Sp) (size : Sp) (segs : Array Seg) (w : Sp) : B :=
-  let b := if b.y + b.descent > b.geom.pageH - b.geom.vmargin then b.breakPage else b
+  let nominal := if size == 0 then b.geom.fontSize else size
+  let tallest := segs.foldl (fun acc s => match s with
+    | .run _ _ _ _ _ sz => max acc sz
+    | _ => acc) nominal
+  let b := if tallest > nominal then
+      { b with y := b.y + b.ascent * (tallest - nominal) / nominal } else b
+  let descent := b.descent * tallest / nominal
+  let b := if b.y + descent > b.geom.pageH - b.geom.vmargin then b.breakPage else b
   let line : LineOut := { x := x, y := b.y, size := size, segs := segs, setWidth := w }
-  { b with cur := { lines := b.cur.lines.push line }, y := b.y + leadingFor size }
+  { b with cur := { lines := b.cur.lines.push line }, y := b.y + leadingFor tallest }
 
 private def B.warnOverfull (b : B) : B :=
   { b with diags := b.diags.push {
@@ -610,7 +632,7 @@ private def typesetPara (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
         let bw := bg.foldl (fun acc (_, _, adv) => acc + adv) 0
         let sep := geom.fontSize * 2 / 5
         segs := #[Seg.run bulletFont Ir.Color.black none bw
-          (bg.map fun (g, c, _) => (g, c)), Seg.gap sep] ++ segs
+          (bg.map fun (g, c, _) => (g, c)) size, Seg.gap sep] ++ segs
         x := x - bw - sep
         w := w + bw + sep
     b := b.placeLine x size segs w

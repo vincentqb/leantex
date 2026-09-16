@@ -116,6 +116,13 @@ inductive Style where
   | size (name : String)
   deriving Repr, BEq
 
+/-- The LaTeX 10pt size scale, per mille of the surrounding size. It lives in
+the IR because both backends read it: they must agree on what `\Huge` means. -/
+def sizeScale : List (String × Nat) :=
+  [("tiny", 500), ("scriptsize", 700), ("footnotesize", 800), ("small", 900),
+   ("normalsize", 1000), ("large", 1200), ("Large", 1440), ("LARGE", 1728),
+   ("huge", 2074), ("Huge", 2488)]
+
 def Style.label : Style → String
   | .bold => "bold"
   | .italic => "italic"

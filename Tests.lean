@@ -46,7 +46,7 @@ def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
   let mut items : Array Layout.Item := #[]
   for p in ps do
     match p with
-    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[])
+    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10))
     | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
     | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true 0 Ir.Color.black #[])
     | .B =>
@@ -112,6 +112,21 @@ def findFont : IO (Option ByteArray) := do
     if ← System.FilePath.pathExists p then
       return some (← IO.FS.readBinFile p)
   return none
+
+/-- Does a produced file contain this ASCII run? PDF content streams are the
+only witness that a face or a size reached the output, and the file as a whole
+is not valid UTF-8, so the search is over bytes. -/
+def bytesContain (hay : ByteArray) (needle : String) : Bool := Id.run do
+  let n := needle.toUTF8
+  if n.size == 0 || hay.size < n.size then return false
+  for i in [0:hay.size - n.size + 1] do
+    let mut ok := true
+    for j in [0:n.size] do
+      if hay[i + j]! != n[j]! then
+        ok := false
+        break
+    if ok then return true
+  return false
 
 /-- Re-verify a produced PDF's cross-reference stream: every type-1 entry
 must point at `N 0 obj`. Returns the number of verified offsets. -/
@@ -726,7 +741,7 @@ def main (args : List String) : IO UInt32 := do
       let hyOut := Layout.run narrow oneFace (some pats) hyDoc
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ _ _ glyphs => glyphs.any (·.2 == '-')
+          | .run _ _ _ _ glyphs _ => glyphs.any (·.2 == '-')
           | .gap _ => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
@@ -740,7 +755,7 @@ def main (args : List String) : IO UInt32 := do
         p.lines.any (·.size == Dim.pt 14)
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ _ _ glyphs => glyphs.any (·.2 == '–')
+          | .run _ _ _ _ glyphs _ => glyphs.any (·.2 == '–')
           | .gap _ => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
@@ -757,6 +772,28 @@ def main (args : List String) : IO UInt32 := do
       match checkXref pdf with
       | .ok n => t s!"pdf xref valid" (n > 0)
       | .error e => failures ref s!"pdf xref: {e}"
+
+      -- Faces and sizes have to survive into the content stream, and only the
+      -- bytes can say so: a regression once embedded one face where six
+      -- belonged while every other test still passed.
+      let twoFace : Font.FontSet := {
+        fonts := #[font, font]
+        index := ((List.range 3).flatMap fun slot =>
+          let idx := if slot == 1 then 1 else 0
+          [((slot, false, false), idx), ((slot, true, false), idx),
+           ((slot, false, true), idx), ((slot, true, true), idx)]).toArray
+      }
+      let (bigDoc, bigDs) := Elab.run "t"
+        "plain {\\sffamily other face} and {\\Huge big} and {\\small little}"
+      t "size scale source clean" bigDs.isEmpty
+      let bigPdf := Pdf.write geom twoFace (Layout.run geom twoFace none bigDoc).pages
+      t "pdf references a second face" (bytesContain bigPdf "/F2 ")
+      t "pdf sets Huge at 2.488x" (bytesContain bigPdf "24.88 Tf")
+      t "pdf sets small at 0.9x" (bytesContain bigPdf "9 Tf")
+      t "pdf keeps the body size" (bytesContain bigPdf "10 Tf")
+      -- One face only: nothing unused is embedded, so no /F2 exists.
+      let plainPdf := Pdf.write geom oneFace (Layout.run geom oneFace none bigDoc).pages
+      t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then

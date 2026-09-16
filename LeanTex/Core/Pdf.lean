@@ -50,7 +50,7 @@ private def usedGlyphs (fontIdx numGlyphs : Nat) (pages : Array PageOut) :
   for p in pages do
     for l in p.lines do
       for s in l.segs do
-        if let .run idx _ _ _ glyphs := s then
+        if let .run idx _ _ _ glyphs _ := s then
           if idx == fontIdx then
             for (g, c) in glyphs do
               if h : g < seen.size then
@@ -79,17 +79,18 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
     let mut inArray := false
     for seg in l.segs do
       match seg with
-      | .run idx color _ _ glyphs =>
+      | .run idx color _ _ glyphs segSize =>
+        let size := if segSize == 0 then l.size else segSize
         -- Neither Tf nor rg may appear inside a TJ array, so a change in
         -- either closes the array and reopens it after.
-        if curFont != idx || curSize != l.size || curColor != color then
+        if curFont != idx || curSize != size || curColor != color then
           if inArray then
             s := s ++ "] TJ\n"
             inArray := false
-          if curFont != idx || curSize != l.size then
-            s := s ++ s!"/F{(remap[idx]?.getD 0) + 1} {l.size.toPtString} Tf\n"
+          if curFont != idx || curSize != size then
+            s := s ++ s!"/F{(remap[idx]?.getD 0) + 1} {size.toPtString} Tf\n"
             curFont := idx
-            curSize := l.size
+            curSize := size
           if curColor != color then
             s := s ++ s!"{color.pdfComponents} rg\n"
             curColor := color
@@ -107,7 +108,10 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
         unless inArray do
           s := s.push '['
           inArray := true
-        let v : Int := -(w * 1000 / l.size)
+        -- A TJ displacement is thousandths of the *live* font size, which is
+        -- whatever the last Tf set, not the line's nominal size.
+        let unit := if curSize == 0 then l.size else curSize
+        let v : Int := -(w * 1000 / unit)
         s := s ++ s!"{v}"
     if inArray then
       s := s ++ "] TJ\n"
@@ -125,11 +129,12 @@ private def linkRects (geom : Geom) (page : PageOut) :
     -- Merge tolerance of one em: a run separated only by an interword space
     -- joins the previous rectangle, so a multi-word link is one annotation.
     let pad := l.size
-    let y0 := geom.pageH - l.y - l.size / 4
-    let y1 := geom.pageH - l.y + l.size * 4 / 5
     for seg in l.segs do
       match seg with
-      | .run _ _ link w _ =>
+      | .run _ _ link w _ segSize =>
+        let size := if segSize == 0 then l.size else segSize
+        let y0 := geom.pageH - l.y - size / 4
+        let y1 := geom.pageH - l.y + size * 4 / 5
         if let some url := link then
           match out.back? with
           | some (bx0, by0, bx1, by1, burl) =>
