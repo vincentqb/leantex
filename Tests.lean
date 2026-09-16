@@ -2333,6 +2333,14 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
           | .gap _ | .rule .. => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
+      -- Scale must survive the dedup: W0005 is spanless, so the count is
+      -- the only signal of how much of the document overflowed.
+      let (ofDoc, _) := Elab.run "t"
+        "aaaaaaaaaaaaaaaaaaaaaaaaaa\n\nbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      let ofOut := Layout.run narrow oneFace none ofDoc
+      t "overfull warning carries the count"
+        ((ofOut.diags.filter (·.code == "W0005")).size == 1 &&
+         ofOut.diags.any (·.message == "2 overfull lines (no feasible break)"))
 
       let visualSrc := "\\section{Heading}\nBody text.\n\n" ++
         "\\begin{itemize}\\item A list item.\\end{itemize}"

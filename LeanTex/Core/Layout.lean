@@ -1280,13 +1280,20 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     out := out.set! i { lines := lines }
   -- One report per problem: the same missing glyph or overfull shape in
   -- thirty code blocks is one thing to fix, not thirty lines of console.
+  -- W0005 is spanless and always the same words, so its collapse keeps the
+  -- count: the number is the only signal of scale the warning has.
   let mut seen : Std.HashSet (String × String) := {}
   let mut unique : Array Diag := #[]
+  let overfull := diags.foldl (fun n d => if d.code == "W0005" then n + 1 else n) 0
   for d in diags do
     let key := (d.code, d.message)
     unless seen.contains key do
       seen := seen.insert key
-      unique := unique.push d
+      if d.code == "W0005" && overfull > 1 then
+        unique := unique.push
+          { d with message := s!"{overfull} overfull lines (no feasible break)" }
+      else
+        unique := unique.push d
   { pages := out, diags := unique }
 
 end LeanTex.Core.Layout
