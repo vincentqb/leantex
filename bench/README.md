@@ -3,7 +3,7 @@
 Run from the repository root after `lake build`:
 
 ```bash
-./scripts/bench.sh
+lake env lean --run scripts/bench.lean
 ```
 
 The harness regenerates `lorem.tex`, then reports median wall time over five

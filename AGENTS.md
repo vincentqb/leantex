@@ -34,7 +34,7 @@ in this repo; refer to the private reference corpus abstractly.
   `scripts/fontcache-check.lean` when touching the font scan or its cache
   (it replaces a font under the same name and checks the answer follows
   the file).
-- Performance claims come only from `scripts/bench.sh` (vs lualatex on the
+- Performance claims come only from `scripts/bench.lean` (vs lualatex on the
   corpus), never from reasoning about the code.
 
 ## Conventions
@@ -58,7 +58,7 @@ in this repo; refer to the private reference corpus abstractly.
   concatenation in loops. A structural walk over a `List` (the totality
   pattern below) accumulates into an `Array` it threads through: building
   the result as `#[x] ++ rest` copies `rest` at every element and turns a
-  4 ms pass into 600 ms on a 30-page document. `scripts/bench.sh` is the
+  4 ms pass into 600 ms on a 30-page document. `scripts/bench.lean` is the
   check; run it when touching any pass over the whole document.
 - Theorems only where they pay (parser totality, elaboration termination and
   determinism, line-break optimality, dimension arithmetic, PDF xref, UTF-8).

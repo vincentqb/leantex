@@ -22,7 +22,7 @@ as CSS custom properties, `--css bulma` interop, one self-contained file.
 A document written for lualatex compiles as written: LaTeX idioms translate
 to the native declarations, unknown constructs degrade to their content with
 a warning, and `-v` lists every translation with its shorter spelling.
-Measured by `scripts/bench.sh`: 1 KB in ~16 ms against lualatex's ~476 ms; a
+Measured by `scripts/bench.lean`: 1 KB in ~16 ms against lualatex's ~476 ms; a
 generated 129 KB / 30 pages in ~149 ms against ~983 ms, with paragraphs
 broken in parallel.
 
