@@ -45,6 +45,14 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-16 — correction to the M3a entry below: the pending-key mechanism
+is gone. `pagePending` reported a declared-but-unimplemented `\page` key as
+pending with its milestone rather than as a type error; its last entry
+(`header`) left the list when running content landed, its only consumer
+went with it, and the empty list is now deleted. An unknown `\page` key
+today is E-diagnosed like any other; a future declared-ahead key gets a
+design decision then, not a dormant list now.
+
 2026-09-16 — two section headings rendered in poppler and Ghostscript and
 not in macOS Preview. The PDF built on the Mac was byte-identical to the one
 built here (the engine is deterministic across hosts, which made the
