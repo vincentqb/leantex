@@ -303,20 +303,19 @@ private def warnSkippedDecl (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
   diag ctx "W0312" s!"no \{...} group after '\\{name}'; it is skipped" (some pos)
     (help := s!"write \\{name}\{...}") .warning
 
-/-- The index of the first item on a line after `anchor`'s. A skipped
-preamble command's malformed arguments end with its line: the next line is
-the author's next declaration, which must never be consumed with them. -/
-private def skipPastLine (raws : Array Raw) (i : Nat) (anchor : Pos) : Nat := Id.run do
+/-- The index of the next construct after a skipped preamble command's
+malformed arguments. The junk ends with the command's line, and a control
+word, an environment, or a verbatim block ends it early: the author's next
+declaration is never consumed with the junk, whether it follows the line or
+shares it. -/
+private def skipMalformedArgs (raws : Array Raw) (i : Nat) (anchor : Pos) : Nat := Id.run do
   let mut j := i
   for _ in [i:raws.size] do
     match raws[j]? with
-    | some (.par _) | none => break
     | some .space => j := j + 1
-    | some (.word _ p) | some (.ctrl _ p) | some (.sym _ p)
-    | some (.group _ p) | some (.verb _ p) =>
+    | some (.word _ p) | some (.sym _ p) | some (.group _ p) | some (.math _ _ p) =>
       if p.line > anchor.line then break else j := j + 1
-    | some (.env _ _ p) | some (.math _ _ p) =>
-      if p.line > anchor.line then break else j := j + 1
+    | _ => break
   return j
 
 /-- Skip a `[...]` run and at most one group: argument recovery after a
@@ -1655,10 +1654,11 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           let (j, unclosed) := skipReservedArgs preamble i pos
           match unclosed with
           | some bpos =>
-            -- The malformed arguments end with the command's line: the next
-            -- line is the author's next declaration, never consumed here.
+            -- The malformed arguments end with the command's line or at the
+            -- next construct on it: the author's next declaration is never
+            -- consumed here.
             warnUnclosed ctx s!"'\\{name}'" bpos
-            i := skipPastLine preamble i pos
+            i := skipMalformedArgs preamble i pos
           | none => i := j
         else
           -- Unknown preamble commands are configuration, not content: their
@@ -1669,7 +1669,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           match unclosed with
           | some bpos =>
             warnUnclosed ctx s!"'\\{name}'" bpos
-            i := skipPastLine preamble i pos
+            i := skipMalformedArgs preamble i pos
           | none => i := j
       | _ =>
         i := i + 1

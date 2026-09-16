@@ -1673,6 +1673,18 @@ def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
     (pDoc.palette.find? "accent" |>.isSome)
   t "the swallowed palette warning is gone"
     (!pDs.any (·.code == "W0304") && !pDs.any (·.severity == .error))
+  -- ...and a declaration SHARING the malformed command's line survives too
+  let preSame := "\\unknowncmd[never closes \\palette{ accent = #00ff00 }\n" ++
+    "\\begin{document}\\textcolor{accent}{x}\\end{document}"
+  let (psDoc, psDs) := elabStr preSame
+  t "unclosed bracket does not eat a declaration on its own line"
+    (psDoc.palette.find? "accent" |>.isSome)
+  t "no misdirecting palette warning for the shared line"
+    (!psDs.any (·.code == "W0304") && !psDs.any (·.severity == .error))
+  t "unclosed bracket does not eat the document on its own line"
+    (match (elabStr "\\unknowncmd[junk \\begin{document}Body survives.\\end{document}").1.body with
+     | #[.para xs] => Ir.plainText xs == "Body survives."
+     | _ => false)
   -- reserved inline command: the sentence after the bracket survives
   t "unclosed bracket after a reserved command keeps the text"
     (match (elabStr "\\figure[unclosed and text continues").1.body with
