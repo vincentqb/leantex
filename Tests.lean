@@ -251,6 +251,23 @@ def main (args : List String) : IO UInt32 := do
   t "args build missing file" ((parse ["build"]).isOk == false)
   t "args trailing junk" ((parse ["build", "a.tex", "b.tex"]).isOk == false)
   t "args help flag wins" ((parse ["--help", "build", "a.tex"]).map (·.cmd) == .ok .help)
+  -- Flags belong after the command too: a command takes the next positional,
+  -- not the next token, or every flag written where people write it is eaten
+  -- as the filename.
+  t "args flag after command" (parse ["build", "--color", "never", "a.tex"] ==
+    .ok { cmd := .build "a.tex", color := .never })
+  t "args emit list" ((parse ["build", "--emit", "pdf,html", "a.tex"]).map (·.emit) ==
+    .ok #[.pdf, .html])
+  t "args emit eq after command"
+    ((parse ["build", "--emit=html", "a.tex"]).map (·.emit) == .ok #[.html])
+  t "args emit default is pdf" ((parse ["build", "a.tex"]).map (·.emit) == .ok #[.pdf])
+  t "args emit bad" ((parse ["build", "--emit", "ps", "a.tex"]).isOk == false)
+  t "args css after command"
+    ((parse ["build", "--css", "bulma", "a.tex"]).map (·.css) == .ok .bulma)
+  t "args css bad" ((parse ["build", "--css", "tailwind", "a.tex"]).isOk == false)
+  t "args math boundary"
+    ((parse ["build", "--math-boundary", "katex", "a.tex"]).map (·.mathBoundary) ==
+      .ok (some "katex"))
 
   -- render: porcelain is stable, escaped JSONL
   let d : Diag := {
@@ -551,6 +568,53 @@ def main (args : List String) : IO UInt32 := do
     "\\begin{document}\\who{Ada} wrote it\\end{document}"
   let (imDoc, _) := elabStr inlineMacro
   t "inline macro does not split the paragraph" (imDoc.body.size == 1)
+
+  -- HTML backend
+  let escaped := Html.escapeText "a <script> & \"x\""
+  t "html escapes text" (escaped == "a &lt;script&gt; &amp; \"x\"")
+  t "html escapes attributes" (Html.escapeAttr "a\"b<c" == "a&quot;b&lt;c")
+  t "html void element has no closing tag"
+    (Html.render (Html.elem "br" #[]) 0 == "<br>\n")
+  t "html phrasing content stays on one line"
+    (Html.render (Html.elem "p" #[Html.text "a ", Html.elem "em" #[Html.text "b"],
+      Html.text ", c"]) 0 == "<p>a <em>b</em>, c</p>\n")
+  t "html style payload cannot close its own tag"
+    (((Html.render (Html.Node.style "x</style>bad") 0).splitOn "</style>").length == 2)
+
+  let (htmlDoc, _) := elabStr ("\\documentclass{article}\n" ++
+    "\\palette{ primary = #7C3AED }\n" ++
+    "\\pdfmeta{ title = \"T\" }\n" ++
+    "\\begin{document}\n" ++
+    "\\section{Head}\n" ++
+    "A \\textbf{bold} word, \\textcolor{primary}{coloured}, and a " ++
+    "\\href{https://example.org}{link}.\n\n" ++
+    "\\begin{itemize}\\item One\\end{itemize}\n" ++
+    "\\end{document}")
+  let (page, pageDiags) := HtmlDoc.emit {} htmlDoc
+  t "html emit clean" pageDiags.isEmpty
+  t "html has doctype" (page.startsWith "<!DOCTYPE html>")
+  t "html sets the title" ((page.splitOn "<title>T</title>").length == 2)
+  t "html section becomes h2" ((page.splitOn "<h2>Head</h2>").length == 2)
+  t "html bold becomes strong" ((page.splitOn "<strong>bold</strong>").length == 2)
+  t "html colour references the token"
+    ((page.splitOn "var(--primary, #7c3aed)").length == 2)
+  t "html link has href"
+    ((page.splitOn "<a href=\"https://example.org\">link</a>").length == 2)
+  t "html single-para item is not wrapped"
+    ((page.splitOn "<li>One</li>").length == 2)
+  t "html inlines the stylesheet" ((page.splitOn "<style>").length == 2)
+  t "html declares the generator" ((page.splitOn "content=\"leantex\"").length == 2)
+
+  -- Running content is paged furniture: HTML says so rather than dropping it.
+  let (_, runHtmlDiags) := HtmlDoc.emit {} runDoc
+  t "html warns about running content" (runHtmlDiags.any (·.code == "W0007"))
+
+  -- Bulma interop binds our tokens to the framework's own properties.
+  let (bulmaPage, _) := HtmlDoc.emit { css := .bulma } htmlDoc
+  t "bulma mode binds primary" ((bulmaPage.splitOn "--bulma-primary").length == 2)
+  t "bulma mode ships no base sheet" ((bulmaPage.splitOn "--measure").length == 1)
+  let (barePage, _) := HtmlDoc.emit { css := .none } htmlDoc
+  t "css none emits no style element" ((barePage.splitOn "<style>").length == 1)
 
   -- \hfill and control-symbol spaces
   -- \hfill takes no argument but still swallows the following space: a space

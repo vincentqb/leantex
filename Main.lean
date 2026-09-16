@@ -254,12 +254,32 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           ui.diag d
         ui.summary file failures.size (← since t0)
         return 2
-      let t ← IO.monoMsNow
-      let pdf := Pdf.write geom fs out.pages doc.info
-      let outPath := (System.FilePath.mk file).withExtension "pdf" |>.toString
-      IO.FS.writeBinFile outPath pdf
-      ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
-      ui.done file outPath out.pages.size (← since t0)
+      let mut written : Array String := #[]
+      if ui.cfg.emit.contains .html then
+        let t ← IO.monoMsNow
+        let cssMode := match ui.cfg.css with
+          | .own => HtmlDoc.CssMode.own
+          | .bulma => HtmlDoc.CssMode.bulma
+          | .none => HtmlDoc.CssMode.none
+        let hcfg : HtmlDoc.Config := {
+          css := cssMode
+          mathBoundary := ui.cfg.mathBoundary
+        }
+        let (html, hdiags) := HtmlDoc.emit hcfg doc
+        for d in hdiags do
+          ui.diag d
+        let htmlPath := (System.FilePath.mk file).withExtension "html" |>.toString
+        IO.FS.writeFile htmlPath html
+        written := written.push htmlPath
+        ui.phase "html" s!"{html.utf8ByteSize} bytes" (← since t)
+      if ui.cfg.emit.contains .pdf then
+        let t ← IO.monoMsNow
+        let pdf := Pdf.write geom fs out.pages doc.info
+        let pdfPath := (System.FilePath.mk file).withExtension "pdf" |>.toString
+        IO.FS.writeBinFile pdfPath pdf
+        written := written.push pdfPath
+        ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
+      ui.done file (String.intercalate ", " written.toList) out.pages.size (← since t0)
       return 0
 
 def dump (ui : Ui) (file : String) : IO UInt32 := do

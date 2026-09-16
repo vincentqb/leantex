@@ -1,5 +1,18 @@
 namespace LeanTex.Cli
 
+/-- Which backends to run. -/
+inductive Emit where
+  | pdf
+  | html
+  deriving Repr, BEq
+
+/-- Which stylesheet the HTML backend writes. -/
+inductive CssChoice where
+  | own
+  | bulma
+  | none
+  deriving Repr, BEq
+
 inductive ColorMode where
   | auto
   | always
@@ -20,11 +33,37 @@ structure Config where
   quiet : Bool := false
   porcelain : Bool := false
   color : ColorMode := .auto
+  emit : Array Emit := #[.pdf]
+  css : CssChoice := .own
+  mathBoundary : Option String := none
   deriving Repr, BEq
 
 private def vCount (s : String) : Option Nat :=
   match s.toList with
   | '-' :: vs => if !vs.isEmpty && vs.all (· == 'v') then some vs.length else none
+  | _ => none
+
+private def emitOne : String → Option Emit
+  | "pdf" => some .pdf
+  | "html" => some .html
+  | _ => none
+
+private def emitList (s : String) : Option (Array Emit) := do
+  let parts := (s.splitOn ",").filterMap fun w =>
+    let t := w.trimAscii.toString
+    if t.isEmpty then none else some t
+  if parts.isEmpty then none else
+    let mut out : Array Emit := #[]
+    for p in parts do
+      match emitOne p with
+      | some e => out := out.push e
+      | none => failure
+    some out
+
+private def cssChoice : String → Option CssChoice
+  | "own" => some .own
+  | "bulma" => some .bulma
+  | "none" => some .none
   | _ => none
 
 private def colorMode : String → Option ColorMode
@@ -38,6 +77,7 @@ def parse (argv : List String) : Except String Config := do
   let mut cmd : Option Cmd := none
   let mut hyphenWords : List String := []
   let mut hyphenFile : Option String := none
+  let mut wantsFile : Option String := none
   let mut args := argv
   repeat
     match args with
@@ -56,6 +96,28 @@ def parse (argv : List String) : Except String Config := do
           cfg := { cfg with color := c }
           args := rest'
         | [] => throw "'--color' needs a mode: auto | always | never"
+      | "--emit" =>
+        match rest with
+        | m :: rest' =>
+          let some es := emitList m
+            | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html"
+          cfg := { cfg with emit := es }
+          args := rest'
+        | [] => throw "'--emit' needs a list: pdf, html"
+      | "--css" =>
+        match rest with
+        | m :: rest' =>
+          let some c := cssChoice m
+            | throw s!"invalid --css '{m}'; expected own, bulma, or none"
+          cfg := { cfg with css := c }
+          args := rest'
+        | [] => throw "'--css' needs a mode: own | bulma | none"
+      | "--math-boundary" =>
+        match rest with
+        | m :: rest' =>
+          cfg := { cfg with mathBoundary := some m }
+          args := rest'
+        | [] => throw "'--math-boundary' needs a tool URL or path"
       | "--file" =>
         match cmd, rest with
         | some (.hyphenate _ _), f :: rest' =>
@@ -66,6 +128,15 @@ def parse (argv : List String) : Except String Config := do
       | _ =>
         if let some n := vCount a then
           cfg := { cfg with verbosity := min 3 (cfg.verbosity + n) }
+        else if a.startsWith "--emit=" then
+          let m := (a.drop "--emit=".length).toString
+          let some es := emitList m
+            | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html"
+          cfg := { cfg with emit := es }
+        else if a.startsWith "--css=" then
+          let m := (a.drop "--css=".length).toString
+          let some c := cssChoice m | throw s!"invalid --css '{m}'; expected own, bulma, or none"
+          cfg := { cfg with css := c }
         else if a.startsWith "--color=" then
           let m := (a.drop "--color=".length).toString
           let some c := colorMode m | throw s!"invalid color mode '{m}'"
@@ -73,23 +144,24 @@ def parse (argv : List String) : Except String Config := do
         else if a.startsWith "-" then
           throw s!"unknown flag '{a}'"
         else
-          match cmd with
-          | some (.hyphenate _ _) => hyphenWords := hyphenWords ++ [a]
-          | some _ => throw s!"unexpected argument '{a}'"
-          | none =>
+          match cmd, wantsFile with
+          | some (.hyphenate _ _), _ => hyphenWords := hyphenWords ++ [a]
+          | some _, _ => throw s!"unexpected argument '{a}'"
+          -- A command that needs a file takes the next positional, not the
+          -- next token: flags belong after the command, where people type them.
+          | none, some k => cmd := some (if k == "build" then .build a else .dump a)
+          | none, none =>
             match a with
             | "help" => cmd := some .help
             | "version" => cmd := some .version
             | "hyphenate" => cmd := some (.hyphenate [] none)
-            | "build" | "dump" =>
-              match args with
-              | f :: rest' =>
-                cmd := some (if a == "build" then .build f else .dump f)
-                args := rest'
-              | [] => throw s!"'{a}' needs a file"
+            | "build" | "dump" => wantsFile := some a
             | _ => throw s!"unknown command '{a}'"
   if cfg.quiet && cfg.verbosity > 0 then
     throw "choose one of -q and -v"
+  if let some k := wantsFile then
+    if cmd.isNone then
+      throw s!"'{k}' needs a file"
   match cmd with
   | some (.hyphenate _ _) =>
     if hyphenWords.isEmpty && hyphenFile.isNone then
@@ -111,6 +183,10 @@ commands:
   help                    show this help
 
 flags:
+  --emit <list>  backends: pdf, html (default pdf)
+  --css <mode>   HTML stylesheet: own | bulma | none (default own)
+  --math-boundary <tool>
+                 attach a client-side math renderer to HTML output
   -q, --quiet    errors only
   -v -vv -vvv    phases · decisions · trace (on stderr)
   --porcelain    JSONL events on stdout, for machines
