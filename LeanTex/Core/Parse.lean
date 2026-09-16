@@ -153,4 +153,34 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
     | none => pure ()
   return (acc, diags)
 
+
+/-! `Raw` back to source text. Declaration blocks and lengths are parsed from
+this string, so it must round-trip what the lexer accepted. -/
+
+mutual
+
+def rawSrc (raws : Array Raw) : String :=
+  (rawSrcList raws.toList).trimAscii.toString
+
+def rawSrcList (rs : List Raw) : String :=
+  match rs with
+  | [] => ""
+  | r :: rest => rawSrcOne r ++ rawSrcList rest
+
+def rawSrcOne (r : Raw) : String :=
+  match r with
+  | .word s _ => s
+  | .space => " "
+  | .par _ => " "
+  | .sym c _ => String.ofList [c]
+  | .ctrl n _ => "\\" ++ n ++ " "
+  | .group body _ => "{" ++ rawSrc body ++ "}"
+  | .math d body _ =>
+    let inner := rawSrc body
+    if d then s!"\\[{inner}\\]" else s!"${inner}$"
+  | .env n body _ => s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
+  | .verb s _ => s!"\\begin\{verbatim}{s}\\end\{verbatim}"
+
+end
+
 end LeanTex.Core.Parse

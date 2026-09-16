@@ -29,9 +29,14 @@ def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat) : Stri
     let noun := if errors == 1 then "error" else "errors"
     s!"{sgr color "1;31" "✖"} {file} — {errors} {noun} ({ms} ms)"
 
-def humanDone (color : Bool) (file output : String) (pages ms : Nat) : String :=
+def humanDone (color : Bool) (file output : String) (pages ms : Nat) (notes : Nat := 0) :
+    String :=
   let noun := if pages == 1 then "page" else "pages"
-  s!"{sgr color "1;32" "✔"} {file} → {output} — {pages} {noun} ({ms} ms)"
+  -- A translated idiom is not a problem, so it does not print by default; the
+  -- count says there is something to read, and -v is where to read it.
+  let hint := if notes == 0 then "" else
+    sgr color "2" s!" · {notes} {if notes == 1 then "note" else "notes"} (-v)"
+  s!"{sgr color "1;32" "✔"} {file} → {output} — {pages} {noun} ({ms} ms){hint}"
 
 private def jsonEscape (s : String) : String :=
   s.foldl (init := "") fun acc c =>

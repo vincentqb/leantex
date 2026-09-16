@@ -16,6 +16,7 @@ structure Geom where
   fontSize : Sp := pt 10
   parskip : Sp := pt 6
   listIndent : Sp := pt 15
+  leading : Nat := 1000
   deriving Repr
 
 def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
@@ -27,9 +28,10 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     pageW := spec.width
     pageH := spec.height
     hmargin := spec.hmargin
-    vmargin := spec.vmargin }
+    vmargin := spec.vmargin
+    leading := spec.leading }
 
-def leadingFor (size : Sp) : Sp := size * 6 / 5
+def leadingFor (size : Sp) (factor : Nat := 1000) : Sp := size * 6 / 5 * factor / 1000
 
 inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
@@ -358,8 +360,15 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       if sp != 0 then
         extras := extras.insert items.size sp
       items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
-  items := items.push (.glue { fil := true, parfill := true })
-  items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
+  -- A paragraph that already ends in a forced break needs no second one: an
+  -- empty final line has no feasible predecessor, and the breaker would
+  -- return no lines at all -- the whole paragraph, silently gone.
+  let endsInBreak := match items.back? with
+    | some (.pen _ cost _ _ _ _) => cost ≤ forcedCost
+    | _ => false
+  if !endsInBreak then
+    items := items.push (.glue { fil := true, parfill := true })
+    items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   let mut diags := st.diags
   for c in missing do
     diags := diags.push {
@@ -669,7 +678,8 @@ private def B.placeLine (b : B) (x : Sp) (size : Sp) (segs : Array Seg) (w : Sp)
   let descent := b.descent * tallest / nominal
   let b := if b.y + descent > b.geom.pageH - b.geom.vmargin then b.breakPage else b
   let line : LineOut := { x := x, y := b.y, size := size, segs := segs, setWidth := w }
-  { b with cur := { lines := b.cur.lines.push line }, y := b.y + leadingFor tallest }
+  { b with cur := { lines := b.cur.lines.push line },
+           y := b.y + leadingFor tallest b.geom.leading }
 
 private def B.warnOverfull (b : B) : B :=
   { b with diags := b.diags.push {

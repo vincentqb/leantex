@@ -22,7 +22,7 @@ def Ui.mk' (cfg : Config) : IO Ui := do
 def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
   if ui.cfg.porcelain then
     ui.outStream.putStrLn (Render.porcelainDiag d)
-  else
+  else if d.severity != .note || ui.cfg.verbosity ≥ 1 then
     ui.errStream.putStrLn (Render.human ui.color d)
 
 def Ui.phase (ui : Ui) (name detail : String) (ms : Nat) : IO Unit := do
@@ -38,11 +38,13 @@ def Ui.summary (ui : Ui) (file : String) (errors ms : Nat) : IO Unit := do
   else if !ui.cfg.quiet then
     ui.errStream.putStrLn (Render.humanSummary ui.color file errors ms)
 
-def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) : IO Unit := do
+def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) (notes : Nat := 0) :
+    IO Unit := do
   if ui.cfg.porcelain then
     ui.outStream.putStrLn (Render.porcelainDone file output pages ms)
   else if !ui.cfg.quiet then
-    ui.errStream.putStrLn (Render.humanDone ui.color file output pages ms)
+    let shown := if ui.cfg.verbosity ≥ 1 then 0 else notes
+    ui.errStream.putStrLn (Render.humanDone ui.color file output pages ms shown)
 
 def fontCandidates : List String :=
   ["/usr/share/fonts/dejavu/DejaVuSans.ttf",
@@ -176,6 +178,74 @@ def since (t0 : Nat) : IO Nat := do
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
 
+/-! `\input{name}` splices a file into the parsed tree. Reading a file is an
+effect, so it happens here in the driver rather than in the core; the core
+sees one tree, as if the document had been written in one file. One pass
+splices each `\input` without descending into what it read; nested inputs
+resolve on the next pass, and eight passes bound the depth the way TeX's input
+stack does. Every pass is a structural walk, so nothing here is partial. -/
+
+def readInput (dir : System.FilePath) (name : String) (pos : Pos) :
+    IO (Array Parse.Raw × Array Diag) := do
+  let name := if name.endsWith ".tex" then name else name ++ ".tex"
+  let path := dir / name
+  if ← path.pathExists then
+    let text ← IO.FS.readFile path
+    let (toks, lexDs) := Lex.lex path.toString text
+    let (sub, parseDs) := Parse.parse path.toString toks
+    return (sub, lexDs ++ parseDs)
+  else
+    let d : Diag := {
+      severity := .warning
+      code := "W0501"
+      message := s!"\\input file not found: '{name}'; skipped"
+      span := some ⟨dir.toString, pos⟩ }
+    return (#[], #[d])
+
+mutual
+
+/-- One splicing pass. `out` accumulates so the walk is linear: prepending to
+the recursive result would copy it at every element. -/
+def spliceList (dir : System.FilePath) (out : Array Parse.Raw) (ds : Array Diag) (hit : Bool) :
+    List Parse.Raw → IO (Array Parse.Raw × Array Diag × Bool)
+  | [] => pure (out, ds, hit)
+  | .ctrl "input" pos :: .group nameRaws _ :: rest
+  | .ctrl "include" pos :: .group nameRaws _ :: rest => do
+    let (sub, ds') ← readInput dir (Parse.rawSrc nameRaws) pos
+    spliceList dir (out ++ sub) (ds ++ ds') true rest
+  | r :: rest => do
+    let (r', ds', hit') ← spliceOne dir r
+    spliceList dir (out.push r') (ds ++ ds') (hit || hit') rest
+
+def spliceOne (dir : System.FilePath) : Parse.Raw → IO (Parse.Raw × Array Diag × Bool)
+  | .env n body p => do
+    let (body', ds, hit) ← spliceList dir #[] #[] false body.toList
+    return (.env n body' p, ds, hit)
+  | .group body p => do
+    let (body', ds, hit) ← spliceList dir #[] #[] false body.toList
+    return (.group body' p, ds, hit)
+  | r => pure (r, #[], false)
+
+end
+
+def expandInputs (file : String) (raws : Array Parse.Raw) :
+    IO (Array Parse.Raw × Array Diag) := do
+  let dir := (System.FilePath.mk file).parent.getD "."
+  let mut raws := raws
+  let mut diags : Array Diag := #[]
+  for _ in [0:8] do
+    let (raws', ds, hit) ← spliceList dir #[] #[] false raws.toList
+    raws := raws'
+    diags := diags ++ ds
+    unless hit do return (raws, diags)
+  let (_, _, still) ← spliceList dir #[] #[] false raws.toList
+  if still then
+    diags := diags.push {
+      severity := .error
+      code := "E0501"
+      message := "\\input nesting deeper than 8 files; is a file including itself?" }
+  return (raws, diags)
+
 /-- Read and decode the file, then run the front end, reporting phases.
 Returns the document, all diagnostics, and whether reading itself failed. -/
 def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := do
@@ -202,9 +272,10 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := d
     let (raws, parseDiags) := Parse.parse file toks
     ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
     let t ← IO.monoMsNow
-    let (doc, elabDiags) := ((Elab.elabDoc file raws).run {})
+    let (raws, inputDiags) ← expandInputs file raws
+    let (doc, elabDiags) := Elab.runRaws file raws (lexDiags ++ parseDiags ++ inputDiags)
     ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
-    return some (doc, lexDiags ++ parseDiags ++ elabDiags.diags)
+    return some (doc, elabDiags)
 
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
@@ -279,7 +350,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         IO.FS.writeBinFile pdfPath pdf
         written := written.push pdfPath
         ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
-      ui.done file (String.intercalate ", " written.toList) out.pages.size (← since t0)
+      let notes := diags.foldl (fun n d => if d.severity == .note then n + 1 else n) 0
+      ui.done file (String.intercalate ", " written.toList) out.pages.size (← since t0) notes
       return 0
 
 def dump (ui : Ui) (file : String) : IO UInt32 := do

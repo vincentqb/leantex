@@ -28,9 +28,12 @@ def elabStr (s : String) : Ir.Doc × Array Diag :=
 def errCodes (s : String) : List String :=
   ((elabStr s).2.filter (·.severity == .error)).toList.map (·.code)
 
+def warnCodes (s : String) : List String :=
+  ((elabStr s).2.filter (·.severity == .warning)).toList.map (·.code)
+
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
-   "links", "resume", "talk"]
+   "links", "resume", "talk", "latex-idioms"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -217,6 +220,68 @@ def runGoldens (update : Bool) (fail : String → IO Unit) : IO Unit := do
         unless g == out do
           fail s!"golden {n}: mismatch, {firstDiff g out} (if intended, run: lake exe Tests --update)"
 
+/-- Line-level typesetting checks against a one-face set. Its own function:
+`main` is a single `do` block, and Lean's elaboration budget for one block
+runs out long before the tests do. -/
+def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  -- Fixed-width spaces are kerns. Looking up a glyph at U+2009 drops the
+  -- space, because a Type 1-derived face has none -- and warns instead of
+  -- setting it.
+  let widthOf (src : String) : Dim.Sp :=
+    let (d, _) := Elab.run "t" src
+    (((Layout.run geom oneFace none d).pages.flatMap (·.lines))[0]?.map
+      (·.setWidth)).getD 0
+  let plainW := widthOf "ab"
+  let thinW := widthOf "a\\,b"
+  t "thin space widens the line" (thinW == plainW + geom.fontSize / 6)
+  t "thin space warns about nothing"
+    ((Layout.run geom oneFace none (Elab.run "t" "a\\,b").1).diags.isEmpty)
+  t "no-break space is an unbreakable interword space"
+    (widthOf "a\\nbsp b" > plainW)
+  -- `~` is what LaTeX authors actually type for it.
+  t "tilde is a no-break space"
+    ((Elab.run "t" "a~b").1.body == #[.para #[.text "a\u00a0b"]])
+  t "tilde does not break the line" (widthOf "a~b" == widthOf "a\u00a0b")
+  t "escaped tilde is a literal tilde"
+    ((Elab.run "t" "a\\~b").1.body == #[.para #[.text "a~b"]])
+
+  -- Small caps are synthesised: lowercase raised and set smaller, in runs
+  -- that carry their own size. `\scshape` used to do nothing at all.
+  let scOut := Layout.run geom oneFace none (Elab.run "t" "\\scshape aB").1
+  let scRuns := (scOut.pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
+    match s with
+    | .run _ _ _ _ glyphs size => some (glyphs.map (·.2), size)
+    | .gap _ => none)
+  t "small caps raises lowercase"
+    (scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
+  t "small caps sets the raised run smaller"
+    (scRuns.any (·.2 == geom.fontSize * Layout.smallCapScale / 1000) &&
+     scRuns.any (·.2 == geom.fontSize))
+
+  -- `\hfill` on a paragraph's last line must reach the margin. The
+  -- line-running fill is also fil glue, and sharing the leftover with it
+  -- puts the right-hand text halfway there -- which is what LaTeX does and
+  -- what nobody setting a row of dates wants.
+  let measureOf (src : String) : Array Dim.Sp :=
+    let (d, _) := Elab.run "t" src
+    ((Layout.run geom oneFace none d).pages.flatMap (·.lines)).map (·.setWidth)
+  -- A paragraph ending in `\\` used to vanish whole: the break's own
+  -- forced penalty and the paragraph terminator left an empty last line
+  -- with no feasible predecessor, and the breaker returned no lines.
+  t "paragraph ending in a break keeps its content"
+    ((measureOf "first line\\\\\n\nsecond").size == 2)
+  let lastLine := measureOf "Left \\hfill Right"
+  t "hfill reaches the margin on a final line"
+    (lastLine.size == 1 && lastLine[0]! == geom.textWidth)
+  let brokenLine := measureOf "Left \\hfill Right\\\\Second"
+  t "hfill reaches the margin before a break"
+    (brokenLine.size == 2 && brokenLine[0]! == geom.textWidth)
+  -- Without an \hfill the last line stays ragged: the fill still fills.
+  t "no hfill leaves the last line short"
+    (brokenLine.size == 2 && brokenLine[1]! < geom.textWidth)
+
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
@@ -368,20 +433,32 @@ def main (args : List String) : IO UInt32 := do
     #[.para #[.styled .bold #[.text "Ada"]]])
   t "elab define text param rejects math" (errCodes (defRole ++ "\\role{$x$}\n\\end{document}") ==
     ["E0305"])
-  t "elab self reference is unknown" (errCodes
-    ("\\define \\x() {\\x}\n\\begin{document}\\x\\end{document}") == ["E0301"])
-  t "elab forward reference is unknown" (errCodes
-    ("\\define \\a() {\\b}\n\\define \\b() {y}\n\\begin{document}\\a\\end{document}") == ["E0301"])
+  t "elab self reference is unknown" (warnCodes
+    ("\\define \\x() {\\x}\n\\begin{document}\\x\\end{document}") == ["W0301"])
+  t "elab forward reference is unknown" (warnCodes
+    ("\\define \\a() {\\b}\n\\define \\b() {y}\n\\begin{document}\\a\\end{document}") == ["W0301"])
   t "elab later definition sees earlier" (errCodes
     ("\\define \\b() {y}\n\\define \\a() {\\b}\n\\begin{document}\\a\\end{document}") == [])
 
   -- elab: diagnostics
-  t "elab unknown command" (errCodes "\\frobnicate" == ["E0301"])
+  -- The non-blocking contract: an unknown command is a warning, its
+  -- arguments are content, and content is never dropped for want of a command.
+  t "elab unknown command warns" (warnCodes "\\frobnicate" == ["W0301"])
+  t "elab unknown command keeps its arguments"
+    ((elabStr "a \\frobnicate{kept}{too} b").1.body ==
+      #[.para #[.text "a kept too b"]])
+  t "elab unknown command warns once per name"
+    ((warnCodes "\\zip{a} \\zip{b} \\zap{c}").length == 2)
   t "elab reserved M5" (errCodes ("\\documentclass{article}\\figure{x}" ++
     "\\begin{document}y\\end{document}") == ["E0307"])
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
-  t "elab redefine builtin" (errCodes "\\define \\textbf() {x}\n\\begin{document}y\\end{document}" ==
-    ["E0303"])
+  t "elab redefine builtin warns and keeps the built-in"
+    (warnCodes "\\define \\textbf() {x}\n\\begin{document}y\\end{document}" == ["W0303"])
+  -- ...except a text symbol, whose name a document may want for itself.
+  let (degDoc, degDs) := elabStr
+    "\\define \\degree(a: text) {\\textbf{\\a}}\n\\begin{document}\\degree{PhD}\\end{document}"
+  t "elab user definition shadows a symbol"
+    (degDs.isEmpty && degDoc.body == #[.para #[.styled .bold #[.text "PhD"]]])
   t "elab trailing content warns" (((elabStr
     "\\begin{document}x\\end{document} y").2.map (·.code)) == #["W0001"])
 
@@ -540,6 +617,68 @@ def main (args : List String) : IO UInt32 := do
   let (symDoc, symDs) := elabStr "a \\middot b \\ldots"
   t "symbol elaborates" (symDs.isEmpty && symDoc.body ==
     #[.para #[.text "a · b …"]])
+
+  -- LaTeX idioms translate to native declarations, each with a note that
+  -- shows the shorter spelling. The document compiles as written.
+  let notesOf (src : String) : List String :=
+    ((elabStr src).2.filter (·.severity == .note)).toList.map (·.message)
+  let pre (decls : String) : String :=
+    "\\documentclass{article}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
+  let (geoDoc, geoDs) := elabStr (pre "\\usepackage[letterpaper,vmargin=0.5in,hmargin=0.75in,headsep=1in]{geometry}")
+  t "compat geometry becomes page" (geoDs.all (·.severity == .note) &&
+    geoDoc.page.vmargin == Dim.inch 1 / 2 && geoDoc.page.hmargin == Dim.inch 3 / 4)
+  t "compat geometry names what it dropped"
+    ((notesOf (pre "\\usepackage[headsep=1in]{geometry}")).any (·.endsWith "headsep"))
+  t "compat known package is a note, unknown a warning"
+    ((elabStr (pre "\\usepackage{hyperref}")).2.all (·.severity == .note) &&
+     warnCodes (pre "\\usepackage{tikz}") == ["W0103"])
+  t "compat definecolor" ((elabStr (pre "\\definecolor{c}{HTML}{0F766E}")).1.palette.find? "c" ==
+    some { r := 0x0F, g := 0x76, b := 0x6E })
+  t "compat definecolor rgb" ((elabStr (pre "\\definecolor{c}{rgb}{1,0,0.5}")).1.palette.find? "c" ==
+    some { r := 255, g := 0, b := 127 })
+  t "compat colorlet aliases"
+    ((elabStr (pre "\\definecolor{a}{HTML}{112233}\\colorlet{b}{a}")).1.palette.find? "b" ==
+      some { r := 0x11, g := 0x22, b := 0x33 })
+  t "compat setlength becomes a token"
+    ((elabStr (pre "\\newlength{\\r}\\setlength{\\r}{2ex}\\setlength{\\s}{0.5\\r}")).1.tokens.find? "s" ==
+      some { width := { ex := 1000 } })
+  t "compat hypersetup becomes pdfmeta"
+    ((elabStr (pre "\\hypersetup{pdfauthor={A. Doe},pdftitle=T,colorlinks=false}")).1.info.author ==
+      some "A. Doe")
+  t "compat scrartcl is article"
+    ((elabStr "\\documentclass{scrartcl}\\begin{document}x\\end{document}").1.docClass == "article")
+  t "compat linespread is leading"
+    ((elabStr (pre "\\linespread{1.04}")).1.page.leading == 1040)
+  t "compat heads become one running head"
+    ((elabStr (pre "\\ihead{L}\\ohead{\\thepage}")).1.head.map (·.any (· == .pageNumber)) == some true)
+  -- \newcommand and \NewDocumentCommand become \define, with #k as \ak.
+  let (ndc, ndcDs) := elabStr ("\\documentclass{article}" ++
+    "\\NewDocumentCommand{\\role}{m o}{\\textbf{#1}\\IfValueT{#2}{ (#2)}}" ++
+    "\\begin{document}\\role{A}[B] \\role{C}\\end{document}")
+  t "compat xparse command clean" (ndcDs.all (·.severity == .note))
+  t "compat xparse command expands with optional"
+    (ndc.body == #[.para #[.styled .bold #[.text "A"], .text " (B) ", .styled .bold #[.text "C"]]])
+  let (nc, _) := elabStr ("\\documentclass{article}\\newcommand{\\two}[2]{#1+#2}" ++
+    "\\begin{document}\\two{a}{b}\\end{document}")
+  t "compat newcommand expands" (nc.body == #[.para #[.text "a+b"]])
+  -- Outside a macro body, # is a colour, not a parameter.
+  t "compat hash outside a body is literal"
+    ((elabStr (pre "\\palette{ p = #7C3AED }")).1.palette.find? "p" == some { r := 0x7C, g := 0x3A, b := 0xED })
+  -- Body-side idioms.
+  t "compat color is the declaration form"
+    ((elabStr ("\\documentclass{article}\\palette{m = #888888}\\begin{document}" ++
+      "a {\\color{m}b} c\\end{document}")).1.body ==
+      #[.para #[.text "a ", .colored { r := 0x88, g := 0x88, b := 0x88 } (some "m") #[.text "b"], .text " c"]])
+  t "compat text symbols" ((elabStr "a\\textbar b\\textperiodcentered c").1.body ==
+    #[.para #[.text "a|b·c"]])
+  t "compat vspace is a spaced block"
+    ((elabStr "a\n\n\\vspace{3pt}\nb").1.body.any fun b => match b with
+      | .spaced _ _ => true
+      | _ => false)
+  t "compat expl3 is skipped whole"
+    (warnCodes (pre "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff") == ["W0106"])
+  t "compat inert commands vanish"
+    ((elabStr "a\\noindent\\relax b").2.isEmpty)
 
   -- smart punctuation: what the author typed is what they meant
   t "smart en dash" ((elabStr "2021--2024").1.body == #[.para #[.text "2021–2024"]])
@@ -862,56 +1001,7 @@ def main (args : List String) : IO UInt32 := do
       let plainPdf := Pdf.write geom oneFace (Layout.run geom oneFace none bigDoc).pages
       t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
 
-      -- Fixed-width spaces are kerns. Looking up a glyph at U+2009 drops the
-      -- space, because a Type 1-derived face has none -- and warns instead of
-      -- setting it.
-      let widthOf (src : String) : Dim.Sp :=
-        let (d, _) := Elab.run "t" src
-        (((Layout.run geom oneFace none d).pages.flatMap (·.lines))[0]?.map
-          (·.setWidth)).getD 0
-      let plainW := widthOf "ab"
-      let thinW := widthOf "a\\,b"
-      t "thin space widens the line" (thinW == plainW + geom.fontSize / 6)
-      t "thin space warns about nothing"
-        ((Layout.run geom oneFace none (Elab.run "t" "a\\,b").1).diags.isEmpty)
-      t "no-break space is an unbreakable interword space"
-        (widthOf "a\\nbsp b" > plainW)
-      -- `~` is what LaTeX authors actually type for it.
-      t "tilde is a no-break space"
-        ((Elab.run "t" "a~b").1.body == #[.para #[.text "a\u00a0b"]])
-      t "tilde does not break the line" (widthOf "a~b" == widthOf "a\u00a0b")
-      t "escaped tilde is a literal tilde"
-        ((Elab.run "t" "a\\~b").1.body == #[.para #[.text "a~b"]])
-
-      -- Small caps are synthesised: lowercase raised and set smaller, in runs
-      -- that carry their own size. `\scshape` used to do nothing at all.
-      let scOut := Layout.run geom oneFace none (Elab.run "t" "\\scshape aB").1
-      let scRuns := (scOut.pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
-        match s with
-        | .run _ _ _ _ glyphs size => some (glyphs.map (·.2), size)
-        | .gap _ => none)
-      t "small caps raises lowercase"
-        (scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
-      t "small caps sets the raised run smaller"
-        (scRuns.any (·.2 == geom.fontSize * Layout.smallCapScale / 1000) &&
-         scRuns.any (·.2 == geom.fontSize))
-
-      -- `\hfill` on a paragraph's last line must reach the margin. The
-      -- line-running fill is also fil glue, and sharing the leftover with it
-      -- puts the right-hand text halfway there -- which is what LaTeX does and
-      -- what nobody setting a row of dates wants.
-      let measureOf (src : String) : Array Dim.Sp :=
-        let (d, _) := Elab.run "t" src
-        ((Layout.run geom oneFace none d).pages.flatMap (·.lines)).map (·.setWidth)
-      let lastLine := measureOf "Left \\hfill Right"
-      t "hfill reaches the margin on a final line"
-        (lastLine.size == 1 && lastLine[0]! == geom.textWidth)
-      let brokenLine := measureOf "Left \\hfill Right\\\\Second"
-      t "hfill reaches the margin before a break"
-        (brokenLine.size == 2 && brokenLine[0]! == geom.textWidth)
-      -- Without an \hfill the last line stays ragged: the fill still fills.
-      t "no hfill leaves the last line short"
-        (brokenLine.size == 2 && brokenLine[1]! < geom.textWidth)
+      lineChecks ref geom oneFace
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then

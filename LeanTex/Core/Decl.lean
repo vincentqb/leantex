@@ -90,7 +90,7 @@ def splitEntries (s : String) : List String := Id.run do
     if t.isEmpty then none else some t
 
 /-- Decimal literal as mantissa and scale: "0.5" ↦ (5, 10). -/
-private def parseDecimal (s : String) : Option (Int × Nat) := Id.run do
+def parseDecimal (s : String) : Option (Int × Nat) := Id.run do
   let cs := s.toList
   let (neg, cs) := match cs with
     | '-' :: rest => (true, rest)

@@ -1,0 +1,70 @@
+% A document written the LaTeX way, for an engine with packages. Everything in
+% this preamble is an idiom the compat layer rewrites into a native declaration;
+% `leantex -v` lists each one with its shorter spelling. Invented content.
+
+\documentclass[paper=letter,fontsize=10pt]{scrartcl}
+
+\usepackage[english]{babel}
+\babelfont{rm}{DejaVu Serif}
+\babelfont{sf}{DejaVu Sans}
+\usepackage{microtype}
+\usepackage{xcolor}
+\usepackage[letterpaper, vmargin=0.5in, hmargin=0.75in, headsep=0.25in]{geometry}
+\usepackage{scrlayer-scrpage}
+\pagestyle{scrheadings}
+\clearpairofpagestyles
+\ihead{\sffamily\scshape Alex Doe}
+\ohead{\thepage}
+
+\newlength{\rhythm}
+\setlength{\rhythm}{1.8ex plus 0.8ex minus 0.4ex\relax}
+\newlength{\sepunit}
+\setlength{\sepunit}{0.5\rhythm}
+\linespread{1.04}
+
+\usepackage{hyperref}
+\hypersetup{
+    pdfauthor={Alex Doe},
+    pdftitle={Alex Doe},
+    pdfborder=0 0 0,
+    colorlinks=false
+}
+
+\definecolor{primary}{HTML}{0F766E}
+\definecolor{muted}{rgb}{0.45,0.45,0.5}
+\colorlet{bulletcolor}{muted}
+
+\NewDocumentCommand{\dotsep}{}{\ \textperiodcentered\ }
+\NewDocumentCommand{\role}{m m m o}{%
+    \noindent\textbf{#1} \textbar\ \textbf{#2} \hfill {\color{muted}#3}\par
+    \IfValueT{#4}{\noindent{\color{muted}\textit{#4}}\par}%
+}
+\newcommand{\degree}[2]{\noindent\textbf{#1}, #2\par}
+\makeatletter
+\makeatother
+
+\begin{document}
+\color{primary}
+
+\begin{center}
+    {\sffamily\bfseries\Huge \textcolor{primary}{Alex} Doe \par}
+    \vspace{2\sepunit}
+    {\color{muted} alex@example.org\dotsep example.org}
+\end{center}
+
+\section*{Experience}
+
+\role{Example Corp}{Staff Engineer}{2021--present}[Platform]
+
+\begin{itemize}
+    \item Made a slow thing 10\% faster and proved it stayed correct.
+\end{itemize}
+
+\vspace{2\sepunit}
+\role{Widgets Ltd}{Engineer}{2017--2021}
+
+\section*{Education}
+
+\degree{PhD Applied Mathematics}{Example University}
+
+\end{document}

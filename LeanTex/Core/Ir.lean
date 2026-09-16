@@ -11,6 +11,9 @@ structure PageSpec where
   height : Sp := pt 792
   vmargin : Sp := inch 1
   hmargin : Sp := inch 1
+  /-- Line spacing as a factor over the default 1.2, in thousandths, so
+  `\linespread{1.04}` has a home. -/
+  leading : Nat := 1000
   deriving Repr, BEq, Inhabited
 
 /-- An sRGB colour. -/

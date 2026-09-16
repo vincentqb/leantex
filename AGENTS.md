@@ -45,7 +45,11 @@ in this repo; refer to the private reference corpus abstractly.
 - Design tokens are the styling API for both backends: a new visual knob is a
   token, not a hard-coded constant in a backend.
 - Hot paths use `Array`/`ByteArray`/packed `UInt32`; no `List`, no `String`
-  concatenation in loops.
+  concatenation in loops. A structural walk over a `List` (the totality
+  pattern below) accumulates into an `Array` it threads through: building
+  the result as `#[x] ++ rest` copies `rest` at every element and turns a
+  4 ms pass into 600 ms on a 30-page document. `scripts/bench.sh` is the
+  check; run it when touching any pass over the whole document.
 - Theorems only where they pay (parser totality, elaboration termination and
   determinism, line-break optimality, dimension arithmetic, PDF xref, UTF-8).
   The language is designed terminating — a construct that breaks that property

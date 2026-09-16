@@ -1,0 +1,101 @@
+class article [paper=letter,fontsize=10pt]
+page 612x792 vmargin 36 hmargin 54
+font body "DejaVu Serif"
+font sans "DejaVu Sans"
+palette primary #0F766E
+palette muted #72727F
+palette bulletcolor #72727F
+token rhythm 1800/1000ex plus 800/1000ex minus 400/1000ex
+token sepunit 900/1000ex plus 400/1000ex minus 200/1000ex
+runninghead
+  styled sans
+    styled smallcaps
+      text "Alex Doe "
+      fill
+      fill
+      pagenumber
+meta title "Alex Doe"
+meta author "Alex Doe"
+para
+  color primary #0F766E
+center
+  para
+    styled sans
+      styled bold
+        styled size:Huge
+          color primary #0F766E
+            text "Alex"
+          text " Doe "
+          linebreak
+  block before 1800/1000ex plus 800/1000ex minus 400/1000ex
+  para
+    color muted #72727F
+      text " alex@example.org · example.org"
+section* 1
+  text "Experience"
+para
+  styled bold
+    text "Example Corp"
+  text " | "
+  styled bold
+    text "Staff Engineer"
+  text " "
+  fill
+  color muted #72727F
+    text "2021–present"
+  linebreak
+  color muted #72727F
+    styled italic
+      text "Platform"
+  linebreak
+list unordered
+  item
+    para
+      text "Made a slow thing 10% faster and proved it stayed correct."
+block before 1800/1000ex plus 800/1000ex minus 400/1000ex
+para
+  styled bold
+    text "Widgets Ltd"
+  text " | "
+  styled bold
+    text "Engineer"
+  text " "
+  fill
+  color muted #72727F
+    text "2017–2021"
+  linebreak
+section* 1
+  text "Education"
+para
+  styled bold
+    text "PhD Applied Mathematics"
+  text ", Example University"
+  linebreak
+-- diagnostics
+note[N0100] 5:1 \documentclass{scrartcl} → \documentclass[paper=letter,fontsize=10pt]{article}
+note[N0100] 7:1 \usepackage{babel} → nothing: the engine does this itself
+note[N0100] 8:1 \babelfont → \fonts{ body = "DejaVu Serif" }
+note[N0100] 9:1 \babelfont → \fonts{ sans = "DejaVu Sans" }
+note[N0100] 10:1 \usepackage{microtype} → nothing: the engine does this itself
+note[N0100] 11:1 \usepackage{xcolor} → nothing: the engine does this itself
+note[N0100] 12:1 \usepackage{geometry} → \page{ size = letter, vmargin = 0.5in, hmargin = 0.75in }
+note[N0101] 12:1 geometry keys without a native equivalent were dropped: headsep
+note[N0100] 13:1 \usepackage{scrlayer-scrpage} → nothing: the engine does this itself
+note[N0100] 20:1 \setlength{\rhythm} → \tokens{ rhythm = 1.8ex plus 0.8ex minus 0.4ex }
+note[N0100] 22:1 \setlength{\sepunit} → \tokens{ sepunit = 0.5 * rhythm }
+note[N0100] 23:1 \linespread → \page{ leading = 1.04 }
+note[N0100] 25:1 \usepackage{hyperref} → nothing: the engine does this itself
+note[N0100] 26:1 \hypersetup → \pdfmeta{ author = "Alex Doe", title = "Alex Doe" }
+note[N0100] 33:1 \definecolor{primary} → \palette{ primary = #0F766E }
+note[N0100] 34:1 \definecolor{muted} → \palette{ muted = #72727F }
+note[N0100] 35:1 \colorlet → \palette{ bulletcolor = muted }
+note[N0100] 37:1 \NewDocumentCommand{\dotsep} → \define \dotsep() {...}
+note[N0100] 38:1 \NewDocumentCommand{\role} → \define \role(a1: text, a2: text, a3: text, a4?: text) {...}
+note[N0100] 39:56 \color{muted} → \muted
+note[N0100] 40:29 \color{muted} → \muted
+note[N0100] 42:1 \newcommand{\degree} → \define \degree(a1: text, a2: text) {...}
+note[N0100] 47:1 \color{primary} → \primary
+note[N0100] 51:5 \vspace → \block[before = 2 * sepunit]{}
+note[N0100] 52:6 \color{muted} → \muted
+note[N0100] 63:1 \vspace → \block[before = 2 * sepunit]{}
+note[N0100] 16:1 \ihead / \chead / \ohead → \runninghead{\sffamily \scshape Alex Doe \hfill  \hfill \thepage}

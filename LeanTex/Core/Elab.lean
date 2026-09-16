@@ -3,6 +3,7 @@ import LeanTex.Core.Parse
 import LeanTex.Core.Ir
 import LeanTex.Core.Dim
 import LeanTex.Core.Decl
+import LeanTex.Core.Compat
 
 namespace LeanTex.Core.Elab
 
@@ -41,6 +42,9 @@ structure Ctx where
 
 structure ESt where
   diags : Array Diag := #[]
+  /-- Unknown commands already warned about: a macro used forty times is one
+  problem, not forty. -/
+  warnedUnknown : Array String := #[]
 
 abbrev EM := StateM ESt
 
@@ -67,7 +71,7 @@ a key/value block: running head and foot. -/
 def runningCtrl : List String := ["runninghead", "runningfoot"]
 
 def pageKeys : List String :=
-  ["size", "width", "height", "margin", "vmargin", "hmargin"]
+  ["size", "width", "height", "margin", "vmargin", "hmargin", "leading"]
 
 /-- Page keys that are declared but not implemented yet, with the milestone
 that will land them. Reported as pending, never as a type error. -/
@@ -125,32 +129,6 @@ private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) := 
 -- Best-effort source text of raw content (math bodies, class options).
 -- Structural recursion through `List`; the outer call trims, and so does each
 -- nested group, matching what the elaborator has always emitted.
-mutual
-
-/-- Source text of raw content, trimmed. -/
-def rawSrc (raws : Array Raw) : String :=
-  (rawSrcList raws.toList).trimAscii.toString
-
-def rawSrcList (rs : List Raw) : String :=
-  match rs with
-  | [] => ""
-  | r :: rest => rawSrcOne r ++ rawSrcList rest
-
-def rawSrcOne (r : Raw) : String :=
-  match r with
-  | .word s _ => s
-  | .space => " "
-  | .par _ => " "
-  | .sym c _ => String.ofList [c]
-  | .ctrl n _ => "\\" ++ n ++ " "
-  | .group body _ => "{" ++ rawSrc body ++ "}"
-  | .math d body _ =>
-    let inner := rawSrc body
-    if d then s!"\\[{inner}\\]" else s!"${inner}$"
-  | .env n body _ => s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
-  | .verb s _ => s!"\\begin\{verbatim}{s}\\end\{verbatim}"
-
-end
 
 private def isSpace : Raw → Bool
   | .space => true
@@ -396,8 +374,10 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             if let some .space := raws[i]? then i := i + 1 else break
         else if let some lit := escapes.lookup name then
           sb := sb ++ lit
-        else if let some sym := Lex.textSymbols.lookup name then
-          sb := sb ++ sym
+        else if (lookupUser ctx name).isNone && (Lex.textSymbols.lookup name).isSome then
+          -- A document may define a symbol's name for itself; its definition
+          -- wins, so the symbol only fires when nothing shadows it.
+          sb := sb ++ (Lex.textSymbols.lookup name).getD ""
         else if let some style := argStyles.lookup name then
           let argCtx := if style == Style.mono then { ctx with literalText := true } else ctx
           let j := skipSpaces raws i
@@ -521,8 +501,36 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             (help := "it is a block-level command: use it between paragraphs, " ++
               "not inside inline content or a command body")
         else
-          diag ctx "E0301" s!"unknown command '\\{name}'" pos
-            (help := "define it with \\define, or see PLAN.md for planned commands")
+          -- Best effort: the arguments are content, and content is never
+          -- dropped for want of a command. Only the formatting is lost.
+          unless (← get).warnedUnknown.contains name do
+            modify fun st => { st with warnedUnknown := st.warnedUnknown.push name }
+            modify fun st => { st with diags := st.diags.push {
+              severity := .warning, code := "W0301"
+              message := s!"unknown command '\\{name}'; its arguments were kept as text"
+              span := some ⟨ctx.file, pos⟩
+              help := some "define it with \\define, or see PLAN.md for planned commands" } }
+          let mut j := skipSpaces raws i
+          let mut kept := 0
+          for _ in [0:9] do
+            match raws[j]? with
+            | some (.group body _) =>
+              acc := flushText acc sb
+              -- Whatever separated the arguments visually is gone with the
+              -- command, so a space stands in; without one, `{a}{b}` runs
+              -- together as `ab`.
+              sb := if kept > 0 then " " else ""
+              acc := flushText acc sb
+              sb := ""
+              acc := acc ++ (← elabInlines ctx body)
+              kept := kept + 1
+              j := skipSpaces raws (j + 1)
+            | _ => break
+          -- The control word swallowed the space after it; give one back so
+          -- the kept text does not fuse with what follows.
+          if kept > 0 && j < raws.size then
+            sb := " "
+          i := j
     else
       break
   let out := mergeText (flushText acc sb)
@@ -733,9 +741,12 @@ private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := 
         if ty == "text" then some .text
         else if ty == "content" then some .content
         else none
-      if name == "" || !name.toList.all Char.isAlpha then
+      let wellFormed := match name.toList with
+        | c :: rest => c.isAlpha && rest.all Char.isAlphanum
+        | [] => false
+      if !wellFormed then
         diag ctx "E0303" s!"invalid parameter name '{name}'" pos
-          (help := "parameter names are letters only")
+          (help := "parameter names start with a letter")
       else
         match type? with
         | some t => params := params.push ⟨name, t, optional⟩
@@ -765,6 +776,16 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "margin", .dim d => spec := { spec with vmargin := d, hmargin := d }
     | "vmargin", .dim d => spec := { spec with vmargin := d }
     | "hmargin", .dim d => spec := { spec with hmargin := d }
+    | "leading", .int n => spec := { spec with leading := n.toNat * 1000 }
+    | "leading", .dim d =>
+      -- A bare decimal like 1.04 reads as a dimension in points; the factor
+      -- is what was meant.
+      spec := { spec with leading := (d * 1000 / pt 1).toNat }
+    | "leading", .ident f =>
+      -- ...and one without a unit reaches here as a name.
+      match Decl.parseDecimal f with
+      | some (m, s) => spec := { spec with leading := (m * 1000 / s).toNat }
+      | none => diag ctx "E0323" s!"'leading' in \\page expects a factor like 1.04, got '{f}'" pos
     | key, v =>
       if key == "header" || key == "footer" then
         -- The feature exists, just not as a page key: running content is
@@ -841,6 +862,13 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (entries : Array Decl.Entry
         diag ctx "E0303" s!"palette name '{e.key}' collides with a built-in command" pos
       else
         pal := { pal with entries := pal.entries.push (e.key, ⟨r, g, b⟩) }
+    | .ident other =>
+      -- An alias, so two names that must never drift apart share one value.
+      match pal.find? other with
+      | some c => pal := { pal with entries := pal.entries.push (e.key, c) }
+      | none =>
+        diag ctx "E0326" s!"'{other}' is not in the palette" pos
+          (help := "declare it first; aliases read earlier entries")
     | v =>
       modify fun st => { st with
         diags := st.diags.push (Decl.wrongType ctx.file "palette" e.key
@@ -974,8 +1002,12 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               k := k + 1
             | none => break
           i := k
-          if builtinNames.contains newName then
-            diag ctx "E0303" s!"cannot redefine built-in '\\{newName}'" npos
+          if builtinNames.contains newName && (Lex.textSymbols.lookup newName).isNone then
+            modify fun st => { st with diags := st.diags.push {
+              severity := .warning, code := "W0303"
+              message := s!"'\\{newName}' is built in; this definition is ignored"
+              span := some ⟨ctx.file, npos⟩
+              help := some "the built-in does what most definitions of this name do" } }
           else
             match bodyRaws with
             | some b =>
@@ -1063,11 +1095,17 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     body := blocks
   }
 
-/-- The full front end: lex, parse, elaborate. -/
+/-- Elaborate parsed input. LaTeX idioms are rewritten first, so a document
+written for another engine compiles as written. -/
+def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
+    Doc × Array Diag :=
+  let (raws, compatDiags) := Compat.rewrite file raws
+  let (doc, st) := (elabDoc file raws).run {}
+  (doc, earlier ++ compatDiags ++ st.diags)
+
 def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input
   let (raws, parseDiags) := Parse.parse file toks
-  let (doc, st) := (elabDoc file raws).run {}
-  (doc, lexDiags ++ parseDiags ++ st.diags)
+  runRaws file raws (lexDiags ++ parseDiags)
 
 end LeanTex.Core.Elab
