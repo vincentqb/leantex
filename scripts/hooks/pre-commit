@@ -27,7 +27,7 @@ if echo "$staged" | grep -q '^tests/golden/'; then
   fi
 fi
 
-added=$(git diff --cached --unified=0 -- '*.lean' | grep '^+' | grep -v '^+++' || true)
+added=$(git diff --cached --no-color --unified=0 -- '*.lean' | grep '^+' | grep -v '^+++' || true)
 
 bad=$(printf '%s\n' "$added" | grep -E '(^|[^[:alnum:]_])partial([^[:alnum:]_]|$)' \
       | grep -vE 'partial def (elabInlines|elabBlocks)' || true)
