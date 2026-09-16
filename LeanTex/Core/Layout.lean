@@ -658,7 +658,6 @@ private structure B where
   cur : PageOut := {}
   y : Sp := 0
   diags : Array Diag := #[]
-  hyphCache : Std.HashMap String (List Nat) := {}
 
 private def B.freshY (b : B) : Sp := b.geom.vmargin + b.ascent
 
@@ -688,42 +687,47 @@ private def B.warnOverfull (b : B) : B :=
     message := "overfull line (no feasible break)"
   } }
 
-private def typesetPara (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
+/-- One paragraph, measured and ready to break: everything `kp` and line
+placement need, gathered during the block walk so the breaking runs can
+happen in parallel between the walk and placement. -/
+private structure ParaJob where
+  items : Array Item
+  extras : Std.HashMap Nat Sp
+  diags : Array Diag
+  target : Sp
+  indent : Sp
+  center : Bool
+  size : Sp
+  bullet : Option (Nat × Array (Nat × Char × Sp)) := none
+
+/-- The block walk emits vertical skips and paragraph jobs; placement replays
+them in document order, so the page builder stays sequential and the output
+does not depend on task scheduling. -/
+private inductive Op where
+  | skip (dy : Sp)
+  | para (job : ParaJob)
+
+private structure Acc where
+  geom : Geom
+  xHeight : Sp
+  ops : Array Op := #[]
+  hyphCache : Std.HashMap String (List Nat) := {}
+
+private def Acc.skip (a : Acc) (dy : Sp) : Acc :=
+  { a with ops := a.ops.push (.skip dy) }
+
+private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
-    (bullet : Option (Nat × Array (Nat × Char × Sp)) := none) : B := Id.run do
-  let mut b := b
-  let geom := b.geom
-  let width := geom.textWidth - indent
+    (bullet : Option (Nat × Array (Nat × Char × Sp)) := none) : Acc :=
   let (items, ds, cache, extras) :=
-    itemsOfInlines pats size b.xHeight fs baseStyle inlines b.hyphCache
-  b := { b with diags := b.diags ++ ds, hyphCache := cache }
-  let breaks := kp items width
-  let mut prev := 0
-  let mut first := true
-  for brk in breaks do
-    let a := if first then lineStart items 0 else lineStart items (prev + 1)
-    let (segs, w, overfull) := setLine items a brk width (!center)
-    if overfull then
-      b := b.warnOverfull
-    let mut x := if center then geom.hmargin + indent + (width - w) / 2
-      else geom.hmargin + indent
-    let mut segs := segs
-    let mut w := w
-    if first then
-      if let some (bulletFont, bg) := bullet then
-        let bw := bg.foldl (fun acc (_, _, adv) => acc + adv) 0
-        let sep := geom.fontSize * 2 / 5
-        segs := #[Seg.run bulletFont Ir.Color.black none bw
-          (bg.map fun (g, c, _) => (g, c)) size, Seg.gap sep] ++ segs
-        x := x - bw - sep
-        w := w + bw + sep
-    b := b.placeLine x size segs w
-    if let some extra := extras[brk]? then
-      b := { b with y := b.y + extra }
-    prev := brk
-    first := false
-  return b
+    itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache
+  { a with
+    hyphCache := cache
+    ops := a.ops.push (.para {
+      items := items, extras := extras, diags := ds
+      target := a.geom.textWidth - indent
+      indent := indent, center := center, size := size, bullet := bullet }) }
 
 def sectionSize (geom : Geom) : Nat → Sp
   | 1 => pt 14
@@ -734,74 +738,105 @@ def sectionSize (geom : Geom) : Nat → Sp
 -- structural: no `partial`, and the shape mirrors the IR.
 mutual
 
-/-- Typeset a block sequence, spacing peers by `parskip`. -/
-def typesetBlocks (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (blocks : Array Block) (indent : Sp) : B :=
-  typesetBlockList b pats fs blocks.toList indent true
+/-- Walk a block sequence, spacing peers by `parskip`. -/
+private def collectBlocks (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+    (blocks : Array Block) (indent : Sp) : Acc :=
+  collectBlockList a pats fs blocks.toList indent true
 
-def typesetBlockList (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (blocks : List Block) (indent : Sp) (first : Bool) : B :=
+private def collectBlockList (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+    (blocks : List Block) (indent : Sp) (first : Bool) : Acc :=
   match blocks with
-  | [] => b
+  | [] => a
   | blk :: rest =>
-    let b := if first then b else { b with y := b.y + b.geom.parskip }
-    let b := typesetBlock b pats fs blk indent
-    typesetBlockList b pats fs rest indent false
+    let a := if first then a else a.skip a.geom.parskip
+    let a := collectBlock a pats fs blk indent
+    collectBlockList a pats fs rest indent false
 
 /-- One list item: its leading paragraph carries the marker. -/
-def typesetItem (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (item : List Block) (indent : Sp) (first : Bool) : B :=
+private def collectItem (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+    (item : List Block) (indent : Sp) (first : Bool) : Acc :=
   match item with
-  | [] => b
+  | [] => a
   | blk :: rest =>
-    let b := if first then b else { b with y := b.y + b.geom.parskip }
-    let b := match blk, first with
+    let a := if first then a else a.skip a.geom.parskip
+    let a := match blk, first with
       | .para content, true =>
-        typesetPara b pats fs content indent false b.geom.fontSize
-          (bullet := some (0, bulletGlyphs b.geom.fontSize fs.body))
-      | _, _ => typesetBlock b pats fs blk indent
-    typesetItem b pats fs rest indent false
+        collectPara a pats fs content indent false a.geom.fontSize
+          (bullet := some (0, bulletGlyphs a.geom.fontSize fs.body))
+      | _, _ => collectBlock a pats fs blk indent
+    collectItem a pats fs rest indent false
 
-def typesetItems (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (items : List (Array Block)) (indent : Sp) : B :=
+private def collectItems (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+    (items : List (Array Block)) (indent : Sp) : Acc :=
   match items with
-  | [] => b
+  | [] => a
   | item :: rest =>
-    let b := typesetItem b pats fs item.toList indent true
-    typesetItems b pats fs rest indent
+    let a := collectItem a pats fs item.toList indent true
+    collectItems a pats fs rest indent
 
 /-- Centered content: paragraphs center, anything else nests unchanged. -/
-def typesetCentered (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (body : List Block) (indent : Sp) : B :=
+private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+    (body : List Block) (indent : Sp) : Acc :=
   match body with
-  | [] => b
+  | [] => a
   | blk :: rest =>
-    let b := match blk with
-      | .para content => typesetPara b pats fs content indent true b.geom.fontSize
-      | _ => typesetBlock b pats fs blk indent
-    typesetCentered b pats fs rest indent
+    let a := match blk with
+      | .para content => collectPara a pats fs content indent true a.geom.fontSize
+      | _ => collectBlock a pats fs blk indent
+    collectCentered a pats fs rest indent
 
-def typesetBlock (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (blk : Block) (indent : Sp) : B :=
+private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+    (blk : Block) (indent : Sp) : Acc :=
   match blk with
   | .para content =>
-    typesetPara b pats fs content indent false b.geom.fontSize
+    collectPara a pats fs content indent false a.geom.fontSize
   | .section level _ title =>
-    let b := { b with y := b.y + b.geom.parskip }
+    let a := a.skip a.geom.parskip
     -- Headings set in the bold face of the body family.
-    typesetPara b pats fs title indent false (sectionSize b.geom level)
+    collectPara a pats fs title indent false (sectionSize a.geom level)
       (baseStyle := { bold := true })
   | .list _ items =>
-    typesetItems b pats fs items.toList (indent + b.geom.listIndent)
+    collectItems a pats fs items.toList (indent + a.geom.listIndent)
   | .center body =>
-    typesetCentered b pats fs body.toList indent
+    collectCentered a pats fs body.toList indent
   | .spaced before body =>
     -- Declared space above the block, resolved against the body font.
-    let g := before.resolve b.geom.fontSize b.xHeight
-    let b := { b with y := b.y + g.width }
-    typesetBlocks b pats fs body indent
+    let g := before.resolve a.geom.fontSize a.xHeight
+    let a := a.skip g.width
+    collectBlocks a pats fs body indent
 
 end
+
+/-- Place one paragraph's lines from precomputed breakpoints. -/
+private def placePara (b : B) (j : ParaJob) (breaks : Array Nat) : B := Id.run do
+  let mut b := { b with diags := b.diags ++ j.diags }
+  let geom := b.geom
+  let width := j.target
+  let mut prev := 0
+  let mut first := true
+  for brk in breaks do
+    let a := if first then lineStart j.items 0 else lineStart j.items (prev + 1)
+    let (segs, w, overfull) := setLine j.items a brk width (!j.center)
+    if overfull then
+      b := b.warnOverfull
+    let mut x := if j.center then geom.hmargin + j.indent + (width - w) / 2
+      else geom.hmargin + j.indent
+    let mut segs := segs
+    let mut w := w
+    if first then
+      if let some (bulletFont, bg) := j.bullet then
+        let bw := bg.foldl (fun acc (_, _, adv) => acc + adv) 0
+        let sep := geom.fontSize * 2 / 5
+        segs := #[Seg.run bulletFont Ir.Color.black none bw
+          (bg.map fun (g, c, _) => (g, c)) j.size, Seg.gap sep] ++ segs
+        x := x - bw - sep
+        w := w + bw + sep
+    b := b.placeLine x j.size segs w
+    if let some extra := j.extras[brk]? then
+      b := { b with y := b.y + extra }
+    prev := brk
+    first := false
+  return b
 
 /-- Replace `\pagenumber` / `\pagecount` with literal text. Running content
 is laid out after the body, so both numbers are known by then — no second
@@ -822,14 +857,26 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     Out := Id.run do
   let font := fs.body
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
+  let xHeight := scale font.xHeight
+  let acc := collectBlocks { geom := geom, xHeight := xHeight } pats fs doc.body 0
+  -- Break every paragraph in parallel: `kp` is pure and each job independent,
+  -- so the tasks race on nothing; joining in document order below keeps the
+  -- output independent of scheduling.
+  let staged : Array (Sum Sp (ParaJob × Task (Array Nat))) := acc.ops.map fun op =>
+    match op with
+    | .skip dy => .inl dy
+    | .para j => .inr (j, Task.spawn fun _ => kp j.items j.target)
   let b0 : B := {
     geom := geom
     ascent := scale font.ascent
     descent := scale (-font.descent)
-    xHeight := scale font.xHeight
+    xHeight := xHeight
   }
-  let b := { b0 with y := b0.freshY }
-  let b := typesetBlocks b pats fs doc.body 0
+  let mut b := { b0 with y := b0.freshY }
+  for s in staged do
+    match s with
+    | .inl dy => b := { b with y := b.y + dy }
+    | .inr (j, t) => b := placePara b j t.get
   let pages := b.pages.push b.cur
   -- Running content is laid out per page once the count is known, into the
   -- margin, so it never disturbs the body it annotates.
@@ -838,7 +885,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       Option LineOut × Array Diag × _ :=
     let sub := substPage n total content
     let (items, ds, cache, _) :=
-      itemsOfInlines pats geom.fontSize b0.xHeight fs {} sub cache
+      itemsOfInlines pats geom.fontSize xHeight fs {} sub cache
     let target := geom.textWidth
     let breaks := kp items target
     match breaks[0]? with
@@ -851,7 +898,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let footY := geom.pageH - geom.vmargin / 2
   let mut out := pages
   let mut diags := b.diags
-  let mut cache := b.hyphCache
+  let mut cache := acc.hyphCache
   for i in [0:out.size] do
     let mut lines := out[i]!.lines
     if let some content := doc.head then
