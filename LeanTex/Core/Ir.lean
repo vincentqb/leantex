@@ -130,10 +130,19 @@ inductive Inline where
   | text (s : String)
   | math (display : Bool) (src : String)
   | styled (style : Style) (body : Array Inline)
-  | colored (color : Color) (body : Array Inline)
+  /-- `name` is the palette entry this came from, when it had one, so the
+  HTML backend can emit `var(--name)` and let a host page override it. -/
+  | colored (color : Color) (name : Option String) (body : Array Inline)
+  /-- `\href{url}{body}`: a hyperlink. Becomes an `<a>` in HTML and a Link
+  annotation in PDF, so the URL rides the IR rather than a backend. -/
+  | link (url : String) (body : Array Inline)
   /-- `\hfill`: stretch that pushes what follows to the far margin. -/
   | fill
-  | linebreak
+  /-- Running-content placeholders, resolved once page count is known. -/
+  | pageNumber
+  | pageCount
+  /-- `\\`, carrying LaTeX's optional extra space: `\\[1ex]`. -/
+  | linebreak (extra : SymGlue)
   deriving Repr, BEq, Inhabited
 
 inductive Block where
@@ -152,6 +161,10 @@ structure Doc where
   fonts : FontSpec := {}
   palette : Palette := {}
   tokens : Tokens := {}
+  /-- `\runninghead` / `\runningfoot`: one line of inline content each, laid
+  out in the margin after the body, when the page count is known. -/
+  head : Option (Array Inline) := none
+  foot : Option (Array Inline) := none
   info : Meta := {}
   asserts : Array Assertion := #[]
   body : Array Block := #[]
@@ -193,10 +206,19 @@ def dumpInline (ind : String) (x : Inline) : String :=
     let kind := if d then "display" else "inline"
     s!"{ind}math {kind} {src.quote}\n"
   | .styled st body => s!"{ind}styled {st.label}\n" ++ dumpInlines (ind ++ "  ") body
-  | .colored c body =>
-    s!"{ind}color #{hex2 c.r}{hex2 c.g}{hex2 c.b}\n" ++ dumpInlines (ind ++ "  ") body
+  | .colored c name body =>
+    let tag := match name with
+      | some n => s!"{n} #{hex2 c.r}{hex2 c.g}{hex2 c.b}"
+      | none => s!"#{hex2 c.r}{hex2 c.g}{hex2 c.b}"
+    s!"{ind}color {tag}\n" ++ dumpInlines (ind ++ "  ") body
+  | .link url body =>
+    s!"{ind}link {url.quote}\n" ++ dumpInlines (ind ++ "  ") body
   | .fill => s!"{ind}fill\n"
-  | .linebreak => s!"{ind}linebreak\n"
+  | .pageNumber => s!"{ind}pagenumber\n"
+  | .pageCount => s!"{ind}pagecount\n"
+  | .linebreak extra =>
+    if extra == ({} : SymGlue) then s!"{ind}linebreak\n"
+    else s!"{ind}linebreak {dumpGlue extra}\n"
 
 end
 
@@ -262,6 +284,13 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
     s!"palette {n} #{hex2 c.r}{hex2 c.g}{hex2 c.b}\n")
   let tokenLines := String.join (doc.tokens.entries.toList.map fun (n, g) =>
     s!"token {n} {dumpGlue g}\n")
+  let runLines :=
+    (match doc.head with
+     | some xs => "runninghead\n" ++ dumpInlines "  " xs
+     | none => "") ++
+    (match doc.foot with
+     | some xs => "runningfoot\n" ++ dumpInlines "  " xs
+     | none => "")
   let infoLines :=
     metaLine "title" doc.info.title ++ metaLine "author" doc.info.author ++
     metaLine "subject" doc.info.subject ++ metaLine "keywords" doc.info.keywords
@@ -273,6 +302,6 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
       "-- diagnostics\n(none)\n"
     else
       "-- diagnostics\n" ++ String.join (diags.toList.map dumpDiag)
-  head ++ page ++ fontLines ++ paletteLines ++ tokenLines ++ infoLines ++ asserts ++ body ++ ds
+  head ++ page ++ fontLines ++ paletteLines ++ tokenLines ++ runLines ++ infoLines ++ asserts ++ body ++ ds
 
 end LeanTex.Core.Ir

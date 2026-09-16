@@ -8,18 +8,18 @@ palette muted #71717A
 palette warn #B45309
 assert pages == 1
 section 1
-  color #7C3AED
+  color primary #7C3AED
     text "A coloured heading"
 para
   text "Ordinary text stays black. "
-  color #7C3AED
+  color primary #7C3AED
     text "This clause is primary"
   text " and "
-  color #71717A
+  color muted #71717A
     text "this one is muted"
   text ", then black resumes."
 para
-  color #71717A
+  color muted #71717A
     text "A declaration colours the rest of its group, including "
     styled bold
       text "bold inside the group"
@@ -27,13 +27,13 @@ para
 list unordered
   item
     para
-      color #B45309
+      color warn #B45309
         text "Warning-coloured item"
       text " with a black tail."
   item
     para
       text "Short hex works too: "
-      color #18181B
+      color ink #18181B
         text "ink"
       text "."
 -- diagnostics

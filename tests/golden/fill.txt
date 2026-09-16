@@ -10,7 +10,7 @@ para
     text "Staff Engineer"
   text " "
   fill
-  text "2021--present"
+  text "2021–present"
 para
   text "A following paragraph, so the entry above is not the last line on the page."
 para

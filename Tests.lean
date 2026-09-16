@@ -30,7 +30,7 @@ def errCodes (s : String) : List String :=
 
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
-   "resume", "talk"]
+   "links", "resume", "talk"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -46,7 +46,7 @@ def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
   let mut items : Array Layout.Item := #[]
   for p in ps do
     match p with
-    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black #[])
+    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[])
     | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
     | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true 0 Ir.Color.black #[])
     | .B =>
@@ -509,6 +509,49 @@ def main (args : List String) : IO UInt32 := do
   t "symbol elaborates" (symDs.isEmpty && symDoc.body ==
     #[.para #[.text "a · b …"]])
 
+  -- smart punctuation: what the author typed is what they meant
+  t "smart en dash" ((elabStr "2021--2024").1.body == #[.para #[.text "2021–2024"]])
+  t "smart em dash" ((elabStr "a---b").1.body == #[.para #[.text "a—b"]])
+  t "smart ellipsis" ((elabStr "wait...").1.body == #[.para #[.text "wait…"]])
+  t "smart quotes directional"
+    ((elabStr "say \"hi\" and don't").1.body == #[.para #[.text "say “hi” and don’t"]])
+  t "mono keeps punctuation literal"
+    ((elabStr "\\texttt{a--b}").1.body ==
+      #[.para #[.styled .mono #[.text "a--b"]]])
+
+  -- links, running content, and block-producing user commands
+  let (linkDoc, linkDs) := elabStr "\\href{https://example.org}{text}"
+  t "href source clean" linkDs.isEmpty
+  t "href wraps body" (linkDoc.body ==
+    #[.para #[.link "https://example.org" #[.text "text"]]])
+  let (bareDoc, bareDs) := elabStr "\\href{https://example.org}"
+  t "href bare prints its url" (bareDs.isEmpty && bareDoc.body ==
+    #[.para #[.link "https://example.org" #[.text "https://example.org"]]])
+  let runSrc := "\\documentclass{article}\n" ++
+    "\\runninghead{Title \\hfill \\pagenumber}\n" ++
+    "\\runningfoot{page \\pagenumber\\ of \\pagecount}\n" ++
+    "\\begin{document}x\\end{document}"
+  let (runDoc, runDs) := elabStr runSrc
+  t "running content clean" runDs.isEmpty
+  t "running head parsed" (runDoc.head.isSome && runDoc.foot.isSome)
+  t "running head has a page number"
+    ((runDoc.head.getD #[]).any fun x => x == .pageNumber)
+  let blockMacro := "\\documentclass{article}\n" ++
+    "\\define \\entry(a: text) {\\block[before = 3pt]{\\textbf{\\a}}}\n" ++
+    "\\begin{document}\\entry{One}\\entry{Two}\\end{document}"
+  let (bmDoc, bmDs) := elabStr blockMacro
+  t "block-producing macro clean" bmDs.isEmpty
+  t "block-producing macro yields blocks" (bmDoc.body.size == 2 &&
+    bmDoc.body.all fun b => match b with
+      | .spaced _ _ => true
+      | _ => false)
+  -- An inline-only macro must stay inline, or it would split the paragraph.
+  let inlineMacro := "\\documentclass{article}\n" ++
+    "\\define \\who(a: text) {\\textbf{\\a}}\n" ++
+    "\\begin{document}\\who{Ada} wrote it\\end{document}"
+  let (imDoc, _) := elabStr inlineMacro
+  t "inline macro does not split the paragraph" (imDoc.body.size == 1)
+
   -- \hfill and control-symbol spaces
   -- \hfill takes no argument but still swallows the following space: a space
   -- after the stretch would be visible at the far margin.
@@ -533,7 +576,7 @@ def main (args : List String) : IO UInt32 := do
     match b with
     | .para content => content.any fun x =>
       match x with
-      | .colored c body => c.r == 0x7C && body.size == 1
+      | .colored c name body => c.r == 0x7C && name == some "primary" && body.size == 1
       | _ => false
     | _ => false)
   t "palette unknown name" (errCodes ("\\documentclass{article}\\palette{a = #fff}" ++
@@ -619,7 +662,7 @@ def main (args : List String) : IO UInt32 := do
       let hyOut := Layout.run narrow oneFace (some pats) hyDoc
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ glyphs => glyphs.any (·.2 == '-')
+          | .run _ _ _ _ glyphs => glyphs.any (·.2 == '-')
           | .gap _ => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
@@ -633,7 +676,7 @@ def main (args : List String) : IO UInt32 := do
         p.lines.any (·.size == Dim.pt 14)
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ glyphs => glyphs.any (·.2 == '–')
+          | .run _ _ _ _ glyphs => glyphs.any (·.2 == '–')
           | .gap _ => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker

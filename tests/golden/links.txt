@@ -1,0 +1,55 @@
+class article
+page 420x595 vmargin 43.2 hmargin 43.2
+font body "DejaVu Serif"
+font sans "DejaVu Sans"
+palette accent #1D4ED8
+palette muted #71717A
+token rhythm 1600/1000ex plus 400/1000ex
+token sep 1600/1000ex plus 400/1000ex
+runninghead
+  styled sans
+    styled smallcaps
+      text "A Linked Document "
+      fill
+      pagenumber
+runningfoot
+  color muted #71717A
+    styled sans
+      text "page "
+      pagenumber
+      text " of "
+      pagecount
+assert pages == 1
+assert fonts.all_embedded
+section 1
+  text "Links"
+para
+  text "A labelled link goes to "
+  link "https://example.org/one"
+    text "the first example"
+  text ", and a bare one prints its own URL: "
+  link "https://example.org/two"
+    text "https://example.org/two"
+  text ". Links inherit style, so "
+  styled bold
+    link "https://example.org/three"
+      text "a bold link"
+  text " works, and a link may wrap across a line break because its rectangle is emitted per line rather than per word."
+block before 1600/1000ex plus 400/1000ex
+  para
+    styled bold
+      text "Example Corp"
+    text "  |  Staff Engineer"
+    fill
+    color muted #71717A
+      text "2021–present"
+block before 1600/1000ex plus 400/1000ex
+  para
+    styled bold
+      text "Widgets Ltd"
+    text "  |  Engineer"
+    fill
+    color muted #71717A
+      text "2017–2021"
+-- diagnostics
+(none)

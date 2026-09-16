@@ -1,0 +1,39 @@
+% Synthetic M3c fixture: hyperlinks, running head and foot, page numbers, and
+% a block-producing user command. Invented content only.
+\documentclass{article}
+
+\fonts{ body = "DejaVu Serif", sans = "DejaVu Sans" }
+
+\palette{ accent = #1D4ED8, muted = #71717A }
+
+\tokens{ rhythm = 1.6ex plus 0.4ex, sep = 1.0 * rhythm }
+
+\page{ size = a5, margin = 0.6in }
+
+\runninghead{\sffamily\scshape A Linked Document \hfill \pagenumber}
+\runningfoot{\muted{\sffamily page \pagenumber\ of \pagecount}}
+
+% A definition that produces a block, which used to report E0312.
+\define \entry(what: text, who: text, when: text) {
+  \block[before = sep]{
+    \textbf{\what} \,|\, \who \hfill \muted{\when}
+  }
+}
+
+\assert{ pages == 1 }
+\assert{ fonts.all_embedded }
+
+\begin{document}
+
+\section{Links}
+
+A labelled link goes to \href{https://example.org/one}{the first example},
+and a bare one prints its own URL: \href{https://example.org/two}.
+Links inherit style, so \textbf{\href{https://example.org/three}{a bold
+link}} works, and a link may wrap across a line break because its rectangle
+is emitted per line rather than per word.
+
+\entry{Example Corp}{Staff Engineer}{2021--present}
+\entry{Widgets Ltd}{Engineer}{2017--2021}
+
+\end{document}

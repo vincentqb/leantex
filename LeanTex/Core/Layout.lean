@@ -32,7 +32,8 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
 def leadingFor (size : Sp) : Sp := size * 6 / 5
 
 inductive Item where
-  | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (glyphs : Array (Nat × Char × Sp))
+  | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
+      (glyphs : Array (Nat × Char × Sp))
   | glue (g : Glue)
   | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Sp))
@@ -43,7 +44,10 @@ def forcedCost : Int := -10000
 def hyphenPenalty : Int := 50
 
 inductive Seg where
-  | run (fontIdx : Nat) (color : Ir.Color) (glyphs : Array (Nat × Char))
+  /-- A glyph run. `width` is carried so link rectangles and alignment can be
+  computed without re-measuring against the font. -/
+  | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
+      (glyphs : Array (Nat × Char))
   | gap (w : Sp)
   deriving Repr, Inhabited
 
@@ -71,13 +75,15 @@ structure TextStyle where
   bold : Bool := false
   italic : Bool := false
   color : Ir.Color := Ir.Color.black
+  /-- Destination of the enclosing `\href`, if any. -/
+  link : Option String := none
   deriving Repr, BEq, Inhabited
 
 private inductive Tk where
   | word (style : TextStyle) (chars : Array Char)
   | space (style : TextStyle)
   | fill
-  | brk
+  | brk (extra : SymGlue)
   deriving Repr
 
 private structure FlattenSt where
@@ -128,14 +134,19 @@ private def flattenList (st : FlattenSt) (sty : TextStyle) (xs : List Inline) : 
 private def flattenOne (st : FlattenSt) (sty : TextStyle) (x : Inline) : FlattenSt :=
   match x with
   | .text s => pushText st sty s
-  | .linebreak => { st with toks := st.toks.push .brk }
+  | .linebreak extra => { st with toks := st.toks.push (.brk extra) }
   | .fill => { st with toks := st.toks.push .fill }
   | .math _ src =>
     let st := if st.warnedMath then st
       else { warn st "W0003" "math is typeset as plain text until M4" with warnedMath := true }
     pushText st sty src
   | .styled s body => flatten st (applyStyle sty s) body
-  | .colored c body => flatten st { sty with color := c } body
+  | .colored c _ body => flatten st { sty with color := c } body
+  | .link url body => flatten st { sty with link := some url } body
+  -- Placeholders are substituted before layout; reaching here means the
+  -- document used one outside running content.
+  | .pageNumber => pushText st sty "?"
+  | .pageCount => pushText st sty "?"
 
 end
 
@@ -162,7 +173,8 @@ def bulletGlyphs (size : Sp) (font : Font) : Array (Nat × Char × Sp) :=
 /-- One word → items: boxes split by hyphenation points (flagged penalties
 carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph). -/
 private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat)
-    (color : Ir.Color) (font : Font) (chars : Array Char) (missing : Array Char)
+    (color : Ir.Color) (link : Option String)
+    (font : Font) (chars : Array Char) (missing : Array Char)
     (cache : Std.HashMap String (List Nat)) :
     Array Item × Array Char × Std.HashMap String (List Nat) := Id.run do
   let mut missing := missing
@@ -172,7 +184,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
   let mut box : Array (Nat × Char × Sp) := #[]
   let mut boxW : Sp := 0
   let flush (items : Array Item) (box : Array (Nat × Char × Sp)) (w : Sp) : Array Item :=
-    if box.isEmpty then items else items.push (.box w fontIdx color box)
+    if box.isEmpty then items else items.push (.box w fontIdx color link box)
   let mut i := 0
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
@@ -238,19 +250,27 @@ private def interword (size : Sp) (font : Font) : Glue :=
   let w := scaledAt size font (font.advance ' ')
   { width := w, stretch := w / 2, shrink := w / 3 }
 
-private def itemsOfInlines (pats : Option Hyphen.Patterns) (size : Sp) (fs : FontSet)
-    (baseStyle : TextStyle) (xs : Array Inline) (cache : Std.HashMap String (List Nat)) :
-    Array Item × Array Diag × Std.HashMap String (List Nat) := Id.run do
+/-- Flatten inlines into Knuth-Plass items. The fourth component maps the
+index of a forced-break penalty to extra vertical space the document asked for
+there (`\\[1ex]`); it rides beside the items because the line breaker has no
+use for it, and putting it in `Item` would make every pattern carry a field
+only the page builder reads. -/
+private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
+    (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
+    (cache : Std.HashMap String (List Nat)) :
+    Array Item × Array Diag × Std.HashMap String (List Nat) ×
+      Std.HashMap Nat Sp := Id.run do
   let st := flatten {} baseStyle xs
   let mut items : Array Item := #[]
   let mut missing : Array Char := #[]
+  let mut extras : Std.HashMap Nat Sp := {}
   let mut cache := cache
   for tk in st.toks do
     match tk with
     | .word sty chars =>
       let idx := fs.lookup sty.slot sty.bold sty.italic
       let (ws, m, c') :=
-        wordItems pats size idx sty.color (fs.get idx) chars missing cache
+        wordItems pats size idx sty.color sty.link (fs.get idx) chars missing cache
       missing := m
       cache := c'
       items := items ++ ws
@@ -260,8 +280,11 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size : Sp) (fs : Fon
     | .fill =>
       -- Stretchable but not a legal breakpoint on its own.
       items := items.push (.glue { fil := true })
-    | .brk =>
+    | .brk extra =>
       items := items.push (.glue { fil := true })
+      let sp := extra.width.resolve size xHeight
+      if sp != 0 then
+        extras := extras.insert items.size sp
       items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   items := items.push (.glue { fil := true })
   items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
@@ -272,7 +295,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size : Sp) (fs : Fon
       code := "W0004"
       message := s!"the font has no glyph for '{c}' (U+{hex c.toNat}); dropped"
     }
-  return (items, diags, cache)
+  return (items, diags, cache, extras)
 where
   hex (n : Nat) : String := Id.run do
     let ds := "0123456789ABCDEF".toList
@@ -291,7 +314,7 @@ def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   match items[j]? with
   | some (.glue _) =>
     match items[j-1]? with
-    | some (.box _ _ _ _) => j > 0
+    | some (.box _ _ _ _ _) => j > 0
     | _ => false
   | some (.pen _ cost _ _ _ _) => cost < 10000
   | _ => false
@@ -315,7 +338,7 @@ def measure (items : Array Item) (a j : Nat) : Measure := Id.run do
   let mut m : Measure := {}
   for k in [a:j] do
     match items[k]! with
-    | .box w _ _ _ => m := { m with natural := m.natural + w }
+    | .box w _ _ _ _ => m := { m with natural := m.natural + w }
     | .glue g => m := { m with
         natural := m.natural + g.width
         stretch := m.stretch + g.stretch
@@ -380,7 +403,7 @@ def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
   pforced := pforced.push 0
   for k in [0:n] do
     let (dw, dst, dsh, dfil) : Sp × Sp × Sp × Nat := match items[k]! with
-      | .box w _ _ _ => (w, 0, 0, 0)
+      | .box w _ _ _ _ => (w, 0, 0, 0)
       | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0)
       | .pen _ _ _ _ _ _ => (0, 0, 0, 0)
     pw := pw.push (pw[k]! + dw)
@@ -482,13 +505,13 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let mut width : Sp := 0
   for k in [a:j] do
     match items[k]! with
-    | .box _ fontIdx color glyphs =>
+    | .box _ fontIdx color link glyphs =>
       let mut run : Array (Nat × Char) := #[]
       let mut w : Sp := 0
       for (g, c, adv) in glyphs do
         run := run.push (g, c)
         w := w + adv
-      segs := segs.push (.run fontIdx color run)
+      segs := segs.push (.run fontIdx color link w run)
       width := width + w
     | .glue g =>
       let setW : Sp :=
@@ -517,7 +540,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   -- breaking at a penalty appends its glyphs (the hyphen)
   if let some (.pen w _ _ fontIdx color glyphs) := items[j]? then
     if !glyphs.isEmpty then
-      segs := segs.push (.run fontIdx color (glyphs.map fun (g, c, _) => (g, c)))
+      segs := segs.push (.run fontIdx color none w (glyphs.map fun (g, c, _) => (g, c)))
       width := width + w
   -- drop trailing gaps (paragraph-final fill)
   let mut segs' := segs
@@ -567,7 +590,8 @@ private def typesetPara (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
   let mut b := b
   let geom := b.geom
   let width := geom.textWidth - indent
-  let (items, ds, cache) := itemsOfInlines pats size fs baseStyle inlines b.hyphCache
+  let (items, ds, cache, extras) :=
+    itemsOfInlines pats size b.xHeight fs baseStyle inlines b.hyphCache
   b := { b with diags := b.diags ++ ds, hyphCache := cache }
   let breaks := kp items width
   let mut prev := 0
@@ -585,11 +609,13 @@ private def typesetPara (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
       if let some (bulletFont, bg) := bullet then
         let bw := bg.foldl (fun acc (_, _, adv) => acc + adv) 0
         let sep := geom.fontSize * 2 / 5
-        segs := #[Seg.run bulletFont Ir.Color.black (bg.map fun (g, c, _) => (g, c)),
-          Seg.gap sep] ++ segs
+        segs := #[Seg.run bulletFont Ir.Color.black none bw
+          (bg.map fun (g, c, _) => (g, c)), Seg.gap sep] ++ segs
         x := x - bw - sep
         w := w + bw + sep
     b := b.placeLine x size segs w
+    if let some extra := extras[brk]? then
+      b := { b with y := b.y + extra }
     prev := brk
     first := false
   return b
@@ -672,20 +698,68 @@ def typesetBlock (b : B) (pats : Option Hyphen.Patterns) (fs : FontSet)
 
 end
 
+/-- Replace `\pagenumber` / `\pagecount` with literal text. Running content
+is laid out after the body, so both numbers are known by then — no second
+pass over the document and no aux file. -/
+partial def substPage (n total : Nat) (xs : Array Inline) : Array Inline :=
+  xs.map fun x =>
+    match x with
+    | .pageNumber => .text (toString n)
+    | .pageCount => .text (toString total)
+    | .styled st body => .styled st (substPage n total body)
+    | .colored c nm body => .colored c nm (substPage n total body)
+    | .link u body => .link u (substPage n total body)
+    | other => other
+
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. -/
-def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc) : Out :=
+def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc) :
+    Out := Id.run do
   let font := fs.body
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
-  let b : B := {
+  let b0 : B := {
     geom := geom
     ascent := scale font.ascent
     descent := scale (-font.descent)
     xHeight := scale font.xHeight
   }
-  let b := { b with y := b.freshY }
+  let b := { b0 with y := b0.freshY }
   let b := typesetBlocks b pats fs doc.body 0
   let pages := b.pages.push b.cur
-  { pages := pages, diags := b.diags }
+  -- Running content is laid out per page once the count is known, into the
+  -- margin, so it never disturbs the body it annotates.
+  let total := pages.size
+  let runLine (content : Array Inline) (n : Nat) (y : Sp) (cache : _) :
+      Option LineOut × Array Diag × _ :=
+    let sub := substPage n total content
+    let (items, ds, cache, _) :=
+      itemsOfInlines pats geom.fontSize b0.xHeight fs {} sub cache
+    let target := geom.textWidth
+    let breaks := kp items target
+    match breaks[0]? with
+    | none => (none, ds, cache)
+    | some brk =>
+      let (segs, w, _) := setLine items (lineStart items 0) brk target true
+      (some { x := geom.hmargin, y := y, size := geom.fontSize, segs := segs,
+              setWidth := w }, ds, cache)
+  let headY := geom.vmargin / 2 + b0.ascent
+  let footY := geom.pageH - geom.vmargin / 2
+  let mut out := pages
+  let mut diags := b.diags
+  let mut cache := b.hyphCache
+  for i in [0:out.size] do
+    let mut lines := out[i]!.lines
+    if let some content := doc.head then
+      let (l?, ds, c) := runLine content (i + 1) headY cache
+      diags := diags ++ ds
+      cache := c
+      if let some l := l? then lines := #[l] ++ lines
+    if let some content := doc.foot then
+      let (l?, ds, c) := runLine content (i + 1) footY cache
+      diags := diags ++ ds
+      cache := c
+      if let some l := l? then lines := lines.push l
+    out := out.set! i { lines := lines }
+  { pages := out, diags := diags }
 
 end LeanTex.Core.Layout

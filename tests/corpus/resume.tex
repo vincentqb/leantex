@@ -8,8 +8,8 @@
 \documentclass[paper=letter, fontsize=10pt]{article}
 
 \fonts{
-  body = "Source Serif 4",
-  sans = "Source Sans 3",
+  body = "Nimbus Roman",
+  sans = "Nimbus Sans",
 }
 
 % Design tokens: one rubber base unit; peers separate, labels bind.
@@ -26,11 +26,12 @@
 }
 
 \page{
-  size    = letter,
-  vmargin = 0.5in,
-  hmargin = 0.75in,
-  header  = { left = {\sans\scshape Alex Doe}, right = \pagenumber },
+    size = letter,
+    vmargin = 0.5in,
+    hmargin = 0.75in,
 }
+
+\runninghead{\sffamily\scshape Alex Doe \hfill \pagenumber}
 
 \pdfmeta{
   author = "Alex Doe",

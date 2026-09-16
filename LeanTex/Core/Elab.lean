@@ -36,6 +36,8 @@ structure Ctx where
   palette : Palette := {}
   /-- Named lengths from `\tokens`. -/
   tokens : Tokens := {}
+  /-- Inside mono/verbatim content, where punctuation stays literal. -/
+  literalText : Bool := false
 
 structure ESt where
   diags : Array Diag := #[]
@@ -53,20 +55,23 @@ private def diag (ctx : Ctx) (code msg : String) (pos : Option Pos)
   } }
 
 def reservedCtrl : List (String × String) :=
-  [("href", "M3"), ("link", "M3"),
-   ("vspace", "M3"), ("noindent", "M3"),
+  [("vspace", "M3"), ("noindent", "M3"),
    ("fontfallback", "M5"), ("figure", "M5"), ("note", "M5")]
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 def declCtrl : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens"]
 
+/-- Preamble declarations that take one group of *inline content* rather than
+a key/value block: running head and foot. -/
+def runningCtrl : List String := ["runninghead", "runningfoot"]
+
 def pageKeys : List String :=
-  ["size", "width", "height", "margin", "vmargin", "hmargin", "header", "footer"]
+  ["size", "width", "height", "margin", "vmargin", "hmargin"]
 
 /-- Page keys that are declared but not implemented yet, with the milestone
 that will land them. Reported as pending, never as a type error. -/
-def pagePending : List (String × String) := [("header", "M3"), ("footer", "M3")]
+def pagePending : List (String × String) := []
 
 def metaKeys : List String := ["title", "author", "subject", "keywords"]
 
@@ -182,6 +187,33 @@ private def allText (xs : Array Inline) : Bool :=
     | .text _ => true
     | _ => false
 
+/-- Typographic punctuation, applied to ordinary text. `--` and `---` are the
+dashes an author means when they type them; `...` is an ellipsis; straight
+quotes become the directional pair, chosen by what precedes them (so an
+apostrophe in "don't" closes). Literal text (mono, verbatim) is exempt — that
+is where a straight quote is the point. -/
+def smartPunct (s : String) : String :=
+  String.ofList (go s.toList [])
+where
+  /-- `prev` is the output so far, reversed: its head is the character just
+  emitted, which is what decides quote direction. -/
+  go : List Char → List Char → List Char
+    | [], prev => prev.reverse
+    | '-' :: '-' :: '-' :: rest, prev => go rest ('—' :: prev)
+    | '-' :: '-' :: rest, prev => go rest ('–' :: prev)
+    | '.' :: '.' :: '.' :: rest, prev => go rest ('…' :: prev)
+    | '"' :: rest, prev =>
+      let opening := match prev with
+        | [] => true
+        | c :: _ => c == ' ' || c == '(' || c == '[' || c == '—' || c == '–'
+      go rest ((if opening then '“' else '”') :: prev)
+    | '\'' :: rest, prev =>
+      let opening := match prev with
+        | [] => true
+        | c :: _ => c == ' ' || c == '(' || c == '[' || c == '“'
+      go rest ((if opening then '‘' else '’') :: prev)
+    | c :: rest, prev => go rest (c :: prev)
+
 private def flushText (acc : Array Inline) (sb : String) : Array Inline :=
   if sb == "" then acc else acc.push (.text sb)
 
@@ -208,9 +240,65 @@ private def skipReservedArgs (raws : Array Raw) (i : Nat) : Nat := Id.run do
     j := j + 1
   return j
 
-/-- Elaborate raw items as inline content. Nontermination is impossible by
-design (a user command's body sees only earlier definitions), but the checker
-cannot see that yet: de-partialing is scheduled proof work. -/
+-- Inline elaboration and argument binding are mutually recursive: a call
+-- site's arguments are themselves inline content. Nontermination is
+-- impossible by design (a body sees only earlier definitions), but the
+-- checker cannot see that yet: de-partialing is scheduled proof work.
+mutual
+
+/-- Bind a user command's declared parameters from the call site. Returns the
+bindings and the index just past the consumed arguments. Shared by inline and
+block expansion so both bind identically. -/
+partial def takeArgs (ctx : Ctx) (cmd : UserCmd) (name : String)
+    (raws : Array Raw) (start : Nat) (pos : Pos) :
+    EM (Array (String × Option (Array Inline)) × Nat) := do
+  let mut bindings : Array (String × Option (Array Inline)) := #[]
+  let mut i := start
+  for p in cmd.params do
+    if p.optional then
+      let j := skipSpaces raws i
+      match raws[j]? with
+      | some (.sym '[' _) =>
+        let mut body : Array Raw := #[]
+        let mut k' := j + 1
+        let mut closed := false
+        for _ in [j:raws.size] do
+          match raws[k']? with
+          | some (.sym ']' _) =>
+            closed := true
+            k' := k' + 1
+            break
+          | some r' =>
+            body := body.push r'
+            k' := k' + 1
+          | none => break
+        unless closed do
+          diag ctx "E0316" s!"unclosed optional argument for '\\{name}'" pos
+        i := k'
+        let v ← elabInlines ctx body
+        if p.type == .text && !allText v then
+          diag ctx "E0305" s!"parameter '{p.name}' of '\\{name}' expects text" pos
+        bindings := bindings.push (p.name, some v)
+      | _ =>
+        bindings := bindings.push (p.name, none)
+    else
+      let j := skipSpaces raws i
+      match raws[j]? with
+      | some (.group body _) =>
+        i := j + 1
+        let v ← elabInlines ctx body
+        if p.type == .text && !allText v then
+          diag ctx "E0305" s!"parameter '{p.name}' of '\\{name}' expects text" pos
+        bindings := bindings.push (p.name, some v)
+      | some (.word s _) =>
+        i := j + 1
+        bindings := bindings.push (p.name, some #[.text s])
+      | _ =>
+        diag ctx "E0304" s!"missing argument '{p.name}' for '\\{name}'" pos
+        bindings := bindings.push (p.name, some #[])
+  return (bindings, i)
+
+/-- Elaborate raw items as inline content. -/
 partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
   let mut acc : Array Inline := #[]
   let mut sb : String := ""
@@ -269,20 +357,50 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           sb := ""
           acc := acc.push .fill
         else if name == "\\" || name == "par" then
+          -- `\\[len]` adds space after the break. The bracket must be
+          -- adjacent: LaTeX skips spaces here and so swallows the `[` of a
+          -- line that legitimately starts with one.
+          let mut extra : SymGlue := {}
+          if name == "\\" then
+            if let some (.sym '[' _) := raws[i]? then
+              let mut optSrc : Array Raw := #[]
+              let mut k := i + 1
+              for _ in [k:raws.size + 1] do
+                match raws[k]? with
+                | some (.sym ']' _) =>
+                  k := k + 1
+                  break
+                | some r' =>
+                  optSrc := optSrc.push r'
+                  k := k + 1
+                | none => break
+              i := k
+              let src := rawSrc optSrc
+              match Decl.parseValue src ctx.tokens.entries with
+              | some (.glue g) => extra := g
+              | some (.dim d) => extra := { width := Dim.Length.ofSp d }
+              | _ =>
+                diag ctx "E0331" s!"cannot read a length from '{src}'" pos
+                  (help := "lengths look like 10pt or 1.5ex, or name a token")
           acc := flushText acc sb
           sb := ""
-          acc := acc.push .linebreak
+          acc := acc.push (.linebreak extra)
+          -- Whitespace after a break is the source's line ending, not content;
+          -- keeping it would open the next line with a stray space.
+          for _ in [i:raws.size] do
+            if let some .space := raws[i]? then i := i + 1 else break
         else if let some lit := escapes.lookup name then
           sb := sb ++ lit
         else if let some sym := Lex.textSymbols.lookup name then
           sb := sb ++ sym
         else if let some style := argStyles.lookup name then
+          let argCtx := if style == Style.mono then { ctx with literalText := true } else ctx
           let j := skipSpaces raws i
           match raws[j]? with
           | some (.group body _) =>
             acc := flushText acc sb
             sb := ""
-            acc := acc.push (.styled style (← elabInlines ctx body))
+            acc := acc.push (.styled style (← elabInlines argCtx body))
             i := j + 1
           | some (.word s _) =>
             acc := flushText acc sb
@@ -291,6 +409,33 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             i := j + 1
           | _ =>
             diag ctx "E0304" s!"'\\{name}' needs an argument" pos
+        else if name == "href" || name == "link" then
+          let j := skipSpaces raws i
+          let j2 := skipSpaces raws (j + 1)
+          match raws[j]?, raws[j2]? with
+          | some (.group urlRaw _), some (.group body _) =>
+            i := j2 + 1
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (.link (rawSrc urlRaw) (← elabInlines ctx body))
+          | some (.group urlRaw _), _ =>
+            -- One argument: the URL is also the text, which is the common case
+            -- for a bare link and saves writing it twice.
+            i := j + 1
+            let url := rawSrc urlRaw
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (.link url #[.text url])
+          | _, _ =>
+            diag ctx "E0304" s!"'\\{name}' needs a URL group, optionally followed by text" pos
+        else if name == "pagenumber" then
+          acc := flushText acc sb
+          sb := ""
+          acc := acc.push .pageNumber
+        else if name == "pagecount" then
+          acc := flushText acc sb
+          sb := ""
+          acc := acc.push .pageCount
         else if name == "textcolor" then
           let j := skipSpaces raws i
           let j2 := skipSpaces raws (j + 1)
@@ -302,7 +447,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             | some c =>
               acc := flushText acc sb
               sb := ""
-              acc := acc.push (.colored c (← elabInlines ctx body))
+              acc := acc.push (.colored c (some key) (← elabInlines ctx body))
             | none =>
               diag ctx "E0326" s!"'{key}' is not in the palette" pos
                 (help := s!"declared: {String.intercalate ", "
@@ -314,10 +459,11 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           let rest ← elabInlines ctx (raws.extract i raws.size)
           acc := flushText acc sb
           sb := ""
-          acc := acc.push (.colored c rest)
+          acc := acc.push (.colored c (some name) rest)
           i := raws.size
         else if let some style := declStyles.lookup name then
-          let rest ← elabInlines ctx (raws.extract i raws.size)
+          let declCtx := if style == Style.mono then { ctx with literalText := true } else ctx
+          let rest ← elabInlines declCtx (raws.extract i raws.size)
           acc := flushText acc sb
           sb := ""
           acc := acc.push (.styled style rest)
@@ -347,49 +493,8 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         else if let some (k, cmd) := lookupUser ctx name then
           acc := flushText acc sb
           sb := ""
-          let mut bindings : Array (String × Option (Array Inline)) := #[]
-          for p in cmd.params do
-            if p.optional then
-              let j := skipSpaces raws i
-              match raws[j]? with
-              | some (.sym '[' _) =>
-                let mut body : Array Raw := #[]
-                let mut k' := j + 1
-                let mut closed := false
-                for _ in [j:raws.size] do
-                  match raws[k']? with
-                  | some (.sym ']' _) =>
-                    closed := true
-                    k' := k' + 1
-                    break
-                  | some r' =>
-                    body := body.push r'
-                    k' := k' + 1
-                  | none => break
-                unless closed do
-                  diag ctx "E0316" s!"unclosed optional argument for '\\{name}'" pos
-                i := k'
-                let v ← elabInlines ctx body
-                if p.type == .text && !allText v then
-                  diag ctx "E0305" s!"parameter '{p.name}' of '\\{name}' expects text" pos
-                bindings := bindings.push (p.name, some v)
-              | _ =>
-                bindings := bindings.push (p.name, none)
-            else
-              let j := skipSpaces raws i
-              match raws[j]? with
-              | some (.group body _) =>
-                i := j + 1
-                let v ← elabInlines ctx body
-                if p.type == .text && !allText v then
-                  diag ctx "E0305" s!"parameter '{p.name}' of '\\{name}' expects text" pos
-                bindings := bindings.push (p.name, some v)
-              | some (.word s _) =>
-                i := j + 1
-                bindings := bindings.push (p.name, some #[.text s])
-              | _ =>
-                diag ctx "E0304" s!"missing argument '{p.name}' for '\\{name}'" pos
-                bindings := bindings.push (p.name, some #[])
+          let (bindings, j) ← takeArgs ctx cmd name raws i pos
+          i := j
           let callCtx : Ctx := { ctx with limit := k, args := bindings }
           acc := acc ++ (← elabInlines callCtx cmd.body)
         else if let some milestone := reservedCtrl.lookup name then
@@ -405,7 +510,31 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             (help := "define it with \\define, or see PLAN.md for planned commands")
     else
       break
-  return mergeText (flushText acc sb)
+  let out := mergeText (flushText acc sb)
+  return if ctx.literalText then out else out.map mapText
+where
+  /-- Applied to this level's own text only; nested bodies were processed by
+  their own call, with their own literal-text setting. -/
+  mapText (x : Inline) : Inline :=
+    match x with
+    | .text t => .text (smartPunct t)
+    | other => other
+
+end
+
+/-- Block environments: those whose content is a block sequence. -/
+def blockEnvs : List String := ["itemize", "enumerate", "center", "document"]
+
+/-- Does this body produce block-level content? Decides whether a user command
+called between paragraphs expands as blocks or as inline content. A purely
+inline macro must stay inline, or `\role{Ada} and more text` would split the
+paragraph. -/
+def bodyIsBlock (raws : Array Raw) : Bool :=
+  raws.any fun r =>
+    match r with
+    | .ctrl n _ => n == "block" || ["section", "subsection", "subsubsection"].contains n
+    | .env n _ _ => blockEnvs.contains n
+    | _ => false
 
 private def sectionLevel : String → Option Nat
   | "section" => some 1
@@ -438,7 +567,12 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .par _ => true
         | .ctrl "par" _ => true
         | .ctrl "block" _ => true
-        | .ctrl n _ => (sectionLevel n).isSome
+        | .ctrl n _ =>
+          (sectionLevel n).isSome ||
+          -- A user command whose body produces blocks is itself a boundary.
+          (match lookupUser ctx n with
+           | some (_, cmd) => bodyIsBlock cmd.body
+           | none => false)
         | .env n _ _ =>
           n == "itemize" || n == "enumerate" || n == "center" ||
           (reservedEnv.lookup n).isSome
@@ -499,6 +633,16 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             diag ctx "E0304" "'\\block' needs a {body}" pos
         | .ctrl n pos =>
           i := i + 1
+          match lookupUser ctx n with
+          | some (k, cmd) =>
+            -- Block-producing user command: bind its arguments, then
+            -- elaborate the body as blocks so `\block` inside a definition
+            -- works instead of reporting E0312.
+            let (bindings, j) ← takeArgs ctx cmd n raws i pos
+            i := j
+            let callCtx : Ctx := { ctx with limit := k, args := bindings }
+            blocks := blocks ++ (← elabBlocks callCtx cmd.body)
+          | none =>
           let level := (sectionLevel n).getD 1
           let mut starred := false
           if let some (.word "*" _) := raws[i]? then
@@ -607,9 +751,13 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "vmargin", .dim d => spec := { spec with vmargin := d }
     | "hmargin", .dim d => spec := { spec with hmargin := d }
     | key, v =>
-      if let some milestone := pagePending.lookup key then
-        diag ctx "E0307" s!"'{key}' in \\page is not implemented yet" pos
-          (help := s!"planned for {milestone}; see PLAN.md")
+      if key == "header" || key == "footer" then
+        -- The feature exists, just not as a page key: running content is
+        -- inline content, which a key/value block cannot carry.
+        let cmd := if key == "header" then "\\runninghead" else "\\runningfoot"
+        diag ctx "E0327" s!"'{key}' is not a \\page key" pos
+          (help := s!"declare it as {cmd}\{...} — it takes inline content, " ++
+            "so use \\hfill to push part of it to the right")
       else if pageKeys.contains key then
         let expected := if key == "size" then "a page size name" else "a dimension"
         modify fun st => { st with
@@ -754,6 +902,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut fonts : FontSpec := {}
   let mut palette : Palette := {}
   let mut tokens : Tokens := {}
+  let mut head : Option (Array Inline) := none
+  let mut foot : Option (Array Inline) := none
   let mut info : Meta := {}
   let mut asserts : Array Assertion := #[]
   let mut textDiagged := false
@@ -825,7 +975,19 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           i := j + 1
       | .ctrl name pos =>
         i := i + 1
-        if declCtrl.contains name then
+        if runningCtrl.contains name then
+          let j := skipSpaces preamble i
+          match preamble[j]? with
+          | some (.group body _) =>
+            i := j + 1
+            let content ← elabInlines ctx body
+            if name == "runninghead" then
+              head := some content
+            else
+              foot := some content
+          | _ =>
+            diag ctx "E0304" s!"'\\{name}' needs one group of inline content" pos
+        else if declCtrl.contains name then
           let j := skipSpaces preamble i
           match preamble[j]? with
           | some (.group body _) =>
@@ -879,6 +1041,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     fonts := fonts
     palette := palette
     tokens := tokens
+    head := head
+    foot := foot
     info := info
     asserts := asserts
     body := blocks

@@ -50,7 +50,7 @@ private def usedGlyphs (fontIdx numGlyphs : Nat) (pages : Array PageOut) :
   for p in pages do
     for l in p.lines do
       for s in l.segs do
-        if let .run idx _ glyphs := s then
+        if let .run idx _ _ _ glyphs := s then
           if idx == fontIdx then
             for (g, c) in glyphs do
               if h : g < seen.size then
@@ -79,7 +79,7 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
     let mut inArray := false
     for seg in l.segs do
       match seg with
-      | .run idx color glyphs =>
+      | .run idx color _ _ glyphs =>
         -- Neither Tf nor rg may appear inside a TJ array, so a change in
         -- either closes the array and reopens it after.
         if curFont != idx || curSize != l.size || curColor != color then
@@ -113,6 +113,34 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
       s := s ++ "] TJ\n"
   s := s ++ "ET"
   return s
+
+/-- Link rectangles for one page, in PDF user space. Adjacent runs with the
+same destination merge, so a hyphenated or multi-font link is one annotation
+per line rather than one per glyph run. -/
+private def linkRects (geom : Geom) (page : PageOut) :
+    Array (Sp × Sp × Sp × Sp × String) := Id.run do
+  let mut out : Array (Sp × Sp × Sp × Sp × String) := #[]
+  for l in page.lines do
+    let mut x := l.x
+    -- Merge tolerance of one em: a run separated only by an interword space
+    -- joins the previous rectangle, so a multi-word link is one annotation.
+    let pad := l.size
+    let y0 := geom.pageH - l.y - l.size / 4
+    let y1 := geom.pageH - l.y + l.size * 4 / 5
+    for seg in l.segs do
+      match seg with
+      | .run _ _ link w _ =>
+        if let some url := link then
+          match out.back? with
+          | some (bx0, by0, bx1, by1, burl) =>
+            if burl == url && by0 == y0 && bx1 + pad ≥ x then
+              out := out.pop.push (bx0, by0, x + w, by1, burl)
+            else
+              out := out.push (x, y0, x + w, y1, url)
+          | none => out := out.push (x, y0, x + w, y1, url)
+        x := x + w
+      | .gap w => x := x + w
+  return out
 
 private def toUnicode (used : Array (Nat × Char)) : String := Id.run do
   let mut s := "/CIDInit /ProcSet findresource begin
@@ -271,8 +299,16 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       s!"<< /Type /Font /Subtype /{cidSubtype} /BaseFont /{baseFont} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {fdId k} 0 R /DW 1000 /W {wArray font used}{cidToGid} >>"),
      (fdId k,
       s!"<< /Type /FontDescriptor /FontName /{baseFont} /Flags {flags} /FontBBox [-1000 {descent1000} 2000 {ascent1000}] /ItalicAngle {italicAngle} /Ascent {ascent1000} /Descent {descent1000} /CapHeight {ascent1000} /StemV {stemV} /{fontFileKey} {fileId k} 0 R >>")]
+  let annots (i : Nat) : String :=
+    let rects := linkRects geom pages[i]!
+    if rects.isEmpty then "" else
+      let entries := rects.toList.map fun (x0, y0, x1, y1, url) =>
+        s!"<< /Type /Annot /Subtype /Link /Rect [{x0.toPtString} {y0.toPtString} " ++
+        s!"{x1.toPtString} {y1.toPtString}] /Border [0 0 0] /F 4 " ++
+        s!"/A << /S /URI /URI ({pdfString url}) >> >>"
+      " /Annots [" ++ String.intercalate " " entries ++ "]"
   let pageDict (i : Nat) :=
-    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {geom.pageW.toPtString} {geom.pageH.toPtString}] /Resources << /Font << {fontResources} >> >> /Contents {contentId i} 0 R >>"
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {geom.pageW.toPtString} {geom.pageH.toPtString}] /Resources << /Font << {fontResources} >> >>{annots i} /Contents {contentId i} 0 R >>"
   -- PDF 2.0 text strings are UTF-8, so declared metadata needs no escaping
   -- beyond the literal-string delimiters.
   let infoEntry (key : String) (v : Option String) : String :=
