@@ -513,6 +513,52 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     ((redef.2.filter (·.severity == .warning)).any (·.code == "W0303") &&
      redef.1.body == #[.para #[.underline #[.text "y"]]])
 
+/-- A synthetic face for resolution-order tests: pure data, no host fonts. -/
+def synthFace (family : String) (path : String := "") : FontDb.Face :=
+  { path := if path.isEmpty then "/x/" ++ family ++ ".ttf" else path
+    family := family
+    subfamily := "Regular"
+    bold := false
+    italic := false
+    fixedPitch := false
+    weight := 400 }
+
+/-- The default-family choice and the search roots are what make a fresh
+machine work with no configuration, so they are pinned here on synthetic
+faces: preference order beats scan order among preferred names; then the
+first family calling itself sans; then any face; none only when nothing is
+installed. Ties between duplicate installs go to scan order. -/
+def defaultFontChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  t "default prefers listed names over scan order"
+    (FontDb.defaultFamily #[synthFace "Arial", synthFace "Helvetica"] == some "Helvetica")
+  t "default takes the first preferred name present"
+    (FontDb.defaultFamily #[synthFace "Helvetica", synthFace "DejaVu Sans"] ==
+      some "DejaVu Sans")
+  t "default falls back to the first sans family"
+    (FontDb.defaultFamily
+      #[synthFace "Example Serif", synthFace "Foo Sans", synthFace "Bar Sans"] ==
+      some "Foo Sans")
+  t "default falls back to any face"
+    (FontDb.defaultFamily #[synthFace "Example Serif"] == some "Example Serif")
+  t "default is none only without any face" (FontDb.defaultFamily #[] == none)
+  t "resolve breaks duplicate-install ties by scan order"
+    ((FontDb.resolve #[synthFace "Tie Sans" "/z/tie.ttf", synthFace "Tie Sans" "/a/tie.ttf"]
+      "Tie Sans" {}).map (·.1.path) == some "/z/tie.ttf")
+  for d in ["/System/Library/Fonts", "/System/Library/Fonts/Supplemental",
+      "/Library/Fonts", "/opt/homebrew/share/fonts", "/usr/local/share/fonts"] do
+    t s!"searchDirs covers {d}" (FontDb.searchDirs.contains d)
+  if let some home ← IO.getEnv "HOME" then
+    t "extraDirs covers ~/Library/Fonts"
+      ((← FontDb.extraDirs).contains (home ++ "/Library/Fonts"))
+  -- A .ttc never reaches probe via the scan (isFontFile skips it), but probe
+  -- fed one directly must classify it as unusable, never abort: its reads
+  -- are bounded checks, not trusted offsets.
+  let ttc := System.FilePath.mk "/tmp" / "leantex-test-synthetic.ttc"
+  IO.FS.writeBinFile ttc ("ttcf".toUTF8 ++ ByteArray.mk (Array.replicate 64 0x7f))
+  t "probe rejects a ttc without aborting" ((← FontDb.probe ttc.toString).isNone)
+  IO.FS.removeFile ttc
+
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
@@ -1060,6 +1106,7 @@ def main (args : List String) : IO UInt32 := do
   let faces ← FontDb.scan
   t "fontdb finds faces" (faces.size > 0)
   t "fontdb finds dejavu" ((FontDb.families faces).any (· == "DejaVu Serif"))
+  defaultFontChecks ref
   -- The plain face must win over same-family condensed/extra variants.
   match FontDb.resolve faces "DejaVu Serif" { bold := true } with
   | some (face, exact) =>
