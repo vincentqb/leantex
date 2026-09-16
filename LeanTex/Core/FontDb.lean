@@ -25,7 +25,11 @@ structure Variant where
 
 def searchDirs : List String :=
   ["/usr/share/fonts", "/usr/local/share/fonts", "/usr/share/texmf-dist/fonts/opentype",
-   "/usr/share/texmf-dist/fonts/truetype"]
+   "/usr/share/texmf-dist/fonts/truetype",
+   -- macOS. System faces are mostly .ttc collections, which the scan skips
+   -- (see isFontFile); Supplemental and /Library hold plain .ttf/.otf.
+   "/System/Library/Fonts", "/System/Library/Fonts/Supplemental", "/Library/Fonts",
+   "/opt/homebrew/share/fonts"]
 
 /-- Where else to look, from `LEANTEX_FONT_PATH` and `$HOME`. A TeX Live tree is
 not always at `/usr/share`, and a user's own fonts are never there: without this
@@ -34,7 +38,7 @@ def extraDirs : IO (List String) := do
   let home := (← IO.getEnv "HOME").getD ""
   let userDirs :=
     if home.isEmpty then []
-    else [home ++ "/.fonts", home ++ "/.local/share/fonts"]
+    else [home ++ "/.fonts", home ++ "/.local/share/fonts", home ++ "/Library/Fonts"]
   let env := (← IO.getEnv "LEANTEX_FONT_PATH").getD ""
   let fromEnv := (env.splitOn ":").filter (!·.isEmpty)
   return userDirs ++ fromEnv
@@ -42,6 +46,9 @@ def extraDirs : IO (List String) := do
 private def isFontFile (p : String) : Bool :=
   -- Compare the extension only: lowercasing the whole path allocated a copy
   -- of every one of 3000 names and was most of the listing's time.
+  -- `.ttc` and `.dfont` collections (macOS system fonts) are skipped here by
+  -- construction: the scan never opens them, so they can never be reported
+  -- as broken fonts. Parsing collections is out of scope (PLAN.md).
   let ext := (p.splitOn ".").getLast? |>.map String.toLower
   ext == some "ttf" || ext == some "otf"
 
@@ -260,9 +267,12 @@ private def targetWeight (bold : Bool) : Nat := if bold then 700 else 400
 
 /-- Rank candidates for a target weight: closest weight wins; ties prefer the
 plain face over one carrying an extra descriptor ("Condensed Bold"), because
-condensed faces commonly share the typographic family name. -/
+condensed faces commonly share the typographic family name. A remaining tie
+(the same family installed twice, e.g. a system copy and a TeX Live copy)
+goes to the earlier face in scan order — the property `scan`'s ordered join
+exists to provide — so the first search directory that holds a family owns it. -/
 private def pickWeighted (cands : Array Face) (target : Nat) : Option Face :=
-  let sorted := cands.qsort fun a b =>
+  let sorted := cands.zipIdx.qsort fun (a, ia) (b, ib) =>
     let da := if a.weight ≥ target then a.weight - target else target - a.weight
     let db := if b.weight ≥ target then b.weight - target else target - b.weight
     if da != db then da < db
@@ -272,8 +282,8 @@ private def pickWeighted (cands : Array Face) (target : Nat) : Option Face :=
       if ca != cb then ca < cb
       else if a.subfamily.length != b.subfamily.length then
         a.subfamily.length < b.subfamily.length
-      else a.path < b.path
-  sorted[0]?
+      else ia < ib
+  sorted[0]?.map (·.1)
 
 /-- Best face for a family name and variant, plus whether the family really
 offers what was asked for. A family whose heaviest face is "Demi" (600) is
@@ -305,5 +315,22 @@ def families (faces : Array Face) : Array String := Id.run do
     unless seen.any (fun s => norm s == norm f.family) do
       seen := seen.push f.family
   return seen.qsort (· < ·)
+
+/-- Families tried, in order, when a document declares no `\fonts`. -/
+def defaultFamilies : List String :=
+  ["DejaVu Sans", "Helvetica Neue", "Helvetica", "Arial", "Liberation Sans",
+   "Nimbus Sans", "Inter"]
+
+/-- The family a document with no `\fonts` uses: the first preferred name
+that resolves, else the first family calling itself sans, else the first
+face of any kind. `none` only when no face is installed at all — so the
+default exists on any host with any scannable font, by construction. -/
+def defaultFamily (faces : Array Face) : Option String :=
+  match defaultFamilies.find? fun n => (resolve faces n {}).isSome with
+  | some n => some n
+  | none =>
+    match faces.find? fun f => ((norm f.family).splitOn "sans").length > 1 with
+    | some f => some f.family
+    | none => faces[0]?.map (·.family)
 
 end LeanTex.Core.FontDb

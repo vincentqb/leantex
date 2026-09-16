@@ -46,48 +46,29 @@ def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) (notes : Nat := 0)
     let shown := if ui.cfg.verbosity ≥ 1 then 0 else notes
     ui.errStream.putStrLn (Render.humanDone ui.color file output pages ms shown)
 
-def fontCandidates : List String :=
-  ["/usr/share/fonts/dejavu/DejaVuSans.ttf",
-   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-   "/usr/share/fonts/TTF/DejaVuSans.ttf"]
+/-- Every slot and variant mapped to one face: the shape of a single-font set. -/
+def singleFaceIndex : Array ((Nat × Bool × Bool) × Nat) :=
+  ((List.range 3).flatMap fun slot =>
+    [((slot, false, false), 0), ((slot, true, false), 0),
+     ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
 
-/-- Load the default face: `LEANTEX_FONT` override, then known paths. Used
-when the document declares no `\fonts`. -/
-def loadFont : IO (Except Diag (String × Font.Font)) := do
-  let tryPath (path : String) : IO (Option (String × Font.Font)) := do
-    if ← System.FilePath.pathExists path then
-      let data ← IO.FS.readBinFile path
-      match Font.parse data with
-      | .ok f => return some (path, f)
-      | .error _ => return none
-    else
-      return none
-  match ← IO.getEnv "LEANTEX_FONT" with
-  | some path =>
-    if ← System.FilePath.pathExists path then
-      let data ← IO.FS.readBinFile path
-      match Font.parse data with
-      | .ok f => return .ok (path, f)
-      | .error e => return .error {
-          severity := .error
-          code := "E0402"
-          message := s!"cannot use LEANTEX_FONT '{path}': {e}"
-        }
-    else
-      return .error {
+/-- `LEANTEX_FONT` (a path) overrides the default face for a document that
+declares no `\fonts`: one face serves every slot and variant, no scan. -/
+def loadOverride (path : String) : IO (Except Diag (Font.Font × String)) := do
+  if ← System.FilePath.pathExists path then
+    let data ← IO.FS.readBinFile path
+    match Font.parse data with
+    | .ok f => return .ok (f, path)
+    | .error e => return .error {
         severity := .error
         code := "E0402"
-        message := s!"LEANTEX_FONT '{path}' does not exist"
+        message := s!"cannot use LEANTEX_FONT '{path}': {e}"
       }
-  | none =>
-    for p in fontCandidates do
-      if let some r ← tryPath p then
-        return .ok r
+  else
     return .error {
       severity := .error
-      code := "E0401"
-      message := "no usable font found"
-      help := some s!"searched: {String.intercalate ", " fontCandidates}; set LEANTEX_FONT"
+      code := "E0402"
+      message := s!"LEANTEX_FONT '{path}' does not exist"
     }
 
 /-- TeX Live's font roots, asked of kpsewhich when it is installed, so
@@ -129,24 +110,37 @@ def texFontDirs : IO (List String) := do
     catch _ => pure ()
   return roots
 
+/-- The scan produced nothing usable at all. -/
+def noFontDiag : Diag := {
+  severity := .error
+  code := "E0401"
+  message := "no usable font found"
+  help := some "install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT"
+}
+
 /-- Every face a document can reach: the three family slots crossed with the
 four bold/italic variants, loaded once and deduplicated by path. Faces the
 document never uses are still loaded but not embedded — `usedGlyphs` decides
-what reaches the file. -/
+what reaches the file. A document with no `\fonts` is served by the same
+mechanism: `FontDb.defaultFamily` picks a family from the scan and it fills
+the body slot, so the default exists wherever any font does, by construction. -/
 def buildFontSet (ui : Ui) (spec : Ir.FontSpec) :
     IO (Except Diag (Font.FontSet × Array Diag × String)) := do
-  if spec.body.isNone && spec.sans.isNone && spec.mono.isNone then
-    -- No \fonts: one default face, no directory scan.
-    match ← loadFont with
-    | .error d => return .error d
-    | .ok (path, f) =>
-      let index := (List.range 3).flatMap fun slot =>
-        [((slot, false, false), 0), ((slot, true, false), 0),
-         ((slot, false, true), 0), ((slot, true, true), 0)]
-      return .ok ({ fonts := #[f], index := index.toArray }, #[], path)
+  let bare := spec.body.isNone && spec.sans.isNone && spec.mono.isNone
+  if bare then
+    if let some path ← IO.getEnv "LEANTEX_FONT" then
+      match ← loadOverride path with
+      | .error d => return .error d
+      | .ok (f, path) =>
+        return .ok ({ fonts := #[f], index := singleFaceIndex }, #[], path)
   let t ← IO.monoMsNow
   let faces ← FontDb.scan (ui.cfg.fontDirs.toList ++ (← texFontDirs))
   ui.phase "fontdb" s!"{faces.size} faces" ((← IO.monoMsNow) - t)
+  let spec ← if bare then
+      match FontDb.defaultFamily faces with
+      | some fam => pure { spec with body := some fam }
+      | none => return .error noFontDiag
+    else pure spec
   let mut diags : Array Diag := #[]
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]
@@ -201,13 +195,16 @@ def buildFontSet (ui : Ui) (spec : Ir.FontSpec) :
             fonts := fonts.push f
             paths := paths.push face.path
   if fonts.isEmpty then
-    match ← loadFont with
-    | .error d => return .error d
-    | .ok (path, f) =>
-      let idx := (List.range 3).flatMap fun slot =>
-        [((slot, false, false), 0), ((slot, true, false), 0),
-         ((slot, false, true), 0), ((slot, true, true), 0)]
-      return .ok ({ fonts := #[f], index := idx.toArray }, diags, path)
+    -- Every named family failed and `diags` carries the errors; the caller
+    -- stops on them, but nothing downstream may ever see an empty set.
+    match FontDb.defaultFamily faces |>.bind (FontDb.resolve faces · {}) with
+    | none => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
+    | some (face, _) =>
+      let data ← IO.FS.readBinFile face.path
+      match Font.parse data with
+      | .error _ => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
+      | .ok f =>
+        return .ok ({ fonts := #[f], index := singleFaceIndex }, diags, face.path)
   return .ok ({ fonts := fonts, index := index }, diags,
     String.intercalate ", " paths.toList)
 
