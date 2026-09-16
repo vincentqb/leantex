@@ -79,6 +79,9 @@ private def say (sev : Severity) (code msg : String) (pos : Pos) (help : Option 
     severity := sev, code := code, message := msg
     span := some ⟨st.file, pos⟩, help := help } }
 
+/-- Keys are namespaced (`ctrl:`, `spec:`, `beamer:`), never bare names: the
+catch-all `beamer:` key set grows with `beamerConfig`, and a flat space would
+let a future entry claim a literal arm's key and silence it. -/
 private def sayOnce (key : String) (sev : Severity) (code msg : String) (pos : Pos)
     (help : Option String := none) : M Unit := do
   unless (← get).warned.contains key do
@@ -571,13 +574,13 @@ where
     let (_, j) := takeOpt raws start
     let (_, k) := takeGroups raws j 1
     let (_, k) := takeOpt raws k
-    sayOnce "setmathfont" .warning "W0104"
+    sayOnce "ctrl:setmathfont" .warning "W0104"
       "'\\setmathfont' is not supported yet; skipped" pos
       (help := "math layout and its font land with M6; see PLAN.md")
     return some (#[], k)
   | "directlua" =>
     let (_, k) := takeGroups raws start 1
-    sayOnce "directlua" .warning "W0104"
+    sayOnce "ctrl:directlua" .warning "W0104"
       "'\\directlua' is Lua code for luatex; skipped" pos
       (help := "there is no Lua here; see PLAN.md for the native declarations")
     return some (#[], k)
@@ -594,7 +597,7 @@ where
         break
       | some _ => k := j + 1
       | none => break
-    sayOnce "def" .warning "W0104" s!"TeX '\\{name}' is not supported; skipped" pos
+    sayOnce "ctrl:def" .warning "W0104" s!"TeX '\\{name}' is not supported; skipped" pos
       (help := "\\define declares typed commands")
     return some (#[], if found then k else start)
   | "newenvironment" | "renewenvironment" =>
@@ -615,7 +618,7 @@ the definition is skipped and every '\{{envName}}' keeps its body" pos
     for j in [start:raws.size] do
       k := j + 1
       if let some (.ctrl "fi" _) := raws[j]? then break
-    sayOnce "ifdefined" .warning "W0104"
+    sayOnce "ctrl:ifdefined" .warning "W0104"
       s!"TeX conditional ('\\{name}' … '\\fi') is not supported; skipped whole" pos
     return some (#[], k)
   | "uncover" | "only" | "visible" | "onslide" | "pause" =>
@@ -625,7 +628,7 @@ the definition is skipped and every '\{{envName}}' keeps its body" pos
     let k := match raws[j]? with
       | some (.word w _) => if w.startsWith "<" && w.endsWith ">" then j + 1 else start
       | _ => start
-    sayOnce "overlay" .warning "W0105"
+    sayOnce "spec:overlay" .warning "W0105"
       "overlay specifications are ignored; every step's content is shown" pos
       (help := "dim-not-hide overlays land with the rest of M5; see PLAN.md")
     return some (#[], k)
@@ -635,7 +638,7 @@ the definition is skipped and every '\{{envName}}' keeps its body" pos
     match raws[j]? with
     | some (.word w _) =>
       if w.startsWith "<" && w.endsWith ">" then
-        sayOnce "overlay" .warning "W0105"
+        sayOnce "spec:overlay" .warning "W0105"
           "overlay specifications are ignored; every step's content is shown" pos
           (help := "dim-not-hide overlays land with the rest of M5; see PLAN.md")
         return some (#[.ctrl "item" pos], j + 1)
@@ -651,7 +654,7 @@ the definition is skipped and every '\{{envName}}' keeps its body" pos
   | "includegraphics" =>
     let (_, j) := takeOpt raws start
     let (_, k) := takeGroups raws j 1
-    sayOnce "includegraphics" .warning "W0107"
+    sayOnce "ctrl:includegraphics" .warning "W0107"
       "'\\includegraphics' is not implemented yet; the image is not rendered" pos
       (help := "asset embedding lands with M8; see PLAN.md")
     return some (#[], k)
@@ -664,7 +667,7 @@ the definition is skipped and every '\{{envName}}' keeps its body" pos
     | #[_, _, text] => return some (#[.group text pos], k)
     | _ => return none
   | "centering" =>
-    sayOnce "centering" .warning "W0108"
+    sayOnce "ctrl:centering" .warning "W0108"
       "'\\centering' is not honoured yet; content stays left-aligned" pos
       (help := "wrap the content in \\begin{center} … \\end{center}")
     return some (#[], start)
@@ -680,7 +683,7 @@ the definition is skipped and every '\{{envName}}' keeps its body" pos
     | some n =>
       let (_, j) := takeOpt raws start
       let (_, k) := takeGroups raws j n
-      sayOnce name .warning "W0104"
+      sayOnce ("beamer:" ++ name) .warning "W0104"
         s!"'\\{name}' is beamer configuration the engine does not have; skipped" pos
         (help := "a theme is a token bundle here (M5b): \\palette and \\tokens \
 declare the design directly")

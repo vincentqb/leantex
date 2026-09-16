@@ -83,6 +83,19 @@ def main : IO UInt32 := do
 {String.intercalate "\n" bad}
   Fix: stay in the safe fragment; {kwUnsafe} code voids the certification story."
 
+  -- Warn-once keys are namespaced: a flat key space let an environment and a
+  -- command of one name silence each other once (W0301/W0302), and a growing
+  -- catch-all table re-creates the collision quietly.
+  let onceKeys (l : String) : List String :=
+    ["sayOnce \"", "warnOnce ctx \""].flatMap fun pat =>
+      ((l.splitOn pat).drop 1).map fun rest => ((rest.splitOn "\"").headD "")
+  let bad := added.filter fun l => (onceKeys l).any fun k => !containsSub k ":"
+  if !bad.isEmpty then
+    say s!"pre-commit: warn-once key without a namespace prefix in staged .lean changes:
+{String.intercalate "\n" bad}
+  Keys share one flat store per module; prefix them (\"ctrl:\", \"env:\", \"spec:\", ...)
+  so two constructs of one name cannot silence each other."
+
   if ← failed.get then
     return 1
 
