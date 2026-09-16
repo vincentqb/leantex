@@ -1,0 +1,76 @@
+% Dialect sketch and future golden input. Invented person and invented design
+% — no data, text, or design values from any private document.
+% Preamble syntax is NOT final: this file is where M1 grammar decisions get
+% argued. Body markup is the stable LaTeX-shaped subset.
+% M3 target: everything a one-page designed document needs — fonts, design
+% tokens, palette, typed commands, layout assertions, PDF metadata.
+
+\documentclass[paper=letter, fontsize=10pt]{article}
+
+\fonts{
+  body = "Source Serif 4",
+  sans = "Source Sans 3",
+}
+
+% Design tokens: one rubber base unit; peers separate, labels bind.
+\tokens{
+  rhythm = 1.5ex plus 0.6ex minus 0.3ex,
+  sep    = 0.6 * rhythm,
+  bind   = 0.45 * rhythm,
+}
+
+\palette{
+  primary = #7C3AED,
+  ink     = #18181B,
+  muted   = #71717A,
+}
+
+\page{
+  size    = letter,
+  vmargin = 0.5in,
+  hmargin = 0.75in,
+  header  = { left = {\sans\scshape Alex Doe}, right = \pagenumber },
+}
+
+\pdfmeta{
+  author = "Alex Doe",
+  title  = "Alex Doe — Resume",
+}
+
+% Layout invariants: violation fails the build. This replaces log-grepping.
+\assert{ pages == 1 }
+\assert{ fonts.all_embedded }
+
+% Typed command: named, typed parameters; optional marked with ?.
+\define \role(company: text, title: text, dates: text, team?: text) {
+  \block[before = 2 * sep]{
+    \textbf{\company} \,|\, \textbf{\title} \hfill \muted{\dates}
+    \ifgiven{\team}{\par \muted{\textit{\team}}}
+  }
+}
+
+\begin{document}
+
+\begin{center}
+  {\sans\bfseries\Huge \primary{Alex} Doe}\\[bind]
+  \muted{alex@example.org \middot example.org \middot github.com/adoe}
+\end{center}
+
+\section*{Experience}
+
+\role{Example Corp}{Staff Engineer}{2021--present}[Platform]
+\begin{itemize}
+  \item Made a slow thing 10\% faster and proved it stayed correct.
+  \item Deleted more code than was added, on purpose, twice.
+\end{itemize}
+
+\role{Widgets Ltd}{Engineer}{2017--2021}
+\begin{itemize}
+  \item Shipped widgets; measured them; shipped better widgets.
+\end{itemize}
+
+\section*{Education}
+
+\role{Example University}{PhD, Applied Mathematics}{2013--2017}
+
+\end{document}
