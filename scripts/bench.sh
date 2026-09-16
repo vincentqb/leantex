@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 N=${N:-5}
 LEANTEX=.lake/build/bin/leantex
 
-./scripts/gen-lorem.sh >/dev/null
+lake env lean --run scripts/gen-lorem.lean >/dev/null
 
 run_ms() { # cmd...
   local t0 t1
