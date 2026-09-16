@@ -1837,6 +1837,12 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       #[.para #[.text "a kept too b"]])
   t "elab unknown command warns once per name"
     ((warnCodes "\\zip{a} \\zip{b} \\zap{c}").length == 2)
+  -- The warn-once keys are namespaced: an environment and a command sharing
+  -- one name are two different unknown constructs, and neither may silence
+  -- the other's warning.
+  t "an environment and a command of one name both warn"
+    ((warnCodes "\\begin{gizmo}body\\end{gizmo}\n\\gizmo{arg}").toArray ==
+      #["W0302", "W0301"])
   t "elab reserved M5 warns, never errors" (warnCodes ("\\documentclass{article}\\figure{x}" ++
     "\\begin{document}y\\end{document}") == ["W0307"])
   -- Unknown environments keep their body: the wrapper's decoration is

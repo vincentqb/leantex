@@ -44,8 +44,9 @@ structure Ctx where
 
 structure ESt where
   diags : Array Diag := #[]
-  /-- Unknown commands already warned about: a macro used forty times is one
-  problem, not forty. -/
+  /-- Warn-once keys already fired: a macro used forty times is one problem,
+  not forty. Keys are namespaced (`env:`, `ctrl:`, `palette:`) so an
+  environment and a command sharing a name cannot silence each other. -/
   warnedUnknown : Array String := #[]
   /-- `\title` / `\subtitle` / `\author` / `\institute` / `\date`, wherever
   they appear — beamer documents declare them in the body — read back by
@@ -435,11 +436,11 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         else
         match reservedEnv.lookup name with
         | some milestone =>
-          warnOnce ctx name "W0307"
+          warnOnce ctx ("env:" ++ name) "W0307"
             s!"'\{{name}}' is not implemented yet; its content is not rendered" pos
             (help := s!"planned for {milestone}; see PLAN.md")
         | none =>
-          warnOnce ctx name "W0302" s!"unknown environment '\{{name}}'; its body is kept" pos
+          warnOnce ctx ("env:" ++ name) "W0302" s!"unknown environment '\{{name}}'; its body is kept" pos
             (help := "see PLAN.md for planned environments")
           acc := flushText acc sb
           sb := ""
@@ -642,7 +643,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           | _, _ =>
             diag ctx "E0304" "'\\ifgiven' needs {\\param} and {content}" pos
         else if let some milestone := reservedCtrl.lookup name then
-          warnOnce ctx name "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
+          warnOnce ctx ("ctrl:" ++ name) "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
             (help := s!"planned for {milestone}; see PLAN.md")
           let (j, unclosed) := skipReservedArgs raws i pos
           if let some bpos := unclosed then
@@ -655,13 +656,9 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         else
           -- Best effort: the arguments are content, and content is never
           -- dropped for want of a command. Only the formatting is lost.
-          unless (← get).warnedUnknown.contains name do
-            modify fun st => { st with warnedUnknown := st.warnedUnknown.push name }
-            modify fun st => { st with diags := st.diags.push {
-              severity := .warning, code := "W0301"
-              message := s!"unknown command '\\{name}'; its arguments were kept as text"
-              span := some ⟨ctx.file, pos⟩
-              help := some "define it with \\define, or see PLAN.md for planned commands" } }
+          warnOnce ctx ("ctrl:" ++ name) "W0301"
+            s!"unknown command '\\{name}'; its arguments were kept as text" pos
+            (help := "define it with \\define, or see PLAN.md for planned commands")
           let mut j := skipSpaces raws i
           let mut kept := 0
           for _ in [0:9] do
@@ -960,7 +957,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           else if n == "maketitle" || n == "titlepage" then
             let inner := titleBlocks (← get)
             if inner.isEmpty then
-              warnOnce ctx "maketitle" "W0309"
+              warnOnce ctx "ctrl:maketitle" "W0309"
                 s!"'\\{n}' with nothing declared; no title is set" pos
                 (help := "declare \\title{...} (and \\author, \\date, ...) before it")
             else if ctx.slides then
@@ -992,7 +989,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             -- Rows survive as lines, cells as fixed-space-separated content:
             -- honest degradation until real table layout, and `&` never
             -- reaches inline elaboration as a stray reserved character.
-            warnOnce ctx "tabular" "W0308"
+            warnOnce ctx "env:tabular" "W0308"
               "tables are not laid out yet; rows are set as plain lines" pos
               (help := "planned for M8; see PLAN.md")
             let mut k := skipSpaces body 0
@@ -1093,13 +1090,13 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           else if n == "center" then
             blocks := blocks.push (.center (← elabBlocks ctx body))
           else if let some milestone := reservedEnv.lookup n then
-            warnOnce ctx n "W0307"
+            warnOnce ctx ("env:" ++ n) "W0307"
               s!"'\{{n}}' is not implemented yet; its content is not rendered" pos
               (help := s!"planned for {milestone}; see PLAN.md")
           else
             -- An unknown wrapper's decoration is unknowable; its body is
             -- not. The arguments on the `\begin` line go with the wrapper.
-            warnOnce ctx n "W0302" s!"unknown environment '\{{n}}'; its body is kept" pos
+            warnOnce ctx ("env:" ++ n) "W0302" s!"unknown environment '\{{n}}'; its body is kept" pos
               (help := "see PLAN.md for planned environments")
             let (kept, unclosed) := dropEnvArgs body pos
             if let some bpos := unclosed then
@@ -1616,7 +1613,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
         else if titleCtrls.contains name then
           i ← takeTitleDecl ctx name preamble i pos
         else if let some milestone := reservedCtrl.lookup name then
-          warnOnce ctx name "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
+          warnOnce ctx ("ctrl:" ++ name) "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
             (help := s!"planned for {milestone}; see PLAN.md")
           let (j, unclosed) := skipReservedArgs preamble i pos
           match unclosed with
@@ -1629,7 +1626,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
         else
           -- Unknown preamble commands are configuration, not content: their
           -- arguments are skipped with them, never elaborated as stray text.
-          warnOnce ctx name "W0301" s!"unknown command '\\{name}' in the preamble; skipped" pos
+          warnOnce ctx ("ctrl:" ++ name) "W0301" s!"unknown command '\\{name}' in the preamble; skipped" pos
             (help := "define it with \\define, or see PLAN.md for planned commands")
           let (j, unclosed) := skipReservedArgs preamble i pos
           match unclosed with
