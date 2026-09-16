@@ -956,6 +956,25 @@ def utf8FuzzChecks (ref : IO.Ref (List String)) : IO Unit := do
       failed := some s!"utf8 fuzz case {i}: validate and core decoder disagree on {v.toList}"
   if let some msg := failed then failures ref msg
 
+def rawPayloadChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- Browsers match end tags ASCII-case-insensitively, so the terminator guard
+  -- must too; the lowercase spelling is pinned beside the printers' tests,
+  -- these pin the case variants in both printers.
+  t "html style payload cannot close its own tag in upper case"
+    (((Html.render (Html.Node.style "x</STYLE>bad") 0).splitOn "</STYLE").length == 1)
+  t "html style payload cannot close its own tag in mixed case inline"
+    (((Html.render (Html.elem "p" #[Html.Node.style "x</Style>bad"]) 0).splitOn
+      "</Style").length == 1)
+  t "html script payload cannot close its own tag in upper case inline"
+    (((Html.render (Html.elem "p" #[Html.Node.script "x</SCRIPT>bad"]) 0).splitOn
+      "</SCRIPT").length == 1)
+  -- The terminator literal omits the closing `>`, which is what catches a
+  -- spaced or self-closed end tag; pinned so the case fix cannot regress it.
+  t "html script payload with a spaced terminator is removed"
+    (((Html.render (Html.elem "p" #[Html.Node.script "x</script >bad"]) 0).splitOn
+      "/* removed */").length == 2)
+
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
@@ -1396,6 +1415,7 @@ def main (args : List String) : IO UInt32 := do
   t "html script payload cannot close its own tag inline"
     (((Html.render (Html.elem "p" #[Html.Node.script "x</script>bad"]) 0).splitOn
       "</script>").length == 2)
+  rawPayloadChecks ref
 
   let (htmlDoc, _) := elabStr ("\\documentclass{article}\n" ++
     "\\palette{ primary = #7C3AED }\n" ++

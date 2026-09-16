@@ -137,10 +137,43 @@ private def isInlineOnly (kids : Array Node) : Bool :=
     | .text _ => true
     | _ => false
 
+/-- Does `term` occur in `l`? A structural scan so the refusal below can be a
+theorem rather than an example; `String.splitOn` recurses on positions the
+kernel cannot see through. -/
+private def hasTerm (term : List Char) : List Char → Bool
+  | [] => false
+  | c :: rest => term.isPrefixOf (c :: rest) || hasTerm term rest
+
 /-- A `style`/`script` payload that closes its own element would break out of
-it; both printers refuse it through here, so neither can disagree. -/
+it; both printers refuse it through here, so neither can disagree. Browsers
+match end tags ASCII-case-insensitively, so the payload is lowered before the
+scan; the terminator literals are already lowercase and omit the final `>`,
+which is what also catches `</script >` and `</script/`. -/
 private def rawPayload (endTag payload : String) : String :=
-  if (payload.splitOn endTag).length > 1 then "/* removed */" else payload
+  if hasTerm endTag.toList (payload.toList.map Char.toLower) then "/* removed */"
+  else payload
+
+/-- The guard's contract, the module's remaining injection claim: whatever
+payload arrives, the emitted string never contains the terminator in any ASCII
+case. Conditional on the replacement literal being clean, which `decide`
+discharges below. -/
+private theorem rawPayload_no_terminator (endTag payload : String)
+    (h : hasTerm endTag.toList ("/* removed */".toList.map Char.toLower) = false) :
+    hasTerm endTag.toList ((rawPayload endTag payload).toList.map Char.toLower) = false := by
+  unfold rawPayload
+  split
+  · exact h
+  · next hc => exact Bool.not_eq_true _ ▸ hc
+
+private theorem rawPayload_style_no_terminator (payload : String) :
+    hasTerm "</style".toList
+      ((rawPayload "</style" payload).toList.map Char.toLower) = false :=
+  rawPayload_no_terminator _ _ (by decide)
+
+private theorem rawPayload_script_no_terminator (payload : String) :
+    hasTerm "</script".toList
+      ((rawPayload "</script" payload).toList.map Char.toLower) = false :=
+  rawPayload_no_terminator _ _ (by decide)
 
 mutual
 
