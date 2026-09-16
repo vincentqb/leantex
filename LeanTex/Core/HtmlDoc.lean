@@ -209,6 +209,11 @@ def baseCss (doc : Doc) : String :=
   -- otherwise, which is the better of the two mechanisms; the PDF path can only
   -- synthesise.
   ".sc { font-variant-caps: small-caps; }\n" ++
+  -- Slides, as the linear handout: one bordered section per frame, printing
+  -- one per page. The interactive controller is the rest of M5.
+  "section.slide { border: 1px solid var(--rule); border-radius: 8px;\n" ++
+  "  padding: 1.4rem 1.8rem; margin: 1.4rem 0; break-inside: avoid; }\n" ++
+  "section.slide > header h2 { margin: 0 0 0.8rem; font-size: 1.35rem; }\n" ++
   sizeRules ++
   ".math { font-family: \"Latin Modern Math\", \"STIX Two Math\", math; }\n" ++
   "@media print {\n" ++
@@ -372,6 +377,13 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- `<pre>` preserves the raw lines; the escaper makes the content inert.
     Html.elem "pre" #[Html.elem "code"
       #[Html.text (String.intercalate "\n" (verbatimLines s).toList)]]
+  | .frame title body =>
+    -- One slide of the deck. With no controller yet this is the no-JS
+    -- rendering the plan promises anyway: a linear readable handout, every
+    -- slide a section.
+    let header := if title.isEmpty then #[]
+      else #[Html.elem "header" #[Html.elem "h2" (inlines cfg title)]]
+    Html.elem "section" (header ++ blockNodes cfg body.toList) #[("class", "slide")]
 
 /-- The accumulator threads through the sibling walk, as in `inlineNodesInto`. -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node

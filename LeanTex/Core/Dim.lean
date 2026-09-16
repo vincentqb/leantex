@@ -9,6 +9,9 @@ def pt (n : Int) : Sp := n * spPerPt
 
 def inch (n : Int) : Sp := n * 72 * spPerPt
 
+/-- Millimetres: 1 mm = 7227⁄2540 pt, TeX's exact ratio, rounded to sp. -/
+def mm (n : Int) : Sp := n * 7227 * spPerPt / 2540
+
 theorem pt_exact (n : Int) : pt n / spPerPt = n := by
   simp [pt, spPerPt]
 

@@ -1454,6 +1454,61 @@ def rawPayloadChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((Html.render (Html.elem "p" #[Html.Node.script "x</script >bad"]) 0).splitOn
       "/* removed */").length == 2)
 
+/-- Frames as first-class blocks: the elaboration shape, the title forms,
+the title frame, and the page-per-frame contract in layout. Its own
+function: `main`'s do block has no elaboration budget left. -/
+def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deck (body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n\\begin{document}\n" ++ body ++
+    "\n\\end{document}"
+  let (fDoc, fDs) := elabStr (deck "\\begin{frame}{T}\nbody\n\\end{frame}")
+  t "frame source clean" fDs.isEmpty
+  t "frame is first-class with its title"
+    (fDoc.body == #[.frame #[.text "T"] #[.para #[.text "body"]]])
+  -- A group after a paragraph break is content, not a title: LaTeX's own
+  -- argument scanning stops looking there too.
+  t "frame title after a blank line is content"
+    ((elabStr (deck "\\begin{frame}[plain]\n\n{scope group}\n\\end{frame}")).1.body ==
+      #[.frame #[] #[.para #[.text "scope group"]]])
+  t "frametitle names the frame"
+    ((elabStr (deck "\\begin{frame}\n\\frametitle{Named}\nbody\n\\end{frame}")).1.body ==
+      #[.frame #[.text "Named"] #[.para #[.text "body"]]])
+  -- \title and friends may sit in the body, as beamer documents do; an
+  -- empty declaration (\date{}) is deliberately blank and sets nothing.
+  let titled := deck ("\\title{A Deck}\\subtitle{Sub}\\author{Pat Placeholder}\\date{}\n" ++
+    "\\maketitle\n\\begin{frame}{One}\nx\n\\end{frame}")
+  let (tDoc, tDs) := elabStr titled
+  t "maketitle source clean" tDs.isEmpty
+  t "maketitle is a centered title frame with the empty date dropped"
+    (match tDoc.body[0]? with
+     | some (Ir.Block.frame title #[.center inner]) => title.isEmpty && inner.size == 3
+     | _ => false)
+  t "pdf metadata falls back to the title declarations"
+    (tDoc.info.title == some "A Deck" && tDoc.info.author == some "Pat Placeholder")
+  t "slides default to the 16:9 stage"
+    (tDoc.page.width == Dim.mm 160 && tDoc.page.height == Dim.mm 90)
+  t "slides without the option are 4:3"
+    ((elabStr "\\documentclass{slides}\\begin{document}x\\end{document}").1.page.width ==
+      Dim.mm 128)
+  t "a declared page beats the stage"
+    ((elabStr ("\\documentclass{slides}\\page{ width = 300pt, height = 200pt }" ++
+      "\\begin{document}x\\end{document}")).1.page.width == Dim.pt 300)
+  t "article keeps its page" ((elabStr "x").1.page.width == Dim.pt 612)
+  -- Layout: a frame is a page of the handout, a section its own divider
+  -- page, and content never flattens into the neighbouring frame.
+  let threeFrames := deck ("\\begin{frame}{A}\na\n\\end{frame}\n" ++
+    "\\begin{frame}{B}\nb\n\\end{frame}\n\\section{S}\n\\begin{frame}{C}\nc\n\\end{frame}")
+  let (dDoc, dDs) := elabStr threeFrames
+  t "deck source clean" dDs.isEmpty
+  let out := Layout.run (Layout.Geom.ofPage dDoc.page) oneFace none dDoc
+  t "one page per frame, one per section divider" (out.pages.size == 4)
+  t "every slide leads with its title at the heading size"
+    (out.pages.all fun p => p.lines.any (·.size == Dim.pt 14))
+  let (html, _) := HtmlDoc.emit {} dDoc
+  t "html gives each frame its own slide section"
+    ((html.splitOn "<section class=\"slide\"").length == 4)
+
 def utf8Checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- utf8: valid inputs
@@ -2211,6 +2266,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       underlineChecks ref geom oneFace font
       inkGeometryChecks ref
       spacingChecks ref geom oneFace font
+      slideChecks ref oneFace
 
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"

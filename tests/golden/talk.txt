@@ -1,10 +1,39 @@
 class slides [aspectratio=169]
-page 612x792 vmargin 72 hmargin 72
+page 455.244x256.075 vmargin 25.607 hmargin 28.453
 font dir "fonts"
 font body "Open Sans"
 font mono "Source Code Pro"
 meta title "leantex: a dummy deck"
+frame
+  title
+    text "Layout is a value"
+  list unordered
+    item
+      para
+        text "Assertions fail builds, not readers."
+    item
+      para
+        text "Metrics are queryable, not measured by hand."
+    item
+      para
+        text "Heavy machinery stays behind boundaries until absorbed."
+frame
+  title
+    text "Porcelain"
+  verbatim
+    "$ leantex build deck.tex"
+    "assert pages == 12 ......... ok"
+    "external tikz .............. 2 boxes (cache hit)"
+    "fallback glyphs: λ ⊗ ∑ ≈ ↦"
+frame
+  title
+    text "Figures"
+frame
+  title
+    text "Escape hatch"
 -- diagnostics
 warning[W0105] 23:5 overlay specifications are ignored; every step's content is shown | help: dim-not-hide overlays land with the rest of M5; see PLAN.md
 warning[W0307] 15:1 '\fontfallback' is not implemented yet; skipped | help: planned for M5; see PLAN.md
-warning[W0307] 21:1 '{frame}' is not implemented yet; its content is not rendered | help: planned for M5; see PLAN.md
+warning[W0307] 27:3 '\note' is not implemented yet; skipped | help: planned for M5; see PLAN.md
+warning[W0307] 41:3 '\figure' is not implemented yet; skipped | help: planned for M5; see PLAN.md
+warning[W0307] 47:3 '{external}' is not implemented yet; its content is not rendered | help: planned for M5; see PLAN.md

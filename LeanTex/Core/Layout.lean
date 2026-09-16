@@ -819,6 +819,8 @@ does not depend on task scheduling. -/
 private inductive Op where
   | skip (g : Glue)
   | para (job : ParaJob)
+  /-- A page boundary: a frame is a page of the handout, whatever fits it. -/
+  | brk
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -833,6 +835,8 @@ private structure Acc where
   geom : Geom
   xHeight : Sp
   styles : Ir.Styles := {}
+  /-- The `slides` class: frames and sections open fresh pages. -/
+  slides : Bool := false
   wantDefault : Bool := false
   owed : Array Glue := #[]
   ops : Array Op := #[]
@@ -867,6 +871,11 @@ private def Acc.flushGap (a : Acc) : Acc :=
       (if a.wantDefault then { a with ops := a.ops.push (.skip a.parskip) } else a)
     else { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
   { a with wantDefault := false, owed := #[] }
+
+/-- A page boundary. Whatever gap was owed dies with the old page, as TeX
+discards glue at the top of a new one. -/
+private def Acc.pageBreak (a : Acc) : Acc :=
+  { a with ops := a.ops.push .brk, wantDefault := false, owed := #[] }
 
 private def Acc.style (a : Acc) (element : String) : Ir.ElementStyle :=
   (a.styles.find? element).getD {}
@@ -962,6 +971,9 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .para content =>
     collectPara a pats fs content indent false a.geom.fontSize
   | .section level _ title =>
+    -- In slides, a section is a divider: its own page between frames rather
+    -- than a heading dropped onto the bottom of the previous slide.
+    let a := if a.slides then a.pageBreak else a
     let element := match level with
       | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
     let st := a.style element
@@ -977,9 +989,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
         collectPara a pats fs title indent false (sectionSize a.geom level)
           (baseStyle := { bold := true })
           (rule := st.rule.map fun (r : Ir.Color × Option String) => (pt 6 / 10, r.1))
-    match st.after with
-    | some g => a.vskip (a.resolve g)
-    | none => a
+    let a := match st.after with
+      | some g => a.vskip (a.resolve g)
+      | none => a
+    if a.slides then a.pageBreak else a
   | .list ordered items =>
     let st := a.style (if ordered then "enumerate" else "itemize")
     -- LaTeX's `topsep`: the declared space stands above the list and below it.
@@ -1006,6 +1019,17 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- hyphen inside an identifier.
     collectPara a none fs #[.styled .mono (Ir.verbatimInlines s)] indent false
       (a.geom.fontSize * 4 / 5)
+  | .frame title body =>
+    -- A frame is a page boundary, not an article paragraph. Content past
+    -- the page bottom spills to a continuation page — best effort, never
+    -- clipped.
+    let a := a.pageBreak
+    let a := if title.isEmpty then a else
+      let a := collectPara a pats fs title 0 false (sectionSize a.geom 1)
+        (baseStyle := { bold := true })
+      { a with wantDefault := true }
+    let a := collectBlocks a pats fs body indent
+    a.pageBreak
 
 end
 
@@ -1171,6 +1195,12 @@ def substPageList (n total : Nat) : List Inline → List Inline
 
 end
 
+/-- One op staged for placement: paragraphs carry their breaking task. -/
+private inductive StagedOp where
+  | skip (g : Glue)
+  | brk
+  | para (j : ParaJob) (t : Task (Array Nat))
+
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. -/
 def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc) :
@@ -1178,15 +1208,17 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let font := fs.body
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
   let xHeight := scale font.xHeight
-  let acc := collectBlocks { geom := geom, xHeight := xHeight, styles := doc.styles }
+  let acc := collectBlocks { geom := geom, xHeight := xHeight, styles := doc.styles
+                             slides := doc.docClass == "slides" }
     pats fs doc.body 0
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
   -- so the tasks race on nothing; joining in document order below keeps the
   -- output independent of scheduling.
-  let staged : Array (Sum Glue (ParaJob × Task (Array Nat))) := acc.ops.map fun op =>
+  let staged : Array StagedOp := acc.ops.map fun op =>
     match op with
-    | .skip g => .inl g
-    | .para j => .inr (j, Task.spawn fun _ => kp j.items j.target)
+    | .skip g => .skip g
+    | .brk => .brk
+    | .para j => .para j (Task.spawn fun _ => kp j.items j.target)
   let b0 : B := {
     geom := geom
     ascent := scale font.ascent
@@ -1197,9 +1229,17 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let mut b := b0
   for s in staged do
     match s with
-    | .inl g => b := { b with skip := b.skip.add g }
-    | .inr (j, t) => b := placePara fs b j t.get
-  b := b.finishPage
+    | .skip g => b := { b with skip := b.skip.add g }
+    | .brk =>
+      -- A boundary closes a page only when the page holds something: two
+      -- adjacent frames share one boundary, not an empty page.
+      if !b.cur.lines.isEmpty then
+        b := b.finishPage
+    | .para j t => b := placePara fs b j t.get
+  -- The trailing boundary of a final frame has already closed its page; a
+  -- document is never given an empty page for it.
+  if !b.cur.lines.isEmpty || b.pages.isEmpty then
+    b := b.finishPage
   let pages := b.pages
   -- Running content is laid out per page once the count is known, into the
   -- margin, so it never disturbs the body it annotates.

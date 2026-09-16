@@ -39,12 +39,22 @@ structure Ctx where
   tokens : Tokens := {}
   /-- Inside mono/verbatim content, where punctuation stays literal. -/
   literalText : Bool := false
+  /-- The document class is `slides`: `\maketitle` makes a title frame. -/
+  slides : Bool := false
 
 structure ESt where
   diags : Array Diag := #[]
   /-- Unknown commands already warned about: a macro used forty times is one
   problem, not forty. -/
   warnedUnknown : Array String := #[]
+  /-- `\title` / `\subtitle` / `\author` / `\institute` / `\date`, wherever
+  they appear — beamer documents declare them in the body — read back by
+  `\maketitle` and, as plain text, by the PDF metadata fallback. -/
+  title : Option (Array Inline) := none
+  subtitle : Option (Array Inline) := none
+  author : Option (Array Inline) := none
+  institute : Option (Array Inline) := none
+  date : Option (Array Inline) := none
 
 abbrev EM := StateM ESt
 
@@ -93,7 +103,11 @@ def pageSizes : List (String × (Sp × Sp)) :=
    ("a5", (Dim.pt 420, Dim.pt 595))]
 
 def reservedEnv : List (String × String) :=
-  [("frame", "M5"), ("external", "M5"), ("tikzpicture", "M8")]
+  [("external", "M5"), ("tikzpicture", "M8")]
+
+/-- Title-page declarations, storable from the preamble or the body. -/
+def titleCtrls : List String :=
+  ["title", "subtitle", "author", "institute", "date"]
 
 def argStyles : List (String × Style) :=
   [("textbf", .bold), ("textit", .italic), ("texttt", .mono), ("emph", .emph)]
@@ -606,7 +620,7 @@ where
 end
 
 /-- Block environments: those whose content is a block sequence. -/
-def blockEnvs : List String := ["itemize", "enumerate", "center", "document"]
+def blockEnvs : List String := ["itemize", "enumerate", "center", "document", "frame"]
 
 /-- Does this body produce block-level content? Decides whether a user command
 called between paragraphs expands as blocks or as inline content. A purely
@@ -723,6 +737,45 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
     | _ => break
   return if inlines.isEmpty then none else some (.para inlines)
 
+/-- Store one `\title`-family declaration; `\maketitle` reads them back.
+Returns the index just past the consumed arguments. -/
+private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
+    (start : Nat) (pos : Pos) : EM Nat := do
+  -- `\title[short]{long}`: the short form feeds furniture we do not render.
+  let mut j := skipSpaces raws start
+  if let some (.sym '[' _) := raws[j]? then
+    for _ in [j:raws.size] do
+      j := j + 1
+      if let some (.sym ']' _) := raws[j - 1]? then break
+    j := skipSpaces raws j
+  match raws[j]? with
+  | some (.group body _) =>
+    let content ← elabInlines ctx body
+    modify fun st => match name with
+      | "title" => { st with title := some content }
+      | "subtitle" => { st with subtitle := some content }
+      | "author" => { st with author := some content }
+      | "institute" => { st with institute := some content }
+      | _ => { st with date := some content }
+    return j + 1
+  | _ =>
+    diag ctx "E0304" s!"'\\{name}' needs a \{...} group" pos
+    return start
+
+/-- The title content `\maketitle` sets, from what was declared. A declared
+but empty part (`\date{}`) is deliberately blank and sets nothing. -/
+private def titleBlocks (st : ESt) : Array Block :=
+  let add (inner : Array Block) (v : Option (Array Inline))
+      (wrap : Array Inline → Array Inline) : Array Block :=
+    match v with
+    | some xs => if xs.isEmpty then inner else inner.push (.para (wrap xs))
+    | none => inner
+  let inner := add #[] st.title fun t => #[.styled (.size "LARGE") #[.styled .bold t]]
+  let inner := add inner st.subtitle fun s => #[.styled (.size "large") s]
+  let inner := add inner st.author id
+  let inner := add inner st.institute fun i => #[.styled (.size "small") i]
+  add inner st.date id
+
 /-- Elaborate raw items as a block sequence. -/
 partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
   let mut blocks : Array Block := #[]
@@ -748,7 +801,8 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           -- A user command whose body produces blocks is itself a boundary.
           (match lookupUser ctx n with
            | some (_, cmd) => bodyIsBlock cmd.body
-           | none => false)
+           | none =>
+             titleCtrls.contains n || n == "maketitle" || n == "titlepage")
         | .env _ _ _ => true
         | .verb _ _ => true
         | _ => false
@@ -818,21 +872,67 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             let callCtx : Ctx := { ctx with limit := k, args := bindings }
             blocks := blocks ++ (← elabBlocks callCtx cmd.body)
           | none =>
-          let level := (sectionLevel n).getD 1
-          let mut starred := false
-          if let some (.word "*" _) := raws[i]? then
-            starred := true
-            i := i + 1
-          let j := skipSpaces raws i
-          match raws[j]? with
-          | some (.group title _) =>
-            i := j + 1
-            blocks := blocks.push (.section level starred (← elabInlines ctx title))
-          | _ =>
-            diag ctx "E0304" s!"'\\{n}' needs a \{title}" pos
+          if titleCtrls.contains n then
+            i ← takeTitleDecl ctx n raws i pos
+          else if n == "maketitle" || n == "titlepage" then
+            let inner := titleBlocks (← get)
+            if inner.isEmpty then
+              warnOnce ctx "maketitle" "W0309"
+                s!"'\\{n}' with nothing declared; no title is set" pos
+                (help := "declare \\title{...} (and \\author, \\date, ...) before it")
+            else if ctx.slides then
+              blocks := blocks.push (.frame #[] #[.center inner])
+            else
+              blocks := blocks.push (.center inner)
+          else
+            let level := (sectionLevel n).getD 1
+            let mut starred := false
+            if let some (.word "*" _) := raws[i]? then
+              starred := true
+              i := i + 1
+            let j := skipSpaces raws i
+            match raws[j]? with
+            | some (.group title _) =>
+              i := j + 1
+              blocks := blocks.push (.section level starred (← elabInlines ctx title))
+            | _ =>
+              diag ctx "E0304" s!"'\\{n}' needs a \{title}" pos
         | .env n body pos =>
           i := i + 1
-          if n == "itemize" || n == "enumerate" then
+          if n == "frame" then
+            -- \begin{frame}[options]{title}: options are burned (fragile,
+            -- plain, standout say how beamer should cope, not what to say);
+            -- the title group counts only when it follows directly — a
+            -- paragraph break before a group makes it content, which is
+            -- where LaTeX's own argument scanning stops looking too.
+            let mut k := skipSpaces body 0
+            for _ in [0:body.size] do
+              match body[k]? with
+              | some (.sym '[' _) =>
+                for _ in [k:body.size] do
+                  k := k + 1
+                  if let some (.sym ']' _) := body[k - 1]? then break
+                k := skipSpaces body k
+              | _ => break
+            let mut title : Array Inline := #[]
+            if let some (.group t _) := body[k]? then
+              title ← elabInlines ctx t
+              k := k + 1
+            -- \frametitle{...} anywhere in the frame names it too.
+            let mut rest : Array Raw := #[]
+            let mut j := k
+            for _ in [k:body.size] do
+              if h' : j < body.size then
+                match body[j], body[j + 1]? with
+                | .ctrl "frametitle" _, some (.group t _) =>
+                  title ← elabInlines ctx t
+                  j := j + 2
+                | r', _ =>
+                  rest := rest.push r'
+                  j := j + 1
+              else break
+            blocks := blocks.push (.frame title (← elabBlocks ctx rest))
+          else if n == "itemize" || n == "enumerate" then
             let mut items : Array (Array Raw) := #[]
             let mut curItem : Array Raw := #[]
             let mut seen := false
@@ -1363,6 +1463,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                 info ← applyMeta ctx info entries pos
           | _ =>
             diag ctx "E0304" s!"'\\{name}' needs a \{...} block" pos
+        else if titleCtrls.contains name then
+          i ← takeTitleDecl ctx name preamble i pos
         else if let some milestone := reservedCtrl.lookup name then
           warnOnce ctx name "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
             (help := s!"planned for {milestone}; see PLAN.md")
@@ -1380,9 +1482,38 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           textDiagged := true
     else
       break
+  -- Slides fill beamer's stage unless the document declared its own
+  -- geometry: a handout on letter portrait is not best effort, it is wrong.
+  if docClass == "slides" then
+    let dflt : PageSpec := {}
+    if page.width == dflt.width && page.height == dflt.height then
+      let ratio169 := (classOptions.splitOn ",").any
+        fun o => o.trimAscii.toString == "aspectratio=169"
+      let (w, h) := if ratio169 then (Dim.mm 160, Dim.mm 90) else (Dim.mm 128, Dim.mm 96)
+      page := { page with width := w, height := h }
+    if page.hmargin == dflt.hmargin then
+      page := { page with hmargin := Dim.mm 10 }
+    if page.vmargin == dflt.vmargin then
+      page := { page with vmargin := Dim.mm 9 }
+  ctx := { ctx with slides := docClass == "slides" }
   let blocks ← elabBlocks ctx body
   if trailing.any (!isSpaceOrPar ·) then
     diag ctx "W0001" "content after '\\end{document}' is ignored" none (sev := .warning)
+  -- PDF metadata falls back to the title declarations: a deck that says
+  -- \title deserves an Info dictionary without saying it twice.
+  let st ← get
+  let fallback (cur : Option String) (src : Option (Array Inline)) : Option String :=
+    match cur with
+    | some s => some s
+    | none =>
+      match src with
+      | some xs =>
+        let t := Ir.plainText xs
+        if t.isEmpty then none else some t
+      | none => none
+  info := { info with
+    title := fallback info.title st.title
+    author := fallback info.author st.author }
   return {
     docClass := docClass
     classOptions := classOptions

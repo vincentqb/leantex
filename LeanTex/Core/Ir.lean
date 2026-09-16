@@ -189,6 +189,10 @@ inductive Block where
   /-- `{verbatim}` content, kept literally: lines, spaces, and all. Both
   backends set it in the mono face and neither reflows it. -/
   | verbatim (content : String)
+  /-- One slide. First-class and never flattened into article paragraphs:
+  HTML makes it a `<section>` of the deck, the PDF handout gives it a page.
+  An empty title is a bare frame. -/
+  | frame (title : Array Inline) (body : Array Block)
   deriving Repr, BEq, Inhabited
 
 /-- Verbatim content, line-split: the newline after `\begin{verbatim}` and
@@ -400,6 +404,11 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .verbatim s =>
     s!"{ind}verbatim\n" ++ String.join ((verbatimLines s).toList.map
       fun l => s!"{ind}  {l.quote}\n")
+  | .frame title body =>
+    s!"{ind}frame\n" ++
+    (if title.isEmpty then ""
+     else s!"{ind}  title\n" ++ dumpInlines (ind ++ "    ") title) ++
+    dumpBlocks (ind ++ "  ") body
 
 end
 

@@ -191,9 +191,12 @@ private def ctrlName (raws : Array Raw) : Option String :=
 
 /-- An xparse argument spec, or a plain count, as native parameters
 `a1 … an`. Only the argument *types* matter here: `m` is mandatory, and `o`,
-`O{..}`, `d..`, `D..{..}`, `s`, `t.` are all optional. Payloads such as
-defaults and delimiters ride inside braces that the parser has already
-grouped, so a spec is read from its own source text and braces are skipped. -/
+`O{..}`, `d..`, `D..{..}`, `s`, `t.` are all optional. Every parameter is
+`content` — a LaTeX macro argument may carry markup (`\light{\texttt{x}}`),
+and typing it `text` would reject exactly the calls LaTeX accepts. Payloads
+such as defaults and delimiters ride inside braces that the parser has
+already grouped, so a spec is read from its own source text and braces are
+skipped. -/
 private def signature (spec : String) : String := Id.run do
   let mut letters : Array Char := #[]
   let mut depth := 0
@@ -205,7 +208,7 @@ private def signature (spec : String) : String := Id.run do
       else if c == 'o' || c == 'O' || c == 'd' || c == 'D' || c == 's' || c == 't' then
         letters := letters.push 'o'
   let params := letters.toList.zipIdx.map fun (c, k) =>
-    s!"a{k + 1}{if c == 'o' then "?" else ""}: text"
+    s!"a{k + 1}{if c == 'o' then "?" else ""}: content"
   String.intercalate ", " params
 
 /-- `\usepackage[opts]{geometry}` → `\page{...}`. -/
