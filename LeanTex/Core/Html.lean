@@ -144,48 +144,60 @@ private def rawPayload (endTag payload : String) : String :=
 
 mutual
 
-/-- Render a node. Indentation is cosmetic and suppressed where whitespace
-matters. -/
-def render (n : Node) (indent : Nat) : String :=
+/-- Render a node onto `acc`. The accumulator threads through the whole walk:
+building each subtree's string and concatenating (`render k ++ rest`) copies
+the tail at every sibling, which is quadratic in the sibling count — the
+`#[x] ++ rest` trap in its String form. -/
+def renderInto (acc : String) (n : Node) (indent : Nat) : String :=
   let pad := "".pushn ' ' (2 * indent)
   match n with
-  | .text s => pad ++ escapeText s ++ "\n"
+  | .text s => acc ++ pad ++ escapeText s ++ "\n"
   | .style css =>
-    pad ++ "<style>\n" ++ rawPayload "</style" css ++ "\n" ++ pad ++ "</style>\n"
+    acc ++ pad ++ "<style>\n" ++ rawPayload "</style" css ++ "\n" ++ pad ++ "</style>\n"
   | .script js =>
-    pad ++ "<script>\n" ++ rawPayload "</script" js ++ "\n" ++ pad ++ "</script>\n"
+    acc ++ pad ++ "<script>\n" ++ rawPayload "</script" js ++ "\n" ++ pad ++ "</script>\n"
   | .elem tag attrs kids =>
     let open' := "<" ++ tag ++ attrString attrs ++ ">"
     if voidTags.contains tag then
-      pad ++ open' ++ "\n"
+      acc ++ pad ++ open' ++ "\n"
     else if preserveTags.contains tag || phrasingTags.contains tag ||
         isInlineOnly kids then
-      pad ++ open' ++ inlineRenderList kids.toList ++ "</" ++ tag ++ ">\n"
+      inlineRenderListInto (acc ++ pad ++ open') kids.toList ++ "</" ++ tag ++ ">\n"
     else
-      pad ++ open' ++ "\n" ++ renderList kids.toList (indent + 1) ++ pad ++ "</" ++ tag ++ ">\n"
+      renderListInto (acc ++ pad ++ open' ++ "\n") kids.toList (indent + 1)
+        ++ pad ++ "</" ++ tag ++ ">\n"
 
 /-- Render without surrounding whitespace, for content inside a line. -/
-def inlineRender (n : Node) : String :=
+def inlineRenderInto (acc : String) (n : Node) : String :=
   match n with
-  | .text s => escapeText s
-  | .style css => "<style>" ++ rawPayload "</style" css ++ "</style>"
-  | .script js => "<script>" ++ rawPayload "</script" js ++ "</script>"
+  | .text s => acc ++ escapeText s
+  | .style css => acc ++ "<style>" ++ rawPayload "</style" css ++ "</style>"
+  | .script js => acc ++ "<script>" ++ rawPayload "</script" js ++ "</script>"
   | .elem tag attrs kids =>
     let open' := "<" ++ tag ++ attrString attrs ++ ">"
-    if voidTags.contains tag then open'
-    else open' ++ inlineRenderList kids.toList ++ "</" ++ tag ++ ">"
+    if voidTags.contains tag then acc ++ open'
+    else inlineRenderListInto (acc ++ open') kids.toList ++ "</" ++ tag ++ ">"
 
 -- The list companions make the recursion structural: a `map` over the
 -- children hides the call behind a lambda the checker cannot see through.
-def renderList : List Node → Nat → String
-  | [], _ => ""
-  | k :: rest, indent => render k indent ++ renderList rest indent
+def renderListInto (acc : String) : List Node → Nat → String
+  | [], _ => acc
+  | k :: rest, indent => renderListInto (renderInto acc k indent) rest indent
 
-def inlineRenderList : List Node → String
-  | [] => ""
-  | k :: rest => inlineRender k ++ inlineRenderList rest
+def inlineRenderListInto (acc : String) : List Node → String
+  | [] => acc
+  | k :: rest => inlineRenderListInto (inlineRenderInto acc k) rest
 
 end
+
+/-- Render a node. Indentation is cosmetic and suppressed where whitespace
+matters. -/
+def render (n : Node) (indent : Nat) : String :=
+  renderInto "" n indent
+
+/-- Render without surrounding whitespace, for content inside a line. -/
+def inlineRender (n : Node) : String :=
+  inlineRenderInto "" n
 
 /-- A complete document: doctype plus the root element. -/
 def document (lang : String) (head body : Array Node) : String :=

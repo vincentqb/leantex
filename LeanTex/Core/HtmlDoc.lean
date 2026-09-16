@@ -233,27 +233,29 @@ private def styleClass : Style → String
 
 mutual
 
-/-- Inline content. Style maps onto the element that carries the *meaning*
-where one exists (`<strong>`, `<em>`, `<code>`) and onto a class otherwise. -/
-def inlineNode (cfg : Config) (x : Inline) : Array Node :=
+/-- Inline content, pushed onto `acc`. Style maps onto the element that
+carries the *meaning* where one exists (`<strong>`, `<em>`, `<code>`) and
+onto a class otherwise. The accumulator threads through the sibling walk:
+`inlineNode x ++ rest` copied the tail at every element. -/
+def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Array Node :=
   match x with
-  | .text s => #[Html.text s]
+  | .text s => acc.push (Html.text s)
   | .math display src =>
     -- Until native MathML lands the source rides in a data attribute, so an
     -- optional client-side renderer can find it and nothing is faked.
     let tag := if display then "div" else "span"
-    #[Html.elem tag #[Html.text src]
-        #[("class", if display then "math math-display" else "math"),
-          ("data-tex", src)]]
+    acc.push (Html.elem tag #[Html.text src]
+      #[("class", if display then "math math-display" else "math"),
+        ("data-tex", src)])
   | .styled st body =>
-    let kids := inlineNodes cfg body.toList
     match st with
-    | .bold => #[Html.elem "strong" kids]
-    | .italic => #[Html.elem "em" kids]
-    | .emph => #[Html.elem "em" kids]
-    | .mono => #[Html.elem "code" kids]
-    | .normal => kids
-    | other => #[Html.elem "span" kids #[("class", styleClass other)]]
+    | .bold => acc.push (Html.elem "strong" (inlineNodesInto cfg #[] body.toList))
+    | .italic => acc.push (Html.elem "em" (inlineNodesInto cfg #[] body.toList))
+    | .emph => acc.push (Html.elem "em" (inlineNodesInto cfg #[] body.toList))
+    | .mono => acc.push (Html.elem "code" (inlineNodesInto cfg #[] body.toList))
+    | .normal => inlineNodesInto cfg acc body.toList
+    | other => acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
+        #[("class", styleClass other)])
   | .colored c name body =>
     -- A named colour becomes a custom-property reference with the literal as
     -- fallback, so the token really is the styling API: a host page can
@@ -261,36 +263,36 @@ def inlineNode (cfg : Config) (x : Inline) : Array Node :=
     let value := match name with
       | some n => s!"color: var(--{n}, {cssColor c})"
       | none => s!"color: {cssColor c}"
-    #[Html.elem "span" (inlineNodes cfg body.toList) #[("style", value)]]
+    acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList) #[("style", value)])
   | .link url body =>
-    #[Html.elem "a" (inlineNodes cfg body.toList)
-      #[("href", url), ("style", "color: inherit")]]
+    acc.push (Html.elem "a" (inlineNodesInto cfg #[] body.toList)
+      #[("href", url), ("style", "color: inherit")])
   | .underline body =>
     -- skip-ink is the browser's native form of the PDF path's invariant: the
     -- rule breaks where a descender crosses it.
-    #[Html.elem "u" (inlineNodes cfg body.toList)]
-  | .fill => #[Html.elem "span" #[] #[("class", "fill")]]
+    acc.push (Html.elem "u" (inlineNodesInto cfg #[] body.toList))
+  | .fill => acc.push (Html.elem "span" #[] #[("class", "fill")])
   -- Page furniture has no meaning in a continuous document.
-  | .pageNumber => #[]
-  | .pageCount => #[]
+  | .pageNumber => acc
+  | .pageCount => acc
   | .linebreak extra =>
     -- Extra space after a break is vertical, so it is a sized block rather
     -- than a second <br>: a doubled <br> would depend on line-height.
-    if extra == ({} : SymGlue) then #[Html.elem "br" #[]]
-    else #[Html.elem "br" #[],
-      Html.elem "span" #[]
-        #[("style", s!"display:block;height:{cssLength extra.width}")]]
+    if extra == ({} : SymGlue) then acc.push (Html.elem "br" #[])
+    else (acc.push (Html.elem "br" #[])).push
+      (Html.elem "span" #[]
+        #[("style", s!"display:block;height:{cssLength extra.width}")])
 
 /-- The list companion keeps the recursion structural; a `flatMap` over the
 children would hide the call behind a lambda. -/
-def inlineNodes (cfg : Config) : List Inline → Array Node
-  | [] => #[]
-  | x :: rest => inlineNode cfg x ++ inlineNodes cfg rest
+def inlineNodesInto (cfg : Config) (acc : Array Node) : List Inline → Array Node
+  | [] => acc
+  | x :: rest => inlineNodesInto cfg (inlineNodeInto cfg acc x) rest
 
 end
 
 private def inlines (cfg : Config) (xs : Array Inline) : Array Node :=
-  inlineNodes cfg xs.toList
+  inlineNodesInto cfg #[] xs.toList
 
 /-- Does this paragraph use `\hfill`? If so it becomes a flex row, which is
 the CSS equivalent of the stretch it asked for. -/
@@ -359,27 +361,30 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem tag (inlines cfg title) (if st.rule.isSome then #[("class", "ruled")] else #[])
   | .list ordered items =>
     let tag := if ordered then "ol" else "ul"
-    Html.elem tag (listItems cfg items.toList)
+    Html.elem tag (listItemsInto cfg #[] items.toList)
   | .center body =>
-    Html.elem "div" (blockNodes cfg body.toList) #[("class", "centered")]
+    Html.elem "div" (blockNodesInto cfg #[] body.toList) #[("class", "centered")]
   | .spaced before body =>
     let style := s!"margin-top: {cssLength before.width}"
-    Html.elem "div" (blockNodes cfg body.toList) #[("class", "spaced"), ("style", style)]
+    Html.elem "div" (blockNodesInto cfg #[] body.toList)
+      #[("class", "spaced"), ("style", style)]
 
-def blockNodes (cfg : Config) : List Block → Array Node
-  | [] => #[]
-  | b :: rest => #[blockNode cfg b] ++ blockNodes cfg rest
+/-- The accumulator threads through the sibling walk, as in `inlineNodesInto`. -/
+def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
+  | [] => acc
+  | b :: rest => blockNodesInto cfg (acc.push (blockNode cfg b)) rest
 
-def listItems (cfg : Config) : List (Array Block) → Array Node
-  | [] => #[]
-  | item :: rest => #[Html.elem "li" (listItem cfg item.toList)] ++ listItems cfg rest
+def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node
+  | [] => acc
+  | item :: rest =>
+    listItemsInto cfg (acc.push (Html.elem "li" (listItem cfg item.toList))) rest
 
 -- A one-paragraph item carries its content directly: wrapping it in <p> is
 -- what makes generated lists render with extra vertical space.
 def listItem (cfg : Config) : List Block → Array Node
   | [.para content] => inlines cfg content
   | [] => #[]
-  | b :: rest => #[blockNode cfg b] ++ blockNodes cfg rest
+  | b :: rest => blockNodesInto cfg #[blockNode cfg b] rest
 
 end
 
@@ -425,7 +430,7 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
     | .bulma => "content"
     | _ => ""
   let cfg := { cfg with styles := doc.styles }
-  let inner := blockNodes cfg doc.body.toList
+  let inner := blockNodesInto cfg #[] doc.body.toList
   let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]
     else #[("class", bodyClass)])
   let mut body : Array Node := #[main]
