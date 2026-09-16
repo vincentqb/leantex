@@ -1,5 +1,5 @@
 class slides [aspectratio=169]
-page 455.244x256.075 vmargin 25.607 hmargin 28.453
+page 453.543x255.118 vmargin 25.512 hmargin 28.346
 font dir "fonts"
 font body "Open Sans"
 font mono "Source Code Pro"

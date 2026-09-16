@@ -9,8 +9,10 @@ def pt (n : Int) : Sp := n * spPerPt
 
 def inch (n : Int) : Sp := n * 72 * spPerPt
 
-/-- Millimetres: 1 mm = 7227⁄2540 pt, TeX's exact ratio, rounded to sp. -/
-def mm (n : Int) : Sp := n * 7227 * spPerPt / 2540
+/-- Millimetres: 1 mm = 7200⁄2540 pt, rounded to sp. This engine's `pt` is
+the big point, 1⁄72 inch (`inch` and `Decl.unitScale` agree), not TeX's
+1⁄72.27: 25.4 mm is exactly 72 pt here. -/
+def mm (n : Int) : Sp := n * 7200 * spPerPt / 2540
 
 theorem pt_exact (n : Int) : pt n / spPerPt = n := by
   simp [pt, spPerPt]
@@ -18,6 +20,15 @@ theorem pt_exact (n : Int) : pt n / spPerPt = n := by
 theorem inch_eq_72pt (n : Int) : inch n = pt (72 * n) := by
   simp only [inch, pt, spPerPt]
   rw [Int.mul_comm n 72]
+
+/-- The two spellings of one length agree: `mm` is defined against the same
+1⁄72-inch point as `inch`, so 254 mm and 10 in are the same number of sp. -/
+theorem mm_eq_inch (n : Int) : mm (254 * n) = inch (10 * n) := by
+  have h : 254 * n * 7200 * spPerPt = 2540 * (10 * n * 72 * spPerPt) := by
+    simp only [spPerPt]
+    omega
+  simp only [mm, inch, h]
+  exact Int.mul_ediv_cancel_left _ (by decide)
 
 /-- Render as decimal points with up to three fractional digits (exact sp
 value rounded to the nearest thousandth). -/

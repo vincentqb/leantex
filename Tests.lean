@@ -2403,6 +2403,10 @@ def main (args : List String) : IO UInt32 := do
   -- dim
   t "sp pt string" ((Dim.pt 10).toPtString == "10" && (Dim.pt 3 / 2).toPtString == "1.5")
   dimChecks ref
+  -- The two spellings of one length must agree: the engine's pt is the big
+  -- point everywhere, so a default deck stage and \page{ width = 160mm }
+  -- name the same number of sp.
+  t "dim mm agrees with inch" (Dim.mm 254 == Dim.inch 10)
 
   kpChecks ref
   hyphenChecks ref
