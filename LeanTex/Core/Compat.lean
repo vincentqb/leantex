@@ -41,7 +41,7 @@ def inert : List (String × Nat) :=
    ("nonfrenchspacing", 0), ("sloppy", 0), ("raggedright", 0),
    ("raggedbottom", 0), ("flushbottom", 0), ("selectlanguage", 1),
    ("column", 1), ("midrule", 0), ("toprule", 0), ("bottomrule", 0),
-   ("addlinespace", 0)]
+   ("addlinespace", 0), ("hline", 0), ("cline", 1)]
 
 /-- Beamer configuration commands: how many `{...}` arguments each carries.
 The engine has no beamer templating layer, so each is skipped whole — the
@@ -655,6 +655,14 @@ the definition is skipped and every '\{{envName}}' keeps its body" pos
       "'\\includegraphics' is not implemented yet; the image is not rendered" pos
       (help := "asset embedding lands with M8; see PLAN.md")
     return some (#[], k)
+  | "multicolumn" =>
+    -- `\multicolumn{n}{align}{text}`: spans are not laid out — tables
+    -- degrade to rows and W0308 says so — but the cell's text is content
+    -- and the span count and alignment spec are not.
+    let (gs, k) := takeGroups raws start 3
+    match gs with
+    | #[_, _, text] => return some (#[.group text pos], k)
+    | _ => return none
   | "centering" =>
     sayOnce "centering" .warning "W0108"
       "'\\centering' is not honoured yet; content stays left-aligned" pos

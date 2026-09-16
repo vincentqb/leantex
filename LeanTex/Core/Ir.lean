@@ -196,15 +196,18 @@ inductive Block where
   deriving Repr, BEq, Inhabited
 
 /-- Verbatim content, line-split: the newline after `\begin{verbatim}` and
-the blank indentation before `\end{verbatim}` delimit; everything between is
-content, interior blank lines included. -/
+the blank tail before `\end{verbatim}` delimit — every trailing blank line
+goes, not one — and everything between is content, interior blank lines
+included. -/
 def verbatimLines (s : String) : Array String := Id.run do
   let s := if s.startsWith "\n" then (s.drop 1).toString
     else if s.startsWith "\r\n" then (s.drop 2).toString else s
   let mut lines := ((s.splitOn "\n").map fun l =>
     if l.endsWith "\r" then (l.dropEnd 1).toString else l).toArray
-  if let some last := lines.back? then
-    if last.trimAscii.isEmpty then lines := lines.pop
+  repeat
+    match lines.back? with
+    | some last => if last.trimAscii.isEmpty then lines := lines.pop else break
+    | none => break
   return lines
 
 /-- Verbatim content as inline text, for a backend that sets lines rather
@@ -216,7 +219,7 @@ def verbatimInlines (s : String) : Array Inline := Id.run do
   for line in verbatimLines s do
     unless out.isEmpty do
       out := out.push (.linebreak {})
-    let kept := String.ofList (line.toList.map fun c => if c == ' ' then '\u00a0' else c)
+    let kept := line.foldl (fun acc c => acc.push (if c == ' ' then '\u00a0' else c)) ""
     out := out.push (.text (if kept.isEmpty then "\u00a0" else kept))
   return out
 

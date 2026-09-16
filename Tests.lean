@@ -1509,6 +1509,14 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "frametitle names the frame"
     ((elabStr (deck "\\begin{frame}\n\\frametitle{Named}\nbody\n\\end{frame}")).1.body ==
       #[.frame #[.text "Named"] #[.para #[.text "body"]]])
+  -- Two titles: the last wins, as in beamer, but never silently.
+  let (dupDoc, dupDs) := elabStr
+    (deck "\\begin{frame}\n\\frametitle{One}\n\\frametitle{Two}\nbody\n\\end{frame}")
+  t "a second frametitle warns and wins"
+    (dupDs.any (·.code == "W0311") &&
+     match dupDoc.body with
+     | #[.frame title _] => Ir.plainText title == "Two"
+     | _ => false)
   -- \title and friends may sit in the body, as beamer documents do; an
   -- empty declaration (\date{}) is deliberately blank and sets nothing.
   let titled := deck ("\\title{A Deck}\\subtitle{Sub}\\author{Pat Placeholder}\\date{}\n" ++
@@ -1556,6 +1564,19 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      match (elabStr tabSrc).1.body with
      | #[.para xs] => xs.contains (.linebreak {}) &&
          ["a", "b", "c", "d"].all fun w => ((Ir.plainText xs).splitOn w).length == 2
+     | _ => false)
+  -- The classic rules, not just booktabs: \hline and \cline are inert, and
+  -- \multicolumn keeps its cell text without the span count or alignment
+  -- spec leaking in beside it.
+  let classicTab := "\\begin{tabular}{ll}\\hline\n" ++
+    "\\multicolumn{2}{X}{Head} \\\\ \\cline{1-2}\na & b \\\\ \\hline\\end{tabular}"
+  let (ctDoc, ctDs) := elabStr classicTab
+  t "classic tabular rules are inert" (!ctDs.any (·.code == "W0301"))
+  t "multicolumn keeps only its cell text"
+    (match ctDoc.body with
+     | #[.para xs] =>
+       let s := Ir.plainText xs
+       (s.splitOn "Head").length == 2 && !s.toList.contains '2' && !s.toList.contains 'X'
      | _ => false)
 
 /-- The shared bracket scanner, fed the malformed and the merely leading:
@@ -1843,7 +1864,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an environment and a command of one name both warn"
     ((warnCodes "\\begin{gizmo}body\\end{gizmo}\n\\gizmo{arg}").toArray ==
       #["W0302", "W0301"])
-  t "elab reserved M5 warns, never errors" (warnCodes ("\\documentclass{article}\\figure{x}" ++
+  t "elab reserved command warns, never errors" (warnCodes ("\\documentclass{article}\\figure{x}" ++
     "\\begin{document}y\\end{document}") == ["W0307"])
   -- Unknown environments keep their body: the wrapper's decoration is
   -- unknowable, the content inside it is not. Arguments on the \begin line
@@ -1892,6 +1913,8 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
      (elabStr verbSrc).2.isEmpty)
   t "verbatim lines trim the delimiters, keep blanks and indentation"
     (Ir.verbatimLines "\nabc\n  in\n\nz\n  " == #["abc", "  in", "", "z"])
+  t "verbatim drops every trailing blank line, not one"
+    (Ir.verbatimLines "\ncode\n\n\n  " == #["code"])
   t "verbatim inline form holds spaces as no-break spaces"
     (Ir.verbatimInlines "\na  b\n" == #[.text "a\u00a0\u00a0b"])
 

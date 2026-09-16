@@ -190,7 +190,7 @@ private def flattenOne (st : FlattenSt) (sty : TextStyle) (x : Inline) : Flatten
   | .fill => { st with toks := st.toks.push .fill }
   | .math _ src =>
     let st := if st.warnedMath then st
-      else { warn st "W0003" "math is typeset as plain text until M4" with warnedMath := true }
+      else { warn st "W0003" "math is typeset as plain text until M6" with warnedMath := true }
     pushText st sty src
   | .styled s body => flatten st (applyStyle sty s) body
   | .colored c _ body => flatten st { sty with color := c } body

@@ -79,7 +79,7 @@ private def warnOnce (ctx : Ctx) (key code msg : String) (pos : Pos)
 
 def reservedCtrl : List (String × String) :=
   [("vspace", "M3"), ("noindent", "M3"),
-   ("fontfallback", "M5"), ("figure", "M5"), ("note", "M5")]
+   ("fontfallback", "M8"), ("figure", "M8"), ("note", "M5")]
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 def declCtrl : List String :=
@@ -104,7 +104,7 @@ def pageSizes : List (String × (Sp × Sp)) :=
    ("a5", (Dim.pt 420, Dim.pt 595))]
 
 def reservedEnv : List (String × String) :=
-  [("external", "M5"), ("tikzpicture", "M8")]
+  [("external", "M8"), ("tikzpicture", "M8")]
 
 /-- Math environments: their body is math source, carried whole. The engine
 emits math as source until M6, and elaborating `&` and `\\` as text would
@@ -1059,7 +1059,12 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             for _ in [k:body.size] do
               if h' : j < body.size then
                 match body[j], body[j + 1]? with
-                | .ctrl "frametitle" _, some (.group t _) =>
+                | .ctrl "frametitle" fpos, some (.group t _) =>
+                  -- The last title wins, as in beamer, but never silently:
+                  -- the author wrote two and only one can show.
+                  unless title.isEmpty do
+                    diag ctx "W0311" "this '\\frametitle' replaces the frame's earlier title"
+                      (some fpos) (help := "the last one wins; remove the other") .warning
                   title ← elabInlines ctx t
                   j := j + 2
                 | r', _ =>

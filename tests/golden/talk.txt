@@ -33,7 +33,7 @@ frame
     text "Escape hatch"
 -- diagnostics
 warning[W0105] 23:5 overlay specifications are ignored; every step's content is shown | help: dim-not-hide overlays land with the rest of M5; see PLAN.md
-warning[W0307] 15:1 '\fontfallback' is not implemented yet; skipped | help: planned for M5; see PLAN.md
+warning[W0307] 15:1 '\fontfallback' is not implemented yet; skipped | help: planned for M8; see PLAN.md
 warning[W0307] 27:3 '\note' is not implemented yet; skipped | help: planned for M5; see PLAN.md
-warning[W0307] 41:3 '\figure' is not implemented yet; skipped | help: planned for M5; see PLAN.md
-warning[W0307] 47:3 '{external}' is not implemented yet; its content is not rendered | help: planned for M5; see PLAN.md
+warning[W0307] 41:3 '\figure' is not implemented yet; skipped | help: planned for M8; see PLAN.md
+warning[W0307] 47:3 '{external}' is not implemented yet; its content is not rendered | help: planned for M8; see PLAN.md
