@@ -19,8 +19,12 @@ font-relative design tokens, page geometry, running head/foot, hyperlinks as
 link annotations, document metadata, and layout assertions that fail the
 build. HTML5: a typed tree with a certified escaper, semantic markup, tokens
 as CSS custom properties, `--css bulma` interop, one self-contained file.
-Measured by `scripts/bench.sh`: 1 KB in ~16 ms against lualatex's ~478 ms; a
-generated 129 KB / 30 pages in ~588 ms against ~968 ms.
+A document written for lualatex compiles as written: LaTeX idioms translate
+to the native declarations, unknown constructs degrade to their content with
+a warning, and `-v` lists every translation with its shorter spelling.
+Measured by `scripts/bench.sh`: 1 KB in ~16 ms against lualatex's ~476 ms; a
+generated 129 KB / 30 pages in ~149 ms against ~983 ms, with paragraphs
+broken in parallel.
 
 **Where it is going.** This plan now covers one engine with **two surfaces**
 (tex primary, markdown as sugar) and **two backends** (PDF and HTML,
@@ -29,15 +33,57 @@ including slides).
 **Immediately next.** M4b theorem environments, or M5 slides. Slides were
 blocked on the size scale, which now exists.
 
-**Open, tracked, not hidden.** `Elab.elabInlines`/`elabBlocks` are still
-`partial`; the Knuth–Plass optimality theorem is held empirically by
-`scripts/kp-fuzz.lean`. Both are detailed in the 2026-09-15 M2 entry below.
-Small caps are synthesised rather than drawn, and math is still emitted as
-source. The resume acceptance run is clean on both backends.
+**Open, tracked, not hidden.** `Elab.takeArgs`/`elabInlines`/`elabBlocks`
+are `partial` — three, not the two an earlier entry claimed; an audit found
+ten and seven were removed (2026-09-16 entry). The Knuth–Plass optimality
+theorem is held empirically by `scripts/kp-fuzz.lean`. Small caps are
+synthesised rather than drawn, math is emitted as source, and element styling
+(section fonts, list spacing) is not yet declarable, which is what keeps the
+real resume from matching its lualatex build exactly.
 
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-16 — the real resume compiles as written. It produced 78 errors and
+not one was the document's fault: 52 came from a preamble asking packages for
+what the engine provides directly, the rest from the author's own macros and
+five body idioms. Principle 8 came out of it. A compat pass rewrites LaTeX
+idioms into the native declarations on the parsed tree — `geometry` →
+`\page`, `\definecolor` → `\palette`, `\setlength` → `\tokens`,
+`\NewDocumentCommand`/`\newcommand` → `\define` with `#k` as `\ak`,
+`\hypersetup` → `\pdfmeta`, `\ihead`/`\ohead` → `\runninghead`,
+`\linespread` → a leading factor, `\color{n}` → the declaration form, and
+thirty packages that are a note rather than a warning. Unknown commands warn
+once per name and keep their arguments as text; `\input` splices in the
+driver. Notes print at `-v`; the success line counts them. Fixing this found a
+layout bug older than the compat layer: a paragraph ending in `\\` vanished
+whole, because the empty last line had no feasible predecessor and the
+breaker returned nothing. What remains visible against the lualatex build is
+element styling (coral sans headings with a rule, tighter bullets, no running
+head on page 1), which is M3d.
+
+2026-09-16 — three worker agents ran in parallel worktrees and landed by
+fast-forward after a fresh-context audit of each diff. Lint: Lean 4.34 ships
+no formatter, so `lake build --wfail` with the `linter.extra` set is the gate,
+in a 68-line pre-commit hook that also rejects new `partial`/`sorry`/`unsafe`
+and hand-edited goldens from the staged diff (0.03 s no-op, 5.7 s cold). Its
+audit found ten `partial` defs where PLAN claimed two; seven were removed the
+same day with byte-identical output. Parallel: layout was 93% of the 30-page
+build and Knuth–Plass 77% of layout, so the block walk now emits jobs and one
+pure `Task` per paragraph runs `kp`, placement replaying in document order:
+576 → 149 ms, output byte-identical on every corpus file including the real
+resume through the compat layer. Font probing runs in chunks of 64, 253 → 80
+ms on an 1800-face tree. A font-scan disk cache was measured and declined:
+default dirs scan in 35 ms. Principle 10 records the position these
+implement.
+
+2026-09-16 — process rule, from the user: before fixing an issue, write the
+invariant whose absence allowed it — as a theorem statement if it is one, a
+test if it is not — and fix to that, not to the symptom. AGENTS.md carries
+it. The accumulator rule (a structural walk threads an `Array`; `#[x] ++
+rest` is quadratic and cost 4 → 1157 ms twice in one afternoon) is the first
+capture under it.
 
 2026-09-15 — four latent no-ops found by rendering the same fixture through
 both backends and looking at the output. Each was accepted by the elaborator
@@ -251,6 +297,25 @@ them.
    or heavyweight lives behind a typed, cached boundary; the native Lean 4
    surface expands to absorb one boundary at a time, when it pays. Documents
    never change when a boundary is absorbed.
+8. Elaboration is non-blocking. For every input the parser accepts, a
+   document comes out. A construct the engine does not implement never
+   removes content — its arguments still render — and the diagnostic names
+   the span and, where one exists, the native spelling. Only malformed
+   syntax, a failed `\assert`, and a font that cannot be found stop a build.
+   Best effort is the contract, not a fallback: a warning the author can act
+   on beats a refusal they have to work around.
+9. Each document class has a primary backend, and the other is a faithful
+   degradation, never a failure. `article` is PDF-first and its HTML is a
+   readable page; `slides` is HTML-first (the interactive deck) and its PDF
+   is the handout. A template optimised for one medium behaves sensibly in
+   the other because both read the same IR; no template targets both
+   equally, and none has to.
+10. All Lean 4. The only C is Lean's runtime — the small isolated kernel the
+    project wants — and there is no Rust and no FFI. Parallelism is `Task`
+    over pure functions, race-free because there is nothing to race on;
+    results join in document order so output never depends on scheduling.
+    Incrementality only where a measurement shows it pays; whole-document
+    compile is fast enough that the document itself is never cached.
 
 ## The language
 

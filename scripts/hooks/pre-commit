@@ -30,11 +30,11 @@ fi
 added=$(git diff --cached --no-color --unified=0 -- '*.lean' | grep '^+' | grep -v '^+++' || true)
 
 bad=$(printf '%s\n' "$added" | grep -E '(^|[^[:alnum:]_])partial([^[:alnum:]_]|$)' \
-      | grep -vE 'partial def (elabInlines|elabBlocks)' || true)
+      | grep -vE 'partial def (takeArgs|elabInlines|elabBlocks)' || true)
 if [ -n "$bad" ]; then
   say "pre-commit: new 'partial' in staged .lean changes:
 $bad
-  Only Elab.elabInlines/elabBlocks may be partial (tracked in PLAN.md).
+  Only Elab.takeArgs/elabInlines/elabBlocks may be partial (tracked in PLAN.md).
   Fix: make the recursion structural (see AGENTS.md, Conventions)."
 fi
 

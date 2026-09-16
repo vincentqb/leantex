@@ -36,6 +36,11 @@ in this repo; refer to the private reference corpus abstractly.
 
 ## Conventions
 
+- Before fixing an issue, write down the invariant whose absence allowed it —
+  as a theorem statement when it is one, as a test when it is not — then fix
+  to that invariant, not to the symptom. The test fails before and passes
+  after; if the lesson generalises, it becomes a rule here or a hook check.
+
 - Pure core: modules under `LeanTex/Core/` do no IO. Files, fonts, anything
   external surfaces as request values the CLI driver fulfills (effects as data).
 - Backends consume the IR and nothing else. A backend never re-parses, and
@@ -57,10 +62,13 @@ in this repo; refer to the private reference corpus abstractly.
   The language is designed terminating — a construct that breaks that property
   needs a design discussion, not a fuel parameter.
 - Never add `partial` to reach a green build. Tree recursion over `Array`
-  fields works via mutual recursion through `List` (see `Ir.dumpBlocks`,
-  `Layout.typesetBlock`); index loops bounded by `[0:xs.size + 1]` are total
-  without it. `Elab.elabInlines`/`elabBlocks` are the two known exceptions and
-  are tracked in PLAN.
+  fields works via mutual recursion through `List` (see `Compat.rewriteList`,
+  `Html.render`); a `map`/`flatMap` over children hides the call behind a
+  lambda the checker cannot see, and a list matched against a literal pattern
+  with a catch-all variable loses the tail — write the `List` companion
+  instead. Index loops bounded by `[0:xs.size + 1]` are total without it.
+  `Elab.takeArgs`/`elabInlines`/`elabBlocks` are the three known exceptions,
+  tracked in PLAN; the pre-commit hook rejects any new one.
 - A claim is open until machine-checked. An executable oracle
   (`scripts/kp-fuzz.lean`) is evidence, not a theorem — say which one you have.
 - Comments: nearly none. Names and tests carry the what; a comment only for a
