@@ -160,6 +160,31 @@ went with it, and the empty list is now deleted. An unknown `\page` key
 today is E-diagnosed like any other; a future declared-ahead key gets a
 design decision then, not a dormant list now.
 
+2026-09-16 — the M5 slice's review findings closed, root causes first.
+One bracket-argument scan existed in four copies that disagreed about two
+rules, and the missing halves each lost content silently: an unclosed `[`
+emptied a frame, swallowed a `\palette` declaration and then advised the
+author to write one, or turned a `\title` typo into a fatal E0313; a frame
+whose content merely opened with `[1]` lost it. The rule, now in one
+`scanBracketArg` every consumer shares: an argument's `[` opens on its
+command's line and closes; anything else is content, reported as W0310 when
+a bracket never closes. Alongside it: `Dim.mm` was TeX's 7227/2540 in an
+engine whose point is the big point, so the default beamer stage disagreed
+with `\page{ width = 160mm }` by 0.375% — now 7200/2540, held by an
+`mm_eq_inch` theorem rather than a test; warn-once keys gained `env:`/`ctrl:`
+namespaces so an environment and a command of one name cannot silence each
+other; the overfull-line collapse carries its count, the only signal of
+scale a spanless warning has; and the `@input:` wrapper is a paragraph
+boundary only when the file holds block content, so an inline `\input` stays
+in its sentence — an unknown environment still breaks the paragraph,
+deliberately, because guessing block-ness from a body's shape would make
+paragraph structure depend on the wrapper's content. Small closures with it:
+`\hline`/`\cline` inert and `\multicolumn` keeping only its cell text,
+milestone references reconciled against this plan (figure, fontfallback,
+external, and W0003's math note), verbatim dropping every trailing blank
+line, and a second `\frametitle` warning (W0311) instead of silently
+replacing the first. Every fix carries a test that failed before it.
+
 2026-09-16 — the first coherent M5 slice: the real beamer talk compiles
 best-effort to both backends, 66 errors to zero, and every remaining
 diagnostic names its construct once and the file that holds it. The load
