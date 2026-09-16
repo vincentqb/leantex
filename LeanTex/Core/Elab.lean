@@ -79,7 +79,7 @@ def pagePending : List (String × String) := []
 
 def metaKeys : List String := ["title", "author", "subject", "keywords"]
 
-def fontKeys : List String := ["body", "sans", "mono", "rm", "sf", "tt"]
+def fontKeys : List String := ["body", "sans", "mono", "rm", "sf", "tt", "dir"]
 
 /-- Named page sizes, in sp. -/
 def pageSizes : List (String × (Sp × Sp)) :=
@@ -821,8 +821,9 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           diags := st.diags.push (Decl.unknownKey ctx.file "page" key pageKeys pos) }
   return spec
 
-/-- `\fonts{...}`: family names per slot. `rm`/`sf`/`tt` are accepted as
-aliases so a LaTeX habit does not become an error. -/
+/-- `\fonts{...}`: family names per slot, and `dir`, a directory of font
+files shipped beside the document. `rm`/`sf`/`tt` are accepted as aliases so
+a LaTeX habit does not become an error. -/
 private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry)
     (pos : Pos) : EM FontSpec := do
   let mut spec := spec
@@ -834,11 +835,12 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
     | "sf", .str f => spec := { spec with sans := some f }
     | "mono", .str f => spec := { spec with mono := some f }
     | "tt", .str f => spec := { spec with mono := some f }
+    | "dir", .str d => spec := { spec with dir := some d }
     | key, v =>
       if fontKeys.contains key then
+        let expected := if key == "dir" then "a quoted directory" else "a quoted family name"
         modify fun st => { st with
-          diags := st.diags.push (Decl.wrongType ctx.file "fonts" key
-            "a quoted family name" v pos) }
+          diags := st.diags.push (Decl.wrongType ctx.file "fonts" key expected v pos) }
       else
         modify fun st => { st with
           diags := st.diags.push (Decl.unknownKey ctx.file "fonts" key fontKeys pos) }

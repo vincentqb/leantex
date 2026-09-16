@@ -1,8 +1,9 @@
 class article
 page 612x792 vmargin 72 hmargin 72
-font body "DejaVu Serif"
-font sans "DejaVu Sans"
-font mono "DejaVu Sans Mono"
+font dir "fonts"
+font body "Source Serif Pro"
+font sans "Open Sans"
+font mono "Source Code Pro"
 meta title "Faces"
 assert pages == 1
 assert fonts.all_embedded

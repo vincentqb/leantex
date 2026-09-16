@@ -53,11 +53,14 @@ structure Palette where
 def Palette.find? (p : Palette) (name : String) : Option Color :=
   (p.entries.find? (·.1 == name)).map (·.2)
 
-/-- Font families a document asks for, as declared by `\fonts`. -/
+/-- Font families a document asks for, as declared by `\fonts`. `dir` is a
+directory of font files the document ships, relative to the document, so a
+document that carries its fonts renders the same on every host. -/
 structure FontSpec where
   body : Option String := none
   sans : Option String := none
   mono : Option String := none
+  dir : Option String := none
   deriving Repr, BEq, Inhabited
 
 /-- What to build, as declared by `\output`: the document carries its own
@@ -359,6 +362,7 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
 "
     | none => ""
   let fontLines :=
+    fontLine "dir" doc.fonts.dir ++
     fontLine "body" doc.fonts.body ++ fontLine "sans" doc.fonts.sans ++
     fontLine "mono" doc.fonts.mono
   let paletteLines := String.join (doc.palette.entries.toList.map fun (n, c) =>

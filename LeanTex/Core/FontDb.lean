@@ -66,7 +66,11 @@ where
   go (dir : System.FilePath) : Nat → Array String → IO (Array String)
     | 0, acc => pure acc
     | depth + 1, acc => do
-      let entries ← try dir.readDir catch _ => pure #[]
+      -- Sorted: `readDir` returns filesystem order, which differs between
+      -- hosts, and resolution breaks ties by scan order. The same files must
+      -- give the same faces in the same order everywhere.
+      let entries := (← try dir.readDir catch _ => pure #[]).qsort
+        fun a b => a.fileName < b.fileName
       let mut acc := acc
       for e in entries do
         let p := e.path
@@ -188,14 +192,20 @@ private def fileKey (path : String) : IO (Option (String × String)) := do
     return some (toString md.byteSize, s!"{md.modified.sec}.{md.modified.nsec}")
   catch _ => return none
 
-/-- All installed faces, classified. Cached by the caller. `dirs` adds to the
-built-in locations rather than replacing them. Probing opens and reads every
-installed face, so chunks of files are probed in parallel; joining in chunk
-order keeps the face array exactly what the sequential scan produced, which
-matters because resolution prefers earlier faces on ties. -/
-def scan (dirs : List String := []) : IO (Array Face) := do
+/-- The built-in locations plus `dirs`, in resolution order. -/
+def systemRoots (dirs : List String := []) : IO (List String) := do
+  return searchDirs ++ (← extraDirs) ++ dirs
+
+/-- The faces under exactly `roots`, classified, in root order then sorted
+path order — so the result is a function of the directories' contents alone,
+which is what lets a test suite scan a directory it ships and get the same
+faces on every host. Cached by the caller. Probing opens and reads every
+face, so chunks of files are probed in parallel; joining in chunk order keeps
+the face array exactly what the sequential scan produced, which matters
+because resolution prefers earlier faces on ties. -/
+def scanRoots (roots : List String) : IO (Array Face) := do
   let mut files : Array String := #[]
-  for d in searchDirs ++ (← extraDirs) ++ dirs do
+  for d in roots do
     let p := System.FilePath.mk d
     if ← p.pathExists then
       files := files ++ (← listFonts p 6)
@@ -251,6 +261,10 @@ def scan (dirs : List String := []) : IO (Array Face) := do
       catch _ => pure ()
   return result.filterMap id
 
+/-- All installed faces: the built-in locations plus `dirs`. -/
+def scan (dirs : List String := []) : IO (Array Face) := do
+  scanRoots (← systemRoots dirs)
+
 private def norm (s : String) : String :=
   String.ofList ((s.toLower.toList).filter fun c => c.isAlphanum)
 
@@ -286,13 +300,24 @@ private def pickWeighted (cands : Array Face) (target : Nat) : Option Face :=
       else ia < ib
   sorted[0]?.map (·.1)
 
+/-- The family a name denotes. A family name denotes itself. A font file name
+(`LibertinusSerif-Regular.otf`) — fontspec's way of naming a font that ships
+beside the document — denotes the family of the scanned face with that file
+name, so its bold and italic are found the way every other family's are. -/
+def familyOf (faces : Array Face) (name : String) : String :=
+  if isFontFile name then
+    match faces.find? fun f => (f.path.splitOn "/").getLast? == some name with
+    | some f => f.family
+    | none => name
+  else name
+
 /-- Best face for a family name and variant, plus whether the family really
 offers what was asked for. A family whose heaviest face is "Demi" (600) is
 serving a genuine bold, so that counts as satisfied; one with no italic at
 all does not, and the caller warns. -/
 def resolve (faces : Array Face) (family : String) (v : Variant) :
     Option (Face × Bool) :=
-  let target := norm family
+  let target := norm (familyOf faces family)
   let inFamily := faces.filter fun f => norm f.family == target
   if inFamily.isEmpty then
     none

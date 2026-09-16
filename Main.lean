@@ -123,8 +123,11 @@ four bold/italic variants, loaded once and deduplicated by path. Faces the
 document never uses are still loaded but not embedded — `usedGlyphs` decides
 what reaches the file. A document with no `\fonts` is served by the same
 mechanism: `FontDb.defaultFamily` picks a family from the scan and it fills
-the body slot, so the default exists wherever any font does, by construction. -/
-def buildFontSet (ui : Ui) (spec : Ir.FontSpec) :
+the body slot, so the default exists wherever any font does, by construction.
+A `\fonts{ dir = ... }` is searched first, resolved against the document's own
+directory like `\input`: a document that ships its fonts renders the same on
+every host, whatever else is installed. -/
+def buildFontSet (ui : Ui) (file : String) (spec : Ir.FontSpec) :
     IO (Except Diag (Font.FontSet × Array Diag × String)) := do
   let bare := spec.body.isNone && spec.sans.isNone && spec.mono.isNone
   if bare then
@@ -133,15 +136,29 @@ def buildFontSet (ui : Ui) (spec : Ir.FontSpec) :
       | .error d => return .error d
       | .ok (f, path) =>
         return .ok ({ fonts := #[f], index := singleFaceIndex }, #[], path)
+  let mut diags : Array Diag := #[]
+  let mut docDirs : List String := []
+  if let some d := spec.dir then
+    let d := if d.endsWith "/" && d.length > 1 then (d.dropEnd 1).toString else d
+    let p := System.FilePath.mk d
+    let p := if p.isAbsolute then p else ((System.FilePath.mk file).parent.getD ".") / p
+    if ← p.isDir then
+      docDirs := [p.toString]
+    else
+      diags := diags.push {
+        severity := .warning
+        code := "W0008"
+        message := s!"\\fonts dir '{d}' is not a directory ({p}); looking elsewhere"
+      }
   let t ← IO.monoMsNow
-  let faces ← FontDb.scan (ui.cfg.fontDirs.toList ++ (← texFontDirs))
+  let faces ← FontDb.scanRoots
+    (docDirs ++ (← FontDb.systemRoots (ui.cfg.fontDirs.toList ++ (← texFontDirs))))
   ui.phase "fontdb" s!"{faces.size} faces" ((← IO.monoMsNow) - t)
   let spec ← if bare then
       match FontDb.defaultFamily faces with
       | some fam => pure { spec with body := some fam }
       | none => return .error noFontDiag
     else pure spec
-  let mut diags : Array Diag := #[]
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]
   let mut index : Array ((Nat × Bool × Bool) × Nat) := #[]
@@ -334,7 +351,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       ui.summary file errors (← since t0)
       return 1
     let t ← IO.monoMsNow
-    match ← buildFontSet ui doc.fonts with
+    match ← buildFontSet ui file doc.fonts with
     | .error d =>
       ui.diag d
       ui.summary file 1 (← since t0)

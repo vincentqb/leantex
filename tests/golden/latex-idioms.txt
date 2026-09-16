@@ -1,7 +1,8 @@
 class article [paper=letter,fontsize=10pt]
 page 612x792 vmargin 36 hmargin 54
-font body "DejaVu Serif"
-font sans "DejaVu Sans"
+font dir "fonts/"
+font body "SourceSerifPro-Regular.otf"
+font sans "OpenSans-Regular.ttf"
 palette primary #0F766E
 palette muted #72727F
 palette rulecolor #99F6E4
@@ -82,8 +83,8 @@ para
 -- diagnostics
 note[N0100] 5:1 \documentclass{scrartcl} → \documentclass[paper=letter,fontsize=10pt]{article}
 note[N0100] 7:1 \usepackage{babel} → nothing: the engine does this itself
-note[N0100] 8:1 \babelfont → \fonts{ body = "DejaVu Serif" }
-note[N0100] 9:1 \babelfont → \fonts{ sans = "DejaVu Sans" }
+note[N0100] 8:1 \babelfont → \fonts{ dir = "fonts/", body = "SourceSerifPro-Regular.otf" }
+note[N0100] 9:1 \babelfont → \fonts{ dir = "fonts/", sans = "OpenSans-Regular.ttf" }
 note[N0100] 10:1 \usepackage{microtype} → nothing: the engine does this itself
 note[N0100] 11:1 \usepackage{xcolor} → nothing: the engine does this itself
 note[N0100] 12:1 \usepackage{geometry} → \page{ size = letter, vmargin = 0.5in, hmargin = 0.75in }

@@ -301,14 +301,28 @@ where
     else return none
   | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont" =>
     let (slotArgs, j) := if name == "babelfont" then takeGroups raws start 1 else (#[], start)
-    let (_, j) := takeOpt raws j
+    let (optBefore, j) := takeOpt raws j
     let (args, k) := takeGroups raws j 1
+    -- fontspec takes its features before the name or after it.
+    let (optAfter, k) := takeOpt raws k
     let slot := match name with
       | "babelfont" => match rawSrc (slotArgs.getD 0 #[]) with
         | "rm" => "body" | "sf" => "sans" | "tt" => "mono" | s => s
       | "setmainfont" => "body" | "setsansfont" => "sans" | _ => "mono"
     let family := rawSrc (args.getD 0 #[])
-    let native := s!"\\fonts\{ {slot} = \"{family}\" }"
+    -- `Path=` is the one feature that says where a font is rather than how
+    -- to shape it: the directory of a font the document ships, whose name is
+    -- then a file name. The scan finds the bold and italic beside it, so
+    -- `BoldFont=` and the rest are dropped along with the shaping features.
+    let dir := ([optBefore, optAfter].filterMap id).findSome? fun opts =>
+      (opts.splitOn ",").findSome? fun kv =>
+        match kv.splitOn "=" with
+        | [key, v] => if key.trimAscii.toString == "Path" then some v.trimAscii.toString else none
+        | _ => none
+    let dirPart := match dir with
+      | some d => s!"dir = \"{d}\", "
+      | none => ""
+    let native := s!"\\fonts\{ {dirPart}{slot} = \"{family}\" }"
     became s!"\\{name}" native pos
     return some (← synthAt native pos, k)
   | "definecolor" =>

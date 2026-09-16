@@ -1,6 +1,7 @@
 class article
 page 612x792 vmargin 72 hmargin 72
-font body "DejaVu Serif"
+font dir "fonts"
+font body "Source Serif Pro"
 token rhythm 2000/1000ex plus 500/1000ex minus 250/1000ex
 token sep 1500/1000ex plus 375/1000ex minus 187/1000ex
 token bind 800/1000ex plus 200/1000ex minus 100/1000ex

@@ -88,6 +88,13 @@ in this repo; refer to the private reference corpus abstractly.
   palettes) copied from the private corpus. Placeholder names, `example.org`
   contacts. The private corpus never enters this repo; acceptance runs
   against it locally, never in CI.
+- Fixtures and tests never depend on what this host has installed. A fixture
+  that names a font ships it in `tests/corpus/fonts/` (with its license) and
+  declares `\fonts{ dir = "fonts" }`; `Tests.lean` scans only that directory
+  (`FontDb.scanRoots [testFonts]`), never `FontDb.scan`. To prove a change
+  hermetic, build the corpus in a namespace with the font directories
+  emptied: `unshare -Urm`, `mount -t tmpfs none /usr/share/fonts` (and the
+  TeX Live tree), `HOME` and `PATH` pointed at empty directories.
 
 ## Don't touch
 

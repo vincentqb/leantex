@@ -109,11 +109,15 @@ def bruteBest (items : Array Layout.Item) (target : Dim.Sp) : Option Int := Id.r
     | none => pure ()
   return best
 
+/-- The fonts the repository ships, beside the fixtures that name them. Every
+font-dependent check runs on these and only these, so `lake test` sees the
+same faces on every host — a Mac with nothing installed included. -/
+def testFonts : String := "tests/corpus/fonts"
+
 def findFont : IO (Option ByteArray) := do
-  for p in ["/usr/share/fonts/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"] do
-    if ← System.FilePath.pathExists p then
-      return some (← IO.FS.readBinFile p)
+  let p := testFonts ++ "/OpenSans-Regular.ttf"
+  if ← System.FilePath.pathExists p then
+    return some (← IO.FS.readBinFile p)
   return none
 
 /-- Does a produced file contain this ASCII run? PDF content streams are the
@@ -416,6 +420,16 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   styleChecks ref
 
+/-- A synthetic face for resolution-order tests: pure data, no host fonts. -/
+def synthFace (family : String) (path : String := "") : FontDb.Face :=
+  { path := if path.isEmpty then "/x/" ++ family ++ ".ttf" else path
+    family := family
+    subfamily := "Regular"
+    bold := false
+    italic := false
+    fixedPitch := false
+    weight := 400 }
+
 /-- The font diagnostics: a missing family suggests its neighbours instead of
 dumping a thousand names, and `families` is linear in the face count. -/
 def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -430,16 +444,20 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "nearest of nothing alike is empty" ((FontDb.nearest fams "Zapfino").isEmpty)
   t "nearest caps at eight"
     ((FontDb.nearest ((List.range 20).map fun i => s!"Test Face {i}").toArray "Test").size ≤ 8)
-  -- families over the host's real faces. A synthetic list did not reproduce
-  -- the two seconds the quadratic version took on this machine's 2856 faces
-  -- (profiled to `families`), so the check runs on the real scan: it is the
-  -- data that made the cost visible.
-  let real ← FontDb.scan []
+  -- families must be linear in the face count. The shape that made the
+  -- quadratic version cost two seconds was a TeX Live tree: ~3000 faces in
+  -- ~1000 families, so `seen` grew to a thousand names re-normalised for
+  -- every face. Synthesised here in that shape — the suite reads no host
+  -- fonts — with distinct families, so dedupe is checked exactly too.
+  let many := ((List.range 3000).map fun i => synthFace s!"Family {i / 3}" s!"/x/{i}.otf").toArray
   let t0 ← IO.monoMsNow
-  let fams' := FontDb.families real
+  let fams' := FontDb.families many
+  -- Consumed before the clock is read again: a pure `let` floats to its
+  -- first use, so a timing with nothing between the two reads measures
+  -- nothing (the quadratic version "took 0 ms" that way; forced, 21 s).
+  t "families dedupes" (fams'.size == 1000)
   let ms := (← IO.monoMsNow) - t0
-  t "families dedupes" (fams'.size ≤ real.size)
-  t s!"families is fast on the real scan ({ms} ms for {real.size} faces)" (ms < 200)
+  t s!"families is linear ({ms} ms for {many.size} faces)" (ms < 200)
 
 /-- Native underline: a decoration never breaks a glyph. Drawn from the
 font's own `post` metrics and interrupted around descenders in the PDF path;
@@ -513,16 +531,6 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     ((redef.2.filter (·.severity == .warning)).any (·.code == "W0303") &&
      redef.1.body == #[.para #[.underline #[.text "y"]]])
 
-/-- A synthetic face for resolution-order tests: pure data, no host fonts. -/
-def synthFace (family : String) (path : String := "") : FontDb.Face :=
-  { path := if path.isEmpty then "/x/" ++ family ++ ".ttf" else path
-    family := family
-    subfamily := "Regular"
-    bold := false
-    italic := false
-    fixedPitch := false
-    weight := 400 }
-
 /-- The default-family choice and the search roots are what make a fresh
 machine work with no configuration, so they are pinned here on synthetic
 faces: preference order beats scan order among preferred names; then the
@@ -558,6 +566,50 @@ def defaultFontChecks (ref : IO.Ref (List String)) : IO Unit := do
   IO.FS.writeBinFile ttc ("ttcf".toUTF8 ++ ByteArray.mk (Array.replicate 64 0x7f))
   t "probe rejects a ttc without aborting" ((← FontDb.probe ttc.toString).isNone)
   IO.FS.removeFile ttc
+
+/-- The shipped fonts make the suite hermetic: what `lake test` sees is a
+function of the checkout, not of the host. Pinned here: scan order is sorted
+path order (so ties resolve the same everywhere), a font file name denotes
+its face's family (fontspec's `Path=` idiom), the compat layer carries
+`Path=` into `dir` from either side of the name, the default family over the
+shipped faces is the sans, and a plain face beats a condensed sibling. -/
+def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) : IO Unit := do
+  let t := check ref
+  let paths := faces.map (·.path)
+  t "scan order is sorted path order" (paths == paths.qsort (· < ·))
+  t "scanning again gives the same faces" ((← FontDb.scanRoots [testFonts]).map (·.path) == paths)
+  t "a file name denotes its family"
+    (FontDb.familyOf faces "SourceSerifPro-Regular.otf" == "Source Serif Pro")
+  t "an unknown file name denotes itself" (FontDb.familyOf faces "Nope.otf" == "Nope.otf")
+  t "resolve by file name finds the bold beside it"
+    ((FontDb.resolve faces "OpenSans-Regular.ttf" { bold := true }).map (·.1.path) ==
+      some (testFonts ++ "/OpenSans-Bold.ttf"))
+  t "default over the shipped faces is the sans"
+    (FontDb.defaultFamily faces == some "Open Sans")
+  let pre := "\\documentclass{article}"
+  let post := "\\begin{document}x\\end{document}"
+  let d1 := (elabStr (pre ++ "\\setmainfont[Path=fonts/]{SourceSerifPro-Regular.otf}" ++ post)).1.fonts
+  t "compat Path before the name"
+    (d1.dir == some "fonts/" && d1.body == some "SourceSerifPro-Regular.otf")
+  let d2 := (elabStr (pre ++ "\\setsansfont{Open Sans}[Path = fonts/, BoldFont = OpenSans-Bold.ttf]"
+    ++ post)).1.fonts
+  t "compat Path after the name" (d2.dir == some "fonts/" && d2.sans == some "Open Sans")
+  let d3 := (elabStr (pre ++ "\\babelfont{rm}[Path=fonts/]{SourceSerifPro-Regular.otf}" ++ post)).1.fonts
+  t "compat babelfont Path" (d3.dir == some "fonts/" && d3.body == some "SourceSerifPro-Regular.otf")
+  let d4 := (elabStr (pre ++ "\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }" ++ post)).1.fonts
+  t "fonts dir" (d4.dir == some "fonts" && d4.body == some "Source Serif Pro")
+  t "fonts dir wrong type" (errCodes (pre ++ "\\fonts{ dir = 12 }" ++ post) == ["E0323"])
+  let plain : FontDb.Face := {
+    path := "/x/a.otf"
+    family := "X"
+    subfamily := "Bold"
+    bold := true
+    italic := false
+    fixedPitch := false
+    weight := 700 }
+  let condensed : FontDb.Face := { plain with path := "/x/b.otf", subfamily := "Condensed Bold" }
+  t "plain face beats a condensed sibling"
+    ((FontDb.resolve #[condensed, plain] "X" { bold := true }).map (·.1.path) == some "/x/a.otf")
 
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
@@ -1103,38 +1155,37 @@ def main (args : List String) : IO UInt32 := do
   t "fonts unknown key" (errCodes ("\\documentclass{article}\\fonts{ script = \"X\" }" ++
     "\\begin{document}x\\end{document}") == ["E0322"])
 
-  let faces ← FontDb.scan
-  t "fontdb finds faces" (faces.size > 0)
-  t "fontdb finds dejavu" ((FontDb.families faces).any (· == "DejaVu Serif"))
+  -- Resolution runs on the shipped faces, never the host's.
+  let faces ← FontDb.scanRoots [testFonts]
+  t "fontdb finds the nine shipped faces" (faces.size == 9)
+  t "fontdb finds source serif" ((FontDb.families faces).any (· == "Source Serif Pro"))
   defaultFontChecks ref
-  -- The plain face must win over same-family condensed/extra variants.
-  match FontDb.resolve faces "DejaVu Serif" { bold := true } with
+  shippedFontChecks ref faces
+  match FontDb.resolve faces "Source Serif Pro" { bold := true } with
   | some (face, exact) =>
     t "fontdb bold is exact" exact
-    t "fontdb bold is not condensed"
-      ((face.path.splitOn "Condensed").length == 1)
     t "fontdb bold flagged" face.bold
-  | none => failures ref "fontdb: DejaVu Serif Bold not found"
-  match FontDb.resolve faces "DejaVu Serif" { bold := true, italic := true } with
+  | none => failures ref "fontdb: Source Serif Pro Bold not found"
+  match FontDb.resolve faces "Source Serif Pro" { bold := true, italic := true } with
   | some (face, exact) => t "fontdb bold italic" (exact && face.bold && face.italic)
-  | none => failures ref "fontdb: DejaVu Serif BoldItalic not found"
+  | none => failures ref "fontdb: Source Serif Pro BoldItalic not found"
   t "fontdb unknown family" (FontDb.resolve faces "No Such Family Here" {} |>.isNone)
 
   -- font parsing on the system font
   match ← findFont with
   | none =>
-    failures ref "font: no DejaVu Sans on this host (needed for M2 tests)"
+    failures ref s!"font: {testFonts}/OpenSans-Regular.ttf missing from the checkout"
   | some fontData =>
     match Font.parse fontData with
     | .error e => failures ref s!"font parse: {e}"
     | .ok font =>
-      t "font name" (font.psName == "DejaVuSans")
+      t "font name" (font.psName == "OpenSans-Regular")
       t "font upem" (font.unitsPerEm == 2048)
       t "font gid A" (font.gid 'A' |>.isSome)
       t "font advance A" (font.advance 'A' > 0)
       t "font greek" (font.gid 'α' |>.isSome)
       t "font missing emoji" (font.gid '🎉' |>.isNone)
-      t "font family" (font.family == "DejaVu Sans")
+      t "font family" (font.family == "Open Sans")
       t "font not bold" (!font.isBold && !font.isItalic)
 
       -- A parser is fed arbitrary files, so it has to be total over them. Every

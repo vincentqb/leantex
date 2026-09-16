@@ -1,12 +1,14 @@
 % Synthetic M3b fixture: font families and real bold/italic faces.
-% Invented content; DejaVu is chosen because it ships with the test host and
-% carries all four variants of each family.
+% Invented content. The families are the ones shipped in fonts/ beside this
+% file, so the fixture renders the same on every host: Source Serif Pro (CFF)
+% carries all four variants, Open Sans (TrueType) too, Source Code Pro one.
 \documentclass{article}
 
 \fonts{
-  body = "DejaVu Serif",
-  sans = "DejaVu Sans",
-  mono = "DejaVu Sans Mono",
+  dir = "fonts",
+  body = "Source Serif Pro",
+  sans = "Open Sans",
+  mono = "Source Code Pro",
 }
 
 \pdfmeta{ title = "Faces" }

@@ -45,6 +45,28 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-16 — the fixtures were not portable, and the test suite was not
+hermetic. `tests/corpus/resume.tex` failed on a Mac with E0403 `Nimbus Roman`:
+not a Mac problem and not a font-installation problem — the fixture named
+this Linux host's URW fonts, eight fixtures named some host's fonts, and the
+harness read DejaVu from `/usr/share/fonts`. The invariant, now pinned: what
+the checkout renders is a function of the checkout. Fixtures that name fonts
+ship them in `tests/corpus/fonts/` (Source Serif Pro, Source Code Pro, Open
+Sans: a CFF family and a TrueType one, so both parsers are exercised; OFL and
+Apache-2.0 texts alongside) and declare `\fonts{ dir = "fonts" }`; the
+harness scans that directory and nothing else. Verified in a mount namespace
+with every system and TeX Live font directory emptied: every declaring
+fixture builds and embeds the shipped faces; the bare ones report E0401, as a
+machine with no fonts should. Two general pieces came out of it, both small:
+`dir` in `\fonts`, resolved against the document like `\input` and searched
+first, with fontspec's `Path=` carried into it by the compat layer (a font
+file name then denotes its face's family, so the bold and italic beside it
+resolve too); and the scan sorts directory entries, because `readDir` order
+differs between hosts and resolution breaks ties by scan order — a latent
+nondeterminism the same invariant forbids. A document that compiles under
+lualatex on a machine compiles under leantex on the same machine because it
+names fonts that machine has; that was never the fixtures' situation.
+
 2026-09-16 — the real resume compiles as written. It produced 78 errors and
 not one was the document's fault: 52 came from a preamble asking packages for
 what the engine provides directly, the rest from the author's own macros and
@@ -676,6 +698,11 @@ is evidence, not a theorem.
 - Two tiers: CI runs goldens, property tests, and assertions over
   `tests/corpus/`; the M3/M5 acceptance bars run locally against the private
   corpus and never enter CI.
+- Hermetic: what the checkout renders is a function of the checkout. A
+  fixture that names a font ships it in `tests/corpus/fonts/` and declares
+  `\fonts{ dir = "fonts" }`; the harness scans that directory and no host
+  location. A fixture that names a host's font is a bug even when it passes
+  here — it passes only here.
 - The corpus sketches are also the language design artifacts: syntax
   decisions land there first, then in the grammar. A sketch whose commands do
   not exist yet is marked PENDING in its header and left out of the golden

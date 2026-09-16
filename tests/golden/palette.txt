@@ -1,7 +1,8 @@
 class article
 page 612x792 vmargin 72 hmargin 72
-font body "DejaVu Serif"
-font sans "DejaVu Sans"
+font dir "fonts"
+font body "Source Serif Pro"
+font sans "Open Sans"
 palette primary #7C3AED
 palette ink #18181B
 palette muted #71717A
