@@ -217,6 +217,21 @@ private def heuristicDescenders (cmap : Array (UInt32 × UInt32 × UInt32))
           out := out.set! gid true
   return out
 
+/-- The underline band a face declares, normalized to something drawable:
+`(position, thickness)` in font units, the band spanning
+`[position - thickness, position]` relative to the baseline. `post` values
+are taken only when plausible — position strictly below the baseline and no
+deeper than half the em, thickness positive and at most a quarter em — and
+each falls back to the convention (a tenth of the em down, a twentieth
+thick) independently, so one absurd value does not discard the other. The
+single normalization shared by ink extraction (`parse`) and rule placement
+(`Layout.underlineSegs`): the two must agree on the band, or the rule is
+cleared against ink it does not overlap. -/
+def underlineBand (upem pos thick : Int) : Int × Int :=
+  let p := if pos < 0 && -(upem / 2) ≤ pos then pos else -(upem / 10)
+  let t := if 0 < thick && thick ≤ upem / 4 then thick else upem / 20
+  (p, t)
+
 def parse (data : ByteArray) : Except String Font := do
   if data.size < 12 then
     throw "not a font file"
@@ -278,13 +293,13 @@ def parse (data : ByteArray) : Except String Font := do
       else ((0 : Int), (0 : Int))
     | none => (0, 0)
   -- A glyph interrupts the rule where its ink crosses the band the rule
-  -- occupies: [position - thickness, position], with the conventional tenth
-  -- of an em (and a twentieth thick) when the font declares nothing. A glyph
-  -- whose outline the decoder does not cover falls back to the character
-  -- heuristic and clears its whole advance — conservative, never wrong by
-  -- striking through ink.
-  let bandHi := if upos == 0 then -((upem : Int) / 10) else upos
-  let bandLo := bandHi - (if uthick ≤ 0 then (upem : Int) / 20 else uthick)
+  -- occupies, `[position - thickness, position]` after normalization. A
+  -- glyph whose outline the decoder does not cover falls back to the
+  -- character heuristic and clears its whole advance — conservative, never
+  -- wrong by striking through ink.
+  let (bandPos, bandThick) := underlineBand (upem : Int) upos uthick
+  let bandHi := bandPos
+  let bandLo := bandPos - bandThick
   let src := Ink.Src.make data isCff numGlyphs
   let fallback := heuristicDescenders cmap numGlyphs
   let underlineInk : Array (Thunk (Array (Int × Int))) := Id.run do
@@ -356,6 +371,11 @@ def Font.inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
 /-- Does this glyph interrupt the underline anywhere? -/
 def Font.descends (f : Font) (g : Nat) : Bool :=
   !(f.inkAt g).isEmpty
+
+/-- This face's normalized underline band: `(position, thickness)` in font
+units. See `underlineBand`. -/
+def Font.band (f : Font) : Int × Int :=
+  underlineBand (f.unitsPerEm : Int) f.underlinePosition f.underlineThickness
 
 /-- The faces a document typesets with. Index 0 is always the body regular
 face; `Style` resolves to an index at layout time. -/

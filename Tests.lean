@@ -720,6 +720,55 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
           forced := forced + (f.inkAt ((f.gid c).getD 0)).size
     t s!"ink is total over truncations (forced {forced} interval sets)" true
   | none => pure ()
+  -- Underline metrics normalize through one helper shared by ink extraction
+  -- and rule placement: a `post` table declaring an implausible position
+  -- (above the baseline, or below half the em) or thickness (nonpositive,
+  -- or over a quarter em) falls back to the convention, each independently.
+  t "band: declared plausible values pass" (Font.underlineBand 2048 (-154) 102 == (-154, 102))
+  t "band: zero position falls back" ((Font.underlineBand 1000 0 50).1 == -100)
+  t "band: positive position falls back" ((Font.underlineBand 1000 200 50).1 == -100)
+  t "band: absurdly deep position falls back" ((Font.underlineBand 1000 (-30000) 50).1 == -100)
+  t "band: zero thickness falls back" ((Font.underlineBand 1000 (-50) 0).2 == 50)
+  t "band: negative thickness falls back" ((Font.underlineBand 1000 (-50) (-80)).2 == 50)
+  t "band: absurdly thick falls back" ((Font.underlineBand 1000 (-50) 900).2 == 50)
+  t "band: one bad value keeps the other" (Font.underlineBand 1000 (-50) (-80) == (-50, 50))
+  -- End to end: a font whose post table declares a positive position and a
+  -- negative thickness still draws a positive-thickness rule below the
+  -- baseline.
+  match ← findFont with
+  | some fontData =>
+    let patched := Id.run do
+      let mut d := fontData
+      match Ink.findTable d "post" with
+      | some post =>
+        -- underlinePosition at offset 8, underlineThickness at 10: put
+        -- +200 and -80 (big-endian FWords).
+        d := d.set! (post.offset + 8) 0x00
+        d := d.set! (post.offset + 9) 200
+        d := d.set! (post.offset + 10) 0xFF
+        d := d.set! (post.offset + 11) (0x100 - 80)
+        return d
+      | none => return d
+    match Font.parse patched with
+    | .error e => failures ref s!"underline: patched post parse: {e}"
+    | .ok bad =>
+      t "band: patched font reads the absurd metrics"
+        (bad.underlinePosition == 200 && bad.underlineThickness == -80)
+      let badSet : Font.FontSet := {
+        fonts := #[bad]
+        index := ((List.range 3).flatMap fun slot =>
+          [((slot, false, false), 0), ((slot, true, false), 0),
+           ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
+      }
+      let badRules := ((outOf badSet "\\underline{ab}").pages.flatMap
+        (·.lines)).flatMap (·.segs.filterMap fun s =>
+          match s with
+          | .rule w th raise _ => some (w, th, raise)
+          | _ => none)
+      t "band: absurd post metrics still rule below the baseline"
+        (badRules.size ≥ 1 && badRules.all fun (w, th, raise) =>
+          w > 0 && th > 0 && raise < 0)
+  | none => pure ()
   -- HTML: <u> plus the skip-ink stylesheet; links get the same treatment.
   let (uPage, _) := HtmlDoc.emit {} (elabStr "\\underline{x}").1
   t "html underline is u" ((uPage.splitOn "<u>x</u>").length == 2)

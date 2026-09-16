@@ -1028,10 +1028,9 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
         let font := fs.get fontIdx
         let sz := if size == 0 then lineSize else size
         let upem : Int := font.unitsPerEm
-        let top := if font.underlinePosition == 0 then -(sz / 10)
-          else font.underlinePosition * sz / upem
-        let thick := if font.underlineThickness == 0 then sz / 20
-          else font.underlineThickness * sz / upem
+        let (bandPos, bandThick) := font.band
+        let top := bandPos * sz / upem
+        let thick := bandThick * sz / upem
         let raise := top - thick
         -- Skip intervals within [0, w], merged: each glyph's ink-in-band
         -- intervals, scaled to the run's size, plus the clearance either side.
