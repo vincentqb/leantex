@@ -137,6 +137,11 @@ private def isInlineOnly (kids : Array Node) : Bool :=
     | .text _ => true
     | _ => false
 
+/-- A `style`/`script` payload that closes its own element would break out of
+it; both printers refuse it through here, so neither can disagree. -/
+private def rawPayload (endTag payload : String) : String :=
+  if (payload.splitOn endTag).length > 1 then "/* removed */" else payload
+
 mutual
 
 /-- Render a node. Indentation is cosmetic and suppressed where whitespace
@@ -146,12 +151,9 @@ def render (n : Node) (indent : Nat) : String :=
   match n with
   | .text s => pad ++ escapeText s ++ "\n"
   | .style css =>
-    -- A payload that closes its own element would break out of it.
-    let safe := if (css.splitOn "</style").length > 1 then "/* removed */" else css
-    pad ++ "<style>\n" ++ safe ++ "\n" ++ pad ++ "</style>\n"
+    pad ++ "<style>\n" ++ rawPayload "</style" css ++ "\n" ++ pad ++ "</style>\n"
   | .script js =>
-    let safe := if (js.splitOn "</script").length > 1 then "/* removed */" else js
-    pad ++ "<script>\n" ++ safe ++ "\n" ++ pad ++ "</script>\n"
+    pad ++ "<script>\n" ++ rawPayload "</script" js ++ "\n" ++ pad ++ "</script>\n"
   | .elem tag attrs kids =>
     let open' := "<" ++ tag ++ attrString attrs ++ ">"
     if voidTags.contains tag then
@@ -166,8 +168,8 @@ def render (n : Node) (indent : Nat) : String :=
 def inlineRender (n : Node) : String :=
   match n with
   | .text s => escapeText s
-  | .style css => "<style>" ++ css ++ "</style>"
-  | .script js => "<script>" ++ js ++ "</script>"
+  | .style css => "<style>" ++ rawPayload "</style" css ++ "</style>"
+  | .script js => "<script>" ++ rawPayload "</script" js ++ "</script>"
   | .elem tag attrs kids =>
     let open' := "<" ++ tag ++ attrString attrs ++ ">"
     if voidTags.contains tag then open'

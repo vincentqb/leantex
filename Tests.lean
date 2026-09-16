@@ -1385,6 +1385,14 @@ def main (args : List String) : IO UInt32 := do
       Html.text ", c"]) 0 == "<p>a <em>b</em>, c</p>\n")
   t "html style payload cannot close its own tag"
     (((Html.render (Html.Node.style "x</style>bad") 0).splitOn "</style>").length == 2)
+  -- The same contract inside a phrasing parent, where rendering goes through
+  -- the inline printer instead.
+  t "html style payload cannot close its own tag inline"
+    (((Html.render (Html.elem "p" #[Html.Node.style "x</style>bad"]) 0).splitOn
+      "</style>").length == 2)
+  t "html script payload cannot close its own tag inline"
+    (((Html.render (Html.elem "p" #[Html.Node.script "x</script>bad"]) 0).splitOn
+      "</script>").length == 2)
 
   let (htmlDoc, _) := elabStr ("\\documentclass{article}\n" ++
     "\\palette{ primary = #7C3AED }\n" ++
