@@ -51,6 +51,9 @@ inductive Seg where
   | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
       (glyphs : Array (Nat × Char)) (size : Sp)
   | gap (w : Sp)
+  /-- A horizontal rule, `w` wide and `thickness` thick, on the baseline plus
+  `raise`. The heading rule of a designed section, filling its line. -/
+  | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
   deriving Repr, Inhabited
 
 structure LineOut where
@@ -699,6 +702,10 @@ private structure ParaJob where
   center : Bool
   size : Sp
   bullet : Option (Nat × Array (Nat × Char × Sp)) := none
+  /-- Marker content set as its own items and placed before the first line. -/
+  markerSegs : Option (Array Seg × Sp) := none
+  /-- A rule filling the first line after the content. -/
+  rule : Option (Sp × Ir.Color) := none
 
 /-- The block walk emits vertical skips and paragraph jobs; placement replays
 them in document order, so the page builder stays sequential and the output
@@ -710,24 +717,50 @@ private inductive Op where
 private structure Acc where
   geom : Geom
   xHeight : Sp
+  styles : Ir.Styles := {}
+  /-- Space a heading asked for below itself; the next block takes it in
+  place of `parskip`. -/
+  pendingAfter : Option Sp := none
   ops : Array Op := #[]
   hyphCache : Std.HashMap String (List Nat) := {}
 
 private def Acc.skip (a : Acc) (dy : Sp) : Acc :=
   { a with ops := a.ops.push (.skip dy) }
 
+/-- The gap before a peer block: a heading's declared `after` if one is
+pending, else `parskip`. -/
+private def Acc.peerGap (a : Acc) : Acc :=
+  match a.pendingAfter with
+  | some dy => { a with ops := a.ops.push (.skip dy), pendingAfter := none }
+  | none => a.skip a.geom.parskip
+
+private def Acc.resolve (a : Acc) (g : SymGlue) : Sp :=
+  g.width.resolve a.geom.fontSize a.xHeight
+
+private def Acc.style (a : Acc) (element : String) : Ir.ElementStyle :=
+  (a.styles.find? element).getD {}
+
 private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
-    (bullet : Option (Nat × Array (Nat × Char × Sp)) := none) : Acc :=
+    (bullet : Option (Nat × Array (Nat × Char × Sp)) := none)
+    (marker : Option (Array Inline) := none)
+    (rule : Option (Sp × Ir.Color) := none) : Acc :=
   let (items, ds, cache, extras) :=
     itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache
+  -- A declared marker is content: set as a line of its own, unjustified, so
+  -- it can carry any style the document gave it.
+  let markerSegs := marker.map fun m =>
+    let (mi, _, _, _) := itemsOfInlines pats size a.xHeight fs {} m cache
+    let (segs, w, _) := setLine mi (lineStart mi 0) (mi.size - 1) a.geom.textWidth false
+    (segs, w)
   { a with
     hyphCache := cache
     ops := a.ops.push (.para {
       items := items, extras := extras, diags := ds
       target := a.geom.textWidth - indent
-      indent := indent, center := center, size := size, bullet := bullet }) }
+      indent := indent, center := center, size := size, bullet := bullet
+      markerSegs := markerSegs, rule := rule }) }
 
 def sectionSize (geom : Geom) : Nat → Sp
   | 1 => pt 14
@@ -748,13 +781,13 @@ private def collectBlockList (a : Acc) (pats : Option Hyphen.Patterns) (fs : Fon
   match blocks with
   | [] => a
   | blk :: rest =>
-    let a := if first then a else a.skip a.geom.parskip
+    let a := if first then a else a.peerGap
     let a := collectBlock a pats fs blk indent
     collectBlockList a pats fs rest indent false
 
 /-- One list item: its leading paragraph carries the marker. -/
 private def collectItem (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (item : List Block) (indent : Sp) (first : Bool) : Acc :=
+    (item : List Block) (indent : Sp) (first : Bool) (st : Ir.ElementStyle) : Acc :=
   match item with
   | [] => a
   | blk :: rest =>
@@ -763,16 +796,22 @@ private def collectItem (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       | .para content, true =>
         collectPara a pats fs content indent false a.geom.fontSize
           (bullet := some (0, bulletGlyphs a.geom.fontSize fs.body))
+          (marker := st.marker)
       | _, _ => collectBlock a pats fs blk indent
-    collectItem a pats fs rest indent false
+    collectItem a pats fs rest indent false st
 
 private def collectItems (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (items : List (Array Block)) (indent : Sp) : Acc :=
+    (items : List (Array Block)) (indent : Sp) (first : Bool) (st : Ir.ElementStyle) : Acc :=
   match items with
   | [] => a
   | item :: rest =>
-    let a := collectItem a pats fs item.toList indent true
-    collectItems a pats fs rest indent
+    -- Items are peers separated by the declared gap. The default is none,
+    -- as it was: a list is one block, and its leading is its rhythm.
+    let a := match first, st.gap with
+      | false, some g => a.skip (a.resolve g)
+      | _, _ => a
+    let a := collectItem a pats fs item.toList indent true st
+    collectItems a pats fs rest indent false st
 
 /-- Centered content: paragraphs center, anything else nests unchanged. -/
 private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
@@ -791,18 +830,40 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .para content =>
     collectPara a pats fs content indent false a.geom.fontSize
   | .section level _ title =>
-    let a := a.skip a.geom.parskip
-    -- Headings set in the bold face of the body family.
-    collectPara a pats fs title indent false (sectionSize a.geom level)
-      (baseStyle := { bold := true })
-  | .list _ items =>
-    collectItems a pats fs items.toList (indent + a.geom.listIndent)
+    let element := match level with
+      | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
+    let st := a.style element
+    let a := a.skip ((st.before.map a.resolve).getD a.geom.parskip)
+    -- A declared font template wraps the title; without one, headings set in
+    -- the bold face of the body family at the level's size.
+    let a := match st.font with
+      | some tpl =>
+        collectPara a pats fs (Ir.fillTemplate tpl title) indent false a.geom.fontSize
+          (rule := st.rule.map fun (r : Ir.Color × Option String) => (pt 6 / 10, r.1))
+      | none =>
+        collectPara a pats fs title indent false (sectionSize a.geom level)
+          (baseStyle := { bold := true })
+          (rule := st.rule.map fun (r : Ir.Color × Option String) => (pt 6 / 10, r.1))
+    { a with pendingAfter := st.after.map a.resolve }
+  | .list ordered items =>
+    let st := a.style (if ordered then "enumerate" else "itemize")
+    let a := match st.before, a.ops.back? with
+      | some g, some (.skip _) => { a with ops := a.ops.pop.push (.skip (a.resolve g)) }
+      | some g, _ => a.skip (a.resolve g)
+      | none, _ => a
+    let indent := indent + (st.indent.map a.resolve).getD a.geom.listIndent
+    collectItems a pats fs items.toList indent true st
   | .center body =>
     collectCentered a pats fs body.toList indent
   | .spaced before body =>
-    -- Declared space above the block, resolved against the body font.
+    -- Declared space above the block, resolved against the body font. It is
+    -- the gap, not an addition to one: the peer gap already pushed is replaced,
+    -- which is what `\vspace` between paragraphs means in LaTeX and what
+    -- `\block[before = ...]` was designed to say.
     let g := before.resolve a.geom.fontSize a.xHeight
-    let a := a.skip g.width
+    let a := match a.ops.back? with
+      | some (.skip _) => { a with ops := a.ops.pop.push (.skip g.width) }
+      | _ => a.skip g.width
     collectBlocks a pats fs body indent
 
 end
@@ -824,13 +885,27 @@ private def placePara (b : B) (j : ParaJob) (breaks : Array Nat) : B := Id.run d
     let mut segs := segs
     let mut w := w
     if first then
-      if let some (bulletFont, bg) := j.bullet then
+      let sep := geom.fontSize * 2 / 5
+      match j.markerSegs, j.bullet with
+      | some (ms, mw), _ =>
+        segs := ms ++ #[Seg.gap sep] ++ segs
+        x := x - mw - sep
+        w := w + mw + sep
+      | none, some (bulletFont, bg) =>
         let bw := bg.foldl (fun acc (_, _, adv) => acc + adv) 0
-        let sep := geom.fontSize * 2 / 5
         segs := #[Seg.run bulletFont Ir.Color.black none bw
           (bg.map fun (g, c, _) => (g, c)) j.size, Seg.gap sep] ++ segs
         x := x - bw - sep
         w := w + bw + sep
+      | none, none => pure ()
+      if let some (thickness, color) := j.rule then
+        -- The rule fills what the heading left of its line, a word-space
+        -- away from the text, sitting at half the x-height like a dash.
+        let gap := j.size / 2
+        let ruleW := width - w - gap
+        if ruleW > 0 then
+          segs := segs ++ #[Seg.gap gap, Seg.rule ruleW thickness (b.xHeight / 2) color]
+          w := width
     b := b.placeLine x j.size segs w
     if let some extra := j.extras[brk]? then
       b := { b with y := b.y + extra }
@@ -867,7 +942,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let font := fs.body
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
   let xHeight := scale font.xHeight
-  let acc := collectBlocks { geom := geom, xHeight := xHeight } pats fs doc.body 0
+  let acc := collectBlocks { geom := geom, xHeight := xHeight, styles := doc.styles }
+    pats fs doc.body 0
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
   -- so the tasks race on nothing; joining in document order below keeps the
   -- output independent of scheduling.
@@ -910,6 +986,9 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let mut cache := acc.hyphCache
   for i in [0:out.size] do
     let mut lines := out[i]!.lines
+    -- Pages before `runningFrom` carry no furniture: an opening page reads
+    -- as a title page, not as page one of a run.
+    if i + 1 < doc.runningFrom then continue
     if let some content := doc.head then
       let (l?, ds, c) := runLine content (i + 1) headY cache
       diags := diags ++ ds

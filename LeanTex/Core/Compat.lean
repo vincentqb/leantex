@@ -1,6 +1,7 @@
 import LeanTex.Core.Lex
 import LeanTex.Core.Parse
 import LeanTex.Core.Decl
+import LeanTex.Core.Ir
 
 namespace LeanTex.Core.Compat
 
@@ -48,6 +49,7 @@ private structure St where
   head : Array (Nat × String) := #[]
   foot : Array (Nat × String) := #[]
   runPos : Pos := ⟨1, 1⟩
+  runFrom : Nat := 1
   /-- The next group is a macro body, where `#k` names a parameter. -/
   bodyNext : Bool := false
 
@@ -146,6 +148,17 @@ private def lengthSrc (raws : Array Raw) : String := Id.run do
     | other => s := s ++ rawSrcOne other
   return s.trimAscii.toString
 
+/-- A TeX length from option text: `3\\sepunit` is `3 * sepunit`, `\\x` is `x`. -/
+private def lengthOfTeX (v : String) : String :=
+  let t := v.trimAscii.toString
+  match t.splitOn "\\" with
+  | [plain] => plain.trimAscii.toString
+  | num :: name :: _ =>
+    let n := num.trimAscii.toString
+    let name := name.trimAscii.toString
+    if n.isEmpty then name else s!"{n} * {name}"
+  | [] => t
+
 /-- The control word inside a group, ignoring whitespace around it. -/
 private def ctrlName (raws : Array Raw) : Option String :=
   match raws.toList.filter (fun r => match r with | .space => false | _ => true) with
@@ -233,6 +246,20 @@ private def color (model value : String) (pos : Pos) : M (Option String) := do
     say .warning "W0102" s!"colour model '{model}' is not supported; use HTML or rgb" pos
     return none
 
+/-- KOMA's `\\sectionlinesformat` is a hook for drawing after a heading. The one
+idiom worth reading is a rule in a colour, `\\textcolor{X}{\\leaders\\hrule …}`;
+anything else is dropped. -/
+private def sectionRule (src : String) (pos : Pos) : M (Array Raw) := do
+  match (src.splitOn "\\textcolor {")[1]? with
+  | some rest =>
+    let color := ((rest.splitOn "}").headD "").trimAscii.toString
+    if (src.splitOn "hrule").length > 1 && !color.isEmpty then
+      let native := s!"\\style\{section}\{ rule = {color} }"
+      became "\\sectionlinesformat" native pos
+      synthAt native pos
+    else return #[]
+  | none => return #[]
+
 /-- Rewrite the control sequence `name` given what follows it. Returns the
 replacement and how many following elements it consumed, or `none` to leave
 the command alone. -/
@@ -312,7 +339,7 @@ where
         return some (← synthAt native pos, k)
       | none => return none
     else return none
-  | "NewDocumentCommand" | "newcommand" | "renewcommand" | "providecommand"
+  | "NewDocumentCommand" | "newcommand" | "providecommand"
   | "DeclareDocumentCommand" | "RenewDocumentCommand" =>
     let xparse := name.endsWith "DocumentCommand"
     let (nameArgs, j) := takeGroups raws start 1
@@ -346,8 +373,12 @@ where
       else { st with foot := st.foot.push (slot, src) }
     return some (#[], k)
   | "thispagestyle" =>
-    let (_, k) := takeGroups raws start 1
-    say .note "N0104" "\\thispagestyle has no effect yet; running content appears on every page" pos
+    -- Only the opening page can be meant from the preamble or the document's
+    -- first line; anywhere else it would need a page model we do not have.
+    let (args, k) := takeGroups raws start 1
+    if rawSrc (args.getD 0 #[]) == "empty" then
+      modify fun st => { st with runFrom := 2 }
+      became "\\thispagestyle{empty}" "\\runninghead[from = 2]{...}" pos
     return some (#[], k)
   | "linespread" =>
     let (args, k) := takeGroups raws start 1
@@ -384,11 +415,75 @@ where
   | "textemdash" => return some (#[.ctrl "emdash" pos], start)
   | "textbackslash" => return some (#[.word "\\" pos], start)
   | "textasciitilde" => return some (#[.word "~" pos], start)
-  | "setkomafont" | "RedeclareSectionCommand" | "setlist" | "sectionlinesformat" =>
+  | "setkomafont" =>
+    let (args, k) := takeGroups raws start 2
+    if h : args.size = 2 then
+      let element := rawSrc args[0]
+      if Ir.styleableElements.contains element then
+        -- The font spec is inline content and travels as a group, not text,
+        -- so its own idioms (\\color{x}) are still rewritten by the walk.
+        let native := s!"\\style\{{element}}"
+        became s!"\\setkomafont\{{element}}" (native ++ "{ font = {...} }") pos
+        let font : Raw := .group #[.word "font" pos, .space, .sym '=' pos, .space,
+          .group args[1] pos] pos
+        return some ((← synthAt native pos).push font, k)
+      else
+        say .note "N0105" s!"\\setkomafont\{{element}}: not a styleable element; ignored" pos
+        return some (#[], k)
+    else return none
+  | "RedeclareSectionCommand" =>
+    let (opt, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    let element := rawSrc (args.getD 0 #[])
+    let mut keys : Array String := #[]
+    for e in Decl.splitEntries (opt.getD "") do
+      match e.splitOn "=" with
+      | ["beforeskip", v] => keys := keys.push s!"before = {lengthOfTeX v}"
+      | ["afterskip", v] => keys := keys.push s!"after = {lengthOfTeX v}"
+      | _ => pure ()
+    if keys.isEmpty || !Ir.styleableElements.contains element then return some (#[], k)
+    let native := s!"\\style\{{element}}\{ {String.intercalate ", " keys.toList} }"
+    became s!"\\RedeclareSectionCommand\{{element}}" native pos
+    return some (← synthAt native pos, k)
+  | "setlist" =>
+    let (opt, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    let element := (opt.getD "itemize").trimAscii.toString
+    let mut keys : Array String := #[]
+    let mut marker : Option String := none
+    for e in Decl.splitEntries (rawSrc (args.getD 0 #[])) do
+      match e.splitOn "=" with
+      | ["leftmargin", v] => keys := keys.push s!"indent = {lengthOfTeX v}"
+      | ["itemsep", v] => keys := keys.push s!"gap = {lengthOfTeX v}"
+      | ["topsep", v] => keys := keys.push s!"before = {lengthOfTeX v}"
+      | "label" :: v => marker := some (String.intercalate "=" v).trimAscii.toString
+      | _ => pure ()
+    if let some m := marker then keys := keys.push s!"marker = {m}"
+    if keys.isEmpty || !Ir.styleableElements.contains element then return some (#[], k)
+    let native := s!"\\style\{{element}}\{ {String.intercalate ", " keys.toList} }"
+    became s!"\\setlist[{element}]" native pos
+    return some (← synthAt native pos, k)
+  | "sectionlinesformat" =>
     let (_, j) := takeOpt raws start
-    let (_, k) := takeGroups raws j (if name == "setkomafont" then 2 else 1)
-    say .note "N0105" s!"\\{name}: element styling is planned (PLAN.md M3d); default style used" pos
-    return some (#[], k)
+    let (args, k) := takeGroups raws j 1
+    return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
+  | "renewcommand" =>
+    -- \\renewcommand\\sectionlinesformat[4]{...} is the spelling KOMA documents;
+    -- other renewals define a command like \\newcommand does.
+    let (nameArgs, j) := takeGroups raws start 1
+    let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
+    let (count, j) := takeOpt raws j
+    if cmd == "sectionlinesformat" then
+      let (args, k) := takeGroups raws j 1
+      return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
+    let (dflt, j) := takeOpt raws j
+    let n := (count.bind String.toNat?).getD 0
+    let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
+      else String.ofList (List.replicate n 'm')
+    let native := s!"\\define \\{cmd}({signature spec})"
+    became s!"\\renewcommand\{\\{cmd}}" (native ++ " {...}") pos
+    modify fun st => { st with bodyNext := true }
+    return some (← synthAt native pos, j)
   | _ =>
     match inert.lookup name with
     | some n =>
@@ -451,12 +546,13 @@ private def flushRunning : M (Array Raw) := do
     let at' (k : Nat) := (parts.filter (·.1 == k)).map (·.2) |>.toList |> String.intercalate " "
     s!"{at' 0} \\hfill {at' 1} \\hfill {at' 2}"
   let mut out : Array Raw := #[]
+  let opt := if st.runFrom > 1 then s!"[from = {st.runFrom}]" else ""
   unless st.head.isEmpty do
-    let native := s!"\\runninghead\{{line st.head}}"
+    let native := s!"\\runninghead{opt}\{{line st.head}}"
     became "\\ihead / \\chead / \\ohead" native st.runPos
     out := out ++ (← synthAt native st.runPos)
   unless st.foot.isEmpty do
-    let native := s!"\\runningfoot\{{line st.foot}}"
+    let native := s!"\\runningfoot{opt}\{{line st.foot}}"
     became "\\ifoot / \\cfoot / \\ofoot" native st.runPos
     out := out ++ (← synthAt native st.runPos)
   return out

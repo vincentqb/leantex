@@ -71,15 +71,28 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
   let mut curFont : Int := -1
   let mut curSize : Sp := -1
   let mut curColor : Ir.Color := Ir.Color.black
+  -- Rules are path operators, which may not appear inside BT/ET, so they are
+  -- gathered here and drawn after the text.
+  let mut rules : Array (Sp × Sp × Sp × Sp × Ir.Color) := #[]
   for l in page.lines do
     if l.segs.isEmpty then
       continue
     let ypdf := geom.pageH - l.y
     s := s ++ s!"1 0 0 1 {l.x.toPtString} {ypdf.toPtString} Tm\n"
     let mut inArray := false
+    let mut x := l.x
     for seg in l.segs do
       match seg with
+      | .rule w thickness raise color =>
+        rules := rules.push (x, ypdf + raise, w, thickness, color)
+        x := x + w
+        unless inArray do
+          s := s.push '['
+          inArray := true
+        let unit := if curSize == 0 then l.size else curSize
+        s := s ++ s!"{(-(w * 1000 / unit) : Int)}"
       | .run idx color _ w glyphs segSize =>
+        x := x + w
         let size := if segSize == 0 then l.size else segSize
         if glyphs.isEmpty then
           -- A kern: width, no glyphs. Emitting an empty string would advance
@@ -115,6 +128,7 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
           s := s.push (hexDigit g)
         s := s.push '>'
       | .gap w =>
+        x := x + w
         unless inArray do
           s := s.push '['
           inArray := true
@@ -126,6 +140,9 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
     if inArray then
       s := s ++ "] TJ\n"
   s := s ++ "ET"
+  for (rx, ry, rw, rh, color) in rules do
+    s := s ++ s!"\nq {color.pdfComponents} rg {rx.toPtString} {ry.toPtString} \
+{rw.toPtString} {rh.toPtString} re f Q"
   return s
 
 /-- Link rectangles for one page, in PDF user space. Adjacent runs with the
@@ -155,6 +172,7 @@ private def linkRects (geom : Geom) (page : PageOut) :
           | none => out := out.push (x, y0, x + w, y1, url)
         x := x + w
       | .gap w => x := x + w
+      | .rule w _ _ _ => x := x + w
   return out
 
 private def toUnicode (used : Array (Nat × Char)) : String := Id.run do

@@ -253,7 +253,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   let scRuns := (scOut.pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
     match s with
     | .run _ _ _ _ glyphs size => some (glyphs.map (·.2), size)
-    | .gap _ => none)
+    | _ => none)
   t "small caps raises lowercase"
     (scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
   t "small caps sets the raised run smaller"
@@ -281,6 +281,134 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   -- Without an \hfill the last line stays ragged: the fill still fills.
   t "no hfill leaves the last line short"
     (brokenLine.size == 2 && brokenLine[1]! < geom.textWidth)
+
+/-- `\\style` and its two backends. Its own function: `main` is a single `do`
+block and Lean's elaboration budget for one block is spent. -/
+def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- \style: every visual constant a backend applies to an element is a token
+  -- the document can name. The font value is a template with a hole.
+  let styled := elabStr ("\\documentclass{article}\\palette{ink = #112233}" ++
+    "\\tokens{ sep = 3pt }" ++
+    "\\style{section}{ font = {\\large\\sffamily\\ink}, before = 2 * sep, after = sep, rule = ink }" ++
+    "\\style{itemize}{ indent = 1.2em, gap = sep, marker = {\\ink\\textendash} }" ++
+    "\\begin{document}\\section{Head}\\begin{itemize}\\item a\\end{itemize}\\end{document}")
+  t "style source clean" (styled.2.all (·.severity == .note))
+  let secStyle := styled.1.styles.find? "section"
+  t "style section font is a template with a hole"
+    ((secStyle.bind (·.font)) == some #[.styled (.size "large") #[.styled .sans
+      #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some "ink") #[]]]])
+  t "style section spacing reads tokens"
+    ((secStyle.bind (·.before)).map (·.width) == some { sp := Dim.pt 6 } &&
+     (secStyle.bind (·.after)).map (·.width) == some { sp := Dim.pt 3 })
+  t "style section rule names the palette entry"
+    ((secStyle.bind (·.rule)).map (·.2) == some (some "ink"))
+  let listStyle := styled.1.styles.find? "itemize"
+  t "style itemize marker is content"
+    ((listStyle.bind (·.marker)) == some #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some "ink") #[.text "–"]])
+  t "style unknown element" (errCodes ("\\documentclass{article}\\style{footer}{ before = 1pt }" ++
+    "\\begin{document}x\\end{document}") == ["E0328"])
+  t "style unknown key" (errCodes ("\\documentclass{article}\\style{section}{ colour = 1pt }" ++
+    "\\begin{document}x\\end{document}") == ["E0322"])
+  t "fillTemplate fills the innermost hole"
+    (Ir.fillTemplate #[.styled .bold #[.styled .sans #[]]] #[.text "x"] ==
+      #[.styled .bold #[.styled .sans #[.text "x"]]])
+  t "fillTemplate leaves plain content alone"
+    (Ir.fillTemplate #[.text "–"] #[.text "x"] == #[.text "–"])
+  -- The styles reach HTML as CSS on the element, with the template wrapping
+  -- the heading and the rule as a class the stylesheet draws.
+  let (stylePage, _) := HtmlDoc.emit {} styled.1
+  t "html styled heading wraps in the template"
+    ((stylePage.splitOn "<h2 class=\"ruled\"><span class=\"size-large\"><span class=\"sans\">").length == 2)
+  t "html styled heading spacing" ((stylePage.splitOn "h2 { margin-top: 6pt; margin-bottom: 3pt;").length == 2)
+  t "html styled list indent and gap"
+    ((stylePage.splitOn "ul { padding-left: 120%; }").length == 2 &&
+     (stylePage.splitOn "ul > li { margin-top: 3pt; }").length == 2)
+  -- \runninghead[from = 2]: the opening page carries no furniture.
+  let (fromDoc, fromDs) := elabStr ("\\documentclass{article}\\runninghead[from = 2]{x}" ++
+    "\\begin{document}y\\end{document}")
+  t "running from clean" (fromDs.isEmpty && fromDoc.runningFrom == 2)
+
+/-- LaTeX idioms translate to native declarations. Own function, same reason. -/
+def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- LaTeX idioms translate to native declarations, each with a note that
+  -- shows the shorter spelling. The document compiles as written.
+  let notesOf (src : String) : List String :=
+    ((elabStr src).2.filter (·.severity == .note)).toList.map (·.message)
+  let pre (decls : String) : String :=
+    "\\documentclass{article}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
+  let (geoDoc, geoDs) := elabStr (pre "\\usepackage[letterpaper,vmargin=0.5in,hmargin=0.75in,headsep=1in]{geometry}")
+  t "compat geometry becomes page" (geoDs.all (·.severity == .note) &&
+    geoDoc.page.vmargin == Dim.inch 1 / 2 && geoDoc.page.hmargin == Dim.inch 3 / 4)
+  t "compat geometry names what it dropped"
+    ((notesOf (pre "\\usepackage[headsep=1in]{geometry}")).any (·.endsWith "headsep"))
+  t "compat known package is a note, unknown a warning"
+    ((elabStr (pre "\\usepackage{hyperref}")).2.all (·.severity == .note) &&
+     warnCodes (pre "\\usepackage{tikz}") == ["W0103"])
+  t "compat definecolor" ((elabStr (pre "\\definecolor{c}{HTML}{0F766E}")).1.palette.find? "c" ==
+    some { r := 0x0F, g := 0x76, b := 0x6E })
+  t "compat definecolor rgb" ((elabStr (pre "\\definecolor{c}{rgb}{1,0,0.5}")).1.palette.find? "c" ==
+    some { r := 255, g := 0, b := 127 })
+  t "compat colorlet aliases"
+    ((elabStr (pre "\\definecolor{a}{HTML}{112233}\\colorlet{b}{a}")).1.palette.find? "b" ==
+      some { r := 0x11, g := 0x22, b := 0x33 })
+  t "compat setlength becomes a token"
+    ((elabStr (pre "\\newlength{\\r}\\setlength{\\r}{2ex}\\setlength{\\s}{0.5\\r}")).1.tokens.find? "s" ==
+      some { width := { ex := 1000 } })
+  t "compat hypersetup becomes pdfmeta"
+    ((elabStr (pre "\\hypersetup{pdfauthor={A. Doe},pdftitle=T,colorlinks=false}")).1.info.author ==
+      some "A. Doe")
+  t "compat scrartcl is article"
+    ((elabStr "\\documentclass{scrartcl}\\begin{document}x\\end{document}").1.docClass == "article")
+  t "compat linespread is leading"
+    ((elabStr (pre "\\linespread{1.04}")).1.page.leading == 1040)
+  t "compat heads become one running head"
+    ((elabStr (pre "\\ihead{L}\\ohead{\\thepage}")).1.head.map (·.any (· == .pageNumber)) == some true)
+  -- \newcommand and \NewDocumentCommand become \define, with #k as \ak.
+  let (ndc, ndcDs) := elabStr ("\\documentclass{article}" ++
+    "\\NewDocumentCommand{\\role}{m o}{\\textbf{#1}\\IfValueT{#2}{ (#2)}}" ++
+    "\\begin{document}\\role{A}[B] \\role{C}\\end{document}")
+  t "compat xparse command clean" (ndcDs.all (·.severity == .note))
+  t "compat xparse command expands with optional"
+    (ndc.body == #[.para #[.styled .bold #[.text "A"], .text " (B) ", .styled .bold #[.text "C"]]])
+  let (nc, _) := elabStr ("\\documentclass{article}\\newcommand{\\two}[2]{#1+#2}" ++
+    "\\begin{document}\\two{a}{b}\\end{document}")
+  t "compat newcommand expands" (nc.body == #[.para #[.text "a+b"]])
+  -- Outside a macro body, # is a colour, not a parameter.
+  t "compat hash outside a body is literal"
+    ((elabStr (pre "\\palette{ p = #7C3AED }")).1.palette.find? "p" == some { r := 0x7C, g := 0x3A, b := 0xED })
+  -- Body-side idioms.
+  t "compat color is the declaration form"
+    ((elabStr ("\\documentclass{article}\\palette{m = #888888}\\begin{document}" ++
+      "a {\\color{m}b} c\\end{document}")).1.body ==
+      #[.para #[.text "a ", .colored { r := 0x88, g := 0x88, b := 0x88 } (some "m") #[.text "b"], .text " c"]])
+  t "compat text symbols" ((elabStr "a\\textbar b\\textperiodcentered c").1.body ==
+    #[.para #[.text "a|b·c"]])
+  t "compat vspace is a spaced block"
+    ((elabStr "a\n\n\\vspace{3pt}\nb").1.body.any fun b => match b with
+      | .spaced _ _ => true
+      | _ => false)
+  t "compat expl3 is skipped whole"
+    (warnCodes (pre "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff") == ["W0106"])
+  t "compat inert commands vanish"
+    ((elabStr "a\\noindent\\relax b").2.isEmpty)
+  let koma := elabStr (pre ("\\definecolor{ink}{HTML}{112233}\\newlength{\\s}\\setlength{\\s}{3pt}" ++
+    "\\setkomafont{section}{\\large\\sffamily\\color{ink}}" ++
+    "\\RedeclareSectionCommand[beforeskip=2\\s,afterskip=1\\s]{section}" ++
+    "\\setlist[itemize]{leftmargin=1.2em,itemsep=\\s,label={\\color{ink}\\textendash}}" ++
+    "\\makeatletter\\renewcommand\\sectionlinesformat[4]{#3#4 \\textcolor{ink}{\\leaders\\hrule\\hfill}}\\makeatother" ++
+    "\\thispagestyle{empty}\\ihead{L}"))
+  t "compat koma section font" ((koma.1.styles.find? "section").bind (·.font) ==
+    some #[.styled (.size "large") #[.styled .sans #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some "ink") #[]]]])
+  t "compat koma section spacing"
+    (((koma.1.styles.find? "section").bind (·.before)).map (·.width) == some { sp := Dim.pt 6 })
+  t "compat koma section rule" (((koma.1.styles.find? "section").bind (·.rule)).map (·.2) == some (some "ink"))
+  t "compat enumitem list" (((koma.1.styles.find? "itemize").bind (·.gap)).map (·.width) == some { sp := Dim.pt 3 } &&
+    ((koma.1.styles.find? "itemize").bind (·.marker)).isSome)
+  t "compat thispagestyle empty starts running content on page 2" (koma.1.runningFrom == 2)
+
+  styleChecks ref
 
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
@@ -618,67 +746,7 @@ def main (args : List String) : IO UInt32 := do
   t "symbol elaborates" (symDs.isEmpty && symDoc.body ==
     #[.para #[.text "a · b …"]])
 
-  -- LaTeX idioms translate to native declarations, each with a note that
-  -- shows the shorter spelling. The document compiles as written.
-  let notesOf (src : String) : List String :=
-    ((elabStr src).2.filter (·.severity == .note)).toList.map (·.message)
-  let pre (decls : String) : String :=
-    "\\documentclass{article}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
-  let (geoDoc, geoDs) := elabStr (pre "\\usepackage[letterpaper,vmargin=0.5in,hmargin=0.75in,headsep=1in]{geometry}")
-  t "compat geometry becomes page" (geoDs.all (·.severity == .note) &&
-    geoDoc.page.vmargin == Dim.inch 1 / 2 && geoDoc.page.hmargin == Dim.inch 3 / 4)
-  t "compat geometry names what it dropped"
-    ((notesOf (pre "\\usepackage[headsep=1in]{geometry}")).any (·.endsWith "headsep"))
-  t "compat known package is a note, unknown a warning"
-    ((elabStr (pre "\\usepackage{hyperref}")).2.all (·.severity == .note) &&
-     warnCodes (pre "\\usepackage{tikz}") == ["W0103"])
-  t "compat definecolor" ((elabStr (pre "\\definecolor{c}{HTML}{0F766E}")).1.palette.find? "c" ==
-    some { r := 0x0F, g := 0x76, b := 0x6E })
-  t "compat definecolor rgb" ((elabStr (pre "\\definecolor{c}{rgb}{1,0,0.5}")).1.palette.find? "c" ==
-    some { r := 255, g := 0, b := 127 })
-  t "compat colorlet aliases"
-    ((elabStr (pre "\\definecolor{a}{HTML}{112233}\\colorlet{b}{a}")).1.palette.find? "b" ==
-      some { r := 0x11, g := 0x22, b := 0x33 })
-  t "compat setlength becomes a token"
-    ((elabStr (pre "\\newlength{\\r}\\setlength{\\r}{2ex}\\setlength{\\s}{0.5\\r}")).1.tokens.find? "s" ==
-      some { width := { ex := 1000 } })
-  t "compat hypersetup becomes pdfmeta"
-    ((elabStr (pre "\\hypersetup{pdfauthor={A. Doe},pdftitle=T,colorlinks=false}")).1.info.author ==
-      some "A. Doe")
-  t "compat scrartcl is article"
-    ((elabStr "\\documentclass{scrartcl}\\begin{document}x\\end{document}").1.docClass == "article")
-  t "compat linespread is leading"
-    ((elabStr (pre "\\linespread{1.04}")).1.page.leading == 1040)
-  t "compat heads become one running head"
-    ((elabStr (pre "\\ihead{L}\\ohead{\\thepage}")).1.head.map (·.any (· == .pageNumber)) == some true)
-  -- \newcommand and \NewDocumentCommand become \define, with #k as \ak.
-  let (ndc, ndcDs) := elabStr ("\\documentclass{article}" ++
-    "\\NewDocumentCommand{\\role}{m o}{\\textbf{#1}\\IfValueT{#2}{ (#2)}}" ++
-    "\\begin{document}\\role{A}[B] \\role{C}\\end{document}")
-  t "compat xparse command clean" (ndcDs.all (·.severity == .note))
-  t "compat xparse command expands with optional"
-    (ndc.body == #[.para #[.styled .bold #[.text "A"], .text " (B) ", .styled .bold #[.text "C"]]])
-  let (nc, _) := elabStr ("\\documentclass{article}\\newcommand{\\two}[2]{#1+#2}" ++
-    "\\begin{document}\\two{a}{b}\\end{document}")
-  t "compat newcommand expands" (nc.body == #[.para #[.text "a+b"]])
-  -- Outside a macro body, # is a colour, not a parameter.
-  t "compat hash outside a body is literal"
-    ((elabStr (pre "\\palette{ p = #7C3AED }")).1.palette.find? "p" == some { r := 0x7C, g := 0x3A, b := 0xED })
-  -- Body-side idioms.
-  t "compat color is the declaration form"
-    ((elabStr ("\\documentclass{article}\\palette{m = #888888}\\begin{document}" ++
-      "a {\\color{m}b} c\\end{document}")).1.body ==
-      #[.para #[.text "a ", .colored { r := 0x88, g := 0x88, b := 0x88 } (some "m") #[.text "b"], .text " c"]])
-  t "compat text symbols" ((elabStr "a\\textbar b\\textperiodcentered c").1.body ==
-    #[.para #[.text "a|b·c"]])
-  t "compat vspace is a spaced block"
-    ((elabStr "a\n\n\\vspace{3pt}\nb").1.body.any fun b => match b with
-      | .spaced _ _ => true
-      | _ => false)
-  t "compat expl3 is skipped whole"
-    (warnCodes (pre "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff") == ["W0106"])
-  t "compat inert commands vanish"
-    ((elabStr "a\\noindent\\relax b").2.isEmpty)
+  compatChecks ref
 
   -- smart punctuation: what the author typed is what they meant
   t "smart en dash" ((elabStr "2021--2024").1.body == #[.para #[.text "2021–2024"]])
@@ -948,7 +1016,7 @@ def main (args : List String) : IO UInt32 := do
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
           | .run _ _ _ _ glyphs _ => glyphs.any (·.2 == '-')
-          | .gap _ => false
+          | .gap _ | .rule .. => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
 
@@ -962,7 +1030,7 @@ def main (args : List String) : IO UInt32 := do
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
           | .run _ _ _ _ glyphs _ => glyphs.any (·.2 == '–')
-          | .gap _ => false
+          | .gap _ | .rule .. => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
 

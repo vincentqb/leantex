@@ -64,7 +64,7 @@ def reservedCtrl : List (String × String) :=
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 def declCtrl : List String :=
-  ["page", "pdfmeta", "assert", "fonts", "palette", "tokens"]
+  ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style"]
 
 /-- Preamble declarations that take one group of *inline content* rather than
 a key/value block: running head and foot. -/
@@ -850,6 +850,64 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
           (help := "lengths look like 10pt, 1.5ex, 2em, or 0.6 * other-token")
   return { entries := acc }
 
+def styleKeys : List String :=
+  ["font", "before", "after", "rule", "marker", "indent", "gap"]
+
+/-- `\style{element}{...}`: how an element kind looks. `font` and `marker`
+are inline content and elaborate as such; the rest are lengths and a palette
+colour. A length may name a token, so the entries are read one at a time
+against the tokens declared so far. -/
+private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos : Pos) :
+    EM Styles := do
+  unless styleableElements.contains element do
+    diag ctx "E0328" s!"'{element}' is not a styleable element" pos
+      (help := s!"elements: {String.intercalate ", " styleableElements}")
+    return styles
+  let mut st : ElementStyle := (styles.find? element).getD {}
+  for entry in Decl.splitEntries src do
+    match Decl.splitEntry entry with
+    | none =>
+      diag ctx "E0320" s!"invalid entry in \\style: {entry.quote}" pos
+        (help := "entries look like: key = value")
+    | some (key, valueSrc) =>
+      let asInline : EM (Option (Array Inline)) := do
+        let inner := if valueSrc.startsWith "{" && valueSrc.endsWith "}" && valueSrc.length ≥ 2
+          then (valueSrc.drop 1).dropEnd 1 |>.toString else valueSrc
+        let (toks, _) := Lex.lex ctx.file inner
+        let (raws, _) := Parse.parse ctx.file toks
+        -- Value text re-enters through the same door as the document, idiom
+        -- translation included, or a \color inside a font spec would leak.
+        let (raws, ds) := Compat.rewrite ctx.file raws
+        modify fun st => { st with diags := st.diags ++ ds.filter (·.severity != .note) }
+        return some (← elabInlines ctx raws)
+      let asLength : EM (Option SymGlue) := do
+        match Decl.parseValue valueSrc ctx.tokens.entries with
+        | some (.glue g) => return some g
+        | some (.dim d) => return some { width := Dim.Length.ofSp d }
+        | _ =>
+          diag ctx "E0321" s!"cannot read length for '{key}' in \\style: {valueSrc.quote}" pos
+            (help := "lengths look like 10pt, 1.5ex, or a token name")
+          return none
+      match key with
+      | "font" => st := { st with font := ← asInline }
+      | "marker" => st := { st with marker := ← asInline }
+      | "before" => st := { st with before := ← asLength }
+      | "after" => st := { st with after := ← asLength }
+      | "indent" => st := { st with indent := ← asLength }
+      | "gap" => st := { st with gap := ← asLength }
+      | "rule" =>
+        match ctx.palette.find? valueSrc with
+        | some c => st := { st with rule := some (c, some valueSrc) }
+        | none =>
+          match Decl.parseValue valueSrc with
+          | some (.color r g b) => st := { st with rule := some (⟨r, g, b⟩, none) }
+          | _ => diag ctx "E0326" s!"'{valueSrc}' is not in the palette" pos
+      | _ =>
+        modify fun st' => { st' with
+          diags := st'.diags.push (Decl.unknownKey ctx.file "style" key styleKeys pos) }
+  let rest := styles.entries.filter (·.1 != element)
+  return { entries := rest.push (element, st) }
+
 /-- `\palette{...}`: named colours. Every entry becomes usable both as
 `\textcolor{name}{...}` and as a bare `\name` declaration. -/
 private def applyPalette (ctx : Ctx) (pal : Palette) (entries : Array Decl.Entry)
@@ -947,6 +1005,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut tokens : Tokens := {}
   let mut head : Option (Array Inline) := none
   let mut foot : Option (Array Inline) := none
+  let mut runningFrom : Nat := 1
+  let mut styles : Styles := {}
   let mut info : Meta := {}
   let mut asserts : Array Assertion := #[]
   let mut textDiagged := false
@@ -1023,7 +1083,26 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
       | .ctrl name pos =>
         i := i + 1
         if runningCtrl.contains name then
-          let j := skipSpaces preamble i
+          -- `[from = 2]` keeps the opening page clean, as a title page is.
+          let mut j := skipSpaces preamble i
+          if let some (.sym '[' _) := preamble[j]? then
+            let mut opt : Array Raw := #[]
+            let mut k := j + 1
+            for _ in [k:preamble.size + 1] do
+              match preamble[k]? with
+              | some (.sym ']' _) => k := k + 1; break
+              | some r => opt := opt.push r; k := k + 1
+              | none => break
+            for e in Decl.splitEntries (rawSrc opt) do
+              match Decl.splitEntry e with
+              | some ("from", v) =>
+                match v.trimAscii.toString.toNat? with
+                | some n => runningFrom := n
+                | none => diag ctx "E0321" s!"'from' needs a page number, got {v.quote}" pos
+              | _ =>
+                diag ctx "E0320" s!"unknown option in \\{name}: {e.quote}" pos
+                  (help := "options: from = <page>")
+            j := skipSpaces preamble k
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
@@ -1034,6 +1113,15 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               foot := some content
           | _ =>
             diag ctx "E0304" s!"'\\{name}' needs one group of inline content" pos
+        else if name == "style" then
+          let j := skipSpaces preamble i
+          let j2 := skipSpaces preamble (j + 1)
+          match preamble[j]?, preamble[j2]? with
+          | some (.group elem _), some (.group body _) =>
+            i := j2 + 1
+            styles ← applyStyle ctx styles (rawSrc elem) (rawSrc body) pos
+          | _, _ =>
+            diag ctx "E0304" "'\\style' needs {element} and a {...} block" pos
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
           match preamble[j]? with
@@ -1090,6 +1178,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     tokens := tokens
     head := head
     foot := foot
+    runningFrom := runningFrom
+    styles := styles
     info := info
     asserts := asserts
     body := blocks

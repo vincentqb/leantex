@@ -164,6 +164,57 @@ inductive Block where
   | spaced (before : SymGlue) (body : Array Block)
   deriving Repr, BEq, Inhabited
 
+/-- How an element kind looks, from `\style{element}{...}`. Every field a
+backend used to hard-code is here instead, so a design lives in the document.
+`font` is a template: the inline wrappers a declaration like
+`{\large\sffamily\bfseries\primary}` elaborates to, with an empty body where
+the element's own content goes. -/
+structure ElementStyle where
+  font : Option (Array Inline) := none
+  before : Option SymGlue := none
+  after : Option SymGlue := none
+  /-- A rule filling the rest of the heading's line, in this palette colour. -/
+  rule : Option (Color × Option String) := none
+  /-- List marker content, replacing the default en dash. -/
+  marker : Option (Array Inline) := none
+  indent : Option SymGlue := none
+  /-- Space between list items. -/
+  gap : Option SymGlue := none
+  deriving Repr, BEq, Inhabited
+
+/-- Elements a document may style. Section levels are `section`, `subsection`,
+`subsubsection`; lists are `itemize` and `enumerate`. -/
+def styleableElements : List String :=
+  ["section", "subsection", "subsubsection", "itemize", "enumerate"]
+
+structure Styles where
+  entries : Array (String × ElementStyle) := #[]
+  deriving Repr, BEq, Inhabited
+
+def Styles.find? (s : Styles) (element : String) : Option ElementStyle :=
+  (s.entries.find? (·.1 == element)).map (·.2)
+
+mutual
+
+def fillOne (content : Array Inline) : Inline → Inline
+  | .styled st body =>
+    .styled st (if body.isEmpty then content else (fillList content body.toList).toArray)
+  | .colored c n body =>
+    .colored c n (if body.isEmpty then content else (fillList content body.toList).toArray)
+  | other => other
+
+def fillList (content : Array Inline) : List Inline → List Inline
+  | [] => []
+  | x :: rest => fillOne content x :: fillList content rest
+
+end
+
+/-- Fill a font template's hole with content. The hole is the innermost empty
+body; a template with no hole (plain content) is returned unchanged, which
+is what a marker is. -/
+def fillTemplate (template content : Array Inline) : Array Inline :=
+  if template.isEmpty then content else (fillList content template.toList).toArray
+
 structure Doc where
   docClass : String := "article"
   classOptions : String := ""
@@ -175,6 +226,10 @@ structure Doc where
   out in the margin after the body, when the page count is known. -/
   head : Option (Array Inline) := none
   foot : Option (Array Inline) := none
+  /-- First page that carries running content; `\thispagestyle{empty}` on the
+  opening page is `2`. -/
+  runningFrom : Nat := 1
+  styles : Styles := {}
   info : Meta := {}
   asserts : Array Assertion := #[]
   body : Array Block := #[]

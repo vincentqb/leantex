@@ -25,6 +25,7 @@ structure Config where
   /-- Optional client-side math renderer, used until native MathML lands.
   A boundary, not a dependency: nothing is emitted unless asked for. -/
   mathBoundary : Option String := none
+  styles : Styles := {}
   deriving Repr
 
 private def hex2 (v : UInt8) : String :=
@@ -45,6 +46,35 @@ def cssLength (l : Length) : String :=
   | [] => "0"
   | [one] => one
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
+
+/-- `\style` declarations as CSS on the element selectors. A marker becomes
+`::marker` content only when it is plain text; styled markers fall back to the
+default, which is the honest degradation until `::marker` styling is portable. -/
+def styleRules (doc : Doc) : String :=
+  let sel : String → Option String
+    | "section" => some "h2" | "subsection" => some "h3" | "subsubsection" => some "h4"
+    | "itemize" => some "ul" | "enumerate" => some "ol" | _ => none
+  let plainText (xs : Array Inline) : Option String :=
+    xs.foldl (fun acc x => match acc, x with
+      | some a, .text t => some (a ++ t)
+      | _, _ => none) (some "")
+  String.join (doc.styles.entries.toList.filterMap fun (element, st) => do
+    let tag ← sel element
+    let decls :=
+      (st.before.map fun g => s!"margin-top: {cssLength g.width};").toList ++
+      (st.after.map fun g => s!"margin-bottom: {cssLength g.width};").toList ++
+      (st.indent.map fun g => s!"padding-left: {cssLength g.width};").toList ++
+      (st.rule.map fun (c, n) =>
+        let color := match n with
+          | some name => s!"var(--{name}, {cssColor c})"
+          | none => cssColor c
+        s!"display: flex; align-items: center; gap: 0.5em; --rule-color: {color};").toList
+    let liDecls :=
+      (st.gap.map fun g => s!"{tag} > li \{ margin-top: {cssLength g.width}; }\n").toList ++
+      (st.marker.bind plainText |>.map fun m =>
+        s!"{tag} > li::marker \{ content: \"{m}  \"; }\n").toList
+    let own := if decls.isEmpty then "" else s!"{tag} \{ {String.intercalate " " decls} }\n"
+    some (own ++ String.join liDecls))
 
 /-- Design tokens become CSS custom properties, so the same declarations drive
 both backends and a reader's stylesheet can override them. -/
@@ -142,6 +172,7 @@ def baseCss (doc : Doc) : String :=
   "  align-items: baseline; }\n" ++
   ".entry-rows { display: flex; flex-direction: column; }\n" ++
   ".sans { font-family: var(--font-sans); }\n" ++
+  ".ruled::after { content: \"\"; flex: 1; border-top: 1px solid var(--rule-color); }\n" ++
   -- The browser uses the face's own small caps when it has them and synthesises
   -- otherwise, which is the better of the two mechanisms; the PDF path can only
   -- synthesise.
@@ -259,11 +290,15 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     else
       Html.elem "p" (inlines cfg content)
   | .section level _ title =>
-    let tag := match level with
-      | 1 => "h2"
-      | 2 => "h3"
-      | _ => "h4"
-    Html.elem tag (inlines cfg title)
+    let (tag, element) := match level with
+      | 1 => ("h2", "section")
+      | 2 => ("h3", "subsection")
+      | _ => ("h4", "subsubsection")
+    let st := (cfg.styles.find? element).getD {}
+    let title := match st.font with
+      | some tpl => fillTemplate tpl title
+      | none => title
+    Html.elem tag (inlines cfg title) (if st.rule.isSome then #[("class", "ruled")] else #[])
   | .list ordered items =>
     let tag := if ordered then "ol" else "ul"
     Html.elem tag (listItems cfg items.toList)
@@ -315,8 +350,11 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
     if let some v := value then
       head := head.push (Html.elem "meta" #[] #[("name", name), ("content", v)])
   head := head.push (Html.elem "meta" #[] #[("name", "generator"), ("content", "leantex")])
+  -- Element styles are the document's own design and ride along in every
+  -- mode: they are declarations, not a framework.
+  let styled := styleRules doc
   match cfg.css with
-  | .own => head := head.push (Node.style (baseCss doc))
+  | .own => head := head.push (Node.style (baseCss doc ++ "\n" ++ styled))
   | .bulma =>
     -- Bind our tokens onto Bulma's own custom properties so a host page's
     -- theme and ours agree instead of fighting.
@@ -324,11 +362,12 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
       "    --bulma-primary: var(--primary, var(--accent, #1d4ed8));\n" ++
       "    --bulma-link: var(--accent, #1d4ed8);\n" ++
       "    --bulma-body-family: var(--font-body, inherit);\n" ++
-      "}"))
-  | .none => pure ()
+      "}\n" ++ styled))
+  | .none => unless styled.isEmpty do head := head.push (Node.style styled)
   let bodyClass := match cfg.css with
     | .bulma => "content"
     | _ => ""
+  let cfg := { cfg with styles := doc.styles }
   let inner := blockNodes cfg doc.body.toList
   let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]
     else #[("class", bodyClass)])

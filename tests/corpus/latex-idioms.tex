@@ -32,7 +32,17 @@
 
 \definecolor{primary}{HTML}{0F766E}
 \definecolor{muted}{rgb}{0.45,0.45,0.5}
+\definecolor{rulecolor}{HTML}{99F6E4}
 \colorlet{bulletcolor}{muted}
+
+% Element styling the KOMA and enumitem way; each becomes one \style{...}.
+\setkomafont{section}{\large\sffamily\bfseries\color{primary}}
+\RedeclareSectionCommand[beforeskip=3\sepunit,afterskip=1\sepunit]{section}
+\makeatletter
+\renewcommand\sectionlinesformat[4]{\hskip#2#3#4\ \textcolor{rulecolor}{\leaders\hrule height 0.6pt\hfill\kern\z@}}
+\makeatother
+\setlist[itemize]{leftmargin=1.2em, label={\textcolor{bulletcolor}{\small\textendash}}, topsep=\sepunit, itemsep=\sepunit}
+\thispagestyle{empty}
 
 \NewDocumentCommand{\dotsep}{}{\ \textperiodcentered\ }
 \NewDocumentCommand{\role}{m m m o}{%
