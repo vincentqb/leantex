@@ -838,18 +838,27 @@ private def placePara (b : B) (j : ParaJob) (breaks : Array Nat) : B := Id.run d
     first := false
   return b
 
+mutual
+
 /-- Replace `\pagenumber` / `\pagecount` with literal text. Running content
 is laid out after the body, so both numbers are known by then — no second
 pass over the document and no aux file. -/
-partial def substPage (n total : Nat) (xs : Array Inline) : Array Inline :=
-  xs.map fun x =>
-    match x with
-    | .pageNumber => .text (toString n)
-    | .pageCount => .text (toString total)
-    | .styled st body => .styled st (substPage n total body)
-    | .colored c nm body => .colored c nm (substPage n total body)
-    | .link u body => .link u (substPage n total body)
-    | other => other
+def substPage (n total : Nat) (xs : Array Inline) : Array Inline :=
+  (substPageList n total xs.toList).toArray
+
+def substPageOne (n total : Nat) : Inline → Inline
+  | .pageNumber => .text (toString n)
+  | .pageCount => .text (toString total)
+  | .styled st body => .styled st (substPageList n total body.toList).toArray
+  | .colored c nm body => .colored c nm (substPageList n total body.toList).toArray
+  | .link u body => .link u (substPageList n total body.toList).toArray
+  | other => other
+
+def substPageList (n total : Nat) : List Inline → List Inline
+  | [] => []
+  | x :: rest => substPageOne n total x :: substPageList n total rest
+
+end
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. -/

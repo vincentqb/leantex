@@ -166,9 +166,11 @@ private def styleClass : Style → String
   | .normal => "normal"
   | .size n => "size-" ++ n
 
+mutual
+
 /-- Inline content. Style maps onto the element that carries the *meaning*
 where one exists (`<strong>`, `<em>`, `<code>`) and onto a class otherwise. -/
-partial def inlineNode (cfg : Config) (x : Inline) : Array Node :=
+def inlineNode (cfg : Config) (x : Inline) : Array Node :=
   match x with
   | .text s => #[Html.text s]
   | .math display src =>
@@ -179,7 +181,7 @@ partial def inlineNode (cfg : Config) (x : Inline) : Array Node :=
         #[("class", if display then "math math-display" else "math"),
           ("data-tex", src)]]
   | .styled st body =>
-    let kids := body.flatMap (inlineNode cfg)
+    let kids := inlineNodes cfg body.toList
     match st with
     | .bold => #[Html.elem "strong" kids]
     | .italic => #[Html.elem "em" kids]
@@ -194,9 +196,9 @@ partial def inlineNode (cfg : Config) (x : Inline) : Array Node :=
     let value := match name with
       | some n => s!"color: var(--{n}, {cssColor c})"
       | none => s!"color: {cssColor c}"
-    #[Html.elem "span" (body.flatMap (inlineNode cfg)) #[("style", value)]]
+    #[Html.elem "span" (inlineNodes cfg body.toList) #[("style", value)]]
   | .link url body =>
-    #[Html.elem "a" (body.flatMap (inlineNode cfg)) #[("href", url)]]
+    #[Html.elem "a" (inlineNodes cfg body.toList) #[("href", url)]]
   | .fill => #[Html.elem "span" #[] #[("class", "fill")]]
   -- Page furniture has no meaning in a continuous document.
   | .pageNumber => #[]
@@ -209,8 +211,16 @@ partial def inlineNode (cfg : Config) (x : Inline) : Array Node :=
       Html.elem "span" #[]
         #[("style", s!"display:block;height:{cssLength extra.width}")]]
 
+/-- The list companion keeps the recursion structural; a `flatMap` over the
+children would hide the call behind a lambda. -/
+def inlineNodes (cfg : Config) : List Inline → Array Node
+  | [] => #[]
+  | x :: rest => inlineNode cfg x ++ inlineNodes cfg rest
+
+end
+
 private def inlines (cfg : Config) (xs : Array Inline) : Array Node :=
-  xs.flatMap (inlineNode cfg)
+  inlineNodes cfg xs.toList
 
 /-- Does this paragraph use `\hfill`? If so it becomes a flex row, which is
 the CSS equivalent of the stretch it asked for. -/
@@ -233,7 +243,9 @@ private def splitAtBreaks (xs : Array Inline) : Array (Array Inline) := Id.run d
     | other => cur := cur.push other
   return out.push cur
 
-partial def blockNode (cfg : Config) (b : Block) : Node :=
+mutual
+
+def blockNode (cfg : Config) (b : Block) : Node :=
   match b with
   | .para content =>
     if hasFill content then
@@ -254,20 +266,29 @@ partial def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem tag (inlines cfg title)
   | .list ordered items =>
     let tag := if ordered then "ol" else "ul"
-    Html.elem tag (items.map fun item =>
-      -- A one-paragraph item carries its content directly: wrapping it in <p>
-      -- is what makes generated lists render with extra vertical space.
-      if item.size == 1 then
-        match item[0]! with
-        | .para content => Html.elem "li" (inlines cfg content)
-        | other => Html.elem "li" #[blockNode cfg other]
-      else
-        Html.elem "li" (item.map (blockNode cfg)))
+    Html.elem tag (listItems cfg items.toList)
   | .center body =>
-    Html.elem "div" (body.map (blockNode cfg)) #[("class", "centered")]
+    Html.elem "div" (blockNodes cfg body.toList) #[("class", "centered")]
   | .spaced before body =>
     let style := s!"margin-top: {cssLength before.width}"
-    Html.elem "div" (body.map (blockNode cfg)) #[("class", "spaced"), ("style", style)]
+    Html.elem "div" (blockNodes cfg body.toList) #[("class", "spaced"), ("style", style)]
+
+def blockNodes (cfg : Config) : List Block → Array Node
+  | [] => #[]
+  | b :: rest => #[blockNode cfg b] ++ blockNodes cfg rest
+
+def listItems (cfg : Config) : List (Array Block) → Array Node
+  | [] => #[]
+  | item :: rest => #[Html.elem "li" (listItem cfg item.toList)] ++ listItems cfg rest
+
+-- A one-paragraph item carries its content directly: wrapping it in <p> is
+-- what makes generated lists render with extra vertical space.
+def listItem (cfg : Config) : List Block → Array Node
+  | [.para content] => inlines cfg content
+  | [] => #[]
+  | b :: rest => #[blockNode cfg b] ++ blockNodes cfg rest
+
+end
 
 /-- Emit a document. Returns the file and any diagnostics the backend itself
 raises — running content is the notable one: page furniture cannot be honoured
@@ -308,7 +329,7 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
   let bodyClass := match cfg.css with
     | .bulma => "content"
     | _ => ""
-  let inner := doc.body.map (blockNode cfg)
+  let inner := blockNodes cfg doc.body.toList
   let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]
     else #[("class", bodyClass)])
   let mut body : Array Node := #[main]

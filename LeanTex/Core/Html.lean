@@ -141,7 +141,7 @@ mutual
 
 /-- Render a node. Indentation is cosmetic and suppressed where whitespace
 matters. -/
-partial def render (n : Node) (indent : Nat) : String :=
+def render (n : Node) (indent : Nat) : String :=
   let pad := "".pushn ' ' (2 * indent)
   match n with
   | .text s => pad ++ escapeText s ++ "\n"
@@ -158,12 +158,12 @@ partial def render (n : Node) (indent : Nat) : String :=
       pad ++ open' ++ "\n"
     else if preserveTags.contains tag || phrasingTags.contains tag ||
         isInlineOnly kids then
-      pad ++ open' ++ String.join (kids.toList.map inlineRender) ++ "</" ++ tag ++ ">\n"
+      pad ++ open' ++ inlineRenderList kids.toList ++ "</" ++ tag ++ ">\n"
     else
-      pad ++ open' ++ "\n" ++ renderList kids (indent + 1) ++ pad ++ "</" ++ tag ++ ">\n"
+      pad ++ open' ++ "\n" ++ renderList kids.toList (indent + 1) ++ pad ++ "</" ++ tag ++ ">\n"
 
 /-- Render without surrounding whitespace, for content inside a line. -/
-partial def inlineRender (n : Node) : String :=
+def inlineRender (n : Node) : String :=
   match n with
   | .text s => escapeText s
   | .style css => "<style>" ++ css ++ "</style>"
@@ -171,10 +171,17 @@ partial def inlineRender (n : Node) : String :=
   | .elem tag attrs kids =>
     let open' := "<" ++ tag ++ attrString attrs ++ ">"
     if voidTags.contains tag then open'
-    else open' ++ String.join (kids.toList.map inlineRender) ++ "</" ++ tag ++ ">"
+    else open' ++ inlineRenderList kids.toList ++ "</" ++ tag ++ ">"
 
-partial def renderList (kids : Array Node) (indent : Nat) : String :=
-  String.join (kids.toList.map fun k => render k indent)
+-- The list companions make the recursion structural: a `map` over the
+-- children hides the call behind a lambda the checker cannot see through.
+def renderList : List Node → Nat → String
+  | [], _ => ""
+  | k :: rest, indent => render k indent ++ renderList rest indent
+
+def inlineRenderList : List Node → String
+  | [] => ""
+  | k :: rest => inlineRender k ++ inlineRenderList rest
 
 end
 

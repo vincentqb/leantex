@@ -42,19 +42,21 @@ private def isFontFile (p : String) : Bool :=
   let lower := p.toLower
   lower.endsWith ".ttf" || lower.endsWith ".otf"
 
-/-- Recursively list font files, bounded so a symlink cycle cannot hang us. -/
-partial def listFonts (dir : System.FilePath) (depth : Nat) : IO (Array String) := do
-  if depth == 0 then
-    return #[]
-  let mut out : Array String := #[]
-  let entries ← try dir.readDir catch _ => pure #[]
-  for e in entries do
-    let p := e.path
-    if ← p.isDir then
-      out := out ++ (← listFonts p (depth - 1))
-    else if isFontFile p.toString then
-      out := out.push p.toString
-  return out
+/-- Font files under `dir`, `depth` levels deep. Structural on `depth`: a
+directory tree is not an inductive type the checker can see, so the bound is
+the recursion measure, and four is deeper than any font tree goes. -/
+def listFonts (dir : System.FilePath) : Nat → IO (Array String)
+  | 0 => pure #[]
+  | depth + 1 => do
+    let mut out : Array String := #[]
+    let entries ← try dir.readDir catch _ => pure #[]
+    for e in entries do
+      let p := e.path
+      if ← p.isDir then
+        out := out ++ (← listFonts p depth)
+      else if isFontFile p.toString then
+        out := out.push p.toString
+    return out
 
 /-- Read just enough of a font file to classify it: the table directory, then
 the `name`, `OS/2`, `head`, and `post` tables. Full files are large (a
