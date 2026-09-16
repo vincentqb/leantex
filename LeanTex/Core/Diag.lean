@@ -8,10 +8,6 @@ structure Pos where
 def Pos.next (p : Pos) (newline : Bool) : Pos :=
   if newline then ⟨p.line + 1, 1⟩ else ⟨p.line, p.col + 1⟩
 
-theorem Pos.next_newline (p : Pos) : p.next true = ⟨p.line + 1, 1⟩ := rfl
-
-theorem Pos.next_same_line (p : Pos) : p.next false = ⟨p.line, p.col + 1⟩ := rfl
-
 structure Span where
   file : String
   pos : Pos
