@@ -996,13 +996,19 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             if let some (.word "*" _) := raws[i]? then
               starred := true
               i := i + 1
-            let j := skipSpaces raws i
+            -- `\section[short]{long}`: the short form feeds furniture we do
+            -- not render, and its bracket obeys the shared scanner.
+            let (j, recovered) ← skipOptArg ctx n raws i pos
             match raws[j]? with
             | some (.group title _) =>
               i := j + 1
               blocks := blocks.push (.section level starred (← elabInlines ctx title))
             | _ =>
-              diag ctx "E0304" s!"'\\{n}' needs a \{title}" pos
+              if recovered then
+                warnSkippedDecl ctx n pos
+                i := j
+              else
+                diag ctx "E0304" s!"'\\{n}' needs a \{title}" pos
         | .env n body pos =>
           i := i + 1
           if let some f := Parse.inputEnvFile? n then

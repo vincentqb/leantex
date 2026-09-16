@@ -1602,6 +1602,20 @@ def optArgChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!tsDs.any (·.severity == .error) && tsDs.any (·.code == "W0312"))
   t "the declaration after a skipped title survives"
     (tsDoc.info.author == some "A. Placeholder")
+  -- \section[short]{long}: the fifth optional-argument site obeys the
+  -- shared scanner instead of a fatal E0304
+  let (secDoc, secDs) := elabStr "\\section[Short]{Long Title}\n\nBody."
+  t "section takes its short form and keeps the long title"
+    (secDs.isEmpty && match secDoc.body with
+     | #[.section 1 false title, .para _] => Ir.plainText title == "Long Title"
+     | _ => false)
+  t "section recovers its title past an unclosed bracket"
+    (match (elabStr "\\section[never closes {Recovered}\nBody.").1.body with
+     | #[.section 1 false title, .para _] => Ir.plainText title == "Recovered"
+     | _ => false)
+  t "a section with no group after its unclosed bracket warns, never fatally"
+    (let ds := (elabStr "\\section[never closes\nBody.").2
+     !ds.any (·.severity == .error) && ds.any (·.code == "W0312"))
 
 /-- The shared bracket scanner, fed the malformed and the merely leading:
 an unclosed `[` is content, never an argument that consumes to the end of
