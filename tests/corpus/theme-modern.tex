@@ -1,0 +1,86 @@
+% Design sketch, not yet a working fixture: the modernized Metropolis
+% successor written as a token bundle, so the theme is reviewable as data
+% rather than as adjectives. Values are invented for this repo.
+%
+% Commands marked PENDING are not implemented yet; the file is here to make
+% the design concrete and to drive the M4/M5 grammar. It is excluded from the
+% golden set until those land.
+\documentclass[aspectratio=169]{slides}
+
+\fonts{
+  body = "Fira Sans",
+  sans = "Fira Sans",
+  mono = "Fira Mono",
+  math = "Fira Math",          % PENDING (M6): matched math face, never pasted-in CM
+}
+
+\palette{
+  % Neither pure black nor pure white on either side: both are harsh on a
+  % projector and on an OLED panel.
+  surface   = #FAFAF9,         % warm off-white
+  ink       = #18181B,         % near-black
+  muted     = #71717A,         % secondary text, captions, footer
+  accent    = #E11D48,         % exactly one accent
+  tint      = #F4F4F5,         % 2-4% plane separation, not a border
+  rule      = #E4E4E7,         % hairlines
+}
+
+\palette[dark]{                % PENDING (M5b): variant, same accent, re-checked
+  surface   = #18181B,
+  ink       = #FAFAF9,
+  muted     = #A1A1AA,
+  accent    = #FB7185,         % lifted for AA on dark
+  tint      = #27272A,
+  rule      = #3F3F46,
+}
+
+% A ~1.25 modular scale. Body at 22pt reads from the back row of a lecture
+% hall; Metropolis-era decks sat near 14pt and assumed a small room.
+\tokens{
+  body      = 22pt,
+  small     = 17.6pt,          % body / 1.25
+  large     = 27.5pt,          % body * 1.25
+  title     = 43pt,            % body * 1.25^3
+  rhythm    = 1.4em plus 0.4em minus 0.2em,
+  sep       = 1.0 * rhythm,    % between peers
+  bind      = 0.45 * rhythm,   % label to its content
+  gutter    = 0.06 * body,
+  hairline  = 1.5pt,
+}
+
+\page{
+  size    = a4paper,
+  margin  = 0.055 * body,
+}
+
+% PENDING (M5): chrome. A hairline progress bar, section title and number in a
+% quiet footer, and no logo repeated on every slide.
+% \chrome{
+%   progress = hairline,
+%   footer   = { left = \sectiontitle, right = \slidenumber },
+%   logo     = titleonly,
+% }
+
+% PENDING (M4b): theorem environments. An accent rule on the leading edge and
+% a small-caps label, not a boxed colored panel.
+% \theoremstyle{
+%   rule    = { width = 2pt, color = accent },
+%   label   = { variant = smallcaps, weight = medium },
+%   body    = { surface = tint },
+%   numbering = section,
+%   qed     = tombstone,
+% }
+
+\assert{ fonts.all_embedded }
+
+\begin{document}
+
+\begin{frame}{What this theme is}
+  \begin{itemize}
+    \item<1-> One accent, two neutrals, and a tint for depth.
+    \item<2-> Type large enough to read from the back row.
+    \item<3-> Overlays dim rather than hide, so nothing reflows.
+  \end{itemize}
+\end{frame}
+
+\end{document}

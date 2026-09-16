@@ -1,10 +1,11 @@
 # AGENTS.md
 
-leantex: fast, certified, modern LaTeX-lookalike engine in Lean 4. The living
-plan is `PLAN.md` — design decisions and milestone status land there, not here.
-Never record personal information (names, emails, and the text or topics of
-private documents) or local paths to private documents in this repo; refer to
-the private reference corpus abstractly.
+leantex: fast, certified, modern document engine in Lean 4 — one language,
+two surfaces (tex primary, markdown as sugar), two backends (PDF 2.0 and
+HTML). The living plan is `PLAN.md` — design decisions and milestone status
+land there, not here. Never record personal information (names, emails, and
+the text or topics of private documents) or local paths to private documents
+in this repo; refer to the private reference corpus abstractly.
 
 ## Setup
 
@@ -35,6 +36,14 @@ the private reference corpus abstractly.
 
 - Pure core: modules under `LeanTex/Core/` do no IO. Files, fonts, anything
   external surfaces as request values the CLI driver fulfills (effects as data).
+- Backends consume the IR and nothing else. A backend never re-parses, and
+  never reaches back into the surface AST — that is how md→PDF and tex→HTML
+  stay free instead of becoming N×M special cases.
+- HTML is built as a typed tree with a certified escaper, never by
+  concatenating tag strings. Any new node type goes through the escaper by
+  construction; if you find yourself writing `"<" ++ …`, stop.
+- Design tokens are the styling API for both backends: a new visual knob is a
+  token, not a hard-coded constant in a backend.
 - Hot paths use `Array`/`ByteArray`/packed `UInt32`; no `List`, no `String`
   concatenation in loops.
 - Theorems only where they pay (parser totality, elaboration termination and

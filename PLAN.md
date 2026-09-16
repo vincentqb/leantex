@@ -1,13 +1,103 @@
 # leantex — plan
 
-Fast, certified, modern LaTeX-lookalike engine in Lean 4.
+Fast, certified, modern document engine in Lean 4: one language, two
+surfaces, two backends.
 
-Not a TeX reimplementation: a clean language that reads and writes like LaTeX,
-with specified semantics and modern defaults, judged on producing very good
-documents. lualatex is the current go-to and the thing to beat, not to match.
-flashtex sets the speed bar.
+Not a TeX reimplementation: a clean LaTeX-shaped language with specified
+semantics and modern defaults, judged on producing very good documents — as
+PDF 2.0 *and* as modern clean HTML. Markdown is a second surface defined by
+desugaring into the same language. lualatex is the go-to to beat on the PDF
+side; on the HTML side the incumbent is a hand-maintained static-site
+pipeline. flashtex sets the speed bar.
 
 ## Status
+
+**Where it is.** PDF 2.0 output is real: justified paragraphs with
+Knuth–Plass and Liang hyphenation, font families with true bold/italic/mono
+faces, named colours, font-relative design tokens, page geometry, document
+metadata, and layout assertions that fail the build. Measured by
+`scripts/bench.sh`: 1 KB in ~17 ms against lualatex's ~481 ms; a generated
+129 KB / 30 pages in ~579 ms against ~980 ms.
+
+**Where it is going.** This plan now covers one engine with **two surfaces**
+(tex primary, markdown as sugar) and **two backends** (PDF and HTML,
+including slides). The HTML backend is next after M3c because it needs no
+layout engine, and it is what makes the site, the talks, and theorem-bound
+documents reachable.
+
+**Immediately next.** M3c — headers/footers (the last `\page` key),
+hyperlinks with PDF link annotations, and block-level user commands (a
+`\define` body producing `\block` reports E0312 today, which is what the
+resume fixture still hits). Then M4, the HTML backend.
+
+**Open, tracked, not hidden.** `Elab.elabInlines`/`elabBlocks` are still
+`partial`; the Knuth–Plass optimality theorem is held empirically by
+`scripts/kp-fuzz.lean`. Both are detailed in the 2026-09-15 M2 entry below
+and neither is on the critical path for HTML.
+
+### Log
+
+Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-15 — plan refined for HTML, slides, themes, and theorems. The leanmd
+workstream merges in: markdown becomes a second surface defined by
+desugaring, HTML becomes a peer backend, and the milestone ladder is rebuilt
+around them (M4 HTML, M5 slides, M6 math, M7 markdown, M8 figures, M9
+verified inclusions). Three positions were taken rather than deferred: HTML
+slides are in scope with a ~3 KB vendored controller instead of reveal.js
+(revising leanmd's zero-JS non-goal, with reveal available as a boundary);
+a theme is a token bundle, and the default is a modernized Metropolis
+successor with a first-class dark variant; theorem environments may bind to a
+machine-checked Lean name, so a missing or unproved theorem fails the build.
+
+2026-09-15 — M3b landed: the document surface a designed page needs.
+
+`\fonts{ body/sans/mono }` selects installed families. Faces are discovered
+natively — `FontDb` reads only each file's header plus its name, OS/2, head
+and post tables, classifying 55 faces in ~35 ms. Resolution is weight-aware
+rather than a bold flag, so URW Bookman's "Demi" (usWeightClass 600) is
+correctly its bold face, and a plain face beats a same-family Condensed
+variant; italic is categorical and never silently replaced by upright. Layout
+resolves each style to a font index carried on boxes, penalties and runs; the
+PDF emits one Identity-H CID font per *used* face with its own ToUnicode (12
+declared, 6 embedded in the fonts fixture) and switches faces by closing and
+reopening the TJ array.
+
+`\palette` declares named sRGB colours, usable as `\textcolor{name}{...}` or
+as bare declarations that colour the rest of their group; colour rides on runs
+and emits `rg`, and a colour change closes the TJ array the way a font change
+does.
+
+`\tokens` declares named lengths that may be font-relative (`2ex plus 0.5ex`)
+or derived from an earlier token (`sep = 0.75 * rhythm`). Entries are walked
+one at a time, because parsing the block in one shot leaves in-block
+references unresolved. Resolution happens at layout against the real font size
+and OS/2 x-height, which is why `Dim.Length` keeps em/ex parts symbolic —
+tokens are declared before any font is chosen. `\block[before = sep]` applies
+one; `\hfill` pushes trailing content to the margin (the dated-entry shape).
+
+Text symbols (`\middot`, `\endash`, `\ldots`, …) live in the *lexer*,
+because they also bend the space-swallowing rule: a control word normally eats
+the following whitespace so `\textbf {x}` adds no space, but a symbol takes no
+argument, so eating it turns `a \middot b` into "a ·b" — a wart, not a
+feature. `\hfill` keeps swallowing, since a space after the stretch would be
+visible at the far margin.
+
+The resume fixture is down from 14 diagnostics to two distinct ones: the
+`header` page key, and `\block` inside a `\define` body. W0002 "styles are
+not rendered" is gone.
+
+2026-09-15 — M3a landed: the declaration layer. `\page` (size, width, height,
+margin, vmargin, hmargin) resolves once into layout geometry via
+`Geom.ofPage`; `\pdfmeta` writes the Info dictionary and an XMP packet;
+`\assert` checks `pages <op> N` and `fonts.all_embedded` against the shipped
+page tree, exiting 2 and writing no PDF when one fails — the "no silent
+failures" principle now has teeth. Declaration values are typed (strings,
+exact dimensions in pt/bp/in/cm/mm/pc/sp, numbers, names, opaque blocks) with
+one diagnostic code per failure mode: unknown key names the known ones, wrong
+type names what it wanted, and a declared-but-unimplemented key (`header`)
+reports as pending with its milestone rather than as a type error. Verified
+by Poppler: A5 page size, all four metadata fields, PDF 2.0.
 
 2026-09-15 — M2 landed, then a proofs pass over the pipeline. The engine
 produces readable, justified PDF 2.0 with automatic American-English Liang
@@ -46,61 +136,6 @@ paragraphs with glue, flagged hyphen penalties, and forced breaks).
 Determinism needs no proof: every stage is a pure Lean function, so it is
 definitional. The claims worth real work are termination, totality (no
 panicking index), and optimality.
-
-Next: M3c — headers/footers (the last `\page` key), hyperlinks with PDF link
-annotations, and block-level user commands (a `\define` body that produces
-`\block` currently reports E0312, which is what the resume fixture still
-hits). Then M4 math. The elaborator termination unit remains open and
-independent.
-
-2026-09-15 — M3a landed: the declaration layer. `\page` (size, width, height,
-margin, vmargin, hmargin) resolves once into layout geometry via
-`Geom.ofPage`; `\pdfmeta` writes the Info dictionary and an XMP packet;
-`\assert` checks `pages <op> N` and `fonts.all_embedded` against the shipped
-page tree, exiting 2 and writing no PDF when one fails — the "no silent
-failures" principle now has teeth. Declaration values are typed (strings,
-exact dimensions in pt/bp/in/cm/mm/pc/sp, numbers, names, opaque blocks) with
-one diagnostic code per failure mode: unknown key names the known ones, wrong
-type names what it wanted, and a declared-but-unimplemented key (`header`)
-reports as pending with its milestone rather than as a type error. Verified
-by Poppler: A5 page size, all four metadata fields, PDF 2.0.
-
-2026-09-15 — M3b landed: the document surface a designed page needs.
-
-`\fonts{ body/sans/mono }` selects installed families. Faces are discovered
-natively — `FontDb` reads only each file's header plus its name, OS/2, head
-and post tables, classifying 55 faces in ~35 ms. Resolution is weight-aware
-rather than a bold flag, so URW Bookman's "Demi" (usWeightClass 600) is
-correctly its bold face, and a plain face beats a same-family Condensed
-variant; italic is categorical and never silently replaced by upright. Layout
-resolves each style to a font index carried on boxes, penalties and runs; the
-PDF emits one Identity-H CID font per *used* face with its own ToUnicode (12
-declared, 6 embedded in the fonts fixture) and switches faces by closing and
-reopening the TJ array.
-
-`\palette` declares named sRGB colours, usable as `\textcolor{name}{...}` or
-as bare declarations that colour the rest of their group; colour rides on runs
-and emits `rg`, and a colour change closes the TJ array the way a font change
-does.
-
-`\tokens` declares named lengths that may be font-relative (`2ex plus 0.5ex`)
-or derived from an earlier token (`sep = 0.75 * rhythm`). Entries are walked
-one at a time, because parsing the block in one shot leaves in-block
-references unresolved. Resolution happens at layout against the real font size
-and OS/2 x-height, which is why `Dim.Length` keeps em/ex parts symbolic —
-tokens are declared before any font is chosen. `\block[before = sep]` applies
-one; `\hfill` pushes trailing content to the margin (the dated-entry shape).
-
-Text symbols (`\middot`, `\endash`, `\ldots`, …) live in the *lexer*,
-because they also bend the space-swallowing rule: a control word normally eats
-the following whitespace so `\textbf {x}` adds no space, but a symbol takes no
-argument, so eating it turns `a \middot b` into "a ·b" — a wart, not a
-feature. `\hfill` keeps swallowing, since a space after the stretch would be
-visible at the far margin.
-
-The resume fixture is down from 14 diagnostics to two distinct ones: the
-`header` page key, and `\block` inside a `\define` body. W0002 "styles are
-not rendered" is gone.
 
 ## Why not TeX-compatible
 
@@ -194,6 +229,240 @@ behind the same type, so trust only ever grows and documents never notice.
   returning structured data can serve papers well before any native
   implementation is worth writing.
 
+## Architecture
+
+Pure pipeline, effects at the edge — IO only in the CLI driver; files and
+fonts surface as request values the driver fulfills:
+
+    .md ──parse──► MD AST ──desugar──► surface AST ◄──parse── .tex
+                                            │ elaborate
+                                            ▼
+                                         doc IR ──emit──► HTML5 (+ slides)
+                                            │
+                                     layout (boxes/glue,
+                                      Knuth–Plass, pages)
+                                            │
+                                            ▼
+                                        PDF 2.0
+
+The IR is the waist. Everything above it is surface syntax; everything below
+is a backend. Both surfaces reach both backends, so markdown→PDF and
+tex→HTML come for free rather than as N×M special cases.
+
+- `leantex build doc.tex` — one shot, machine-readable diagnostics, exit code
+  reflects assertions. `--emit pdf,html` selects backends.
+- `leantex expand doc.md` — pretty-prints the desugared surface AST as real
+  `.tex`: the inspectable witness of what markdown means, and the ejection
+  path when a document outgrows it.
+- `leantex worker` — JSONL protocol for live re-render (later milestone).
+
+## Surfaces: LaTeX-shaped primary, markdown as sugar
+
+Merged from the leanmd workstream (that repo reduces to a pointer; its plan
+is superseded by this section plus the milestones).
+
+The tex-shaped surface is the semantics of record. Markdown has **no
+semantics of its own**: its meaning *is* its desugaring — a total,
+deterministic, span-preserving function MD AST → surface AST. One elaborator,
+one place where meaning lives. Deleting the markdown parser would change no
+document's meaning.
+
+That is the structural defense against the pandoc failure mode (N surfaces ×
+M backends meeting in a lowest-common-denominator IR, with silent per-route
+drift):
+
+- Desugaring is AST → AST, never through generated text. Generating tex and
+  re-parsing it would destroy diagnostic provenance and put two parsers in
+  the pipeline; diagnostics carry original `.md` spans all the way through.
+- Directives are typed-command sugar: `:::{figure}` desugars to the typed
+  `\figure{...}`, and the directive registry is *derived from* command
+  signatures. Markdown can never express what the surface language cannot.
+- Asymmetry is one-directional by design: md ⊂ tex-expressible, and the tex
+  surface never chases markdown features.
+
+Dialect: CommonMark-shaped but strict. Raw HTML passthrough, lazy
+continuation, and indented code blocks are **errors with fix-its**, not silent
+divergence — the first is what keeps the injection-safety argument short, the
+others are the measured ambiguity classes. CommonMark's emphasis
+delimiter-run algorithm is kept faithfully: it is gnarly but specified and
+deterministic, and the warts worth deleting are the silent ones, not the
+ugly-but-deterministic ones. The 652-case spec suite is a **classifier, not a
+gate**: every case carries a committed verdict (`match`,
+`rejected-with-diagnostic`, `deliberate-divergence` + rationale) and an
+unclassified deviation fails CI.
+
+Extensions: YAML frontmatter (data-driven documents), `$…$`/`$$…$$`, typed
+directives and roles, pipe tables, footnotes, and in-memory cross-references
+(`{#id}` / `[](#id)`) with no aux-file fixpoint.
+
+## The HTML backend
+
+Not an afterthought export: a peer backend off the same IR, and the cheaper
+one — it needs no layout engine, so it exercises the whole frontend at a
+fraction of the cost.
+
+**Typed tree, certified escaping.** A well-formed-by-construction HTML tree,
+never string-concatenated tags. With raw-HTML passthrough deleted from the
+markdown dialect and a certified escaper on every text node, document content
+can never become markup. That argument is short *because* the dialect removed
+the carve-outs.
+
+**Semantic HTML5, zero dependencies by default.** `<article>`, `<section>`,
+`<h1>`–`<h4>`, `<figure>`/`<figcaption>`, `<dl>` where it means a
+description list. One self-contained file by default: critical CSS inlined, no
+CDN, no webfont round-trip (a subset font inlined or self-hosted), works
+offline and leaks nothing. A generated document should not require a network.
+
+**Zero JavaScript for documents.** Non-negotiable for articles, papers, and
+pages. Slides are the one exception and are argued below.
+
+**Design tokens are the styling API.** `\tokens` and `\palette` map 1:1 onto
+CSS custom properties, so the same declarations drive both backends: `sep`
+becomes `--sep`, `primary` becomes `--primary`. A document's design intent
+survives the trip to CSS instead of being re-encoded by hand.
+
+**Framework interop, not framework dependency.** Bulma 1.x is a good tradeoff
+for a hand-built site — CSS-only, no JS, and since 1.0 it is itself built on
+CSS custom properties with a dark mode. But a *generated* document should not
+ship a 200 KB framework to use four of its classes. So: the default
+stylesheet is our own, token-driven, small; and `--css bulma` is an interop
+mode that emits Bulma class names on containers and maps our tokens onto
+`--bulma-*` properties, so generated pages drop into an existing Bulma site
+and inherit its accent. Same for a plain `--css none` (semantic markup only,
+bring your own sheet).
+
+**Math, honestly staged.** MathML Core is now native in Chrome, Safari, and
+Firefox, so it is the destination — no MathJax in the shipped output. Two
+caveats that shape the plan: Chromium ships *no* math font, so the stylesheet
+must supply one (`math { font-family: … }` with a self-hosted OpenType MATH
+face), and all three engines still have rendering gaps. Until the math
+milestone lands, HTML math is not faked: the source is emitted in a
+`<span class="math" data-tex="…">` and an *optional* client-side renderer can
+be attached as a boundary (`--math-boundary katex`). Native MathML replaces
+it, the markup stays the same, and the boundary becomes unnecessary.
+
+**Accessibility rides HTML.** Landmarks, heading order, contrast checked
+against the token set, focus-visible styling, `prefers-reduced-motion`
+honored. This is also why tagged PDF stays deferred: the accessible artifact
+exists on the HTML path.
+
+**A markdown alternate is an output, not a chore.** Since the markdown
+surface exists, the engine can emit an `llms.txt`-style plain-markdown
+rendition of the same IR alongside the HTML — one source, three artifacts.
+
+## Slides
+
+The engine already plans PDF slides (frames, overlays, speaker notes). Beamer
+overlay specs (`\item<1->`) and reveal.js fragments are the *same construct*,
+so once overlays exist in the IR, an HTML deck is nearly free. Both decks come
+from one source.
+
+**Revising the leanmd non-goal.** That plan said no HTML slides in v1, because
+overlay interactivity conflicts with zero-JS. That was the wrong call:
+navigation *is* interactive, and a CSS-only deck cannot do fragments, a
+speaker view, or a timer. Pretending otherwise ships a worse artifact. The
+resolution is a budget, not a ban.
+
+**A tiny vendored controller, not reveal.js.** Target ≈3 KB, hand-written, no
+dependencies, inlined in the file. It covers what is actually used from
+reveal.js: keyboard/touch/click navigation, fragment stepping, URL-hash
+deep-linking, a hairline progress indicator, and a speaker window (notes,
+next-slide preview, elapsed timer) over `BroadcastChannel`. Not covered, on
+purpose: 3D transitions, auto-animate, plugin ecosystem, markdown-in-HTML
+slides (we have a markdown surface).
+
+**Degradation is the feature.** With JavaScript disabled the deck renders as a
+linear scrollable document with every slide and every fragment visible — a
+readable handout. Decks get distributed and read without the speaker, so that
+path is not a fallback, it is a second deliverable. reveal.js does not give
+this by default.
+
+**reveal.js stays available as a boundary.** `--emit reveal` produces
+reveal-compatible markup for anyone who wants that ecosystem, exactly like the
+TikZ boundary: pinned tool, no engine dependency, absorbed or not on its own
+schedule.
+
+**Overlays dim rather than hide.** A hidden fragment reflows the slide as it
+appears; a dimmed one does not. Dimming also gives the PDF path a sane
+rendering (one page per step, pending items in gray) and matches the taste
+already visible in the reference deck, which sets covered content
+transparent. One overlay semantics, two backends.
+
+## Design system and themes
+
+A theme is **a token bundle plus a small layout policy**, not a pile of
+hard-coded rules — that is what `\tokens`/`\palette` are for, and it is what
+makes a theme portable across both backends. `\theme{name}` selects one;
+documents override any token.
+
+The Metropolis/moloch lineage is the starting point and needs updating: it is
+excellent 2015 flat design — sans throughout, flat blocks, minimal chrome, a
+progress bar — and it shows its age in three specific ways worth fixing.
+
+**1. Pure-flat has no depth.** Modern practice separates planes with a 2–4%
+surface tint rather than borders or shadows: quiet on screen, invisible in
+print, no skeuomorphism.
+
+**2. One-mode-only.** Dark is now a first-class variant, not an inversion
+hack: the same accent, re-checked contrast (AA body, AAA large), off-white
+`#FAFAF9`-class surfaces and near-black `#18181B`-class ink rather than pure
+white and pure black on either side.
+
+**3. Type is too small and too uniform.** A modular scale (≈1.25) with body
+around 22–24 pt at 16:9 reads from the back row; variable fonts give a display
+axis for titles; tabular figures for data. Sans display + sans text with a
+*matching math face* (a Fira Sans / Fira Math-class pairing) keeps math from
+looking pasted in — the legacy failure this engine already refuses.
+
+Chrome: hairline progress, section number and title in a small footer, no
+logo on every slide, full-bleed accent section dividers with a large numeral.
+Motion: none by default, and `prefers-reduced-motion` respected where any
+exists.
+
+## Theorem environments
+
+A first-class need, not a package: `theorem`, `lemma`, `proposition`,
+`corollary`, `definition`, `example`, `remark`, `proof`, with declared
+numbering (per-section by default), optional names, and cross-references
+resolved in memory.
+
+**Design.** Not a boxed colored panel — that is the dated look, and it breaks
+badly across pages. Instead: a 2 px accent rule on the leading edge, a
+small-caps or medium-weight label carrying the number, the statement body set
+apart by a slight surface tint or italic, generous space above and below.
+`proof` is unnumbered with an italic label and a flush-right tombstone (∎).
+
+**Markup.** A labelled container with a real heading and `aria-labelledby`.
+No invented ARIA roles: DPUB-ARIA has no `doc-theorem`, and fabricating one
+helps nobody.
+
+**The binding worth building.** A theorem environment may cite a
+machine-checked artifact:
+
+    \begin{theorem}[Optimality][lean = LeanTex.Core.Layout.kp_optimal]
+
+The build resolves that name against a manifest of the formal surface through
+the verified-inclusion boundary: if the theorem is absent, unproved, or
+carries a disallowed axiom, the build fails, and the rendered statement gets
+a "verified" marker linking to the source. This is the engine's own
+layout-assertion principle — check what actually shipped — extended from
+layout facts to content facts, and it is why the reproducible-research
+machinery below belongs in this project rather than bolted around it.
+
+## Verified inclusions
+
+Prose bound to machine-checked artifacts, with drift as build failure. A typed
+request in (an inventory query, a measured count, a generated table), a
+structured value out, a content-hash cache in front, a trust label, and an
+inclusion inventory in every build's porcelain output: what on the page came
+through a boundary, from which artifact, at which hash. A stale inclusion
+fails the build.
+
+The engine does **not** execute notebooks or arbitrary code in-process.
+Computation happens outside; results enter through the boundary. The core
+stays pure and builds stay deterministic — the same isolate-then-absorb
+contract as the graphics boundary, with data instead of boxes coming back.
+
 ## CLI and logging
 
 Zero-config by intent: good defaults, flags for the rest, nothing required.
@@ -211,6 +480,10 @@ Zero-config by intent: good defaults, flags for the rest, nothing required.
 - Color: auto on TTY, `NO_COLOR` respected, `--color always|never|auto`.
 - Exit codes are the API: 0 ok · 1 document errors · 2 assertions failed ·
   3 usage · 4 internal.
+- Surface additions for the second surface and backend, contract unchanged:
+  input may be `.md` or `.tex`; `--emit pdf,html,reveal,md`; `--css
+  bulma|none`; `--math-boundary <tool>`; `expand` (md → tex ejection). The
+  porcelain event schema gains inclusion-inventory records.
 
 ## Hyphenation
 
@@ -231,18 +504,6 @@ with `\input hyph-en-us` and compares word for word (552/552 exact as of
 2026-09-15). Comparing against plain `lualatex` produces ~3% spurious
 mismatches. `\showhyphens` lists every admissible break, not one rendering.
 
-## Architecture
-
-Pure pipeline, effects at the edge — IO only in the CLI driver; files and
-fonts surface as request values the driver fulfills:
-
-    bytes → UTF-8 → lexer → parser (AST) → elaborator (typed doc IR)
-          → layout (boxes/glue, Knuth–Plass, pages) → PDF writer
-
-- `leantex build doc.tex` — one shot, machine-readable diagnostics, exit code
-  reflects assertions.
-- `leantex worker` — JSONL protocol for live re-render (later milestone).
-
 ## Certification (theorems that pay)
 
 - Parser: total by construction (one pass, explicit frame stack, no recursion).
@@ -254,6 +515,19 @@ fonts surface as request values the driver fulfills:
 - Assertions: verdicts sound with respect to the shipped page tree.
 - PDF: cross-reference and object streams correct by construction; every
   glyph carries a Unicode mapping.
+
+Second surface and backend add:
+
+- Desugaring: total, deterministic, span-preserving.
+- Expand round-trip: `parse ∘ print ∘ desugar = desugar`.
+- Injection safety: no raw-HTML passthrough plus certified escaping means
+  document content can never become markup. Short because the dialect
+  deleted the carve-outs.
+- HTML well-formedness by construction (typed tree, no string concatenation).
+- Verified inclusions: freshness sound with respect to what shipped — a
+  reported hash matches the artifact the page was built from.
+- Enumerated divergence from CommonMark: harness-enforced by the classifier,
+  not a theorem, and labelled as such.
 
 Determinism is definitional: every stage is a pure function. Claims are
 marked open here until a machine-checked proof exists — an executable oracle
@@ -271,7 +545,17 @@ is evidence, not a theorem.
   `tests/corpus/`; the M3/M5 acceptance bars run locally against the private
   corpus and never enter CI.
 - The corpus sketches are also the language design artifacts: syntax
-  decisions land there first, then in the grammar.
+  decisions land there first, then in the grammar. A sketch whose commands do
+  not exist yet is marked PENDING in its header and left out of the golden
+  set until they do — `tests/corpus/theme-modern.tex` is the current example,
+  and it exists so the theme is reviewable as data rather than as adjectives.
+- HTML output is checked three ways, since "looks right" is not a test: the
+  emitted tree is compared against goldens, the file is validated for
+  well-formedness, and it is rendered headless and inspected. Differential
+  testing for the markdown surface runs against the cmark reference binary on
+  the spec suite; disagreements are classified, never ignored.
+- Bench, per backend: lualatex on the PDF path (recorded in `bench/README.md`),
+  typst as the speed bar, and for HTML the incumbent static-site generator.
 
 ## Milestones
 
@@ -297,15 +581,37 @@ is evidence, not a theorem.
   Acceptance (local, private corpus): the resume ported, one page asserted,
   side-by-side at least as good as the lualatex original, its external check
   scripts retired. CI equivalent: `tests/corpus/resume.tex`.
-- M4 math: unicode-math-style input via OpenType MATH metrics.
-- M5 figures + slides: asset embedding (PDF pages, PNG, JPEG), external
-  render blocks with content-hash cache (the TikZ escape hatch), frames,
-  overlays, speaker notes (second-screen build), verbatim code blocks,
-  per-glyph font fallback chains.
-  Acceptance (local, private corpus): the talk ported, figures included.
-  CI equivalent: `tests/corpus/talk.tex`.
-- M6 speed and polish: bench-driven optimization vs lualatex and flashtex;
-  worker mode; microtype-grade protrusion.
+- M4 HTML backend: typed tree, certified escaping, semantic HTML5,
+  tokens → CSS custom properties, self-contained single-file output, `--css
+  bulma` interop, markdown alternate emission. Math emitted as source with an
+  optional client-side boundary until M6.
+  Acceptance (local, private corpus): one personal-site page side by side
+  against the current generator. CI equivalent: a synthetic site page.
+- M4b theorem environments: the eight environments, per-section numbering,
+  in-memory cross-references, the modern treatment (accent rule, small-caps
+  label, tombstone) on both backends.
+- M5 slides: frames, overlays with dim-not-hide semantics, speaker notes.
+  HTML deck with the ≈3 KB controller and the no-JS linear handout;
+  `--emit reveal` boundary. PDF deck one page per overlay step.
+  Acceptance (local): the talk ported to both, side by side against the
+  current beamer build. CI equivalent: `tests/corpus/talk.tex`.
+- M5b themes: token bundles including the modernized Metropolis successor,
+  dark variant, contrast checks as layout assertions.
+- M6 math: unicode-math-style input; OpenType MATH metrics for PDF, MathML
+  Core plus a self-hosted math font for HTML.
+- M7 markdown surface: our strict CommonMark-shaped parser (total by
+  construction, span-preserving), desugaring, `expand` with the round-trip
+  theorem, the spec-suite classifier, frontmatter, directives.
+- M8 figures and boundaries: asset embedding (PDF pages, PNG, JPEG), the
+  external-render boundary with content-hash cache (TikZ), verbatim code
+  blocks, per-glyph font fallback chains.
+- M9 verified inclusions: the boundary, freshness assertions, inclusion
+  inventory in porcelain output, and the `lean = …` theorem binding.
+  Acceptance (CI): a synthetic publication twin builds with live counts, and
+  the negative control holds — tampering with the inventory without
+  rebuilding fails the build.
+- M10 speed and polish: bench-driven optimization vs lualatex, typst, and
+  flashtex; worker mode; microtype-grade protrusion.
 
 ## Non-goals
 
@@ -315,8 +621,20 @@ is evidence, not a theorem.
   typed graphics DSL is the horizon replacement.
 - Native bibliographies, indexing, glossaries: post-M6; a biber boundary can
   serve papers sooner if a document demands it.
-- Tagged PDF: revisit later; whatever lands must never silently alter layout
-  — that is the original wart.
+- Tagged PDF: deferred while the accessible artifact is the HTML one;
+  whatever lands must never silently alter layout — that is the original wart.
+- No in-engine execution of notebooks or arbitrary code: computation enters
+  through verified-inclusion boundaries only.
+- No liberal authoring mode. Forgiving rendering is a terminal renderer's
+  job; a compiler is loud.
+- No in-file mixing of surfaces (tex blocks inside md) in v1; the escape is
+  per-file ejection via `expand`. A parsed, typed `{tex}` block is a v2
+  candidate.
+- No framework dependency in generated output. Bulma interop is a mode, not
+  a runtime requirement.
+- Not a slide *framework*: the HTML controller stays a few kilobytes and
+  covers navigation, fragments, notes, and deep-linking. Anything past that
+  is what `--emit reveal` is for.
 
 ## Open questions
 
@@ -326,6 +644,16 @@ is evidence, not a theorem.
 - Worker protocol: mirror flashtex's JSONL for editor reuse, or design our own.
 - External tool pinning: how hermetic (a TeX Live snapshot? a container?) the
   escape-hatch renderers must be for cache keys to be trustworthy.
+- Directive fence syntax: ` ```{name} ` versus `:::{name}` (colon fences do
+  not collide with code fences; MyST ships both).
+- Whether the HTML backend emits one file per document always, or a
+  multi-page site mode with a shared stylesheet — the site use case wants
+  the latter, the paper use case the former.
+- Slide aspect ratio policy: 16:9 default, and whether a 4:3 or 16:10 variant
+  is worth a token bundle.
+- Theme naming, and how many bundles ship. Names are cheap and deferred; the
+  Metropolis successor is the one that must be good.
+- Repo naming once markdown and HTML are visible faces of the engine.
 
 ## Decisions
 
@@ -355,6 +683,44 @@ is evidence, not a theorem.
   reserved for `--porcelain` JSONL, an `-v/-vv/-vvv` ladder, `NO_COLOR`
   respected, exit codes as API, zero required configuration. LaTeX-style
   console verbosity is an anti-goal.
+- 2026-09-15: one engine, two surfaces, two backends. The tex-shaped surface
+  is the semantics of record; markdown is sugar defined by total AST-level
+  desugaring, never string translation. Rationale: kills the pandoc N×M drift
+  structurally and keeps one place where meaning lives. The leanmd plan merges
+  into this document; that repo reduces to a pointer.
+- 2026-09-15: HTML is a peer backend off the shared IR, not an export — typed
+  tree, certified escaping, semantic HTML5, zero JS for documents, tokens as
+  CSS custom properties, self-contained by default. It lands before math and
+  before the markdown surface because it needs no layout engine and unlocks
+  real output immediately.
+- 2026-09-15: framework interop, not dependency. Bulma 1.x is a sound choice
+  for a hand-built site and its 1.0 custom-property model maps cleanly onto
+  our tokens, so `--css bulma` emits its class names and binds
+  `--bulma-*`; the default output ships our own small stylesheet and no CDN.
+- 2026-09-15: HTML slides are in scope, revising leanmd's non-goal. Slide
+  navigation is inherently interactive, so the zero-JS rule becomes a budget:
+  a ≈3 KB vendored controller (nav, fragments, hash deep-links, progress,
+  speaker window) instead of reveal.js, with the no-JS rendering being a
+  readable linear handout rather than a broken page. reveal.js remains
+  available as `--emit reveal`, a boundary like TikZ.
+- 2026-09-15: overlays dim rather than hide, so the slide does not reflow as
+  fragments appear and the PDF path renders pending items in gray. One overlay
+  semantics for both backends.
+- 2026-09-15: a theme is a token bundle plus a small layout policy, so themes
+  are portable across backends and overridable per document. The default is a
+  modernized Metropolis successor: surface tints instead of flat blocks, a
+  first-class dark variant with re-checked contrast, a ≈1.25 modular scale
+  with 22–24 pt body at 16:9, and a math face matched to the text face.
+- 2026-09-15: theorem environments are first-class, styled with an accent rule
+  and small-caps label rather than a boxed panel, and may bind to a
+  machine-checked artifact (`lean = Name`) through the verified-inclusion
+  boundary — absent, unproved, or axiom-carrying fails the build. This extends
+  the layout-assertion principle from layout facts to content facts.
+- 2026-09-15: MathML Core is the HTML math destination (native in all three
+  engines now), with two consequences recorded: the stylesheet must supply a
+  math font because Chromium ships none, and until the math milestone lands
+  HTML math is emitted as source with an optional client-side boundary rather
+  than faked.
 - 2026-09-15: hyphenation ships the ushyphmax (`hyph-en-us.tex`) pattern set,
   not Knuth's frozen `hyphen.tex`, for the extra admissible breaks. Verified
   faithful against luatex loaded with the same patterns (552/552 words).
