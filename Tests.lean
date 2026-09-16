@@ -353,28 +353,57 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\page{ hmargin = 0.75in }\\begin{document}x\\end{document}")
   t "html measure follows a declared page" (narrowDs.isEmpty &&
     ((HtmlDoc.emit {} narrowDoc).1.splitOn "--measure: 50.4em;").length == 2)
-  -- A fill row is atomic groups around each \hfill: the row may only break
-  -- between groups, so a narrow viewport wraps the right group whole and
-  -- right-aligned — never a date orphaned mid-label.
+  -- Exactly two fill groups reserve the right group's max-content width,
+  -- then let the left group wrap in what remains. More groups retain the
+  -- general flex semantics instead of pretending to be a two-column row.
+  let hasClass (name : String) (attrs : Array (String × String)) : Bool :=
+    attrs.any fun (key, value) =>
+      key == "class" && (value.splitOn " ").contains name
   let (entryDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "left label \\hfill 2021\\end{document}")
+  let entryTree := HtmlDoc.blockNode {} entryDoc.body[0]!
   let entryPage := (HtmlDoc.emit {} entryDoc).1
-  t "html fill row is two atomic groups"
-    ((entryPage.splitOn ("<p class=\"entry\"><span class=\"group\">left label </span>" ++
-      "<span class=\"group\">2021</span></p>")).length == 2)
-  t "html later groups take the leftover"
-    ((entryPage.splitOn ".group + .group { margin-left: auto; }").length == 2)
+  t "html two-group fill row selects the pair contract"
+    (match entryTree with
+    | .elem "p" attrs kids =>
+      hasClass "entry-pair" attrs && kids.size == 2 && kids.all fun child =>
+        match child with
+        | .elem "span" childAttrs _ => hasClass "group" childAttrs
+        | _ => false
+    | _ => false)
+  t "html pair allocates the right max-content column first"
+    ((entryPage.splitOn
+      "grid-template-columns: minmax(0, 1fr) max-content;").length == 2)
+  t "html pair stacks to one column only at a narrow viewport"
+    ((entryPage.splitOn "@media (max-width: 30rem)").length == 2 &&
+     (entryPage.splitOn "grid-template-columns: minmax(0, 1fr);").length == 2)
   t "html a stacked last group right-aligns"
     ((entryPage.splitOn ".group:last-child { text-align: right; }").length == 2)
+  let (manyDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "left \\hfill middle \\hfill right\\end{document}")
+  t "html three-group fill row retains general semantics"
+    (match HtmlDoc.blockNode {} manyDoc.body[0]! with
+    | .elem "p" attrs kids =>
+      hasClass "entry" attrs && !hasClass "entry-pair" attrs && kids.size == 3
+    | _ => false)
   let (rowsDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "a \\hfill b\\\\c \\hfill d\\end{document}")
-  t "html broken fill rows keep their groups"
+  t "html broken two-group rows select the pair contract"
     (((HtmlDoc.emit {} rowsDoc).1.splitOn
-      "<span class=\"entry-row\"><span class=\"group\">").length == 3)
-  -- A link inherits the document colour, as it does in the PDF: the anchor
-  -- imposes nothing, and the affordance is the underline plus a visible
-  -- focus outline.
-  t "html link colour inherits" ((entryPage.splitOn "a { color: inherit;").length == 2)
+      "<span class=\"entry-row entry-pair\"><span class=\"group\">").length == 3)
+  -- The anchor itself carries inheritance, so a host framework cannot remap
+  -- links away from the document or enclosing IR colour.
+  let (linkDoc, linkDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\href{https://example.org}{invented link}\\end{document}")
+  let inheritedLink :=
+    "<a href=\"https://example.org\" style=\"color: inherit\">invented link</a>"
+  t "html link source is clean" linkDs.isEmpty
+  t "html links inherit in every CSS mode"
+    ([HtmlDoc.CssMode.own, .bulma, .none].all fun mode =>
+      (((HtmlDoc.emit { css := mode } linkDoc).1.splitOn inheritedLink).length == 2))
+  let bulmaPage := (HtmlDoc.emit { css := .bulma } linkDoc).1
+  t "bulma does not remap links to the accent"
+    ((bulmaPage.splitOn "--bulma-link:").length == 1)
   t "html link keeps a visible focus"
     ((entryPage.splitOn "a:focus-visible { outline:").length == 2)
   -- A heading rule sits on the text baseline, where the PDF draws it, not at
@@ -1279,7 +1308,8 @@ def main (args : List String) : IO UInt32 := do
   t "html colour references the token"
     ((page.splitOn "var(--primary, #7c3aed)").length == 2)
   t "html link has href"
-    ((page.splitOn "<a href=\"https://example.org\">link</a>").length == 2)
+    ((page.splitOn
+      "<a href=\"https://example.org\" style=\"color: inherit\">link</a>").length == 2)
   t "html single-para item is not wrapped"
     ((page.splitOn "<li>One</li>").length == 2)
   t "html inlines the stylesheet" ((page.splitOn "<style>").length == 2)
@@ -1297,19 +1327,19 @@ def main (args : List String) : IO UInt32 := do
   t "css none emits no style element" ((barePage.splitOn "<style>").length == 1)
 
   -- A stretched row broken by `\\` becomes a column of rows. A <br> cannot end
-  -- a flex line, so the break has to be structural or the second line lands
+  -- a layout row, so the break has to be structural or the second line lands
   -- beside the first -- where the PDF puts it below.
   let (rowDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "left \\hfill right\\\\second\\end{document}")
   let (rowPage, _) := HtmlDoc.emit {} rowDoc
   t "broken stretched row becomes rows"
-    ((rowPage.splitOn "class=\"entry-row\"").length == 3)
+    ((rowPage.splitOn "<span class=\"entry-row").length == 3)
   t "broken stretched row keeps no br" ((rowPage.splitOn "<br>").length == 1)
   -- An unbroken one stays a single row.
   let (oneRowDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "left \\hfill right\\end{document}")
   t "unbroken stretched row stays one row"
-    (((HtmlDoc.emit {} oneRowDoc).1.splitOn "class=\"entry\"").length == 2)
+    (((HtmlDoc.emit {} oneRowDoc).1.splitOn "class=\"entry entry-pair\"").length == 2)
 
   -- \hfill and control-symbol spaces
   -- \hfill takes no argument but still swallows the following space: a space

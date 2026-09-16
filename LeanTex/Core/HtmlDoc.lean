@@ -194,14 +194,14 @@ def baseCss (doc : Doc) : String :=
   ".centered { text-align: center; }\n" ++
   ".fill { flex: 1 1 auto; }\n" ++
   ".spaced { margin-top: var(--sep, 1.4rem); }\n" ++
-  -- One atomic flex item per `\hfill`-separated group: the row breaks between
-  -- groups, never inside one, so a date is never orphaned mid-label. The auto
-  -- margin is the stretch, and it still right-aligns the group when a narrow
-  -- viewport wraps it onto its own line.
+  -- General rows keep the prior flex behavior. An exact pair switches to a
+  -- grid that reserves the right max-content column before the left wraps.
   ".entry, .entry-row { display: flex; flex-wrap: wrap; column-gap: 0.4rem;\n" ++
   "  align-items: baseline; }\n" ++
   ".entry > .group + .group, .entry-row > .group + .group { margin-left: auto; }\n" ++
   ".entry > .group:last-child, .entry-row > .group:last-child { text-align: right; }\n" ++
+  ".entry-pair { display: grid;\n" ++
+  "  grid-template-columns: minmax(0, 1fr) max-content; }\n" ++
   ".entry-rows { display: flex; flex-direction: column; }\n" ++
   ".sans { font-family: var(--font-sans); }\n" ++
   ".ruled::after { content: \"\"; flex: 1; border-top: 1px solid var(--rule-color); }\n" ++
@@ -216,6 +216,9 @@ def baseCss (doc : Doc) : String :=
   "}\n" ++
   "@media (prefers-reduced-motion: reduce) {\n" ++
   "  * { animation: none !important; transition: none !important; }\n" ++
+  "}\n" ++
+  "@media (max-width: 30rem) {\n" ++
+  "  .entry-pair { grid-template-columns: minmax(0, 1fr); }\n" ++
   "}"
 
 private def styleClass : Style → String
@@ -260,7 +263,8 @@ def inlineNode (cfg : Config) (x : Inline) : Array Node :=
       | none => s!"color: {cssColor c}"
     #[Html.elem "span" (inlineNodes cfg body.toList) #[("style", value)]]
   | .link url body =>
-    #[Html.elem "a" (inlineNodes cfg body.toList) #[("href", url)]]
+    #[Html.elem "a" (inlineNodes cfg body.toList)
+      #[("href", url), ("style", "color: inherit")]]
   | .underline body =>
     -- skip-ink is the browser's native form of the PDF path's invariant: the
     -- rule breaks where a descender crosses it.
@@ -309,9 +313,8 @@ private def splitAtBreaks (xs : Array Inline) : Array (Array Inline) := Id.run d
     | other => cur := cur.push other
   return out.push cur
 
-/-- Split one row at each `\hfill`. Each side becomes one atomic flex item, so
-the row can only break between groups — a long left label may push the date to
-its own line, but never strand it mid-label. -/
+/-- Split one row at each `\hfill`. The exact two-group case gets a dedicated
+column contract; rows with more groups keep the general flex semantics. -/
 private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
   let mut out : Array (Array Inline) := #[]
   let mut cur : Array Inline := #[]
@@ -323,9 +326,12 @@ private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
     | other => cur := cur.push other
   return out.push cur
 
-private def fillRow (cfg : Config) (xs : Array Inline) : Array Node :=
-  (splitAtFills xs).map fun g =>
-    Html.elem "span" (inlines cfg g) #[("class", "group")]
+private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) : Node :=
+  let groups := splitAtFills xs
+  let rowClass := if groups.size == 2 then baseClass ++ " entry-pair" else baseClass
+  Html.elem tag (groups.map fun group =>
+    Html.elem "span" (inlines cfg group) #[("class", "group")])
+    #[("class", rowClass)]
 
 mutual
 
@@ -335,10 +341,9 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     if hasFill content then
       let rows := splitAtBreaks content
       if rows.size == 1 then
-        Html.elem "p" (fillRow cfg content) #[("class", "entry")]
+        fillRow cfg "p" "entry" content
       else
-        Html.elem "p" (rows.map fun r =>
-          Html.elem "span" (fillRow cfg r) #[("class", "entry-row")])
+        Html.elem "p" (rows.map fun row => fillRow cfg "span" "entry-row" row)
           #[("class", "entry-rows")]
     else
       Html.elem "p" (inlines cfg content)
@@ -413,7 +418,6 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
     -- theme and ours agree instead of fighting.
     head := head.push (Node.style (":root {\n" ++ tokenVars doc ++ "\n" ++
       "    --bulma-primary: var(--primary, var(--accent, #1d4ed8));\n" ++
-      "    --bulma-link: var(--accent, #1d4ed8);\n" ++
       "    --bulma-body-family: var(--font-body, inherit);\n" ++
       "}\n" ++ styled))
   | .none => unless styled.isEmpty do head := head.push (Node.style styled)
