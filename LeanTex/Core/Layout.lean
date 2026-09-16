@@ -13,7 +13,7 @@ structure Geom where
   pageH : Sp := pt 792
   hmargin : Sp := inch 1
   vmargin : Sp := inch 1
-  fontSize : Sp := pt 10
+  fontSize : Sp := Ir.baseFontSize
   /-- The gap between peer paragraphs. The default is the engine's own; a
   document declares its own through `\page{ parskip = ... }`. -/
   parskip : SymGlue := { width := Dim.Length.ofSp (pt 6) }

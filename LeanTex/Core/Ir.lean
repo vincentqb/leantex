@@ -135,6 +135,11 @@ inductive Style where
   | size (name : String)
   deriving Repr, BEq
 
+/-- The base font size every relative measure hangs off. It lives in the IR
+because both backends read it: layout sets body text at this size, and HTML
+derives its content measure from the page's text width in these units. -/
+def baseFontSize : Sp := Dim.pt 10
+
 /-- The LaTeX 10pt size scale, per mille of the surrounding size. It lives in
 the IR because both backends read it: they must agree on what `\Huge` means. -/
 def sizeScale : List (String × Nat) :=

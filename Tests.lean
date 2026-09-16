@@ -339,6 +339,52 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}y\\end{document}")
   t "running from clean" (fromDs.isEmpty && fromDoc.runningFrom == 2)
 
+/-- The HTML article layout is a faithful degradation of the PDF page: the
+measure, fill rows, link colour, and heading rules all follow the IR. Its own
+function, same elaboration-budget reason. -/
+def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- The measure is the page's text width over the base font size, in em so
+  -- it scales with the browser font. It used to be a fixed 68ch, an
+  -- unrelated design the PDF page never asked for.
+  t "html measure derives from the default page"
+    (HtmlDoc.measureEm {} == "46.8em")
+  let (narrowDoc, narrowDs) := elabStr ("\\documentclass{article}" ++
+    "\\page{ hmargin = 0.75in }\\begin{document}x\\end{document}")
+  t "html measure follows a declared page" (narrowDs.isEmpty &&
+    ((HtmlDoc.emit {} narrowDoc).1.splitOn "--measure: 50.4em;").length == 2)
+  -- A fill row is atomic groups around each \hfill: the row may only break
+  -- between groups, so a narrow viewport wraps the right group whole and
+  -- right-aligned — never a date orphaned mid-label.
+  let (entryDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "left label \\hfill 2021\\end{document}")
+  let entryPage := (HtmlDoc.emit {} entryDoc).1
+  t "html fill row is two atomic groups"
+    ((entryPage.splitOn ("<p class=\"entry\"><span class=\"group\">left label </span>" ++
+      "<span class=\"group\">2021</span></p>")).length == 2)
+  t "html later groups take the leftover"
+    ((entryPage.splitOn ".group + .group { margin-left: auto; }").length == 2)
+  t "html a stacked last group right-aligns"
+    ((entryPage.splitOn ".group:last-child { text-align: right; }").length == 2)
+  let (rowsDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "a \\hfill b\\\\c \\hfill d\\end{document}")
+  t "html broken fill rows keep their groups"
+    (((HtmlDoc.emit {} rowsDoc).1.splitOn
+      "<span class=\"entry-row\"><span class=\"group\">").length == 3)
+  -- A link inherits the document colour, as it does in the PDF: the anchor
+  -- imposes nothing, and the affordance is the underline plus a visible
+  -- focus outline.
+  t "html link colour inherits" ((entryPage.splitOn "a { color: inherit;").length == 2)
+  t "html link keeps a visible focus"
+    ((entryPage.splitOn "a:focus-visible { outline:").length == 2)
+  -- A heading rule sits on the text baseline, where the PDF draws it, not at
+  -- the heading's vertical middle.
+  let (ruledDoc, _) := elabStr ("\\documentclass{article}\\palette{ ink = #112233 }" ++
+    "\\style{section}{ rule = ink }\\begin{document}\\section{H}\\end{document}")
+  t "html heading rule aligns at the baseline"
+    (((HtmlDoc.emit {} ruledDoc).1.splitOn
+      "h2 { display: flex; align-items: baseline;").length == 2)
+
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -470,6 +516,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat thispagestyle empty starts running content on page 2" (koma.1.runningFrom == 2)
 
   styleChecks ref
+  htmlLayoutChecks ref
 
 /-- A synthetic face for resolution-order tests: pure data, no host fonts. -/
 def synthFace (family : String) (path : String := "") : FontDb.Face :=

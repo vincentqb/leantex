@@ -34,29 +34,38 @@ private def hex2 (v : UInt8) : String :=
 
 def cssColor (c : Color) : String := s!"#{hex2 c.r}{hex2 c.g}{hex2 c.b}"
 
+/-- Thousandths to a decimal, so `1.2em` round-trips as `1.2em`. It was once
+emitted as `120%`, which for padding is a fraction of the container and pushed
+every styled list off the page. -/
+private def decMilli (n : Int) : String :=
+  let sign := if n < 0 then "-" else ""
+  let a := n.natAbs
+  let frac := toString (a % 1000)
+  let frac := "".pushn '0' (3 - frac.length) ++ frac
+  let frac := String.ofList (frac.toList.reverse.dropWhile (· == '0')).reverse
+  s!"{sign}{a / 1000}" ++ (if frac.isEmpty then "" else "." ++ frac)
+
 /-- A length in CSS. `em`/`ex` survive as their CSS equivalents rather than
 being resolved, so the browser scales them with the reader's font size — the
 one place HTML should *not* copy what the PDF path does. -/
 def cssLength (l : Length) : String :=
-  -- Thousandths to a decimal, so `1.2em` round-trips as `1.2em`. It was once
-  -- emitted as `120%`, which for padding is a fraction of the container and
-  -- pushed every styled list off the page.
-  let dec (n : Int) : String :=
-    let sign := if n < 0 then "-" else ""
-    let a := n.natAbs
-    let frac := toString (a % 1000)
-    let frac := "".pushn '0' (3 - frac.length) ++ frac
-    let frac := String.ofList (frac.toList.reverse.dropWhile (· == '0')).reverse
-    s!"{sign}{a / 1000}" ++ (if frac.isEmpty then "" else "." ++ frac)
   let parts :=
     (if l.sp != 0 then [s!"{l.sp.toPtString}pt"] else []) ++
-    (if l.em != 0 then [s!"{dec l.em}em"] else []) ++
+    (if l.em != 0 then [s!"{decMilli l.em}em"] else []) ++
     -- CSS has an `ex` unit of its own; the browser measures the real font.
-    (if l.ex != 0 then [s!"{dec l.ex}ex"] else [])
+    (if l.ex != 0 then [s!"{decMilli l.ex}ex"] else [])
   match parts with
   | [] => "0"
   | [one] => one
   | many => "calc(" ++ String.intercalate " + " many ++ ")"
+
+/-- The content measure, as the page declared it: text width over the base
+font size, in `em` so it scales with the browser font. `article` is PDF-first
+and its HTML is a faithful degradation, so the measure comes from `\page`
+rather than a fixed reading-column width. -/
+def measureEm (page : PageSpec) : String :=
+  let textWidth := page.width - 2 * page.hmargin
+  s!"{decMilli (textWidth * 1000 / Ir.baseFontSize)}em"
 
 /-- `\style` declarations as CSS on the element selectors. A marker becomes
 `::marker` content only when it is plain text; styled markers fall back to the
@@ -79,7 +88,9 @@ def styleRules (doc : Doc) : String :=
         let color := match n with
           | some name => s!"var(--{name}, {cssColor c})"
           | none => cssColor c
-        s!"display: flex; align-items: center; gap: 0.5em; --rule-color: {color};").toList
+        -- Baseline, not center: the rule is drawn where the PDF draws it,
+        -- level with the heading's baseline, via the flex items' baselines.
+        s!"display: flex; align-items: baseline; gap: 0.5em; --rule-color: {color};").toList
     let liDecls :=
       (st.gap.map fun g => s!"{tag} > li \{ margin-top: {cssLength g.width}; }\n").toList ++
       (st.marker.bind plainText |>.map fun m =>
@@ -122,7 +133,7 @@ token set, not an inversion hack. -/
 def baseCss (doc : Doc) : String :=
   ":root {\n" ++
   "    color-scheme: light dark;\n" ++
-  "    --measure: 68ch;\n" ++
+  s!"    --measure: {measureEm doc.page};\n" ++
   "    --ink: #18181b;\n" ++
   "    --surface: #fafaf9;\n" ++
   "    --muted: #71717a;\n" ++
@@ -170,7 +181,9 @@ def baseCss (doc : Doc) : String :=
   "ul, ol { margin: 0 0 1rem; padding-left: 1.35rem; }\n" ++
   "li { margin: 0.25rem 0; }\n" ++
   "li::marker { color: var(--muted); }\n" ++
-  "a { color: var(--accent); text-decoration-thickness: 1px;\n" ++
+  -- A link inherits the document's colour, as it does in the PDF: the anchor
+  -- imposes nothing, the underline and focus outline carry the affordance.
+  "a { color: inherit; text-decoration-thickness: 1px;\n" ++
   "    text-decoration-skip-ink: auto; text-underline-offset: 0.15em; }\n" ++
   "u { text-decoration: underline; text-decoration-skip-ink: auto;\n" ++
   "    text-underline-offset: 0.15em; }\n" ++
@@ -181,8 +194,14 @@ def baseCss (doc : Doc) : String :=
   ".centered { text-align: center; }\n" ++
   ".fill { flex: 1 1 auto; }\n" ++
   ".spaced { margin-top: var(--sep, 1.4rem); }\n" ++
-  ".entry, .entry-row { display: flex; flex-wrap: wrap; gap: 0.4rem;\n" ++
+  -- One atomic flex item per `\hfill`-separated group: the row breaks between
+  -- groups, never inside one, so a date is never orphaned mid-label. The auto
+  -- margin is the stretch, and it still right-aligns the group when a narrow
+  -- viewport wraps it onto its own line.
+  ".entry, .entry-row { display: flex; flex-wrap: wrap; column-gap: 0.4rem;\n" ++
   "  align-items: baseline; }\n" ++
+  ".entry > .group + .group, .entry-row > .group + .group { margin-left: auto; }\n" ++
+  ".entry > .group:last-child, .entry-row > .group:last-child { text-align: right; }\n" ++
   ".entry-rows { display: flex; flex-direction: column; }\n" ++
   ".sans { font-family: var(--font-sans); }\n" ++
   ".ruled::after { content: \"\"; flex: 1; border-top: 1px solid var(--rule-color); }\n" ++
@@ -194,7 +213,6 @@ def baseCss (doc : Doc) : String :=
   ".math { font-family: \"Latin Modern Math\", \"STIX Two Math\", math; }\n" ++
   "@media print {\n" ++
   "  body { background: #fff; color: #000; padding: 0; }\n" ++
-  "  a { color: inherit; }\n" ++
   "}\n" ++
   "@media (prefers-reduced-motion: reduce) {\n" ++
   "  * { animation: none !important; transition: none !important; }\n" ++
@@ -291,6 +309,24 @@ private def splitAtBreaks (xs : Array Inline) : Array (Array Inline) := Id.run d
     | other => cur := cur.push other
   return out.push cur
 
+/-- Split one row at each `\hfill`. Each side becomes one atomic flex item, so
+the row can only break between groups — a long left label may push the date to
+its own line, but never strand it mid-label. -/
+private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
+  let mut out : Array (Array Inline) := #[]
+  let mut cur : Array Inline := #[]
+  for x in xs do
+    match x with
+    | .fill =>
+      out := out.push cur
+      cur := #[]
+    | other => cur := cur.push other
+  return out.push cur
+
+private def fillRow (cfg : Config) (xs : Array Inline) : Array Node :=
+  (splitAtFills xs).map fun g =>
+    Html.elem "span" (inlines cfg g) #[("class", "group")]
+
 mutual
 
 def blockNode (cfg : Config) (b : Block) : Node :=
@@ -299,10 +335,10 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     if hasFill content then
       let rows := splitAtBreaks content
       if rows.size == 1 then
-        Html.elem "p" (inlines cfg content) #[("class", "entry")]
+        Html.elem "p" (fillRow cfg content) #[("class", "entry")]
       else
         Html.elem "p" (rows.map fun r =>
-          Html.elem "span" (inlines cfg r) #[("class", "entry-row")])
+          Html.elem "span" (fillRow cfg r) #[("class", "entry-row")])
           #[("class", "entry-rows")]
     else
       Html.elem "p" (inlines cfg content)
