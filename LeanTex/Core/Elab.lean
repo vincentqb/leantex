@@ -272,6 +272,37 @@ private def warnUnclosed (ctx : Ctx) (after : String) (bpos : Pos) : EM Unit :=
   diag ctx "W0310" s!"'[' after {after} never closes; it is not an argument" (some bpos)
     (help := "add the matching ']'") .warning
 
+/-- The index of a command's `{...}` group past its optional argument, best
+effort. A well-formed `[...]` is skipped whole. An unclosed one warns and its
+run — the rest of the command's own line — is consumed, so the group the
+author wrote is found whether it shares the line or opens the next; the hunt
+never crosses into another construct or a later line's content. Returns the
+candidate index and whether it recovered from an unclosed bracket: a
+recovered command with no group left is skipped with a warning by its caller,
+never a fatal error. -/
+private def skipOptArg (ctx : Ctx) (name : String) (raws : Array Raw)
+    (start : Nat) (pos : Pos) : EM (Nat × Bool) := do
+  let mut j := skipSpaces raws start
+  match scanBracketArg raws start pos with
+  | .took k => return (skipSpaces raws k, false)
+  | .content => return (j, false)
+  | .unclosed bpos =>
+    warnUnclosed ctx s!"'\\{name}'" bpos
+    for _ in [j:raws.size] do
+      match raws[j]? with
+      | some .space => j := j + 1
+      | some (.word _ p) | some (.sym _ p) =>
+        if p.line == pos.line then j := j + 1 else break
+      | _ => break
+    return (j, true)
+
+/-- A command whose group never materialised after an unclosed `[` is
+dropped whole: W0310 already named the typo, and one skipped declaration
+must not fail the build or bleed into the next construct as stray content. -/
+private def warnSkippedDecl (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
+  diag ctx "W0312" s!"no \{...} group after '\\{name}'; it is skipped" (some pos)
+    (help := s!"write \\{name}\{...}") .warning
+
 /-- The index of the first item on a line after `anchor`'s. A skipped
 preamble command's malformed arguments end with its line: the next line is
 the author's next declaration, which must never be consumed with them. -/
@@ -812,22 +843,10 @@ Returns the index just past the consumed arguments. -/
 private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
     (start : Nat) (pos : Pos) : EM Nat := do
   -- `\title[short]{long}`: the short form feeds furniture we do not render.
-  let mut j := skipSpaces raws start
-  match scanBracketArg raws start pos with
-  | .took k => j := skipSpaces raws k
-  | .unclosed bpos =>
-    -- The group the author wrote is still there past the malformed bracket:
-    -- best effort takes it as the argument rather than failing the build.
-    warnUnclosed ctx s!"'\\{name}'" bpos
-    for _ in [j:raws.size] do
-      match raws[j]? with
-      | some .space => j := j + 1
-      | some (.group _ gpos) =>
-        if gpos.line == pos.line then break else j := raws.size
-      | some (.word _ p) | some (.ctrl _ p) | some (.sym _ p) =>
-        if p.line == pos.line then j := j + 1 else j := raws.size
-      | _ => break
-  | .content => pure ()
+  -- Past an unclosed `[`, the group the author wrote is still there — on
+  -- this line or the next — and best effort takes it as the argument
+  -- rather than failing the build.
+  let (j, recovered) ← skipOptArg ctx name raws start pos
   match raws[j]? with
   | some (.group body _) =>
     let content ← elabInlines ctx body
@@ -839,6 +858,9 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
       | _ => { st with date := some content }
     return j + 1
   | _ =>
+    if recovered then
+      warnSkippedDecl ctx name pos
+      return j
     diag ctx "E0304" s!"'\\{name}' needs a \{...} group" pos
     return start
 

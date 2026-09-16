@@ -1579,6 +1579,30 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
        (s.splitOn "Head").length == 2 && !s.toList.contains '2' && !s.toList.contains 'X'
      | _ => false)
 
+/-- The optional-argument recovery, fed the malformed across line breaks:
+an unclosed `[` never turns into a fatal error however the lines fall — the
+group the author wrote is found on its own line or the next, a command with
+no group left is skipped whole (W0312), and a construct sharing the typo's
+line is never consumed with it. -/
+def optArgChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- \title: the group on the NEXT line is the argument too, never a fatal
+  -- E0304 + E0313
+  let titleNl := "\\title[short never closes\n{The Real Title}\n\\begin{document}x\\end{document}"
+  let (tnDoc, tnDs) := elabStr titleNl
+  t "title survives an unclosed bracket with its group on the next line"
+    (tnDoc.info.title == some "The Real Title")
+  t "an unclosed title bracket across lines is a warning, not E0313"
+    (!tnDs.any (·.severity == .error) && tnDs.any (·.code == "W0310"))
+  -- ...and with no group anywhere, the declaration is skipped whole (W0312)
+  -- and the next declaration survives
+  let titleSkip := "\\title[never closes\n\\author{A. Placeholder}\n\\begin{document}x\\end{document}"
+  let (tsDoc, tsDs) := elabStr titleSkip
+  t "a title with no group after its unclosed bracket is skipped, never fatal"
+    (!tsDs.any (·.severity == .error) && tsDs.any (·.code == "W0312"))
+  t "the declaration after a skipped title survives"
+    (tsDoc.info.author == some "A. Placeholder")
+
 /-- The shared bracket scanner, fed the malformed and the merely leading:
 an unclosed `[` is content, never an argument that consumes to the end of
 its scan, and a bracket on a later line than its command is content too.
@@ -1645,6 +1669,7 @@ def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match (elabStr "\\figure\n[1] a caption line").1.body with
      | #[.para xs] => Ir.plainText xs == "[1] a caption line"
      | _ => false)
+  optArgChecks ref
 
 def utf8Checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
