@@ -29,6 +29,10 @@ def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat) : Stri
     let noun := if errors == 1 then "error" else "errors"
     s!"{sgr color "1;31" "✖"} {file} — {errors} {noun} ({ms} ms)"
 
+def humanDone (color : Bool) (file output : String) (pages ms : Nat) : String :=
+  let noun := if pages == 1 then "page" else "pages"
+  s!"{sgr color "1;32" "✔"} {file} → {output} — {pages} {noun} ({ms} ms)"
+
 private def jsonEscape (s : String) : String :=
   s.foldl (init := "") fun acc c =>
     match c with
@@ -68,6 +72,11 @@ def porcelainPhase (name detail : String) (ms : Nat) : String :=
 def porcelainSummary (file : String) (ok : Bool) (errors ms : Nat) : String :=
   obj [("event", jstr "summary"), ("file", jstr file),
     ("ok", if ok then "true" else "false"), ("errors", toString errors),
+    ("ms", toString ms)]
+
+def porcelainDone (file output : String) (pages ms : Nat) : String :=
+  obj [("event", jstr "summary"), ("file", jstr file), ("ok", "true"),
+    ("output", jstr output), ("pages", toString pages), ("errors", "0"),
     ("ms", toString ms)]
 
 end LeanTex.Cli.Render

@@ -4,6 +4,10 @@ import LeanTex.Core.Lex
 import LeanTex.Core.Parse
 import LeanTex.Core.Ir
 import LeanTex.Core.Elab
+import LeanTex.Core.Dim
+import LeanTex.Core.Font
+import LeanTex.Core.Layout
+import LeanTex.Core.Pdf
 import LeanTex.Cli.Args
 import LeanTex.Cli.Render
 

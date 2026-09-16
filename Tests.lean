@@ -30,6 +30,137 @@ def errCodes (s : String) : List String :=
 
 def goldenNames : List String := ["paragraphs", "resume", "talk"]
 
+-- KP test helpers: word/glue/forced-break item builders and a brute-force
+-- optimum to cross-check the DP against.
+
+inductive Piece where
+  | W (w : Int)
+  | G
+  | B
+
+open Piece in
+def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
+  let mut items : Array Layout.Item := #[]
+  for p in ps do
+    match p with
+    | .W w => items := items.push (.box (Dim.pt w) #[])
+    | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
+    | .B =>
+      items := items.push (.glue { fil := true })
+      items := items.push (.pen 0 Layout.forcedCost false)
+  items := items.push (.glue { fil := true })
+  items := items.push (.pen 0 Layout.forcedCost false)
+  return items
+
+def W (w : Int) : Piece := .W w
+def G : Piece := .G
+def BRK : List Piece := [.B]
+
+/-- Total demerits of a specific break sequence (must end at the final
+forced penalty), or none when it spans a forced break. -/
+def seqCost (items : Array Layout.Item) (target : Dim.Sp) (breaks : List Nat) :
+    Option Int := Id.run do
+  let mut prev := 0
+  let mut first := true
+  let mut total : Int := 0
+  for b in breaks do
+    let a := if first then Layout.lineStart items 0 else Layout.lineStart items prev
+    for k in [a:b] do
+      if Layout.isForced items k then
+        return none
+    let m := Layout.measure items a b
+    total := total + Layout.lineDemerits items m target b
+    prev := b
+    first := false
+  if breaks.getLast? != some (items.size - 1) then
+    return none
+  return some total
+
+/-- Minimum cost over every legal break sequence (exponential; tiny inputs). -/
+def bruteBest (items : Array Layout.Item) (target : Dim.Sp) : Option Int := Id.run do
+  let n := items.size
+  let legal := (List.range n).filter (Layout.canBreakAt items)
+  let mut best : Option Int := none
+  -- enumerate subsets of legal breakpoints that end at the final penalty
+  let optional' := legal.filter (· != n - 1)
+  let m := optional'.length
+  for mask in [0:2 ^ m] do
+    let mut chosen : List Nat := []
+    for (b, idx) in optional'.zipIdx do
+      if mask / 2 ^ idx % 2 == 1 then
+        chosen := chosen ++ [b]
+    match seqCost items target (chosen ++ [n - 1]) with
+    | some c =>
+      match best with
+      | some b0 => if c < b0 then best := some c
+      | none => best := some c
+    | none => pure ()
+  return best
+
+def findFont : IO (Option ByteArray) := do
+  for p in ["/usr/share/fonts/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"] do
+    if ← System.FilePath.pathExists p then
+      return some (← IO.FS.readBinFile p)
+  return none
+
+/-- Re-verify a produced PDF's cross-reference stream: every type-1 entry
+must point at `N 0 obj`. Returns the number of verified offsets. -/
+def checkXref (pdf : ByteArray) : Except String Nat := do
+  let ascii (a b : Nat) : String :=
+    String.ofList (((pdf.extract a (min b pdf.size)).toList).map fun v =>
+      Char.ofNat (min v.toNat 127))
+  let findLast (pat : String) : Option Nat := Id.run do
+    let p := pat.toUTF8
+    if pdf.size < p.size then
+      return none
+    for back in [0:pdf.size - p.size + 1] do
+      let i := pdf.size - p.size - back
+      let mut ok := true
+      for k in [0:p.size] do
+        if pdf[i + k]! != p[k]! then
+          ok := false
+          break
+      if ok then
+        return some i
+    return none
+  let find (start : Nat) (pat : String) : Option Nat := Id.run do
+    let p := pat.toUTF8
+    for i in [start:pdf.size - p.size + 1] do
+      let mut ok := true
+      for k in [0:p.size] do
+        if pdf[i + k]! != p[k]! then
+          ok := false
+          break
+      if ok then
+        return some i
+    return none
+  let some sx := findLast "startxref" | throw "no startxref"
+  let numStr := (ascii (sx + 10) (sx + 30)).splitOn "\n" |>.head!
+  let some xrefOff := numStr.toNat? | throw s!"bad startxref '{numStr}'"
+  let head := ascii xrefOff (xrefOff + 300)
+  unless (head.splitOn " 0 obj").length ≥ 2 do
+    throw "startxref does not point at an object"
+  unless (head.splitOn "/Type /XRef").length ≥ 2 do
+    throw "xref object is not an XRef stream"
+  let some sizePart := (head.splitOn "/Size ").getLast? | throw "no /Size"
+  let some size := (sizePart.splitOn " ").head?.bind (·.toNat?) | throw "bad /Size"
+  let some streamAbs := find xrefOff "stream\n" | throw "no stream data"
+  let dataOff := streamAbs + "stream\n".length
+  let mut verified := 0
+  for id in [1:size] do
+    let row := dataOff + 7 * id
+    let kind := (pdf[row]!).toNat
+    if kind == 1 then
+      let off := ((pdf[row+1]!).toNat * 256 + (pdf[row+2]!).toNat) * 65536 +
+        (pdf[row+3]!).toNat * 256 + (pdf[row+4]!).toNat
+      let expect := s!"{id} 0 obj"
+      let got := ascii off (off + expect.utf8ByteSize)
+      unless got == expect do
+        throw s!"object {id}: offset {off} holds {got.quote}, expected {expect.quote}"
+      verified := verified + 1
+  return verified
+
 def firstDiff (expected actual : String) : String := Id.run do
   let e := expected.splitOn "\n"
   let a := actual.splitOn "\n"
@@ -215,6 +346,50 @@ def main (args : List String) : IO UInt32 := do
 
   -- goldens
   runGoldens update (failures ref)
+
+  -- dim
+  t "sp pt string" ((Dim.pt 10).toPtString == "10" && (Dim.pt 3 / 2).toPtString == "1.5")
+
+  -- knuth–plass: DP result equals brute-force minimum over all break sequences
+  let cases : List (String × Array Layout.Item × Dim.Sp) := [
+    ("three words", mkItems [W 100, G, W 100, G, W 100], Dim.pt 250),
+    ("four words", mkItems [W 50, G, W 60, G, W 70, G, W 80], Dim.pt 150),
+    ("forced mid", mkItems ([W 100, G, W 100] ++ BRK ++ [W 100]), Dim.pt 250),
+    ("overfull word", mkItems [W 300], Dim.pt 100),
+    ("tight fit", mkItems [W 80, G, W 80, G, W 80, G, W 80, G, W 80], Dim.pt 170)]
+  for (name, items, target) in cases do
+    let kpBreaks := (Layout.kp items target).toList
+    let kpCost := seqCost items target kpBreaks
+    let brute := bruteBest items target
+    t s!"kp optimal ({name})" (kpCost == brute && !kpBreaks.isEmpty)
+
+  -- font parsing on the system font
+  match ← findFont with
+  | none =>
+    failures ref "font: no DejaVu Sans on this host (needed for M2 tests)"
+  | some fontData =>
+    match Font.parse fontData with
+    | .error e => failures ref s!"font parse: {e}"
+    | .ok font =>
+      t "font name" (font.psName == "DejaVuSans")
+      t "font upem" (font.unitsPerEm == 2048)
+      t "font gid A" (font.gid 'A' |>.isSome)
+      t "font advance A" (font.advance 'A' > 0)
+      t "font greek" (font.gid 'α' |>.isSome)
+      t "font missing emoji" (font.gid '🎉' |>.isNone)
+
+      -- pdf: build a tiny document and re-verify the xref stream offsets
+      let (doc, eds) := Elab.run "t" "hello world, a small pdf self check"
+      t "pdf source clean" eds.isEmpty
+      let geom : Layout.Geom := {}
+      let out := Layout.run geom font doc
+      t "pdf one page" (out.pages.size == 1)
+      let pdf := Pdf.write geom font out.pages
+      t "pdf header" (String.fromUTF8! (pdf.extract 0 8) == "%PDF-2.0")
+      t "pdf eof" (String.fromUTF8! (pdf.extract (pdf.size - 6) pdf.size) == "%%EOF\n")
+      match checkXref pdf with
+      | .ok n => t s!"pdf xref valid" (n > 0)
+      | .error e => failures ref s!"pdf xref: {e}"
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then

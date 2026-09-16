@@ -9,18 +9,18 @@ flashtex sets the speed bar.
 
 ## Status
 
-2026-09-15 — M1 landed: the front end runs end to end. Lexer (fixed specials,
-verbatim-blind, TeX-style space swallow and comment joining), parser (groups,
-inline/display math, environments, recovery — strays reported, unclosed
-delimiters healed), elaborator (typed `\define` with optional params and
-`\ifgiven`, snapshot scoping so a body sees only earlier definitions, styles,
-sections, lists, center, documentclass, reserved-command diagnostics with
-milestone pointers), document IR with a stable dump format, `leantex dump`,
-golden tests over the corpus, 36 + 33 tests green. paragraphs.tex elaborates
-with zero diagnostics; resume/talk goldens record the honest M1 boundary.
-Debt, deliberate: elaborator/parser use `partial` recursion — nontermination
-is impossible by design (snapshot scoping), but proving it means de-looping
-those functions; that is the next proofs unit. Next: M2 paragraphs → PDF.
+2026-09-15 — M2a landed: leantex produces PDFs. Knuth–Plass line breaking
+(DP verified optimal against brute-force enumeration on small cases), sp
+fixed-point dimensions with first proofs, sfnt font parsing (TrueType + CFF,
+cmap 4/12, metrics), justified paragraph typesetting with fil glue and forced
+breaks, page assembly, and a PDF 2.0 writer — cross-reference stream, object
+stream, Identity-H CID font fully embedded, ToUnicode CMap — self-verified in
+tests by re-parsing the xref of produced output, and extraction-checked with
+pdftotext. `paragraphs.tex` → one justified page in ~6 ms. 105 tests green.
+Remaining for M2 (next unit, M2b): Liang hyphenation, the bench harness vs
+lualatex, and section/list visual styling. Deliberate debt unchanged from M1
+(partial recursion; de-partialing + KP optimality proof queued as the proofs
+unit).
 
 ## Why not TeX-compatible
 

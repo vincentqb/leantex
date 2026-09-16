@@ -38,6 +38,56 @@ def Ui.summary (ui : Ui) (file : String) (errors ms : Nat) : IO Unit := do
   else if !ui.cfg.quiet then
     ui.errStream.putStrLn (Render.humanSummary ui.color file errors ms)
 
+def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) : IO Unit := do
+  if ui.cfg.porcelain then
+    ui.outStream.putStrLn (Render.porcelainDone file output pages ms)
+  else if !ui.cfg.quiet then
+    ui.errStream.putStrLn (Render.humanDone ui.color file output pages ms)
+
+def fontCandidates : List String :=
+  ["/usr/share/fonts/dejavu/DejaVuSans.ttf",
+   "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+   "/usr/share/fonts/TTF/DejaVuSans.ttf"]
+
+/-- Resolve the default font: `LEANTEX_FONT` override, then known paths.
+Font *selection* in the document arrives with M3 `\fonts`. -/
+def loadFont : IO (Except Diag (String × Font.Font)) := do
+  let tryPath (path : String) : IO (Option (String × Font.Font)) := do
+    if ← System.FilePath.pathExists path then
+      let data ← IO.FS.readBinFile path
+      match Font.parse data with
+      | .ok f => return some (path, f)
+      | .error _ => return none
+    else
+      return none
+  match ← IO.getEnv "LEANTEX_FONT" with
+  | some path =>
+    if ← System.FilePath.pathExists path then
+      let data ← IO.FS.readBinFile path
+      match Font.parse data with
+      | .ok f => return .ok (path, f)
+      | .error e => return .error {
+          severity := .error
+          code := "E0402"
+          message := s!"cannot use LEANTEX_FONT '{path}': {e}"
+        }
+    else
+      return .error {
+        severity := .error
+        code := "E0402"
+        message := s!"LEANTEX_FONT '{path}' does not exist"
+      }
+  | none =>
+    for p in fontCandidates do
+      if let some r ← tryPath p then
+        return .ok r
+    return .error {
+      severity := .error
+      code := "E0401"
+      message := "no usable font found"
+      help := some s!"searched: {String.intercalate ", " fontCandidates}; set LEANTEX_FONT"
+    }
+
 def since (t0 : Nat) : IO Nat := do
   return (← IO.monoMsNow) - t0
 
@@ -80,23 +130,34 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
   | none =>
     ui.summary file 1 (← since t0)
     return 1
-  | some (_, diags) =>
+  | some (doc, diags) =>
     for d in diags do
       ui.diag d
     let errors := countErrors diags
     if errors > 0 then
       ui.summary file errors (← since t0)
       return 1
-    let d : Diag := {
-      severity := .error
-      code := "E0000"
-      message := "the pipeline ends here: layout is not implemented yet (M2)"
-      span := some ⟨file, {}⟩
-      help := "see PLAN.md for the milestone ladder"
-    }
-    ui.diag d
-    ui.summary file 1 (← since t0)
-    return 4
+    let t ← IO.monoMsNow
+    match ← loadFont with
+    | .error d =>
+      ui.diag d
+      ui.summary file 1 (← since t0)
+      return 1
+    | .ok (path, font) =>
+      ui.phase "font" s!"{font.psName} ({path})" (← since t)
+      let t ← IO.monoMsNow
+      let geom : Layout.Geom := {}
+      let out := Layout.run geom font doc
+      for d in out.diags do
+        ui.diag d
+      ui.phase "layout" s!"{out.pages.size} pages" (← since t)
+      let t ← IO.monoMsNow
+      let pdf := Pdf.write geom font out.pages
+      let outPath := (System.FilePath.mk file).withExtension "pdf" |>.toString
+      IO.FS.writeBinFile outPath pdf
+      ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
+      ui.done file outPath out.pages.size (← since t0)
+      return 0
 
 def dump (ui : Ui) (file : String) : IO UInt32 := do
   match ← frontend ui file with
