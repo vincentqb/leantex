@@ -29,8 +29,11 @@ in this repo; refer to the private reference corpus abstractly.
   pre-commit hook (build with warnings-as-failures + convention checks).
 - `lake exe Tests --update` — regenerate goldens after an intended IR change.
 - Deeper oracles, not in `lake test` (too slow / need TeX): run
-  `scripts/kp-fuzz.lean` when touching line breaking, and
-  `scripts/hyphen-diff.sh` when touching hyphenation.
+  `scripts/kp-fuzz.lean` when touching line breaking,
+  `scripts/hyphen-diff.sh` when touching hyphenation, and
+  `scripts/fontcache-check.lean` when touching the font scan or its cache
+  (it replaces a font under the same name and checks the answer follows
+  the file).
 - Performance claims come only from `scripts/bench.sh` (vs lualatex on the
   corpus), never from reasoning about the code.
 

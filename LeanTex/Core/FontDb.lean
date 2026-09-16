@@ -1,3 +1,4 @@
+import Std.Data.HashMap
 import LeanTex.Core.Font
 
 namespace LeanTex.Core.FontDb
@@ -39,8 +40,10 @@ def extraDirs : IO (List String) := do
   return userDirs ++ fromEnv
 
 private def isFontFile (p : String) : Bool :=
-  let lower := p.toLower
-  lower.endsWith ".ttf" || lower.endsWith ".otf"
+  -- Compare the extension only: lowercasing the whole path allocated a copy
+  -- of every one of 3000 names and was most of the listing's time.
+  let ext := (p.splitOn ".").getLast? |>.map String.toLower
+  ext == some "ttf" || ext == some "otf"
 
 /-- Font files under `dir`, `depth` levels deep. Structural on `depth`: a
 directory tree is not an inductive type the checker can see, so the bound is
@@ -48,15 +51,23 @@ the recursion measure, and four is deeper than any font tree goes. -/
 def listFonts (dir : System.FilePath) : Nat → IO (Array String)
   | 0 => pure #[]
   | depth + 1 => do
-    let mut out : Array String := #[]
-    let entries ← try dir.readDir catch _ => pure #[]
-    for e in entries do
-      let p := e.path
-      if ← p.isDir then
-        out := out ++ (← listFonts p depth)
-      else if isFontFile p.toString then
-        out := out.push p.toString
-    return out
+    -- Threads the accumulator: `out ++ (← recurse)` copied it at every
+    -- subdirectory, and a font tree has hundreds.
+    go dir depth #[]
+where
+  go (dir : System.FilePath) : Nat → Array String → IO (Array String)
+    | 0, acc => pure acc
+    | depth + 1, acc => do
+      let entries ← try dir.readDir catch _ => pure #[]
+      let mut acc := acc
+      for e in entries do
+        let p := e.path
+        -- A name with a font extension is a file; nothing else is worth a stat.
+        if isFontFile p.toString then
+          acc := acc.push p.toString
+        else if ← p.isDir then
+          acc ← go p depth acc
+      return acc
 
 /-- Read just enough of a font file to classify it: the table directory, then
 the `name`, `OS/2`, `head`, and `post` tables. Full files are large (a
@@ -122,6 +133,53 @@ def probe (path : String) : IO (Option Face) := do
   catch _ =>
     return none
 
+/-! ## The probe cache
+
+Probing a face reads and classifies its tables; on a host with a TeX Live tree
+that is ~2900 files and ~400 ms, the whole cost of a small build. Listing them
+is 25 ms. So the classification of each file is cached on disk, keyed by the
+file's path, size, and mtime: a face that changed on disk misses and is
+probed again, one that vanished is never read, and a corrupt or missing cache
+is a full rescan. Nothing about the cache can make the answer differ from a
+scan, which is the property that lets it exist. -/
+
+/-- `$XDG_CACHE_HOME/leantex`, or `~/.cache/leantex`; none without a home. -/
+def cacheDir : IO (Option System.FilePath) := do
+  let base ← match ← IO.getEnv "XDG_CACHE_HOME" with
+    | some d => pure (some (System.FilePath.mk d))
+    | none => match ← IO.getEnv "HOME" with
+      | some h => pure (some (System.FilePath.mk h / ".cache"))
+      | none => pure none
+  return base.map (· / "leantex")
+
+private def cachePath : IO (Option System.FilePath) := do
+  return (← cacheDir).map (· / "fontdb.tsv")
+
+/-- One line per file, tab-separated: the key fields, then the classification
+-- or nothing after the key for a file `probe` rejected, so a rejected font is
+not read again on every run. Family names may hold spaces and never tabs,
+which is why the format is TSV and not something that needs an escaper. -/
+private def faceLine (path size mtime : String) (f : Option Face) : String :=
+  match f with
+  | some f => String.intercalate "\t" [path, size, mtime, f.family, f.subfamily,
+      toString f.bold, toString f.italic, toString f.fixedPitch, toString f.weight]
+  | none => String.intercalate "\t" [path, size, mtime]
+
+private def parseLine (line : String) : Option (String × Option Face) :=
+  match line.splitOn "\t" with
+  | [path, size, mtime, family, sub, bold, italic, fixed, weight] =>
+    some (path ++ "\t" ++ size ++ "\t" ++ mtime, some
+      { path, family, subfamily := sub, bold := bold == "true", italic := italic == "true"
+        fixedPitch := fixed == "true", weight := weight.toNat?.getD 400 })
+  | [path, size, mtime] => some (path ++ "\t" ++ size ++ "\t" ++ mtime, none)
+  | _ => none
+
+private def fileKey (path : String) : IO (Option (String × String)) := do
+  try
+    let md ← (System.FilePath.mk path).metadata
+    return some (toString md.byteSize, s!"{md.modified.sec}.{md.modified.nsec}")
+  catch _ => return none
+
 /-- All installed faces, classified. Cached by the caller. `dirs` adds to the
 built-in locations rather than replacing them. Probing opens and reads every
 installed face, so chunks of files are probed in parallel; joining in chunk
@@ -132,23 +190,58 @@ def scan (dirs : List String := []) : IO (Array Face) := do
   for d in searchDirs ++ (← extraDirs) ++ dirs do
     let p := System.FilePath.mk d
     if ← p.pathExists then
-      files := files ++ (← listFonts p 4)
+      files := files ++ (← listFonts p 6)
+  -- What the cache remembers, keyed by path + size + mtime.
+  let cacheFile ← cachePath
+  let mut known : Std.HashMap String (Option Face) := {}
+  if let some cf := cacheFile then
+    if ← cf.pathExists then
+      let text ← try IO.FS.readFile cf catch _ => pure ""
+      for line in text.splitOn "\n" do
+        if let some (key, face) := parseLine line then
+          known := known.insert key face
+  -- Hits come from the cache; misses are probed in parallel chunks, in
+  -- listing order either way so resolution's tie-breaking is unchanged.
+  let mut keyed : Array (String × Option (String × String)) := #[]
+  for f in files do
+    keyed := keyed.push (f, ← fileKey f)
+  let mut toProbe : Array (Nat × String) := #[]
+  let mut result : Array (Option Face) := Array.replicate files.size none
+  for h : i in [0:keyed.size] do
+    let (f, k?) := keyed[i]
+    match k? with
+    | some (size, mtime) =>
+      match known[f ++ "\t" ++ size ++ "\t" ++ mtime]? with
+      | some face? => result := result.set! i face?
+      | none => toProbe := toProbe.push (i, f)
+    | none => toProbe := toProbe.push (i, f)
   let chunk := 64
-  let mut tasks : Array (Task (Except IO.Error (Array Face))) := #[]
-  for i in [0:(files.size + chunk - 1) / chunk] do
-    let slice := files.extract (i * chunk) ((i + 1) * chunk)
+  let mut tasks : Array (Task (Except IO.Error (Array (Nat × Option Face)))) := #[]
+  for c in [0:(toProbe.size + chunk - 1) / chunk] do
+    let slice := toProbe.extract (c * chunk) ((c + 1) * chunk)
     tasks := tasks.push (← IO.asTask do
-      let mut fs : Array Face := #[]
-      for file in slice do
-        if let some face ← probe file then
-          fs := fs.push face
-      return fs)
-  let mut faces : Array Face := #[]
+      let mut out : Array (Nat × Option Face) := #[]
+      for (i, file) in slice do
+        out := out.push (i, ← probe file)
+      return out)
   for t in tasks do
     match t.get with
-    | .ok fs => faces := faces ++ fs
+    | .ok out => for (i, face?) in out do result := result.set! i face?
     | .error e => throw e
-  return faces
+  -- Rewrite the cache only when something was probed: the common case reads
+  -- one file and writes none.
+  if !toProbe.isEmpty then
+    if let some cf := cacheFile then
+      let mut lines : Array String := #[]
+      for h : i in [0:keyed.size] do
+        match keyed[i] with
+        | (path, some (size, mtime)) => lines := lines.push (faceLine path size mtime result[i]!)
+        | _ => pure ()
+      try
+        if let some parent := cf.parent then IO.FS.createDirAll parent
+        IO.FS.writeFile cf (String.intercalate "\n" lines.toList ++ "\n")
+      catch _ => pure ()
+  return result.filterMap id
 
 private def norm (s : String) : String :=
   String.ofList ((s.toLower.toList).filter fun c => c.isAlphanum)

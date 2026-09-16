@@ -91,10 +91,11 @@ def loadFont : IO (Except Diag (String × Font.Font)) := do
     }
 
 /-- TeX Live's font roots, asked of kpsewhich when it is installed, so
-`--font-dir` is almost never needed. `--show-path` expands the brace/`//`
-config syntax to a colon-separated list; `!!` (ls-R only) and trailing `//`
-(recursive) markers drop, and relative entries like `.` are skipped. Not
-cached: kpsewhich answers in ~10 ms. -/
+`--font-dir` is almost never needed. `--show-path` returns the expanded list.
+Two process spawns cost ~120 ms -- measured, not the ~10 ms first assumed --
+so the answer is remembered beside the font cache, keyed by the kpsewhich
+binary's own mtime: a TeX Live upgrade replaces it and the roots are asked
+again. -/
 def texFontDirs : IO (List String) := do
   let query (ext : String) : IO (List String) := do
     try
@@ -105,7 +106,28 @@ def texFontDirs : IO (List String) := do
         let p := String.ofList (p.toList.reverse.dropWhile (· == '/')).reverse
         if p.startsWith "/" then some p else none
     catch _ => return []
-  return ((← query ".otf") ++ (← query ".ttf")).eraseDups
+  let cache ← FontDb.cacheDir
+  let stamp ← do
+    let which ← try IO.Process.output { cmd := "sh", args := #["-c", "command -v kpsewhich"] }
+      catch _ => pure { exitCode := 1, stdout := "", stderr := "" }
+    if which.exitCode != 0 then return []
+    let bin := which.stdout.trimAscii.toString
+    match ← (System.FilePath.mk bin).metadata.toBaseIO with
+    | .ok md => pure s!"{bin} {md.modified.sec}"
+    | .error _ => pure bin
+  let memo := cache.map (· / "texroots.txt")
+  if let some m := memo then
+    if let .ok text ← IO.FS.readFile m |>.toBaseIO then
+      match text.splitOn "\n" with
+      | first :: roots => if first == stamp then return roots.filter (!·.isEmpty)
+      | _ => pure ()
+  let roots := ((← query ".otf") ++ (← query ".ttf")).eraseDups
+  if let some m := memo then
+    try
+      if let some parent := m.parent then IO.FS.createDirAll parent
+      IO.FS.writeFile m (String.intercalate "\n" (stamp :: roots) ++ "\n")
+    catch _ => pure ()
+  return roots
 
 /-- Every face a document can reach: the three family slots crossed with the
 four bold/italic variants, loaded once and deduplicated by path. Faces the
