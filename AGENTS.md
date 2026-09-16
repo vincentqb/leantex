@@ -27,6 +27,10 @@ in this repo; refer to the private reference corpus abstractly.
 - `lake test` — golden corpus + property tests. Run both before declaring done.
 - `git config core.hooksPath scripts/hooks` — one-time: installs the
   pre-commit hook (build with warnings-as-failures + convention checks).
+  The harness is Lean throughout (`scripts/*.lean`, run via
+  `lake env lean --run`); the one exception is this hook, where git executes
+  a file, so `scripts/hooks/pre-commit` stays a 3-line sh trampoline into
+  `scripts/precommit.lean`.
 - `lake exe Tests --update` — regenerate goldens after an intended IR change.
 - Deeper oracles, not in `lake test` (too slow / need TeX): run
   `scripts/kp-fuzz.lean` when touching line breaking,
