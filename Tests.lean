@@ -1661,8 +1661,20 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       #[.para #[.text "a kept too b"]])
   t "elab unknown command warns once per name"
     ((warnCodes "\\zip{a} \\zip{b} \\zap{c}").length == 2)
-  t "elab reserved M5" (errCodes ("\\documentclass{article}\\figure{x}" ++
-    "\\begin{document}y\\end{document}") == ["E0307"])
+  t "elab reserved M5 warns, never errors" (warnCodes ("\\documentclass{article}\\figure{x}" ++
+    "\\begin{document}y\\end{document}") == ["W0307"])
+  -- Unknown environments keep their body: the wrapper's decoration is
+  -- unknowable, the content inside it is not. Arguments on the \begin line
+  -- go with the wrapper; a group on a later line is content.
+  t "elab unknown environment keeps its body"
+    ((elabStr "\\begin{wrap}{arg}\nkept\n\\end{wrap}").1.body == #[.para #[.text "kept"]])
+  t "elab unknown environment warns once per name"
+    ((warnCodes "\\begin{w}a\\end{w}\\begin{w}b\\end{w}") == ["W0302"])
+  t "elab unknown environment keeps a group on a later line"
+    ((elabStr "\\begin{wrap}\n{kept}\n\\end{wrap}").1.body == #[.para #[.text "kept"]])
+  t "elab reserved environment content is skipped with one warning"
+    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0307"] &&
+     (elabStr "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}").1.body == #[])
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
   t "elab redefine builtin warns and keeps the built-in"
     (warnCodes "\\define \\textbf() {x}\n\\begin{document}y\\end{document}" == ["W0303"])
@@ -1980,8 +1992,12 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .colored c name body => c.r == 0x7C && name == some "primary" && body.size == 1
       | _ => false
     | _ => false)
-  t "palette unknown name" (errCodes ("\\documentclass{article}\\palette{a = #fff}" ++
-    "\\begin{document}\\textcolor{nope}{x}\\end{document}") == ["E0326"])
+  t "palette unknown name warns and keeps the content"
+    (warnCodes ("\\documentclass{article}\\palette{a = #fff}" ++
+      "\\begin{document}\\textcolor{nope}{x}\\end{document}") == ["W0304"] &&
+     (elabStr ("\\documentclass{article}\\palette{a = #fff}" ++
+      "\\begin{document}\\textcolor{nope}{x}\\end{document}")).1.body ==
+        #[.para #[.text "x"]])
   -- A palette name binds a following group as its argument. It used to colour
   -- everything to the end of the group, so `\primary{Alex} Doe` painted Doe too.
   let palSrc (body : String) : Ir.Doc :=

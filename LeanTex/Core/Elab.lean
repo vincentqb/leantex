@@ -58,6 +58,14 @@ private def diag (ctx : Ctx) (code msg : String) (pos : Option Pos)
     help := help
   } }
 
+/-- A warning deduplicated by `key`: the same unsupported construct in forty
+frames is one problem, not forty. -/
+private def warnOnce (ctx : Ctx) (key code msg : String) (pos : Pos)
+    (help : Option String := none) : EM Unit := do
+  unless (← get).warnedUnknown.contains key do
+    modify fun st => { st with warnedUnknown := st.warnedUnknown.push key }
+    diag ctx code msg (some pos) help .warning
+
 def reservedCtrl : List (String × String) :=
   [("vspace", "M3"), ("noindent", "M3"),
    ("fontfallback", "M5"), ("figure", "M5"), ("note", "M5")]
@@ -85,7 +93,7 @@ def pageSizes : List (String × (Sp × Sp)) :=
    ("a5", (Dim.pt 420, Dim.pt 595))]
 
 def reservedEnv : List (String × String) :=
-  [("frame", "M5"), ("verbatim", "M5"), ("external", "M5")]
+  [("frame", "M5"), ("verbatim", "M5"), ("external", "M5"), ("tikzpicture", "M8")]
 
 def argStyles : List (String × Style) :=
   [("textbf", .bold), ("textit", .italic), ("texttt", .mono), ("emph", .emph)]
@@ -340,15 +348,17 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         i := i + 1
         match reservedEnv.lookup name with
         | some milestone =>
-          diag ctx "E0307" s!"'\{{name}}' is not implemented yet" pos
+          warnOnce ctx name "W0307"
+            s!"'\{{name}}' is not implemented yet; its content is not rendered" pos
             (help := s!"planned for {milestone}; see PLAN.md")
         | none =>
-          diag ctx "E0302" s!"unknown environment '{name}'" pos
+          warnOnce ctx name "W0302" s!"unknown environment '\{{name}}'; its body is kept" pos
+            (help := "see PLAN.md for planned environments")
           acc := flushText acc sb
           sb := ""
           acc := acc ++ (← elabInlines ctx body)
       | .verb _ pos =>
-        diag ctx "E0307" "'{verbatim}' is not implemented yet" pos
+        warnOnce ctx "verbatim" "W0307" "'{verbatim}' is not implemented yet" pos
           (help := "planned for M5; see PLAN.md")
         i := i + 1
       | .ctrl name pos =>
@@ -486,9 +496,16 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
               sb := ""
               acc := acc.push (.colored c (some key) (← elabInlines ctx body))
             | none =>
-              diag ctx "E0326" s!"'{key}' is not in the palette" pos
+              -- The colour is unresolvable; the content is not. Keeping it
+              -- uncoloured is the best-effort contract: a wrong colour beats
+              -- a missing word.
+              warnOnce ctx ("palette:" ++ key) "W0304"
+                s!"'{key}' is not in the palette; content kept uncoloured" pos
                 (help := s!"declared: {String.intercalate ", "
                   (ctx.palette.entries.toList.map (·.1))}")
+              acc := flushText acc sb
+              sb := ""
+              acc := acc ++ (← elabInlines ctx body)
           | _, _ =>
             diag ctx "E0304" "'\\textcolor' needs {name} and {content}" pos
         else if let some c := ctx.palette.find? name then
@@ -533,7 +550,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           | _, _ =>
             diag ctx "E0304" "'\\ifgiven' needs {\\param} and {content}" pos
         else if let some milestone := reservedCtrl.lookup name then
-          diag ctx "E0307" s!"'\\{name}' is not implemented yet" pos
+          warnOnce ctx name "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
             (help := s!"planned for {milestone}; see PLAN.md")
           i := skipReservedArgs raws i
         else if blockOnly.contains name then
@@ -633,6 +650,32 @@ private def isArgument (cur : Array Raw) : Bool := Id.run do
     | _ => return false
   return false
 
+/-- The body of an unknown environment without its arguments: leading `[...]`
+runs and `{...}` groups on the `\begin` line are the environment's own
+arguments (`\begin{banner}{Logo}`), not content. A group on a later line
+is content — LaTeX's own argument scanning stops looking there too. -/
+private def dropEnvArgs (body : Array Raw) (beginPos : Pos) : Array Raw := Id.run do
+  let mut i := 0
+  for _ in [0:body.size] do
+    let j := skipSpaces body i
+    match body[j]? with
+    | some (.sym '[' _) =>
+      let mut k := j + 1
+      let mut closed := false
+      for _ in [k:body.size + 1] do
+        match body[k]? with
+        | some (.sym ']' _) =>
+          k := k + 1
+          closed := true
+          break
+        | some _ => k := k + 1
+        | none => break
+      if closed then i := k else break
+    | some (.group _ gpos) =>
+      if gpos.line == beginPos.line then i := j + 1 else break
+    | _ => break
+  return body.extract i body.size
+
 /-- `\par` ends a paragraph wherever it stands, a scope group included:
 `{A \par B}` is `{A}\par{decls B}`, the declarations active at the break
 re-applied to what follows. So `{\Huge Title \par}` sets one line and stops,
@@ -703,9 +746,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           (match lookupUser ctx n with
            | some (_, cmd) => bodyIsBlock cmd.body
            | none => false)
-        | .env n _ _ =>
-          n == "itemize" || n == "enumerate" || n == "center" ||
-          (reservedEnv.lookup n).isSome
+        | .env _ _ _ => true
         | _ => false
       if !isBoundary then
         unless cur.isEmpty && isSpaceOrPar r do
@@ -813,9 +854,16 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             blocks := blocks.push (.list (n == "enumerate") elabItems)
           else if n == "center" then
             blocks := blocks.push (.center (← elabBlocks ctx body))
+          else if let some milestone := reservedEnv.lookup n then
+            warnOnce ctx n "W0307"
+              s!"'\{{n}}' is not implemented yet; its content is not rendered" pos
+              (help := s!"planned for {milestone}; see PLAN.md")
           else
-            diag ctx "E0307" s!"'\{{n}}' is not implemented yet" pos
-              (help := s!"planned for {(reservedEnv.lookup n).getD "later"}; see PLAN.md")
+            -- An unknown wrapper's decoration is unknowable; its body is
+            -- not. The arguments on the `\begin` line go with the wrapper.
+            warnOnce ctx n "W0302" s!"unknown environment '\{{n}}'; its body is kept" pos
+              (help := "see PLAN.md for planned environments")
+            blocks := blocks ++ (← elabBlocks ctx (dropEnvArgs body pos))
         | _ =>
           i := i + 1
     else
@@ -1309,12 +1357,15 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           | _ =>
             diag ctx "E0304" s!"'\\{name}' needs a \{...} block" pos
         else if let some milestone := reservedCtrl.lookup name then
-          diag ctx "E0307" s!"'\\{name}' is not implemented yet" pos
+          warnOnce ctx name "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
             (help := s!"planned for {milestone}; see PLAN.md")
           i := skipReservedArgs preamble i
         else
-          diag ctx "E0301" s!"unknown command '\\{name}'" pos
+          -- Unknown preamble commands are configuration, not content: their
+          -- arguments are skipped with them, never elaborated as stray text.
+          warnOnce ctx name "W0301" s!"unknown command '\\{name}' in the preamble; skipped" pos
             (help := "define it with \\define, or see PLAN.md for planned commands")
+          i := skipReservedArgs preamble i
       | _ =>
         i := i + 1
         unless textDiagged do
