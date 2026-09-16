@@ -239,19 +239,68 @@ private def mergeText (xs : Array Inline) : Array Inline := Id.run do
     | _, _ => out := out.push x
   return out
 
-/-- Skip `[...]` runs and at most one group: argument recovery after a
-reserved (not yet implemented) command. -/
-private def skipReservedArgs (raws : Array Raw) (i : Nat) : Nat := Id.run do
-  let mut j := skipSpaces raws i
-  if let some (.sym '[' _) := raws[j]? then
-    for _ in [j:raws.size] do
-      j := j + 1
-      if let some (.sym ']' _) := raws[j - 1]? then
-        break
-    j := skipSpaces raws j
-  if let some (.group _ _) := raws[j]? then
-    j := j + 1
+/-- What one `[...]` argument scan found. -/
+inductive ArgScan where
+  | took (next : Nat)
+  | unclosed (bpos : Pos)
+  | content
+
+/-- The one bracket-argument scan, shared by every consumer of an optional
+`[...]`. An argument's `[` opens on `anchor`'s line — a bracket on a later
+line is content, where LaTeX's own argument scanning stops looking too — and
+it has a matching `]`. One that never closes is malformed content, never an
+argument: consuming to the end of the scan would silently drop everything
+after it, a frame body or the rest of a preamble included. `.took` carries
+the index past the `]`; `.unclosed` consumes nothing and carries the `[`'s
+position for the caller to warn about. -/
+private def scanBracketArg (raws : Array Raw) (i : Nat) (anchor : Pos) : ArgScan := Id.run do
+  let j := skipSpaces raws i
+  match raws[j]? with
+  | some (.sym '[' bpos) =>
+    if bpos.line != anchor.line then return .content
+    let mut k := j + 1
+    for _ in [k:raws.size] do
+      if let some (.sym ']' _) := raws[k]? then
+        return .took (k + 1)
+      k := k + 1
+    return .unclosed bpos
+  | _ => return .content
+
+/-- An unclosed `[` stays as content; this says why it was not an argument. -/
+private def warnUnclosed (ctx : Ctx) (after : String) (bpos : Pos) : EM Unit :=
+  diag ctx "W0310" s!"'[' after {after} never closes; it is not an argument" (some bpos)
+    (help := "add the matching ']'") .warning
+
+/-- The index of the first item on a line after `anchor`'s. A skipped
+preamble command's malformed arguments end with its line: the next line is
+the author's next declaration, which must never be consumed with them. -/
+private def skipPastLine (raws : Array Raw) (i : Nat) (anchor : Pos) : Nat := Id.run do
+  let mut j := i
+  for _ in [i:raws.size] do
+    match raws[j]? with
+    | some (.par _) | none => break
+    | some .space => j := j + 1
+    | some (.word _ p) | some (.ctrl _ p) | some (.sym _ p)
+    | some (.group _ p) | some (.verb _ p) =>
+      if p.line > anchor.line then break else j := j + 1
+    | some (.env _ _ p) | some (.math _ _ p) =>
+      if p.line > anchor.line then break else j := j + 1
   return j
+
+/-- Skip a `[...]` run and at most one group: argument recovery after a
+reserved (not yet implemented) or unknown command. Returns the next index
+and, when an unclosed `[` stopped the scan, its position. -/
+private def skipReservedArgs (raws : Array Raw) (i : Nat) (anchor : Pos) :
+    Nat × Option Pos := Id.run do
+  let mut j := i
+  match scanBracketArg raws i anchor with
+  | .took k => j := k
+  | .unclosed bpos => return (i, some bpos)
+  | .content => pure ()
+  let k := skipSpaces raws j
+  if let some (.group _ _) := raws[k]? then
+    return (k + 1, none)
+  return (j, none)
 
 -- Inline elaboration and argument binding are mutually recursive: a call
 -- site's arguments are themselves inline content. Nontermination is
@@ -595,7 +644,10 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         else if let some milestone := reservedCtrl.lookup name then
           warnOnce ctx name "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
             (help := s!"planned for {milestone}; see PLAN.md")
-          i := skipReservedArgs raws i
+          let (j, unclosed) := skipReservedArgs raws i pos
+          if let some bpos := unclosed then
+            warnUnclosed ctx s!"'\\{name}'" bpos
+          i := j
         else if blockOnly.contains name then
           diag ctx "E0312" s!"'\\{name}' is not allowed here" pos
             (help := "it is a block-level command: use it between paragraphs, " ++
@@ -695,29 +747,24 @@ private def isArgument (cur : Array Raw) : Bool := Id.run do
 
 /-- The body of an unknown environment without its arguments: leading `[...]`
 runs and `{...}` groups on the `\begin` line are the environment's own
-arguments (`\begin{banner}{Logo}`), not content. A group on a later line
-is content — LaTeX's own argument scanning stops looking there too. -/
-private def dropEnvArgs (body : Array Raw) (beginPos : Pos) : Array Raw := Id.run do
+arguments (`\begin{banner}{Logo}`), not content. A group or bracket on a
+later line is content — LaTeX's own argument scanning stops looking there
+too. Also returns the position of an unclosed `[`, for the caller to warn
+about; its run is kept as content. -/
+private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
+    Array Raw × Option Pos := Id.run do
   let mut i := 0
   for _ in [0:body.size] do
-    let j := skipSpaces body i
-    match body[j]? with
-    | some (.sym '[' _) =>
-      let mut k := j + 1
-      let mut closed := false
-      for _ in [k:body.size + 1] do
-        match body[k]? with
-        | some (.sym ']' _) =>
-          k := k + 1
-          closed := true
-          break
-        | some _ => k := k + 1
-        | none => break
-      if closed then i := k else break
-    | some (.group _ gpos) =>
-      if gpos.line == beginPos.line then i := j + 1 else break
-    | _ => break
-  return body.extract i body.size
+    match scanBracketArg body i beginPos with
+    | .took k => i := k
+    | .unclosed bpos => return (body.extract i body.size, some bpos)
+    | .content =>
+      let j := skipSpaces body i
+      match body[j]? with
+      | some (.group _ gpos) =>
+        if gpos.line == beginPos.line then i := j + 1 else break
+      | _ => break
+  return (body.extract i body.size, none)
 
 /-- `\par` ends a paragraph wherever it stands, a scope group included:
 `{A \par B}` is `{A}\par{decls B}`, the declarations active at the break
@@ -769,11 +816,21 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
     (start : Nat) (pos : Pos) : EM Nat := do
   -- `\title[short]{long}`: the short form feeds furniture we do not render.
   let mut j := skipSpaces raws start
-  if let some (.sym '[' _) := raws[j]? then
+  match scanBracketArg raws start pos with
+  | .took k => j := skipSpaces raws k
+  | .unclosed bpos =>
+    -- The group the author wrote is still there past the malformed bracket:
+    -- best effort takes it as the argument rather than failing the build.
+    warnUnclosed ctx s!"'\\{name}'" bpos
     for _ in [j:raws.size] do
-      j := j + 1
-      if let some (.sym ']' _) := raws[j - 1]? then break
-    j := skipSpaces raws j
+      match raws[j]? with
+      | some .space => j := j + 1
+      | some (.group _ gpos) =>
+        if gpos.line == pos.line then break else j := raws.size
+      | some (.word _ p) | some (.ctrl _ p) | some (.sym _ p) =>
+        if p.line == pos.line then j := j + 1 else j := raws.size
+      | _ => break
+  | .content => pure ()
   match raws[j]? with
   | some (.group body _) =>
     let content ← elabInlines ctx body
@@ -982,15 +1039,15 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             -- the title group counts only when it follows directly — a
             -- paragraph break before a group makes it content, which is
             -- where LaTeX's own argument scanning stops looking too.
-            let mut k := skipSpaces body 0
+            let mut k := 0
             for _ in [0:body.size] do
-              match body[k]? with
-              | some (.sym '[' _) =>
-                for _ in [k:body.size] do
-                  k := k + 1
-                  if let some (.sym ']' _) := body[k - 1]? then break
-                k := skipSpaces body k
-              | _ => break
+              match scanBracketArg body k pos with
+              | .took k' => k := k'
+              | .unclosed bpos =>
+                warnUnclosed ctx "'\\begin{frame}'" bpos
+                break
+              | .content => break
+            k := skipSpaces body k
             let mut title : Array Inline := #[]
             if let some (.group t _) := body[k]? then
               title ← elabInlines ctx t
@@ -1044,7 +1101,10 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             -- not. The arguments on the `\begin` line go with the wrapper.
             warnOnce ctx n "W0302" s!"unknown environment '\{{n}}'; its body is kept" pos
               (help := "see PLAN.md for planned environments")
-            blocks := blocks ++ (← elabBlocks ctx (dropEnvArgs body pos))
+            let (kept, unclosed) := dropEnvArgs body pos
+            if let some bpos := unclosed then
+              warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
+            blocks := blocks ++ (← elabBlocks ctx kept)
         | .verb s _ =>
           i := i + 1
           blocks := blocks.push (.verbatim s)
@@ -1558,13 +1618,25 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
         else if let some milestone := reservedCtrl.lookup name then
           warnOnce ctx name "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
             (help := s!"planned for {milestone}; see PLAN.md")
-          i := skipReservedArgs preamble i
+          let (j, unclosed) := skipReservedArgs preamble i pos
+          match unclosed with
+          | some bpos =>
+            -- The malformed arguments end with the command's line: the next
+            -- line is the author's next declaration, never consumed here.
+            warnUnclosed ctx s!"'\\{name}'" bpos
+            i := skipPastLine preamble i pos
+          | none => i := j
         else
           -- Unknown preamble commands are configuration, not content: their
           -- arguments are skipped with them, never elaborated as stray text.
           warnOnce ctx name "W0301" s!"unknown command '\\{name}' in the preamble; skipped" pos
             (help := "define it with \\define, or see PLAN.md for planned commands")
-          i := skipReservedArgs preamble i
+          let (j, unclosed) := skipReservedArgs preamble i pos
+          match unclosed with
+          | some bpos =>
+            warnUnclosed ctx s!"'\\{name}'" bpos
+            i := skipPastLine preamble i pos
+          | none => i := j
       | _ =>
         i := i + 1
         unless textDiagged do

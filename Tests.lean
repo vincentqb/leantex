@@ -1558,6 +1558,73 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
          ["a", "b", "c", "d"].all fun w => ((Ir.plainText xs).splitOn w).length == 2
      | _ => false)
 
+/-- The shared bracket scanner, fed the malformed and the merely leading:
+an unclosed `[` is content, never an argument that consumes to the end of
+its scan, and a bracket on a later line than its command is content too.
+Each case here lost text silently — a frame body, a preamble declaration,
+a title — when four copies of the scan disagreed about the guard. -/
+def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let deck (body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n\\begin{document}\n" ++ body ++
+    "\n\\end{document}"
+  let blockText (b : Ir.Block) : String :=
+    match b with
+    | .para xs => Ir.plainText xs
+    | _ => ""
+  -- an unclosed bracket must not consume the frame body
+  let (fDoc, fDs) := elabStr (deck "\\begin{frame}[unclosed\nBody survives.\n\\end{frame}")
+  t "unclosed bracket keeps the frame body"
+    (match fDoc.body with
+     | #[.frame _ body] => body.any fun b => (blockText b).endsWith "Body survives."
+     | _ => false)
+  t "unclosed bracket in a frame warns" (fDs.any (·.code == "W0310"))
+  -- a bracket opening the frame's content is content, not an option
+  t "frame content starting with a bracket survives"
+    (match (elabStr (deck "\\begin{frame}\n[1] Reference survives.\n\\end{frame}")).1.body with
+     | #[.frame _ #[.para xs]] => Ir.plainText xs == "[1] Reference survives."
+     | _ => false)
+  -- options on the begin line are still arguments, bracket runs included
+  t "frame options on the begin line are burned"
+    (match (elabStr (deck "\\begin{frame}[plain][t]{T}\nbody\n\\end{frame}")).1.body with
+     | #[.frame title #[.para xs]] =>
+       Ir.plainText title == "T" && Ir.plainText xs == "body"
+     | _ => false)
+  -- unknown environment: unclosed bracket keeps the body, later-line bracket is content
+  let (uDoc, uDs) := elabStr "\\begin{mywrap}[unclosed\nkept body\n\\end{mywrap}"
+  t "unclosed bracket keeps an unknown environment's body"
+    (uDoc.body.any fun b => (blockText b).endsWith "kept body")
+  t "unclosed bracket in an unknown environment warns" (uDs.any (·.code == "W0310"))
+  t "unknown environment content starting with a bracket survives"
+    (match (elabStr "\\begin{mywrap}\n[1] first line\nkept\n\\end{mywrap}").1.body with
+     | #[.para xs] => Ir.plainText xs == "[1] first line kept"
+     | _ => false)
+  -- \title: the title survives its own malformed optional argument
+  let titleSrc := "\\title[short never closes {The Real Title}\n\\begin{document}x\\end{document}"
+  let (tDoc, tDs) := elabStr titleSrc
+  t "title survives an unclosed optional argument"
+    (tDoc.info.title == some "The Real Title")
+  t "an unclosed title bracket is a warning, not E0313"
+    (!tDs.any (·.severity == .error) && tDs.any (·.code == "W0310"))
+  -- unknown preamble command: the next line's declaration must survive
+  let preSrc := "\\unknowncmd[opts that never close\n\\palette{ accent = #ff0000 }\n" ++
+    "\\begin{document}\\textcolor{accent}{x}\\end{document}"
+  let (pDoc, pDs) := elabStr preSrc
+  t "unclosed bracket does not eat the next preamble declaration"
+    (pDoc.palette.find? "accent" |>.isSome)
+  t "the swallowed palette warning is gone"
+    (!pDs.any (·.code == "W0304") && !pDs.any (·.severity == .error))
+  -- reserved inline command: the sentence after the bracket survives
+  t "unclosed bracket after a reserved command keeps the text"
+    (match (elabStr "\\figure[unclosed and text continues").1.body with
+     | #[.para xs] => (Ir.plainText xs).endsWith "and text continues"
+     | _ => false)
+  -- a reserved command's bracket on a later line is content
+  t "bracket on the line after a reserved command is content"
+    (match (elabStr "\\figure\n[1] a caption line").1.body with
+     | #[.para xs] => Ir.plainText xs == "[1] a caption line"
+     | _ => false)
+
 def utf8Checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- utf8: valid inputs
@@ -2316,6 +2383,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       inkGeometryChecks ref
       spacingChecks ref geom oneFace font
       slideChecks ref oneFace
+      scannerChecks ref
 
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
