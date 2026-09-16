@@ -436,15 +436,29 @@ def familyOf (faces : Array Face) (name : String) : String :=
 /-- Best face for a family name and variant, plus whether the family really
 offers what was asked for. A family whose heaviest face is "Demi" (600) is
 serving a genuine bold, so that counts as satisfied; one with no italic at
-all does not, and the caller warns. -/
+all does not, and the caller warns.
+
+A name that is no family may still name a face: fontspec documents ask for
+"Fira Sans Light", the Light face of Fira Sans. Family plus subfamily
+matches it exactly, the "… Italic" sibling comes along, and the named
+weight serves as that name's regular — its bold stays unsatisfied and
+warned, because picking a heavier face than the author named would be a
+silent substitution. -/
 def resolve (faces : Array Face) (family : String) (v : Variant) :
     Option (Face × Bool) :=
   let target := (norm (familyOf faces family)).toList.toArray
-  let inFamily := faces.filter fun f => normEq f.family target
+  let byFamily := faces.filter fun f => normEq f.family target
+  let (inFamily, named) :=
+    if byFamily.isEmpty then
+      let targetItalic := target ++ "italic".toList.toArray
+      (faces.filter fun f =>
+        let key := f.family ++ f.subfamily
+        normEq key target || normEq key targetItalic, true)
+    else (byFamily, false)
   if inFamily.isEmpty then
     none
   else
-    let want := targetWeight v.bold
+    let want := if named then targetWeight false else targetWeight v.bold
     -- Italic is categorical: never substitute upright for italic silently.
     let matchingSlant := inFamily.filter fun f => f.italic == v.italic
     let pool := if matchingSlant.isEmpty then inFamily else matchingSlant

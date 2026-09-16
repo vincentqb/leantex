@@ -636,6 +636,24 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "families dedupes" (fams'.size == 1000)
   let ms := (← IO.monoMsNow) - t0
   t s!"families is linear ({ms} ms for {many.size} faces)" (ms < 200)
+  -- A fontspec name like "Alpha Sans Light" is no family, but it names a
+  -- face: family plus subfamily matches it, its italic sibling comes along,
+  -- and its true bold is honestly unsatisfied rather than silently heavier.
+  let light : FontDb.Face := { synthFace "Alpha Sans" "/x/as-l.otf" with
+    subfamily := "Light", weight := 300 }
+  let lightIt : FontDb.Face := { light with
+    path := "/x/as-li.otf", subfamily := "Light Italic", italic := true }
+  let faces := #[synthFace "Alpha Sans", light, lightIt]
+  t "family plus subfamily names a face"
+    ((FontDb.resolve faces "Alpha Sans Light" {}).map (·.1.subfamily) == some "Light")
+  t "the named face's italic sibling resolves satisfied"
+    ((FontDb.resolve faces "Alpha Sans Light" { italic := true }).map
+      (fun r => (r.1.subfamily, r.2)) == some ("Light Italic", true))
+  t "the named face's bold is unsatisfied, never silently heavier"
+    ((FontDb.resolve faces "Alpha Sans Light" { bold := true }).map
+      (fun r => (r.1.subfamily, r.2)) == some ("Light", false))
+  t "a real family name still resolves its regular"
+    ((FontDb.resolve faces "Alpha Sans" {}).map (·.1.subfamily) == some "Regular")
 
 /-- The band projection over synthetic outlines: the invariant is that no
 ink inside the band escapes the reported intervals, whatever its shape —
