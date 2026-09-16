@@ -45,7 +45,7 @@
 % Typed command: named, typed parameters; optional marked with ?.
 \define \role(company: text, title: text, dates: text, team?: text) {
   \block[before = 2 * sep]{
-    \textbf{\company} \,|\, \textbf{\title} \hfill \muted{\dates}
+    \textbf{\company}\,|\,\textbf{\title} \hfill \muted{\dates}
     \ifgiven{\team}{\par \muted{\textit{\team}}}
   }
 }

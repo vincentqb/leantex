@@ -175,6 +175,17 @@ def bulletGlyphs (size : Sp) (font : Font) : Array (Nat × Char × Sp) :=
   | some g => #[g]
   | none => hyphenGlyph size font
 
+/-- Fixed-width spaces, as a fraction of the em. These are kerns, not
+characters: a Type 1-derived face has no glyph at U+2009, so looking one up
+drops the space that `\,` asked for. `\!`-style negative kerns are not here
+because there is no Unicode character for them. -/
+def fixedSpace (c : Char) : Option (Nat × Nat) :=
+  if c == '\u2009' then some (1, 6)        -- thin space, TeX's \,
+  else if c == '\u2005' then some (1, 4)   -- four-per-em, \:
+  else if c == '\u2004' then some (1, 3)   -- three-per-em, \;
+  else if c == '\u2007' then some (1, 2)   -- figure space
+  else none
+
 /-- One word → items: boxes split by hyphenation points (flagged penalties
 carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph). -/
 private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat)
@@ -233,6 +244,25 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
               missing := missing.push c'
         i := j
       else
+        match fixedSpace c with
+        | some (num, den) =>
+          -- A kern: width but no glyph, and never a breakpoint, so `\,` cannot
+          -- become a place to end a line.
+          items := flush items box boxW
+          box := #[]
+          boxW := 0
+          items := items.push (.box (size * num / den) fontIdx color link #[] size)
+          i := i + 1
+        | none =>
+        if c == '\u00a0' then
+          -- A no-break space is an interword space that is not glue.
+          items := flush items box boxW
+          box := #[]
+          boxW := 0
+          items := items.push
+            (.box (scaledAt size font (font.advance ' ')) fontIdx color link #[] size)
+          i := i + 1
+        else
         match glyphOf size font c with
         | some g =>
           box := box.push g
@@ -520,13 +550,11 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let mut width : Sp := 0
   for k in [a:j] do
     match items[k]! with
-    | .box _ fontIdx color link glyphs size =>
-      let mut run : Array (Nat × Char) := #[]
-      let mut w : Sp := 0
-      for (g, c, adv) in glyphs do
-        run := run.push (g, c)
-        w := w + adv
-      segs := segs.push (.run fontIdx color link w run size)
+    | .box w fontIdx color link glyphs size =>
+      -- The declared width is authoritative, as it already is in `measure`: a
+      -- kern is a box with a width and no glyphs, and recomputing from the
+      -- advances would silently set it to zero.
+      segs := segs.push (.run fontIdx color link w (glyphs.map fun (g, c, _) => (g, c)) size)
       width := width + w
     | .glue g =>
       let setW : Sp :=

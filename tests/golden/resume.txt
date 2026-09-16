@@ -34,7 +34,7 @@ block before 1800/1000ex plus 720/1000ex minus 360/1000ex
   para
     styled bold
       text "Example Corp"
-    text "  |  "
+    text " | "
     styled bold
       text "Staff Engineer"
     text " "
@@ -57,7 +57,7 @@ block before 1800/1000ex plus 720/1000ex minus 360/1000ex
   para
     styled bold
       text "Widgets Ltd"
-    text "  |  "
+    text " | "
     styled bold
       text "Engineer"
     text " "
@@ -74,7 +74,7 @@ block before 1800/1000ex plus 720/1000ex minus 360/1000ex
   para
     styled bold
       text "Example University"
-    text "  |  "
+    text " | "
     styled bold
       text "PhD, Applied Mathematics"
     text " "

@@ -79,8 +79,18 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
     let mut inArray := false
     for seg in l.segs do
       match seg with
-      | .run idx color _ _ glyphs segSize =>
+      | .run idx color _ w glyphs segSize =>
         let size := if segSize == 0 then l.size else segSize
+        if glyphs.isEmpty then
+          -- A kern: width, no glyphs. Emitting an empty string would advance
+          -- nothing, so it moves the pen the same way a gap does.
+          if w != 0 then
+            unless inArray do
+              s := s.push '['
+              inArray := true
+            let unit := if curSize == 0 then size else curSize
+            s := s ++ s!"{-(w * 1000 / unit)}"
+        else
         -- Neither Tf nor rg may appear inside a TJ array, so a change in
         -- either closes the array and reopens it after.
         if curFont != idx || curSize != size || curColor != color then

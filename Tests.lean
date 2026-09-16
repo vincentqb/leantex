@@ -795,6 +795,21 @@ def main (args : List String) : IO UInt32 := do
       let plainPdf := Pdf.write geom oneFace (Layout.run geom oneFace none bigDoc).pages
       t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
 
+      -- Fixed-width spaces are kerns. Looking up a glyph at U+2009 drops the
+      -- space, because a Type 1-derived face has none -- and warns instead of
+      -- setting it.
+      let widthOf (src : String) : Dim.Sp :=
+        let (d, _) := Elab.run "t" src
+        (((Layout.run geom oneFace none d).pages.flatMap (·.lines))[0]?.map
+          (·.setWidth)).getD 0
+      let plainW := widthOf "ab"
+      let thinW := widthOf "a\\,b"
+      t "thin space widens the line" (thinW == plainW + geom.fontSize / 6)
+      t "thin space warns about nothing"
+        ((Layout.run geom oneFace none (Elab.run "t" "a\\,b").1).diags.isEmpty)
+      t "no-break space is an unbreakable interword space"
+        (widthOf "a\\nbsp b" > plainW)
+
       -- `\hfill` on a paragraph's last line must reach the margin. The
       -- line-running fill is also fil glue, and sharing the leftover with it
       -- puts the right-hand text halfway there -- which is what LaTeX does and
