@@ -158,31 +158,46 @@ private def fillAt (edges : Array (Int × Int × Int × Int)) (y : Int) :
     wind := w
   return out
 
-/-- Merged x-intervals (font units) of ink inside `[bandLo, bandHi]`, sampled
-on three scanlines — just under the top edge, the middle, just over the
-bottom. Sampling is the approximation: a stroke slanting between scanlines
-can shift by half the band height, far below the clearance the consumer
-dilates every interval by. -/
+/-- Merged x-intervals (font units) of ink inside `[bandLo, bandHi]`: the
+x-projection of every flattened edge clipped to the band, unioned with the
+winding-fill runs on the band's midline. This covers all flattened ink in
+the band: a point of ink either has a contour edge somewhere on its vertical
+line inside the band — the clipped projection of that edge covers it — or it
+sits strictly inside ink across the whole band height, and then the midline
+fill run covers it. What remains approximate is curve flattening (eight
+chords per curve, a deviation of a few font units at the extremes) and the
+integer interpolation at the clip (one unit); both are orders of magnitude
+under the clearance the consumer dilates every interval by. -/
 def bandIntervals (o : Outline) (bandLo bandHi : Int) : Array (Int × Int) := Id.run do
   if o.minY ≥ bandHi then
     return #[]
   let edges := edgesOf o.cmds
   if edges.isEmpty then
     return #[]
-  let ys : Array Int :=
-    if bandHi ≤ bandLo then #[2 * bandHi - 1]
-    else
-      let mid := bandLo + bandHi
-      #[2 * bandLo + 1, if mid % 2 == 0 then mid + 1 else mid, 2 * bandHi - 1]
+  -- Doubled coordinates throughout, matching the edges.
+  let lo2 := 2 * bandLo
+  let hi2 := 2 * bandHi
   let mut iv : Array (Int × Int) := #[]
-  for y in ys do
-    for (a, b) in fillAt edges y do
-      iv := iv.push (a, b)
+  for (x0, y0, x1, y1) in edges do
+    let ylo := min y0 y1
+    let yhi := max y0 y1
+    if yhi ≥ lo2 && ylo ≤ hi2 then
+      if y0 == y1 then
+        iv := iv.push (min x0 x1, max x0 x1)
+      else
+        let xAt (y : Int) : Int := x0 + (x1 - x0) * (y - y0) / (y1 - y0)
+        let xa := xAt (max ylo lo2)
+        let xb := xAt (min yhi hi2)
+        iv := iv.push (min xa xb, max xa xb)
+  let mid := lo2 + (hi2 - lo2) / 2
+  for (a, b) in fillAt edges (if mid % 2 == 0 then mid + 1 else mid) do
+    iv := iv.push (a, b)
   let sorted := iv.qsort fun a b => a.1 < b.1
   let mut out : Array (Int × Int) := #[]
   for (a2, b2) in sorted do
-    let a := a2 / 2
-    let b := (b2 + 1) / 2
+    -- Halve back to font units, rounding outward.
+    let a := a2.fdiv 2
+    let b := (b2 + 1).fdiv 2
     match out.back? with
     | some (pa, pb) =>
       if a ≤ pb then out := out.pop.push (pa, max pb b)

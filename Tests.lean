@@ -599,6 +599,48 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ms := (← IO.monoMsNow) - t0
   t s!"families is linear ({ms} ms for {many.size} faces)" (ms < 200)
 
+/-- The band projection over synthetic outlines: the invariant is that no
+ink inside the band escapes the reported intervals, whatever its shape —
+wholly inside the band, spanning it, or dipping into it at a curve
+extremum. Scanline sampling missed the first and clipped the extent of
+slanted strokes; the projection cannot. Band `[-100, -50]` matches the
+shipped CFF faces' scale. -/
+def inkGeometryChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let iv (cmds : Array Ink.Cmd) (minY : Int) : Array (Int × Int) :=
+    Ink.bandIntervals ⟨cmds, minY⟩ (-100) (-50)
+  -- A rectangle wholly inside the band, spanning no scanline a sampler
+  -- would choose: its projection is still its full width.
+  let floatRect := iv #[.move 100 (-60), .line 200 (-60), .line 200 (-70),
+    .line 100 (-70)] (-70)
+  t "ink: contour wholly inside the band is covered"
+    (floatRect.size == 1 && floatRect.all fun (lo, hi) => lo ≤ 100 && hi ≥ 200)
+  -- A tall rectangle spanning the band: the interior comes from the midline
+  -- fill, not just the side edges.
+  let tallRect := iv #[.move 300 0, .line 400 0, .line 400 (-200),
+    .line 300 (-200)] (-200)
+  t "ink: contour spanning the band covers its full width"
+    (tallRect.size == 1 && tallRect.all fun (lo, hi) => lo ≤ 300 && hi ≥ 400)
+  -- A shallow curve dipping into the band: the lens between the quadratic
+  -- and its chord lies inside, and its whole x-extent is reported even
+  -- though only the extremum neighbourhood reaches the band's midline.
+  let dip := iv #[.move 500 (-60), .quad 550 (-90) 600 (-60)] (-75)
+  t "ink: curve extremum reports the whole lens extent"
+    (dip.size == 1 && dip.all fun (lo, hi) => lo ≤ 502 && hi ≥ 598)
+  -- A slanted stroke through the band: ink between the entry and exit
+  -- depths is continuous, so the report is one interval over the whole
+  -- crossing, not samples with gaps.
+  let slant := iv #[.move 700 (-40), .line 750 (-110), .line 770 (-110),
+    .line 720 (-40)] (-110)
+  t "ink: slanted stroke is one gap-free interval"
+    (slant.size == 1 && slant.all fun (lo, hi) => lo ≤ 709 && hi ≥ 761)
+  -- Contours clear of the band report nothing.
+  t "ink: contour above the band is empty"
+    ((iv #[.move 0 0, .line 50 0, .line 50 (-40), .line 0 (-40)] (-40)).isEmpty)
+  t "ink: contour below the band is empty"
+    ((iv #[.move 0 (-120), .line 50 (-120), .line 50 (-160), .line 0 (-160)]
+      (-160)).isEmpty)
+
 /-- Native underline: a decoration never breaks a glyph. Drawn from the
 font's own `post` metrics and interrupted only where a glyph's outline ink
 actually crosses the rule's band — `q` keeps its rule under the bowl and
@@ -1827,6 +1869,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
 
       lineChecks ref geom oneFace
       underlineChecks ref geom oneFace font
+      inkGeometryChecks ref
       spacingChecks ref geom oneFace font
 
 def main (args : List String) : IO UInt32 := do

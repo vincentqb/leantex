@@ -229,7 +229,7 @@ single normalization shared by ink extraction (`parse`) and rule placement
 cleared against ink it does not overlap. -/
 def underlineBand (upem pos thick : Int) : Int × Int :=
   let p := if pos < 0 && -(upem / 2) ≤ pos then pos else -(upem / 10)
-  let t := if 0 < thick && thick ≤ upem / 4 then thick else upem / 20
+  let t := if 0 < thick && thick ≤ upem / 4 then thick else max 1 (upem / 20)
   (p, t)
 
 def parse (data : ByteArray) : Except String Font := do
