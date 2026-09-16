@@ -1,0 +1,71 @@
+% Invented deck exercising the M5 slice end to end: title metadata and
+% \maketitle, section dividers, frames with titles (argument and
+% \frametitle forms), verbatim code, math environments and tables carried
+% as source and rows, unknown wrapper environments degrading to their body,
+% and beamer idioms through the compat layer. Nothing here derives from any
+% private document.
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{example}
+\setbeamercovered{transparent}
+\newcommand{\dim}[1]{\textcolor{quiet!50}{#1}}
+\newenvironment{banner}[1]{}{}
+
+\fonts{
+  dir = "fonts",
+  body = "Open Sans",
+  mono = "Source Code Pro",
+}
+
+\title{A Certified Deck}
+\subtitle{Slides from one IR}
+\author{Pat Placeholder}
+\institute{example.org}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\section{Engine}
+
+\begin{frame}{Two backends}
+    \begin{itemize}
+        \item<1-> HTML is the deck; PDF is the handout.
+        \item<2-> \alert{Frames are page boundaries}, never flattened.
+    \end{itemize}
+    \note{Speaker notes are hidden until notes land.}
+\end{frame}
+
+\begin{banner}{decoration}
+    \begin{frame}[fragile]{Code}
+        Definition:
+\begin{verbatim}
+def pages (doc : Doc) : Nat :=
+    (layout doc).pages.size
+\end{verbatim}
+        \uncover<2>{\dim{Checked at build time.}}
+    \end{frame}
+\end{banner}
+
+\begin{frame}
+    \frametitle{Arithmetic}
+    The first squares:
+    \begin{align*}
+        1 &= 1^2
+        \\1 + 3 &= 2^2
+    \end{align*}
+
+    \begin{tabular}{ll}
+        \textbf{Pages} & \textbf{Frames} \\
+        \midrule
+        one & per frame \\
+        one & per divider \\
+    \end{tabular}
+\end{frame}
+
+\begin{frame}[standout]
+    Questions?
+\end{frame}
+
+\end{document}

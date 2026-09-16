@@ -1,0 +1,85 @@
+class slides [aspectratio=169]
+page 455.244x256.075 vmargin 25.607 hmargin 28.453
+font dir "fonts"
+font body "Open Sans"
+font mono "Source Code Pro"
+meta title "A Certified Deck"
+meta author "Pat Placeholder"
+frame
+  center
+    para
+      styled size:LARGE
+        styled bold
+          text "A Certified Deck"
+    para
+      styled size:large
+        text "Slides from one IR"
+    para
+      text "Pat Placeholder"
+    para
+      styled size:small
+        text "example.org"
+section 1
+  text "Engine"
+frame
+  title
+    text "Two backends"
+  list unordered
+    item
+      para
+        text "HTML is the deck; PDF is the handout."
+    item
+      para
+        styled bold
+          text "Frames are page boundaries"
+        text ", never flattened."
+frame
+  title
+    text "Code"
+  para
+    text "Definition:"
+  verbatim
+    "def pages (doc : Doc) : Nat :="
+    "    (layout doc).pages.size"
+  para
+    text "Checked at build time."
+frame
+  title
+    text "Arithmetic"
+  para
+    text "The first squares:"
+  para
+    math display "1 &= 1^2 \\\\ 1 + 3 &= 2^2"
+  para
+    text " "
+    styled bold
+      text "Pages"
+    text " "
+    text "  "
+    text " "
+    styled bold
+      text "Frames"
+    text " "
+    linebreak
+    text " one "
+    text "  "
+    text " per frame "
+    linebreak
+    text " one "
+    text "  "
+    text " per divider "
+frame
+  para
+    text "Questions?"
+-- diagnostics
+note[N0100] 7:1 \documentclass{beamer} → \documentclass[aspectratio=169]{slides}
+warning[W0104] 9:1 '\usetheme' is beamer configuration the engine does not have; skipped | help: a theme is a token bundle here (M5b): \palette and \tokens declare the design directly
+warning[W0104] 10:1 '\setbeamercovered' is beamer configuration the engine does not have; skipped | help: a theme is a token bundle here (M5b): \palette and \tokens declare the design directly
+note[N0100] 11:1 \newcommand{\dim} → \define \dim(a1: content) {...}
+warning[W0104] 12:1 '\newenvironment{banner}' is not supported; the definition is skipped and every '{banner}' keeps its body | help: the wrapper's decoration is lost; the content inside still renders
+warning[W0105] 34:9 overlay specifications are ignored; every step's content is shown | help: dim-not-hide overlays land with the rest of M5; see PLAN.md
+note[N0100] 35:19 \alert → \textbf
+warning[W0307] 37:5 '\note' is not implemented yet; skipped | help: planned for M5; see PLAN.md
+warning[W0302] 40:1 unknown environment '{banner}'; its body is kept | help: see PLAN.md for planned environments
+warning[W0304] 11:22 'quiet!50' is not in the palette; content kept uncoloured | help: declare colours with \palette{ name = #RRGGBB }
+warning[W0308] 59:5 tables are not laid out yet; rows are set as plain lines | help: planned for M8; see PLAN.md

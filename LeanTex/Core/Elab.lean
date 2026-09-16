@@ -105,6 +105,12 @@ def pageSizes : List (String × (Sp × Sp)) :=
 def reservedEnv : List (String × String) :=
   [("external", "M5"), ("tikzpicture", "M8")]
 
+/-- Math environments: their body is math source, carried whole. The engine
+emits math as source until M6, and elaborating `&` and `\\` as text would
+shred exactly the alignment the author wrote. -/
+def mathEnvs : List String :=
+  ["align", "align*", "equation", "equation*", "gather", "gather*", "displaymath"]
+
 /-- Title-page declarations, storable from the preamble or the body. -/
 def titleCtrls : List String :=
   ["title", "subtitle", "author", "institute", "date"]
@@ -360,6 +366,11 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         i := i + 1
       | .env name body pos =>
         i := i + 1
+        if mathEnvs.contains name then
+          acc := flushText acc sb
+          sb := ""
+          acc := acc.push (.math true (rawSrc body))
+        else
         match reservedEnv.lookup name with
         | some milestone =>
           warnOnce ctx name "W0307"
@@ -518,8 +529,10 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
               -- a missing word.
               warnOnce ctx ("palette:" ++ key) "W0304"
                 s!"'{key}' is not in the palette; content kept uncoloured" pos
-                (help := s!"declared: {String.intercalate ", "
-                  (ctx.palette.entries.toList.map (·.1))}")
+                (help := if ctx.palette.entries.isEmpty then
+                    "declare colours with \\palette{ name = #RRGGBB }"
+                  else s!"declared: {String.intercalate ", "
+                    (ctx.palette.entries.toList.map (·.1))}")
               acc := flushText acc sb
               sb := ""
               acc := acc ++ (← elabInlines ctx body)
@@ -899,7 +912,54 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
               diag ctx "E0304" s!"'\\{n}' needs a \{title}" pos
         | .env n body pos =>
           i := i + 1
-          if n == "frame" then
+          if mathEnvs.contains n then
+            blocks := blocks.push (.para #[.math true (rawSrc body)])
+          else if n == "tabular" || n == "tabular*" then
+            -- Rows survive as lines, cells as fixed-space-separated content:
+            -- honest degradation until real table layout, and `&` never
+            -- reaches inline elaboration as a stray reserved character.
+            warnOnce ctx "tabular" "W0308"
+              "tables are not laid out yet; rows are set as plain lines" pos
+              (help := "planned for M8; see PLAN.md")
+            let mut k := skipSpaces body 0
+            if n == "tabular*" then
+              if let some (.group _ _) := body[k]? then
+                k := skipSpaces body (k + 1)
+            if let some (.group _ _) := body[k]? then
+              k := k + 1
+            let mut rows : Array (Array (Array Inline)) := #[]
+            let mut cells : Array (Array Inline) := #[]
+            let mut cellRaws : Array Raw := #[]
+            for j in [k:body.size] do
+              if h' : j < body.size then
+                match body[j] with
+                | .ctrl "\\" _ =>
+                  cells := cells.push (← elabInlines ctx cellRaws)
+                  cellRaws := #[]
+                  rows := rows.push cells
+                  cells := #[]
+                | .sym '&' _ =>
+                  cells := cells.push (← elabInlines ctx cellRaws)
+                  cellRaws := #[]
+                | r' => cellRaws := cellRaws.push r'
+            if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
+              cells := cells.push (← elabInlines ctx cellRaws)
+              rows := rows.push cells
+            let mut content : Array Inline := #[]
+            for row in rows do
+              if row.any (!·.isEmpty) then
+                unless content.isEmpty do
+                  content := content.push (.linebreak {})
+                let mut first := true
+                for cell in row do
+                  unless cell.isEmpty do
+                    unless first do
+                      content := content.push (.text "\u00a0\u00a0")
+                    content := content ++ cell
+                    first := false
+            unless content.isEmpty do
+              blocks := blocks.push (.para content)
+          else if n == "frame" then
             -- \begin{frame}[options]{title}: options are burned (fragile,
             -- plain, standout say how beamer should cope, not what to say);
             -- the title group counts only when it follows directly — a

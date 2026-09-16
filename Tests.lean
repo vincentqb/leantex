@@ -46,7 +46,7 @@ def warnCodes (s : String) : List String :=
 
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
-   "links", "resume", "talk", "latex-idioms"]
+   "links", "resume", "talk", "deck", "latex-idioms"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -1508,6 +1508,20 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let (html, _) := HtmlDoc.emit {} dDoc
   t "html gives each frame its own slide section"
     ((html.splitOn "<section class=\"slide\"").length == 4)
+  -- Math environments carry their source whole — elaborating `&` and `\\`
+  -- as text would shred the alignment; tables degrade to rows of cells and
+  -- `&` never reaches inline elaboration as a reserved-character error.
+  t "align* is one display-math block, source intact"
+    (match (elabStr "\\begin{align*}1 &= 1 \\\\ 2 &= 4\\end{align*}").1.body with
+     | #[.para #[.math true src]] => (src.splitOn "&").length == 3
+     | _ => false)
+  let tabSrc := "\\begin{tabular}{ll}a & b \\\\ c & d\\end{tabular}"
+  t "tabular keeps cells as rows without errors"
+    (errCodes tabSrc == [] &&
+     match (elabStr tabSrc).1.body with
+     | #[.para xs] => xs.contains (.linebreak {}) &&
+         ["a", "b", "c", "d"].all fun w => ((Ir.plainText xs).splitOn w).length == 2
+     | _ => false)
 
 def utf8Checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
