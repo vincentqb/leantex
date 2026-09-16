@@ -36,8 +36,10 @@ structure Font where
   /-- Per-gid, lazily: merged x-intervals (font units) of glyph ink inside
   the band the underline rule occupies, from the glyph's own outline. Empty
   means the rule runs unbroken under the glyph. Decoding happens on first
-  use, so a document with no underline never pays for it; malformed or
-  truncated outline data reads as empty, never a panic. -/
+  use and is memoized (`Thunk` is call-by-need), so a document with no
+  underline never pays for it and a repeated glyph decodes once; malformed
+  or truncated outline data obstructs its whole advance, never panics and
+  never leaves a rule through ink it could not read. -/
   underlineInk : Array (Thunk (Array (Int × Int)))
   deriving Inhabited
 

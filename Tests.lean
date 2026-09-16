@@ -682,12 +682,13 @@ def inkGeometryChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((srcOf overPoints).inkAt 0 (-100) (-50) |>.isNone)
 
 /-- Native underline: a decoration never breaks a glyph. Drawn from the
-font's own `post` metrics and interrupted only where a glyph's outline ink
-actually crosses the rule's band — `q` keeps its rule under the bowl and
-clears it at the stem; `text-decoration-skip-ink` is the browser's spelling
-of the same invariant. Both outline formats are exercised: Open Sans is
-TrueType `glyf`, Source Serif Pro is CFF Type 2 charstrings. Own function,
-same elaboration-budget reason as the others. -/
+font's own `post` metrics and interrupted where a glyph's outline ink
+crosses the rule's band, with clearance either side — `q` keeps its rule
+under the bowl and clears it at the stem; `text-decoration-skip-ink` is the
+browser's spelling of the same invariant. Undecodable outlines clear their
+whole advance. Both outline formats are exercised: Open Sans is TrueType
+`glyf`, Source Serif Pro is CFF Type 2 charstrings. Own function, same
+elaboration-budget reason as the others. -/
 def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
   let t := check ref

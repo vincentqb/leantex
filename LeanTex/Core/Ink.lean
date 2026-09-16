@@ -2,13 +2,16 @@ namespace LeanTex.Core.Ink
 
 /-! Glyph ink in the underline band, from the font's own outlines.
 
-For each glyph: the horizontal extent of actual ink crossing the band the
-underline rule occupies, as merged x-intervals in font units. The rule is
-interrupted only where an outline really crosses it — `q` keeps its rule
-under the bowl and clears it at the stem. Everything here is total over
-arbitrary bytes: a malformed table yields no intervals, never a panic, and a
-glyph whose outline the decoder does not cover is reported as `none` so the
-caller can fall back conservatively. -/
+For each glyph: the horizontal extent of ink crossing the band the underline
+rule occupies, as merged x-intervals in font units, so `q` keeps its rule
+under the bowl and clears it at the stem. The extent is the projection of
+the flattened outline — eight chords per curve — clipped to the band, so it
+is approximate by the flattening error, a few font units at a curve's
+extreme, well under the clearance the consumer dilates every interval by.
+Everything here is total over arbitrary bytes, and errs only toward more
+obstruction: a glyph the decoder cannot answer for — malformed or truncated
+tables, unsupported constructs, exceeded budgets — is reported as `none`,
+and the caller clears its whole advance. -/
 
 /-- A bounded byte read. Out of range is 0 rather than a panic: these parsers
 are fed arbitrary files, and a reader that aborts the process on a short
