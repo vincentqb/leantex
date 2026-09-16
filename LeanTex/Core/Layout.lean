@@ -474,12 +474,16 @@ def isFlagged (items : Array Item) (k : Nat) : Bool :=
 
 def doubleHyphenDemerits : Int := 10000
 
-/-- Optimal breakpoints by dynamic programming over break positions, with
-prefix-sum line measures and an active list: a node whose line to the
-current position is already overfull beyond shrink can only get worse, so
-it is considered one last time and then deactivated (one node is always
-retained so a solution exists even for unbreakable content). -/
-def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
+/-- Prefix sums over item width/stretch/shrink/fil/forced counts, one slot
+past the end, so `kp` measures any line by differencing. -/
+structure KpSums where
+  w : Array Sp
+  s : Array Sp
+  k : Array Sp
+  f : Array Nat
+  forced : Array Nat
+
+def kpSums (items : Array Item) : KpSums := Id.run do
   let n := items.size
   let mut pw : Array Sp := Array.mkEmpty (n + 1)
   let mut ps : Array Sp := Array.mkEmpty (n + 1)
@@ -501,14 +505,29 @@ def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
     pk := pk.push (pk[k]! + dsh)
     pf := pf.push (pf[k]! + dfil)
     pforced := pforced.push (pforced[k]! + (if isForced items k then 1 else 0))
-  let measureAt (a j : Nat) : Measure :=
-    let penW : Sp := match items[j]? with
-      | some (.pen w _ _ _ _ _) => w
-      | _ => 0
-    { natural := pw[j]! - pw[a]! + penW
-      stretch := ps[j]! - ps[a]!
-      shrink := pk[j]! - pk[a]!
-      fil := pf[j]! - pf[a]! > 0 }
+  return { w := pw, s := ps, k := pk, f := pf, forced := pforced }
+
+/-- The line measure `kp` uses: prefix-sum differences over [a:j) plus the
+width of the penalty broken at. Must agree with `measure` wherever `kp`
+evaluates it; `scripts/kp-fuzz.lean` holds it to that. -/
+def kpMeasure (items : Array Item) (sums : KpSums) (a j : Nat) : Measure :=
+  let penW : Sp := match items[j]? with
+    | some (.pen w _ _ _ _ _) => w
+    | _ => 0
+  { natural := sums.w[j]! - sums.w[a]! + penW
+    stretch := sums.s[j]! - sums.s[a]!
+    shrink := sums.k[j]! - sums.k[a]!
+    fil := sums.f[j]! - sums.f[a]! > 0 }
+
+/-- Optimal breakpoints by dynamic programming over break positions, with
+prefix-sum line measures and an active list: a node whose line to the
+current position is already overfull beyond shrink can only get worse, so
+it is considered one last time and then deactivated (one node is always
+retained so a solution exists even for unbreakable content). -/
+def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
+  let n := items.size
+  let sums := kpSums items
+  let measureAt (a j : Nat) : Measure := kpMeasure items sums a j
   let mut best : Array (Option (Int × Nat)) := Array.replicate (n + 1) none
   best := best.set! n (some (0, n))
   let mut active : Array Nat := #[n]
@@ -521,7 +540,7 @@ def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
       for p in active do
         if p == n || p < j then
           let a := lineStart items (if p == n then 0 else p + 1)
-          let spansForced := a < j && pforced[j]! - pforced[a]! > 0
+          let spansForced := a < j && sums.forced[j]! - sums.forced[a]! > 0
           if !spansForced && a ≤ j then
             match best[p]! with
             | some (d0, _) =>

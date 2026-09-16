@@ -95,15 +95,17 @@ private def bruteBest (items : Array Item) (target : Dim.Sp) : Option Int := Id.
       | none => best := some c
   return best
 
-/-- Prefix-sum measure inside `kp` must agree with the direct `measure`. -/
+/-- `kp`'s prefix-sum measure must agree with the direct `measure` wherever
+`kp` evaluates it: a line start to a legal breakpoint. -/
 private def measuresAgree (items : Array Item) : Bool := Id.run do
+  let sums := kpSums items
   for a in [0:items.size] do
     for j in [a:items.size] do
-      let direct := measure items a j
-      -- `kp` only measures from a line start to a breakpoint
       if a == lineStart items a && canBreakAt items j then
-        let viaKp := measure items a j
-        if direct.natural != viaKp.natural then
+        let direct := measure items a j
+        let viaKp := kpMeasure items sums a j
+        if direct.natural != viaKp.natural || direct.stretch != viaKp.stretch ||
+            direct.shrink != viaKp.shrink || direct.fil != viaKp.fil then
           return false
   return true
 
