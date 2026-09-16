@@ -599,7 +599,10 @@ paragraph. -/
 def bodyIsBlock (raws : Array Raw) : Bool :=
   raws.any fun r =>
     match r with
-    | .ctrl n _ => n == "block" || ["section", "subsection", "subsubsection"].contains n
+    -- A body that ends its own paragraph (`...\par`, the LaTeX habit for a
+    -- one-line entry) produces one, so it is a block too.
+    | .ctrl n _ => n == "block" || n == "par" || ["section", "subsection", "subsubsection"].contains n
+    | .par _ => true
     | .env n _ _ => blockEnvs.contains n
     | _ => false
 
@@ -668,7 +671,14 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
     | _ => break
   if cur.isEmpty then
     return none
-  let inlines ← elabInlines ctx cur
+  let mut inlines ← elabInlines ctx cur
+  -- A forced break at the very end says what the paragraph end already
+  -- says; kept, it is an empty line in the PDF and an empty row in HTML.
+  repeat
+    match inlines.back? with
+    | some (.linebreak _) => inlines := inlines.pop
+    | some (.text s) => if s.trimAscii.isEmpty then inlines := inlines.pop else break
+    | _ => break
   return if inlines.isEmpty then none else some (.para inlines)
 
 /-- Elaborate raw items as a block sequence. -/

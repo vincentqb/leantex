@@ -47,7 +47,6 @@ block before 1800/1000ex plus 720/1000ex minus 360/1000ex
     color muted #71717A
       styled italic
         text "Platform"
-    text " "
 list unordered
   item
     para
@@ -66,7 +65,6 @@ block before 1800/1000ex plus 720/1000ex minus 360/1000ex
     fill
     color muted #71717A
       text "2017–2021"
-    text " "
 list unordered
   item
     para
@@ -84,6 +82,5 @@ block before 1800/1000ex plus 720/1000ex minus 360/1000ex
     fill
     color muted #71717A
       text "2013–2017"
-    text " "
 -- diagnostics
 (none)

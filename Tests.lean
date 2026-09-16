@@ -388,6 +388,16 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr "{\\bfseries a\n\nb}").1.body.size == 2)
   t "par in an argument group is the command's"
     ((elabStr "\\emph{a \\par b}").1.body.size == 1)
+  -- A defined command whose body ends its paragraph produces one when
+  -- called between paragraphs, as LaTeX's `\newcommand{\entry}[1]{...\par}`
+  -- does; and a forced break at a paragraph's end is dropped, since the end
+  -- already says it (it was an empty line in the PDF, an empty row in HTML).
+  let (entry, _) := elabStr ("\\documentclass{article}\\define \\entry(a: content) {\\textbf{\\a}\\par}" ++
+    "\\begin{document}\\entry{x}\\entry{y}\\end{document}")
+  t "a body ending in par is a block" (entry.body ==
+    #[.para #[.styled .bold #[.text "x"]], .para #[.styled .bold #[.text "y"]]])
+  t "a trailing forced break is dropped" ((elabStr "a\\\\ \n\nb").1.body ==
+    #[.para #[.text "a"], .para #[.text "b"]])
   -- The document's definitions win over every built-in it may redefine;
   -- the ones it may not are refused with W0303, never shadowed silently.
   let (own, ownDs) := elabStr ("\\documentclass{article}" ++

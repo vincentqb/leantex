@@ -44,11 +44,10 @@ para
   fill
   color muted #72727F
     text "2021–present"
-  linebreak
+para
   color muted #72727F
     styled italic
       text "Platform"
-  linebreak
 list unordered
   item
     para
@@ -64,14 +63,12 @@ para
   fill
   color muted #72727F
     text "2017–2021"
-  linebreak
 section* 1
   text "Education"
 para
   styled bold
     text "PhD Applied Mathematics"
   text ", Example University"
-  linebreak
 para
   underline
     text "Selected honours"
