@@ -34,7 +34,14 @@ structure Config where
   porcelain : Bool := false
   color : ColorMode := .auto
   emit : Array Emit := #[.pdf]
+  /-- Whether `--emit` was given explicitly: an explicit flag outranks the
+  output name and the document's `\output`. -/
+  emitSet : Bool := false
   css : CssChoice := .own
+  cssSet : Bool := false
+  /-- `-o`: an output file (its extension picks the backend) or a directory. -/
+  output : Option String := none
+  watch : Bool := false
   mathBoundary : Option String := none
   /-- Extra font directories, added to the built-in locations. -/
   fontDirs : Array String := #[]
@@ -45,7 +52,7 @@ private def vCount (s : String) : Option Nat :=
   | '-' :: vs => if !vs.isEmpty && vs.all (· == 'v') then some vs.length else none
   | _ => none
 
-private def emitOne : String → Option Emit
+def emitOne : String → Option Emit
   | "pdf" => some .pdf
   | "html" => some .html
   | _ => none
@@ -62,7 +69,7 @@ private def emitList (s : String) : Option (Array Emit) := do
       | none => failure
     some out
 
-private def cssChoice : String → Option CssChoice
+def cssChoice : String → Option CssChoice
   | "own" => some .own
   | "bulma" => some .bulma
   | "none" => some .none
@@ -89,8 +96,15 @@ def parse (argv : List String) : Except String Config := do
       match a with
       | "-q" | "--quiet" => cfg := { cfg with quiet := true }
       | "--porcelain" => cfg := { cfg with porcelain := true }
+      | "--watch" => cfg := { cfg with watch := true }
       | "-h" | "--help" => return { cfg with cmd := .help }
       | "--version" => return { cfg with cmd := .version }
+      | "-o" | "--output" =>
+        match rest with
+        | m :: rest' =>
+          cfg := { cfg with output := some m }
+          args := rest'
+        | [] => throw "'-o' needs a file or directory"
       | "--color" =>
         match rest with
         | m :: rest' =>
@@ -103,7 +117,7 @@ def parse (argv : List String) : Except String Config := do
         | m :: rest' =>
           let some es := emitList m
             | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html"
-          cfg := { cfg with emit := es }
+          cfg := { cfg with emit := es, emitSet := true }
           args := rest'
         | [] => throw "'--emit' needs a list: pdf, html"
       | "--css" =>
@@ -111,7 +125,7 @@ def parse (argv : List String) : Except String Config := do
         | m :: rest' =>
           let some c := cssChoice m
             | throw s!"invalid --css '{m}'; expected own, bulma, or none"
-          cfg := { cfg with css := c }
+          cfg := { cfg with css := c, cssSet := true }
           args := rest'
         | [] => throw "'--css' needs a mode: own | bulma | none"
       | "--math-boundary" =>
@@ -140,11 +154,13 @@ def parse (argv : List String) : Except String Config := do
           let m := (a.drop "--emit=".length).toString
           let some es := emitList m
             | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html"
-          cfg := { cfg with emit := es }
+          cfg := { cfg with emit := es, emitSet := true }
         else if a.startsWith "--css=" then
           let m := (a.drop "--css=".length).toString
           let some c := cssChoice m | throw s!"invalid --css '{m}'; expected own, bulma, or none"
-          cfg := { cfg with css := c }
+          cfg := { cfg with css := c, cssSet := true }
+        else if a.startsWith "--output=" then
+          cfg := { cfg with output := some (a.drop "--output=".length).toString }
         else if a.startsWith "--font-dir=" then
           cfg := { cfg with
             fontDirs := cfg.fontDirs.push (a.drop "--font-dir=".length).toString }
@@ -167,7 +183,15 @@ def parse (argv : List String) : Except String Config := do
             | "version" => cmd := some .version
             | "hyphenate" => cmd := some (.hyphenate [] none)
             | "build" | "dump" => wantsFile := some a
-            | _ => throw s!"unknown command '{a}'"
+            | _ =>
+              -- The file is the command: `leantex doc.tex` builds it.
+              -- `.md` is reserved for the markdown surface.
+              if a.endsWith ".tex" || a.endsWith ".md" then
+                cmd := some (.build a)
+              else if a.toList.contains '.' || a.toList.contains '/' then
+                throw s!"'{a}' is not a .tex or .md document"
+              else
+                throw s!"unknown command '{a}'"
   if cfg.quiet && cfg.verbosity > 0 then
     throw "choose one of -q and -v"
   if let some k := wantsFile then
@@ -180,31 +204,79 @@ def parse (argv : List String) : Except String Config := do
     return { cfg with cmd := .hyphenate hyphenWords hyphenFile }
   | _ => return { cfg with cmd := cmd.getD .help }
 
-def helpText : String :=
-  "leantex — a fast, certified, modern LaTeX-lookalike engine
+def Emit.ext : Emit → String
+  | .pdf => "pdf"
+  | .html => "html"
 
-usage: leantex [flags] <command>
+/-- The backend an output name asks for, when it names one. -/
+def emitOfPath (o : String) : Option Emit :=
+  if o.endsWith ".pdf" then some .pdf
+  else if o.endsWith ".html" then some .html
+  else none
+
+/-- Backends to run: explicit `--emit` > the output name > the document's
+`\output{ formats = ... }` > PDF. -/
+def Config.effectiveEmit (cfg : Config) (docFormats : Array String) : Array Emit :=
+  if cfg.emitSet then cfg.emit
+  else if let some e := cfg.output.bind emitOfPath then #[e]
+  else
+    let ds := docFormats.filterMap emitOne
+    if ds.isEmpty then cfg.emit else ds
+
+/-- Stylesheet: explicit `--css` > the document's `\output{ css = ... }` >
+the default. -/
+def Config.effectiveCss (cfg : Config) (docCss : Option String) : CssChoice :=
+  if cfg.cssSet then cfg.css
+  else (docCss.bind cssChoice).getD cfg.css
+
+/-- Where a backend writes. A directory keeps the source's stem; a file
+naming this backend's extension is used as-is; anything else (the other
+backend's file, under `--emit pdf,html`) falls back beside the source. -/
+def outPath (output : Option String) (outputIsDir : Bool) (source : String)
+    (e : Emit) : String :=
+  let besideSource := (System.FilePath.mk source).withExtension e.ext |>.toString
+  match output with
+  | none => besideSource
+  | some o =>
+    if o.endsWith "/" || outputIsDir then
+      let stem := (System.FilePath.mk source).fileStem.getD "out"
+      let dir := String.ofList (o.toList.reverse.dropWhile (· == '/')).reverse
+      (System.FilePath.mk dir / stem).withExtension e.ext |>.toString
+    else if emitOfPath o == some e then o
+    else besideSource
+
+def helpText : String :=
+  "leantex — compile a .tex document to PDF or HTML, fast, with no setup
+
+usage: leantex <file> [flags] · leantex <command> [args]
+
+examples:
+  leantex doc.tex                 build doc.pdf beside the source
+  leantex doc.tex -o out.html     the output name picks the backend
+  leantex doc.tex -o build/       write build/doc.pdf
+  leantex doc.tex --watch         rebuild on every change
+
+a document can declare its own outputs — \\output{ formats = pdf, html } —
+so the command line stays bare; flags override the document.
 
 commands:
-  build <file>            compile a document to PDF
+  build <file>            same as `leantex <file>`
   dump <file>             print the elaborated document structure (debugging)
-  hyphenate <word>...     show hyphenation points, one word per line
-  hyphenate --file <path> hyphenate each word in a file
-  version                 print version
-  help                    show this help
+  hyphenate <word>...     show hyphenation points (--file <path> for a list)
+  version · help
 
 flags:
-  --emit <list>  backends: pdf, html (default pdf)
-  --css <mode>   HTML stylesheet: own | bulma | none (default own)
-  --math-boundary <tool>
-                 attach a client-side math renderer to HTML output
-  --font-dir <d> also look for fonts here (repeatable; see LEANTEX_FONT_PATH)
-  -q, --quiet    errors only
-  -v -vv -vvv    phases · decisions · trace (on stderr)
-  --porcelain    JSONL events on stdout, for machines
-  --color <m>    auto | always | never (NO_COLOR respected)
+  -o, --output <path>     output file (.pdf | .html) or directory
+  --watch                 rebuild when the source changes (Ctrl-C stops)
+  --emit <list>           backends: pdf, html — the way to get both at once
+  --css <mode>            HTML stylesheet: own | bulma | none (default own)
+  --math-boundary <tool>  attach a client-side math renderer to HTML output
+  --font-dir <d>          also look for fonts here (repeatable)
+  -q, --quiet             errors only
+  -v -vv -vvv             phases · decisions · trace (on stderr)
+  --porcelain             JSONL events on stdout, for machines
+  --color <m>             auto | always | never (NO_COLOR respected)
 
-exit codes:
-  0 ok · 1 document errors · 2 assertions failed · 3 usage · 4 internal"
+exit codes: 0 ok · 1 document errors · 2 assertions failed · 3 usage · 4 internal"
 
 end LeanTex.Cli

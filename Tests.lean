@@ -476,6 +476,32 @@ def main (args : List String) : IO UInt32 := do
   t "args math boundary"
     ((parse ["build", "--math-boundary", "katex", "a.tex"]).map (·.mathBoundary) ==
       .ok (some "katex"))
+  -- args: the file is the command; the output name chooses the backend
+  t "args file is the command" (parse ["a.tex"] == .ok { cmd := .build "a.tex" })
+  t "args md reserved for markdown" (parse ["notes.md"] == .ok { cmd := .build "notes.md" })
+  t "args flags after the file" (parse ["a.tex", "--color", "never"] ==
+    .ok { cmd := .build "a.tex", color := .never })
+  t "args non-document positional" ((parse ["nonsense.txt"]).isOk == false)
+  t "args output flag" ((parse ["a.tex", "-o", "out.html"]).map (·.output) ==
+    .ok (some "out.html"))
+  t "args output infers html" ((parse ["a.tex", "-o", "out.html"]).map
+    (·.effectiveEmit #[]) == .ok #[.html])
+  t "args output infers pdf" ((parse ["a.tex", "-o", "b/x.pdf"]).map
+    (·.effectiveEmit #[]) == .ok #[.pdf])
+  t "args emit beats output name" ((parse ["a.tex", "--emit", "pdf,html", "-o", "out/"]).map
+    (·.effectiveEmit #[]) == .ok #[.pdf, .html])
+  t "args document formats apply" ((parse ["a.tex"]).map (·.effectiveEmit #["html"]) ==
+    .ok #[.html])
+  t "args flag beats document" ((parse ["a.tex", "--emit", "pdf"]).map
+    (·.effectiveEmit #["html"]) == .ok #[.pdf])
+  t "args document css applies" ((parse ["a.tex"]).map (·.effectiveCss (some "bulma")) ==
+    .ok .bulma)
+  t "args css flag beats document" ((parse ["a.tex", "--css", "none"]).map
+    (·.effectiveCss (some "bulma")) == .ok CssChoice.none)
+  t "args output dir keeps stem" (outPath (some "out/") false "doc.tex" .pdf == "out/doc.pdf")
+  t "args output other backend beside source"
+    (outPath (some "out.html") false "doc.tex" .pdf == "doc.pdf")
+  t "args watch" ((parse ["a.tex", "--watch"]).map (·.watch) == .ok true)
 
   -- render: porcelain is stable, escaped JSONL
   let d : Diag := {
@@ -548,6 +574,14 @@ def main (args : List String) : IO UInt32 := do
     #[.list false #[#[.para #[.text "a"]], #[.para #[.text "b"]]]])
   let (doc6, d6) := elabStr "\\documentclass[x=1]{article}\n\\begin{document}\nhi\n\\end{document}"
   t "elab documentclass" (d6.isEmpty && doc6.docClass == "article" && doc6.classOptions == "x=1")
+  let (doc9, d9) := elabStr
+    "\\output{ formats = pdf, html, css = bulma }\n\\begin{document}x\\end{document}"
+  t "elab output declaration" (d9.isEmpty && doc9.output.formats == #["pdf", "html"] &&
+    doc9.output.css == some "bulma")
+  t "elab output bad format" (errCodes
+    "\\output{ formats = ps }\n\\begin{document}x\\end{document}" == ["E0321"])
+  t "elab output unknown key" (errCodes
+    "\\output{ paper = a4 }\n\\begin{document}x\\end{document}" == ["E0322"])
 
   -- elab: define and call
   let defRole := "\\documentclass{article}\n" ++

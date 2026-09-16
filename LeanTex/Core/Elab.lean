@@ -64,7 +64,7 @@ def reservedCtrl : List (String × String) :=
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 def declCtrl : List String :=
-  ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style"]
+  ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output"]
 
 /-- Preamble declarations that take one group of *inline content* rather than
 a key/value block: running head and foot. -/
@@ -933,6 +933,45 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (entries : Array Decl.Entry
           "a color like #7C3AED" v pos) }
   return pal
 
+/-- `\output{...}`: what to build, so a document needs no CLI options.
+`formats` takes a bare comma list (`formats = pdf, html`), so entries are
+walked by hand: an entry without `=` continues the list. -/
+private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos) :
+    EM OutputSpec := do
+  let mut o := o0
+  let mut inFormats := false
+  let addFormat (o : OutputSpec) (f : String) : EM OutputSpec := do
+    if ["pdf", "html"].contains f then
+      return { o with
+        formats := if o.formats.contains f then o.formats else o.formats.push f }
+    diag ctx "E0321" s!"'{f}' is not an output format" pos
+      (help := some "formats: pdf, html")
+    return o
+  for entry in Decl.splitEntries src do
+    match Decl.splitEntry entry with
+    | some ("formats", v) =>
+      inFormats := true
+      o ← addFormat o v
+    | some ("css", v) =>
+      inFormats := false
+      if ["own", "bulma", "none"].contains v then
+        o := { o with css := some v }
+      else
+        diag ctx "E0321" s!"'{v}' is not a stylesheet mode" pos
+          (help := some "css: own | bulma | none")
+    | some (key, _) =>
+      inFormats := false
+      modify fun st => { st with
+        diags := st.diags.push (Decl.unknownKey ctx.file "output" key
+          ["formats", "css"] pos) }
+    | none =>
+      if inFormats then
+        o ← addFormat o entry
+      else
+        diag ctx "E0320" s!"invalid entry in \\output: {entry.quote}" pos
+          (help := some "entries look like: formats = pdf, html")
+  return o
+
 /-- `\pdfmeta{...}`: PDF document information. -/
 private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     (pos : Pos) : EM Meta := do
@@ -1008,6 +1047,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut runningFrom : Nat := 1
   let mut styles : Styles := {}
   let mut info : Meta := {}
+  let mut output : OutputSpec := {}
   let mut asserts : Array Assertion := #[]
   let mut textDiagged := false
   let mut i := 0
@@ -1131,6 +1171,10 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             if name == "assert" then
               if let some a ← parseAssert ctx src pos then
                 asserts := asserts.push a
+            else if name == "output" then
+              -- Parses its own entries: `formats` is a bare comma list, which
+              -- a generic key/value pre-parse would break apart.
+              output ← applyOutput ctx output src pos
             else if name == "tokens" then
               -- Parses its own entries one at a time; a generic pre-parse
               -- would reject `0.6 * rhythm` before the reference resolves.
@@ -1181,6 +1225,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     runningFrom := runningFrom
     styles := styles
     info := info
+    output := output
     asserts := asserts
     body := blocks
   }

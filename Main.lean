@@ -90,6 +90,23 @@ def loadFont : IO (Except Diag (String × Font.Font)) := do
       help := some s!"searched: {String.intercalate ", " fontCandidates}; set LEANTEX_FONT"
     }
 
+/-- TeX Live's font roots, asked of kpsewhich when it is installed, so
+`--font-dir` is almost never needed. `--show-path` expands the brace/`//`
+config syntax to a colon-separated list; `!!` (ls-R only) and trailing `//`
+(recursive) markers drop, and relative entries like `.` are skipped. Not
+cached: kpsewhich answers in ~10 ms. -/
+def texFontDirs : IO (List String) := do
+  let query (ext : String) : IO (List String) := do
+    try
+      let out ← IO.Process.output { cmd := "kpsewhich", args := #["--show-path=" ++ ext] }
+      if out.exitCode != 0 then return []
+      return (out.stdout.trimAscii.toString.splitOn ":").filterMap fun p =>
+        let p := if p.startsWith "!!" then (p.drop 2).toString else p
+        let p := String.ofList (p.toList.reverse.dropWhile (· == '/')).reverse
+        if p.startsWith "/" then some p else none
+    catch _ => return []
+  return ((← query ".otf") ++ (← query ".ttf")).eraseDups
+
 /-- Every face a document can reach: the three family slots crossed with the
 four bold/italic variants, loaded once and deduplicated by path. Faces the
 document never uses are still loaded but not embedded — `usedGlyphs` decides
@@ -106,7 +123,7 @@ def buildFontSet (ui : Ui) (spec : Ir.FontSpec) :
          ((slot, false, true), 0), ((slot, true, true), 0)]
       return .ok ({ fonts := #[f], index := index.toArray }, #[], path)
   let t ← IO.monoMsNow
-  let faces ← FontDb.scan ui.cfg.fontDirs.toList
+  let faces ← FontDb.scan (ui.cfg.fontDirs.toList ++ (← texFontDirs))
   ui.phase "fontdb" s!"{faces.size} faces" ((← IO.monoMsNow) - t)
   let mut diags : Array Diag := #[]
   let mut fonts : Array Font.Font := #[]
@@ -326,9 +343,17 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         ui.summary file failures.size (← since t0)
         return 2
       let mut written : Array String := #[]
-      if ui.cfg.emit.contains .html then
+      let emit := ui.cfg.effectiveEmit doc.output.formats
+      let css := ui.cfg.effectiveCss doc.output.css
+      let outIsDir ← match ui.cfg.output with
+        | some o => (System.FilePath.mk o).isDir
+        | none => pure false
+      if let some o := ui.cfg.output then
+        if o.endsWith "/" && !outIsDir then
+          IO.FS.createDirAll o
+      if emit.contains .html then
         let t ← IO.monoMsNow
-        let cssMode := match ui.cfg.css with
+        let cssMode := match css with
           | .own => HtmlDoc.CssMode.own
           | .bulma => HtmlDoc.CssMode.bulma
           | .none => HtmlDoc.CssMode.none
@@ -339,14 +364,14 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         let (html, hdiags) := HtmlDoc.emit hcfg doc
         for d in hdiags do
           ui.diag d
-        let htmlPath := (System.FilePath.mk file).withExtension "html" |>.toString
+        let htmlPath := outPath ui.cfg.output outIsDir file .html
         IO.FS.writeFile htmlPath html
         written := written.push htmlPath
         ui.phase "html" s!"{html.utf8ByteSize} bytes" (← since t)
-      if ui.cfg.emit.contains .pdf then
+      if emit.contains .pdf then
         let t ← IO.monoMsNow
         let pdf := Pdf.write geom fs out.pages doc.info
-        let pdfPath := (System.FilePath.mk file).withExtension "pdf" |>.toString
+        let pdfPath := outPath ui.cfg.output outIsDir file .pdf
         IO.FS.writeBinFile pdfPath pdf
         written := written.push pdfPath
         ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
@@ -389,6 +414,24 @@ def hyphenate (ui : Ui) (words : List String) (file : Option String) : IO UInt32
     IO.println (showHyphens pats w)
   return 0
 
+/-- Rebuild whenever the source changes, by polling its mtime every 200 ms —
+no inotify dependency. Each rebuild prints the usual summary line. -/
+def watch (cfg : Config) (file : String) : IO UInt32 := do
+  let mtime : IO (Option IO.FS.SystemTime) := do
+    try
+      pure (some (← (System.FilePath.mk file).metadata).modified)
+    catch _ =>
+      pure none
+  let mut last ← mtime
+  discard <| build (← Ui.mk' cfg) file
+  repeat
+    IO.sleep 200
+    let m ← mtime
+    if m != last && m.isSome then
+      last := m
+      discard <| build (← Ui.mk' cfg) file
+  return 0
+
 def main (argv : List String) : IO UInt32 := do
   match parse argv with
   | .error msg =>
@@ -405,7 +448,22 @@ def main (argv : List String) : IO UInt32 := do
       IO.println s!"leantex {LeanTex.version}"
       return 0
     | .build file =>
-      build (← Ui.mk' cfg) file
+      if file.endsWith ".md" then
+        let stderr ← IO.getStderr
+        stderr.putStrLn
+          "leantex: markdown input is reserved for the second surface; not implemented yet (PLAN.md)"
+        return 3
+      if let some o := cfg.output then
+        unless o.endsWith "/" || (← (System.FilePath.mk o).isDir) ||
+            (emitOfPath o).isSome do
+          let stderr ← IO.getStderr
+          stderr.putStrLn
+            s!"leantex: cannot tell the output format of '{o}'; name it *.pdf or *.html, or pass a directory"
+          return 3
+      if cfg.watch then
+        watch cfg file
+      else
+        build (← Ui.mk' cfg) file
     | .dump file =>
       dump (← Ui.mk' cfg) file
     | .hyphenate words file =>

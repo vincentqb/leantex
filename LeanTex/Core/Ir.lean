@@ -60,6 +60,14 @@ structure FontSpec where
   mono : Option String := none
   deriving Repr, BEq, Inhabited
 
+/-- What to build, as declared by `\output`: the document carries its own
+build intent, the way `\documentclass` already does. Names stay strings here
+so the core does not know the CLI's option types. -/
+structure OutputSpec where
+  formats : Array String := #[]
+  css : Option String := none
+  deriving Repr, BEq, Inhabited
+
 /-- PDF document information, as declared by `\pdfmeta`. -/
 structure Meta where
   title : Option String := none
@@ -231,6 +239,7 @@ structure Doc where
   runningFrom : Nat := 1
   styles : Styles := {}
   info : Meta := {}
+  output : OutputSpec := {}
   asserts : Array Assertion := #[]
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
