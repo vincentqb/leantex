@@ -322,8 +322,14 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((stylePage.splitOn "<h2 class=\"ruled\"><span class=\"size-large\"><span class=\"sans\">").length == 2)
   t "html styled heading spacing" ((stylePage.splitOn "h2 { margin-top: 6pt; margin-bottom: 3pt;").length == 2)
   t "html styled list indent and gap"
-    ((stylePage.splitOn "ul { padding-left: 120%; }").length == 2 &&
+    ((stylePage.splitOn "ul { padding-left: 1.2em; }").length == 2 &&
      (stylePage.splitOn "ul > li { margin-top: 3pt; }").length == 2)
+  -- Font-relative lengths keep their unit. `1.2em` once became `120%`, which
+  -- for padding is a fraction of the container: every styled list left the page.
+  t "css em keeps its unit" (HtmlDoc.cssLength { em := 1200 } == "1.2em")
+  t "css ex keeps its unit" (HtmlDoc.cssLength { ex := 1500 } == "1.5ex")
+  t "css whole em has no fraction" (HtmlDoc.cssLength { em := 2000 } == "2em")
+  t "css mixed length sums" (HtmlDoc.cssLength { sp := Dim.pt 3, em := 500 } == "calc(3pt + 0.5em)")
   -- \runninghead[from = 2]: the opening page carries no furniture.
   let (fromDoc, fromDs) := elabStr ("\\documentclass{article}\\runninghead[from = 2]{x}" ++
     "\\begin{document}y\\end{document}")

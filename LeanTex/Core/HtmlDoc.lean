@@ -38,10 +38,21 @@ def cssColor (c : Color) : String := s!"#{hex2 c.r}{hex2 c.g}{hex2 c.b}"
 being resolved, so the browser scales them with the reader's font size — the
 one place HTML should *not* copy what the PDF path does. -/
 def cssLength (l : Length) : String :=
+  -- Thousandths to a decimal, so `1.2em` round-trips as `1.2em`. It was once
+  -- emitted as `120%`, which for padding is a fraction of the container and
+  -- pushed every styled list off the page.
+  let dec (n : Int) : String :=
+    let sign := if n < 0 then "-" else ""
+    let a := n.natAbs
+    let frac := toString (a % 1000)
+    let frac := "".pushn '0' (3 - frac.length) ++ frac
+    let frac := String.ofList (frac.toList.reverse.dropWhile (· == '0')).reverse
+    s!"{sign}{a / 1000}" ++ (if frac.isEmpty then "" else "." ++ frac)
   let parts :=
     (if l.sp != 0 then [s!"{l.sp.toPtString}pt"] else []) ++
-    (if l.em != 0 then [s!"{(l.em / 10)}%"] else []) ++
-    (if l.ex != 0 then [s!"calc({l.ex} * 0.001em * 0.52)"] else [])
+    (if l.em != 0 then [s!"{dec l.em}em"] else []) ++
+    -- CSS has an `ex` unit of its own; the browser measures the real font.
+    (if l.ex != 0 then [s!"{dec l.ex}ex"] else [])
   match parts with
   | [] => "0"
   | [one] => one
