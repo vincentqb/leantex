@@ -1,0 +1,9 @@
+class slides [aspectratio=169]
+-- diagnostics
+error[E0307] 9:1 '\fonts' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0307] 14:1 '\fontfallback' is not implemented yet | help: planned for M5; see PLAN.md
+error[E0307] 16:1 '\pdfmeta' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0307] 20:1 '{frame}' is not implemented yet | help: planned for M5; see PLAN.md
+error[E0307] 29:1 '{frame}' is not implemented yet | help: planned for M5; see PLAN.md
+error[E0307] 38:1 '{frame}' is not implemented yet | help: planned for M5; see PLAN.md
+error[E0307] 43:1 '{frame}' is not implemented yet | help: planned for M5; see PLAN.md

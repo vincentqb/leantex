@@ -1,0 +1,13 @@
+class article
+para
+  text "Typesetting is the arrangement of type. This paragraph exists to be broken into lines by an optimal algorithm, so it rambles just long enough to wrap: the quick brown fox jumps over the lazy dog, again and again, until the paragraph carries at least four lines at a letter-size measure and the breaker has real choices to make."
+para
+  text "Unicode is the substrate, not an extension: naïve, façade, Škoda, Møller — and Greek runs inline: αβγδ. Inline math stays simple for now: "
+  math inline "E = mc^2"
+  text " and "
+  math inline "a^2 + b^2 = c^2"
+  text "."
+para
+  text "Incomprehensibility notwithstanding, internationalization and floccinaucinihilipilification hyphenate somewhere reasonable, and the demerits say where."
+-- diagnostics
+(none)

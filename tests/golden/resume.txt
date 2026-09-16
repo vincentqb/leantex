@@ -1,0 +1,39 @@
+class article [paper=letter, fontsize=10pt]
+center
+  para
+    styled sans
+      styled bold
+        styled size:Huge
+          text "Alex Doe"
+    linebreak
+    text "[bind] alex@example.org example.org github.com/adoe"
+section* 1
+  text "Experience"
+list unordered
+  item
+    para
+      text "Made a slow thing 10% faster and proved it stayed correct."
+  item
+    para
+      text "Deleted more code than was added, on purpose, twice."
+list unordered
+  item
+    para
+      text "Shipped widgets; measured them; shipped better widgets."
+section* 1
+  text "Education"
+-- diagnostics
+error[E0307] 10:1 '\fonts' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0307] 16:1 '\tokens' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0307] 22:1 '\palette' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0307] 28:1 '\page' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0307] 35:1 '\pdfmeta' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0307] 41:1 '\assert' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0307] 42:1 '\assert' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0301] 55:24 unknown command '\primary' | help: define it with \define, or see PLAN.md for planned commands
+error[E0301] 56:3 unknown command '\muted' | help: define it with \define, or see PLAN.md for planned commands
+error[E0301] 56:27 unknown command '\middot' | help: define it with \define, or see PLAN.md for planned commands
+error[E0301] 56:47 unknown command '\middot' | help: define it with \define, or see PLAN.md for planned commands
+error[E0307] 46:3 '\block' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0307] 46:3 '\block' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0307] 46:3 '\block' is not implemented yet | help: planned for M3; see PLAN.md

@@ -9,11 +9,18 @@ flashtex sets the speed bar.
 
 ## Status
 
-2026-09-15 — M0 landed: lake scaffold, CLI with the logging contract below
-(quiet default, `-v` ladder, `--porcelain` JSONL, color, exit codes),
-diagnostics with spans, strict UTF-8 stage, 36 tests green, CI. Dialect
-sketches (synthetic, double as future goldens) live in `tests/corpus/`.
-Next: M1 language core.
+2026-09-15 — M1 landed: the front end runs end to end. Lexer (fixed specials,
+verbatim-blind, TeX-style space swallow and comment joining), parser (groups,
+inline/display math, environments, recovery — strays reported, unclosed
+delimiters healed), elaborator (typed `\define` with optional params and
+`\ifgiven`, snapshot scoping so a body sees only earlier definitions, styles,
+sections, lists, center, documentclass, reserved-command diagnostics with
+milestone pointers), document IR with a stable dump format, `leantex dump`,
+golden tests over the corpus, 36 + 33 tests green. paragraphs.tex elaborates
+with zero diagnostics; resume/talk goldens record the honest M1 boundary.
+Debt, deliberate: elaborator/parser use `partial` recursion — nontermination
+is impossible by design (snapshot scoping), but proving it means de-looping
+those functions; that is the next proofs unit. Next: M2 paragraphs → PDF.
 
 ## Why not TeX-compatible
 

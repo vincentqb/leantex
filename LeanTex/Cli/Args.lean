@@ -10,6 +10,7 @@ inductive Cmd where
   | help
   | version
   | build (file : String)
+  | dump (file : String)
   deriving Repr, BEq
 
 structure Config where
@@ -68,12 +69,12 @@ def parse (argv : List String) : Except String Config := do
             match a with
             | "help" => cmd := some .help
             | "version" => cmd := some .version
-            | "build" =>
+            | "build" | "dump" =>
               match args with
               | f :: rest' =>
-                cmd := some (.build f)
+                cmd := some (if a == "build" then .build f else .dump f)
                 args := rest'
-              | [] => throw "'build' needs a file"
+              | [] => throw s!"'{a}' needs a file"
             | _ => throw s!"unknown command '{a}'"
   if cfg.quiet && cfg.verbosity > 0 then
     throw "choose one of -q and -v"
@@ -86,6 +87,7 @@ usage: leantex [flags] <command>
 
 commands:
   build <file>   compile a document to PDF
+  dump <file>    print the elaborated document structure (debugging)
   version        print version
   help           show this help
 
