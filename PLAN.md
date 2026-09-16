@@ -47,8 +47,21 @@ Determinism needs no proof: every stage is a pure Lean function, so it is
 definitional. The claims worth real work are termination, totality (no
 panicking index), and optimality.
 
-Next: M3 documents (design tokens, palette, geometry, assertions), or the
-elaborator termination unit above — either order works.
+Next: M3b — `\fonts` selection, `\tokens` with symbolic (ex/em) lengths,
+`\palette` and color, `\block` spacing, headers/footers. Or the elaborator
+termination unit above; either order works.
+
+2026-09-15 — M3a landed: the declaration layer. `\page` (size, width, height,
+margin, vmargin, hmargin) resolves once into layout geometry via
+`Geom.ofPage`; `\pdfmeta` writes the Info dictionary and an XMP packet;
+`\assert` checks `pages <op> N` and `fonts.all_embedded` against the shipped
+page tree, exiting 2 and writing no PDF when one fails — the "no silent
+failures" principle now has teeth. Declaration values are typed (strings,
+exact dimensions in pt/bp/in/cm/mm/pc/sp, numbers, names, opaque blocks) with
+one diagnostic code per failure mode: unknown key names the known ones, wrong
+type names what it wanted, and a declared-but-unimplemented key (`header`)
+reports as pending with its milestone rather than as a type error. Verified
+by Poppler: A5 page size, all four metadata fields, PDF 2.0.
 
 ## Why not TeX-compatible
 
@@ -233,6 +246,12 @@ is evidence, not a theorem.
   optimality theorem. Bench harness vs lualatex arrives here.
 - M3 documents: sections, lists, color, geometry, headers/footers, hyperlinks
   and PDF metadata, design tokens, layout assertions.
+  M3a (done): `\page` geometry, `\pdfmeta` (Info + XMP), `\assert` with
+  `pages <op> N` and `fonts.all_embedded`, checked against the shipped page
+  tree — a failing assertion exits 2 and writes no PDF. Declaration parser
+  with per-key diagnostics (unknown key, wrong type, unreadable value).
+  M3b: `\fonts` selection, `\tokens` (symbolic lengths, ex/em), `\palette`
+  and color, `\block` spacing, headers/footers, hyperlinks.
   Acceptance (local, private corpus): the resume ported, one page asserted,
   side-by-side at least as good as the lualatex original, its external check
   scripts retired. CI equivalent: `tests/corpus/resume.tex`.

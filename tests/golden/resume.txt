@@ -1,4 +1,9 @@
 class article [paper=letter, fontsize=10pt]
+page 612x792 vmargin 36 hmargin 54
+meta title "Alex Doe — Resume"
+meta author "Alex Doe"
+assert pages == 1
+assert fonts.all_embedded
 center
   para
     styled sans
@@ -26,10 +31,7 @@ section* 1
 error[E0307] 10:1 '\fonts' is not implemented yet | help: planned for M3; see PLAN.md
 error[E0307] 16:1 '\tokens' is not implemented yet | help: planned for M3; see PLAN.md
 error[E0307] 22:1 '\palette' is not implemented yet | help: planned for M3; see PLAN.md
-error[E0307] 28:1 '\page' is not implemented yet | help: planned for M3; see PLAN.md
-error[E0307] 35:1 '\pdfmeta' is not implemented yet | help: planned for M3; see PLAN.md
-error[E0307] 41:1 '\assert' is not implemented yet | help: planned for M3; see PLAN.md
-error[E0307] 42:1 '\assert' is not implemented yet | help: planned for M3; see PLAN.md
+error[E0307] 28:1 'header' in \page is not implemented yet | help: planned for M3; see PLAN.md
 error[E0301] 55:24 unknown command '\primary' | help: define it with \define, or see PLAN.md for planned commands
 error[E0301] 56:3 unknown command '\muted' | help: define it with \define, or see PLAN.md for planned commands
 error[E0301] 56:27 unknown command '\middot' | help: define it with \define, or see PLAN.md for planned commands

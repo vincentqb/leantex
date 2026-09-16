@@ -1,8 +1,65 @@
 import LeanTex.Core.Diag
+import LeanTex.Core.Dim
 
 namespace LeanTex.Core.Ir
 
-open LeanTex.Core
+open LeanTex.Core LeanTex.Core.Dim
+
+/-- Page geometry, as declared by `\page`. -/
+structure PageSpec where
+  width : Sp := pt 612
+  height : Sp := pt 792
+  vmargin : Sp := inch 1
+  hmargin : Sp := inch 1
+  deriving Repr, BEq, Inhabited
+
+/-- PDF document information, as declared by `\pdfmeta`. -/
+structure Meta where
+  title : Option String := none
+  author : Option String := none
+  subject : Option String := none
+  keywords : Option String := none
+  deriving Repr, BEq, Inhabited
+
+inductive CmpOp where
+  | eq
+  | ne
+  | le
+  | lt
+  | ge
+  | gt
+  deriving Repr, BEq, Inhabited
+
+def CmpOp.label : CmpOp → String
+  | .eq => "=="
+  | .ne => "!="
+  | .le => "<="
+  | .lt => "<"
+  | .ge => ">="
+  | .gt => ">"
+
+def CmpOp.holds : CmpOp → Int → Int → Bool
+  | .eq, a, b => a == b
+  | .ne, a, b => a != b
+  | .le, a, b => a ≤ b
+  | .lt, a, b => a < b
+  | .ge, a, b => a ≥ b
+  | .gt, a, b => a > b
+
+/-- A layout invariant the engine checks against what it actually shipped. -/
+inductive AssertKind where
+  | pages (op : CmpOp) (n : Int)
+  | fontsAllEmbedded
+  deriving Repr, BEq, Inhabited
+
+def AssertKind.source : AssertKind → String
+  | .pages op n => s!"pages {op.label} {n}"
+  | .fontsAllEmbedded => "fonts.all_embedded"
+
+structure Assertion where
+  kind : AssertKind
+  span : Option Span := none
+  deriving Repr, BEq, Inhabited
 
 inductive Style where
   | bold
@@ -42,6 +99,9 @@ inductive Block where
 structure Doc where
   docClass : String := "article"
   classOptions : String := ""
+  page : PageSpec := {}
+  info : Meta := {}
+  asserts : Array Assertion := #[]
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
 
@@ -109,12 +169,24 @@ def dumpDiag (d : Diag) : String :=
 def dump (doc : Doc) (diags : Array Diag) : String :=
   let opts := if doc.classOptions == "" then "" else s!" [{doc.classOptions}]"
   let head := s!"class {doc.docClass}{opts}\n"
+  let page :=
+    s!"page {doc.page.width.toPtString}x{doc.page.height.toPtString} " ++
+    s!"vmargin {doc.page.vmargin.toPtString} hmargin {doc.page.hmargin.toPtString}\n"
+  let metaLine (label : String) (v : Option String) : String :=
+    match v with
+    | some s => s!"meta {label} {s.quote}\n"
+    | none => ""
+  let infoLines :=
+    metaLine "title" doc.info.title ++ metaLine "author" doc.info.author ++
+    metaLine "subject" doc.info.subject ++ metaLine "keywords" doc.info.keywords
+  let asserts := String.join (doc.asserts.toList.map fun a =>
+    s!"assert {a.kind.source}\n")
   let body := dumpBlocks "" doc.body
   let ds :=
     if diags.isEmpty then
       "-- diagnostics\n(none)\n"
     else
       "-- diagnostics\n" ++ String.join (diags.toList.map dumpDiag)
-  head ++ body ++ ds
+  head ++ page ++ infoLines ++ asserts ++ body ++ ds
 
 end LeanTex.Core.Ir

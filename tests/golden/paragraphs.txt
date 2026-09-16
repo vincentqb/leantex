@@ -1,4 +1,5 @@
 class article
+page 612x792 vmargin 72 hmargin 72
 para
   text "Typesetting is the arrangement of type. This paragraph exists to be broken into lines by an optimal algorithm, so it rambles just long enough to wrap: the quick brown fox jumps over the lazy dog, again and again, until the paragraph carries at least four lines at a letter-size measure and the breaker has real choices to make."
 para

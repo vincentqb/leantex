@@ -1,10 +1,12 @@
 import LeanTex.Core.Lex
 import LeanTex.Core.Parse
 import LeanTex.Core.Ir
+import LeanTex.Core.Dim
+import LeanTex.Core.Decl
 
 namespace LeanTex.Core.Elab
 
-open LeanTex.Core LeanTex.Core.Parse LeanTex.Core.Ir
+open LeanTex.Core LeanTex.Core.Parse LeanTex.Core.Ir LeanTex.Core.Dim
 
 inductive ParamType where
   | text
@@ -47,10 +49,29 @@ private def diag (ctx : Ctx) (code msg : String) (pos : Option Pos)
   } }
 
 def reservedCtrl : List (String × String) :=
-  [("fonts", "M3"), ("tokens", "M3"), ("palette", "M3"), ("page", "M3"),
-   ("pdfmeta", "M3"), ("assert", "M3"), ("block", "M3"), ("href", "M3"),
-   ("link", "M3"), ("hfill", "M3"), ("vspace", "M3"), ("noindent", "M3"),
+  [("fonts", "M3"), ("tokens", "M3"), ("palette", "M3"),
+   ("block", "M3"), ("href", "M3"), ("link", "M3"), ("hfill", "M3"),
+   ("vspace", "M3"), ("noindent", "M3"),
    ("fontfallback", "M5"), ("figure", "M5"), ("note", "M5")]
+
+/-- Declarations that take a `{...}` block and are handled in the preamble. -/
+def declCtrl : List String := ["page", "pdfmeta", "assert"]
+
+def pageKeys : List String :=
+  ["size", "width", "height", "margin", "vmargin", "hmargin", "header", "footer"]
+
+/-- Page keys that are declared but not implemented yet, with the milestone
+that will land them. Reported as pending, never as a type error. -/
+def pagePending : List (String × String) := [("header", "M3"), ("footer", "M3")]
+
+def metaKeys : List String := ["title", "author", "subject", "keywords"]
+
+/-- Named page sizes, in sp. -/
+def pageSizes : List (String × (Sp × Sp)) :=
+  [("letter", (pt 612, pt 792)),
+   ("legal", (pt 612, pt 1008)),
+   ("a4", (Dim.pt 595, Dim.pt 842)),
+   ("a5", (Dim.pt 420, Dim.pt 595))]
 
 def reservedEnv : List (String × String) :=
   [("frame", "M5"), ("verbatim", "M5"), ("external", "M5")]
@@ -483,6 +504,85 @@ private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := 
         (help := "expected name: type")
   return params
 
+/-- `\page{...}`: geometry. `size` names a standard page; `width`/`height`
+override it; `margin` sets both axes, `vmargin`/`hmargin` one each. -/
+private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
+    (pos : Pos) : EM PageSpec := do
+  let mut spec := spec
+  for e in entries do
+    match e.key, e.value with
+    | "size", .ident name =>
+      match pageSizes.lookup name.toLower with
+      | some (w, h) => spec := { spec with width := w, height := h }
+      | none =>
+        diag ctx "E0324" s!"unknown page size '{name}'" pos
+          (help := s!"known sizes: {String.intercalate ", " (pageSizes.map (·.1))}")
+    | "width", .dim d => spec := { spec with width := d }
+    | "height", .dim d => spec := { spec with height := d }
+    | "margin", .dim d => spec := { spec with vmargin := d, hmargin := d }
+    | "vmargin", .dim d => spec := { spec with vmargin := d }
+    | "hmargin", .dim d => spec := { spec with hmargin := d }
+    | key, v =>
+      if let some milestone := pagePending.lookup key then
+        diag ctx "E0307" s!"'{key}' in \\page is not implemented yet" pos
+          (help := s!"planned for {milestone}; see PLAN.md")
+      else if pageKeys.contains key then
+        let expected := if key == "size" then "a page size name" else "a dimension"
+        modify fun st => { st with
+          diags := st.diags.push (Decl.wrongType ctx.file "page" key expected v pos) }
+      else
+        modify fun st => { st with
+          diags := st.diags.push (Decl.unknownKey ctx.file "page" key pageKeys pos) }
+  return spec
+
+/-- `\pdfmeta{...}`: PDF document information. -/
+private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
+    (pos : Pos) : EM Meta := do
+  let mut m := m0
+  for e in entries do
+    match e.key, e.value with
+    | "title", .str s => m := { m with title := some s }
+    | "author", .str s => m := { m with author := some s }
+    | "subject", .str s => m := { m with subject := some s }
+    | "keywords", .str s => m := { m with keywords := some s }
+    | key, v =>
+      if metaKeys.contains key then
+        modify fun st => { st with
+          diags := st.diags.push (Decl.wrongType ctx.file "pdfmeta" key "a string" v pos) }
+      else
+        modify fun st => { st with
+          diags := st.diags.push (Decl.unknownKey ctx.file "pdfmeta" key metaKeys pos) }
+  return m
+
+private def cmpOp : String → Option CmpOp
+  | "==" => some .eq
+  | "=" => some .eq
+  | "!=" => some .ne
+  | "<=" => some .le
+  | "<" => some .lt
+  | ">=" => some .ge
+  | ">" => some .gt
+  | _ => none
+
+/-- `\assert{ ... }`: a layout invariant, checked against the shipped page
+tree. Grammar is deliberately tiny: `pages <op> N`, or `fonts.all_embedded`. -/
+private def parseAssert (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Assertion) := do
+  let words := (src.splitOn " ").filterMap fun w =>
+    let t := w.trimAscii.toString
+    if t.isEmpty then none else some t
+  let fail (why : String) : EM (Option Assertion) := do
+    diag ctx "E0325" s!"cannot read assertion: {src.trimAscii.toString.quote}" pos
+      (help := some why)
+    return none
+  match words with
+  | ["fonts.all_embedded"] => return some ⟨.fontsAllEmbedded, some ⟨ctx.file, pos⟩⟩
+  | ["pages", op, n] =>
+    match cmpOp op, n.toInt? with
+    | some o, some v => return some ⟨.pages o v, some ⟨ctx.file, pos⟩⟩
+    | none, _ => fail s!"'{op}' is not a comparison (== != <= < >= >)"
+    | _, none => fail s!"'{n}' is not a whole number"
+  | _ => fail "supported forms: pages <op> N, fonts.all_embedded"
+
 /-- Elaborate the whole document: split preamble and body around the
 `document` environment, process declarations, then the body. -/
 def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
@@ -501,6 +601,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut ctx : Ctx := { file := file }
   let mut docClass := "article"
   let mut classOptions := ""
+  let mut page : PageSpec := {}
+  let mut info : Meta := {}
+  let mut asserts : Array Assertion := #[]
   let mut textDiagged := false
   let mut i := 0
   repeat
@@ -570,7 +673,25 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           i := j + 1
       | .ctrl name pos =>
         i := i + 1
-        if let some milestone := reservedCtrl.lookup name then
+        if declCtrl.contains name then
+          let j := skipSpaces preamble i
+          match preamble[j]? with
+          | some (.group body _) =>
+            i := j + 1
+            let src := rawSrc body
+            if name == "assert" then
+              if let some a ← parseAssert ctx src pos then
+                asserts := asserts.push a
+            else
+              let (entries, ds) := Decl.parseBlock ctx.file src pos name
+              modify fun st => { st with diags := st.diags ++ ds }
+              if name == "page" then
+                page ← applyPage ctx page entries pos
+              else
+                info ← applyMeta ctx info entries pos
+          | _ =>
+            diag ctx "E0304" s!"'\\{name}' needs a \{...} block" pos
+        else if let some milestone := reservedCtrl.lookup name then
           diag ctx "E0307" s!"'\\{name}' is not implemented yet" pos
             (help := s!"planned for {milestone}; see PLAN.md")
           i := skipReservedArgs preamble i
@@ -587,7 +708,14 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let blocks ← elabBlocks ctx body
   if trailing.any (!isSpaceOrPar ·) then
     diag ctx "W0001" "content after '\\end{document}' is ignored" none (sev := .warning)
-  return { docClass := docClass, classOptions := classOptions, body := blocks }
+  return {
+    docClass := docClass
+    classOptions := classOptions
+    page := page
+    info := info
+    asserts := asserts
+    body := blocks
+  }
 
 /-- The full front end: lex, parse, elaborate. -/
 def run (file input : String) : Doc × Array Diag :=

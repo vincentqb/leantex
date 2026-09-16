@@ -1,4 +1,5 @@
 class article
+page 612x792 vmargin 72 hmargin 72
 center
   para
     text "A small document with deliberately ordinary content"

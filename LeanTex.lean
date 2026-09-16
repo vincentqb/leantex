@@ -8,7 +8,9 @@ import LeanTex.Core.Dim
 import LeanTex.Core.Font
 import LeanTex.Core.HyphenData
 import LeanTex.Core.Hyphen
+import LeanTex.Core.Decl
 import LeanTex.Core.Layout
+import LeanTex.Core.Check
 import LeanTex.Core.Pdf
 import LeanTex.Cli.Args
 import LeanTex.Cli.Render

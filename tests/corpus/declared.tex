@@ -1,0 +1,33 @@
+% Synthetic M3 fixture: declarations that change output, and invariants the
+% engine checks against what it actually shipped. Invented content only.
+\documentclass{article}
+
+\page{
+  size = a5,
+  vmargin = 0.75in,
+  hmargin = 0.6in,
+}
+
+\pdfmeta{
+  title = "A Declared Document",
+  author = "A. Nonymous",
+  subject = "Testing declarations",
+  keywords = "leantex, declarations, assertions",
+}
+
+\assert{ pages == 1 }
+\assert{ fonts.all_embedded }
+
+\begin{document}
+
+\section{Declared geometry}
+
+This page is A5 with narrow margins, so the measure is much shorter than the
+letter-size default and the line breaker has less room to work with.
+
+\begin{itemize}
+  \item The assertions above are checked after layout.
+  \item A failing assertion stops the build before any PDF is written.
+\end{itemize}
+
+\end{document}

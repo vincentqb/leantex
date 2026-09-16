@@ -11,13 +11,23 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font LeanTex.Core.Ir
 structure Geom where
   pageW : Sp := pt 612
   pageH : Sp := pt 792
-  margin : Sp := inch 1
+  hmargin : Sp := inch 1
+  vmargin : Sp := inch 1
   fontSize : Sp := pt 10
   parskip : Sp := pt 6
   listIndent : Sp := pt 15
   deriving Repr
 
-def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.margin
+def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
+
+/-- Resolve a document's `\page` declaration into layout geometry. One source
+of truth: layout reads geometry only from here. -/
+def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
+  { base with
+    pageW := spec.width
+    pageH := spec.height
+    hmargin := spec.hmargin
+    vmargin := spec.vmargin }
 
 def leadingFor (size : Sp) : Sp := size * 6 / 5
 
@@ -504,13 +514,13 @@ private structure B where
   diags : Array Diag := #[]
   hyphCache : Std.HashMap String (List Nat) := {}
 
-private def B.freshY (b : B) : Sp := b.geom.margin + b.ascent
+private def B.freshY (b : B) : Sp := b.geom.vmargin + b.ascent
 
 private def B.breakPage (b : B) : B :=
   { b with pages := b.pages.push b.cur, cur := {}, y := b.freshY }
 
 private def B.placeLine (b : B) (x : Sp) (size : Sp) (segs : Array Seg) (w : Sp) : B :=
-  let b := if b.y + b.descent > b.geom.pageH - b.geom.margin then b.breakPage else b
+  let b := if b.y + b.descent > b.geom.pageH - b.geom.vmargin then b.breakPage else b
   let line : LineOut := { x := x, y := b.y, size := size, segs := segs, setWidth := w }
   { b with cur := { lines := b.cur.lines.push line }, y := b.y + leadingFor size }
 
@@ -537,8 +547,8 @@ private def typesetPara (b : B) (pats : Option Hyphen.Patterns) (font : Font)
     let (segs, w, overfull) := setLine items a brk width (!center)
     if overfull then
       b := b.warnOverfull
-    let mut x := if center then geom.margin + indent + (width - w) / 2
-      else geom.margin + indent
+    let mut x := if center then geom.hmargin + indent + (width - w) / 2
+      else geom.hmargin + indent
     let mut segs := segs
     let mut w := w
     if first then
@@ -624,7 +634,8 @@ def typesetBlock (b : B) (pats : Option Hyphen.Patterns) (font : Font)
 
 end
 
-/-- Typeset a document body into positioned pages. -/
+/-- Typeset a document body into positioned pages. Geometry is resolved by
+the caller via `Geom.ofPage`, so layout has one source of truth. -/
 def run (geom : Geom) (font : Font) (pats : Option Hyphen.Patterns) (doc : Doc) : Out :=
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
   let b : B := {

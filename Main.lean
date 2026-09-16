@@ -149,13 +149,25 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let pats := Hyphen.load
       ui.phase "hyphen" s!"{pats.map.size} patterns" (← since t)
       let t ← IO.monoMsNow
-      let geom : Layout.Geom := {}
+      let geom := Layout.Geom.ofPage doc.page
       let out := Layout.run geom font (some pats) doc
       for d in out.diags do
         ui.diag d
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)
+      -- Assertions judge what shipped, so they run after layout and before
+      -- the file is written: a failing document must not produce output.
+      let shipped := Check.Shipped.ofOut out (fontsEmbedded := true)
+      let failures := Check.all shipped doc.asserts
+      unless doc.asserts.isEmpty do
+        ui.phase "assert"
+          s!"{doc.asserts.size - failures.size}/{doc.asserts.size} held" (← since t)
+      if !failures.isEmpty then
+        for d in failures do
+          ui.diag d
+        ui.summary file failures.size (← since t0)
+        return 2
       let t ← IO.monoMsNow
-      let pdf := Pdf.write geom font out.pages
+      let pdf := Pdf.write geom font out.pages doc.info
       let outPath := (System.FilePath.mk file).withExtension "pdf" |>.toString
       IO.FS.writeBinFile outPath pdf
       ui.phase "pdf" s!"{pdf.size} bytes" (← since t)

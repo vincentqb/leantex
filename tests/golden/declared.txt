@@ -1,0 +1,21 @@
+class article
+page 420x595 vmargin 54 hmargin 43.2
+meta title "A Declared Document"
+meta author "A. Nonymous"
+meta subject "Testing declarations"
+meta keywords "leantex, declarations, assertions"
+assert pages == 1
+assert fonts.all_embedded
+section 1
+  text "Declared geometry"
+para
+  text "This page is A5 with narrow margins, so the measure is much shorter than the letter-size default and the line breaker has less room to work with."
+list unordered
+  item
+    para
+      text "The assertions above are checked after layout."
+  item
+    para
+      text "A failing assertion stops the build before any PDF is written."
+-- diagnostics
+(none)

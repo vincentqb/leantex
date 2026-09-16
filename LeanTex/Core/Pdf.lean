@@ -123,6 +123,55 @@ private def wArray (font : Font) (used : Array (Nat × Char)) : String := Id.run
     s := s ++ s!" {g} [{w}]"
   return s ++ " ]"
 
+/-- Escape a PDF literal string: balance-sensitive characters only. -/
+private def pdfString (s : String) : String := Id.run do
+  let mut out := ""
+  for c in s.toList do
+    if c == '(' || c == ')' || c == '\\' then
+      out := out.push '\\'
+    out := out.push c
+  return out
+
+/-- Escape text for XML character data. -/
+private def xmlEscape (s : String) : String := Id.run do
+  let mut out := ""
+  for c in s.toList do
+    if c == '&' then out := out ++ "&amp;"
+    else if c == '<' then out := out ++ "&lt;"
+    else if c == '>' then out := out ++ "&gt;"
+    else out := out.push c
+  return out
+
+/-- XMP packet mirroring the Info dictionary; PDF 2.0 expects metadata here. -/
+private def xmpPacket (info : Ir.Meta) : String :=
+  let elem (tag : String) (v : Option String) : String :=
+    match v with
+    | some s =>
+      s!"        <{tag}><rdf:Alt><rdf:li xml:lang=\"x-default\">{xmlEscape s}</rdf:li></rdf:Alt></{tag}>\n"
+    | none => ""
+  let seqElem (tag : String) (v : Option String) : String :=
+    match v with
+    | some s => s!"        <{tag}><rdf:Seq><rdf:li>{xmlEscape s}</rdf:li></rdf:Seq></{tag}>\n"
+    | none => ""
+  "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n" ++
+  "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n" ++
+  "  <rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n" ++
+  "    <rdf:Description rdf:about=\"\"\n" ++
+  "        xmlns:dc=\"http://purl.org/dc/elements/1.1/\"\n" ++
+  "        xmlns:pdf=\"http://ns.adobe.com/pdf/1.3/\"\n" ++
+  "        xmlns:xmp=\"http://ns.adobe.com/xap/1.0/\">\n" ++
+  elem "dc:title" info.title ++
+  seqElem "dc:creator" info.author ++
+  elem "dc:description" info.subject ++
+  (match info.keywords with
+   | some k => s!"        <pdf:Keywords>{xmlEscape k}</pdf:Keywords>\n"
+   | none => "") ++
+  "        <pdf:Producer>leantex</pdf:Producer>\n" ++
+  "    </rdf:Description>\n" ++
+  "  </rdf:RDF>\n" ++
+  "</x:xmpmeta>\n" ++
+  "<?xpacket end=\"w\"?>"
+
 private structure Wr where
   out : ByteArray := ByteArray.empty
 
@@ -133,15 +182,20 @@ private def Wr.putB (w : Wr) (b : ByteArray) : Wr :=
   { out := w.out ++ b }
 
 /-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
-object streams, Identity-H CID font (full embed), ToUnicode. -/
-def write (geom : Geom) (font : Font) (pages : Array PageOut) : ByteArray := Id.run do
+object streams, Identity-H CID font (full embed), ToUnicode, and the document
+information the source declared (Info dictionary plus XMP). -/
+def write (geom : Geom) (font : Font) (pages : Array PageOut)
+    (info : Ir.Meta := {}) : ByteArray := Id.run do
   let used := usedGlyphs font.numGlyphs pages
   let np := pages.size
   -- ids: 1 catalog, 2 pages, 3 type0, 4 cid, 5 descriptor,
-  -- 6 tounicode, 7 fontfile, 8+2i page dict, 9+2i content, objstm, xref
+  -- 6 tounicode, 7 fontfile, 8+2i page dict, 9+2i content,
+  -- then info, xmp, objstm, xref
   let pageId (i : Nat) := 8 + 2 * i
   let contentId (i : Nat) := 9 + 2 * i
-  let objStmId := 8 + 2 * np
+  let infoId := 8 + 2 * np
+  let xmpId := infoId + 1
+  let objStmId := xmpId + 1
   let xrefId := objStmId + 1
   let size := xrefId + 1
   let baseFont := pdfName font.psName
@@ -150,7 +204,7 @@ def write (geom : Geom) (font : Font) (pages : Array PageOut) : ByteArray := Id.
 
   -- compressed (non-stream) objects, serialized bare
   let kids := String.intercalate " " ((List.range np).map fun i => s!"{pageId i} 0 R")
-  let catalog := "<< /Type /Catalog /Pages 2 0 R >>"
+  let catalog := s!"<< /Type /Catalog /Pages 2 0 R /Metadata {xmpId} 0 R >>"
   let pagesObj := s!"<< /Type /Pages /Kids [{kids}] /Count {np} >>"
   let type0 := s!"<< /Type /Font /Subtype /Type0 /BaseFont /{baseFont} /Encoding /Identity-H /DescendantFonts [4 0 R] /ToUnicode 6 0 R >>"
   let cidSubtype := if font.isCff then "CIDFontType0" else "CIDFontType2"
@@ -160,9 +214,19 @@ def write (geom : Geom) (font : Font) (pages : Array PageOut) : ByteArray := Id.
   let fd := s!"<< /Type /FontDescriptor /FontName /{baseFont} /Flags 4 /FontBBox [-1000 {descent1000} 2000 {ascent1000}] /ItalicAngle 0 /Ascent {ascent1000} /Descent {descent1000} /CapHeight {ascent1000} /StemV 80 /{fontFileKey} 7 0 R >>"
   let pageDict (i : Nat) :=
     s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {geom.pageW.toPtString} {geom.pageH.toPtString}] /Resources << /Font << /F1 3 0 R >> >> /Contents {contentId i} 0 R >>"
+  -- PDF 2.0 text strings are UTF-8, so declared metadata needs no escaping
+  -- beyond the literal-string delimiters.
+  let infoEntry (key : String) (v : Option String) : String :=
+    match v with
+    | some s => s!" /{key} ({pdfString s})"
+    | none => ""
+  let infoDict :=
+    "<<" ++ infoEntry "Title" info.title ++ infoEntry "Author" info.author ++
+    infoEntry "Subject" info.subject ++ infoEntry "Keywords" info.keywords ++
+    s!" /Producer (leantex) >>"
 
   let compressed : List (Nat × String) :=
-    [(1, catalog), (2, pagesObj), (3, type0), (4, cid), (5, fd)] ++
+    [(1, catalog), (2, pagesObj), (3, type0), (4, cid), (5, fd), (infoId, infoDict)] ++
     (List.range np).map fun i => (pageId i, pageDict i)
 
   -- object stream payload
@@ -205,6 +269,11 @@ def write (geom : Geom) (font : Font) (pages : Array PageOut) : ByteArray := Id.
   w := w''
   locs := locs.set! 7 (1, ffOff)
 
+  let (wx, xmpOff) := putStream w xmpId "/Type /Metadata /Subtype /XML"
+    (xmpPacket info).toUTF8
+  w := wx
+  locs := locs.set! xmpId (1, xmpOff)
+
   let (w3, osOff) := putStream w objStmId
     s!"/Type /ObjStm /N {compressed.length} /First {first}" objStmData.toUTF8
   w := w3
@@ -238,7 +307,7 @@ def write (geom : Geom) (font : Font) (pages : Array PageOut) : ByteArray := Id.
         rows := rows ++ ⟨#[UInt8.ofNat (v / 256 % 256), UInt8.ofNat (v % 256)]⟩
   let idA := hex16 (fnv64 14695981039346656037 w.out)
   let idB := hex16 (fnv64 1099511628211 w.out)
-  let xrefDict := s!"/Type /XRef /Size {size} /W [1 4 2] /Index [0 {size}] /Root 1 0 R /ID [<{idA}> <{idB}>]"
+  let xrefDict := s!"/Type /XRef /Size {size} /W [1 4 2] /Index [0 {size}] /Root 1 0 R /Info {infoId} 0 R /ID [<{idA}> <{idB}>]"
   let w4 := (putStream w xrefId xrefDict rows).1
   w := w4
   w := w.put s!"startxref\n{xrefOff}\n%%EOF\n"

@@ -28,7 +28,7 @@ def elabStr (s : String) : Ir.Doc × Array Diag :=
 def errCodes (s : String) : List String :=
   ((elabStr s).2.filter (·.severity == .error)).toList.map (·.code)
 
-def goldenNames : List String := ["paragraphs", "layout", "resume", "talk"]
+def goldenNames : List String := ["paragraphs", "layout", "declared", "resume", "talk"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -408,6 +408,60 @@ def main (args : List String) : IO UInt32 := do
   t "hyphen respects hyphenmins" ((Hyphen.hyphenate pats "typesetting").all
     fun p => p ≥ 2 && p + 3 ≤ 11)
 
+  -- declarations: \page, \pdfmeta, \assert
+  let declSrc := "\\documentclass{article}\n" ++
+    "\\page{ size = a5, margin = 0.5in }\n" ++
+    "\\pdfmeta{ title = \"T\", author = \"A\" }\n" ++
+    "\\assert{ pages == 1 }\n" ++
+    "\\assert{ fonts.all_embedded }\n" ++
+    "\\begin{document}hi\\end{document}"
+  let (declDoc, declDs) := elabStr declSrc
+  t "decl source clean" declDs.isEmpty
+  t "decl page size" (declDoc.page.width == Dim.pt 420 && declDoc.page.height == Dim.pt 595)
+  t "decl margin both axes"
+    (declDoc.page.vmargin == Dim.inch 1 / 2 && declDoc.page.hmargin == Dim.inch 1 / 2)
+  t "decl metadata" (declDoc.info.title == some "T" && declDoc.info.author == some "A")
+  t "decl assertions parsed" (declDoc.asserts.size == 2)
+
+  -- dimension parsing is exact
+  t "decl dim in" (Decl.parseValue "0.5in" == some (.dim (Dim.inch 1 / 2)))
+  t "decl dim pt" (Decl.parseValue "12pt" == some (.dim (Dim.pt 12)))
+  t "decl dim cm" (Decl.parseValue "2.54cm" == some (.dim (Dim.inch 1)))
+  t "decl dim mm" (Decl.parseValue "25.4mm" == some (.dim (Dim.inch 1)))
+  t "decl string" (Decl.parseValue "\"a b\"" == some (.str "a b"))
+  t "decl ident" (Decl.parseValue "letter" == some (.ident "letter"))
+  t "decl int" (Decl.parseValue "3" == some (.int 3))
+  t "decl rejects junk" (Decl.parseValue "12 furlongs" == none)
+
+  -- declaration diagnostics, one code each
+  t "decl unknown size" (errCodes ("\\documentclass{article}\n\\page{ size = tabloid }\n" ++
+    "\\begin{document}x\\end{document}") == ["E0324"])
+  t "decl unknown key" (errCodes ("\\documentclass{article}\n\\page{ bogus = 1pt }\n" ++
+    "\\begin{document}x\\end{document}") == ["E0322"])
+  t "decl wrong type" (errCodes ("\\documentclass{article}\n\\page{ vmargin = \"x\" }\n" ++
+    "\\begin{document}x\\end{document}") == ["E0323"])
+  t "decl bad assertion" (errCodes ("\\documentclass{article}\n\\assert{ pages =~ 1 }\n" ++
+    "\\begin{document}x\\end{document}") == ["E0325"])
+  t "decl needs a block" (errCodes ("\\documentclass{article}\n\\page\n" ++
+    "\\begin{document}x\\end{document}") == ["E0304"])
+
+  -- assertions are judged against what shipped
+  let shipped : Check.Shipped := { pages := 2, fontsEmbedded := true }
+  let mkAssert (k : Ir.AssertKind) : Ir.Assertion := { kind := k, span := none }
+  t "assert pages eq holds" ((Check.one shipped (mkAssert (.pages .eq 2))).isNone)
+  t "assert pages eq fails" ((Check.one shipped (mkAssert (.pages .eq 1))).isSome)
+  t "assert pages le holds" ((Check.one shipped (mkAssert (.pages .le 3))).isNone)
+  t "assert pages gt fails" ((Check.one shipped (mkAssert (.pages .gt 5))).isSome)
+  t "assert fonts holds" ((Check.one shipped (mkAssert .fontsAllEmbedded)).isNone)
+  t "assert fonts fails"
+    ((Check.one { shipped with fontsEmbedded := false } (mkAssert .fontsAllEmbedded)).isSome)
+  t "assert failure names the actual"
+    (((Check.one shipped (mkAssert (.pages .eq 1))).map (·.message)).any
+      fun m => (m.splitOn "actual: 2").length == 2)
+  t "assert all reports every failure"
+    ((Check.all shipped #[mkAssert (.pages .eq 1), mkAssert (.pages .eq 2),
+      mkAssert (.pages .lt 1)]).size == 2)
+
   -- font parsing on the system font
   match ← findFont with
   | none =>
@@ -430,7 +484,8 @@ def main (args : List String) : IO UInt32 := do
       let narrow : Layout.Geom := {
         pageW := Dim.pt 90
         pageH := Dim.pt 200
-        margin := Dim.pt 10
+        hmargin := Dim.pt 10
+        vmargin := Dim.pt 10
         fontSize := Dim.pt 10
       }
       let hyOut := Layout.run narrow font (some pats) hyDoc
