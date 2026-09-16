@@ -5,3 +5,7 @@ tests/corpus/*.html
 
 bench/lorem.tex
 bench/*.pdf
+
+# Review tooling writes its report into the worktree; the lesson belongs in a
+# test or a PLAN entry, not a transcript in the repo.
+semantic-review/
