@@ -45,30 +45,57 @@ structure Doc where
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
 
--- Display-only printers; not part of the semantic core, so `partial` is fine.
+-- Display-only printers. Structural recursion through `List`, so no `partial`.
 
-partial def dumpInlines (ind : String) (xs : Array Inline) : String :=
-  String.join (xs.toList.map fun x =>
-    match x with
-    | .text s => s!"{ind}text {s.quote}\n"
-    | .math d src =>
-      let kind := if d then "display" else "inline"
-      s!"{ind}math {kind} {src.quote}\n"
-    | .styled st body => s!"{ind}styled {st.label}\n" ++ dumpInlines (ind ++ "  ") body
-    | .linebreak => s!"{ind}linebreak\n")
+mutual
 
-partial def dumpBlocks (ind : String) (xs : Array Block) : String :=
-  String.join (xs.toList.map fun b =>
-    match b with
-    | .para content => s!"{ind}para\n" ++ dumpInlines (ind ++ "  ") content
-    | .section level starred title =>
-      let star := if starred then "*" else ""
-      s!"{ind}section{star} {level}\n" ++ dumpInlines (ind ++ "  ") title
-    | .list ordered items =>
-      let kind := if ordered then "ordered" else "unordered"
-      s!"{ind}list {kind}\n" ++ String.join (items.toList.map fun item =>
-        s!"{ind}  item\n" ++ dumpBlocks (ind ++ "    ") item)
-    | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body)
+def dumpInlines (ind : String) (xs : Array Inline) : String :=
+  dumpInlineList ind xs.toList
+
+def dumpInlineList (ind : String) (xs : List Inline) : String :=
+  match xs with
+  | [] => ""
+  | x :: rest => dumpInline ind x ++ dumpInlineList ind rest
+
+def dumpInline (ind : String) (x : Inline) : String :=
+  match x with
+  | .text s => s!"{ind}text {s.quote}\n"
+  | .math d src =>
+    let kind := if d then "display" else "inline"
+    s!"{ind}math {kind} {src.quote}\n"
+  | .styled st body => s!"{ind}styled {st.label}\n" ++ dumpInlines (ind ++ "  ") body
+  | .linebreak => s!"{ind}linebreak\n"
+
+end
+
+mutual
+
+def dumpBlocks (ind : String) (xs : Array Block) : String :=
+  dumpBlockList ind xs.toList
+
+def dumpBlockList (ind : String) (xs : List Block) : String :=
+  match xs with
+  | [] => ""
+  | b :: rest => dumpBlock ind b ++ dumpBlockList ind rest
+
+def dumpItems (ind : String) (items : List (Array Block)) : String :=
+  match items with
+  | [] => ""
+  | item :: rest =>
+    s!"{ind}item\n" ++ dumpBlocks (ind ++ "  ") item ++ dumpItems ind rest
+
+def dumpBlock (ind : String) (b : Block) : String :=
+  match b with
+  | .para content => s!"{ind}para\n" ++ dumpInlines (ind ++ "  ") content
+  | .section level starred title =>
+    let star := if starred then "*" else ""
+    s!"{ind}section{star} {level}\n" ++ dumpInlines (ind ++ "  ") title
+  | .list ordered items =>
+    let kind := if ordered then "ordered" else "unordered"
+    s!"{ind}list {kind}\n" ++ dumpItems (ind ++ "  ") items.toList
+  | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
+
+end
 
 def dumpDiag (d : Diag) : String :=
   let where' := match d.span with

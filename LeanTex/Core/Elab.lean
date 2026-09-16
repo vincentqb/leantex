@@ -86,25 +86,35 @@ private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) := 
         return some (k, ctx.user[k])
   return none
 
-/-- Best-effort source text of raw content (math bodies, class options). -/
-partial def rawSrc (raws : Array Raw) : String := Id.run do
-  let mut out := ""
-  for r in raws do
-    match r with
-    | .word s _ => out := out ++ s
-    | .space => out := out.push ' '
-    | .par _ => out := out.push ' '
-    | .sym c _ => out := out.push c
-    | .ctrl n _ => out := out ++ "\\" ++ n ++ " "
-    | .group body _ => out := out ++ "{" ++ rawSrc body ++ "}"
-    | .math d body _ =>
-      let inner := rawSrc body
-      out := out ++ (if d then s!"\\[{inner}\\]" else s!"${inner}$")
-    | .env n body _ =>
-      out := out ++ s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
-    | .verb s _ =>
-      out := out ++ s!"\\begin\{verbatim}{s}\\end\{verbatim}"
-  return out.trimAscii.toString
+-- Best-effort source text of raw content (math bodies, class options).
+-- Structural recursion through `List`; the outer call trims, and so does each
+-- nested group, matching what the elaborator has always emitted.
+mutual
+
+/-- Source text of raw content, trimmed. -/
+def rawSrc (raws : Array Raw) : String :=
+  (rawSrcList raws.toList).trimAscii.toString
+
+def rawSrcList (rs : List Raw) : String :=
+  match rs with
+  | [] => ""
+  | r :: rest => rawSrcOne r ++ rawSrcList rest
+
+def rawSrcOne (r : Raw) : String :=
+  match r with
+  | .word s _ => s
+  | .space => " "
+  | .par _ => " "
+  | .sym c _ => String.ofList [c]
+  | .ctrl n _ => "\\" ++ n ++ " "
+  | .group body _ => "{" ++ rawSrc body ++ "}"
+  | .math d body _ =>
+    let inner := rawSrc body
+    if d then s!"\\[{inner}\\]" else s!"${inner}$"
+  | .env n body _ => s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
+  | .verb s _ => s!"\\begin\{verbatim}{s}\\end\{verbatim}"
+
+end
 
 private def isSpace : Raw → Bool
   | .space => true
@@ -339,7 +349,7 @@ private def sectionLevel : String → Option Nat
   | "subsubsection" => some 3
   | _ => none
 
-private partial def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
+private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   let mut cur := cur
   repeat
     match cur.back? with

@@ -9,23 +9,46 @@ flashtex sets the speed bar.
 
 ## Status
 
-2026-09-15 — M2 landed. The engine now produces readable, justified PDF 2.0
-with automatic American-English Liang hyphenation, section sizing, centered
-blocks, hanging list markers, and multi-page assembly. The PDF uses an
-Identity-H CID font, full OpenType embedding, ToUnicode, object streams, and a
-cross-reference stream; internal tests re-parse every direct xref offset, and
-Poppler independently reports PDF 2.0 plus embedded/Unicode-mapped fonts.
-Knuth–Plass uses prefix sums and an active list, with its output checked against
-brute-force minima on small cases. The synthetic visual fixture and paragraph
-fixture render cleanly. Measured by `scripts/bench.sh` (five-run wall-time
-median on this host): 1 KB is 14 ms vs lualatex 486 ms; generated 129 KB /
-30 pages is 573 ms vs 982 ms. Evidence and caveats live in `bench/README.md`.
+2026-09-15 — M2 landed, then a proofs pass over the pipeline. The engine
+produces readable, justified PDF 2.0 with automatic American-English Liang
+hyphenation, section sizing, centered blocks, hanging list markers, and
+multi-page assembly. Identity-H CID font, full OpenType embedding, ToUnicode,
+object streams, cross-reference stream; tests re-parse every direct xref
+offset, and Poppler independently reports PDF 2.0 with embedded,
+Unicode-mapped fonts. Measured by `scripts/bench.sh` (five-run wall-time
+median): 1 KB is 17 ms vs lualatex 481 ms; generated 129 KB / 30 pages is
+598 ms vs 977 ms. Evidence and caveats in `bench/README.md`.
 
-Next: the proofs unit before M3 — remove `partial` from parser/elaborator/layout
-and prove front-end termination/determinism plus Knuth–Plass optimality. Two
-executable oracles stay as independent checks and should be run when touching
-their subjects: `scripts/kp-fuzz.lean` (randomized differential vs brute-force
-optimum; 2000 paragraphs pass) and `scripts/hyphen-diff.sh` (vs real TeX).
+Termination status — `partial` is gone from the parser (rewritten as a
+single pass over an explicit frame stack, so totality is immediate), the
+UTF-8 validator (was fueled; now well-founded on bytes remaining), `rawSrc`,
+the layout block walk, and the IR printers. Each rewrite was checked to
+produce byte-identical output, not merely to pass.
+
+Two functions remain `partial`: `Elab.elabInlines` and `Elab.elabBlocks`.
+Nontermination is still impossible by design — a user command's body sees
+only definitions that precede it — but the measure is lexicographic
+(visible-command limit, then tree size), and the checker cannot see it while
+argument consumption is interleaved with tree descent: a command consumes
+`[...]`/`{...}` from its *siblings* and then continues on the remainder, so
+cons-recursion alone does not expose the decrease. Designed fix, not an
+annotation: split macro expansion from elaboration (Phase A substitutes user
+commands, structurally recursing on the limit; Phase B elaborates a
+command-free tree structurally). It needs supporting lemmas about suffixes
+(`sizeOf (l.drop k) ≤ sizeOf l`) and `Array.toList`. Scheduled as its own
+unit; it is a small formalization project, not a refactor.
+
+Also open: the Knuth–Plass optimality theorem. Until it exists, optimality
+is established empirically by `scripts/kp-fuzz.lean`, which differentially
+tests the pruned DP against brute-force enumeration (2000 randomized
+paragraphs with glue, flagged hyphen penalties, and forced breaks).
+
+Determinism needs no proof: every stage is a pure Lean function, so it is
+definitional. The claims worth real work are termination, totality (no
+panicking index), and optimality.
+
+Next: M3 documents (design tokens, palette, geometry, assertions), or the
+elaborator termination unit above — either order works.
 
 ## Why not TeX-compatible
 
@@ -170,15 +193,19 @@ fonts surface as request values the driver fulfills:
 
 ## Certification (theorems that pay)
 
-- Parser: total, deterministic.
-- Elaboration: terminating and deterministic — reachable only because the
-  language is designed for it.
-- Knuth–Plass: returns minimal total demerits over feasible breakpoints.
+- Parser: total by construction (one pass, explicit frame stack, no recursion).
+- UTF-8: total decode (well-founded on bytes remaining), round-trip.
+- Elaboration: terminating by design — the proof is open, see PLAN Status.
+- Knuth–Plass: returns minimal total demerits over feasible breakpoints —
+  open; held empirically by `scripts/kp-fuzz.lean`.
 - Dimension arithmetic (fixed point, sp = 2⁻¹⁶ pt): exact, no silent overflow.
 - Assertions: verdicts sound with respect to the shipped page tree.
 - PDF: cross-reference and object streams correct by construction; every
   glyph carries a Unicode mapping.
-- UTF-8: total decode, round-trip.
+
+Determinism is definitional: every stage is a pure function. Claims are
+marked open here until a machine-checked proof exists — an executable oracle
+is evidence, not a theorem.
 
 ## Testing
 

@@ -66,18 +66,23 @@ where
       if k == 1 then first b
 
 /-- First UTF-8 error in `bs`, with byte offset and line/column, or `none`
-when the bytes are valid. Fueled for M0; totality proof arrives with M1. -/
+when the bytes are valid. Terminating (not fueled): each step advances by
+`max 1 width`, and `seq` only ever returns 1–4, so the `max` is a no-op that
+makes the decrease visible to the checker. -/
 def validate (bs : ByteArray) : Option Err :=
-  go bs.size 0 {}
+  go 0 {}
 where
-  go (fuel i : Nat) (pos : Pos) : Option Err :=
-    match fuel with
-    | 0 => if i < bs.size then some ⟨i, pos, .truncated⟩ else none
-    | fuel + 1 =>
-      if i >= bs.size then none
-      else
-        match seq bs i with
-        | .error kind => some ⟨i, pos, kind⟩
-        | .ok width => go fuel (i + width) (pos.next (bs[i]! == 0x0A))
+  go (i : Nat) (pos : Pos) : Option Err :=
+    if i ≥ bs.size then
+      none
+    else
+      match seq bs i with
+      | .error kind => some ⟨i, pos, kind⟩
+      | .ok width =>
+        go (i + max 1 width) (pos.next (bs[i]! == 0x0A))
+  termination_by bs.size - i
+  decreasing_by
+    simp_wf
+    omega
 
 end LeanTex.Core.Utf8

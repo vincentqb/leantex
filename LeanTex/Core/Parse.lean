@@ -16,125 +16,141 @@ inductive Raw where
   | verb (s : String) (pos : Pos)
   deriving Repr, BEq, Inhabited
 
+/-- What closes an open frame. -/
 inductive Stop where
-  | eof
   | brace
   | math
   | displayMath
   | env (name : String)
-  deriving Repr, BEq
+  deriving Repr, BEq, Inhabited
 
-structure St where
-  toks : Array Token
-  file : String
-  diags : Array Diag := #[]
-
-abbrev PM := StateM St
-
-private def diag (code msg : String) (pos : Pos) (help : Option String := none) : PM Unit :=
-  modify fun st => { st with diags := st.diags.push {
-    severity := .error
-    code := code
-    message := msg
-    span := some ⟨st.file, pos⟩
-    help := help
-  } }
-
-private def tokAt (i : Nat) : PM (Option Token) := do
-  return (← get).toks[i]?
-
-private def stopName : Stop → String
-  | .eof => "end of input"
+def Stop.name : Stop → String
   | .brace => "'}'"
   | .math => "closing '$'"
   | .displayMath => "'\\]'"
   | .env n => s!"'\\end\{{n}}'"
 
-private def parseEnvName (i : Nat) (pos : Pos) : PM (String × Nat) := do
-  let some ⟨.lbrace, _⟩ ← tokAt i
-    | diag "E0205" "expected '{name}' here" pos; return ("", i)
-  let some ⟨.word n, _⟩ ← tokAt (i + 1)
-    | diag "E0205" "expected an environment name" pos; return ("", i + 1)
-  let some ⟨.rbrace, _⟩ ← tokAt (i + 2)
-    | diag "E0205" "expected '}' after the environment name" pos; return (n, i + 2)
-  return (n, i + 3)
+/-- An open delimiter, holding the items collected before it. -/
+private structure Frame where
+  stop : Stop
+  openPos : Pos
+  outer : Array Raw
 
-/-- Parse a sequence until `stop`; returns the items and the index after the
-closing delimiter. Recovery: strays are reported and skipped, unclosed
-delimiters close at end of input. -/
-private partial def seq (i : Nat) (stop : Stop) (openPos : Pos) :
-    PM (Array Raw × Nat) := do
+/-- Wrap a closed frame's body into the node its delimiter denotes. -/
+private def Frame.close (f : Frame) (body : Array Raw) : Array Raw :=
+  match f.stop with
+  | .brace => f.outer.push (.group body f.openPos)
+  | .math => f.outer.push (.math false body f.openPos)
+  | .displayMath => f.outer.push (.math true body f.openPos)
+  | .env n => f.outer.push (.env n body f.openPos)
+
+private def err (file : String) (code msg : String) (pos : Pos) : Diag :=
+  { severity := .error, code := code, message := msg, span := some ⟨file, pos⟩ }
+
+/-- `{name}` after `\begin` or `\end`; returns the name and the next index. -/
+private def envName (toks : Array Token) (file : String) (i : Nat) (pos : Pos) :
+    String × Nat × Array Diag :=
+  match toks[i]?, toks[i + 1]?, toks[i + 2]? with
+  | some ⟨.lbrace, _⟩, some ⟨.word n, _⟩, some ⟨.rbrace, _⟩ => (n, i + 3, #[])
+  | some ⟨.lbrace, _⟩, some ⟨.word n, _⟩, _ =>
+    (n, i + 2, #[err file "E0205" "expected '}' after the environment name" pos])
+  | some ⟨.lbrace, _⟩, _, _ =>
+    ("", i + 1, #[err file "E0205" "expected an environment name" pos])
+  | _, _, _ => ("", i, #[err file "E0205" "expected '{name}' here" pos])
+
+/-- Parse tokens into a `Raw` forest with one pass and an explicit frame
+stack: no recursion, so totality is immediate. Recovery is unchanged —
+strays are reported and skipped, unclosed delimiters close at end of input. -/
+def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.run do
+  let mut frames : Array Frame := #[]
   let mut acc : Array Raw := #[]
-  let mut i := i
-  repeat
-    match ← tokAt i with
-    | none =>
-      if stop != .eof then
-        diag "E0201" s!"unclosed: expected {stopName stop}" openPos
-      return (acc, i)
-    | some ⟨tok, pos⟩ =>
+  let mut diags : Array Diag := #[]
+  let mut i := 0
+  -- Every branch advances `i` by at least one, so this bound is never the
+  -- reason the loop stops; the `i < toks.size` guard is.
+  for _ in [0:toks.size + 1] do
+    if h : i < toks.size then
+      let ⟨tok, pos⟩ := toks[i]
+      i := i + 1
       match tok with
-      | .rbrace =>
-        if stop == .brace then
-          return (acc, i + 1)
-        diag "E0202" "unexpected '}'" pos
-        i := i + 1
-      | .math =>
-        if stop == .math then
-          return (acc, i + 1)
-        let (body, j) ← seq (i + 1) .math pos
-        acc := acc.push (.math false body pos)
-        i := j
       | .lbrace =>
-        let (body, j) ← seq (i + 1) .brace pos
-        acc := acc.push (.group body pos)
-        i := j
+        frames := frames.push ⟨.brace, pos, acc⟩
+        acc := #[]
+      | .rbrace =>
+        match frames.back? with
+        | some f =>
+          if f.stop == .brace then
+            frames := frames.pop
+            acc := f.close acc
+          else
+            diags := diags.push (err file "E0202" "unexpected '}'" pos)
+        | none =>
+          diags := diags.push (err file "E0202" "unexpected '}'" pos)
+      | .math =>
+        match frames.back? with
+        | some f =>
+          if f.stop == .math then
+            frames := frames.pop
+            acc := f.close acc
+          else
+            frames := frames.push ⟨.math, pos, acc⟩
+            acc := #[]
+        | none =>
+          frames := frames.push ⟨.math, pos, acc⟩
+          acc := #[]
       | .ctrl "[" =>
-        let (body, j) ← seq (i + 1) .displayMath pos
-        acc := acc.push (.math true body pos)
-        i := j
+        frames := frames.push ⟨.displayMath, pos, acc⟩
+        acc := #[]
       | .ctrl "]" =>
-        if stop == .displayMath then
-          return (acc, i + 1)
-        diag "E0202" "unexpected '\\]'" pos
-        i := i + 1
+        match frames.back? with
+        | some f =>
+          if f.stop == .displayMath then
+            frames := frames.pop
+            acc := f.close acc
+          else
+            diags := diags.push (err file "E0202" "unexpected '\\]'" pos)
+        | none =>
+          diags := diags.push (err file "E0202" "unexpected '\\]'" pos)
       | .ctrl "begin" =>
-        let (name, j) ← parseEnvName (i + 1) pos
-        let (body, k) ← seq j (.env name) pos
-        acc := acc.push (.env name body pos)
-        i := k
+        let (name, j, ds) := envName toks file i pos
+        diags := diags ++ ds
+        i := j
+        frames := frames.push ⟨.env name, pos, acc⟩
+        acc := #[]
       | .ctrl "end" =>
-        let (name, j) ← parseEnvName (i + 1) pos
-        match stop with
-        | .env expected =>
-          if name != expected then
-            diag "E0205" s!"'\\end\{{name}}' closes '\\begin\{{expected}}'" pos
-          return (acc, j)
-        | _ =>
-          diag "E0205" s!"'\\end\{{name}}' without matching '\\begin\{{name}}'" pos
-          i := j
-      | .ctrl name =>
-        acc := acc.push (.ctrl name pos)
-        i := i + 1
-      | .word s =>
-        acc := acc.push (.word s pos)
-        i := i + 1
-      | .space =>
-        acc := acc.push .space
-        i := i + 1
-      | .par =>
-        acc := acc.push (.par pos)
-        i := i + 1
-      | .sym c =>
-        acc := acc.push (.sym c pos)
-        i := i + 1
-      | .verb s =>
-        acc := acc.push (.verb s pos)
-        i := i + 1
-  return (acc, i)
-
-def parse (file : String) (toks : Array Token) : Array Raw × Array Diag :=
-  let (res, st) := (seq 0 .eof {}).run { toks := toks, file := file }
-  (res.1, st.diags)
+        let (name, j, ds) := envName toks file i pos
+        diags := diags ++ ds
+        i := j
+        match frames.back? with
+        | some f =>
+          match f.stop with
+          | .env expected =>
+            if name != expected then
+              diags := diags.push
+                (err file "E0205" s!"'\\end\{{name}}' closes '\\begin\{{expected}}'" pos)
+            frames := frames.pop
+            acc := f.close acc
+          | _ =>
+            diags := diags.push (err file "E0205"
+              s!"'\\end\{{name}}' without matching '\\begin\{{name}}'" pos)
+        | none =>
+          diags := diags.push (err file "E0205"
+            s!"'\\end\{{name}}' without matching '\\begin\{{name}}'" pos)
+      | .ctrl name => acc := acc.push (.ctrl name pos)
+      | .word s => acc := acc.push (.word s pos)
+      | .space => acc := acc.push .space
+      | .par => acc := acc.push (.par pos)
+      | .sym c => acc := acc.push (.sym c pos)
+      | .verb s => acc := acc.push (.verb s pos)
+  -- End of input: close what is still open, innermost first.
+  for _ in [0:frames.size] do
+    match frames.back? with
+    | some f =>
+      diags := diags.push
+        (err file "E0201" s!"unclosed: expected {f.stop.name}" f.openPos)
+      frames := frames.pop
+      acc := f.close acc
+    | none => pure ()
+  return (acc, diags)
 
 end LeanTex.Core.Parse

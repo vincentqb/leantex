@@ -84,23 +84,31 @@ private def pushText (st : FlattenSt) (s : String) : FlattenSt := Id.run do
     st := { st with toks := st.toks.push (.word cur) }
   return st
 
-private partial def flatten (st : FlattenSt) (xs : Array Inline) : FlattenSt := Id.run do
-  let mut st := st
-  for x in xs do
-    match x with
-    | .text s => st := pushText st s
-    | .linebreak => st := { st with toks := st.toks.push .brk }
-    | .math _ src =>
-      if !st.warnedMath then
-        st := warn st "W0003" "math is typeset as plain text until M4"
-        st := { st with warnedMath := true }
-      st := pushText st src
-    | .styled _ body =>
-      if !st.warnedStyle then
-        st := warn st "W0002" "styles are not rendered yet (single font until M3)"
-        st := { st with warnedStyle := true }
-      st := flatten st body
-  return st
+mutual
+
+private def flatten (st : FlattenSt) (xs : Array Inline) : FlattenSt :=
+  flattenList st xs.toList
+
+private def flattenList (st : FlattenSt) (xs : List Inline) : FlattenSt :=
+  match xs with
+  | [] => st
+  | x :: rest => flattenList (flattenOne st x) rest
+
+private def flattenOne (st : FlattenSt) (x : Inline) : FlattenSt :=
+  match x with
+  | .text s => pushText st s
+  | .linebreak => { st with toks := st.toks.push .brk }
+  | .math _ src =>
+    let st := if st.warnedMath then st
+      else { warn st "W0003" "math is typeset as plain text until M4" with warnedMath := true }
+    pushText st src
+  | .styled _ body =>
+    let st := if st.warnedStyle then st
+      else { warn st "W0002" "styles are not rendered yet (single font until M3)" with
+        warnedStyle := true }
+    flatten st body
+
+end
 
 -- Items -----------------------------------------------------------------------
 
@@ -550,40 +558,71 @@ def sectionSize (geom : Geom) : Nat → Sp
   | 2 => pt 12
   | _ => geom.fontSize
 
-partial def typesetBlocks (b : B) (pats : Option Hyphen.Patterns) (font : Font)
-    (blocks : Array Block) (indent : Sp) : B := Id.run do
-  let mut b := b
-  let geom := b.geom
-  let mut firstBlock := true
-  for blk in blocks do
-    unless firstBlock do
-      b := { b with y := b.y + geom.parskip }
-    firstBlock := false
-    match blk with
-    | .para content =>
-      b := typesetPara b pats font content indent false geom.fontSize
-    | .section level _ title =>
-      b := { b with y := b.y + geom.parskip }
-      b := typesetPara b pats font title indent false (sectionSize geom level)
-    | .list _ items =>
-      for item in items do
-        let mut firstInItem := true
-        for cb in item do
-          unless firstInItem do
-            b := { b with y := b.y + geom.parskip }
-          match cb, firstInItem with
-          | .para content, true =>
-            b := typesetPara b pats font content (indent + geom.listIndent) false
-              geom.fontSize (bullet := some (bulletGlyphs geom.fontSize font))
-          | _, _ =>
-            b := typesetBlocks b pats font #[cb] (indent + geom.listIndent)
-          firstInItem := false
-    | .center body =>
-      for cb in body do
-        match cb with
-        | .para content => b := typesetPara b pats font content indent true geom.fontSize
-        | _ => b := typesetBlocks b pats font #[cb] indent
-  return b
+-- Block walk. Mutual recursion through `List` so the nested calls are
+-- structural: no `partial`, and the shape mirrors the IR.
+mutual
+
+/-- Typeset a block sequence, spacing peers by `parskip`. -/
+def typesetBlocks (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+    (blocks : Array Block) (indent : Sp) : B :=
+  typesetBlockList b pats font blocks.toList indent true
+
+def typesetBlockList (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+    (blocks : List Block) (indent : Sp) (first : Bool) : B :=
+  match blocks with
+  | [] => b
+  | blk :: rest =>
+    let b := if first then b else { b with y := b.y + b.geom.parskip }
+    let b := typesetBlock b pats font blk indent
+    typesetBlockList b pats font rest indent false
+
+/-- One list item: its leading paragraph carries the marker. -/
+def typesetItem (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+    (item : List Block) (indent : Sp) (first : Bool) : B :=
+  match item with
+  | [] => b
+  | blk :: rest =>
+    let b := if first then b else { b with y := b.y + b.geom.parskip }
+    let b := match blk, first with
+      | .para content, true =>
+        typesetPara b pats font content indent false b.geom.fontSize
+          (bullet := some (bulletGlyphs b.geom.fontSize font))
+      | _, _ => typesetBlock b pats font blk indent
+    typesetItem b pats font rest indent false
+
+def typesetItems (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+    (items : List (Array Block)) (indent : Sp) : B :=
+  match items with
+  | [] => b
+  | item :: rest =>
+    let b := typesetItem b pats font item.toList indent true
+    typesetItems b pats font rest indent
+
+/-- Centered content: paragraphs center, anything else nests unchanged. -/
+def typesetCentered (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+    (body : List Block) (indent : Sp) : B :=
+  match body with
+  | [] => b
+  | blk :: rest =>
+    let b := match blk with
+      | .para content => typesetPara b pats font content indent true b.geom.fontSize
+      | _ => typesetBlock b pats font blk indent
+    typesetCentered b pats font rest indent
+
+def typesetBlock (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+    (blk : Block) (indent : Sp) : B :=
+  match blk with
+  | .para content =>
+    typesetPara b pats font content indent false b.geom.fontSize
+  | .section level _ title =>
+    let b := { b with y := b.y + b.geom.parskip }
+    typesetPara b pats font title indent false (sectionSize b.geom level)
+  | .list _ items =>
+    typesetItems b pats font items.toList (indent + b.geom.listIndent)
+  | .center body =>
+    typesetCentered b pats font body.toList indent
+
+end
 
 /-- Typeset a document body into positioned pages. -/
 def run (geom : Geom) (font : Font) (pats : Option Hyphen.Patterns) (doc : Doc) : Out :=

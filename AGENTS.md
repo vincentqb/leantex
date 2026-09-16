@@ -41,6 +41,13 @@ the private reference corpus abstractly.
   determinism, line-break optimality, dimension arithmetic, PDF xref, UTF-8).
   The language is designed terminating — a construct that breaks that property
   needs a design discussion, not a fuel parameter.
+- Never add `partial` to reach a green build. Tree recursion over `Array`
+  fields works via mutual recursion through `List` (see `Ir.dumpBlocks`,
+  `Layout.typesetBlock`); index loops bounded by `[0:xs.size + 1]` are total
+  without it. `Elab.elabInlines`/`elabBlocks` are the two known exceptions and
+  are tracked in PLAN.
+- A claim is open until machine-checked. An executable oracle
+  (`scripts/kp-fuzz.lean`) is evidence, not a theorem — say which one you have.
 - Comments: nearly none. Names and tests carry the what; a comment only for a
   why the code cannot say.
 - In-repo tests and fixtures are synthetic, and synthetic means invented: no
