@@ -11,7 +11,7 @@ flashtex sets the speed bar.
 
 2026-09-15 — M0 landed: lake scaffold, CLI with the logging contract below
 (quiet default, `-v` ladder, `--porcelain` JSONL, color, exit codes),
-diagnostics with spans, strict UTF-8 stage, 30 tests green, CI. Dialect
+diagnostics with spans, strict UTF-8 stage, 36 tests green, CI. Dialect
 sketches (synthetic, double as future goldens) live in `tests/corpus/`.
 Next: M1 language core.
 

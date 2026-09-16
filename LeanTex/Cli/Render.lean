@@ -1,0 +1,73 @@
+import LeanTex.Core.Diag
+
+namespace LeanTex.Cli.Render
+
+open LeanTex.Core
+
+private def sgr (color : Bool) (code : String) (s : String) : String :=
+  if color then s!"\x1b[{code}m{s}\x1b[0m" else s
+
+private def severityColor : Severity → String
+  | .error => "1;31"
+  | .warning => "1;33"
+  | .note => "1;36"
+
+def human (color : Bool) (d : Diag) : String :=
+  let head := sgr color (severityColor d.severity) s!"{d.severity.label}[{d.code}]"
+  let base := s!"{head}: {d.message}"
+  let withSpan := match d.span with
+    | some sp => base ++ "\n" ++ sgr color "1;34" "  --> " ++ s!"{sp.file}:{sp.pos.line}:{sp.pos.col}"
+    | none => base
+  match d.help with
+  | some h => withSpan ++ "\n  " ++ sgr color "1" "help:" ++ " " ++ h
+  | none => withSpan
+
+def humanSummary (color : Bool) (file : String) (errors : Nat) (ms : Nat) : String :=
+  if errors == 0 then
+    s!"{sgr color "1;32" "✔"} {file} ({ms} ms)"
+  else
+    let noun := if errors == 1 then "error" else "errors"
+    s!"{sgr color "1;31" "✖"} {file} — {errors} {noun} ({ms} ms)"
+
+private def jsonEscape (s : String) : String :=
+  s.foldl (init := "") fun acc c =>
+    match c with
+    | '"' => acc ++ "\\\""
+    | '\\' => acc ++ "\\\\"
+    | '\n' => acc ++ "\\n"
+    | '\r' => acc ++ "\\r"
+    | '\t' => acc ++ "\\t"
+    | c =>
+      if c.toNat < 0x20 then
+        let hex := "0123456789abcdef".toList
+        acc ++ "\\u00" ++ String.ofList [hex[c.toNat >>> 4]!, hex[c.toNat &&& 0xF]!]
+      else
+        acc.push c
+
+private def jstr (s : String) : String := "\"" ++ jsonEscape s ++ "\""
+
+private def obj (fields : List (String × String)) : String :=
+  "{" ++ String.intercalate "," (fields.map fun (k, v) => jstr k ++ ":" ++ v) ++ "}"
+
+def porcelainDiag (d : Diag) : String :=
+  let base := [("event", jstr "diagnostic"), ("severity", jstr d.severity.label),
+    ("code", jstr d.code), ("message", jstr d.message)]
+  let withSpan := match d.span with
+    | some sp => base ++ [("file", jstr sp.file), ("line", toString sp.pos.line),
+        ("col", toString sp.pos.col)]
+    | none => base
+  let all := match d.help with
+    | some h => withSpan ++ [("help", jstr h)]
+    | none => withSpan
+  obj all
+
+def porcelainPhase (name detail : String) (ms : Nat) : String :=
+  obj [("event", jstr "phase"), ("name", jstr name), ("detail", jstr detail),
+    ("ms", toString ms)]
+
+def porcelainSummary (file : String) (ok : Bool) (errors ms : Nat) : String :=
+  obj [("event", jstr "summary"), ("file", jstr file),
+    ("ok", if ok then "true" else "false"), ("errors", toString errors),
+    ("ms", toString ms)]
+
+end LeanTex.Cli.Render

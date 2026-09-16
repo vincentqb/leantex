@@ -1,0 +1,14 @@
+name = "leantex"
+defaultTargets = ["leantex"]
+testDriver = "Tests"
+
+[[lean_lib]]
+name = "LeanTex"
+
+[[lean_exe]]
+name = "leantex"
+root = "Main"
+
+[[lean_exe]]
+name = "Tests"
+root = "Tests"
