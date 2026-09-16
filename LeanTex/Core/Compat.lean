@@ -395,7 +395,6 @@ where
       let (_, k) := takeGroups raws start n
       return some (#[], k)
     | none => return none
-  termination_by structural name => name
 
 mutual
 
