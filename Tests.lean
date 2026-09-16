@@ -28,7 +28,7 @@ def elabStr (s : String) : Ir.Doc × Array Diag :=
 def errCodes (s : String) : List String :=
   ((elabStr s).2.filter (·.severity == .error)).toList.map (·.code)
 
-def goldenNames : List String := ["paragraphs", "resume", "talk"]
+def goldenNames : List String := ["paragraphs", "layout", "resume", "talk"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -36,6 +36,7 @@ def goldenNames : List String := ["paragraphs", "resume", "talk"]
 inductive Piece where
   | W (w : Int)
   | G
+  | H (w : Int)
   | B
 
 open Piece in
@@ -45,32 +46,38 @@ def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
     match p with
     | .W w => items := items.push (.box (Dim.pt w) #[])
     | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
+    | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true #[])
     | .B =>
       items := items.push (.glue { fil := true })
-      items := items.push (.pen 0 Layout.forcedCost false)
+      items := items.push (.pen 0 Layout.forcedCost false #[])
   items := items.push (.glue { fil := true })
-  items := items.push (.pen 0 Layout.forcedCost false)
+  items := items.push (.pen 0 Layout.forcedCost false #[])
   return items
 
 def W (w : Int) : Piece := .W w
 def G : Piece := .G
+def H (w : Int := 3) : Piece := .H w
 def BRK : List Piece := [.B]
 
 /-- Total demerits of a specific break sequence (must end at the final
 forced penalty), or none when it spans a forced break. -/
 def seqCost (items : Array Layout.Item) (target : Dim.Sp) (breaks : List Nat) :
     Option Int := Id.run do
-  let mut prev := 0
+  let mut prev : Nat := 0
   let mut first := true
+  let mut prevFlagged := false
   let mut total : Int := 0
   for b in breaks do
-    let a := if first then Layout.lineStart items 0 else Layout.lineStart items prev
+    let a := if first then Layout.lineStart items 0 else Layout.lineStart items (prev + 1)
     for k in [a:b] do
       if Layout.isForced items k then
         return none
     let m := Layout.measure items a b
     total := total + Layout.lineDemerits items m target b
+    if prevFlagged && Layout.isFlagged items b then
+      total := total + Layout.doubleHyphenDemerits
     prev := b
+    prevFlagged := Layout.isFlagged items b
     first := false
   if breaks.getLast? != some (items.size - 1) then
     return none
@@ -356,12 +363,38 @@ def main (args : List String) : IO UInt32 := do
     ("four words", mkItems [W 50, G, W 60, G, W 70, G, W 80], Dim.pt 150),
     ("forced mid", mkItems ([W 100, G, W 100] ++ BRK ++ [W 100]), Dim.pt 250),
     ("overfull word", mkItems [W 300], Dim.pt 100),
-    ("tight fit", mkItems [W 80, G, W 80, G, W 80, G, W 80, G, W 80], Dim.pt 170)]
+    ("tight fit", mkItems [W 80, G, W 80, G, W 80, G, W 80, G, W 80], Dim.pt 170),
+    ("hyphen choice", mkItems [W 60, G, W 40, H, W 50, G, W 60], Dim.pt 120),
+    ("double hyphen", mkItems [W 70, H, W 70, H, W 70, H, W 70], Dim.pt 80),
+    ("hyphen vs glue", mkItems [W 50, G, W 30, H, W 30, G, W 50, G, W 40], Dim.pt 100)]
   for (name, items, target) in cases do
     let kpBreaks := (Layout.kp items target).toList
     let kpCost := seqCost items target kpBreaks
     let brute := bruteBest items target
-    t s!"kp optimal ({name})" (kpCost == brute && !kpBreaks.isEmpty)
+    t s!"kp optimal ({name})" (kpCost.isSome && kpCost == brute && !kpBreaks.isEmpty)
+
+  -- hyphenation: expectations are lualatex \showhyphens output (the oracle)
+  let pats := Hyphen.load
+  let hyph (w : String) : String := Id.run do
+    let breaks := Hyphen.hyphenate pats w
+    let mut out := ""
+    for (c, i) in w.toList.zipIdx do
+      if i > 0 && breaks.contains i then
+        out := out.push '-'
+      out := out.push c
+    return out
+  t "hyphen patterns loaded" (pats.map.size > 4000)
+  t "hyphen incomprehensibility" (hyph "incomprehensibility" == "in-com-pre-hen-si-bil-ity")
+  t "hyphen internationalization" (hyph "internationalization" == "in-ter-na-tion-al-iza-tion")
+  t "hyphen algorithm" (hyph "algorithm" == "al-go-rithm")
+  t "hyphen paragraph" (hyph "paragraph" == "para-graph")
+  t "hyphen typesetting" (hyph "typesetting" == "type-set-ting")
+  t "hyphen hyphenation" (hyph "hyphenation" == "hy-phen-ation")
+  t "hyphen long word" (hyph "floccinaucinihilipilification" ==
+    "floc-cin-aucini-hilip-il-i-fi-ca-tion")
+  t "hyphen exception dictionary" (hyph "associate" == "as-so-ciate")
+  t "hyphen short word untouched" (hyph "cat" == "cat")
+  t "hyphen capitalized" (hyph "Paragraph" == "Para-graph")
 
   -- font parsing on the system font
   match ← findFont with
@@ -378,11 +411,43 @@ def main (args : List String) : IO UInt32 := do
       t "font greek" (font.gid 'α' |>.isSome)
       t "font missing emoji" (font.gid '🎉' |>.isNone)
 
+      -- layout: hyphenation is materialized only at a chosen break; headings
+      -- and list markers carry visual structure into the positioned page.
+      let (hyDoc, hyDs) := Elab.run "t" "incomprehensibility"
+      t "layout hyphen source clean" hyDs.isEmpty
+      let narrow : Layout.Geom := {
+        pageW := Dim.pt 90
+        pageH := Dim.pt 200
+        margin := Dim.pt 10
+        fontSize := Dim.pt 10
+      }
+      let hyOut := Layout.run narrow font (some pats) hyDoc
+      let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
+        l.segs.any fun s => match s with
+          | .run glyphs => glyphs.any (·.2 == '-')
+          | .gap _ => false
+      t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
+      t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
+
+      let visualSrc := "\\section{Heading}\nBody text.\n\n" ++
+        "\\begin{itemize}\\item A list item.\\end{itemize}"
+      let (visualDoc, visualDs) := Elab.run "t" visualSrc
+      t "layout visual source clean" visualDs.isEmpty
+      let visualOut := Layout.run ({} : Layout.Geom) font (some pats) visualDoc
+      let hasSectionSize := visualOut.pages.any fun p =>
+        p.lines.any (·.size == Dim.pt 14)
+      let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
+        l.segs.any fun s => match s with
+          | .run glyphs => glyphs.any (·.2 == '–')
+          | .gap _ => false
+      t "layout section size" hasSectionSize
+      t "layout list marker" hasListMarker
+
       -- pdf: build a tiny document and re-verify the xref stream offsets
       let (doc, eds) := Elab.run "t" "hello world, a small pdf self check"
       t "pdf source clean" eds.isEmpty
       let geom : Layout.Geom := {}
-      let out := Layout.run geom font doc
+      let out := Layout.run geom font none doc
       t "pdf one page" (out.pages.size == 1)
       let pdf := Pdf.write geom font out.pages
       t "pdf header" (String.fromUTF8! (pdf.extract 0 8) == "%PDF-2.0")

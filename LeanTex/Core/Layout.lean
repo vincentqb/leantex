@@ -1,5 +1,6 @@
 import LeanTex.Core.Dim
 import LeanTex.Core.Font
+import LeanTex.Core.Hyphen
 import LeanTex.Core.Ir
 import LeanTex.Core.Diag
 
@@ -12,20 +13,23 @@ structure Geom where
   pageH : Sp := pt 792
   margin : Sp := inch 1
   fontSize : Sp := pt 10
-  leading : Sp := pt 12
   parskip : Sp := pt 6
   listIndent : Sp := pt 15
   deriving Repr
 
 def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.margin
 
+def leadingFor (size : Sp) : Sp := size * 6 / 5
+
 inductive Item where
   | box (w : Sp) (glyphs : Array (Nat × Char × Sp))
   | glue (g : Glue)
-  | pen (w : Sp) (cost : Int) (flagged : Bool)
+  | pen (w : Sp) (cost : Int) (flagged : Bool) (glyphs : Array (Nat × Char × Sp))
   deriving Repr, Inhabited
 
 def forcedCost : Int := -10000
+
+def hyphenPenalty : Int := 50
 
 inductive Seg where
   | run (glyphs : Array (Nat × Char))
@@ -35,6 +39,7 @@ inductive Seg where
 structure LineOut where
   x : Sp
   y : Sp
+  size : Sp
   segs : Array Seg
   setWidth : Sp
   deriving Repr, Inhabited
@@ -59,7 +64,6 @@ private structure FlattenSt where
   toks : Array Tk := #[]
   warnedStyle : Bool := false
   warnedMath : Bool := false
-  missing : Array Char := #[]
   diags : Array Diag := #[]
 
 private def warn (st : FlattenSt) (code msg : String) : FlattenSt :=
@@ -100,47 +104,122 @@ private partial def flatten (st : FlattenSt) (xs : Array Inline) : FlattenSt := 
 
 -- Items -----------------------------------------------------------------------
 
-private def scaled (geom : Geom) (font : Font) (units : Nat) : Sp :=
-  (units * geom.fontSize.toNat) / font.unitsPerEm
+private def scaledAt (size : Sp) (font : Font) (units : Nat) : Sp :=
+  (units * size.toNat) / font.unitsPerEm
 
-private def wordBox (geom : Geom) (font : Font) (chars : Array Char)
-    (missing : Array Char) : Item × Array Char := Id.run do
-  let mut glyphs : Array (Nat × Char × Sp) := #[]
-  let mut w : Sp := 0
+private def glyphOf (size : Sp) (font : Font) (c : Char) : Option (Nat × Char × Sp) :=
+  match font.gid c with
+  | some g => some (g, c, scaledAt size font (font.widths[g]?.getD 0))
+  | none => none
+
+def hyphenGlyph (size : Sp) (font : Font) : Array (Nat × Char × Sp) :=
+  match glyphOf size font '-' with
+  | some g => #[g]
+  | none => #[]
+
+def bulletGlyphs (size : Sp) (font : Font) : Array (Nat × Char × Sp) :=
+  match glyphOf size font '–' with
+  | some g => #[g]
+  | none => hyphenGlyph size font
+
+/-- One word → items: boxes split by hyphenation points (flagged penalties
+carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph). -/
+private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (font : Font)
+    (chars : Array Char) (missing : Array Char)
+    (cache : Std.HashMap String (List Nat)) :
+    Array Item × Array Char × Std.HashMap String (List Nat) := Id.run do
   let mut missing := missing
-  for c in chars do
-    match font.gid c with
-    | some g =>
-      let adv := scaled geom font (font.widths[g]?.getD 0)
-      glyphs := glyphs.push (g, c, adv)
-      w := w + adv
-    | none =>
-      unless missing.contains c do
-        missing := missing.push c
-  return (.box w glyphs, missing)
+  let mut cache := cache
+  let hyphW := (hyphenGlyph size font).foldl (fun w (_, _, adv) => w + adv) 0
+  let mut items : Array Item := #[]
+  let mut box : Array (Nat × Char × Sp) := #[]
+  let mut boxW : Sp := 0
+  let flush (items : Array Item) (box : Array (Nat × Char × Sp)) (w : Sp) : Array Item :=
+    if box.isEmpty then items else items.push (.box w box)
+  let mut i := 0
+  for _ in [0:chars.size + 1] do
+    if h : i < chars.size then
+      let c := chars[i]
+      if c.isAlpha then
+        let mut j := i
+        let mut run : Array Char := #[]
+        for _ in [i:chars.size] do
+          if h' : j < chars.size then
+            if chars[j].isAlpha then
+              run := run.push chars[j]
+              j := j + 1
+            else
+              break
+          else
+            break
+        let word := String.ofList run.toList
+        let mut breaks : List Nat := []
+        match pats with
+        | some p =>
+          match cache[word]? with
+          | some b => breaks := b
+          | none =>
+            let b := Hyphen.hyphenate p word
+            cache := cache.insert word b
+            breaks := b
+        | none => pure ()
+        for (c', k) in run.zipIdx do
+          if breaks.contains k then
+            items := flush items box boxW
+            box := #[]
+            boxW := 0
+            items := items.push (.pen hyphW hyphenPenalty true (hyphenGlyph size font))
+          match glyphOf size font c' with
+          | some g =>
+            box := box.push g
+            boxW := boxW + g.2.2
+          | none =>
+            unless missing.contains c' do
+              missing := missing.push c'
+        i := j
+      else
+        match glyphOf size font c with
+        | some g =>
+          box := box.push g
+          boxW := boxW + g.2.2
+        | none =>
+          unless missing.contains c do
+            missing := missing.push c
+        i := i + 1
+        if c == '-' then
+          items := flush items box boxW
+          box := #[]
+          boxW := 0
+          items := items.push (.pen 0 hyphenPenalty false #[])
+    else
+      break
+  items := flush items box boxW
+  return (items, missing, cache)
 
-private def interword (geom : Geom) (font : Font) : Glue :=
-  let w := scaled geom font (font.advance ' ')
+private def interword (size : Sp) (font : Font) : Glue :=
+  let w := scaledAt size font (font.advance ' ')
   { width := w, stretch := w / 2, shrink := w / 3 }
 
-private def itemsOfInlines (geom : Geom) (font : Font) (xs : Array Inline) :
-    Array Item × Array Diag := Id.run do
+private def itemsOfInlines (pats : Option Hyphen.Patterns) (size : Sp) (font : Font)
+    (xs : Array Inline) (cache : Std.HashMap String (List Nat)) :
+    Array Item × Array Diag × Std.HashMap String (List Nat) := Id.run do
   let st := flatten {} xs
   let mut items : Array Item := #[]
   let mut missing : Array Char := #[]
+  let mut cache := cache
   for tk in st.toks do
     match tk with
     | .word chars =>
-      let (b, m) := wordBox geom font chars missing
+      let (ws, m, c') := wordItems pats size font chars missing cache
       missing := m
-      items := items.push b
-    | .space => items := items.push (.glue (interword geom font))
+      cache := c'
+      items := items ++ ws
+    | .space => items := items.push (.glue (interword size font))
     | .brk =>
       items := items.push (.glue { fil := true })
-      items := items.push (.pen 0 forcedCost false)
-  -- paragraph end: infinitely stretchable fill, then a forced break
+      items := items.push (.pen 0 forcedCost false #[])
   items := items.push (.glue { fil := true })
-  items := items.push (.pen 0 forcedCost false)
+  items := items.push (.pen 0 forcedCost false #[])
   let mut diags := st.diags
   for c in missing do
     diags := diags.push {
@@ -148,7 +227,7 @@ private def itemsOfInlines (geom : Geom) (font : Font) (xs : Array Inline) :
       code := "W0004"
       message := s!"the font has no glyph for '{c}' (U+{hex c.toNat}); dropped"
     }
-  return (items, diags)
+  return (items, diags, cache)
 where
   hex (n : Nat) : String := Id.run do
     let ds := "0123456789ABCDEF".toList
@@ -169,7 +248,7 @@ def canBreakAt (items : Array Item) (j : Nat) : Bool :=
     match items[j-1]? with
     | some (.box _ _) => j > 0
     | _ => false
-  | some (.pen _ cost _) => cost < 10000
+  | some (.pen _ cost _ _) => cost < 10000
   | _ => false
 
 structure Measure where
@@ -178,14 +257,12 @@ structure Measure where
   shrink : Sp := 0
   fil : Bool := false
 
-/-- Line contents run from the first non-discardable item after the previous
-break up to (exclusive) the break item; a penalty break adds its width. -/
-def lineStart (items : Array Item) (prevBreak : Nat) : Nat := Id.run do
-  let mut a := if prevBreak == 0 then 0 else prevBreak + 1
+def lineStart (items : Array Item) (start : Nat) : Nat := Id.run do
+  let mut a := start
   for _ in [a:items.size] do
     match items[a]? with
     | some (.glue _) => a := a + 1
-    | some (.pen _ cost _) => if cost ≥ 10000 then break else a := a + 1
+    | some (.pen _ cost _ _) => if cost ≥ 10000 then break else a := a + 1
     | _ => break
   return a
 
@@ -199,18 +276,14 @@ def measure (items : Array Item) (a j : Nat) : Measure := Id.run do
         stretch := m.stretch + g.stretch
         shrink := m.shrink + g.shrink
         fil := m.fil || g.fil }
-    | .pen _ _ _ => pure ()
-  if let some (.pen w _ _) := items[j]? then
+    | .pen _ _ _ _ => pure ()
+  if let some (.pen w _ _ _) := items[j]? then
     m := { m with natural := m.natural + w }
   return m
 
 def overfullDemerits : Int := 100000000
 
-/-- Badness-based demerits of a candidate line, `none` when hard-infeasible
-(can never happen for overfull lines: they get huge but finite demerits so a
-solution always exists). -/
-def lineDemerits (items : Array Item) (m : Measure) (target : Sp)
-    (j : Nat) : Int :=
+def lineDemerits (items : Array Item) (m : Measure) (target : Sp) (j : Nat) : Int :=
   let delta := target - m.natural
   let b : Int :=
     if delta == 0 then 0
@@ -224,7 +297,7 @@ def lineDemerits (items : Array Item) (m : Measure) (target : Sp)
     else (10 + b) ^ 2
   let penTerm : Int :=
     match items[j]? with
-    | some (.pen _ cost _) =>
+    | some (.pen _ cost _ _) =>
       if cost ≤ forcedCost then 0
       else if cost > 0 then cost ^ 2
       else -(cost ^ 2)
@@ -233,45 +306,107 @@ def lineDemerits (items : Array Item) (m : Measure) (target : Sp)
 
 def isForced (items : Array Item) (k : Nat) : Bool :=
   match items[k]? with
-  | some (.pen _ cost _) => cost ≤ forcedCost
+  | some (.pen _ cost _ _) => cost ≤ forcedCost
   | _ => false
 
-/-- Optimal breakpoints by dynamic programming over break positions.
-Returns the item indices of the chosen breaks, in order. -/
+def isFlagged (items : Array Item) (k : Nat) : Bool :=
+  match items[k]? with
+  | some (.pen _ _ flagged _) => flagged
+  | _ => false
+
+def doubleHyphenDemerits : Int := 10000
+
+/-- Optimal breakpoints by dynamic programming over break positions, with
+prefix-sum line measures and an active list: a node whose line to the
+current position is already overfull beyond shrink can only get worse, so
+it is considered one last time and then deactivated (one node is always
+retained so a solution exists even for unbreakable content). -/
 def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
   let n := items.size
-  -- best.get j = some (demerits, previous break) for break position j;
-  -- position n is the virtual "start" node stored at index of items? use
-  -- prev = n to mean "paragraph start".
+  let mut pw : Array Sp := Array.mkEmpty (n + 1)
+  let mut ps : Array Sp := Array.mkEmpty (n + 1)
+  let mut pk : Array Sp := Array.mkEmpty (n + 1)
+  let mut pf : Array Nat := Array.mkEmpty (n + 1)
+  let mut pforced : Array Nat := Array.mkEmpty (n + 1)
+  pw := pw.push 0
+  ps := ps.push 0
+  pk := pk.push 0
+  pf := pf.push 0
+  pforced := pforced.push 0
+  for k in [0:n] do
+    let (dw, dst, dsh, dfil) : Sp × Sp × Sp × Nat := match items[k]! with
+      | .box w _ => (w, 0, 0, 0)
+      | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0)
+      | .pen _ _ _ _ => (0, 0, 0, 0)
+    pw := pw.push (pw[k]! + dw)
+    ps := ps.push (ps[k]! + dst)
+    pk := pk.push (pk[k]! + dsh)
+    pf := pf.push (pf[k]! + dfil)
+    pforced := pforced.push (pforced[k]! + (if isForced items k then 1 else 0))
+  let measureAt (a j : Nat) : Measure :=
+    let penW : Sp := match items[j]? with
+      | some (.pen w _ _ _) => w
+      | _ => 0
+    { natural := pw[j]! - pw[a]! + penW
+      stretch := ps[j]! - ps[a]!
+      shrink := pk[j]! - pk[a]!
+      fil := pf[j]! - pf[a]! > 0 }
   let mut best : Array (Option (Int × Nat)) := Array.replicate (n + 1) none
   best := best.set! n (some (0, n))
-  let mut order : Array Nat := #[n]
+  let mut active : Array Nat := #[n]
   for j in [0:n] do
     if canBreakAt items j then
       let mut bestHere : Option (Int × Nat) := none
-      for p in order do
+      let mut survivors : Array Nat := #[]
+      let mut bestDroppedPlain : Option (Int × Nat) := none
+      let mut bestDroppedFlagged : Option (Int × Nat) := none
+      for p in active do
         if p == n || p < j then
-          -- a line may not span a forced break
-          let a := lineStart items (if p == n then 0 else p)
-          let mut spansForced := false
-          for k in [a:j] do
-            if isForced items k then
-              spansForced := true
-              break
+          let a := lineStart items (if p == n then 0 else p + 1)
+          let spansForced := a < j && pforced[j]! - pforced[a]! > 0
           if !spansForced && a ≤ j then
             match best[p]! with
             | some (d0, _) =>
-              let m := measure items a j
-              let d := d0 + lineDemerits items m target j
+              let m := measureAt a j
+              let dbl := if p != n && isFlagged items p && isFlagged items j then
+                doubleHyphenDemerits else 0
+              let d := d0 + lineDemerits items m target j + dbl
               match bestHere with
               | some (dBest, _) =>
                 if d < dBest then bestHere := some (d, p)
               | none => bestHere := some (d, p)
+              -- Once overfull beyond shrink, this predecessor only gets
+              -- worse. Keep the best one per flagged state because that is
+              -- the only predecessor property future line costs observe.
+              if m.natural - m.shrink > target then
+                if p != n && isFlagged items p then
+                  match bestDroppedFlagged with
+                  | some (dD, _) =>
+                    if d < dD then bestDroppedFlagged := some (d, p)
+                  | none => bestDroppedFlagged := some (d, p)
+                else
+                  match bestDroppedPlain with
+                  | some (dD, _) =>
+                    if d < dD then bestDroppedPlain := some (d, p)
+                  | none => bestDroppedPlain := some (d, p)
+              else
+                survivors := survivors.push p
             | none => pure ()
+          else if !spansForced then
+            survivors := survivors.push p
+        else
+          survivors := survivors.push p
       if bestHere.isSome then
         best := best.set! j bestHere
-        order := order.push j
-  -- reconstruct from the last break (the final forced penalty)
+        survivors := survivors.push j
+      -- Overfull predecessors keep their relative order as j grows. One per
+      -- flagged state preserves the optimum (double-hyphen demerits are the
+      -- only future cost that distinguishes the two classes).
+      if let some (_, p) := bestDroppedPlain then
+        survivors := survivors.push p
+      if let some (_, p) := bestDroppedFlagged then
+        survivors := survivors.push p
+      active := survivors
   let last := n - 1
   let mut breaks : Array Nat := #[]
   match best[last]! with
@@ -294,7 +429,6 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let m := measure items a j
   let delta := target - m.natural
   let mut overfull := false
-  -- count fil glues for distribution
   let mut fils := 0
   for k in [a:j] do
     if let some (.glue g) := items[k]? then
@@ -334,7 +468,12 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
         overfull := true
       segs := segs.push (.gap (max 0 setW))
       width := width + max 0 setW
-    | .pen _ _ _ => pure ()
+    | .pen _ _ _ _ => pure ()
+  -- breaking at a penalty appends its glyphs (the hyphen)
+  if let some (.pen w _ _ glyphs) := items[j]? then
+    if !glyphs.isEmpty then
+      segs := segs.push (.run (glyphs.map fun (g, c, _) => (g, c)))
+      width := width + w
   -- drop trailing gaps (paragraph-final fill)
   let mut segs' := segs
   repeat
@@ -355,16 +494,17 @@ private structure B where
   cur : PageOut := {}
   y : Sp := 0
   diags : Array Diag := #[]
+  hyphCache : Std.HashMap String (List Nat) := {}
 
 private def B.freshY (b : B) : Sp := b.geom.margin + b.ascent
 
 private def B.breakPage (b : B) : B :=
   { b with pages := b.pages.push b.cur, cur := {}, y := b.freshY }
 
-private def B.placeLine (b : B) (x : Sp) (segs : Array Seg) (w : Sp) : B :=
+private def B.placeLine (b : B) (x : Sp) (size : Sp) (segs : Array Seg) (w : Sp) : B :=
   let b := if b.y + b.descent > b.geom.pageH - b.geom.margin then b.breakPage else b
-  let line : LineOut := { x := x, y := b.y, segs := segs, setWidth := w }
-  { b with cur := { lines := b.cur.lines.push line }, y := b.y + b.geom.leading }
+  let line : LineOut := { x := x, y := b.y, size := size, segs := segs, setWidth := w }
+  { b with cur := { lines := b.cur.lines.push line }, y := b.y + leadingFor size }
 
 private def B.warnOverfull (b : B) : B :=
   { b with diags := b.diags.push {
@@ -373,29 +513,45 @@ private def B.warnOverfull (b : B) : B :=
     message := "overfull line (no feasible break)"
   } }
 
-private def typesetPara (b : B) (font : Font) (inlines : Array Inline)
-    (indent : Sp) (center : Bool) : B := Id.run do
+private def typesetPara (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+    (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
+    (bullet : Option (Array (Nat × Char × Sp)) := none) : B := Id.run do
   let mut b := b
   let geom := b.geom
   let width := geom.textWidth - indent
-  let (items, ds) := itemsOfInlines geom font inlines
-  b := { b with diags := b.diags ++ ds }
+  let (items, ds, cache) := itemsOfInlines pats size font inlines b.hyphCache
+  b := { b with diags := b.diags ++ ds, hyphCache := cache }
   let breaks := kp items width
   let mut prev := 0
   let mut first := true
   for brk in breaks do
-    let a := if first then lineStart items 0 else lineStart items prev
+    let a := if first then lineStart items 0 else lineStart items (prev + 1)
     let (segs, w, overfull) := setLine items a brk width (!center)
     if overfull then
       b := b.warnOverfull
-    let x := if center then geom.margin + indent + (width - w) / 2 else geom.margin + indent
-    b := b.placeLine x segs w
+    let mut x := if center then geom.margin + indent + (width - w) / 2
+      else geom.margin + indent
+    let mut segs := segs
+    let mut w := w
+    if first then
+      if let some bg := bullet then
+        let bw := bg.foldl (fun acc (_, _, adv) => acc + adv) 0
+        let sep := geom.fontSize * 2 / 5
+        segs := #[Seg.run (bg.map fun (g, c, _) => (g, c)), Seg.gap sep] ++ segs
+        x := x - bw - sep
+        w := w + bw + sep
+    b := b.placeLine x size segs w
     prev := brk
     first := false
   return b
 
-partial def typesetBlocks (b : B) (font : Font) (blocks : Array Block)
-    (indent : Sp) : B := Id.run do
+def sectionSize (geom : Geom) : Nat → Sp
+  | 1 => pt 14
+  | 2 => pt 12
+  | _ => geom.fontSize
+
+partial def typesetBlocks (b : B) (pats : Option Hyphen.Patterns) (font : Font)
+    (blocks : Array Block) (indent : Sp) : B := Id.run do
   let mut b := b
   let geom := b.geom
   let mut firstBlock := true
@@ -405,22 +561,32 @@ partial def typesetBlocks (b : B) (font : Font) (blocks : Array Block)
     firstBlock := false
     match blk with
     | .para content =>
-      b := typesetPara b font content indent false
-    | .section _ _ title =>
+      b := typesetPara b pats font content indent false geom.fontSize
+    | .section level _ title =>
       b := { b with y := b.y + geom.parskip }
-      b := typesetPara b font title indent false
+      b := typesetPara b pats font title indent false (sectionSize geom level)
     | .list _ items =>
       for item in items do
-        b := typesetBlocks b font item (indent + geom.listIndent)
+        let mut firstInItem := true
+        for cb in item do
+          unless firstInItem do
+            b := { b with y := b.y + geom.parskip }
+          match cb, firstInItem with
+          | .para content, true =>
+            b := typesetPara b pats font content (indent + geom.listIndent) false
+              geom.fontSize (bullet := some (bulletGlyphs geom.fontSize font))
+          | _, _ =>
+            b := typesetBlocks b pats font #[cb] (indent + geom.listIndent)
+          firstInItem := false
     | .center body =>
       for cb in body do
         match cb with
-        | .para content => b := typesetPara b font content indent true
-        | _ => b := typesetBlocks b font #[cb] indent
+        | .para content => b := typesetPara b pats font content indent true geom.fontSize
+        | _ => b := typesetBlocks b pats font #[cb] indent
   return b
 
 /-- Typeset a document body into positioned pages. -/
-def run (geom : Geom) (font : Font) (doc : Doc) : Out :=
+def run (geom : Geom) (font : Font) (pats : Option Hyphen.Patterns) (doc : Doc) : Out :=
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
   let b : B := {
     geom := geom
@@ -428,7 +594,7 @@ def run (geom : Geom) (font : Font) (doc : Doc) : Out :=
     descent := scale (-font.descent)
   }
   let b := { b with y := b.freshY }
-  let b := typesetBlocks b font doc.body 0
+  let b := typesetBlocks b pats font doc.body 0
   let pages := b.pages.push b.cur
   { pages := pages, diags := b.diags }
 

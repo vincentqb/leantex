@@ -146,8 +146,11 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     | .ok (path, font) =>
       ui.phase "font" s!"{font.psName} ({path})" (← since t)
       let t ← IO.monoMsNow
+      let pats := Hyphen.load
+      ui.phase "hyphen" s!"{pats.map.size} patterns" (← since t)
+      let t ← IO.monoMsNow
       let geom : Layout.Geom := {}
-      let out := Layout.run geom font doc
+      let out := Layout.run geom font (some pats) doc
       for d in out.diags do
         ui.diag d
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)

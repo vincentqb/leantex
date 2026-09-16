@@ -6,6 +6,8 @@ import LeanTex.Core.Ir
 import LeanTex.Core.Elab
 import LeanTex.Core.Dim
 import LeanTex.Core.Font
+import LeanTex.Core.HyphenData
+import LeanTex.Core.Hyphen
 import LeanTex.Core.Layout
 import LeanTex.Core.Pdf
 import LeanTex.Cli.Args

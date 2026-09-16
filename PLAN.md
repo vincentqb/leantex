@@ -9,18 +9,21 @@ flashtex sets the speed bar.
 
 ## Status
 
-2026-09-15 — M2a landed: leantex produces PDFs. Knuth–Plass line breaking
-(DP verified optimal against brute-force enumeration on small cases), sp
-fixed-point dimensions with first proofs, sfnt font parsing (TrueType + CFF,
-cmap 4/12, metrics), justified paragraph typesetting with fil glue and forced
-breaks, page assembly, and a PDF 2.0 writer — cross-reference stream, object
-stream, Identity-H CID font fully embedded, ToUnicode CMap — self-verified in
-tests by re-parsing the xref of produced output, and extraction-checked with
-pdftotext. `paragraphs.tex` → one justified page in ~6 ms. 105 tests green.
-Remaining for M2 (next unit, M2b): Liang hyphenation, the bench harness vs
-lualatex, and section/list visual styling. Deliberate debt unchanged from M1
-(partial recursion; de-partialing + KP optimality proof queued as the proofs
-unit).
+2026-09-15 — M2 landed. The engine now produces readable, justified PDF 2.0
+with automatic American-English Liang hyphenation, section sizing, centered
+blocks, hanging list markers, and multi-page assembly. The PDF uses an
+Identity-H CID font, full OpenType embedding, ToUnicode, object streams, and a
+cross-reference stream; internal tests re-parse every direct xref offset, and
+Poppler independently reports PDF 2.0 plus embedded/Unicode-mapped fonts.
+Knuth–Plass uses prefix sums and an active list, with its output checked against
+brute-force minima on small cases. The synthetic visual fixture and paragraph
+fixture render cleanly. Measured by `scripts/bench.sh` (five-run wall-time
+median on this host): 1 KB is 14 ms vs lualatex 486 ms; generated 129 KB /
+30 pages is 573 ms vs 982 ms. Evidence and caveats live in `bench/README.md`.
+
+Next: the proofs unit before M3 — remove `partial` from parser/elaborator/layout
+and prove front-end termination/determinism plus Knuth–Plass optimality. The
+brute-force oracle stays as an independent executable check.
 
 ## Why not TeX-compatible
 

@@ -1,3 +1,6 @@
 .lake/
 
 tests/corpus/*.pdf
+
+bench/lorem.tex
+bench/*.pdf

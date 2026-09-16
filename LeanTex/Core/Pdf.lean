@@ -42,39 +42,48 @@ private def hex16 (x : UInt64) : String := Id.run do
     v := v / 16
   return s
 
-/-- Used glyphs: sorted by gid, one char witness per gid (for ToUnicode). -/
-private def usedGlyphs (pages : Array PageOut) : Array (Nat × Char) := Id.run do
-  let mut pairs : Array (Nat × Char) := #[]
+/-- Used glyphs: one char witness per gid, ascending gid. Mark array — the
+glyph stream is large (every glyph on every page), so no sorting. -/
+private def usedGlyphs (numGlyphs : Nat) (pages : Array PageOut) :
+    Array (Nat × Char) := Id.run do
+  let mut seen : Array (Option Char) := Array.replicate numGlyphs none
   for p in pages do
     for l in p.lines do
       for s in l.segs do
         if let .run glyphs := s then
           for (g, c) in glyphs do
-            pairs := pairs.push (g, c)
-  let sorted := pairs.qsort fun a b => a.1 < b.1
+            if h : g < seen.size then
+              if seen[g].isNone then
+                seen := seen.set! g (some c)
   let mut out : Array (Nat × Char) := #[]
-  for (g, c) in sorted do
-    match out.back? with
-    | some (g', _) => if g != g' then out := out.push (g, c)
-    | none => out := out.push (g, c)
+  for (c?, g) in seen.zipIdx do
+    if let some c := c? then
+      out := out.push (g, c)
   return out
 
 private def contentStream (geom : Geom) (page : PageOut) : String := Id.run do
-  let mut s := s!"BT\n/F1 {geom.fontSize.toPtString} Tf\n"
+  let mut s := "BT\n"
+  let mut curSize : Sp := -1
   for l in page.lines do
     if l.segs.isEmpty then
       continue
+    if l.size != curSize then
+      s := s ++ s!"/F1 {l.size.toPtString} Tf\n"
+      curSize := l.size
     let ypdf := geom.pageH - l.y
     s := s ++ s!"1 0 0 1 {l.x.toPtString} {ypdf.toPtString} Tm\n["
     for seg in l.segs do
       match seg with
       | .run glyphs =>
-        s := s ++ "<"
+        s := s.push '<'
         for (g, _) in glyphs do
-          s := s ++ hex4 g
-        s := s ++ ">"
+          s := s.push (hexDigit (g / 4096))
+          s := s.push (hexDigit (g / 256))
+          s := s.push (hexDigit (g / 16))
+          s := s.push (hexDigit g)
+        s := s.push '>'
       | .gap w =>
-        let v : Int := -(w * 1000 / geom.fontSize)
+        let v : Int := -(w * 1000 / l.size)
         s := s ++ s!"{v}"
     s := s ++ "] TJ\n"
   s := s ++ "ET"
@@ -126,7 +135,7 @@ private def Wr.putB (w : Wr) (b : ByteArray) : Wr :=
 /-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
 object streams, Identity-H CID font (full embed), ToUnicode. -/
 def write (geom : Geom) (font : Font) (pages : Array PageOut) : ByteArray := Id.run do
-  let used := usedGlyphs pages
+  let used := usedGlyphs font.numGlyphs pages
   let np := pages.size
   -- ids: 1 catalog, 2 pages, 3 type0, 4 cid, 5 descriptor,
   -- 6 tounicode, 7 fontfile, 8+2i page dict, 9+2i content, objstm, xref
