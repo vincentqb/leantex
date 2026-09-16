@@ -640,6 +640,46 @@ def inkGeometryChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "ink: contour below the band is empty"
     ((iv #[.move 0 (-120), .line 50 (-120), .line 50 (-160), .line 0 (-160)]
       (-160)).isEmpty)
+  -- Budget-exceeded outlines are undecodable, never silently truncated: a
+  -- glyph declaring more contours or points than the decoder's budget is
+  -- `none`, so the consumer clears its whole advance instead of trusting an
+  -- incomplete decode. Minimal hand-built sfnts, one glyph each, yMin dipped
+  -- below the band so the header shortcut cannot mask the decode.
+  let mkSfnt (tables : Array (String × ByteArray)) : ByteArray := Id.run do
+    let pushU16 (d : ByteArray) (v : Nat) : ByteArray :=
+      (d.push (UInt8.ofNat (v / 256 % 256))).push (UInt8.ofNat (v % 256))
+    let pushU32 (d : ByteArray) (v : Nat) : ByteArray :=
+      pushU16 (pushU16 d (v / 65536)) (v % 65536)
+    let mut d := pushU32 ByteArray.empty 0x00010000
+    d := pushU16 d tables.size
+    d := pushU16 (pushU16 (pushU16 d 0) 0) 0
+    let mut off := 12 + 16 * tables.size
+    for (tag, body) in tables do
+      d := d ++ tag.toUTF8
+      d := pushU32 d 0
+      d := pushU32 d off
+      d := pushU32 d body.size
+      off := off + body.size
+    for (_, body) in tables do
+      d := d ++ body
+    return d
+  -- indexToLocFormat 0 at offset 50: short loca.
+  let head52 : ByteArray := ⟨Array.replicate 52 (0 : UInt8)⟩
+  let srcOf (glyf : Array UInt8) : Ink.Src :=
+    let loca : ByteArray := ⟨#[0, 0, UInt8.ofNat (glyf.size / 2 / 256),
+      UInt8.ofNat (glyf.size / 2 % 256)]⟩
+    Ink.Src.make (mkSfnt #[("head", head52), ("loca", loca), ("glyf", ⟨glyf⟩)])
+      false 1
+  -- numberOfContours 200 (budget 128); yMin -200.
+  let overContours : Array UInt8 :=
+    #[0, 200, 0, 0, 0xFF, 0x38] ++ Array.replicate 14 (0 : UInt8)
+  t "ink: contour budget exceeded is undecodable"
+    ((srcOf overContours).inkAt 0 (-100) (-50) |>.isNone)
+  -- one contour whose endPtsOfContours declares 5001 points (budget 4096).
+  let overPoints : Array UInt8 :=
+    #[0, 1, 0, 0, 0xFF, 0x38, 0, 0, 0, 0, 19, 136] ++ Array.replicate 8 (0 : UInt8)
+  t "ink: point budget exceeded is undecodable"
+    ((srcOf overPoints).inkAt 0 (-100) (-50) |>.isNone)
 
 /-- Native underline: a decoration never breaks a glyph. Drawn from the
 font's own `post` metrics and interrupted only where a glyph's outline ink
@@ -674,6 +714,13 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       lo > qAdv / 2 && hi - lo < qAdv / 3)
   -- Double-storey g crosses the band twice: the ear side and the tail loop.
   t "g ink is two intervals" ((font.inkAt (gidOf 'g')).size == 2)
+  -- ç is a composite (c plus a cedilla component): composites decode
+  -- through their components, so the obstruction is the cedilla's narrow
+  -- crossing, not a conservative whole advance.
+  let cedAdv : Int := font.widths[gidOf 'ç']?.getD 0
+  let cedInk := font.inkAt (gidOf 'ç')
+  t "composite ç ink is the cedilla, not the advance"
+    (cedInk.size == 1 && cedInk.all fun (lo, hi) => lo > 0 && hi < cedAdv)
   -- Layout: rule segs under the underlined run, split around actual ink.
   let outOf (fs : Font.FontSet) (src : String) : Layout.Out :=
     Layout.run geom fs none (Elab.run "t" src).1
@@ -750,18 +797,63 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     failures ref s!"underline: {serifPath} missing from the checkout"
   -- Truncated font data: forcing the lazy ink of every descender-ish glyph
   -- on every truncation that still parses must return a verdict, never
-  -- panic — and can only report less ink, never a strike through it.
+  -- panic — and the verdict is conservative: what the intact outline tables
+  -- say for that font's own normalized band (a cut can drop `post`, moving
+  -- the band to the default) when the outlines survived, the whole advance
+  -- when they did not. A rule through ink is never among the outcomes.
   match ← findFont with
   | some fontData =>
-    let mut forced := 0
-    for k in [0:64] do
-      match Font.parse (fontData.extract 0 (fontData.size * k / 64)) with
-      | .error _ => pure ()
-      | .ok f =>
-        for c in "gqy,()".toList do
-          forced := forced + (f.inkAt ((f.gid c).getD 0)).size
-    t s!"ink is total over truncations (forced {forced} interval sets)" true
+    match Font.parse fontData with
+    | .error e => failures ref s!"underline: full font parse: {e}"
+    | .ok full =>
+      let intact := Ink.Src.make fontData full.isCff full.numGlyphs
+      let mut checked := 0
+      let mut conservative := true
+      for k in [0:64] do
+        match Font.parse (fontData.extract 0 (fontData.size * k / 64)) with
+        | .error _ => pure ()
+        | .ok f =>
+          let (bpos, bthick) := f.band
+          for c in "gqy,()".toList do
+            let g := (f.gid c).getD 0
+            let whole := #[((0 : Int), (f.widths[g]?.getD 0 : Int))]
+            checked := checked + 1
+            unless f.inkAt g == whole ||
+                some (f.inkAt g) == intact.inkAt g (bpos - bthick) bpos do
+              conservative := false
+      t s!"truncated ink is the intact intervals or the whole advance ({checked} checked)"
+        (checked > 0 && conservative)
   | none => pure ()
+  -- Undecodable outline tables are conservative for every glyph: corrupt
+  -- the outline table's directory entry (length past the file) and the font
+  -- still parses, but 'a' — no descender, not on any character list — now
+  -- obstructs its whole advance, because a rule cannot be trusted over ink
+  -- the decoder cannot see.
+  let corruptTable (tag : String) (d0 : ByteArray) : ByteArray := Id.run do
+    let mut d := d0
+    let n := Ink.u16 d 4
+    for k in [0:n] do
+      let entry := 12 + 16 * k
+      if entry + 16 ≤ d.size && d.extract entry (entry + 4) == tag.toUTF8 then
+        for j in [0:4] do
+          d := d.set! (entry + 12 + j) 0xFF
+    return d
+  match ← findFont with
+  | some fontData =>
+    match Font.parse (corruptTable "loca" fontData) with
+    | .error e => failures ref s!"underline: corrupt loca parse: {e}"
+    | .ok f =>
+      let g := (f.gid 'a').getD 0
+      t "corrupt loca: a obstructs its whole advance"
+        (f.inkAt g == #[(0, (f.widths[g]?.getD 0 : Int))] && f.descends g)
+  | none => pure ()
+  if ← System.FilePath.pathExists serifPath then
+    match Font.parse (corruptTable "CFF " (← IO.FS.readBinFile serifPath)) with
+    | .error e => failures ref s!"underline: corrupt CFF parse: {e}"
+    | .ok f =>
+      let g := (f.gid 'a').getD 0
+      t "corrupt CFF: a obstructs its whole advance"
+        (f.inkAt g == #[(0, (f.widths[g]?.getD 0 : Int))] && f.descends g)
   -- Underline metrics normalize through one helper shared by ink extraction
   -- and rule placement: a `post` table declaring an implausible position
   -- (above the baseline, or below half the em) or thickness (nonpositive,

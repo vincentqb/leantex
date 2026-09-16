@@ -196,27 +196,6 @@ def classify (data : ByteArray) : Except String Class := do
     | none => if isBold then 700 else 400
   return { psName, family, subfamily, isBold, isItalic, isFixedPitch, weight }
 
-/-- Characters whose glyphs hang below an underline in an ordinary text face:
-the descending letters, the punctuation that reaches down, and letters
-carrying a below-attached diacritic. The conservative stand-in for a glyph
-whose outline could not be decoded: the character answers for its glyph, and
-the whole advance is cleared, as the old skip did. -/
-def descenderChars : String :=
-  "gjpqy,;()[]{}@QçÇşŞţŢņŅģĢķĶļĻŗŖșȘțȚąĄęĘįĮųŲḑḐṣṢẉẈ"
-
-/-- The glyphs `descenderChars` reaches through the cmap. -/
-private def heuristicDescenders (cmap : Array (UInt32 × UInt32 × UInt32))
-    (numGlyphs : Nat) : Array Bool := Id.run do
-  let mut out : Array Bool := Array.replicate numGlyphs false
-  for c in descenderChars.toList do
-    let x := UInt32.ofNat c.toNat
-    for (s, e, g) in cmap do
-      if s ≤ x && x ≤ e then
-        let gid := (g + (x - s)).toNat % 0x10000
-        if gid < out.size then
-          out := out.set! gid true
-  return out
-
 /-- The underline band a face declares, normalized to something drawable:
 `(position, thickness)` in font units, the band spanning
 `[position - thickness, position]` relative to the baseline. `post` values
@@ -293,24 +272,22 @@ def parse (data : ByteArray) : Except String Font := do
       else ((0 : Int), (0 : Int))
     | none => (0, 0)
   -- A glyph interrupts the rule where its ink crosses the band the rule
-  -- occupies, `[position - thickness, position]` after normalization. A
-  -- glyph whose outline the decoder does not cover falls back to the
-  -- character heuristic and clears its whole advance — conservative, never
-  -- wrong by striking through ink.
+  -- occupies, `[position - thickness, position]` after normalization. Any
+  -- glyph the decoder cannot answer for — malformed or truncated tables, a
+  -- CID-keyed CFF, seac or point-matched composition, an exceeded budget —
+  -- obstructs its whole advance: undecodable input clears the rule, it
+  -- never leaves one through ink.
   let (bandPos, bandThick) := underlineBand (upem : Int) upos uthick
   let bandHi := bandPos
   let bandLo := bandPos - bandThick
   let src := Ink.Src.make data isCff numGlyphs
-  let fallback := heuristicDescenders cmap numGlyphs
   let underlineInk : Array (Thunk (Array (Int × Int))) := Id.run do
     let mut ink : Array (Thunk (Array (Int × Int))) := Array.mkEmpty numGlyphs
     for g in [0:numGlyphs] do
       ink := ink.push (Thunk.mk fun _ =>
         match src.inkAt g bandLo bandHi with
         | some iv => iv
-        | none =>
-          if fallback[g]?.getD false then #[(0, (widths[g]?.getD 0 : Int))]
-          else #[])
+        | none => #[(0, (widths[g]?.getD 0 : Int))])
     return ink
   return {
     data := data

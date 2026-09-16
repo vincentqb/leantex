@@ -276,19 +276,25 @@ private def contourCmds (pts : Array (Int × Int × Bool)) (s e : Nat)
   return acc
 
 /-- Decode a simple glyph (numberOfContours ≥ 0 at `off`) under `t`,
-appending to `acc`. Bounded reads throughout: a header lying about its
-extent decodes to zeros, never a panic. -/
-private def simpleOutline (b : ByteArray) (off : Nat) (t : Xf)
-    (acc : Array Cmd) (minY0 : Int) : Array Cmd × Int := Id.run do
-  let nc := min (i16 b off).toNat 128
+appending to `acc`. Reads are bounded by `lim` (the end of this glyph's
+slice): a glyph that declares more than its slice holds, or exceeds the
+contour or point budget, is undecodable (`none`) rather than silently
+truncated — the caller must fall back conservatively. -/
+private def simpleOutline (b : ByteArray) (off lim : Nat) (t : Xf)
+    (acc : Array Cmd) (minY0 : Int) : Option (Array Cmd × Int) := Id.run do
+  let nc := (i16 b off).toNat
+  if nc > 128 then
+    return none
   let mut ends : Array Nat := #[]
   for k in [0:nc] do
     ends := ends.push (u16 b (off + 10 + 2 * k))
   let nPts := match ends.back? with
-    | some e => min (e + 1) 4096
+    | some e => e + 1
     | none => 0
+  if nPts > 4096 then
+    return none
   if nPts == 0 then
-    return (acc, minY0)
+    return some (acc, minY0)
   let insLen := u16 b (off + 10 + 2 * nc)
   let mut p := off + 12 + 2 * nc + insLen
   let mut flags : Array Nat := #[]
@@ -326,6 +332,9 @@ private def simpleOutline (b : ByteArray) (off : Nat) (t : Xf)
       y := y + i16 b p
       p := p + 2
     ys := ys.push y
+  -- p only ever advances, so one check catches any read past the slice.
+  if p > lim then
+    return none
   let mut pts : Array (Int × Int × Bool) := #[]
   let mut minY := minY0
   for k in [0:nPts] do
@@ -339,11 +348,13 @@ private def simpleOutline (b : ByteArray) (off : Nat) (t : Xf)
     if s ≤ e then
       acc := contourCmds pts s e acc
       s := e + 1
-  return (acc, minY)
+  return some (acc, minY)
 
-/-- Decode glyph `g` of a TrueType font. `none` when a composite uses
-point-matching arguments or exceeds the expansion budget — the caller falls
-back conservatively. -/
+/-- Decode glyph `g` of a TrueType font. `none` for anything the decoder
+does not cover or the data does not support: an out-of-range component gid,
+a component list past the budget, point-matching arguments, a malformed
+loca entry, or a glyph slice that overruns its table — the caller falls
+back conservatively. Only a genuinely empty glyph decodes to nothing. -/
 private def glyfOutline (b : ByteArray) (glyf loca : Table) (long : Bool)
     (numGlyphs g : Nat) : Option Outline := Id.run do
   let offAt (i : Nat) : Nat :=
@@ -358,16 +369,24 @@ private def glyfOutline (b : ByteArray) (glyf loca : Table) (long : Bool)
     let (gid, t) := work.back?.getD (0, {})
     work := work.pop
     if gid ≥ numGlyphs then
+      bad := true
       continue
     let o1 := offAt gid
     let o2 := offAt (gid + 1)
-    if o2 ≤ o1 || o1 + 10 > glyf.length then
+    if o2 == o1 then
+      -- A genuinely empty glyph (a space): no outline, no ink.
+      continue
+    if o2 < o1 || o2 > glyf.length || o1 + 10 > glyf.length then
+      bad := true
       continue
     let base := glyf.offset + o1
+    let lim := glyf.offset + o2
     if i16 b base ≥ 0 then
-      let (cs, my) := simpleOutline b base t cmds minY
-      cmds := cs
-      minY := my
+      match simpleOutline b base lim t cmds minY with
+      | some (cs, my) =>
+        cmds := cs
+        minY := my
+      | none => bad := true
     else
       let mut p := base + 10
       let mut more := true
@@ -403,6 +422,11 @@ private def glyfOutline (b : ByteArray) (glyf loca : Table) (long : Bool)
             p := p + 8
           work := work.push (gi, t.compose child)
           more := flags &&& 32 != 0
+      if more then
+        -- component list past the budget: undecoded remainder
+        bad := true
+      if p > lim then
+        bad := true
   if bad || !work.isEmpty then
     return none
   return some ⟨cmds, minY⟩
@@ -537,7 +561,8 @@ private def parseCff (b : ByteArray) : Option Cff := do
 /-- Run one Type 2 charstring into an outline. Explicit subroutine frames
 and a step budget keep it total on arbitrary bytes; `none` marks a
 charstring the interpreter does not cover (seac composition, arithmetic
-operators), which the caller treats conservatively. -/
+operators) or that never terminates within the budget, which the caller
+treats conservatively. -/
 private def runCharstring (b : ByteArray) (c : Cff) (cs : Nat × Nat) :
     Option Outline := Id.run do
   let biasOf (n : Nat) : Int :=
@@ -548,7 +573,6 @@ private def runCharstring (b : ByteArray) (c : Cff) (cs : Nat × Nat) :
   let mut y : Int := 0
   let mut minY : Int := 0x40000000
   let mut nStems : Nat := 0
-  let mut widthDone := false
   let mut frames : Array (Nat × Nat) := #[]
   let mut pc := cs.1
   let mut lim := cs.2
@@ -587,12 +611,10 @@ private def runCharstring (b : ByteArray) (c : Cff) (cs : Nat × Nat) :
       let arg (i : Nat) : Int := stk[i]?.getD 0
       if b0 == 1 || b0 == 3 || b0 == 18 || b0 == 23 then
         nStems := nStems + n / 2
-        widthDone := true
         stk := #[]
         pc := pc + 1
       else if b0 == 19 || b0 == 20 then
         nStems := nStems + n / 2
-        widthDone := true
         stk := #[]
         pc := pc + 1 + (nStems + 7) / 8
       else if b0 == 21 || b0 == 22 || b0 == 4 then
@@ -607,7 +629,6 @@ private def runCharstring (b : ByteArray) (c : Cff) (cs : Nat × Nat) :
           y := y + arg (n - 1)
         cmds := cmds.push (.move x y)
         minY := min minY y
-        widthDone := true
         stk := #[]
         pc := pc + 1
       else if b0 == 5 then
@@ -806,24 +827,22 @@ private def runCharstring (b : ByteArray) (c : Cff) (cs : Nat × Nat) :
         else
           bad := true
         stk := #[]
-        widthDone := true
         pc := pc + 2
       else
         bad := true
-  if bad then
+  if bad || !done then
     return none
   return some ⟨cmds, minY⟩
 
 /-- The prepared outline source of one font, tables resolved once so
-per-glyph decoding is pay-as-you-go. `.inkless`: no glyph has ink in the band
-(a TrueType font whose outline tables are truncated — matching what the old
-descender scan read from them). `.opaque`: outlines exist but cannot be
-decoded (a CFF table that would not parse, CID keying), so every glyph is
-`none` and the consumer falls back. -/
+per-glyph decoding is pay-as-you-go. `.opaque`: outlines that cannot be
+read at all — a CFF table that would not parse or is CID-keyed, TrueType
+tables missing, truncated, or too short for the glyph count — so every
+glyph is `none` and the consumer falls back to clearing its whole
+advance. -/
 inductive Src where
   | cffSrc (data : ByteArray) (c : Cff)
   | glyfSrc (data : ByteArray) (glyf loca : Table) (long : Bool) (numGlyphs : Nat)
-  | inkless
   | opaque
 
 def Src.make (b : ByteArray) (isCff : Bool) (numGlyphs : Nat) : Src :=
@@ -839,8 +858,8 @@ def Src.make (b : ByteArray) (isCff : Bool) (numGlyphs : Nat) : Src :=
       if fits b loca && fits b glyf && (numGlyphs + 1) * entry ≤ loca.length then
         .glyfSrc b glyf loca long numGlyphs
       else
-        .inkless
-    | _, _, _ => .inkless
+        .opaque
+    | _, _, _ => .opaque
 
 /-- Merged ink intervals of glyph `g` inside the underline band, or `none`
 where the outline could not be decoded and the caller must fall back. Total
@@ -848,7 +867,6 @@ over arbitrary bytes. -/
 def Src.inkAt (s : Src) (g : Nat) (bandLo bandHi : Int) :
     Option (Array (Int × Int)) :=
   match s with
-  | .inkless => some #[]
   | .opaque => none
   | .cffSrc b c =>
     match c.charStrings[g]? with
@@ -862,10 +880,15 @@ def Src.inkAt (s : Src) (g : Nat) (bandLo bandHi : Int) :
       else 2 * u16 b (loca.offset + 2 * g)
     let o2 := if long then u32 b (loca.offset + 4 * (g + 1))
       else 2 * u16 b (loca.offset + 2 * (g + 1))
-    -- An empty glyph has no ink; a header whose own yMin clears the band
-    -- never needs its outline decoded.
-    if g ≥ numGlyphs || o2 ≤ o1 || o1 + 10 > glyf.length then
+    if g ≥ numGlyphs then
+      none
+    else if o2 == o1 then
+      -- A genuinely empty glyph has no ink.
       some #[]
+    else if o2 < o1 || o2 > glyf.length || o1 + 10 > glyf.length then
+      none
+    -- A header whose own yMin clears the band never needs its outline
+    -- decoded.
     else if i16 b (glyf.offset + o1 + 4) ≥ bandHi then
       some #[]
     else
