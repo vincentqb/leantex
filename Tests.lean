@@ -795,6 +795,23 @@ def main (args : List String) : IO UInt32 := do
       let plainPdf := Pdf.write geom oneFace (Layout.run geom oneFace none bigDoc).pages
       t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
 
+      -- `\hfill` on a paragraph's last line must reach the margin. The
+      -- line-running fill is also fil glue, and sharing the leftover with it
+      -- puts the right-hand text halfway there -- which is what LaTeX does and
+      -- what nobody setting a row of dates wants.
+      let measureOf (src : String) : Array Dim.Sp :=
+        let (d, _) := Elab.run "t" src
+        ((Layout.run geom oneFace none d).pages.flatMap (·.lines)).map (·.setWidth)
+      let lastLine := measureOf "Left \\hfill Right"
+      t "hfill reaches the margin on a final line"
+        (lastLine.size == 1 && lastLine[0]! == geom.textWidth)
+      let brokenLine := measureOf "Left \\hfill Right\\\\Second"
+      t "hfill reaches the margin before a break"
+        (brokenLine.size == 2 && brokenLine[0]! == geom.textWidth)
+      -- Without an \hfill the last line stays ragged: the fill still fills.
+      t "no hfill leaves the last line short"
+        (brokenLine.size == 2 && brokenLine[1]! < geom.textWidth)
+
   let failed := (← ref.get).reverse
   if failed.isEmpty then
     IO.println "tests: all passed"

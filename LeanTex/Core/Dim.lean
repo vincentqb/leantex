@@ -38,6 +38,10 @@ structure Glue where
   stretch : Sp := 0
   shrink : Sp := 0
   fil : Bool := false
+  /-- Fill that only exists to run out the rest of a line, as at the end of a
+  paragraph. It yields to an author's `\hfill`: a row that says "name, then
+  dates at the margin" means the margin, not halfway to it. -/
+  parfill : Bool := false
   deriving Repr, BEq, Inhabited
 
 def Glue.add (a b : Glue) : Glue :=

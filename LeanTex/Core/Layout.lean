@@ -287,12 +287,12 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       -- Stretchable but not a legal breakpoint on its own.
       items := items.push (.glue { fil := true })
     | .brk extra =>
-      items := items.push (.glue { fil := true })
+      items := items.push (.glue { fil := true, parfill := true })
       let sp := extra.width.resolve size xHeight
       if sp != 0 then
         extras := extras.insert items.size sp
       items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
-  items := items.push (.glue { fil := true })
+  items := items.push (.glue { fil := true, parfill := true })
   items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   let mut diags := st.diags
   for c in missing do
@@ -503,10 +503,19 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let m := measure items a j
   let delta := target - m.natural
   let mut overfull := false
-  let mut fils := 0
+  -- Fill glue shares the leftover, but a line-running fill does not count as a
+  -- sharer when the author wrote their own `\hfill`: otherwise
+  -- `name \hfill dates` on a paragraph's last line puts the dates halfway to
+  -- the margin instead of at it, which is what LaTeX does and what nobody
+  -- setting a row of dates wants.
+  let mut explicitFils := 0
+  let mut allFils := 0
   for k in [a:j] do
     if let some (.glue g) := items[k]? then
-      if g.fil then fils := fils + 1
+      if g.fil then
+        allFils := allFils + 1
+        unless g.parfill do explicitFils := explicitFils + 1
+  let fils := if explicitFils > 0 then explicitFils else allFils
   let mut segs : Array Seg := #[]
   let mut width : Sp := 0
   for k in [a:j] do
