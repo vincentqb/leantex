@@ -104,7 +104,7 @@ def buildFontSet (ui : Ui) (spec : Ir.FontSpec) :
          ((slot, false, true), 0), ((slot, true, true), 0)]
       return .ok ({ fonts := #[f], index := index.toArray }, #[], path)
   let t ← IO.monoMsNow
-  let faces ← FontDb.scan
+  let faces ← FontDb.scan ui.cfg.fontDirs.toList
   ui.phase "fontdb" s!"{faces.size} faces" ((← IO.monoMsNow) - t)
   let mut diags : Array Diag := #[]
   let mut fonts : Array Font.Font := #[]

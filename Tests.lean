@@ -745,6 +745,45 @@ def main (args : List String) : IO UInt32 := do
       t "font family" (font.family == "DejaVu Sans")
       t "font not bold" (!font.isBold && !font.isItalic)
 
+      -- A parser is fed arbitrary files, so it has to be total over them. Every
+      -- byte read used to go through `b[i]!`, which aborts the process: one
+      -- font in a TeX Live tree took the whole run down with it.
+      t "font parse rejects garbage"
+        ((Font.parse (ByteArray.mk #[0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])).isOk == false)
+      t "font parse rejects an empty file" ((Font.parse (ByteArray.mk #[])).isOk == false)
+      -- Truncation at every length must return a verdict rather than abort.
+      -- Reaching the assertion at all is the property: a panic would take the
+      -- whole run down. Some truncations parse legitimately -- the metrics
+      -- tables can all survive when only glyph data is lost.
+      let verdicts := (List.range 64).map fun k =>
+        (Font.parse (fontData.extract 0 (fontData.size * k / 64))).isOk
+      t "font parse is total over truncations" (verdicts.length == 64)
+      t "font parse rejects short truncations" (verdicts.take 8 |>.all (· == false))
+      -- A valid font with a table header claiming more than the file holds.
+      let lying := Id.run do
+        let mut b := fontData.extract 0 (min fontData.size 4096)
+        -- the first table entry's length field, made absurd
+        for i in [0:4] do
+          b := b.set! (12 + 12 + i) 0x7f
+        return b
+      t "font parse rejects a table that overruns the file"
+        ((Font.parse lying).isOk == false)
+      -- `classify` is what a family scan uses, and it must agree with `parse`
+      -- about what a face is called. It used to be `parse` fed a sparse image
+      -- with the metric tables missing, which is how the scan read out of
+      -- bounds in the first place.
+      match Font.classify fontData with
+      | .error e => failures ref s!"font classify: {e}"
+      | .ok c =>
+        t "classify agrees with parse on family" (c.family == font.family)
+        t "classify agrees with parse on subfamily" (c.subfamily == font.subfamily)
+        t "classify agrees with parse on style"
+          (c.isBold == font.isBold && c.isItalic == font.isItalic &&
+           c.weight == font.weight && c.isFixedPitch == font.isFixedPitch)
+      t "classify is total over truncations"
+        (((List.range 64).map fun k =>
+          (Font.classify (fontData.extract 0 (fontData.size * k / 64))).isOk).length == 64)
+
       -- A one-face set: every slot and variant maps to index 0.
       let oneFace : Font.FontSet := {
         fonts := #[font]
@@ -837,6 +876,12 @@ def main (args : List String) : IO UInt32 := do
         ((Layout.run geom oneFace none (Elab.run "t" "a\\,b").1).diags.isEmpty)
       t "no-break space is an unbreakable interword space"
         (widthOf "a\\nbsp b" > plainW)
+      -- `~` is what LaTeX authors actually type for it.
+      t "tilde is a no-break space"
+        ((Elab.run "t" "a~b").1.body == #[.para #[.text "a\u00a0b"]])
+      t "tilde does not break the line" (widthOf "a~b" == widthOf "a\u00a0b")
+      t "escaped tilde is a literal tilde"
+        ((Elab.run "t" "a\\~b").1.body == #[.para #[.text "a~b"]])
 
       -- Small caps are synthesised: lowercase raised and set smaller, in runs
       -- that carry their own size. `\scshape` used to do nothing at all.

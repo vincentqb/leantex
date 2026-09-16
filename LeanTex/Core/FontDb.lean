@@ -26,6 +26,18 @@ def searchDirs : List String :=
   ["/usr/share/fonts", "/usr/local/share/fonts", "/usr/share/texmf-dist/fonts/opentype",
    "/usr/share/texmf-dist/fonts/truetype"]
 
+/-- Where else to look, from `LEANTEX_FONT_PATH` and `$HOME`. A TeX Live tree is
+not always at `/usr/share`, and a user's own fonts are never there: without this
+a document naming a font it demonstrably has gets told the font does not exist. -/
+def extraDirs : IO (List String) := do
+  let home := (← IO.getEnv "HOME").getD ""
+  let userDirs :=
+    if home.isEmpty then []
+    else [home ++ "/.fonts", home ++ "/.local/share/fonts"]
+  let env := (← IO.getEnv "LEANTEX_FONT_PATH").getD ""
+  let fromEnv := (env.splitOn ":").filter (!·.isEmpty)
+  return userDirs ++ fromEnv
+
 private def isFontFile (p : String) : Bool :=
   let lower := p.toLower
   lower.endsWith ".ttf" || lower.endsWith ".otf"
@@ -69,6 +81,9 @@ def probe (path : String) : IO (Option Face) := do
           (dir[base + 10]!).toNat) * 256 + (dir[base + 11]!).toNat
         let len := (((dir[base + 12]!).toNat * 256 + (dir[base + 13]!).toNat) * 256 +
           (dir[base + 14]!).toNat) * 256 + (dir[base + 15]!).toNat
+        -- Only the metadata tables. A scan touches every installed face, and
+        -- `hmtx` and `cmap` are what make that expensive -- classification
+        -- needs neither, so `probe` calls `classify` rather than `parse`.
         if tag == "name" || tag == "OS/2" || tag == "head" || tag == "post" then
           wanted := wanted.push (tag, off, len)
     if wanted.isEmpty then
@@ -90,7 +105,7 @@ def probe (path : String) : IO (Option Face) := do
         let chunk ← handle.read len.toUSize
         image := image ++ chunk
         pos := off + chunk.size
-    match Font.parse image with
+    match Font.classify image with
     | .ok f =>
       return some {
         path := path
@@ -105,10 +120,11 @@ def probe (path : String) : IO (Option Face) := do
   catch _ =>
     return none
 
-/-- All installed faces, classified. Cached by the caller. -/
-def scan : IO (Array Face) := do
+/-- All installed faces, classified. Cached by the caller. `dirs` adds to the
+built-in locations rather than replacing them. -/
+def scan (dirs : List String := []) : IO (Array Face) := do
   let mut faces : Array Face := #[]
-  for d in searchDirs do
+  for d in searchDirs ++ (← extraDirs) ++ dirs do
     let p := System.FilePath.mk d
     if ← p.pathExists then
       for file in ← listFonts p 4 do

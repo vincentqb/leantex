@@ -25,7 +25,12 @@ structure Font where
   numGlyphs : Nat
   deriving Inhabited
 
-private def u8 (b : ByteArray) (i : Nat) : Nat := (b[i]!).toNat
+/-- A bounded byte read. Out of range is 0 rather than a panic: this parser is
+fed arbitrary files, and a reader that aborts the process on a short table is
+not a parser. `parse` separately rejects a font whose tables do not fit, so a
+truncated file gets a diagnostic instead of quietly reading zeros. -/
+private def u8 (b : ByteArray) (i : Nat) : Nat :=
+  if h : i < b.size then (b[i]).toNat else 0
 
 private def u16 (b : ByteArray) (i : Nat) : Nat := u8 b i * 256 + u8 b (i + 1)
 
@@ -52,6 +57,11 @@ private def findTable (b : ByteArray) (tag : String) : Option Table := Id.run do
     if b.extract entry (entry + 4) == tagBytes then
       return some ⟨u32 b (entry + 8), u32 b (entry + 12)⟩
   return none
+
+/-- Does a table's declared extent fit inside the file? A table that does not is
+a broken font, and saying so beats reading zeros off the end of it. -/
+private def fits (b : ByteArray) (t : Table) : Bool :=
+  t.offset + t.length ≤ b.size
 
 private def parseCmap4 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × UInt32) := Id.run do
   let segX2 := u16 b (off + 6)
@@ -150,34 +160,31 @@ private def nameOf (b : ByteArray) (t : Option Table) (ids : List Nat)
     | some s => if s.isEmpty then fallback else s
     | none => fallback
 
-def parse (data : ByteArray) : Except String Font := do
+/-- Identity and style of a face, from the metadata tables only. Split out
+because classifying a font for a family scan needs none of its metrics: a
+scan touches every installed face, and `hmtx` and `cmap` are the two tables
+that make that expensive. `parse` uses the same code so the two can never
+disagree about what a face is called. -/
+structure Class where
+  psName : String
+  family : String
+  subfamily : String
+  isBold : Bool
+  isItalic : Bool
+  isFixedPitch : Bool
+  weight : Nat
+  deriving Repr, Inhabited
+
+/-- Classify a face. Needs only `head`; `name`, `OS/2`, and `post` refine it. -/
+def classify (data : ByteArray) : Except String Class := do
   if data.size < 12 then
     throw "not a font file"
   let tag := u32 data 0
-  let isCff := tag == 0x4F54544F  -- 'OTTO'
-  if !isCff && tag != 0x00010000 then
+  if tag != 0x4F54544F && tag != 0x00010000 then
     throw "unsupported font format (need TrueType or CFF OpenType)"
   let some head := findTable data "head" | throw "font has no 'head' table"
-  let some hhea := findTable data "hhea" | throw "font has no 'hhea' table"
-  let some maxp := findTable data "maxp" | throw "font has no 'maxp' table"
-  let some hmtx := findTable data "hmtx" | throw "font has no 'hmtx' table"
-  let some cmapT := findTable data "cmap" | throw "font has no 'cmap' table"
-  let unitsPerEm := u16 data (head.offset + 18)
-  let ascent := i16 data (hhea.offset + 4)
-  let descent := i16 data (hhea.offset + 6)
-  let lineGap := i16 data (hhea.offset + 8)
-  let numH := u16 data (hhea.offset + 34)
-  let numGlyphs := u16 data (maxp.offset + 4)
-  let widths : Array Nat := Id.run do
-    let mut w : Array Nat := Array.mkEmpty numGlyphs
-    let mut last := 0
-    for g in [0:numGlyphs] do
-      if g < numH then
-        last := u16 data (hmtx.offset + 4 * g)
-      w := w.push last
-    return w
-  let cmap := parseCmap data cmapT
-  let cmap := cmap.qsort fun a b => a.1 < b.1
+  unless fits data head do
+    throw "font table 'head' extends past the end of the file"
   let nameT := findTable data "name"
   let psName := nameOf data nameT [6] "Embedded"
   let family := nameOf data nameT [16, 1] psName
@@ -209,6 +216,48 @@ def parse (data : ByteArray) : Except String Font := do
         if w == 0 then (if isBold then 700 else 400) else w
       else if isBold then 700 else 400
     | none => if isBold then 700 else 400
+  return { psName, family, subfamily, isBold, isItalic, isFixedPitch, weight }
+
+def parse (data : ByteArray) : Except String Font := do
+  if data.size < 12 then
+    throw "not a font file"
+  let tag := u32 data 0
+  let isCff := tag == 0x4F54544F  -- 'OTTO'
+  if !isCff && tag != 0x00010000 then
+    throw "unsupported font format (need TrueType or CFF OpenType)"
+  let some head := findTable data "head" | throw "font has no 'head' table"
+  let some hhea := findTable data "hhea" | throw "font has no 'hhea' table"
+  let some maxp := findTable data "maxp" | throw "font has no 'maxp' table"
+  let some hmtx := findTable data "hmtx" | throw "font has no 'hmtx' table"
+  let some cmapT := findTable data "cmap" | throw "font has no 'cmap' table"
+  for (name, t) in [("head", head), ("hhea", hhea), ("maxp", maxp),
+                    ("hmtx", hmtx), ("cmap", cmapT)] do
+    unless fits data t do
+      throw s!"font table '{name}' extends past the end of the file"
+  let unitsPerEm := u16 data (head.offset + 18)
+  let ascent := i16 data (hhea.offset + 4)
+  let descent := i16 data (hhea.offset + 6)
+  let lineGap := i16 data (hhea.offset + 8)
+  let numH := u16 data (hhea.offset + 34)
+  let numGlyphs := u16 data (maxp.offset + 4)
+  let widths : Array Nat := Id.run do
+    let mut w : Array Nat := Array.mkEmpty numGlyphs
+    let mut last := 0
+    for g in [0:numGlyphs] do
+      if g < numH then
+        last := u16 data (hmtx.offset + 4 * g)
+      w := w.push last
+    return w
+  let cmap := parseCmap data cmapT
+  let cmap := cmap.qsort fun a b => a.1 < b.1
+  let cls ← classify data
+  let psName := cls.psName
+  let family := cls.family
+  let subfamily := cls.subfamily
+  let isBold := cls.isBold
+  let isItalic := cls.isItalic
+  let isFixedPitch := cls.isFixedPitch
+  let weight := cls.weight
   -- OS/2 sxHeight (version 2+); tokens in `ex` need it. Falls back to half
   -- the em, which is the conventional approximation.
   let xHeight := match findTable data "OS/2" with

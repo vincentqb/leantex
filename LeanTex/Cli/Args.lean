@@ -36,6 +36,8 @@ structure Config where
   emit : Array Emit := #[.pdf]
   css : CssChoice := .own
   mathBoundary : Option String := none
+  /-- Extra font directories, added to the built-in locations. -/
+  fontDirs : Array String := #[]
   deriving Repr, BEq
 
 private def vCount (s : String) : Option Nat :=
@@ -118,6 +120,12 @@ def parse (argv : List String) : Except String Config := do
           cfg := { cfg with mathBoundary := some m }
           args := rest'
         | [] => throw "'--math-boundary' needs a tool URL or path"
+      | "--font-dir" =>
+        match rest with
+        | m :: rest' =>
+          cfg := { cfg with fontDirs := cfg.fontDirs.push m }
+          args := rest'
+        | [] => throw "'--font-dir' needs a directory"
       | "--file" =>
         match cmd, rest with
         | some (.hyphenate _ _), f :: rest' =>
@@ -137,6 +145,9 @@ def parse (argv : List String) : Except String Config := do
           let m := (a.drop "--css=".length).toString
           let some c := cssChoice m | throw s!"invalid --css '{m}'; expected own, bulma, or none"
           cfg := { cfg with css := c }
+        else if a.startsWith "--font-dir=" then
+          cfg := { cfg with
+            fontDirs := cfg.fontDirs.push (a.drop "--font-dir=".length).toString }
         else if a.startsWith "--color=" then
           let m := (a.drop "--color=".length).toString
           let some c := colorMode m | throw s!"invalid color mode '{m}'"
@@ -187,6 +198,7 @@ flags:
   --css <mode>   HTML stylesheet: own | bulma | none (default own)
   --math-boundary <tool>
                  attach a client-side math renderer to HTML output
+  --font-dir <d> also look for fonts here (repeatable; see LEANTEX_FONT_PATH)
   -q, --quiet    errors only
   -v -vv -vvv    phases · decisions · trace (on stderr)
   --porcelain    JSONL events on stdout, for machines

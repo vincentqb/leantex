@@ -322,6 +322,11 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
       | .sym ']' _ =>
         sb := sb.push ']'
         i := i + 1
+      | .sym '~' _ =>
+        -- Every LaTeX author means a non-breaking space by `~`, and reserving
+        -- it buys nothing: there is no catcode machinery here to reserve it for.
+        sb := sb.push '\u00a0'
+        i := i + 1
       | .sym c pos =>
         diag ctx "E0311" s!"reserved character '{c}'" pos (help := s!"escape it as '\\{c}'")
         i := i + 1
