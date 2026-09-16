@@ -39,7 +39,22 @@ def inert : List (String × Nat) :=
    ("clearpairofpagestyles", 0), ("pagestyle", 1), ("urlstyle", 1),
    ("KOMAoptions", 1), ("newlength", 1), ("frenchspacing", 0),
    ("nonfrenchspacing", 0), ("sloppy", 0), ("raggedright", 0),
-   ("raggedbottom", 0), ("flushbottom", 0), ("selectlanguage", 1)]
+   ("raggedbottom", 0), ("flushbottom", 0), ("selectlanguage", 1),
+   ("column", 1), ("midrule", 0), ("toprule", 0), ("bottomrule", 0),
+   ("addlinespace", 0)]
+
+/-- Beamer configuration commands: how many `{...}` arguments each carries.
+The engine has no beamer templating layer, so each is skipped whole — the
+construct, its options, and its arguments — with one warning naming it. What
+must never happen is the arguments leaking into elaboration as stray content
+(that was an E0313 cascade per construct). -/
+def beamerConfig : List (String × Nat) :=
+  [("usetheme", 1), ("usecolortheme", 1), ("usefonttheme", 1),
+   ("setbeamercovered", 1), ("setbeameroption", 1),
+   ("setbeamertemplate", 2), ("addtobeamertemplate", 3),
+   ("setbeamerfont", 2), ("setbeamercolor", 2),
+   ("beamertemplatenavigationsymbolsempty", 0),
+   ("logo", 1), ("titlegraphic", 1)]
 
 private structure St where
   file : String
@@ -52,6 +67,9 @@ private structure St where
   runFrom : Nat := 1
   /-- The next group is a macro body, where `#k` names a parameter. -/
   bodyNext : Bool := false
+  /-- Constructs already warned about: forty frames sharing one unsupported
+  idiom are one problem, not forty. -/
+  warned : Array String := #[]
 
 private abbrev M := StateM St
 
@@ -60,6 +78,12 @@ private def say (sev : Severity) (code msg : String) (pos : Pos) (help : Option 
   modify fun st => { st with diags := st.diags.push {
     severity := sev, code := code, message := msg
     span := some ⟨st.file, pos⟩, help := help } }
+
+private def sayOnce (key : String) (sev : Severity) (code msg : String) (pos : Pos)
+    (help : Option String := none) : M Unit := do
+  unless (← get).warned.contains key do
+    modify fun st => { st with warned := st.warned.push key }
+    say sev code msg pos help
 
 /-- Every translation is one note in the same shape, so `-v` reads as a list
 of things the document could say directly. -/
@@ -540,7 +564,117 @@ where
     became s!"\\renewcommand\{\\{cmd}}" (native ++ " {...}") pos
     modify fun st => { st with bodyNext := true }
     return some (← synthAt native pos, j)
+  | "setmathfont" =>
+    let (_, j) := takeOpt raws start
+    let (_, k) := takeGroups raws j 1
+    let (_, k) := takeOpt raws k
+    sayOnce "setmathfont" .warning "W0104"
+      "'\\setmathfont' is not supported yet; skipped" pos
+      (help := "math layout and its font land with M6; see PLAN.md")
+    return some (#[], k)
+  | "directlua" =>
+    let (_, k) := takeGroups raws start 1
+    sayOnce "directlua" .warning "W0104"
+      "'\\directlua' is Lua code for luatex; skipped" pos
+      (help := "there is no Lua here; see PLAN.md for the native declarations")
+    return some (#[], k)
+  | "def" | "edef" | "gdef" | "xdef" =>
+    -- TeX's macro layer: consume through the body group, so the definition
+    -- never leaks into the document as stray content.
+    let mut k := start
+    let mut found := false
+    for j in [start:raws.size] do
+      match raws[j]? with
+      | some (.group _ _) =>
+        found := true
+        k := j + 1
+        break
+      | some _ => k := j + 1
+      | none => break
+    sayOnce "def" .warning "W0104" s!"TeX '\\{name}' is not supported; skipped" pos
+      (help := "\\define declares typed commands")
+    return some (#[], if found then k else start)
+  | "newenvironment" | "renewenvironment" =>
+    let (args, j) := takeGroups raws start 1
+    let envName := rawSrc (args.getD 0 #[])
+    let (_, j) := takeOpt raws j
+    let (_, j) := takeOpt raws j
+    let (_, k) := takeGroups raws j 2
+    say .warning "W0104" s!"'\\{name}\{{envName}}' is not supported; \
+the definition is skipped and every '\{{envName}}' keeps its body" pos
+      (help := "the wrapper's decoration is lost; the content inside still renders")
+    return some (#[], k)
+  | "ifdefined" | "ifcsname" | "ifx" =>
+    -- A TeX conditional is configuration for machinery that is not here.
+    -- Skipped whole, both branches: elaborating either would only warn
+    -- about the constructs inside it one by one.
+    let mut k := start
+    for j in [start:raws.size] do
+      k := j + 1
+      if let some (.ctrl "fi" _) := raws[j]? then break
+    sayOnce "ifdefined" .warning "W0104"
+      s!"TeX conditional ('\\{name}' … '\\fi') is not supported; skipped whole" pos
+    return some (#[], k)
+  | "uncover" | "only" | "visible" | "onslide" | "pause" =>
+    -- Overlay steps: everything is shown, which is beamer's handout mode.
+    -- `\uncover<2>{...}`'s group stays in the stream and renders as content.
+    let j := skipSpaces raws start
+    let k := match raws[j]? with
+      | some (.word w _) => if w.startsWith "<" && w.endsWith ">" then j + 1 else start
+      | _ => start
+    sayOnce "overlay" .warning "W0105"
+      "overlay specifications are ignored; every step's content is shown" pos
+      (help := "dim-not-hide overlays land with the rest of M5; see PLAN.md")
+    return some (#[], k)
+  | "item" =>
+    -- `\item<1->`: the item stays, its overlay specification goes.
+    let j := skipSpaces raws start
+    match raws[j]? with
+    | some (.word w _) =>
+      if w.startsWith "<" && w.endsWith ">" then
+        sayOnce "overlay" .warning "W0105"
+          "overlay specifications are ignored; every step's content is shown" pos
+          (help := "dim-not-hide overlays land with the rest of M5; see PLAN.md")
+        return some (#[.ctrl "item" pos], j + 1)
+      else return none
+    | _ => return none
+  | "alert" =>
+    became "\\alert" "\\textbf" pos
+    return some (#[.ctrl "textbf" pos], start)
+  | "nolinkurl" =>
+    -- Its group stays in the stream: the URL renders as its own text.
+    became "\\nolinkurl" "the URL as plain text" pos
+    return some (#[], start)
+  | "includegraphics" =>
+    let (_, j) := takeOpt raws start
+    let (_, k) := takeGroups raws j 1
+    sayOnce "includegraphics" .warning "W0107"
+      "'\\includegraphics' is not implemented yet; the image is not rendered" pos
+      (help := "asset embedding lands with M8; see PLAN.md")
+    return some (#[], k)
+  | "centering" =>
+    sayOnce "centering" .warning "W0108"
+      "'\\centering' is not honoured yet; content stays left-aligned" pos
+      (help := "wrap the content in \\begin{center} … \\end{center}")
+    return some (#[], start)
+  | "bigskip" | "medskip" | "smallskip" =>
+    let native := match name with
+      | "bigskip" => "\\block[before = 12pt plus 4pt minus 4pt]{}"
+      | "medskip" => "\\block[before = 6pt plus 2pt minus 2pt]{}"
+      | _ => "\\block[before = 3pt plus 1pt minus 1pt]{}"
+    became s!"\\{name}" native pos
+    return some (← synthAt native pos, start)
   | _ =>
+    match beamerConfig.lookup name with
+    | some n =>
+      let (_, j) := takeOpt raws start
+      let (_, k) := takeGroups raws j n
+      sayOnce name .warning "W0104"
+        s!"'\\{name}' is beamer configuration the engine does not have; skipped" pos
+        (help := "a theme is a token bundle here (M5b): \\palette and \\tokens \
+declare the design directly")
+      return some (#[], k)
+    | none =>
     match inert.lookup name with
     | some n =>
       let (_, k) := takeGroups raws start n

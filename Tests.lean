@@ -542,6 +542,39 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes (pre "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff") == ["W0106"])
   t "compat inert commands vanish"
     ((elabStr "a\\noindent\\relax b").2.isEmpty)
+  -- Unsupported configuration is skipped as a whole construct — command,
+  -- options, arguments — with one warning naming it. It must never leak its
+  -- arguments into elaboration as stray content (that was an E0313 per
+  -- construct, an error cascade from a preamble the body never needed).
+  let beamerPre := pre ("\\usetheme{moloch}\\usefonttheme{professionalfonts}" ++
+    "\\setbeamercovered{transparent}\\addtobeamertemplate{block begin}{}{\\smallskip}" ++
+    "\\setbeameroption{hide notes}")
+  t "compat beamer config skipped without errors" (errCodes beamerPre == [])
+  t "compat beamer config warns once per construct"
+    ((warnCodes beamerPre).length == 5 && (warnCodes beamerPre).all (· == "W0104"))
+  t "compat tex conditional skipped whole, contents included"
+    (warnCodes (pre "\\ifdefined\\x\\usepackage{pgfpages}\\setbeameroption{notes}\\fi") ==
+      ["W0104"])
+  t "compat def skipped through its body"
+    (errCodes (pre "\\makeatletter\\def\\verbatim@font{\\footnotesize\\ttfamily}\\makeatother") == [])
+  t "compat newenvironment warns and is skipped"
+    (warnCodes (pre "\\newenvironment{wrap}[1]{\\logo{#1}}{\\logo{}}") == ["W0104"])
+  -- Overlay specifications go; the content they staged stays.
+  t "compat uncover keeps content, drops the spec"
+    ((elabStr "a \\uncover<2>{shown} b").1.body == #[.para #[.text "a shown b"]])
+  t "compat pause vanishes"
+    ((elabStr "a \\pause b").1.body == #[.para #[.text "a b"]])
+  t "compat overlay warns once for the whole document"
+    ((warnCodes "\\uncover<1>{a} \\pause \\onslide<2->b").length == 1)
+  t "compat item overlay spec is dropped"
+    ((elabStr "\\begin{itemize}\\item<1-> one\\end{itemize}").1.body ==
+      #[.list false #[#[.para #[.text "one"]]]])
+  t "compat alert is textbf"
+    ((elabStr "\\alert{hot}").1.body == #[.para #[.styled .bold #[.text "hot"]]])
+  t "compat bigskip is a spaced block"
+    ((elabStr "a\n\n\\bigskip\nb").1.body.any fun b => match b with
+      | .spaced _ _ => true
+      | _ => false)
   let koma := elabStr (pre ("\\definecolor{ink}{HTML}{112233}\\newlength{\\s}\\setlength{\\s}{3pt}" ++
     "\\setkomafont{section}{\\large\\sffamily\\color{ink}}" ++
     "\\RedeclareSectionCommand[beforeskip=2\\s,afterskip=1\\s]{section}" ++
