@@ -52,7 +52,7 @@ def main : IO UInt32 := do
   if genLorem.exitCode != 0 then
     die s!"gen-lorem failed:\n{genLorem.stderr}"
   let haveLualatex ← hasCmd "lualatex"
-  for doc in ["tests/corpus/paragraphs.tex", "bench/lorem.tex"] do
+  for doc in ["tests/corpus/paragraphs.tex", "bench/lorem.tex", "bench/underline.tex"] do
     let base := (doc.splitOn "/").getLastD doc
     bench n s!"leantex  {base}" leantex #["-q", "build", doc]
     if haveLualatex then

@@ -721,6 +721,18 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let cedInk := font.inkAt (gidOf 'ç')
   t "composite ç ink is the cedilla, not the advance"
     (cedInk.size == 1 && cedInk.all fun (lo, hi) => lo > 0 && hi < cedAdv)
+  -- The lazy per-glyph decode is memoized: Lean's `Thunk` is call-by-need
+  -- (`Thunk.get` caches in the runtime object), so a repeated glyph decodes
+  -- once however often layout asks. 100k forced reads must land orders of
+  -- magnitude under 100k fresh decodes (tens of µs each) — the bound fails
+  -- by more than an order of magnitude if each read decoded afresh.
+  let t0 ← IO.monoMsNow
+  let mut inkReads := 0
+  for _ in [0:100000] do
+    inkReads := inkReads + (font.inkAt (gidOf 'q')).size
+  let inkMs := (← IO.monoMsNow) - t0
+  t s!"repeated glyph ink is memoized ({inkMs} ms for {inkReads} reads)"
+    (inkReads == 100000 && inkMs < 500)
   -- Layout: rule segs under the underlined run, split around actual ink.
   let outOf (fs : Font.FontSet) (src : String) : Layout.Out :=
     Layout.run geom fs none (Elab.run "t" src).1
