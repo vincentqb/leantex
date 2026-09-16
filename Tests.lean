@@ -416,6 +416,31 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   styleChecks ref
 
+/-- The font diagnostics: a missing family suggests its neighbours instead of
+dumping a thousand names, and `families` is linear in the face count. -/
+def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let fams := #["Nimbus Sans L", "Nimbus Mono", "Latin Modern Roman", "Arial",
+    "Libertinus Serif", "Libertinus Sans", "DejaVu Sans"]
+  let near := FontDb.nearest fams "Nimbus Roman"
+  t "nearest shares a word" (near.contains "Nimbus Sans L" && near.contains "Nimbus Mono")
+  t "nearest ranks two shared words first"
+    ((FontDb.nearest fams "Libertinus Serif Display")[0]? == some "Libertinus Serif")
+  t "nearest omits the unrelated" (!near.contains "Arial" && !near.contains "DejaVu Sans")
+  t "nearest of nothing alike is empty" ((FontDb.nearest fams "Zapfino").isEmpty)
+  t "nearest caps at eight"
+    ((FontDb.nearest ((List.range 20).map fun i => s!"Test Face {i}").toArray "Test").size ≤ 8)
+  -- families over the host's real faces. A synthetic list did not reproduce
+  -- the two seconds the quadratic version took on this machine's 2856 faces
+  -- (profiled to `families`), so the check runs on the real scan: it is the
+  -- data that made the cost visible.
+  let real ← FontDb.scan []
+  let t0 ← IO.monoMsNow
+  let fams' := FontDb.families real
+  let ms := (← IO.monoMsNow) - t0
+  t "families dedupes" (fams'.size ≤ real.size)
+  t s!"families is fast on the real scan ({ms} ms for {real.size} faces)" (ms < 200)
+
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
@@ -787,6 +812,7 @@ def main (args : List String) : IO UInt32 := do
     #[.para #[.text "a · b …"]])
 
   compatChecks ref
+  fontDiagChecks ref
 
   -- smart punctuation: what the author typed is what they meant
   t "smart en dash" ((elabStr "2021--2024").1.body == #[.para #[.text "2021–2024"]])

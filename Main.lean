@@ -161,11 +161,18 @@ def buildFontSet (ui : Ui) (spec : Ir.FontSpec) :
       | none =>
         unless missing.contains family do
           missing := missing.push family
+          -- A host with TeX Live installed has a thousand families; listing
+          -- them all is not help. Name the ones that look like what was asked
+          -- for, and how to see the rest.
+          let all := FontDb.families faces
+          let near := FontDb.nearest all family
+          let hint := if near.isEmpty then s!"{all.size} families are installed"
+            else s!"did you mean: {String.intercalate ", " near.toList}?"
           diags := diags.push {
             severity := .error
             code := "E0403"
             message := s!"no installed font family named '{family}'"
-            help := some s!"installed: {String.intercalate ", " (FontDb.families faces).toList}"
+            help := some s!"{hint} — `leantex fonts` lists every family"
           }
       | some (face, satisfied) =>
         unless satisfied do
@@ -487,3 +494,10 @@ def main (argv : List String) : IO UInt32 := do
       dump (← Ui.mk' cfg) file
     | .hyphenate words file =>
       hyphenate (← Ui.mk' cfg) words file
+    | .fonts =>
+      -- The answer to "what may \\fonts name here": one family per line on
+      -- stdout, so it pipes into grep.
+      let faces ← FontDb.scan (cfg.fontDirs.toList ++ (← texFontDirs))
+      for f in FontDb.families faces do
+        IO.println f
+      return 0

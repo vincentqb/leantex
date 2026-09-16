@@ -1,4 +1,5 @@
 import Std.Data.HashMap
+import Std.Data.HashSet
 import LeanTex.Core.Font
 
 namespace LeanTex.Core.FontDb
@@ -308,13 +309,41 @@ def resolve (faces : Array Face) (family : String) (v : Variant) :
         if v.bold then face.weight ≥ 550 else face.weight ≤ 550
       some (face, slantOk && weightOk)
 
-/-- Family names present, for diagnostics that suggest alternatives. -/
+/-- Installed families that resemble a name: sharing a word, or within an
+edit or two of it. `Nimbus Roman` finds `Nimbus Sans L` and `Nimbus Mono`;
+`Libertinus` finds every Libertinus face. At most eight, closest first. -/
+def nearest (families : Array String) (wanted : String) : Array String :=
+  let words (s : String) : List String :=
+    (s.toLower.splitOn " ").filter fun w => !w.isEmpty && w.length > 1
+  let want := words wanted
+  let score (fam : String) : Nat :=
+    let got := words fam
+    let shared := (want.filter got.contains).length
+    -- Prefix of the first word counts too: `Nimbus` vs `NimbusSans`.
+    let prefixHit := match want.head?, got.head? with
+      | some a, some b => a.startsWith b || b.startsWith a
+      | _, _ => false
+    shared * 2 + (if prefixHit then 1 else 0)
+  let scored := families.filterMap fun f =>
+    let sc := score f
+    if sc > 0 then some (sc, f) else none
+  let sorted := scored.qsort fun a b => a.1 > b.1 || (a.1 == b.1 && a.2 < b.2)
+  (sorted.extract 0 8).map (·.2)
+
+/-- Family names present, sorted, for diagnostics and . -/
 def families (faces : Array Face) : Array String := Id.run do
-  let mut seen : Array String := #[]
+  -- One normalised key per face, kept in a set. The earlier `seen.any` with
+  -- `norm` on both sides re-normalised every prior name for every face:
+  -- four million string allocations and two seconds on a 2856-face host,
+  -- paid on every failed font lookup.
+  let mut keys : Std.HashSet String := {}
+  let mut out : Array String := #[]
   for f in faces do
-    unless seen.any (fun s => norm s == norm f.family) do
-      seen := seen.push f.family
-  return seen.qsort (· < ·)
+    let k := norm f.family
+    unless keys.contains k do
+      keys := keys.insert k
+      out := out.push f.family
+  return out.qsort (· < ·)
 
 /-- Families tried, in order, when a document declares no `\fonts`. -/
 def defaultFamilies : List String :=
