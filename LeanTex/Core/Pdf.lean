@@ -62,9 +62,16 @@ private def usedGlyphs (fontIdx numGlyphs : Nat) (pages : Array PageOut) :
       out := out.push (g, c)
   return out
 
-/-- One page's content stream. A `TJ` array cannot switch fonts mid-array, so
-a run in a different face closes the array, emits `Tf`, and reopens it; the
-text position carries over because `Tm` is only set per line. -/
+/-- One page's content stream. Glyph runs are written as `TJ` arrays; the
+pen's position is tracked against the layout's, and only a glyph run moves
+it — a gap, a kern or a rule advances the layout position and nothing is
+written until glyphs follow. Then the move is a `TJ` adjustment when it is
+small and the array is open, and an absolute `Tm` otherwise: an adjustment
+is thousandths of the live font size, and a viewer that keeps them in
+sixteen bits (macOS Preview drops the whole array past ±32767) never sees
+one that large. A rule-only line writes nothing here. A `TJ` array cannot
+switch fonts or colours mid-array, so a run in a different face or colour
+closes it, emits `Tf`/`rg`, and reopens it. -/
 private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
     String := Id.run do
   let mut s := "BT\n"
@@ -75,38 +82,43 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
   -- gathered here and drawn after the text.
   let mut rules : Array (Sp × Sp × Sp × Sp × Ir.Color) := #[]
   for l in page.lines do
-    if l.segs.isEmpty then
-      continue
     let ypdf := geom.pageH - l.y
-    s := s ++ s!"1 0 0 1 {l.x.toPtString} {ypdf.toPtString} Tm\n"
     let mut inArray := false
     let mut x := l.x
+    -- Where the pen is, when it is known: a fresh line has no position until
+    -- its first glyph run sets one.
+    let mut pen : Option Sp := none
     for seg in l.segs do
       match seg with
       | .rule w thickness raise color =>
         rules := rules.push (x, ypdf + raise, w, thickness, color)
         x := x + w
-        unless inArray do
-          s := s.push '['
-          inArray := true
-        let unit := if curSize == 0 then l.size else curSize
-        s := s ++ s!"{(-(w * 1000 / unit) : Int)}"
-      | .run idx color _ w glyphs segSize _ =>
+      | .gap w =>
         x := x + w
-        let size := if segSize == 0 then l.size else segSize
+      | .run idx color _ w glyphs segSize _ =>
         if glyphs.isEmpty then
-          -- A kern: width, no glyphs. Emitting an empty string would advance
-          -- nothing, so it moves the pen the same way a gap does.
-          if w != 0 then
-            unless inArray do
-              s := s.push '['
-              inArray := true
-            let unit := if curSize == 0 then size else curSize
-            s := s ++ s!"{-(w * 1000 / unit)}"
+          -- A kern: width, no glyphs. It moves the layout position like a gap.
+          x := x + w
         else
-        -- Neither Tf nor rg may appear inside a TJ array, so a change in
-        -- either closes the array and reopens it after.
-        if curFont != idx || curSize != size || curColor != color then
+        let size := if segSize == 0 then l.size else segSize
+        let changes := curFont != idx || curSize != size || curColor != color
+        -- Bring the pen to the run. Inside an open array with the face
+        -- unchanged, a small move is an adjustment in the live size; any
+        -- other move is absolute, and closes the array.
+        match pen with
+        | some here =>
+          if here != x then
+            let v : Int := (x - here) * 1000 / curSize
+            if inArray && !changes && v.natAbs ≤ 32000 then
+              s := s ++ s!"{-v}"
+            else
+              if inArray then
+                s := s ++ "] TJ\n"
+                inArray := false
+              s := s ++ s!"1 0 0 1 {x.toPtString} {ypdf.toPtString} Tm\n"
+        | none =>
+          s := s ++ s!"1 0 0 1 {x.toPtString} {ypdf.toPtString} Tm\n"
+        if changes then
           if inArray then
             s := s ++ "] TJ\n"
             inArray := false
@@ -127,16 +139,8 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
           s := s.push (hexDigit (g / 16))
           s := s.push (hexDigit g)
         s := s.push '>'
-      | .gap w =>
         x := x + w
-        unless inArray do
-          s := s.push '['
-          inArray := true
-        -- A TJ displacement is thousandths of the *live* font size, which is
-        -- whatever the last Tf set, not the line's nominal size.
-        let unit := if curSize == 0 then l.size else curSize
-        let v : Int := -(w * 1000 / unit)
-        s := s ++ s!"{v}"
+        pen := some x
     if inArray then
       s := s ++ "] TJ\n"
   s := s ++ "ET"

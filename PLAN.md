@@ -45,6 +45,21 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-16 — two section headings rendered in poppler and Ghostscript and
+not in macOS Preview. The PDF built on the Mac was byte-identical to the one
+built here (the engine is deterministic across hosts, which made the
+comparison possible), so the fault was in the file, and the only thing
+those two lines had that no other line did was a `TJ` adjustment past
+±32767: the gap before each heading's rule, 433pt at 12pt, written as
+−36089 thousandths. Everything else in the document stayed under 16 bits,
+and no other producer writes moves that large that way — TeX moves the pen
+with `Td`. The writer now tracks the pen against the layout position and
+writes a move only when glyphs follow: a `TJ` adjustment inside an open
+array when it is small, an absolute `Tm` otherwise. A rule-only line (an
+underline's sibling) writes nothing into the text object, where before it
+wrote a `TJ` array with no strings. The tests pin both: no adjustment past
+sixteen bits, no glyphless array, and a fill crossed with `Tm`.
+
 2026-09-16 — the resume matches its lualatex build line for line, at
 natural glue, and fits its page. The gap under the name was 28pt too wide
 and the page ran to two. Five causes, each a rule TeX has and the engine

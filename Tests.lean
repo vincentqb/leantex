@@ -736,6 +736,46 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "an unshrunk page says nothing"
     (!(Layout.run geom oneFace none (Elab.run "t" three).1).diags.any (·.code == "N0200"))
 
+/-- The content stream a strict viewer accepts. Own function, same
+elaboration-budget reason as the others. -/
+def pdfStreamChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  -- The pen is moved by `Tm` when a gap is wide; a `TJ` adjustment is
+  -- thousandths of the font size and macOS Preview drops an array holding
+  -- one past ±32767 — which is how two headings vanished from a resume.
+  -- And an array with no glyphs (a rule-only line) is never written.
+  let asciiText (pdf : ByteArray) : String :=
+    String.fromUTF8! ⟨pdf.data.map fun b => if b < 128 then b else 46⟩
+  let tjNumbers (text : String) : List Int × Nat := Id.run do
+    let mut nums : List Int := []
+    let mut emptyArrays := 0
+    for arr in (text.splitOn "] TJ").dropLast do
+      let body := (arr.splitOn "[").getLast?.getD ""
+      if !body.any (· == '<') then emptyArrays := emptyArrays + 1
+      -- Outside <...> strings, the numbers are adjustments.
+      let mut inHex := false
+      let mut cur := ""
+      for c in body.toList ++ [' '] do
+        if c == '<' then inHex := true
+        else if c == '>' then inHex := false
+        else if !inHex then
+          if c.isDigit || c == '-' then cur := cur.push c
+          else
+            if !cur.isEmpty then
+              if let some n := cur.toInt? then nums := n :: nums
+              cur := ""
+    return (nums, emptyArrays)
+  let wide : Layout.Geom := { pageW := Dim.pt 1200, hmargin := Dim.pt 20 }
+  let (gapDoc, _) := Elab.run "t" "a\\hfill b\n\n\\underline{x}"
+  let gapText := asciiText (Pdf.write wide oneFace (Layout.run wide oneFace none gapDoc).pages)
+  let (adjs, empties) := tjNumbers gapText
+  t "pdf never writes a TJ adjustment past sixteen bits"
+    (adjs.all fun n => n.natAbs ≤ 32767)
+  t "pdf writes no glyphless TJ array" (empties == 0)
+  -- Three pen placements: the first line, `b` across the fill, the second
+  -- line; the underline's rule-only sibling line places nothing.
+  t "pdf moves the pen across a wide gap with Tm" ((gapText.splitOn " Tm\n").length == 4)
+
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
@@ -1430,6 +1470,7 @@ def main (args : List String) : IO UInt32 := do
       -- One face only: nothing unused is embedded, so no /F2 exists.
       let plainPdf := Pdf.write geom oneFace (Layout.run geom oneFace none bigDoc).pages
       t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
+      pdfStreamChecks ref oneFace
 
       lineChecks ref geom oneFace
       underlineChecks ref geom oneFace font
