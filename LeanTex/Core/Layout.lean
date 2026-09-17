@@ -35,7 +35,24 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     leading := spec.leading
     parskip := spec.parskip.getD base.parskip }
 
+/-- Baseline distance for a size: 6⁄5 of it, scaled by the page's `leading`
+factor (`\linespread`'s home). The 1.2 is the routine text setting — 10/12 of
+Bringhurst's "settings such as 9/11, 10/12, 11/13 and 12/15 are routine;
+longer measures need more lead than short ones" (Elements §2.2.1) — and the
+factor is where a document declares the extra lead a wide measure wants; the
+engine never raises it silently. -/
 def leadingFor (size : Sp) (factor : Nat := 1000) : Sp := size * 6 / 5 * factor / 1000
+
+/-- The default vertical rhythm is one system, not three numbers: the peer
+gap (`parskip`, 6pt at the 10pt base) is half the base leading, so the
+heading's default space above — `2 × parskip` in the block walk — is exactly
+one full rhythm unit, and every default gap is a multiple of the half-unit
+(Bringhurst §2.2.2: add vertical space in measured intervals, multiples of
+the basic leading). The positivity conjunct is what makes a heading's space
+above strictly exceed its space below. -/
+theorem default_rhythm_multiples :
+    2 * ({} : Geom).parskip.width.sp = leadingFor Ir.baseFontSize ∧
+    0 < ({} : Geom).parskip.width.sp := by decide
 
 inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
@@ -1594,6 +1611,24 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     docBg := doc.palette.find? "bg"
   }
   let mut b := b0
+  -- A heading binds to the text it introduces, so its space above must not
+  -- be the smaller of the two (the standard rule; Butterick, "space above
+  -- and below": the space below should be smaller so the heading sits
+  -- visually closer to what follows). Checked only when the document
+  -- declared both sides — the defaults satisfy it by theorem.
+  for element in ["section", "subsection", "subsubsection"] do
+    if let some st := doc.styles.find? element then
+      if let (some before, some after) := (st.before, st.after) then
+        let up := (before.resolve geom.fontSize xHeight).width
+        let down := (after.resolve geom.fontSize xHeight).width
+        if down > up then
+          b := { b with diags := b.diags.push {
+            severity := .warning
+            code := "W0202"
+            message := s!"'{element}' sets more space below the heading " ++
+              s!"({down.toPtString}pt) than above it ({up.toPtString}pt)"
+            help := s!"a heading binds to the text it introduces: in " ++
+              s!"\\style\{{element}}\{...} keep 'after' at most 'before'" } }
   let mut colSaves : Array ColSave := #[]
   for s in staged do
     match s with

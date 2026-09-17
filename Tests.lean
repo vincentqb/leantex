@@ -3092,6 +3092,23 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   | none => failures ref "fontdb: Source Serif Pro BoldItalic not found"
   t "fontdb unknown family" (FontDb.resolve faces "No Such Family Here" {} |>.isNone)
 
+/-- Vertical-rhythm diagnostics: a heading binds to the text it introduces,
+so declared space below it must not exceed the declared space above. -/
+def rhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let layoutDiags (styleBlock : String) : Array Diag :=
+    let src := "\\documentclass{article}\\tokens{ u = 4pt }" ++ styleBlock ++
+      "\\begin{document}\\section{Head}Body\\end{document}"
+    (Layout.run ({} : Layout.Geom) oneFace none (Elab.run "t" src).1).diags
+  t "heading below-heavy spacing warns"
+    ((layoutDiags "\\style{section}{ before = u, after = 2 * u }").any (·.code == "W0202"))
+  t "heading above-heavy spacing is silent"
+    (!(layoutDiags "\\style{section}{ before = 2 * u, after = u }").any (·.code == "W0202"))
+  t "heading equal spacing is silent"
+    (!(layoutDiags "\\style{section}{ before = u, after = u }").any (·.code == "W0202"))
+  t "an undeclared side is not compared"
+    (!(layoutDiags "\\style{section}{ after = 2 * u }").any (·.code == "W0202"))
+
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pats := Hyphen.load
@@ -3229,6 +3246,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       themeFurnitureChecks ref oneFace
       themeReconcileChecks ref oneFace
       scannerChecks ref
+      rhythmChecks ref oneFace
 
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
