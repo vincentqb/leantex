@@ -22,6 +22,31 @@ def hasWord (line word : String) : Bool :=
 def containsSub (line pat : String) : Bool :=
   (line.splitOn pat).length > 1
 
+/-- The line with its string-literal content removed: a banned keyword is a
+code token, and a string mentioning one — the math tables' command-name
+entry for TeX's derivative symbol was the escape — is data, not a
+declaration. Escapes are honoured. Two stated line-scanner limitations,
+like `ioInCore`'s: a literal left open by a multi-line string strips to the
+line's end, and a char literal holding a double quote reads as opening one. -/
+def stripStrings (l : String) : String := Id.run do
+  let mut out := ""
+  let mut inStr := false
+  let mut esc := false
+  for c in l.toList do
+    if inStr then
+      if esc then esc := false
+      else if c == '\\' then esc := true
+      else if c == '"' then inStr := false
+    else if c == '"' then
+      inStr := true
+    else
+      out := out.push c
+  return out
+
+/-- A banned keyword as a code token: word-delimited, string content aside. -/
+def bannedWord (kw l : String) : Bool :=
+  hasWord (stripStrings l) kw
+
 def relevant (f : String) : Bool :=
   f.endsWith ".lean" || f == "lakefile.toml" || f == "lakefile.lean"
     || f == "lean-toolchain" || f.startsWith "tests/golden/"
@@ -210,6 +235,16 @@ def selftest : IO UInt32 := do
     ("        chosen := chosen ++ [b]", false),
     ("  | x :: rest => #[x] ++ rest", false)]
 
+  expect "bannedWord" (bannedWord kwPartial) [
+    -- a declaration must still fire, wherever it stands on the line
+    ("+" ++ kwPartial ++ " def foo : Nat := 0", true),
+    ("+  " ++ kwPartial ++ " def go (l : List Nat) : Nat := go l", true),
+    -- the escape that prompted the stripper: a command-name table entry
+    ("+   (\"" ++ kwPartial ++ "\", .ord, '𝜕'),", false),
+    ("+    say s!\"a message naming " ++ kwPartial ++ " in prose\"", false),
+    -- word-delimiting still holds
+    ("+  let " ++ kwPartial ++ "Sums := 3", false)]
+
   expect "ctorDefault" ctorDefault [
     -- a field default, with and without the lambda that evaded the old check
     ("+  | run (label : String := \"unnamed\") : Cmd", true),
@@ -301,20 +336,20 @@ def main (args : List String) : IO UInt32 := do
   let partialAllowed (l : String) : Bool :=
     containsSub l s!"{kwPartial} def takeArgs" || containsSub l s!"{kwPartial} def elabInlines"
       || containsSub l s!"{kwPartial} def elabBlocks"
-  let bad := added.filter fun l => hasWord l kwPartial && !partialAllowed l
+  let bad := added.filter fun l => bannedWord kwPartial l && !partialAllowed l
   if !bad.isEmpty then
     say s!"pre-commit: new '{kwPartial}' in staged .lean changes:
 {String.intercalate "\n" bad}
   Only Elab.takeArgs/elabInlines/elabBlocks may be {kwPartial} (tracked in PLAN.md).
   Fix: make the recursion structural (see AGENTS.md, Conventions)."
 
-  let bad := added.filter (hasWord · kwSorry)
+  let bad := added.filter (bannedWord kwSorry)
   if !bad.isEmpty then
     say s!"pre-commit: '{kwSorry}' in staged .lean changes:
 {String.intercalate "\n" bad}
   Fix: finish the proof; a broken theorem is a broken build."
 
-  let bad := added.filter (hasWord · kwUnsafe)
+  let bad := added.filter (bannedWord kwUnsafe)
   if !bad.isEmpty then
     say s!"pre-commit: '{kwUnsafe}' in staged .lean changes:
 {String.intercalate "\n" bad}
