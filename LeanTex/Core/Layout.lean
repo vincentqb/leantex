@@ -1771,6 +1771,10 @@ private structure B where
   TeX marks `\prevdepth` ignored after an `\hrule` so the box after a rule
   takes exactly the explicit glue. booktabs' rule padding depends on it. -/
   noInterline : Bool := false
+  /-- A `tie` op stands between the last placed line and the next one: a
+  float's caption and its object. Consumed by the next placement; a page
+  break landing on it is reported (W0339), never silent. -/
+  tie : Bool := false
   /-- Background of the page being built, from `.pageStyle`; reset when it
   closes. -/
   pageBg : Option Ir.Color := none
@@ -1838,8 +1842,19 @@ private def B.commit (b : B) (line : LineOut) (depth above overflow : Sp) : B :=
            y := line.y
            freshStart := false
            noInterline := false
+           tie := false
            prevDepth := depth
            skip := {} }
+
+/-- The tie's report: the seam the break landed on, named. The float is
+still best-effort — the caption opens the next page — and the pending code
+says the keep-together is owed. -/
+private def B.brokeTie (b : B) : B :=
+  if b.tie then
+    { b with diags := b.diags.push (Diag.of .W0339
+        "a page break separates a caption from the table or figure it belongs to"
+        (help := "\\pagebreak before the float moves it whole to the next page")) }
+  else b
 
 /-- Place one line. Its height and depth follow the tallest run on it, not
 the paragraph's nominal size: a line carrying `\Huge` needs room above its
@@ -1891,7 +1906,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     if overflow ≤ above then
       b.commit (mk y) depth above overflow
     else
-      let b := b.finishPage
+      let b := b.brokeTie.finishPage
       b.commit (mk firstY) depth 0 0
 
 private def B.warnOverfull (b : B) : B :=
@@ -1966,6 +1981,11 @@ private inductive Op where
   label lines through one `Pic.Place` transform, fitted vertically the way
   a line of the picture's height is. -/
   | picture (x : Sp) (pic : Ir.Pic.Picture)
+  /-- The seam between a float's object and its caption: the two belong
+  together on one page, and the engine has no keep-together yet. Placement
+  consumes it at the next line: a page break landing exactly here is
+  reported (W0339, pending), never silent. -/
+  | tie
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -2066,6 +2086,9 @@ private def Acc.flushGap (a : Acc) : Acc :=
 discards glue at the top of a new one. -/
 private def Acc.pageBreak (a : Acc) : Acc :=
   { a with ops := a.ops.push .brk, wantDefault := false, owed := #[] }
+
+private def Acc.pushOp (a : Acc) (op : Op) : Acc :=
+  { a with ops := a.ops.push op }
 
 private def Acc.style (a : Acc) (element : String) : Ir.ElementStyle :=
   (a.styles.find? element).getD {}
@@ -2696,11 +2719,13 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       collectPara a pats fs caption indent fits a.geom.fontSize
     let a := if capAbove then
       let a := setCaption a
-      let a := if caption.isEmpty then a else a.addvspace capSep
+      let a := if caption.isEmpty then a else
+        a.addvspace capSep |>.pushOp .tie
       collectCentered a pats fs body.toList indent
     else
       let a := collectCentered a pats fs body.toList indent
-      let a := if caption.isEmpty then a else a.addvspace capSep
+      let a := if caption.isEmpty then a else
+        a.addvspace capSep |>.pushOp .tie
       setCaption a
     a.addvspace floatSep
   | .frame title standout valign body =>
@@ -3009,6 +3034,7 @@ private inductive StagedOp where
   | colClose
   | setLogo (content : Array Ir.Inline)
   | picture (x : Sp) (pic : Ir.Pic.Picture)
+  | tie
 
 /-- Placement state saved at a `colOpen`, restored per column: where the
 columns start, and the lowest bottom any column reached so far. -/
@@ -3132,6 +3158,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .colClose => .colClose
     | .setLogo c => .setLogo c
     | .picture x pic => .picture x pic
+    | .tie => .tie
   let b0 : B := {
     geom := geom
     ascent := scale font.ascent
@@ -3168,6 +3195,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       -- carry this content; a later span overrides.
       logoSpans := logoSpans.push (b.pages.size, c)
     | .skip g => b := { b with skip := b.skip.add g }
+    | .tie => b := { b with tie := true }
     | .brk =>
       -- A boundary closes a page only when the page holds something: two
       -- adjacent frames share one boundary, not an empty page. A style set
@@ -3234,7 +3262,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
         if overflow ≤ above then
           b := { b.commit (mk y) 0 above overflow with noInterline := true }
         else
-          b := b.finishPage
+          b := b.brokeTie.finishPage
           b := { b.commit (mk (b.geom.vmargin + th)) 0 0 0 with noInterline := true }
     | .progress num den fg bg thick x w =>
       -- Half a line under the last baseline: the track, then the elapsed
@@ -3274,7 +3302,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
         if overflow ≤ above then
           yTop := y
         else
-          b := b.finishPage
+          b := b.brokeTie.finishPage
           overflow := 0
           above := 0
       -- One transform for everything the picture ships: `Pic.Place` is the
@@ -3322,7 +3350,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
         y := yTop + h
         prevDepth := 0
         skip := {}
-        freshStart := false }
+        freshStart := false
+        tie := false }
   -- The trailing boundary of a final frame has already closed its page; a
   -- document is never given an empty page for it.
   if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty || b.pages.isEmpty then

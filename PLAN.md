@@ -93,6 +93,17 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — the caption seam is named before it is fixed: W0339
+(`pending`) fires when a page break lands exactly between a float's
+object and its caption — the table slice's largest honest gap, previously
+silent. The mechanism is a `tie` op the float arm places on the seam
+(both caption sides); placement consumes it at the next line, table rule,
+or picture, and the break path reports it. The keep-together itself —
+moving the object whole — is still owed to the float milestone; when it
+lands, the code retires with its last emission site, as W0308 did.
+Witness and seam test sweep a `\vspace` in 3pt steps across the page
+bottom, so the firing input holds under any face's metrics.
+
 2026-09-17 — M8's table story: booktabs is the layout, not a package, and
 float/caption spacing is declared, rhythm-held, and enforced. The user's
 two asks, in order of stated value: consistent spacing first, booktabs

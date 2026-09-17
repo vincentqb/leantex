@@ -4379,6 +4379,15 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .W0337 => dvE (dvDoc "" "\\begin{tabular}{ll}\na & b & c \\\\\nd \\\\\n\\end{tabular}")
   | .W0338 => dvL one (dvDoc "" ("\\begin{tabular}{p{0.8\\linewidth}p{0.8\\linewidth}}\n" ++
       "a & b \\\\\n\\end{tabular}"))
+  | .W0339 =>
+    -- The seam-break window is about one leading tall wherever the page
+    -- bottom falls, so a 3pt `\vspace` sweep crosses it whatever the
+    -- face's metrics say; the golden dedups the one rendered form.
+    (List.range 50).foldl (init := #[]) fun acc k =>
+      acc ++ dvL one (dvDoc "\\page{ size = a5 }\n"
+        (s!"top\n\n\\vspace\{{350 + 3 * k}pt}\n\n\\begin\{table}\n" ++
+         "\\begin{tabular}{l}\nalpha \\\\\n\\end{tabular}\n" ++
+         "\\caption{Below the table}\n\\end{table}"))
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
@@ -4562,6 +4571,22 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (match (elabStr (wrap "\\begin{table}\\begin{tabular}{l}a\\\\\\end{tabular}\\caption{Below}\\end{table}")).1.body with
      | #[.float .table false _ cap] => Ir.plainText cap == "Below"
      | _ => false)
+  -- The caption seam: nothing keeps a float and its caption on one page
+  -- yet, so the break is reported (W0339, pending), never silent. The
+  -- `\vspace` sweep parks the object at every position around the page
+  -- bottom in 3pt steps: the seam-break window is about one leading tall,
+  -- so some step lands the object on the page with the caption past it,
+  -- whatever the face's metrics — and a small vspace leaves room for both.
+  let tieDoc (pts : Nat) : String :=
+    "\\documentclass{article}\n\\page{ size = a5 }\n\\begin{document}\n" ++
+    s!"top\n\n\\vspace\{{pts}pt}\n\n\\begin\{table}\n" ++
+    "\\begin{tabular}{l}\nalpha \\\\\n\\end{tabular}\n" ++
+    "\\caption{Below the table}\n\\end{table}\n\\end{document}"
+  t "a page break through the caption seam is named"
+    ((List.range 50).any fun k =>
+      (layoutDiags (tieDoc (350 + 3 * k))).any (·.code == "W0339"))
+  t "a float that fits keeps its caption silently"
+    (!(layoutDiags (tieDoc 12)).any (·.code == "W0339"))
   -- Rules span exactly their columns, judged on the page: the full rules
   -- share one left edge and one width; the trimmed \cmidrule lies strictly
   -- inside them. An executable check, not a theorem — the extents live in
