@@ -1,0 +1,29 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+palette cobalt #1D4ED8
+meta title "Field Notes"
+meta subject "An invented page with a navigation landmark."
+only html
+  nav
+    para
+      link "#first-light"
+        text "First Light"
+      text " "
+      link "#gathered-notes"
+        text "Gathered Notes"
+      text " "
+      link "#top"
+        text "Back to top"
+section* 1
+  text "First Light"
+para
+  text "An invented opening paragraph that appears on every surface."
+only pdf
+  para
+    text "This sentence is set only on the printed page."
+section* 1
+  text "Gathered Notes"
+para
+  text "A second invented paragraph, also on every surface."
+-- diagnostics
+(none)

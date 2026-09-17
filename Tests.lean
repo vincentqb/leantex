@@ -50,7 +50,7 @@ def goldenNames : List String :=
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
    "chrome", "lists", "lists-styled", "lists-deck",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
-   "webpage", "quotes", "quote-deck", "outline", "outline-gap"]
+   "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -3401,6 +3401,13 @@ def censusTable :
     ("the name ships", hasStr (censusText c) "Doe"),
     ("the section headings ship",
       hasStr (censusText c) "Experience" && hasStr (censusText c) "Education")]),
+  ("webnav", fun _ c => [
+    ("one page", c.size == 1),
+    ("the shared content ships", hasStr (censusText c) "appears on every surface"),
+    ("the print-only conditional ships on the page",
+      hasStr (censusText c) "This sentence is set only on the printed page."),
+    ("the web-only nav never reaches the page",
+      !hasStr (censusText c) "Back to top")]),
   ("math", fun _ c => [
     ("one page", c.size == 1),
     ("prose around the display ships",

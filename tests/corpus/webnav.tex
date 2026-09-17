@@ -1,0 +1,29 @@
+% A page with a navigation landmark, declared interaction states, and
+% backend-conditional content: the nav (with its hover/focus/motion) is
+% web-only, one sentence is print-only, and everything else ships on every
+% surface. Invented content throughout.
+\documentclass{article}
+\pdfmeta{ title = "Field Notes", subject = "An invented page with a navigation landmark." }
+\palette{ cobalt = #1D4ED8 }
+\style{nav}{ hover = cobalt, focus = cobalt, motion = 150ms }
+\begin{document}
+
+\begin{ifbackend}{html}
+\begin{nav}
+\href{#first-light}{First Light} \href{#gathered-notes}{Gathered Notes} \href{#top}{Back to top}
+\end{nav}
+\end{ifbackend}
+
+\section*{First Light}
+
+An invented opening paragraph that appears on every surface.
+
+\begin{ifbackend}{pdf}
+This sentence is set only on the printed page.
+\end{ifbackend}
+
+\section*{Gathered Notes}
+
+A second invented paragraph, also on every surface.
+
+\end{document}
