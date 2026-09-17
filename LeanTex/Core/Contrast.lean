@@ -48,7 +48,7 @@ the ones document-level diagnostics report.
 
 namespace LeanTex.Core.Contrast
 
-open LeanTex.Core.Ir
+open LeanTex.Core.Ir LeanTex.Core.Dim
 
 /-- The WCAG channel linearisation, tabulated: entry `c` is the linearised
 value of channel `c` scaled by 10⁷ and rounded to nearest. A table rather
@@ -199,38 +199,41 @@ private def hexOf (c : Color) : String :=
 
 /-- One coloured text occurrence: the name it was used under when it had
 one, the colour, and whether it stood as large-scale text (≥ 18pt, or bold
-≥ 14pt — the WCAG 2.2 glossary sizes, against the 10pt body base). -/
+≥ 14pt — the WCAG 2.2 glossary sizes, against the document's own resolved
+base size). -/
 private structure Use where
   name : Option String
   color : Color
   large : Bool
   deriving BEq
 
-/-- The text-size context of the walk below. `scale` follows the layout
-semantics: a size declaration sets the per-mille factor over the base, it
-does not compound. -/
+/-- The text-size context of the walk below. `size` follows the layout
+semantics: a size declaration sets a factor over the document base (`base`
+here, so `\normalfont` can restore it), it does not compound. -/
 private structure UseCx where
-  scale : Nat := 1000
+  base : Sp
+  size : Sp
   bold : Bool := false
   cur : Option (Option String × Color) := none
 
 private def UseCx.large (cx : UseCx) : Bool :=
-  cx.scale ≥ 1800 || (cx.bold && cx.scale ≥ 1400)
+  cx.size ≥ Dim.pt 18 || (cx.bold && cx.size ≥ Dim.pt 14)
 
 private def UseCx.style (cx : UseCx) : Style → UseCx
   | .bold => { cx with bold := true }
-  | .normal => { cx with scale := 1000, bold := false }
+  | .normal => { cx with size := cx.base, bold := false }
   | .size n => match sizeScale.lookup n with
-    | some k => { cx with scale := k }
+    | some k => { cx with size := cx.base * k / 1000 }
     | none => cx
   | _ => cx
 
-/-- The context a heading's title sets: layout's defaults per level, bold at
-14pt for level 1 — which the WCAG glossary counts as large-scale. -/
-private def headingCx : Nat → UseCx
-  | 1 => { scale := 1400, bold := true }
-  | 2 => { scale := 1200, bold := true }
-  | _ => { scale := 1000, bold := true }
+/-- The context a heading's title sets: layout's per-level sizes (14pt and
+12pt are absolute, level 3 the base), bold — 14pt bold is what the WCAG
+glossary counts as large-scale. -/
+private def headingCx (base : Sp) : Nat → UseCx
+  | 1 => { base, size := Dim.pt 14, bold := true }
+  | 2 => { base, size := Dim.pt 12, bold := true }
+  | _ => { base, size := base, bold := true }
 
 mutual
 
@@ -268,15 +271,16 @@ private def usesBlocks (cx : UseCx) (out : Array Use) (xs : List Block) :
 private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
   | .para content => usesInlines cx out content.toList
   | .section level _ title =>
-    usesInlines { headingCx level with cur := cx.cur } out title.toList
+    usesInlines { headingCx cx.base level with cur := cx.cur } out title.toList
   | .list _ items => usesItems cx out items.toList
   | .center body => usesBlocks cx out body.toList
   | .spaced _ body => usesBlocks cx out body.toList
   | .columns cols => usesColumns cx out cols.toList
   | .step _ body => usesBlocks cx out body.toList
   | .frame title _ body =>
-    usesBlocks cx (usesInlines { headingCx 1 with cur := cx.cur } out title.toList)
-      body.toList
+    -- A frame title sets at `\large\bfseries`: 1.2 of the base, bold.
+    let titleCx := { cx with size := cx.base * 1200 / 1000, bold := true }
+    usesBlocks cx (usesInlines titleCx out title.toList) body.toList
   -- A note is a side channel, never page text; verbatim carries no colour.
   | .note _ | .verbatim _ => out
 
@@ -306,14 +310,15 @@ under `\palette[decorative]{...}`: the warning names that spelling, so poor
 contrast is a choice a document states, never a silent default. -/
 def docDiags (doc : Doc) : Array Diag := Id.run do
   let surface := (doc.palette.find? "bg").getD light.surface
-  let mut uses := usesBlocks {} #[] doc.body.toList
+  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
+  let mut uses := usesBlocks base #[] doc.body.toList
   -- `fg` colours every uncoloured run through the backends, never through
   -- `.colored`, so the declared pair is judged directly.
   if let some fg := doc.palette.find? "fg" then
     uses := uses.push { name := some "fg", color := fg, large := false }
   for run in [doc.head, doc.foot] do
     if let some content := run then
-      uses := usesInlines {} uses content.toList
+      uses := usesInlines base uses content.toList
   let mut out : Array Diag := #[]
   let mut done : Array (Option String × Color) := #[]
   for u in uses do
