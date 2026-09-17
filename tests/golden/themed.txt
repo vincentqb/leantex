@@ -50,6 +50,21 @@ frame
         color #8F999B
           text "a mixed colour"
         text "."
+frame
+  title
+    text "Covered keeps the colour"
+  para
+    text "The opening beat, crisp on both steps."
+  step 2
+    para
+      text "An "
+      color alert #C2185B
+        styled bold
+          text "alert beat"
+      text " and a "
+      color example #008080
+        text "teal example beat"
+      text ", covered as themselves."
 frame standout
   para
     text "One language, two backends."
@@ -57,4 +72,5 @@ frame standout
 note[N0100] 6:1 \documentclass{beamer} → \documentclass[aspectratio=169]{slides}
 note[N0100] 8:1 \usetheme → \theme{moloch}
 note[N0100] 31:11 \alert → \textcolor{alert}{\textbf ...}
+note[N0100] 38:6 \alert → \textcolor{alert}{\textbf ...}
 warning[W0315] - text coloured #8F999B reads at 2.79:1 on the page (#FAFAFA), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3) | help: deliberate low contrast is declared, not defaulted: \palette[decorative]{ quiet = #8F999B }

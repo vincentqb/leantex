@@ -3359,10 +3359,15 @@ def CensusPage.text (p : CensusPage) : String :=
 
 /-- The colours covering can paint in a document: the plain cover (runs
 with no colour of their own) and the per-colour cover of every palette
-entry — computed from the same `Design.cover` layout reads. -/
+entry — computed from the same `Design.cover` layout reads. A fixed point
+(`cov.of c == c`, e.g. the page colour itself: covering toward `bg` moves
+nothing) is excluded: it covers nothing, and keeping it would read active
+ink painted in that colour as covered. -/
 def coveredColorsOf (doc : Ir.Doc) : Array Ir.Color :=
   let cov := (Ir.Design.ofDoc doc).cover
-  (doc.palette.entries.map fun (_, c) => cov.of c).push cov.plain
+  (doc.palette.entries.filterMap fun (_, c) =>
+    let covered := cov.of c
+    if covered == c then none else some covered).push cov.plain
 
 def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
     Array CensusPage := Id.run do
@@ -3471,10 +3476,14 @@ def censusTable :
     ("the standout frame fills its background", (c[7]?.map (·.fills == 1)).getD false),
     ("the standout content ships", pageHas c 7 "Questions?")]),
   ("themed", fun _ c => [
-    ("pages", c.size == 4),
+    ("pages", c.size == 6),
     ("the section page carries its progress-bar fills", (c[1]?.map fun p => decide (p.fills ≥ 2)).getD false),
     ("the frame-title bar fills", (c[2]?.map fun p => decide (p.fills ≥ 1)).getD false),
-    ("the standout frame fills its background", (c[3]?.map fun p => decide (p.fills ≥ 1)).getD false)]),
+    ("the covered step dims the alert and example beats in place",
+      pageCovered c 3 "alert beat" && pageCovered c 3 "teal example beat"),
+    ("the covered beats still ship", pageHas c 3 "alert beat"),
+    ("the second step reveals them", pageAllRevealed c 4),
+    ("the standout frame fills its background", (c[5]?.map fun p => decide (p.fills ≥ 1)).getD false)]),
   ("latex-idioms", fun _ c => [
     ("one page", c.size == 1),
     ("the running head ships", hasStr (censusText c) "Alex Doe"),
