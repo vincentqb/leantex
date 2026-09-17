@@ -48,26 +48,36 @@ in this repo; refer to the private reference corpus abstractly.
   to that invariant, not to the symptom. The test fails before and passes
   after; if the lesson generalises, it becomes a rule here or a hook check.
 
-- Pure core: modules under `LeanTex/Core/` do no IO. Files, fonts, anything
-  external surfaces as request values the CLI driver fulfills (effects as data).
+- Pure core: modules under `LeanTex/Core/` do no IO (`FontDb` is the one
+  exception; the pre-commit hook rejects new IO in core). Files, fonts,
+  anything external surfaces as request values the CLI driver fulfills
+  (effects as data).
 - Backends consume the IR and nothing else. A backend never re-parses, and
   never reaches back into the surface AST — that is how md→PDF and tex→HTML
-  stay free instead of becoming N×M special cases.
+  stay free instead of becoming N×M special cases. The hook rejects a
+  surface reach-in — an import, `open`, or qualified use of
+  `Lex`/`Parse`/`Elab`/`Compat` — in a backend module.
 - HTML is built as a typed tree with a certified escaper, never by
   concatenating tag strings. Any new node type goes through the escaper by
   construction; if you find yourself writing `"<" ++ …`, stop.
 - Design tokens are the styling API for both backends: a new visual knob is a
   token, not a hard-coded constant in a backend.
-- Hot paths use `Array`/`ByteArray`/packed `UInt32`; no `List`, no `String`
-  concatenation in loops. A structural walk over a `List` (the totality
-  pattern below) accumulates into an `Array` it threads through: building
-  the result as `#[x] ++ rest` copies `rest` at every element and turns a
-  4 ms pass into 600 ms on a 30-page document. `scripts/bench.lean` is the
-  check; run it when touching any pass over the whole document.
+- Hot paths use `Array`/`ByteArray`/packed `UInt32`; no `List`. A structural
+  walk over a `List` (the totality pattern below) accumulates into an
+  `Array` it threads through: building the result as `#[x] ++ walk rest`
+  copies the walk's result at every element and turns a 4 ms pass into
+  600 ms on a 30-page document — the hook rejects an append whose trailing
+  text is a call ending in a bare variable, whatever the left side spells.
+  Appending to a `mut` string or array in a loop is fine: unique ownership
+  appends in place (`Pdf.write` builds the whole file that way).
+  `scripts/bench.lean` is the check; run it when touching any pass over the
+  whole document.
 - Theorems only where they pay (parser totality, elaboration termination and
   determinism, line-break optimality, dimension arithmetic, PDF xref, UTF-8).
   The language is designed terminating — a construct that breaks that property
   needs a design discussion, not a fuel parameter.
+- No default values on inductive constructor fields — patterns then
+  under-specify silently; the hook rejects them. Structure fields keep theirs.
 - Never add `partial` to reach a green build. Tree recursion over `Array`
   fields works via mutual recursion through `List` (see `Compat.rewriteList`,
   `Html.render`); a `map`/`flatMap` over children hides the call behind a
