@@ -40,5 +40,5 @@ frame
     text "Escape hatch"
 -- diagnostics
 warning[W0329] 15:1 '\fontfallback' is not implemented yet; skipped | help: planned for M8; see PLAN.md
-error[W0307] 44:3 '\figure' is not implemented yet; skipped | help: planned for M8; see PLAN.md; \allow{W0307} accepts the loss
-error[W0307] 50:3 '{external}' is not implemented yet; its content is not rendered | help: planned for M8; \allow{W0307} accepts the loss until then
+warning[W0307] 44:3 '\figure' is not implemented yet; skipped | help: planned for M8; see PLAN.md; \allow{W0307} accepts the loss
+warning[W0307] 50:3 '{external}' is not implemented yet; its content is not rendered | help: planned for M8; \allow{W0307} accepts the loss until then

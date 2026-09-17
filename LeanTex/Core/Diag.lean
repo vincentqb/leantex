@@ -29,10 +29,16 @@ diagnostic. Severity is a function of one question — can the reader recover
 what the document declared? — so it is derived from this classification,
 never chosen at a call site. -/
 inductive Loss where
-  /-- Declared content is absent with nothing in its place, or a declared
-  value the engine cannot interpret. Test: deleting the construct from the
-  source leaves the output identical AND the construct carried content. -/
+  /-- Declared content is absent with nothing in its place, and the engine has
+  no plan to render it: a value it cannot interpret, a construct it will not
+  support. Test: deleting the construct from the source leaves the output
+  identical AND the construct carried content AND no milestone owns it. -/
   | dropped
+  /-- Declared content is absent, but the engine has published a plan to
+  render it: a construct owned by a milestone. The reader loses it today and
+  gets it later, so refusing to emit the document is the wrong trade — the
+  loss is reported and the rest of the document is still produced. -/
+  | pending
   /-- The content is in the output but not as declared (unstyled, set as
   source text, a placeholder box, a substituted face): the reader sees
   *something stands here*. -/
@@ -44,11 +50,16 @@ inductive Loss where
   | info
   deriving Repr, BEq
 
-/-- The policy: a dropped loss is an error, a degraded or config loss is a
-warning, info is a note. `\allow` in a document downgrades named
-dropped-loss codes to warnings (see `Diag.accept`). -/
+/-- The policy: a dropped loss is an error, everything else is a warning or a
+note. `pending` is a warning by design — the engine renders as much as it can
+and says what it could not, because a document is more useful than a refusal
+when the gap is one the project has committed to closing. `--werror` turns
+every warning fatal for a caller who wants the strict reading, and `\allow`
+in a document downgrades named dropped-loss codes to warnings (see
+`Diag.accept`). -/
 def Loss.severity : Loss → Severity
   | .dropped => .error
+  | .pending => .warning
   | .degraded => .warning
   | .config => .warning
   | .info => .note
@@ -153,7 +164,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0302 => ("W0302", .degraded, "unknown environment; body kept")
   | .W0303 => ("W0303", .config, "built-in name cannot be redefined")
   | .W0304 => ("W0304", .degraded, "colour name not in the palette; content kept uncoloured")
-  | .W0307 => ("W0307", .dropped, "construct not implemented yet; its content is not rendered")
+  | .W0307 => ("W0307", .pending, "construct not implemented yet; its content is not rendered")
   | .W0308 => ("W0308", .degraded, "tables are not laid out yet; rows set as plain lines")
   | .W0309 => ("W0309", .config, "\\maketitle with nothing declared")
   | .W0310 => ("W0310", .degraded, "'[' never closes; not an argument")

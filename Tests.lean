@@ -4373,10 +4373,16 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an environment and a command of one name both warn"
     ((warnCodes "\\begin{gizmo}body\\end{gizmo}\n\\gizmo{arg}").toArray ==
       #["W0302", "W0301"])
-  -- A reserved command whose skipped arguments carry content is a dropped
-  -- loss and errors; one that only loses layout or selection warns W0329.
-  t "elab reserved command dropping content errors" (errCodes ("\\documentclass{article}\\figure{x}" ++
+  -- A reserved command whose skipped arguments carry content loses that
+  -- content -- but the construct is one a milestone owns, so the loss is
+  -- `pending`: reported, and the rest of the document still renders. A
+  -- document that wants the strict reading asks for it (`--werror`) rather
+  -- than having every planned gap refuse to emit a page.
+  t "elab reserved command dropping planned content warns" (warnCodes ("\\documentclass{article}\\figure{x}" ++
     "\\begin{document}y\\end{document}") == ["W0307"])
+  t "elab reserved command dropping planned content still renders"
+    ((elabStr ("\\documentclass{article}\\figure{x}" ++
+      "\\begin{document}y\\end{document}")).1.body == #[.para #[.text "y"]])
   t "elab reserved layout-only command warns" (warnCodes ("\\documentclass{article}\\fontfallback{x}" ++
     "\\begin{document}y\\end{document}") == ["W0329"])
   -- Unknown environments keep their body: the wrapper's decoration is
@@ -4388,8 +4394,8 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((warnCodes "\\begin{w}a\\end{w}\\begin{w}b\\end{w}") == ["W0302"])
   t "elab unknown environment keeps a group on a later line"
     ((elabStr "\\begin{wrap}\n{kept}\n\\end{wrap}").1.body == #[.para #[.text "kept"]])
-  t "elab reserved environment content dropped is one error"
-    (errCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0307"] &&
+  t "elab reserved environment content dropped is one pending warning"
+    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0307"] &&
      (elabStr "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}").1.body == #[])
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
   t "elab redefine builtin warns and keeps the built-in"
