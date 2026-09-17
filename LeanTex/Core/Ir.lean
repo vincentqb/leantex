@@ -255,8 +255,10 @@ inductive Block where
   | note (body : Array Block)
   /-- One slide. First-class and never flattened into article paragraphs:
   HTML makes it a `<section>` of the deck, the PDF handout gives it a page.
-  An empty title is a bare frame. -/
-  | frame (title : Array Inline) (body : Array Block)
+  An empty title is a bare frame. `standout` is beamer's `[standout]`: the
+  frame inverts (`standoutfg` on `standoutbg`, defaulting to the inverse of
+  the page), centres, and sets Large bold. -/
+  | frame (title : Array Inline) (standout : Bool) (body : Array Block)
   deriving Repr, BEq, Inhabited
 
 /-- Verbatim content, line-split: the newline after `\begin{verbatim}` and
@@ -487,8 +489,8 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .verbatim s =>
     s!"{ind}verbatim\n" ++ String.join ((verbatimLines s).toList.map
       fun l => s!"{ind}  {l.quote}\n")
-  | .frame title body =>
-    s!"{ind}frame\n" ++
+  | .frame title standout body =>
+    s!"{ind}frame{if standout then " standout" else ""}\n" ++
     (if title.isEmpty then ""
      else s!"{ind}  title\n" ++ dumpInlines (ind ++ "    ") title) ++
     dumpBlocks (ind ++ "  ") body
@@ -637,18 +639,19 @@ end
 
 /-- One handout page per overlay step: each top-level multi-step frame
 becomes one frame per step, pending content dimmed. The PDF path calls
-this; HTML keeps the single frame and its step data. -/
+this; HTML keeps the single frame and its step data. A step and a standout
+frame are orthogonal: the flag rides onto every step page unchanged. -/
 def expandOverlays (dim : Color) (blocks : Array Block) : Array Block := Id.run do
   let mut out : Array Block := #[]
   for b in blocks do
     match b with
-    | .frame title body =>
+    | .frame title standout body =>
       let steps := maxStepBlocks body
       if steps ≤ 1 then
-        out := out.push (.frame title body)
+        out := out.push (.frame title standout body)
       else
         for k in [1:steps + 1] do
-          out := out.push (.frame title (dimBlocks dim k body))
+          out := out.push (.frame title standout (dimBlocks dim k body))
     | other => out := out.push other
   return out
 

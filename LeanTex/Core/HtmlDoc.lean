@@ -214,6 +214,12 @@ def baseCss (doc : Doc) : String :=
   "section.slide { border: 1px solid var(--rule); border-radius: 8px;\n" ++
   "  padding: 1.4rem 1.8rem; margin: 1.4rem 0; break-inside: avoid; }\n" ++
   "section.slide > header h2 { margin: 0 0 0.8rem; font-size: 1.35rem; }\n" ++
+  -- A standout frame inverts: the palette's standout keys override, and
+  -- without them the page's own fg/bg swap — the same rule as the PDF path.
+  "section.slide.standout { background: var(--standoutbg, var(--fg, #18181b));\n" ++
+  "  color: var(--standoutfg, var(--bg, #fafaf9)); text-align: center;\n" ++
+  "  font-size: 1.44em; font-weight: 600;\n" ++
+  "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   sizeRules ++
   ".math { font-family: \"Latin Modern Math\", \"STIX Two Math\", math; }\n" ++
   "@media print {\n" ++
@@ -409,13 +415,14 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- `<pre>` preserves the raw lines; the escaper makes the content inert.
     Html.elem "pre" #[Html.elem "code"
       #[Html.text (String.intercalate "\n" (verbatimLines s).toList)]]
-  | .frame title body =>
+  | .frame title standout body =>
     -- One slide of the deck. With no controller yet this is the no-JS
     -- rendering the plan promises anyway: a linear readable handout, every
     -- slide a section.
     let header := if title.isEmpty then #[]
       else #[Html.elem "header" #[Html.elem "h2" (inlines cfg title)]]
-    Html.elem "section" (header ++ blockNodesInto cfg #[] body.toList) #[("class", "slide")]
+    let cls := if standout then "slide standout" else "slide"
+    Html.elem "section" (header ++ blockNodesInto cfg #[] body.toList) #[("class", cls)]
 
 /-- The accumulator threads through the sibling walk, as in `inlineNodesInto`. -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node

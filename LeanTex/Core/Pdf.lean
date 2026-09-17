@@ -74,7 +74,13 @@ switch fonts or colours mid-array, so a run in a different face or colour
 closes it, emits `Tf`/`rg`, and reopens it. -/
 private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
     String := Id.run do
-  let mut s := "BT\n"
+  let mut s := ""
+  -- Fills paint first, in order: the page background, then any bars, then
+  -- the text over them.
+  for f in page.fills do
+    s := s ++ s!"q {f.color.pdfComponents} rg {f.x.toPtString} \
+{(geom.pageH - f.y - f.h).toPtString} {f.w.toPtString} {f.h.toPtString} re f Q\n"
+  s := s ++ "BT\n"
   let mut curFont : Int := -1
   let mut curSize : Sp := -1
   let mut curColor : Ir.Color := Ir.Color.black

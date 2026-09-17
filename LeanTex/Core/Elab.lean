@@ -1315,7 +1315,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
                 s!"'\\{n}' with nothing declared; no title is set" pos
                 (help := "declare \\title{...} (and \\author, \\date, ...) before it")
             else if ctx.slides then
-              blocks := blocks.push (.frame #[] #[.center inner])
+              blocks := blocks.push (.frame #[] false #[.center inner])
             else
               blocks := blocks.push (.center inner)
           else
@@ -1396,14 +1396,21 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
               blocks := blocks.push (.para content)
           else if n == "frame" then
             -- \begin{frame}[options]{title}: options are burned (fragile,
-            -- plain, standout say how beamer should cope, not what to say);
-            -- the title group counts only when it follows directly — a
-            -- paragraph break before a group makes it content, which is
-            -- where LaTeX's own argument scanning stops looking too.
+            -- plain say how beamer should cope, not what to say) except
+            -- `standout`, which says what the frame IS; the title group
+            -- counts only when it follows directly — a paragraph break
+            -- before a group makes it content, which is where LaTeX's own
+            -- argument scanning stops looking too.
             let mut k := 0
+            let mut standout := false
             for _ in [0:body.size] do
+              let j0 := skipSpaces body k
               match scanBracketArg body k pos with
-              | .took k' => k := k'
+              | .took k' =>
+                let inner := rawSrc (body.extract (j0 + 1) (k' - 1))
+                if (inner.splitOn ",").any (·.trimAscii.toString == "standout") then
+                  standout := true
+                k := k'
               | .unclosed bpos =>
                 warnUnclosed ctx "'\\begin{frame}'" bpos
                 break
@@ -1439,7 +1446,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             modify fun st => { st with pendingNotes := #[] }
             for nb in stash do
               inner := inner.push (.note (← elabBlocks { ctx with noteBody := true } nb))
-            blocks := blocks.push (.frame title inner)
+            blocks := blocks.push (.frame title standout inner)
           else if n == "itemize" || n == "enumerate" then
             let mut items : Array (Array Raw) := #[]
             let mut steps : Array (Option Nat) := #[]

@@ -74,7 +74,7 @@ frame
     text " one "
     text "  "
     text " per divider "
-frame
+frame standout
   para
     text "Questions?"
 -- diagnostics

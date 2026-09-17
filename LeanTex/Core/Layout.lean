@@ -68,8 +68,21 @@ structure LineOut where
   setWidth : Sp
   deriving Repr, Inhabited
 
+/-- A filled rectangle behind a page's text: the page background, a frame
+title's colour bar, a progress bar. `x`/`y` are the top-left corner in
+layout coordinates (y grows downward); the PDF writer paints fills before
+the text, in order. -/
+structure Fill where
+  x : Sp
+  y : Sp
+  w : Sp
+  h : Sp
+  color : Ir.Color
+  deriving Repr, Inhabited
+
 structure PageOut where
   lines : Array LineOut := #[]
+  fills : Array Fill := #[]
   deriving Repr, Inhabited
 
 structure Out where
@@ -382,7 +395,7 @@ private def scalarTextOne (out : Array String) : Block → Array String
   -- for.
   | .note _ => out
   | .verbatim s => out.push s
-  | .frame title body => scalarTextList (out.push (Ir.plainText title)) body.toList
+  | .frame title _ body => scalarTextList (out.push (Ir.plainText title)) body.toList
 
 private def scalarTextCols (out : Array String) :
     List (Option Nat × Array Block) → Array String
@@ -829,6 +842,11 @@ private structure B where
   on the page: a later column rewound to a fresh page's start must place
   its first line where the first column placed its. -/
   freshStart : Bool := false
+  /-- Background of the page being built, from `.pageStyle`; reset when it
+  closes. -/
+  pageBg : Option Ir.Color := none
+  /-- Whether the page being built centres its content vertically. -/
+  centerV : Bool := false
   diags : Array Diag := #[]
 
 /-- TeX's `\lineskip`: the least space between a line's depth and the next
@@ -849,8 +867,24 @@ private def B.finishPage (b : B) : B :=
       message := s!"page {b.pages.size + 1} set {b.needed / 65536}pt short: its skips gave " ++
         s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink"
     } else b.diags
-  { b with pages := b.pages.push { lines := lines }, cur := {}, shrinkAbove := #[],
-           pageShrink := 0, needed := 0, skip := {}, diags := diags }
+  -- Vertical centring (a standout frame, a section page): the leftover
+  -- between the content's bottom and the bottom margin, split evenly. The
+  -- page's fills ride with their lines.
+  let delta := if b.centerV && !lines.isEmpty then
+      let lastY := lines.foldl (fun m l => max m l.y) 0
+      let leftover := (b.geom.pageH - b.geom.vmargin) - (lastY + b.prevDepth)
+      if leftover > 0 then leftover / 2 else 0
+    else 0
+  let lines := if delta == 0 then lines else lines.map fun l => { l with y := l.y + delta }
+  let fills := if delta == 0 then b.cur.fills else
+    b.cur.fills.map fun f => { f with y := f.y + delta }
+  let fills := match b.pageBg with
+    | some c => #[({ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
+                     color := c } : Fill)] ++ fills
+    | none => fills
+  { b with pages := b.pages.push { lines := lines, fills := fills }, cur := {},
+           shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
+           pageBg := none, centerV := false, diags := diags }
 
 /-- A line that shares its baseline with the last one (underline rules)
 rides with it, including its share of the page's shrink. -/
@@ -934,6 +968,8 @@ private structure ParaJob where
   markerSegs : Option (Array Seg × Sp) := none
   /-- A rule filling the first line after the content. -/
   rule : Option (Sp × Ir.Color) := none
+  /-- Colour of a synthesised bullet: the page's text colour. -/
+  fg : Ir.Color := Ir.Color.black
 
 /-- The block walk emits vertical skips and paragraph jobs; placement replays
 them in document order, so the page builder stays sequential and the output
@@ -949,6 +985,10 @@ private inductive Op where
   | colOpen
   | colNext
   | colClose
+  /-- Style for the page being opened: a background fill, and whether its
+  content centres vertically (a standout frame, a section page). Applies
+  when the page closes and resets with it. -/
+  | pageStyle (bg : Option Ir.Color) (centerV : Bool)
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -968,6 +1008,11 @@ private structure Acc where
   /-- The right edge paragraphs break against, from the page's left margin:
   the text width, unless a column narrows it. -/
   measure : Option Sp := none
+  /-- The document's palette: the semantic keys (`fg`, `standoutbg`, …)
+  drive the themed furniture, and their absence turns it off. -/
+  pal : Ir.Palette := {}
+  /-- Default text colour: the palette's `fg` when declared, else black. -/
+  fg : Ir.Color := Ir.Color.black
   wantDefault : Bool := false
   owed : Array Glue := #[]
   ops : Array Op := #[]
@@ -1018,12 +1063,17 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (marker : Option (Array Inline) := none)
     (rule : Option (Sp × Ir.Color) := none) : Acc :=
   let a := a.flushGap
+  -- The page's text colour is the default: content that declared its own
+  -- keeps it, so a themed page colours everything or nothing silently dies
+  -- on a dark standout background.
+  let baseStyle := if baseStyle.color == Ir.Color.black then
+      { baseStyle with color := a.fg } else baseStyle
   let (items, ds, cache, extras) :=
     itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache
   -- A declared marker is content: set as a line of its own, unjustified, so
   -- it can carry any style the document gave it.
   let markerSegs := marker.map fun m =>
-    let (mi, _, _, _) := itemsOfInlines pats size a.xHeight fs {} m cache
+    let (mi, _, _, _) := itemsOfInlines pats size a.xHeight fs { color := a.fg } m cache
     let (segs, w, _) := setLine mi (lineStart mi 0) (mi.size - 1) a.geom.textWidth false
     (segs, w)
   { a with
@@ -1032,7 +1082,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       items := items, extras := extras, diags := ds
       target := (a.measure.getD a.geom.textWidth) - indent
       indent := indent, center := center, size := size, bullet := bullet
-      markerSegs := markerSegs, rule := rule }) }
+      markerSegs := markerSegs, rule := rule, fg := a.fg }) }
 
 def sectionSize (geom : Geom) : Nat → Sp
   | 1 => pt 14
@@ -1119,6 +1169,21 @@ private def collectColumns (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontS
       hyphCache := sub.hyphCache }
     collectColumns a pats fs rest (x0 + wi + gutter) shareW gutter total
 
+/-- A standout frame's content: paragraphs centre and set Large bold, in
+the page's (inverted) text colour; anything else nests through the normal
+walk and still inherits the colour. -/
+private def collectStandout (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+    (body : List Block) (indent : Sp) : Acc :=
+  match body with
+  | [] => a
+  | blk :: rest =>
+    let a := match blk with
+      | .para content =>
+        collectPara a pats fs content indent true (a.geom.fontSize * 1440 / 1000)
+          (baseStyle := { bold := true })
+      | _ => collectBlock a pats fs blk indent
+    collectStandout (if rest.isEmpty then a else a.wantGap) pats fs rest indent
+
 private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (blk : Block) (indent : Sp) : Acc :=
   match blk with
@@ -1195,11 +1260,22 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- hyphen inside an identifier.
     collectPara a none fs #[.styled .mono (Ir.verbatimInlines s)] indent false
       (a.geom.fontSize * 4 / 5)
-  | .frame title body =>
+  | .frame title standout body =>
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never
     -- clipped.
     let a := a.pageBreak
+    if standout then
+      -- Inverted, centred, Large bold. The palette's standout keys
+      -- override; without them the frame inverts the page's own colours.
+      let bg := (a.pal.find? "standoutbg").getD ((a.pal.find? "fg").getD Ir.Color.black)
+      let fg := (a.pal.find? "standoutfg").getD ((a.pal.find? "bg").getD Ir.Color.white)
+      let a := { a with ops := a.ops.push (.pageStyle (some bg) true) }
+      let saved := a.fg
+      let a := collectStandout { a with fg := fg } pats fs body.toList indent
+      let a := { a with fg := saved }
+      a.pageBreak
+    else
     let a := if title.isEmpty then a else
       let a := collectPara a pats fs title 0 false (sectionSize a.geom 1)
         (baseStyle := { bold := true })
@@ -1320,7 +1396,7 @@ private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) 
         w := w + mw + sep
       | none, some (bulletFont, bg) =>
         let bw := bg.foldl (fun acc (_, _, adv) => acc + adv) 0
-        segs := #[Seg.run bulletFont Ir.Color.black none bw
+        segs := #[Seg.run bulletFont j.fg none bw
           (bg.map fun (g, c, _) => (g, c)) j.size false, Seg.gap sep] ++ segs
         x := x - bw - sep
         w := w + bw + sep
@@ -1376,6 +1452,7 @@ end
 private inductive StagedOp where
   | skip (g : Glue)
   | brk
+  | pageStyle (bg : Option Ir.Color) (centerV : Bool)
   | para (j : ParaJob) (t : Task (Array Nat))
   | colOpen
   | colNext
@@ -1399,7 +1476,9 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
   let xHeight := scale font.xHeight
   let acc := collectBlocks { geom := geom, xHeight := xHeight, styles := doc.styles
-                             slides := doc.docClass == "slides" }
+                             slides := doc.docClass == "slides"
+                             pal := doc.palette
+                             fg := (doc.palette.find? "fg").getD Ir.Color.black }
     pats fs (Ir.expandOverlays ((doc.palette.find? "covered").getD Ir.coveredDefault)
       doc.body) 0
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
@@ -1409,6 +1488,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     match op with
     | .skip g => .skip g
     | .brk => .brk
+    | .pageStyle bg c => .pageStyle bg c
     | .para j => .para j (Task.spawn fun _ => kp j.items j.target)
     | .colOpen => .colOpen
     | .colNext => .colNext
@@ -1427,9 +1507,13 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .skip g => b := { b with skip := b.skip.add g }
     | .brk =>
       -- A boundary closes a page only when the page holds something: two
-      -- adjacent frames share one boundary, not an empty page.
+      -- adjacent frames share one boundary, not an empty page. A style set
+      -- for a page that never got content dies with the boundary.
       if !b.cur.lines.isEmpty then
         b := b.finishPage
+      else
+        b := { b with pageBg := none, centerV := false }
+    | .pageStyle bg c => b := { b with pageBg := bg, centerV := c }
     | .colOpen =>
       colSaves := colSaves.push {
         y := b.y, prevDepth := b.prevDepth, skip := b.skip
@@ -1492,7 +1576,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       diags := diags ++ ds
       cache := c
       if let some l := l? then lines := lines.push l
-    out := out.set! i { lines := lines }
+    out := out.set! i { out[i]! with lines := lines }
   -- One report per problem: the same missing glyph or overfull shape in
   -- thirty code blocks is one thing to fix, not thirty lines of console.
   -- W0005 is spanless and always the same words, so its collapse keeps the

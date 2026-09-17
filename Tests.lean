@@ -492,7 +492,7 @@ def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (fr, frDs) := elabStr ("\\documentclass{slides}\\begin{document}" ++
     "\\begin{frame}\\centering Questions?\\end{frame}\\end{document}")
   t "centering inside a frame centres its content" (frDs.isEmpty &&
-    fr.body == #[.frame #[] #[.center #[.para #[.text "Questions?"]]]])
+    fr.body == #[.frame #[] false #[.center #[.para #[.text "Questions?"]]]])
   -- Inside inline content there is no block to centre; the warning stays.
   t "centering in an argument still warns"
     (warnCodes "\\textbf{\\centering x}" == ["W0108"])
@@ -1751,7 +1751,7 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "\\begin{column}{0.4\\textwidth}\nright\n\\end{column}\n\\end{columns}")
   let (doc, ds) := elabStr src
   t "columns elaborate with widths, warning nothing" (ds.isEmpty &&
-    doc.body == #[.frame #[] #[.columns #[
+    doc.body == #[.frame #[] false #[.columns #[
       (some 600, #[.para #[.text "left"]]),
       (some 400, #[.para #[.text "right"]])]]])
   -- PDF: the columns' first lines share a baseline, and the second sits
@@ -1780,7 +1780,7 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "an absolute column width warns and degrades to a share"
     (aDs.any (·.code == "W0314") &&
      (match aDoc.body with
-      | #[.frame _ #[.columns cols]] => cols.map (·.1) == #[none, some 500]
+      | #[.frame _ _ #[.columns cols]] => cols.map (·.1) == #[none, some 500]
       | _ => false))
 
 /-- Overlays, dim-not-hide (PLAN M5): steps ride the IR, the PDF handout
@@ -1797,7 +1797,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "\\uncover<2>{tail}")
   let (doc, ds) := elabStr src
   t "overlay specs elaborate to steps, warning nothing" (ds.isEmpty &&
-    doc.body == #[.frame #[] #[
+    doc.body == #[.frame #[] false #[
       .list false #[
         #[.step 1 #[.para #[.text "first"]]],
         #[.step 2 #[.para #[.text "second"]]]],
@@ -1805,7 +1805,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   -- \pause steps the rest of the scope.
   let (pDoc, pDs) := elabStr (deck "one\n\n\\pause\ntwo\n\n\\pause\nthree")
   t "pause steps the rest, cumulatively" (pDs.isEmpty &&
-    pDoc.body == #[.frame #[] #[
+    pDoc.body == #[.frame #[] false #[
       .para #[.text "one"],
       .step 2 #[.para #[.text "two"], .step 3 #[.para #[.text "three"]]]]])
   -- PDF: one page per step; pending content dims, nothing moves.
@@ -1848,7 +1848,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
     body ++ "\n\\end{frame}\n\\end{document}"
   let (doc, ds) := elabStr (deck "Visible words.\n\\note{Hidden speaker words.}")
   t "note elaborates to a side channel, warning nothing" (ds.isEmpty &&
-    doc.body == #[.frame #[] #[
+    doc.body == #[.frame #[] false #[
       .para #[.text "Visible words."],
       .note #[.para #[.text "Hidden speaker words."]]]])
   -- PDF: the note adds nothing — the page is the page without it.
@@ -1868,7 +1868,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   t "a mid-sentence note leaves its paragraph whole and drains to the frame"
     (inlDs.isEmpty &&
      (match inl.body with
-      | #[.frame _ #[.para content, .note nbody]] =>
+      | #[.frame _ _ #[.para content, .note nbody]] =>
         Ir.plainText content == "bold text" &&
         ((Ir.dumpBlocks "" nbody).splitOn "never shown").length == 2
       | _ => false))
@@ -1880,7 +1880,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   t "reserved characters in a note stay literal, erroring nothing"
     (resvDs.isEmpty &&
      (match resv.body with
-      | #[.frame _ #[_, .note nbody]] =>
+      | #[.frame _ _ #[_, .note nbody]] =>
         ((Ir.dumpBlocks "" nbody).splitOn "name_with_underscores & more").length == 2
       | _ => false))
 
@@ -1895,22 +1895,22 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let (fDoc, fDs) := elabStr (deck "\\begin{frame}{T}\nbody\n\\end{frame}")
   t "frame source clean" fDs.isEmpty
   t "frame is first-class with its title"
-    (fDoc.body == #[.frame #[.text "T"] #[.para #[.text "body"]]])
+    (fDoc.body == #[.frame #[.text "T"] false #[.para #[.text "body"]]])
   -- A group after a paragraph break is content, not a title: LaTeX's own
   -- argument scanning stops looking there too.
   t "frame title after a blank line is content"
     ((elabStr (deck "\\begin{frame}[plain]\n\n{scope group}\n\\end{frame}")).1.body ==
-      #[.frame #[] #[.para #[.text "scope group"]]])
+      #[.frame #[] false #[.para #[.text "scope group"]]])
   t "frametitle names the frame"
     ((elabStr (deck "\\begin{frame}\n\\frametitle{Named}\nbody\n\\end{frame}")).1.body ==
-      #[.frame #[.text "Named"] #[.para #[.text "body"]]])
+      #[.frame #[.text "Named"] false #[.para #[.text "body"]]])
   -- Two titles: the last wins, as in beamer, but never silently.
   let (dupDoc, dupDs) := elabStr
     (deck "\\begin{frame}\n\\frametitle{One}\n\\frametitle{Two}\nbody\n\\end{frame}")
   t "a second frametitle warns and wins"
     (dupDs.any (·.code == "W0311") &&
      match dupDoc.body with
-     | #[.frame title _] => Ir.plainText title == "Two"
+     | #[.frame title _ _] => Ir.plainText title == "Two"
      | _ => false)
   -- \title and friends may sit in the body, as beamer documents do; an
   -- empty declaration (\date{}) is deliberately blank and sets nothing.
@@ -1920,7 +1920,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "maketitle source clean" tDs.isEmpty
   t "maketitle is a centered title frame with the empty date dropped"
     (match tDoc.body[0]? with
-     | some (Ir.Block.frame title #[.center inner]) => title.isEmpty && inner.size == 3
+     | some (Ir.Block.frame title _ #[.center inner]) => title.isEmpty && inner.size == 3
      | _ => false)
   t "pdf metadata falls back to the title declarations"
     (tDoc.info.title == some "A Deck" && tDoc.info.author == some "Pat Placeholder")
@@ -1973,6 +1973,46 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
        let s := Ir.plainText xs
        (s.splitOn "Head").length == 2 && !s.toList.contains '2' && !s.toList.contains 'X'
      | _ => false)
+  -- [standout]: the one frame option that says what the frame IS. It
+  -- inverts, centres, and sets Large bold in both backends; the other
+  -- options stay burned.
+  t "standout option marks the frame"
+    (match (elabStr (deck "\\begin{frame}[fragile,standout]\nQ\n\\end{frame}")).1.body with
+     | #[.frame _ true _] => true
+     | _ => false)
+  t "other frame options do not mark it"
+    (match (elabStr (deck "\\begin{frame}[plain]\nQ\n\\end{frame}")).1.body with
+     | #[.frame _ false _] => true
+     | _ => false)
+  let (sDoc, _) := elabStr (deck ("\\begin{frame}{A}\na\n\\end{frame}\n" ++
+    "\\begin{frame}[standout]\nQ\n\\end{frame}"))
+  let sGeom := Layout.Geom.ofPage sDoc.page
+  let sOut := Layout.run sGeom oneFace none sDoc
+  t "standout page carries a full-page background fill"
+    (match sOut.pages[1]? with
+     | some p => p.fills.any fun f =>
+         f.x == 0 && f.y == 0 && f.w == sGeom.pageW && f.h == sGeom.pageH &&
+         f.color == Ir.Color.black
+     | none => false)
+  t "the plain page beside it carries none"
+    (match sOut.pages[0]? with
+     | some p => p.fills.isEmpty
+     | none => false)
+  t "standout text is inverted and Large"
+    (match sOut.pages[1]? with
+     | some p => p.lines.any fun l =>
+         l.size == sGeom.fontSize * 1440 / 1000 &&
+         l.segs.any fun s => match s with
+           | .run _ c _ _ _ _ _ => c == Ir.Color.white
+           | _ => false
+     | none => false)
+  t "standout content centres vertically"
+    (match sOut.pages[1]?.bind (·.lines[0]?), sOut.pages[0]?.bind (·.lines[0]?) with
+     | some sl, some pl => sl.y > pl.y + sGeom.pageH / 4
+     | _, _ => false)
+  let (sHtml, _) := HtmlDoc.emit {} sDoc
+  t "html standout section carries the class"
+    ((sHtml.splitOn "class=\"slide standout\"").length == 2)
 
 /-- The paragraph boundary, judged from a body's shape: an unknown
 environment follows the same rule as the `@input:` wrapper — an inline body
@@ -2108,18 +2148,18 @@ def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (fDoc, fDs) := elabStr (deck "\\begin{frame}[unclosed\nBody survives.\n\\end{frame}")
   t "unclosed bracket keeps the frame body"
     (match fDoc.body with
-     | #[.frame _ body] => body.any fun b => (blockText b).endsWith "Body survives."
+     | #[.frame _ _ body] => body.any fun b => (blockText b).endsWith "Body survives."
      | _ => false)
   t "unclosed bracket in a frame warns" (fDs.any (·.code == "W0310"))
   -- a bracket opening the frame's content is content, not an option
   t "frame content starting with a bracket survives"
     (match (elabStr (deck "\\begin{frame}\n[1] Reference survives.\n\\end{frame}")).1.body with
-     | #[.frame _ #[.para xs]] => Ir.plainText xs == "[1] Reference survives."
+     | #[.frame _ _ #[.para xs]] => Ir.plainText xs == "[1] Reference survives."
      | _ => false)
   -- options on the begin line are still arguments, bracket runs included
   t "frame options on the begin line are burned"
     (match (elabStr (deck "\\begin{frame}[plain][t]{T}\nbody\n\\end{frame}")).1.body with
-     | #[.frame title #[.para xs]] =>
+     | #[.frame title _ #[.para xs]] =>
        Ir.plainText title == "T" && Ir.plainText xs == "body"
      | _ => false)
   -- unknown environment: unclosed bracket keeps the body, later-line bracket is content
