@@ -89,6 +89,42 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — severity stops being a choice: it derives from a declared
+loss. The user's charge ("how come unsupported features are not Erroring
+out? … looks like you are generally taking shortcuts") audited out to one
+root cause: `Diag.severity` was an open field every call site picked ad
+hoc, so nothing distinguished "content degraded but visible" from "content
+silently gone" — fourteen sites shipped dropped content as warnings or
+silence, and Principle 8 promised what W0307/W0104/W0501 did not deliver.
+The old principle's wording was the original shortcut; it is rewritten
+above to state the real guarantee. The mechanism now: `DiagCode` is an
+inductive (one constructor per code — this supersedes the string
+`diagRegistry` the entry below describes; the registry's checks survive
+pointed at the type), each code declares a `Loss`
+(dropped → error, degraded/config → warning, info → note), and `Diag.of`
+copies the loss's severity, so a free severity is unrepresentable — the
+theorem `(Diag.of c …).severity = c.loss.severity` is `rfl`, and the hook
+rejects a `severity :=` outside Diag.lean. The escape hatch landed before
+the promotions: `\allow{codes}` in the preamble accepts named losses,
+`--best-effort` accepts all, with three teeth (unknown code errors E0329,
+never-fired entry warns W0013, acceptance always prints). Promotions:
+W0307, W0501, W0313, W0004 → error; N0101/N0105 → warning; \titlegraphic
+(E0112) and a content-carrying \setbeamertemplate body (E0111) leave the
+config warning they rode on; the silent sectionRule else-arms (E0113) and
+the five "burned" option sites (N0102/N0103) are registered; the four
+meaning-changing `inert` entries (raggedright, sloppy, selectlanguage,
+pagestyle) warn from `configSkip`. Expired audit rows, checked against
+main before promoting: W0107 \includegraphics and \logo — both since
+implemented. Both real reference documents still build byte-identically;
+the deck accepts W0307 for its M8 tikz hatch with one `\allow` line.
+Integration with the web slices (which own W0320–W0327): the layout-only
+skip code is W0329 here; the inductive surfaced a live string-registry
+collision on main — W0319 meant both "unknown theme" and "running content
+wraps" (the registry check passed because the string was registered) —
+the wrap diagnostic is now W0328; and W0324 (ifbackend content addressed
+to no backend) is a dropped loss under this entry's own test, so it
+promotes to error with the others, `\allow{W0324}` accepting it.
+
 2026-09-17 — declared once, derived everywhere: the web metadata slice
 (site-port gaps 1 and 7). `\pdfmeta` grows `url`, `image`, `favicon` — an
 extension of the one `Ir.Meta` record, not a second declaration — and each
@@ -1625,13 +1661,19 @@ them.
    or heavyweight lives behind a typed, cached boundary; the native Lean 4
    surface expands to absorb one boundary at a time, when it pays. Documents
    never change when a boundary is absorbed.
-8. Elaboration is non-blocking. For every input the parser accepts, a
-   document comes out. A construct the engine does not implement never
-   removes content — its arguments still render — and the diagnostic names
-   the span and, where one exists, the native spelling. Only malformed
-   syntax, a failed `\assert`, and a font that cannot be found stop a build.
-   Best effort is the contract, not a fallback: a warning the author can act
-   on beats a refusal they have to work around.
+8. Elaboration is non-blocking, and loss is never silent. For every input
+   the parser accepts, a document comes out — but what the engine
+   guarantees about content is honest now: content is either kept, or its
+   loss carries a diagnostic whose severity derives from the loss itself
+   (`Loss` in Diag.lean). Declared content the reader of the output cannot
+   recover is an error unless the document accepted it (`\allow{...}` in
+   the preamble, `--best-effort` on the CLI); a degradation the reader can
+   see, and configuration the engine does not model, are warnings; and
+   acceptance always prints in the build summary, so it is declared, never
+   ambient. The diagnostic names the span and, where one exists, the
+   native spelling. Only malformed syntax, an unaccepted loss, a failed
+   `\assert`, and a font that cannot be found stop a build. Best effort is
+   a mode a document opts into, not a fallback the engine imposes.
 9. Each document class has a primary backend, and the other is a faithful
    degradation, never a failure. `article` is PDF-first and its HTML is a
    readable page; `slides` is HTML-first (the interactive deck) and its PDF
