@@ -1435,6 +1435,33 @@ def dimChecks (ref : IO.Ref (List String)) : IO Unit := do
   if let some msg := failed then failures ref msg
   t "dim round-trip error reaches the print rounding bound" (worst > 20)
 
+/-- Faces and sizes have to survive into the content stream, and only the
+bytes can say so: a regression once embedded one face where six belonged
+while every other test still passed. Its own function: `main`'s do block
+has no elaboration budget left. -/
+def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
+    (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
+  let t := check ref
+  let twoFace : Font.FontSet := {
+    fonts := #[font, font]
+    index := ((List.range 3).flatMap fun slot =>
+      let idx := if slot == 1 then 1 else 0
+      [((slot, false, false), idx), ((slot, true, false), idx),
+       ((slot, false, true), idx), ((slot, true, true), idx)]).toArray
+  }
+  let (bigDoc, bigDs) := Elab.run "t"
+    "plain {\\sffamily other face} and {\\Huge big} and {\\small little}"
+  t "size scale source clean" bigDs.isEmpty
+  let bigPdf := Pdf.write geom twoFace (Layout.run geom twoFace none bigDoc).pages
+  t "pdf references a second face" (bytesContain bigPdf "/F2 ")
+  t "pdf sets Huge at 2.488x" (bytesContain bigPdf "24.88 Tf")
+  t "pdf sets small at 0.9x" (bytesContain bigPdf "9 Tf")
+  t "pdf keeps the body size" (bytesContain bigPdf "10 Tf")
+  -- One face only: nothing unused is embedded, so no /F2 exists.
+  let plainPdf := Pdf.write geom oneFace (Layout.run geom oneFace none bigDoc).pages
+  t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
+  pdfStreamChecks ref oneFace
+
 /-- Differential fuzz of the UTF-8 validator against the core decoder
 (generator: xorshift64*, 400 byte strings — half raw random bytes of length
 0–15, half a valid encoded string with one byte overwritten): `validate`
@@ -2479,28 +2506,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .ok n => t s!"pdf xref valid" (n > 0)
       | .error e => failures ref s!"pdf xref: {e}"
 
-      -- Faces and sizes have to survive into the content stream, and only the
-      -- bytes can say so: a regression once embedded one face where six
-      -- belonged while every other test still passed.
-      let twoFace : Font.FontSet := {
-        fonts := #[font, font]
-        index := ((List.range 3).flatMap fun slot =>
-          let idx := if slot == 1 then 1 else 0
-          [((slot, false, false), idx), ((slot, true, false), idx),
-           ((slot, false, true), idx), ((slot, true, true), idx)]).toArray
-      }
-      let (bigDoc, bigDs) := Elab.run "t"
-        "plain {\\sffamily other face} and {\\Huge big} and {\\small little}"
-      t "size scale source clean" bigDs.isEmpty
-      let bigPdf := Pdf.write geom twoFace (Layout.run geom twoFace none bigDoc).pages
-      t "pdf references a second face" (bytesContain bigPdf "/F2 ")
-      t "pdf sets Huge at 2.488x" (bytesContain bigPdf "24.88 Tf")
-      t "pdf sets small at 0.9x" (bytesContain bigPdf "9 Tf")
-      t "pdf keeps the body size" (bytesContain bigPdf "10 Tf")
-      -- One face only: nothing unused is embedded, so no /F2 exists.
-      let plainPdf := Pdf.write geom oneFace (Layout.run geom oneFace none bigDoc).pages
-      t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
-      pdfStreamChecks ref oneFace
+      pdfFaceChecks ref geom oneFace font
 
       lineChecks ref geom oneFace
       underlineChecks ref geom oneFace font

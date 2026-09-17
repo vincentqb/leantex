@@ -383,7 +383,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- slide a section.
     let header := if title.isEmpty then #[]
       else #[Html.elem "header" #[Html.elem "h2" (inlines cfg title)]]
-    Html.elem "section" (header ++ blockNodes cfg body.toList) #[("class", "slide")]
+    Html.elem "section" (header ++ blockNodesInto cfg #[] body.toList) #[("class", "slide")]
 
 /-- The accumulator threads through the sibling walk, as in `inlineNodesInto`. -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
