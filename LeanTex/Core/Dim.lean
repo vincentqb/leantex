@@ -14,6 +14,10 @@ the big point, 1⁄72 inch (`inch` and `Decl.unitScale` agree), not TeX's
 1⁄72.27: 25.4 mm is exactly 72 pt here. -/
 def mm (n : Int) : Sp := n * 7200 * spPerPt / 2540
 
+/-- Hundredths of a millimetre, for standards that specify to 0.01 mm —
+ISO/IEC 7810's ID-1 card is 85.60 × 53.98 mm. -/
+def mm100 (n : Int) : Sp := n * 7200 * spPerPt / 254000
+
 theorem pt_exact (n : Int) : pt n / spPerPt = n := by
   simp [pt, spPerPt]
 
@@ -29,6 +33,15 @@ theorem mm_eq_inch (n : Int) : mm (254 * n) = inch (10 * n) := by
     omega
   simp only [mm, inch, h]
   exact Int.mul_ediv_cancel_left _ (by decide)
+
+/-- The finer spelling names the same lengths: 100 hundredths are one mm. -/
+theorem mm100_eq_mm (n : Int) : mm100 (100 * n) = mm n := by
+  have h : 100 * n * 7200 * spPerPt = 100 * (n * 7200 * spPerPt) := by
+    simp only [spPerPt]
+    omega
+  have h2 : (254000 : Int) = 100 * 2540 := by decide
+  simp only [mm100, mm, h, h2]
+  exact Int.mul_ediv_mul_of_pos _ _ (by decide)
 
 /-- Render as decimal points with up to three fractional digits (exact sp
 value rounded to the nearest thousandth). -/

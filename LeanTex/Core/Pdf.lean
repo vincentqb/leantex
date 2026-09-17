@@ -88,9 +88,11 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
   -- gathered here and drawn after the text.
   let mut rules : Array (Sp × Sp × Sp × Sp × Ir.Color) := #[]
   for l in page.lines do
-    let ypdf := geom.pageH - l.y
+    -- Bleed shifts everything: layout works in trim coordinates and the
+    -- trim box sits `bleed` in from the medium's corner.
+    let ypdf := geom.bleed + geom.pageH - l.y
     let mut inArray := false
-    let mut x := l.x
+    let mut x := geom.bleed + l.x
     -- Where the pen is, when it is known: a fresh line has no position until
     -- its first glyph run sets one.
     let mut pen : Option Sp := none
@@ -162,7 +164,7 @@ private def linkRects (geom : Geom) (page : PageOut) :
     Array (Sp × Sp × Sp × Sp × String) := Id.run do
   let mut out : Array (Sp × Sp × Sp × Sp × String) := #[]
   for l in page.lines do
-    let mut x := l.x
+    let mut x := geom.bleed + l.x
     -- Merge tolerance of one em: a run separated only by an interword space
     -- joins the previous rectangle, so a multi-word link is one annotation.
     let pad := l.size
@@ -170,8 +172,8 @@ private def linkRects (geom : Geom) (page : PageOut) :
       match seg with
       | .run _ _ link w _ segSize _ =>
         let size := if segSize == 0 then l.size else segSize
-        let y0 := geom.pageH - l.y - size / 4
-        let y1 := geom.pageH - l.y + size * 4 / 5
+        let y0 := geom.bleed + geom.pageH - l.y - size / 4
+        let y1 := geom.bleed + geom.pageH - l.y + size * 4 / 5
         if let some url := link then
           match out.back? with
           | some (bx0, by0, bx1, by1, burl) =>
@@ -351,7 +353,15 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         s!"/A << /S /URI /URI ({pdfString url}) >> >>"
       " /Annots [" ++ String.intercalate " " entries ++ "]"
   let pageDict (i : Nat) :=
-    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {geom.pageW.toPtString} {geom.pageH.toPtString}] /Resources << /Font << {fontResources} >> >>{annots i} /Contents {contentId i} 0 R >>"
+    -- With bleed the medium is larger than the finished page and the trim
+    -- box records what the finishing knife should leave (ISO 32000-2,
+    -- 14.11.2: TrimBox is the intended dimensions of the finished page).
+    let b := geom.bleed
+    let mediaW := geom.pageW + 2 * b
+    let mediaH := geom.pageH + 2 * b
+    let trim := if b == 0 then "" else
+      s!" /TrimBox [{b.toPtString} {b.toPtString} {(geom.pageW + b).toPtString} {(geom.pageH + b).toPtString}]"
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {mediaW.toPtString} {mediaH.toPtString}]{trim} /Resources << /Font << {fontResources} >> >>{annots i} /Contents {contentId i} 0 R >>"
   -- PDF 2.0 text strings are UTF-8, so declared metadata needs no escaping
   -- beyond the literal-string delimiters.
   let infoEntry (key : String) (v : Option String) : String :=

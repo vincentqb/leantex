@@ -31,6 +31,15 @@ structure PageSpec where
   `\page{ measure = free }` declares that the document takes responsibility
   for its line length and silences the diagnostic. -/
   measureChecked : Bool := true
+  /-- Bleed: how far past the trim edge the physical PDF page extends on
+  every side, for print finishing. The page keeps its declared trim size
+  here; only the PDF writer grows the medium and records the trim box.
+  The print convention is 3 mm per edge (0.125 in at US shops). -/
+  bleed : Sp := 0
+  /-- Whether paragraphs may hyphenate; `none` takes the class default —
+  on for `article` and `slides`, off for `card`, where a two-line name
+  broken with a hyphen is never what anyone means. -/
+  hyphenate : Option Bool := none
   deriving Repr, BEq, Inhabited
 
 /-- The text block of an undeclared letter page: 26 picas (312 pt).
@@ -730,6 +739,10 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
       then s!" fontsize {doc.page.fontSize.toPtString}" else "") ++
     (match doc.page.parskip with
       | some g => s!" parskip {dumpGlue g}"
+      | none => "") ++
+    (if doc.page.bleed != 0 then s!" bleed {doc.page.bleed.toPtString}" else "") ++
+    (match doc.page.hyphenate with
+      | some b => s!" hyphenate {if b then "on" else "off"}"
       | none => "") ++ "\n"
   let metaLine (label : String) (v : Option String) : String :=
     match v with

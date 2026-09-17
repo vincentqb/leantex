@@ -3305,6 +3305,85 @@ def rhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   t "an undeclared side is not compared"
     (!(layoutDiags "\\style{section}{ after = 2 * u }").any (·.code == "W0202"))
 
+/-- The `card` document class: trade-standard trim sizes, print safe-zone
+margins, no hyphenation, no running furniture, bleed on request. -/
+def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (pats : Hyphen.Patterns) : IO Unit := do
+  let t := check ref
+  let card (opts body : String) (pre : String := "") : String :=
+    s!"\\documentclass{opts}\{card}\n{pre}\\begin\{document}\n{body}\n\\end\{document}"
+  let (cDoc, cDs) := elabStr (card "" "Pat Placeholder")
+  t "card class parses clean" (!cDs.any (·.severity == .error))
+  -- ISO/IEC 7810 ID-1, the size most business cards follow: 85.60 × 53.98 mm.
+  t "card defaults to ISO/IEC 7810 ID-1"
+    (cDoc.page.width == Dim.mm100 8560 && cDoc.page.height == Dim.mm100 5398)
+  t "us option is the 3.5 × 2 in trade size"
+    ((elabStr (card "[us]" "x")).1.page.width == Dim.pt 252 &&
+     (elabStr (card "[us]" "x")).1.page.height == Dim.pt 144)
+  t "jis option is the 91 × 55 mm meishi"
+    ((elabStr (card "[jis]" "x")).1.page.width == Dim.mm 91 &&
+     (elabStr (card "[jis]" "x")).1.page.height == Dim.mm 55)
+  -- Margins default to the print safe zone: content there risks the trim.
+  t "card margins default to the safe zone"
+    (cDoc.page.hmargin == Dim.mm 5 && cDoc.page.vmargin == Dim.mm 5)
+  t "a declared page beats the card defaults"
+    ((elabStr (card "" "x" "\\page{ width = 100pt, height = 60pt, margin = 4pt }\n")).1.page.width
+      == Dim.pt 100)
+  t "card turns hyphenation off by default"
+    (cDoc.page.hyphenate == some false)
+  t "article leaves hyphenation to the class default"
+    ((elabStr "x").1.page.hyphenate == none)
+  t "hyphenate is a page key any class may declare"
+    ((elabStr "\\page{ hyphenate = off }\\begin{document}x\\end{document}").1.page.hyphenate
+      == some false)
+  t "hyphenate rejects a value that is not on or off"
+    (errCodes "\\page{ hyphenate = 5pt }\\begin{document}x\\end{document}" == ["E0323"])
+  -- The gate lives in layout: the same narrow measure hyphenates as an
+  -- article and must not as a card, whoever loaded the patterns.
+  let hyphenRendered (doc : Ir.Doc) : Bool :=
+    let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace (some pats) doc
+    out.pages.any fun p => p.lines.any fun l =>
+      l.segs.any fun s => match s with
+        | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '-')
+        | .gap _ | .rule .. => false
+  let narrowPage := "\\page{ width = 90pt, height = 400pt, margin = 10pt }\n"
+  let word := "incomprehensibility incomprehensibility"
+  t "an article at this measure does hyphenate"
+    (hyphenRendered (elabStr (s!"{narrowPage}\\begin\{document}\n{word}\n\\end\{document}")).1)
+  t "a card never hyphenates"
+    (!hyphenRendered (elabStr (card "" word narrowPage)).1)
+  -- A card carries no running furniture: the declaration is dropped loudly.
+  let (rDoc, rDs) := elabStr (card "" "x" "\\runninghead{name \\pagenumber}\n")
+  t "card drops running content with W0315"
+    (rDs.any (·.code == "W0315") && rDoc.head.isNone)
+  -- Two faces are two frames: one page each, through the same page-boundary
+  -- mechanism every class shares.
+  let two := card "" "\\begin{frame}front\\end{frame}\n\\begin{frame}back\\end{frame}"
+  let (twoDoc, twoDs) := elabStr two
+  t "card faces source clean" (!twoDs.any (·.severity == .error))
+  t "two faces are two pages"
+    ((Layout.run (Layout.Geom.ofPage twoDoc.page) oneFace none twoDoc).pages.size == 2)
+  -- Bleed grows the medium and records the trim box; without it the page
+  -- dictionaries stay exactly as they were.
+  let (bDoc, bDs) := elabStr (card "" "x" "\\page{ bleed = 3mm }\n")
+  t "bleed declaration is clean" (!bDs.any (·.severity == .error))
+  t "bleed reaches the page spec" (bDoc.page.bleed == Dim.mm 3)
+  let bGeom := Layout.Geom.ofPage bDoc.page
+  let bOut := Layout.run bGeom oneFace none bDoc
+  let bPdf := Pdf.write bGeom oneFace bOut.pages
+  t "bleed writes a TrimBox 3mm in from the medium corner"
+    (bytesContain bPdf "/TrimBox [8.504 8.504 251.15 161.518]")
+  t "bleed grows the MediaBox by twice itself"
+    (bytesContain bPdf "/MediaBox [0 0 259.654 170.022]")
+  -- The ink shifts with the trim box: the first glyph sits at the margin
+  -- measured from the trim corner (8.504 + 14.173 pt), not the medium corner.
+  t "bleed shifts the content with the trim box"
+    (bytesContain bPdf "1 0 0 1 22.677 ")
+  let plainGeom := Layout.Geom.ofPage cDoc.page
+  let plainPdf := Pdf.write plainGeom oneFace
+    (Layout.run plainGeom oneFace none cDoc).pages
+  t "no bleed, no TrimBox" (!bytesContain plainPdf "/TrimBox")
+
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pats := Hyphen.load
@@ -3437,6 +3516,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       inkGeometryChecks ref
       spacingChecks ref geom oneFace font
       slideChecks ref oneFace
+      cardChecks ref oneFace pats
       columnsChecks ref oneFace
       overlayChecks ref oneFace
       noteChecks ref oneFace

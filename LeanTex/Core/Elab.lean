@@ -122,7 +122,7 @@ def runningCtrl : List String := ["runninghead", "runningfoot"]
 
 def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin", "leading", "parskip",
-   "measure", "fontsize"]
+   "measure", "fontsize", "bleed", "hyphenate"]
 
 def metaKeys : List String := ["title", "author", "subject", "keywords"]
 
@@ -1667,6 +1667,14 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "checked" => spec := { spec with measureChecked := true }
       | _ =>
         diag ctx "E0323" s!"'measure' in \\page expects 'checked' or 'free', got '{v}'" pos
+    | "bleed", .dim d => spec := { spec with bleed := d }
+    | "bleed", .int 0 => spec := { spec with bleed := 0 }
+    | "hyphenate", .ident v =>
+      match v with
+      | "on" | "true" => spec := { spec with hyphenate := some true }
+      | "off" | "false" => spec := { spec with hyphenate := some false }
+      | _ =>
+        diag ctx "E0323" s!"'hyphenate' in \\page expects on or off, got '{v}'" pos
     | key, v =>
       if key == "header" || key == "footer" then
         -- The feature exists, just not as a page key: running content is
@@ -1678,6 +1686,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       else if pageKeys.contains key then
         let expected := if key == "size" then "a page size name"
           else if key == "measure" then "'checked' or 'free'"
+          else if key == "hyphenate" then "on or off"
           else "a dimension"
         modify fun st => { st with
           diags := st.diags.push (Decl.wrongType ctx.file "page" key expected v pos) }
@@ -2038,9 +2047,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
         | some (.group nameRaws _) =>
           i := j + 1
           docClass := (rawSrc nameRaws).trimAscii.toString
-          if docClass != "article" && docClass != "slides" then
+          if docClass != "article" && docClass != "slides" && docClass != "card" then
             diag ctx "E0309" s!"unknown document class '{docClass}'" pos
-              (help := "classes: article | slides")
+              (help := "classes: article | slides | card")
         | _ =>
           diag ctx "E0304" "'\\documentclass' needs a {class}" pos
       | .ctrl "define" pos =>
@@ -2320,6 +2329,34 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
       page := { page with hmargin := Ir.slidesHMargin }
     if page.vmargin == dflt.vmargin then
       page := { page with vmargin := Ir.slidesVMargin }
+  -- A card is trimmed from a sheet, so its defaults are the print trade's,
+  -- not a guess: ISO/IEC 7810 ID-1 (85.60 × 53.98 mm, the credit-card size)
+  -- unless the class option names the US (3.5 × 2 in) or Japanese
+  -- (91 × 55 mm) trade size; margins are the print safe zone, inside which
+  -- a drifting trim cannot cut. No hyphenation and no running furniture:
+  -- a card is one face of display text, not a page of a run — which is
+  -- also why the prose measure band (W0201) does not apply to it.
+  else if docClass == "card" then
+    let dflt : PageSpec := {}
+    let opts := (classOptions.splitOn ",").map (·.trimAscii.toString)
+    if page.width == dflt.width && page.height == dflt.height then
+      let (w, h) :=
+        if opts.contains "us" then (Dim.pt 252, Dim.pt 144)
+        else if opts.contains "jis" then (Dim.mm 91, Dim.mm 55)
+        else (Dim.mm100 8560, Dim.mm100 5398)
+      page := { page with width := w, height := h }
+    if page.hmargin == dflt.hmargin then
+      page := { page with hmargin := Dim.mm 5 }
+    if page.vmargin == dflt.vmargin then
+      page := { page with vmargin := Dim.mm 5 }
+    if page.hyphenate.isNone then
+      page := { page with hyphenate := some false }
+    if head.isSome || foot.isSome then
+      diag ctx "W0315"
+        "a card carries no running head or foot; the declaration is dropped" none
+        (sev := .warning)
+      head := none
+      foot := none
   else if !sawPage then
     -- An undeclared letter page takes Bringhurst's text block for a 10pt
     -- text face, 26 picas, not the word-processor inch: the default must

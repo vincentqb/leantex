@@ -20,6 +20,12 @@ structure Geom where
   parskip : SymGlue := { width := Dim.Length.ofSp (pt 6) }
   listIndent : Sp := pt 15
   leading : Nat := 1000
+  /-- Whether paragraphs may hyphenate; the class default resolved. Layout
+  owns the gate so every caller — build, tests, oracles — obeys it. -/
+  hyphenate : Bool := true
+  /-- Bleed past the trim edge, for the PDF writer: layout works in trim
+  coordinates and never sees it. -/
+  bleed : Sp := 0
   deriving Repr
 
 def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
@@ -34,7 +40,9 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     vmargin := spec.vmargin
     fontSize := spec.fontSize
     leading := spec.leading
-    parskip := spec.parskip.getD base.parskip }
+    parskip := spec.parskip.getD base.parskip
+    hyphenate := spec.hyphenate.getD base.hyphenate
+    bleed := spec.bleed }
 
 /-- Baseline distance for a size: 6⁄5 of it, scaled by the page's `leading`
 factor (`\linespread`'s home). The 1.2 is the routine text setting — 10/12 of
@@ -1571,6 +1579,9 @@ private structure ColSave where
 the caller via `Geom.ofPage`, so layout has one source of truth. -/
 def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc) :
     Out := Id.run do
+  -- The geometry decides whether patterns apply at all: a card never
+  -- hyphenates, whoever loaded the patterns.
+  let pats := if geom.hyphenate then pats else none
   let font := fs.body
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
   let xHeight := scale font.xHeight
@@ -1723,7 +1734,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- L₄₅ = 1.415α + 23.03 pt). Slides are display text, not continuous
   -- reading, and are out of the rule's own scope; `\page{ measure = free }`
   -- declares the document takes responsibility.
-  if doc.docClass != "slides" && doc.page.measureChecked && prose ≥ 4 then
+  if doc.docClass != "slides" && doc.docClass != "card" && doc.page.measureChecked
+      && prose ≥ 4 then
     let alphabet := (List.range 26).foldl (fun acc k =>
       acc + scaledAt geom.fontSize font (font.advance (Char.ofNat ('a'.toNat + k)))) 0
     if alphabet > 0 then
