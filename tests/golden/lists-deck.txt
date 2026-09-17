@@ -13,6 +13,7 @@ palette progressbg #CBC0B6
 palette separator #A55A13
 palette standoutfg #FAFAFA
 palette standoutbg #23373B
+palette covered #A8B0B1
 token progressheight 1pt
 meta title "List Marks"
 meta author "Pat Placeholder"

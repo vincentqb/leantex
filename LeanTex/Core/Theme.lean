@@ -33,7 +33,13 @@ def moloch : Theme := {
     "fg = #23373B, bg = black!2, alert = #A55A13, example = #008080, " ++
     "frametitlefg = bg, frametitlebg = fg, progressfg = alert, " ++
     "progressbg = progressfg!50!black!30, separator = progressfg, " ++
-    "standoutfg = bg, standoutbg = fg"
+    "standoutfg = bg, standoutbg = fg, " ++
+    -- Covered overlay content shows at 38% of the body ink over the page --
+    -- the Material Design disabled-state opacity (m2.material.io/design/
+    -- interaction/states.html#disabled); WCAG 2.2 SC 1.4.3 exempts text in
+    -- an inactive state, and Contrast.coveredContract holds the value to
+    -- "quieter than body, still distinguishable" for every bundle.
+    "covered = fg!38!bg"
   tokens := "progressheight = 1pt"
   styles := [("frametitle", "font = {\\large\\bfseries}"),
              ("sectionpage", "font = {\\Large\\bfseries}"),
@@ -48,7 +54,9 @@ def plain : Theme := {
   palette :=
     "fg = #1B1B1F, bg = #FFFFFF, alert = #B3261E, example = #205E3B, " ++
     "progressfg = fg!60, progressbg = fg!15, separator = fg!40, " ++
-    "standoutfg = bg, standoutbg = fg"
+    "standoutfg = bg, standoutbg = fg, " ++
+    -- The same 38% disabled-state convention as moloch's covered.
+    "covered = fg!38!bg"
   tokens := "progressheight = 1pt"
   styles := [("sectionpage", "font = {\\Large\\bfseries}"),
              ("standout", "font = {\\Large\\bfseries}")]

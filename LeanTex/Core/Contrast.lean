@@ -407,7 +407,8 @@ def molochResolved : Palette := { entries := #[
   ("progressbg", ⟨0xCB, 0xC0, 0xB6⟩),
   ("separator", ⟨0xA5, 0x5A, 0x13⟩),
   ("standoutfg", ⟨0xFA, 0xFA, 0xFA⟩),
-  ("standoutbg", ⟨0x23, 0x37, 0x3B⟩)] }
+  ("standoutbg", ⟨0x23, 0x37, 0x3B⟩),
+  ("covered", ⟨0xA8, 0xB0, 0xB1⟩)] }
 
 /-- `plain`'s palette as `\theme` resolves it; same pinning as `moloch`'s. -/
 def plainResolved : Palette := { entries := #[
@@ -419,12 +420,35 @@ def plainResolved : Palette := { entries := #[
   ("progressbg", ⟨0xDD, 0xDD, 0xDD⟩),
   ("separator", ⟨0xA4, 0xA4, 0xA5⟩),
   ("standoutfg", ⟨0xFF, 0xFF, 0xFF⟩),
-  ("standoutbg", ⟨0x1B, 0x1B, 0x1F⟩)] }
+  ("standoutbg", ⟨0x1B, 0x1B, 0x1F⟩),
+  ("covered", ⟨0xA8, 0xA8, 0xAA⟩)] }
 
 /-- No shipped moloch pairing is illegible — with the alert corrected: the
 lineage's own #EB811B read at 2.61:1 on this page, under SC 1.4.3. -/
 theorem moloch_contract : paletteContract molochResolved = true := by decide
 
 theorem plain_contract : paletteContract plainResolved = true := by decide
+
+/-- Covered reads as covered on the palette's own page. Quieter than the
+body ink (a lower contrast against `bg` than `fg` has — SC 1.4.3 exempts
+inactive text, so no minimum binds it), yet the dimming itself must be
+seen: `fg` and `covered` differ by at least 3:1, the ratio SC 1.4.11 asks
+of visual information that identifies a state. The two together are what
+"visibly covered" means, judged from the palette, not an eyeball. -/
+def coveredContract (pal : Palette) : Bool :=
+  let bg := (pal.find? "bg").getD Color.white
+  let fg := (pal.find? "fg").getD Color.black
+  let covered := (pal.find? "covered").getD coveredDefault
+  contrastMilli covered bg < contrastMilli fg bg
+    && contrastMilli fg covered ≥ aaLargeText
+
+/-- The default surface: black ink, white page, `coveredDefault` (38%
+black, the Material disabled-state opacity, as the themes' `covered`
+mixes are). -/
+theorem default_covered : coveredContract { entries := #[] } = true := by decide
+
+theorem moloch_covered : coveredContract molochResolved = true := by decide
+
+theorem plain_covered : coveredContract plainResolved = true := by decide
 
 end LeanTex.Core.Contrast
