@@ -1891,6 +1891,60 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
         ((Ir.dumpBlocks "" nbody).splitOn "name_with_underscores & more").length == 2
       | _ => false))
 
+/-- The theme × frame-furniture reconciliation invariants: standout and
+overlay steps are orthogonal (the flag rides onto every step page), the
+furniture belongs to the frame rather than the step (a stepped frame's
+pages share one progress position), and a note stays silent through the
+themed paths too. -/
+def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let themed (body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n" ++
+    "\\palette{ fg = #23373B, bg = #FFFFFF, alert = #EB811B,\n" ++
+    "  progressfg = alert, standoutfg = bg, standoutbg = fg }\n" ++
+    "\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  -- A standout frame carrying steps: one page per step, every page still
+  -- inverted, its text still in standoutfg.
+  let (soDoc, soDs) := elabStr (themed
+    ("\\begin{frame}[standout]\nOne.\n\n\\pause\nTwo.\n\\end{frame}"))
+  t "stepped standout source clean" soDs.isEmpty
+  let geom := Layout.Geom.ofPage soDoc.page
+  let so := Layout.run geom oneFace none soDoc
+  t "a stepped standout frame gets one page per step" (so.pages.size == 2)
+  let fg : Ir.Color := ⟨0x23, 0x37, 0x3B⟩
+  let bg : Ir.Color := ⟨0xFF, 0xFF, 0xFF⟩
+  t "every step page of a standout frame stays inverted"
+    (so.pages.all fun p => p.fills.any fun f =>
+      f.x == 0 && f.y == 0 && f.w == geom.pageW && f.h == geom.pageH && f.color == fg)
+  t "standout text keeps standoutfg on every step page"
+    (so.pages.all fun p => p.lines.any fun l => l.segs.any fun s => match s with
+      | .run _ c _ _ _ _ _ => c == bg
+      | _ => false)
+  -- The furniture is the frame's, not the step's: three step pages advance
+  -- the deck position by ONE frame, so the section page after them shows
+  -- 1 of 2 elapsed — not 3 of 2.
+  let (pDoc, pDs) := elabStr (themed
+    ("\\begin{frame}{Steps}\na\n\n\\pause\nb\n\n\\pause\nc\n\\end{frame}\n" ++
+     "\\section{Mid}\n\\begin{frame}{After}\nd\n\\end{frame}"))
+  t "stepped deck source clean" pDs.isEmpty
+  let pOut := Layout.run (Layout.Geom.ofPage pDoc.page) oneFace none pDoc
+  t "step pages plus divider plus frame" (pOut.pages.size == 5)
+  let alert : Ir.Color := ⟨0xEB, 0x81, 0x1B⟩
+  let mp : Dim.Sp := (Layout.Geom.ofPage pDoc.page).textWidth * 7875 / 10000
+  t "the progress position belongs to the frame, not the step"
+    (match pOut.pages[3]? with
+     | some p => p.fills.any fun f => f.w == mp / 2 && f.color == alert
+     | none => false)
+  -- A note through the themed standout path: the page is the page
+  -- without it.
+  let (nDoc, _) := elabStr (themed
+    "\\begin{frame}[standout]\nShown.\n\\note{never printed}\n\\end{frame}")
+  let (bDoc, _) := elabStr (themed "\\begin{frame}[standout]\nShown.\n\\end{frame}")
+  let nOut := Layout.run (Layout.Geom.ofPage nDoc.page) oneFace none nDoc
+  let bOut := Layout.run (Layout.Geom.ofPage bDoc.page) oneFace none bDoc
+  t "a themed standout frame does not print its speaker note"
+    (nOut.pages.map (·.lines.size) == bOut.pages.map (·.lines.size))
+
 /-- The themed slides furniture, keyed on the semantic palette entries: page
 background and text colour, the frame-title bar, the section page with its
 progress bar. No theme machinery here — the keys are the API, so a theme
@@ -3173,6 +3227,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       overlayChecks ref oneFace
       noteChecks ref oneFace
       themeFurnitureChecks ref oneFace
+      themeReconcileChecks ref oneFace
       scannerChecks ref
 
 def main (args : List String) : IO UInt32 := do
