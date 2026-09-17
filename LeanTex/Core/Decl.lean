@@ -55,7 +55,7 @@ private def parseColor (s : String) : Option Value := do
     | _ => none
   | _ => none
 
-private def isIdentChar (c : Char) : Bool :=
+def isIdentChar (c : Char) : Bool :=
   c.isAlphanum || c == '_' || c == '.'
 
 /-- Split on commas that are not inside braces, brackets, or quotes. Public

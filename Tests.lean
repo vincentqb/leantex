@@ -2779,6 +2779,48 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "color pdf components" ((Ir.Color.mk 255 0 128).pdfComponents == "1 0 0.502")
   t "color black components" (Ir.Color.black.pdfComponents == "0 0 0")
 
+/-- xcolor's `!` mixing in the palette. Its own def: `main`'s elaboration
+budget is spent (see lineChecks). -/
+def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pal : Ir.Palette := { entries := #[("base", ⟨0x40, 0x00, 0x80⟩)] }
+  t "mix toward white" (pal.resolve "base!50" == some ⟨0xA0, 0x80, 0xC0⟩)
+  t "mix with black" (pal.resolve "base!50!black" == some ⟨0x20, 0x00, 0x40⟩)
+  t "mix chain folds left" (pal.resolve "base!50!black!30" ==
+    some (((⟨0x40, 0x00, 0x80⟩ : Ir.Color).mix 50 Ir.Color.black).mix 30 Ir.Color.white))
+  t "mix black!2 is near-white"
+    (({} : Ir.Palette).resolve "black!2" == some ⟨250, 250, 250⟩)
+  t "mix plain name still resolves" (pal.resolve "base" == some ⟨0x40, 0x00, 0x80⟩)
+  t "mix pct over 100 rejected" (pal.resolve "base!101" == none)
+  t "mix unknown atom rejected" (pal.resolve "nope!50" == none)
+  -- Declaration site: a mix value reads the entries declared so far.
+  let doc (body : String) := elabStr ("\\documentclass{article}\n" ++
+    "\\palette{ fg = #000000, bg = #ffffff, dim = bg!50!fg, faint = black!2 }\n" ++
+    "\\begin{document}" ++ body ++ "\\end{document}")
+  let (pDoc, pDs) := doc "x"
+  t "palette mix entry clean" pDs.isEmpty
+  t "palette mix entry value" (pDoc.palette.find? "dim" == some ⟨0x80, 0x80, 0x80⟩)
+  t "palette black!2 entry" (pDoc.palette.find? "faint" == some ⟨250, 250, 250⟩)
+  -- Use site: \textcolor takes a mix, `fg`/`bg` naming the current semantic
+  -- foreground and background. A computed colour carries no var name.
+  let (uDoc, uDs) := doc "\\textcolor{fg!50!bg}{x}"
+  t "textcolor mix resolves without W0304" (!uDs.any (·.code == "W0304"))
+  t "textcolor mix colours the content" (uDoc.body == #[.para #[
+    .colored ⟨0x80, 0x80, 0x80⟩ none #[.text "x"]]])
+  t "textcolor mix with unknown base still warns"
+    (warnCodes ("\\documentclass{article}\\begin{document}" ++
+      "\\textcolor{quiet!50}{x}\\end{document}") == ["W0304"])
+  -- Later declarations override earlier ones, theme defaults included.
+  let (oDoc, _) := elabStr ("\\documentclass{article}\n" ++
+    "\\palette{ a = #111111 }\\palette{ a = #222222 }\n" ++
+    "\\tokens{ s = 4pt }\\tokens{ s = 8pt }\n" ++
+    "\\begin{document}x\\end{document}")
+  t "palette redeclare overrides" (oDoc.palette.find? "a" == some ⟨0x22, 0x22, 0x22⟩)
+  t "tokens redeclare overrides"
+    ((oDoc.tokens.find? "s").map (·.width) == some (Dim.Length.ofSp (Dim.pt 8)))
+  t "palette redeclare keeps one entry"
+    ((oDoc.palette.entries.filter (·.1 == "a")).size == 1)
+
 def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- \fonts declarations and family resolution
@@ -2983,6 +3025,7 @@ def main (args : List String) : IO UInt32 := do
   smartChecks ref
   linkHtmlChecks ref
   paletteChecks ref
+  mixChecks ref
   fontsDeclChecks ref
   fontSuiteChecks ref
 

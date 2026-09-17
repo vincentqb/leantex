@@ -764,11 +764,14 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           | some (.group cname _), some (.group body _) =>
             i := j2 + 1
             let key := argText ctx cname
-            match ctx.palette.find? key with
+            match ctx.palette.resolve key with
             | some c =>
               acc := flushText acc sb
               sb := ""
-              acc := acc.push (.colored c (some key) (← elabInlines ctx body))
+              -- A mix expression is a computed value, not a token: only a
+              -- plain palette name rides along for the HTML var(--name).
+              let cssName := if (ctx.palette.find? key).isSome then some key else none
+              acc := acc.push (.colored c cssName (← elabInlines ctx body))
             | none =>
               -- The colour is unresolvable; the content is not. Keeping it
               -- uncoloured is the best-effort contract: a wrong colour beats
@@ -1725,9 +1728,15 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
       diag ctx "E0320" s!"invalid entry in \\tokens: {entry.quote}" pos
         (help := "entries look like: name = length")
     | some (key, valueSrc) =>
+      -- A redeclared token replaces the earlier entry, so a later
+      -- declaration overrides — a theme's defaults included. Entries
+      -- already derived from the old value keep it: references resolve
+      -- when the entry is read, in declaration order.
+      let put (acc : Array (String × SymGlue)) (g : SymGlue) :=
+        (acc.filter (·.1 != key)).push (key, g)
       match Decl.parseValue valueSrc acc with
-      | some (.glue g) => acc := acc.push (key, g)
-      | some (.dim d) => acc := acc.push (key, { width := Dim.Length.ofSp d })
+      | some (.glue g) => acc := put acc g
+      | some (.dim d) => acc := put acc { width := Dim.Length.ofSp d }
       | some v =>
         modify fun st => { st with
           diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
@@ -1783,8 +1792,10 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
       | "indent" => st := { st with indent := ← asLength }
       | "gap" => st := { st with gap := ← asLength }
       | "rule" =>
-        match ctx.palette.find? valueSrc with
-        | some c => st := { st with rule := some (c, some valueSrc) }
+        match ctx.palette.resolve valueSrc with
+        | some c =>
+          let name := if (ctx.palette.find? valueSrc).isSome then some valueSrc else none
+          st := { st with rule := some (c, name) }
         | none =>
           match Decl.parseValue valueSrc with
           | some (.color r g b) => st := { st with rule := some (⟨r, g, b⟩, none) }
@@ -1796,28 +1807,48 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
   return { entries := rest.push (element, st) }
 
 /-- `\palette{...}`: named colours. Every entry becomes usable both as
-`\textcolor{name}{...}` and as a bare `\name` declaration. -/
-private def applyPalette (ctx : Ctx) (pal : Palette) (entries : Array Decl.Entry)
+`\textcolor{name}{...}` and as a bare `\name` declaration. Parses its own
+entries one at a time — a value may be a mix expression (`black!2`,
+`accent!50!black`) over the entries declared so far, which a generic
+pre-parse would reject. A redeclared name replaces the earlier entry: a
+later declaration overrides, which is what lets a document override a
+theme's defaults. -/
+private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
     (pos : Pos) : EM Palette := do
   let mut pal := pal
-  for e in entries do
-    match e.value with
-    | .color r g b =>
-      if builtinNames.contains e.key then
-        diag ctx "E0303" s!"palette name '{e.key}' collides with a built-in command" pos
+  for entry in Decl.splitEntries src do
+    match Decl.splitEntry entry with
+    | none =>
+      diag ctx "E0320" s!"invalid entry in \\palette: {entry.quote}" pos
+        (help := "entries look like: name = #RRGGBB")
+    | some (key, valueSrc) =>
+      if !key.toList.all Decl.isIdentChar then
+        diag ctx "E0320" s!"invalid key in \\palette: {entry.quote}" pos
+          (help := "entries look like: name = #RRGGBB")
+      else if builtinNames.contains key then
+        diag ctx "E0303" s!"palette name '{key}' collides with a built-in command" pos
       else
-        pal := { pal with entries := pal.entries.push (e.key, ⟨r, g, b⟩) }
-    | .ident other =>
-      -- An alias, so two names that must never drift apart share one value.
-      match pal.find? other with
-      | some c => pal := { pal with entries := pal.entries.push (e.key, c) }
-      | none =>
-        diag ctx "E0326" s!"'{other}' is not in the palette" pos
-          (help := "declare it first; aliases read earlier entries")
-    | v =>
-      modify fun st => { st with
-        diags := st.diags.push (Decl.wrongType ctx.file "palette" e.key
-          "a color like #7C3AED" v pos) }
+        let put (pal : Palette) (c : Color) : Palette :=
+          { pal with entries := (pal.entries.filter (·.1 != key)).push (key, c) }
+        match Decl.parseValue valueSrc with
+        | some (.color r g b) => pal := put pal ⟨r, g, b⟩
+        | v? =>
+          -- A name, an alias, or a mix: all read against what is declared
+          -- so far, so two names that must never drift apart share a value.
+          match pal.resolve valueSrc with
+          | some c => pal := put pal c
+          | none =>
+            match v? with
+            | some (.ident other) =>
+              diag ctx "E0326" s!"'{other}' is not in the palette" pos
+                (help := "declare it first; aliases read earlier entries")
+            | some v =>
+              modify fun st => { st with
+                diags := st.diags.push (Decl.wrongType ctx.file "palette" key
+                  "a color like #7C3AED" v pos) }
+            | none =>
+              diag ctx "E0321" s!"cannot read colour for '{key}': {valueSrc.quote}" pos
+                (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
   return pal
 
 /-- `\output{...}`: what to build, so a document needs no CLI options.
@@ -2128,6 +2159,11 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               let tk ← applyTokens ctx tokens src pos
               tokens := tk
               ctx := { ctx with tokens := tk }
+            else if name == "palette" then
+              -- Its own entries too: a value may be a mix over earlier ones.
+              let pal ← applyPalette ctx palette src pos
+              palette := pal
+              ctx := { ctx with palette := pal }
             else
               let (entries, ds) := Decl.parseBlock ctx.file src pos name
               modify fun st => { st with diags := st.diags ++ ds }
@@ -2135,10 +2171,6 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                 page ← applyPage ctx page entries pos
               else if name == "fonts" then
                 fonts ← applyFonts ctx fonts entries pos
-              else if name == "palette" then
-                let pal ← applyPalette ctx palette entries pos
-                palette := pal
-                ctx := { ctx with palette := pal }
               else
                 info ← applyMeta ctx info entries pos
           | _ =>

@@ -57,6 +57,45 @@ structure Palette where
 def Palette.find? (p : Palette) (name : String) : Option Color :=
   (p.entries.find? (·.1 == name)).map (·.2)
 
+def Color.white : Color := { r := 255, g := 255, b := 255 }
+
+/-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`,
+per sRGB channel, rounded. -/
+def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
+  let ch (x y : UInt8) : UInt8 :=
+    UInt8.ofNat ((x.toNat * pct + y.toNat * (100 - pct) + 50) / 100)
+  { r := ch a.r b.r, g := ch a.g b.g, b := ch a.b b.b }
+
+/-- A palette expression: a name, or xcolor's `!` mix folding left —
+`a!30!b` is 30% of `a` over `b`, and a trailing `a!30` mixes toward white,
+so `black!2` is a near-white. `black` and `white` are always available;
+every other atom resolves against this palette, so `fg!50!bg` names the
+document's current foreground and background. -/
+def Palette.resolve (p : Palette) (expr : String) : Option Color :=
+  let atom (s : String) : Option Color :=
+    if s == "black" then some Color.black
+    else if s == "white" then some Color.white
+    else p.find? s
+  let rec go (c : Color) : List String → Option Color
+    | [] => some c
+    | pctS :: rest =>
+      match pctS.toNat? with
+      | none => none
+      | some pct =>
+        if pct > 100 then none
+        else match rest with
+          | [] => some (c.mix pct Color.white)
+          | name :: rest' =>
+            match atom name with
+            | some b => go (c.mix pct b) rest'
+            | none => none
+  match (expr.splitOn "!").map (·.trimAscii.toString) with
+  | [] => none
+  | first :: rest =>
+    match atom first with
+    | some c => go c rest
+    | none => none
+
 /-- Font families a document asks for, as declared by `\fonts`. `dirs` are
 directories of font files the document ships, relative to the document, so a
 document that carries its fonts renders the same on every host. Every `dir`
