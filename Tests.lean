@@ -1623,6 +1623,21 @@ def envBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match (elabStr "Take \\begin{banner}{Logo}the text\\end{banner} along.").1.body with
      | #[.para xs] => Ir.plainText xs == "Take the text along."
      | _ => false)
+  -- A spliced body's edge space is a separator, not wrapper furniture:
+  -- dropping it glued `before` to `inner`, and keeping it twice would
+  -- double the gap the author wrote once.
+  t "an inline unknown environment's edge spaces still separate words"
+    (match (elabStr "Glue check:before\\begin{gizmo} inner \\end{gizmo}after done.").1.body with
+     | #[.para xs] => Ir.plainText xs == "Glue check:before inner after done."
+     | _ => false)
+  t "splicing an unknown environment never doubles a space"
+    (match (elabStr "before\n\\begin{gizmo}\ninner\n\\end{gizmo}\nafter").1.body with
+     | #[.para xs] => Ir.plainText xs == "before inner after"
+     | _ => false)
+  t "a paragraph never opens with a spliced body's leading space"
+    (match (elabStr "\\begin{gizmo} inner \\end{gizmo} rest.").1.body with
+     | #[.para xs] => Ir.plainText xs == "inner rest."
+     | _ => false)
 
 /-- The optional-argument recovery, fed the malformed across line breaks:
 an unclosed `[` never turns into a fatal error however the lines fall — the

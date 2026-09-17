@@ -340,12 +340,6 @@ private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
       | _ => break
   return (body.extract i body.size, none)
 
-/-- A body without its edge spaces: the newline after `\begin{...}` and the
-one before `\end{...}` belong to the dropped wrapper, not to the sentence
-the body splices into. -/
-private def trimEdgeSpaces (raws : Array Raw) : Array Raw :=
-  trimBy raws isSpace
-
 /-- A command whose group never materialised after an unclosed `[` is
 dropped whole: W0310 already named the typo, and one skipped declaration
 must not fail the build or bleed into the next construct as stray content. -/
@@ -399,6 +393,16 @@ private def argText (ctx : Ctx) (raws : Array Raw) : String :=
     | .group body _ => "{" ++ String.join (body.toList.map one) ++ "}"
     | _ => one r
   (String.join (raws.toList.map flat)).trimAscii.toString
+
+/-- Whether a whitespace token separates here: yes, unless the space is
+already there. A group body keeps a deliberate leading space (`{ (x)}`);
+a paragraph's own edges are trimmed by `mkPara`, not here. -/
+private def needsSep (acc : Array Inline) (sb : String) : Bool :=
+  if sb.isEmpty then
+    match acc.back? with
+    | some (.text t) => !t.endsWith " "
+    | _ => true
+  else !sb.endsWith " "
 
 mutual
 
@@ -456,6 +460,7 @@ partial def takeArgs (ctx : Ctx) (cmd : UserCmd) (name : String)
 
 /-- Elaborate raw items as inline content. -/
 partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
+  let mut raws := raws
   let mut acc : Array Inline := #[]
   let mut sb : String := ""
   let mut i := 0
@@ -466,11 +471,11 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
       | .word s _ =>
         sb := sb ++ s
         i := i + 1
-      | .space =>
-        sb := sb.push ' '
-        i := i + 1
-      | .par _ =>
-        sb := sb.push ' '
+      | .space | .par _ =>
+        -- Whitespace is one separator however many tokens a splice put side
+        -- by side (a run was a single token at the lexer), and a paragraph
+        -- never opens with one: a leading space glue would indent the line.
+        if needsSep acc sb then sb := sb.push ' '
         i := i + 1
       | .sym '[' _ =>
         sb := sb.push '['
@@ -497,34 +502,36 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         acc := acc ++ (← elabInlines ctx body)
         i := i + 1
       | .env name body pos =>
-        i := i + 1
         if let some f := Parse.inputEnvFile? name then
+          i := i + 1
           acc := flushText acc sb
           sb := ""
           acc := acc ++ (← elabInlines { ctx with file := f } body)
         else if mathEnvs.contains name then
+          i := i + 1
           acc := flushText acc sb
           sb := ""
           acc := acc.push (.math true (rawSrc body))
         else
         match reservedEnv.lookup name with
         | some milestone =>
+          i := i + 1
           warnOnce ctx ("env:" ++ name) "W0307"
             s!"'\{{name}}' is not implemented yet; its content is not rendered" pos
             (help := s!"planned for {milestone}; see PLAN.md")
         | none =>
           warnOnce ctx ("env:" ++ name) "W0302" s!"unknown environment '\{{name}}'; its body is kept" pos
             (help := "see PLAN.md for planned environments")
-          acc := flushText acc sb
-          sb := ""
           -- The arguments on the `\begin` line go with the wrapper here
           -- too: an inline unknown environment obeys the same scanner as a
-          -- block one, and its edge spaces belong to the wrapper's source
-          -- lines, not the sentence.
+          -- block one. The body splices into this very scan, so its edge
+          -- spaces are ordinary separators — collapsed against the
+          -- neighbours by the whitespace arm, never dropped (gluing
+          -- `before` to `inner`) and never doubled.
           let (kept, unclosed) := dropEnvArgs body pos
           if let some bpos := unclosed then
             warnUnclosed ctx s!"'\\begin\{{name}}'" bpos
-          acc := acc ++ (← elabInlines ctx (trimEdgeSpaces kept))
+          raws := raws.extract 0 i ++ kept ++ raws.extract (i + 1) raws.size
       | .verb s _ =>
         -- Verbatim inside inline content: kept as mono text, spaces held as
         -- no-break spaces, lines separated by forced breaks.
@@ -857,12 +864,29 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   if cur.isEmpty then
     return none
   let mut inlines ← elabInlines ctx cur
+  -- A spliced body can leave a leading space no raw-level skip saw; a
+  -- paragraph never opens with a space glue.
+  if let some (Inline.text s) := inlines[0]? then
+    if s.startsWith " " then
+      let t := String.ofList (s.toList.dropWhile (· == ' '))
+      if t.isEmpty then
+        inlines := inlines.extract 1 inlines.size
+      else
+        inlines := inlines.modify 0 fun _ => .text t
   -- A forced break at the very end says what the paragraph end already
   -- says; kept, it is an empty line in the PDF and an empty row in HTML.
   repeat
     match inlines.back? with
     | some (.linebreak _) => inlines := inlines.pop
-    | some (.text s) => if s.trimAscii.isEmpty then inlines := inlines.pop else break
+    | some (.text s) =>
+      if s.trimAscii.isEmpty then inlines := inlines.pop
+      else
+        -- ...and a spliced body's trailing space is the same edge case as
+        -- the leading one above.
+        if s.endsWith " " then
+          let t := String.ofList ((s.toList.reverse.dropWhile (· == ' ')).reverse)
+          inlines := inlines.pop.push (.text t)
+        break
     | _ => break
   return if inlines.isEmpty then none else some (.para inlines)
 
