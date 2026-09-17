@@ -125,18 +125,21 @@ The rows, each with its why:
 - A palette role or token the engine reads owes a single resolving site,
   its contrast contract, and a per-bundle completeness check. moloch
   declares `separator` and no code reads it; sectionpage alignment fell
-  back per `getD` site. Enforcement arrives with the resolve-once
-  `Design` record (below); today Contrast.lean carries the pairing
-  contract and the bundles are pinned by test.
+  back per `getD` site. The resolve-once `Design` record landed while
+  this entry was in flight (the theme-contract entry above): the pairing
+  contract quantifies over `Theme.builtin`, the role census runs in
+  Tests, and `separator` gained its consumer (the title-page rule) and
+  moved into `consumedRoles`.
 - A page-opening path owes a declared vertical distribution, never a
   default. The title jammed at the top of its page, and the plain-frame
-  branch opens a page with no `pageStyle` at all. Enforcement arrives
-  with `vdist` on `Op.pageStyle` (design audit R1; its `distribute_sum`
-  lemma is already proved in that audit's scratch); until then a new
-  page-opening path sets `centerV` deliberately.
-- A furniture element owes a declared alignment: `\maketitle` hard-codes
+  branch opens a page with no `pageStyle` at all. Landed while this
+  entry was in flight: `VDist` rides on `pageStyle` (the
+  vertical-distribution slice, design audit R1) with the exact-split
+  theorems; the rule stands for any new page-opening path.
+- A furniture element owes a declared alignment: `\maketitle` hard-coded
   `.center` where the moloch source is ragged-left under golden-ratio
-  glue. Arrives with `align` on `ElementStyle` (design audit R2).
+  glue. Landed while this entry was in flight: `align` on `ElementStyle`
+  (design audit R2), the title page styled through it.
 - An `AssertKind` owes its judge in `Check.one` (the match is exhaustive
   — the compiler collects) and a test that re-breaks each guarantee once
   (the card slice's pattern).
@@ -153,19 +156,16 @@ scan included, runs in ~1.6 s.
 The shared shapes, named once so the next agent extends instead of
 reinventing (status as of this entry):
 
-- Resolve-once-then-total: `Design.ofDoc : Palette → Tokens → Styles →
-  Design`, semantic fields non-Option, every default applied at one
-  construction site, backends and `Layout.collect*` read only the
-  record — never `find?`+`getD` per site. Proposal (provability audit's
-  keystone R1+R2, with themes as typed values); what it deletes is ~29
-  per-site fallbacks and the Contrast spec copies.
-- Ratio vertical distribution: `vdist : Nat × Nat` on `Op.pageStyle` and
-  `B`, `finishPage` calling `distribute`, exhaustiveness making
-  "unowned leftover" unrepresentable. Proposal (design audit R1);
-  today `centerV : Bool` with a hard-coded ½ split.
-- Declared alignment: `align` and `separator` keys on `ElementStyle`,
-  `titlepage` styleable. Proposal (design audit R2); today the struct
-  has neither key.
+- Resolve-once-then-total: exists — `Ir.Design.ofDoc`, landed with the
+  theme-contract slice (provability audit's keystone R1+R2, themes as
+  typed values); Contrast and HtmlDoc read it, the Contrast spec copies
+  are deleted, and `Layout.Acc`'s adoption is the recorded follow-up.
+- Ratio vertical distribution: exists — `Layout.VDist` on `pageStyle`
+  with the exact-split theorems (the vertical-distribution slice,
+  design audit R1); frames declare `[t]`/`[c]`/`[b]`, the title page
+  takes the golden split.
+- Declared alignment: exists — `align` and `separator` on
+  `ElementStyle`, `titlepage` styleable (design audit R2).
 - One bracket scanner: exists — `Elab.scanBracketArg`, the single scan
   that four disagreeing copies collapsed into (2026-09-16 entry).
 - One census: `Check.Shipped` exists and is the lever; the role census
