@@ -47,6 +47,35 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — the pre-commit gate now rejects the four defect classes the
+audit rounds actually produced, each with a stated blind-spot list and a
+selftest: the quadratic prepend in every spelling (`expr ++ recurse rest`,
+dotted head included — not only a `#[` literal; the `mut` self-append and
+the parenthesised accumulator stay legal), a default value on an inductive
+constructor field (the binder shape `(name : … := …)` is required, so a
+Markdown table row in a docstring no longer fires), IO added under
+`LeanTex/Core/` (FontDb excepted; `--` comments are stripped first), and a
+backend reaching into the surface (`import`, `open`, or qualified use of
+`Lex`/`Parse`/`Elab`/`Compat`, not import alone). Every predicate carries
+positive cases — the shapes whose escape prompted it — and negative cases
+from this tree, run as `--selftest` from `lake test`. Hook cost, measured:
+0.03 s on a commit touching no `.lean` file, 1.3 s warm on one that does.
+The AGENTS rules now say what the hook rejects, no more than the checks
+enforce, and the hot-path example shows a shape the gate really catches
+(`#[x] ++ walk rest`; the bare `#[x] ++ rest` it used to show is a
+spelling the gate deliberately passes).
+
+The five `expr ++ recurse` sites the review named were re-measured rather
+than rewritten. `leantex dump` on the lorem bench doc at 1×/4×/16× body
+scale runs 46/144/580 ms — a quadratic fit puts the copy term under 1 ms
+at real document scale and ~60 ms at 16×, on a debug-only path that is
+frontend-dominated. `Html.escapeText`/`escapeAttr` append `List Char`,
+which copies the ≤5-element left operand and shares the recursive tail —
+linear by construction, and the shape carries the escaper theorems.
+`Ir.plainText` feeds on argument-sized inline arrays. All five stay as
+they are; the gate keeps the pattern out of new code, where the same
+spelling over a `String` accumulator did turn 4 ms into 1157 ms.
+
 2026-09-17 — the round-three review: two corrections to the second-round
 entry below, and one root cause under its four remaining symptoms. The
 entry claims the recovery "takes the group wherever the line break falls";
