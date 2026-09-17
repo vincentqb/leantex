@@ -418,6 +418,184 @@ inductive VAlign where
   | golden
   deriving Repr, BEq, Inhabited
 
+namespace Pic
+
+/-- One shape of an elaborated picture, in picture coordinates: sp with y
+growing upward, as TikZ has it. The elaborator evaluates everything before
+the IR — loops unrolled, expressions reduced, colours resolved, `scale=`
+applied — so a shape is concrete ink both backends place without reading
+the surface again. -/
+inductive Shape where
+  /-- A filled rectangle: `(x, y)` one corner, `(x + w, y + h)` the other. -/
+  | rect (x y w h : Sp) (color : Color)
+  /-- A text label whose box is centred on `(x, y)` — TikZ's default node
+  anchor — at `scale` per mille of the body size. -/
+  | label (x y : Sp) (text : String) (color : Color) (scale : Nat)
+  deriving Repr, BEq, Inhabited
+
+/-- Repaint a shape, keeping its geometry and text: how a picture dims
+under an overlay cover. -/
+def Shape.recolor (f : Color → Color) : Shape → Shape
+  | .rect x y w h c => .rect x y w h (f c)
+  | .label x y t c sc => .label x y t (f c) sc
+
+/-- A box in picture coordinates: min corner, then max corner. -/
+abbrev Box := (Sp × Sp) × (Sp × Sp)
+
+/-- The declared box of a shape, corners sorted. A label's box is its
+anchor point — its text extent is a font question layout answers — so a
+picture's box bounds every fill entirely and every label at its anchor
+(`box_in_bbox`); the ink of a label can stand a little proud of it. -/
+def Shape.box : Shape → Box
+  | .rect x y w h _ => ((min x (x + w), min y (y + h)), (max x (x + w), max y (y + h)))
+  | .label x y _ _ _ => ((x, y), (x, y))
+
+structure Picture where
+  shapes : Array Shape := #[]
+  deriving Repr, BEq, Inhabited
+
+def Picture.recolor (p : Picture) (f : Color → Color) : Picture :=
+  { shapes := p.shapes.map (·.recolor f) }
+
+/-- The texts a picture's labels set, for the font-scalar walk: every glyph
+a picture can ask a face for is here. -/
+def Picture.labelTexts (p : Picture) : Array String :=
+  p.shapes.filterMap fun s => match s with
+    | .label _ _ t _ _ => some t
+    | .rect _ _ _ _ _ => none
+
+/-- `a` is inside `b`, componentwise. -/
+def Box.le (a b : Box) : Prop :=
+  b.1.1 ≤ a.1.1 ∧ b.1.2 ≤ a.1.2 ∧ a.2.1 ≤ b.2.1 ∧ a.2.2 ≤ b.2.2
+
+/-- The join of two boxes: the smallest box holding both. -/
+def Box.join (a b : Box) : Box :=
+  ((min a.1.1 b.1.1, min a.1.2 b.1.2), (max a.2.1 b.2.1, max a.2.2 b.2.2))
+
+-- The Box and Place proofs state their arithmetic over bare `Int` binders
+-- because `omega` does not see through the `Sp` abbreviation (the same
+-- workaround `footBandFor`'s proof records in Layout).
+
+theorem Box.le_refl (a : Box) : Box.le a a := by
+  have h : ∀ x : Int, x ≤ x := fun _ => Int.le_refl _
+  exact ⟨h _, h _, h _, h _⟩
+
+theorem Box.le_join_left (a b : Box) : Box.le a (Box.join a b) := by
+  have hmin : ∀ x y : Int, min x y ≤ x := by intro x y; omega
+  have hmax : ∀ x y : Int, x ≤ max x y := by intro x y; omega
+  exact ⟨hmin _ _, hmin _ _, hmax _ _, hmax _ _⟩
+
+theorem Box.le_join_right (a b : Box) : Box.le b (Box.join a b) := by
+  have hmin : ∀ x y : Int, min x y ≤ y := by intro x y; omega
+  have hmax : ∀ x y : Int, y ≤ max x y := by intro x y; omega
+  exact ⟨hmin _ _, hmin _ _, hmax _ _, hmax _ _⟩
+
+theorem Box.le_trans {a b c : Box} (h1 : Box.le a b) (h2 : Box.le b c) : Box.le a c := by
+  have h : ∀ x y z : Int, x ≤ y → y ≤ z → x ≤ z := fun _ _ _ => Int.le_trans
+  exact ⟨h _ _ _ h2.1 h1.1, h _ _ _ h2.2.1 h1.2.1,
+         h _ _ _ h1.2.2.1 h2.2.2.1, h _ _ _ h1.2.2.2 h2.2.2.2⟩
+
+/-- The bounding-box fold, `List` companion first as every walk here. -/
+def bboxList (acc : Box) : List Shape → Box
+  | [] => acc
+  | s :: rest => bboxList (Box.join acc s.box) rest
+
+/-- The picture's bounding box: the join of its shapes' boxes. An empty
+picture is the empty box at the origin. -/
+def Picture.bbox (p : Picture) : Box :=
+  match p.shapes.toList with
+  | [] => ((0, 0), (0, 0))
+  | s :: rest => bboxList s.box rest
+
+theorem bboxList_le (acc : Box) (xs : List Shape) : Box.le acc (bboxList acc xs) := by
+  induction xs generalizing acc with
+  | nil => exact Box.le_refl acc
+  | cons s rest ih =>
+    exact Box.le_trans (Box.le_join_left acc s.box) (ih (Box.join acc s.box))
+
+theorem bboxList_mem (acc : Box) (xs : List Shape) (s : Shape) (h : s ∈ xs) :
+    Box.le s.box (bboxList acc xs) := by
+  induction xs generalizing acc with
+  | nil => cases h
+  | cons t rest ih =>
+    cases h with
+    | head =>
+      exact Box.le_trans (Box.le_join_right acc s.box) (bboxList_le _ rest)
+    | tail _ hmem => exact ih (Box.join acc t.box) hmem
+
+/-- The picture stays in its box: the bounding box contains the declared
+box of every shape it emits, so nothing the picture draws stands outside
+what layout measures for it (labels bound at their anchors, see
+`Shape.box`). -/
+theorem Picture.box_in_bbox (p : Picture) (s : Shape) (h : s ∈ p.shapes) :
+    Box.le s.box p.bbox := by
+  have h' : s ∈ p.shapes.toList := by simpa using h
+  unfold Picture.bbox
+  split
+  · next heq => rw [heq] at h'; cases h'
+  · next t rest heq =>
+    rw [heq] at h'
+    cases h' with
+    | head => exact bboxList_le _ rest
+    | tail _ hmem => exact bboxList_mem _ rest s hmem
+
+/-- Where a picture lands on a page: the map from picture coordinates
+(y up) to layout coordinates (y down). The elaborator has already applied
+`scale=`, so what is left is a translation and the y reflection — affine
+with unit determinant, hence exactly invertible over sp
+(`ofPage_toPage`/`toPage_ofPage`), monotone in x and antitone in y
+(`toPage_box`): a shape's placed box is the transform of its declared box,
+corner for corner, so a diagram cannot silently drift off its slot. -/
+structure Place where
+  /-- Page x where the picture's `xmin` lands (its left edge). -/
+  x0 : Sp
+  /-- Page y where the picture's `ymax` lands (its top edge). -/
+  yTop : Sp
+  xmin : Sp
+  ymax : Sp
+  deriving Repr, BEq, Inhabited
+
+def Place.toPage (t : Place) (u : Sp × Sp) : Sp × Sp :=
+  (t.x0 + (u.1 - t.xmin), t.yTop + (t.ymax - u.2))
+
+def Place.ofPage (t : Place) (q : Sp × Sp) : Sp × Sp :=
+  (t.xmin + (q.1 - t.x0), t.ymax - (q.2 - t.yTop))
+
+/-- The placement transform loses nothing: every page point recovers its
+picture point exactly. -/
+theorem Place.ofPage_toPage (t : Place) (u : Sp × Sp) : t.ofPage (t.toPage u) = u := by
+  obtain ⟨ux, uy⟩ := u
+  have hx : ∀ a b c : Int, b + (a + (c - b) - a) = c := by intro a b c; omega
+  have hy : ∀ m yT q : Int, m - (yT + (m - q) - yT) = q := by intro m yT q; omega
+  simp only [toPage, ofPage, Prod.mk.injEq]
+  exact ⟨hx _ _ _, hy _ _ _⟩
+
+theorem Place.toPage_ofPage (t : Place) (q : Sp × Sp) : t.toPage (t.ofPage q) = q := by
+  obtain ⟨qx, qy⟩ := q
+  have hx : ∀ a b c : Int, b + (a + (c - b) - a) = c := by intro a b c; omega
+  have hy : ∀ yT m q : Int, yT + (m - (m - (q - yT))) = q := by intro yT m q; omega
+  simp only [toPage, ofPage, Prod.mk.injEq]
+  exact ⟨hx _ _ _, hy _ _ _⟩
+
+/-- The transform preserves containment: a picture point inside a declared
+box lands inside that box's transform — x keeps its order, y reverses, so
+the placed box's top-left corner is the declared box's `(xmin, ymax)`. With
+`box_in_bbox` this is why no shape escapes the placed picture. -/
+theorem Place.toPage_box (t : Place) (b : Box) (u : Sp × Sp)
+    (hx1 : b.1.1 ≤ u.1) (hx2 : u.1 ≤ b.2.1) (hy1 : b.1.2 ≤ u.2) (hy2 : u.2 ≤ b.2.2) :
+    (t.toPage (b.1.1, b.2.2)).1 ≤ (t.toPage u).1
+      ∧ (t.toPage u).1 ≤ (t.toPage (b.2.1, b.1.2)).1
+      ∧ (t.toPage (b.1.1, b.2.2)).2 ≤ (t.toPage u).2
+      ∧ (t.toPage u).2 ≤ (t.toPage (b.2.1, b.1.2)).2 := by
+  have hx : ∀ x0 m a b : Int, a ≤ b → x0 + (a - m) ≤ x0 + (b - m) := by
+    intro x0 m a b h; omega
+  have hy : ∀ yT m a b : Int, a ≤ b → yT + (m - b) ≤ yT + (m - a) := by
+    intro yT m a b h; omega
+  simp only [toPage]
+  exact ⟨hx _ _ _ _ hx1, hx _ _ _ _ hx2, hy _ _ _ _ hy2, hy _ _ _ _ hy1⟩
+
+end Pic
+
 inductive Block where
   | para (content : Array Inline)
   | section (level : Nat) (starred : Bool) (title : Array Inline)
@@ -488,6 +666,13 @@ inductive Block where
   the palette entry the colour came from, when it had one, as `.colored`;
   the thickness is symbolic so a token may state it in em. -/
   | rule (color : Color) (name : Option String) (thickness : SymGlue)
+  /-- An elaborated `tikzpicture` subset: concrete shapes in picture
+  coordinates, everything evaluated at elaboration (loops unrolled,
+  expressions reduced, colours resolved, `scale=` applied). Layout places
+  the box and transforms shapes through `Pic.Place`; a construct outside
+  the subset never reaches here — it is diagnosed by name where it stood
+  (W0330/E0333), so nothing a picture declares goes silently missing. -/
+  | picture (pic : Pic.Picture)
   deriving Repr, BEq, Inhabited
 
 /-- The frames the deck numbers: a `.frame` that is neither standout nor
@@ -1230,6 +1415,18 @@ def dumpBlock (ind : String) (b : Block) : String :=
       | some n => s!" {n}"
       | none => s!" #{hex2 color.r}{hex2 color.g}{hex2 color.b}"
     s!"{ind}rule{nm} {dumpGlue thickness}\n"
+  | .picture pic =>
+    -- Every evaluated shape, so a golden witnesses the whole elaboration:
+    -- unrolled loops, reduced expressions, resolved colours.
+    s!"{ind}picture {pic.shapes.size} shapes\n" ++
+    String.join (pic.shapes.toList.map fun s =>
+      match s with
+      | .rect x y w h c =>
+        s!"{ind}  rect {x.toPtString} {y.toPtString} {w.toPtString} {h.toPtString} \
+#{hex2 c.r}{hex2 c.g}{hex2 c.b}\n"
+      | .label x y t c sc =>
+        s!"{ind}  label {x.toPtString} {y.toPtString} {t.quote} \
+#{hex2 c.r}{hex2 c.g}{hex2 c.b} {sc}\n")
 
 end
 
@@ -1387,6 +1584,8 @@ def maxStepBlock : Block → Nat
   | .framefoot _ => 1
   | .logo _ => 1
   | .rule _ _ _ => 1
+  -- A picture is concrete ink with no overlay structure inside it.
+  | .picture _ => 1
 
 def maxStepItems : List (Array Block) → Nat
   | [] => 1
@@ -1448,6 +1647,9 @@ def shadeBlock (cover : Cover) : Block → Block
   | .framefoot content => .framefoot content
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
+  -- A covered picture is the same picture, quieter: each shape takes its
+  -- own colour's cover, exactly as a coloured run does.
+  | .picture p => .picture (p.recolor cover.of)
 
 def shadeItems (cover : Cover) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
@@ -1516,6 +1718,9 @@ def dimBlock (cover : Cover) (k : Nat) : Block → Block
   | .framefoot content => .framefoot content
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
+  -- No overlay structure inside a picture: dimming happens where a `.step`
+  -- wraps it, through `shadeBlock`.
+  | .picture p => .picture p
 
 def dimItems (cover : Cover) (k : Nat) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
@@ -1588,6 +1793,7 @@ def unwrapItemStep : Block → Block
   | .framefoot content => .framefoot content
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
+  | .picture p => .picture p
 
 def unwrapItemStepItems (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
@@ -1651,6 +1857,10 @@ def blockTextOne (acc : String) : Block → String
   | .framefoot content => acc ++ plainText content
   -- A rule is decorative ink; it carries no text.
   | .rule _ _ _ => acc
+  -- A picture's labels are diagram ink, not running text: they reach the
+  -- shipped-page census through the label runs layout sets, and the census
+  -- rows assert them there.
+  | .picture _ => acc
 
 def blockTextItems (acc : String) : List (Array Block) → String
   | [] => acc
@@ -1692,6 +1902,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .framefoot _ => out
   | .logo _ => out
   | .rule _ _ _ => out
+  | .picture _ => out
 
 def headingLevelItems (out : Array Nat) : List (Array Block) → Array Nat
   | [] => out
@@ -1953,6 +2164,9 @@ theorem shadeBlock_text (cover : Cover) (b : Block) (acc : String) :
   -- A logo declaration is page furniture: the shade never repaints it, so
   -- its census — the declaration's own inline text — is untouched.
   | .logo _ => rfl
+  -- A shaded picture recolours its shapes and keeps its labels: no census
+  -- text either side.
+  | .picture _ => rfl
   | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ => rfl
 
 theorem shadeItems_text (cover : Cover) (items : List (Array Block))
@@ -2087,7 +2301,7 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (b : Block) (acc : String) :
   -- its census — the declaration's own inline text — is untouched.
   | .logo _ => rfl
   | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
-  | .rule _ _ _ => rfl
+  | .rule _ _ _ | .picture _ => rfl
 
 theorem dimItems_text (cover : Cover) (k : Nat) (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :
@@ -2136,7 +2350,7 @@ def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
   | .para _ | .section _ _ _ | .list _ _ | .center _ | .quote _ | .spaced _ _
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
-  | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ | .nav _ => true
+  | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ | .nav _ | .picture _ => true
 
 mutual
 
@@ -2163,6 +2377,7 @@ def keepForOne (t : String) : Block → Block
   | .logo c => .logo c
   | .framefoot c => .framefoot c
   | .rule c n th => .rule c n th
+  | .picture p => .picture p
 
 def keepForList (t : String) : List Block → List Block
   | [] => []
@@ -2216,6 +2431,9 @@ def textLeavesOne (acc : List String) : Block → List String
   | .frame title _ _ body => textLeavesList (plainText title :: acc) body.toList
   -- A rule is decorative ink; it carries no text (as `blockTextOne` reads it).
   | .rule _ _ _ => acc
+  -- A picture's labels reach the census through the shipped runs, as
+  -- `blockTextOne` reads it.
+  | .picture _ => acc
 
 def textLeavesItems (acc : List String) : List (Array Block) → List String
   | [] => acc
@@ -2258,7 +2476,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .nav body => orphanFreeList avail body.toList
   | .frame _ _ _ body => orphanFreeList avail body.toList
   | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
-  | .rule _ _ _ => true
+  | .rule _ _ _ | .picture _ => true
 
 def orphanFreeItems (avail : List String) : List (Array Block) → Bool
   | [] => true
@@ -2300,6 +2518,7 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .logo c => simp [textLeavesOne]
   | .framefoot c => simp [textLeavesOne]
   | .rule c n th => simp [textLeavesOne]
+  | .picture p => simp [textLeavesOne]
   | .list o items =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesItems_acc acc items.toList
@@ -2425,6 +2644,9 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
   | .rule c n th =>
+    intro s hs
+    simp [textLeavesOne] at hs
+  | .picture p =>
     intro s hs
     simp [textLeavesOne] at hs
   | .center body =>
@@ -2631,6 +2853,7 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .frame title _ _ body => imageSrcsBlockList (imageSrcsInlines out title) body.toList
   | .framefoot content => imageSrcsInlines out content
   | .rule _ _ _ => out
+  | .picture _ => out
 
 def imageSrcsItems (out : Array String) : List (Array Block) → Array String
   | [] => out

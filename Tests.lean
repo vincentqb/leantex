@@ -6096,6 +6096,57 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
        ((Elab.run "t" "\\includegraphics{figures/plot}").1)
      (h.splitOn "<img src=\"figures/plot.png\"").length == 2)
 
+/-- The picture block through layout: shapes land as fills and label runs
+through one `Pic.Place` transform. The transform and bounding-box facts are
+theorems (`Pic.Place.ofPage_toPage`, `Pic.Picture.box_in_bbox`); what is
+checked here is the placement they license — where the box lands, that the
+label centres on its anchor, that `{center}` centres the box, and that
+W0331 fires when the box cannot fit the text area (the diagnostic half of
+the stays-in-its-box contract). -/
+def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let red : Ir.Color := { r := 200, g := 40, b := 40 }
+  let pic : Ir.Pic.Picture := { shapes := #[
+    .rect 0 0 (Dim.pt 20) (Dim.pt 10) red,
+    .label (Dim.pt 10) (Dim.pt 5) "7" Ir.Color.black 800] }
+  t "picture bbox joins its shapes"
+    (pic.bbox == ((0, 0), (Dim.pt 20, Dim.pt 10)))
+  let run (body : Array Ir.Block) : Layout.Out :=
+    Layout.run geom oneFace none { body := body }
+  let out := run #[.picture pic]
+  t "picture ships one page" (out.pages.size == 1)
+  t "picture rect ships as one fill of its own size and colour"
+    ((out.pages[0]?.bind fun p => p.fills[0]?.map fun f =>
+      p.fills.size == 1 && f.x == geom.hmargin && f.y == geom.vmargin &&
+      f.w == Dim.pt 20 && f.h == Dim.pt 10 && f.color == red).getD false)
+  t "picture label ships its glyphs centred on the anchor"
+    ((out.pages[0]?.map fun p =>
+      match p.lines.toList with
+      | [l] =>
+        (match l.segs.toList with
+         | [Layout.Seg.run _ _ _ _ glyphs _ _ _] =>
+           String.ofList (glyphs.toList.map (·.2)) == "7"
+         | _ => false)
+        && l.x + l.setWidth / 2 == geom.hmargin + Dim.pt 10
+      | _ => false).getD false)
+  -- A fills-only picture is page content: the page ships.
+  let bare := run #[.picture { shapes := #[.rect 0 0 (Dim.pt 5) (Dim.pt 5) red] }]
+  t "a picture of fills alone still ships its page"
+    ((bare.pages[0]?.map fun p => p.fills.size == 1).getD false)
+  -- `{center}` centres the box, as it centres a paragraph's lines.
+  let centered := run #[.center #[.picture pic]]
+  t "a centred picture centres its box"
+    ((centered.pages[0]?.bind fun p => p.fills[0]?.map fun f =>
+      f.x == geom.hmargin + (geom.textWidth - Dim.pt 20) / 2).getD false)
+  -- The diagnostic half of the contract: a box the text area cannot hold.
+  let wide := run #[.picture { shapes :=
+    #[.rect 0 0 (geom.textWidth + Dim.pt 50) (Dim.pt 10) red] }]
+  t "a picture wider than the text area warns W0335"
+    (wide.diags.any (·.code == "W0335"))
+  t "a fitting picture does not warn W0335"
+    (!out.diags.any (·.code == "W0335"))
+
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pats := Hyphen.load
@@ -6261,6 +6312,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       censusChecks ref oneFace pats
       bandChecks ref oneFace
       agreeChecks ref oneFace pats
+      pictureLayoutChecks ref oneFace
       quoteChecks ref oneFace
       titleChecks ref
       outlineChecks ref

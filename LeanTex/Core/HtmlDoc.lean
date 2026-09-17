@@ -843,6 +843,37 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- Paged-media furniture; `blockNodesInto` skips it (and `emit` says
     -- so), so this arm only closes the match.
     Html.text ""
+  | .picture pic =>
+    -- The picture as inline SVG: the same evaluated shapes the PDF paints,
+    -- through the typed tree so every label passes the escaper. SVG's y
+    -- grows downward, so the transform is the PDF path's: flip against the
+    -- box's top. Lengths are pt, the unit the viewBox declares.
+    let ((px0, py0), (px1, py1)) := pic.bbox
+    let w := px1 - px0
+    let h := py1 - py0
+    let kids := pic.shapes.map fun shape =>
+      match shape with
+      | .rect rx ry rw rh color =>
+        Html.elem "rect" #[] #[
+          ("x", (min rx (rx + rw) - px0).toPtString),
+          ("y", (py1 - max ry (ry + rh)).toPtString),
+          ("width", (max rw (-rw)).toPtString),
+          ("height", (max rh (-rh)).toPtString),
+          ("fill", cssColor color)]
+      | .label lx ly text color scale =>
+        Html.elem "text" #[Html.text text] #[
+          ("x", (lx - px0).toPtString),
+          ("y", (py1 - ly).toPtString),
+          ("fill", cssColor color),
+          ("font-size", (Ir.baseFontSize * (scale : Int) / 1000).toPtString),
+          ("text-anchor", "middle"),
+          ("dominant-baseline", "central")]
+    Html.elem "svg" kids #[
+      ("viewBox", s!"0 0 {w.toPtString} {h.toPtString}"),
+      ("width", s!"{w.toPtString}pt"),
+      ("height", s!"{h.toPtString}pt"),
+      ("role", "img"),
+      ("class", "picture")]
 
 /-- The accumulator threads through the sibling walk, as in `inlineNodesInto`. -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node

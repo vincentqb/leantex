@@ -85,7 +85,7 @@ inductive DiagCode where
   | W0301 | W0302 | W0303 | W0304 | W0307 | W0308 | W0309 | W0310 | W0311
   | W0312 | W0313 | W0314 | W0315 | W0316 | W0317 | W0318 | W0319
   | W0320 | W0321 | W0322 | W0323 | W0324 | W0325 | W0326 | W0327 | W0328
-  | W0329 | W0330 | W0331 | W0332 | W0333
+  | W0329 | W0330 | W0331 | W0332 | W0333 | W0335
   | W0501
   | W0601 | W0602
   deriving Repr, BEq, DecidableEq
@@ -193,6 +193,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0331 => ("W0331", .degraded, "declared marker not expressible in this backend; default substituted")
   | .W0332 => ("W0332", .degraded, "footer mixes the frame and physical page sequences undeclared")
   | .W0333 => ("W0333", .degraded, "band slots collide; the lower-priority slot is painted over")
+  | .W0335 => ("W0335", .degraded, "picture larger than the text area; it may overrun the page")
   | .W0501 => ("W0501", .dropped, "\\input file not found; skipped")
   | .W0601 => ("W0601", .degraded, "image unreadable or not found; placeholder box placed")
   | .W0602 => ("W0602", .degraded, "image format unusable; placeholder box placed")
@@ -215,7 +216,7 @@ def DiagCode.all : List DiagCode :=
    .W0110, .W0201, .W0202, .W0301, .W0302, .W0303, .W0304, .W0307, .W0308,
    .W0309, .W0310, .W0311, .W0312, .W0313, .W0314, .W0315, .W0316, .W0317,
    .W0318, .W0319, .W0320, .W0321, .W0322, .W0323, .W0324, .W0325, .W0326,
-   .W0327, .W0328, .W0329, .W0330, .W0331, .W0332, .W0333, .W0501,
+   .W0327, .W0328, .W0329, .W0330, .W0331, .W0332, .W0333, .W0335, .W0501,
    .W0601, .W0602]
 
 theorem DiagCode.all_complete (c : DiagCode) : DiagCode.all.contains c := by

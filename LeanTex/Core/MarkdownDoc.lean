@@ -120,6 +120,9 @@ private def blockInto (ind acc : String) : Block → String
   | .logo _ => acc
   -- A rule is decorative ink; it carries no text.
   | .rule _ _ _ => acc
+  -- A picture is diagram ink; its labels are coordinates' text, not prose
+  -- the twin can carry in reading order.
+  | .picture _ => acc
   | .frame title _ _ body =>
     let head := if title.isEmpty then "" else ind ++ "## " ++ inlineText title ++ "\n\n"
     blocksInto ind (acc ++ head) body.toList

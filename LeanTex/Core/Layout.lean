@@ -737,6 +737,9 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   | .verbatim _ s => out.push s
   -- A rule has no glyphs.
   | .rule _ _ _ => out
+  -- A picture's labels are set as glyph runs: their scalars are asked of
+  -- the body face like any other text.
+  | .picture pic => out ++ pic.labelTexts
   | .frame title _ _ body =>
     scalarTextList (out.push (Ir.plainText title)) itemD enumD body.toList
   -- A framefoot note is set on the page as footer text.
@@ -1918,6 +1921,10 @@ private inductive Op where
   /-- The logo state changes here: pages from this point carry `content`
   (empty clears). Applied by the furniture pass, keyed to page indexes. -/
   | setLogo (content : Array Ir.Inline)
+  /-- An elaborated picture placed with its left edge at page x — fills and
+  label lines through one `Pic.Place` transform, fitted vertically the way
+  a line of the picture's height is. -/
+  | picture (x : Sp) (pic : Ir.Pic.Picture)
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -2096,6 +2103,31 @@ private def collectDisplay (a : Acc) (fs : FontSet)
 
 -- Block walk. Mutual recursion through `List` so the nested calls are
 -- structural: no `partial`, and the shape mirrors the IR.
+
+/-- Stage one picture. The theorem side of the stays-in-its-box contract
+bounds every shape by the picture's box (`Ir.Pic.Picture.box_in_bbox`);
+this is the diagnostic side, bounding the box by the text area — a picture
+that cannot fit is still placed (best effort, never a blank), and W0335
+says the page may be overrun. `center` sets the box's left edge the way a
+centred paragraph sets its lines. -/
+private def collectPicture (a : Acc) (pic : Ir.Pic.Picture) (indent : Sp)
+    (center : Bool) : Acc :=
+  let ((px0, _), (px1, py1)) := pic.bbox
+  let w := px1 - px0
+  let h := py1 - pic.bbox.1.2
+  let avail := (a.measure.getD a.geom.textWidth) - indent
+  let a := if w > avail || h > a.geom.textHeight then
+      { a with diags := a.diags.push (Diag.of .W0335
+        (s!"the picture is {w.toPtString}pt × {h.toPtString}pt against a text area " ++
+          s!"of {avail.toPtString}pt × {a.geom.textHeight.toPtString}pt; it may overrun \
+the page")
+        (help := "shrink the picture ([scale=...]) or widen the text area \
+(\\page{ margin = ... })")) }
+    else a
+  let x := if center then indent + max 0 ((avail - w) / 2) else indent
+  let a := a.flushGap
+  { a with ops := a.ops.push (.picture (a.geom.hmargin + x) pic) }
+
 mutual
 
 /-- Walk a block sequence, spacing peers by `parskip`. -/
@@ -2168,6 +2200,9 @@ private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : Font
         collectDisplay a fs title indent true
           (a.geom.fontSize * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000)
           (baseStyle := { bold := true })
+      -- A centred picture: its box centres in the measure, as the lines of
+      -- a centred paragraph do.
+      | .picture pic => collectPicture a pic indent true
       | _ => collectBlock a pats fs blk indent
     collectCentered (if rest.isEmpty then a else a.wantGap) pats fs rest indent
 
@@ -2392,6 +2427,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- text width, as moloch draws it.
     let a := a.flushGap
     { a with ops := a.ops.push (.hrule color (a.resolve thickness).width) }
+  | .picture pic =>
+    -- Left on the current indent, as LaTeX places the box where it stands;
+    -- a `{center}` around it goes through `collectCentered`'s arm.
+    collectPicture a pic indent false
   | .frame title standout valign body =>
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never
@@ -2696,6 +2735,7 @@ private inductive StagedOp where
   | colNext
   | colClose
   | setLogo (content : Array Ir.Inline)
+  | picture (x : Sp) (pic : Ir.Pic.Picture)
 
 /-- Placement state saved at a `colOpen`, restored per column: where the
 columns start, and the lowest bottom any column reached so far. -/
@@ -2814,6 +2854,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .colNext => .colNext
     | .colClose => .colClose
     | .setLogo c => .setLogo c
+    | .picture x pic => .picture x pic
   let b0 : B := {
     geom := geom
     ascent := scale font.ascent
@@ -2853,8 +2894,9 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .brk =>
       -- A boundary closes a page only when the page holds something: two
       -- adjacent frames share one boundary, not an empty page. A style set
-      -- for a page that never got content dies with the boundary.
-      if !b.cur.lines.isEmpty then
+      -- for a page that never got content dies with the boundary. Fills
+      -- are content too: a picture of fills alone is a page.
+      if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty then
         b := b.finishPage
       else
         b := { b with pageBg := none, vdist := .top, pinnedLines := 0, pinnedFills := 0 }
@@ -2917,9 +2959,76 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
           j.markerSegs.isNone && j.rule.isNone then
         prose := max prose breaks.size
       b := placePara fs b j breaks
+    | .picture x pic =>
+      -- Fit the picture's box the way `placeLine` fits a line of height
+      -- `h` and no depth: at the top of a fresh page, else below the last
+      -- line's depth, breaking to a new page when even the shrink above
+      -- cannot absorb the overflow.
+      let ((px0, py0), (px1, py1)) := pic.bbox
+      let h := py1 - py0
+      let bottom := b.geom.bodyBottom
+      let mut yTop := b.geom.vmargin
+      let mut above : Sp := 0
+      let mut overflow : Sp := 0
+      if !(b.cur.lines.isEmpty || b.freshStart) then
+        let y := b.y + b.prevDepth + b.skip.width + lineskip
+        overflow := y + h - bottom
+        above := b.pageShrink + b.skip.shrink
+        if overflow ≤ above then
+          yTop := y
+        else
+          b := b.finishPage
+          overflow := 0
+          above := 0
+      -- One transform for everything the picture ships: `Pic.Place` is the
+      -- affine map the invertibility and containment theorems range over.
+      let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
+      let mut fills := b.cur.fills
+      let mut lines := b.cur.lines
+      let mut shrinks := b.shrinkAbove
+      for shape in pic.shapes do
+        match shape with
+        | .rect rx ry rw rh color =>
+          -- The fill's top-left corner is the rect's (min x, max y) corner
+          -- through the transform; a negative extent keeps its sorted box.
+          let (fx, fy) := place.toPage (min rx (rx + rw), max ry (ry + rh))
+          fills := fills.push { x := fx, y := fy,
+                                w := max rw (-rw), h := max rh (-rh), color := color }
+        | .label lx ly text color scale =>
+          let size := b.geom.fontSize * (scale : Int) / 1000
+          let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}
+            #[.colored color none #[.text text]] {} imgs b.geom.textWidth b.geom.textHeight
+          let breaks := kp items b.geom.textWidth
+          if let some brk := breaks[0]? then
+            let (segs, w, _) := setLine items (lineStart items 0) brk b.geom.textWidth false
+            -- The node's box centres on its anchor, as TikZ anchors a node:
+            -- the baseline sits below the centre by half the ink height
+            -- less half the depth.
+            let (hgt, dep) := segs.foldl (fun (acc : Sp × Sp) seg => match seg with
+              | .run idx _ _ _ _ sz _ raise =>
+                let font := fs.get idx
+                let sz := if sz == 0 then size else sz
+                (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
+                 max acc.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
+              | _ => acc) (0, 0)
+            let (cx, cy) := place.toPage (lx, ly)
+            lines := lines.push { x := cx - w / 2, y := cy + (hgt - dep) / 2,
+                                  size := size, segs := segs, setWidth := w }
+            -- Label lines ride with the picture: they share the shrink
+            -- above it, so a page set short moves the diagram as one.
+            shrinks := shrinks.push above
+      b := { b with
+        cur := { b.cur with fills := fills, lines := lines }
+        shrinkAbove := shrinks
+        pageShrink := above
+        needed := max b.needed overflow
+        y := yTop + h
+        prevDepth := 0
+        skip := {}
+        freshStart := false }
   -- The trailing boundary of a final frame has already closed its page; a
   -- document is never given an empty page for it.
-  if !b.cur.lines.isEmpty || b.pages.isEmpty then
+  if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty || b.pages.isEmpty then
     b := b.finishPage
   -- The measure, checked against the readable band once the document has
   -- shown continuous text (a paragraph of four or more full-measure lines).
