@@ -13,6 +13,9 @@
 }
 % Code samples mix scripts and symbols; fall back per glyph.
 \fontfallback{ mono <- "Source Serif Pro" }
+% \figure and the external hatch are M8: their content does not render yet,
+% and this deck accepts that loss deliberately.
+\allow{W0307}
 
 \pdfmeta{ title = "leantex: a dummy deck" }
 

@@ -59,7 +59,7 @@ compiler-exhaustive. The letter prefix is the code's history, not its
 severity — severity comes from the declared `Loss` alone. -/
 inductive DiagCode where
   | E0001 | E0002
-  | E0101 | E0102
+  | E0101 | E0102 | E0111 | E0112
   | E0201 | E0202 | E0205
   | E0303 | E0304 | E0305 | E0306 | E0309 | E0310 | E0311 | E0312 | E0313
   | E0316 | E0320 | E0321 | E0322 | E0323 | E0324 | E0325 | E0326 | E0327
@@ -74,6 +74,7 @@ inductive DiagCode where
   | W0301 | W0302 | W0303 | W0304 | W0307 | W0308 | W0309 | W0310 | W0311
   | W0312 | W0313 | W0314 | W0315 | W0316 | W0317 | W0318 | W0319
   | W0320 | W0321 | W0322 | W0323 | W0324 | W0325 | W0326 | W0327 | W0328
+  | W0329
   | W0501
   | W0601 | W0602
   deriving Repr, BEq, DecidableEq
@@ -87,6 +88,8 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .E0002 => ("E0002", .dropped, "input is not valid UTF-8")
   | .E0101 => ("E0101", .dropped, "lone backslash at end of input")
   | .E0102 => ("E0102", .dropped, "unclosed verbatim environment")
+  | .E0111 => ("E0111", .dropped, "beamer template body carrying content dropped")
+  | .E0112 => ("E0112", .dropped, "\\titlegraphic content dropped")
   | .E0201 => ("E0201", .dropped, "unclosed group or environment at end of input")
   | .E0202 => ("E0202", .dropped, "unexpected closer")
   | .E0205 => ("E0205", .dropped, "malformed or mismatched environment name")
@@ -118,12 +121,12 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .E0404 => ("E0404", .dropped, "a font file could not be used")
   | .E0501 => ("E0501", .dropped, "\\input nesting too deep")
   | .N0100 => ("N0100", .info, "LaTeX idiom translated to its native declaration")
-  | .N0101 => ("N0101", .info, "geometry keys without a native equivalent dropped")
-  | .N0105 => ("N0105", .info, "\\setkomafont on a non-styleable element ignored")
+  | .N0101 => ("N0101", .config, "geometry keys without a native equivalent dropped")
+  | .N0105 => ("N0105", .config, "\\setkomafont on a non-styleable element ignored")
   | .N0200 => ("N0200", .info, "page set short: its skips gave their shrink")
   | .W0001 => ("W0001", .config, "content after \\end{document} is ignored")
   | .W0003 => ("W0003", .degraded, "math is typeset as plain text until M6")
-  | .W0004 => ("W0004", .degraded, "font has no glyph for a character; dropped")
+  | .W0004 => ("W0004", .dropped, "font has no glyph for a character; dropped")
   | .W0005 => ("W0005", .degraded, "overfull line, no feasible break")
   | .W0006 => ("W0006", .degraded, "declared face variant missing; another face substitutes")
   | .W0007 => ("W0007", .degraded, "running head/foot omitted from HTML")
@@ -146,13 +149,13 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0302 => ("W0302", .degraded, "unknown environment; body kept")
   | .W0303 => ("W0303", .config, "built-in name cannot be redefined")
   | .W0304 => ("W0304", .degraded, "colour name not in the palette; content kept uncoloured")
-  | .W0307 => ("W0307", .degraded, "environment not implemented yet; content not rendered")
+  | .W0307 => ("W0307", .dropped, "construct not implemented yet; its content is not rendered")
   | .W0308 => ("W0308", .degraded, "tables are not laid out yet; rows set as plain lines")
   | .W0309 => ("W0309", .config, "\\maketitle with nothing declared")
   | .W0310 => ("W0310", .degraded, "'[' never closes; not an argument")
   | .W0311 => ("W0311", .degraded, "a second \\frametitle replaces the first")
   | .W0312 => ("W0312", .degraded, "no {...} group after a command; skipped")
-  | .W0313 => ("W0313", .degraded, "{...} groups went with an unknown wrapper")
+  | .W0313 => ("W0313", .dropped, "{...} groups went with an unknown wrapper")
   | .W0314 => ("W0314", .degraded, "column width is not a fraction of the text width")
   | .W0315 => ("W0315", .degraded, "low-contrast colour pairing (WCAG 2.2)")
   | .W0316 => ("W0316", .config, "unknown option in \\palette; block skipped")
@@ -163,12 +166,13 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0321 => ("W0321", .degraded, "the document title follows another heading")
   | .W0322 => ("W0322", .config, "a second \\maketitle is ignored; the title is typeset once")
   | .W0323 => ("W0323", .config, "unknown backend name in \\begin{ifbackend}; ignored")
-  | .W0324 => ("W0324", .degraded, "\\begin{ifbackend} content addressed to no backend")
+  | .W0324 => ("W0324", .dropped, "\\begin{ifbackend} content addressed to no backend")
   | .W0325 => ("W0325", .degraded, "more than one <nav> landmark on one page")
   | .W0326 => ("W0326", .degraded, "in-page link with no target anchor on the page")
   | .W0327 => ("W0327", .degraded, "two distinct section titles fold to the same anchor")
   | .W0328 => ("W0328", .degraded, "running content wraps; only its first line is kept")
-  | .W0501 => ("W0501", .degraded, "\\input file not found; skipped")
+  | .W0329 => ("W0329", .config, "reserved layout-only construct skipped; no content is affected")
+  | .W0501 => ("W0501", .dropped, "\\input file not found; skipped")
   | .W0601 => ("W0601", .degraded, "image unreadable or not found; placeholder box placed")
   | .W0602 => ("W0602", .degraded, "image format unusable; placeholder box placed")
 
@@ -181,7 +185,7 @@ def DiagCode.meaning (c : DiagCode) : String := c.spec.2.2
 /-- Every code, for the registry checks in Tests.lean; `all_complete` holds
 the list to the type. -/
 def DiagCode.all : List DiagCode :=
-  [.E0001, .E0002, .E0101, .E0102, .E0201, .E0202, .E0205, .E0303, .E0304,
+  [.E0001, .E0002, .E0101, .E0102, .E0111, .E0112, .E0201, .E0202, .E0205, .E0303, .E0304,
    .E0305, .E0306, .E0309, .E0310, .E0311, .E0312, .E0313, .E0316, .E0320,
    .E0321, .E0322, .E0323, .E0324, .E0325, .E0326, .E0327, .E0328, .E0329,
    .E0330, .E0331, .E0401, .E0402, .E0403, .E0404, .E0501, .N0100, .N0101,
@@ -190,7 +194,7 @@ def DiagCode.all : List DiagCode :=
    .W0110, .W0201, .W0202, .W0301, .W0302, .W0303, .W0304, .W0307, .W0308,
    .W0309, .W0310, .W0311, .W0312, .W0313, .W0314, .W0315, .W0316, .W0317,
    .W0318, .W0319, .W0320, .W0321, .W0322, .W0323, .W0324, .W0325, .W0326,
-   .W0327, .W0328, .W0501, .W0601, .W0602]
+   .W0327, .W0328, .W0329, .W0501, .W0601, .W0602]
 
 theorem DiagCode.all_complete (c : DiagCode) : DiagCode.all.contains c := by
   cases c <;> rfl

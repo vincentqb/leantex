@@ -868,15 +868,18 @@ def backendChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has md "Print and twin carry this." && !has md "Only the page")
   -- Diagnostics: an unknown backend name (W0323), and content no backend
   -- answers (W0324) — flat by typo, or nested by empty intersection.
-  t "unknown backend name warns, and an emptied set warns with it"
+  t "unknown backend name warns, and an emptied set errors with it"
     (warnCodes ("\\documentclass{article}\\begin{document}" ++
       "\\begin{ifbackend}{web}x\\end{ifbackend}\\end{document}")
-      == ["W0323", "W0324"])
+      == ["W0323"] &&
+     errCodes ("\\documentclass{article}\\begin{document}" ++
+      "\\begin{ifbackend}{web}x\\end{ifbackend}\\end{document}")
+      == ["W0324"])
   let nested := "\\documentclass{article}\\begin{document}" ++
     "\\begin{ifbackend}{html}\\begin{ifbackend}{pdf}Orphaned.\\end{ifbackend}" ++
     "\\end{ifbackend}\\end{document}"
-  t "nested conditionals intersect to nothing and warn"
-    (warnCodes nested == ["W0324"])
+  t "nested conditionals intersect to nothing and error"
+    (errCodes nested == ["W0324"])
   t "orphanFree mirrors W0321 on the same document"
     (!Ir.orphanFree Ir.backendNames (elabStr nested).1.body)
   t "a missing backends group is an error"
@@ -1122,10 +1125,13 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let pre (decls : String) : String :=
     "\\documentclass{article}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
   let (geoDoc, geoDs) := elabStr (pre "\\usepackage[letterpaper,vmargin=0.5in,hmargin=0.75in,headsep=1in]{geometry}")
-  t "compat geometry becomes page" (geoDs.all (·.severity == .note) &&
+  t "compat geometry becomes page" (geoDs.all (·.severity != .error) &&
     geoDoc.page.vmargin == Dim.inch 1 / 2 && geoDoc.page.hmargin == Dim.inch 3 / 4)
-  t "compat geometry names what it dropped"
-    ((notesOf (pre "\\usepackage[headsep=1in]{geometry}")).any (·.endsWith "headsep"))
+  -- Dropped geometry keys change the page: a config loss, a warning, never
+  -- a note buried behind -v.
+  t "compat geometry names what it dropped as a warning"
+    ((elabStr (pre "\\usepackage[headsep=1in]{geometry}")).2.any fun d =>
+      d.code == "N0101" && d.severity == .warning && d.message.endsWith "headsep")
   t "compat known package is a note, unknown a warning"
     ((elabStr (pre "\\usepackage{hyperref}")).2.all (·.severity == .note) &&
      warnCodes (pre "\\usepackage{tikz}") == ["W0103"])
@@ -1273,9 +1279,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       ["W0104"])
   t "compat def skipped through its body"
     (errCodes (pre "\\makeatletter\\def\\verbatim@font{\\footnotesize\\ttfamily}\\makeatother") == [])
-  t "compat newenvironment defines; only its beamer-config body warns"
-    (warnCodes (pre "\\newenvironment{wrap}[1]{\\titlegraphic{#1}}{\\titlegraphic{}}") ==
-      ["W0104"])
+  t "compat newenvironment defines; its titlegraphic content is a dropped loss"
+    (let src := pre "\\newenvironment{wrap}[1]{\\titlegraphic{#1}}{\\titlegraphic{}}"
+     errCodes src == ["E0112"] && warnCodes src == ["W0104"])
   -- Overlay specifications elaborate to steps; the content stays.
   t "uncover wraps its content in a step"
     ((elabStr "a \\uncover<2>{shown} b").1.body ==
@@ -3126,12 +3132,13 @@ def frameFootChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let bOut := Layout.run (Layout.Geom.ofPage bDoc.page) oneFace none bDoc
   t "the unthemed note still lands"
     ((bOut.pages[0]?.bind (·.foot)).map Ir.plainText == some "quiet note")
-  -- Other templates keep the honest skip, naming the native spellings.
+  -- Other templates drop their body; a body carrying content is a dropped
+  -- loss (footline carries the frame number), named with the native spelling.
   let (_, fDs) := elabStr (deck ""
     ("\\setbeamertemplate{footline}{\\insertframenumber}\n" ++
      "\\begin{frame}{T}\nx\n\\end{frame}"))
-  t "other templates still skip with W0104 naming framefoot"
-    (fDs.any fun d => d.code == "W0104" &&
+  t "a content-carrying template drops as an error naming framefoot"
+    (fDs.any fun d => d.code == "E0111" && d.severity == .error &&
       ((d.help.getD "").splitOn "framefoot").length == 2)
   -- The HTML backend reads the same override.
   let (html, _) := HtmlDoc.emit {} doc
@@ -4314,8 +4321,12 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an environment and a command of one name both warn"
     ((warnCodes "\\begin{gizmo}body\\end{gizmo}\n\\gizmo{arg}").toArray ==
       #["W0302", "W0301"])
-  t "elab reserved command warns, never errors" (warnCodes ("\\documentclass{article}\\figure{x}" ++
+  -- A reserved command whose skipped arguments carry content is a dropped
+  -- loss and errors; one that only loses layout or selection warns W0329.
+  t "elab reserved command dropping content errors" (errCodes ("\\documentclass{article}\\figure{x}" ++
     "\\begin{document}y\\end{document}") == ["W0307"])
+  t "elab reserved layout-only command warns" (warnCodes ("\\documentclass{article}\\fontfallback{x}" ++
+    "\\begin{document}y\\end{document}") == ["W0329"])
   -- Unknown environments keep their body: the wrapper's decoration is
   -- unknowable, the content inside it is not. Arguments on the \begin line
   -- go with the wrapper; a group on a later line is content.
@@ -4325,8 +4336,8 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((warnCodes "\\begin{w}a\\end{w}\\begin{w}b\\end{w}") == ["W0302"])
   t "elab unknown environment keeps a group on a later line"
     ((elabStr "\\begin{wrap}\n{kept}\n\\end{wrap}").1.body == #[.para #[.text "kept"]])
-  t "elab reserved environment content is skipped with one warning"
-    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0307"] &&
+  t "elab reserved environment content dropped is one error"
+    (errCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0307"] &&
      (elabStr "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}").1.body == #[])
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
   t "elab redefine builtin warns and keeps the built-in"

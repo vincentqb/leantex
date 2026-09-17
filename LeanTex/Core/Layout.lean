@@ -912,7 +912,9 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   let mut diags := st.diags
   for (idx, c) in missing do
     diags := diags.push (Diag.of .W0004
-      s!"'{(fs.get idx).family}' has no glyph for '{c}' (U+{hex c.toNat}); dropped")
+      s!"'{(fs.get idx).family}' has no glyph for '{c}' (U+{hex c.toNat}); dropped"
+      (help := "declare a face that covers it in \\fonts, or accept the loss \
+with \\allow{W0004}"))
   for (idx, c, fb) in substs do
     diags := diags.push (Diag.of .W0009
       s!"'{(fs.get idx).family}' has no glyph for '{c}' \

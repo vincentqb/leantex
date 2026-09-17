@@ -401,6 +401,7 @@ def readInput (dir : System.FilePath) (name : String) (pos : Pos) :
   else
     let d := Diag.of .W0501 s!"\\input file not found: '{name}'; skipped"
       (some ⟨dir.toString, pos⟩)
+      (help := "an entire file's content is absent; \\allow{W0501} accepts the loss")
     return (#[], #[d])
 
 mutual

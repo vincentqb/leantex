@@ -87,8 +87,7 @@ def beamerConfig : List (String × Nat) :=
    ("setbeameroption", 1),
    ("addtobeamertemplate", 3),
    ("setbeamerfont", 2), ("setbeamercolor", 2),
-   ("beamertemplatenavigationsymbolsempty", 0),
-   ("titlegraphic", 1)]
+   ("beamertemplatenavigationsymbolsempty", 0)]
 
 /-- The native spelling a skipped beamer construct now has, named in its
 warning's help: a warning the author can act on beats a dead end. -/
@@ -673,7 +672,8 @@ where
       | some _ => k := j + 1
       | none => break
     sayOnce "ctrl:def" .W0104 s!"TeX '\\{name}' is not supported; skipped" pos
-      (help := "\\define declares typed commands")
+      (help := "\\define declares typed commands; later uses of the defined name \
+fall to W0301, their arguments kept as text")
     return some (#[], if found then k else start)
   | "newenvironment" | "renewenvironment" =>
     -- `\newenvironment{name}[n][default]{begin}{end}` is the native
@@ -732,10 +732,19 @@ where
       return some (← synthAt "\\framefoot" pos, j)
     else
       let (_, j) := takeOpt raws j
-      let (_, k) := takeGroups raws j 1
-      sayOnce "beamer:setbeamertemplate" .W0104
-        "'\\setbeamertemplate' is beamer configuration the engine does not have; skipped" pos
-        (help := beamerNative.lookup "setbeamertemplate")
+      let (bodyArgs, k) := takeGroups raws j 1
+      -- A template body that carries content (footline, headline) is a
+      -- dropped loss, an error the document can accept; an empty or absent
+      -- body is configuration and warns.
+      if (rawSrc (bodyArgs.getD 0 #[])).trimAscii.toString.isEmpty then
+        sayOnce "beamer:setbeamertemplate" .W0104
+          "'\\setbeamertemplate' is beamer configuration the engine does not have; skipped" pos
+          (help := beamerNative.lookup "setbeamertemplate")
+      else
+        say .E0111
+          s!"'\\setbeamertemplate\{{element}}' is dropped with its template body, which carries content" pos
+          (help := ((beamerNative.lookup "setbeamertemplate").getD "") ++
+            "; \\allow{E0111} accepts the loss")
       return some (#[], k)
   | "usetheme" =>
     let (_, j) := takeOpt raws start
@@ -749,6 +758,19 @@ where
     if (Theme.find? tname).isSome then
       modify fun st => { st with themed := true }
     return some (← synthAt native pos, k)
+  | "titlegraphic" =>
+    -- Declared visual content for the title page, not configuration: the
+    -- engine has nowhere to place it yet, so a non-empty declaration is a
+    -- dropped loss; an empty one clears what does not exist and warns.
+    let (args, k) := takeGroups raws start 1
+    if (rawSrc (args.getD 0 #[])).trimAscii.toString.isEmpty then
+      sayOnce "beamer:titlegraphic" .W0104
+        "'\\titlegraphic{}' clears beamer configuration the engine does not have; skipped" pos
+    else
+      say .E0112
+        "'\\titlegraphic' declares title-page content the engine does not place; the content is dropped" pos
+        (help := "\\logo places an image on running pages; \\allow{E0112} accepts the loss")
+    return some (#[], k)
   | "nolinkurl" =>
     -- Its group stays in the stream: the URL renders as its own text.
     became "\\nolinkurl" "the URL as plain text" pos

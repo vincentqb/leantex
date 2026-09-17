@@ -132,9 +132,13 @@ private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
       (help := "the rest of M6; see PLAN.md")
     return .math display (Parse.rawSrc body)
 
-def reservedCtrl : List (String × String) :=
-  [("vspace", "M3"), ("noindent", "M3"),
-   ("fontfallback", "M8"), ("figure", "M8")]
+/-- Reserved control words: the milestone that will implement each, and the
+code its skip earns — W0307 (dropped, an error) when the skipped arguments
+carry content, W0329 (config, a warning) when only layout or selection is
+lost. -/
+def reservedCtrl : List (String × String × DiagCode) :=
+  [("vspace", "M3", .W0329), ("noindent", "M3", .W0329),
+   ("fontfallback", "M8", .W0329), ("figure", "M8", .W0307)]
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 def declCtrl : List String :=
@@ -694,7 +698,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           i := i + 1
           warnOnce ctx ("env:" ++ name) .W0307
             s!"'\{{name}}' is not implemented yet; its content is not rendered" pos
-            (help := s!"planned for {milestone}; see PLAN.md")
+            (help := s!"planned for {milestone}; \\allow\{W0307} accepts the loss until then")
         | none =>
           warnOnce ctx ("env:" ++ name) .W0302 s!"unknown environment '\{{name}}'; its body is kept" pos
             (help := "see PLAN.md for planned environments")
@@ -1056,9 +1060,10 @@ specs are not modelled")
           warnOnce ctx "ctrl:centering" .W0108
             "'\\centering' centres nothing inside an argument; content stays left-aligned" pos
             (help := "put it at the start of a group or environment body")
-        else if let some milestone := reservedCtrl.lookup name then
-          warnOnce ctx ("ctrl:" ++ name) .W0307 s!"'\\{name}' is not implemented yet; skipped" pos
-            (help := s!"planned for {milestone}; see PLAN.md")
+        else if let some (milestone, code) := reservedCtrl.lookup name then
+          warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
+            (help := s!"planned for {milestone}; see PLAN.md" ++
+              (if code == .W0307 then "; \\allow{W0307} accepts the loss" else ""))
           let (j, unclosed) := skipReservedArgs raws i pos
           if let some bpos := unclosed then
             warnUnclosed ctx s!"'\\{name}'" bpos
@@ -2000,7 +2005,8 @@ the column shares the leftover" cpos
                   "this content is addressed to no backend; no output will carry it"
                   (some pos)
                   (help := "name at least one of pdf, html, md; a nested \
-'\\begin{ifbackend}' intersects with its enclosing one")
+'\\begin{ifbackend}' intersects with its enclosing one; \
+\\allow{W0324} accepts the loss")
               let inner ← elabBlocks { ctx with backendTargets := eff }
                 (body.extract (j + 1) body.size)
               blocks := blocks.push (.only targets inner)
@@ -2026,7 +2032,7 @@ the column shares the leftover" cpos
           else if let some milestone := reservedEnv.lookup n then
             warnOnce ctx ("env:" ++ n) .W0307
               s!"'\{{n}}' is not implemented yet; its content is not rendered" pos
-              (help := s!"planned for {milestone}; see PLAN.md")
+              (help := s!"planned for {milestone}; \\allow\{W0307} accepts the loss until then")
           else
             -- An unknown wrapper's decoration is unknowable; its body is
             -- not. The arguments on the `\begin` line go with the wrapper.
@@ -2919,9 +2925,10 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           -- W0310 already pointing at it — the preamble has no content.
           let (j, _) ← takeTitleDecl ctx name preamble i pos
           i := j
-        else if let some milestone := reservedCtrl.lookup name then
-          warnOnce ctx ("ctrl:" ++ name) .W0307 s!"'\\{name}' is not implemented yet; skipped" pos
-            (help := s!"planned for {milestone}; see PLAN.md")
+        else if let some (milestone, code) := reservedCtrl.lookup name then
+          warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
+            (help := s!"planned for {milestone}; see PLAN.md" ++
+              (if code == .W0307 then "; \\allow{W0307} accepts the loss" else ""))
           let (j, unclosed) := skipReservedArgs preamble i pos
           match unclosed with
           | some bpos =>
