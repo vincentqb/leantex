@@ -2622,6 +2622,24 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       | .rule w _ _ _ => w == geom.textWidth
       | _ => false)
 
+/-- The IR-to-IR walks are exhaustive, and each arm below was a wildcard
+drop once: the fact checked is the behaviour the walk owes the constructor
+it used to drop silently (PLAN 2026-09-17, the obligation table). -/
+def walkChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- A font template's hole may sit inside any body-carrying wrapper: a
+  -- link or step wrapper is filled exactly like styled/colored/underline.
+  t "fillTemplate fills a hole inside a link"
+    (Ir.fillTemplate #[.link "https://example.org" #[]] #[.text "x"] ==
+      #[.link "https://example.org" #[.text "x"]])
+  t "fillTemplate fills a hole inside a step"
+    (Ir.fillTemplate #[.step 2 none #[]] #[.text "x"] == #[.step 2 none #[.text "x"]])
+  -- Furniture sits outside the overlay model: the dim walks keep a section
+  -- title whole, so a step there must not multiply handout pages either.
+  -- A deliberate answer, pinned; the wildcard used to decide it silently.
+  t "maxStep keeps furniture outside the overlay model"
+    (Ir.maxStepBlocks #[.section 1 false #[.step 2 none #[.text "t"]]] == 1)
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
@@ -4793,6 +4811,7 @@ def main (args : List String) : IO UInt32 := do
 
   kpChecks ref
   hyphenChecks ref
+  walkChecks ref
   declChecks ref
   tokensChecks ref
   compatChecks ref

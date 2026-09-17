@@ -587,7 +587,7 @@ def raggedItems (items : Array Item) : Array Item :=
   items.map fun it =>
     match it with
     | .glue g => .glue { width := g.width, fil := true, parfill := g.parfill }
-    | other => other
+    | .box .. | .pen .. | .img .. => it
 
 -- The document's scalars, for the driver's per-glyph fallback ------------------
 
@@ -2084,7 +2084,14 @@ def substPageOne (n total : Nat) : Inline → Inline
   | .link u body => .link u (substPageList n total body.toList).toArray
   | .underline body => .underline (substPageList n total body.toList).toArray
   | .step s last body => .step s last (substPageList n total body.toList).toArray
-  | other => other
+  | .text s => .text s
+  | .math d src => .math d src
+  -- a formula's body is math atoms and an image carries no inline body:
+  -- neither can hold a page-number placeholder
+  | .formula d src body => .formula d src body
+  | .image src size alt => .image src size alt
+  | .fill => .fill
+  | .linebreak e => .linebreak e
 
 def substPageList (n total : Nat) : List Inline → List Inline
   | [] => []

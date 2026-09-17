@@ -549,6 +549,10 @@ def Chrome.hasFooter (c : Chrome) : Bool :=
 
 mutual
 
+/-- The walk of `fillTemplate`. Exhaustive over `Inline` by design: any
+body-carrying wrapper may hold the template's hole, and a leaf carries no
+body to fill. A new constructor must answer here or the build breaks —
+never add a wildcard arm (AGENTS.md, the obligation table). -/
 def fillOne (content : Array Inline) : Inline → Inline
   | .styled st body =>
     .styled st (if body.isEmpty then content else (fillList content body.toList).toArray)
@@ -556,7 +560,20 @@ def fillOne (content : Array Inline) : Inline → Inline
     .colored c n (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .underline body =>
     .underline (if body.isEmpty then content else (fillList content body.toList).toArray)
-  | other => other
+  | .link u body =>
+    .link u (if body.isEmpty then content else (fillList content body.toList).toArray)
+  | .step n last body =>
+    .step n last (if body.isEmpty then content else (fillList content body.toList).toArray)
+  | .text s => .text s
+  | .math d src => .math d src
+  -- a formula's body is math atoms, an image carries no inline body:
+  -- neither can hold the template's hole
+  | .formula d src body => .formula d src body
+  | .image src size alt => .image src size alt
+  | .fill => .fill
+  | .pageNumber => .pageNumber
+  | .pageCount => .pageCount
+  | .linebreak e => .linebreak e
 
 def fillList (content : Array Inline) : List Inline → List Inline
   | [] => []
@@ -928,6 +945,11 @@ def maxStepBlockList : List Block → Nat
   | [] => 1
   | b :: rest => max (maxStepBlock b) (maxStepBlockList rest)
 
+/-- Exhaustive by design (never add a wildcard arm). The `1` arms are
+decisions, not gaps: furniture (a section title, a frame footer) and the
+note side channel sit outside the overlay model — the dim walks keep them
+whole, so a step there must not multiply handout pages either — and
+verbatim carries no inline structure. -/
 def maxStepBlock : Block → Nat
   | .para content => maxStepInlines content
   | .list _ items => maxStepItems items.toList
@@ -935,7 +957,13 @@ def maxStepBlock : Block → Nat
   | .spaced _ body => maxStepBlockList body.toList
   | .columns cols => maxStepColumns cols.toList
   | .step n last body => max (max n (last.getD n)) (maxStepBlockList body.toList)
-  | _ => 1
+  | .section _ _ _ => 1
+  | .verbatim _ _ => 1
+  | .note _ => 1
+  | .frame _ _ _ _ => 1
+  | .framefoot _ => 1
+  | .logo _ => 1
+  | .rule _ _ _ => 1
 
 def maxStepItems : List (Array Block) → Nat
   | [] => 1
@@ -957,7 +985,8 @@ def maxStepInline : Inline → Nat
   | .link _ body => maxStepInlineList body.toList
   | .underline body => maxStepInlineList body.toList
   | .step n last body => max (max n (last.getD n)) (maxStepInlineList body.toList)
-  | _ => 1
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _
+  | .fill | .pageNumber | .pageCount | .linebreak _ => 1
 
 end
 
@@ -985,7 +1014,12 @@ def shadeBlock (dim : Color) : Block → Block
   | .columns cols => .columns (shadeColumns dim #[] cols.toList)
   | .step n last body => .step n last (shadeBlockList dim #[] body.toList)
   | .verbatim _ s => .verbatim (some dim) s
-  | other => other
+  | .section l st title => .section l st title
+  | .note body => .note body
+  | .frame t st v body => .frame t st v body
+  | .framefoot content => .framefoot content
+  | .logo content => .logo content
+  | .rule c nm th => .rule c nm th
 
 def shadeItems (dim : Color) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
@@ -1008,7 +1042,16 @@ def shadeInline (dim : Color) : Inline → Inline
   | .link u body => .link u (shadeInlines dim #[] body.toList)
   | .underline body => .underline (shadeInlines dim #[] body.toList)
   | .step n last body => .step n last (shadeInlines dim #[] body.toList)
-  | other => other
+  | .text s => .text s
+  | .math d src => .math d src
+  -- shading leaves formula and image nodes whole: a pending formula or
+  -- raster dims in the backends' hands, not in this walk
+  | .formula d src body => .formula d src body
+  | .image src size alt => .image src size alt
+  | .fill => .fill
+  | .pageNumber => .pageNumber
+  | .pageCount => .pageCount
+  | .linebreak e => .linebreak e
 
 end
 
@@ -1035,7 +1078,13 @@ def dimBlock (dim : Color) (k : Nat) : Block → Block
   | .step n last body =>
     if stepPending n last k then .step n last (shadeBlocks dim body)
     else .step n last (dimBlockList dim k #[] body.toList)
-  | other => other
+  | .section l st title => .section l st title
+  | .verbatim c s => .verbatim c s
+  | .note body => .note body
+  | .frame t st v body => .frame t st v body
+  | .framefoot content => .framefoot content
+  | .logo content => .logo content
+  | .rule c nm th => .rule c nm th
 
 def dimItems (dim : Color) (k : Nat) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
@@ -1065,7 +1114,15 @@ def dimInline (dim : Color) (k : Nat) : Inline → Inline
     if stepPending n last k then
       .step n last #[.colored dim none (shadeInlines dim #[] body.toList)]
     else .step n last (dimInlineList dim k #[] body.toList)
-  | other => other
+  | .text s => .text s
+  | .math d src => .math d src
+  -- dimming leaves formula and image nodes whole, as the shade does
+  | .formula d src body => .formula d src body
+  | .image src size alt => .image src size alt
+  | .fill => .fill
+  | .pageNumber => .pageNumber
+  | .pageCount => .pageCount
+  | .linebreak e => .linebreak e
 
 end
 
@@ -1090,7 +1147,13 @@ def unwrapItemStep : Block → Block
   | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
   | .step n l body => .step n l (unwrapItemStepList #[] body.toList)
   | .frame t s v body => .frame t s v (unwrapItemStepList #[] body.toList)
-  | other => other
+  | .para content => .para content
+  | .section l st title => .section l st title
+  | .verbatim c s => .verbatim c s
+  | .note body => .note body
+  | .framefoot content => .framefoot content
+  | .logo content => .logo content
+  | .rule c nm th => .rule c nm th
 
 def unwrapItemStepItems (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
