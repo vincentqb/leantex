@@ -122,7 +122,7 @@ def runningCtrl : List String := ["runninghead", "runningfoot"]
 
 def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin", "leading", "parskip",
-   "measure", "fontsize", "bleed", "hyphenate"]
+   "measure", "fontsize", "bleed", "hyphenate", "justify"]
 
 def metaKeys : List String := ["title", "author", "subject", "keywords"]
 
@@ -1675,6 +1675,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "off" | "false" => spec := { spec with hyphenate := some false }
       | _ =>
         diag ctx "E0323" s!"'hyphenate' in \\page expects on or off, got '{v}'" pos
+    | "justify", .ident v =>
+      match v with
+      | "on" | "true" => spec := { spec with justify := some true }
+      | "off" | "false" => spec := { spec with justify := some false }
+      | _ =>
+        diag ctx "E0323" s!"'justify' in \\page expects on or off, got '{v}'" pos
     | key, v =>
       if key == "header" || key == "footer" then
         -- The feature exists, just not as a page key: running content is
@@ -1686,7 +1692,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       else if pageKeys.contains key then
         let expected := if key == "size" then "a page size name"
           else if key == "measure" then "'checked' or 'free'"
-          else if key == "hyphenate" then "on or off"
+          else if key == "hyphenate" || key == "justify" then "on or off"
           else "a dimension"
         modify fun st => { st with
           diags := st.diags.push (Decl.wrongType ctx.file "page" key expected v pos) }
@@ -1969,13 +1975,20 @@ private def parseAssert (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Asse
       (help := some why)
     return none
   match words with
-  | ["fonts.all_embedded"] => return some ⟨.fontsAllEmbedded, some ⟨ctx.file, pos⟩⟩
+  | ["fonts.all_embedded"] =>
+    return some { kind := .fontsAllEmbedded, span := some ⟨ctx.file, pos⟩ }
+  | ["text.in_area"] =>
+    return some { kind := .textInArea, span := some ⟨ctx.file, pos⟩ }
+  | ["text.xheight", ">=", v] =>
+    match Decl.parseValue v with
+    | some (.dim d) => return some { kind := .minXHeight d, span := some ⟨ctx.file, pos⟩ }
+    | _ => fail s!"'{v}' is not a dimension (like 1.4mm)"
   | ["pages", op, n] =>
     match cmpOp op, n.toInt? with
-    | some o, some v => return some ⟨.pages o v, some ⟨ctx.file, pos⟩⟩
+    | some o, some v => return some { kind := .pages o v, span := some ⟨ctx.file, pos⟩ }
     | none, _ => fail s!"'{op}' is not a comparison (== != <= < >= >)"
     | _, none => fail s!"'{n}' is not a whole number"
-  | _ => fail "supported forms: pages <op> N, fonts.all_embedded"
+  | _ => fail "supported forms: pages <op> N, fonts.all_embedded, text.in_area, text.xheight >= <len>"
 
 /-- Elaborate the whole document: split preamble and body around the
 `document` environment, process declarations, then the body. -/
@@ -2351,6 +2364,12 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
       page := { page with vmargin := Dim.mm 5 }
     if page.hyphenate.isNone then
       page := { page with hyphenate := some false }
+    -- Below the 40-character working minimum for justified text
+    -- (Bringhurst, Elements 2.1.2), the measure is set ragged: at card
+    -- width justification has no stretch to work with and the breaker is
+    -- left choosing between overfull answers.
+    if page.justify.isNone then
+      page := { page with justify := some false }
     if head.isSome || foot.isSome then
       diag ctx "W0315"
         "a card carries no running head or foot; the declaration is dropped" none
@@ -2365,6 +2384,32 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
   ctx := { ctx with slides := docClass == "slides" }
   let blocks ← elabBlocks ctx body
+  -- What a card guarantees, stated as the assertions the engine already
+  -- enforces: content fits its faces, ink respects the safe margin, and
+  -- the smallest type clears the fluent-reading floor at hand-held
+  -- distance — an angular x-height of 0.2°, 1.4 mm at 40 cm (Legge &
+  -- Bigelow 2011). Declaring an assertion of the same form is intent and
+  -- silences the class default.
+  if docClass == "card" then
+    let faces : Int := max 1 (blocks.foldl (init := 0) fun n b =>
+      match b with
+      | .frame _ _ => n + 1
+      | _ => n)
+    unless asserts.any (fun a => match a.kind with | .pages _ _ => true | _ => false) do
+      asserts := asserts.push {
+        kind := .pages .le faces
+        help := some s!"the card class asserts content fits its {faces} face(s); \
+declare \\assert\{ pages <= N } to take control" }
+    unless asserts.any (·.kind == .textInArea) do
+      asserts := asserts.push {
+        kind := .textInArea
+        help := some "the margins are the print safe zone: ink past them risks \
+the trim; declare \\assert{ text.in_area } to take control" }
+    unless asserts.any (fun a => match a.kind with | .minXHeight _ => true | _ => false) do
+      asserts := asserts.push {
+        kind := .minXHeight (Dim.mm100 140)
+        help := some "1.4mm x-height is the fluent-reading floor at hand-held \
+distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control" }
   if trailing.any (!isSpaceOrPar ·) then
     diag ctx "W0001" "content after '\\end{document}' is ignored" none (sev := .warning)
   -- PDF metadata falls back to the title declarations: a deck that says

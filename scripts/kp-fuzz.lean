@@ -119,19 +119,22 @@ def main (args : List String) : IO UInt32 := do
     let (tw, g'') := g.next 200
     g := g''
     let target := Dim.pt (tw + 40)
-    let kpBreaks := (kp items target).toList
-    let kpCost := seqCost items target kpBreaks
-    let brute := bruteBest items target
-    unless kpCost.isSome && kpCost == brute do
-      failures := failures + 1
-      IO.eprintln s!"FAIL case {i}: target={target} kp={kpCost} brute={brute}"
-      IO.eprintln s!"  breaks={kpBreaks}"
-      IO.eprintln s!"  items={items.size}"
+    -- Justified, and ragged as the fil-glue transform the card class uses:
+    -- the same breaker must be optimal over both item shapes.
+    for shape in [items, raggedItems items] do
+      let kpBreaks := (kp shape target).toList
+      let kpCost := seqCost shape target kpBreaks
+      let brute := bruteBest shape target
+      unless kpCost.isSome && kpCost == brute do
+        failures := failures + 1
+        IO.eprintln s!"FAIL case {i}: target={target} kp={kpCost} brute={brute}"
+        IO.eprintln s!"  breaks={kpBreaks}"
+        IO.eprintln s!"  items={shape.size}"
     unless measuresAgree items do
       failures := failures + 1
       IO.eprintln s!"FAIL case {i}: prefix-sum measure disagrees with direct measure"
   if failures == 0 then
-    IO.println s!"kp-fuzz: {iters} random paragraphs, all optimal"
+    IO.println s!"kp-fuzz: {iters} random paragraphs, all optimal (justified and ragged)"
     return 0
   else
     IO.eprintln s!"kp-fuzz: {failures} failures in {iters} cases"

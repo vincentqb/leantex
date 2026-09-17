@@ -23,6 +23,9 @@ structure Geom where
   /-- Whether paragraphs may hyphenate; the class default resolved. Layout
   owns the gate so every caller — build, tests, oracles — obeys it. -/
   hyphenate : Bool := true
+  /-- Whether paragraphs justify. Off means ragged right: word spaces stay
+  natural, an underfull line costs nothing, and only real overfull is bad. -/
+  justify : Bool := true
   /-- Bleed past the trim edge, for the PDF writer: layout works in trim
   coordinates and never sees it. -/
   bleed : Sp := 0
@@ -42,6 +45,7 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     leading := spec.leading
     parskip := spec.parskip.getD base.parskip
     hyphenate := spec.hyphenate.getD base.hyphenate
+    justify := spec.justify.getD base.justify
     bleed := spec.bleed }
 
 /-- Baseline distance for a size: 6⁄5 of it, scaled by the page's `leading`
@@ -417,6 +421,16 @@ private def interword (size : Sp) (font : Font) : Glue :=
   let w := scaledAt size font (font.advance ' ')
   { width := w, stretch := w / 2, shrink := w / 3 }
 
+/-- Ragged setting as an item transform, leaving the breaker untouched:
+every glue keeps its natural width and gains fil, so an underfull line is
+free and shrink is never spent — `\raggedright`'s glue model. The lines are
+then set unjustified, so the fil never stretches a rendered space. -/
+def raggedItems (items : Array Item) : Array Item :=
+  items.map fun it =>
+    match it with
+    | .glue g => .glue { width := g.width, fil := true, parfill := g.parfill }
+    | other => other
+
 -- The document's scalars, for the driver's per-glyph fallback ------------------
 
 mutual
@@ -614,6 +628,7 @@ def measure (items : Array Item) (a j : Nat) : Measure := Id.run do
 
 def overfullDemerits : Int := 100000000
 
+/-- Demerits of one candidate line. -/
 def lineDemerits (items : Array Item) (m : Measure) (target : Sp) (j : Nat) : Int :=
   let delta := target - m.natural
   let b : Int :=
@@ -1008,6 +1023,9 @@ private structure ParaJob where
   indent : Sp
   center : Bool
   size : Sp
+  /-- Justified or ragged, from the page: ragged lines break free of
+  stretch badness and are set at their natural width. -/
+  justify : Bool := true
   bullet : Option (Nat × Array (Nat × Char × Sp)) := none
   /-- Marker content set as its own items and placed before the first line. -/
   markerSegs : Option (Array Seg × Sp) := none
@@ -1127,6 +1145,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       { baseStyle with color := a.fg } else baseStyle
   let (items, ds, cache, extras) :=
     itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache
+  let items := if a.geom.justify then items else raggedItems items
   -- A declared marker is content: set as a line of its own, unjustified, so
   -- it can carry any style the document gave it.
   let markerSegs := marker.map fun m =>
@@ -1139,6 +1158,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       items := items, extras := extras, diags := ds
       target := (a.measure.getD a.geom.textWidth) - indent
       indent := indent, center := center, size := size, bullet := bullet
+      justify := a.geom.justify
       markerSegs := markerSegs, rule := rule, fg := a.fg }) }
 
 def sectionSize (geom : Geom) : Nat → Sp
@@ -1485,7 +1505,7 @@ private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) 
   let mut first := true
   for brk in breaks do
     let a := if first then lineStart j.items 0 else lineStart j.items (prev + 1)
-    let (segs, w, overfull) := setLine j.items a brk width (!j.center)
+    let (segs, w, overfull) := setLine j.items a brk width (!j.center && j.justify)
     if overfull then
       b := b.warnOverfull
     let mut x := if j.center then geom.hmargin + j.indent + (width - w) / 2

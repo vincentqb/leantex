@@ -3331,6 +3331,21 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       == Dim.pt 100)
   t "card turns hyphenation off by default"
     (cDoc.page.hyphenate == some false)
+  -- Below the 40-character working minimum for justified text the measure
+  -- is set ragged (Bringhurst): forcing justification at card width gives
+  -- the breaker only overfull answers.
+  t "card sets ragged by default" (cDoc.page.justify == some false)
+  t "justify is a page key any class may declare"
+    ((elabStr "\\page{ justify = off }\\begin{document}x\\end{document}").1.page.justify
+      == some false)
+  let prose := String.intercalate " " (List.replicate 20 "placeholder words")
+  let judgeOverfull (pre : String) : Bool :=
+    let doc := (elabStr (card "" prose pre)).1
+    let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+    out.diags.any (·.code == "W0005")
+  t "ragged card prose breaks without overfull lines" (!judgeOverfull "")
+  t "the same prose justified at card width cannot break"
+    (judgeOverfull "\\page{ justify = on }\n")
   t "article leaves hyphenation to the class default"
     ((elabStr "x").1.page.hyphenate == none)
   t "hyphenate is a page key any class may declare"
@@ -3383,6 +3398,47 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let plainPdf := Pdf.write plainGeom oneFace
     (Layout.run plainGeom oneFace none cDoc).pages
   t "no bleed, no TrimBox" (!bytesContain plainPdf "/TrimBox")
+  -- What the class guarantees, stated as the assertions the engine already
+  -- enforces. Declaring an assertion of the same form is intent and takes
+  -- control of the bound.
+  let cardAsserts (src : String) := (elabStr src).1.asserts
+  let plainAsserts := cardAsserts (card "" "x")
+  t "card implies its three guarantees"
+    (plainAsserts.any (·.kind == .pages .le 1) &&
+     plainAsserts.any (·.kind == .textInArea) &&
+     plainAsserts.any (·.kind == .minXHeight (Dim.mm100 140)))
+  t "two faces raise the fits bound" ((cardAsserts two).any (·.kind == .pages .le 2))
+  t "declared intent silences the class default"
+    (((cardAsserts (card "" "x" "\\assert{ pages <= 4 }\n")).filter
+      (fun a => match a.kind with | .pages _ _ => true | _ => false)).size == 1)
+  t "article never gets the card contract" ((elabStr "x").1.asserts.isEmpty)
+  t "assert text.in_area is declarable anywhere"
+    ((elabStr "\\assert{ text.in_area }\\begin{document}x\\end{document}").1.asserts.any
+      (·.kind == .textInArea))
+  t "assert text.xheight takes a dimension"
+    ((elabStr "\\assert{ text.xheight >= 2mm }\\begin{document}x\\end{document}").1.asserts.any
+      (·.kind == .minXHeight (Dim.mm 2)))
+  t "assert text.xheight rejects a word"
+    (errCodes "\\assert{ text.xheight >= wide }\\begin{document}x\\end{document}" == ["E0325"])
+  -- Each guarantee fails on the card built to violate it, through the same
+  -- judge-the-shipped-pages path the build uses.
+  let judge (src : String) : Array Diag :=
+    let doc := (elabStr src).1
+    let geom := Layout.Geom.ofPage doc.page
+    let out := Layout.run geom oneFace none doc
+    Check.all (Check.Shipped.ofOut geom oneFace out true) doc.asserts
+  let lorem := String.intercalate " " (List.replicate 60 "placeholder words fill the face")
+  t "an over-full card fails its faces assertion"
+    ((judge (card "" lorem)).any fun d => (d.message.splitOn "pages <= 1").length == 2)
+  t "an unbreakable run past the safe margin fails text.in_area"
+    ((judge (card "" ("W" ++ "".pushn 'm' 60))).any fun d =>
+      (d.message.splitOn "text.in_area").length == 2 &&
+      (d.message.splitOn "right margin").length == 2)
+  t "tiny type fails the legibility floor"
+    ((judge (card "" "{\\tiny Pat Placeholder}")).any fun d =>
+      (d.message.splitOn "text.xheight").length == 2)
+  t "a reasonable card passes its whole contract"
+    ((judge (card "" "Pat Placeholder\\\\ {\\small pat@example.org}")).isEmpty)
 
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

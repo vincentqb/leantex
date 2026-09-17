@@ -410,7 +410,11 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)
       -- Assertions judge what shipped, so they run after layout and before
       -- the file is written: a failing document must not produce output.
-      let shipped := Check.Shipped.ofOut out (fontsEmbedded := true)
+      -- The page walk is skipped when nothing asserts: measuring ink on
+      -- every build would tax the common path for the rare check.
+      let shipped := if doc.asserts.isEmpty then
+          { pages := out.pages.size, fontsEmbedded := true : Check.Shipped }
+        else Check.Shipped.ofOut geom fs out (fontsEmbedded := true)
       let failures := Check.all shipped doc.asserts
       unless doc.asserts.isEmpty do
         ui.phase "assert"

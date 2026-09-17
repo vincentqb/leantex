@@ -40,6 +40,12 @@ structure PageSpec where
   on for `article` and `slides`, off for `card`, where a two-line name
   broken with a hyphen is never what anyone means. -/
   hyphenate : Option Bool := none
+  /-- Whether paragraphs justify; `none` takes the class default. Off for
+  `card`: below the 40-character working minimum for justified text
+  (Bringhurst), a measure must be set ragged — at card width no line has
+  the stretch justification needs, and forcing it gives the breaker only
+  overfull answers. -/
+  justify : Option Bool := none
   deriving Repr, BEq, Inhabited
 
 /-- The text block of an undeclared letter page: 26 picas (312 pt).
@@ -213,15 +219,27 @@ def CmpOp.holds : CmpOp → Int → Int → Bool
 inductive AssertKind where
   | pages (op : CmpOp) (n : Int)
   | fontsAllEmbedded
+  /-- Every piece of ink inside the margins. On a card the margins are the
+  print safe zone, so this is "nothing risks the trim". -/
+  | textInArea
+  /-- The smallest x-height set anywhere is at least this, judged from each
+  run's font at its size: the legibility floor is an angular x-height, so
+  the check reads the metric the source speaks in. -/
+  | minXHeight (min : Sp)
   deriving Repr, BEq, Inhabited
 
 def AssertKind.source : AssertKind → String
   | .pages op n => s!"pages {op.label} {n}"
   | .fontsAllEmbedded => "fonts.all_embedded"
+  | .textInArea => "text.in_area"
+  | .minXHeight m => s!"text.xheight >= {m.toPtString}pt"
 
 structure Assertion where
   kind : AssertKind
   span : Option Span := none
+  /-- Failure guidance. A class-implied assertion says which contract fired
+  and how declaring intent takes control of it. -/
+  help : Option String := none
   deriving Repr, BEq, Inhabited
 
 inductive Style where
@@ -743,6 +761,9 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
     (if doc.page.bleed != 0 then s!" bleed {doc.page.bleed.toPtString}" else "") ++
     (match doc.page.hyphenate with
       | some b => s!" hyphenate {if b then "on" else "off"}"
+      | none => "") ++
+    (match doc.page.justify with
+      | some b => s!" justify {if b then "on" else "off"}"
       | none => "") ++ "\n"
   let metaLine (label : String) (v : Option String) : String :=
     match v with
