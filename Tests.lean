@@ -975,11 +975,8 @@ def rawPayloadChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((Html.render (Html.elem "p" #[Html.Node.script "x</script >bad"]) 0).splitOn
       "/* removed */").length == 2)
 
-def main (args : List String) : IO UInt32 := do
-  let update := args.contains "--update"
-  let ref ← IO.mkRef ([] : List String)
+def utf8Checks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-
   -- utf8: valid inputs
   t "utf8 empty" (validate (bytes []) == none)
   t "utf8 ascii" (validate "hello, world".toUTF8 == none)
@@ -1009,6 +1006,8 @@ def main (args : List String) : IO UInt32 := do
       ((validate v == none) == (String.fromUTF8? v).isSome)
   utf8FuzzChecks ref
 
+def argsChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- args
   t "args empty is help" (parse [] == .ok { cmd := .help })
   t "args build" (parse ["build", "a.tex"] == .ok { cmd := .build "a.tex" })
@@ -1072,6 +1071,8 @@ def main (args : List String) : IO UInt32 := do
     (outPath (some "out.html") false "doc.tex" .pdf == "doc.pdf")
   t "args watch" ((parse ["a.tex", "--watch"]).map (·.watch) == .ok true)
 
+def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- render: porcelain is stable, escaped JSONL
   let d : Diag := {
     severity := .error
@@ -1091,6 +1092,8 @@ def main (args : List String) : IO UInt32 := do
   t "human diag plain" (Render.human false d ==
     "error[E0002]: bad \"quote\"\nline\n  --> a.tex:3:7\n  help: fix it")
 
+def lexChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- lex
   t "lex words and space" (toks "ab cd" == [.word "ab", .space, .word "cd"])
   t "lex par" (toks "a\n\nb" == [.word "a", .par, .word "b"])
@@ -1105,6 +1108,8 @@ def main (args : List String) : IO UInt32 := do
   t "lex position" (((Lex.lex "t" "a\nbé c").1.map fun tk => (tk.pos.line, tk.pos.col)).toList ==
     [(1, 1), (1, 2), (2, 1), (2, 3), (2, 4)])
 
+def parseChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- parse
   let praw (s : String) : Array Parse.Raw × Array Diag :=
     let (tk, _) := Lex.lex "t" s
@@ -1125,6 +1130,8 @@ def main (args : List String) : IO UInt32 := do
     | .math true _ _ => "display"
     | _ => "?") == #["display"])
 
+def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- elab: clean documents
   let (doc1, d1) := elabStr "hello $x$ world"
   t "elab snippet clean" (d1.isEmpty && doc1.body ==
@@ -1193,13 +1200,8 @@ def main (args : List String) : IO UInt32 := do
   t "elab trailing content warns" (((elabStr
     "\\begin{document}x\\end{document} y").2.map (·.code)) == #["W0001"])
 
-  -- goldens
-  runGoldens update (failures ref)
-
-  -- dim
-  t "sp pt string" ((Dim.pt 10).toPtString == "10" && (Dim.pt 3 / 2).toPtString == "1.5")
-  dimChecks ref
-
+def kpChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- knuth–plass: DP result equals brute-force minimum over all break sequences
   let cases : List (String × Array Layout.Item × Dim.Sp) := [
     ("three words", mkItems [W 100, G, W 100, G, W 100], Dim.pt 250),
@@ -1216,6 +1218,8 @@ def main (args : List String) : IO UInt32 := do
     let brute := bruteBest items target
     t s!"kp optimal ({name})" (kpCost.isSome && kpCost == brute && !kpBreaks.isEmpty)
 
+def hyphenChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- Hyphenation. Expectations are real TeX \showhyphens output with the SAME
   -- pattern set the engine embeds (luatex + hyph-en-us.tex, hyphenmins 2/3);
   -- plain lualatex is a different oracle because TeX Live maps `english` to
@@ -1251,6 +1255,8 @@ def main (args : List String) : IO UInt32 := do
   t "hyphen respects hyphenmins" ((Hyphen.hyphenate pats "typesetting").all
     fun p => p ≥ 2 && p + 3 ≤ 11)
 
+def declChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- declarations: \page, \pdfmeta, \assert
   let declSrc := "\\documentclass{article}\n" ++
     "\\page{ size = a5, margin = 0.5in }\n" ++
@@ -1305,6 +1311,8 @@ def main (args : List String) : IO UInt32 := do
     ((Check.all shipped #[mkAssert (.pages .eq 1), mkAssert (.pages .eq 2),
       mkAssert (.pages .lt 1)]).size == 2)
 
+def tokensChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- \tokens: font-relative lengths, derived tokens, and \block spacing
   let tokSrc := "\\documentclass{article}\n" ++
     "\\tokens{ rhythm = 2ex plus 0.5ex, sep = 0.75 * rhythm, slab = 18pt }\n" ++
@@ -1350,9 +1358,8 @@ def main (args : List String) : IO UInt32 := do
   t "symbol elaborates" (symDs.isEmpty && symDoc.body ==
     #[.para #[.text "a · b …"]])
 
-  compatChecks ref
-  fontDiagChecks ref
-
+def smartChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- smart punctuation: what the author typed is what they meant
   t "smart en dash" ((elabStr "2021--2024").1.body == #[.para #[.text "2021–2024"]])
   t "smart em dash" ((elabStr "a---b").1.body == #[.para #[.text "a—b"]])
@@ -1363,6 +1370,8 @@ def main (args : List String) : IO UInt32 := do
     ((elabStr "\\texttt{a--b}").1.body ==
       #[.para #[.styled .mono #[.text "a--b"]]])
 
+def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- links, running content, and block-producing user commands
   let (linkDoc, linkDs) := elabStr "\\href{https://example.org}{text}"
   t "href source clean" linkDs.isEmpty
@@ -1478,6 +1487,8 @@ def main (args : List String) : IO UInt32 := do
   t "thin space escape" ((elabStr "a\\,b").1.body ==
     #[.para #[.text "a b"]])
 
+def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- \palette and colour
   let palSrc := "\\documentclass{article}\n" ++
     "\\palette{ primary = #7C3AED, short = #abc }\n" ++
@@ -1520,6 +1531,8 @@ def main (args : List String) : IO UInt32 := do
   t "color pdf components" ((Ir.Color.mk 255 0 128).pdfComponents == "1 0 0.502")
   t "color black components" (Ir.Color.black.pdfComponents == "0 0 0")
 
+def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
   -- \fonts declarations and family resolution
   let fontsSrc := "\\documentclass{article}\n" ++
     "\\fonts{ body = \"DejaVu Serif\", sf = \"DejaVu Sans\" }\n" ++
@@ -1550,6 +1563,9 @@ def main (args : List String) : IO UInt32 := do
   | none => failures ref "fontdb: Source Serif Pro BoldItalic not found"
   t "fontdb unknown family" (FontDb.resolve faces "No Such Family Here" {} |>.isNone)
 
+def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pats := Hyphen.load
   -- font parsing on the system font
   match ← findFont with
   | none =>
@@ -1689,6 +1705,37 @@ def main (args : List String) : IO UInt32 := do
       lineChecks ref geom oneFace
       underlineChecks ref geom oneFace font
       spacingChecks ref geom oneFace font
+
+def main (args : List String) : IO UInt32 := do
+  let update := args.contains "--update"
+  let ref ← IO.mkRef ([] : List String)
+  let t := check ref
+
+  utf8Checks ref
+  argsChecks ref
+  renderChecks ref
+  lexChecks ref
+  parseChecks ref
+  elabDocChecks ref
+
+  -- goldens
+  runGoldens update (failures ref)
+
+  -- dim
+  t "sp pt string" ((Dim.pt 10).toPtString == "10" && (Dim.pt 3 / 2).toPtString == "1.5")
+  dimChecks ref
+
+  kpChecks ref
+  hyphenChecks ref
+  declChecks ref
+  tokensChecks ref
+  compatChecks ref
+  fontDiagChecks ref
+  smartChecks ref
+  linkHtmlChecks ref
+  paletteChecks ref
+  fontsDeclChecks ref
+  fontSuiteChecks ref
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then
