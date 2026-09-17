@@ -66,7 +66,16 @@ structure FontSpec where
   sans : Option String := none
   mono : Option String := none
   dirs : Array String := #[]
+  /-- Per-variant faces the document named (fontspec's `UprightFont=`,
+  `BoldFont=`, `ItalicFont=`, `BoldItalicFont=`): `(slot, bold, italic)` →
+  the face name, resolved like any other named face and winning over the
+  family's own variant. -/
+  faces : Array ((Nat × Bool × Bool) × String) := #[]
   deriving Repr, BEq, Inhabited
+
+/-- The face the document declared for one slot variant, if any. -/
+def FontSpec.faceFor (s : FontSpec) (slot : Nat) (bold italic : Bool) : Option String :=
+  (s.faces.find? (·.1 == (slot, bold, italic))).map (·.2)
 
 /-- What to build, as declared by `\output`: the document carries its own
 build intent, the way `\documentclass` already does. Names stay strings here
@@ -445,7 +454,13 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
   let fontLines :=
     String.join (doc.fonts.dirs.toList.map fun d => fontLine "dir" (some d)) ++
     fontLine "body" doc.fonts.body ++ fontLine "sans" doc.fonts.sans ++
-    fontLine "mono" doc.fonts.mono
+    fontLine "mono" doc.fonts.mono ++
+    String.join (doc.fonts.faces.toList.map fun ((slot, bold, italic), f) =>
+      let slotName := match slot with | 0 => "body" | 1 => "sans" | _ => "mono"
+      let variant := match bold, italic with
+        | false, false => "upright" | true, false => "bold"
+        | false, true => "italic" | true, true => "bolditalic"
+      fontLine s!"{slotName}.{variant}" (some f))
   let paletteLines := String.join (doc.palette.entries.toList.map fun (n, c) =>
     s!"palette {n} #{hex2 c.r}{hex2 c.g}{hex2 c.b}\n")
   let tokenLines := String.join (doc.tokens.entries.toList.map fun (n, g) =>

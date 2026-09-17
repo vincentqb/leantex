@@ -165,16 +165,24 @@ def buildFontSet (ui : Ui) (file : String) (spec : Ir.FontSpec) :
   let mut missing : Array String := #[]
   let slots : List (Nat × Option String) :=
     [(0, spec.body), (1, spec.sans), (2, spec.mono)]
-  -- A slot the document did not name falls back to the body family.
+  -- A slot the document did not name falls back to the body family, and the
+  -- body's declared per-variant faces come with it.
   let resolveName (slot : Nat) : Option String :=
     match slot with
     | 0 => spec.body
     | 1 => spec.sans.orElse fun _ => spec.body
     | _ => spec.mono.orElse fun _ => spec.body
+  let declaredFace (slot : Nat) (bold italic : Bool) : Option String :=
+    let effective := match slot with
+      | 1 => if spec.sans.isSome then 1 else 0
+      | 2 => if spec.mono.isSome then 2 else 0
+      | _ => 0
+    spec.faceFor effective bold italic
   for (slot, _) in slots do
     let some family := resolveName slot | continue
     for (bold, italic) in [(false, false), (true, false), (false, true), (true, true)] do
-      match FontDb.resolve faces family { bold := bold, italic := italic } with
+      match FontDb.resolveVariant faces family (declaredFace slot bold italic)
+          { bold := bold, italic := italic } with
       | none =>
         unless missing.contains family do
           missing := missing.push family
@@ -191,11 +199,8 @@ def buildFontSet (ui : Ui) (file : String) (spec : Ir.FontSpec) :
             message := s!"no installed font family named '{family}'"
             help := some s!"{hint} — `leantex fonts` lists every family"
           }
-      | some (face, satisfied) =>
-        unless satisfied do
-          let want :=
-            if bold && italic then "bold italic" else if bold then "bold" else "italic"
-          let msg := s!"'{family}' has no {want} face; using {face.subfamily.quote}"
+      | some (face, warning) =>
+        if let some msg := warning then
           -- Slots share families, so the same substitution surfaces repeatedly.
           unless diags.any (·.message == msg) do
             diags := diags.push {

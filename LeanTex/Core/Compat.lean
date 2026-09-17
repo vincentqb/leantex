@@ -360,19 +360,30 @@ where
         | "rm" => "body" | "sf" => "sans" | "tt" => "mono" | s => s
       | "setmainfont" => "body" | "setsansfont" => "sans" | _ => "mono"
     let family := rawSrc (args.getD 0 #[])
-    -- `Path=` is the one feature that says where a font is rather than how
-    -- to shape it: the directory of a font the document ships, whose name is
-    -- then a file name. The scan finds the bold and italic beside it, so
-    -- `BoldFont=` and the rest are dropped along with the shaping features.
-    let dir := ([optBefore, optAfter].filterMap id).findSome? fun opts =>
-      (opts.splitOn ",").findSome? fun kv =>
-        match kv.splitOn "=" with
-        | [key, v] => if key.trimAscii.toString == "Path" then some v.trimAscii.toString else none
-        | _ => none
-    let dirPart := match dir with
+    -- fontspec features that matter here are the ones that name fonts rather
+    -- than shape them: `Path=` says where the fonts live, and the per-variant
+    -- faces (`BoldFont=` and siblings) say exactly which file or name serves
+    -- each variant. Everything else is a shaping feature and is dropped.
+    let feature (k : String) : Option String :=
+      ([optBefore, optAfter].filterMap id).findSome? fun opts =>
+        (Decl.splitEntries opts).findSome? fun kv =>
+          match Decl.splitEntry kv with
+          | some (key, v) =>
+            if key == k then
+              some (if v.startsWith "{" && v.endsWith "}" then
+                ((v.drop 1).toString.dropEnd 1).toString.trimAscii.toString
+              else v)
+            else none
+          | none => none
+    let dirPart := match feature "Path" with
       | some d => s!"dir = \"{d}\", "
       | none => ""
-    let native := s!"\\fonts\{ {dirPart}{slot} = \"{family}\" }"
+    let mut parts := #[s!"{slot} = \"{family}\""]
+    for (opt, variant) in [("UprightFont", "upright"), ("BoldFont", "bold"),
+        ("ItalicFont", "italic"), ("BoldItalicFont", "bolditalic")] do
+      if let some f := feature opt then
+        parts := parts.push s!"{slot}.{variant} = \"{f}\""
+    let native := s!"\\fonts\{ {dirPart}{String.intercalate ", " parts.toList} }"
     became s!"\\{name}" native pos
     return some (← synthAt native pos, k)
   | "definecolor" =>

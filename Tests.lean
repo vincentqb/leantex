@@ -672,6 +672,69 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a real family name still resolves its regular"
     ((FontDb.resolve faces "Alpha Sans" {}).map (·.1.subfamily) == some "Regular")
 
+/-- fontspec's per-variant face options (`BoldFont=` and siblings) reach the
+font spec and win over the family's own variant; a declared face the host
+lacks degrades with a message that says the declaration could not be met and
+names the face actually used. -/
+def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pre := "\\documentclass{article}"
+  let post := "\\begin{document}x\\end{document}"
+  -- The compat layer carries the four face options into the spec.
+  let d := (elabStr (pre ++ "\\setsansfont[ItalicFont={Alpha Sans Light Italic}, " ++
+    "BoldFont={Alpha Sans}, BoldItalicFont={Alpha Sans Italic}]{Alpha Sans Light}" ++
+    post)).1.fonts
+  t "compat sans family" (d.sans == some "Alpha Sans Light")
+  t "compat BoldFont" (d.faceFor 1 true false == some "Alpha Sans")
+  t "compat ItalicFont" (d.faceFor 1 false true == some "Alpha Sans Light Italic")
+  t "compat BoldItalicFont" (d.faceFor 1 true true == some "Alpha Sans Italic")
+  t "compat no UprightFont declared" (d.faceFor 1 false false == none)
+  -- ...from either side of the name, a file name included.
+  let d2 := (elabStr (pre ++
+    "\\setsansfont{Open Sans}[Path = fonts/, BoldFont = OpenSans-Bold.ttf]" ++ post)).1.fonts
+  t "compat BoldFont after the name" (d2.faceFor 1 true false == some "OpenSans-Bold.ttf")
+  -- The native spelling.
+  let d3 := (elabStr (pre ++ "\\fonts{ body = \"X\", body.bold = \"Y\", " ++
+    "mono.upright = \"Z\" }" ++ post)).1.fonts
+  t "fonts body.bold" (d3.faceFor 0 true false == some "Y")
+  t "fonts mono.upright" (d3.faceFor 2 false false == some "Z")
+  t "fonts unknown variant key" (errCodes (pre ++ "\\fonts{ body.slanted = \"Y\" }" ++ post)
+    == ["E0322"])
+  t "fonts variant wrong type" (errCodes (pre ++ "\\fonts{ body.bold = 12 }" ++ post)
+    == ["E0323"])
+  -- Resolution: the declared face wins over the family's own variant.
+  let light : FontDb.Face := { synthFace "Alpha Sans" "/x/as-l.otf" with
+    subfamily := "Light", weight := 300 }
+  let lightIt : FontDb.Face := { light with
+    path := "/x/as-li.otf", subfamily := "Light Italic", italic := true }
+  let faces := #[synthFace "Alpha Sans", light, lightIt]
+  t "declared bold face is honoured, no warning"
+    ((FontDb.resolveVariant faces "Alpha Sans Light" (some "Alpha Sans") { bold := true }).map
+      (fun r => (r.1.subfamily, r.2)) == some ("Regular", none))
+  t "declared italic face is honoured"
+    ((FontDb.resolveVariant faces "Alpha Sans" (some "Alpha Sans Light Italic")
+      { italic := true }).map (fun r => (r.1.subfamily, r.2)) == some ("Light Italic", none))
+  -- A declared face the host lacks: family fallback, message says so.
+  t "declared face the host lacks degrades and says so"
+    ((FontDb.resolveVariant faces "Alpha Sans Light" (some "Nope Sans") { bold := true }).map
+      (fun r => (r.1.subfamily, r.2)) == some ("Light", some
+        ("'Alpha Sans Light' declares \"Nope Sans\" as its bold face, " ++
+         "which is not installed; using \"Alpha Sans Light\"")))
+  -- No declaration: the substitution message names the face actually used.
+  t "substitution names the face actually used"
+    ((FontDb.resolveVariant faces "Alpha Sans Light" none { bold := true }).map (·.2) ==
+      some (some "'Alpha Sans Light' has no bold face; using \"Alpha Sans Light\""))
+  t "a satisfied variant carries no message"
+    ((FontDb.resolveVariant faces "Alpha Sans" none {}).map (·.2) == some none)
+  t "a missing family is still the caller's E0403"
+    ((FontDb.resolveVariant faces "Nope Sans" (some "Also Nope") { bold := true }).isNone)
+  -- A declared file name denotes that exact scanned face.
+  let shipped ← FontDb.scanRoots [testFonts]
+  t "a declared file name denotes that exact face"
+    ((FontDb.resolveVariant shipped "Open Sans" (some "SourceSerifPro-Bold.otf")
+      { bold := true }).map (fun r => (r.1.path, r.2)) ==
+      some (testFonts ++ "/SourceSerifPro-Bold.otf", none))
+
 /-- The band projection over synthetic outlines: the invariant is that no
 ink inside the band escapes the reported intervals, whatever its shape —
 wholly inside the band, spanning it, or dipping into it at a curve
@@ -2613,6 +2676,7 @@ def main (args : List String) : IO UInt32 := do
   tokensChecks ref
   compatChecks ref
   fontDiagChecks ref
+  declaredFaceChecks ref
   smartChecks ref
   linkHtmlChecks ref
   paletteChecks ref

@@ -1352,9 +1352,31 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           diags := st.diags.push (Decl.unknownKey ctx.file "page" key pageKeys pos) }
   return spec
 
+private def fontSlot? (name : String) : Option Nat :=
+  match name with
+  | "body" | "rm" => some 0
+  | "sans" | "sf" => some 1
+  | "mono" | "tt" => some 2
+  | _ => none
+
+/-- `body.bold`-style keys: `(slot, bold, italic)`. -/
+private def fontVariantKey? (key : String) : Option (Nat × Bool × Bool) :=
+  match key.splitOn "." with
+  | [slotName, variant] => do
+    let slot ← fontSlot? slotName
+    match variant with
+    | "upright" => some (slot, false, false)
+    | "bold" => some (slot, true, false)
+    | "italic" => some (slot, false, true)
+    | "bolditalic" => some (slot, true, true)
+    | _ => none
+  | _ => none
+
 /-- `\fonts{...}`: family names per slot, and `dir`, a directory of font
 files shipped beside the document. `rm`/`sf`/`tt` are accepted as aliases so
-a LaTeX habit does not become an error. -/
+a LaTeX habit does not become an error. A dotted key names one variant's
+face (`body.bold = "X"`, fontspec's `BoldFont=`), which resolution honours
+over the family's own variant. -/
 private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry)
     (pos : Pos) : EM FontSpec := do
   let mut spec := spec
@@ -1369,13 +1391,21 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
     | "dir", .str d =>
       spec := if spec.dirs.contains d then spec else { spec with dirs := spec.dirs.push d }
     | key, v =>
-      if fontKeys.contains key then
-        let expected := if key == "dir" then "a quoted directory" else "a quoted family name"
+      match fontVariantKey? key, v with
+      | some variant, .str f =>
+        spec := { spec with faces := spec.faces.push (variant, f) }
+      | some _, _ =>
         modify fun st => { st with
-          diags := st.diags.push (Decl.wrongType ctx.file "fonts" key expected v pos) }
-      else
-        modify fun st => { st with
-          diags := st.diags.push (Decl.unknownKey ctx.file "fonts" key fontKeys pos) }
+          diags := st.diags.push (Decl.wrongType ctx.file "fonts" key "a quoted face name" v pos) }
+      | none, _ =>
+        if fontKeys.contains key then
+          let expected := if key == "dir" then "a quoted directory" else "a quoted family name"
+          modify fun st => { st with
+            diags := st.diags.push (Decl.wrongType ctx.file "fonts" key expected v pos) }
+        else
+          modify fun st => { st with
+            diags := st.diags.push (Decl.unknownKey ctx.file "fonts" key
+              (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic"]) pos) }
   return spec
 
 /-- `\tokens{...}`: named lengths. Entries are walked one at a time so a

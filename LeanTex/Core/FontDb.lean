@@ -470,6 +470,42 @@ def resolve (faces : Array Face) (family : String) (v : Variant) :
         if v.bold then face.weight ≥ 550 else face.weight ≤ 550
       some (face, slantOk && weightOk)
 
+/-- The face a declared per-variant name denotes: a font file name is that
+scanned file's own face; anything else resolves like a family or
+family-plus-subfamily name. -/
+def resolveNamed (faces : Array Face) (name : String) : Option Face :=
+  if isFontFile name then
+    faces.find? fun f => (f.path.splitOn "/").getLast? == some name
+  else
+    (resolve faces name {}).map (·.1)
+
+/-- The face for one slot variant, and the W0006 message when the answer is
+not what the document asked for. A face the document declared (fontspec's
+`BoldFont=` and siblings) wins over the family's own variant and is met by
+definition; a declared face the host lacks degrades to the family's best,
+saying so. `none` only when the family itself has no face at all — the
+caller's E0403. -/
+def resolveVariant (faces : Array Face) (family : String) (declared : Option String)
+    (v : Variant) : Option (Face × Option String) :=
+  let want :=
+    if v.bold && v.italic then "bold italic"
+    else if v.bold then "bold"
+    else if v.italic then "italic"
+    else "regular"
+  match declared with
+  | some name =>
+    match resolveNamed faces name with
+    | some face => some (face, none)
+    | none =>
+      (resolve faces family v).map fun (face, _) =>
+        (face, some s!"'{family}' declares \"{name}\" as its {want} face, \
+          which is not installed; using \"{face.family} {face.subfamily}\"")
+  | none =>
+    (resolve faces family v).map fun (face, satisfied) =>
+      if satisfied then (face, none)
+      else (face, some s!"'{family}' has no {want} face; \
+        using \"{face.family} {face.subfamily}\"")
+
 /-- Installed families that resemble a name: sharing a word, or within an
 edit or two of it. `Nimbus Roman` finds `Nimbus Sans L` and `Nimbus Mono`;
 `Libertinus` finds every Libertinus face. At most eight, closest first. -/
