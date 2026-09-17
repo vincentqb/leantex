@@ -238,7 +238,10 @@ private def flattenOne (st : FlattenSt) (sty : TextStyle) (x : Inline) : Flatten
     pushText st sty src
   | .styled s body => flatten st (applyStyle sty s) body
   | .colored c _ body => flatten st { sty with color := c } body
-  | .link url body => flatten st { sty with link := some url } body
+  -- The underline is the link's affordance in both backends (the HTML
+  -- anchor keeps the browser's): never colour alone, and never nothing
+  -- (WCAG 2.2 SC 1.4.1, use of colour).
+  | .link url body => flatten st { sty with link := some url, underline := true } body
   | .underline body => flatten st { sty with underline := true } body
   -- A step is pure grouping here: the PDF path dims pending content by
   -- recolouring copies before layout (`run`'s step driver), never by metrics.

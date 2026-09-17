@@ -1122,6 +1122,25 @@ browser's spelling of the same invariant. Undecodable outlines clear their
 whole advance. Both outline formats are exercised: Open Sans is TrueType
 `glyf`, Source Serif Pro is CFF Type 2 charstrings. Own function, same
 elaboration-budget reason as the others. -/
+def linkSignalChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  -- Colour is never the only signal (WCAG 2.2 SC 1.4.1). A link's
+  -- affordance is the underline in both backends -- the HTML anchor keeps
+  -- the browser's, and the PDF path draws one: before this, a PDF link had
+  -- no visual signal at all, not even colour.
+  let out := Layout.run geom oneFace none
+    (Elab.run "t" "see \\href{https://example.org/}{the example} here").1
+  let segs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
+  let linkRuns := segs.filterMap fun s => match s with
+    | .run _ _ (some _) _ _ _ ul => some ul
+    | _ => none
+  t "pdf link runs exist" (!linkRuns.isEmpty)
+  t "pdf link runs are underlined" (linkRuns.all (· == true))
+  t "pdf link draws its underline rule" (segs.any fun s => match s with
+    | .rule .. => true
+    | _ => false)
+
 def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
   let t := check ref
@@ -3414,6 +3433,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
 
       lineChecks ref geom oneFace
       underlineChecks ref geom oneFace font
+      linkSignalChecks ref geom oneFace
       inkGeometryChecks ref
       spacingChecks ref geom oneFace font
       slideChecks ref oneFace
