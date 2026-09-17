@@ -17,7 +17,7 @@ frame
         para
           text "Third beat."
   para
-    step 3
+    step 3-3
       text "A closing line for the last step."
 frame
   title

@@ -48,7 +48,7 @@ frame
           text "Second beat."
   step 2
     para
-      step 3
+      step 3-3
         text "The closing line."
 -- diagnostics
 note[N0100] 5:1 \documentclass{beamer} → \documentclass[aspectratio=169]{slides}

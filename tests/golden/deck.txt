@@ -47,7 +47,7 @@ frame
     "def pages (doc : Doc) : Nat :="
     "    (layout doc).pages.size"
   para
-    step 2
+    step 2-2
       text "Checked at build time."
 frame
   title

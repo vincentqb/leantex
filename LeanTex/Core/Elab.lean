@@ -273,14 +273,27 @@ private def allText (xs : Array Inline) : Bool :=
     | .text _ => true
     | _ => false
 
-/-- An overlay specification's from-step: `<2>`, `<2->`, and `<2-3>` are all
-"visible from 2" under dim-not-hide (the range's end is not modelled).
-`none` for a spec the model cannot number (`<+->`, `<.->`), which keeps the
-honest W0105. -/
-private def overlayFrom (w : String) : Option Nat :=
+/-- An overlay specification's range: `<2->` is (2, none) — crisp from 2 on;
+`<2>` is (2, some 2) and `<2-3>` is (2, some 3) — crisp within the range,
+dimmed outside it, never hidden. `none` for a spec the model cannot number
+(`<+->`, `<.->`), which keeps the honest W0105. -/
+private def overlayFrom (w : String) : Option (Nat × Option Nat) :=
   if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then
-    let digits := (((w.drop 1).toString).toList.takeWhile Char.isDigit)
-    if digits.isEmpty then none else (String.ofList digits).toNat?
+    let inner := ((w.drop 1).dropEnd 1).toString.toList
+    let digits := inner.takeWhile Char.isDigit
+    if digits.isEmpty then none else
+    match (String.ofList digits).toNat? with
+    | none => none
+    | some n =>
+      match inner.drop digits.length with
+      | [] => some (n, some n)
+      | '-' :: rest =>
+        let toDigits := rest.takeWhile Char.isDigit
+        if rest.isEmpty then some (n, none)
+        else if toDigits.length == rest.length && !toDigits.isEmpty then
+          (String.ofList toDigits).toNat?.map fun u => (n, some u)
+        else none
+      | _ => none
   else none
 
 /-- Is this raw an overlay spec word? The lexer keeps `<2->` one word. -/
@@ -843,18 +856,18 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           match raws[j]?.bind specWord? with
           | some w =>
             match overlayFrom w with
-            | some n =>
+            | some (n, last) =>
               let j2 := skipSpaces raws (j + 1)
               match raws[j2]? with
               | some (.group gbody _) =>
                 acc := flushText acc sb
                 sb := ""
-                acc := acc.push (.step n (← elabInlines ctx gbody))
+                acc := acc.push (.step n last (← elabInlines ctx gbody))
                 i := j2 + 1
               | _ =>
                 acc := flushText acc sb
                 sb := ""
-                acc := acc.push (.step n (← elabInlines ctx (raws.extract (j + 1) raws.size)))
+                acc := acc.push (.step n last (← elabInlines ctx (raws.extract (j + 1) raws.size)))
                 i := raws.size
             | none =>
               warnOnce ctx "spec:overlay" "W0105"
@@ -1232,7 +1245,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             (raws.extract i raws.size)
           i := raws.size
           unless inner.isEmpty do
-            blocks := blocks.push (.step (ctx.stepBase + 2) inner)
+            blocks := blocks.push (.step (ctx.stepBase + 2) none inner)
         | .ctrl "note" npos =>
           -- \note[placement]<spec>{...}: the placement and the spec are
           -- burned; the body is the side channel, never slide content.
@@ -1453,9 +1466,9 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             blocks := blocks.push (.frame title standout inner)
           else if n == "itemize" || n == "enumerate" then
             let mut items : Array (Array Raw) := #[]
-            let mut steps : Array (Option Nat) := #[]
+            let mut steps : Array (Option (Nat × Option Nat)) := #[]
             let mut curItem : Array Raw := #[]
-            let mut curStep : Option Nat := none
+            let mut curStep : Option (Nat × Option Nat) := none
             let mut awaitSpec := false
             let mut seen := false
             let mut strayDiagged := false
@@ -1496,7 +1509,7 @@ specs are not modelled")
             for (it, st?) in items.zip steps do
               let inner ← elabBlocks ctx it
               elabItems := elabItems.push (match st? with
-                | some s => #[.step s inner]
+                | some (s, last) => #[.step s last inner]
                 | none => inner)
             blocks := blocks.push (.list (n == "enumerate") elabItems)
           else if n == "center" then

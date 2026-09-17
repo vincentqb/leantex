@@ -750,15 +750,15 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Overlay specifications elaborate to steps; the content stays.
   t "uncover wraps its content in a step"
     ((elabStr "a \\uncover<2>{shown} b").1.body ==
-      #[.para #[.text "a ", .step 2 #[.text "shown"], .text " b"]])
+      #[.para #[.text "a ", .step 2 (some 2) #[.text "shown"], .text " b"]])
   t "pause between words steps the rest of the scope"
     ((elabStr "a \\pause b").1.body ==
-      #[.para #[.text "a"], .step 2 #[.para #[.text "b"]]])
+      #[.para #[.text "a"], .step 2 none #[.para #[.text "b"]]])
   t "unnumbered overlay specs warn once for the whole document"
     ((warnCodes "\\uncover<+->{a} \\uncover<.->{b}").length == 1)
   t "item overlay spec wraps the item"
     ((elabStr "\\begin{itemize}\\item<1-> one\\end{itemize}").1.body ==
-      #[.list false #[#[.step 1 #[.para #[.text "one"]]]]])
+      #[.list false #[#[.step 1 none #[.para #[.text "one"]]]]])
   t "compat alert is textbf"
     ((elabStr "\\alert{hot}").1.body == #[.para #[.styled .bold #[.text "hot"]]])
   t "compat bigskip is a spaced block"
@@ -1936,15 +1936,15 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "overlay specs elaborate to steps, warning nothing" (ds.isEmpty &&
     doc.body == #[.frame #[] false #[
       .list false #[
-        #[.step 1 #[.para #[.text "first"]]],
-        #[.step 2 #[.para #[.text "second"]]]],
-      .para #[.step 2 #[.text "tail"]]]])
+        #[.step 1 none #[.para #[.text "first"]]],
+        #[.step 2 none #[.para #[.text "second"]]]],
+      .para #[.step 2 (some 2) #[.text "tail"]]]])
   -- \pause steps the rest of the scope.
   let (pDoc, pDs) := elabStr (deck "one\n\n\\pause\ntwo\n\n\\pause\nthree")
   t "pause steps the rest, cumulatively" (pDs.isEmpty &&
     pDoc.body == #[.frame #[] false #[
       .para #[.text "one"],
-      .step 2 #[.para #[.text "two"], .step 3 #[.para #[.text "three"]]]]])
+      .step 2 none #[.para #[.text "two"], .step 3 none #[.para #[.text "three"]]]]])
   -- PDF: one page per step; pending content dims, nothing moves.
   let out := Layout.run (Layout.Geom.ofPage pDoc.page) oneFace none pDoc
   t "pdf emits one page per step" (out.pages.size == 3)
@@ -1974,6 +1974,28 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   -- A spec the model cannot number keeps the honest warning.
   t "an unnumberable spec still warns W0105"
     (warnCodes (deck "\\begin{itemize}\\item<+-> x\\end{itemize}") == ["W0105"])
+  -- The range's end is modelled: <2> covers on 1 AND again from 3, exactly
+  -- as beamer's transparent covering does; <2-3> reads the same way.
+  t "a range spec carries its end"
+    ((elabStr (deck "\\uncover<2-3>{ranged}")).1.body ==
+      #[.frame #[] false #[.para #[.step 2 (some 3) #[.text "ranged"]]]])
+  let (rDoc, rDs) := elabStr (deck ("\\begin{itemize}\n\\item<1> opening\n" ++
+    "\\item<2-> second\n\\item<3-> third\n\\end{itemize}"))
+  let rOut := Layout.run (Layout.Geom.ofPage rDoc.page) oneFace none rDoc
+  t "content past its range end dims again" (rDs.isEmpty &&
+    rOut.pages.size == 3 &&
+    (match rOut.pages[0]?, rOut.pages[2]? with
+     | some p1, some p3 =>
+       let colorOf (p : Layout.PageOut) (k : Nat) : Option Ir.Color :=
+         p.lines[k]?.bind fun l => l.segs.findSome? fun s => match s with
+           | .run _ c _ _ _ _ _ => some c
+           | _ => none
+       -- Page 1: the <1> item crisp, the rest dimmed. Page 3: the <1> item
+       -- dimmed again — its range ended — and the rest crisp.
+       colorOf p1 0 == some Ir.Color.black && colorOf p1 1 != some Ir.Color.black &&
+       colorOf p3 0 != some Ir.Color.black && colorOf p3 1 == some Ir.Color.black &&
+       colorOf p3 2 == some Ir.Color.black
+     | _, _ => false))
 
 /-- Speaker notes: a side channel — never slide content, omitted from the
 PDF handout, an inert hidden aside in HTML for the coming speaker view.

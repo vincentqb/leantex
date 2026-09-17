@@ -340,10 +340,11 @@ inductive Inline where
   | pageCount
   /-- `\\`, carrying LaTeX's optional extra space: `\\[1ex]`. -/
   | linebreak (extra : SymGlue)
-  /-- Overlay content visible from step `n` (`\uncover<2>{...}`): before its
-  step it dims, never hides, so no step reflows the slide (PLAN M5). Zero
-  metric impact — a pure grouping both backends may recolor or tag. -/
-  | step (n : Nat) (body : Array Inline)
+  /-- Overlay content crisp on steps `n` through `last` (`\uncover<2>`,
+  `<2->` when `last` is `none`, `<2-3>`): outside its range it dims, never
+  hides, so no step reflows the slide (PLAN M5). Zero metric impact — a
+  pure grouping both backends may recolor or tag. -/
+  | step (n : Nat) (last : Option Nat) (body : Array Inline)
   deriving Repr, BEq, Inhabited
 
 inductive Block where
@@ -361,9 +362,10 @@ inductive Block where
   leftover equally. Columns are top-aligned; the alignment options and
   absolute widths are not modelled (PLAN, M5). -/
   | columns (cols : Array (Option Nat × Array Block))
-  /-- Overlay blocks visible from step `n` (`\item<2->`, `\pause`): the
-  block form of `Inline.step`, with the same dim-not-hide semantics. -/
-  | step (n : Nat) (body : Array Block)
+  /-- Overlay blocks crisp on steps `n` through `last` (`\item<2->`,
+  `\pause`): the block form of `Inline.step`, with the same dim-not-hide
+  semantics. -/
+  | step (n : Nat) (last : Option Nat) (body : Array Block)
   /-- A speaker note (`\note{...}`): a side channel, never slide content.
   The PDF handout omits it; HTML keeps it as an inert hidden aside for the
   coming speaker view (PLAN M5). -/
@@ -523,11 +525,18 @@ def plainTextOne (x : Inline) : String :=
   | .colored _ _ body => plainTextList body.toList
   | .link _ body => plainTextList body.toList
   | .underline body => plainTextList body.toList
-  | .step _ body => plainTextList body.toList
+  | .step _ _ body => plainTextList body.toList
   | .fill | .pageNumber | .pageCount => ""
   | .linebreak _ => " "
 
 end
+
+/-- A step's range as the surface spells it: `step 2`, `step 2-3`, and
+`step 2-2` for `<2->`, `<2-3>`, and `<2>`. -/
+def dumpStepRange (n : Nat) (last : Option Nat) : String :=
+  match last with
+  | some u => s!"step {n}-{u}"
+  | none => s!"step {n}"
 
 mutual
 
@@ -555,8 +564,8 @@ def dumpInline (ind : String) (x : Inline) : String :=
     s!"{ind}link {url.quote}\n" ++ dumpInlines (ind ++ "  ") body
   | .underline body =>
     s!"{ind}underline\n" ++ dumpInlines (ind ++ "  ") body
-  | .step n body =>
-    s!"{ind}step {n}\n" ++ dumpInlines (ind ++ "  ") body
+  | .step n last body =>
+    s!"{ind}{dumpStepRange n last}\n" ++ dumpInlines (ind ++ "  ") body
   | .fill => s!"{ind}fill\n"
   | .pageNumber => s!"{ind}pagenumber\n"
   | .pageCount => s!"{ind}pagecount\n"
@@ -603,7 +612,8 @@ def dumpBlock (ind : String) (b : Block) : String :=
     s!"{ind}list {kind}\n" ++ dumpItems (ind ++ "  ") items.toList
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
   | .columns cols => s!"{ind}columns\n" ++ dumpColumns (ind ++ "  ") cols.toList
-  | .step n body => s!"{ind}step {n}\n" ++ dumpBlocks (ind ++ "  ") body
+  | .step n last body =>
+    s!"{ind}{dumpStepRange n last}\n" ++ dumpBlocks (ind ++ "  ") body
   | .note body => s!"{ind}note\n" ++ dumpBlocks (ind ++ "  ") body
   | .spaced before body =>
     s!"{ind}block before {dumpGlue before}\n" ++ dumpBlocks (ind ++ "  ") body
@@ -625,6 +635,13 @@ def coveredDefault : Color := { r := 0xA1, g := 0xA1, b := 0xAA }
 
 -- Overlay walks. Structural recursion through `List`, as the printers above.
 
+/-- Is a step's content pending on page `k`: before its range starts, or
+past its declared end (`\uncover<2>` covers on 1 and again from 3, exactly
+as beamer's transparent covering does). Pending content dims; it is never
+hidden. -/
+def stepPending (n : Nat) (last : Option Nat) (k : Nat) : Bool :=
+  k < n || (match last with | some u => k > u | none => false)
+
 mutual
 
 /-- The last step a frame's body reaches: how many pages the PDF handout
@@ -641,7 +658,7 @@ def maxStepBlock : Block → Nat
   | .center body => maxStepBlockList body.toList
   | .spaced _ body => maxStepBlockList body.toList
   | .columns cols => maxStepColumns cols.toList
-  | .step n body => max n (maxStepBlockList body.toList)
+  | .step n last body => max (max n (last.getD n)) (maxStepBlockList body.toList)
   | _ => 1
 
 def maxStepItems : List (Array Block) → Nat
@@ -663,7 +680,7 @@ def maxStepInline : Inline → Nat
   | .colored _ _ body => maxStepInlineList body.toList
   | .link _ body => maxStepInlineList body.toList
   | .underline body => maxStepInlineList body.toList
-  | .step n body => max n (maxStepInlineList body.toList)
+  | .step n last body => max (max n (last.getD n)) (maxStepInlineList body.toList)
   | _ => 1
 
 end
@@ -687,7 +704,7 @@ def shadeBlock (dim : Color) : Block → Block
   | .center body => .center (shadeBlockList dim #[] body.toList)
   | .spaced g body => .spaced g (shadeBlockList dim #[] body.toList)
   | .columns cols => .columns (shadeColumns dim #[] cols.toList)
-  | .step n body => .step n (shadeBlockList dim #[] body.toList)
+  | .step n last body => .step n last (shadeBlockList dim #[] body.toList)
   | other => other
 
 def shadeItems (dim : Color) (out : Array (Array Block)) :
@@ -705,9 +722,10 @@ end
 
 mutual
 
-/-- The frame's body as step `k` of its overlay shows it: content of a later
-step dims to `dim`, everything else stays. Only colours change, so no step
-can reflow the slide — the dim-not-hide invariant, by construction. -/
+/-- The frame's body as step `k` of its overlay shows it: content outside
+its declared range dims to `dim`, everything else stays. Only colours
+change, so no step can reflow the slide — the dim-not-hide invariant, by
+construction. -/
 def dimBlocks (dim : Color) (k : Nat) (xs : Array Block) : Array Block :=
   dimBlockList dim k #[] xs.toList
 
@@ -722,9 +740,9 @@ def dimBlock (dim : Color) (k : Nat) : Block → Block
   | .center body => .center (dimBlockList dim k #[] body.toList)
   | .spaced g body => .spaced g (dimBlockList dim k #[] body.toList)
   | .columns cols => .columns (dimColumns dim k #[] cols.toList)
-  | .step n body =>
-    if n > k then .step n (shadeBlocks dim body)
-    else .step n (dimBlockList dim k #[] body.toList)
+  | .step n last body =>
+    if stepPending n last k then .step n last (shadeBlocks dim body)
+    else .step n last (dimBlockList dim k #[] body.toList)
   | other => other
 
 def dimItems (dim : Color) (k : Nat) (out : Array (Array Block)) :
@@ -751,9 +769,9 @@ def dimInline (dim : Color) (k : Nat) : Inline → Inline
   | .colored c nm body => .colored c nm (dimInlineList dim k #[] body.toList)
   | .link u body => .link u (dimInlineList dim k #[] body.toList)
   | .underline body => .underline (dimInlineList dim k #[] body.toList)
-  | .step n body =>
-    if n > k then .step n #[.colored dim none body]
-    else .step n (dimInlineList dim k #[] body.toList)
+  | .step n last body =>
+    if stepPending n last k then .step n last #[.colored dim none body]
+    else .step n last (dimInlineList dim k #[] body.toList)
   | other => other
 
 end

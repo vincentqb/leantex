@@ -258,7 +258,7 @@ private def flattenOne (st : FlattenSt) (sty : TextStyle) (x : Inline) : Flatten
   | .underline body => flatten st { sty with underline := true } body
   -- A step is pure grouping here: the PDF path dims pending content by
   -- recolouring copies before layout (`run`'s step driver), never by metrics.
-  | .step _ body => flatten st sty body
+  | .step _ _ body => flatten st sty body
   -- Placeholders are substituted before layout; reaching here means the
   -- document used one outside running content.
   | .pageNumber => pushText st sty "?"
@@ -450,7 +450,7 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   | .center body => scalarTextList out itemD enumD body.toList
   | .spaced _ body => scalarTextList out itemD enumD body.toList
   | .columns cols => scalarTextCols out itemD enumD cols.toList
-  | .step _ body => scalarTextList out itemD enumD body.toList
+  | .step _ _ body => scalarTextList out itemD enumD body.toList
   -- A note is never set in either backend's pages; its glyphs are not asked
   -- for.
   | .note _ => out
@@ -1401,7 +1401,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- bare `\vspace` after a list adds to the list's `topsep`, as in LaTeX.
     let a := a.vskip (a.resolve before)
     collectBlocks a pats fs body indent
-  | .step _ body =>
+  | .step _ _ body =>
     -- Pure grouping: any dimming was painted into colours before layout.
     collectBlocks a pats fs body indent
   | .note _ =>
@@ -1605,7 +1605,7 @@ def substPageOne (n total : Nat) : Inline → Inline
   | .colored c nm body => .colored c nm (substPageList n total body.toList).toArray
   | .link u body => .link u (substPageList n total body.toList).toArray
   | .underline body => .underline (substPageList n total body.toList).toArray
-  | .step s body => .step s (substPageList n total body.toList).toArray
+  | .step s last body => .step s last (substPageList n total body.toList).toArray
   | other => other
 
 def substPageList (n total : Nat) : List Inline → List Inline

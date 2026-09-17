@@ -259,7 +259,7 @@ private def usesInline (cx : UseCx) (out : Array Use) : Inline → Array Use
   | .colored c nm body => usesInlines { cx with cur := some (nm, c) } out body.toList
   | .link _ body => usesInlines cx out body.toList
   | .underline body => usesInlines cx out body.toList
-  | .step _ body => usesInlines cx out body.toList
+  | .step _ _ body => usesInlines cx out body.toList
   | .fill | .linebreak _ => out
 
 private def usesBlocks (cx : UseCx) (out : Array Use) (xs : List Block) :
@@ -276,7 +276,7 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
   | .center body => usesBlocks cx out body.toList
   | .spaced _ body => usesBlocks cx out body.toList
   | .columns cols => usesColumns cx out cols.toList
-  | .step _ body => usesBlocks cx out body.toList
+  | .step _ _ body => usesBlocks cx out body.toList
   | .frame title _ body =>
     -- A frame title sets at `\large\bfseries`: 1.2 of the base, bold.
     let titleCx := { cx with size := cx.base * 1200 / 1000, bold := true }
