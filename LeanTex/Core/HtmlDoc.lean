@@ -501,6 +501,14 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       (match covered with
        | some c => #[("style", s!"color: {cssColor c}")]
        | none => #[])
+  | .rule color name thickness =>
+    -- The title page's separator: an <hr> carrying the palette variable,
+    -- so a host page can override it as it can any colour.
+    let c := match name with
+      | some n => s!"var(--{n}, {cssColor color})"
+      | none => cssColor color
+    Html.elem "hr" #[] #[("class", "separator"),
+      ("style", s!"border: none; height: {cssLength thickness.width}; background: {c}")]
   | .frame title standout _ body =>
     -- One slide of the deck. With no controller yet this is the no-JS
     -- rendering the plan promises anyway: a linear readable handout, every

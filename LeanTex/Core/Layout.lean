@@ -585,6 +585,8 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   -- for.
   | .note _ => out
   | .verbatim _ s => out.push s
+  -- A rule has no glyphs.
+  | .rule _ _ _ => out
   | .frame title _ _ body =>
     scalarTextList (out.push (Ir.plainText title)) itemD enumD body.toList
   -- A framefoot note is set on the page as footer text.
@@ -1202,6 +1204,10 @@ private inductive Op where
   /-- A colour bar behind the line just placed — the frame title. Full page
   width, from the page top to `pad` below the line's depth. -/
   | titleBar (color : Ir.Color) (pad : Sp)
+  /-- A full-measure horizontal rule as its own line: the title page's
+  separator. Placed through `placeLine`, so it spaces, breaks pages, and
+  distributes exactly as a line of text does. -/
+  | hrule (color : Ir.Color) (thickness : Sp)
   /-- Content placed so far on the open page is chrome pinned to the page
   top — the frame title and its bar: the page's vertical distribution
   moves only the lines and fills that follow, as beamer distributes the
@@ -1608,6 +1614,12 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- Not a line, a state change: the note the following frames' footers
     -- carry. Empty clears back to the chrome default.
     { a with frameFoot := if content.isEmpty then none else some content }
+  | .rule color _ thickness =>
+    -- The title page's separator: colour and thickness were declared
+    -- (palette `separator`, token `separatorheight`); the measure is the
+    -- text width, as moloch draws it.
+    let a := a.flushGap
+    { a with ops := a.ops.push (.hrule color (a.resolve thickness).width) }
   | .frame title standout valign body =>
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never
@@ -1827,6 +1839,7 @@ private inductive StagedOp where
   | brk
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
   | titleBar (color : Ir.Color) (pad : Sp)
+  | hrule (color : Ir.Color) (thickness : Sp)
   | pin
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
   | foot (content : Option (Array Inline))
@@ -1922,6 +1935,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .brk => .brk
     | .pageStyle bg c => .pageStyle bg c
     | .titleBar color pad => .titleBar color pad
+    | .hrule color th => .hrule color th
     | .pin => .pin
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
     | .foot c => .foot c
@@ -2003,6 +2017,12 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
                                h := l.y + b.prevDepth + pad, color := color }
           { b with cur := { b.cur with fills := b.cur.fills.push fill } }
         | none => b
+    | .hrule color th =>
+      -- A line whose only seg is the rule: the full line machinery decides
+      -- its place, so skips, page breaks, and the vertical distribution
+      -- treat it as they treat text.
+      b := b.placeLine fs b.geom.hmargin 0 #[.rule b.geom.textWidth th 0 color]
+        b.geom.textWidth
     | .progress num den fg bg thick x w =>
       -- Half a line under the last baseline: the track, then the elapsed
       -- share over it. The bar joins the page's depth so following content

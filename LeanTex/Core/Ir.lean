@@ -396,6 +396,10 @@ inductive Block where
   the frames from here on carry in the chrome footer's left slot, beside
   the frame number. Empty content clears it back to the chrome default. -/
   | framefoot (content : Array Inline)
+  /-- A full-measure horizontal rule: the title page's separator. `name` is
+  the palette entry the colour came from, when it had one, as `.colored`;
+  the thickness is symbolic so a token may state it in em. -/
+  | rule (color : Color) (name : Option String) (thickness : SymGlue)
   deriving Repr, BEq, Inhabited
 
 /-- Verbatim content, line-split: the newline after `\begin{verbatim}` and
@@ -442,18 +446,27 @@ structure ElementStyle where
   indent : Option SymGlue := none
   /-- Space between list items. -/
   gap : Option SymGlue := none
+  /-- Horizontal alignment of the element's lines: `left`, `center`, or
+  `right`. The title page reads it (moloch sets its title matter ragged
+  left; undeclared, a title page centres). -/
+  align : Option String := none
+  /-- A full-measure rule after the element's leading part, in this palette
+  colour: the moloch title separator between the title block and the
+  author block. -/
+  separator : Option (Color × Option String) := none
   deriving Repr, BEq, Inhabited
 
 /-- Elements a document may style. Section levels are `section`, `subsection`,
 `subsubsection`; lists are `itemize` and `enumerate` — those two style every
 nesting level, and `itemize2`..`itemize4` / `enumerate2`..`enumerate4`
 override one level, the way `\labelitemii` or `\setlist[itemize,2]` does;
-`frametitle`, `sectionpage`, and `standout` are the slides furniture (their
-`font` is read; the other keys have no meaning there yet). -/
+`frametitle`, `sectionpage`, `standout`, and `titlepage` are the slides
+furniture (their `font` is read; `titlepage` also reads `align` and
+`separator`; the other keys have no meaning there yet). -/
 def styleableElements : List String :=
   ["section", "subsection", "subsubsection", "itemize", "enumerate",
    "itemize2", "itemize3", "itemize4", "enumerate2", "enumerate3", "enumerate4",
-   "frametitle", "sectionpage", "standout"]
+   "frametitle", "sectionpage", "standout", "titlepage"]
 
 structure Styles where
   entries : Array (String × ElementStyle) := #[]
@@ -681,6 +694,11 @@ def dumpBlock (ind : String) (b : Block) : String :=
     dumpBlocks (ind ++ "  ") body
   | .framefoot content =>
     s!"{ind}framefoot\n" ++ dumpInlines (ind ++ "  ") content
+  | .rule color name thickness =>
+    let nm := match name with
+      | some n => s!" {n}"
+      | none => s!" #{hex2 color.r}{hex2 color.g}{hex2 color.b}"
+    s!"{ind}rule{nm} {dumpGlue thickness}\n"
 
 end
 
@@ -924,6 +942,8 @@ def blockTextOne (acc : String) : Block → String
   | .verbatim _ s => acc ++ s
   | .frame title _ _ body => blockTextList (acc ++ plainText title) body.toList
   | .framefoot content => acc ++ plainText content
+  -- A rule is decorative ink; it carries no text.
+  | .rule _ _ _ => acc
 
 def blockTextItems (acc : String) : List (Array Block) → String
   | [] => acc
@@ -1032,7 +1052,7 @@ theorem shadeBlock_text (dim : Color) (b : Block) (acc : String) :
     rw [shadeBlock]
     simp [blockTextOne, shadeBlockList_text dim body.toList #[] acc, blockTextList]
   | .verbatim c s => rfl
-  | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _ => rfl
+  | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ => rfl
 
 theorem shadeItems_text (dim : Color) (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :
@@ -1146,7 +1166,8 @@ theorem dimBlock_text (dim : Color) (k : Nat) (b : Block) (acc : String) :
         shadeBlockList_text dim body.toList #[] acc, blockTextList]
     · simp [h, blockTextOne, dimBlockList_text dim k body.toList #[] acc,
         blockTextList]
-  | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _ => rfl
+  | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
+  | .rule _ _ _ => rfl
 
 theorem dimItems_text (dim : Color) (k : Nat) (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :

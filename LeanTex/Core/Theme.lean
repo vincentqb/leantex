@@ -48,10 +48,20 @@ def moloch : Theme := {
     -- an inactive state, and Contrast.coveredContract holds the value to
     -- "quieter than body, still distinguishable" for every bundle.
     "covered = fg!38!bg"
-  tokens := "progressheight = 1pt"
+  tokens := "progressheight = 1pt, separatorheight = 0.5pt, " ++
+    -- The title page's inter-part spacing, from the moloch source
+    -- (beamerinnerthememoloch.dtx): 0.3em above the subtitle, 0.8em below
+    -- the separator (its default linewidth is 0.5pt), 0.5em below the
+    -- author, 1em below the institute.
+    "subtitlegap = 0.3em, separatorgap = 0.8em, " ++
+    "authorgap = 0.5em, institutegap = 1em"
   styles := [("frametitle", "font = {\\large\\bfseries}"),
              ("sectionpage", "font = {\\Large\\bfseries}"),
-             ("standout", "font = {\\Large\\bfseries}")]
+             ("standout", "font = {\\Large\\bfseries}"),
+             -- moloch's `title page` template sets the title matter ragged
+             -- left and draws a separator rule between the title block and
+             -- the author block, in the palette's separator colour.
+             ("titlepage", "align = left, separator = separator")]
   -- The footline of the lineage read as data: metropolis puts the frame
   -- number in the footline and a `frame footer` template beside it; here
   -- the section title keeps the reader placed and the frame number says

@@ -57,6 +57,9 @@ structure Ctx where
   palette : Palette := {}
   /-- Named lengths from `\tokens`. -/
   tokens : Tokens := {}
+  /-- Element styles declared so far (`\style`, theme bundles): the body
+  reads `titlepage` at `\maketitle`. -/
+  styles : Styles := {}
   /-- Inside mono/verbatim content, where punctuation stays literal. -/
   literalText : Bool := false
   /-- Inside a speaker note, absorbed as beamer absorbs it: a reserved
@@ -1191,19 +1194,49 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
     diag ctx "E0304" s!"'\\{name}' needs a \{...} group" pos
     return (start, #[])
 
-/-- The title content `\maketitle` sets, from what was declared. A declared
-but empty part (`\date{}`) is deliberately blank and sets nothing. -/
-private def titleBlocks (st : ESt) : Array Block :=
-  let add (inner : Array Block) (v : Option (Array Inline))
-      (wrap : Array Inline → Array Inline) : Array Block :=
-    match v with
-    | some xs => if xs.isEmpty then inner else inner.push (.para (wrap xs))
-    | none => inner
-  let inner := add #[] st.title fun t => #[.styled (.size "LARGE") #[.styled .bold t]]
-  let inner := add inner st.subtitle fun s => #[.styled (.size "large") s]
-  let inner := add inner st.author id
-  let inner := add inner st.institute fun i => #[.styled (.size "small") i]
-  add inner st.date id
+/-- The title content `\maketitle` sets, from what was declared, per the
+`titlepage` style. A declared `separator` becomes a full-measure rule
+between the title block (title, subtitle) and the author block (author,
+institute, date), in the declared palette colour at the `separatorheight`
+token's thickness — moloch's title separator. The inter-part spacing reads
+the `subtitlegap`/`separatorgap`/`authorgap`/`institutegap` tokens (the
+moloch bundle carries that theme's values); an after-gap materialises only
+when a later part follows. A declared but empty part (`\date{}`) is
+deliberately blank and sets nothing. -/
+private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
+  let tps : ElementStyle := (ctx.styles.find? "titlepage").getD {}
+  let part (v : Option (Array Inline)) : Option (Array Inline) :=
+    v.bind fun xs => if xs.isEmpty then none else some xs
+  let push (inner : Array Block) (before : Option SymGlue) (b : Block) : Array Block :=
+    match before, inner.isEmpty with
+    | some g, false => inner.push (.spaced g #[b])
+    | _, _ => inner.push b
+  let mut inner : Array Block := #[]
+  let mut pending : Option SymGlue := none
+  if let some xs := part st.title then
+    inner := push inner none (.para #[.styled (.size "LARGE") #[.styled .bold xs]])
+  if let some xs := part st.subtitle then
+    inner := push inner (ctx.tokens.find? "subtitlegap") (.para #[.styled (.size "large") xs])
+  if let some (c, nm) := tps.separator then
+    unless inner.isEmpty && (part st.author).isNone && (part st.institute).isNone
+        && (part st.date).isNone do
+      -- moloch's default titleseparator linewidth, when no token names one.
+      let th := (ctx.tokens.find? "separatorheight").getD
+        { width := Dim.Length.ofSp (Dim.pt 1 / 2) }
+      inner := push inner none (.rule c nm th)
+      pending := ctx.tokens.find? "separatorgap"
+  if let some xs := part st.author then
+    inner := push inner pending (.para xs)
+    pending := ctx.tokens.find? "authorgap"
+  if let some xs := part st.institute then
+    inner := push inner pending (.para #[.styled (.size "small") xs])
+    pending := ctx.tokens.find? "institutegap"
+  if let some xs := part st.date then
+    inner := push inner pending (.para xs)
+  -- A separator with nothing else declared is no title page at all.
+  match inner with
+  | #[.rule _ _ _] => return #[]
+  | _ => return inner
 
 /-- Elaborate raw items as a block sequence. -/
 partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
@@ -1458,13 +1491,20 @@ specs are not modelled")
             if let some p ← mkPara ctx junk then
               blocks := blocks.push p
           else if n == "maketitle" || n == "titlepage" then
-            let inner := titleBlocks (← get)
+            let inner := titleBlocks ctx (← get)
             if inner.isEmpty then
               warnOnce ctx "ctrl:maketitle" "W0309"
                 s!"'\\{n}' with nothing declared; no title is set" pos
                 (help := "declare \\title{...} (and \\author, \\date, ...) before it")
             else if ctx.slides then
-              blocks := blocks.push (.frame #[] false .center #[.center inner])
+              -- The title frame takes the golden split (moloch's
+              -- `title page` template: `0pt plus 1.618fil` + `\vfil` above
+              -- against `plus 1fil` below), and its horizontal alignment is
+              -- the `titlepage` style's declaration: moloch sets its title
+              -- matter ragged left; undeclared, the title page centres.
+              let tps := (ctx.styles.find? "titlepage").getD {}
+              let content := if tps.align == some "left" then inner else #[.center inner]
+              blocks := blocks.push (.frame #[] false .golden content)
             else
               blocks := blocks.push (.center inner)
           else
@@ -1959,7 +1999,8 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
   return { entries := acc }
 
 def styleKeys : List String :=
-  ["font", "before", "after", "rule", "marker", "indent", "gap"]
+  ["font", "before", "after", "rule", "marker", "indent", "gap",
+   "align", "separator"]
 
 /-- `\style{element}{...}`: how an element kind looks. `font` and `marker`
 are inline content and elaborate as such; the rest are lengths and a palette
@@ -2012,6 +2053,21 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
           match Decl.parseValue valueSrc with
           | some (.color r g b) => st := { st with rule := some (⟨r, g, b⟩, none) }
           | _ => diag ctx "E0326" s!"'{valueSrc}' is not in the palette" pos
+      | "separator" =>
+        match ctx.palette.resolve valueSrc with
+        | some c =>
+          let name := if (ctx.palette.find? valueSrc).isSome then some valueSrc else none
+          st := { st with separator := some (c, name) }
+        | none =>
+          match Decl.parseValue valueSrc with
+          | some (.color r g b) => st := { st with separator := some (⟨r, g, b⟩, none) }
+          | _ => diag ctx "E0326" s!"'{valueSrc}' is not in the palette" pos
+      | "align" =>
+        match valueSrc.trimAscii.toString with
+        | "left" => st := { st with align := some "left" }
+        | "center" => st := { st with align := some "center" }
+        | v =>
+          diag ctx "E0323" s!"'align' in \\style expects left or center, got '{v}'" pos
       | _ =>
         modify fun st' => { st' with
           diags := st'.diags.push (Decl.unknownKey ctx.file "style" key styleKeys pos) }
@@ -2622,7 +2678,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     -- satisfy the measure band the engine checks (W0201). A document that
     -- declares any \page geometry keeps every value it named.
     page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
-  ctx := { ctx with slides := docClass == "slides" }
+  ctx := { ctx with slides := docClass == "slides", styles := styles }
   let blocks ← elabBlocks ctx body
   -- What a card guarantees, stated as the assertions the engine already
   -- enforces: content fits its faces, ink respects the safe margin, and

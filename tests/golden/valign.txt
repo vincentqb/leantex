@@ -1,0 +1,27 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 25.512 hmargin 28.346 fontsize 11
+frame
+  title
+    text "Centred by default"
+  para
+    text "A short body sits midway between the title and the bottom margin."
+frame top
+  title
+    text "Top"
+  para
+    text "This body hugs its title, as a dense reference frame wants."
+frame bottom
+  title
+    text "Bottom"
+  para
+    text "This body sits on the bottom margin, leaving the air above."
+frame top
+  para
+    text "A bare top frame keeps its first line where an article would put it."
+frame
+  title
+    text "Overflow"
+  para
+    text "A frame taller than its stage takes nothing above the content: it stays top flush and spills to a continuation page, never off the top edge. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again. The placeholder committee resolved to enumerate the resolutions again."
+-- diagnostics
+(none)

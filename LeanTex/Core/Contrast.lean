@@ -285,8 +285,10 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
   -- colours are judged; its default colour is the muted key, judged once
   -- at the palette level.
   | .framefoot content => usesInlines cx out content.toList
-  -- A note is a side channel, never page text; verbatim carries no colour.
-  | .note _ | .verbatim _ _ => out
+  -- A note is a side channel, never page text; verbatim carries no
+  -- colour; a rule is decorative ink, not text, so the text-contrast
+  -- contract does not judge it.
+  | .note _ | .verbatim _ _ | .rule _ _ _ => out
 
 private def usesItems (cx : UseCx) (out : Array Use) :
     List (Array Block) → Array Use

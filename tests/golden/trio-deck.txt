@@ -11,7 +11,7 @@ token sep 1200/1000ex plus 300/1000ex
 meta title "Cardamom Press"
 meta author "Pat Placeholder"
 assert fonts.all_embedded
-frame
+frame golden
   center
     para
       styled size:LARGE

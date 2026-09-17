@@ -49,7 +49,7 @@ def goldenNames : List String :=
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
    "chrome", "lists", "lists-styled", "lists-deck",
-   "trio-page", "trio-deck", "trio-card"]
+   "trio-page", "trio-deck", "trio-card", "valign"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -2589,6 +2589,37 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (((Layout.run geom oneFace none (elabStr src).1).pages.flatMap
       (·.fills))[0]?.map (·.h)).getD 0
   t "the title bar keeps its height under centring" (barH "" == barH "[t]")
+  -- The title frame: golden distribution, and the titlepage style decides
+  -- the horizontal alignment and the separator.
+  let titled := deck "\\title{A Deck}\\author{Pat Placeholder}\n\\maketitle"
+  t "the title frame declares the golden split"
+    (match (elabStr titled).1.body with
+     | #[.frame _ _ .golden _] => true
+     | _ => false)
+  t "an undeclared title page centres"
+    (match (elabStr titled).1.body with
+     | #[.frame _ _ _ #[.center _]] => true
+     | _ => false)
+  let styledSrc := "\\documentclass[aspectratio=169]{slides}\n" ++
+    "\\palette{sep = #445566}\n" ++
+    "\\style{titlepage}{align = left, separator = sep}\n" ++
+    "\\begin{document}\n\\title{A Deck}\\author{Pat Placeholder}\n\\maketitle\n" ++
+    "\\end{document}"
+  t "a left title page is ragged and carries the separator"
+    (match (elabStr styledSrc).1.body with
+     | #[.frame _ _ .golden inner] =>
+       inner.size ≥ 2 && inner.any (fun b => match b with
+         | .rule _ (some "sep") _ => true
+         | _ => false) && !inner.any (fun b => match b with
+         | .center _ => true
+         | _ => false)
+     | _ => false)
+  -- The separator lays out as a full-measure rule line.
+  t "the separator sets as a full-measure rule"
+    ((linesOf styledSrc).any fun l => l.segs.any fun sg =>
+      match sg with
+      | .rule w _ _ _ => w == geom.textWidth
+      | _ => false)
 
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own

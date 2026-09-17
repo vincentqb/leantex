@@ -5,7 +5,7 @@ font body "Open Sans"
 font mono "Source Code Pro"
 meta title "A Certified Deck"
 meta author "Pat Placeholder"
-frame
+frame golden
   center
     para
       styled size:LARGE
