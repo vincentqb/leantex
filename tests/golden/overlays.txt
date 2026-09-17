@@ -1,0 +1,31 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 25.512 hmargin 28.346
+frame
+  title
+    text "Reveal in order"
+  list unordered
+    item
+      step 1
+        para
+          text "Always here."
+    item
+      step 2
+        para
+          text "Second beat."
+    item
+      step 3
+        para
+          text "Third beat."
+  para
+    step 3
+      text "A closing line for the last step."
+frame
+  title
+    text "Paused"
+  para
+    text "Before the pause."
+  step 2
+    para
+      text "After the pause."
+-- diagnostics
+(none)

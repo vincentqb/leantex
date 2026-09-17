@@ -26,13 +26,15 @@ frame
     text "Two backends"
   list unordered
     item
-      para
-        text "HTML is the deck; PDF is the handout."
+      step 1
+        para
+          text "HTML is the deck; PDF is the handout."
     item
-      para
-        styled bold
-          text "Frames are page boundaries"
-        text ", never flattened."
+      step 2
+        para
+          styled bold
+            text "Frames are page boundaries"
+          text ", never flattened."
 frame
   title
     text "Code"
@@ -42,7 +44,8 @@ frame
     "def pages (doc : Doc) : Nat :="
     "    (layout doc).pages.size"
   para
-    text "Checked at build time."
+    step 2
+      text "Checked at build time."
 frame
   title
     text "Arithmetic"
@@ -77,7 +80,6 @@ warning[W0104] 9:1 '\usetheme' is beamer configuration the engine does not have;
 warning[W0104] 10:1 '\setbeamercovered' is beamer configuration the engine does not have; skipped | help: a theme is a token bundle here (M5b): \palette and \tokens declare the design directly
 note[N0100] 11:1 \newcommand{\dim} → \define \dim(a1: content) {...}
 note[N0100] 12:1 \newenvironment{banner} → \defineenv{banner}(a1: content) {begin} {end}
-warning[W0105] 34:9 overlay specifications are ignored; every step's content is shown | help: dim-not-hide overlays land with the rest of M5; see PLAN.md
 note[N0100] 35:19 \alert → \textbf
 warning[W0307] 37:5 '\note' is not implemented yet; skipped | help: planned for M5; see PLAN.md
 warning[W0304] 11:22 'quiet!50' is not in the palette; content kept uncoloured | help: declare colours with \palette{ name = #RRGGBB }

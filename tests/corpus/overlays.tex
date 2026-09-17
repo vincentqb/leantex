@@ -1,0 +1,24 @@
+% Invented fixture: overlays, dim-not-hide. Item specs, an inline
+% \uncover, and \pause — the PDF handout gets one page per step with
+% pending content dimmed in place; HTML keeps one slide with step data.
+\documentclass[aspectratio=169]{slides}
+
+\begin{document}
+
+\begin{frame}{Reveal in order}
+\begin{itemize}
+\item<1-> Always here.
+\item<2-> Second beat.
+\item<3-> Third beat.
+\end{itemize}
+\uncover<3>{A closing line for the last step.}
+\end{frame}
+
+\begin{frame}{Paused}
+Before the pause.
+
+\pause
+After the pause.
+\end{frame}
+
+\end{document}

@@ -57,6 +57,9 @@ structure Ctx where
   tokens : Tokens := {}
   /-- Inside mono/verbatim content, where punctuation stays literal. -/
   literalText : Bool := false
+  /-- Overlay steps already opened by `\pause` in enclosing scopes: the next
+  pause reveals at `stepBase + 1`. -/
+  stepBase : Nat := 0
   /-- The document class is `slides`: `\maketitle` makes a title frame. -/
   slides : Bool := false
 
@@ -258,6 +261,21 @@ private def allText (xs : Array Inline) : Bool :=
   xs.all fun x => match x with
     | .text _ => true
     | _ => false
+
+/-- An overlay specification's from-step: `<2>`, `<2->`, and `<2-3>` are all
+"visible from 2" under dim-not-hide (the range's end is not modelled).
+`none` for a spec the model cannot number (`<+->`, `<.->`), which keeps the
+honest W0105. -/
+private def overlayFrom (w : String) : Option Nat :=
+  if w.startsWith "<" && w.endsWith ">" && w.length ≥ 3 then
+    let digits := (((w.drop 1).toString).toList.takeWhile Char.isDigit)
+    if digits.isEmpty then none else (String.ofList digits).toNat?
+  else none
+
+/-- Is this raw an overlay spec word? The lexer keeps `<2->` one word. -/
+private def specWord? : Raw → Option String
+  | .word w _ => if w.startsWith "<" && w.endsWith ">" then some w else none
+  | _ => none
 
 /-- Typographic punctuation, applied to ordinary text. `--` and `---` are the
 dashes an author means when they type them; `...` is an ellipsis; straight
@@ -795,6 +813,43 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
               diag ctx "E0306" "expected a parameter reference like {\\team}" pos
           | _, _ =>
             diag ctx "E0304" "'\\ifgiven' needs {\\param} and {content}" pos
+        else if name == "uncover" || name == "visible" || name == "only"
+            || name == "onslide" then
+          -- Overlay commands, dim-not-hide (PLAN M5): the content wraps in
+          -- a step and dims before its turn — \only included, one overlay
+          -- semantics for both backends. Without a group the spec declares:
+          -- the rest of this inline scope steps. A spec the model cannot
+          -- number keeps the honest W0105 and the content stays shown.
+          let j := skipSpaces raws i
+          match raws[j]?.bind specWord? with
+          | some w =>
+            match overlayFrom w with
+            | some n =>
+              let j2 := skipSpaces raws (j + 1)
+              match raws[j2]? with
+              | some (.group gbody _) =>
+                acc := flushText acc sb
+                sb := ""
+                acc := acc.push (.step n (← elabInlines ctx gbody))
+                i := j2 + 1
+              | _ =>
+                acc := flushText acc sb
+                sb := ""
+                acc := acc.push (.step n (← elabInlines ctx (raws.extract (j + 1) raws.size)))
+                i := raws.size
+            | none =>
+              warnOnce ctx "spec:overlay" "W0105"
+                s!"overlay specification '{w}' does not name a step; its content is \
+shown on every step" pos
+                (help := "dim-not-hide reads <2>, <2->, <2-3>; incremental \
+specs are not modelled")
+              i := j + 1
+          | none => pure ()
+        else if name == "pause" then
+          -- Reachable only inside an argument or definition body; between
+          -- blocks the boundary rule steps the rest of the scope.
+          warnOnce ctx "spec:pause-inline" "W0105"
+            "'\\pause' inside an argument cannot step; its content is shown" pos
         else if name == "centering" then
           -- Between blocks the declaration centres the rest of its scope;
           -- here, inside inline content, there is no block to centre.
@@ -1072,6 +1127,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .ctrl "par" _ => true
         | .ctrl "block" _ => true
         | .ctrl "centering" _ => true
+        | .ctrl "pause" _ => true
         | .ctrl n _ =>
           (sectionLevel n).isSome ||
           -- A user command whose body produces blocks is itself a boundary.
@@ -1131,6 +1187,16 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           i := raws.size
           unless inner.isEmpty do
             blocks := blocks.push (.center inner)
+        | .ctrl "pause" _ =>
+          -- The rest of this scope reveals one step later. Numbering is
+          -- cumulative through nesting: each pause raises the base its
+          -- successors count from, so pending content stays pending.
+          i := i + 1
+          let inner ← elabBlocks { ctx with stepBase := ctx.stepBase + 1 }
+            (raws.extract i raws.size)
+          i := raws.size
+          unless inner.isEmpty do
+            blocks := blocks.push (.step (ctx.stepBase + 2) inner)
         | .group gbody _ =>
           -- A centering scope group: its own block sequence, so the
           -- declaration stops at the closing brace.
@@ -1320,7 +1386,10 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             blocks := blocks.push (.frame title (← elabBlocks ctx rest))
           else if n == "itemize" || n == "enumerate" then
             let mut items : Array (Array Raw) := #[]
+            let mut steps : Array (Option Nat) := #[]
             let mut curItem : Array Raw := #[]
+            let mut curStep : Option Nat := none
+            let mut awaitSpec := false
             let mut seen := false
             let mut strayDiagged := false
             for item in body do
@@ -1328,9 +1397,26 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
               | .ctrl "item" _ =>
                 if seen then
                   items := items.push curItem
+                  steps := steps.push curStep
                 curItem := #[]
+                curStep := none
+                awaitSpec := true
                 seen := true
               | _ =>
+                -- `\item<2->`: the spec directly after the item names the
+                -- step its content reveals at, dim-not-hide (PLAN M5).
+                if seen && awaitSpec && !isSpace item then
+                  awaitSpec := false
+                  if let some w := specWord? item then
+                    match overlayFrom w with
+                    | some s => curStep := some s
+                    | none =>
+                      warnOnce ctx "spec:overlay" "W0105"
+                        s!"overlay specification '{w}' does not name a step; its \
+content is shown on every step" pos
+                        (help := "dim-not-hide reads <2>, <2->, <2-3>; incremental \
+specs are not modelled")
+                    continue
                 if seen then
                   curItem := curItem.push item
                 else if !isSpaceOrPar item && !strayDiagged then
@@ -1338,9 +1424,13 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
                   strayDiagged := true
             if seen then
               items := items.push curItem
+              steps := steps.push curStep
             let mut elabItems : Array (Array Block) := #[]
-            for it in items do
-              elabItems := elabItems.push (← elabBlocks ctx it)
+            for (it, st?) in items.zip steps do
+              let inner ← elabBlocks ctx it
+              elabItems := elabItems.push (match st? with
+                | some s => #[.step s inner]
+                | none => inner)
             blocks := blocks.push (.list (n == "enumerate") elabItems)
           else if n == "center" then
             blocks := blocks.push (.center (← elabBlocks ctx body))

@@ -641,29 +641,6 @@ where
     sayOnce "ctrl:ifdefined" .warning "W0104"
       s!"TeX conditional ('\\{name}' … '\\fi') is not supported; skipped whole" pos
     return some (#[], k)
-  | "uncover" | "only" | "visible" | "onslide" | "pause" =>
-    -- Overlay steps: everything is shown, which is beamer's handout mode.
-    -- `\uncover<2>{...}`'s group stays in the stream and renders as content.
-    let j := skipSpaces raws start
-    let k := match raws[j]? with
-      | some (.word w _) => if w.startsWith "<" && w.endsWith ">" then j + 1 else start
-      | _ => start
-    sayOnce "spec:overlay" .warning "W0105"
-      "overlay specifications are ignored; every step's content is shown" pos
-      (help := "dim-not-hide overlays land with the rest of M5; see PLAN.md")
-    return some (#[], k)
-  | "item" =>
-    -- `\item<1->`: the item stays, its overlay specification goes.
-    let j := skipSpaces raws start
-    match raws[j]? with
-    | some (.word w _) =>
-      if w.startsWith "<" && w.endsWith ">" then
-        sayOnce "spec:overlay" .warning "W0105"
-          "overlay specifications are ignored; every step's content is shown" pos
-          (help := "dim-not-hide overlays land with the rest of M5; see PLAN.md")
-        return some (#[.ctrl "item" pos], j + 1)
-      else return none
-    | _ => return none
   | "alert" =>
     became "\\alert" "\\textbf" pos
     return some (#[.ctrl "textbf" pos], start)

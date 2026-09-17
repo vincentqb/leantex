@@ -46,7 +46,7 @@ def warnCodes (s : String) : List String :=
 
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
-   "links", "resume", "talk", "deck", "latex-idioms", "wrapper", "centering", "columns"]
+   "links", "resume", "talk", "deck", "latex-idioms", "wrapper", "centering", "columns", "overlays"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -627,18 +627,20 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       ["W0104"])
   t "compat def skipped through its body"
     (errCodes (pre "\\makeatletter\\def\\verbatim@font{\\footnotesize\\ttfamily}\\makeatother") == [])
-  t "compat newenvironment warns and is skipped"
+  t "compat newenvironment defines; only its beamer-config body warns"
     (warnCodes (pre "\\newenvironment{wrap}[1]{\\logo{#1}}{\\logo{}}") == ["W0104"])
-  -- Overlay specifications go; the content they staged stays.
-  t "compat uncover keeps content, drops the spec"
-    ((elabStr "a \\uncover<2>{shown} b").1.body == #[.para #[.text "a shown b"]])
-  t "compat pause vanishes"
-    ((elabStr "a \\pause b").1.body == #[.para #[.text "a b"]])
-  t "compat overlay warns once for the whole document"
-    ((warnCodes "\\uncover<1>{a} \\pause \\onslide<2->b").length == 1)
-  t "compat item overlay spec is dropped"
+  -- Overlay specifications elaborate to steps; the content stays.
+  t "uncover wraps its content in a step"
+    ((elabStr "a \\uncover<2>{shown} b").1.body ==
+      #[.para #[.text "a ", .step 2 #[.text "shown"], .text " b"]])
+  t "pause between words steps the rest of the scope"
+    ((elabStr "a \\pause b").1.body ==
+      #[.para #[.text "a"], .step 2 #[.para #[.text "b"]]])
+  t "unnumbered overlay specs warn once for the whole document"
+    ((warnCodes "\\uncover<+->{a} \\uncover<.->{b}").length == 1)
+  t "item overlay spec wraps the item"
     ((elabStr "\\begin{itemize}\\item<1-> one\\end{itemize}").1.body ==
-      #[.list false #[#[.para #[.text "one"]]]])
+      #[.list false #[#[.step 1 #[.para #[.text "one"]]]]])
   t "compat alert is textbf"
     ((elabStr "\\alert{hot}").1.body == #[.para #[.styled .bold #[.text "hot"]]])
   t "compat bigskip is a spaced block"
@@ -1781,6 +1783,61 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       | #[.frame _ #[.columns cols]] => cols.map (·.1) == #[none, some 500]
       | _ => false))
 
+/-- Overlays, dim-not-hide (PLAN M5): steps ride the IR, the PDF handout
+gets one page per step with pending content dimmed and no reflow, HTML
+carries the step data with everything visible (the no-JS deliverable).
+Own function: `main`'s do block has no budget left. -/
+def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deck (body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n\\begin{document}\n\\begin{frame}\n" ++
+    body ++ "\n\\end{frame}\n\\end{document}"
+  -- \item<n-> wraps its item; \uncover<n>{...} wraps inline content.
+  let src := deck ("\\begin{itemize}\n\\item<1-> first\n\\item<2-> second\n\\end{itemize}\n" ++
+    "\\uncover<2>{tail}")
+  let (doc, ds) := elabStr src
+  t "overlay specs elaborate to steps, warning nothing" (ds.isEmpty &&
+    doc.body == #[.frame #[] #[
+      .list false #[
+        #[.step 1 #[.para #[.text "first"]]],
+        #[.step 2 #[.para #[.text "second"]]]],
+      .para #[.step 2 #[.text "tail"]]]])
+  -- \pause steps the rest of the scope.
+  let (pDoc, pDs) := elabStr (deck "one\n\n\\pause\ntwo\n\n\\pause\nthree")
+  t "pause steps the rest, cumulatively" (pDs.isEmpty &&
+    pDoc.body == #[.frame #[] #[
+      .para #[.text "one"],
+      .step 2 #[.para #[.text "two"], .step 3 #[.para #[.text "three"]]]]])
+  -- PDF: one page per step; pending content dims, nothing moves.
+  let out := Layout.run (Layout.Geom.ofPage pDoc.page) oneFace none pDoc
+  t "pdf emits one page per step" (out.pages.size == 3)
+  let coords (p : Layout.PageOut) : Array (Dim.Sp × Dim.Sp) :=
+    p.lines.map fun l => (l.x, l.y)
+  t "pdf steps do not reflow"
+    (match out.pages[0]?, out.pages[2]? with
+     | some p1, some p3 => coords p1 == (coords p3).extract 0 (coords p1).size
+     | _, _ => false)
+  let lineColors (p : Layout.PageOut) : Array Ir.Color :=
+    p.lines.filterMap fun l => l.segs.findSome? fun s => match s with
+      | .run _ c _ _ _ _ _ => some c
+      | _ => none
+  t "pdf pending content is dimmed, then undimmed"
+    (match out.pages[0]?, out.pages[2]? with
+     | some p1, some p3 =>
+       let c1 := lineColors p1
+       let c3 := lineColors p3
+       c1.size == 3 && c3.size == 3 &&
+       c1[0]? == some Ir.Color.black && c1[1]? != some Ir.Color.black &&
+       c1[2]? != some Ir.Color.black && c3.all (· == Ir.Color.black)
+     | _, _ => false)
+  -- HTML: the steps ride as data, everything visible.
+  let (html, _) := HtmlDoc.emit {} doc
+  t "html carries step data"
+    ((html.splitOn "data-step=\"2\"").length ≥ 2)
+  -- A spec the model cannot number keeps the honest warning.
+  t "an unnumberable spec still warns W0105"
+    (warnCodes (deck "\\begin{itemize}\\item<+-> x\\end{itemize}") == ["W0105"])
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
@@ -2840,6 +2897,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       spacingChecks ref geom oneFace font
       slideChecks ref oneFace
       columnsChecks ref oneFace
+      overlayChecks ref oneFace
       scannerChecks ref
 
 def main (args : List String) : IO UInt32 := do

@@ -186,6 +186,10 @@ inductive Inline where
   | pageCount
   /-- `\\`, carrying LaTeX's optional extra space: `\\[1ex]`. -/
   | linebreak (extra : SymGlue)
+  /-- Overlay content visible from step `n` (`\uncover<2>{...}`): before its
+  step it dims, never hides, so no step reflows the slide (PLAN M5). Zero
+  metric impact — a pure grouping both backends may recolor or tag. -/
+  | step (n : Nat) (body : Array Inline)
   deriving Repr, BEq, Inhabited
 
 inductive Block where
@@ -203,6 +207,9 @@ inductive Block where
   leftover equally. Columns are top-aligned; the alignment options and
   absolute widths are not modelled (PLAN, M5). -/
   | columns (cols : Array (Option Nat × Array Block))
+  /-- Overlay blocks visible from step `n` (`\item<2->`, `\pause`): the
+  block form of `Inline.step`, with the same dim-not-hide semantics. -/
+  | step (n : Nat) (body : Array Block)
   /-- One slide. First-class and never flattened into article paragraphs:
   HTML makes it a `<section>` of the deck, the PDF handout gives it a page.
   An empty title is a bare frame. -/
@@ -350,6 +357,7 @@ def plainTextOne (x : Inline) : String :=
   | .colored _ _ body => plainTextList body.toList
   | .link _ body => plainTextList body.toList
   | .underline body => plainTextList body.toList
+  | .step _ body => plainTextList body.toList
   | .fill | .pageNumber | .pageCount => ""
   | .linebreak _ => " "
 
@@ -381,6 +389,8 @@ def dumpInline (ind : String) (x : Inline) : String :=
     s!"{ind}link {url.quote}\n" ++ dumpInlines (ind ++ "  ") body
   | .underline body =>
     s!"{ind}underline\n" ++ dumpInlines (ind ++ "  ") body
+  | .step n body =>
+    s!"{ind}step {n}\n" ++ dumpInlines (ind ++ "  ") body
   | .fill => s!"{ind}fill\n"
   | .pageNumber => s!"{ind}pagenumber\n"
   | .pageCount => s!"{ind}pagecount\n"
@@ -427,6 +437,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
     s!"{ind}list {kind}\n" ++ dumpItems (ind ++ "  ") items.toList
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
   | .columns cols => s!"{ind}columns\n" ++ dumpColumns (ind ++ "  ") cols.toList
+  | .step n body => s!"{ind}step {n}\n" ++ dumpBlocks (ind ++ "  ") body
   | .spaced before body =>
     s!"{ind}block before {dumpGlue before}\n" ++ dumpBlocks (ind ++ "  ") body
   | .verbatim s =>
@@ -439,6 +450,163 @@ def dumpBlock (ind : String) (b : Block) : String :=
     dumpBlocks (ind ++ "  ") body
 
 end
+
+/-- The colour pending overlay content dims to, unless the document's
+palette declares `covered`: the same value as the HTML muted token, so the
+two backends' handouts agree. -/
+def coveredDefault : Color := { r := 0xA1, g := 0xA1, b := 0xAA }
+
+-- Overlay walks. Structural recursion through `List`, as the printers above.
+
+mutual
+
+/-- The last step a frame's body reaches: how many pages the PDF handout
+gives the frame. A frame nested below another block keeps one page. -/
+def maxStepBlocks (xs : Array Block) : Nat := maxStepBlockList xs.toList
+
+def maxStepBlockList : List Block → Nat
+  | [] => 1
+  | b :: rest => max (maxStepBlock b) (maxStepBlockList rest)
+
+def maxStepBlock : Block → Nat
+  | .para content => maxStepInlines content
+  | .list _ items => maxStepItems items.toList
+  | .center body => maxStepBlockList body.toList
+  | .spaced _ body => maxStepBlockList body.toList
+  | .columns cols => maxStepColumns cols.toList
+  | .step n body => max n (maxStepBlockList body.toList)
+  | _ => 1
+
+def maxStepItems : List (Array Block) → Nat
+  | [] => 1
+  | item :: rest => max (maxStepBlockList item.toList) (maxStepItems rest)
+
+def maxStepColumns : List (Option Nat × Array Block) → Nat
+  | [] => 1
+  | (_, body) :: rest => max (maxStepBlockList body.toList) (maxStepColumns rest)
+
+def maxStepInlines (xs : Array Inline) : Nat := maxStepInlineList xs.toList
+
+def maxStepInlineList : List Inline → Nat
+  | [] => 1
+  | x :: rest => max (maxStepInline x) (maxStepInlineList rest)
+
+def maxStepInline : Inline → Nat
+  | .styled _ body => maxStepInlineList body.toList
+  | .colored _ _ body => maxStepInlineList body.toList
+  | .link _ body => maxStepInlineList body.toList
+  | .underline body => maxStepInlineList body.toList
+  | .step n body => max n (maxStepInlineList body.toList)
+  | _ => 1
+
+end
+
+mutual
+
+/-- Every paragraph below here recoloured to the covered colour: the body
+of a step that has not arrived. Explicit colours nested inside win, as any
+inner wrapper does; verbatim and section blocks carry no colour and stay
+(recorded in PLAN). -/
+def shadeBlocks (dim : Color) (xs : Array Block) : Array Block :=
+  shadeBlockList dim #[] xs.toList
+
+def shadeBlockList (dim : Color) (out : Array Block) : List Block → Array Block
+  | [] => out
+  | b :: rest => shadeBlockList dim (out.push (shadeBlock dim b)) rest
+
+def shadeBlock (dim : Color) : Block → Block
+  | .para content => .para #[.colored dim none content]
+  | .list o items => .list o (shadeItems dim #[] items.toList)
+  | .center body => .center (shadeBlockList dim #[] body.toList)
+  | .spaced g body => .spaced g (shadeBlockList dim #[] body.toList)
+  | .columns cols => .columns (shadeColumns dim #[] cols.toList)
+  | .step n body => .step n (shadeBlockList dim #[] body.toList)
+  | other => other
+
+def shadeItems (dim : Color) (out : Array (Array Block)) :
+    List (Array Block) → Array (Array Block)
+  | [] => out
+  | item :: rest => shadeItems dim (out.push (shadeBlockList dim #[] item.toList)) rest
+
+def shadeColumns (dim : Color) (out : Array (Option Nat × Array Block)) :
+    List (Option Nat × Array Block) → Array (Option Nat × Array Block)
+  | [] => out
+  | (w, body) :: rest =>
+    shadeColumns dim (out.push (w, shadeBlockList dim #[] body.toList)) rest
+
+end
+
+mutual
+
+/-- The frame's body as step `k` of its overlay shows it: content of a later
+step dims to `dim`, everything else stays. Only colours change, so no step
+can reflow the slide — the dim-not-hide invariant, by construction. -/
+def dimBlocks (dim : Color) (k : Nat) (xs : Array Block) : Array Block :=
+  dimBlockList dim k #[] xs.toList
+
+def dimBlockList (dim : Color) (k : Nat) (out : Array Block) :
+    List Block → Array Block
+  | [] => out
+  | b :: rest => dimBlockList dim k (out.push (dimBlock dim k b)) rest
+
+def dimBlock (dim : Color) (k : Nat) : Block → Block
+  | .para content => .para (dimInlines dim k content)
+  | .list o items => .list o (dimItems dim k #[] items.toList)
+  | .center body => .center (dimBlockList dim k #[] body.toList)
+  | .spaced g body => .spaced g (dimBlockList dim k #[] body.toList)
+  | .columns cols => .columns (dimColumns dim k #[] cols.toList)
+  | .step n body =>
+    if n > k then .step n (shadeBlocks dim body)
+    else .step n (dimBlockList dim k #[] body.toList)
+  | other => other
+
+def dimItems (dim : Color) (k : Nat) (out : Array (Array Block)) :
+    List (Array Block) → Array (Array Block)
+  | [] => out
+  | item :: rest => dimItems dim k (out.push (dimBlockList dim k #[] item.toList)) rest
+
+def dimColumns (dim : Color) (k : Nat) (out : Array (Option Nat × Array Block)) :
+    List (Option Nat × Array Block) → Array (Option Nat × Array Block)
+  | [] => out
+  | (w, body) :: rest =>
+    dimColumns dim k (out.push (w, dimBlockList dim k #[] body.toList)) rest
+
+def dimInlines (dim : Color) (k : Nat) (xs : Array Inline) : Array Inline :=
+  dimInlineList dim k #[] xs.toList
+
+def dimInlineList (dim : Color) (k : Nat) (out : Array Inline) :
+    List Inline → Array Inline
+  | [] => out
+  | x :: rest => dimInlineList dim k (out.push (dimInline dim k x)) rest
+
+def dimInline (dim : Color) (k : Nat) : Inline → Inline
+  | .styled st body => .styled st (dimInlineList dim k #[] body.toList)
+  | .colored c nm body => .colored c nm (dimInlineList dim k #[] body.toList)
+  | .link u body => .link u (dimInlineList dim k #[] body.toList)
+  | .underline body => .underline (dimInlineList dim k #[] body.toList)
+  | .step n body =>
+    if n > k then .step n #[.colored dim none body]
+    else .step n (dimInlineList dim k #[] body.toList)
+  | other => other
+
+end
+
+/-- One handout page per overlay step: each top-level multi-step frame
+becomes one frame per step, pending content dimmed. The PDF path calls
+this; HTML keeps the single frame and its step data. -/
+def expandOverlays (dim : Color) (blocks : Array Block) : Array Block := Id.run do
+  let mut out : Array Block := #[]
+  for b in blocks do
+    match b with
+    | .frame title body =>
+      let steps := maxStepBlocks body
+      if steps ≤ 1 then
+        out := out.push (.frame title body)
+      else
+        for k in [1:steps + 1] do
+          out := out.push (.frame title (dimBlocks dim k body))
+    | other => out := out.push other
+  return out
 
 def dumpDiag (d : Diag) : String :=
   let where' := match d.span with

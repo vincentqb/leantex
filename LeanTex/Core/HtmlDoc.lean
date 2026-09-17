@@ -276,6 +276,11 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- skip-ink is the browser's native form of the PDF path's invariant: the
     -- rule breaks where a descender crosses it.
     acc.push (Html.elem "u" (inlineNodesInto cfg #[] body.toList))
+  | .step n body =>
+    -- Every step is visible: the no-JS deck is a readable handout (PLAN M5).
+    -- The step number rides as data for the coming deck controller.
+    acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
+      #[("class", "step"), ("data-step", toString n)])
   | .fill => acc.push (Html.elem "span" #[] #[("class", "fill")])
   -- Page furniture has no meaning in a continuous document.
   | .pageNumber => acc
@@ -387,6 +392,10 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       #[("class", "columns"),
         ("style", s!"display: grid; grid-template-columns: {gridTracks cols}; " ++
           "justify-content: space-between; column-gap: 0.75rem")]
+  | .step n body =>
+    -- Every step visible (the no-JS handout); the number rides as data.
+    Html.elem "div" (blockNodesInto cfg #[] body.toList)
+      #[("class", "step"), ("data-step", toString n)]
   | .spaced before body =>
     let style := s!"margin-top: {cssLength before.width}"
     Html.elem "div" (blockNodesInto cfg #[] body.toList)

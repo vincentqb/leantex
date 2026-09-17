@@ -196,6 +196,9 @@ private def flattenOne (st : FlattenSt) (sty : TextStyle) (x : Inline) : Flatten
   | .colored c _ body => flatten st { sty with color := c } body
   | .link url body => flatten st { sty with link := some url } body
   | .underline body => flatten st { sty with underline := true } body
+  -- A step is pure grouping here: the PDF path dims pending content by
+  -- recolouring copies before layout (Ir.expandOverlays), never by metrics.
+  | .step _ body => flatten st sty body
   -- Placeholders are substituted before layout; reaching here means the
   -- document used one outside running content.
   | .pageNumber => pushText st sty "?"
@@ -1169,6 +1172,9 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- bare `\vspace` after a list adds to the list's `topsep`, as in LaTeX.
     let a := a.vskip (a.resolve before)
     collectBlocks a pats fs body indent
+  | .step _ body =>
+    -- Pure grouping: any dimming was painted into colours before layout.
+    collectBlocks a pats fs body indent
   | .verbatim s =>
     -- Code lines, kept literally, at 4/5 of the body size (the
     -- \footnotesize convention for code frames — an 80-column line fits a
@@ -1344,6 +1350,7 @@ def substPageOne (n total : Nat) : Inline → Inline
   | .colored c nm body => .colored c nm (substPageList n total body.toList).toArray
   | .link u body => .link u (substPageList n total body.toList).toArray
   | .underline body => .underline (substPageList n total body.toList).toArray
+  | .step s body => .step s (substPageList n total body.toList).toArray
   | other => other
 
 def substPageList (n total : Nat) : List Inline → List Inline
@@ -1380,7 +1387,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let xHeight := scale font.xHeight
   let acc := collectBlocks { geom := geom, xHeight := xHeight, styles := doc.styles
                              slides := doc.docClass == "slides" }
-    pats fs doc.body 0
+    pats fs (Ir.expandOverlays ((doc.palette.find? "covered").getD Ir.coveredDefault)
+      doc.body) 0
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
   -- so the tasks race on nothing; joining in document order below keeps the
   -- output independent of scheduling.
