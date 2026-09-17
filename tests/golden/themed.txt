@@ -6,6 +6,7 @@ font mono "Source Code Pro"
 palette fg #23373B
 palette bg #FAFAFA
 palette example #008080
+palette muted #647274
 palette frametitlefg #FAFAFA
 palette frametitlebg #23373B
 palette progressfg #A55A13
@@ -16,6 +17,7 @@ palette standoutbg #23373B
 palette covered #A8B0B1
 palette alert #C2185B
 token progressheight 1pt
+chrome footer left sectiontitle right framenumber
 meta title "A Themed Deck"
 meta author "Pat Placeholder"
 frame

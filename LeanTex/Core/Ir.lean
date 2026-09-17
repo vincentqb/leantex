@@ -444,6 +444,32 @@ structure Styles where
 def Styles.find? (s : Styles) (element : String) : Option ElementStyle :=
   (s.entries.find? (·.1 == element)).map (·.2)
 
+/-- What a chrome footer slot shows, resolved per page by the backends: the
+title of the current top-level section, or the index of the page's own frame
+(one number for all pages of a stepped frame). Data, not content: a theme
+names the datum and the engine supplies the value, so a bundle stays a table
+and no backend learns a theme's name. -/
+inductive ChromeSlot where
+  | sectionTitle
+  | frameNumber
+  deriving Repr, BEq, Inhabited
+
+def ChromeSlot.label : ChromeSlot → String
+  | .sectionTitle => "sectiontitle"
+  | .frameNumber => "framenumber"
+
+/-- Page furniture a theme (or the document, via `\chrome`) declares: the
+slide footer's two slots. A document's own `\runningfoot` overrides the
+whole footer; a slot left undeclared is empty. Redeclaring `\chrome`
+replaces, as `\palette` and `\tokens` do, so a theme stays a default. -/
+structure Chrome where
+  footerLeft : Option ChromeSlot := none
+  footerRight : Option ChromeSlot := none
+  deriving Repr, BEq, Inhabited
+
+def Chrome.hasFooter (c : Chrome) : Bool :=
+  c.footerLeft.isSome || c.footerRight.isSome
+
 mutual
 
 def fillOne (content : Array Inline) : Inline → Inline
@@ -481,6 +507,8 @@ structure Doc where
   /-- First page that carries running content; `\thispagestyle{empty}` on the
   opening page is `2`. -/
   runningFrom : Nat := 1
+  /-- Slide chrome: the themed default footer's slots. `foot` wins over it. -/
+  chrome : Chrome := {}
   styles : Styles := {}
   info : Meta := {}
   output : OutputSpec := {}
@@ -1184,7 +1212,14 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
      | none => "") ++
     (match doc.foot with
      | some xs => "runningfoot\n" ++ dumpInlines "  " xs
-     | none => "")
+     | none => "") ++
+    (if doc.chrome.hasFooter then
+      let slot (label : String) (s : Option ChromeSlot) : String :=
+        match s with
+        | some v => s!" {label} {v.label}"
+        | none => ""
+      s!"chrome footer{slot "left" doc.chrome.footerLeft}{slot "right" doc.chrome.footerRight}\n"
+     else "")
   let infoLines :=
     metaLine "title" doc.info.title ++ metaLine "author" doc.info.author ++
     metaLine "subject" doc.info.subject ++ metaLine "keywords" doc.info.keywords

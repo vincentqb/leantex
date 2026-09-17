@@ -316,6 +316,13 @@ def docDiags (doc : Doc) : Array Diag := Id.run do
   -- `.colored`, so the declared pair is judged directly.
   if let some fg := doc.palette.find? "fg" then
     uses := uses.push { name := some "fg", color := fg, large := false }
+  -- The chrome footer draws small text in `muted` on the page: a document
+  -- that overrides the key is judged on the pairing it creates, exactly as
+  -- a declared `fg` is (the shipped bundles are covered by the palette
+  -- contract theorems below).
+  if doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone then
+    if let some muted := doc.palette.find? "muted" then
+      uses := uses.push { name := some "muted", color := muted, large := false }
   for run in [doc.head, doc.foot] do
     if let some content := run then
       uses := usesInlines base uses content.toList
@@ -367,14 +374,16 @@ def bundlePalette (th : Theme.Theme) : Palette := Id.run do
   return pal
 
 /-- Every text pairing a theme bundle itself creates clears its threshold:
-`fg`, `alert`, and `example` colour body text on `bg` (4.5:1, SC 1.4.3);
-the frame title sets `frametitlefg` on its `frametitlebg` bar at
-`\large\bfseries` — 12pt bold, under the large-scale sizes, so 4.5:1 too;
-a standout frame sets `standoutfg` on `standoutbg` at `\Large\bfseries` —
-14.4pt bold, large-scale — so 3:1. The progress bar and separator are not
-checked: supplementary position indicators the section title already
-carries, outside SC 1.4.11's "required to understand the content". A key a
-bundle does not declare creates no pairing and passes vacuously. -/
+`fg`, `alert`, and `example` colour body text on `bg` (4.5:1, SC 1.4.3), and
+`muted` colours the chrome footer's small text on `bg` — under the
+large-scale sizes, so 4.5:1 as well; the frame title sets `frametitlefg` on
+its `frametitlebg` bar at `\large\bfseries` — 12pt bold, under the
+large-scale sizes, so 4.5:1 too; a standout frame sets `standoutfg` on
+`standoutbg` at `\Large\bfseries` — 14.4pt bold, large-scale — so 3:1. The
+progress bar and separator are not checked: supplementary position
+indicators the section title already carries, outside SC 1.4.11's "required
+to understand the content". A key a bundle does not declare creates no
+pairing and passes vacuously. -/
 def paletteContract (pal : Palette) : Bool :=
   let bg := (pal.find? "bg").getD Color.white
   let text (k : String) : Bool :=
@@ -385,7 +394,7 @@ def paletteContract (pal : Palette) : Bool :=
     match pal.find? f, pal.find? b with
     | some cf, some cb => contrastMilli cf cb ≥ threshold
     | _, _ => true
-  text "fg" && text "alert" && text "example"
+  text "fg" && text "alert" && text "example" && text "muted"
     && pair "frametitlefg" "frametitlebg" aaText
     && pair "standoutfg" "standoutbg" aaLargeText
 
@@ -401,6 +410,7 @@ def molochResolved : Palette := { entries := #[
   ("bg", ⟨0xFA, 0xFA, 0xFA⟩),
   ("alert", ⟨0xA5, 0x5A, 0x13⟩),
   ("example", ⟨0x00, 0x80, 0x80⟩),
+  ("muted", ⟨0x64, 0x72, 0x74⟩),
   ("frametitlefg", ⟨0xFA, 0xFA, 0xFA⟩),
   ("frametitlebg", ⟨0x23, 0x37, 0x3B⟩),
   ("progressfg", ⟨0xA5, 0x5A, 0x13⟩),
@@ -416,6 +426,7 @@ def plainResolved : Palette := { entries := #[
   ("bg", ⟨0xFF, 0xFF, 0xFF⟩),
   ("alert", ⟨0xB3, 0x26, 0x1E⟩),
   ("example", ⟨0x20, 0x5E, 0x3B⟩),
+  ("muted", ⟨0x5F, 0x5F, 0x62⟩),
   ("progressfg", ⟨0x76, 0x76, 0x79⟩),
   ("progressbg", ⟨0xDD, 0xDD, 0xDD⟩),
   ("separator", ⟨0xA4, 0xA4, 0xA5⟩),

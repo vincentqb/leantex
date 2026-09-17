@@ -2230,6 +2230,58 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "a themed standout frame does not print its speaker note"
     (nOut.pages.map (·.lines.size) == bOut.pages.map (·.lines.size))
 
+/-- `\chrome` and the bundles' chrome: page furniture as declared data, a
+slot naming a per-page datum, redeclaration replacing — a theme's chrome is
+a default exactly as its palette is. -/
+def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let deck (pre body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n" ++ pre ++
+    "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let frame := "\\begin{frame}{T}\nx\n\\end{frame}"
+  let (mDoc, mDs) := elabStr (deck "\\theme{moloch}" frame)
+  t "chrome moloch source clean" mDs.isEmpty
+  t "moloch declares the footer slots"
+    (mDoc.chrome.footerLeft == some .sectionTitle &&
+     mDoc.chrome.footerRight == some .frameNumber)
+  t "moloch declares the muted step"
+    (mDoc.palette.find? "muted" == some ⟨0x64, 0x72, 0x74⟩)
+  t "plain declares the same footer"
+    ((elabStr (deck "\\theme{plain}" frame)).1.chrome.hasFooter)
+  t "an unthemed deck has no chrome"
+    (!(elabStr (deck "" frame)).1.chrome.hasFooter)
+  -- A later \chrome replaces the theme's whole footer, as \palette entries
+  -- replace: the theme is a default, never a lock.
+  let (oDoc, oDs) := elabStr (deck
+    "\\theme{moloch}\\chrome{ footer = { right = \\slidenumber } }" frame)
+  t "a document's chrome overrides the theme's whole footer" (oDs.isEmpty &&
+    oDoc.chrome.footerLeft.isNone && oDoc.chrome.footerRight == some .frameNumber)
+  -- The sketch's spelling and the beamer lineage's name one datum.
+  t "slidenumber and framenumber are one datum"
+    ((elabStr (deck "\\chrome{ footer = { right = \\framenumber } }" frame)).1.chrome ==
+     (elabStr (deck "\\chrome{ footer = { right = \\slidenumber } }" frame)).1.chrome)
+  t "unknown chrome key names the known one"
+    ((elabStr (deck "\\chrome{ logo = x }" frame)).2.any fun d =>
+      d.code == "E0322" && ((d.help.getD "").splitOn "footer").length == 2)
+  t "unknown slot key names left and right"
+    ((elabStr (deck "\\chrome{ footer = { top = \\framenumber } }" frame)).2.any
+      (·.code == "E0322"))
+  t "an unreadable slot names the data"
+    ((elabStr (deck "\\chrome{ footer = { left = \\pagenumber } }" frame)).2.any fun d =>
+      d.code == "E0321" && ((d.help.getD "").splitOn "sectiontitle").length == 2)
+  t "a non-block footer is a type error"
+    ((elabStr (deck "\\chrome{ footer = 3pt }" frame)).2.any (·.code == "E0323"))
+  t "chrome outside slides warns"
+    ((elabStr ("\\documentclass{article}\\chrome{ footer = { right = \\framenumber } }" ++
+      "\\begin{document}x\\end{document}")).2.any (·.code == "W0318"))
+  -- The muted rule is load-bearing: one step weaker (fg!60!bg) fails the
+  -- bundle contract the theorems hold.
+  let weaker : Ir.Palette := { entries :=
+    Contrast.molochResolved.entries.map fun (k, c) =>
+      if k == "muted" then (k, ⟨121, 133, 135⟩) else (k, c) }
+  t "the palette contract rejects a muted one step weaker"
+    (!Contrast.paletteContract weaker)
+
 /-- The footer band is reserved, never overlaid: `Geom.bodyBottom` is the one
 place a footer's band comes out of the page, placement reads the bottom only
 from there, and `bodyBottom_clears_footer` is the arithmetic that the
@@ -3902,6 +3954,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       noteChecks ref oneFace
       themeFurnitureChecks ref oneFace
       themeReconcileChecks ref oneFace
+      chromeDeclChecks ref
       footerBandChecks ref oneFace
       scannerChecks ref
       rhythmChecks ref oneFace

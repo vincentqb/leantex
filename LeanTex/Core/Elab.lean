@@ -114,7 +114,7 @@ def reservedCtrl : List (String × String) :=
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 def declCtrl : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
-   "theme"]
+   "theme", "chrome"]
 
 /-- Preamble declarations that take one group of *inline content* rather than
 a key/value block: running head and foot. -/
@@ -2045,6 +2045,62 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
                 (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
   return pal
 
+/-- `\chrome{ footer = { left = \sectiontitle, right = \framenumber } }`:
+page furniture as declared data. A slot names a per-page datum the engine
+supplies — the current section's title, or the frame's own number — never
+literal content (that is `\runningfoot`, which overrides the whole footer).
+Redeclaring replaces, so a theme's chrome is a default exactly as its
+palette is. -/
+private def applyChrome (ctx : Ctx) (src : String) (pos : Pos) : EM Chrome := do
+  let mut chrome : Chrome := {}
+  let slotHelp := "slots are \\sectiontitle or \\framenumber"
+  for entry in Decl.splitEntries src do
+    match Decl.splitEntry entry with
+    | none =>
+      diag ctx "E0320" s!"invalid entry in \\chrome: {entry.quote}" pos
+        (help := "entries look like: footer = { left = \\sectiontitle, right = \\framenumber }")
+    | some (key, valueSrc) =>
+      if key == "footer" then
+        match Decl.parseValue valueSrc with
+        | some (.block inner) =>
+          for slotEntry in Decl.splitEntries inner do
+            match Decl.splitEntry slotEntry with
+            | none =>
+              diag ctx "E0320" s!"invalid entry in \\chrome footer: {slotEntry.quote}" pos
+                (help := s!"entries look like: left = \\sectiontitle; {slotHelp}")
+            | some (slotKey, slotVal) =>
+              let v := slotVal.trimAscii.toString
+              let v := if v.startsWith "\\" then (v.drop 1).toString else v
+              let datum : Option ChromeSlot :=
+                match v with
+                | "sectiontitle" => some .sectionTitle
+                -- The deck spelling and the beamer lineage's name one datum.
+                | "framenumber" | "slidenumber" => some .frameNumber
+                | _ => none
+              match datum with
+              | none =>
+                diag ctx "E0321"
+                  s!"cannot read the \\chrome footer slot '{slotKey}': {slotVal.quote}" pos
+                  (help := slotHelp)
+              | some d =>
+                match slotKey with
+                | "left" => chrome := { chrome with footerLeft := some d }
+                | "right" => chrome := { chrome with footerRight := some d }
+                | _ =>
+                  modify fun st => { st with diags := st.diags.push (Decl.unknownKey
+                    ctx.file "chrome footer" slotKey ["left", "right"] pos) }
+        | some v =>
+          modify fun st => { st with diags := st.diags.push (Decl.wrongType
+            ctx.file "chrome" key
+            "a block like { left = \\sectiontitle, right = \\framenumber }" v pos) }
+        | none =>
+          diag ctx "E0321" s!"cannot read value for 'footer' in \\chrome: {valueSrc.quote}" pos
+            (help := "footer = { left = \\sectiontitle, right = \\framenumber }")
+      else
+        modify fun st => { st with diags := st.diags.push (Decl.unknownKey
+          ctx.file "chrome" key ["footer"] pos) }
+  return chrome
+
 /-- `\output{...}`: what to build, so a document needs no CLI options.
 `formats` takes a bare comma list (`formats = pdf, html`), so entries are
 walked by hand: an entry without `=` continues the list. -/
@@ -2167,6 +2223,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut foot : Option (Array Inline) := none
   let mut runningFrom : Nat := 1
   let mut styles : Styles := {}
+  let mut chrome : Chrome := {}
   let mut info : Meta := {}
   let mut output : OutputSpec := {}
   let mut asserts : Array Assertion := #[]
@@ -2398,6 +2455,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                 ctx := { ctx with tokens := tk }
                 for (element, styleSrc) in th.styles do
                   styles ← applyStyle ctx styles element styleSrc pos
+                unless th.chrome.isEmpty do
+                  chrome ← applyChrome ctx th.chrome pos
               | none =>
                 diag ctx "W0314" s!"unknown theme '{tname}'; the document is unthemed"
                   (some pos)
@@ -2415,6 +2474,16 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               let tk ← applyTokens ctx tokens src pos
               tokens := tk
               ctx := { ctx with tokens := tk }
+            else if name == "chrome" then
+              -- Parses its own entries: slot values are `\sectiontitle`
+              -- spellings a key/value pre-parse would reject.
+              chrome ← applyChrome ctx src pos
+              -- Inert chrome would be a silent failure: only slides draw it.
+              if docClass != "slides" then
+                diag ctx "W0318"
+                  s!"\\chrome is slides furniture; the {docClass} class never draws it"
+                  (some pos) (help := "\\runninghead / \\runningfoot are the page furniture")
+                  .warning
             else
               let (entries, ds) := Decl.parseBlock ctx.file src pos name
               modify fun st => { st with diags := st.diags ++ ds }
@@ -2586,6 +2655,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
     head := head
     foot := foot
     runningFrom := runningFrom
+    chrome := chrome
     styles := styles
     info := info
     output := output
