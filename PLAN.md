@@ -239,6 +239,42 @@ types, so agreement-by-one-function is proved and the artifact-level
 equality is held per fixture by the tier; recorded here so the next
 slice extends the tier instead of trusting the construction.
 
+2026-09-17 — fixed positions and a declared priority order: the F5
+correction. The user corrected the entry above's flex-row reading ("no,
+always right aligned, sometimes things can be painted over (eg dropped),
+since page number is lower priority"), so the footline is not one line
+whose slots land where the content pushes them — each slot has a fixed
+position, a function of the declared layout and the page geometry alone,
+and when two boxes would overlap the lower-priority slot yields in
+place: painted under, never moved, the yield named. Mechanism:
+`Ir.Chrome.footBand` supersedes `footLine` (the pair resolver
+`footSlots` and its theorems stand; `footBand_projects` replaces
+`footLine_eq_slots` — both backends still resolve one pair). A slot's x
+is `Layout.bandSlotX (side, geometry, own width)` — the other slot is
+not an argument, so content-independence of position holds by
+construction, and `bandSlotX_right_pinned` proves x + w is the right
+margin for every width (the folio's anchor is a constant of the
+geometry; the empty-left case is deleted, not fixed). The order:
+`ChromeSlot.priority` — frame number low, section title above it, a
+`\framefoot` note above both — `priority_injective` proven, and
+`BandSlot.rank` breaks the one representable tie (the same datum on
+both sides) by side (`rank_ne_of_side_ne`), so which slot yields is a
+fact of the declaration. Yielding is paint order: the PDF pushes the
+lower rank first (under), the HTML carries `z-index` = rank per span
+with each span pinned to its declared edge; both report W0332
+(degraded — the ink is present, not as declared) naming the yielded and
+the displacing slot; the per-slot wrap keeps W0328. Verified on the
+reference deck: the frame number's xMax is 425.197pt (the right margin)
+on the empty-left page and the two section pages alike, where the
+empty-left page previously collapsed to xMin 28.35. Fixture
+footer-collide forces a collision with an unbreakable overlong note;
+bandChecks holds the number's box byte-identical across empty, filled,
+and colliding left slots and pins the yield direction both ways. Grade:
+position-pinning and order-totality are theorems; content-independence
+is by construction (argument absence) with the fixture family as its
+executable face; yield-reporting is a test (the single collision site
+emits the diagnostic in the same branch).
+
 2026-09-17 — declared once, derived everywhere: the web metadata slice
 (site-port gaps 1 and 7). `\pdfmeta` grows `url`, `image`, `favicon` — an
 extension of the one `Ir.Meta` record, not a second declaration — and each
