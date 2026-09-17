@@ -26,7 +26,11 @@ light preset onto the semantic keys, mixes included. -/
 def moloch : Theme := {
   name := "moloch"
   palette :=
-    "fg = #23373B, bg = black!2, alert = #EB811B, example = #008080, " ++
+    -- moloch's own alert is #EB811B, which reads at 2.61:1 on this page --
+    -- under the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text. The same orange at
+    -- 70% over black clears it at 4.94:1, so the lineage keeps its hue and
+    -- the bundle keeps the engine's contract (Core/Contrast.lean).
+    "fg = #23373B, bg = black!2, alert = #A55A13, example = #008080, " ++
     "frametitlefg = bg, frametitlebg = fg, progressfg = alert, " ++
     "progressbg = progressfg!50!black!30, separator = progressfg, " ++
     "standoutfg = bg, standoutbg = fg"

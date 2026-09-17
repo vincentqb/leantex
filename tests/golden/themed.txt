@@ -8,9 +8,9 @@ palette bg #FAFAFA
 palette example #008080
 palette frametitlefg #FAFAFA
 palette frametitlebg #23373B
-palette progressfg #EB811B
-palette progressbg #D6C6B7
-palette separator #EB811B
+palette progressfg #A55A13
+palette progressbg #CBC0B6
+palette separator #A55A13
 palette standoutfg #FAFAFA
 palette standoutbg #23373B
 palette alert #C2185B
@@ -37,7 +37,8 @@ frame
     item
       para
         color alert #C2185B
-          text "An overridden accent"
+          styled bold
+            text "An overridden accent"
         text " and "
         color #8F999B
           text "a mixed colour"
@@ -48,4 +49,4 @@ frame standout
 -- diagnostics
 note[N0100] 6:1 \documentclass{beamer} → \documentclass[aspectratio=169]{slides}
 note[N0100] 8:1 \usetheme → \theme{moloch}
-note[N0100] 31:11 \alert → \textcolor{alert}
+note[N0100] 31:11 \alert → \textcolor{alert}{\textbf ...}

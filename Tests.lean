@@ -2987,6 +2987,45 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "illegible bundle names its ratio" (Contrast.ratioString
     (Contrast.contrastMilli Contrast.light.accent Contrast.dark.surface) == "2.64:1")
 
+  -- The built-in theme bundles, held to the same contract. The theorems
+  -- hold over the pre-resolved palettes; these pins close the chain: the
+  -- constants equal the pure bundle resolution, the pure resolution equals
+  -- what \theme actually installs, and the live check passes.
+  t "molochResolved is bundlePalette moloch"
+    (Contrast.bundlePalette Theme.moloch == Contrast.molochResolved)
+  t "plainResolved is bundlePalette plain"
+    (Contrast.bundlePalette Theme.plain == Contrast.plainResolved)
+  for th in Theme.builtin do
+    let (thDoc, _) := elabStr ("\\documentclass{slides}\\theme{" ++ th.name ++
+      "}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}")
+    t s!"bundlePalette {th.name} matches the elaborator"
+      (thDoc.palette == Contrast.bundlePalette th)
+  t "every built-in bundle clears its thresholds"
+    (Theme.builtin.all Contrast.Theme.contractHolds)
+  -- The check fires on the illegible bundle it exists for: moloch's own
+  -- alert (#EB811B, 2.61:1 as body text) fails the contract.
+  t "the contract rejects moloch's original alert"
+    (let badEntries := (Contrast.molochResolved.entries.filter (·.1 != "alert")).push
+        ("alert", (⟨0xEB, 0x81, 0x1B⟩ : Ir.Color))
+     !Contrast.paletteContract { entries := badEntries })
+  -- Themed \alert is colour AND bold: colour alone would be the run's only
+  -- signal (WCAG 2.2 SC 1.4.1); unthemed it stays the bold stand-in.
+  let themedAlert := elabStr ("\\documentclass{beamer}\\usetheme{moloch}" ++
+    "\\begin{document}\\begin{frame}\\alert{hot}\\end{frame}\\end{document}")
+  t "themed alert is colour and bold" (themedAlert.1.body.any fun b =>
+    match b with
+    | .frame _ _ body => body.any fun blk =>
+      match blk with
+      | .para content => content.any fun x =>
+        match x with
+        | .colored _ (some "alert") inner => inner.any fun y =>
+          match y with
+          | .styled .bold _ => true
+          | _ => false
+        | _ => false
+      | _ => false
+    | _ => false)
+
 def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pal : Ir.Palette := { entries := #[("base", ⟨0x40, 0x00, 0x80⟩)] }
@@ -3044,7 +3083,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "theme moloch resolves its own mixes"
     (mDoc.palette.find? "bg" == some ⟨0xFA, 0xFA, 0xFA⟩ &&
      mDoc.palette.find? "frametitlebg" == some ⟨0x23, 0x37, 0x3B⟩ &&
-     mDoc.palette.find? "progressbg" == some ⟨0xD6, 0xC6, 0xB7⟩)
+     mDoc.palette.find? "progressbg" == some ⟨0xCB, 0xC0, 0xB6⟩)
   t "theme moloch declares the progress token"
     (((mDoc.tokens.find? "progressheight").map (·.width)) ==
       some (Dim.Length.ofSp (Dim.pt 1)))
@@ -3078,7 +3117,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match aDoc.body with
      | #[.frame _ _ body] => body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
-          | .colored c (some "alert") _ => c == ⟨0xEB, 0x81, 0x1B⟩
+          | .colored c (some "alert") _ => c == ⟨0xA5, 0x5A, 0x13⟩
           | _ => false
         | _ => false
      | _ => false)

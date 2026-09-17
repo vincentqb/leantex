@@ -657,11 +657,20 @@ where
       s!"TeX conditional ('\\{name}' … '\\fi') is not supported; skipped whole" pos
     return some (#[], k)
   | "alert" =>
-    -- Themed, alert is a colour, as in beamer; unthemed there is no alert
-    -- colour and bold is the stand-in.
+    -- Themed, alert is the theme's colour AND bold: colour alone would be
+    -- the only signal distinguishing the run, which WCAG 2.2 SC 1.4.1
+    -- forbids (metropolis itself colours only; the divergence is
+    -- deliberate). Unthemed there is no alert colour and bold stands in.
     if (← get).themed then
-      became "\\alert" "\\textcolor{alert}" pos
-      return some (← synthAt "\\textcolor{alert}" pos, start)
+      let (args, k) := takeGroups raws start 1
+      match args[0]? with
+      | some body =>
+        became "\\alert" "\\textcolor{alert}{\\textbf ...}" pos
+        return some ((← synthAt "\\textcolor{alert}" pos).push
+          (.group #[.ctrl "textbf" pos, .group body pos] pos), k)
+      | none =>
+        became "\\alert" "\\textcolor{alert}" pos
+        return some (← synthAt "\\textcolor{alert}" pos, start)
     else
       became "\\alert" "\\textbf" pos
       return some (#[.ctrl "textbf" pos], start)

@@ -1,4 +1,6 @@
 import LeanTex.Core.Ir
+import LeanTex.Core.Theme
+import LeanTex.Core.Decl
 
 /-!
 Colour as a checkable contract: WCAG 2.2 relative luminance and contrast
@@ -186,5 +188,87 @@ on text in an inactive state, and covered content exists to read as not yet
 active. Pinned so the exemption is a recorded decision, not an oversight. -/
 theorem covered_is_deliberately_dim :
     contrastMilli coveredDefault Color.white < aaLargeText := by decide
+
+-- The built-in theme bundles, held to the same contract.
+
+/-- A theme bundle's palette, resolved the way `\theme` resolves it: entries
+in order, a redeclared name replacing the earlier one, a value either a
+`#RRGGBB` literal or a mix expression over what is declared so far. A pure
+mirror of the elaborator's value semantics — `Tests.lean` pins the two to
+each other on every built-in bundle, so this cannot drift into checking
+colours the engine does not ship. -/
+def bundlePalette (th : Theme.Theme) : Palette := Id.run do
+  let mut pal : Palette := {}
+  for entry in Decl.splitEntries th.palette do
+    if let some (key, valueSrc) := Decl.splitEntry entry then
+      let put (c : Color) : Palette :=
+        { entries := (pal.entries.filter (·.1 != key)).push (key, c) }
+      match Decl.parseValue valueSrc with
+      | some (.color r g b) => pal := put ⟨r, g, b⟩
+      | _ =>
+        if let some c := pal.resolve valueSrc then
+          pal := put c
+  return pal
+
+/-- Every text pairing a theme bundle itself creates clears its threshold:
+`fg`, `alert`, and `example` colour body text on `bg` (4.5:1, SC 1.4.3);
+the frame title sets `frametitlefg` on its `frametitlebg` bar at
+`\large\bfseries` — 12pt bold, under the large-scale sizes, so 4.5:1 too;
+a standout frame sets `standoutfg` on `standoutbg` at `\Large\bfseries` —
+14.4pt bold, large-scale — so 3:1. The progress bar and separator are not
+checked: supplementary position indicators the section title already
+carries, outside SC 1.4.11's "required to understand the content". A key a
+bundle does not declare creates no pairing and passes vacuously. -/
+def paletteContract (pal : Palette) : Bool :=
+  let bg := (pal.find? "bg").getD Color.white
+  let text (k : String) : Bool :=
+    match pal.find? k with
+    | some c => contrastMilli c bg ≥ aaText
+    | none => true
+  let pair (f b : String) (threshold : Nat) : Bool :=
+    match pal.find? f, pal.find? b with
+    | some cf, some cb => contrastMilli cf cb ≥ threshold
+    | _, _ => true
+  text "fg" && text "alert" && text "example"
+    && pair "frametitlefg" "frametitlebg" aaText
+    && pair "standoutfg" "standoutbg" aaLargeText
+
+def Theme.contractHolds (th : LeanTex.Core.Theme.Theme) : Bool :=
+  paletteContract (bundlePalette th)
+
+/-- `moloch`'s palette as `\theme` resolves it, mixes included; the kernel
+cannot evaluate the string parse inside `decide`, so the theorems hold over
+these values and `Tests.lean` pins them to `bundlePalette Theme.moloch`,
+which in turn is pinned to the elaborator's own resolution. -/
+def molochResolved : Palette := { entries := #[
+  ("fg", ⟨0x23, 0x37, 0x3B⟩),
+  ("bg", ⟨0xFA, 0xFA, 0xFA⟩),
+  ("alert", ⟨0xA5, 0x5A, 0x13⟩),
+  ("example", ⟨0x00, 0x80, 0x80⟩),
+  ("frametitlefg", ⟨0xFA, 0xFA, 0xFA⟩),
+  ("frametitlebg", ⟨0x23, 0x37, 0x3B⟩),
+  ("progressfg", ⟨0xA5, 0x5A, 0x13⟩),
+  ("progressbg", ⟨0xCB, 0xC0, 0xB6⟩),
+  ("separator", ⟨0xA5, 0x5A, 0x13⟩),
+  ("standoutfg", ⟨0xFA, 0xFA, 0xFA⟩),
+  ("standoutbg", ⟨0x23, 0x37, 0x3B⟩)] }
+
+/-- `plain`'s palette as `\theme` resolves it; same pinning as `moloch`'s. -/
+def plainResolved : Palette := { entries := #[
+  ("fg", ⟨0x1B, 0x1B, 0x1F⟩),
+  ("bg", ⟨0xFF, 0xFF, 0xFF⟩),
+  ("alert", ⟨0xB3, 0x26, 0x1E⟩),
+  ("example", ⟨0x20, 0x5E, 0x3B⟩),
+  ("progressfg", ⟨0x76, 0x76, 0x79⟩),
+  ("progressbg", ⟨0xDD, 0xDD, 0xDD⟩),
+  ("separator", ⟨0xA4, 0xA4, 0xA5⟩),
+  ("standoutfg", ⟨0xFF, 0xFF, 0xFF⟩),
+  ("standoutbg", ⟨0x1B, 0x1B, 0x1F⟩)] }
+
+/-- No shipped moloch pairing is illegible — with the alert corrected: the
+lineage's own #EB811B read at 2.61:1 on this page, under SC 1.4.3. -/
+theorem moloch_contract : paletteContract molochResolved = true := by decide
+
+theorem plain_contract : paletteContract plainResolved = true := by decide
 
 end LeanTex.Core.Contrast
