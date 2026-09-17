@@ -363,10 +363,6 @@ def docDiags (doc : Doc) : Array Diag := Id.run do
 
 -- The built-in theme bundles, held to the same contract.
 
-/-- A theme bundle's palette. The bundle carries typed values, so this is
-the identity — kept as the name the contract theorems and tests speak,
-and `Tests.lean` still pins it to what `\theme` actually installs. -/
-def bundlePalette (th : Theme.Theme) : Palette := th.palette
 
 /-- Every text pairing a theme bundle itself creates clears its threshold:
 `fg`, `alert`, and `example` colour body text on `bg` (4.5:1, SC 1.4.3), and
@@ -394,46 +390,18 @@ def paletteContract (pal : Palette) : Bool :=
     && pair "standoutfg" "standoutbg" aaLargeText
 
 def Theme.contractHolds (th : LeanTex.Core.Theme.Theme) : Bool :=
-  paletteContract (bundlePalette th)
+  paletteContract th.palette
 
-/-- `moloch`'s palette as `\theme` resolves it, mixes included; the kernel
-cannot evaluate the string parse inside `decide`, so the theorems hold over
-these values and `Tests.lean` pins them to `bundlePalette Theme.moloch`,
-which in turn is pinned to the elaborator's own resolution. -/
-def molochResolved : Palette := { entries := #[
-  ("fg", ⟨0x23, 0x37, 0x3B⟩),
-  ("bg", ⟨0xFA, 0xFA, 0xFA⟩),
-  ("alert", ⟨0xA5, 0x5A, 0x13⟩),
-  ("example", ⟨0x00, 0x80, 0x80⟩),
-  ("muted", ⟨0x64, 0x72, 0x74⟩),
-  ("frametitlefg", ⟨0xFA, 0xFA, 0xFA⟩),
-  ("frametitlebg", ⟨0x23, 0x37, 0x3B⟩),
-  ("progressfg", ⟨0xA5, 0x5A, 0x13⟩),
-  ("progressbg", ⟨0xCB, 0xC0, 0xB6⟩),
-  ("separator", ⟨0xA5, 0x5A, 0x13⟩),
-  ("standoutfg", ⟨0xFA, 0xFA, 0xFA⟩),
-  ("standoutbg", ⟨0x23, 0x37, 0x3B⟩),
-  ("covered", ⟨0xA8, 0xB0, 0xB1⟩)] }
-
-/-- `plain`'s palette as `\theme` resolves it; same pinning as `moloch`'s. -/
-def plainResolved : Palette := { entries := #[
-  ("fg", ⟨0x1B, 0x1B, 0x1F⟩),
-  ("bg", ⟨0xFF, 0xFF, 0xFF⟩),
-  ("alert", ⟨0xB3, 0x26, 0x1E⟩),
-  ("example", ⟨0x20, 0x5E, 0x3B⟩),
-  ("muted", ⟨0x5F, 0x5F, 0x62⟩),
-  ("progressfg", ⟨0x76, 0x76, 0x79⟩),
-  ("progressbg", ⟨0xDD, 0xDD, 0xDD⟩),
-  ("separator", ⟨0xA4, 0xA4, 0xA5⟩),
-  ("standoutfg", ⟨0xFF, 0xFF, 0xFF⟩),
-  ("standoutbg", ⟨0x1B, 0x1B, 0x1F⟩),
-  ("covered", ⟨0xA8, 0xA8, 0xAA⟩)] }
+-- The theorems range over the bundles the engine installs: `Theme.moloch`
+-- carries its palette as values (mixes evaluated at definition time), so
+-- the kernel walks the same entries `\theme` declares — no transcription
+-- stands between the statement and the engine.
 
 /-- No shipped moloch pairing is illegible — with the alert corrected: the
 lineage's own #EB811B read at 2.61:1 on this page, under SC 1.4.3. -/
-theorem moloch_contract : paletteContract molochResolved = true := by decide
+theorem moloch_contract : paletteContract Theme.moloch.palette = true := by decide
 
-theorem plain_contract : paletteContract plainResolved = true := by decide
+theorem plain_contract : paletteContract Theme.plain.palette = true := by decide
 
 /-- Covered reads as covered on the palette's own page. Quieter than the
 body ink (a lower contrast against `bg` than `fg` has — SC 1.4.3 exempts
@@ -453,8 +421,8 @@ black, the Material disabled-state opacity, as the themes' `covered`
 mixes are). -/
 theorem default_covered : coveredContract { entries := #[] } = true := by decide
 
-theorem moloch_covered : coveredContract molochResolved = true := by decide
+theorem moloch_covered : coveredContract Theme.moloch.palette = true := by decide
 
-theorem plain_covered : coveredContract plainResolved = true := by decide
+theorem plain_covered : coveredContract Theme.plain.palette = true := by decide
 
 end LeanTex.Core.Contrast

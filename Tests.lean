@@ -639,8 +639,8 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes (themedPre "\\setbeamercovered{transparent}") == [])
   t "compat setbeamercovered transparent=n sets the covered colour"
     ((elabStr (themedPre "\\setbeamercovered{transparent=25}")).1.palette.find? "covered"
-      == some (Ir.Color.mix ((Contrast.molochResolved.find? "fg").getD Ir.Color.black)
-          25 ((Contrast.molochResolved.find? "bg").getD Ir.Color.white)))
+      == some (Ir.Color.mix ((Theme.moloch.palette.find? "fg").getD Ir.Color.black)
+          25 ((Theme.moloch.palette.find? "bg").getD Ir.Color.white)))
   t "compat setbeamercovered invisible keeps the honest warning"
     (warnCodes (themedPre "\\setbeamercovered{invisible}") == ["W0104"])
   t "compat definecolor rgb" ((elabStr (pre "\\definecolor{c}{rgb}{1,0,0.5}")).1.palette.find? "c" ==
@@ -2278,7 +2278,7 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The muted rule is load-bearing: one step weaker (fg!60!bg) fails the
   -- bundle contract the theorems hold.
   let weaker : Ir.Palette := { entries :=
-    Contrast.molochResolved.entries.map fun (k, c) =>
+    Theme.moloch.palette.entries.map fun (k, c) =>
       if k == "muted" then (k, ⟨121, 133, 135⟩) else (k, c) }
   t "the palette contract rejects a muted one step weaker"
     (!Contrast.paletteContract weaker)
@@ -3641,24 +3641,20 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{frame}x\\end{frame}\\end{document}")).contains "W0315")
 
   -- The built-in theme bundles, held to the same contract. The theorems
-  -- hold over the pre-resolved palettes; these pins close the chain: the
-  -- constants equal the pure bundle resolution, the pure resolution equals
-  -- what \theme actually installs, and the live check passes.
-  t "molochResolved is bundlePalette moloch"
-    (Contrast.bundlePalette Theme.moloch == Contrast.molochResolved)
-  t "plainResolved is bundlePalette plain"
-    (Contrast.bundlePalette Theme.plain == Contrast.plainResolved)
+  -- range over the bundles' own typed values; this pin closes the chain:
+  -- what \theme installs is exactly the bundle the theorems cover, and
+  -- the live check passes.
   for th in Theme.builtin do
     let (thDoc, _) := elabStr ("\\documentclass{slides}\\theme{" ++ th.name ++
       "}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}")
-    t s!"bundlePalette {th.name} matches the elaborator"
-      (thDoc.palette == Contrast.bundlePalette th)
+    t s!"\\theme installs the {th.name} bundle's own values"
+      (thDoc.palette == th.palette)
   t "every built-in bundle clears its thresholds"
     (Theme.builtin.all Contrast.Theme.contractHolds)
   -- The check fires on the illegible bundle it exists for: moloch's own
   -- alert (#EB811B, 2.61:1 as body text) fails the contract.
   t "the contract rejects moloch's original alert"
-    (let badEntries := (Contrast.molochResolved.entries.filter (·.1 != "alert")).push
+    (let badEntries := (Theme.moloch.palette.entries.filter (·.1 != "alert")).push
         ("alert", (⟨0xEB, 0x81, 0x1B⟩ : Ir.Color))
      !Contrast.paletteContract { entries := badEntries })
   -- Themed \alert is colour AND bold: colour alone would be the run's only
