@@ -49,6 +49,22 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — the theme slice rebased onto the frame-furniture batch; the
+crossing of standout frames with overlay steps resolved as one design
+rather than two flags. `Block.frame` carries title, standout, and body —
+steps stay content inside it, so the two features compose freely and every
+pattern spells the full arity. Correction to the furniture entry below:
+`Ir.expandOverlays` is gone; `Layout.run`'s top-level driver expands a
+multi-step frame itself (same `Ir.dimBlocks` copies, same pages), because
+the furniture state must be the frame's — all step pages of a frame share
+one `framesSeen`, so a progress bar shows the deck position in frames and
+never advances mid-frame, and the standout flag rides onto every step
+page. `framesSeen`/`framesTotal` both count top-level frames, matching the
+HTML path. Notes stay a side channel through the themed paths too: the
+standout walk routes non-paragraph blocks through the normal walk, which
+drops them. Each invariant pinned in `themeReconcileChecks`, shown failing
+with the bug re-introduced and passing after.
+
 2026-09-17 — M5b's first slice: a theme is a token bundle, and `\theme`
 selects one. `Theme.lean` holds each bundle as declaration bodies in the
 surface language — palette, tokens, element styles — applied at the
