@@ -175,7 +175,7 @@ shipped bundle — over the engine's values, not a transcription of them. -/
 theorem builtin_palette_contract_engine :
     ∀ t ∈ Theme.builtin,
       Contrast.paletteContract (themedDoc t.name).palette = true ∧
-      Contrast.coveredContract (Ir.Design.ofDoc (themedDoc t.name)) = true := by
+      Contrast.coveredContract (themedDoc t.name).palette = true := by
   sorry
 
 -- owed: titlepage_align_declared_engine
