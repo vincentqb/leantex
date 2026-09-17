@@ -396,6 +396,11 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- Every step visible (the no-JS handout); the number rides as data.
     Html.elem "div" (blockNodesInto cfg #[] body.toList)
       #[("class", "step"), ("data-step", toString n)]
+  | .note body =>
+    -- Inert and hidden: available to a speaker view, invisible in the deck
+    -- and in print.
+    Html.elem "aside" (blockNodesInto cfg #[] body.toList)
+      #[("class", "note"), ("hidden", "hidden")]
   | .spaced before body =>
     let style := s!"margin-top: {cssLength before.width}"
     Html.elem "div" (blockNodesInto cfg #[] body.toList)

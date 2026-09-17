@@ -46,7 +46,7 @@ def warnCodes (s : String) : List String :=
 
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
-   "links", "resume", "talk", "deck", "latex-idioms", "wrapper", "centering", "columns", "overlays"]
+   "links", "resume", "talk", "deck", "latex-idioms", "wrapper", "centering", "columns", "overlays", "notes"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -1838,6 +1838,41 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "an unnumberable spec still warns W0105"
     (warnCodes (deck "\\begin{itemize}\\item<+-> x\\end{itemize}") == ["W0105"])
 
+/-- Speaker notes: a side channel — never slide content, omitted from the
+PDF handout, an inert hidden aside in HTML for the coming speaker view.
+Own function: `main`'s do block has no budget left. -/
+def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deck (body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n\\begin{document}\n\\begin{frame}\n" ++
+    body ++ "\n\\end{frame}\n\\end{document}"
+  let (doc, ds) := elabStr (deck "Visible words.\n\\note{Hidden speaker words.}")
+  t "note elaborates to a side channel, warning nothing" (ds.isEmpty &&
+    doc.body == #[.frame #[] #[
+      .para #[.text "Visible words."],
+      .note #[.para #[.text "Hidden speaker words."]]]])
+  -- PDF: the note adds nothing — the page is the page without it.
+  let (bare, _) := elabStr (deck "Visible words.")
+  let noted := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+  let plain := Layout.run (Layout.Geom.ofPage bare.page) oneFace none bare
+  t "pdf omits the note entirely"
+    (noted.pages.map (·.lines.size) == plain.pages.map (·.lines.size))
+  -- HTML: an inert hidden aside, available to a speaker view.
+  let (html, _) := HtmlDoc.emit {} doc
+  t "html carries the note as a hidden aside"
+    ((html.splitOn "<aside class=\"note\" hidden=").length == 2 &&
+     (html.splitOn "Hidden speaker words.").length == 2)
+  -- The generic body-preservation path must never leak a note into
+  -- content: inside an argument it vanishes too.
+  let (inl, inlDs) := elabStr (deck "\\textbf{bold \\note{never shown} text}")
+  t "a mid-sentence note leaves its paragraph whole and drains to the frame"
+    (inlDs.isEmpty &&
+     (match inl.body with
+      | #[.frame _ #[.para content, .note nbody]] =>
+        Ir.plainText content == "bold text" &&
+        ((Ir.dumpBlocks "" nbody).splitOn "never shown").length == 2
+      | _ => false))
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
@@ -2898,6 +2933,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       slideChecks ref oneFace
       columnsChecks ref oneFace
       overlayChecks ref oneFace
+      noteChecks ref oneFace
       scannerChecks ref
 
 def main (args : List String) : IO UInt32 := do

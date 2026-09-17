@@ -35,6 +35,9 @@ frame
           styled bold
             text "Frames are page boundaries"
           text ", never flattened."
+  note
+    para
+      text "Speaker notes are hidden until notes land."
 frame
   title
     text "Code"
@@ -81,6 +84,5 @@ warning[W0104] 10:1 '\setbeamercovered' is beamer configuration the engine does 
 note[N0100] 11:1 \newcommand{\dim} → \define \dim(a1: content) {...}
 note[N0100] 12:1 \newenvironment{banner} → \defineenv{banner}(a1: content) {begin} {end}
 note[N0100] 35:19 \alert → \textbf
-warning[W0307] 37:5 '\note' is not implemented yet; skipped | help: planned for M5; see PLAN.md
 warning[W0304] 11:22 'quiet!50' is not in the palette; content kept uncoloured | help: declare colours with \palette{ name = #RRGGBB }
 warning[W0308] 59:5 tables are not laid out yet; rows are set as plain lines | help: planned for M8; see PLAN.md

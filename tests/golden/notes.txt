@@ -1,0 +1,15 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 25.512 hmargin 28.346
+frame
+  title
+    text "Spoken, not shown"
+  para
+    text "Everything visible here is one short paragraph, and the note inside it never breaks the flow."
+  note
+    para
+      text "A block note with a burned placement option."
+  note
+    para
+      text "Say hello to the room."
+-- diagnostics
+(none)

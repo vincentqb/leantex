@@ -1175,6 +1175,9 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .step _ body =>
     -- Pure grouping: any dimming was painted into colours before layout.
     collectBlocks a pats fs body indent
+  | .note _ =>
+    -- A speaker note is not handout content: no lines, no gap.
+    a
   | .verbatim s =>
     -- Code lines, kept literally, at 4/5 of the body size (the
     -- \footnotesize convention for code frames — an 80-column line fits a

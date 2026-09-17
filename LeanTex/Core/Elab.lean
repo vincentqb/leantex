@@ -77,6 +77,10 @@ structure ESt where
   author : Option (Array Inline) := none
   institute : Option (Array Inline) := none
   date : Option (Array Inline) := none
+  /-- Speaker-note bodies met inside inline content, where a block cannot
+  stand: the enclosing frame drains them to its end, so a mid-sentence
+  `\note` neither splits its paragraph nor loses its words. -/
+  pendingNotes : Array (Array Raw) := #[]
 
 abbrev EM := StateM ESt
 
@@ -100,7 +104,7 @@ private def warnOnce (ctx : Ctx) (key code msg : String) (pos : Pos)
 
 def reservedCtrl : List (String × String) :=
   [("vspace", "M3"), ("noindent", "M3"),
-   ("fontfallback", "M8"), ("figure", "M8"), ("note", "M5")]
+   ("fontfallback", "M8"), ("figure", "M8")]
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 def declCtrl : List String :=
@@ -850,6 +854,19 @@ specs are not modelled")
           -- blocks the boundary rule steps the rest of the scope.
           warnOnce ctx "spec:pause-inline" "W0105"
             "'\\pause' inside an argument cannot step; its content is shown" pos
+        else if name == "note" then
+          -- A speaker note met mid-sentence: no block can stand here, so
+          -- the body is stashed for the enclosing frame to drain — the
+          -- paragraph flows on unbroken and the note never leaks into it.
+          let (j, _, _) ← skipOptArg ctx "note" raws i pos
+          i := j
+          let js := skipSpaces raws i
+          if (raws[js]?.bind specWord?).isSome then
+            i := js + 1
+          let j2 := skipSpaces raws i
+          if let some (.group nbody _) := raws[j2]? then
+            i := j2 + 1
+            modify fun st => { st with pendingNotes := st.pendingNotes.push nbody }
         else if name == "centering" then
           -- Between blocks the declaration centres the rest of its scope;
           -- here, inside inline content, there is no block to centre.
@@ -1128,6 +1145,10 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .ctrl "block" _ => true
         | .ctrl "centering" _ => true
         | .ctrl "pause" _ => true
+        -- A note opening a paragraph is its own block; one met mid-sentence
+        -- flows on inline, where it stashes for the enclosing frame instead
+        -- of splitting the paragraph.
+        | .ctrl "note" _ => cur.isEmpty
         | .ctrl n _ =>
           (sectionLevel n).isSome ||
           -- A user command whose body produces blocks is itself a boundary.
@@ -1197,6 +1218,22 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           i := raws.size
           unless inner.isEmpty do
             blocks := blocks.push (.step (ctx.stepBase + 2) inner)
+        | .ctrl "note" npos =>
+          -- \note[placement]<spec>{...}: the placement and the spec are
+          -- burned; the body is the side channel, never slide content.
+          i := i + 1
+          let (j, _, _) ← skipOptArg ctx "note" raws i npos
+          i := j
+          let js := skipSpaces raws i
+          if (raws[js]?.bind specWord?).isSome then
+            i := js + 1
+          let j2 := skipSpaces raws i
+          match raws[j2]? with
+          | some (.group nbody _) =>
+            i := j2 + 1
+            blocks := blocks.push (.note (← elabBlocks ctx nbody))
+          | _ =>
+            warnSkippedDecl ctx "note" npos
         | .group gbody _ =>
           -- A centering scope group: its own block sequence, so the
           -- declaration stops at the closing brace.
@@ -1383,7 +1420,15 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
                   rest := rest.push r'
                   j := j + 1
               else break
-            blocks := blocks.push (.frame title (← elabBlocks ctx rest))
+            -- Notes met inside the frame's inline content drain to the
+            -- frame's end: the side channel stays with its frame.
+            modify fun st => { st with pendingNotes := #[] }
+            let mut inner ← elabBlocks ctx rest
+            let stash := (← get).pendingNotes
+            modify fun st => { st with pendingNotes := #[] }
+            for nb in stash do
+              inner := inner.push (.note (← elabBlocks ctx nb))
+            blocks := blocks.push (.frame title inner)
           else if n == "itemize" || n == "enumerate" then
             let mut items : Array (Array Raw) := #[]
             let mut steps : Array (Option Nat) := #[]

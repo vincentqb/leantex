@@ -210,6 +210,10 @@ inductive Block where
   /-- Overlay blocks visible from step `n` (`\item<2->`, `\pause`): the
   block form of `Inline.step`, with the same dim-not-hide semantics. -/
   | step (n : Nat) (body : Array Block)
+  /-- A speaker note (`\note{...}`): a side channel, never slide content.
+  The PDF handout omits it; HTML keeps it as an inert hidden aside for the
+  coming speaker view (PLAN M5). -/
+  | note (body : Array Block)
   /-- One slide. First-class and never flattened into article paragraphs:
   HTML makes it a `<section>` of the deck, the PDF handout gives it a page.
   An empty title is a bare frame. -/
@@ -438,6 +442,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
   | .columns cols => s!"{ind}columns\n" ++ dumpColumns (ind ++ "  ") cols.toList
   | .step n body => s!"{ind}step {n}\n" ++ dumpBlocks (ind ++ "  ") body
+  | .note body => s!"{ind}note\n" ++ dumpBlocks (ind ++ "  ") body
   | .spaced before body =>
     s!"{ind}block before {dumpGlue before}\n" ++ dumpBlocks (ind ++ "  ") body
   | .verbatim s =>
