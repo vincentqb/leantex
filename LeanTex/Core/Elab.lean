@@ -89,6 +89,9 @@ structure ESt where
   stand: the enclosing frame drains them to its end, so a mid-sentence
   `\note` neither splits its paragraph nor loses its words. -/
   pendingNotes : Array (Array Raw) := #[]
+  /-- beamer's `\logo`, a declaration legal in the preamble and the body
+  alike; the last one wins, as in beamer. -/
+  logo : Option (Array Inline) := none
 
 abbrev EM := StateM ESt
 
@@ -817,7 +820,9 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
                 | none =>
                   diag ctx "E0331" s!"cannot read a length from '{v}'" pos
                     (help := "image sizes look like 3cm or 0.8\\textwidth")
-              | some ("height", v) =>
+              | some ("height", v) | some ("totalheight", v) =>
+                -- totalheight is height plus depth, and an image has no
+                -- depth, so the two keys coincide here.
                 match imageLen v with
                 | some l => spec := { spec with height := some l }
                 | none =>
@@ -1342,7 +1347,8 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
            | none =>
              ((overlayCtrls.contains n || n == "alt") &&
                overlayTakesBlocks raws i cur.isEmpty (n == "alt")) ||
-             titleCtrls.contains n || n == "maketitle" || n == "titlepage")
+             titleCtrls.contains n || n == "maketitle" || n == "titlepage"
+               || n == "logo")
         | .group body _ =>
           -- A scope group carrying a `\centering` declaration is a block
           -- scope: the declaration needs blocks to centre, and the group's
@@ -1559,6 +1565,17 @@ specs are not modelled")
             -- The malformed run of an unclosed bracket is content here.
             if let some p ← mkPara ctx junk then
               blocks := blocks.push p
+          else if n == "logo" then
+            -- The declaration is legal in the body too, where beamer decks
+            -- scope a logo to a frame (`\logo{...}` before it, `\logo{}`
+            -- after): a stateful block the layout replays per page.
+            let j := skipSpaces raws i
+            match raws[j]? with
+            | some (.group gbody _) =>
+              i := j + 1
+              blocks := blocks.push (.logo (← elabInlines ctx gbody))
+            | _ =>
+              diag ctx "E0304" "'\\logo' needs one group of inline content" pos
           else if n == "maketitle" || n == "titlepage" then
             let inner := titleBlocks ctx (← get)
             if inner.isEmpty then
@@ -2412,7 +2429,6 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut tokens : Tokens := {}
   let mut head : Option (Array Inline) := none
   let mut foot : Option (Array Inline) := none
-  let mut logo : Option (Array Inline) := none
   let mut runningFrom : Nat := 1
   let mut styles : Styles := {}
   let mut chrome : Chrome := {}
@@ -2591,7 +2607,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
-            logo := some (← elabInlines ctx body)
+            let content ← elabInlines ctx body
+            modify fun st => { st with
+              logo := if content.isEmpty then none else some content }
           | _ =>
             diag ctx "E0304" "'\\logo' needs one group of inline content" pos
         else if name == "palette" then
@@ -2798,11 +2816,6 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
         (sev := .warning)
       head := none
       foot := none
-    if logo.isSome then
-      diag ctx "W0317"
-        "a card carries no logo; the declaration is dropped" none
-        (sev := .warning)
-      logo := none
   else if !sawPage then
     -- An undeclared letter page takes Bringhurst's text block for a 10pt
     -- text face, 26 picas, not the word-processor inch: the default must
@@ -2811,6 +2824,13 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
   ctx := { ctx with slides := docClass == "slides", styles := styles }
   let blocks ← elabBlocks ctx body
+  -- The logo may have been declared in either half; a card carries none.
+  let mut logo := (← get).logo
+  if docClass == "card" && logo.isSome then
+    diag ctx "W0317"
+      "a card carries no logo; the declaration is dropped" none
+      (sev := .warning)
+    logo := none
   -- What a card guarantees, stated as the assertions the engine already
   -- enforces: content fits its faces, ink respects the safe margin, and
   -- the smallest type clears the fluent-reading floor at hand-held

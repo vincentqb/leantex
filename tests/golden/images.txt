@@ -20,5 +20,9 @@ para
   text ", and exactly sized: "
   image "rects.png" width 32pt height 40pt
   text "."
+para
+  text "A transparent overlay: "
+  image "rects-alpha.png"
+  text " keeps its alpha."
 -- diagnostics
 note[N0100] 6:1 \usepackage{graphicx} → nothing: the engine does this itself

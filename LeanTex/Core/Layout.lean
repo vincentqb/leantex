@@ -598,6 +598,7 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   -- A note is never set in either backend's pages; its glyphs are not asked
   -- for.
   | .note _ => out
+  | .logo content => out.push (Ir.plainText content)
   | .verbatim _ s => out.push s
   -- A rule has no glyphs.
   | .rule _ _ _ => out
@@ -1256,6 +1257,9 @@ private inductive Op where
   own number, the section in force), a section page or standout frame
   clears it, and a spill page inherits its frame's. -/
   | foot (content : Option (Array Inline))
+  /-- The logo state changes here: pages from this point carry `content`
+  (empty clears). Applied by the furniture pass, keyed to page indexes. -/
+  | setLogo (content : Array Ir.Inline)
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -1657,6 +1661,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .note _ =>
     -- A speaker note is not handout content: no lines, no gap.
     a
+  | .logo content =>
+    -- A stateful declaration: the pages from here on carry this content at
+    -- their corner. No lines, no gap; placement reads the spans.
+    { a with ops := a.ops.push (.setLogo content) }
   | .verbatim covered s =>
     -- Code lines, kept literally, at the scale's own \footnotesize (the
     -- code-frame convention) — derived from the table, not a loose decimal.
@@ -1917,6 +1925,7 @@ private inductive StagedOp where
   | colOpen
   | colNext
   | colClose
+  | setLogo (content : Array Ir.Inline)
 
 /-- Placement state saved at a `colOpen`, restored per column: where the
 columns start, and the lowest bottom any column reached so far. -/
@@ -2015,6 +2024,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .colOpen => .colOpen
     | .colNext => .colNext
     | .colClose => .colClose
+    | .setLogo c => .setLogo c
   let b0 : B := {
     geom := geom
     ascent := scale font.ascent
@@ -2045,8 +2055,13 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
             help := s!"a heading binds to the text it introduces: in " ++
               s!"\\style\{{element}}\{...} keep 'after' at most 'before'" } }
   let mut colSaves : Array ColSave := #[]
+  let mut logoSpans : Array (Nat × Array Inline) := #[]
   for s in staged do
     match s with
+    | .setLogo c =>
+      -- The page being built (index `pages.size`) and everything after
+      -- carry this content; a later span overrides.
+      logoSpans := logoSpans.push (b.pages.size, c)
     | .skip g => b := { b with skip := b.skip.add g }
     | .brk =>
       -- A boundary closes a page only when the page holds something: two
@@ -2172,23 +2187,26 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let mut out := pages
   let mut diags := b.diags
   let mut cache := acc.hyphCache
-  -- The deck logo: one line, laid out once — it names no page number — and
-  -- placed at the lower-right corner of every page carrying running
-  -- content, its right edge on the margin and its box standing on the
-  -- bottom margin line.
-  let mut logoLine : Option LineOut := none
-  if let some content := doc.logo then
+  -- The logo: the preamble `\logo` is the initial state, and a `\logo`
+  -- block in the body changes it for the pages from that point on — an
+  -- empty one clears it, which is how a deck scopes a logo to one frame
+  -- (`\logo{...}` before it, `\logo{}` after). One line per state, laid
+  -- out once — a logo names no page number — and placed at the lower-right
+  -- corner, its right edge on the margin, its box standing on the bottom
+  -- margin line.
+  let mkLogoLine (content : Array Inline) (cache0 : Std.HashMap String (List Nat)) :
+      Option LineOut × Array Diag × Std.HashMap String (List Nat) :=
     let (items, ds, c, _) :=
-      itemsOfInlines pats geom.fontSize xHeight fs {} content cache imgs
+      itemsOfInlines pats geom.fontSize xHeight fs {} content cache0 imgs
         geom.textWidth geom.textHeight
-    cache := c
-    diags := diags ++ ds
     let breaks := kp items geom.textWidth
-    if let some brk := breaks[0]? then
+    match breaks[0]? with
+    | none => (none, ds, c)
+    | some brk =>
       let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
-      logoLine := some { x := geom.pageW - geom.hmargin - w
-                         y := geom.pageH - geom.vmargin
-                         size := geom.fontSize, segs := segs, setWidth := w }
+      (some { x := geom.pageW - geom.hmargin - w
+              y := geom.pageH - geom.vmargin
+              size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
   for i in [0:out.size] do
     let mut lines := out[i]!.lines
     -- Pages before `runningFrom` carry no furniture: an opening page reads
@@ -2212,7 +2230,15 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       diags := diags ++ ds
       cache := c
       if let some l := l? then lines := lines.push l
-    if let some l := logoLine then lines := lines.push l
+    let logoContent := logoSpans.foldl
+      (fun acc (span : Nat × Array Inline) => if span.1 ≤ i then some span.2 else acc)
+      doc.logo
+    if let some content := logoContent then
+      unless content.isEmpty do
+        let (l?, ds, c) := mkLogoLine content cache
+        diags := diags ++ ds
+        cache := c
+        if let some l := l? then lines := lines.push l
     out := out.set! i { out[i]! with lines := lines }
   -- One report per problem: the same missing glyph or overfull shape in
   -- thirty code blocks is one thing to fix, not thirty lines of console.

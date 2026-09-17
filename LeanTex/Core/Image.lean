@@ -1,4 +1,5 @@
 import LeanTex.Core.Dim
+import LeanTex.Core.Flate
 
 namespace LeanTex.Core.Image
 
@@ -51,6 +52,12 @@ structure Info where
   /-- PNG colour type 3: the PLTE payload, RGB triples. -/
   palette : ByteArray := ByteArray.empty
   data : ByteArray := ByteArray.empty
+  /-- PNG only: `data` is the raw IDAT stream, PNG-predicted, and the PDF
+  dictionary must declare the predictor. False for a re-encoded plane. -/
+  predictor : Bool := false
+  /-- An alpha channel, as its own zlib-compressed 8-bit gray plane: the PDF
+  soft mask. Empty when the image is opaque. -/
+  smask : ByteArray := ByteArray.empty
   deriving Inhabited
 
 /-- Samples per pixel, for `/DecodeParms /Colors`. -/
@@ -95,15 +102,70 @@ private def ppmToDpi (ppm : Nat) : Nat := (ppm * 254 + 5000) / 10000
 
 Signature, then chunks of `length type data crc`. IHDR carries the
 dimensions and sample layout, pHYs the density, PLTE the palette, IDAT the
-zlib stream (possibly split across chunks). The samples pass through to a
-PDF `/FlateDecode` image XObject with the PNG predictor declared — legal
-exactly for the colour types whose scanlines are pure sample runs after the
-per-row filter byte: greyscale (0), truecolour (2), and indexed (3). An
-alpha channel (types 4 and 6) interleaves samples PDF has no colour space
-for, and Adam7 interlacing reorders scanlines the predictor cannot see, so
-both are refused with the reason. -/
+zlib stream (possibly split across chunks). Greyscale (0), truecolour (2),
+and indexed (3) samples pass through to a PDF `/FlateDecode` image XObject
+with the PNG predictor declared — their scanlines are pure sample runs after
+the per-row filter byte, which is exactly what the predictor describes. An
+alpha channel (types 4 and 6, 8-bit) interleaves samples PDF has no colour
+space for, so those really decode: inflate, unfilter, split into a colour
+plane and an SMask, re-encode. Adam7 interlacing and 16-bit alpha are
+refused with the reason. -/
 
 private def pngSig : List Nat := [137, 80, 78, 71, 13, 10, 26, 10]
+
+/-- Reverse the per-scanline PNG filters (ISO/IEC 15948 §9): each row opens
+with its filter type, predicting from the left, above, and above-left bytes
+at `bpp` distance. Total: bounds-checked reads, loops bounded by the
+declared geometry. -/
+private def unfilter (raw : ByteArray) (pxH rowBytes bpp : Nat) :
+    Except String ByteArray := Id.run do
+  let mut out := ByteArray.empty
+  let mut pos := 0
+  for _ in [0:pxH] do
+    let some ft := raw[pos]? | return .error "corrupt PNG: truncated scanlines"
+    pos := pos + 1
+    if pos + rowBytes > raw.size then
+      return .error "corrupt PNG: truncated scanlines"
+    let f := ft.toNat
+    if f > 4 then
+      return .error s!"corrupt PNG: filter type {f}"
+    let rowStart := out.size
+    for i in [0:rowBytes] do
+      let x := (raw[pos + i]?.getD 0).toNat
+      let left := if i ≥ bpp then (out[rowStart + i - bpp]?.getD 0).toNat else 0
+      let up := if rowStart ≥ rowBytes then
+          (out[rowStart + i - rowBytes]?.getD 0).toNat else 0
+      let upLeft := if rowStart ≥ rowBytes && i ≥ bpp then
+          (out[rowStart + i - rowBytes - bpp]?.getD 0).toNat else 0
+      let v :=
+        if f == 0 then x
+        else if f == 1 then x + left
+        else if f == 2 then x + up
+        else if f == 3 then x + (left + up) / 2
+        else
+          -- Paeth: the neighbour closest to the linear estimate.
+          let p : Int := (left : Int) + up - upLeft
+          let pa := (p - left).natAbs
+          let pb := (p - up).natAbs
+          let pc := (p - upLeft).natAbs
+          x + (if pa ≤ pb && pa ≤ pc then left else if pb ≤ pc then up else upLeft)
+      out := out.push (UInt8.ofNat (v % 256))
+    pos := pos + rowBytes
+  return .ok out
+
+/-- Split interleaved pixels into the colour plane and the alpha plane:
+`channels` is 4 (RGBA) or 2 (grey + alpha), the alpha always last. -/
+private def splitAlpha (px : ByteArray) (channels : Nat) :
+    ByteArray × ByteArray := Id.run do
+  let colorCh := channels - 1
+  let n := px.size / channels
+  let mut color := ByteArray.empty
+  let mut alpha := ByteArray.empty
+  for p in [0:n] do
+    for c in [0:colorCh] do
+      color := color.push (px[p * channels + c]?.getD 0)
+    alpha := alpha.push (px[p * channels + colorCh]?.getD 0)
+  return (color, alpha)
 
 def decodePng (b : ByteArray) : Except String Info := do
   unless sliceEq b 0 pngSig do
@@ -120,16 +182,21 @@ def decodePng (b : ByteArray) : Except String Info := do
     throw "corrupt PNG: zero width or height"
   if interlace != 0 then
     throw "interlaced (Adam7) PNG is not supported; re-export without interlacing"
-  let space ← match colorType with
-    | 0 => pure Space.gray
-    | 2 => pure Space.rgb
-    | 3 => pure Space.indexed
-    | 4 | 6 => throw "PNG with an alpha channel is not supported yet; flatten it"
+  -- `alpha` is the channel count of a type that must really decode.
+  let (space, alpha) ← match colorType with
+    | 0 => pure (Space.gray, none)
+    | 2 => pure (Space.rgb, none)
+    | 3 => pure (Space.indexed, none)
+    | 4 => pure (Space.gray, some 2)
+    | 6 => pure (Space.rgb, some 4)
     | t => throw s!"corrupt PNG: colour type {t}"
   unless [1, 2, 4, 8, 16].contains bitDepth do
     throw s!"corrupt PNG: bit depth {bitDepth}"
-  if space == .rgb && bitDepth < 8 then
+  if space == .rgb && alpha.isNone && bitDepth < 8 then
     throw s!"corrupt PNG: truecolour at bit depth {bitDepth}"
+  if alpha.isSome && bitDepth != 8 then
+    throw s!"PNG with a {bitDepth}-bit alpha channel is not supported; \
+re-export at 8 bits or flatten it"
   -- Walk the chunks. `i` advances by at least 12 per step, so the loop over
   -- `b.size` iterations covers every well-formed file; a lying length that
   -- points past the end is caught by the bounds-checked reads.
@@ -169,8 +236,22 @@ def decodePng (b : ByteArray) : Except String Info := do
     throw "corrupt PNG: no image data (IDAT)"
   if space == .indexed && (palette.isEmpty || palette.size % 3 != 0) then
     throw "corrupt PNG: indexed colour without a usable PLTE"
-  return { format := .png, pxW, pxH, dpiX, dpiY, bitDepth, space, palette,
-           data := idat }
+  match alpha with
+  | none =>
+    return { format := .png, pxW, pxH, dpiX, dpiY, bitDepth, space, palette,
+             data := idat, predictor := true }
+  | some channels =>
+    -- The samples cannot pass through: inflate against the size the
+    -- geometry declares, unfilter, split, re-encode each plane.
+    let rowBytes := pxW * channels
+    let raw ← Flate.inflate idat (pxH * (1 + rowBytes))
+    if raw.size != pxH * (1 + rowBytes) then
+      throw "corrupt PNG: sample data does not match the declared size"
+    let px ← unfilter raw pxH rowBytes channels
+    let (color, alphaPlane) := splitAlpha px channels
+    return { format := .png, pxW, pxH, dpiX, dpiY, bitDepth := 8, space,
+             data := Flate.deflateStored color
+             smask := Flate.deflateStored alphaPlane }
 
 /-! ## JPEG
 
@@ -260,8 +341,19 @@ places its placeholder box instead. -/
 
 structure Loaded where
   src : String
+  /-- The relative path the driver resolved, when it differs from `src`: a
+  bare graphicx name (`figures/plot`) gains the extension the file on disk
+  has, and an HTML link must name it. -/
+  href : String := ""
   info : Option Info := none
   deriving Inhabited
+
+/-- graphicx resolves an extensionless name against its extension list; the
+same convention here, over the formats that embed. The candidates are tried
+in order, the name as written first. -/
+def sourceCandidates (src : String) : List String :=
+  [src, src ++ ".png", src ++ ".jpg", src ++ ".jpeg", src ++ ".PNG",
+   src ++ ".JPG", src ++ ".JPEG"]
 
 structure Store where
   entries : Array Loaded := #[]

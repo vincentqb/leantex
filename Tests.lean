@@ -4082,12 +4082,32 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (match Image.decodePng physed with
      | .ok inf => inf.dpiX == 150 && inf.width == Dim.pt 64 * 72 / 150
      | .error _ => false)
-  -- Refusals, each with its reason: alpha, interlace, palette-less indexed.
-  t "png alpha refused"
-    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 6 0) ++
+  -- Refusals and the decode path, each with its reason: 16-bit alpha and
+  -- interlace refuse; 8-bit alpha really decodes — inflate, unfilter,
+  -- split — and the alpha plane comes back as an SMask.
+  t "png 16-bit alpha refused"
+    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 16 6 0) ++
       chunk "IDAT" [0] ++ chunk "IEND" [])) with
-     | .error e => (e.splitOn "alpha").length == 2
+     | .error e => (e.splitOn "16-bit").length == 2
      | .ok _ => false)
+  -- 2×2 RGBA, row 0 filter None, row 1 filter Sub: known planes out.
+  let rgbaRaw := bytes ([0, 10, 20, 30, 255, 40, 50, 60, 128] ++
+    [1, 5, 5, 5, 7, 1, 2, 3, 9])
+  let rgbaPng := mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++
+    chunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ chunk "IEND" [])
+  t "png alpha decodes to colour plus smask"
+    (match Image.decodePng rgbaPng with
+     | .ok inf =>
+       inf.space == .rgb && !inf.predictor && !inf.smask.isEmpty &&
+       Flate.inflate inf.data 12 ==
+         .ok (bytes [10, 20, 30, 40, 50, 60, 5, 5, 5, 6, 7, 8]) &&
+       Flate.inflate inf.smask 4 == .ok (bytes [255, 128, 7, 16])
+     | .error _ => false)
+  -- The inflate under it round-trips its own stored encoder, and reads a
+  -- real compressor's stream: rects.png's IDAT is zlib at level 9, and its
+  -- unfiltered scanlines are 40 rows of 1+192 bytes.
+  t "flate roundtrip on stored blocks"
+    (Flate.inflate (Flate.deflateStored rgbaRaw) rgbaRaw.size == .ok rgbaRaw)
   t "png interlace refused"
     (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 2 1) ++
       chunk "IDAT" [0] ++ chunk "IEND" [])) with
@@ -4141,8 +4161,10 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- The shipped fixtures: what `lake test` sees on every host.
   let pngData ← IO.FS.readBinFile "tests/corpus/rects.png"
   let jpgData ← IO.FS.readBinFile "tests/corpus/rects.jpg"
+  let alphaData ← IO.FS.readBinFile "tests/corpus/rects-alpha.png"
   let pngInfo := Image.decode pngData
   let jpgInfo := Image.decode jpgData
+  let alphaInfo := Image.decode alphaData
   t "shipped png decodes 64x40 rgb"
     (match pngInfo with
      | .ok inf => inf.format == .png && inf.pxW == 64 && inf.pxH == 40 &&
@@ -4152,6 +4174,18 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (match jpgInfo with
      | .ok inf => inf.format == .jpeg && inf.pxW == 64 && inf.pxH == 40 &&
         inf.width == Dim.pt 64
+     | .error _ => false)
+  -- The RGBA fixture went through a real compressor (zlib level 9), so
+  -- decoding it exercises the Huffman paths of the inflater; its alpha
+  -- fades 255 down to 15 across the rectangle and vanishes outside it.
+  t "shipped alpha png decodes with its mask"
+    (match alphaInfo with
+     | .ok inf =>
+       inf.pxW == 48 && inf.pxH == 32 && inf.space == .rgb && !inf.smask.isEmpty &&
+       (match Flate.inflate inf.smask (48 * 32) with
+        | .ok mask => mask.size == 48 * 32 && mask[0]?.getD 1 == 0 &&
+            (mask[4 * 48 + 4]?.getD 0) == 255 && (mask[4 * 48 + 43]?.getD 0) == 21
+        | .error _ => false)
      | .error _ => false)
   -- Totality over truncations of both, as for fonts: reaching the count is
   -- the property — a panic would take the run down.
@@ -4164,7 +4198,8 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
 
   let store : Image.Store := { entries := #[
     { src := "rects.png", info := pngInfo.toOption },
-    { src := "rects.jpg", info := jpgInfo.toOption }] }
+    { src := "rects.jpg", info := jpgInfo.toOption },
+    { src := "rects-alpha.png", info := alphaInfo.toOption }] }
   let geom : Layout.Geom := {}
   let imageSegs (out : Layout.Out) : Array (Option Nat × Dim.Sp × Dim.Sp) := Id.run do
     let mut acc : Array (Option Nat × Dim.Sp × Dim.Sp) := #[]
@@ -4250,14 +4285,17 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- The PDF: an XObject per used image, painted by a cm+Do pair; the xref
   -- theorem-test still holds with the new objects in the file.
   let (pdfDoc, _) := Elab.run "t"
-    "\\includegraphics{rects.png} and \\includegraphics{rects.jpg}"
+    "\\includegraphics{rects.png} and \\includegraphics{rects.jpg} and \
+\\includegraphics{rects-alpha.png}"
   let pdfOut := Layout.run geom oneFace none pdfDoc store
   let pdf := Pdf.write geom oneFace pdfOut.pages {} store
   t "pdf embeds the png as flate with the predictor"
     (bytesContain pdf "/Subtype /Image" && bytesContain pdf "/FlateDecode" &&
      bytesContain pdf "/Predictor 15")
   t "pdf embeds the jpeg as dct" (bytesContain pdf "/DCTDecode")
-  t "pdf paints both images" (bytesContain pdf "/Im1 Do" && bytesContain pdf "/Im2 Do")
+  t "pdf gives the alpha image a soft mask" (bytesContain pdf "/SMask")
+  t "pdf paints all three images" (bytesContain pdf "/Im1 Do" &&
+    bytesContain pdf "/Im2 Do" && bytesContain pdf "/Im3 Do")
   -- The cm matrix must carry the placed size: a Do behind a degenerate
   -- matrix is a blank box that every structural check would miss.
   t "pdf image matrix carries the placed size"
@@ -4318,6 +4356,40 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (warnCodes "\\includegraphics[angle=45]{x.png}" == ["W0110"])
   t "includegraphics without a file group is E0304"
     (errCodes "\\includegraphics[width=3cm]" == ["E0304"])
+  -- totalheight is height plus depth and an image has no depth: one key.
+  t "includegraphics totalheight is height"
+    (match (elabStr "\\includegraphics[totalheight=8pt]{x.png}").1.body.toList with
+     | [.para xs] => xs.any fun x => match x with
+        | .image _ spec _ => spec.height == some { sp := Dim.pt 8 }
+        | _ => false
+     | _ => false)
+  -- \logo is a declaration in the body too, and it is stateful there, as
+  -- in beamer: a deck scopes a logo to one frame with `\logo{...}` before
+  -- it and `\logo{}` after.
+  let (bodyLogoDoc, bodyLogoDiags) := Elab.run "t"
+    "\\documentclass{slides}\\begin{document}\\logo{\\includegraphics[height=8pt]{rects.png}}\
+\\begin{frame}{A}x\\end{frame}\\logo{}\\begin{frame}{B}y\\end{frame}\\end{document}"
+  t "logo declared in the body binds" (bodyLogoDiags.isEmpty && bodyLogoDoc.logo.isNone)
+  let blOut := Layout.run (Layout.Geom.ofPage bodyLogoDoc.page) oneFace none
+    bodyLogoDoc store
+  let pageHasImage (p : Layout.PageOut) : Bool :=
+    p.lines.any fun l => l.segs.any fun s => match s with
+      | .image .. => true
+      | _ => false
+  t "body logo scopes to its frame's page"
+    (blOut.pages.size == 2 && pageHasImage blOut.pages[0]! &&
+     !pageHasImage blOut.pages[1]!)
+  -- A bare graphicx name gains the extension the file on disk has; the
+  -- candidate order tries the name as written first.
+  t "source candidates try the written name first"
+    ((Image.sourceCandidates "figures/plot").take 2 ==
+      ["figures/plot", "figures/plot.png"])
+  t "html names the resolved file, not the bare spelling"
+    (let store2 : Image.Store := { entries := #[
+      { src := "figures/plot", href := "figures/plot.png", info := pngInfo.toOption }] }
+     let (h, _) := HtmlDoc.emit { imgs := store2 }
+       ((Elab.run "t" "\\includegraphics{figures/plot}").1)
+     (h.splitOn "<img src=\"figures/plot.png\"").length == 2)
 
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

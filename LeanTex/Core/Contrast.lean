@@ -290,8 +290,9 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
   | .framefoot content => usesInlines cx out content.toList
   -- A note is a side channel, never page text; verbatim carries no
   -- colour; a rule is decorative ink, not text, so the text-contrast
-  -- contract does not judge it.
-  | .note _ | .verbatim _ _ | .rule _ _ _ => out
+  -- contract does not judge it; a logo declaration is furniture, not
+  -- page text.
+  | .note _ | .verbatim _ _ | .rule _ _ _ | .logo _ => out
 
 private def usesItems (cx : UseCx) (out : Array Use) :
     List (Array Block) → Array Use

@@ -392,6 +392,11 @@ inductive Block where
   The PDF handout omits it; HTML keeps it as an inert hidden aside for the
   coming speaker view (PLAN M5). -/
   | note (body : Array Block)
+  /-- beamer's `\logo`, met in the body: a stateful declaration — the pages
+  from here on carry this content at their lower-right corner, and an empty
+  content clears it (`\logo{}` after a frame is how a deck scopes a logo to
+  one frame). The preamble form is `Doc.logo`, the initial state. -/
+  | logo (content : Array Inline)
   /-- One slide. First-class and never flattened into article paragraphs:
   HTML makes it a `<section>` of the deck, the PDF handout gives it a page.
   An empty title is a bare frame. `standout` is beamer's `[standout]`: the
@@ -702,6 +707,9 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .step n last body =>
     s!"{ind}{dumpStepRange n last}\n" ++ dumpBlocks (ind ++ "  ") body
   | .note body => s!"{ind}note\n" ++ dumpBlocks (ind ++ "  ") body
+  | .logo content =>
+    if content.isEmpty then s!"{ind}logo clear\n"
+    else s!"{ind}logo\n" ++ dumpInlines (ind ++ "  ") content
   | .spaced before body =>
     s!"{ind}block before {dumpGlue before}\n" ++ dumpBlocks (ind ++ "  ") body
   | .verbatim covered s =>
@@ -966,6 +974,7 @@ def blockTextOne (acc : String) : Block → String
   | .step _ _ body => blockTextList acc body.toList
   | .note body => blockTextList acc body.toList
   | .verbatim _ s => acc ++ s
+  | .logo content => acc ++ plainText content
   | .frame title _ _ body => blockTextList (acc ++ plainText title) body.toList
   | .framefoot content => acc ++ plainText content
   -- A rule is decorative ink; it carries no text.
@@ -1082,6 +1091,9 @@ theorem shadeBlock_text (dim : Color) (b : Block) (acc : String) :
     rw [shadeBlock]
     simp [blockTextOne, shadeBlockList_text dim body.toList #[] acc, blockTextList]
   | .verbatim c s => rfl
+  -- A logo declaration is page furniture: the shade never repaints it, so
+  -- its census — the declaration's own inline text — is untouched.
+  | .logo _ => rfl
   | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ => rfl
 
 theorem shadeItems_text (dim : Color) (items : List (Array Block))
@@ -1199,6 +1211,9 @@ theorem dimBlock_text (dim : Color) (k : Nat) (b : Block) (acc : String) :
         shadeBlockList_text dim body.toList #[] acc, blockTextList]
     · simp [h, blockTextOne, dimBlockList_text dim k body.toList #[] acc,
         blockTextList]
+  -- A logo declaration is page furniture: dimming never repaints it, so
+  -- its census — the declaration's own inline text — is untouched.
+  | .logo _ => rfl
   | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
   | .rule _ _ _ => rfl
 
@@ -1278,6 +1293,7 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .columns cols => imageSrcsColumns out cols.toList
   | .step _ _ body => imageSrcsBlockList out body.toList
   | .note body => imageSrcsBlockList out body.toList
+  | .logo content => imageSrcsInlines out content
   | .verbatim _ _ => out
   | .frame title _ _ body => imageSrcsBlockList (imageSrcsInlines out title) body.toList
   | .framefoot content => imageSrcsInlines out content

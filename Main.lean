@@ -279,10 +279,18 @@ def loadImages (file : String) (doc : Ir.Doc) : IO (Image.Store × Array Diag) :
   let mut entries : Array Image.Loaded := #[]
   let mut diags : Array Diag := #[]
   for src in Ir.imageRefs doc do
-    let p := if (System.FilePath.mk src).isAbsolute then System.FilePath.mk src
-      else dir / src
-    let bytes? ← do
+    -- The name as written, then graphicx's extension resolution: a deck
+    -- says `figures/plot` and means the `figures/plot.png` beside it.
+    let mut hit : Option (String × System.FilePath) := none
+    for cand in Image.sourceCandidates src do
+      let p := if (System.FilePath.mk cand).isAbsolute then System.FilePath.mk cand
+        else dir / cand
       if ← p.pathExists then
+        hit := some (cand, p)
+        break
+    let bytes? ← do
+      match hit with
+      | some (_, p) =>
         try pure (some (← IO.FS.readBinFile p))
         catch e =>
           diags := diags.push {
@@ -291,20 +299,26 @@ def loadImages (file : String) (doc : Ir.Doc) : IO (Image.Store × Array Diag) :
             message := s!"cannot read image '{src}': {e}"
             help := some "a placeholder box of the requested size is placed" }
           pure none
-      else
+      | none =>
+        let p := if (System.FilePath.mk src).isAbsolute then System.FilePath.mk src
+          else dir / src
         diags := diags.push {
           severity := .warning
           code := "W0601"
           message := s!"image file not found: '{src}'"
-          help := some s!"looked at {p}; a placeholder box of the requested size is placed" }
+          help := some s!"looked at {p} (also with .png/.jpg/.jpeg added); \
+a placeholder box of the requested size is placed" }
         pure none
+    let href := match hit with
+      | some (cand, _) => if cand == src then "" else cand
+      | none => ""
     match bytes? with
-    | none => entries := entries.push { src }
+    | none => entries := entries.push { src, href }
     | some bytes =>
       match Image.decode bytes with
-      | .ok info => entries := entries.push { src, info := some info }
+      | .ok info => entries := entries.push { src, href, info := some info }
       | .error e =>
-        entries := entries.push { src }
+        entries := entries.push { src, href }
         diags := diags.push {
           severity := .warning
           code := "W0602"

@@ -1,5 +1,6 @@
 import LeanTex.Core.Diag
 import LeanTex.Core.Utf8
+import LeanTex.Core.Flate
 import LeanTex.Core.Image
 import LeanTex.Core.Lex
 import LeanTex.Core.Parse

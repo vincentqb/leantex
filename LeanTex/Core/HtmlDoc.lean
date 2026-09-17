@@ -337,6 +337,11 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- stands. `height: auto` (or width) keeps the browser on the intrinsic
     -- ratio, the same invariant the PDF path proves.
     let info? := (cfg.imgs.find? src).bind fun k => (cfg.imgs.get? k).bind (·.info)
+    -- A bare graphicx name resolved to a file with an extension: the link
+    -- must name the file on disk, not the spelling in the source.
+    let href := match (cfg.imgs.find? src).bind fun k => cfg.imgs.get? k with
+      | some entry => if entry.href.isEmpty then src else entry.href
+      | none => src
     let cssDim (l : Image.Len) : Option String :=
       if l.tw != 0 && l.sp == 0 && l.th == 0 then
         some (decMilli (l.tw * 100) ++ "%")
@@ -359,7 +364,7 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
             s!"width: {Dim.Sp.toPtString (inf.width * size.scaleNum / size.scaleDen)}pt; \
 height: auto"
         else none
-    let attrs := #[("src", src), ("alt", alt)] ++
+    let attrs := #[("src", href), ("alt", alt)] ++
       (match info? with
        | some inf => #[("width", toString inf.pxW), ("height", toString inf.pxH)]
        | none => #[]) ++
@@ -562,10 +567,15 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- A state change for the deck walk in `emit`, not content: nothing to
     -- render where one stands alone.
     Html.text ""
+  | .logo _ =>
+    -- Paged-media furniture; `blockNodesInto` skips it (and `emit` says
+    -- so), so this arm only closes the match.
+    Html.text ""
 
 /-- The accumulator threads through the sibling walk, as in `inlineNodesInto`. -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
   | [] => acc
+  | .logo _ :: rest => blockNodesInto cfg acc rest
   | b :: rest => blockNodesInto cfg (acc.push (blockNode cfg b)) rest
 
 private def columnNodesInto (cfg : Config) (acc : Array Node) :
@@ -603,7 +613,9 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
       message := "running head/foot is paged-media furniture; omitted from HTML"
       help := some "put a masthead in the document body if it should appear in both"
     }
-  if doc.logo.isSome then
+  if doc.logo.isSome || doc.body.any (fun b => match b with
+      | .logo c => !c.isEmpty
+      | _ => false) then
     diags := diags.push {
       severity := .warning
       code := "W0007"

@@ -339,8 +339,8 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     return m
   -- Object ids are laid out in fixed blocks so the xref can be built without
   -- a second pass: 1 catalog, 2 pages, then four ids per font, one file per
-  -- font, one XObject per image, then two per page, then info, xmp, objstm,
-  -- xref.
+  -- font, then per image an XObject plus an SMask when it has an alpha
+  -- plane, then two per page, then info, xmp, objstm, xref.
   let fontBase := 3
   let type0Id (k : Nat) := fontBase + 4 * k
   let cidId (k : Nat) := fontBase + 4 * k + 1
@@ -349,8 +349,23 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let fileBase := fontBase + 4 * nf
   let fileId (k : Nat) := fileBase + k
   let imgBase := fileBase + nf
-  let imgId (k : Nat) := imgBase + k
-  let pageBase := imgBase + ni
+  let (imgIds, smaskIds, pageBase) : Array Nat × Array (Option Nat) × Nat := Id.run do
+    let mut ids : Array Nat := #[]
+    let mut masks : Array (Option Nat) := #[]
+    let mut next := imgBase
+    for k in usedImgs do
+      ids := ids.push next
+      next := next + 1
+      match (imgs.get? k).bind (·.info) with
+      | some inf =>
+        if inf.smask.isEmpty then
+          masks := masks.push none
+        else
+          masks := masks.push (some next)
+          next := next + 1
+      | none => masks := masks.push none
+    return (ids, masks, next)
+  let imgId (n : Nat) := imgIds[n]?.getD 0
   let pageId (i : Nat) := pageBase + 2 * i
   let contentId (i : Nat) := pageBase + 2 * i + 1
   let infoId := pageBase + 2 * np
@@ -450,11 +465,12 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     w := w'
     locs := locs.set! (contentId i) (1, off)
 
-  -- Image XObjects. A PNG's zlib stream passes through as `/FlateDecode`
-  -- with the PNG predictor declared (ISO 32000-2 §7.4.4.4: Predictor 15,
-  -- with Colors/BitsPerComponent/Columns describing the scanlines); a JPEG
-  -- embeds whole as `/DCTDecode`. The decoder already refused every form
-  -- for which this pass-through would be wrong.
+  -- Image XObjects. A PNG's raw IDAT stream passes through as
+  -- `/FlateDecode` with the PNG predictor declared (ISO 32000-2 §7.4.4.4:
+  -- Predictor 15, with Colors/BitsPerComponent/Columns describing the
+  -- scanlines); a decoded-and-re-encoded plane needs no predictor; a JPEG
+  -- embeds whole as `/DCTDecode`. An alpha plane rides as its own gray
+  -- XObject named by `/SMask`.
   for (k, n) in usedImgs.zipIdx do
     if let some inf := (imgs.get? k).bind (·.info) then
       let colorSpace := match inf.space with
@@ -467,14 +483,27 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
             hex := hex.push (hexDigit byte.toNat)
           return s!"[/Indexed /DeviceRGB {inf.palette.size / 3 - 1} <{hex}>]"
       let filter := match inf.format with
-        | .png => s!"/Filter /FlateDecode /DecodeParms << /Predictor 15 \
+        | .png =>
+          if inf.predictor then
+            s!"/Filter /FlateDecode /DecodeParms << /Predictor 15 \
 /Colors {inf.space.components} /BitsPerComponent {inf.bitDepth} /Columns {inf.pxW} >>"
+          else "/Filter /FlateDecode"
         | .jpeg => "/Filter /DCTDecode"
+      let smaskRef := match smaskIds[n]?.getD none with
+        | some mid => s!" /SMask {mid} 0 R"
+        | none => ""
       let dict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
-/Height {inf.pxH} /ColorSpace {colorSpace} /BitsPerComponent {inf.bitDepth} {filter}"
+/Height {inf.pxH} /ColorSpace {colorSpace} /BitsPerComponent {inf.bitDepth}\
+{smaskRef} {filter}"
       let (w', off) := putStream w (imgId n) dict inf.data
       w := w'
       locs := locs.set! (imgId n) (1, off)
+      if let some mid := smaskIds[n]?.getD none then
+        let mdict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
+/Height {inf.pxH} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode"
+        let (w'', moff) := putStream w mid mdict inf.smask
+        w := w''
+        locs := locs.set! mid (1, moff)
 
   for k in [0:nf] do
     let font := fs.get keep[k]!
