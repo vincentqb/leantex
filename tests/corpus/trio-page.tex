@@ -1,0 +1,47 @@
+% One design, three artefacts (1/3): the page. The \fonts, \palette,
+% \tokens and \style blocks are byte-identical across trio-page.tex,
+% trio-deck.tex and trio-card.tex: the classes differ in their defaults,
+% never in their vocabulary. Everything here is invented — a fictional
+% studio, placeholder names, example.org contacts.
+\documentclass{article}
+
+\fonts{
+  dir  = "fonts",
+  body = "Source Serif Pro",
+  sans = "Open Sans",
+  mono = "Source Code Pro",
+}
+\palette{
+  primary = #B45309,
+  quiet   = #6B7280,
+}
+\tokens{
+  rhythm = 1.6ex plus 0.4ex,
+  sep    = 0.75 * rhythm,
+}
+\style{section}{ font = {\sffamily\bfseries\primary}, before = rhythm, rule = quiet }
+\style{itemize}{ gap = 0.25 * rhythm }
+
+\page{ size = a5, margin = 18mm }
+\pdfmeta{ title = "Cardamom Press", author = "Pat Placeholder" }
+\assert{ pages == 1 }
+\assert{ fonts.all_embedded }
+
+\begin{document}
+
+\section{Cardamom Press}
+
+Cardamom Press is an invented letterpress studio that exists to give this
+corpus a subject. Its design is declared once — a palette, a rhythm, an
+element style — and this page, the deck beside it, and the card beside
+that all read the same declarations.
+
+\section{Practice}
+
+\begin{itemize}
+  \item Wood type and photopolymer plates; \primary{amber} is the one accent.
+  \item Editions of \texttt{64} or fewer, numbered by hand.
+  \item Enquiries: \texttt{press@example.org}.
+\end{itemize}
+
+\end{document}

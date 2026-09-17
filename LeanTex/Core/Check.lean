@@ -12,8 +12,12 @@ structure Shipped where
   pages : Nat
   fontsEmbedded : Bool
   /-- Every piece of ink inside the margins, judged from the shipped lines
-  with the fonts' own metrics (ascent above the baseline, descent below).
-  On a card the margins are the print safe zone. -/
+  with the fonts' own metrics: cap height above the baseline — the height a
+  line of text measures from its glyphs, where the hhea ascent reserves
+  accent headroom that is usually blank — and the full descent below. An
+  accent above the caps on a margin-tight line is outside this measure,
+  and that approximation is deliberate. On a card the margins are the
+  print safe zone. -/
   inArea : Bool := true
   /-- The worst offender, for the failure message. -/
   areaActual : String := ""
@@ -58,7 +62,8 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
             let font := fs.get idx
             let sz := if size == 0 then l.size else size
             let upem : Int := font.unitsPerEm
-            let asc := font.ascent * sz / upem
+            let asc := (if font.capHeight > 0 then font.capHeight else font.ascent)
+              * sz / upem
             let desc := (-font.descent) * sz / upem
             if geom.hmargin - x > worst then
               worst := geom.hmargin - x

@@ -1,0 +1,48 @@
+% One design, three artefacts (2/3): the deck. Same declaration blocks as
+% trio-page.tex and trio-card.tex; only the class and the content differ.
+% Invented content throughout.
+\documentclass[aspectratio=169]{slides}
+
+\fonts{
+  dir  = "fonts",
+  body = "Source Serif Pro",
+  sans = "Open Sans",
+  mono = "Source Code Pro",
+}
+\palette{
+  primary = #B45309,
+  quiet   = #6B7280,
+}
+\tokens{
+  rhythm = 1.6ex plus 0.4ex,
+  sep    = 0.75 * rhythm,
+}
+\style{section}{ font = {\sffamily\bfseries\primary}, before = rhythm, rule = quiet }
+\style{itemize}{ gap = 0.25 * rhythm }
+
+\title{Cardamom Press}
+\author{Pat Placeholder}
+\date{}
+
+\assert{ fonts.all_embedded }
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{One vocabulary}
+  \begin{itemize}
+    \item The deck reads the same \texttt{palette} and \texttt{tokens}
+      declarations as the page and the card.
+    \item \primary{Amber} means the same thing on every artefact.
+  \end{itemize}
+\end{frame}
+
+\section{Editions}
+
+\begin{frame}{Editions}
+  Editions of \texttt{64} or fewer, numbered by hand.
+  Enquiries: \texttt{press@example.org}.
+\end{frame}
+
+\end{document}

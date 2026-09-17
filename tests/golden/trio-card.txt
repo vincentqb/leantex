@@ -1,0 +1,44 @@
+class card
+page 242.646x153.014 vmargin 14.173 hmargin 14.173 bleed 8.504 hyphenate off justify off
+font dir "fonts"
+font body "Source Serif Pro"
+font sans "Open Sans"
+font mono "Source Code Pro"
+palette primary #B45309
+palette quiet #6B7280
+token rhythm 1600/1000ex plus 400/1000ex
+token sep 1200/1000ex plus 300/1000ex
+meta title "Cardamom Press — card"
+meta author "Pat Placeholder"
+assert fonts.all_embedded
+assert pages <= 2
+assert text.in_area
+assert text.xheight >= 3.968pt
+frame
+  title
+    styled size:Large
+      styled sans
+        styled bold
+          text "Pat Placeholder"
+  para
+    linebreak
+    color primary #B45309
+      styled sans
+        text "Compositor"
+  block before 1600/1000ex plus 400/1000ex
+    para
+      text "Cardamom Press"
+frame
+  title
+    styled sans
+      styled bold
+        text "Cardamom Press"
+  block before 1200/1000ex plus 300/1000ex
+    para
+      styled mono
+        text "press@example.org"
+      linebreak
+      color quiet #6B7280
+        text "Editions of 64 or fewer, numbered by hand."
+-- diagnostics
+(none)

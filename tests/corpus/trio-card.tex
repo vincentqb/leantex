@@ -1,0 +1,46 @@
+% One design, three artefacts (3/3): the card. Same declaration blocks as
+% trio-page.tex and trio-deck.tex. ISO/IEC 7810 ID-1 trim by class default,
+% two faces as two frames, 3 mm bleed for the print shop. The card class
+% itself asserts the contract: content fits both faces, ink stays inside
+% the safe margin, and no type drops below the legible floor. Invented
+% identity: placeholder name, example.org.
+\documentclass{card}
+
+\fonts{
+  dir  = "fonts",
+  body = "Source Serif Pro",
+  sans = "Open Sans",
+  mono = "Source Code Pro",
+}
+\palette{
+  primary = #B45309,
+  quiet   = #6B7280,
+}
+\tokens{
+  rhythm = 1.6ex plus 0.4ex,
+  sep    = 0.75 * rhythm,
+}
+\style{section}{ font = {\sffamily\bfseries\primary}, before = rhythm, rule = quiet }
+\style{itemize}{ gap = 0.25 * rhythm }
+
+\page{ bleed = 3mm }
+\pdfmeta{ title = "Cardamom Press — card", author = "Pat Placeholder" }
+\assert{ fonts.all_embedded }
+
+\begin{document}
+
+\begin{frame}
+  {\Large\sffamily\bfseries Pat Placeholder}\\
+  \primary{\sffamily Compositor}
+
+  \block[before = rhythm]{Cardamom Press}
+\end{frame}
+
+\begin{frame}
+  {\sffamily\bfseries Cardamom Press}
+
+  \block[before = sep]{\texttt{press@example.org}\\
+  \quiet{Editions of 64 or fewer, numbered by hand.}}
+\end{frame}
+
+\end{document}
