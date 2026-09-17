@@ -1,0 +1,16 @@
+class article
+page 420x595 vmargin 14 hmargin 43.2
+runninghead
+  text "Invented Field Notes "
+  fill
+  text "p. "
+  pagenumber
+assert pages == 1
+section 1
+  text "Under a tight margin"
+para
+  text "The running head above this page sits in a top margin far too small to hold it, so the engine reserves a band below the margin and the body starts under the head’s ink, never on it."
+para
+  text "The first line of this paragraph is the one a missing reservation would have collided with, which is exactly why this fixture exists."
+-- diagnostics
+(none)

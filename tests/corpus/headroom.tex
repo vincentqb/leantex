@@ -1,0 +1,28 @@
+% Synthetic fixture: a running head over a deliberately tight top margin.
+% The half margin cannot hold the head's line, so the head must reserve a
+% band out of the body area (headBandFor / Geom.bodyTop) or it collides
+% with the first line of body ink. Invented content only.
+\documentclass{article}
+
+\page{
+  size = a5,
+  vmargin = 14pt,
+  hmargin = 0.6in,
+}
+
+\runninghead{Invented Field Notes \hfill p. \pagenumber}
+
+\assert{ pages == 1 }
+
+\begin{document}
+
+\section{Under a tight margin}
+
+The running head above this page sits in a top margin far too small to
+hold it, so the engine reserves a band below the margin and the body
+starts under the head's ink, never on it.
+
+The first line of this paragraph is the one a missing reservation would
+have collided with, which is exactly why this fixture exists.
+
+\end{document}

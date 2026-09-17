@@ -48,7 +48,7 @@ def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
-   "chrome", "lists", "lists-styled", "lists-deck",
+   "chrome", "lists", "lists-styled", "lists-deck", "headroom",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav"]
 
@@ -3336,6 +3336,59 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       | .rule w _ _ _ => w == geom.textWidth
       | _ => false)
 
+/-- The running head's reserved band (`headBandFor`/`Geom.bodyTop`): with a
+top margin too small to hold the head line, body ink still starts at least
+`lineskip` below the head's ink bottom — `bodyTop_clears_head` is the
+sufficiency proof; this is its witness over the shipped lines, the
+invariant whose absence let the head collide with the first body line. The
+mirrored default is also pinned: at the default margins the band is zero,
+so an undeclared page is unchanged. -/
+def headBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let tight := "\\documentclass{article}\\page{ vmargin = 14pt }" ++
+    "\\runninghead{Invented Notes \\hfill p. \\pagenumber}" ++
+    "\\begin{document}Body text under a tight margin.\\end{document}"
+  let (doc, _) := elabStr tight
+  let geom := Layout.Geom.ofPage doc.page
+  let out := Layout.run geom oneFace none doc
+  let lines := (out.pages[0]?.map (·.lines)).getD #[]
+  let font := oneFace.body
+  let scale (u : Int) : Dim.Sp := u * geom.fontSize / (font.unitsPerEm : Int)
+  let headY := geom.vmargin / 2 + scale font.ascent
+  t "the tight-margin page ships its head line" (lines.any fun l => l.y == headY)
+  let headBottom := headY + scale (-font.descent)
+  let bodyInkTops := lines.filterMap fun l =>
+    if l.y == headY then none else some (l.y - scale font.capHeight)
+  t "body ink clears the head's ink by lineskip under a tight margin"
+    (!bodyInkTops.isEmpty &&
+      bodyInkTops.all fun top => headBottom + Layout.lineskip ≤ top)
+  -- The default margin holds the head whole: the band is zero and the
+  -- first body line sits exactly where a headless page puts it.
+  let dflt (head : Bool) : Option Dim.Sp := Id.run do
+    let src := "\\documentclass{article}" ++
+      (if head then "\\runninghead{Invented Notes}" else "") ++
+      "\\begin{document}Body text at the default margin.\\end{document}"
+    let (doc, _) := elabStr src
+    let geom := Layout.Geom.ofPage doc.page
+    let out := Layout.run geom oneFace none doc
+    let lines := (out.pages[0]?.map (·.lines)).getD #[]
+    return (lines.filter fun l => l.y ≠ geom.vmargin / 2 + scale font.ascent)
+      |>.foldl (fun acc l => match acc with
+        | none => some l.y
+        | some y => some (min y l.y)) none
+  t "the default margin reserves no band: the body does not move"
+    (dflt true == dflt false && (dflt false).isSome)
+  -- `slides_lines_survive_bands` allows each running line two em of ink;
+  -- the shipped test faces sit inside that bound, so the theorem's
+  -- hypothesis is real, not aspirational.
+  for name in ["OpenSans-Regular.ttf", "SourceSerifPro-Regular.otf",
+               "SourceCodePro-Regular.otf"] do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
+    | .ok f =>
+      t s!"{name} line ink stays under two em"
+        (f.ascent + (-f.descent) ≤ 2 * (f.unitsPerEm : Int))
+    | .error e => failures ref s!"headBand font parse {name}: {e}"
+
 /-- The IR-to-IR walks are exhaustive, and each arm below was a wildcard
 drop once: the fact checked is the behaviour the walk owes the constructor
 it used to drop silently (PLAN 2026-09-17, the obligation table). -/
@@ -3504,6 +3557,15 @@ def censusTable :
     ("one page", c.size == 1),
     ("the running head ships", hasStr (censusText c) "Alex Doe"),
     ("the section rules draw", c.any fun p => decide (p.rules ≥ 1))]),
+  ("headroom", fun geom c => [
+    ("one page", c.size == 1),
+    ("the head ships with its page number", hasStr (censusText c) "Invented Field Notes"),
+    ("the body ships under it", hasStr (censusText c) "reserves a band below the margin"),
+    ("the head keeps its own line: no body text beside it",
+      ((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.2 "Invented Field Notes").map
+        fun l => !hasStr l.2 "tight margin").getD false),
+    ("body lines sit at the margin, not in the band",
+      lineXOf c 0 "The running head above this page" == some geom.hmargin)]),
   ("wrapper", fun _ c => [
     ("both wrapper halves ship around the body",
       hasStr (censusText c) "First: body one (end First)"),
@@ -5862,6 +5924,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       spacingChecks ref geom oneFace font
       slideChecks ref oneFace
       vdistChecks ref geom oneFace
+      headBandChecks ref oneFace
       cardChecks ref oneFace pats
       censusChecks ref oneFace pats
       quoteChecks ref oneFace

@@ -37,6 +37,12 @@ structure Geom where
   undeclared page is unchanged. `Layout.run` computes it (`footBandFor`);
   everything else reads it only through `bodyBottom`. -/
   footBand : Sp := 0
+  /-- The band a running head reserves below the top margin: what its ink
+  and clearance need beyond the half margin it hangs below. Zero when
+  there is no head or the margin already holds it, so an undeclared page
+  is unchanged. `Layout.run` computes it (`headBandFor`); everything else
+  reads it only through `bodyTop`. -/
+  headBand : Sp := 0
   deriving Repr
 
 def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
@@ -52,10 +58,26 @@ here and nowhere else — a footer that draws over the last line of body text
 is a worse bug than no footer. -/
 def Geom.bodyBottom (g : Geom) : Sp := g.pageH - g.vmargin - g.footBand
 
+/-- The highest y a body line's ink may reach: the top margin, plus the
+band a running head reserves. Every placement decision reads the page top
+from here and nowhere else — a head that draws over the first line of body
+text is the same bug as the footer's, at the other edge. -/
+def Geom.bodyTop (g : Geom) : Sp := g.vmargin + g.headBand
+
 /-- The band a footer of ink height `ascent` reserves: its baseline sits
 `vmargin/2` below the body area, so whatever of `ascent + lineskip` the half
 margin cannot hold comes out of the body. -/
 def footBandFor (vmargin ascent : Sp) : Sp := max 0 (ascent + lineskip - vmargin / 2)
+
+/-- The band a running head of ink `ascent + descent` reserves — the
+footer's own reservation, fed the head's ink extent below its half-margin
+line. The head's ink top sits `vmargin/2` above the body area (its
+baseline `ascent` below that), so the whole line hangs toward the body
+where the footer hangs only its ascent: whatever of
+`ascent + descent + lineskip` the half margin cannot hold comes out of
+the body. -/
+def headBandFor (vmargin ascent descent : Sp) : Sp :=
+  footBandFor vmargin (ascent + descent)
 
 /-- The reservation is sufficient, for every geometry: with the band from
 `footBandFor`, body ink stops at least `lineskip` above the footer's ink top
@@ -73,6 +95,23 @@ theorem bodyBottom_clears_footer (g : Geom) (ascent : Sp) (hm : 0 ≤ g.vmargin)
   simp only [Geom.bodyBottom, footBandFor] at h ⊢
   rw [h]
   exact key g.pageH g.vmargin ascent lineskip hm
+
+/-- The mirror of `bodyBottom_clears_footer`, for every geometry: with the
+band from `headBandFor`, body ink starts at least `lineskip` below the
+head's ink bottom — `headY + descent`, the baseline at half the top margin
+plus the head's ascent, plus what it hangs below. The same key inequality,
+reflected. -/
+theorem bodyTop_clears_head (g : Geom) (ascent descent : Sp) (hm : 0 ≤ g.vmargin)
+    (h : g.headBand = headBandFor g.vmargin ascent descent) :
+    g.vmargin / 2 + ascent + descent + lineskip ≤ g.bodyTop := by
+  have key : ∀ m a d l : Int, 0 ≤ m →
+      m / 2 + a + d + l ≤ m + max 0 (a + d + l - m / 2) := by
+    intro m a d l hm
+    simp only [Int.max_def]
+    split <;> omega
+  simp only [Geom.bodyTop, headBandFor, footBandFor] at h ⊢
+  rw [h]
+  exact key g.vmargin ascent descent lineskip hm
 
 /-- The height between the margins: what `0.3\textheight` sizes against. -/
 def Geom.textHeight (g : Geom) : Sp := g.pageH - 2 * g.vmargin
@@ -123,6 +162,55 @@ theorem slides_lines_in_band :
     10 ≤ (Ir.slidesStage43.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ∧
     (Ir.slidesStage43.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ≤ 20 := by
   decide
+
+/-- The bands never eat the measure: any slides-default geometry whose head
+and foot bands come from `headBandFor`/`footBandFor` keeps a positive body
+height, and Tantau's 10–20 lines (beamer user guide §5.6.1, the band
+`slides_lines_in_band` states for the bare stages) still holds between
+`bodyTop` and `bodyBottom`. The ink hypotheses allow each line two em of
+the base size — the OpenType spec leaves hhea ascender/descender to the
+font and typical line metrics sit at 1.0–1.3 em (the shipped test fonts
+are pinned under the bound in `Tests.lean`), so two em is generous cover,
+not a tuned constant. -/
+theorem slides_lines_survive_bands (a d f : Sp)
+    (h0a : 0 ≤ a) (h0d : 0 ≤ d) (h0f : 0 ≤ f)
+    (hh : a + d ≤ 2 * Ir.slidesFontSize) (hf : f ≤ 2 * Ir.slidesFontSize)
+    (g : Geom)
+    (hg : g.pageH = Ir.slidesStage169.2 ∨ g.pageH = Ir.slidesStage43.2)
+    (hv : g.vmargin = Ir.slidesVMargin)
+    (hhb : g.headBand = headBandFor g.vmargin a d)
+    (hfb : g.footBand = footBandFor g.vmargin f) :
+    0 < g.bodyBottom - g.bodyTop ∧
+    10 ≤ (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ∧
+    (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ≤ 20 := by
+  have hvm : Ir.slidesVMargin = 1671942 := by decide
+  have hfs : Ir.slidesFontSize = 720896 := by decide
+  have hld : leadingFor Ir.slidesFontSize = 865075 := by decide
+  have h169 : Ir.slidesStage169.2 = 16719420 := by decide
+  have h43 : Ir.slidesStage43.2 = 17834048 := by decide
+  have hls : lineskip = 65536 := by decide
+  -- The key inequality over bare `Int` binders, as `bodyBottom_clears_footer`
+  -- does it: `omega` does not see through the `Sp` abbreviation.
+  have key : ∀ a d f hb fb H : Int,
+      0 ≤ a → 0 ≤ d → 0 ≤ f →
+      a + d ≤ 2 * 720896 → f ≤ 2 * 720896 →
+      (H = 16719420 ∨ H = 17834048) →
+      hb = max 0 (a + d + 65536 - 1671942 / 2) →
+      fb = max 0 (f + 65536 - 1671942 / 2) →
+      0 < H - 1671942 - fb - (1671942 + hb) ∧
+      10 ≤ (H - 1671942 - fb - (1671942 + hb)) / 865075 ∧
+      (H - 1671942 - fb - (1671942 + hb)) / 865075 ≤ 20 := by
+    intro a d f hb fb H h0a h0d h0f hh hf hH hhb hfb
+    simp only [Int.max_def] at hhb hfb
+    rcases hH with h | h <;> subst h <;> split at hhb <;> split at hfb <;> omega
+  rw [hfs] at hh hf
+  rw [h169] at hg
+  rw [h43] at hg
+  simp only [headBandFor, footBandFor, hls, hv, hvm] at hhb hfb
+  rw [hld]
+  simp only [Geom.bodyBottom, Geom.bodyTop]
+  rw [hv, hvm]
+  exact key a d f g.headBand g.footBand g.pageH h0a h0d h0f hh hf hg hhb hfb
 
 /-- How a page distributes its leftover vertical space: declared shares of
 the stretch above and below the content, the ratio form of beamer's
@@ -1356,7 +1444,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
                  b.descent * nominal / b.geom.fontSize)
   let bottom := b.geom.bodyBottom
   let mk (y : Sp) : LineOut := { x := x, y := y, size := size, segs := segs, setWidth := w }
-  let firstY := b.geom.vmargin + max b.ascent height
+  let firstY := b.geom.bodyTop + max b.ascent height
   if b.cur.lines.isEmpty || b.freshStart then
     b.commit (mk firstY) depth 0 0
   else
@@ -2204,6 +2292,14 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     else if chromeActive then
       { geom with footBand :=
           footBandFor geom.vmargin (font.ascent * footSize / (font.unitsPerEm : Int)) }
+    else geom
+  -- The running head reserves its band the same way, before anything is
+  -- placed (`bodyTop_clears_head` is the sufficiency proof). With the
+  -- default margins the half margin holds the head line whole and the
+  -- band is zero: an undeclared page is unchanged.
+  let geom := if doc.head.isSome then
+      { geom with headBand :=
+          headBandFor geom.vmargin (scale font.ascent) (scale (-font.descent)) }
     else geom
   let xHeight := scale font.xHeight
   let cover := (Ir.Design.ofDoc doc).cover
