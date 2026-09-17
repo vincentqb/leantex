@@ -1005,6 +1005,14 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
      has "<meta property=\"og:type\" content=\"website\">")
   t "html twitter derives only its card kind; the facts fall back to og"
     (has "<meta name=\"twitter:card\" content=\"summary\">" && !has "twitter:title")
+  -- The llms.txt twin is discoverable from the page: when the driver
+  -- writes one beside the html, the head links it (rel=alternate,
+  -- HTML §4.6.6.1; text/markdown, RFC 7763).
+  let mdPage := (HtmlDoc.emit { mdHref := some "profile.md" } doc).1
+  t "html links its markdown twin as the alternate representation"
+    ((mdPage.splitOn ("<link rel=\"alternate\" type=\"text/markdown\" " ++
+        "href=\"profile.md\">")).length == 2 &&
+     !has "rel=\"alternate\"")
   let md := MarkdownDoc.emit doc
   let pdf := Pdf.write geom oneFace (Layout.run geom oneFace none doc).pages doc.info
   t "the one declared title reaches all three surfaces"

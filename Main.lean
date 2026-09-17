@@ -562,6 +562,11 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           css := cssMode
           mathBoundary := ui.cfg.mathBoundary
           imgs := imgs
+          -- The markdown twin, when one is being written beside the page,
+          -- is linked from the head as the alternate representation.
+          mdHref := if emit.contains .md then
+              (System.FilePath.mk (outPath ui.cfg.output outIsDir file .md)).fileName
+            else none
         }
         let (html, hdiags) := HtmlDoc.emit hcfg doc
         for d in hdiags do

@@ -30,6 +30,11 @@ structure Config where
   /-- The document's loaded images, from the driver: `<img>` carries the
   intrinsic pixel size so the page never reflows while loading. -/
   imgs : Image.Store := {}
+  /-- The markdown twin's name, from the driver when it writes one beside
+  the page: the head then links it as the alternate representation
+  (`rel=alternate`, HTML §4.6.6.1; `text/markdown`, RFC 7763) — the
+  llms.txt convention's discoverable form. -/
+  mdHref : Option String := none
 
 private def hex2 (v : UInt8) : String :=
   let d := "0123456789abcdef".toList
@@ -927,6 +932,9 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
     head := head.push (Html.elem "link" #[] #[("rel", "canonical"), ("href", url)])
   if let some icon := doc.info.favicon then
     head := head.push (Html.elem "link" #[] #[("rel", "icon"), ("href", icon)])
+  if let some md := cfg.mdHref then
+    head := head.push (Html.elem "link" #[]
+      #[("rel", "alternate"), ("type", "text/markdown"), ("href", md)])
   if doc.info.url.isSome || doc.info.image.isSome then
     let og (p v : String) : Node :=
       Html.elem "meta" #[] #[("property", p), ("content", v)]
