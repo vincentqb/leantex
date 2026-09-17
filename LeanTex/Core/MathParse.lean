@@ -612,7 +612,10 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
         acc := acc.pop.push (.atom cls nuc sup sub false)
       | _ => throw "\\nolimits without an operator"
       i := i + 1
-    | .ctrl "text" | .ctrl "mbox" | .ctrl "textrm" =>
+    | .ctrl "text" | .ctrl "mbox" | .ctrl "textrm" | .ctrl "operatorname" =>
+      -- \text sets its letters upright as an Ord atom; \operatorname is
+      -- the same word as an Op atom, binding with a thin space like the
+      -- built-in function names (TeXbook p. 162's class).
       let mut j := i + 1
       if let some .ws := toks[j]? then j := j + 1
       let some .openGrp := toks[j]? | throw s!"{tokName tok} without its group"
@@ -630,7 +633,8 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
         | some t => throw s!"{tokName t} inside {tokName tok}"
         | none => throw "an unbalanced group"
       let some .closeGrp := toks[j]? | throw "an unbalanced group"
-      acc := acc.push (.atom .ord (.word s) .nil .nil false)
+      let cls : MathClass := if tok == .ctrl "operatorname" then .op else .ord
+      acc := acc.push (.atom cls (.word s) .nil .nil false)
       i := j + 1
     | .ctrl n =>
       match ctrlSpace.lookup n with

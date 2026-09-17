@@ -6266,6 +6266,9 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "text inside math keeps its letters and spaces upright"
     (glyphChars "$\\text{if }x$" == #['i', 'f', ' ', '𝑥'] ||
       glyphChars "$\\text{if }x$" == #['i', 'f', '𝑥'])
+  t "operatorname binds like a named function"
+    (widthOf "$\\operatorname{foo} x$" ==
+      adv base 'f' + adv base 'o' + adv base 'o' + mu base 3 + adv base '𝑥')
   t "setmathfont fills the math slot"
     ((Elab.run "t" ("\\documentclass{article}\\setmathfont{Fira Math}" ++
       "\\begin{document}x\\end{document}")).1.fonts.math == some "Fira Math")
