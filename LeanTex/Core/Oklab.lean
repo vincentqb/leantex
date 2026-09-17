@@ -326,14 +326,30 @@ theorem labMix_L (f : Nat) (c s : Lab) :
 
 /-- Covering moves toward the surface, definitionally: the covered
 lightness lies between the ink's and the surface's (at the mix's 100×
-scale), whichever is darker — a dark page covers darker, a light page
-covers lighter, never past either. -/
+scale) when the surface is the darker of the two. -/
 theorem toward_surface (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : s.L ≤ c.L) :
     100 * s.L ≤ (labMix f c s).L ∧ (labMix f c s).L ≤ 100 * c.L := by
   rw [labMix_L]
   have h1 : 0 ≤ (f : Int) * (c.L - s.L) := Int.mul_nonneg (by omega) (by omega)
   have h2 : (f : Int) * (c.L - s.L) ≤ 100 * (c.L - s.L) :=
     Int.mul_le_mul_of_nonneg_right (by omega) (by omega)
+  generalize hp : (f : Int) * (c.L - s.L) = p at h1 h2
+  omega
+
+/-- The mirrored direction, and the one the shipped surfaces use: both
+shipped page colours (#FAFAFA, #FFFFFF) are lighter than their inks, so
+covering *lightens* toward the surface and never past it (color-factor
+F7 — the docstring's "whichever is darker … never past either" needs
+both lemmas to be a theorem, not a promise). Same algebra. -/
+theorem toward_surface_light (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : c.L ≤ s.L) :
+    100 * c.L ≤ (labMix f c s).L ∧ (labMix f c s).L ≤ 100 * s.L := by
+  rw [labMix_L]
+  have h1 : (f : Int) * (c.L - s.L) ≤ 0 :=
+    Int.mul_nonpos_of_nonneg_of_nonpos (by omega) (by omega)
+  have h2 : 100 * (c.L - s.L) ≤ (f : Int) * (c.L - s.L) := by
+    have hc : c.L - s.L ≤ 0 := by omega
+    have hf' : (f : Int) ≤ 100 := by omega
+    exact Int.mul_le_mul_of_nonpos_right hf' hc
   generalize hp : (f : Int) * (c.L - s.L) = p at h1 h2
   omega
 
