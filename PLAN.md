@@ -45,6 +45,50 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — a runtime audit: every pass is linear, so the work went to the
+constant. A 25–600-paragraph ladder (generated lorem, `leantex -v`, min of
+3) shows lex, elab, layout, and pdf all scaling ~2× per doubling — no
+superlinear pass anywhere — while the font machinery cost every run a fixed
+~95 ms on this host (2856 installed faces once the TeX Live tree is in the
+roots): a trivial one-line document built in ~99 ms of which fonts were ~92.
+Three fixes, output byte-identical across the corpus by `cmp` (PDF and
+HTML), each measured before and after:
+
+- The warm scan re-walked every font tree per run (~50 ms: a readDir per
+  directory, a stat per entry). A directory's listing is now cached keyed by
+  the directory's own mtime — POSIX moves it on any entry add/remove/rename,
+  and an in-place file edit that it misses is exactly what the per-file
+  probe key catches — so a warm walk is one stat per directory; the per-file
+  key stats run in parallel chunks like probing. fontdb 72 → 34 ms.
+  `scripts/fontcache-check.lean` now also exercises membership staleness
+  (file added, new subdirectory, removal), and fails when the mtime key is
+  ignored.
+- Both font-cache writes replaced the file with the current scan's entries,
+  so any probing scan of one small root (the test suite scanning
+  `tests/corpus/fonts`, `fontcache-check`'s /tmp directory) evicted ~2900
+  system classifications and the next build re-probed everything, ~380 ms —
+  observed live during this audit. Writes now merge into what was loaded:
+  after a small-root scan the cache holds 2883 lines where it held 13.
+- `FontDb.resolve` normalised all 2856 family names (four allocations each)
+  per query, twelve queries per build: ~15 ms, found by elimination —
+  a trivial document under `LEANTEX_FONT` (no scan, no resolve) builds in
+  14 ms. The target normalises once; faces compare via an allocation-free
+  fold. And the lexer paid a cons cell per character three ways
+  (`toList.toArray`, per-token `extract`/`ofList`, `matchAt` rebuilding its
+  pattern per position): lex 18 → 12 ms on the 129 KB bench doc.
+
+`scripts/bench.lean` medians, N=5, same session: paragraphs.tex 128 → 73 ms
+(lualatex 675), lorem.tex 337 → 269 ms (lualatex 1292). The resume fixture
+99 → 45 ms end to end. The PLAN entries above quote ~16 ms and ~149 ms for
+these documents; on this host today the *before* numbers were already 128
+and 337 with lualatex slower in proportion (~476 → ~675 ms), so the older
+figures reflect a lighter host state and a smaller font tree (the kpsewhich
+roots landed after them), not a regression in the engine. What remains of
+the constant, measured: ~34 ms fontdb (≈16 ms of it the per-file stats that
+correctness demands — `fontcache-check` pins that an in-place replacement
+under an unchanged name is seen), ~8 ms font file reads + parses. Layout
+stays ~1 ms/paragraph and is the dominant term past ~40 paragraphs.
+
 2026-09-17 — the developer loop, measured and two costs deleted. Medians
 of ≥3, this host, `lake build --wfail` unless said otherwise. Cold build
 (`lake clean` first) 14.6 s — the "~2 min" folk number is the first-ever
@@ -71,6 +115,7 @@ saves almost nothing (3.9 s c.o); the pre-commit hook is 13 ms on an
 irrelevant commit and ~1.0 s on a relevant one, most of it the lean
 interpreter starting on precommit.lean, honest both ways.
 
+||||||| parent of 11b6a5b (Record the runtime audit in the PLAN log)
 2026-09-16 — correction to the M3a entry below: the pending-key mechanism
 is gone. `pagePending` reported a declared-but-unimplemented `\page` key as
 pending with its milestone rather than as a type error; its last entry
