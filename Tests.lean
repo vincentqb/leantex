@@ -836,12 +836,13 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     #[.para #[.underline #[.text "b"]]])
   -- The font's own glyph outlines decide what interrupts the rule.
   let gidOf (c : Char) : Nat := (font.gid c).getD 0
-  t "descends g" (font.descends (gidOf 'g'))
-  t "descends y" (font.descends (gidOf 'y'))
-  t "descends not a" (!font.descends (gidOf 'a'))
-  t "descends not x-height b" (!font.descends (gidOf 'b'))
-  t "descends comma" (font.descends (gidOf ','))
-  t "descends parens" (font.descends (gidOf '(') && font.descends (gidOf ')'))
+  let hasInk (c : Char) : Bool := !(font.inkAt (gidOf c)).isEmpty
+  t "g has ink in the band" (hasInk 'g')
+  t "y has ink in the band" (hasInk 'y')
+  t "a has no ink in the band" (!hasInk 'a')
+  t "x-height b has no ink in the band" (!hasInk 'b')
+  t "comma has ink in the band" (hasInk ',')
+  t "parens have ink in the band" (hasInk '(' && hasInk ')')
   -- Ink is an interval, not the whole advance: q's stem crosses the band on
   -- the right of its bowl, so its interval starts past the advance midpoint
   -- and is far narrower than the glyph.
@@ -1028,7 +1029,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     | .ok f =>
       let g := (f.gid 'a').getD 0
       t "corrupt loca: a obstructs its whole advance"
-        (f.inkAt g == #[(0, (f.widths[g]?.getD 0 : Int))] && f.descends g)
+        (f.inkAt g == #[(0, (f.widths[g]?.getD 0 : Int))])
   | none => pure ()
   if ← System.FilePath.pathExists serifPath then
     match Font.parse (corruptTable "CFF " (← IO.FS.readBinFile serifPath)) with
@@ -1036,7 +1037,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     | .ok f =>
       let g := (f.gid 'a').getD 0
       t "corrupt CFF: a obstructs its whole advance"
-        (f.inkAt g == #[(0, (f.widths[g]?.getD 0 : Int))] && f.descends g)
+        (f.inkAt g == #[(0, (f.widths[g]?.getD 0 : Int))])
   -- Underline metrics normalize through one helper shared by ink extraction
   -- and rule placement: a `post` table declaring an implausible position
   -- (above the baseline, or below half the em) or thickness (nonpositive,

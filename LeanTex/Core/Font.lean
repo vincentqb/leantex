@@ -347,10 +347,6 @@ def Font.inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
   | some t => t.get
   | none => #[]
 
-/-- Does this glyph interrupt the underline anywhere? -/
-def Font.descends (f : Font) (g : Nat) : Bool :=
-  !(f.inkAt g).isEmpty
-
 /-- This face's normalized underline band: `(position, thickness)` in font
 units. See `underlineBand`. -/
 def Font.band (f : Font) : Int × Int :=
