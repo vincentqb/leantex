@@ -77,40 +77,40 @@ para
     text "genuinely groundbreaking"
   text " by a jury."
 -- diagnostics
-note[N0100] 5:1 \documentclass{scrartcl} → \documentclass[paper=letter,fontsize=10pt]{article}\page{ parskip = 0pt }
-note[N0100] 7:1 \usepackage{babel} → nothing: the engine does this itself
-note[N0100] 8:1 \babelfont → \fonts{ dir = "fonts/", body = "SourceSerifPro-Regular.otf" }
-note[N0100] 9:1 \babelfont → \fonts{ dir = "fonts/", sans = "OpenSans-Regular.ttf" }
-note[N0100] 10:1 \usepackage{microtype} → nothing: the engine does this itself
-note[N0100] 11:1 \usepackage{xcolor} → nothing: the engine does this itself
-note[N0100] 12:1 \usepackage{geometry} → \page{ size = letter, vmargin = 0.5in, hmargin = 0.75in }
+note[N0100] 5:1 '\documentclass{scrartcl}' → \documentclass[paper=letter,fontsize=10pt]{article}\page{ parskip = 0pt }
+note[N0100] 7:1 '\usepackage{babel}' → nothing: the engine does this itself
+note[N0100] 8:1 '\babelfont' → \fonts{ dir = "fonts/", body = "SourceSerifPro-Regular.otf" }
+note[N0100] 9:1 '\babelfont' → \fonts{ dir = "fonts/", sans = "OpenSans-Regular.ttf" }
+note[N0100] 10:1 '\usepackage{microtype}' → nothing: the engine does this itself
+note[N0100] 11:1 '\usepackage{xcolor}' → nothing: the engine does this itself
+note[N0100] 12:1 '\usepackage{geometry}' → \page{ size = letter, vmargin = 0.5in, hmargin = 0.75in }
 warning[W0101] 12:1 geometry keys without a native equivalent were dropped: headsep
-note[N0100] 13:1 \usepackage{scrlayer-scrpage} → nothing: the engine does this itself
+note[N0100] 13:1 '\usepackage{scrlayer-scrpage}' → nothing: the engine does this itself
 warning[W0104] 14:1 '\pagestyle' names page furniture the engine does not model; ignored | help: \runninghead / \runningfoot declare the page furniture
-note[N0100] 20:1 \setlength{\rhythm} → \tokens{ rhythm = 1.8ex plus 0.8ex minus 0.4ex }
-note[N0100] 22:1 \setlength{\sepunit} → \tokens{ sepunit = 0.5 * rhythm }
-note[N0100] 23:1 \linespread → \page{ leading = 1.04 }
-note[N0100] 25:1 \usepackage{hyperref} → nothing: the engine does this itself
-note[N0100] 26:1 \usepackage{soul} → nothing: the engine does this itself
-note[N0100] 27:1 \hypersetup → \pdfmeta{ author = "Alex Doe", title = "Alex Doe" }
-note[N0100] 34:1 \definecolor{primary} → \palette{ primary = #0F766E }
-note[N0100] 35:1 \definecolor{muted} → \palette{ muted = #72727F }
-note[N0100] 36:1 \definecolor{rulecolor} → \palette{ rulecolor = #99F6E4 }
-note[N0100] 37:1 \colorlet → \palette{ bulletcolor = muted }
-note[N0100] 40:1 \setkomafont{section} → \style{section}{ font = {...} }
-note[N0100] 41:1 \RedeclareSectionCommand{section} → \style{section}{ before = 3 * sepunit, after = 1 * sepunit }
-note[N0100] 43:1 \sectionlinesformat → \style{section}{ rule = rulecolor }
-note[N0100] 45:1 \setlist[itemize] → \style{itemize}{ indent = 1.2em, before = sepunit, gap = sepunit, marker = {\textcolor {bulletcolor}{\small \textendash}} }
-note[N0100] 46:1 \thispagestyle{empty} → \runninghead[from = 2]{...}
-note[N0100] 48:1 \NewDocumentCommand{\dotsep} → \define \dotsep() {...}
-note[N0100] 49:1 \NewDocumentCommand{\role} → \define \role(a1: content, a2: content, a3: content, a4?: content) {...}
-note[N0100] 50:56 \color{muted} → \muted
-note[N0100] 51:29 \color{muted} → \muted
-note[N0100] 53:1 \newcommand{\degree} → \define \degree(a1: content, a2: content) {...}
-note[N0100] 58:1 \color{primary} → \primary
-note[N0100] 62:5 \vspace → \block[before = 2 * sepunit]{}
-note[N0100] 63:6 \color{muted} → \muted
-note[N0100] 74:1 \vspace → \block[before = 2 * sepunit]{}
-note[N0100] 81:1 \ul → \underline
-note[N0100] 81:38 \varul → \underline
-note[N0100] 16:1 \ihead / \chead / \ohead → \runninghead[from = 2]{\sffamily \scshape Alex Doe \hfill  \hfill \thepage}
+note[N0100] 20:1 '\setlength{\rhythm}' → \tokens{ rhythm = 1.8ex plus 0.8ex minus 0.4ex }
+note[N0100] 22:1 '\setlength{\sepunit}' → \tokens{ sepunit = 0.5 * rhythm }
+note[N0100] 23:1 '\linespread' → \page{ leading = 1.04 }
+note[N0100] 25:1 '\usepackage{hyperref}' → nothing: the engine does this itself
+note[N0100] 26:1 '\usepackage{soul}' → nothing: the engine does this itself
+note[N0100] 27:1 '\hypersetup' → \pdfmeta{ author = "Alex Doe", title = "Alex Doe" }
+note[N0100] 34:1 '\definecolor{primary}' → \palette{ primary = #0F766E }
+note[N0100] 35:1 '\definecolor{muted}' → \palette{ muted = #72727F }
+note[N0100] 36:1 '\definecolor{rulecolor}' → \palette{ rulecolor = #99F6E4 }
+note[N0100] 37:1 '\colorlet' → \palette{ bulletcolor = muted }
+note[N0100] 40:1 '\setkomafont{section}' → \style{section}{ font = {...} }
+note[N0100] 41:1 '\RedeclareSectionCommand{section}' → \style{section}{ before = 3 * sepunit, after = 1 * sepunit }
+note[N0100] 43:1 '\sectionlinesformat' → \style{section}{ rule = rulecolor }
+note[N0100] 45:1 '\setlist[itemize]' → \style{itemize}{ indent = 1.2em, before = sepunit, gap = sepunit, marker = {\textcolor {bulletcolor}{\small \textendash}} }
+note[N0100] 46:1 '\thispagestyle{empty}' → \runninghead[from = 2]{...}
+note[N0100] 48:1 '\NewDocumentCommand{\dotsep}' → \define \dotsep() {...}
+note[N0100] 49:1 '\NewDocumentCommand{\role}' → \define \role(a1: content, a2: content, a3: content, a4?: content) {...}
+note[N0100] 50:56 '\color{muted}' → \muted
+note[N0100] 51:29 '\color{muted}' → \muted
+note[N0100] 53:1 '\newcommand{\degree}' → \define \degree(a1: content, a2: content) {...}
+note[N0100] 58:1 '\color{primary}' → \primary
+note[N0100] 62:5 '\vspace' → \block[before = 2 * sepunit]{}
+note[N0100] 63:6 '\color{muted}' → \muted
+note[N0100] 74:1 '\vspace' → \block[before = 2 * sepunit]{}
+note[N0100] 81:1 '\ul' → \underline
+note[N0100] 81:38 '\varul' → \underline
+note[N0100] 16:1 '\ihead / \chead / \ohead' → \runninghead[from = 2]{\sffamily \scshape Alex Doe \hfill  \hfill \thepage}

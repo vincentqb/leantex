@@ -316,9 +316,9 @@ def styleRules (doc : Doc) : String × Array Diag :=
         diags := diags.push (Diag.of .W0331
           s!"the declared '{element}' marker is not expressible in HTML; \
 the level default marks these items"
-          (help := some "a ::marker rule carries text with colour and font \
-styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or an overlay \
-step in a marker does not reach it"))
+          (help := some "marker = {...} reaches HTML as text with colour \
+and font styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or \
+an overlay step does not"))
     -- Interaction states live on the element's links (the interactive
     -- content a hover or focus can land on; for `nav` that is `nav a`).
     -- The colour keeps its token spelling, like every named colour here,
@@ -1107,13 +1107,13 @@ def emitTree (cfg : Config) (doc : Doc) :
   if doc.head.isSome || doc.foot.isSome then
     diags := diags.push (Diag.of .W0007
       "running head/foot is paged-media furniture; omitted from HTML"
-      (help := "put a masthead in the document body if it should appear in both"))
+      (help := "body content reaches both backends: move the masthead there"))
   if doc.logo.isSome || doc.body.any (fun b => match b with
       | .logo c => !c.isEmpty
       | _ => false) then
     diags := diags.push (Diag.of .W0007
       "the \\logo is paged-media furniture; omitted from HTML"
-      (help := "put the image in the document body if it should appear in both"))
+      (help := "body content reaches both backends: move the image there"))
   let title := doc.info.title.getD "Untitled"
   let mut head : Array Node := #[
     Html.elem "meta" #[] #[("charset", "utf-8")],
@@ -1315,7 +1315,7 @@ via \\chrome is the sequence both backends share"))
       s!"{facts.navs} <nav> landmarks on one page are \
 indistinguishable to assistive technology"
       (help := some "keep one {nav}; repeated landmarks need unique labels \
-(ARIA Authoring Practices, Landmark Regions), which are not modelled yet"))
+(ARIA Landmark Regions), not modelled yet"))
   -- Every navigation target exists: an in-page link resolves to an anchor
   -- this page emits, or it is named here rather than shipped broken. '#'
   -- and any-ASCII-case 'top' always resolve — the HTML spec's fragment
@@ -1331,8 +1331,8 @@ indistinguishable to assistive technology"
       diags := diags.push (Diag.of .W0326
         s!"in-page link '{fref}' has no target anchor on this page"
         (help := some (if facts.ids.isEmpty then
-            "no anchors are emitted; level-1 section titles become ids in \
-the article class"
+            "this page has no anchors: a level-1 \\section title becomes \
+one in the article class"
           else s!"anchors on this page: \
 {String.intercalate ", " (facts.ids.toList.map ("#" ++ ·))}")))
   return (head, body, diags)

@@ -655,7 +655,7 @@ def main (argv : List String) : IO UInt32 := do
       if file.endsWith ".md" then
         let stderr ← IO.getStderr
         stderr.putStrLn
-          "leantex: markdown input is reserved for the second surface; not implemented yet (PLAN.md)"
+          "leantex: markdown input is not implemented yet; write the document as .tex"
         return 3
       if let some o := cfg.output then
         unless o.endsWith "/" || (← (System.FilePath.mk o).isDir) ||

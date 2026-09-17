@@ -1948,7 +1948,8 @@ def outlineDiags (doc : Doc) : Array Diag := Id.run do
         gapNamed := true
         out := out.push (Diag.of .W0320
           s!"heading levels skip a step: {levelName p} is followed by {levelName l}"
-          (help := some "descend one level at a time (HTML §4.3.11, WCAG G141); \
+          (help := some "descend one level at a time — here \\subsection \
+(HTML §4.3.11, WCAG G141); \
 a screen reader reads the gap as a broken outline"))
       if l == 0 && !titleNamed then
         titleNamed := true
@@ -2021,9 +2022,8 @@ def footerSequenceDiags (doc : Doc) : Array Diag := Id.run do
     if let .framefoot xs := b then
       if hasPhysicalPage xs && out.isEmpty then
         out := out.push (Diag.of .W0332
-          "the footer mixes the physical page number with the frame number: \
-the two sequences are distinct, and a stepped frame advances one and not \
-the other"
+          "the footer mixes the physical page number with the frame number; \
+a stepped frame advances one and not the other"
           (help := some "declare the footer's slots yourself \
 (\\chrome{ footer = { left = ..., right = \\framenumber } }) to say the \
 mixing is meant, or drop \\pagenumber from \\framefoot"))

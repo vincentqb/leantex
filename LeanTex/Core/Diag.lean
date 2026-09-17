@@ -154,7 +154,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0111 => ("0111", .config, "\\setkomafont on a non-styleable element ignored")
   | .N0200 => ("0200", .info, "page set short: its skips gave their shrink")
   | .W0001 => ("0001", .config, "content after \\end{document} is ignored")
-  | .W0003 => ("0003", .degraded, "math is typeset as plain text until M6")
+  | .W0003 => ("0003", .degraded, "no math face available; math set as plain text")
   | .E0405 => ("0405", .dropped, "font has no glyph for a character; dropped")
   | .W0005 => ("0005", .degraded, "overfull line, no feasible break")
   | .W0006 => ("0006", .degraded, "declared face variant missing; another face substitutes")

@@ -1511,12 +1511,12 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "declared face the host lacks degrades and says so"
     ((FontDb.resolveVariant faces "Alpha Sans Light" (some "Nope Sans") { bold := true }).map
       (fun r => (r.1.subfamily, r.2)) == some ("Light", some
-        ("'Alpha Sans Light' declares \"Nope Sans\" as its bold face, " ++
-         "which is not installed; using \"Alpha Sans Light\"")))
+        ("'Alpha Sans Light' declares 'Nope Sans' as its bold face, " ++
+         "which is not installed; 'Alpha Sans Light' substitutes")))
   -- No declaration: the substitution message names the face actually used.
   t "substitution names the face actually used"
     ((FontDb.resolveVariant faces "Alpha Sans Light" none { bold := true }).map (·.2) ==
-      some (some "'Alpha Sans Light' has no bold face; using \"Alpha Sans Light\""))
+      some (some "'Alpha Sans Light' has no bold face; 'Alpha Sans Light' substitutes"))
   t "a satisfied variant carries no message"
     ((FontDb.resolveVariant faces "Alpha Sans" none {}).map (·.2) == some none)
   t "a missing family is still the caller's E0403"
@@ -4310,10 +4310,10 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .W0202 => dvL one (dvDoc "\\style{section}{ before = 2pt, after = 10pt }\n"
       "\\section{a}\nbody")
   | .W0301 => dvE "\\mystery{x}"
+  | .W0307 => dvE (dvDoc "" "\\begin{external}\nx\n\\end{external}")
   | .W0302 => dvE (dvDoc "" "\\begin{banner}\nx\n\\end{banner}")
   | .W0303 => dvE (dvDoc "\\define \\textbf(a: content) {\\a}\n" "x")
   | .W0304 => dvE "\\textcolor{nope}{x}"
-  | .W0307 => dvE (dvDoc "" "\\begin{external}\nx\n\\end{external}")
   | .W0308 => dvE (dvDoc "" "\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}")
   | .W0309 => dvE (dvDoc "" "\\maketitle")
   | .W0310 => dvE (dvDoc "" "\\section[oops\nnever closed")
@@ -4358,6 +4358,100 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
       "not a PNG or JPEG file"]
 
+/-! The message lint: every fired message and help is judged mechanically.
+Each check exists because the pasted real output violated it (the brief's
+four defects); the golden covers what these cannot — tone, jargon, whether
+a help actually helps. -/
+
+/-- A reference only someone inside this repository can follow: a repo file,
+a source path, or a milestone token (`M6`, `M8`). A diagnostic must be
+actionable by someone holding only their own document. -/
+def dvInternalRef (s : String) : Bool :=
+  let has (pat : String) : Bool := (s.splitOn pat).length > 1
+  has "PLAN.md" || has "AGENTS.md" || has "LeanTex/" || has ".lean" ||
+    (Id.run do
+      let cs := s.toList.toArray
+      for i in [0:cs.size] do
+        if cs[i]! == 'M' && (cs[i+1]?.map Char.isDigit).getD false &&
+            !((i > 0) && (cs[i-1]!.isAlphanum || cs[i-1]! == '_')) &&
+            !(((cs[i+2]?.map (·.isAlphanum)).getD false)) then
+          return true
+      return false)
+
+/-- A help either tells the reader what to write — a `\` spelling, a flag,
+a `key = value`, a quoted literal, a backticked command, or a `:`-led
+enumeration of the known values — or it should not exist. -/
+def dvHasAction (s : String) : Bool :=
+  let has (pat : String) : Bool := (s.splitOn pat).length > 1
+  has "\\" || has "--" || has "`" || has "=" || has ": " || has "{" ||
+    (s.toList.filter (· == '\'')).length ≥ 2
+
+/-- Message and help bounds, in characters, taken from the two longest
+texts that read well rather than from a round number: the message bound is
+W0315's fired message (121 characters, one clause with the ratio, the
+threshold, and the source), the help bound E0328's list of every styleable
+element (181 characters, generated from `styleableElements`; growing that
+list means deciding this bound again). -/
+def dvMsgMax : Nat := 121
+def dvHelpMax : Nat := 181
+
+/-- Sentence case: a message opens lowercase (or with a quoted construct)
+unless its first word is a proper noun the engine speaks of. -/
+def dvCaseOk (s : String) : Bool :=
+  match s.toList with
+  | [] => true
+  | c :: _ =>
+    !c.isUpper ||
+      ["TeX", "LaTeX", "LEANTEX_FONT", "PNG", "JPEG", "WCAG", "HTML",
+       "U+"].any (s.startsWith ·)
+
+/-- One convention for terminal punctuation: none (a `?` may close a real
+question). -/
+def dvTerminalOk (s : String) : Bool :=
+  !(s.endsWith "." || s.endsWith "!")
+
+/-- Code-shaped tokens in prose: a reader cannot look a code up, so a
+message or help may name only the code it is itself printed under. -/
+def dvForeignCodes (own : String) (s : String) : List String := Id.run do
+  let mut out : List String := []
+  let mut tok := ""
+  for c in s.toList ++ [' '] do
+    if c.isAlphanum then
+      tok := tok.push c
+    else
+      if isDiagCode tok && tok != own && !out.contains tok then
+        out := tok :: out
+      tok := ""
+  return out
+
+/-- The lint over one fired diagnostic. `\allow`-teeth codes (W0013, E0329)
+quote codes the user wrote in their own document, so the foreign-code check
+does not apply to them. -/
+def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
+  let judge (part : String) (s : String) : IO Unit := do
+    if dvInternalRef s then
+      fail s!"{d.code} {part}: repo-internal reference: {s}"
+    unless dvTerminalOk s do
+      fail s!"{d.code} {part}: terminal punctuation: {s}"
+    unless dvCaseOk s do
+      fail s!"{d.code} {part}: starts uppercase without a proper noun: {s}"
+    if (s.splitOn "\"\\").length > 1 then
+      fail s!"{d.code} {part}: a construct is double-quoted; the convention is '...': {s}"
+    unless d.code == "W0013" || d.code == "E0329" do
+      for tok in dvForeignCodes d.code s do
+        fail s!"{d.code} {part}: names {tok}, which the reader cannot look up: {s}"
+  judge "message" d.message
+  if d.message.startsWith "\\" then
+    fail s!"{d.code} message: the construct it names is unquoted: {d.message}"
+  unless d.message.length ≤ dvMsgMax do
+    fail s!"{d.code} message: {d.message.length} chars, over {dvMsgMax}: {d.message}"
+  if let some h := d.help then
+    judge "help" h
+    unless dvHasAction h do
+      fail s!"{d.code} help: no action — nothing to write, no flag, no known values: {h}"
+    unless h.length ≤ dvHelpMax do
+      fail s!"{d.code} help: {h.length} chars, over {dvHelpMax}: {h}"
+
 /-- The voice golden and its coverage: every registered code fires from its
 witness, and every fired form renders into tests/golden/diagnostics.txt —
 the one place the whole voice is reviewable in a diff. Spans are dropped:
@@ -4391,9 +4485,15 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
   for c in DiagCode.all do
     let fired := (diagWitness one mapped c).filter (·.code == c.code)
     check ref s!"diag voice {c.code}: the witness fires it" (!fired.isEmpty)
+    -- The registry meaning is prose too: self-contained, one convention.
+    if dvInternalRef c.meaning then
+      failures ref s!"diag voice {c.code} meaning: repo-internal reference: {c.meaning}"
+    unless dvTerminalOk c.meaning do
+      failures ref s!"diag voice {c.code} meaning: terminal punctuation: {c.meaning}"
     out := out ++ s!"── {c.code} ({lossLabel c.loss}) {c.meaning}\n"
     let mut seen : Array String := #[]
     for d in fired do
+      dvLint (fun m => failures ref s!"diag voice {m}") d
       let r := Render.human false { d with span := none }
       unless seen.contains r do
         seen := seen.push r

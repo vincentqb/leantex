@@ -229,18 +229,18 @@ def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
       let valueSrc := String.intercalate "=" rest |>.trimAscii.toString
       if key.isEmpty || !key.toList.all isIdentChar then
         diags := diags.push (Diag.of .E0320
-          s!"invalid key in \\{what}: {entry.quote}" (some ⟨file, pos⟩)
+          s!"invalid key in '\\{what}': {entry.quote}" (some ⟨file, pos⟩)
           (help := "entries look like: key = value"))
       else if valueSrc.isEmpty then
         diags := diags.push (Diag.of .E0320
-          s!"'{key}' in \\{what} has no value" (some ⟨file, pos⟩)
+          s!"'{key}' in '\\{what}' has no value" (some ⟨file, pos⟩)
           (help := "entries look like: key = value"))
       else
         match parseValue valueSrc tokens with
         | some v => entries := entries.push ⟨key, v⟩
         | none =>
           diags := diags.push (Diag.of .E0321
-            s!"cannot read value for '{key}' in \\{what}: {valueSrc.quote}"
+            s!"cannot read value for '{key}' in '\\{what}': {valueSrc.quote}"
             (some ⟨file, pos⟩) (help :=
               "values are \"strings\", dimensions (10pt, 0.5in), numbers, names, or #RRGGBB colors"))
     | [] => pure ()
@@ -258,12 +258,12 @@ def splitEntry (entry : String) : Option (String × String) :=
 /-- Reject keys the declaration does not define, naming the ones it does. -/
 def unknownKey (file : String) (what key : String) (known : List String)
     (pos : Pos) : Diag :=
-  Diag.of .E0322 s!"\\{what} has no key '{key}'" (some ⟨file, pos⟩)
+  Diag.of .E0322 s!"'\\{what}' has no key '{key}'" (some ⟨file, pos⟩)
     (help := s!"known keys: {String.intercalate ", " known}")
 
 def wrongType (file : String) (what key expected : String) (got : Value)
     (pos : Pos) : Diag :=
-  Diag.of .E0323 s!"'{key}' in \\{what} expects {expected}, got a {got.kindName}"
+  Diag.of .E0323 s!"'{key}' in '\\{what}' expects {expected}, got a {got.kindName}"
     (some ⟨file, pos⟩)
 
 end LeanTex.Core.Decl

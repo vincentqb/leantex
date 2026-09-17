@@ -63,4 +63,4 @@ frame
       para
         text "Shown on every step."
 -- diagnostics
-warning[W0105] 55:1 overlay specification '<+->' does not name a step; its content is shown on every step | help: dim-not-hide reads <2>, <2->, <2-3>; incremental specs are not modelled
+warning[W0105] 55:1 overlay specification '<+->' does not name a step; its content is shown on every step | help: write a numbered spec: <2>, <2->, or <2-3>; incremental specs are not modelled

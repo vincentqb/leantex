@@ -90,6 +90,38 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — the diagnostic voice is gated, not groomed. Real output
+carried `error[W0307]` (a warning-lettered error), `see PLAN.md` (a file
+the reader does not have), and milestone names (`M6`, `M8`). Three
+mechanisms, in order of strength. (1) The code letter now derives from
+the declared `Loss`: `DiagCode.spec` carries digits only, `DiagCode.code`
+is the one site that prepends `Loss.letter`, and
+`DiagCode.code_letter`/`Diag.of_code_letter` state the rendered prefix's
+two halves agree — `error[W…]` is unrepresentable. Renumbered where the
+letter had drifted: W0313→E0336, W0324→E0334, W0004→E0405,
+W0501→E0502, N0101→W0101, N0105→W0111 (retired numbers stay retired;
+W0313's first landing as E0333 moved to E0336 when the picture slice
+took E0333 on main — the registry as landed wins a number race).
+W0307 itself kept its letter: `pending` (declared content absent but
+owned by a milestone) landed as a warning by design, so the exhibit
+resolved by reclassification, not renumbering.
+(2) Every registered code has a firing witness (`diagWitness`, an
+exhaustive match: a new code does not build until it names the input that
+fires it) and every fired form renders into
+`tests/golden/diagnostics.txt` — the whole voice reviewable in one diff.
+The driver's fourteen messages moved into pure builders
+(`Cli/DriverDiag.lean`) to be reachable there. (3) A voice lint judges
+every fired message and help in `lake test`: no repo-internal reference,
+length bounds taken from named exemplars (message ≤ 121 from W0315, help
+≤ 181 from E0328's generated list), a help carries an action or does not
+exist, no terminal period, sentence case, constructs quoted in single
+quotes, no code named in prose that the reader cannot look up (W0013 and
+E0329 exempt: they quote the user's own `\allow` entries). The pre-commit
+hook rejects `PLAN.md`/`AGENTS.md`/`LeanTex/`/milestone tokens inside
+string literals at the source level (`repoRefInString`). The rewrite that
+followed is mechanical fallout: milestones and `see PLAN.md` deleted from
+every message, helps that named no action dropped or given a spelling.
+
 2026-09-17 — covered means the same colour, quieter. Covering used to
 erase a colour: `shadeInline` repainted every nested `.colored` run to
 the one palette `covered` constant, so a covered alert and a covered

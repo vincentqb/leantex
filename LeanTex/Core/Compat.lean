@@ -60,19 +60,19 @@ hyphenation language, page furniture — skipped with a warning that names
 what changed, never silently: they used to sit in the silent list under a
 comment claiming they say nothing about the document, and they do. Each
 entry: arguments consumed, the message, the help. -/
-def configSkip : List (String × Nat × String × String) :=
+def configSkip : List (String × Nat × String × Option String) :=
   [("raggedright", 0,
     "'\\raggedright' asks for unjustified setting; the document stays justified",
-    "declare \\page{ justify = false }"),
+    some "declare \\page{ justify = false }"),
    ("sloppy", 0,
-    "'\\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps its own",
-    "overfull lines already warn (W0005); no knob is needed"),
+    "'\\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps \
+its own and an overfull line warns by itself", none),
    ("selectlanguage", 1,
-    "'\\selectlanguage' would change the hyphenation language; patterns are unchanged",
-    "hyphenation patterns are English-only today; see PLAN.md"),
+    "'\\selectlanguage' would change the hyphenation language; patterns stay English",
+    some "hyphenation patterns are English-only; \\page{ hyphenate = off } turns them off"),
    ("pagestyle", 1,
     "'\\pagestyle' names page furniture the engine does not model; ignored",
-    "\\runninghead / \\runningfoot declare the page furniture")]
+    some "\\runninghead / \\runningfoot declare the page furniture")]
 
 /-- Beamer configuration commands: how many `{...}` arguments each carries.
 The engine has no beamer templating layer, so each is skipped whole — the
@@ -140,7 +140,7 @@ private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
 /-- Every translation is one note in the same shape, so `-v` reads as a list
 of things the document could say directly. -/
 private def became (what native : String) (pos : Pos) : M Unit :=
-  say .N0100 s!"{what} → {native}" pos
+  say .N0100 s!"'{what}' → {native}" pos
 
 private def synth (s : String) : M (Array Raw) := do
   let file := (← get).file
@@ -377,7 +377,6 @@ where
         became s!"\\usepackage\{{p}}" "nothing: the engine does this itself" pos
       else
         say .W0103 s!"package '{p}' is not supported; skipped" pos
-          (help := "leantex has no packages: see PLAN.md for the native declarations")
     return some (out, k)
   | "documentclass" =>
     let (opt, j) := takeOpt raws start
@@ -582,7 +581,8 @@ where
           .group args[1] pos] pos
         return some ((← synthAt native pos).push font, k)
       else
-        say .W0111 s!"\\setkomafont\{{element}}: not a styleable element; ignored" pos
+        say .W0111 s!"'\\setkomafont\{{element}}' names no styleable element; ignored" pos
+          (help := "\\style{element}{ font = {...} } styles the elements the engine draws")
         return some (#[], k)
     else return none
   | "RedeclareSectionCommand" =>
@@ -664,7 +664,6 @@ where
     let (_, k) := takeGroups raws start 1
     sayOnce "ctrl:directlua" .W0104
       "'\\directlua' is Lua code for luatex; skipped" pos
-      (help := "there is no Lua here; see PLAN.md for the native declarations")
     return some (#[], k)
   | "def" | "edef" | "gdef" | "xdef" =>
     -- TeX's macro layer: consume through the body group, so the definition
@@ -680,8 +679,7 @@ where
       | some _ => k := j + 1
       | none => break
     sayOnce "ctrl:def" .W0104 s!"TeX '\\{name}' is not supported; skipped" pos
-      (help := "\\define declares typed commands; later uses of the defined name \
-fall to W0301, their arguments kept as text")
+      (help := "\\define \\name(...) {body} declares typed commands")
     return some (#[], if found then k else start)
   | "newenvironment" | "renewenvironment" =>
     -- `\newenvironment{name}[n][default]{begin}{end}` is the native

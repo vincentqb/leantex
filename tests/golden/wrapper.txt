@@ -9,6 +9,6 @@ para
 para
   text "Aside. body two"
 -- diagnostics
-note[N0100] 6:1 \newenvironment{labeled} → \defineenv{labeled}(a1: content) {begin} {end}
-note[N0100] 7:1 \newenvironment{aside} → \defineenv{aside}() {begin} {end}
-note[N0100] 8:1 \renewenvironment{aside} → \defineenv{aside}() {begin} {end}
+note[N0100] 6:1 '\newenvironment{labeled}' → \defineenv{labeled}(a1: content) {begin} {end}
+note[N0100] 7:1 '\newenvironment{aside}' → \defineenv{aside}() {begin} {end}
+note[N0100] 8:1 '\renewenvironment{aside}' → \defineenv{aside}() {begin} {end}

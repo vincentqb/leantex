@@ -311,8 +311,8 @@ def effectivePairDiags (doc : Doc) : Array Diag :=
             "\\palette[decorative]{ " ++ s!"fg = {hexOf p.fg} " ++ "}"))]
       else
         #[Diag.of .W0330
-          (s!"the page is declared {hexOf p.bg} but the ink is left defaulted: " ++
-            s!"{hexOf p.fg} text reads at {ratioString milli}, below the " ++
+          (s!"declared page {hexOf p.bg} keeps the defaulted {hexOf p.fg} ink: " ++
+            s!"{ratioString milli}, below the " ++
             s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
           (help := some ("a declared surface chooses its ink: declare " ++
             "\\palette{ fg = ... }" ++ " beside bg"))]

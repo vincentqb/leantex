@@ -505,13 +505,13 @@ def resolveVariant (faces : Array Face) (family : String) (declared : Option Str
     | some face => some (face, none)
     | none =>
       (resolve faces family v).map fun (face, _) =>
-        (face, some s!"'{family}' declares \"{name}\" as its {want} face, \
-          which is not installed; using \"{face.family} {face.subfamily}\"")
+        (face, some s!"'{family}' declares '{name}' as its {want} face, \
+          which is not installed; '{face.family} {face.subfamily}' substitutes")
   | none =>
     (resolve faces family v).map fun (face, satisfied) =>
       if satisfied then (face, none)
       else (face, some s!"'{family}' has no {want} face; \
-        using \"{face.family} {face.subfamily}\"")
+        '{face.family} {face.subfamily}' substitutes")
 
 /-- For each scalar no declared face covers, the scanned face that will set
 it. The order is documented, never scan luck: candidates are every scanned

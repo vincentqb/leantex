@@ -69,8 +69,8 @@ frame standout
   para
     text "One language, two backends."
 -- diagnostics
-note[N0100] 6:1 \documentclass{beamer} → \documentclass[aspectratio=169]{slides}
-note[N0100] 8:1 \usetheme → \theme{moloch}
-note[N0100] 31:11 \alert → \textcolor{alert}{\textbf ...}
-note[N0100] 38:6 \alert → \textcolor{alert}{\textbf ...}
+note[N0100] 6:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 8:1 '\usetheme' → \theme{moloch}
+note[N0100] 31:11 '\alert' → \textcolor{alert}{\textbf ...}
+note[N0100] 38:6 '\alert' → \textcolor{alert}{\textbf ...}
 warning[W0315] - text coloured #8F999B reads at 2.79:1 on the page (#FAFAFA), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3) | help: deliberate low contrast is declared, not defaulted: \palette[decorative]{ quiet = #8F999B }

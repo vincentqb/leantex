@@ -29,7 +29,7 @@ def noFont : Diag :=
 
 /-- W0008: the document's `\fonts{ dir = ... }` is not a directory. -/
 def fontsDirMissing (decl resolved : String) : Diag :=
-  Diag.of .W0008 s!"\\fonts dir '{decl}' is not a directory ({resolved}); looking elsewhere"
+  Diag.of .W0008 s!"'\\fonts' dir '{decl}' is not a directory ({resolved}); looking elsewhere"
 
 /-- E0403: a named family is not installed; `near` are the closest installed
 names, `installed` the family count when nothing is close. -/
@@ -47,38 +47,35 @@ def fontFileUnusable (path err : String) : Diag :=
 def mathFaceNoTable (family path : String) : Diag :=
   Diag.of .W0011
     s!"'{family}' ({path}) has no OpenType MATH table; math is set as plain text"
-    (help := "name a math face (Latin Modern Math, STIX Two Math, \
-TeX Gyre Pagella Math, Fira Math, ...) — its MATH table is where the engine \
-reads math spacing from")
+    (help := "\\fonts{ math = \"STIX Two Math\" } names a math face; \
+`leantex fonts` lists the installed families")
 
 /-- W0601: the image file exists but reading it failed. -/
 def imageUnreadable (src err : String) : Diag :=
-  Diag.of .W0601 s!"cannot read image '{src}': {err}"
-    (help := "a placeholder box of the requested size is placed")
+  Diag.of .W0601 s!"cannot read image '{src}': {err}; a placeholder box holds its place"
 
 /-- W0601: no file answers the image source. -/
 def imageMissing (src looked : String) : Diag :=
-  Diag.of .W0601 s!"image file not found: '{src}'"
-    (help := s!"looked at {looked} (also with .png/.jpg/.jpeg added); \
-a placeholder box of the requested size is placed")
+  Diag.of .W0601 s!"image file not found: '{src}'; a placeholder box holds its place"
+    (help := s!"looked at: {looked}, also with .png/.jpg/.jpeg added")
 
 /-- W0602: the image bytes are not a format the engine embeds. -/
 def imageUndecodable (src err : String) : Diag :=
-  Diag.of .W0602 s!"cannot use image '{src}': {err}"
-    (help := "PNG and JPEG embed natively; a placeholder box is placed")
+  Diag.of .W0602 s!"cannot use image '{src}': {err}; a placeholder box holds its place"
+    (help := "PNG and JPEG embed natively: re-export the image as one")
 
 /-- E0502: an `\input` file is not there; its content is absent. -/
 def inputMissing (name : String) (span : Option Span) : Diag :=
-  Diag.of .E0502 s!"\\input file not found: '{name}'; skipped" span
-    (help := "an entire file's content is absent; \\allow{E0502} accepts the loss")
+  Diag.of .E0502 s!"'\\input' file '{name}' is not there; its content is absent" span
+    (help := "\\allow{E0502} accepts the loss")
 
 /-- E0501: the `\input` stack never emptied. -/
 def inputTooDeep : Diag :=
-  Diag.of .E0501 "\\input nesting deeper than 8 files; is a file including itself?"
+  Diag.of .E0501 "'\\input' nesting deeper than 8 files; is a file including itself?"
 
 /-- W0013: an `\allow` entry no diagnostic matched. -/
 def allowUnfired (code : String) : Diag :=
-  Diag.of .W0013 s!"\\allow'd code {code} never fired"
-    (help := "the document no longer needs to accept it; drop it from \\allow")
+  Diag.of .W0013 s!"'\\allow' lists {code}, which never fired"
+    (help := "the document no longer needs it; drop the entry from \\allow")
 
 end LeanTex.Cli.DriverDiag

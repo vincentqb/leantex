@@ -58,5 +58,5 @@ frame
       para
         text "Second placeholder"
 -- diagnostics
-note[N0100] 4:1 \documentclass{beamer} → \documentclass[aspectratio=169]{slides}
-note[N0100] 6:1 \usetheme → \theme{moloch}
+note[N0100] 4:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 6:1 '\usetheme' → \theme{moloch}

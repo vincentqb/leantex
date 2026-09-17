@@ -270,6 +270,48 @@ def surfaceReach (l : String) : Bool :=
     || (t.startsWith "open " && surfaceMods.any (hasWord t ·))
     || surfaceMods.any (usesQualified l ·)
 
+/-- The line's string-literal contents, concatenated — `stripStrings`'
+complement, with its stated line-scanner limitations. What the engine says
+to a user lives in string literals; this is the text the self-containment
+gate reads. -/
+def stringsOnly (l : String) : String := Id.run do
+  let mut out := ""
+  let mut inStr := false
+  let mut esc := false
+  for c in l.toList do
+    if inStr then
+      if esc then
+        esc := false
+        out := out.push c
+      else if c == '\\' then esc := true
+      else if c == '"' then inStr := false
+      else out := out.push c
+    else if c == '"' then
+      inStr := true
+      out := out.push ' '
+  return out
+
+/-- A milestone token (`M6`, `M8`, …): an internal name that means nothing
+outside this repository. -/
+def milestoneTok (s : String) : Bool := Id.run do
+  let cs := s.toList.toArray
+  for i in [0:cs.size] do
+    if cs[i]! == 'M' && ((cs[i+1]?.map Char.isDigit).getD false)
+        && !(i > 0 && (isWordChar (cs[i-1]!)))
+        && !((cs[i+2]?.map isWordChar).getD false) then
+      return true
+  return false
+
+/-- A repo-internal reference inside a string literal: `PLAN.md`,
+`AGENTS.md`, a `LeanTex/` path, or a milestone token. A diagnostic must be
+actionable by someone holding only their own document — `see PLAN.md`
+points at a file the user does not have (the diag-voice defect). Lines that
+are themselves comments stay legal: prose for developers may name the plan. -/
+def repoRefInString (l : String) : Bool :=
+  let s := stringsOnly (stripLineComment l)
+  containsSub s "PLAN.md" || containsSub s "AGENTS.md" ||
+    containsSub s "LeanTex/" || milestoneTok s
+
 /-- Every case a gate predicate must catch and every legal spelling it must
 pass, run by `lean --run scripts/precommit.lean --selftest` from `lake test`.
 Positive cases are the shapes whose escape prompted a gate change; negative
@@ -404,6 +446,23 @@ def selftest : IO UInt32 := do
     ("-- import Obligations would be rejected", false),
     ("import LeanTex.Core.Ir", false)]
 
+  expect "repoRefInString" repoRefInString [
+    -- the shapes that shipped in real output (the diag-voice defects)
+    ("      (help := \"the rest of M6; see PLAN.md\")", true),
+    ("      (help := \"there is no Lua here; see PLAN.md for the native declarations\")", true),
+    ("            (help := s!\"planned for {milestone}; see PLAN.md\" ++", true),
+    ("  say .W0104 \"planned for M8\" pos", true),
+    ("  let msg := \"stated in AGENTS.md\"", true),
+    ("  fail s!\"see LeanTex/Core/Diag.lean\"", true),
+    -- legal spellings: code tokens, comments, docstrings, honest text
+    ("  -- planned for M8, tracked in PLAN.md", false),
+    ("/-- the registry row's why lives in PLAN.md -/", false),
+    ("  let milestone := reservedCtrl.lookup name", false),
+    ("      (help := \"\\\\allow{E0333} accepts the loss\")", false),
+    ("    \"'{tikzpicture}' is not implemented yet; its content is not rendered\"", false),
+    ("  say .W0104 \"a 10mm margin\" pos", false),
+    ("  let m8 := M8.compute x", false)]
+
   expect "severityAssign" severityAssign [
     -- the free-severity spellings the DiagCode gate closed over
     ("    severity := .error", true),
@@ -532,6 +591,16 @@ def main (args : List String) : IO UInt32 := do
   severity policy).
   Fix: emit through Diag.of with a DiagCode; if the code's loss category is
   wrong, change it in DiagCode.spec."
+    if file.startsWith "LeanTex/" || file == "Main.lean" then
+      let bad := lines.filter repoRefInString
+      if !bad.isEmpty then
+        say s!"pre-commit: a repo-internal reference in a string the user can see, in {file}:
+{String.intercalate "\n" bad.toList}
+  A diagnostic is read by someone holding only their own document: PLAN.md,
+  AGENTS.md, a LeanTex/ path, and milestone names (M6, M8) mean nothing
+  there — 'see PLAN.md' shipped in real output (the diag-voice defect).
+  Fix: say what happens and what to write instead; the voice lint in
+  Tests.lean judges the registered text."
     if file.startsWith "LeanTex/Core/" && file != "LeanTex/Core/FontDb.lean" then
       let bad := lines.filter ioInCore
       if !bad.isEmpty then

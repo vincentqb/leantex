@@ -1859,7 +1859,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
       b.commit (mk firstY) depth 0 0
 
 private def B.warnOverfull (b : B) : B :=
-  { b with diags := b.diags.push (Diag.of .W0005 "overfull line (no feasible break)") }
+  { b with diags := b.diags.push (Diag.of .W0005 "overfull line; no feasible break") }
 
 /-- One paragraph, measured and ready to break: everything `kp` and line
 placement need, gathered during the block walk so the breaking runs can
@@ -2333,7 +2333,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let a := if depth > 4 then { a with diags := a.diags.push (
         Diag.of .W0010
           s!"lists nest four levels; level {depth} reuses the fourth's marker"
-          (help := "LaTeX errors here (\"Too deeply nested\"); flatten the nesting")) }
+          (help := "LaTeX errors here ('Too deeply nested'); flatten the nesting")) }
       else a
     -- The level's own style, falling back to the kind's base style — so a
     -- bare `\style{itemize}{...}` keeps styling every level, as it did.

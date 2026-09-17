@@ -25,4 +25,4 @@ para
   image "rects-alpha.png"
   text " keeps its alpha."
 -- diagnostics
-note[N0100] 6:1 \usepackage{graphicx} → nothing: the engine does this itself
+note[N0100] 6:1 '\usepackage{graphicx}' → nothing: the engine does this itself

@@ -111,7 +111,7 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
 private def failure (a : Assertion) (actual : String) : Diag :=
   Diag.of .E0330 s!"assertion failed: {a.kind.source} (actual: {actual})" a.span
     (help := some (a.help.getD
-      "the document shipped this; change the source or the assertion"))
+      "the document shipped this; change the source or the \\assert"))
 
 /-- Check one assertion, returning a diagnostic when it does not hold. -/
 def one (shipped : Shipped) (a : Assertion) : Option Diag :=

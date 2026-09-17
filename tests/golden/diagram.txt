@@ -33,4 +33,4 @@ center
 para
   text "After the diagram stands another, so the flow resumes."
 -- diagnostics
-warning[W0334] 25:1 '\draw' is outside the rendered picture subset; not drawn | help: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro; the full graphics story is M8 (PLAN.md)
+warning[W0334] 25:1 '\draw' is outside the rendered picture subset; not drawn | help: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro

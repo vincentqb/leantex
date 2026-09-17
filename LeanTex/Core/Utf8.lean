@@ -31,7 +31,8 @@ structure Err where
 
 def Err.toDiag (e : Err) (file : String) : Diag :=
   Diag.of .E0002 s!"invalid UTF-8: {e.kind.message} at byte offset {e.offset}"
-    (some ⟨file, e.pos⟩) (help := "leantex reads UTF-8 only; re-encode the file")
+    (some ⟨file, e.pos⟩)
+    (help := "every input is read as UTF-8; `iconv -t utf-8` re-encodes the file")
 
 private def isCont (b : UInt8) : Bool := b &&& 0xC0 == 0x80
 
