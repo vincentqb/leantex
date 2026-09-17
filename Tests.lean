@@ -565,6 +565,44 @@ def anchorChecks (ref : IO.Ref (List String)) : IO Unit := do
      | some before => (before.splitOn "<section").length == 1
      | none => false)
   t "html every container closes" ((page.splitOn "</section>").length == 4)
+  -- Identifier fidelity: HTML §3.2.6 forbids only ASCII whitespace in an id
+  -- and the WHATWG URL fragment percent-encode set excludes non-ASCII, so a
+  -- title's own letters — accented or CJK — survive into its anchor instead
+  -- of degrading to hyphens. Invented titles.
+  let (intlDoc, intlDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\section*{Café Notes}First.\\section*{概要}Second." ++
+    "\\section*{Caf Notes}Third.\\end{document}")
+  let (intlPage, intlDiags) := HtmlDoc.emit {} intlDoc
+  t "html accented anchors keep their letters" (intlDs.isEmpty &&
+    (intlPage.splitOn "<section id=\"café-notes\">").length == 2)
+  t "html cjk anchors keep their characters"
+    ((intlPage.splitOn "<section id=\"概要\">").length == 2)
+  t "html titles that folded together under the ascii rule stay distinct"
+    ((intlPage.splitOn "<section id=\"caf-notes\">").length == 2 &&
+     intlDiags.isEmpty)
+  -- Two distinct titles that still fold to the same slug: the ids stay
+  -- unique and W0320 names the collision, because a link written from the
+  -- second title's text would silently reach the first section.
+  let (clashDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\section*{Signal Path}One.\\section*{Signal, Path}Two.\\end{document}")
+  let (clashPage, clashDiags) := HtmlDoc.emit {} clashDoc
+  t "html a folded collision of distinct titles warns W0327"
+    (clashDiags.any (·.code == "W0327"))
+  t "html the colliding sections still take distinct anchors"
+    ((clashPage.splitOn "<section id=\"signal-path\">").length == 2 &&
+     (clashPage.splitOn "<section id=\"signal-path-2\">").length == 2)
+  t "html a repeated identical title numbers quietly"
+    (!ds.any (·.code == "W0327") &&
+     !(HtmlDoc.emit {} doc).2.any (·.code == "W0327"))
+  -- The numbered fallback is itself an id: a title whose own slug is
+  -- `noise-2` must not collide with the number handed to a repeated
+  -- `Noise`. Uniqueness is per assigned id, not per base.
+  let (numDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\section*{Noise}A.\\section*{Noise}B.\\section*{Noise 2}C.\\end{document}")
+  let numPage := (HtmlDoc.emit {} numDoc).1
+  t "html a numbered fallback never collides with a real title"
+    ((numPage.splitOn "<section id=\"noise-2\">").length == 2 &&
+     (numPage.splitOn "<section id=\"noise-2-2\">").length == 2)
   let (navDoc, navDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\href{#trailhead}{jump}\\section*{Trailhead}Body.\\end{document}")
   let navPage := (HtmlDoc.emit {} navDoc).1
@@ -3579,6 +3617,7 @@ def diagRegistry : List (String × String) := [
   ("W0324", "\\begin{ifbackend} content addressed to no backend"),
   ("W0325", "more than one <nav> landmark on one page"),
   ("W0326", "in-page link with no target anchor on the page"),
+  ("W0327", "two distinct section titles fold to the same anchor"),
   ("W0315", "low-contrast colour pairing (WCAG 2.2)"),
   ("W0316", "unknown option in \\palette; block skipped"),
   ("W0317", "a card carries no running head or foot; declaration dropped"),

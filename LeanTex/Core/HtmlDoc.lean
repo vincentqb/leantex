@@ -714,43 +714,163 @@ private def pageFactsList (acc : PageFacts) : List Node → PageFacts
 
 end
 
-/-- An anchor id from a title's own text: ASCII letters and digits lowercased,
-every other run collapsed to one hyphen. Every static site generator derives
+/-- Unicode `White_Space` (PropList.txt, maintained under UAX #44): the
+closed set 0009–000D, 0020, 0085, 00A0, 1680, 2000–200A, 2028, 2029, 202F,
+205F, 3000. HTML forbids only ASCII whitespace in an id (§3.2.6), a subset
+of this set; treating every White_Space character as a separator also keeps
+the thin spaces the engine itself emits for `\,`/`\:`/`\;` out of anchors. -/
+def isWhiteSpaceUni (c : Char) : Bool :=
+  let n := c.toNat
+  (0x09 ≤ n && n ≤ 0x0D) || n == 0x20 || n == 0x85 || n == 0xA0 ||
+  n == 0x1680 || (0x2000 ≤ n && n ≤ 0x200A) || n == 0x2028 || n == 0x2029 ||
+  n == 0x202F || n == 0x205F || n == 0x3000
+
+/-- One character of an anchor: ASCII letters and digits lowercased, every
+other non-ASCII scalar kept (`none` marks a separator). HTML §3.2.6 places
+no restriction on an id beyond non-emptiness and the absence of ASCII
+whitespace, and the WHATWG URL fragment percent-encode set (§1.3) excludes
+non-ASCII — U+00A0–U+10FFFD are URL code points (§4.3) — so `Café`'s é
+belongs in its anchor rather than degrading to a hyphen. The keep-check
+runs on the already-lowered character, which is what makes
+`slugCharKeep_not_whitespace` a case split over its own guards. -/
+def slugCharKeep (k : Char) : Option Char :=
+  if isWhiteSpaceUni k then none
+  else if k.isAlpha || k.isDigit then some k
+  else if 0x80 ≤ k.toNat then some k
+  else none
+
+def slugChar (c : Char) : Option Char :=
+  slugCharKeep (if c.isAlpha || c.isDigit then c.toLower else c)
+
+/-- The slug walk: separators collapse to one hyphen, emitted only between
+kept characters, so no leading or trailing hyphen can exist by construction. -/
+def slugGo (acc : Array Char) (sep : Bool) : List Char → Array Char
+  | [] => acc
+  | c :: rest =>
+    match slugChar c with
+    | some k =>
+      if sep && !acc.isEmpty then slugGo ((acc.push '-').push k) false rest
+      else slugGo (acc.push k) false rest
+    | none => slugGo acc true rest
+
+/-- An anchor id from a title's own text. Every static site generator derives
 ids this way, so an in-page `\href{#experience}` has a target by construction
-rather than by a label the author must remember to declare. -/
+rather than by a label the author must remember to declare. Non-emptiness —
+the other half of HTML §3.2.6's requirement — is `sectionize`'s job: an
+all-separator title takes the id `section`. -/
 def slug (title : Array Inline) : String :=
-  let folded := (Ir.plainText title).foldl (init := "") fun acc c =>
-    if c.isAlpha || c.isDigit then acc.push c.toLower
-    else if acc.endsWith "-" || acc.isEmpty then acc
-    else acc.push '-'
-  if folded.endsWith "-" then (folded.dropEnd 1).toString else folded
+  String.ofList (slugGo #[] false (Ir.plainText title).toList).toList
+
+theorem slugCharKeep_not_whitespace (k k' : Char) (h : slugCharKeep k = some k') :
+    isWhiteSpaceUni k' = false := by
+  unfold slugCharKeep at h
+  split at h
+  · exact absurd h (by simp)
+  · next hws =>
+    have hws' : isWhiteSpaceUni k = false := by simpa using hws
+    split at h
+    · cases h; exact hws'
+    · split at h
+      · cases h; exact hws'
+      · exact absurd h (by simp)
+
+theorem slugChar_not_whitespace (c k : Char) (h : slugChar c = some k) :
+    isWhiteSpaceUni k = false :=
+  slugCharKeep_not_whitespace _ _ h
+
+theorem slugGo_no_whitespace (l : List Char) (acc : Array Char) (sep : Bool)
+    (hacc : ∀ c ∈ acc.toList, isWhiteSpaceUni c = false) :
+    ∀ c ∈ (slugGo acc sep l).toList, isWhiteSpaceUni c = false := by
+  induction l generalizing acc sep with
+  | nil => simpa [slugGo] using hacc
+  | cons c rest ih =>
+    simp only [slugGo]
+    split
+    · next k hk =>
+      have hkw := slugChar_not_whitespace c k hk
+      split
+      · apply ih
+        intro d hd
+        simp only [Array.toList_push, List.mem_append, List.mem_singleton] at hd
+        rcases hd with (hd | hd) | hd
+        · exact hacc d hd
+        · subst hd; decide
+        · subst hd; exact hkw
+      · apply ih
+        intro d hd
+        simp only [Array.toList_push, List.mem_append, List.mem_singleton] at hd
+        rcases hd with hd | hd
+        · exact hacc d hd
+        · subst hd; exact hkw
+    · exact ih acc true hacc
+
+/-- The addressability half of HTML §3.2.6's id contract, proved in the
+stronger Unicode form: no character of a slug is `White_Space`, so in
+particular none is ASCII whitespace ("The value must not contain any ASCII
+whitespace"). Non-emptiness is discharged at the one use site. -/
+theorem slug_no_whitespace (title : Array Inline) :
+    ∀ c ∈ (slug title).toList, isWhiteSpaceUni c = false := by
+  intro c hc
+  simp only [slug, String.toList_ofList] at hc
+  exact slugGo_no_whitespace _ _ _ (by simp) c hc
 
 /-- An article's top-level sections become `<section id="...">` containers:
 the heading and everything up to the next level-1 heading. The id gives every
 section an anchor and a styling handle, and the container is what HTML 5 says
 a heading-introduced region is (§4.3.3). Content before the first section
-stays a direct child of `<main>`. A repeated title takes `-2`, `-3`, … so ids
-stay unique, which `getElementById` semantics require. -/
-private def sectionize (cfg : Config) (blocks : Array Block) : Array Node := Id.run do
+stays a direct child of `<main>`.
+
+Ids are unique by construction — a section takes the first of `base`,
+`base-2`, `base-3`, … not already assigned, which `getElementById` semantics
+require — and distinct titles are meant to produce distinct anchors. When
+they cannot (two different titles fold to the same slug), the collision is
+named as W0327 rather than resolved silently: an in-page link written from
+the second title's text would reach the first section without any error. A
+repeated identical title takes its number quietly, as every static site
+generator does. -/
+private def sectionize (cfg : Config) (blocks : Array Block) :
+    Array Node × Array Diag := Id.run do
   let close (out cur : Array Node) : Option String → Array Node
     | some id => out.push (Html.elem "section" cur #[("id", id)])
     | none => out ++ cur
   let mut out : Array Node := #[]
   let mut cur : Array Node := #[]
   let mut openId : Option String := none
-  let mut bases : Array String := #[]
+  -- Each assigned id with the plain text of the title that holds it.
+  let mut taken : Array (String × String) := #[]
+  let mut diags : Array Diag := #[]
   for b in blocks do
     match b with
     | .section 1 _ title =>
       out := close out cur openId
+      let text := Ir.plainText title
       let base := slug title
       let base := if base.isEmpty then "section" else base
-      let seen := bases.foldl (fun n s => if s == base then n + 1 else n) 0
-      bases := bases.push base
-      openId := some (if seen == 0 then base else s!"{base}-{seen + 1}")
+      -- k assigned ids can block at most k candidates, so the first free
+      -- one is always found among the k+1 checked here.
+      let mut id := base
+      let mut clash : Option String := none
+      for n in [2 : taken.size + 3] do
+        match taken.find? (·.1 == id) with
+        | some (_, holder) =>
+          if holder != text && clash.isNone then
+            clash := some holder
+          id := s!"{base}-{n}"
+        | none => break
+      if let some holder := clash then
+        diags := diags.push {
+          severity := .warning
+          code := "W0327"
+          message := s!"sections {holder.quote} and {text.quote} share the \
+anchor '{base}'; the second becomes '{id}'"
+          help := some s!"an in-page link '#{base}' reaches only the first; \
+retitle one section, or link to '#{id}'"
+        }
+      taken := taken.push (id, text)
+      openId := some id
       cur := #[blockNode cfg b]
     | _ => cur := cur.push (blockNode cfg b)
-  return close out cur openId
+  return (close out cur openId, diags)
 
 /-- Emit a document. Returns the file and any diagnostics the backend itself
 raises — running content is the notable one: page furniture cannot be honoured
@@ -826,9 +946,10 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
     | _ => false
   let chromeFoot := doc.docClass == "slides" && doc.foot.isNone &&
     (doc.chrome.hasFooter || hasFrameFoot)
-  let inner := if doc.docClass == "article" then sectionize cfg doc.body
+  let (inner, sectionDiags) := if doc.docClass == "article" then
+      sectionize cfg doc.body
     else if !themedSections && !chromeFoot then
-      blockNodesInto cfg #[] doc.body.toList
+      (blockNodesInto cfg #[] doc.body.toList, #[])
     else Id.run do
       -- The one numbering: the same array the PDF path threads
       -- (`Ir.frameNumbers`, T2–T4). This walk indexes it and counts
@@ -878,7 +999,8 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
           else
             acc := acc.push (blockNode cfg (.section 1 starred title))
         | _ => acc := acc.push (blockNode cfg b)
-      return acc
+      return (acc, #[])
+  diags := diags ++ sectionDiags
   let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]
     else #[("class", bodyClass)])
   let mut body : Array Node := #[main]
