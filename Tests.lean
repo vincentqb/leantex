@@ -628,6 +628,21 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
      warnCodes (pre "\\usepackage{tikz}") == ["W0103"])
   t "compat definecolor" ((elabStr (pre "\\definecolor{c}{HTML}{0F766E}")).1.palette.find? "c" ==
     some { r := 0x0F, g := 0x76, b := 0x6E })
+  -- \setbeamercovered{transparent} asks for what the engine always does
+  -- (dim-not-hide): agreement, not missing configuration — no warning.
+  -- A percentage declares the covered colour; anything else (invisible,
+  -- dynamic) keeps the warning naming the divergence.
+  let themedPre (decls : String) : String :=
+    "\\documentclass{beamer}\n\\usetheme{moloch}\n" ++ decls ++
+    "\n\\begin{document}\\begin{frame}x\\end{frame}\\end{document}"
+  t "compat setbeamercovered transparent agrees, warning nothing"
+    (warnCodes (themedPre "\\setbeamercovered{transparent}") == [])
+  t "compat setbeamercovered transparent=n sets the covered colour"
+    ((elabStr (themedPre "\\setbeamercovered{transparent=25}")).1.palette.find? "covered"
+      == some (Ir.Color.mix ((Contrast.molochResolved.find? "fg").getD Ir.Color.black)
+          25 ((Contrast.molochResolved.find? "bg").getD Ir.Color.white)))
+  t "compat setbeamercovered invisible keeps the honest warning"
+    (warnCodes (themedPre "\\setbeamercovered{invisible}") == ["W0104"])
   t "compat definecolor rgb" ((elabStr (pre "\\definecolor{c}{rgb}{1,0,0.5}")).1.palette.find? "c" ==
     some { r := 255, g := 0, b := 127 })
   t "compat colorlet aliases"
@@ -733,8 +748,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\setbeamercovered{transparent}\\addtobeamertemplate{block begin}{}{\\smallskip}" ++
     "\\setbeameroption{hide notes}")
   t "compat beamer config skipped without errors" (errCodes beamerPre == [])
+  -- \setbeamercovered{transparent} no longer counts: it agrees with the
+  -- engine's covering and warns nothing.
   t "compat beamer config warns once per construct"
-    ((warnCodes beamerPre).length == 4 && (warnCodes beamerPre).all (· == "W0104"))
+    ((warnCodes beamerPre).length == 3 && (warnCodes beamerPre).all (· == "W0104"))
   t "compat usetheme selects the bundle instead of warning"
     ((elabStr beamerPre).1.palette.find? "frametitlebg" |>.isSome)
   t "compat beamer warnings name the native spelling"

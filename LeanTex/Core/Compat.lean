@@ -52,7 +52,7 @@ arguments leaking into elaboration as stray content (that was an E0313
 cascade per construct). `\usetheme` is not here: it rewrites to `\theme`. -/
 def beamerConfig : List (String × Nat) :=
   [("usecolortheme", 1), ("usefonttheme", 1),
-   ("setbeamercovered", 1), ("setbeameroption", 1),
+   ("setbeameroption", 1),
    ("setbeamertemplate", 2), ("addtobeamertemplate", 3),
    ("setbeamerfont", 2), ("setbeamercolor", 2),
    ("beamertemplatenavigationsymbolsempty", 0),
@@ -712,6 +712,48 @@ where
       | _ => "\\block[before = 3pt plus 1pt minus 1pt]{}"
     became s!"\\{name}" native pos
     return some (← synthAt native pos, start)
+  | "setbeamercovered" =>
+    -- beamer's default covering is invisible and `transparent` makes it
+    -- show dimmed; this engine's covering is dim-not-hide always (PLAN
+    -- M5), so `transparent` asks for what already happens — agreement, not
+    -- missing configuration, and no warning. `transparent=<n>` shows
+    -- covered text at n% opaqueness (beamer manual, \setbeamercovered:
+    -- 0 transparent .. 100 opaque; 15 is the default), which over the page
+    -- is an n% mix of the body ink into it: the covered colour, declared.
+    -- Everything else (invisible, dynamic, still/again covered) asks for
+    -- hiding or per-slide opacity the engine deliberately does not do.
+    let (args, k) := takeGroups raws start 1
+    let src := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    if src == "transparent" then
+      became "\\setbeamercovered{transparent}"
+        "the engine's own covering (dim-not-hide)" pos
+      return some (#[], k)
+    let pct? : Option Nat :=
+      if src.startsWith "transparent=" then
+        ((src.drop "transparent=".length).toString.trimAscii.toString).toNat?
+      else none
+    match pct? with
+    | some n =>
+      if 1 ≤ n && n ≤ 99 then
+        -- Unthemed there is no fg/bg to mix over: the page is white, the
+        -- ink black.
+        let native := if (← get).themed then s!"\\palette\{ covered = fg!{n}!bg }"
+          else s!"\\palette\{ covered = black!{n} }"
+        became "\\setbeamercovered" native pos
+        return some (← synthAt native pos, k)
+      else
+        sayOnce "beamer:setbeamercovered" .warning "W0104"
+          s!"'\\setbeamercovered\{{src}}' asks for {if n == 0 then "invisible" else "undimmed"} \
+covered content; the engine always dims (dim-not-hide)" pos
+          (help := "\\palette{ covered = ... } sets the dim colour")
+        return some (#[], k)
+    | none =>
+      sayOnce "beamer:setbeamercovered" .warning "W0104"
+        s!"'\\setbeamercovered\{{src}}' is not modelled; covered content always \
+dims (dim-not-hide), it is never hidden" pos
+        (help := "\\palette{ covered = ... } sets the dim colour; 'transparent' \
+and 'transparent=<n>' are understood")
+      return some (#[], k)
   | _ =>
     match beamerConfig.lookup name with
     | some n =>
