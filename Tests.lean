@@ -544,6 +544,38 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((HtmlDoc.emit {} ruledDoc).1.splitOn
       "h2 { display: flex; align-items: baseline;").length == 2)
 
+/-- Article sections become anchored containers: `<section id="slug">` wraps
+the heading and its content, ids stay unique under repeated titles, and an
+in-page `\href{#...}` has a real target. Invented titles throughout. -/
+def anchorChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "Opening paragraph.\\section*{Signal Path}First.\\section*{Noise}Second." ++
+    "\\section*{Noise}Third.\\end{document}")
+  let page := (HtmlDoc.emit {} doc).1
+  t "html anchors source is clean" ds.isEmpty
+  t "html level-1 sections become containers with slug ids"
+    ((page.splitOn "<section id=\"signal-path\">").length == 2 &&
+     (page.splitOn "<section id=\"noise\">").length == 2)
+  t "html a repeated title takes a numbered anchor"
+    ((page.splitOn "<section id=\"noise-2\">").length == 2)
+  t "html content before the first section stays outside the containers"
+    (match (page.splitOn "Opening paragraph.")[0]? with
+     | some before => (before.splitOn "<section").length == 1
+     | none => false)
+  t "html every container closes" ((page.splitOn "</section>").length == 4)
+  let (navDoc, navDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\href{#trailhead}{jump}\\section*{Trailhead}Body.\\end{document}")
+  let navPage := (HtmlDoc.emit {} navDoc).1
+  t "html an in-page link reaches its section anchor" (navDs.isEmpty &&
+    (navPage.splitOn "<a href=\"#trailhead\"").length == 2 &&
+    (navPage.splitOn "<section id=\"trailhead\">").length == 2)
+  -- Slides keep their own sectioning: one <section> per frame, none per title.
+  let (deck, _) := elabStr ("\\documentclass{slides}\\begin{document}" ++
+    "\\begin{frame}{One}a\\end{frame}\\end{document}")
+  t "html slides sectioning is untouched"
+    (((HtmlDoc.emit {} deck).1.splitOn "<section id=").length == 1)
+
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
 around the content, and nothing warns. Its own function: `main` is one `do`
 block and its elaboration budget is spent. -/
@@ -817,6 +849,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   styleChecks ref
   htmlLayoutChecks ref
+  anchorChecks ref
 
 /-- A synthetic face for resolution-order tests: pure data, no host fonts. -/
 def synthFace (family : String) (path : String := "") : FontDb.Face :=

@@ -609,6 +609,44 @@ def listItem (cfg : Config) : List Block → Array Node
 
 end
 
+/-- An anchor id from a title's own text: ASCII letters and digits lowercased,
+every other run collapsed to one hyphen. Every static site generator derives
+ids this way, so an in-page `\href{#experience}` has a target by construction
+rather than by a label the author must remember to declare. -/
+def slug (title : Array Inline) : String :=
+  let folded := (Ir.plainText title).foldl (init := "") fun acc c =>
+    if c.isAlpha || c.isDigit then acc.push c.toLower
+    else if acc.endsWith "-" || acc.isEmpty then acc
+    else acc.push '-'
+  if folded.endsWith "-" then (folded.dropEnd 1).toString else folded
+
+/-- An article's top-level sections become `<section id="...">` containers:
+the heading and everything up to the next level-1 heading. The id gives every
+section an anchor and a styling handle, and the container is what HTML 5 says
+a heading-introduced region is (§4.3.3). Content before the first section
+stays a direct child of `<main>`. A repeated title takes `-2`, `-3`, … so ids
+stay unique, which `getElementById` semantics require. -/
+private def sectionize (cfg : Config) (blocks : Array Block) : Array Node := Id.run do
+  let close (out cur : Array Node) : Option String → Array Node
+    | some id => out.push (Html.elem "section" cur #[("id", id)])
+    | none => out ++ cur
+  let mut out : Array Node := #[]
+  let mut cur : Array Node := #[]
+  let mut openId : Option String := none
+  let mut bases : Array String := #[]
+  for b in blocks do
+    match b with
+    | .section 1 _ title =>
+      out := close out cur openId
+      let base := slug title
+      let base := if base.isEmpty then "section" else base
+      let seen := bases.foldl (fun n s => if s == base then n + 1 else n) 0
+      bases := bases.push base
+      openId := some (if seen == 0 then base else s!"{base}-{seen + 1}")
+      cur := #[blockNode cfg b]
+    | _ => cur := cur.push (blockNode cfg b)
+  return close out cur openId
+
 /-- Emit a document. Returns the file and any diagnostics the backend itself
 raises — running content is the notable one: page furniture cannot be honoured
 in a continuous document, and dropping it silently would be the kind of quiet
@@ -673,7 +711,8 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
     | _ => false
   let chromeFoot := doc.docClass == "slides" && doc.foot.isNone &&
     (doc.chrome.hasFooter || hasFrameFoot)
-  let inner := if !themedSections && !chromeFoot then
+  let inner := if doc.docClass == "article" then sectionize cfg doc.body
+    else if !themedSections && !chromeFoot then
       blockNodesInto cfg #[] doc.body.toList
     else Id.run do
       let total := doc.body.foldl (fun n b => match b with
