@@ -57,6 +57,9 @@ structure Ctx where
   tokens : Tokens := {}
   /-- Inside mono/verbatim content, where punctuation stays literal. -/
   literalText : Bool := false
+  /-- Inside a speaker note, absorbed as beamer absorbs it: a reserved
+  character is literal text there, never a build error. -/
+  noteBody : Bool := false
   /-- Overlay steps already opened by `\pause` in enclosing scopes: the next
   pause reveals at `stepBase + 1`. -/
   stepBase : Nat := 0
@@ -562,7 +565,12 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         sb := sb.push '\u00a0'
         i := i + 1
       | .sym c pos =>
-        diag ctx "E0311" s!"reserved character '{c}'" pos (help := s!"escape it as '\\{c}'")
+        if ctx.noteBody then
+          -- A note is absorbed, as beamer absorbs it: its reserved
+          -- characters are the speaker's literal text.
+          sb := sb.push c
+        else
+          diag ctx "E0311" s!"reserved character '{c}'" pos (help := s!"escape it as '\\{c}'")
         i := i + 1
       | .math d body _ =>
         acc := flushText acc sb
@@ -1231,7 +1239,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           match raws[j2]? with
           | some (.group nbody _) =>
             i := j2 + 1
-            blocks := blocks.push (.note (← elabBlocks ctx nbody))
+            blocks := blocks.push (.note (← elabBlocks { ctx with noteBody := true } nbody))
           | _ =>
             warnSkippedDecl ctx "note" npos
         | .group gbody _ =>
@@ -1427,7 +1435,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             let stash := (← get).pendingNotes
             modify fun st => { st with pendingNotes := #[] }
             for nb in stash do
-              inner := inner.push (.note (← elabBlocks ctx nb))
+              inner := inner.push (.note (← elabBlocks { ctx with noteBody := true } nb))
             blocks := blocks.push (.frame title inner)
           else if n == "itemize" || n == "enumerate" then
             let mut items : Array (Array Raw) := #[]

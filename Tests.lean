@@ -1873,6 +1873,17 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
         ((Ir.dumpBlocks "" nbody).splitOn "never shown").length == 2
       | _ => false))
 
+  -- A note body is absorbed, as beamer absorbs it: a reserved character
+  -- there (a bare code-ish underscore is the common case) stays literal
+  -- and must not fail the build.
+  let (resv, resvDs) := elabStr (deck "Shown.\n\\note{name_with_underscores & more}")
+  t "reserved characters in a note stay literal, erroring nothing"
+    (resvDs.isEmpty &&
+     (match resv.body with
+      | #[.frame _ #[_, .note nbody]] =>
+        ((Ir.dumpBlocks "" nbody).splitOn "name_with_underscores & more").length == 2
+      | _ => false))
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
