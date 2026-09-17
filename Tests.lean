@@ -444,7 +444,7 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "style itemize marker is content"
     ((listStyle.bind (·.marker)) == some #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some "ink") #[.text "–"]])
   -- A declared marker either reaches HTML as declared or the substitution
-  -- is named (W0328): the résumé's colour-and-size shape is expressible in
+  -- is named (W0331): the résumé's colour-and-size shape is expressible in
   -- a ::marker rule (CSS Pseudo-Elements 4 §4.1), arbitrary inline content
   -- is not. `markerCss?_text` is the theorem that the expressed content is
   -- exactly the declared characters.
@@ -472,11 +472,11 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html styled marker reaches ::marker with its colour and size"
     ((styledMarkerPage.splitOn
       "{ content: \"–  \"; color: var(--markerink, #205e3b); font-size: 0.9em; }").length == 2)
-  t "html styled marker is clean" (styledMarkerDs.all (·.code != "W0328"))
+  t "html styled marker is clean" (styledMarkerDs.all (·.code != "W0331"))
   let (contentMarkerPage, contentMarkerDs) :=
     HtmlDoc.emit {} (markerDoc "\\includegraphics{rects.png}")
   t "html inexpressible marker is named, not silently defaulted"
-    (contentMarkerDs.any fun d => d.code == "W0328" && d.severity == .warning &&
+    (contentMarkerDs.any fun d => d.code == "W0331" && d.severity == .warning &&
       (d.message.splitOn "itemize").length > 1)
   t "html inexpressible marker emits no ::marker override"
     ((contentMarkerPage.splitOn "rects.png").length == 1)
@@ -2873,21 +2873,21 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\begin{document}x\\end{document}")).2.any (·.code == "W0318"))
   -- FINDINGS F4: the frame and physical sequences share a band only by
   -- declaration. A theme-installed frame slot plus \framefoot{\pagenumber}
-  -- is undeclared mixing (W0329); the document naming its own \chrome slots
+  -- is undeclared mixing (W0332); the document naming its own \chrome slots
   -- IS the declaration, so the same band is then silent.
   let mixedBody := "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}"
   t "undeclared sequence mixing warns by name"
     ((elabStr (deck "\\theme{moloch}" mixedBody)).2.any fun d =>
-      d.code == "W0329" && d.severity == .warning)
+      d.code == "W0332" && d.severity == .warning)
   t "a document that declares its chrome has declared the mixing"
     (!(elabStr (deck "\\theme{moloch}\\chrome{ footer = { right = \\framenumber } }"
-      mixedBody)).2.any (·.code == "W0329"))
+      mixedBody)).2.any (·.code == "W0332"))
   t "no frame slot, no mixing"
-    (!(elabStr (deck "" mixedBody)).2.any (·.code == "W0329"))
+    (!(elabStr (deck "" mixedBody)).2.any (·.code == "W0332"))
   t "a physical-free framefoot mixes nothing"
     (!(elabStr (deck "\\theme{moloch}"
       "\\framefoot{note}\n\\begin{frame}{T}\nx\n\\end{frame}")).2.any
-      (·.code == "W0329"))
+      (·.code == "W0332"))
   -- The sequences cannot quietly fuse: the physical pass leaves a rendered
   -- frame slot untouched on every page (`substPage_leaves_frame_slot` is
   -- the theorem; this pins one instance executably).
@@ -3641,8 +3641,8 @@ def censusTable :
     ("the head ships with its page number", hasStr (censusText c) "Invented Field Notes"),
     ("the body ships under it", hasStr (censusText c) "reserves a band below the margin"),
     ("the head keeps its own line: no body text beside it",
-      ((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.2 "Invented Field Notes").map
-        fun l => !hasStr l.2 "tight margin").getD false),
+      ((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.text "Invented Field Notes").map
+        fun l => !hasStr l.text "tight margin").getD false),
     ("body lines sit at the margin, not in the band",
       lineXOf c 0 "The running head above this page" == some geom.hmargin)]),
   ("wrapper", fun _ c => [
@@ -3720,7 +3720,7 @@ def censusTable :
     ("the base override ships", hasStr (censusText c) "– The base override"),
     ("the level override ships", hasStr (censusText c) "• The level override")]),
   -- The two marker fixtures carry FINDINGS F1: a declared marker either
-  -- reaches a backend as declared or the substitution has a name (W0328).
+  -- reaches a backend as declared or the substitution has a name (W0331).
   -- The PDF side is judged here; the HTML side and the agreement between
   -- them are judged in agreeChecks.
   ("marker-styled", fun _ c => [
@@ -3935,12 +3935,12 @@ def dedupConsecutive (xs : Array (String × String)) : Array (String × String) 
 fact both backends render — a footer's slot contents and their sides, a
 list item's marker — renders the same from `Layout.Out` and from the typed
 HTML tree, or a diagnostic names the divergence (W0007 physical furniture
-omitted, W0328 marker substituted, W0329 sequences mixed). This is the
+omitted, W0331 marker substituted, W0332 sequences mixed). This is the
 general form of FINDINGS F1 and F5: the next divergence in any fixture
 fails here without anyone looking at a page. -/
 def agreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
-  let namingCodes := ["W0007", "W0328", "W0329"]
+  let namingCodes := ["W0007", "W0331", "W0332"]
   for n in goldenNames do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
     let (doc, docDs) := Elab.run s!"{n}.tex" src
@@ -3962,7 +3962,7 @@ def agreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
             (r.text == Ir.plainText m)
         | none =>
           check ref s!"agree {n}: the '{element}' marker's substitution is named"
-            (htmlDs.any (·.code == "W0328"))
+            (htmlDs.any (·.code == "W0331"))
 
 
 /- One diagnostic code, one meaning: `DiagCode` in Diag.lean is the single

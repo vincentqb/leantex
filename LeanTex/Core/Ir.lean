@@ -1716,15 +1716,13 @@ def footerSequenceDiags (doc : Doc) : Array Diag := Id.run do
   for b in doc.body do
     if let .framefoot xs := b then
       if hasPhysicalPage xs && out.isEmpty then
-        out := out.push {
-          severity := .warning
-          code := "W0329"
-          message := "the footer mixes the physical page number with the \
-frame number: the two sequences are distinct, and a stepped frame advances \
-one and not the other"
-          help := some "declare the footer's slots yourself \
+        out := out.push (Diag.of .W0332
+          "the footer mixes the physical page number with the frame number: \
+the two sequences are distinct, and a stepped frame advances one and not \
+the other"
+          (help := some "declare the footer's slots yourself \
 (\\chrome{ footer = { left = ..., right = \\framenumber } }) to say the \
-mixing is meant, or drop \\pagenumber from \\framefoot" }
+mixing is meant, or drop \\pagenumber from \\framefoot"))
   return out
 
 /-- The two sequences stay distinct, stated where they could fuse: the

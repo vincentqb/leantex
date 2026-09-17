@@ -85,7 +85,7 @@ inductive DiagCode where
   | W0301 | W0302 | W0303 | W0304 | W0307 | W0308 | W0309 | W0310 | W0311
   | W0312 | W0313 | W0314 | W0315 | W0316 | W0317 | W0318 | W0319
   | W0320 | W0321 | W0322 | W0323 | W0324 | W0325 | W0326 | W0327 | W0328
-  | W0329 | W0330
+  | W0329 | W0330 | W0331 | W0332
   | W0501
   | W0601 | W0602
   deriving Repr, BEq, DecidableEq
@@ -144,7 +144,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0004 => ("W0004", .dropped, "font has no glyph for a character; dropped")
   | .W0005 => ("W0005", .degraded, "overfull line, no feasible break")
   | .W0006 => ("W0006", .degraded, "declared face variant missing; another face substitutes")
-  | .W0007 => ("W0007", .degraded, "running head/foot omitted from HTML")
+  | .W0007 => ("W0007", .degraded, "paged-media furniture omitted from HTML")
   | .W0008 => ("W0008", .config, "\\fonts dir is not a directory")
   | .W0009 => ("W0009", .degraded, "no glyph in the declared face; set from a fallback face")
   | .W0010 => ("W0010", .degraded, "lists nest four levels; deeper levels reuse the fourth marker")
@@ -190,6 +190,8 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0328 => ("W0328", .degraded, "running content wraps; only its first line is kept")
   | .W0329 => ("W0329", .config, "reserved layout-only construct skipped; no content is affected")
   | .W0330 => ("W0330", .degraded, "declared page with a defaulted ink is illegible (WCAG 2.2)")
+  | .W0331 => ("W0331", .degraded, "declared marker not expressible in this backend; default substituted")
+  | .W0332 => ("W0332", .degraded, "footer mixes the frame and physical page sequences undeclared")
   | .W0501 => ("W0501", .dropped, "\\input file not found; skipped")
   | .W0601 => ("W0601", .degraded, "image unreadable or not found; placeholder box placed")
   | .W0602 => ("W0602", .degraded, "image format unusable; placeholder box placed")
@@ -212,7 +214,8 @@ def DiagCode.all : List DiagCode :=
    .W0110, .W0201, .W0202, .W0301, .W0302, .W0303, .W0304, .W0307, .W0308,
    .W0309, .W0310, .W0311, .W0312, .W0313, .W0314, .W0315, .W0316, .W0317,
    .W0318, .W0319, .W0320, .W0321, .W0322, .W0323, .W0324, .W0325, .W0326,
-   .W0327, .W0328, .W0329, .W0330, .W0501, .W0601, .W0602]
+   .W0327, .W0328, .W0329, .W0330, .W0331, .W0332, .W0501, .W0601,
+   .W0602]
 
 theorem DiagCode.all_complete (c : DiagCode) : DiagCode.all.contains c := by
   cases c <;> rfl

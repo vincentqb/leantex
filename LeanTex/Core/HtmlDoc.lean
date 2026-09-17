@@ -313,14 +313,12 @@ def styleRules (doc : Doc) : String × Array Diag :=
         liDecls := liDecls ++
           [s!"{markerSel tag} \{ content: \"{cssString r.text}  \";{body} }\n"]
       | none =>
-        diags := diags.push {
-          severity := .warning
-          code := "W0328"
-          message := s!"the declared '{element}' marker is not expressible in \
-HTML; the level default marks these items"
-          help := some "a ::marker rule carries text with colour and font \
+        diags := diags.push (Diag.of .W0331
+          s!"the declared '{element}' marker is not expressible in HTML; \
+the level default marks these items"
+          (help := some "a ::marker rule carries text with colour and font \
 styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or an overlay \
-step in a marker does not reach it" }
+step in a marker does not reach it"))
     -- Interaction states live on the element's links (the interactive
     -- content a hover or focus can land on; for `nav` that is `nav a`).
     -- The colour keeps its token spelling, like every named colour here,
@@ -1211,13 +1209,11 @@ def emitTree (cfg : Config) (doc : Doc) :
           -- renders as nothing here while the PDF resolves it, so the drop
           -- is named — a divergence is declared or reported.
           if Ir.hasPhysicalPage xs && walkDiags.isEmpty then
-            walkDiags := walkDiags.push {
-              severity := .warning
-              code := "W0007"
-              message := "\\pagenumber in a \\framefoot is paged-media \
-furniture; omitted from HTML"
-              help := some "the deck has no physical pages; \\framenumber \
-via \\chrome is the sequence both backends share" }
+            walkDiags := walkDiags.push (Diag.of .W0007
+              "\\pagenumber in a \\framefoot is paged-media furniture; \
+omitted from HTML"
+              (help := some "the deck has no physical pages; \\framenumber \
+via \\chrome is the sequence both backends share"))
         | .frame _ _ _ _ =>
           let num := nums[i]?.getD none
           done := num.getD done
