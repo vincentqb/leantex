@@ -276,65 +276,134 @@ private def usesColumns (cx : UseCx) (out : Array Use) :
 
 end
 
+/-- The ink/page pair the shipped pages actually carry, declared or
+defaulted: the resolved design's ink — `Design.ofDoc` is the one resolving
+site, and `Layout.run` reads the same field for every uncoloured run — over
+the declared page when there is one, the shipped light surface otherwise
+(WCAG's contrast-ratio Note 3 assumes white when nothing is specified; the
+shipped surface is the marginally darker of the two, so passing here passes
+on the PDF's white page too). -/
+def effectivePair (doc : Doc) : ColorPair :=
+  let d := Design.ofDoc doc
+  { fg := d.fg, bg := if d.bgDeclared then d.bg else light.surface }
+
+/-- The effective ink judged against the effective page, first and
+unconditionally — the straight-line half of `docDiags`, so
+`defaulted_ink_cannot_escape` can range over every document. A declared
+pair keeps W0315's spelling and its decorative escape; a defaulted ink on
+a declared page is its own code (W0330), because its remedy is different:
+declare the ink, not the intent. -/
+def effectivePairDiags (doc : Doc) : Array Diag :=
+  if doc.palette.decorative.contains "fg" then #[]
+  else
+    let p := effectivePair doc
+    let milli := contrastMilli p.fg p.bg
+    if milli < aaText then
+      if (Design.ofDoc doc).fgDeclared then
+        #[Diag.of .W0315
+          (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
+            s!"on the page ({hexOf p.bg}), below the {ratioString aaText} " ++
+            "WCAG 2.2 asks of text (SC 1.4.3)")
+          (help := some ("deliberate low contrast is declared, not defaulted: " ++
+            "\\palette[decorative]{ " ++ s!"fg = {hexOf p.fg} " ++ "}"))]
+      else
+        #[Diag.of .W0330
+          (s!"the page is declared {hexOf p.bg} but the ink is left defaulted: " ++
+            s!"{hexOf p.fg} text reads at {ratioString milli}, below the " ++
+            s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
+          (help := some ("a declared surface chooses its ink: declare " ++
+            "\\palette{ fg = ... }" ++ " beside bg"))]
+    else #[]
+
 /-- The pairings a document's own colours create, judged: every colour the
 document puts on text is paired with the page by the engine, so each is
-checked against the page — the palette's own `bg` entry when it
-declares one (the semantic key themes set), the shipped light surface
-otherwise (WCAG's contrast-ratio
-Note 3 assumes white when nothing is specified; the shipped surface is the
-marginally darker of the two, so passing here passes on the PDF's white
-page too). A pairing used only as large-scale text is held to 3:1, any
+checked against the page — the effective page (`effectivePair`), and the
+effective ink first of all, whether or not the document spelled it: a
+document that declares a dark page and leaves the ink defaulted ships
+black-on-dark, and the contract judges what ships, never only what was
+spelled. A pairing used only as large-scale text is held to 3:1, any
 other use to 4.5:1 (SC 1.4.3). `covered` is exempt by role — dimmed overlay
 content is deliberately quiet — and so is anything the document declared
 under `\palette[decorative]{...}`: the warning names that spelling, so poor
 contrast is a choice a document states, never a silent default. -/
-def docDiags (doc : Doc) : Array Diag := Id.run do
-  let d := Design.ofDoc doc
-  -- The check judges against the declared page, or the shipped surface
-  -- when none is: WCAG's Note 3 semantics, not the PDF's white default —
-  -- the shipped surface is the marginally darker of the two.
-  let surface := if d.bgDeclared then d.bg else light.surface
-  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
-  let mut uses := usesBlocks base #[] doc.body.toList
-  -- `fg` colours every uncoloured run through the backends, never through
-  -- `.colored`, so the declared pair is judged directly.
-  if d.fgDeclared then
-    uses := uses.push { name := some "fg", color := d.fg, large := false }
-  -- The chrome footer draws small text in `muted` on the page: a document
-  -- that overrides the key is judged on the pairing it creates, exactly as
-  -- a declared `fg` is (the shipped bundles are covered by the palette
-  -- contract theorems below). Declaredness gates the check — the resolved
-  -- design's `muted` is total, but an undeclared key creates no pairing of
-  -- its own beyond the `fg` one already judged.
-  if doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone then
-    if let some muted := doc.palette.find? "muted" then
-      uses := uses.push { name := some "muted", color := muted, large := false }
-  for run in [doc.head, doc.foot] do
-    if let some content := run then
-      uses := usesInlines base uses content.toList
-  let mut out : Array Diag := #[]
-  let mut done : Array (Option String × Color) := #[]
-  for u in uses do
-    let key := (u.name, u.color)
-    if done.contains key then continue
-    done := done.push key
-    if let some n := u.name then
-      if n == "covered" || doc.palette.decorative.contains n then continue
-    let allLarge := uses.all fun v => (v.name, v.color) != key || v.large
-    let threshold := if allLarge then aaLargeText else aaText
-    let milli := contrastMilli u.color surface
-    if milli < threshold then
-      let label := match u.name with
-        | some n => s!"'{n}' ({hexOf u.color})"
-        | none => hexOf u.color
-      out := out.push (Diag.of .W0315
-        (s!"text coloured {label} reads at {ratioString milli} " ++
-          s!"on the page ({hexOf surface}), below the {ratioString threshold} " ++
-          s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
-        (help := some ("deliberate low contrast is declared, not defaulted: " ++
-          "\\palette[decorative]{ " ++
-          s!"{(u.name.getD "quiet")} = {hexOf u.color} " ++ "}")))
-  return out
+def docDiags (doc : Doc) : Array Diag :=
+  -- A one-off append, not a walk: the declared-use half is bound to a name
+  -- so the join reads as the two-part contract it is.
+  let declared := declaredUseDiags doc
+  effectivePairDiags doc ++ declared
+where
+  declaredUseDiags (doc : Doc) : Array Diag := Id.run do
+    let d := Design.ofDoc doc
+    let surface := (effectivePair doc).bg
+    let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
+    let mut uses := usesBlocks base #[] doc.body.toList
+    -- The chrome footer draws small text in `muted` on the page: a document
+    -- that overrides the key is judged on the pairing it creates, exactly as
+    -- the effective ink is (the shipped bundles are covered by the palette
+    -- contract theorems below). Declaredness gates the check — the resolved
+    -- design's `muted` is total, but an undeclared key creates no pairing of
+    -- its own beyond the effective pair already judged.
+    if doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone then
+      if let some muted := doc.palette.find? "muted" then
+        uses := uses.push { name := some "muted", color := muted, large := false }
+    for run in [doc.head, doc.foot] do
+      if let some content := run then
+        uses := usesInlines base uses content.toList
+    let mut out : Array Diag := #[]
+    -- The effective pair is judged in `effectivePairDiags`; a body use of
+    -- the same pairing must not report it twice.
+    let mut done : Array (Option String × Color) := #[(some "fg", d.fg)]
+    for u in uses do
+      let key := (u.name, u.color)
+      if done.contains key then continue
+      done := done.push key
+      if let some n := u.name then
+        if n == "covered" || doc.palette.decorative.contains n then continue
+      let allLarge := uses.all fun v => (v.name, v.color) != key || v.large
+      let threshold := if allLarge then aaLargeText else aaText
+      let milli := contrastMilli u.color surface
+      if milli < threshold then
+        let label := match u.name with
+          | some n => s!"'{n}' ({hexOf u.color})"
+          | none => hexOf u.color
+        out := out.push (Diag.of .W0315
+          (s!"text coloured {label} reads at {ratioString milli} " ++
+            s!"on the page ({hexOf surface}), below the {ratioString threshold} " ++
+            s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
+          (help := some ("deliberate low contrast is declared, not defaulted: " ++
+            "\\palette[decorative]{ " ++
+            s!"{(u.name.getD "quiet")} = {hexOf u.color} " ++ "}")))
+    return out
+
+/-- The judged pair is the shipped pair: what `effectivePairDiags` judges is
+the resolved design's own ink — the field `Layout.run` colours every
+uncoloured run with — and, on a declared page, the resolved design's own
+surface — the fill `Layout.run` paints the page with. Definitional by
+construction (`effectivePair` reads `Design.ofDoc`, the one resolving
+site), and stated so the construction cannot drift: a defaulted colour
+cannot escape the contract by never being spelled. -/
+theorem judged_pair_is_shipped (doc : Doc) :
+    (effectivePair doc).fg = (Design.ofDoc doc).fg ∧
+    ((Design.ofDoc doc).bgDeclared = true →
+      (effectivePair doc).bg = (Design.ofDoc doc).bg) :=
+  ⟨rfl, fun h => by simp [effectivePair, h]⟩
+
+/-- The load-bearing form of F3, over every document: when the effective
+pair fails the AA text threshold and the ink is not declared decorative,
+`docDiags` reports — declared ink or defaulted, because
+`effectivePairDiags` judges the pair before the declared-use walk runs.
+The missing special case is now an impossibility, not a covered branch. -/
+theorem defaulted_ink_cannot_escape (doc : Doc)
+    (hdec : doc.palette.decorative.contains "fg" = false)
+    (hfail : contrastMilli (effectivePair doc).fg (effectivePair doc).bg < aaText) :
+    0 < (docDiags doc).size := by
+  have h1 : 0 < (effectivePairDiags doc).size := by
+    unfold effectivePairDiags
+    rw [hdec]
+    simp only [Bool.false_eq_true, ite_false, hfail, ite_true]
+    split <;> simp
+  simp only [docDiags, Array.size_append]
+  omega
 
 -- The built-in theme bundles, held to the same contract.
 

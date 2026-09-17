@@ -127,6 +127,42 @@ theorem), themed pages rastered and looked at (covered alert dims
 orange—or the fixture's declared pink—covered example dims teal, never
 one grey), bench medians 74/281/393 ms (baseline 79/290/396, noise).
 
+2026-09-17 — two mirrors closed: the head's missing band (F2) and the
+contract's blindness to a defaulted pair (F3), one slice because both are
+an invariant that existed for one case and not its reflection. F2: the
+footer's reservation had no top analogue — `headY = vmargin/2 + ascent`
+with nothing subtracted from the body area, so a tight declared `vmargin`
+collided the head with the first body line (the numbering slice's owed
+item above). The fix is the footer's own mechanism reflected, not a
+second one: `headBandFor` feeds `footBandFor` the head's ink extent
+below its half-margin line (ascent + descent, where the footer hangs its
+ascent alone), `Geom.bodyTop` mirrors `Geom.bodyBottom`, the one top-edge
+read (`B.placeLine`'s `firstY`) goes through it, `bodyTop_clears_head`
+mirrors `bodyBottom_clears_footer` with the same key inequality, and
+`slides_lines_survive_bands` proves both bands leave Tantau's 10–20 lines
+at the slide defaults for any running line up to two em of ink — a bound
+no spec provides (OS/2: "It is not a general requirement that
+sTypoAscender − sTypoDescender be equal to unitsPerEm"), so it is a
+declared coverage choice, with the shipped test faces pinned under it.
+The headroom fixture collides before the fix and clears after (rendered
+and looked at, both states); every other golden is byte-identical — at
+the default margins the band is zero. F3: `docDiags` judged only pairs
+the document spelled, so a declared dark page with the ink left defaulted
+shipped black-on-dark undiagnosed. The fix judges the *effective* pair:
+`effectivePair` reads the resolved design — and Layout now reads the same
+`Design.ofDoc` fields for its doc-level ink, page fill, and muted, so
+there is one resolving site (`judged_pair_is_shipped` pins fg
+definitionally) — and `docDiags = effectivePairDiags ++ declaredUseDiags`
+puts the judgment on a straight-line path, which is what lets
+`defaulted_ink_cannot_escape` quantify over every document: a failing
+effective pair that is not declared decorative always produces a
+diagnostic. A declared illegible fg keeps W0315; the defaulted-ink case
+is its own code (W0330, degraded) because its remedy differs: declare the
+ink, not the intent. Reintroducing the blindness breaks the theorem —
+the build fails before any test runs; with the theorem deleted too, the
+W0330 test catches it. An undeclared document is never diagnosed for the
+proven default pair.
+
 2026-09-17 — severity stops being a choice: it derives from a declared
 loss. The user's charge ("how come unsupported features are not Erroring
 out? … looks like you are generally taking shortcuts") audited out to one

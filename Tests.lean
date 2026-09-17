@@ -4947,6 +4947,31 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((warnCodes ("\\documentclass{article}" ++
       "\\palette{ fg = #999999, bg = #888888 }" ++
       "\\begin{document}x\\end{document}")).contains "W0315")
+  -- The effective pair (F3): the contract judges the pair the page ships,
+  -- not only the pair the document spelled. A declared dark page with the
+  -- ink left defaulted is black-on-dark in both backends — its own code
+  -- (W0330), because its remedy is declaring the ink; declaring a legible
+  -- ink silences it; a document that declares nothing ships the proven
+  -- default pair and is not diagnosed.
+  t "a declared dark page with a defaulted ink is diagnosed"
+    ((elabStr ("\\documentclass{article}\\palette{ bg = #18181B }" ++
+      "\\begin{document}x\\end{document}")).2.any fun d =>
+        d.code == "W0330" && (d.message.splitOn "defaulted").length == 2)
+  t "declaring a legible ink beside the dark page silences W0330"
+    (!(warnCodes ("\\documentclass{article}" ++
+      "\\palette{ fg = #FAFAF9, bg = #18181B }" ++
+      "\\begin{document}x\\end{document}")).contains "W0330")
+  t "an undeclared document is never diagnosed for its default pair"
+    (((elabStr "\\documentclass{article}\\begin{document}x\\end{document}").2.filter
+      fun d => d.code == "W0330" || d.code == "W0315").isEmpty)
+  t "a defaulted ink on an undeclared page is fine: no pairing exists to fail"
+    (!(warnCodes ("\\documentclass{article}\\palette{ washed = #DDDDDD }" ++
+      "\\begin{document}x\\end{document}")).contains "W0330")
+  t "a body use of the effective pair is not reported twice"
+    ((((elabStr ("\\documentclass{article}" ++
+      "\\palette{ fg = #999999, bg = #888888 }" ++
+      "\\begin{document}\\textcolor{fg}{x}\\end{document}")).2.filter
+        fun d => d.code == "W0315" || d.code == "W0330").size) == 1)
   t "the built-in themes raise no pairing warning"
     (!(warnCodes ("\\documentclass{slides}\\theme{moloch}\\begin{document}" ++
       "\\begin{frame}x\\end{frame}\\end{document}")).contains "W0315")

@@ -167,11 +167,14 @@ theorem slides_lines_in_band :
 and foot bands come from `headBandFor`/`footBandFor` keeps a positive body
 height, and Tantau's 10–20 lines (beamer user guide §5.6.1, the band
 `slides_lines_in_band` states for the bare stages) still holds between
-`bodyTop` and `bodyBottom`. The ink hypotheses allow each line two em of
-the base size — the OpenType spec leaves hhea ascender/descender to the
-font and typical line metrics sit at 1.0–1.3 em (the shipped test fonts
-are pinned under the bound in `Tests.lean`), so two em is generous cover,
-not a tuned constant. -/
+`bodyTop` and `bodyBottom`. The ink hypotheses allow each running line two
+em of the base size. That bound has no external authority to cite: the
+OpenType spec bounds no line metric — OS/2 `sTypoAscender`: "It is not a
+general requirement that sTypoAscender − sTypoDescender be equal to
+unitsPerEm", and the hhea ascender/descender the engine reads are the
+font's own — so two em is this engine's coverage choice, chosen generous
+against real faces (typical line metrics sit at 1.0–1.3 em; the shipped
+test faces are pinned under the bound in `Tests.lean`). -/
 theorem slides_lines_survive_bands (a d f : Sp)
     (h0a : 0 ≤ a) (h0d : 0 ≤ d) (h0f : 0 ≤ f)
     (hh : a + d ≤ 2 * Ir.slidesFontSize) (hf : f ≤ 2 * Ir.slidesFontSize)
@@ -2302,7 +2305,11 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
           headBandFor geom.vmargin (scale font.ascent) (scale (-font.descent)) }
     else geom
   let xHeight := scale font.xHeight
-  let cover := (Ir.Design.ofDoc doc).cover
+  -- The resolved design is the one resolving site for the document-level
+  -- colours (`Design.ofDoc`): the ink here is the ink `Contrast.docDiags`
+  -- judges (`judged_pair_is_shipped`), never a second `getD` chain.
+  let design := Ir.Design.ofDoc doc
+  let cover := design.cover
   let acc0 : Acc := { geom := geom, xHeight := xHeight, styles := doc.styles
                       slides := doc.docClass == "slides"
                       pal := doc.palette
@@ -2311,7 +2318,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
                       chromeL := if footAllowed then doc.chrome.footerLeft else none
                       chromeR := if footAllowed then doc.chrome.footerRight else none
                       footAllowed := footAllowed
-                      fg := (doc.palette.find? "fg").getD Ir.Color.black
+                      fg := design.fg
                       imgs := imgs }
   -- One handout page per overlay step, driven here at the top level: a
   -- multi-step frame collects once per step with pending content dimmed
@@ -2365,7 +2372,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     descent := scale (-font.descent)
     capHeight := scale font.capHeight
     xHeight := xHeight
-    docBg := doc.palette.find? "bg"
+    docBg := if design.bgDeclared then some design.bg else none
     diags := acc.diags
   }
   let mut b := b0
@@ -2519,8 +2526,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
               setWidth := w }, ds, cache)
   let headY := geom.vmargin / 2 + b0.ascent
   let footY := geom.pageH - geom.vmargin / 2
-  let mutedC := (doc.palette.find? "muted").getD
-    ((doc.palette.find? "fg").getD Ir.Color.black)
+  let mutedC := design.muted
   let mut out := pages
   let mut diags := b.diags
   let mut cache := acc.hyphCache
