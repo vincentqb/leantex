@@ -30,10 +30,12 @@ broken in parallel.
 (tex primary, markdown as sugar) and **two backends** (PDF and HTML,
 including slides).
 
-**Immediately next.** The rest of M5: overlays with dim-not-hide semantics,
-speaker notes, the ≈3 KB HTML deck controller, `--emit reveal`. The first
-coherent M5 slice landed 2026-09-16: frames, verbatim, title frames, and
-slides geometry, best-effort over a real beamer deck.
+**Immediately next.** The rest of M5: the ≈3 KB HTML deck controller
+(interactive stepping over the `data-step` attributes the IR already
+emits), the speaker window reading the note asides, `--emit reveal`. The
+frame furniture landed 2026-09-17: defined wrappers, `\centering`,
+columns, dim-not-hide overlays with the PDF page-per-step handout, and
+speaker notes as a side channel.
 
 **Open, tracked, not hidden.** `Elab.takeArgs`/`elabInlines`/`elabBlocks`
 are `partial` — three, not the two an earlier entry claimed; an audit found
@@ -46,6 +48,73 @@ real resume from matching its lualatex build exactly.
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-17 — the frame furniture a real deck is built from, in five units,
+each a construct that was a warning and is now a meaning:
+
+- `\newenvironment{name}[n][dflt]{begin}{end}` translates to a native
+  `\defineenv{name}(sig) {begin} {end}` exactly as `\newcommand` does to
+  `\define` (Compat's body flag became a scoped count of two). At
+  `\begin{name}` the parameters bind through the same `takeArgs`, then the
+  begin half, the content, and the end half each contribute — the halves
+  under the definition-time limits, which keeps expansion terminating and
+  makes self-reference impossible. Deleted W0104-def + W0302 + W0313 in one
+  move for any deck that defines wrappers. Built-in environment names
+  refuse redefinition with W0303. Divergence, deliberate: an inline half
+  beside block content becomes its own paragraph rather than fusing.
+- `\centering` is a declaration: a block boundary wrapping the rest of its
+  scope in `.center`, a scope group carrying it is a block scope (the brace
+  ends its reach), and it counts as a declaration for the par-splitting
+  rule, so it carries across `\par` like `\bfseries`. Divergence: text
+  earlier in a broken paragraph stays uncentred where LaTeX re-aligns the
+  whole paragraph. Inline positions keep W0108, now saying why.
+- `Block.columns` carries per-column widths as per mille of the text width
+  (`{0.5\textwidth}` spellings; W0314 and an equal share for anything
+  else). PDF: a new `Acc.measure` narrows the paragraph target, and flat
+  `colOpen`/`colNext`/`colClose` ops rewind the vertical position per
+  column through a save stack (`B.freshStart` reproduces the page-top
+  formula). Leftover measure: equal shares to widthless columns, else
+  equal gutters. HTML: a grid of percentage/fr tracks. Not modelled,
+  recorded: vertical alignment options (top only), absolute widths, a
+  column outliving its page, exact page-shrink bookkeeping inside columns,
+  the `\column` command spelling (still inert).
+- Overlays: `Inline.step`/`Block.step` carry visible-from-step content as
+  pure grouping. `\uncover`/`\visible`/`\only<n>{...}` (one dim semantics
+  for all three), `\item<n->`, and `\pause` (a block boundary numbering
+  cumulatively through `Ctx.stepBase`) elaborate to steps; `<+->`-style
+  specs keep W0105, now naming the spec. The PDF path expands each
+  multi-step frame to one page per step before layout (`Ir.expandOverlays`),
+  recolouring pending content to palette `covered` (default #A1A1AA — the
+  HTML muted token; declare `covered` to restyle). Only colours differ
+  between the copies, so no step reflows — the invariant holds by
+  construction and by test. HTML keeps one slide per frame with
+  `class="step" data-step="n"`, everything visible: the no-JS handout.
+  Recorded limits: `\onslide` reaches only its own paragraph, a
+  mid-paragraph `\pause` splits its paragraph, dimmed items keep black
+  bullets, range upper bounds are ignored, absolute specs do not
+  synchronise with `\pause` counting.
+- `\note` is `Block.note`, a side channel: omitted from the PDF handout
+  (the page is byte-identical to the same frame without it), an inert
+  hidden `<aside class="note">` in HTML for the coming speaker view. A
+  note opening a paragraph is a block in place; one met mid-sentence
+  stashes and drains to its frame's end, so the paragraph flows on
+  unbroken and nothing leaks. A note's body absorbs reserved characters
+  as beamer absorbs them — the acceptance deck writes code-ish
+  underscores in notes, and 17 E0311s said the elaborated-as-content
+  design was wrong before the fixture said it.
+
+Every unit carries a fixture + golden and a check shown failing before its
+change and re-broken once after (wrapper: lookup off, 7 failures;
+centering: boundary off, 4; columns: rewind off, the shared-baseline check;
+overlays: identity expansion, 3; notes: layout rendering them, 1; note
+absorption: off, 1). The combined `furniture.tex` deck renders to 6 PDF
+pages and 4 HTML slides, both rasterized and inspected. The private
+acceptance deck, PDF and HTML: 0 errors (17 before this batch, all E0311
+in notes), 62 pages each, 94/86 ms, warnings down to constructs genuinely
+outside this slice — beamer templating and fonts config (W0104/W0103,
+owned by the theming and font workers or M5b), one tikzpicture (W0307,
+M8), one table degradation (W0308, M8), one colour-mix key (W0304, M5b).
+
 
 2026-09-17 — fonts honour the faces a document names, and a missing glyph
 is set from another face instead of dropped. Three fixes in one area, each
