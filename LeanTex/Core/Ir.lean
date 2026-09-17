@@ -841,7 +841,7 @@ each slot carries its declared side, its content resolved by `footSlots`
 (the band never re-resolves), and its declared priority. Positions are the
 layout's, fixed per side (`Layout.bandSlotX`) — never derived from content —
 and on a collision the lower-rank slot yields by paint order, reported by
-name (W0332). -/
+name (W0333). -/
 def Chrome.footBand (c : Chrome) (frameFoot : Option (Array Inline))
     (sectionTitle : Array Inline) (n total : Nat) : Array BandSlot :=
   let (left, right) := c.footSlots frameFoot sectionTitle n total

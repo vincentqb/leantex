@@ -210,7 +210,7 @@ typed HTML tree (`HtmlDoc.emitTree`, split from `emit` so the tree is
 judgeable before render), and every declared list marker against what
 `::marker` can express; a mismatch passes only when a diagnostic from
 the naming set stands (W0007 physical furniture omitted from HTML,
-W0330 marker substituted, W0331 sequences mixed). Per fact, both
+W0331 marker substituted, W0332 sequences mixed). Per fact, both
 backends now consume one resolving function, so they can only diverge
 by rendering, never by resolving: `Ir.Chrome.footSlots`/`footLine`
 (moloch's own footline row, beamerouterthememoloch.dtx:216-228 — left
@@ -223,11 +223,11 @@ glue via `lineStart` (written for broken-off paragraph lines; a running
 line's leading fill is content) — theorems
 `footSlots_right_ignores_left`/`footLine_eq_slots` state the slot
 layout is a function of the declaration. F1's residual (a marker HTML
-cannot express) is W0330, warning, naming the backend and key;
+cannot express) is W0331, warning, naming the backend and key;
 `markerCss?_text` proves expressed content is exactly the declared
 characters. F4 (a `\framefoot{p. \pagenumber}` beside the theme's frame
 slot) is declarable, not prevented: `Doc.chromeDeclared` records the
-author naming their own `\chrome`, undeclared mixing warns W0331
+author naming their own `\chrome`, undeclared mixing warns W0332
 naming both sequences, and the fusion direction is closed by theorems
 (`frame_sequence_carries_no_physical`, `substPage_id`,
 `substPage_leaves_frame_slot`: the physical pass rewrites exactly the
@@ -261,7 +261,7 @@ geometry; the empty-left case is deleted, not fixed). The order:
 both sides) by side (`rank_ne_of_side_ne`), so which slot yields is a
 fact of the declaration. Yielding is paint order: the PDF pushes the
 lower rank first (under), the HTML carries `z-index` = rank per span
-with each span pinned to its declared edge; both report W0332
+with each span pinned to its declared edge; both report W0333
 (degraded — the ink is present, not as declared) naming the yielded and
 the displacing slot; the per-slot wrap keeps W0328. Verified on the
 reference deck: the frame number's xMax is 425.197pt (the right margin)
