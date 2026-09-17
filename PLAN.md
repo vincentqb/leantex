@@ -49,6 +49,51 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — M5b's first slice: a theme is a token bundle, and `\theme`
+selects one. `Theme.lean` holds each bundle as declaration bodies in the
+surface language — palette, tokens, element styles — applied at the
+`\theme` site through the same code paths the document's own declarations
+use; `\palette` and `\tokens` now replace on redeclare, so everything
+after the site overrides and a theme is a default, never a lock. Two
+bundles ship: `moloch` (the Metropolis lineage's light preset mapped onto
+the semantic keys) and `plain`; a third theme is one more table of
+values. The semantic keys are the whole backend contract: `fg`/`bg`
+colour body text and page, declaring `frametitlebg` turns the frame
+title into a full-width colour bar, `progressfg`/`progressbg` draw the
+section page's progress bar (width = frames seen over total, thickness
+the `progressheight` token), and `standoutfg`/`standoutbg` invert a
+`[standout]` frame — now in the IR (`Block.frame` carries the flag),
+centred and Large bold on its own page, defaulting to the inverse of the
+page's own colours when the keys are absent. Layout pages gained fills
+the PDF paints before the text object; the HTML stylesheet gained the
+same rules keyed on the same palette entries, so both backends read one
+design. xcolor's `!` mixing landed with it (`black!2`,
+`progressfg!50!black!30` in the bundle, `fg!50!bg` at use sites, with
+`fg`/`bg` naming the current semantic foreground and background), because
+the moloch palette and the reference deck both write it; a mix that
+cannot resolve still warns W0304. Compat rewrites `\usetheme{name}` to
+`\theme{name}` and, for a known bundle, `\alert` to `\textcolor{alert}`;
+an unknown name warns W0314 naming the bundles, and the remaining W0104
+skips (`\setbeamercolor`, `\setbeamerfont`, `\setbeamertemplate`,
+`\usecolortheme`, `\usefonttheme`) name their native spellings in help.
+`tests/corpus/themed.tex` is the end-to-end fixture (theme through
+compat, a document override, a mixed colour, bar, section page,
+standout), with per-element checks each shown failing before its code
+and re-broken once after. Found by those tests: `B.commit` rebuilt the
+current page with only its lines, so every fill placed before another
+line vanished — fixed to the invariant that what the walk attaches to a
+page survives to that page's output. Measured: bench medians 78/276/376
+ms against 73/283/379 at the base commit, same session (noise); the
+private deck 52 pages, 0 errors, 34 → 32 warnings (the `\usetheme` skip
+and the mixed-colour W0304 are gone), ~86 ms per backend, and its frame
+pages raster with the title bar and tinted page. Recorded, not done:
+`\palette[dark]` variants and the contrast assertions the milestone
+names; per-frame `framefooter`/`framelogo` environments (the deck's
+`\newenvironment` forms still warn; a document-wide `\runningfoot` is
+the near spelling); the title-page separator rule (`separator` is
+declared, unread); and the frame-title bar's padding follows the body
+font size rather than moloch's strut geometry.
+
 2026-09-17 — the frame furniture a real deck is built from, in five units,
 each a construct that was a warning and is now a meaning:
 

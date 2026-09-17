@@ -27,6 +27,8 @@ inductive Cmd where
   | hyphenate (words : List String) (file : Option String)
   /-- List installed font families, one per line. -/
   | fonts
+  /-- List the built-in theme bundles, one per line. -/
+  | themes
   deriving Repr, BEq
 
 structure Config where
@@ -186,6 +188,7 @@ def parse (argv : List String) : Except String Config := do
             | "version" => cmd := some .version
             | "hyphenate" => cmd := some (.hyphenate [] none)
             | "fonts" => cmd := some .fonts
+            | "themes" => cmd := some .themes
             | "build" | "dump" => wantsFile := some a
             | _ =>
               -- The file is the command: `leantex doc.tex` builds it.
@@ -271,6 +274,7 @@ commands:
   dump <file>             print the elaborated document structure (debugging)
   hyphenate <word>...     show hyphenation points (--file <path> for a list)
   fonts                   list the font families leantex can see
+  themes                  list the built-in theme bundles (\\theme{name})
   version · help
 
 flags:

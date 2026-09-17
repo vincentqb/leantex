@@ -64,7 +64,11 @@ Open Sans — see the license files there), so they build on any machine:
 `declared.tex`, `layout.tex`, and `paragraphs.tex` name no font and take the
 machine's default sans. `talk.tex` and `deck.tex` are slide decks: each
 frame is one `<section>` of the HTML deck and one page of the PDF handout.
-`theme-modern.tex` sketches the M5b theme bundle and does not build yet.
+`themed.tex` selects the built-in `moloch` theme (`leantex themes` in help:
+`\usetheme{moloch}` or `\theme{moloch}`; `plain` is the quieter bundle) and
+shows the frame-title bar, a section page with its progress bar, and a
+standout frame. `theme-modern.tex` sketches the rest of the M5b bundle
+(dark variant, chrome) and does not build yet.
 
 Builds and runs on Linux and macOS. On the Amazon Linux 2 host the engine is
 developed on, the `LEAN_CC`/`LIBRARY_PATH` exports in AGENTS.md work around an

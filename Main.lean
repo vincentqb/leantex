@@ -553,3 +553,8 @@ def main (argv : List String) : IO UInt32 := do
       for f in FontDb.families faces do
         IO.println f
       return 0
+    | .themes =>
+      -- The answer to "what may \\theme name here": one bundle per line.
+      for th in Theme.builtin do
+        IO.println th.name
+      return 0
