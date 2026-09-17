@@ -603,7 +603,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       #[("data-backend", String.intercalate "," targets.toList)]
   | .nav body =>
     -- The navigation landmark (ARIA's `navigation` role comes with the
-    -- element itself); `emit` diagnoses a second unlabeled one (W0322).
+    -- element itself); `emit` diagnoses a second unlabeled one (W0325).
     Html.elem "nav" (blockNodesInto cfg #[] body.toList)
   | .logo _ =>
     -- Paged-media furniture; `blockNodesInto` skips it (and `emit` says
@@ -635,6 +635,37 @@ def listItem (cfg : Config) : List Block → Array Node
   | [.para content] => inlines cfg content
   | [] => #[]
   | b :: rest => blockNodesInto cfg #[blockNode cfg b] rest
+
+end
+
+/-- Facts of the emitted tree that the landmark and anchor checks judge:
+the `<nav>` landmarks, the `id` anchors, and the in-page link targets
+(`href="#..."`), collected in one walk over the typed tree. The artifact is
+judged, never the IR — a backend conditional may have dropped a nav or an
+anchor on the way here, and only the tree knows what this page carries. -/
+private structure PageFacts where
+  ids : Array String := #[]
+  fragmentRefs : Array String := #[]
+  navs : Nat := 0
+
+mutual
+
+private def pageFactsOne (acc : PageFacts) : Node → PageFacts
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ => acc
+  | .elem tag attrs kids =>
+    let acc := if tag == "nav" then { acc with navs := acc.navs + 1 } else acc
+    let acc := attrs.foldl (init := acc) fun a kv =>
+      if kv.1 == "id" then { a with ids := a.ids.push kv.2 }
+      else if kv.1 == "href" && kv.2.startsWith "#" then
+        { a with fragmentRefs := a.fragmentRefs.push kv.2 }
+      else a
+    pageFactsList acc kids.toList
+
+private def pageFactsList (acc : PageFacts) : List Node → PageFacts
+  | [] => acc
+  | k :: rest => pageFactsList (pageFactsOne acc k) rest
 
 end
 
@@ -809,6 +840,42 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
   if let some tool := cfg.mathBoundary then
     body := body.push (Html.elem "script" #[]
       #[("data-math-boundary", tool), ("src", tool)])
+  -- The landmark and anchor contracts, judged over the emitted tree.
+  let facts := pageFactsList {} body.toList
+  if facts.navs > 1 then
+    -- One unlabeled landmark per role: "if a specific landmark role is
+    -- used more than once on a page, provide each instance a unique label"
+    -- (W3C ARIA Authoring Practices, Landmark Regions, Step 3 and the
+    -- Navigation role). The engine has no label mechanism yet, so a second
+    -- unlabeled <nav> is indistinguishable to assistive technology.
+    diags := diags.push {
+      severity := .warning
+      code := "W0325"
+      message := s!"{facts.navs} <nav> landmarks on one page are \
+indistinguishable to assistive technology"
+      help := some "keep one {nav}; repeated landmarks need unique labels \
+(ARIA Authoring Practices, Landmark Regions), which are not modelled yet" }
+  -- Every navigation target exists: an in-page link resolves to an anchor
+  -- this page emits, or it is named here rather than shipped broken. '#'
+  -- and any-ASCII-case 'top' always resolve — the HTML spec's fragment
+  -- navigation scrolls both to the top of the document ("select the
+  -- indicated part": an empty fragment, or a decoded fragment that is an
+  -- ASCII case-insensitive match for 'top').
+  let mut checked : Array String := #[]
+  for fref in facts.fragmentRefs do
+    let frag := (fref.drop 1).toString
+    let isTop := frag.isEmpty || frag.map Char.toLower == "top"
+    unless isTop || facts.ids.contains frag || checked.contains fref do
+      checked := checked.push fref
+      diags := diags.push {
+        severity := .warning
+        code := "W0326"
+        message := s!"in-page link '{fref}' has no target anchor on this page"
+        help := some (if facts.ids.isEmpty then
+            "no anchors are emitted; level-1 section titles become ids in \
+the article class"
+          else s!"anchors on this page: \
+{String.intercalate ", " (facts.ids.toList.map ("#" ++ ·))}") }
   return (Html.document cfg.lang head body, diags)
 
 end LeanTex.Core.HtmlDoc

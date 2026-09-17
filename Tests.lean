@@ -845,6 +845,51 @@ def backendChecks (ref : IO.Ref (List String)) : IO Unit := do
     (errCodes ("\\documentclass{article}\\begin{document}" ++
       "\\begin{ifbackend}text\\end{ifbackend}\\end{document}") == ["E0304"])
 
+/-- The navigation landmark and its two artifact-judged contracts: at most
+one unlabeled `<nav>` per page (W0325 — ARIA Authoring Practices, Landmark
+Regions: a repeated landmark role needs unique labels, and the engine has
+no label mechanism yet) and every in-page link resolving to an anchor the
+page emits (W0326 — with '#' and any-ASCII-case '#top' exempt, which the
+HTML spec's fragment navigation scrolls to the top of the document). Both
+judged over the emitted tree, never the IR: a backend conditional may keep
+a nav on one surface only, and only the tree knows what this page carries.
+Invented content. -/
+def landmarkChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let has (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+  let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\begin{nav}\\href{#field-notes}{Notes} \\href{#top}{Top}\\end{nav}" ++
+    "\\section*{Field Notes}Body text.\\end{document}")
+  let (page, pds) := HtmlDoc.emit {} doc
+  t "nav source and page are clean" (ds.isEmpty && pds.isEmpty)
+  t "nav emits the landmark element around its links"
+    (has page "<nav>" && has page "</nav>" && has page "<a href=\"#field-notes\""
+      && has page "<section id=\"field-notes\">")
+  t "markdown keeps a nav's content transparent"
+    (has (MarkdownDoc.emit doc) "[Notes](#field-notes)")
+  let (two, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\begin{nav}\\href{#a-head}{A}\\end{nav}\\begin{nav}\\href{#a-head}{B}\\end{nav}" ++
+    "\\section*{A Head}x\\end{document}")
+  t "a second nav landmark warns"
+    (((HtmlDoc.emit {} two).2.filter (·.code == "W0325")).size == 1)
+  let (kept, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\begin{nav}\\href{#a-head}{A}\\end{nav}" ++
+    "\\begin{ifbackend}{pdf}\\begin{nav}\\href{#a-head}{B}\\end{nav}\\end{ifbackend}" ++
+    "\\section*{A Head}x\\end{document}")
+  t "a nav another backend owns does not count against this page"
+    (((HtmlDoc.emit {} kept).2.filter (·.code == "W0325")).size == 0)
+  let (dangle, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\href{#nowhere}{broken} \\href{#nowhere}{again} \\href{#}{up} " ++
+    "\\href{#TOP}{Top}\\section*{Somewhere}x\\end{document}")
+  let ddiags := ((HtmlDoc.emit {} dangle).2.filter (·.code == "W0326"))
+  t "a dangling in-page link is diagnosed once, by name, with the anchors"
+    (ddiags.size == 1 &&
+     ddiags.all (fun d => (d.message.splitOn "#nowhere").length > 1 &&
+       ((d.help.getD "").splitOn "#somewhere").length > 1))
+  t "the spec's top fragments resolve without anchors"
+    (!ddiags.any fun d =>
+      (d.message.splitOn "#TOP").length > 1 || (d.message.splitOn "'#'").length > 1)
+
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
 around the content, and nothing warns. Its own function: `main` is one `do`
 block and its elaboration budget is spent. -/
@@ -1121,6 +1166,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   anchorChecks ref
   markdownChecks ref
   backendChecks ref
+  landmarkChecks ref
 
 /-- A synthetic face for resolution-order tests: pure data, no host fonts. -/
 def synthFace (family : String) (path : String := "") : FontDb.Face :=
@@ -3476,6 +3522,8 @@ def diagRegistry : List (String × String) := [
   ("W0319", "unknown theme; the document is unthemed"),
   ("W0323", "unknown backend name in \\begin{ifbackend}; ignored"),
   ("W0324", "\\begin{ifbackend} content addressed to no backend"),
+  ("W0325", "more than one <nav> landmark on one page"),
+  ("W0326", "in-page link with no target anchor on the page"),
   ("W0315", "low-contrast colour pairing (WCAG 2.2)"),
   ("W0316", "unknown option in \\palette; block skipped"),
   ("W0317", "a card carries no running head or foot; declaration dropped"),
