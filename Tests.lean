@@ -4148,6 +4148,15 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "the title page never hyphenates"
         (!hyphens (Elab.run "t" ("\\documentclass{slides}\\begin{document}" ++
           "\\title{incomprehensibility}\\maketitle\\end{document}")).1)
+      -- Display type sets ragged: justification without hyphenation would
+      -- stretch a short display line across the whole measure (Butterick,
+      -- "Justified text"; moloch's title templates are \raggedright).
+      let (jhDoc, _) := Elab.run "t"
+        "\\section{one two six ten oak elm fir ash}\n\nbody text"
+      let headLines := (Layout.run narrow oneFace (some pats) jhDoc).pages.flatMap
+        (·.lines) |>.filter (·.size == Dim.pt 14)
+      t "a wrapped heading is ragged, not justified"
+        (headLines.size ≥ 2 && headLines.all (·.setWidth < narrow.textWidth))
       t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
       -- Scale must survive the dedup: W0005 is spanless, so the count is
       -- the only signal of how much of the document overflowed.

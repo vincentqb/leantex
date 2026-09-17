@@ -1368,17 +1368,22 @@ def sectionSize (geom : Geom) : Nat → Sp
   | _ => geom.fontSize
 
 /-- Display type: headings, frame titles, section-page and standout text.
-Display is not body text and is never hyphenated (Butterick, Practical
+Display is not body text: it is never hyphenated (Butterick, Practical
 Typography, "Hyphenation": suppress automatic hyphenation where lines are
 short — headings foremost — because a break there costs more than it
-saves). The door takes no patterns at all, so no heading path can
-hyphenate by construction — the invariant is the signature. -/
+saves), and therefore never justified either (Butterick, "Justified
+text": justification without hyphenation leaves the breaker only word
+spaces, and a two-word display line stretches across the whole measure;
+moloch's own title and title-page templates are `\raggedright`). The
+door takes no patterns and forces ragged, so no heading path can do
+either by construction — the invariant is the signature. -/
 private def collectDisplay (a : Acc) (fs : FontSet)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
     (rule : Option (Sp × Ir.Color) := none) : Acc :=
-  collectPara a none fs inlines indent center size (baseStyle := baseStyle)
-    (rule := rule)
+  let sub := collectPara { a with geom := { a.geom with justify := false } }
+    none fs inlines indent center size (baseStyle := baseStyle) (rule := rule)
+  { sub with geom := a.geom }
 
 -- Block walk. Mutual recursion through `List` so the nested calls are
 -- structural: no `partial`, and the shape mirrors the IR.
@@ -1687,9 +1692,13 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- moves the body below it, never the title (beamer's frametitle).
     let a := if title.isEmpty then a else { a with ops := a.ops.push .pin }
     -- A golden frame is the title page (only \maketitle declares golden),
-    -- and everything on it is display furniture: titles never hyphenate.
-    let pats := if valign matches .golden then none else pats
-    let a := collectBlocks a pats fs body indent
+    -- and everything on it is display furniture: titles never hyphenate
+    -- and never justify (collectDisplay's rule, through the declaration).
+    let a := if valign matches .golden then
+        let sub := collectBlocks { a with geom := { a.geom with justify := false } }
+          none fs body indent
+        { sub with geom := a.geom }
+      else collectBlocks a pats fs body indent
     a.pageBreak
 
 end
