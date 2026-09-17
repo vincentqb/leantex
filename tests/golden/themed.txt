@@ -1,0 +1,51 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 25.512 hmargin 28.346
+font dir "fonts"
+font body "Open Sans"
+font mono "Source Code Pro"
+palette fg #23373B
+palette bg #FAFAFA
+palette example #008080
+palette frametitlefg #FAFAFA
+palette frametitlebg #23373B
+palette progressfg #EB811B
+palette progressbg #D6C6B7
+palette separator #EB811B
+palette standoutfg #FAFAFA
+palette standoutbg #23373B
+palette alert #C2185B
+token progressheight 1pt
+meta title "A Themed Deck"
+meta author "Pat Placeholder"
+frame
+  center
+    para
+      styled size:LARGE
+        styled bold
+          text "A Themed Deck"
+    para
+      text "Pat Placeholder"
+section 1
+  text "Bundles"
+frame
+  title
+    text "A theme is data"
+  list unordered
+    item
+      para
+        text "Palette, tokens, and element styles: a table of values."
+    item
+      para
+        color alert #C2185B
+          text "An overridden accent"
+        text " and "
+        color #8F999B
+          text "a mixed colour"
+        text "."
+frame standout
+  para
+    text "One language, two backends."
+-- diagnostics
+note[N0100] 6:1 \documentclass{beamer} → \documentclass[aspectratio=169]{slides}
+note[N0100] 8:1 \usetheme → \theme{moloch}
+note[N0100] 31:11 \alert → \textcolor{alert}

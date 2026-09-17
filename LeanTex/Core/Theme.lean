@@ -1,0 +1,60 @@
+import LeanTex.Core.Ir
+
+namespace LeanTex.Core.Theme
+
+/-- A theme is data: declaration bodies in the surface language, applied at
+the `\theme` site exactly as if the document had written them. A document's
+own later declarations override (palette and tokens replace on redeclare),
+so a theme is a default, never a lock — and a new theme is a new table
+here, values only, no code. The semantic palette keys are the whole
+contract with the backends: `fg`/`bg` colour text and page, declaring
+`frametitlebg` turns the frame title into a colour bar, `progressfg`/`bg`
+draw the section-page progress bar (`progressheight` sizes it), and
+`standoutfg`/`bg` invert a `[standout]` frame. -/
+structure Theme where
+  name : String
+  /-- `\palette{...}` body. -/
+  palette : String
+  /-- `\tokens{...}` body. -/
+  tokens : String
+  /-- `\style{element}{...}` bodies, element first. -/
+  styles : List (String × String)
+
+/-- The Metropolis lineage as a token bundle: an inverted frame-title bar,
+one warm accent, a near-white page. Values map the moloch beamer theme's
+light preset onto the semantic keys, mixes included. -/
+def moloch : Theme := {
+  name := "moloch"
+  palette :=
+    "fg = #23373B, bg = black!2, alert = #EB811B, example = #008080, " ++
+    "frametitlefg = bg, frametitlebg = fg, progressfg = alert, " ++
+    "progressbg = progressfg!50!black!30, separator = progressfg, " ++
+    "standoutfg = bg, standoutbg = fg"
+  tokens := "progressheight = 1pt"
+  styles := [("frametitle", "font = {\\large\\bfseries}"),
+             ("sectionpage", "font = {\\Large\\bfseries}"),
+             ("standout", "font = {\\Large\\bfseries}")]
+}
+
+/-- A quieter default: near-black ink on white, one restrained accent, no
+title bar — frame titles set as plain bold headings because the bar key is
+simply absent. A third theme costs exactly one more table like this. -/
+def plain : Theme := {
+  name := "plain"
+  palette :=
+    "fg = #1B1B1F, bg = #FFFFFF, alert = #B3261E, example = #205E3B, " ++
+    "progressfg = fg!60, progressbg = fg!15, separator = fg!40, " ++
+    "standoutfg = bg, standoutbg = fg"
+  tokens := "progressheight = 1pt"
+  styles := [("sectionpage", "font = {\\Large\\bfseries}"),
+             ("standout", "font = {\\Large\\bfseries}")]
+}
+
+def builtin : List Theme := [moloch, plain]
+
+def find? (name : String) : Option Theme :=
+  builtin.find? (·.name == name)
+
+def names : List String := builtin.map (·.name)
+
+end LeanTex.Core.Theme

@@ -1,5 +1,6 @@
 import LeanTex.Core.Lex
 import LeanTex.Core.Parse
+import LeanTex.Core.Theme
 import LeanTex.Core.Decl
 import LeanTex.Core.Ir
 
@@ -45,16 +46,27 @@ def inert : List (String × Nat) :=
 
 /-- Beamer configuration commands: how many `{...}` arguments each carries.
 The engine has no beamer templating layer, so each is skipped whole — the
-construct, its options, and its arguments — with one warning naming it. What
-must never happen is the arguments leaking into elaboration as stray content
-(that was an E0313 cascade per construct). -/
+construct, its options, and its arguments — with one warning naming it (and
+its native spelling, where one exists). What must never happen is the
+arguments leaking into elaboration as stray content (that was an E0313
+cascade per construct). `\usetheme` is not here: it rewrites to `\theme`. -/
 def beamerConfig : List (String × Nat) :=
-  [("usetheme", 1), ("usecolortheme", 1), ("usefonttheme", 1),
+  [("usecolortheme", 1), ("usefonttheme", 1),
    ("setbeamercovered", 1), ("setbeameroption", 1),
    ("setbeamertemplate", 2), ("addtobeamertemplate", 3),
    ("setbeamerfont", 2), ("setbeamercolor", 2),
    ("beamertemplatenavigationsymbolsempty", 0),
    ("logo", 1), ("titlegraphic", 1)]
+
+/-- The native spelling a skipped beamer construct now has, named in its
+warning's help: a warning the author can act on beats a dead end. -/
+def beamerNative : List (String × String) :=
+  [("usecolortheme", "\\theme{name} selects a token bundle; \\palette overrides its entries"),
+   ("usefonttheme", "\\fonts selects families; \\style{element}{ font = {...} } styles one element"),
+   ("setbeamercolor", "declare the colour with \\palette{ name = #RRGGBB }"),
+   ("setbeamerfont", "declare it with \\style{element}{ font = {...} }"),
+   ("setbeamertemplate", "\\style{element}{...} styles elements; \\runningfoot sets a frame footer"),
+   ("addtobeamertemplate", "\\style{element}{...} styles elements; \\runningfoot sets a frame footer")]
 
 private structure St where
   file : String
@@ -70,6 +82,9 @@ private structure St where
   and end halves. Scoped: descending into a group consumes one and shields
   the count from the group's own definitions. -/
   bodyNext : Nat := 0
+  /-- A `\usetheme` was seen: `\alert` then maps to the theme's alert colour
+  rather than the unthemed bold stand-in. -/
+  themed : Bool := false
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -642,8 +657,26 @@ where
       s!"TeX conditional ('\\{name}' … '\\fi') is not supported; skipped whole" pos
     return some (#[], k)
   | "alert" =>
-    became "\\alert" "\\textbf" pos
-    return some (#[.ctrl "textbf" pos], start)
+    -- Themed, alert is a colour, as in beamer; unthemed there is no alert
+    -- colour and bold is the stand-in.
+    if (← get).themed then
+      became "\\alert" "\\textcolor{alert}" pos
+      return some (← synthAt "\\textcolor{alert}" pos, start)
+    else
+      became "\\alert" "\\textbf" pos
+      return some (#[.ctrl "textbf" pos], start)
+  | "usetheme" =>
+    let (_, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    let native := s!"\\theme\{{tname}}"
+    became "\\usetheme" native pos
+    -- Only a theme the engine ships turns the themed mappings on: an
+    -- unknown name leaves the document unthemed (W0314 says so), and
+    -- \alert keeps its unthemed bold stand-in.
+    if (Theme.find? tname).isSome then
+      modify fun st => { st with themed := true }
+    return some (← synthAt native pos, k)
   | "nolinkurl" =>
     -- Its group stays in the stream: the URL renders as its own text.
     became "\\nolinkurl" "the URL as plain text" pos
@@ -677,8 +710,9 @@ where
       let (_, k) := takeGroups raws j n
       sayOnce ("beamer:" ++ name) .warning "W0104"
         s!"'\\{name}' is beamer configuration the engine does not have; skipped" pos
-        (help := "a theme is a token bundle here (M5b): \\palette and \\tokens \
-declare the design directly")
+        (help := (beamerNative.lookup name).getD
+          "a theme is a token bundle here: \\theme selects one, and \\palette \
+and \\tokens declare the design directly")
       return some (#[], k)
     | none =>
     match inert.lookup name with

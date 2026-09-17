@@ -3,6 +3,7 @@ import LeanTex.Core.Parse
 import LeanTex.Core.Ir
 import LeanTex.Core.Dim
 import LeanTex.Core.Decl
+import LeanTex.Core.Theme
 import LeanTex.Core.Compat
 
 namespace LeanTex.Core.Elab
@@ -111,7 +112,8 @@ def reservedCtrl : List (String × String) :=
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 def declCtrl : List String :=
-  ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output"]
+  ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
+   "theme"]
 
 /-- Preamble declarations that take one group of *inline content* rather than
 a key/value block: running head and foot. -/
@@ -2153,7 +2155,27 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           | some (.group body _) =>
             i := j + 1
             let src := rawSrc body
-            if name == "assert" then
+            if name == "theme" then
+              -- A theme is a named bundle of declarations in the surface
+              -- language, applied here as if the document had written them.
+              -- Everything after this site overrides: the theme is a
+              -- default, never a lock.
+              let tname := src.trimAscii.toString
+              match Theme.find? tname with
+              | some th =>
+                let pal ← applyPalette ctx palette th.palette pos
+                palette := pal
+                ctx := { ctx with palette := pal }
+                let tk ← applyTokens ctx tokens th.tokens pos
+                tokens := tk
+                ctx := { ctx with tokens := tk }
+                for (element, styleSrc) in th.styles do
+                  styles ← applyStyle ctx styles element styleSrc pos
+              | none =>
+                diag ctx "W0314" s!"unknown theme '{tname}'; the document is unthemed"
+                  (some pos)
+                  (help := s!"themes: {String.intercalate ", " Theme.names}") .warning
+            else if name == "assert" then
               if let some a ← parseAssert ctx src pos then
                 asserts := asserts.push a
             else if name == "output" then

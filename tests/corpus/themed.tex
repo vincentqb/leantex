@@ -1,0 +1,39 @@
+% Invented themed deck exercising M5b end to end: \usetheme selecting a
+% built-in token bundle through the compat layer, the document overriding a
+% theme entry afterwards, colour mixing at a use site, the frame-title bar,
+% a section page with its progress bar, and a standout closing frame.
+% Nothing here derives from any private document.
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{moloch}
+
+\fonts{
+  dir = "fonts",
+  body = "Open Sans",
+  mono = "Source Code Pro",
+}
+
+% The theme is a default: this overrides its accent, and only its accent.
+\palette{ alert = #C2185B }
+
+\title{A Themed Deck}
+\author{Pat Placeholder}
+
+\begin{document}
+
+\maketitle
+
+\section{Bundles}
+
+\begin{frame}{A theme is data}
+  \begin{itemize}
+    \item Palette, tokens, and element styles: a table of values.
+    \item \alert{An overridden accent} and \textcolor{fg!50!bg}{a mixed colour}.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[standout]
+  One language, two backends.
+\end{frame}
+
+\end{document}

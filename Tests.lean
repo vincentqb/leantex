@@ -46,7 +46,8 @@ def warnCodes (s : String) : List String :=
 
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
-   "links", "resume", "talk", "deck", "latex-idioms", "wrapper", "centering", "columns", "overlays", "notes", "furniture"]
+   "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
+   "centering", "columns", "overlays", "notes", "furniture"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -616,12 +617,18 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- options, arguments — with one warning naming it. It must never leak its
   -- arguments into elaboration as stray content (that was an E0313 per
   -- construct, an error cascade from a preamble the body never needed).
+  -- \usetheme is no longer skipped: it rewrites to \theme (M5b).
   let beamerPre := pre ("\\usetheme{moloch}\\usefonttheme{professionalfonts}" ++
     "\\setbeamercovered{transparent}\\addtobeamertemplate{block begin}{}{\\smallskip}" ++
     "\\setbeameroption{hide notes}")
   t "compat beamer config skipped without errors" (errCodes beamerPre == [])
   t "compat beamer config warns once per construct"
-    ((warnCodes beamerPre).length == 5 && (warnCodes beamerPre).all (· == "W0104"))
+    ((warnCodes beamerPre).length == 4 && (warnCodes beamerPre).all (· == "W0104"))
+  t "compat usetheme selects the bundle instead of warning"
+    ((elabStr beamerPre).1.palette.find? "frametitlebg" |>.isSome)
+  t "compat beamer warnings name the native spelling"
+    ((elabStr (pre "\\setbeamercolor{normal text}{fg=black}")).2.any fun d =>
+      d.code == "W0104" && ((d.help.getD "").splitOn "\\palette").length == 2)
   t "compat tex conditional skipped whole, contents included"
     (warnCodes (pre "\\ifdefined\\x\\usepackage{pgfpages}\\setbeameroption{notes}\\fi") ==
       ["W0104"])
@@ -2935,6 +2942,70 @@ def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "palette redeclare keeps one entry"
     ((oDoc.palette.entries.filter (·.1 == "a")).size == 1)
 
+/-- `\theme` and the built-in bundles: a theme is data applied through the
+same declarations a document writes, and everything after the site
+overrides it. -/
+def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let deck (pre body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n" ++ pre ++
+    "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let (mDoc, mDs) := elabStr (deck "\\theme{moloch}" "\\begin{frame}{T}\nx\n\\end{frame}")
+  t "theme moloch source clean" mDs.isEmpty
+  t "theme moloch declares the semantic keys"
+    (["fg", "bg", "alert", "frametitlefg", "frametitlebg", "progressfg",
+      "progressbg", "standoutfg", "standoutbg"].all
+      fun k => (mDoc.palette.find? k).isSome)
+  t "theme moloch resolves its own mixes"
+    (mDoc.palette.find? "bg" == some ⟨0xFA, 0xFA, 0xFA⟩ &&
+     mDoc.palette.find? "frametitlebg" == some ⟨0x23, 0x37, 0x3B⟩ &&
+     mDoc.palette.find? "progressbg" == some ⟨0xD6, 0xC6, 0xB7⟩)
+  t "theme moloch declares the progress token"
+    (((mDoc.tokens.find? "progressheight").map (·.width)) ==
+      some (Dim.Length.ofSp (Dim.pt 1)))
+  t "theme moloch styles the frame title"
+    ((mDoc.styles.find? "frametitle").bind (·.font) |>.isSome)
+  -- The theme is a default: a later declaration replaces its entry, and
+  -- only that entry.
+  let (oDoc, _) := elabStr (deck "\\theme{moloch}\\palette{ alert = #C2185B }"
+    "\\begin{frame}{T}\nx\n\\end{frame}")
+  t "a document overrides the theme"
+    (oDoc.palette.find? "alert" == some ⟨0xC2, 0x18, 0x5B⟩ &&
+     oDoc.palette.find? "frametitlebg" == some ⟨0x23, 0x37, 0x3B⟩)
+  -- The second bundle is a table of values, not new code: plainer keys,
+  -- no title bar because the key is simply absent.
+  let (pDoc, pDs) := elabStr (deck "\\theme{plain}" "\\begin{frame}{T}\nx\n\\end{frame}")
+  t "theme plain source clean" pDs.isEmpty
+  t "theme plain has no title bar key" ((pDoc.palette.find? "frametitlebg").isNone)
+  t "theme plain still inverts standout"
+    (pDoc.palette.find? "standoutbg" == pDoc.palette.find? "fg")
+  -- Unknown names warn and leave the document unthemed.
+  let (uDoc, uDs) := elabStr (deck "\\theme{vaporwave}" "x")
+  t "unknown theme warns naming the bundles"
+    (uDs.any fun d => d.code == "W0314" &&
+      ((d.help.getD "").splitOn "moloch").length == 2 &&
+      ((d.help.getD "").splitOn "plain").length == 2)
+  t "unknown theme leaves the palette empty" (uDoc.palette.entries.isEmpty)
+  -- \alert through the compat layer: a colour when themed, bold when not.
+  let (aDoc, _) := elabStr (deck "\\usetheme{moloch}"
+    "\\begin{frame}{T}\n\\alert{hot}\n\\end{frame}")
+  t "themed alert is the alert colour"
+    (match aDoc.body with
+     | #[.frame _ _ body] => body.any fun b => match b with
+        | .para xs => xs.any fun x => match x with
+          | .colored c (some "alert") _ => c == ⟨0xEB, 0x81, 0x1B⟩
+          | _ => false
+        | _ => false
+     | _ => false)
+  t "unthemed alert stays bold"
+    (match (elabStr (deck "" "\\begin{frame}{T}\n\\alert{hot}\n\\end{frame}")).1.body with
+     | #[.frame _ _ body] => body.any fun b => match b with
+        | .para xs => xs.any fun x => match x with
+          | .styled .bold _ => true
+          | _ => false
+        | _ => false
+     | _ => false)
+
 def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- \fonts declarations and family resolution
@@ -3141,6 +3212,7 @@ def main (args : List String) : IO UInt32 := do
   linkHtmlChecks ref
   paletteChecks ref
   mixChecks ref
+  themeChecks ref
   fontsDeclChecks ref
   fontSuiteChecks ref
 
