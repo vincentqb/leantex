@@ -637,6 +637,19 @@ def markdownChecks (ref : IO.Ref (List String)) : IO Unit := do
     "under\\_score and 2*3\\end{document}")
   t "markdown escapes what would read as markup"
     (((MarkdownDoc.emit esc).splitOn "under\\_score and 2\\*3").length == 2)
+  -- The declared text alternative (graphicx's alt key, LaTeX News 37)
+  -- reaches both backends, and a caption does not overwrite it.
+  let (img, imgDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\includegraphics[width=32pt, alt={An invented portrait}]{face.png}" ++
+    "\\end{document}")
+  t "image alt declares and reaches both backends" (imgDs.isEmpty &&
+    (((HtmlDoc.emit {} img).1.splitOn "alt=\"An invented portrait\"").length == 2) &&
+    (((MarkdownDoc.emit img).splitOn "![An invented portrait](face.png)").length == 2))
+  let (figImg, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\begin{figure}\\includegraphics[alt={Declared wins}]{face.png}" ++
+    "\\caption{A caption}\\end{figure}\\end{document}")
+  t "figure caption fills only an undeclared alt"
+    (((HtmlDoc.emit {} figImg).1.splitOn "alt=\"Declared wins\"").length == 2)
 
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
 around the content, and nothing warns. Its own function: `main` is one `do`

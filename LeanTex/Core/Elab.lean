@@ -830,6 +830,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           -- and anything else (rotation included) is named and skipped: a
           -- silently dropped key would misplace the figure without a word.
           let mut spec : Image.SizeSpec := {}
+          let mut altText := ""
           let mut j := skipSpaces raws i
           if let some (.sym '[' _) := raws[j]? then
             let mut optSrc : Array Raw := #[]
@@ -860,19 +861,29 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
                 match Decl.parseDecimal v with
                 | some (m, sc) => spec := { spec with scaleNum := m, scaleDen := sc }
                 | none => diag ctx "E0321" s!"'scale' needs a number, got {v.quote}" pos
+              | some ("alt", v) =>
+                -- graphicx's own alt key (LaTeX News 37, 2023): the text
+                -- alternative WCAG 2.2 SC 1.1.1 requires, declared where the
+                -- image is. Braced or quoted spellings both read as text.
+                let v := if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
+                    String.ofList (v.toList.drop 1).dropLast
+                  else if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
+                    String.ofList (v.toList.drop 1).dropLast
+                  else v
+                altText := v.trimAscii.toString
               | _ =>
                 if e.trimAscii.toString == "keepaspectratio" then
                   spec := { spec with keepAspect := true }
                 else
                   warnOnce ctx ("imgopt:" ++ e) "W0110"
                     s!"unsupported \\includegraphics option '{e}'; ignored" pos
-                    (help := "modelled keys: width, height, scale, keepaspectratio")
+                    (help := "modelled keys: width, height, scale, keepaspectratio, alt")
           match raws[j]? with
           | some (.group pathRaw _) =>
             i := j + 1
             acc := flushText acc sb
             sb := ""
-            acc := acc.push (.image (argText ctx pathRaw) spec "")
+            acc := acc.push (.image (argText ctx pathRaw) spec altText)
           | _ =>
             diag ctx "E0304" "'\\includegraphics' needs a {file} group" pos
         else if name == "pagenumber" then
