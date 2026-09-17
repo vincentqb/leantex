@@ -2595,6 +2595,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut info : Meta := {}
   let mut output : OutputSpec := {}
   let mut asserts : Array Assertion := #[]
+  let mut allow : Array String := #[]
   let mut textDiagged := false
   let mut i := 0
   repeat
@@ -2813,6 +2814,27 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             styles ← applyStyle ctx styles (rawSrc elem) (rawSrc body) pos
           | _, _ =>
             diag ctx .E0304 "'\\style' needs {element} and a {...} block" pos
+        else if name == "allow" then
+          -- `\allow{W0307, W0501}`: the document accepts the named losses.
+          -- The teeth: an unknown code is an error (a typo must not grant a
+          -- silent blanket), an entry that never fires warns (Main), and
+          -- the acceptance always prints in the build summary.
+          let j := skipSpaces preamble i
+          match preamble[j]? with
+          | some (.group body _) =>
+            i := j + 1
+            for entry in (rawSrc body).splitOn "," do
+              let code := entry.trimAscii.toString
+              if code.isEmpty then continue
+              match DiagCode.ofString? code with
+              | some c =>
+                unless allow.contains c.code do
+                  allow := allow.push c.code
+              | none =>
+                diag ctx .E0329 s!"\\allow names no diagnostic code '{code}'" pos
+                  (help := "codes look like W0307; each names the one loss it accepts")
+          | _ =>
+            diag ctx .E0304 "'\\allow' needs a {...} block of diagnostic codes" pos
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
           match preamble[j]? with
@@ -3062,6 +3084,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
     info := info
     output := output
     asserts := asserts
+    allow := allow
     body := blocks
   }
 

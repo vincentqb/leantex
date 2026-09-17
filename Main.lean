@@ -25,6 +25,43 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
   else if d.severity != .note || ui.cfg.verbosity ≥ 1 then
     ui.errStream.putStrLn (Render.human ui.color d)
 
+/-- One phase's diagnostics resolved against the document's acceptance
+(`\allow` and `--best-effort`) and printed. Returns the codes that fired,
+the codes whose errors were accepted, and the error count after
+acceptance. -/
+def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
+    (ds : Array Diag) : IO (Array String × Array String × Nat) := do
+  let mut fired : Array String := #[]
+  let mut accepted : Array String := #[]
+  let mut errors := 0
+  for d0 in ds do
+    let (d, acc) := Diag.accept allowed allowAll d0
+    fired := fired.push d.code
+    if acc then accepted := accepted.push d.code
+    if d.severity == .error then errors := errors + 1
+    ui.diag d
+  return (fired, accepted, errors)
+
+/-- Codes with their multiplicities, first appearance first. -/
+def tally (xs : Array String) : List (String × Nat) := Id.run do
+  let mut out : Array (String × Nat) := #[]
+  for x in xs do
+    match out.findIdx? (·.1 == x) with
+    | some i => out := out.set! i (x, out[i]!.2 + 1)
+    | none => out := out.push (x, 1)
+  return out.toList
+
+/-- Acceptance is visible, never ambient: whenever any loss was accepted,
+the line prints — under `-q` too, because an accepted error is exactly the
+thing quiet mode must not hide. -/
+def Ui.accepted (ui : Ui) (accepted : Array String) : IO Unit := do
+  if accepted.isEmpty then return
+  let counts := tally accepted
+  if ui.cfg.porcelain then
+    ui.outStream.putStrLn (Render.porcelainAccepted counts)
+  else
+    ui.errStream.putStrLn (Render.humanAccepted ui.color counts)
+
 def Ui.phase (ui : Ui) (name detail : String) (ms : Nat) : IO Unit := do
   if ui.cfg.verbosity ≥ 1 then
     if ui.cfg.porcelain then
@@ -446,30 +483,39 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     ui.summary file 1 (← since t0)
     return 1
   | some (doc, diags) =>
-    for d in diags do
-      ui.diag d
-    let errors := countErrors diags
+    let allowAll := ui.cfg.bestEffort
+    let mut fired : Array String := #[]
+    let mut accepted : Array String := #[]
+    let (f0, a0, errors) ← ui.resolve doc.allow allowAll diags
+    fired := fired ++ f0
+    accepted := accepted ++ a0
     if errors > 0 then
+      ui.accepted accepted
       ui.summary file errors (← since t0)
       return 1
     let t ← IO.monoMsNow
     match ← buildFontSet ui file doc with
     | .error d =>
+      -- No usable font set exists at all: nothing downstream can run, so
+      -- this stays fatal whatever the document accepts.
       ui.diag d
       ui.summary file 1 (← since t0)
       return 1
     | .ok (fs, fontDiags, paths) =>
-      for d in fontDiags do
-        ui.diag d
-      if fontDiags.any (·.severity == .error) then
-        ui.summary file (countErrors fontDiags) (← since t0)
+      let (f1, a1, fontErrors) ← ui.resolve doc.allow allowAll fontDiags
+      fired := fired ++ f1
+      accepted := accepted ++ a1
+      if fontErrors > 0 then
+        ui.accepted accepted
+        ui.summary file fontErrors (← since t0)
         return 1
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.phase "font" s!"{names} ({paths})" (← since t)
       let t ← IO.monoMsNow
       let (imgs, imgDiags) ← loadImages file doc
-      for d in imgDiags do
-        ui.diag d
+      let (f2, a2, imgErrors) ← ui.resolve doc.allow allowAll imgDiags
+      fired := fired ++ f2
+      accepted := accepted ++ a2
       unless imgs.entries.isEmpty do
         ui.phase "images" s!"{imgs.entries.size} files" (← since t)
       let t ← IO.monoMsNow
@@ -478,9 +524,17 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let t ← IO.monoMsNow
       let geom := Layout.Geom.ofPage doc.page
       let out := Layout.run geom fs (some pats) doc imgs
-      for d in out.diags do
-        ui.diag d
+      let (f3, a3, layoutErrors) ← ui.resolve doc.allow allowAll out.diags
+      fired := fired ++ f3
+      accepted := accepted ++ a3
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)
+      -- An unaccepted error anywhere before the writers means no output: a
+      -- failing document must not produce one (the assertion contract, held
+      -- for every dropped loss).
+      if imgErrors + layoutErrors > 0 then
+        ui.accepted accepted
+        ui.summary file (imgErrors + layoutErrors) (← since t0)
+        return 1
       -- Assertions judge what shipped, so they run after layout and before
       -- the file is written: a failing document must not produce output.
       -- The page walk is skipped when nothing asserts: measuring ink on
@@ -495,6 +549,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       if !failures.isEmpty then
         for d in failures do
           ui.diag d
+        ui.accepted accepted
         ui.summary file failures.size (← since t0)
         return 2
       let mut written : Array String := #[]
@@ -523,8 +578,9 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
             else none
         }
         let (html, hdiags) := HtmlDoc.emit hcfg doc
-        for d in hdiags do
-          ui.diag d
+        let (f4, a4, _) ← ui.resolve doc.allow allowAll hdiags
+        fired := fired ++ f4
+        accepted := accepted ++ a4
         let htmlPath := outPath ui.cfg.output outIsDir file .html
         IO.FS.writeFile htmlPath html
         written := written.push htmlPath
@@ -543,6 +599,12 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         IO.FS.writeBinFile pdfPath pdf
         written := written.push pdfPath
         ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
+      -- The hatch's other teeth: an `\allow` that never fired is stale
+      -- acceptance and warns; what was accepted always prints.
+      for c in Diag.unfired doc.allow fired do
+        ui.diag (Diag.of .W0013 s!"\\allow'd code {c} never fired"
+          (help := "the document no longer needs to accept it; drop it from \\allow"))
+      ui.accepted accepted
       let notes := diags.foldl (fun n d => if d.severity == .note then n + 1 else n) 0
       ui.done file (String.intercalate ", " written.toList) out.pages.size (← since t0) notes
       return 0

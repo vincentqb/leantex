@@ -38,6 +38,12 @@ def humanDone (color : Bool) (file output : String) (pages ms : Nat) (notes : Na
     sgr color "2" s!" · {notes} {if notes == 1 then "note" else "notes"} (-v)"
   s!"{sgr color "1;32" "✔"} {file} → {output} — {pages} {noun} ({ms} ms){hint}"
 
+def humanAccepted (color : Bool) (counts : List (String × Nat)) : String :=
+  let parts := counts.map fun (c, n) => if n == 1 then c else s!"{c} ×{n}"
+  let total := counts.foldl (fun t (_, n) => t + n) 0
+  let noun := if total == 1 then "loss" else "losses"
+  s!"{sgr color "1;33" "accepted"}: {total} {noun} ({String.intercalate ", " parts})"
+
 private def jsonEscape (s : String) : String :=
   s.foldl (init := "") fun acc c =>
     match c with
@@ -83,5 +89,11 @@ def porcelainDone (file output : String) (pages ms : Nat) : String :=
   obj [("event", jstr "summary"), ("file", jstr file), ("ok", "true"),
     ("output", jstr output), ("pages", toString pages), ("errors", "0"),
     ("ms", toString ms)]
+
+def porcelainAccepted (counts : List (String × Nat)) : String :=
+  let total := counts.foldl (fun t (_, n) => t + n) 0
+  let codes := counts.map fun (c, n) => obj [("code", jstr c), ("count", toString n)]
+  obj [("event", jstr "accepted"), ("count", toString total),
+    ("codes", "[" ++ String.intercalate "," codes ++ "]")]
 
 end LeanTex.Cli.Render

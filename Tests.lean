@@ -4160,6 +4160,41 @@ def argsChecks (ref : IO.Ref (List String)) : IO Unit := do
     (outPath (some "out.html") false "doc.tex" .pdf == "doc.pdf")
   t "args watch" ((parse ["a.tex", "--watch"]).map (·.watch) == .ok true)
 
+/-- The `\allow` escape hatch: declared acceptance of named losses, with its
+three teeth — an unknown code is an error, a never-fired entry warns
+(`Diag.unfired`, applied in the driver), and the acceptance prints. -/
+def allowChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let doc (pre : String) : String :=
+    pre ++ "\n\\begin{document}\nx\n\\end{document}"
+  t "allow stores its codes on the document"
+    ((elabStr (doc "\\allow{W0307, W0501}")).1.allow == #["W0307", "W0501"])
+  t "allow dedupes a repeated code"
+    ((elabStr (doc "\\allow{W0307}\\allow{W0307}")).1.allow == #["W0307"])
+  t "allow with an unknown code is an error"
+    (errCodes (doc "\\allow{W9999}") == ["E0329"])
+  t "allow dumps as a declaration"
+    (((Ir.dump (elabStr (doc "\\allow{W0307}")).1 #[]).splitOn "allow W0307").length == 2)
+  -- The total function severity resolution is: an allowed dropped-loss
+  -- error becomes a warning; everything else keeps its derived severity.
+  let e := Diag.of .E0501 "gone"
+  t "accept downgrades an allowed error to a warning, changing nothing else"
+    (let (d, acc) := Diag.accept #["E0501"] false e
+     acc && d.severity == .warning && d.code == e.code && d.message == e.message
+       && d.span == e.span && d.help == e.help)
+  t "accept leaves an unallowed error alone"
+    (Diag.accept #["W0307"] false e == (e, false))
+  t "best-effort accepts every error"
+    (let (d, acc) := Diag.accept #[] true e
+     acc && d.severity == .warning)
+  t "accept never touches a warning"
+    (Diag.accept #["W0308"] true (Diag.of .W0308 "t") == (Diag.of .W0308 "t", false))
+  t "unfired names the stale entries only"
+    (Diag.unfired #["W0307", "W0308"] #["W0308", "W0308"] == #["W0307"])
+  t "accepted losses line prints codes with counts"
+    (Render.humanAccepted false [("W0307", 2), ("W0501", 1)] ==
+      "accepted: 3 losses (W0307 ×2, W0501)")
+
 def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- render: porcelain is stable, escaped JSONL
@@ -5911,6 +5946,7 @@ def main (args : List String) : IO UInt32 := do
   hyphenChecks ref
   walkChecks ref
   diagChecks ref
+  allowChecks ref
   declChecks ref
   tokensChecks ref
   compatChecks ref

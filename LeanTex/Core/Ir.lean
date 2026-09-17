@@ -802,6 +802,10 @@ structure Doc where
   info : Meta := {}
   output : OutputSpec := {}
   asserts : Array Assertion := #[]
+  /-- `\allow{W0307, ...}`: diagnostic codes whose losses this document
+  accepts. The driver downgrades those errors to warnings and always prints
+  the acceptance, so it is declared and visible, never ambient. -/
+  allow : Array String := #[]
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
 
@@ -2478,12 +2482,14 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
      | none => "")
   let asserts := String.join (doc.asserts.toList.map fun a =>
     s!"assert {a.kind.source}\n")
+  let allowLine := if doc.allow.isEmpty then ""
+    else s!"allow {String.intercalate ", " doc.allow.toList}\n"
   let body := dumpBlocks "" doc.body
   let ds :=
     if diags.isEmpty then
       "-- diagnostics\n(none)\n"
     else
       "-- diagnostics\n" ++ String.join (diags.toList.map dumpDiag)
-  head ++ page ++ fontLines ++ paletteLines ++ tokenLines ++ runLines ++ infoLines ++ outputLines ++ asserts ++ body ++ ds
+  head ++ page ++ fontLines ++ paletteLines ++ tokenLines ++ runLines ++ infoLines ++ outputLines ++ asserts ++ allowLine ++ body ++ ds
 
 end LeanTex.Core.Ir

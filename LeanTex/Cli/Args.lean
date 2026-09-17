@@ -49,6 +49,9 @@ structure Config where
   /-- `-o`: an output file (its extension picks the backend) or a directory. -/
   output : Option String := none
   watch : Bool := false
+  /-- `--best-effort`: accept every loss, as `\allow` of every code would —
+  port mode for documents written against another engine. -/
+  bestEffort : Bool := false
   mathBoundary : Option String := none
   /-- Extra font directories, added to the built-in locations. -/
   fontDirs : Array String := #[]
@@ -105,6 +108,7 @@ def parse (argv : List String) : Except String Config := do
       | "-q" | "--quiet" => cfg := { cfg with quiet := true }
       | "--porcelain" => cfg := { cfg with porcelain := true }
       | "--watch" => cfg := { cfg with watch := true }
+      | "--best-effort" => cfg := { cfg with bestEffort := true }
       | "-h" | "--help" => return { cfg with cmd := .help }
       | "--version" => return { cfg with cmd := .version }
       | "-o" | "--output" =>
@@ -285,6 +289,8 @@ commands:
 flags:
   -o, --output <path>     output file (.pdf | .html | .md) or directory
   --watch                 rebuild when the source changes (Ctrl-C stops)
+  --best-effort           accept every loss (as \\allow of every code); the
+                          summary prints what was accepted
   --emit <list>           backends: pdf, html, md — several at once
   --css <mode>            HTML stylesheet: own | bulma | none (default own)
   --math-boundary <tool>  attach a client-side math renderer to HTML output

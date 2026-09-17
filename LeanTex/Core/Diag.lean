@@ -63,12 +63,12 @@ inductive DiagCode where
   | E0201 | E0202 | E0205
   | E0303 | E0304 | E0305 | E0306 | E0309 | E0310 | E0311 | E0312 | E0313
   | E0316 | E0320 | E0321 | E0322 | E0323 | E0324 | E0325 | E0326 | E0327
-  | E0328 | E0330 | E0331
+  | E0328 | E0329 | E0330 | E0331
   | E0401 | E0402 | E0403 | E0404
   | E0501
   | N0100 | N0101 | N0105 | N0200
   | W0001 | W0003 | W0004 | W0005 | W0006 | W0007 | W0008 | W0009 | W0010
-  | W0011 | W0012
+  | W0011 | W0012 | W0013
   | W0102 | W0103 | W0104 | W0105 | W0106 | W0108 | W0110
   | W0201 | W0202
   | W0301 | W0302 | W0303 | W0304 | W0307 | W0308 | W0309 | W0310 | W0311
@@ -109,6 +109,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .E0326 => ("E0326", .dropped, "name not in the palette where a colour is required")
   | .E0327 => ("E0327", .dropped, "not a \\page key")
   | .E0328 => ("E0328", .dropped, "not a styleable element")
+  | .E0329 => ("E0329", .dropped, "unknown diagnostic code in \\allow")
   | .E0330 => ("E0330", .dropped, "layout assertion failed against the shipped pages")
   | .E0331 => ("E0331", .dropped, "unreadable length")
   | .E0401 => ("E0401", .dropped, "no usable font found on the host")
@@ -131,6 +132,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0010 => ("W0010", .degraded, "lists nest four levels; deeper levels reuse the fourth marker")
   | .W0011 => ("W0011", .degraded, "declared math face has no OpenType MATH table")
   | .W0012 => ("W0012", .degraded, "math construct not rendered yet; set as source text")
+  | .W0013 => ("W0013", .config, "an \\allow'd code never fired")
   | .W0102 => ("W0102", .degraded, "unsupported colour model")
   | .W0103 => ("W0103", .config, "unsupported package skipped")
   | .W0104 => ("W0104", .config, "unsupported TeX construct skipped")
@@ -181,10 +183,10 @@ the list to the type. -/
 def DiagCode.all : List DiagCode :=
   [.E0001, .E0002, .E0101, .E0102, .E0201, .E0202, .E0205, .E0303, .E0304,
    .E0305, .E0306, .E0309, .E0310, .E0311, .E0312, .E0313, .E0316, .E0320,
-   .E0321, .E0322, .E0323, .E0324, .E0325, .E0326, .E0327, .E0328, .E0330,
-   .E0331, .E0401, .E0402, .E0403, .E0404, .E0501, .N0100, .N0101, .N0105,
-   .N0200, .W0001, .W0003, .W0004, .W0005, .W0006, .W0007, .W0008, .W0009,
-   .W0010, .W0011, .W0012, .W0102, .W0103, .W0104, .W0105, .W0106, .W0108,
+   .E0321, .E0322, .E0323, .E0324, .E0325, .E0326, .E0327, .E0328, .E0329,
+   .E0330, .E0331, .E0401, .E0402, .E0403, .E0404, .E0501, .N0100, .N0101,
+   .N0105, .N0200, .W0001, .W0003, .W0004, .W0005, .W0006, .W0007, .W0008,
+   .W0009, .W0010, .W0011, .W0012, .W0013, .W0102, .W0103, .W0104, .W0105, .W0106, .W0108,
    .W0110, .W0201, .W0202, .W0301, .W0302, .W0303, .W0304, .W0307, .W0308,
    .W0309, .W0310, .W0311, .W0312, .W0313, .W0314, .W0315, .W0316, .W0317,
    .W0318, .W0319, .W0320, .W0321, .W0322, .W0323, .W0324, .W0325, .W0326,
@@ -222,5 +224,24 @@ site cannot make it false. -/
 theorem Diag.of_severity (c : DiagCode) (message : String) (span : Option Span)
     (help : Option String) :
     (Diag.of c message span help).severity = c.loss.severity := rfl
+
+/-- The escape hatch: `\allow{W0307, ...}` in a document's preamble accepts
+the named losses, downgrading those errors to warnings for that document
+alone; `--best-effort` (`allowAll`) accepts every loss — port mode. Rust's
+lint levels (allow/warn/deny per scope, deny wins in CI) are the tested
+prior art: acceptance is declared and scoped, never ambient — the build
+summary prints what was accepted. Returns the resolved diagnostic and
+whether it was accepted. -/
+def Diag.accept (allowed : Array String) (allowAll : Bool) (d : Diag) : Diag × Bool :=
+  if d.severity == .error && (allowAll || allowed.contains d.code) then
+    ({ d with severity := .warning }, true)
+  else (d, false)
+
+/-- The `\allow` entries no emitted diagnostic ever matched: each is stale
+acceptance the document no longer needs, and warning about it is one of the
+hatch's teeth — an allow that silences nothing today may silence something
+real tomorrow. -/
+def Diag.unfired (allowed : Array String) (fired : Array String) : Array String :=
+  allowed.filter (!fired.contains ·)
 
 end LeanTex.Core
