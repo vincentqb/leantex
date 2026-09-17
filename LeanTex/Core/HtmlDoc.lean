@@ -367,14 +367,22 @@ def themeCss (doc : Doc) : String :=
     "  width: 60%; margin: 0.6rem auto 0; }\n" ++
     ".progress > div { background: var(--progressfg); height: 100%; }\n" else "") ++
   -- The chrome footer: colour from the muted key, size from the shared
-  -- scale (`size-small` on the element), layout the only thing added here.
+  -- scale (`size-small` on the element), positions fixed by the declared
+  -- side — each slot pinned to its edge, as `Layout.bandSlotX` pins the
+  -- page's — so nothing a slot contains can move another. The band holds
+  -- one line (`min-height: 1lh`, CSS Values 4 §6.1.3: the element's own
+  -- line-height); a colliding slot paints under or over by declared
+  -- priority (`z-index` from `BandSlot.rank`, set per span), never moves.
   (if doc.docClass == "slides" && doc.foot.isNone &&
       (doc.chrome.hasFooter || doc.body.any fun b => match b with
         | .framefoot xs => !xs.isEmpty
         | _ => false) then
-    "section.slide > footer.slide-foot { display: flex;\n" ++
-    "  justify-content: space-between; gap: 1em; margin-top: 1.2rem;\n" ++
-    "  color: var(--muted); }\n" else "")
+    "section.slide > footer.slide-foot { position: relative;\n" ++
+    "  min-height: 1lh; margin-top: 1.2rem; color: var(--muted); }\n" ++
+    "footer.slide-foot > .band-left { position: absolute; left: 0;\n" ++
+    "  white-space: nowrap; }\n" ++
+    "footer.slide-foot > .band-right { position: absolute; right: 0;\n" ++
+    "  white-space: nowrap; }\n" else "")
 
 /-- Design tokens become CSS custom properties, so the same declarations drive
 both backends and a reader's stylesheet can override them. -/
@@ -1221,15 +1229,22 @@ via \\chrome is the sequence both backends share"))
           let node := if chromeFoot then
               match num, node with
               | some n, .elem tag attrs kids =>
-                -- The one slot layout (`Ir.Chrome.footSlots`): the same
-                -- function the PDF's foot line consumes, so the two
-                -- backends resolve the same pair and can only diverge by
-                -- rendering it — the spans are left and right, and the
-                -- stylesheet's `space-between` is the template's `\hfill`.
-                let (left, right) := doc.chrome.footSlots frameFoot curSection n total
+                -- The one slot band (`Ir.Chrome.footBand`): the same
+                -- function the PDF's final pass consumes, so the two
+                -- backends resolve the same slots and can only diverge by
+                -- rendering them. Fixed positions come from the declared
+                -- side (the stylesheet pins `band-left`/`band-right` to the
+                -- edges, as `Layout.bandSlotX` does); the paint order is
+                -- the declared priority, `z-index` carrying `rank` so a
+                -- colliding lower-priority slot is painted under, in place,
+                -- exactly as on the page.
+                let band := doc.chrome.footBand frameFoot curSection n total
                 Node.elem tag attrs (kids.push (Html.elem "footer"
-                  #[Html.elem "span" (inlines cfg left),
-                    Html.elem "span" (inlines cfg right)]
+                  (band.map fun s => Html.elem "span" (inlines cfg s.content)
+                    #[("class", match s.side with
+                        | .left => "band-left"
+                        | .right => "band-right"),
+                      ("style", s!"z-index: {s.rank}")])
                   #[("class", "slide-foot size-small")]))
               | _, other => other
             else node

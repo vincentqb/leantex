@@ -3009,7 +3009,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "html frames close with the footer, standout none"
     ((html.splitOn "class=\"slide-foot size-small\"").length == 3)
   t "html footer carries the frame number"
-    ((html.splitOn "<span>2</span>").length == 2)
+    ((html.splitOn ">2</span>").length == 2)
   t "html footer styling comes from the tokens"
     ((html.splitOn "section.slide > footer.slide-foot").length == 2 &&
      (((html.splitOn "footer.slide-foot {")[1]?.getD "").splitOn
@@ -3084,7 +3084,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "html gives the title and standout frames no footer"
     ((html.splitOn "class=\"slide-foot size-small\"").length == 2)
   t "html numbers the content frame 1"
-    ((html.splitOn "<span>1</span>").length == 2)
+    ((html.splitOn ">1</span>").length == 2)
   t "html progress is 0% before any content frame"
     ((html.splitOn "width: 0%").length == 2)
   t "pdf and html footers are the same text" (pdfFoots out == htmlFoots html)
@@ -3238,7 +3238,7 @@ def frameFootChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "html wrapped frame carries the note"
     ((html.splitOn "origin: example.org").length == 2)
   t "html unwrapped frames keep the section title"
-    ((html.splitOn "<span>Topic</span>").length == 3)
+    ((html.splitOn ">Topic</span>").length == 3)
 
 /-- The themed slides furniture, keyed on the semantic palette entries: page
 background and text colour, the frame-title bar, the section page with its
@@ -3945,9 +3945,9 @@ end
 mutual
 
 /-- Every chrome footer in the emitted deck, in document order, as its two
-slots' text: the HTML side of the footline fact. The two spans are left and
-right by construction (`Ir.Chrome.footSlots` through `emitTree`), and the
-stylesheet's `space-between` renders them at the edges. -/
+slots' text: the HTML side of the footline fact. The spans carry their
+declared side as a class (`Ir.Chrome.footBand` through `emitTree`), and the
+stylesheet pins each to its edge. -/
 def slideFootsOne (acc : Array (String × String)) : Html.Node → Array (String × String)
   | .text _ => acc
   | .style _ => acc
@@ -3955,10 +3955,15 @@ def slideFootsOne (acc : Array (String × String)) : Html.Node → Array (String
   | .elem tag attrs kids =>
     if tag == "footer" &&
         attrs.any (fun (k, v) => k == "class" && (v.splitOn "slide-foot").length > 1) then
-      match kids.toList with
-      | [l, r] =>
-        acc.push ((nodeTextOne "" l).trimAscii.toString, (nodeTextOne "" r).trimAscii.toString)
-      | _ => acc
+      let slotText (cls : String) : String :=
+        kids.foldl (fun s k => match k with
+          | .elem _ kattrs _ =>
+            if kattrs.any (fun (a, v) => a == "class" && v == cls) then
+              nodeTextOne s k
+            else s
+          | _ => s) ""
+      acc.push ((slotText "band-left").trimAscii.toString,
+        (slotText "band-right").trimAscii.toString)
     else slideFootsList acc kids.toList
 
 def slideFootsList (acc : Array (String × String)) :
