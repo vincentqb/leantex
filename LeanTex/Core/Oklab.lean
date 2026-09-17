@@ -208,7 +208,14 @@ nearest; the accumulated error (< 5·10⁻⁵ in linear light, dominated by the
 10⁻⁶ cube-root granularity through the ≈7.6 gain of the inverse LMS
 matrix) sits well under the half-gap between adjacent table entries
 (≥ 1.5·10⁻⁴), which is what makes the round trip an identity —
-checked exhaustively by `scripts/oklab-roundtrip.lean`, not assumed. -/
+checked exhaustively by `scripts/oklab-roundtrip.lean`, not assumed.
+
+WARNING (color-factor F8): this consumes the 10²⁰ scale `labMix` produces,
+not the 10¹⁸ scale `labOf` produces — both are `Lab`, so
+`toColor (labOf c)` type-checks and is silently wrong by 100×. The one
+composition today is `cover` (`toColor (labMix …)`), pinned by the
+round-trip oracle. The day a second `toColor` caller appears, introduce a
+scale-indexed wrapper instead of trusting this warning twice. -/
 def toColor (lab : Lab) : Color :=
   let lp := rdiv (10000000000 * lab.L + 3963377774 * lab.a + 2158037573 * lab.b) (10 ^ 24)
   let mp := rdiv (10000000000 * lab.L - 1055613458 * lab.a - 638541728 * lab.b) (10 ^ 24)
