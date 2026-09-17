@@ -2883,6 +2883,124 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       check ref s!"census {n}: {label}" ok
 
 
+/-- One diagnostic code, one meaning: this registry is the single place a
+code's meaning lives, and `diagChecks` holds the tree to it. Every
+quote-delimited code literal in the engine must appear here — a new code
+is forced through this table, where a collision with an existing number
+is visible before it ships — no number may appear twice, and no entry may
+outlive its last emission site. The defect class is real twice over: the
+card slice nearly renumbered W0315 over the contrast pairing (PLAN
+2026-09-17), and this check's first run found W0314 meaning both a column
+width and an unknown theme. -/
+def diagRegistry : List (String × String) := [
+  ("E0001", "cannot read an input file"),
+  ("E0002", "input is not valid UTF-8"),
+  ("E0101", "lone backslash at end of input"),
+  ("E0102", "unclosed verbatim environment"),
+  ("E0201", "unclosed group or environment at end of input"),
+  ("E0202", "unexpected closer"),
+  ("E0205", "malformed or mismatched environment name"),
+  ("E0303", "malformed \\define signature"),
+  ("E0304", "missing argument for a command"),
+  ("E0305", "parameter expects text"),
+  ("E0306", "unknown parameter reference in a definition body"),
+  ("E0309", "unknown document class"),
+  ("E0310", "content before the first \\item in a list"),
+  ("E0311", "reserved character in text"),
+  ("E0312", "block-level command used inline"),
+  ("E0313", "only declarations may appear before \\begin{document}"),
+  ("E0316", "unclosed optional argument"),
+  ("E0320", "invalid key or missing value in a declaration block"),
+  ("E0321", "unreadable value for a declaration key"),
+  ("E0322", "unknown key in a declaration block"),
+  ("E0323", "declaration key value has the wrong type"),
+  ("E0324", "unknown page size name"),
+  ("E0325", "unreadable \\assert expression"),
+  ("E0326", "name not in the palette where a colour is required"),
+  ("E0327", "not a \\page key"),
+  ("E0328", "not a styleable element"),
+  ("E0330", "layout assertion failed against the shipped pages"),
+  ("E0331", "unreadable length"),
+  ("E0401", "no usable font found on the host"),
+  ("E0402", "LEANTEX_FONT is unusable"),
+  ("E0403", "no installed font family by that name"),
+  ("E0404", "a font file could not be used"),
+  ("E0501", "\\input nesting too deep"),
+  ("N0100", "LaTeX idiom translated to its native declaration"),
+  ("N0101", "geometry keys without a native equivalent dropped"),
+  ("N0105", "\\setkomafont on a non-styleable element ignored"),
+  ("N0200", "page set short: its skips gave their shrink"),
+  ("W0001", "content after \\end{document} is ignored"),
+  ("W0003", "math is typeset as plain text until M6"),
+  ("W0004", "font has no glyph for a character; dropped"),
+  ("W0005", "overfull line, no feasible break"),
+  ("W0006", "declared face variant missing; another face substitutes"),
+  ("W0007", "running head/foot omitted from HTML"),
+  ("W0008", "\\fonts dir is not a directory"),
+  ("W0009", "no glyph in the declared face; set from a fallback face"),
+  ("W0010", "lists nest four levels; deeper levels reuse the fourth marker"),
+  ("W0011", "declared math face has no OpenType MATH table"),
+  ("W0012", "math construct not rendered yet; set as source text"),
+  ("W0102", "unsupported colour model"),
+  ("W0103", "unsupported package skipped"),
+  ("W0104", "unsupported TeX construct skipped"),
+  ("W0105", "overlay specification does not name a step"),
+  ("W0106", "expl3 code skipped"),
+  ("W0108", "\\centering is inert inside an argument"),
+  ("W0110", "unsupported \\includegraphics option; ignored"),
+  ("W0201", "measure outside the readable band"),
+  ("W0202", "heading sets more space below than above"),
+  ("W0301", "unknown command; arguments kept as text"),
+  ("W0302", "unknown environment; body kept"),
+  ("W0303", "built-in name cannot be redefined"),
+  ("W0304", "colour name not in the palette; content kept uncoloured"),
+  ("W0307", "environment not implemented yet; content not rendered"),
+  ("W0308", "tables are not laid out yet; rows set as plain lines"),
+  ("W0309", "\\maketitle with nothing declared"),
+  ("W0310", "'[' never closes; not an argument"),
+  ("W0311", "a second \\frametitle replaces the first"),
+  ("W0312", "no {...} group after a command; skipped"),
+  ("W0313", "{...} groups went with an unknown wrapper"),
+  ("W0314", "column width is not a fraction of the text width"),
+  ("W0318", "unknown theme; the document is unthemed"),
+  ("W0315", "low-contrast colour pairing (WCAG 2.2)"),
+  ("W0316", "unknown option in \\palette; block skipped"),
+  ("W0317", "a card carries no running head or foot; declaration dropped"),
+  ("W0501", "\\input file not found; skipped"),
+  ("W0601", "image unreadable or not found; placeholder box placed"),
+  ("W0602", "image format unusable; placeholder box placed")]
+
+/-- Is this quote-delimited string one diagnostic code (`E0330`)? -/
+def isDiagCode (s : String) : Bool :=
+  match s.toList with
+  | [k, a, b, c, d] =>
+    (k == 'E' || k == 'W' || k == 'N') && [a, b, c, d].all Char.isDigit
+  | _ => false
+
+def diagChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let codes := diagRegistry.map (·.1)
+  for c in codes.eraseDups do
+    check ref s!"diag {c}: one code, one meaning"
+      ((codes.filter (· == c)).length == 1)
+  -- Every code the engine can emit is registered, and no entry outlives
+  -- its last emission site. The scan is over quote-delimited literals,
+  -- which is the one spelling every emission helper takes its code in.
+  let mut files := (← System.FilePath.walkDir "LeanTex").filter
+    (·.toString.endsWith ".lean")
+  files := files.push "Main.lean"
+  let mut emitted : List String := []
+  for f in files do
+    let src ← IO.FS.readFile f
+    for part in src.splitOn "\"" do
+      if isDiagCode part && !emitted.contains part then
+        emitted := part :: emitted
+  for c in emitted do
+    check ref s!"diag {c}: emitted by the engine but not in the registry"
+      (codes.contains c)
+  for c in codes do
+    check ref s!"diag {c}: registered but no longer emitted"
+      (emitted.contains c)
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
@@ -4016,7 +4134,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Unknown names warn and leave the document unthemed.
   let (uDoc, uDs) := elabStr (deck "\\theme{vaporwave}" "x")
   t "unknown theme warns naming the bundles"
-    (uDs.any fun d => d.code == "W0314" &&
+    (uDs.any fun d => d.code == "W0318" &&
       ((d.help.getD "").splitOn "moloch").length == 2 &&
       ((d.help.getD "").splitOn "plain").length == 2)
   t "unknown theme leaves the palette empty" (uDoc.palette.entries.isEmpty)
@@ -5013,11 +5131,11 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Elab.run "t" "\\begin{equation*}x\\end{equation*}").1.body ==
       #[.center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil) .nil)]]])
   t "align keeps its source and warns by name"
-    (warnCodes "\\begin{align}a &= b\\end{align}" == ["W0010"] &&
+    (warnCodes "\\begin{align}a &= b\\end{align}" == ["W0012"] &&
       (Elab.run "t" "\\begin{align}a &= b\\end{align}").1.body ==
         #[.para #[.math true "a &= b"]])
   t "frac keeps its source and warns by name"
-    (warnCodes "$\\frac{a}{b}$" == ["W0010"] &&
+    (warnCodes "$\\frac{a}{b}$" == ["W0012"] &&
       ((Elab.run "t" "$\\frac{a}{b}$").1.body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
           | .math false _ => true
@@ -5056,6 +5174,7 @@ def main (args : List String) : IO UInt32 := do
   kpChecks ref
   hyphenChecks ref
   walkChecks ref
+  diagChecks ref
   declChecks ref
   tokensChecks ref
   compatChecks ref

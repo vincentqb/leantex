@@ -122,7 +122,7 @@ private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
   match MathParse.parseMath body with
   | .ok l => return .formula display (Parse.rawSrc body) l
   | .error what =>
-    warnOnce ctx ("math:" ++ what) "W0010"
+    warnOnce ctx ("math:" ++ what) "W0012"
       s!"math with {what} is not rendered yet; the formula is set as source text" pos
       (help := "the rest of M6; see PLAN.md")
     return .math display (Parse.rawSrc body)
@@ -664,7 +664,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           i := i + 1
           acc := flushText acc sb
           sb := ""
-          warnOnce ctx ("math:env:" ++ name) "W0010"
+          warnOnce ctx ("math:env:" ++ name) "W0012"
             s!"'\{{name}}' is not rendered yet; its math is set as source text" pos
             (help := "the rest of M6; see PLAN.md")
           acc := acc.push (.math true (rawSrc body))
@@ -1665,7 +1665,7 @@ specs are not modelled")
             let inl ← elabMathInline ctx true body pos
             blocks := blocks.push (.center #[.para #[inl]])
           else if mathEnvs.contains n then
-            warnOnce ctx ("math:env:" ++ n) "W0010"
+            warnOnce ctx ("math:env:" ++ n) "W0012"
               s!"'\{{n}}' is not rendered yet; its math is set as source text" pos
               (help := "the rest of M6; see PLAN.md")
             blocks := blocks.push (.para #[.math true (rawSrc body)])
@@ -2736,7 +2736,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                 if th.chrome.hasFooter then
                   chrome := th.chrome
               | none =>
-                diag ctx "W0314" s!"unknown theme '{tname}'; the document is unthemed"
+                diag ctx "W0318" s!"unknown theme '{tname}'; the document is unthemed"
                   (some pos)
                   (help := s!"themes: {String.intercalate ", " Theme.names}") .warning
             else if name == "assert" then
