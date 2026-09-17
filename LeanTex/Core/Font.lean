@@ -434,6 +434,10 @@ def parse (data : ByteArray) : Except String Font := do
         | none => #[(0, (widths[g]?.getD 0 : Int))])
     return ink
   let inkExtent : Array (Thunk (Option (Int × Int))) := Id.run do
+    -- Only math layout asks for vertical extents, so only a face with a
+    -- MATH table pays for the per-gid thunk array: a text face costs
+    -- nothing at load and answers `none` (nominal metrics) if ever asked.
+    if (findTable data "MATH").isNone then return #[]
     let mut ext : Array (Thunk (Option (Int × Int))) := Array.mkEmpty numGlyphs
     for g in [0:numGlyphs] do
       ext := ext.push (Thunk.mk fun _ => src.yExtentAt g)
