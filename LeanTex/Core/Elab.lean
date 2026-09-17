@@ -7,6 +7,7 @@ import LeanTex.Core.Decl
 import LeanTex.Core.Theme
 import LeanTex.Core.Compat
 import LeanTex.Core.Contrast
+import LeanTex.Core.Picture
 
 namespace LeanTex.Core.Elab
 
@@ -2097,6 +2098,19 @@ the column shares the leftover" cpos
             blocks := blocks ++ (← elabBlocks envCtx env.beginBody)
             blocks := blocks ++ (← elabBlocks ctx (body.extract j body.size))
             blocks := blocks ++ (← elabBlocks envCtx env.endBody)
+          else if n == "tikzpicture" then
+            -- The rendered subset: shapes evaluate here — loops unrolled,
+            -- expressions reduced, colours resolved against the palette —
+            -- and everything the subset cannot render is a named loss
+            -- beside the shapes that did (W0334 outside the subset, E0333
+            -- unreadable inside it), never one blanket W0307.
+            let (pic, pdiags) := Picture.elabPicture ctx.palette body
+            for (code, msg) in pdiags do
+              warnOnce ctx ("picture:" ++ msg) code msg pos
+                (help := "the rendered subset is \\fill...rectangle, \\node at, \
+\\foreach, and \\pgfmathsetmacro; the full graphics story is M8 (PLAN.md)")
+            unless pic.shapes.isEmpty do
+              blocks := blocks.push (.picture pic)
           else if let some milestone := reservedEnv.lookup n then
             warnOnce ctx ("env:" ++ n) .W0307
               s!"'\{{n}}' is not implemented yet; its content is not rendered" pos

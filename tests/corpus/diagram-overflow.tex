@@ -1,0 +1,18 @@
+% Synthetic M8 fixture: a picture wider than the text area. The engine
+% places it anyway (best effort, never a blank) and W0331 names the
+% overrun — the diagnostic half of the picture stays-in-its-box contract.
+% Invented content and design.
+\documentclass{article}
+
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+
+\palette{ band = #3A5A8C }
+
+\begin{document}
+
+\begin{tikzpicture}
+  \fill[band!40] (0,0) rectangle (30,3);
+  \node at (15,1.5) {wide band};
+\end{tikzpicture}
+
+\end{document}

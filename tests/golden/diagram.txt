@@ -1,0 +1,36 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+palette grid #2A6F4E
+palette ink #14141A
+section 1
+  text "A shaded grid"
+para
+  text "Before the diagram stands a paragraph, so the picture spaces below text."
+center
+  picture 20 shapes
+    rect 0 0 15.307 15.307 #AEC8BC
+    rect 0 17.008 15.307 15.307 #88AE9C
+    rect 0 34.016 15.307 15.307 #61947C
+    rect 0 51.024 15.307 15.307 #3B7B5C
+    rect 17.008 0 15.307 15.307 #88AE9C
+    rect 17.008 17.008 15.307 15.307 #88AE9C
+    rect 17.008 34.016 15.307 15.307 #61947C
+    rect 17.008 51.024 15.307 15.307 #3B7B5C
+    rect 34.016 0 15.307 15.307 #61947C
+    rect 34.016 17.008 15.307 15.307 #61947C
+    rect 34.016 34.016 15.307 15.307 #61947C
+    rect 34.016 51.024 15.307 15.307 #3B7B5C
+    rect 51.024 0 15.307 15.307 #3B7B5C
+    rect 51.024 17.008 15.307 15.307 #3B7B5C
+    rect 51.024 34.016 15.307 15.307 #3B7B5C
+    rect 51.024 51.024 15.307 15.307 #3B7B5C
+    label 7.654 7.654 "aa" #14141A 900
+    label 24.661 24.661 "bb" #14141A 900
+    label 41.669 41.669 "cc" #14141A 900
+    label 58.677 58.677 "dd" #14141A 900
+para
+  text "After the diagram stands another, so the flow resumes."
+-- diagnostics
+warning[W0334] 23:1 '\draw' is outside the rendered picture subset; not drawn | help: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmathsetmacro; the full graphics story is M8 (PLAN.md)

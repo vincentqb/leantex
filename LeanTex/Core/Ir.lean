@@ -671,7 +671,7 @@ inductive Block where
   expressions reduced, colours resolved, `scale=` applied). Layout places
   the box and transforms shapes through `Pic.Place`; a construct outside
   the subset never reaches here — it is diagnosed by name where it stood
-  (W0330/E0333), so nothing a picture declares goes silently missing. -/
+  (W0334/E0333), so nothing a picture declares goes silently missing. -/
   | picture (pic : Pic.Picture)
   deriving Repr, BEq, Inhabited
 

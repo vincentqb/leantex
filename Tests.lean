@@ -52,7 +52,8 @@ def goldenNames : List String :=
    "lists-styled", "lists-deck", "headroom",
    "marker-styled", "marker-content",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
-   "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav"]
+   "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav",
+   "diagram", "diagram-overflow"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -3774,6 +3775,24 @@ def censusTable :
       hasStr (censusText c) "This sentence is set only on the printed page."),
     ("the web-only nav never reaches the page",
       !hasStr (censusText c) "Back to top")]),
+  ("diagram", fun geom c => [
+    ("one page", c.size == 1),
+    ("the 4×4 grid ships its sixteen fills",
+      (c[0]?.map (·.fills == 16)).getD false),
+    ("every diagonal label ships",
+      ["aa", "bb", "cc", "dd"].all fun l => hasStr (censusText c) l),
+    ("the labels step up the diagonal",
+      (((lineXOf c 0 "aa").bind fun xa => (lineXOf c 0 "dd").map fun xd =>
+        decide (xa < xd)).getD false)),
+    ("the centred picture stands past the margin",
+      ((lineXOf c 0 "aa").map fun x => decide (x > geom.hmargin)).getD false),
+    ("the prose around the diagram ships",
+      hasStr (censusText c) "Before the diagram" &&
+        hasStr (censusText c) "After the diagram")]),
+  ("diagram-overflow", fun _ c => [
+    ("one page", c.size == 1),
+    ("the band ships as a fill", (c[0]?.map (·.fills == 1)).getD false),
+    ("its label ships", hasStr (censusText c) "wide band")]),
   ("math", fun _ c => [
     ("one page", c.size == 1),
     ("prose around the display ships",
@@ -4764,8 +4783,12 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "elab unknown environment keeps a group on a later line"
     ((elabStr "\\begin{wrap}\n{kept}\n\\end{wrap}").1.body == #[.para #[.text "kept"]])
   t "elab reserved environment content dropped is one pending warning"
-    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0307"] &&
-     (elabStr "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}").1.body == #[])
+    (warnCodes "\\begin{external}x\\end{external}" == ["W0307"] &&
+     (elabStr "\\begin{external}x\\end{external}").1.body == #[])
+  -- The tikz subset narrowed W0307: a picture is elaborated, and what it
+  -- cannot render is named per construct instead of dropped whole.
+  t "elab tikzpicture no longer earns the blanket W0307"
+    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0334"])
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
   t "elab redefine builtin warns and keeps the built-in"
     (warnCodes "\\define \\textbf() {x}\n\\begin{document}y\\end{document}" == ["W0303"])
@@ -6147,6 +6170,67 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a fitting picture does not warn W0335"
     (!out.diags.any (·.code == "W0335"))
 
+/-- The picture subset's boundary is named, never silent: a construct
+outside the subset is W0330 naming it, an unreadable expression, range, or
+colour inside it is E0333 — and the supported shapes around either still
+elaborate (the nothing-silently-skipped contract, as a test). The unroll
+and arithmetic facts are checked through the IR the elaborator ships. -/
+def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let wrap (body : String) : String :=
+    "\\palette{ grid = #2A6F4E }\\begin{document}\\begin{tikzpicture}" ++
+    body ++ "\\end{tikzpicture}\\end{document}"
+  let picOf (src : String) : Option Ir.Pic.Picture :=
+    (elabStr src).1.body.findSome? fun b => match b with
+      | .picture p => some p
+      | _ => none
+  let cm := Dim.mm 10
+  t "a foreach of fills unrolls to exactly its range's count"
+    ((picOf (wrap "\\foreach \\x in {1,...,3}{\\fill (\\x,0) rectangle ++(1,1);}")).map
+      (·.shapes.size) == some 3)
+  t "the pair form binds both variables"
+    ((picOf (wrap "\\foreach \\k/\\lbl in {1/aa,2/bb}{\\node at (\\k,0) {\\lbl};}")).map
+      (·.shapes) == some #[.label cm 0 "aa" Ir.Color.black 1000,
+                           .label (2 * cm) 0 "bb" Ir.Color.black 1000])
+  t "max and * evaluate inside a coordinate"
+    ((picOf (wrap "\\fill (0,0) rectangle (max(1,2)*2, 1);")).map (·.shapes) ==
+      some #[.rect 0 0 (4 * cm) cm Ir.Color.black])
+  t "scale= scales every coordinate"
+    ((picOf (wrap "[scale=0.5]\\fill (0,0) rectangle (2,2);")).map (·.shapes) ==
+      some #[.rect 0 0 cm cm Ir.Color.black])
+  t "a relative corner adds to its anchor"
+    ((picOf (wrap "\\fill (1,1) rectangle ++(1,1);")).map (·.shapes) ==
+      some #[.rect cm cm cm cm Ir.Color.black])
+  t "a construct outside the subset is W0334, and the rest still draws"
+    (warnCodes (wrap "\\draw (0,0) circle (1);\\fill (0,0) rectangle (1,1);") ==
+        ["W0334"] &&
+      (picOf (wrap "\\draw (0,0) circle (1);\\fill (0,0) rectangle (1,1);")).map
+        (·.shapes.size) == some 1)
+  t "a zero-step range is E0333, not a hang"
+    (errCodes (wrap "\\foreach \\x in {1,1,...,5}{\\fill (\\x,0) rectangle ++(1,1);}") ==
+      ["E0333"])
+  t "a range walking away from its bound is E0333"
+    (errCodes (wrap "\\foreach \\x in {5,4,...,9}{\\fill (\\x,0) rectangle ++(1,1);}") ==
+      ["E0333"])
+  t "division by zero is E0333 and loses only its shape"
+    (errCodes (wrap "\\fill (1/0,0) rectangle (1,1);\\fill (0,0) rectangle (1,1);") ==
+        ["E0333"] &&
+      (picOf (wrap "\\fill (1/0,0) rectangle (1,1);\\fill (0,0) rectangle (1,1);")).map
+        (·.shapes.size) == some 1)
+  t "an unknown colour is E0333 naming the spelling"
+    ((elabStr (wrap "\\fill[nosuch!30] (0,0) rectangle (1,1);")).2.any fun d =>
+      d.code == "E0333" && hasStr d.message "nosuch!30")
+  t "an unknown macro is E0333"
+    (errCodes (wrap "\\fill (\\nope,0) rectangle (1,1);") == ["E0333"])
+  t "an unsupported node option loses only the option"
+    (warnCodes (wrap "\\node[draw] at (1,1) {x};") == ["W0334"] &&
+      (picOf (wrap "\\node[draw] at (1,1) {x};")).map (·.shapes.size) == some 1)
+  t "one construct looped forty times is one diagnostic, not forty"
+    (warnCodes (wrap "\\foreach \\x in {1,...,40}{\\draw (\\x,0) circle (1);}") ==
+      ["W0334"])
+  t "an empty tikzpicture ships no block and no diagnostic"
+    ((elabStr (wrap "")).2.isEmpty && (picOf (wrap "")).isNone)
+
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pats := Hyphen.load
@@ -6661,6 +6745,7 @@ def main (args : List String) : IO UInt32 := do
   hyphenChecks ref
   walkChecks ref
   diagChecks ref
+  pictureElabChecks ref
   allowChecks ref
   declChecks ref
   tokensChecks ref
