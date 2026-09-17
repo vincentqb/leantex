@@ -1,0 +1,20 @@
+% Invented fixture: \newenvironment with arguments. Two one-argument
+% wrappers whose halves each contribute content around the body, and a
+% zero-argument renewal. Nothing here derives from any private document.
+\documentclass{article}
+
+\newenvironment{labeled}[1]{\textbf{#1:}}{\emph{(end #1)}}
+\newenvironment{aside}{}{}
+\renewenvironment{aside}{Aside.}{}
+
+\begin{document}
+
+\begin{labeled}{First}
+body one
+\end{labeled}
+
+\begin{aside}
+body two
+\end{aside}
+
+\end{document}

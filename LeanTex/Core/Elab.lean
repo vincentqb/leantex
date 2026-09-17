@@ -26,12 +26,30 @@ structure UserCmd where
   body : Array Raw
   deriving Repr, BEq
 
+/-- A document-defined environment (`\defineenv`, the native spelling of
+`\newenvironment`): its begin and end halves wrap the environment's content,
+and its parameters bind from the groups after `\begin{name}`. -/
+structure UserEnv where
+  name : String
+  params : Array Param
+  beginBody : Array Raw
+  endBody : Array Raw
+  /-- Commands the halves may use: those defined before this environment.
+  That bound is what makes expansion terminate, as `limit` does for
+  commands. -/
+  cmdLimit : Nat
+  deriving Repr, BEq
+
 /-- A user command sees only commands defined before it: `limit` bounds the
 visible prefix of `user`. That rule is what makes expansion terminate. -/
 structure Ctx where
   file : String
   user : Array UserCmd := #[]
   limit : Nat := 0
+  /-- Document-defined environments; `envLimit` bounds the visible prefix,
+  as `limit` does for commands. -/
+  userEnvs : Array UserEnv := #[]
+  envLimit : Nat := 0
   args : Array (String × Option (Array Inline)) := #[]
   /-- Palette names usable as colour commands, from `\palette`. -/
   palette : Palette := {}
@@ -143,7 +161,7 @@ def escapes : List (String × String) :=
 
 def blockOnly : List String :=
   ["section", "subsection", "subsubsection", "item", "documentclass", "define",
-   "block"]
+   "defineenv", "block"]
 
 def builtinNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass", "textcolor",
@@ -160,6 +178,17 @@ private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) := 
     if h : k < ctx.user.size then
       if ctx.user[k].name == name then
         return some (k, ctx.user[k])
+  return none
+
+/-- The latest visible definition wins, so `\renewenvironment` is one more
+push, exactly as `lookupUser` treats commands. -/
+private def lookupUserEnv (ctx : Ctx) (name : String) : Option (Nat × UserEnv) := Id.run do
+  let mut k := ctx.envLimit
+  for _ in [0:ctx.envLimit] do
+    k := k - 1
+    if h : k < ctx.userEnvs.size then
+      if ctx.userEnvs[k].name == name then
+        return some (k, ctx.userEnvs[k])
   return none
 
 -- Best-effort source text of raw content (math bodies, class options).
@@ -427,15 +456,16 @@ private def needsSep (acc : Array Inline) (sb : String) : Bool :=
 
 mutual
 
-/-- Bind a user command's declared parameters from the call site. Returns the
-bindings and the index just past the consumed arguments. Shared by inline and
-block expansion so both bind identically. -/
-partial def takeArgs (ctx : Ctx) (cmd : UserCmd) (name : String)
+/-- Bind declared parameters from the call site — a user command's, or a
+user environment's from the groups after its `\begin`. Returns the bindings
+and the index just past the consumed arguments. Shared by inline and block
+expansion so both bind identically. -/
+partial def takeArgs (ctx : Ctx) (params : Array Param) (name : String)
     (raws : Array Raw) (start : Nat) (pos : Pos) :
     EM (Array (String × Option (Array Inline)) × Nat) := do
   let mut bindings : Array (String × Option (Array Inline)) := #[]
   let mut i := start
-  for p in cmd.params do
+  for p in params do
     if p.optional then
       let j := skipSpaces raws i
       match raws[j]? with
@@ -533,6 +563,20 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           acc := flushText acc sb
           sb := ""
           acc := acc.push (.math true (rawSrc body))
+        else if let some (k, env) := lookupUserEnv ctx name then
+          -- A defined wrapper: its parameters bind from the groups after
+          -- `\begin{name}`, its halves elaborate around the content. The
+          -- halves see the commands and environments defined before the
+          -- wrapper (never itself), the content sees the caller's.
+          i := i + 1
+          acc := flushText acc sb
+          sb := ""
+          let (bindings, j) ← takeArgs ctx env.params name body 0 pos
+          let envCtx : Ctx := { ctx with
+            limit := env.cmdLimit, envLimit := k, args := bindings }
+          acc := acc ++ (← elabInlines envCtx env.beginBody)
+          acc := acc ++ (← elabInlines ctx (body.extract j body.size))
+          acc := acc ++ (← elabInlines envCtx env.endBody)
         else
         match reservedEnv.lookup name with
         | some milestone =>
@@ -577,7 +621,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         else if let some (k, cmd) := lookupUser ctx name then
           acc := flushText acc sb
           sb := ""
-          let (bindings, j) ← takeArgs ctx cmd name raws i pos
+          let (bindings, j) ← takeArgs ctx cmd.params name raws i pos
           i := j
           let callCtx : Ctx := { ctx with limit := k, args := bindings }
           acc := acc ++ (← elabInlines callCtx cmd.body)
@@ -806,6 +850,12 @@ end
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String := ["itemize", "enumerate", "center", "document", "frame"]
 
+/-- Environment names a document cannot redefine, the environment mirror of
+`builtinNames`: everything the engine gives a meaning of its own. -/
+def builtinEnvNames : List String :=
+  blockEnvs ++ mathEnvs ++ ["verbatim", "tabular", "tabular*"] ++
+  (reservedEnv.map (·.1))
+
 mutual
 
 /-- One raw's verdict for `bodyIsBlock`; the `List` companion below carries
@@ -1014,7 +1064,15 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           else
             blockEnvs.contains n || mathEnvs.contains n
               || n == "tabular" || n == "tabular*"
-              || (reservedEnv.lookup n).isSome || bodyIsBlock body
+              || (reservedEnv.lookup n).isSome
+              || (match lookupUserEnv ctx n with
+                  | some (_, env) =>
+                    -- A defined wrapper is judged by everything it will
+                    -- produce: either half being block-shaped makes the
+                    -- whole a block, as the content does.
+                    bodyIsBlock env.beginBody || bodyIsBlock env.endBody
+                  | none => false)
+              || bodyIsBlock body
         | .verb _ _ => true
         | _ => false
       if !isBoundary then
@@ -1078,7 +1136,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             -- Block-producing user command: bind its arguments, then
             -- elaborate the body as blocks so `\block` inside a definition
             -- works instead of reporting E0312.
-            let (bindings, j) ← takeArgs ctx cmd n raws i pos
+            let (bindings, j) ← takeArgs ctx cmd.params n raws i pos
             i := j
             let callCtx : Ctx := { ctx with limit := k, args := bindings }
             blocks := blocks ++ (← elabBlocks callCtx cmd.body)
@@ -1239,6 +1297,17 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             blocks := blocks.push (.list (n == "enumerate") elabItems)
           else if n == "center" then
             blocks := blocks.push (.center (← elabBlocks ctx body))
+          else if let some (k, env) := lookupUserEnv ctx n then
+            -- A defined wrapper at block level: the halves and the content
+            -- each contribute their blocks, in order. An inline half becomes
+            -- its own paragraph beside block content — the splice that would
+            -- merge them re-elaborates raws under two argument scopes.
+            let (bindings, j) ← takeArgs ctx env.params n body 0 pos
+            let envCtx : Ctx := { ctx with
+              limit := env.cmdLimit, envLimit := k, args := bindings }
+            blocks := blocks ++ (← elabBlocks envCtx env.beginBody)
+            blocks := blocks ++ (← elabBlocks ctx (body.extract j body.size))
+            blocks := blocks ++ (← elabBlocks envCtx env.endBody)
           else if let some milestone := reservedEnv.lookup n then
             warnOnce ctx ("env:" ++ n) "W0307"
               s!"'\{{n}}' is not implemented yet; its content is not rendered" pos
@@ -1712,6 +1781,53 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               diag ctx "E0303" s!"'\\define \\{newName}' is missing its \{body}" pos
         | _ =>
           diag ctx "E0303" "expected '\\define \\name(...)  {body}'" pos
+          i := j + 1
+      | .ctrl "defineenv" pos =>
+        -- `\defineenv{name}(sig) {begin} {end}`: the native spelling of
+        -- `\newenvironment`. The halves are stored raw and elaborate at
+        -- every `\begin{name}`, around its content, with the parameters
+        -- bound from the groups after the `\begin`.
+        i := i + 1
+        let j := skipSpaces preamble i
+        match preamble[j]? with
+        | some (.group nameRaws npos) =>
+          let envName := (rawSrc nameRaws).trimAscii.toString
+          let mut sigRaws : Array Raw := #[]
+          let mut k := j + 1
+          let mut beginRaws : Option (Array Raw) := none
+          for _ in [k:preamble.size] do
+            match preamble[k]? with
+            | some (.group b _) =>
+              beginRaws := some b
+              k := k + 1
+              break
+            | some r' =>
+              sigRaws := sigRaws.push r'
+              k := k + 1
+            | none => break
+          let k2 := skipSpaces preamble k
+          let endRaws : Option (Array Raw) := match preamble[k2]? with
+            | some (.group e _) => some e
+            | _ => none
+          i := if endRaws.isSome then k2 + 1 else k
+          if builtinEnvNames.contains envName then
+            modify fun st => { st with diags := st.diags.push {
+              severity := .warning, code := "W0303"
+              message := s!"'\{{envName}}' is built in; this definition is ignored"
+              span := some ⟨ctx.file, npos⟩
+              help := some "the built-in does what most definitions of this name do" } }
+          else
+            match beginRaws, endRaws with
+            | some b, some e =>
+              let params ← parseSig ctx (rawSrc sigRaws) pos
+              ctx := { ctx with
+                userEnvs := ctx.userEnvs.push
+                  ⟨envName, params, trimRaws b, trimRaws e, ctx.limit⟩
+                envLimit := ctx.userEnvs.size + 1 }
+            | _, _ =>
+              diag ctx "E0303" s!"'\\defineenv \{{envName}}' needs \{begin} and \{end}" pos
+        | _ =>
+          diag ctx "E0303" "expected '\\defineenv {name}(...) {begin} {end}'" pos
           i := j + 1
       | .ctrl name pos =>
         i := i + 1

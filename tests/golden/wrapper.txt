@@ -1,0 +1,14 @@
+class article
+page 612x792 vmargin 72 hmargin 72
+para
+  styled bold
+    text "First:"
+  text " body one "
+  styled emph
+    text "(end First)"
+para
+  text "Aside. body two"
+-- diagnostics
+note[N0100] 6:1 \newenvironment{labeled} → \defineenv{labeled}(a1: content) {begin} {end}
+note[N0100] 7:1 \newenvironment{aside} → \defineenv{aside}() {begin} {end}
+note[N0100] 8:1 \renewenvironment{aside} → \defineenv{aside}() {begin} {end}

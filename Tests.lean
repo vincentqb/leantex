@@ -46,7 +46,7 @@ def warnCodes (s : String) : List String :=
 
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
-   "links", "resume", "talk", "deck", "latex-idioms"]
+   "links", "resume", "talk", "deck", "latex-idioms", "wrapper"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -431,6 +431,50 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html heading rule aligns at the baseline"
     (((HtmlDoc.emit {} ruledDoc).1.splitOn
       "h2 { display: flex; align-items: baseline;").length == 2)
+
+/-- `\newenvironment` wrappers: the definition binds, the halves contribute
+around the content, and nothing warns. Its own function: `main` is one `do`
+block and its elaboration budget is spent. -/
+def wrapperChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pre (defs body : String) : String :=
+    "\\documentclass{article}\n" ++ defs ++ "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let (doc, ds) := elabStr (pre
+    "\\newenvironment{labeled}[1]{\\textbf{#1:}}{\\emph{(end)}}"
+    "\\begin{labeled}{First} body \\end{labeled}")
+  t "newenvironment defines a wrapper, warning nothing"
+    (ds.all (·.severity == .note))
+  t "wrapper argument binds and both halves contribute"
+    (doc.body.size == 1 && (doc.body[0]?.map fun b => match b with
+      | .para content =>
+        Ir.plainText content == "First: body (end)" &&
+        content.any (fun x => x == .styled .bold #[.text "First:"]) &&
+        content.any (fun x => x == .styled .emph #[.text "(end)"])
+      | _ => false) == some true)  -- The optional-argument spelling binds like \newcommand's.
+  let (opt, optDs) := elabStr (pre
+    "\\newenvironment{tag}[2][?]{\\textbf{#1/#2}}{}"
+    "\\begin{tag}[a]{b} body\\end{tag}")
+  t "wrapper optional argument binds" (optDs.all (·.severity == .note) &&
+    (opt.body[0]?.map fun b => match b with
+      | .para content => Ir.plainText content == "a/b body"
+      | _ => false) == some true)
+  -- \renewenvironment redefines: the last definition wins.
+  let (re, _) := elabStr (pre
+    "\\newenvironment{aside}{old:}{}\\renewenvironment{aside}{new:}{}"
+    "\\begin{aside} body\\end{aside}")
+  t "renewenvironment wins"
+    ((re.body[0]?.map fun b => match b with
+      | .para content => Ir.plainText content == "new: body"
+      | _ => false) == some true)
+  -- A built-in environment cannot be redefined, and says so.
+  t "a built-in environment cannot be redefined"
+    (warnCodes (pre "\\newenvironment{itemize}{x}{y}" "z") == ["W0303"])
+  -- A wrapper whose content is block-shaped keeps its blocks.
+  let (blk, blkDs) := elabStr (pre
+    "\\newenvironment{boxed}{}{}"
+    "\\begin{boxed}first\n\nsecond\\end{boxed}")
+  t "wrapper around block content keeps the blocks"
+    (blkDs.all (·.severity == .note) && blk.body.size == 2)
 
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -2761,6 +2805,7 @@ def main (args : List String) : IO UInt32 := do
   declChecks ref
   tokensChecks ref
   compatChecks ref
+  wrapperChecks ref
   fontDiagChecks ref
   declaredFaceChecks ref
   fallbackChecks ref

@@ -65,8 +65,11 @@ private structure St where
   foot : Array (Nat × String) := #[]
   runPos : Pos := ⟨1, 1⟩
   runFrom : Nat := 1
-  /-- The next group is a macro body, where `#k` names a parameter. -/
-  bodyNext : Bool := false
+  /-- Upcoming groups that are macro bodies, where `#k` names a parameter:
+  one for a `\define`/`\newcommand` body, two for `\newenvironment`'s begin
+  and end halves. Scoped: descending into a group consumes one and shields
+  the count from the group's own definitions. -/
+  bodyNext : Nat := 0
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -436,7 +439,7 @@ where
         pure (signature spec, j)
     let native := s!"\\define \\{cmd}({spec})"
     became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
-    modify fun st => { st with bodyNext := true }
+    modify fun st => { st with bodyNext := 1 }
     return some (← synthAt native pos, j)
   | "hypersetup" =>
     let (args, k) := takeGroups raws start 1
@@ -579,7 +582,7 @@ where
       else String.ofList (List.replicate n 'm')
     let native := s!"\\define \\{cmd}({signature spec})"
     became s!"\\renewcommand\{\\{cmd}}" (native ++ " {...}") pos
-    modify fun st => { st with bodyNext := true }
+    modify fun st => { st with bodyNext := 1 }
     return some (← synthAt native pos, j)
   | "setmathfont" =>
     let (_, j) := takeOpt raws start
@@ -612,15 +615,21 @@ where
       (help := "\\define declares typed commands")
     return some (#[], if found then k else start)
   | "newenvironment" | "renewenvironment" =>
+    -- `\newenvironment{name}[n][default]{begin}{end}` is the native
+    -- `\defineenv{name}(a1: content, ...) {begin} {end}`. The two body
+    -- groups stay in the stream and are announced as macro bodies, so `#k`
+    -- becomes `\ak` in each and idioms inside them translate as usual.
     let (args, j) := takeGroups raws start 1
     let envName := rawSrc (args.getD 0 #[])
-    let (_, j) := takeOpt raws j
-    let (_, j) := takeOpt raws j
-    let (_, k) := takeGroups raws j 2
-    say .warning "W0104" s!"'\\{name}\{{envName}}' is not supported; \
-the definition is skipped and every '\{{envName}}' keeps its body" pos
-      (help := "the wrapper's decoration is lost; the content inside still renders")
-    return some (#[], k)
+    let (count, j) := takeOpt raws j
+    let (dflt, j) := takeOpt raws j
+    let n := (count.bind String.toNat?).getD 0
+    let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
+      else String.ofList (List.replicate n 'm')
+    let native := s!"\\defineenv\{{envName}}({signature spec})"
+    became s!"\\{name}\{{envName}}" (native ++ " {begin} {end}") pos
+    modify fun st => { st with bodyNext := 2 }
+    return some (← synthAt native pos, j)
   | "ifdefined" | "ifcsname" | "ifx" =>
     -- A TeX conditional is configuration for machinery that is not here.
     -- Skipped whole, both branches: elaborating either would only warn
@@ -718,7 +727,7 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
   | [], _, _ => pure out
   | _ :: rest, i, skip + 1 => rewriteList inBody raws out rest (i + 1) skip
   | .ctrl "define" pos :: rest, i, 0 => do
-    modify fun st => { st with bodyNext := true }
+    modify fun st => { st with bodyNext := 1 }
     rewriteList inBody raws (out.push (.ctrl "define" pos)) rest (i + 1) 0
   | .ctrl name pos :: rest, i, 0 => do
     match ← rewriteCtrl name pos raws (i + 1) with
@@ -743,11 +752,15 @@ recursion is structural on `Raw`: the body is a field of the head, not a tail
 of the list. -/
 private def rewriteRaw (inBody : Bool) : Raw → M Raw
   | .group body p => do
-    -- A group is a macro body when a definition announced one; the flag is
-    -- consumed here so only that group is read as a body.
-    let isBody := (← get).bodyNext
-    modify fun st => { st with bodyNext := false }
-    return .group (← rewriteList (inBody || isBody) body #[] body.toList 0 0) p
+    -- A group is a macro body when a definition announced one. The count is
+    -- zeroed for the descent and restored one lower on the way out, so a
+    -- definition inside the body manages its own following group without
+    -- stealing `\newenvironment`'s second half.
+    let saved := (← get).bodyNext
+    modify fun st => { st with bodyNext := 0 }
+    let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
+    modify fun st => { st with bodyNext := saved - 1 }
+    return .group body' p
   | .env n body p => do
     -- An `\input` wrapper switches the file its diagnostics name.
     match Parse.inputEnvFile? n with
