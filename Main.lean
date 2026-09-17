@@ -126,9 +126,17 @@ mechanism: `FontDb.defaultFamily` picks a family from the scan and it fills
 the body slot, so the default exists wherever any font does, by construction.
 A `\fonts{ dir = ... }` is searched first, resolved against the document's own
 directory like `\input`: a document that ships its fonts renders the same on
-every host, whatever else is installed. -/
-def buildFontSet (ui : Ui) (file : String) (spec : Ir.FontSpec) :
+every host, whatever else is installed.
+
+Per-glyph fallback is precomputed here, against the document's own scalars
+(`Layout.docScalars`): a scalar some declared face covers maps to the first
+covering face in declaration order, and one no declared face covers goes to
+`FontDb.fallbackPicks`, whose face is loaded at the end of the set. Layout
+consults the map only on a missing glyph. The `LEANTEX_FONT` override is a
+single face with no scan behind it, so it gets no fallback. -/
+def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     IO (Except Diag (Font.FontSet × Array Diag × String)) := do
+  let spec := doc.fonts
   let bare := spec.body.isNone && spec.sans.isNone && spec.mono.isNone
   if bare then
     if let some path ← IO.getEnv "LEANTEX_FONT" then
@@ -234,7 +242,27 @@ def buildFontSet (ui : Ui) (file : String) (spec : Ir.FontSpec) :
       | .error _ => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
       | .ok f =>
         return .ok ({ fonts := #[f], index := singleFaceIndex }, diags, face.path)
-  return .ok ({ fonts := fonts, index := index }, diags,
+  -- Per-glyph fallback: map every scalar the document uses to the first
+  -- declared face covering it; scalars none covers go to the scan.
+  let mut fallback : Array (Char × Nat) := #[]
+  let mut uncovered : Array Char := #[]
+  for c in Layout.docScalars doc do
+    match (Array.range fonts.size).find? (fun i => ((fonts[i]!).gid c).isSome) with
+    | some i => fallback := fallback.push (c, i)
+    | none => uncovered := uncovered.push c
+  unless uncovered.isEmpty do
+    for (c, path) in ← FontDb.fallbackPicks faces uncovered do
+      match paths.findIdx? (· == path) with
+      | some i => fallback := fallback.push (c, i)
+      | none =>
+        let data ← IO.FS.readBinFile path
+        match Font.parse data with
+        | .error _ => pure ()  -- undecodable candidate; the scalar stays dropped
+        | .ok f =>
+          fallback := fallback.push (c, fonts.size)
+          fonts := fonts.push f
+          paths := paths.push path
+  return .ok ({ fonts := fonts, index := index, fallback := fallback }, diags,
     String.intercalate ", " paths.toList)
 
 def since (t0 : Nat) : IO Nat := do
@@ -358,7 +386,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       ui.summary file errors (← since t0)
       return 1
     let t ← IO.monoMsNow
-    match ← buildFontSet ui file doc.fonts with
+    match ← buildFontSet ui file doc with
     | .error d =>
       ui.diag d
       ui.summary file 1 (← since t0)

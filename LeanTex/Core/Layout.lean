@@ -235,13 +235,19 @@ def fixedSpace (c : Char) : Option (Nat × Nat) :=
   else none
 
 /-- One word → items: boxes split by hyphenation points (flagged penalties
-carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph). -/
+carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph).
+A scalar the styled face lacks is set from the precomputed fallback face
+(`FontSet.fallback`) at the same size — its own one-glyph box, since a box
+carries one face — or dropped when no face covers it. `missing` and `substs`
+carry `(styled font, scalar)` so the diagnostic can name the family. -/
 private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat)
     (color : Ir.Color) (link : Option String) (underline : Bool)
-    (font : Font) (chars : Array Char) (missing : Array Char)
-    (cache : Std.HashMap String (List Nat)) :
-    Array Item × Array Char × Std.HashMap String (List Nat) := Id.run do
+    (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
+    (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (List Nat)) :
+    Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
+      Std.HashMap String (List Nat) := Id.run do
   let mut missing := missing
+  let mut substs := substs
   let mut cache := cache
   let hyphW := (hyphenGlyph size font).foldl (fun w (_, _, adv) => w + adv) 0
   let mut items : Array Item := #[]
@@ -288,8 +294,18 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
             box := box.push g
             boxW := boxW + g.2.2
           | none =>
-            unless missing.contains c' do
-              missing := missing.push c'
+            match fs.fallbackFor c' |>.bind fun fb =>
+                (glyphOf size (fs.get fb) c').map (fb, ·) with
+            | some (fb, g) =>
+              items := flush items box boxW
+              box := #[]
+              boxW := 0
+              items := items.push (.box g.2.2 fb color link #[g] size underline)
+              unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c') do
+                substs := substs.push (fontIdx, c', fb)
+            | none =>
+              unless missing.contains (fontIdx, c') do
+                missing := missing.push (fontIdx, c')
         i := j
       else
         match fixedSpace c with
@@ -316,8 +332,18 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
           box := box.push g
           boxW := boxW + g.2.2
         | none =>
-          unless missing.contains c do
-            missing := missing.push c
+          match fs.fallbackFor c |>.bind fun fb =>
+              (glyphOf size (fs.get fb) c).map (fb, ·) with
+          | some (fb, g) =>
+            items := flush items box boxW
+            box := #[]
+            boxW := 0
+            items := items.push (.box g.2.2 fb color link #[g] size underline)
+            unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c) do
+              substs := substs.push (fontIdx, c, fb)
+          | none =>
+            unless missing.contains (fontIdx, c) do
+              missing := missing.push (fontIdx, c)
         i := i + 1
         if c == '-' then
           items := flush items box boxW
@@ -327,11 +353,78 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
     else
       break
   items := flush items box boxW
-  return (items, missing, cache)
+  return (items, missing, substs, cache)
 
 private def interword (size : Sp) (font : Font) : Glue :=
   let w := scaledAt size font (font.advance ' ')
   { width := w, stretch := w / 2, shrink := w / 3 }
+
+-- The document's scalars, for the driver's per-glyph fallback ------------------
+
+mutual
+
+private def scalarTextList (out : Array String) : List Block → Array String
+  | [] => out
+  | b :: rest => scalarTextList (scalarTextOne out b) rest
+
+private def scalarTextOne (out : Array String) : Block → Array String
+  | .para xs => out.push (Ir.plainText xs)
+  | .section _ _ title => out.push (Ir.plainText title)
+  | .list _ items => scalarTextItems out items.toList
+  | .center body => scalarTextList out body.toList
+  | .spaced _ body => scalarTextList out body.toList
+  | .verbatim s => out.push s
+  | .frame title body => scalarTextList (out.push (Ir.plainText title)) body.toList
+
+private def scalarTextItems (out : Array String) : List (Array Block) → Array String
+  | [] => out
+  | bs :: rest => scalarTextItems (scalarTextList out bs.toList) rest
+
+end
+
+/-- Every scalar the document's text can ask a face for, sorted: body text,
+titles, verbatim, running content (with the digits page numbers become), and
+style templates and markers — plus each cased scalar's uppercase, because
+small caps set lowercase as its uppercase. Whitespace and the fixed-space
+kerns are excluded; they never look a glyph up. The driver checks these
+against the loaded faces to precompute `FontSet.fallback` before layout
+begins, which is what keeps layout pure: finding a covering face on disk is
+the driver's effect, and by layout time it has already happened. -/
+def docScalars (doc : Doc) : Array Char := Id.run do
+  let mut texts : Array String := scalarTextList #[] doc.body.toList
+  if let some h := doc.head then
+    texts := (texts.push (Ir.plainText h)).push "0123456789"
+  if let some f := doc.foot then
+    texts := (texts.push (Ir.plainText f)).push "0123456789"
+  for (_, st) in doc.styles.entries do
+    if let some tpl := st.font then
+      texts := texts.push (Ir.plainText tpl)
+    if let some m := st.marker then
+      texts := texts.push (Ir.plainText m)
+  -- ASCII in a bitmap, the rest gathered and deduplicated after: a hash
+  -- insert per character of the document costs ~15 ms on the 30-page bench,
+  -- a bitmap update costs nothing. Two folds, so each accumulator threads
+  -- linearly and updates in place.
+  let skip (c : Char) : Bool :=
+    c == ' ' || c == '\n' || c == '\t' || c == '\u00a0' || (fixedSpace c).isSome
+  let mut ascii : Array Bool := Array.replicate 128 false
+  let mut rest : Array Char := #[]
+  for t in texts do
+    ascii := t.foldl (init := ascii) fun a c =>
+      if c.toNat < 128 && !skip c then
+        let a := a.set! c.toNat true
+        if c.isLower then a.set! c.toUpper.toNat true else a
+      else a
+    rest := t.foldl (init := rest) fun a c =>
+      if c.toNat >= 128 && !skip c then a.push c else a
+  let mut set : Std.HashSet Char := {}
+  for c in rest do
+    set := set.insert c
+  let mut out : Array Char := #[]
+  for n in [0:128] do
+    if ascii[n]! then
+      out := out.push (Char.ofNat n)
+  return out ++ set.toArray.qsort (· < ·)
 
 /-- Flatten inlines into Knuth-Plass items. The fourth component maps the
 index of a forced-break penalty to extra vertical space the document asked for
@@ -345,7 +438,8 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       Std.HashMap Nat Sp := Id.run do
   let st := flatten {} baseStyle xs
   let mut items : Array Item := #[]
-  let mut missing : Array Char := #[]
+  let mut missing : Array (Nat × Char) := #[]
+  let mut substs : Array (Nat × Char × Nat) := #[]
   let mut extras : Std.HashMap Nat Sp := {}
   let mut cache := cache
   for tk in st.toks do
@@ -353,9 +447,11 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     | .word sty chars =>
       let idx := fs.lookup sty.slot sty.bold sty.italic
       let sz := size * sty.scale / 1000
-      let (ws, m, c') :=
-        wordItems pats sz idx sty.color sty.link sty.underline (fs.get idx) chars missing cache
+      let (ws, m, s, c') :=
+        wordItems pats sz idx sty.color sty.link sty.underline fs (fs.get idx) chars
+          missing substs cache
       missing := m
+      substs := s
       cache := c'
       items := items ++ ws
     | .space sty =>
@@ -380,11 +476,19 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     items := items.push (.glue { fil := true, parfill := true })
     items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   let mut diags := st.diags
-  for c in missing do
+  for (idx, c) in missing do
     diags := diags.push {
       severity := .warning
       code := "W0004"
-      message := s!"the font has no glyph for '{c}' (U+{hex c.toNat}); dropped"
+      message :=
+        s!"'{(fs.get idx).family}' has no glyph for '{c}' (U+{hex c.toNat}); dropped"
+    }
+  for (idx, c, fb) in substs do
+    diags := diags.push {
+      severity := .warning
+      code := "W0009"
+      message := s!"'{(fs.get idx).family}' has no glyph for '{c}' \
+        (U+{hex c.toNat}); set from '{(fs.get fb).family}'"
     }
   return (items, diags, cache, extras)
 where

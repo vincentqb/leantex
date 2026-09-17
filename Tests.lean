@@ -735,6 +735,92 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
       { bold := true }).map (fun r => (r.1.path, r.2)) ==
       some (testFonts ++ "/SourceSerifPro-Bold.otf", none))
 
+/-- Per-glyph fallback: a scalar the styled face lacks is set from the face
+the driver's map names, at the same size; the diagnostic is one line per
+family+glyph, naming both families; a scalar no face covers is still an
+honest W0004 naming the family; and a document whose faces cover their text
+is untouched by the map — byte-identical output. The pick order over scanned
+faces is the documented one, not scan order. -/
+def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let load (name : String) : IO Font.Font := do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"fallback: {name} unparsable: {e}")
+  let sans ← load "OpenSans-Regular.ttf"
+  let code ← load "SourceCodePro-Regular.otf"
+  t "coverage premise: only the code face has U+2200"
+    ((sans.gid '∀').isNone && (code.gid '∀').isSome)
+  t "coverage premise: no shipped face has U+27E8"
+    ((sans.gid '⟨').isNone && (code.gid '⟨').isNone)
+  let geom : Layout.Geom := {}
+  let allVariants (slot idx : Nat) : List ((Nat × Bool × Bool) × Nat) :=
+    [((slot, false, false), idx), ((slot, true, false), idx),
+     ((slot, false, true), idx), ((slot, true, true), idx)]
+  let bare : Font.FontSet := {
+    fonts := #[sans, code]
+    index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 1).toArray
+  }
+  let mapped : Font.FontSet := { bare with fallback := #[('∀', 1)] }
+  -- The mapped face sets the glyph, at the styled size, in its own run.
+  let (faDoc, faDs) := Elab.run "t" "for all is ∀ set\n\nagain ∀ here"
+  t "fallback source clean" faDs.isEmpty
+  let out := Layout.run geom mapped none faDoc
+  let runs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
+  t "fallback sets the glyph from the mapped face"
+    (runs.any fun s => match s with
+      | .run 1 _ _ _ glyphs _ _ => glyphs.any (·.2 == '∀')
+      | _ => false)
+  t "fallback reports once per family+glyph, naming both faces"
+    ((out.diags.filter (·.code == "W0009")).map (·.message) ==
+      #["'Open Sans' has no glyph for '∀' (U+2200); set from 'Source Code Pro'"])
+  t "a covered scalar raises no W0004" (!out.diags.any (·.code == "W0004"))
+  -- No face covers it: dropped once per family+glyph, family named.
+  let (dropDoc, _) := Elab.run "t" "lost ⟨ here\n\nand ⟨ there"
+  let dropOut := Layout.run geom mapped none dropDoc
+  t "an uncovered scalar drops once, naming the family"
+    ((dropOut.diags.filter (·.code == "W0004")).map (·.message) ==
+      #["'Open Sans' has no glyph for '⟨' (U+27E8); dropped"])
+  -- A document whose faces cover their text is untouched by the map.
+  let (plainDoc, _) := Elab.run "t" "plain words only"
+  let noMap := Pdf.write geom bare (Layout.run geom bare none plainDoc).pages
+  let withMap := Pdf.write geom
+    { bare with fallback := #[('p', 1), ('a', 1), ('o', 1)] }
+    (Layout.run geom { bare with fallback := #[('p', 1), ('a', 1), ('o', 1)] }
+      none plainDoc).pages
+  t "a covered document is byte-identical under any map" (noMap == withMap)
+  -- The document's scalars: text and titles, uppercase for small caps,
+  -- verbatim content, no whitespace and no fixed-space kerns.
+  let (scDoc, _) := Elab.run "t"
+    "\\section{Tz}\n\n{\\scshape hi}\\,x\n\n\\begin{verbatim}q r\\end{verbatim}"
+  let scalars := Layout.docScalars scDoc
+  t "docScalars carries text, titles, and verbatim"
+    (scalars.contains 'T' && scalars.contains 'z' && scalars.contains 'x' &&
+      scalars.contains 'q' && scalars.contains 'r')
+  t "docScalars carries the uppercase small caps set"
+    (scalars.contains 'H' && scalars.contains 'I')
+  t "docScalars excludes whitespace and kerns"
+    (!scalars.contains ' ' && !scalars.contains '\u2009' && !scalars.contains '\u00a0')
+  t "docScalars is sorted" (scalars == scalars.qsort (· < ·))
+  -- The scanned-face pick order is documented: families in normalised order,
+  -- upright regular first — never scan luck.
+  let shipped ← FontDb.scanRoots [testFonts]
+  let picks ← FontDb.fallbackPicks shipped #['∀', '₿', '⟨']
+  t "picks the first covering family in sorted order"
+    (picks.contains ('∀', testFonts ++ "/SourceCodePro-Regular.otf"))
+  t "picks the regular face of a family with variants"
+    (picks.contains ('₿', testFonts ++ "/SourceSerifPro-Regular.otf"))
+  t "a scalar no face covers is absent from the picks"
+    (!picks.any (·.1 == '⟨'))
+  -- Malformed and missing candidates stay total: no answer, never an abort.
+  t "tableImage of a missing file is none"
+    ((← FontDb.tableImage "/nonexistent/leantex-x.otf" (fun _ => true)).isNone)
+  let corrupt := System.FilePath.mk "/tmp" / "leantex-test-corrupt-fallback.otf"
+  IO.FS.writeBinFile corrupt ("OTTO".toUTF8 ++ ByteArray.mk (Array.replicate 40 0xff))
+  t "a corrupt candidate yields no cmap image"
+    ((← FontDb.tableImage corrupt.toString (· == "cmap")).isNone)
+  IO.FS.removeFile corrupt
+
 /-- The band projection over synthetic outlines: the invariant is that no
 ink inside the band escapes the reported intervals, whatever its shape —
 wholly inside the band, spanning it, or dipping into it at a curve
@@ -2677,6 +2763,7 @@ def main (args : List String) : IO UInt32 := do
   compatChecks ref
   fontDiagChecks ref
   declaredFaceChecks ref
+  fallbackChecks ref
   smartChecks ref
   linkHtmlChecks ref
   paletteChecks ref

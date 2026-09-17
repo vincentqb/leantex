@@ -315,16 +315,16 @@ def parse (data : ByteArray) : Except String Font := do
     underlineInk := underlineInk
   }
 
-/-- Glyph id for a scalar, or `none` (missing glyph). Binary search. -/
-def Font.gid (f : Font) (c : Char) : Option Nat := Id.run do
+/-- Glyph id for a scalar in sorted cmap ranges, or `none`. Binary search. -/
+def gidIn (cmap : Array (UInt32 × UInt32 × UInt32)) (c : Char) : Option Nat := Id.run do
   let x := UInt32.ofNat c.toNat
   let mut lo := 0
-  let mut hi := f.cmap.size
+  let mut hi := cmap.size
   for _ in [0:32] do
     if lo >= hi then
       break
     let mid := (lo + hi) / 2
-    let (s, e, g) := f.cmap[mid]!
+    let (s, e, g) := cmap[mid]!
     if x < s then
       hi := mid
     else if x > e then
@@ -332,6 +332,18 @@ def Font.gid (f : Font) (c : Char) : Option Nat := Id.run do
     else
       return some ((g + (x - s)).toNat % 0x10000)
   return none
+
+/-- Glyph id for a scalar, or `none` (missing glyph). -/
+def Font.gid (f : Font) (c : Char) : Option Nat :=
+  gidIn f.cmap c
+
+/-- The char→glyph ranges of a font image alone, sorted, without parsing the
+rest of it: what the per-glyph fallback scan asks of a candidate face is only
+"has it the glyph". Empty when the image has no readable cmap. -/
+def cmapRanges (data : ByteArray) : Array (UInt32 × UInt32 × UInt32) :=
+  match findTable data "cmap" with
+  | some t => if fits data t then (parseCmap data t).qsort (fun a b => a.1 < b.1) else #[]
+  | none => #[]
 
 /-- Advance width of a scalar in font units (0 when the glyph is missing). -/
 def Font.advance (f : Font) (c : Char) : Nat :=
@@ -358,6 +370,13 @@ structure FontSet where
   fonts : Array Font
   /-- (family slot, bold, italic) → index into `fonts`. -/
   index : Array ((Nat × Bool × Bool) × Nat) := #[]
+  /-- Per-scalar fallback, precomputed by the driver from the document's own
+  text: the font that sets a glyph when the styled face lacks it — the first
+  declared face that covers the scalar, in declaration order, else the first
+  covering scanned face (loaded at the end of `fonts`). Layout consults it
+  only on a missing glyph, so a document whose faces cover their text is
+  untouched by construction. -/
+  fallback : Array (Char × Nat) := #[]
   deriving Inhabited
 
 namespace FontSet
@@ -374,6 +393,10 @@ def lookup (fs : FontSet) (slot : Nat) (bold italic : Bool) : Nat :=
     match fs.index.find? fun e => e.1 == (slot, false, false) with
     | some (_, i) => i
     | none => 0
+
+/-- The font that sets a glyph the styled face lacks, if any face can. -/
+def fallbackFor (fs : FontSet) (c : Char) : Option Nat :=
+  (fs.fallback.find? (·.1 == c)).map (·.2)
 
 end FontSet
 end LeanTex.Core.Font

@@ -53,10 +53,11 @@ private def isFontFile (p : String) : Bool :=
   let ext := (p.splitOn ".").getLast? |>.map String.toLower
   ext == some "ttf" || ext == some "otf"
 
-/-- Read just enough of a font file to classify it: the table directory, then
-the `name`, `OS/2`, `head`, and `post` tables. Full files are large (a
-megabyte each is common) and a scan touches every installed face. -/
-def probe (path : String) : IO (Option Face) := do
+/-- A sparse image of a font file holding only the tables `want` names, each
+spliced at its true offset so `Font`'s table readers see a consistent file:
+zeros elsewhere, nothing else read. `none` when the file is not sfnt-shaped
+or a wanted table is absent or absurd. -/
+def tableImage (path : String) (want : String → Bool) : IO (Option ByteArray) := do
   try
     let handle ← IO.FS.Handle.mk path .read
     let header ← handle.read 12
@@ -66,8 +67,6 @@ def probe (path : String) : IO (Option Face) := do
     if numTables == 0 || numTables > 512 then
       return none
     let dir ← handle.read (16 * numTables).toUSize
-    -- Keep the header + directory, then splice each wanted table at its own
-    -- offset so `Font.parse`-style readers see a consistent file image.
     let mut wanted : Array (String × Nat × Nat) := #[]
     for k in [0:numTables] do
       let base := 16 * k
@@ -78,10 +77,7 @@ def probe (path : String) : IO (Option Face) := do
           (dir[base + 10]!).toNat) * 256 + (dir[base + 11]!).toNat
         let len := (((dir[base + 12]!).toNat * 256 + (dir[base + 13]!).toNat) * 256 +
           (dir[base + 14]!).toNat) * 256 + (dir[base + 15]!).toNat
-        -- Only the metadata tables. A scan touches every installed face, and
-        -- `hmtx` and `cmap` are what make that expensive -- classification
-        -- needs neither, so `probe` calls `classify` rather than `parse`.
-        if tag == "name" || tag == "OS/2" || tag == "head" || tag == "post" then
+        if want tag then
           wanted := wanted.push (tag, off, len)
     if wanted.isEmpty then
       return none
@@ -102,20 +98,31 @@ def probe (path : String) : IO (Option Face) := do
         let chunk ← handle.read len.toUSize
         image := image ++ chunk
         pos := off + chunk.size
-    match Font.classify image with
-    | .ok f =>
-      return some {
-        path := path
-        family := f.family
-        subfamily := f.subfamily
-        bold := f.isBold
-        italic := f.isItalic
-        fixedPitch := f.isFixedPitch
-        weight := f.weight
-      }
-    | .error _ => return none
+    return some image
   catch _ =>
     return none
+
+/-- Read just enough of a font file to classify it: the table directory, then
+the `name`, `OS/2`, `head`, and `post` tables. Full files are large (a
+megabyte each is common) and a scan touches every installed face — `hmtx`
+and `cmap` are what make that expensive, and classification needs neither,
+so `probe` calls `classify` rather than `parse`. -/
+def probe (path : String) : IO (Option Face) := do
+  let some image ← tableImage path
+    (fun tag => tag == "name" || tag == "OS/2" || tag == "head" || tag == "post")
+    | return none
+  match Font.classify image with
+  | .ok f =>
+    return some {
+      path := path
+      family := f.family
+      subfamily := f.subfamily
+      bold := f.isBold
+      italic := f.isItalic
+      fixedPitch := f.isFixedPitch
+      weight := f.weight
+    }
+  | .error _ => return none
 
 /-! ## The probe cache
 
@@ -505,6 +512,42 @@ def resolveVariant (faces : Array Face) (family : String) (declared : Option Str
       if satisfied then (face, none)
       else (face, some s!"'{family}' has no {want} face; \
         using \"{face.family} {face.subfamily}\"")
+
+/-- For each scalar no declared face covers, the scanned face that will set
+it. The order is documented, never scan luck: candidates are every scanned
+face sorted by family name (normalised), upright before italic, weight
+nearest regular, then subfamily and path — and the first whose cmap holds
+the scalar wins. Only candidate cmaps are read, and only until every scalar
+is served; a scalar no face covers is absent from the result. -/
+def fallbackPicks (faces : Array Face) (needed : Array Char) :
+    IO (Array (Char × String)) := do
+  let lt (a b : Face) : Bool :=
+    if norm a.family != norm b.family then norm a.family < norm b.family
+    else if a.italic != b.italic then !a.italic && b.italic
+    else
+      let da := max a.weight 400 - min a.weight 400
+      let db := max b.weight 400 - min b.weight 400
+      if da != db then da < db
+      else if a.subfamily != b.subfamily then a.subfamily < b.subfamily
+      else a.path < b.path
+  let sorted := faces.qsort lt
+  let mut remaining := needed
+  let mut out : Array (Char × String) := #[]
+  for f in sorted do
+    if remaining.isEmpty then
+      break
+    let some image ← tableImage f.path (· == "cmap") | continue
+    let ranges := Font.cmapRanges image
+    if ranges.isEmpty then
+      continue
+    let mut still : Array Char := #[]
+    for c in remaining do
+      if (Font.gidIn ranges c).isSome then
+        out := out.push (c, f.path)
+      else
+        still := still.push c
+    remaining := still
+  return out
 
 /-- Installed families that resemble a name: sharing a word, or within an
 edit or two of it. `Nimbus Roman` finds `Nimbus Sans L` and `Nimbus Mono`;
