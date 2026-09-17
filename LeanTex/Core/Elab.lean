@@ -2736,7 +2736,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                 if th.chrome.hasFooter then
                   chrome := th.chrome
               | none =>
-                diag ctx "W0318" s!"unknown theme '{tname}'; the document is unthemed"
+                diag ctx "W0319" s!"unknown theme '{tname}'; the document is unthemed"
                   (some pos)
                   (help := s!"themes: {String.intercalate ", " Theme.names}") .warning
             else if name == "assert" then

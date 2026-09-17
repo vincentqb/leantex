@@ -2962,7 +2962,8 @@ def diagRegistry : List (String × String) := [
   ("W0312", "no {...} group after a command; skipped"),
   ("W0313", "{...} groups went with an unknown wrapper"),
   ("W0314", "column width is not a fraction of the text width"),
-  ("W0318", "unknown theme; the document is unthemed"),
+  ("W0318", "\\chrome outside the slides class; ignored"),
+  ("W0319", "unknown theme; the document is unthemed"),
   ("W0315", "low-contrast colour pairing (WCAG 2.2)"),
   ("W0316", "unknown option in \\palette; block skipped"),
   ("W0317", "a card carries no running head or foot; declaration dropped"),
@@ -4134,7 +4135,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Unknown names warn and leave the document unthemed.
   let (uDoc, uDs) := elabStr (deck "\\theme{vaporwave}" "x")
   t "unknown theme warns naming the bundles"
-    (uDs.any fun d => d.code == "W0318" &&
+    (uDs.any fun d => d.code == "W0319" &&
       ((d.help.getD "").splitOn "moloch").length == 2 &&
       ((d.help.getD "").splitOn "plain").length == 2)
   t "unknown theme leaves the palette empty" (uDoc.palette.entries.isEmpty)
