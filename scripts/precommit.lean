@@ -188,6 +188,42 @@ def usesQualified (l mod : String) : Bool :=
     | none => true
     | some c => !isWordChar c
 
+/-- Is `w` a bare variable as a pattern spells one: word characters only,
+opening lowercase — never a constructor (`.text`, `Nat.zero`), a literal,
+or a bracket. -/
+def isVarToken (w : String) : Bool :=
+  !w.isEmpty && w.toList.all isWordChar
+    && (w.toList.head?.map Char.isLower).getD false
+
+/-- The pattern and RHS of a line-leading match arm, when the line is one
+(`| pat => rhs` with exactly one `=>`). An arm split across lines, or an
+arm not opening the line, is not seen — a stated line-scanner blind spot. -/
+def armParts (l : String) : Option (List String × List String) :=
+  let t := (stripLineComment l).trimAscii.toString
+  if !t.startsWith "|" then none
+  else match (t.drop 1).toString.splitOn "=>" with
+    | [pat, rhs] => some (tokens pat, tokens rhs)
+    | _ => none
+
+/-- The identity catch-all of a rewrite walk: a match arm whose pattern is
+one bare variable and whose RHS is that same variable (`| other => other`).
+It is how a new IR constructor ships through a walk untouched — the walks
+in Ir.lean and Layout.lean spell every constructor now, and the compiler
+turns the next constructor into a build error at each. -/
+def identityArm (l : String) : Bool :=
+  match armParts l with
+  | some ([p], [r]) => p == r && isVarToken p
+  | _ => false
+
+/-- A catch-all arm answering a bare numeral (`| _ => 1`): the measure-walk
+default that once kept a step inside a section title off the handout.
+Checked only in Ir.lean, where every walk over the IR lives. -/
+def wildcardNumeral (l : String) : Bool :=
+  match armParts l with
+  | some ([p], [r]) =>
+    (p == "_" || isVarToken p) && !r.isEmpty && r.toList.all Char.isDigit
+  | _ => false
+
 /-- A backend reaching into the surface: an import, an `open`, or a
 qualified use of a surface module, comments aside. An alias
 (`abbrev P := LeanTex.Core.Parse` elsewhere) would not be seen — the same
@@ -278,6 +314,30 @@ def selftest : IO UInt32 := do
     ("  -- a backend never calls Parse.scanOpt; the IR carries it", false),
     ("  let reparse := myParse.run s", false),
     ("  openTag := elem tag attrs kids", false)]
+
+  expect "identityArm" identityArm [
+    -- the wildcard drops the walk audit found, all of which must fire
+    ("  | other => other", true),
+    ("  | x => x", true),
+    -- explicit arms and non-arm lines that must stay legal
+    ("  | .text s => .text s", false),
+    ("  | .verbatim s => .verbatim s", false),
+    ("  | .box .. | .pen .. => it", false),
+    ("  | some x => x", false),
+    ("  | [] => []", false),
+    ("  | x :: rest => fillOne content x :: fillList content rest", false),
+    ("| a docstring table row | with cells |", false),
+    ("  -- | other => other, quoted in a comment", false)]
+
+  expect "wildcardNumeral" wildcardNumeral [
+    ("  | _ => 1", true),
+    ("  | other => 1", true),
+    -- a wildcard answering a non-numeral stays legal (a Nat scrutinee
+    -- cannot spell every case), as does an explicit arm answering one
+    ("  | _ => \"mono\"", false),
+    ("  | _ => geom.fontSize", false),
+    ("  | .verbatim _ => 1", false),
+    ("  | [] => 1", false)]
 
   let failed := (← fails.get).reverse
   if failed.isEmpty then
@@ -382,6 +442,24 @@ def main (args : List String) : IO UInt32 := do
   Modules under LeanTex/Core/ do no IO (FontDb is the one exception): files
   and fonts surface as request values the CLI driver fulfills.
   Fix: return a request value and fulfill it in Main.lean."
+    if file.startsWith "LeanTex/Core/" then
+      let bad := lines.filter identityArm
+      if !bad.isEmpty then
+        say s!"pre-commit: identity catch-all arm (`| x => x`) in {file}:
+{String.intercalate "\n" bad.toList}
+  A rewrite walk with a wildcard ships a new IR constructor through
+  untouched -- the shape of the covered-content defect (PLAN 2026-09-17).
+  Fix: spell every constructor; the compiler then makes the next
+  constructor a build error at every walk (AGENTS.md, obligation table)."
+    if file == "LeanTex/Core/Ir.lean" then
+      let bad := lines.filter wildcardNumeral
+      if !bad.isEmpty then
+        say s!"pre-commit: wildcard arm answering a numeral (`| _ => 1`) in {file}:
+{String.intercalate "\n" bad.toList}
+  A measure walk with a numeric default silently miscounts a new IR
+  constructor -- a step inside a section title got no handout page this
+  way (PLAN 2026-09-17).
+  Fix: spell every constructor and say what each one measures."
     if backendFiles.contains file then
       let bad := lines.filter surfaceReach
       if !bad.isEmpty then
