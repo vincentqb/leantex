@@ -1662,6 +1662,14 @@ def optArgChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!tsDs.any (·.severity == .error) && tsDs.any (·.code == "W0312"))
   t "the declaration after a skipped title survives"
     (tsDoc.info.author == some "A. Placeholder")
+  -- ...and a BLANK line between the typo and the group is one more line
+  -- arrangement, not a fatal E0313: never fatal means never
+  let titleBlank := "\\title[short never closes\n\n{The Real Title}\n\\begin{document}x\\end{document}"
+  let (tbDoc, tbDs) := elabStr titleBlank
+  t "title survives an unclosed bracket with a blank line before its group"
+    (tbDoc.info.title == some "The Real Title")
+  t "an unclosed title bracket across a blank line is never fatal"
+    (!tbDs.any (·.severity == .error) && tbDs.any (·.code == "W0310"))
   -- \section[short]{long}: the fifth optional-argument site obeys the
   -- shared scanner instead of a fatal E0304
   let (secDoc, secDs) := elabStr "\\section[Short]{Long Title}\n\nBody."
@@ -1671,8 +1679,21 @@ def optArgChecks (ref : IO.Ref (List String)) : IO Unit := do
      | _ => false)
   t "section recovers its title past an unclosed bracket"
     (match (elabStr "\\section[never closes {Recovered}\nBody.").1.body with
-     | #[.section 1 false title, .para _] => Ir.plainText title == "Recovered"
+     | #[.para _, .section 1 false title, .para _] => Ir.plainText title == "Recovered"
      | _ => false)
+  -- Principle 8: the malformed run W0310 calls content IS content in a
+  -- content position, exactly as in the scanner's two sibling paths
+  t "the malformed run before a recovered section title stays content"
+    (match (elabStr "\\section[never closes IMPORTANTWORDS {Recovered}\nBody.").1.body with
+     | #[.para junk, .section 1 false title, .para _] =>
+       (Ir.plainText junk).endsWith "IMPORTANTWORDS" && Ir.plainText title == "Recovered"
+     | _ => false)
+  t "a body title's malformed run stays content, the title still taken"
+    (let (doc, ds) := elabStr "\\title[junk words {Kept Title}\n\\maketitle"
+     !ds.any (·.severity == .error) &&
+       (match doc.body with
+        | #[.para junk, .center _] => (Ir.plainText junk).endsWith "junk words"
+        | _ => false))
   t "a section with no group after its unclosed bracket warns, never fatally"
     (let ds := (elabStr "\\section[never closes\nBody.").2
      !ds.any (·.severity == .error) && ds.any (·.code == "W0312"))

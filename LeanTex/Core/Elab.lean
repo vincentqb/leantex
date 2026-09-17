@@ -302,22 +302,28 @@ private def warnUnclosed (ctx : Ctx) (after : String) (bpos : Pos) : EM Unit :=
     (help := "add the matching ']'") .warning
 
 /-- The index of a command's `{...}` group past its optional argument, best
-effort. A well-formed `[...]` is skipped whole. An unclosed one warns and its
-run — the rest of the command's own line — is consumed, so the group the
-author wrote is found whether it shares the line or opens the next; the hunt
-never crosses into another construct or a later line's content. Returns the
-candidate index and whether it recovered from an unclosed bracket: a
-recovered command with no group left is skipped with a warning by its caller,
-never a fatal error. -/
+effort. A well-formed `[...]` is skipped whole. An unclosed one warns; its
+run — the rest of the command's own line — is returned to the caller,
+because W0310 just called it content: a body position renders it, and only
+the preamble, where no content can live, drops it with the warning already
+pointing there. The group the author wrote is then found wherever the line
+break falls — this line, the next, or past a blank line — but never past
+another construct. Returns the candidate index, whether it recovered from
+an unclosed bracket (a recovered command with no group left is skipped with
+a warning by its caller, never a fatal error), and the malformed run. -/
 private def skipOptArg (ctx : Ctx) (name : String) (raws : Array Raw)
-    (start : Nat) (pos : Pos) : EM (Nat × Bool) := do
+    (start : Nat) (pos : Pos) : EM (Nat × Bool × Array Raw) := do
   let j := skipSpaces raws start
   match scanBracketArg raws start pos with
-  | .took k => return (skipSpaces raws k, false)
-  | .content => return (j, false)
+  | .took k => return (skipSpaces raws k, false, #[])
+  | .content => return (j, false, #[])
   | .unclosed bpos =>
     warnUnclosed ctx s!"'\\{name}'" bpos
-    return (malformedRun raws j pos (groups := false), true)
+    let e := malformedRun raws j pos (groups := false)
+    let k := spanRaws raws e isSpaceOrPar
+    if let some (.group _ _) := raws[k]? then
+      return (k, true, raws.extract j e)
+    return (e, true, raws.extract j e)
 
 /-- The body of an unknown environment without its arguments: leading `[...]`
 runs and `{...}` groups on the `\begin` line are the environment's own
@@ -891,14 +897,16 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   return if inlines.isEmpty then none else some (.para inlines)
 
 /-- Store one `\title`-family declaration; `\maketitle` reads them back.
-Returns the index just past the consumed arguments. -/
+Returns the index just past the consumed arguments, and the malformed run
+of an unclosed optional argument for the caller to keep where content can
+live. -/
 private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
-    (start : Nat) (pos : Pos) : EM Nat := do
+    (start : Nat) (pos : Pos) : EM (Nat × Array Raw) := do
   -- `\title[short]{long}`: the short form feeds furniture we do not render.
-  -- Past an unclosed `[`, the group the author wrote is still there — on
-  -- this line or the next — and best effort takes it as the argument
-  -- rather than failing the build.
-  let (j, recovered) ← skipOptArg ctx name raws start pos
+  -- Past an unclosed `[`, the group the author wrote is still there —
+  -- wherever the line break falls — and best effort takes it as the
+  -- argument rather than failing the build.
+  let (j, recovered, junk) ← skipOptArg ctx name raws start pos
   match raws[j]? with
   | some (.group body _) =>
     let content ← elabInlines ctx body
@@ -908,13 +916,13 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
       | "author" => { st with author := some content }
       | "institute" => { st with institute := some content }
       | _ => { st with date := some content }
-    return j + 1
+    return (j + 1, junk)
   | _ =>
     if recovered then
       warnSkippedDecl ctx name pos
-      return j
+      return (j, junk)
     diag ctx "E0304" s!"'\\{name}' needs a \{...} group" pos
-    return start
+    return (start, #[])
 
 /-- The title content `\maketitle` sets, from what was declared. A declared
 but empty part (`\date{}`) is deliberately blank and sets nothing. -/
@@ -1038,7 +1046,11 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             blocks := blocks ++ (← elabBlocks callCtx cmd.body)
           | none =>
           if titleCtrls.contains n then
-            i ← takeTitleDecl ctx n raws i pos
+            let (j, junk) ← takeTitleDecl ctx n raws i pos
+            i := j
+            -- The malformed run of an unclosed bracket is content here.
+            if let some p ← mkPara ctx junk then
+              blocks := blocks.push p
           else if n == "maketitle" || n == "titlepage" then
             let inner := titleBlocks (← get)
             if inner.isEmpty then
@@ -1056,8 +1068,12 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
               starred := true
               i := i + 1
             -- `\section[short]{long}`: the short form feeds furniture we do
-            -- not render, and its bracket obeys the shared scanner.
-            let (j, recovered) ← skipOptArg ctx n raws i pos
+            -- not render, and its bracket obeys the shared scanner. The
+            -- malformed run of an unclosed bracket is content here
+            -- (Principle 8), exactly as in the scanner's sibling paths.
+            let (j, recovered, junk) ← skipOptArg ctx n raws i pos
+            if let some p ← mkPara ctx junk then
+              blocks := blocks.push p
             match raws[j]? with
             | some (.group title _) =>
               i := j + 1
@@ -1707,7 +1723,10 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           | _ =>
             diag ctx "E0304" s!"'\\{name}' needs a \{...} block" pos
         else if titleCtrls.contains name then
-          i ← takeTitleDecl ctx name preamble i pos
+          -- A declaration-only position: the malformed run is dropped with
+          -- W0310 already pointing at it — the preamble has no content.
+          let (j, _) ← takeTitleDecl ctx name preamble i pos
+          i := j
         else if let some milestone := reservedCtrl.lookup name then
           warnOnce ctx ("ctrl:" ++ name) "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
             (help := s!"planned for {milestone}; see PLAN.md")
