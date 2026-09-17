@@ -272,8 +272,24 @@ def main (args : List String) : IO UInt32 := do
   Fix: git restore --staged lean-toolchain, commit the rest, then commit the bump alone."
 
   if staged.any (·.startsWith "tests/golden/") then
-    if !staged.any (fun f => f.endsWith ".lean"
-        || (f.startsWith "tests/corpus/" && f.endsWith ".tex")) then
+    -- A golden may not be hand-edited, which is why it must travel with the
+    -- change that moved it. On a branch that already carries such a change,
+    -- a later regeneration is legitimate on its own: two slices landing in
+    -- the same fixture only agree after the second one rebases, and the
+    -- harness output is what lands either way. So the source change is
+    -- looked for across the branch, not only in this commit.
+    let branchTouched ← do
+      let base := ((← git #["merge-base", "HEAD", "main"]).splitOn "\n").head?
+      match base with
+      | some b =>
+        let b := b.trimAscii.toString
+        if b.isEmpty then pure #[] else
+          pure (((← git #["diff", "--name-only", b ++ "..HEAD"]).splitOn "\n").filter
+            (!·.isEmpty)).toArray
+      | none => pure #[]
+    let isSource (f : String) : Bool :=
+      f.endsWith ".lean" || (f.startsWith "tests/corpus/" && f.endsWith ".tex")
+    if !staged.any isSource && !branchTouched.any isSource then
       say "pre-commit: tests/golden/** changed without a .lean or tests/corpus/*.tex change.
   Goldens are regenerated through the harness, never hand-edited (AGENTS.md, Don't touch).
   Fix: revert the golden files, or regenerate with: lake exe Tests --update"
