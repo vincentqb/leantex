@@ -611,27 +611,42 @@ def inkGeometryChecks (ref : IO.Ref (List String)) : IO Unit := do
     Ink.bandIntervals ⟨cmds, minY⟩ (-100) (-50)
   -- A rectangle wholly inside the band, spanning no scanline a sampler
   -- would choose: its projection is still its full width.
-  let floatRect := iv #[.move 100 (-60), .line 200 (-60), .line 200 (-70),
-    .line 100 (-70)] (-70)
+  let floatRectCmds : Array Ink.Cmd := #[.move 100 (-60), .line 200 (-60),
+    .line 200 (-70), .line 100 (-70)]
+  let floatRect := iv floatRectCmds (-70)
   t "ink: contour wholly inside the band is covered"
     (floatRect.size == 1 && floatRect.all fun (lo, hi) => lo ≤ 100 && hi ≥ 200)
   -- A tall rectangle spanning the band: the interior comes from the midline
   -- fill, not just the side edges.
-  let tallRect := iv #[.move 300 0, .line 400 0, .line 400 (-200),
-    .line 300 (-200)] (-200)
+  let tallRectCmds : Array Ink.Cmd := #[.move 300 0, .line 400 0,
+    .line 400 (-200), .line 300 (-200)]
+  let tallRect := iv tallRectCmds (-200)
   t "ink: contour spanning the band covers its full width"
     (tallRect.size == 1 && tallRect.all fun (lo, hi) => lo ≤ 300 && hi ≥ 400)
+  -- A band-spanning contour with a curved side: chord vertices come from
+  -- flattening, and one landing on the fill scanline drops the crossing
+  -- pair there, so the stroke's interior vanishes from the report. The
+  -- control point is chosen so a flattener that does not force even doubled
+  -- coordinates puts its k=4 chord vertex exactly on the band's midline
+  -- scanline (doubled y −149).
+  let curvedSpanCmds : Array Ink.Cmd := #[.move 300 0, .line 400 0,
+    .quad 405 (-49) 400 (-200), .line 300 (-200)]
+  let curvedSpan := iv curvedSpanCmds (-200)
+  t "ink: curve-sided contour spanning the band covers its full width"
+    (curvedSpan.size == 1 && curvedSpan.all fun (lo, hi) => lo ≤ 300 && hi ≥ 400)
   -- A shallow curve dipping into the band: the lens between the quadratic
   -- and its chord lies inside, and its whole x-extent is reported even
   -- though only the extremum neighbourhood reaches the band's midline.
-  let dip := iv #[.move 500 (-60), .quad 550 (-90) 600 (-60)] (-75)
+  let dipCmds : Array Ink.Cmd := #[.move 500 (-60), .quad 550 (-90) 600 (-60)]
+  let dip := iv dipCmds (-75)
   t "ink: curve extremum reports the whole lens extent"
     (dip.size == 1 && dip.all fun (lo, hi) => lo ≤ 502 && hi ≥ 598)
   -- A slanted stroke through the band: ink between the entry and exit
   -- depths is continuous, so the report is one interval over the whole
   -- crossing, not samples with gaps.
-  let slant := iv #[.move 700 (-40), .line 750 (-110), .line 770 (-110),
-    .line 720 (-40)] (-110)
+  let slantCmds : Array Ink.Cmd := #[.move 700 (-40), .line 750 (-110),
+    .line 770 (-110), .line 720 (-40)]
+  let slant := iv slantCmds (-110)
   t "ink: slanted stroke is one gap-free interval"
     (slant.size == 1 && slant.all fun (lo, hi) => lo ≤ 709 && hi ≥ 761)
   -- Contours clear of the band report nothing.
@@ -640,6 +655,100 @@ def inkGeometryChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "ink: contour below the band is empty"
     ((iv #[.move 0 (-120), .line 50 (-120), .line 50 (-160), .line 0 (-160)]
       (-160)).isEmpty)
+  -- The coverage invariant against an oracle that shares nothing with the
+  -- implementation: Float flattening at 32 chords and a half-open crossing
+  -- rule, which counts exactly one of two edges meeting at a vertex on the
+  -- scanline and so cannot lose a crossing pair there. Every ink run the
+  -- oracle finds, at any height inside the band, must lie inside the
+  -- reported intervals (2 font units of slack for the flattening
+  -- difference).
+  let oracleRuns (cmds : Array Ink.Cmd) (y : Float) : Array (Float × Float) := Id.run do
+    let mut edges : Array (Float × Float × Float × Float) := #[]
+    let mut cx : Float := 0
+    let mut cy : Float := 0
+    let mut sx : Float := 0
+    let mut sy : Float := 0
+    let mut opened := false
+    for c in cmds do
+      match c with
+      | .move x yv =>
+        if opened && (cx != sx || cy != sy) then
+          edges := edges.push (cx, cy, sx, sy)
+        cx := Float.ofInt x
+        cy := Float.ofInt yv
+        sx := cx
+        sy := cy
+        opened := true
+      | .line x yv =>
+        edges := edges.push (cx, cy, Float.ofInt x, Float.ofInt yv)
+        cx := Float.ofInt x
+        cy := Float.ofInt yv
+      | .quad qx qy x yv =>
+        let x0 := cx
+        let y0 := cy
+        let x1 := Float.ofInt qx
+        let y1 := Float.ofInt qy
+        let x2 := Float.ofInt x
+        let y2 := Float.ofInt yv
+        for k in [1:33] do
+          let s := Float.ofNat k / 32
+          let u := 1 - s
+          let px := u * u * x0 + 2 * u * s * x1 + s * s * x2
+          let py := u * u * y0 + 2 * u * s * y1 + s * s * y2
+          edges := edges.push (cx, cy, px, py)
+          cx := px
+          cy := py
+      | .cube ax ay bx by' x yv =>
+        let x0 := cx
+        let y0 := cy
+        let x1 := Float.ofInt ax
+        let y1 := Float.ofInt ay
+        let x2 := Float.ofInt bx
+        let y2 := Float.ofInt by'
+        let x3 := Float.ofInt x
+        let y3 := Float.ofInt yv
+        for k in [1:33] do
+          let s := Float.ofNat k / 32
+          let u := 1 - s
+          let px := u*u*u*x0 + 3*u*u*s*x1 + 3*u*s*s*x2 + s*s*s*x3
+          let py := u*u*u*y0 + 3*u*u*s*y1 + 3*u*s*s*y2 + s*s*s*y3
+          edges := edges.push (cx, cy, px, py)
+          cx := px
+          cy := py
+    if opened && (cx != sx || cy != sy) then
+      edges := edges.push (cx, cy, sx, sy)
+    let mut xs : Array (Float × Int) := #[]
+    for (x0, y0, x1, y1) in edges do
+      if (y0 ≤ y && y < y1) || (y1 ≤ y && y < y0) then
+        xs := xs.push (x0 + (x1 - x0) * (y - y0) / (y1 - y0),
+          if y0 < y1 then 1 else -1)
+    let sorted := xs.qsort fun a b => a.1 < b.1
+    let mut runs : Array (Float × Float) := #[]
+    let mut wind : Int := 0
+    let mut lo : Float := 0
+    for (x, d) in sorted do
+      let w := wind + d
+      if wind == 0 && w != 0 then
+        lo := x
+      if wind != 0 && w == 0 then
+        runs := runs.push (lo, x)
+      wind := w
+    return runs
+  let shapes : Array (String × Array Ink.Cmd × Int) :=
+    #[("floatRect", floatRectCmds, -70), ("tallRect", tallRectCmds, -200),
+      ("curvedSpan", curvedSpanCmds, -200), ("dip", dipCmds, -75),
+      ("slant", slantCmds, -110)]
+  for (name, cmds, minY) in shapes do
+    let reported := iv cmds minY
+    let mut escaped := false
+    for j in [1:10] do
+      let y : Float := -100 + 5 * Float.ofNat j
+      for (a, b) in oracleRuns cmds y do
+        if a + 2 < b - 2 then
+          unless reported.any fun (rlo, rhi) =>
+              Float.ofInt rlo ≤ a + 2 && b - 2 ≤ Float.ofInt rhi do
+            escaped := true
+    t s!"ink oracle: no {name} ink in the band escapes the report" (!escaped)
   -- Budget-exceeded outlines are undecodable, never silently truncated: a
   -- glyph declaring more contours or points than the decoder's budget is
   -- `none`, so the consumer clears its whole advance instead of trusting an

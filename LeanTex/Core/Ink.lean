@@ -75,8 +75,9 @@ structure Outline where
   minY : Int
 
 /-- Straight edges in doubled coordinates, each curve cut into eight chords.
-Doubling puts every vertex at an even y, so a scanline at an odd y never
-meets one and the crossing count is unambiguous. -/
+Every vertex has an even y — `move`/`line` vertices are doubled inputs, and
+each chord vertex is computed in font units and then doubled — so a scanline
+at an odd y never meets one and the crossing count is unambiguous. -/
 private def edgesOf (cmds : Array Cmd) : Array (Int × Int × Int × Int) := Id.run do
   let mut out : Array (Int × Int × Int × Int) := #[]
   let mut cx : Int := 0
@@ -110,8 +111,8 @@ private def edgesOf (cmds : Array Cmd) : Array (Int × Int × Int × Int) := Id.
         let a := (8 - k) * (8 - k)
         let m := 2 * k * (8 - k)
         let z := k * k
-        let px := (a * x0 + m * x1 + z * x2) / 64
-        let py := (a * y0 + m * y1 + z * y2) / 64
+        let px := 2 * ((a * x0 + m * x1 + z * x2) / 128)
+        let py := 2 * ((a * y0 + m * y1 + z * y2) / 128)
         out := out.push (cx, cy, px, py)
         cx := px
         cy := py
@@ -130,8 +131,8 @@ private def edgesOf (cmds : Array Cmd) : Array (Int × Int × Int × Int) := Id.
         let m := 3 * k * (8 - k) * (8 - k)
         let z := 3 * k * k * (8 - k)
         let w := k * k * k
-        let px := (a * x0 + m * x1 + z * x2 + w * x3) / 512
-        let py := (a * y0 + m * y1 + z * y2 + w * y3) / 512
+        let px := 2 * ((a * x0 + m * x1 + z * x2 + w * x3) / 1024)
+        let py := 2 * ((a * y0 + m * y1 + z * y2 + w * y3) / 1024)
         out := out.push (cx, cy, px, py)
         cx := px
         cy := py
@@ -167,10 +168,15 @@ winding-fill runs on the band's midline. This covers all flattened ink in
 the band: a point of ink either has a contour edge somewhere on its vertical
 line inside the band — the clipped projection of that edge covers it — or it
 sits strictly inside ink across the whole band height, and then the midline
-fill run covers it. What remains approximate is curve flattening (eight
-chords per curve, a deviation of a few font units at the extremes) and the
-integer interpolation at the clip (one unit); both are orders of magnitude
-under the clearance the consumer dilates every interval by. -/
+fill run covers it. The fill leg needs no vertex on its scanline, which
+`edgesOf` guarantees by construction (every vertex even, the scanline odd).
+What remains approximate is the flattening itself: eight chords per curve,
+whose deviation from the true curve grows with the curve's size — a few
+font units at a glyph's extremes, more for outsized geometry — plus one
+font unit of rounding at each chord vertex and at the clip. The consumer
+dilates every interval by twice the rule thickness, two orders of magnitude
+above the rounding, so only the chord deviation is ever visible and only as
+a slightly loose boundary. -/
 def bandIntervals (o : Outline) (bandLo bandHi : Int) : Array (Int × Int) := Id.run do
   if o.minY ≥ bandHi then
     return #[]
