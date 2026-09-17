@@ -46,7 +46,7 @@ def warnCodes (s : String) : List String :=
 
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
-   "links", "resume", "talk", "deck", "latex-idioms", "wrapper", "centering", "columns", "overlays", "notes"]
+   "links", "resume", "talk", "deck", "latex-idioms", "wrapper", "centering", "columns", "overlays", "notes", "furniture"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.

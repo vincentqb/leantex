@@ -1,0 +1,49 @@
+% Invented combined fixture: every piece of frame furniture in one deck —
+% a \newenvironment wrapper with an argument, \centering, columns with
+% declared widths, overlays (item specs, \uncover, \pause), and speaker
+% notes. Nothing here derives from any private document.
+\documentclass[aspectratio=169]{beamer}
+
+\newenvironment{callout}[1]{\textbf{#1:} }{}
+
+\title{Frame Furniture}
+\author{Pat Placeholder}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{Wrapped and centred}
+\begin{callout}{Note}
+wrappers keep their argument.
+\end{callout}
+
+{\centering This line is centred.\par}
+\note{Wrappers and centering share this slide.}
+\end{frame}
+
+\begin{frame}{Figure beside text}
+\begin{columns}[T]
+\begin{column}{0.55\textwidth}
+The wider column carries the prose, set to its own measure, wrapping
+where the narrow measure says it must.
+\end{column}
+\begin{column}{0.4\textwidth}
+\centering
+The narrow column.
+\end{column}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Step by step}
+\begin{itemize}
+\item<1-> First beat.
+\item<2-> Second beat.
+\end{itemize}
+
+\pause
+\uncover<3>{The closing line.}
+\end{frame}
+
+\end{document}
