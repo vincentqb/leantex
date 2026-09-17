@@ -47,6 +47,51 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — fonts honour the faces a document names, and a missing glyph
+is set from another face instead of dropped. Three fixes in one area, each
+with the invariant that carries it:
+
+- fontspec's per-variant face options (`UprightFont`/`BoldFont`/
+  `ItalicFont`/`BoldItalicFont`) reach resolution: the compat layer carries
+  them into new dotted `\fonts` keys (`sans.bold = "X"`, on any slot
+  alias), and a declared face wins over the family's own variant — met by
+  definition, resolved like any named face, a file name denoting that
+  exact scanned face. A declared face the host lacks degrades to the
+  family's best with a W0006 that says the declaration could not be met;
+  W0006 now always names the face actually used, family and subfamily,
+  and an unsatisfied regular says "regular" (it used to say "italic").
+  `FontFace={...}{...}{...}` (positional) is not carried.
+- per-glyph fallback, the mechanism `\fontfallback` was reserved for:
+  layout consults a per-scalar map only when the styled face lacks a
+  glyph, and sets the scalar from the mapped face at the same size in its
+  own one-glyph box. The driver precomputes the map from the document's
+  own scalars (`Layout.docScalars`: text, titles, verbatim, running
+  content with its digits, style templates, each cased scalar's uppercase
+  for small caps) — the first declared face covering the scalar in
+  declaration order, else the first covering scanned face in a documented
+  order (family, upright before italic, weight nearest regular, then
+  subfamily and path: `FontDb.fallbackPicks`, reading candidate cmaps
+  alone through the probe's now-shared `tableImage` splice). Layout stays
+  pure — the disk was read before layout began — and `LEANTEX_FONT`, one
+  face with no scan behind it, gets no fallback. Invariants tested: a
+  document whose faces cover their text is byte-identical under any map;
+  the report is once per family+glyph (W0009 substitution / W0004 drop,
+  both naming families, through the existing message collapse); malformed
+  or vanished candidates yield nothing, totally. Declared chains (the
+  `\fontfallback` command itself) remain M8; a `\directlua` fallback
+  stays a warning.
+
+Measured: bench medians of 5, back-to-back in one session — paragraphs
+77 → 75 ms, lorem 278 → 283 ms, underline 380 → 394 ms with the
+attributable cost ~3 ms in the font phase (41 → 44 ms; layout unchanged;
+`docScalars` folds ASCII into a bitmap because a hash insert per document
+character alone cost ~15 ms), a trivial one-liner 60 → 62 ms. Corpus
+PDF+HTML byte-identical by `cmp` except talk.pdf, where U+2297/U+21A6 —
+dropped before — are now set from a scanned face. On the private deck:
+0 errors, 52 pages, ~156 ms PDF and ~170 ms HTML; the four missing-glyph
+W0004s are gone, four W0009 substitutions in their place (mono notation
+set from a scanned face), and W0006 is gone — the declared faces resolve.
+
 2026-09-17 — the pre-commit gate now rejects the four defect classes the
 audit rounds actually produced, each with a stated blind-spot list and a
 selftest: the quadratic prepend in every spelling (`expr ++ recurse rest`,
