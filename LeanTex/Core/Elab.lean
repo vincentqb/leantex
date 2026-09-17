@@ -330,21 +330,36 @@ runs and `{...}` groups on the `\begin` line are the environment's own
 arguments (`\begin{banner}{Logo}`), not content. A group or bracket on a
 later line is content — LaTeX's own argument scanning stops looking there
 too. Also returns the position of an unclosed `[`, for the caller to warn
-about; its run is kept as content. -/
+about (its run is kept as content), and how many groups went with the
+wrapper, for the caller to name what W0302's "body is kept" does not cover. -/
 private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
-    Array Raw × Option Pos := Id.run do
+    Array Raw × Option Pos × Nat := Id.run do
   let mut i := 0
+  let mut dropped := 0
   for _ in [0:body.size] do
     match scanBracketArg body i beginPos with
     | .took k => i := k
-    | .unclosed bpos => return (body.extract i body.size, some bpos)
+    | .unclosed bpos => return (body.extract i body.size, some bpos, dropped)
     | .content =>
       let j := skipSpaces body i
       match body[j]? with
       | some (.group _ gpos) =>
-        if gpos.line == beginPos.line then i := j + 1 else break
+        if gpos.line == beginPos.line then
+          i := j + 1
+          dropped := dropped + 1
+        else break
       | _ => break
-  return (body.extract i body.size, none)
+  return (body.extract i body.size, none, dropped)
+
+/-- Exactly what went with an unknown wrapper: the count W0302's "its body
+is kept" cannot carry. -/
+private def warnDroppedArgs (ctx : Ctx) (name : String) (dropped : Nat)
+    (pos : Pos) : EM Unit := do
+  if dropped > 0 then
+    let noun := if dropped == 1 then "group" else "groups"
+    diag ctx "W0313"
+      s!"{dropped} \{...} {noun} on the '\\begin\{{name}}' line went with the unknown wrapper" (some pos)
+      (help := "content, not an argument? put it after the '\\begin' line") .warning
 
 /-- A command whose group never materialised after an unclosed `[` is
 dropped whole: W0310 already named the typo, and one skipped declaration
@@ -534,9 +549,10 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           -- spaces are ordinary separators — collapsed against the
           -- neighbours by the whitespace arm, never dropped (gluing
           -- `before` to `inner`) and never doubled.
-          let (kept, unclosed) := dropEnvArgs body pos
+          let (kept, unclosed, dropped) := dropEnvArgs body pos
           if let some bpos := unclosed then
             warnUnclosed ctx s!"'\\begin\{{name}}'" bpos
+          warnDroppedArgs ctx name dropped pos
           raws := raws.extract 0 i ++ kept ++ raws.extract (i + 1) raws.size
       | .verb s _ =>
         -- Verbatim inside inline content: kept as mono text, spaces held as
@@ -1210,9 +1226,10 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             -- not. The arguments on the `\begin` line go with the wrapper.
             warnOnce ctx ("env:" ++ n) "W0302" s!"unknown environment '\{{n}}'; its body is kept" pos
               (help := "see PLAN.md for planned environments")
-            let (kept, unclosed) := dropEnvArgs body pos
+            let (kept, unclosed, dropped) := dropEnvArgs body pos
             if let some bpos := unclosed then
               warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
+            warnDroppedArgs ctx n dropped pos
             blocks := blocks ++ (← elabBlocks ctx kept)
         | .verb s _ =>
           i := i + 1

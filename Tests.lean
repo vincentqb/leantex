@@ -1623,6 +1623,16 @@ def envBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match (elabStr "Take \\begin{banner}{Logo}the text\\end{banner} along.").1.body with
      | #[.para xs] => Ir.plainText xs == "Take the text along."
      | _ => false)
+  -- W0302 says the body is kept; when begin-line groups go with the
+  -- wrapper, a warning must say exactly what went (the diagnostic and the
+  -- behaviour agree, or one of them is lying)
+  t "dropped begin-line groups are named precisely, count included"
+    (let ds := (elabStr "Two: \\begin{card}{First}{Second}kept body\\end{card} end.").2
+     ds.any fun d => d.code == "W0313" && d.message.startsWith "2 ")
+  t "the block path warns about dropped begin-line groups too"
+    ((elabStr "\\begin{wrap}{arg}\none\n\ntwo\n\\end{wrap}").2.any (·.code == "W0313"))
+  t "no dropped-argument warning without begin-line groups"
+    (!(elabStr "Take \\begin{banner}the text\\end{banner} along.").2.any (·.code == "W0313"))
   -- A spliced body's edge space is a separator, not wrapper furniture:
   -- dropping it glued `before` to `inner`, and keeping it twice would
   -- double the gap the author wrote once.
