@@ -2003,6 +2003,9 @@ def precommitChecks (ref : IO.Ref (List String)) : IO Unit := do
   let out ← IO.Process.output
     { cmd := "lean", args := #["--run", "scripts/precommit.lean", "--selftest"] }
   check ref s!"precommit selftest:\n{out.stderr}" (out.exitCode == 0)
+  let owed ← IO.Process.output
+    { cmd := "lean", args := #["--run", "scripts/owed.lean", "--selftest"] }
+  check ref s!"owed selftest:\n{owed.stderr}" (owed.exitCode == 0)
 
 /-- `columns`/`column`: side-by-side blocks with declared widths, in the IR
 and both backends. Own function: `main`'s do block has no budget left. -/

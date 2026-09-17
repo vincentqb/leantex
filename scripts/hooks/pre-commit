@@ -1,5 +1,5 @@
 #!/bin/sh
 # Git executes a FILE here; the gate itself is scripts/precommit.lean. The
 # grep keeps irrelevant commits at ~0.02 s instead of paying lean startup.
-git diff --cached --name-only | grep -qE '\.lean$|^lakefile\.(toml|lean)$|^lean-toolchain$|^tests/golden/' || exit 0
+git diff --cached --name-only | grep -qE '\.lean$|^lakefile\.(toml|lean)$|^lean-toolchain$|^tests/golden/|^PLAN\.md$' || exit 0
 exec lean --run scripts/precommit.lean

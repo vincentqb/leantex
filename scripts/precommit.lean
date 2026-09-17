@@ -49,7 +49,12 @@ def bannedWord (kw l : String) : Bool :=
 
 def relevant (f : String) : Bool :=
   f.endsWith ".lean" || f == "lakefile.toml" || f == "lakefile.lean"
-    || f == "lean-toolchain" || f.startsWith "tests/golden/"
+    || f == "lean-toolchain" || f.startsWith "tests/golden/" || f == "PLAN.md"
+
+/-- The owed-theorem staging area (see scripts/owed.lean): the one path
+where a stated obligation may hold its proof open. -/
+def obligationsFile (f : String) : Bool :=
+  f == "Obligations.lean" || f.startsWith "Obligations/"
 
 /-- The banned words, composed so this file's own staged diff never contains
 them as word-delimited tokens — the gate scans every .lean file, itself
@@ -239,6 +244,11 @@ def wildcardNumeral (l : String) : Bool :=
     (p == "_" || isVarToken p) && !r.isEmpty && r.toList.all Char.isDigit
   | _ => false
 
+/-- An import of the owed-theorem staging area: legal only inside it. The
+gated library must never depend on a statement whose proof is open. -/
+def importsObligations (l : String) : Bool :=
+  ((stripLineComment l).trimAscii.toString).startsWith "import Obligations"
+
 /-- A backend reaching into the surface: an import, an `open`, or a
 qualified use of a surface module, comments aside. An alias
 (`abbrev P := LeanTex.Core.Parse` elsewhere) would not be seen — the same
@@ -368,6 +378,22 @@ def selftest : IO UInt32 := do
     ("  let g := (a.resolve tok).width", false),
     ("  let mmNames := [\"mm\", \"cm\"]", false)]
 
+  expect "obligationsFile" obligationsFile [
+    -- the staging area, root module and any future submodule
+    ("Obligations.lean", true),
+    ("Obligations/Conservation.lean", true),
+    -- everything else keeps the flat ban
+    ("LeanTex/Core/Ir.lean", false),
+    ("Tests.lean", false),
+    ("scripts/owed.lean", false),
+    ("ObligationsExtra.lean", false)]
+
+  expect "importsObligations" importsObligations [
+    ("import Obligations", true),
+    ("import Obligations.Conservation", true),
+    ("-- import Obligations would be rejected", false),
+    ("import LeanTex.Core.Ir", false)]
+
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "precommit selftest: all passed"
@@ -432,11 +458,14 @@ def main (args : List String) : IO UInt32 := do
   Only Elab.takeArgs/elabInlines/elabBlocks may be {kwPartial} (tracked in PLAN.md).
   Fix: make the recursion structural (see AGENTS.md, Conventions)."
 
-  let bad := added.filter (bannedWord kwSorry)
+  let bad := ((addedByFile diff).filter (fun p => !obligationsFile p.1)).flatMap (·.2)
+    |>.filter (bannedWord kwSorry)
   if !bad.isEmpty then
-    say s!"pre-commit: '{kwSorry}' in staged .lean changes:
-{String.intercalate "\n" bad}
-  Fix: finish the proof; a broken theorem is a broken build."
+    say s!"pre-commit: '{kwSorry}' in staged .lean changes outside Obligations/:
+{String.intercalate "\n" bad.toList}
+  Fix: finish the proof -- a broken theorem is a broken build -- or, for a
+  statement the engine does not yet earn, stage it as a recorded obligation
+  under Obligations/ (see scripts/owed.lean; the ratchet applies)."
 
   let bad := added.filter (bannedWord kwUnsafe)
   if !bad.isEmpty then
@@ -463,6 +492,15 @@ def main (args : List String) : IO UInt32 := do
   Fix: spell the field at every constructor site; defaults belong on structures."
 
   for (file, lines) in addedByFile diff do
+    if !obligationsFile file then
+      let bad := lines.filter importsObligations
+      if !bad.isEmpty then
+        say s!"pre-commit: import of Obligations outside the staging area, in {file}:
+{String.intercalate "\n" bad.toList}
+  Obligations is the owed-theorem staging area: statements with open proofs.
+  The gated library must never depend on it (scripts/owed.lean also checks
+  the whole tree).
+  Fix: prove the statement and move it into its owner module first."
     if file.startsWith "LeanTex/Core/" && file != "LeanTex/Core/FontDb.lean" then
       let bad := lines.filter ioInCore
       if !bad.isEmpty then
@@ -552,6 +590,19 @@ def main (args : List String) : IO UInt32 := do
   a literal (\"ctrl:x\") or a concatenation opening with one ((\"env:\" ++ name)) —
   so two constructs of one name cannot silence each other, and this check can see it."
 
+  -- The owed-theorem ratchet: a commit that touches the staging area or
+  -- PLAN.md must leave the debt recorded — one hole per owed record, every
+  -- record registered in PLAN, no import of Obligations from the gated
+  -- library. The check reads the whole tree, not the diff, so the count
+  -- cannot drift through an edit the diff scanner does not see.
+  if staged.any (fun f => obligationsFile f || f == "PLAN.md") then
+    let owed ← IO.Process.output
+      { cmd := "lean", args := #["--run", "scripts/owed.lean", "--check"] }
+    if owed.exitCode != 0 then
+      say s!"pre-commit: the owed-theorem ratchet failed:
+{owed.stderr}  Fix: register the obligation in PLAN.md ('Owed obligations'), or finish
+  its proof and move it to its owner module (see scripts/owed.lean)."
+
   if ← failed.get then
     return 1
 
@@ -568,5 +619,17 @@ def main (args : List String) : IO UInt32 := do
     IO.eprint build.stdout
     IO.eprint build.stderr
     return 1
+
+  -- Staged obligations must still type-check: the staging target builds
+  -- without --wfail, so its expected open-proof warnings pass while a
+  -- statement that does not compile still fails the commit. A statement
+  -- that does not compile is worse than no statement.
+  if staged.any obligationsFile then
+    let ob ← IO.Process.output { cmd := "lake", args := #["build", "Obligations", "-q"], env }
+    if ob.exitCode != 0 then
+      IO.eprintln "pre-commit: lake build Obligations failed (staged statements must type-check):"
+      IO.eprint ob.stdout
+      IO.eprint ob.stderr
+      return 1
 
   return 0

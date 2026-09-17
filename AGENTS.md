@@ -38,6 +38,10 @@ in this repo; refer to the private reference corpus abstractly.
   `scripts/fontcache-check.lean` when touching the font scan or its cache
   (it replaces a font under the same name and checks the answer follows
   the file).
+- `lake env lean --run scripts/owed.lean` — what does this engine not yet
+  guarantee? Prints every owed obligation (a type-checked statement whose
+  proof is open, staged under `Obligations/`) with owner, source, and
+  blocker. Exits non-zero only when the ratchet is violated.
 - Performance claims come only from `scripts/bench.lean` (vs lualatex on the
   corpus), never from reasoning about the code.
 
@@ -102,6 +106,16 @@ in this repo; refer to the private reference corpus abstractly.
   determinism, line-break optimality, dimension arithmetic, PDF xref, UTF-8).
   The language is designed terminating — a construct that breaks that property
   needs a design discussion, not a fuel parameter.
+- A theorem the engine does not yet earn is stated anyway — in
+  `Obligations/`, the staging queue: its own lake target, outside the
+  default `lake build` and `lake test`, never imported by `LeanTex/` (the
+  hook and `scripts/owed.lean` check mechanically). `sorry` is permitted
+  only there, one per obligation, each carrying an
+  owed/owner/source/blocker/goldens record whose name is registered in
+  PLAN.md § Owed obligations — the ratchet: the debt may never grow
+  unnamed. A discharged obligation moves into its owner module with a real
+  proof; the queue is not a home. Statements range over the engine's own
+  functions, never a spec copy.
 - No default values on inductive constructor fields — patterns then
   under-specify silently; the hook rejects them. Structure fields keep theirs.
 - Never add `partial` to reach a green build. Tree recursion over `Array`

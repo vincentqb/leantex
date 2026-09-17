@@ -49,6 +49,41 @@ named warning), and element styling
 (section fonts, list spacing) is not yet declarable, which is what keeps the
 real resume from matching its lualatex build exactly.
 
+### Owed obligations
+
+The staging ratchet's registry (mechanism in the 2026-09-17 owed-theorems
+log entry): every open proof hole under `Obligations/` carries a record
+whose name must appear backticked here, so the debt never grows unnamed.
+`lake env lean --run scripts/owed.lean` prints the queue with owner,
+source, and blocker; the pre-commit hook enforces the ratchet. Discharging
+an obligation (real proof, moved to its owner module) strikes it from this
+list.
+
+- `emission_conservation_paras` — weak public form of arch-provable I4:
+  plain paragraphs ship exactly their declared ink or a diagnostic names
+  the drop. The strong per-block form waits on the `Acc` split.
+- `page_background_survives` — weak observable form of arch-provable I5
+  (page conservation); the fill-vanishing `B.commit` bug was its
+  counterexample.
+- `pages_count_frame_steps` — provisional numbering: one page per overlay
+  step of a titled frame (replace with audit-numbering's statement when
+  its report lands).
+- `frame_pages_footed` — provisional numbering: every page of a footed
+  deck is footed.
+- `builtin_palette_contract_engine` — arch-provable I2 over what `\theme`
+  installs, through the real pipeline; unblocked by typed theme values,
+  which then delete the `molochResolved`/`plainResolved` spec copies.
+- `titlepage_align_declared_engine` — arch-design I2: shipped bundles
+  declare title-page alignment and separator.
+- `heading_hierarchy` — arch-design I3: false today (`sectionSize` is
+  loose constants); discharging it moves goldens ~0.4 pt.
+- `unwrap_item_steps_text` — the one public IR walk still missing its
+  text-conservation theorem.
+- `ordered_marker_shows_order` — the census's marker-kind fact as a
+  theorem over `ListMark.marker`.
+- `take_args_consumes_forward` — the progress half of the elaborator's
+  termination measure, stated against the phase split that discharges it.
+
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
@@ -258,6 +293,27 @@ goldens unmoved, whole corpus byte-identical by `cmp` (PDF and HTML)
 against the base commit. Follow-up, deliberately not here:
 `Layout.Acc`'s `pal`/`tokens`/`styles`/`fg` collapse onto `Design` —
 Layout.lean has six concurrent workers in it.
+
+2026-09-17 — owed theorems: state the obligation before you can prove it.
+The advisories named a couple of dozen invariants whose strongest form was
+not reached; the statable ones now live as type-checked statements with
+open proofs in `Obligations.lean` — its own lake target, outside the
+default build and `lake test`, never imported by `LeanTex/`. The rule that
+a `sorry` in the library is a lie wearing a theorem's clothes is not
+weakened: the hook still rejects it everywhere else, and the staging path
+is gated by a ratchet (`scripts/owed.lean`, run by the hook) — one hole
+per owed record, every record's name registered in § Owed obligations
+above, the whole tree scanned (not the diff) so the count cannot drift.
+Statements range over the engine's own public functions; what is only
+statable over private internals (`Acc`, `B`, `Op`, `collect*`) is recorded
+as each obligation's blocker instead — opening a `private` was
+deliberately not done. Unstatable without inventing definitions, so not
+staged: the loss ledger (arch-provable I7, needs a `Loss` type),
+`elabInlines`/`elabBlocks` termination (needs the phase split's total
+definitions to even state a measure), and walk-coverage (arch-provable I3,
+a compiler-exhaustiveness property, not a proposition). The gate was
+proved load-bearing by staging a hole outside the path and an unrecorded
+hole inside it and watching both commits fail.
 
 2026-09-17 — M6's first vertical slice: formulas render. `$x^2$` is glyphs
 now, not the characters `x^2` — inline `$...$`/`\(...\)` and display
