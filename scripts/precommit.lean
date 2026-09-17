@@ -33,7 +33,228 @@ def kwPartial : String := "par" ++ "tial"
 def kwSorry : String := "sor" ++ "ry"
 def kwUnsafe : String := "uns" ++ "afe"
 
-def main : IO UInt32 := do
+/-- Composed for the same reason: prepending to a recursive call's result
+copies that result at every element. -/
+def patAppend : String := "+" ++ "+"
+
+def tokens (s : String) : List String :=
+  (s.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty)
+
+/-- One applied name, dotted qualification included (`Ir.dumpInlineList`). -/
+def isAtom (w : String) : Bool :=
+  !w.isEmpty && w.toList.all (fun c => isWordChar c || c == '.')
+
+/-- Is the append writing back onto the very name it extends
+(`s := s ++ one x`)? That appends in place under unique ownership — the
+blessed `mut` accumulator pattern — it does not copy a recursive result. -/
+def selfAppend (lhs : String) : Bool :=
+  match (lhs.splitOn ":=").reverse with
+  | after :: before :: _ =>
+    match tokens after, (tokens before).reverse with
+    | [n], target :: _ => n == target
+    | _, _ => false
+  | _ => false
+
+/-- Does the text after the line's last append read as a plain application
+of two or more names ending in a bare variable (`… ++ walk cfg rest`)? That
+is the spelling of every quadratic walk this tree has produced — with or
+without a `#[` literal, qualified head (`Mod.f rest`) included: prepending
+to the recursive call's result copies it at every element. Still legal: a
+bare name after the append (the one-off prepend escape — bind the call to a
+name first), a parenthesised append (`walk cfg (acc ++ node x) rest` extends
+an accumulator), an RHS with non-name structure (literals, brackets), a
+self-append (`s := s ++ one x`), and an RHS ending in a projection
+(`out.extract i out.size` splices, it does not walk a tail). Line-local: an
+application split across lines is not seen. -/
+def quadraticPrepend (l : String) : Bool :=
+  match (l.splitOn patAppend).reverse with
+  | rhs :: lhs :: _ =>
+    let ws := tokens rhs
+    ws.length ≥ 2 && ws.all isAtom
+      && (ws.getLastD "").toList.all isWordChar
+      && !selfAppend lhs
+  | _ => false
+
+/-- The text of the innermost paren group still open at the end of `pre`,
+with closed inner groups dropped: for `(f : (A → B) ` that is `f : `. -/
+def lastOpenGroup (pre : String) : Option String :=
+  let step : List String → Char → List String := fun st c =>
+    match c, st with
+    | '(', _ => "" :: st
+    | ')', _ :: rest => rest
+    | c, cur :: rest => (cur.push c) :: rest
+    | _, [] => []
+  (pre.toList.foldl step []).head?
+
+/-- Does the group read `name :` — a binder with a type ascription, the only
+opening a constructor field default can live in? A named argument `(n := 3)`
+has no ascription colon and stays legal. -/
+def binderish (g : String) : Bool :=
+  let g := g.trimAscii.toString
+  let name := (g.takeWhile isWordChar).toString
+  !name.isEmpty && ((g.drop name.length).toString.trimAscii.toString).startsWith ":"
+
+/-- Is some `:=` on the line inside a paren group that opens `(name :`? -/
+def hasBinderDefault (t : String) : Bool := Id.run do
+  let mut pre := ""
+  for p in (t.splitOn ":=").dropLast do
+    pre := pre ++ p
+    if (lastOpenGroup pre).any binderish then return true
+    pre := pre ++ ":="
+  return false
+
+/-- An inductive constructor field with a default value: patterns then
+under-specify silently (`.run a b c` once matched only the default — PLAN
+2026-09-15). Structure fields keep their defaults; their lines do not start
+with `|`. The default lives in a binder, `(name : … := …)`, so the `:=`
+must sit inside a paren group that opens like one: a `:=` elsewhere on a
+`|` line — a Markdown table row in a docstring, a named argument — is not a
+field default, and requiring the binder (rather than the absence of `=>`)
+keeps a lambda default like `(f : α → β := fun _ => c)` caught. Takes the
+raw diff line, `+` prefix included. -/
+def ctorDefault (l : String) : Bool :=
+  let t := (l.drop 1).toString.trimAscii.toString
+  t.startsWith "|" && hasBinderDefault t
+
+/-- Added lines of one unified diff, attributed to their file. -/
+def addedByFile (diff : String) : Array (String × Array String) := Id.run do
+  let mut out : Array (String × Array String) := #[]
+  let mut cur : Option String := none
+  let mut lines : Array String := #[]
+  for l in diff.splitOn "\n" do
+    if l.startsWith "+++ b/" then
+      if let some f := cur then out := out.push (f, lines)
+      cur := some (l.drop "+++ b/".length).toString
+      lines := #[]
+    else if l.startsWith "+" && !l.startsWith "+++" then
+      lines := lines.push (l.drop 1).toString
+  if let some f := cur then out := out.push (f, lines)
+  return out
+
+/-- Modules that consume the IR and must never reach back into the surface:
+re-parsing is how md→PDF and tex→HTML would decay into N×M special cases. -/
+def backendFiles : List String :=
+  ["LeanTex/Core/Layout.lean", "LeanTex/Core/Pdf.lean",
+   "LeanTex/Core/Html.lean", "LeanTex/Core/HtmlDoc.lean"]
+
+/-- The line with any `--` comment stripped: a line comment, or a doc/block
+comment's opening line. Blind spots, accepted rather than parsed around
+(a line scanner has no comment state): a continuation line inside a block
+comment still looks like code, and a string literal containing `--`
+truncates the code after it. -/
+def stripLineComment (l : String) : String :=
+  (l.splitOn "--").headD l
+
+/-- `IO` named outside a comment. A string literal naming IO still matches,
+and a block comment's continuation line naming IO still matches — both
+stated blind spots of the line scanner, not claims the gate makes. -/
+def ioInCore (l : String) : Bool :=
+  hasWord (stripLineComment l) "IO"
+
+def surfaceMods : List String := ["Lex", "Parse", "Elab", "Compat"]
+
+def surfaceImports : List String := surfaceMods.map ("import LeanTex.Core." ++ ·)
+
+/-- A qualified use `Mod.…` with nothing word-like before the name: catches
+`Parse.scanOpt` and `LeanTex.Core.Parse.scanOpt`, not `myParse.foo`. -/
+def usesQualified (l mod : String) : Bool :=
+  (l.splitOn (mod ++ ".")).dropLast.any fun p =>
+    match p.toList.getLast? with
+    | none => true
+    | some c => !isWordChar c
+
+/-- A backend reaching into the surface: an import, an `open`, or a
+qualified use of a surface module, comments aside. An alias
+(`abbrev P := LeanTex.Core.Parse` elsewhere) would not be seen — the same
+line-scanner limitation as `ioInCore`, stated, not claimed away. -/
+def surfaceReach (l : String) : Bool :=
+  let l := stripLineComment l
+  let t := l.trimAscii.toString
+  surfaceImports.any (t == ·)
+    || (t.startsWith "open " && surfaceMods.any (hasWord t ·))
+    || surfaceMods.any (usesQualified l ·)
+
+/-- Every case a gate predicate must catch and every legal spelling it must
+pass, run by `lean --run scripts/precommit.lean --selftest` from `lake test`.
+Positive cases are the shapes whose escape prompted a gate change; negative
+cases are lines of this tree. A gate that does not catch the shape it
+commemorates grants false confidence, so a gate change lands with both. -/
+def selftest : IO UInt32 := do
+  let fails ← IO.mkRef ([] : List String)
+  let expect (name : String) (p : String → Bool) (cases : List (String × Bool)) : IO Unit := do
+    for (line, want) in cases do
+      if p line != want then
+        fails.modify (s!"{name} {if want then "missed" else "fired on"}: {line}" :: ·)
+
+  expect "quadraticPrepend" quadraticPrepend [
+    -- the walks this tree has produced, all of which must fire
+    ("  | x :: rest => inlineNode cfg x ++ inlineNodes cfg rest", true),
+    ("  | x :: rest => plainTextOne x ++ plainTextList rest", true),
+    ("  | x :: rest => dumpInline ind x ++ dumpInlineList ind rest", true),
+    ("  | b :: rest => dumpBlock ind b ++ dumpBlockList ind rest", true),
+    ("    s!\"{ind}item\\n\" ++ dumpBlocks (ind ++ \"  \") item ++ dumpItems ind rest", true),
+    ("    | c :: rest => escapeCharText c ++ go rest", true),
+    ("    | c :: rest => escapeCharAttr c ++ go rest", true),
+    ("  | k :: rest, indent => render k indent ++ renderList rest indent", true),
+    ("  | k :: rest => inlineRender k ++ inlineRenderList rest", true),
+    ("  | r :: rest => rawSrcOne r ++ rawSrcList rest", true),
+    ("  | b :: rest => #[blockNode cfg b] ++ blockNodes cfg rest", true),
+    ("  | x :: rest => #[x] ++ Compat.rewriteList rest", true),
+    -- legal spellings from this tree that must stay legal
+    ("  | x :: rest => inlineNodes cfg (acc ++ inlineNode cfg x) rest", false),
+    ("  | b :: rest => blockNodes cfg (acc.push (blockNode cfg b)) rest", false),
+    ("  base ++ plus ++ minus", false),
+    ("      | other => s := s ++ rawSrcOne other", false),
+    ("        | some i => out.extract 0 i ++ running ++ out.extract i out.size", false),
+    ("    s!\"{ind}styled {st.label}\\n\" ++ dumpInlines (ind ++ \"  \") body", false),
+    ("        chosen := chosen ++ [b]", false),
+    ("  | x :: rest => #[x] ++ rest", false)]
+
+  expect "ctorDefault" ctorDefault [
+    -- a field default, with and without the lambda that evaded the old check
+    ("+  | run (label : String := \"unnamed\") : Cmd", true),
+    ("+  | mk (a : Nat) (f : Nat → Nat := fun _ => 0) : T", true),
+    -- `|` lines that carry a `:=` without being a field default
+    ("+  | `.run a b c` := what the pattern matched | the whole suite green |", false),
+    ("+  | x => go (n := 3) rest", false),
+    ("+  | x => { s with field := v }", false),
+    ("+  | .text s => s", false)]
+
+  -- `addedByFile` hands these two checks their lines with the `+` already
+  -- stripped, unlike the whole-diff checks above.
+  expect "ioInCore" ioInCore [
+    ("def scan (roots : List String) : IO (Array Face) := do", true),
+    ("    let bytes ← IO.FS.readBinFile path", true),
+    -- a stated blind spot, pinned so a change to it is a deliberate one:
+    -- a block comment's continuation line still looks like code
+    ("continuation line of a block comment naming IO", true),
+    -- the fix: `--` comments no longer trip the check
+    ("  -- files and fonts surface as request values, never IO here", false),
+    ("/-- Effects as data: the IO happens in Main.lean. -/", false),
+    ("  let priority := ioPriority.toNat", false)]
+
+  expect "surfaceReach" surfaceReach [
+    ("import LeanTex.Core.Parse", true),
+    ("open LeanTex.Core.Parse in", true),
+    ("open Elab", true),
+    ("  let opt := Parse.scanOpt args i", true),
+    ("    LeanTex.Core.Compat.rewrite doc", true),
+    ("import LeanTex.Core.Ir", false),
+    ("  -- a backend never calls Parse.scanOpt; the IR carries it", false),
+    ("  let reparse := myParse.run s", false),
+    ("  openTag := elem tag attrs kids", false)]
+
+  let failed := (← fails.get).reverse
+  if failed.isEmpty then
+    IO.println "precommit selftest: all passed"
+    return 0
+  for f in failed do
+    IO.eprintln s!"FAIL {f}"
+  return 1
+
+def main (args : List String) : IO UInt32 := do
+  if args.contains "--selftest" then
+    return (← selftest)
   let staged := ((← git #["diff", "--cached", "--name-only"]).splitOn "\n").filter (!·.isEmpty)
   if staged.isEmpty then
     return 0
@@ -82,6 +303,42 @@ def main : IO UInt32 := do
     say s!"pre-commit: '{kwUnsafe}' in staged .lean changes:
 {String.intercalate "\n" bad}
   Fix: stay in the safe fragment; {kwUnsafe} code voids the certification story."
+
+  let bad := added.filter quadraticPrepend
+  if !bad.isEmpty then
+    say s!"pre-commit: '{patAppend} walk rest' (prepend to a recursive call's result) in staged .lean changes:
+{String.intercalate "\n" bad}
+  Prepending to a recursive call's result copies it at every element -- it
+  turned a 4 ms pass into 1157 ms, three times in one day (PLAN 2026-09-16).
+  Fix: thread an Array accumulator through the walk (see Compat.rewriteList);
+  a one-off prepend outside a recursion can bind the call to a name first."
+
+  let bad := added.filter ctorDefault
+  if !bad.isEmpty then
+    say s!"pre-commit: inductive constructor field with a default value:
+{String.intercalate "\n" bad}
+  Defaults on constructor fields let patterns under-specify silently: `.run
+  a b c` once matched only the default, with the whole suite green (PLAN
+  2026-09-15).
+  Fix: spell the field at every constructor site; defaults belong on structures."
+
+  for (file, lines) in addedByFile diff do
+    if file.startsWith "LeanTex/Core/" && file != "LeanTex/Core/FontDb.lean" then
+      let bad := lines.filter ioInCore
+      if !bad.isEmpty then
+        say s!"pre-commit: IO in {file}:
+{String.intercalate "\n" bad.toList}
+  Modules under LeanTex/Core/ do no IO (FontDb is the one exception): files
+  and fonts surface as request values the CLI driver fulfills.
+  Fix: return a request value and fulfill it in Main.lean."
+    if backendFiles.contains file then
+      let bad := lines.filter surfaceReach
+      if !bad.isEmpty then
+        say s!"pre-commit: a backend reaches into the surface, in {file}:
+{String.intercalate "\n" bad.toList}
+  Backends consume the IR and nothing else; a backend that re-parses is how
+  md→PDF and tex→HTML decay into N×M special cases (AGENTS.md, Conventions).
+  Fix: put what the backend needs on the IR."
 
   -- Warn-once keys are namespaced: a flat key space let an environment and a
   -- command of one name silence each other once (W0301/W0302), and a growing

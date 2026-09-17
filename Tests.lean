@@ -1516,6 +1516,14 @@ def rawPayloadChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((Html.render (Html.elem "p" #[Html.Node.script "x</script >bad"]) 0).splitOn
       "/* removed */").length == 2)
 
+/-- The pre-commit gate's own predicates, exercised through the script's
+`--selftest` mode: a gate that does not catch the shape it commemorates
+grants false confidence. -/
+def precommitChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let out ← IO.Process.output
+    { cmd := "lean", args := #["--run", "scripts/precommit.lean", "--selftest"] }
+  check ref s!"precommit selftest:\n{out.stderr}" (out.exitCode == 0)
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
@@ -2300,6 +2308,7 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((Html.render (Html.elem "p" #[Html.Node.script "x</script>bad"]) 0).splitOn
       "</script>").length == 2)
   rawPayloadChecks ref
+  precommitChecks ref
 
   let (htmlDoc, _) := elabStr ("\\documentclass{article}\n" ++
     "\\palette{ primary = #7C3AED }\n" ++
