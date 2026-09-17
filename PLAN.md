@@ -110,10 +110,14 @@ overlays: identity expansion, 3; notes: layout rendering them, 1; note
 absorption: off, 1). The combined `furniture.tex` deck renders to 6 PDF
 pages and 4 HTML slides, both rasterized and inspected. The private
 acceptance deck, PDF and HTML: 0 errors (17 before this batch, all E0311
-in notes), 62 pages each, 94/86 ms, warnings down to constructs genuinely
-outside this slice — beamer templating and fonts config (W0104/W0103,
-owned by the theming and font workers or M5b), one tikzpicture (W0307,
-M8), one table degradation (W0308, M8), one colour-mix key (W0304, M5b).
+in notes), 62 pages each (52 frames-and-dividers plus the overlay steps),
+94/86 ms on this branch alone and 157/148 ms rebased onto the same-day
+font-fallback batch, warnings down to constructs genuinely outside this
+slice — beamer templating and fonts config (W0104/W0103, owned by the
+theming and font workers or M5b), one tikzpicture (W0307, M8), one table
+degradation (W0308, M8), one colour-mix key (W0304, M5b). Bench, medians
+of 5 in one session against the base commit built in a scratch clone:
+paragraphs 75 → 77 ms, lorem 275 → 277 ms, underline 377 → 379 ms.
 
 
 2026-09-17 — fonts honour the faces a document names, and a missing glyph

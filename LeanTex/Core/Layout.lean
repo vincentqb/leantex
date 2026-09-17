@@ -376,8 +376,18 @@ private def scalarTextOne (out : Array String) : Block → Array String
   | .list _ items => scalarTextItems out items.toList
   | .center body => scalarTextList out body.toList
   | .spaced _ body => scalarTextList out body.toList
+  | .columns cols => scalarTextCols out cols.toList
+  | .step _ body => scalarTextList out body.toList
+  -- A note is never set in either backend's pages; its glyphs are not asked
+  -- for.
+  | .note _ => out
   | .verbatim s => out.push s
   | .frame title body => scalarTextList (out.push (Ir.plainText title)) body.toList
+
+private def scalarTextCols (out : Array String) :
+    List (Option Nat × Array Block) → Array String
+  | [] => out
+  | (_, body) :: rest => scalarTextCols (scalarTextList out body.toList) rest
 
 private def scalarTextItems (out : Array String) : List (Array Block) → Array String
   | [] => out
