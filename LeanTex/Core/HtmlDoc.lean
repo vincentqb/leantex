@@ -1054,11 +1054,13 @@ retitle one section, or link to '#{id}'"))
     | _ => cur := cur.push (blockNode cfg b)
   return (close out cur openId, diags)
 
-/-- Emit a document. Returns the file and any diagnostics the backend itself
-raises — running content is the notable one: page furniture cannot be honoured
-in a continuous document, and dropping it silently would be the kind of quiet
-failure this engine exists to avoid. -/
-def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
+/-- Emit a document as its typed tree — head and body nodes — plus any
+diagnostics the backend itself raises; `emit` renders it. The tree is the
+page before serialization: what the cross-backend agreement census judges
+against the PDF's `Layout.Out`, so a divergence is caught on structure, not
+by parsing the rendering back. -/
+def emitTree (cfg : Config) (doc : Doc) :
+    Array Node × Array Node × Array Diag := Id.run do
   -- The page's view of the document: backend conditionals resolve here, at
   -- the backend's entry (`Ir.keepFor_covers` is why dropping cannot lose
   -- content), so every walk below — sectioning, the deck chrome, the
@@ -1291,6 +1293,14 @@ indistinguishable to assistive technology"
 the article class"
           else s!"anchors on this page: \
 {String.intercalate ", " (facts.ids.toList.map ("#" ++ ·))}")))
-  return (Html.document cfg.lang head body, diags)
+  return (head, body, diags)
+
+/-- Emit a document. Returns the file and any diagnostics the backend itself
+raises — running content is the notable one: page furniture cannot be honoured
+in a continuous document, and dropping it silently would be the kind of quiet
+failure this engine exists to avoid. -/
+def emit (cfg : Config) (doc : Doc) : String × Array Diag :=
+  let (head, body, diags) := emitTree cfg doc
+  (Html.document cfg.lang head body, diags)
 
 end LeanTex.Core.HtmlDoc

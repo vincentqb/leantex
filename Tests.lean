@@ -3857,6 +3857,113 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     for (label, ok) in facts geom c do
       check ref s!"census {n}: {label}" ok
 
+-- Cross-backend agreement -------------------------------------------------
+
+mutual
+
+/-- The text content of an emitted HTML node, for the agreement census: the
+typed tree's characters with the markup stripped — the HTML side of what
+`censusOf` reads off the PDF's shipped lines. -/
+def nodeTextOne (acc : String) : Html.Node → String
+  | .text s => acc ++ s
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem _ _ kids => nodeTextList acc kids.toList
+
+def nodeTextList (acc : String) : List Html.Node → String
+  | [] => acc
+  | k :: rest => nodeTextList (nodeTextOne acc k) rest
+
+end
+
+mutual
+
+/-- Every chrome footer in the emitted deck, in document order, as its two
+slots' text: the HTML side of the footline fact. The two spans are left and
+right by construction (`Ir.Chrome.footSlots` through `emitTree`), and the
+stylesheet's `space-between` renders them at the edges. -/
+def slideFootsOne (acc : Array (String × String)) : Html.Node → Array (String × String)
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem tag attrs kids =>
+    if tag == "footer" &&
+        attrs.any (fun (k, v) => k == "class" && (v.splitOn "slide-foot").length > 1) then
+      match kids.toList with
+      | [l, r] =>
+        acc.push ((nodeTextOne "" l).trimAscii.toString, (nodeTextOne "" r).trimAscii.toString)
+      | _ => acc
+    else slideFootsList acc kids.toList
+
+def slideFootsList (acc : Array (String × String)) :
+    List Html.Node → Array (String × String)
+  | [] => acc
+  | k :: rest => slideFootsList (slideFootsOne acc k) rest
+
+end
+
+/-- Every chrome footer the PDF ships, in page order, as its two slots' text:
+`PageOut.foot` is the one footline declaration resolved per page
+(`Ir.Chrome.footLine`), its fill the slot boundary, and the physical pass
+applied exactly as the final layout pass applies it. -/
+def pdfFoots (out : Layout.Out) : Array (String × String) := Id.run do
+  let mut res : Array (String × String) := #[]
+  let total := out.pages.size
+  for h : i in [0:out.pages.size] do
+    if let some content := out.pages[i].foot then
+      let sub := Layout.substPage (i + 1) total content
+      let mut left : Array Ir.Inline := #[]
+      let mut right : Array Ir.Inline := #[]
+      let mut seen := false
+      for x in sub do
+        if x == Ir.Inline.fill then
+          seen := true
+        else if seen then
+          right := right.push x
+        else
+          left := left.push x
+      res := res.push ((Ir.plainText left).trimAscii.toString,
+        (Ir.plainText right).trimAscii.toString)
+  return res
+
+/-- Adjacent equal pairs collapsed: the pages of one stepped frame share
+their footer, and the HTML has one section per frame. -/
+def dedupConsecutive (xs : Array (String × String)) : Array (String × String) :=
+  xs.foldl (fun acc p => if acc.back? == some p then acc else acc.push p) #[]
+
+/-- The cross-backend agreement tier, over every golden fixture: a declared
+fact both backends render — a footer's slot contents and their sides, a
+list item's marker — renders the same from `Layout.Out` and from the typed
+HTML tree, or a diagnostic names the divergence (W0007 physical furniture
+omitted, W0328 marker substituted, W0329 sequences mixed). This is the
+general form of FINDINGS F1 and F5: the next divergence in any fixture
+fails here without anyone looking at a page. -/
+def agreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (pats : Hyphen.Patterns) : IO Unit := do
+  let namingCodes := ["W0007", "W0328", "W0329"]
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, docDs) := Elab.run s!"{n}.tex" src
+    let geom := Layout.Geom.ofPage doc.page
+    let out := Layout.run geom oneFace (some pats) doc
+    let (_, body, htmlDs) := HtmlDoc.emitTree {} doc
+    let naming := (docDs ++ out.diags ++ htmlDs).any (namingCodes.contains ·.code)
+    let pdf := dedupConsecutive (pdfFoots out)
+    let html := slideFootsList #[] body.toList
+    check ref s!"agree {n}: footer slots match across backends, or are named"
+      (pdf == html || naming)
+    for (element, st) in doc.styles.entries do
+      if let some m := st.marker then
+        match HtmlDoc.markerCss? m with
+        | some r =>
+          -- The expressible marker shows the declared characters — the
+          -- executable face of `markerCss?_text`, judged per fixture.
+          check ref s!"agree {n}: the '{element}' marker's HTML text is the declared text"
+            (r.text == Ir.plainText m)
+        | none =>
+          check ref s!"agree {n}: the '{element}' marker's substitution is named"
+            (htmlDs.any (·.code == "W0328"))
+
 
 /- One diagnostic code, one meaning: `DiagCode` in Diag.lean is the single
 place a code lives — an unregistered code is unrepresentable, because every
@@ -6089,6 +6196,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       headBandChecks ref oneFace
       cardChecks ref oneFace pats
       censusChecks ref oneFace pats
+      agreeChecks ref oneFace pats
       quoteChecks ref oneFace
       titleChecks ref
       outlineChecks ref
