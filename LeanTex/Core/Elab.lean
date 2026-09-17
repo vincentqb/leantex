@@ -154,7 +154,8 @@ def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin", "leading", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify"]
 
-def metaKeys : List String := ["title", "author", "subject", "keywords"]
+def metaKeys : List String :=
+  ["title", "author", "subject", "keywords", "url", "image", "favicon"]
 
 def fontKeys : List String := ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir"]
 
@@ -2520,6 +2521,9 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     | "author", .str s => m := { m with author := some s }
     | "subject", .str s => m := { m with subject := some s }
     | "keywords", .str s => m := { m with keywords := some s }
+    | "url", .str s => m := { m with url := some s }
+    | "image", .str s => m := { m with image := some s }
+    | "favicon", .str s => m := { m with favicon := some s }
     | key, v =>
       if metaKeys.contains key then
         modify fun st => { st with

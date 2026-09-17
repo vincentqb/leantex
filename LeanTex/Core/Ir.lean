@@ -217,12 +217,24 @@ structure OutputSpec where
   stylesheet : Option String := none
   deriving Repr, BEq, Inhabited
 
-/-- PDF document information, as declared by `\pdfmeta`. -/
+/-- Document metadata, as declared by `\pdfmeta` — the one record every
+surface derives from. The PDF reads title/author/subject/keywords into its
+Info dictionary and XMP, and `url` into XMP `dc:identifier`; the HTML head
+reads all of them plus `image` and `favicon`; the markdown twin reads title
+and subject as its llms.txt preamble. `image` and `favicon` are web-surface
+facts with no PDF meaning; nothing else here is per-backend. -/
 structure Meta where
   title : Option String := none
   author : Option String := none
   subject : Option String := none
   keywords : Option String := none
+  /-- The document's canonical URL: `<link rel="canonical">` (RFC 6596) and
+  the Open Graph `og:url` in HTML, `dc:identifier` in the PDF's XMP. -/
+  url : Option String := none
+  /-- A representative image for link previews: `og:image`. -/
+  image : Option String := none
+  /-- The page icon: `<link rel="icon">`. -/
+  favicon : Option String := none
   deriving Repr, BEq, Inhabited
 
 inductive CmpOp where
@@ -2456,7 +2468,9 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
      | none => "")
   let infoLines :=
     metaLine "title" doc.info.title ++ metaLine "author" doc.info.author ++
-    metaLine "subject" doc.info.subject ++ metaLine "keywords" doc.info.keywords
+    metaLine "subject" doc.info.subject ++ metaLine "keywords" doc.info.keywords ++
+    metaLine "url" doc.info.url ++ metaLine "image" doc.info.image ++
+    metaLine "favicon" doc.info.favicon
   let outputLines :=
     (if doc.output.formats.isEmpty then ""
      else s!"output formats {String.intercalate "," doc.output.formats.toList}\n") ++

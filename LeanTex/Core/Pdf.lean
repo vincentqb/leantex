@@ -283,6 +283,12 @@ private def xmpPacket (info : Ir.Meta) : String :=
   elem "dc:title" info.title ++
   seqElem "dc:creator" info.author ++
   elem "dc:description" info.subject ++
+  -- The canonical URL: dc:identifier, "an unambiguous reference to the
+  -- resource within a given context" (XMP Specification Part 1 §8.3,
+  -- ISO 16684-1, Dublin Core namespace; simple Text, not Alt/Seq).
+  (match info.url with
+   | some u => s!"        <dc:identifier>{xmlEscape u}</dc:identifier>\n"
+   | none => "") ++
   (match info.keywords with
    | some k => s!"        <pdf:Keywords>{xmlEscape k}</pdf:Keywords>\n"
    | none => "") ++

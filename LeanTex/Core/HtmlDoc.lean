@@ -910,6 +910,37 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
       ("keywords", doc.info.keywords)] do
     if let some v := value then
       head := head.push (Html.elem "meta" #[] #[("name", name), ("content", v)])
+  -- The declared web identity, each fact emitted once per surface. The
+  -- canonical URL is `rel=canonical` (RFC 6596); the icon `rel=icon`
+  -- (HTML §4.6.6.8). The Open Graph set is a projection of facts already
+  -- declared once — og:title/og:description/og:url/og:image restate title,
+  -- subject, url, image — never asked for again, which is how the drift
+  -- the site-port found ("Experience" vs "Professional Experience")
+  -- becomes unrepresentable. It appears only when the document declares a
+  -- web identity (url or image): ogp.me requires og:url for a valid
+  -- object, and og:type's own default, `website`, is emitted explicitly
+  -- because ogp.me lists it among the four required properties. X's card
+  -- crawler falls back to og:* for title/description/image, so the one
+  -- twitter-specific tag is the card kind itself (developer.x.com, cards
+  -- markup): `summary`, the base card.
+  if let some url := doc.info.url then
+    head := head.push (Html.elem "link" #[] #[("rel", "canonical"), ("href", url)])
+  if let some icon := doc.info.favicon then
+    head := head.push (Html.elem "link" #[] #[("rel", "icon"), ("href", icon)])
+  if doc.info.url.isSome || doc.info.image.isSome then
+    let og (p v : String) : Node :=
+      Html.elem "meta" #[] #[("property", p), ("content", v)]
+    if let some t := doc.info.title then
+      head := head.push (og "og:title" t)
+    if let some s := doc.info.subject then
+      head := head.push (og "og:description" s)
+    if let some u := doc.info.url then
+      head := head.push (og "og:url" u)
+    if let some i := doc.info.image then
+      head := head.push (og "og:image" i)
+    head := head.push (og "og:type" "website")
+    head := head.push (Html.elem "meta" #[]
+      #[("name", "twitter:card"), ("content", "summary")])
   head := head.push (Html.elem "meta" #[] #[("name", "generator"), ("content", "leantex")])
   -- Element styles are the document's own design and ride along in every
   -- mode: they are declarations, not a framework.

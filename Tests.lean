@@ -974,6 +974,53 @@ def motionSiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref s!"transition is spelled only in HtmlDoc ({f})"
         (f.toString.endsWith "HtmlDoc.lean")
 
+/-- Declared once, derived everywhere: every metadata fact lives in the one
+`Ir.Meta` record and each surface derives its own rendering of it — the HTML
+head, the llms.txt preamble, and the PDF's Info dictionary and XMP read the
+same field, so no surface can drift from another (the report's principle 3).
+Invented facts, example.org throughout. -/
+def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr ("\\documentclass{article}" ++
+    "\\pdfmeta{ title = \"Alex Doe, PhD\", subject = \"An invented person.\"," ++
+    " author = \"Alex Doe\", url = \"https://example.org/alex\"," ++
+    " image = \"https://example.org/alex/card.png\", favicon = \"favicon.svg\" }" ++
+    "\\begin{document}Body text.\\end{document}")
+  t "web meta source is clean" ds.isEmpty
+  t "web meta declares the record once"
+    (doc.info.url == some "https://example.org/alex" &&
+     doc.info.image == some "https://example.org/alex/card.png" &&
+     doc.info.favicon == some "favicon.svg")
+  let page := (HtmlDoc.emit {} doc).1
+  let has (s : String) : Bool := (page.splitOn s).length ≥ 2
+  t "html head links the canonical url"
+    (has "<link rel=\"canonical\" href=\"https://example.org/alex\">")
+  t "html head links the favicon" (has "<link rel=\"icon\" href=\"favicon.svg\">")
+  t "html og facts derive from the one record"
+    (has "<meta property=\"og:title\" content=\"Alex Doe, PhD\">" &&
+     has "<meta property=\"og:description\" content=\"An invented person.\">" &&
+     has "<meta property=\"og:url\" content=\"https://example.org/alex\">" &&
+     has "<meta property=\"og:image\" content=\"https://example.org/alex/card.png\">" &&
+     has "<meta property=\"og:type\" content=\"website\">")
+  t "html twitter derives only its card kind; the facts fall back to og"
+    (has "<meta name=\"twitter:card\" content=\"summary\">" && !has "twitter:title")
+  let md := MarkdownDoc.emit doc
+  let pdf := Pdf.write geom oneFace (Layout.run geom oneFace none doc).pages doc.info
+  t "the one declared title reaches all three surfaces"
+    (has "<title>Alex Doe, PhD</title>" &&
+     md.startsWith "# Alex Doe, PhD\n" &&
+     bytesContain pdf "/Title (Alex Doe, PhD)")
+  t "the one declared url reaches the pdf as XMP dc:identifier"
+    (bytesContain pdf "<dc:identifier>https://example.org/alex</dc:identifier>")
+  let (bare, _) := elabStr ("\\documentclass{article}" ++
+    "\\pdfmeta{ title = \"Quiet Page\" }\\begin{document}x\\end{document}")
+  let barePage := (HtmlDoc.emit {} bare).1
+  t "html without a declared web identity emits none of the web head"
+    ((barePage.splitOn "og:").length == 1 &&
+     (barePage.splitOn "rel=\"canonical\"").length == 1 &&
+     (barePage.splitOn "twitter:").length == 1)
+
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
 around the content, and nothing warns. Its own function: `main` is one `do`
 block and its elaboration budget is spent. -/
@@ -5633,6 +5680,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .error e => failures ref s!"pdf xref: {e}"
 
       pdfFaceChecks ref geom oneFace font
+      webMetaChecks ref geom oneFace
 
       lineChecks ref geom oneFace
       listChecks ref oneFace font

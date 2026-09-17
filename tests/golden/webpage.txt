@@ -5,6 +5,9 @@ palette muted #71717A
 meta title "Alex Doe, PhD"
 meta author "Alex Doe"
 meta subject "Alex Doe, PhD, Example Scientist."
+meta url "https://example.org/alex"
+meta image "https://example.org/alex/card.png"
+meta favicon "favicon.svg"
 output formats html,md
 output css own
 output stylesheet "webpage.css"
