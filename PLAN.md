@@ -45,6 +45,41 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — underline skip-ink is decided by the font's own outlines. A
+new `LeanTex/Core/Ink.lean` decodes TrueType `glyf` (simple and composite)
+and CFF Type 2 charstrings, flattens curves to eight chords, and reports
+the merged x-intervals where a glyph's ink crosses the underline band;
+`Font.underlineInk` memoizes one `Thunk` per glyph (Lean's `Thunk` is
+call-by-need: 0.6 µs per repeated read against 387 µs for a cold CFF
+decode), and `Layout.underlineSegs` collects obstructions across the whole
+line in line coordinates, dilates each by twice its run's rule thickness,
+and subtracts. The descender character list is gone. Two invariants carry
+the design and each is tested: decode-or-clear — every outline the decoder
+cannot answer for (budgets, point-matching, CID CFF, truncation, corrupt
+tables) clears its whole advance, and a declared bbox is trusted only on a
+simple glyph, where it is the glyph's own point data; and band-projection
+coverage — no ink inside the band escapes the reported intervals, because
+ink either has a contour edge on its vertical line inside the band (the
+clipped edge projection covers it) or spans the band and the midline
+winding fill covers it. The fill leg requires that no vertex lie on its
+scanline; the flattener now emits chord vertices computed in font units
+then doubled, so every vertex is even and the odd scanline meets none
+(before this, `/64` chord division could land a vertex on the scanline and
+drop a crossing pair — SourceSerifPro gid 490 reported a phantom gap that
+tracked the band position). Tests pin both invariants, plus a coverage
+oracle that shares nothing with the fill (Float flattening, half-open
+crossing rule). An earlier PDF-side approach — a white glyph halo stroked
+into the band, render mode 2 — was abandoned: the halo clears vertically
+too, erasing the rule under glyphs whose ink never reaches the band, and
+it is a second extractable copy of the text (`pdftotext` returned it
+twice). Measured now: 600 dpi poppler AND Ghostscript per-column oracle on
+`\Huge \underline{anq}` — CFF 292 no-ink columns full thickness / 0
+partial / 37 rule-free (the clearance beside the q stem, gaps 20/17 px ≈
+2× the 11 px rule), TTF 314/0/20 (gs 315/0/19); no column anywhere has a
+rule through ink, both formats, both rasterizers, and extraction returns
+the text once. `scripts/bench.lean` medians of 5: paragraphs 133 ms, lorem
+342 ms, and the new every-word-underlined arm 447 ms.
+
 2026-09-17 — a runtime audit: every pass is linear, so the work went to the
 constant. A 25–600-paragraph ladder (generated lorem, `leantex -v`, min of
 3) shows lex, elab, layout, and pdf all scaling ~2× per doubling — no
@@ -115,7 +150,6 @@ saves almost nothing (3.9 s c.o); the pre-commit hook is 13 ms on an
 irrelevant commit and ~1.0 s on a relevant one, most of it the lean
 interpreter starting on precommit.lean, honest both ways.
 
-||||||| parent of 11b6a5b (Record the runtime audit in the PLAN log)
 2026-09-16 — correction to the M3a entry below: the pending-key mechanism
 is gone. `pagePending` reported a declared-but-unimplemented `\page` key as
 pending with its milestone rather than as a type error; its last entry
