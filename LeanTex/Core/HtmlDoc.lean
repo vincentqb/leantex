@@ -1199,11 +1199,23 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
       let mut curSection : Array Inline := #[]
       let mut frameFoot : Option (Array Inline) := none
       let mut acc : Array Node := #[]
+      let mut walkDiags : Array Diag := #[]
       for h : i in [0:doc.body.size] do
         let b := doc.body[i]
         match b with
         | .framefoot xs =>
           frameFoot := if xs.isEmpty then none else some xs
+          -- A continuous page has no physical page number: the placeholder
+          -- renders as nothing here while the PDF resolves it, so the drop
+          -- is named — a divergence is declared or reported.
+          if Ir.hasPhysicalPage xs && walkDiags.isEmpty then
+            walkDiags := walkDiags.push {
+              severity := .warning
+              code := "W0007"
+              message := "\\pagenumber in a \\framefoot is paged-media \
+furniture; omitted from HTML"
+              help := some "the deck has no physical pages; \\framenumber \
+via \\chrome is the sequence both backends share" }
         | .frame _ _ _ _ =>
           let num := nums[i]?.getD none
           done := num.getD done
@@ -1239,7 +1251,7 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
           else
             acc := acc.push (blockNode cfg (.section 1 starred title))
         | _ => acc := acc.push (blockNode cfg b)
-      return (acc, #[])
+      return (acc, walkDiags)
   diags := diags ++ sectionDiags
   let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]
     else #[("class", bodyClass)])

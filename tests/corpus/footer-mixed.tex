@@ -1,0 +1,38 @@
+% Invented deck pinning FINDINGS F4: \framefoot{p. \pagenumber} beside the
+% theme's frame-number slot puts the physical page sequence and the frame
+% sequence in one band. The counting model keeps them distinct — the
+% stepped frame below advances \pagenumber and not the frame number — so
+% the undeclared mixing is warned by name (W0329). Nothing here derives
+% from any private document.
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{moloch}
+
+\fonts{
+  dir = "fonts",
+  body = "Open Sans",
+}
+
+\title{Two Sequences}
+\author{Pat Placeholder}
+
+\begin{document}
+
+\maketitle
+
+\section{Counting}
+
+\framefoot{p. \pagenumber}
+
+\begin{frame}{Stepped}
+  \begin{itemize}
+  \item<1-> The first beat
+  \item<2-> The second beat
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Plain}
+  One page, one frame.
+\end{frame}
+
+\end{document}

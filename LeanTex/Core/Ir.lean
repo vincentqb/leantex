@@ -859,6 +859,11 @@ structure Doc where
   runningFrom : Nat := 1
   /-- Slide chrome: the themed default footer's slots. `foot` wins over it. -/
   chrome : Chrome := {}
+  /-- Whether the document itself declared `\chrome` (not a theme installing
+  its default): the author who names the footer's slots has declared what
+  the band holds, so mixing the frame sequence with the physical one there
+  is said, not silent (`footerSequenceDiags`). -/
+  chromeDeclared : Bool := false
   styles : Styles := {}
   info : Meta := {}
   output : OutputSpec := {}
@@ -1649,6 +1654,96 @@ a screen reader reads the gap as a broken outline"))
 outline starts at its top"))
     prev := some l
   return out
+
+mutual
+
+/-- Does this inline content carry a physical-page placeholder
+(`\pagenumber` / `\pagecount`)? The physical sequence's only spellings —
+what `Layout.substPage` resolves, and what the frame sequence must never be
+mixed with silently (`footerSequenceDiags`). Explicit arms: a new `Inline`
+constructor must answer here (the obligation table; no wildcard). -/
+def hasPhysicalPageOne : Inline → Bool
+  | .pageNumber => true
+  | .pageCount => true
+  | .styled _ body => hasPhysicalPageList body.toList
+  | .colored _ _ body => hasPhysicalPageList body.toList
+  | .link _ body => hasPhysicalPageList body.toList
+  | .underline body => hasPhysicalPageList body.toList
+  | .step _ _ body => hasPhysicalPageList body.toList
+  | .text _ => false
+  | .math _ _ => false
+  -- a formula's body is math atoms and an image carries no inline body:
+  -- neither can hold a page-number placeholder
+  | .formula _ _ _ => false
+  | .image _ _ _ => false
+  | .fill => false
+  | .linebreak _ => false
+
+def hasPhysicalPageList : List Inline → Bool
+  | [] => false
+  | x :: rest => hasPhysicalPageOne x || hasPhysicalPageList rest
+
+end
+
+def hasPhysicalPage (xs : Array Inline) : Bool :=
+  hasPhysicalPageList xs.toList
+
+/-- Is this slot the frame sequence's? The counting model keeps two distinct
+sequences: the frame numbering (`Ir.frameNumbers`, rendered only by
+`ChromeSlot.render`) and the physical pages (`\pagenumber`/`\pagecount`,
+rendered only by `Layout.substPage`) — a stepped frame advances one and not
+the other. -/
+def ChromeSlot.isFrameSequence : ChromeSlot → Bool
+  | .frameNumber => true
+  | .frameFraction => true
+  | .sectionTitle => false
+
+/-- The footer band must not mix the two sequences silently: a `\framefoot`
+note carrying `\pagenumber`/`\pagecount` beside a frame-sequence chrome slot
+puts the physical count and the frame count in one band with no declared
+relation — on a stepped frame they visibly disagree. Legal, but only
+declared: a document that names its own `\chrome` slots has said what the
+band holds; one that inherited them from a theme has not, and gets a warning
+naming both sequences. Warning, not error (the audit-strict severity
+policy): the content is present, its meaning is what degraded. -/
+def footerSequenceDiags (doc : Doc) : Array Diag := Id.run do
+  unless doc.docClass == "slides" && doc.foot.isNone && !doc.chromeDeclared do
+    return #[]
+  let frameSlot := (doc.chrome.footerLeft.map ChromeSlot.isFrameSequence).getD false
+    || (doc.chrome.footerRight.map ChromeSlot.isFrameSequence).getD false
+  unless frameSlot do return #[]
+  let mut out : Array Diag := #[]
+  for b in doc.body do
+    if let .framefoot xs := b then
+      if hasPhysicalPage xs && out.isEmpty then
+        out := out.push {
+          severity := .warning
+          code := "W0329"
+          message := "the footer mixes the physical page number with the \
+frame number: the two sequences are distinct, and a stepped frame advances \
+one and not the other"
+          help := some "declare the footer's slots yourself \
+(\\chrome{ footer = { left = ..., right = \\framenumber } }) to say the \
+mixing is meant, or drop \\pagenumber from \\framefoot" }
+  return out
+
+/-- The two sequences stay distinct, stated where they could fuse: the
+physical pass (`Layout.substPage` rewrites exactly `.pageNumber` and
+`.pageCount`) can never touch a rendered frame slot, because the frame
+sequence's one rendering site emits no physical placeholder. So no future
+change can quietly derive one number from the other's counter without
+breaking this. -/
+theorem frame_sequence_carries_no_physical (s : ChromeSlot)
+    (sec : Array Inline) (n total : Nat) (hs : s.isFrameSequence = true) :
+    hasPhysicalPage (s.render sec n total) = false := by
+  cases s with
+  | sectionTitle => simp [ChromeSlot.isFrameSequence] at hs
+  | frameNumber =>
+    simp [ChromeSlot.render, hasPhysicalPage, hasPhysicalPageList,
+      hasPhysicalPageOne]
+  | frameFraction =>
+    simp [ChromeSlot.render, hasPhysicalPage, hasPhysicalPageList,
+      hasPhysicalPageOne]
 
 private theorem plainTextList_append (l1 l2 : List Inline) :
     plainTextList (l1 ++ l2) = plainTextList l1 ++ plainTextList l2 := by

@@ -1,0 +1,59 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 25.512 hmargin 28.346 fontsize 11
+font dir "fonts"
+font body "Open Sans"
+palette fg #23373B
+palette bg #FAFAFA
+palette alert #A55A13
+palette example #008080
+palette muted #647274
+palette frametitlefg #FAFAFA
+palette frametitlebg #23373B
+palette progressfg #A55A13
+palette progressbg #CBC0B6
+palette separator #A55A13
+palette standoutfg #FAFAFA
+palette standoutbg #23373B
+palette covered #A8B0B1
+token progressheight 1pt
+token separatorheight 0.5pt
+token subtitlegap 300/1000em
+token separatorgap 800/1000em
+token authorgap 500/1000em
+token institutegap 1000/1000em
+chrome footer left sectiontitle right framenumber
+meta title "Two Sequences"
+meta author "Pat Placeholder"
+frame golden
+  section* 0
+    text "Two Sequences"
+  rule separator 0.5pt
+  block before 800/1000em
+    para
+      text "Pat Placeholder"
+section 1
+  text "Counting"
+framefoot
+  text "p. "
+  pagenumber
+frame
+  title
+    text "Stepped"
+  list unordered
+    item
+      step 1
+        para
+          text "The first beat"
+    item
+      step 2
+        para
+          text "The second beat"
+frame
+  title
+    text "Plain"
+  para
+    text "One page, one frame."
+-- diagnostics
+note[N0100] 7:1 \documentclass{beamer} → \documentclass[aspectratio=169]{slides}
+note[N0100] 9:1 \usetheme → \theme{moloch}
+warning[W0329] - the footer mixes the physical page number with the frame number: the two sequences are distinct, and a stepped frame advances one and not the other | help: declare the footer's slots yourself (\chrome{ footer = { left = ..., right = \framenumber } }) to say the mixing is meant, or drop \pagenumber from \framefoot

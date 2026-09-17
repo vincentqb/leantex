@@ -2606,6 +2606,61 @@ def substPageList (n total : Nat) : List Inline → List Inline
 
 end
 
+mutual
+
+/-- The physical pass rewrites exactly the physical placeholders: content
+carrying none is untouched. This is the substitution half of "the two
+sequences stay distinct" — `Ir.frame_sequence_carries_no_physical` is the
+rendering half. -/
+theorem substPageOne_id (n total : Nat) (x : Inline)
+    (h : Ir.hasPhysicalPageOne x = false) : substPageOne n total x = x := by
+  match x with
+  | .pageNumber => simp [Ir.hasPhysicalPageOne] at h
+  | .pageCount => simp [Ir.hasPhysicalPageOne] at h
+  | .styled st body =>
+    rw [Ir.hasPhysicalPageOne] at h
+    rw [substPageOne, substPageList_id n total body.toList h]
+  | .colored c nm body =>
+    rw [Ir.hasPhysicalPageOne] at h
+    rw [substPageOne, substPageList_id n total body.toList h]
+  | .link u body =>
+    rw [Ir.hasPhysicalPageOne] at h
+    rw [substPageOne, substPageList_id n total body.toList h]
+  | .underline body =>
+    rw [Ir.hasPhysicalPageOne] at h
+    rw [substPageOne, substPageList_id n total body.toList h]
+  | .step s last body =>
+    rw [Ir.hasPhysicalPageOne] at h
+    rw [substPageOne, substPageList_id n total body.toList h]
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .fill
+  | .linebreak _ => rw [substPageOne]
+
+theorem substPageList_id (n total : Nat) (xs : List Inline)
+    (h : Ir.hasPhysicalPageList xs = false) :
+    substPageList n total xs = xs := by
+  match xs with
+  | [] => rw [substPageList]
+  | x :: rest =>
+    rw [Ir.hasPhysicalPageList, Bool.or_eq_false_iff] at h
+    rw [substPageList, substPageOne_id n total x h.1,
+      substPageList_id n total rest h.2]
+
+end
+
+/-- Content with no physical placeholder survives the physical pass whole. -/
+theorem substPage_id (n total : Nat) (xs : Array Inline)
+    (h : Ir.hasPhysicalPage xs = false) : substPage n total xs = xs := by
+  rw [substPage, substPageList_id n total xs.toList h]
+
+/-- The two sequences cannot quietly fuse: the physical pass leaves a frame
+slot's rendering exactly as the frame numbering rendered it, on every page —
+so the frame number in a footer can never be rewritten by, or derived from,
+the physical page counter. -/
+theorem substPage_leaves_frame_slot (n total k tot : Nat) (s : Ir.ChromeSlot)
+    (sec : Array Inline) (hs : s.isFrameSequence = true) :
+    substPage n total (s.render sec k tot) = s.render sec k tot :=
+  substPage_id n total _ (Ir.frame_sequence_carries_no_physical s sec k tot hs)
+
 /-- One op staged for placement: paragraphs carry their breaking task. -/
 private inductive StagedOp where
   | skip (g : Glue)

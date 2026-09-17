@@ -2684,6 +2684,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut runningFrom : Nat := 1
   let mut styles : Styles := {}
   let mut chrome : Chrome := {}
+  let mut chromeDeclared := false
   let mut info : Meta := {}
   let mut output : OutputSpec := {}
   let mut asserts : Array Assertion := #[]
@@ -2994,6 +2995,10 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               -- Parses its own entries: slot values are `\sectiontitle`
               -- spellings a key/value pre-parse would reject.
               chrome ← applyChrome ctx src pos
+              -- The author has named what the footer band holds: mixing
+              -- the frame and physical sequences there is now declared
+              -- (`footerSequenceDiags`).
+              chromeDeclared := true
               -- Inert chrome would be a silent failure: only slides draw it.
               if docClass != "slides" then
                 diag ctx .W0318
@@ -3178,6 +3183,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
     logo := logo
     runningFrom := runningFrom
     chrome := chrome
+    chromeDeclared := chromeDeclared
     styles := styles
     info := info
     output := output
@@ -3194,7 +3200,8 @@ def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
   let (doc, st) := (elabDoc file raws).run {}
   let contrast := Contrast.docDiags doc
   let outline := Ir.outlineDiags doc
-  (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline)
+  let sequences := Ir.footerSequenceDiags doc
+  (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ sequences)
 
 def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input

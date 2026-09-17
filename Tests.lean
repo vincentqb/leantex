@@ -48,7 +48,8 @@ def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
-   "chrome", "footer-left", "lists", "lists-styled", "lists-deck", "headroom",
+   "chrome", "footer-left", "footer-mixed", "lists", "lists-styled",
+   "lists-deck", "headroom",
    "marker-styled", "marker-content",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav"]
@@ -2870,6 +2871,29 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "chrome outside slides warns"
     ((elabStr ("\\documentclass{article}\\chrome{ footer = { right = \\framenumber } }" ++
       "\\begin{document}x\\end{document}")).2.any (·.code == "W0318"))
+  -- FINDINGS F4: the frame and physical sequences share a band only by
+  -- declaration. A theme-installed frame slot plus \framefoot{\pagenumber}
+  -- is undeclared mixing (W0329); the document naming its own \chrome slots
+  -- IS the declaration, so the same band is then silent.
+  let mixedBody := "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}"
+  t "undeclared sequence mixing warns by name"
+    ((elabStr (deck "\\theme{moloch}" mixedBody)).2.any fun d =>
+      d.code == "W0329" && d.severity == .warning)
+  t "a document that declares its chrome has declared the mixing"
+    (!(elabStr (deck "\\theme{moloch}\\chrome{ footer = { right = \\framenumber } }"
+      mixedBody)).2.any (·.code == "W0329"))
+  t "no frame slot, no mixing"
+    (!(elabStr (deck "" mixedBody)).2.any (·.code == "W0329"))
+  t "a physical-free framefoot mixes nothing"
+    (!(elabStr (deck "\\theme{moloch}"
+      "\\framefoot{note}\n\\begin{frame}{T}\nx\n\\end{frame}")).2.any
+      (·.code == "W0329"))
+  -- The sequences cannot quietly fuse: the physical pass leaves a rendered
+  -- frame slot untouched on every page (`substPage_leaves_frame_slot` is
+  -- the theorem; this pins one instance executably).
+  t "substPage leaves a rendered frame slot alone"
+    (Layout.substPage 7 9 (Ir.ChromeSlot.frameFraction.render #[] 2 5) ==
+      Ir.ChromeSlot.frameFraction.render #[] 2 5)
   -- The muted rule is load-bearing: one step weaker (fg!60!bg) fails the
   -- bundle contract the theorems hold.
   let weaker : Ir.Palette := { entries :=
@@ -3671,6 +3695,18 @@ def censusTable :
         fun l => l.text.startsWith "Placement").getD false),
     ("the sectioned frame numbers at the same right edge",
       lineRightOf c 3 "Placement 2" == some (geom.pageW - geom.hmargin))]),
+  -- FINDINGS F4: the two sequences share a band only by declaration. The
+  -- stepped frame is where they visibly disagree: its pages advance the
+  -- physical number and hold the frame number — one counter could never
+  -- ship these pages.
+  ("footer-mixed", fun _ c => [
+    ("pages", c.size == 5),
+    ("the step pages advance the physical number",
+      pageHas c 2 "p. 3" && pageHas c 3 "p. 4"),
+    ("and hold the frame number across the step",
+      (lineRightOf c 2 "p. 3").isSome && pageHas c 2 "1" && pageHas c 3 "1"),
+    ("the plain frame carries the next of both",
+      pageHas c 4 "p. 5" && pageHas c 4 "2")]),
   ("lists", fun _ c => [
     ("one page", c.size == 1),
     ("four itemize levels ship their four marks",
