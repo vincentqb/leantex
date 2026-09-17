@@ -1,0 +1,16 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+palette markerink #205E3B
+para
+  text "Placeholder prose from example.org."
+list unordered
+  item
+    para
+      text "First invented point"
+  item
+    para
+      text "Second invented point"
+-- diagnostics
+(none)

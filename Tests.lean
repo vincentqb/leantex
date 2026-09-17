@@ -49,6 +49,7 @@ def goldenNames : List String :=
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
    "chrome", "footer-left", "lists", "lists-styled", "lists-deck", "headroom",
+   "marker-styled", "marker-content",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav"]
 
@@ -441,6 +442,47 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let listStyle := styled.1.styles.find? "itemize"
   t "style itemize marker is content"
     ((listStyle.bind (·.marker)) == some #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some "ink") #[.text "–"]])
+  -- A declared marker either reaches HTML as declared or the substitution
+  -- is named (W0328): the résumé's colour-and-size shape is expressible in
+  -- a ::marker rule (CSS Pseudo-Elements 4 §4.1), arbitrary inline content
+  -- is not. `markerCss?_text` is the theorem that the expressed content is
+  -- exactly the declared characters.
+  let dash : Ir.Color := { r := 0x20, g := 0x5E, b := 0x3B }
+  t "markerCss? expresses colour and size around text"
+    (HtmlDoc.markerCss? #[.colored dash (some "markerink")
+        #[.styled (.size "small") #[.text "–"]]] ==
+      some { text := "–"
+             decls := #["color: var(--markerink, #205e3b);", "font-size: 0.9em;"] })
+  t "markerCss? expresses bold plain text"
+    (HtmlDoc.markerCss? #[.styled .bold #[.text "»"]] ==
+      some { text := "»", decls := #["font-weight: 600;"] })
+  t "markerCss? refuses an image marker"
+    (HtmlDoc.markerCss? #[.image "rects.png" {} ""] == none)
+  t "markerCss? refuses a link marker"
+    (HtmlDoc.markerCss? #[.link "https://example.org" #[.text "x"]] == none)
+  t "markerCss? refuses a wrapper beside text"
+    (HtmlDoc.markerCss? #[.styled .bold #[.text "a"], .text "b"] == none)
+  let markerDoc (m : String) : Ir.Doc :=
+    (elabStr ("\\documentclass{article}\\palette{ markerink = #205E3B }" ++
+      s!"\\style\{itemize}\{ marker = \{{m}} }" ++
+      "\\begin{document}\\begin{itemize}\\item a\\end{itemize}\\end{document}")).1
+  let (styledMarkerPage, styledMarkerDs) :=
+    HtmlDoc.emit {} (markerDoc "\\textcolor{markerink}{\\small\\endash}")
+  t "html styled marker reaches ::marker with its colour and size"
+    ((styledMarkerPage.splitOn
+      "{ content: \"–  \"; color: var(--markerink, #205e3b); font-size: 0.9em; }").length == 2)
+  t "html styled marker is clean" (styledMarkerDs.all (·.code != "W0328"))
+  let (contentMarkerPage, contentMarkerDs) :=
+    HtmlDoc.emit {} (markerDoc "\\includegraphics{rects.png}")
+  t "html inexpressible marker is named, not silently defaulted"
+    (contentMarkerDs.any fun d => d.code == "W0328" && d.severity == .warning &&
+      (d.message.splitOn "itemize").length > 1)
+  t "html inexpressible marker emits no ::marker override"
+    ((contentMarkerPage.splitOn "rects.png").length == 1)
+  -- The content string is escaped: marker text cannot end its own CSS
+  -- string (CSS Syntax 3 §4.3.7).
+  t "css marker string escapes its delimiters"
+    (HtmlDoc.cssString "a\"b\\c" == "a\\\"b\\\\c")
   t "style unknown element" (errCodes ("\\documentclass{article}\\style{footer}{ before = 1pt }" ++
     "\\begin{document}x\\end{document}") == ["E0328"])
   t "style unknown key" (errCodes ("\\documentclass{article}\\style{section}{ colour = 1pt }" ++
@@ -3641,6 +3683,19 @@ def censusTable :
     ("one page", c.size == 1),
     ("the base override ships", hasStr (censusText c) "– The base override"),
     ("the level override ships", hasStr (censusText c) "• The level override")]),
+  -- The two marker fixtures carry FINDINGS F1: a declared marker either
+  -- reaches a backend as declared or the substitution has a name (W0328).
+  -- The PDF side is judged here; the HTML side and the agreement between
+  -- them are judged in agreeChecks.
+  ("marker-styled", fun _ c => [
+    ("one page", c.size == 1),
+    ("the declared en-dash marker ships beside each item",
+      pageHas c 0 "– First invented point" && pageHas c 0 "– Second invented point")]),
+  ("marker-content", fun _ c => [
+    ("one page", c.size == 1),
+    ("the items ship", pageHas c 0 "An item marked by a picture"),
+    ("no default text marker substitutes for the image",
+      !pageHas c 0 "• An item" && !pageHas c 0 "– An item")]),
   ("lists-deck", fun _ c => [
     ("pages", c.size == 4),
     ("nesting shows through the theme", pageHas c 1 "– Nested under the stepped item"),

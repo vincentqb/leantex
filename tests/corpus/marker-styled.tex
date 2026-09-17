@@ -1,0 +1,23 @@
+% Invented fixture: a styled marker that must reach BOTH backends — a
+% declared colour and a size step are expressible in a ::marker rule
+% (CSS Pseudo-Elements 4 §4.1: color and all font properties apply), so
+% neither backend may substitute the level default (FINDINGS F1). The
+% shape mirrors enumitem's label={\textcolor{...}{\small\textendash}}
+% with invented values. Nothing here derives from any private document.
+\documentclass{article}
+
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+
+\palette{ markerink = #205E3B }
+\style{itemize}{ marker = {\textcolor{markerink}{\small\endash}} }
+
+\begin{document}
+
+Placeholder prose from example.org.
+
+\begin{itemize}
+\item First invented point
+\item Second invented point
+\end{itemize}
+
+\end{document}

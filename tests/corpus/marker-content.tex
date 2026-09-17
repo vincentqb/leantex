@@ -1,0 +1,21 @@
+% Invented fixture: a marker that is arbitrary inline content — an image —
+% which a ::marker rule cannot carry (CSS Pseudo-Elements 4 §4.1 lists no
+% replaced content), so the HTML backend must diagnose the substitution by
+% name (W0328), never default silently; the PDF sets it as declared.
+% Nothing here derives from any private document.
+\documentclass{article}
+
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+
+\style{itemize}{ marker = {\includegraphics[width=5pt]{rects.png}} }
+
+\begin{document}
+
+Placeholder prose from example.org.
+
+\begin{itemize}
+\item An item marked by a picture
+\item Another such item
+\end{itemize}
+
+\end{document}

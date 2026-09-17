@@ -104,13 +104,174 @@ theorem motionCss_guarded (sel : String) (ms : Nat) :
     ∃ rule, motionCss sel ms = rule ++ reducedMotionGuard sel :=
   ⟨_, rfl⟩
 
-/-- `\style` declarations as CSS on the element selectors. A marker becomes
-`::marker` content only when it is plain text; styled markers fall back to the
-default, which is the honest degradation until `::marker` styling is portable.
-A base list element styles every nesting level (as the PDF path does), so its
-marker rule is emitted at each depth — the depth-qualified selectors match
-the level defaults' specificity and, standing later in the sheet, win. -/
-def styleRules (doc : Doc) : String :=
+/-- A declared marker resolved to what a `::marker` rule can say: the text
+it shows, and the CSS declarations its wrappers translate to. CSS
+Pseudo-Elements 4 §4.1 lists the properties that apply to `::marker`: all
+font properties, `color`, `content`, `white-space`, `unicode-bidi`,
+`direction`, `text-combine-upright` — so a colour and a size step are
+expressible, and what is not is arbitrary inline content (a link, an image,
+math, a step), plus drawn decoration (`text-decoration` is not in the list,
+so an underlined marker does not qualify). -/
+structure MarkerCss where
+  text : String
+  decls : Array String := #[]
+  deriving Repr, BEq
+
+/-- What one style wrapper says in a `::marker` rule, when it says anything
+(CSS Pseudo-Elements 4 §4.1: all font properties apply). The bold weight is
+600, the same weight the base stylesheet's level-2 dash carries. An unknown
+size name resolves to nothing, which makes the whole marker inexpressible
+rather than silently unsized. -/
+private def markerStyleDecls : Style → Option (Array String)
+  | .bold => some #["font-weight: 600;"]
+  | .italic => some #["font-style: italic;"]
+  | .emph => some #["font-style: italic;"]
+  | .mono => some #["font-family: var(--font-mono);"]
+  | .sans => some #["font-family: var(--font-sans);"]
+  | .smallcaps => some #["font-variant-caps: small-caps;"]
+  | .normal => some #[]
+  | .size name => (Ir.sizeScale.lookup name).map fun k =>
+      #[s!"font-size: {decMilli k}em;"]
+
+private def markerColorDecl (c : Ir.Color) (name : Option String) : String :=
+  match name with
+  | some n => s!"color: var(--{n}, {cssColor c});"
+  | none => s!"color: {cssColor c};"
+
+/-- The plain text of a marker whose every element is text — anything else
+is not `::marker` content. Explicit arms: a new `Inline` constructor must
+answer here (the obligation table; no wildcard in a backend's IR walk). -/
+private def markerTextInto (acc : String) : List Inline → Option String
+  | [] => some acc
+  | .text s :: rest => markerTextInto (acc ++ s) rest
+  | .math _ _ :: _ => none
+  | .formula _ _ _ :: _ => none
+  | .styled _ _ :: _ => none
+  | .colored _ _ _ :: _ => none
+  | .link _ _ :: _ => none
+  | .underline _ :: _ => none
+  | .fill :: _ => none
+  | .pageNumber :: _ => none
+  | .pageCount :: _ => none
+  | .linebreak _ :: _ => none
+  | .step _ _ _ :: _ => none
+  | .image _ _ _ :: _ => none
+
+mutual
+
+/-- Resolve one marker element for `::marker`: a whole-content style wrapper
+— it must wrap everything inside it, since one `::marker` rule styles the
+whole marker — or plain text. `none` is the inexpressible remainder, which
+the emitter must diagnose, never silently default (`styleRules`): the same
+declaration then reaches both backends or the difference has a name.
+Explicit arms (the obligation table; no wildcard in a backend's IR walk). -/
+def markerCssOne (decls : Array String) : Inline → Option MarkerCss
+  | .text s => some { text := s, decls := decls }
+  | .styled st body =>
+    match markerStyleDecls st with
+    | some ds => markerCssList (decls ++ ds) body.toList
+    | _ => none
+  | .colored c name body =>
+    markerCssList (decls.push (markerColorDecl c name)) body.toList
+  | .math _ _ => none
+  | .formula _ _ _ => none
+  | .link _ _ => none
+  | .underline _ => none
+  | .fill => none
+  | .pageNumber => none
+  | .pageCount => none
+  | .linebreak _ => none
+  | .step _ _ _ => none
+  | .image _ _ _ => none
+
+def markerCssList (decls : Array String) : List Inline → Option MarkerCss
+  | [x] => markerCssOne decls x
+  | xs => (markerTextInto "" xs).map fun t => { text := t, decls := decls }
+
+end
+
+def markerCss? (m : Array Inline) : Option MarkerCss :=
+  markerCssList #[] m.toList
+
+private theorem markerTextInto_text (xs : List Inline) :
+    ∀ acc t, markerTextInto acc xs = some t → t = acc ++ Ir.plainTextList xs := by
+  induction xs with
+  | nil =>
+    intro acc t h
+    simp [markerTextInto] at h
+    simp [← h, Ir.plainTextList]
+  | cons x rest ih =>
+    intro acc t h
+    cases x <;> simp [markerTextInto] at h
+    rw [ih _ _ h]
+    simp [Ir.plainTextList, Ir.plainTextOne, String.append_assoc]
+
+mutual
+
+/-- A marker `::marker` can express shows exactly the declared characters:
+the emitted `content` is the marker's own plain text, so the HTML marker and
+the PDF marker (which sets the same declared content as a line of its own)
+can only differ where a diagnostic already names the substitution. -/
+theorem markerCssOne_text (decls : Array String) (x : Inline) (r : MarkerCss)
+    (h : markerCssOne decls x = some r) : r.text = Ir.plainTextOne x := by
+  match x with
+  | .text s =>
+    simp [markerCssOne] at h
+    simp [← h, Ir.plainTextOne]
+  | .styled st body =>
+    rw [markerCssOne] at h
+    split at h
+    · rw [Ir.plainTextOne]
+      exact markerCssList_text _ body.toList r h
+    · exact absurd h (by simp)
+  | .colored c name body =>
+    rw [markerCssOne] at h
+    rw [Ir.plainTextOne]
+    exact markerCssList_text _ body.toList r h
+  | .math _ _ | .formula _ _ _ | .link _ _ | .underline _ | .fill
+  | .pageNumber | .pageCount | .linebreak _ | .step _ _ _ | .image _ _ _ =>
+    simp [markerCssOne] at h
+
+theorem markerCssList_text (decls : Array String) (xs : List Inline)
+    (r : MarkerCss) (h : markerCssList decls xs = some r) :
+    r.text = Ir.plainTextList xs := by
+  match xs with
+  | [x] =>
+    rw [markerCssList] at h
+    simp [Ir.plainTextList, markerCssOne_text decls x r h]
+  | [] =>
+    simp [markerCssList, markerTextInto] at h
+    simp [← h, Ir.plainTextList]
+  | x :: y :: rest =>
+    rw [markerCssList] at h
+    case x_1 => intro z hz; simp at hz
+    simp only [Option.map_eq_some_iff] at h
+    obtain ⟨t, ht, hr⟩ := h
+    rw [← hr]
+    simpa using markerTextInto_text _ _ _ ht
+
+end
+
+theorem markerCss?_text (m : Array Inline) (r : MarkerCss)
+    (h : markerCss? m = some r) : r.text = Ir.plainText m :=
+  Ir.plainText.eq_def m ▸ markerCssList_text #[] m.toList r h
+
+/-- A CSS string value: the two characters that could end the string or
+start an escape are escaped (CSS Syntax 3 §4.3.7), so a declared marker's
+characters can never break out of their `content` string. -/
+def cssString (s : String) : String :=
+  (s.replace "\\" "\\\\").replace "\"" "\\\""
+
+/-- `\style` declarations as CSS on the element selectors. A declared marker
+becomes a `::marker` rule when it is expressible there — plain text under
+colour and font wrappers (`markerCss?`; CSS Pseudo-Elements 4 §4.1) — and
+the inexpressible remainder is diagnosed by name (W0328), never silently
+defaulted: the PDF sets the same declared content, so a silent fallback here
+is a silent backend divergence (FINDINGS F1). A base list element styles
+every nesting level (as the PDF path does), so its marker rule is emitted at
+each depth — the depth-qualified selectors match the level defaults'
+specificity and, standing later in the sheet, win. -/
+def styleRules (doc : Doc) : String × Array Diag :=
   let sel : String → Option String
     | "titlepage" => some "h1"
     | "section" => some "h2" | "subsection" => some "h3" | "subsubsection" => some "h4"
@@ -127,12 +288,11 @@ def styleRules (doc : Doc) : String :=
     | "ol" => "ol > li::marker, ol ol > li::marker, ol ol ol > li::marker, " ++
       "ol ol ol ol > li::marker"
     | tag => s!"{tag} > li::marker"
-  let plainText (xs : Array Inline) : Option String :=
-    xs.foldl (fun acc x => match acc, x with
-      | some a, .text t => some (a ++ t)
-      | _, _ => none) (some "")
-  String.join (doc.styles.entries.toList.filterMap fun (element, st) => do
-    let tag ← sel element
+  Id.run do
+  let mut css := ""
+  let mut diags : Array Diag := #[]
+  for (element, st) in doc.styles.entries do
+    let some tag := sel element | continue
     let decls :=
       (st.before.map fun g => s!"margin-top: {cssLength g.width};").toList ++
       (st.after.map fun g => s!"margin-bottom: {cssLength g.width};").toList ++
@@ -144,10 +304,23 @@ def styleRules (doc : Doc) : String :=
         -- Baseline, not center: the rule is drawn where the PDF draws it,
         -- level with the heading's baseline, via the flex items' baselines.
         s!"display: flex; align-items: baseline; gap: 0.5em; --rule-color: {color};").toList
-    let liDecls :=
-      (st.gap.map fun g => s!"{tag} > li \{ margin-top: {cssLength g.width}; }\n").toList ++
-      (st.marker.bind plainText |>.map fun m =>
-        s!"{markerSel tag} \{ content: \"{m}  \"; }\n").toList
+    let mut liDecls :=
+      (st.gap.map fun g => s!"{tag} > li \{ margin-top: {cssLength g.width}; }\n").toList
+    if let some m := st.marker then
+      match markerCss? m with
+      | some r =>
+        let body := String.join (r.decls.toList.map (" " ++ ·))
+        liDecls := liDecls ++
+          [s!"{markerSel tag} \{ content: \"{cssString r.text}  \";{body} }\n"]
+      | none =>
+        diags := diags.push {
+          severity := .warning
+          code := "W0328"
+          message := s!"the declared '{element}' marker is not expressible in \
+HTML; the level default marks these items"
+          help := some "a ::marker rule carries text with colour and font \
+styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or an overlay \
+step in a marker does not reach it" }
     -- Interaction states live on the element's links (the interactive
     -- content a hover or focus can land on; for `nav` that is `nav a`).
     -- The colour keeps its token spelling, like every named colour here,
@@ -164,7 +337,12 @@ def styleRules (doc : Doc) : String :=
         s!"{iSel}:focus-visible \{ outline-color: {tokenColor c n}; }\n").toList ++
       (st.motion.map fun ms => motionCss iSel ms).toList
     let own := if decls.isEmpty then "" else s!"{tag} \{ {String.intercalate " " decls} }\n"
-    some (own ++ String.join liDecls ++ String.join interDecls))
+    -- Bound first: appending a call's result directly is the shape the
+    -- cost gate rejects; a name makes the one-off append visible as one.
+    let liCss := String.join liDecls
+    let interCss := String.join interDecls
+    css := css ++ own ++ liCss ++ interCss
+  return (css, diags)
 
 /-- Furniture the semantic palette keys turn on — one shared rule set for
 every theme, so a theme stays a table of values. The conditions read the
@@ -971,8 +1149,10 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
       ("{\n" ++ String.intercalate ",\n" fields ++ "\n}"))
   head := head.push (Html.elem "meta" #[] #[("name", "generator"), ("content", "leantex")])
   -- Element styles are the document's own design and ride along in every
-  -- mode: they are declarations, not a framework.
-  let styled := styleRules doc
+  -- mode: they are declarations, not a framework. A marker the sheet cannot
+  -- express is named here (W0328), not silently defaulted.
+  let (styled, styleDiags) := styleRules doc
+  diags := diags ++ styleDiags
   match cfg.css with
   | .own => head := head.push (Node.style (baseCss doc ++ "\n" ++ themeCss doc ++ styled))
   | .bulma =>
