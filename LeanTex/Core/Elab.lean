@@ -106,23 +106,18 @@ structure ESt where
 
 abbrev EM := StateM ESt
 
-private def diag (ctx : Ctx) (code msg : String) (pos : Option Pos)
-    (help : Option String := none) (sev : Severity := .error) : EM Unit :=
-  modify fun st => { st with diags := st.diags.push {
-    severity := sev
-    code := code
-    message := msg
-    span := pos.map (⟨ctx.file, ·⟩)
-    help := help
-  } }
+private def diag (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
+    (help : Option String := none) : EM Unit :=
+  modify fun st => { st with
+    diags := st.diags.push (Diag.of code msg (pos.map (⟨ctx.file, ·⟩)) help) }
 
 /-- A warning deduplicated by `key`: the same unsupported construct in forty
 frames is one problem, not forty. -/
-private def warnOnce (ctx : Ctx) (key code msg : String) (pos : Pos)
+private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String) (pos : Pos)
     (help : Option String := none) : EM Unit := do
   unless (← get).warnedUnknown.contains key do
     modify fun st => { st with warnedUnknown := st.warnedUnknown.push key }
-    diag ctx code msg (some pos) help .warning
+    diag ctx code msg (some pos) help
 
 /-- One formula: parsed into math atoms when this slice can model it, kept
 as source text with a warning naming the construct when it cannot — out of
@@ -132,7 +127,7 @@ private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
   match MathParse.parseMath body with
   | .ok l => return .formula display (Parse.rawSrc body) l
   | .error what =>
-    warnOnce ctx ("math:" ++ what) "W0012"
+    warnOnce ctx ("math:" ++ what) .W0012
       s!"math with {what} is not rendered yet; the formula is set as source text" pos
       (help := "the rest of M6; see PLAN.md")
     return .math display (Parse.rawSrc body)
@@ -411,8 +406,8 @@ private def scanBracketArg (raws : Array Raw) (i : Nat) (anchor : Pos) : ArgScan
 
 /-- An unclosed `[` stays as content; this says why it was not an argument. -/
 private def warnUnclosed (ctx : Ctx) (after : String) (bpos : Pos) : EM Unit :=
-  diag ctx "W0310" s!"'[' after {after} never closes; it is not an argument" (some bpos)
-    (help := "add the matching ']'") .warning
+  diag ctx .W0310 s!"'[' after {after} never closes; it is not an argument" (some bpos)
+    (help := "add the matching ']'")
 
 /-- The index of a command's `{...}` group past its optional argument, best
 effort. A well-formed `[...]` is skipped whole. An unclosed one warns; its
@@ -470,16 +465,16 @@ private def warnDroppedArgs (ctx : Ctx) (name : String) (dropped : Nat)
     (pos : Pos) : EM Unit := do
   if dropped > 0 then
     let noun := if dropped == 1 then "group" else "groups"
-    diag ctx "W0313"
+    diag ctx .W0313
       s!"{dropped} \{...} {noun} on the '\\begin\{{name}}' line went with the unknown wrapper" (some pos)
-      (help := "content, not an argument? put it after the '\\begin' line") .warning
+      (help := "content, not an argument? put it after the '\\begin' line")
 
 /-- A command whose group never materialised after an unclosed `[` is
 dropped whole: W0310 already named the typo, and one skipped declaration
 must not fail the build or bleed into the next construct as stray content. -/
 private def warnSkippedDecl (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
-  diag ctx "W0312" s!"no \{...} group after '\\{name}'; it is skipped" (some pos)
-    (help := s!"write \\{name}\{...}") .warning
+  diag ctx .W0312 s!"no \{...} group after '\\{name}'; it is skipped" (some pos)
+    (help := s!"write \\{name}\{...}")
 
 /-- The index of the next construct after a skipped preamble command's
 malformed arguments. The junk ends with the command's line, and a control
@@ -587,11 +582,11 @@ partial def takeArgs (ctx : Ctx) (params : Array Param) (name : String)
             k' := k' + 1
           | none => break
         unless closed do
-          diag ctx "E0316" s!"unclosed optional argument for '\\{name}'" pos
+          diag ctx .E0316 s!"unclosed optional argument for '\\{name}'" pos
         i := k'
         let v ← elabInlines ctx body
         if p.type == .text && !allText v then
-          diag ctx "E0305" s!"parameter '{p.name}' of '\\{name}' expects text" pos
+          diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
         bindings := bindings.push (p.name, some v)
       | _ =>
         bindings := bindings.push (p.name, none)
@@ -602,13 +597,13 @@ partial def takeArgs (ctx : Ctx) (params : Array Param) (name : String)
         i := j + 1
         let v ← elabInlines ctx body
         if p.type == .text && !allText v then
-          diag ctx "E0305" s!"parameter '{p.name}' of '\\{name}' expects text" pos
+          diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
         bindings := bindings.push (p.name, some v)
       | some (.word s _) =>
         i := j + 1
         bindings := bindings.push (p.name, some #[.text s])
       | _ =>
-        diag ctx "E0304" s!"missing argument '{p.name}' for '\\{name}'" pos
+        diag ctx .E0304 s!"missing argument '{p.name}' for '\\{name}'" pos
         bindings := bindings.push (p.name, some #[])
   return (bindings, i)
 
@@ -648,7 +643,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           -- characters are the speaker's literal text.
           sb := sb.push c
         else
-          diag ctx "E0311" s!"reserved character '{c}'" pos (help := s!"escape it as '\\{c}'")
+          diag ctx .E0311 s!"reserved character '{c}'" pos (help := s!"escape it as '\\{c}'")
         i := i + 1
       | .math d body mpos =>
         acc := flushText acc sb
@@ -675,7 +670,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           i := i + 1
           acc := flushText acc sb
           sb := ""
-          warnOnce ctx ("math:env:" ++ name) "W0012"
+          warnOnce ctx ("math:env:" ++ name) .W0012
             s!"'\{{name}}' is not rendered yet; its math is set as source text" pos
             (help := "the rest of M6; see PLAN.md")
           acc := acc.push (.math true (rawSrc body))
@@ -697,11 +692,11 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         match reservedEnv.lookup name with
         | some milestone =>
           i := i + 1
-          warnOnce ctx ("env:" ++ name) "W0307"
+          warnOnce ctx ("env:" ++ name) .W0307
             s!"'\{{name}}' is not implemented yet; its content is not rendered" pos
             (help := s!"planned for {milestone}; see PLAN.md")
         | none =>
-          warnOnce ctx ("env:" ++ name) "W0302" s!"unknown environment '\{{name}}'; its body is kept" pos
+          warnOnce ctx ("env:" ++ name) .W0302 s!"unknown environment '\{{name}}'; its body is kept" pos
             (help := "see PLAN.md for planned environments")
           -- The arguments on the `\begin` line go with the wrapper here
           -- too: an inline unknown environment obeys the same scanner as a
@@ -769,7 +764,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
               | some (.glue g) => extra := g
               | some (.dim d) => extra := { width := Dim.Length.ofSp d }
               | _ =>
-                diag ctx "E0331" s!"cannot read a length from '{src}'" pos
+                diag ctx .E0331 s!"cannot read a length from '{src}'" pos
                   (help := "lengths look like 10pt or 1.5ex, or name a token")
           acc := flushText acc sb
           sb := ""
@@ -799,7 +794,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             acc := acc.push (.styled style #[.text s])
             i := j + 1
           | _ =>
-            diag ctx "E0304" s!"'\\{name}' needs an argument" pos
+            diag ctx .E0304 s!"'\\{name}' needs an argument" pos
         else if name == "underline" || name == "uline" then
           -- Drawn, not a face change, so not a Style: one group, like \textbf.
           let j := skipSpaces raws i
@@ -815,7 +810,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             acc := acc.push (.underline #[.text s])
             i := j + 1
           | _ =>
-            diag ctx "E0304" s!"'\\{name}' needs an argument" pos
+            diag ctx .E0304 s!"'\\{name}' needs an argument" pos
         else if name == "href" || name == "link" then
           let j := skipSpaces raws i
           let j2 := skipSpaces raws (j + 1)
@@ -834,7 +829,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             sb := ""
             acc := acc.push (.link url #[.text url])
           | _, _ =>
-            diag ctx "E0304" s!"'\\{name}' needs a URL group, optionally followed by text" pos
+            diag ctx .E0304 s!"'\\{name}' needs a URL group, optionally followed by text" pos
         else if name == "includegraphics" then
           -- graphicx's command, native. The keys that size figures in real
           -- documents are modelled — width, height, scale, keepaspectratio —
@@ -858,7 +853,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
                 match imageLen v with
                 | some l => spec := { spec with width := some l }
                 | none =>
-                  diag ctx "E0331" s!"cannot read a length from '{v}'" pos
+                  diag ctx .E0331 s!"cannot read a length from '{v}'" pos
                     (help := "image sizes look like 3cm or 0.8\\textwidth")
               | some ("height", v) | some ("totalheight", v) =>
                 -- totalheight is height plus depth, and an image has no
@@ -866,12 +861,12 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
                 match imageLen v with
                 | some l => spec := { spec with height := some l }
                 | none =>
-                  diag ctx "E0331" s!"cannot read a length from '{v}'" pos
+                  diag ctx .E0331 s!"cannot read a length from '{v}'" pos
                     (help := "image sizes look like 3cm or 0.3\\textheight")
               | some ("scale", v) =>
                 match Decl.parseDecimal v with
                 | some (m, sc) => spec := { spec with scaleNum := m, scaleDen := sc }
-                | none => diag ctx "E0321" s!"'scale' needs a number, got {v.quote}" pos
+                | none => diag ctx .E0321 s!"'scale' needs a number, got {v.quote}" pos
               | some ("alt", v) =>
                 -- graphicx's own alt key (LaTeX News 37, 2023): the text
                 -- alternative WCAG 2.2 SC 1.1.1 requires, declared where the
@@ -886,7 +881,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
                 if e.trimAscii.toString == "keepaspectratio" then
                   spec := { spec with keepAspect := true }
                 else
-                  warnOnce ctx ("imgopt:" ++ e) "W0110"
+                  warnOnce ctx ("imgopt:" ++ e) .W0110
                     s!"unsupported \\includegraphics option '{e}'; ignored" pos
                     (help := "modelled keys: width, height, scale, keepaspectratio, alt")
           match raws[j]? with
@@ -896,7 +891,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             sb := ""
             acc := acc.push (.image (argText ctx pathRaw) spec altText)
           | _ =>
-            diag ctx "E0304" "'\\includegraphics' needs a {file} group" pos
+            diag ctx .E0304 "'\\includegraphics' needs a {file} group" pos
         else if name == "pagenumber" then
           acc := flushText acc sb
           sb := ""
@@ -924,7 +919,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
               -- The colour is unresolvable; the content is not. Keeping it
               -- uncoloured is the best-effort contract: a wrong colour beats
               -- a missing word.
-              warnOnce ctx ("palette:" ++ key) "W0304"
+              warnOnce ctx ("palette:" ++ key) .W0304
                 s!"'{key}' is not in the palette; content kept uncoloured" pos
                 (help := if ctx.palette.entries.isEmpty then
                     "declare colours with \\palette{ name = #RRGGBB }"
@@ -934,7 +929,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
               sb := ""
               acc := acc ++ (← elabInlines ctx body)
           | _, _ =>
-            diag ctx "E0304" "'\\textcolor' needs {name} and {content}" pos
+            diag ctx .E0304 "'\\textcolor' needs {name} and {content}" pos
         else if let some c := ctx.palette.find? name then
           -- With a group, that group is the argument: `\primary{Alex}` means
           -- colour Alex, which is what it looks like. Without one it is a
@@ -971,11 +966,11 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
               match ctx.args.find? (·.1 == pname) with
               | some (_, some _) => acc := acc ++ (← elabInlines ctx tmpl)
               | some (_, none) => pure ()
-              | none => diag ctx "E0306" s!"unknown parameter '\\{pname}'" pos
+              | none => diag ctx .E0306 s!"unknown parameter '\\{pname}'" pos
             | _ =>
-              diag ctx "E0306" "expected a parameter reference like {\\team}" pos
+              diag ctx .E0306 "expected a parameter reference like {\\team}" pos
           | _, _ =>
-            diag ctx "E0304" "'\\ifgiven' needs {\\param} and {content}" pos
+            diag ctx .E0304 "'\\ifgiven' needs {\\param} and {content}" pos
         else if overlayCtrls.contains name then
           -- Overlay commands, dim-not-hide (PLAN M5): the content wraps in
           -- a step and dims before its turn — \only included, one overlay
@@ -1000,7 +995,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
                 acc := acc.push (.step n last (← elabInlines ctx (raws.extract (j + 1) raws.size)))
                 i := raws.size
             | none =>
-              warnOnce ctx "spec:overlay" "W0105"
+              warnOnce ctx "spec:overlay" .W0105
                 s!"overlay specification '{w}' does not name a step; its content is \
 shown on every step" pos
                 (help := "dim-not-hide reads <2>, <2->, <2-3>; incremental \
@@ -1028,7 +1023,7 @@ specs are not modelled")
               acc := acc.push (.step n last (← elabInlines ctx ga))
               acc := acc.push (.step 1 (some (n - 1)) (← elabInlines ctx gb))
             | none =>
-              warnOnce ctx "spec:overlay" "W0105"
+              warnOnce ctx "spec:overlay" .W0105
                 "'\\alt' without a numbered specification shows both \
 alternatives on every step" pos
                 (help := "dim-not-hide reads <2>, <2->, <2-3>; incremental \
@@ -1036,11 +1031,11 @@ specs are not modelled")
               acc := acc ++ (← elabInlines ctx ga)
               acc := acc ++ (← elabInlines ctx gb)
           | _, _ =>
-            diag ctx "E0304" "'\\alt' needs <spec>{content}{content}" pos
+            diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
         else if name == "pause" then
           -- Reachable only inside an argument or definition body; between
           -- blocks the boundary rule steps the rest of the scope.
-          warnOnce ctx "spec:pause-inline" "W0105"
+          warnOnce ctx "spec:pause-inline" .W0105
             "'\\pause' inside an argument cannot step; its content is shown" pos
         else if name == "note" then
           -- A speaker note met mid-sentence: no block can stand here, so
@@ -1058,24 +1053,24 @@ specs are not modelled")
         else if name == "centering" then
           -- Between blocks the declaration centres the rest of its scope;
           -- here, inside inline content, there is no block to centre.
-          warnOnce ctx "ctrl:centering" "W0108"
+          warnOnce ctx "ctrl:centering" .W0108
             "'\\centering' centres nothing inside an argument; content stays left-aligned" pos
             (help := "put it at the start of a group or environment body")
         else if let some milestone := reservedCtrl.lookup name then
-          warnOnce ctx ("ctrl:" ++ name) "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
+          warnOnce ctx ("ctrl:" ++ name) .W0307 s!"'\\{name}' is not implemented yet; skipped" pos
             (help := s!"planned for {milestone}; see PLAN.md")
           let (j, unclosed) := skipReservedArgs raws i pos
           if let some bpos := unclosed then
             warnUnclosed ctx s!"'\\{name}'" bpos
           i := j
         else if blockOnly.contains name then
-          diag ctx "E0312" s!"'\\{name}' is not allowed here" pos
+          diag ctx .E0312 s!"'\\{name}' is not allowed here" pos
             (help := "it is a block-level command: use it between paragraphs, " ++
               "not inside inline content or a command body")
         else
           -- Best effort: the arguments are content, and content is never
           -- dropped for want of a command. Only the formatting is lost.
-          warnOnce ctx ("ctrl:" ++ name) "W0301"
+          warnOnce ctx ("ctrl:" ++ name) .W0301
             s!"unknown command '\\{name}'; its arguments were kept as text" pos
             (help := "define it with \\define, or see PLAN.md for planned commands")
           let mut j := skipSpaces raws i
@@ -1316,7 +1311,7 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
     if recovered then
       warnSkippedDecl ctx name pos
       return (j, junk)
-    diag ctx "E0304" s!"'\\{name}' needs a \{...} group" pos
+    diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
     return (start, #[])
 
 /-- The title content `\maketitle` sets, from what was declared, per the
@@ -1509,7 +1504,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             i := j + 1
             blocks := blocks.push (.framefoot (← elabInlines ctx fbody))
           | _ =>
-            diag ctx "E0304" "'\\framefoot' needs one group of inline content" fpos
+            diag ctx .E0304 "'\\framefoot' needs one group of inline content" fpos
         | .ctrl "block" pos =>
           i := i + 1
           -- \block[before = <len>]{content}
@@ -1549,7 +1544,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             i := j + 1
             blocks := blocks.push (.spaced before (← elabBlocks ctx body))
           | _ =>
-            diag ctx "E0304" "'\\block' needs a {body}" pos
+            diag ctx .E0304 "'\\block' needs a {body}" pos
         | .ctrl n pos =>
           i := i + 1
           match lookupUser ctx n with
@@ -1579,7 +1574,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
               match overlayFrom w with
               | some p => spec := some p
               | none =>
-                warnOnce ctx "spec:overlay" "W0105"
+                warnOnce ctx "spec:overlay" .W0105
                   s!"overlay specification '{w}' does not name a step; its \
 content is shown on every step" pos
                   (help := "dim-not-hide reads <2>, <2->, <2-3>; incremental \
@@ -1601,7 +1596,7 @@ specs are not modelled")
                   blocks := blocks ++ (← elabBlocks ctx ga)
                   blocks := blocks ++ (← elabBlocks ctx gb)
               | _, _ =>
-                diag ctx "E0304" "'\\alt' needs <spec>{content}{content}" pos
+                diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
             else
               match raws[jg]? with
               | some (.group gbody _) =>
@@ -1641,20 +1636,20 @@ specs are not modelled")
               i := j + 1
               blocks := blocks.push (.logo (← elabInlines ctx gbody))
             | _ =>
-              diag ctx "E0304" "'\\logo' needs one group of inline content" pos
+              diag ctx .E0304 "'\\logo' needs one group of inline content" pos
           else if n == "maketitle" || n == "titlepage" then
             if (← get).titleDone then
               -- LaTeX typesets the title once: \maketitle disables itself
               -- (classes.dtx, \global\let\maketitle\relax), which is also
               -- what keeps the document to one level-0 heading. Named,
               -- never silent.
-              warnOnce ctx "ctrl:maketitle2" "W0322"
+              warnOnce ctx "ctrl:maketitle2" .W0322
                 s!"a second '\\{n}' is ignored; the title is typeset once" pos
                 (help := "LaTeX's \\maketitle disables itself after use (classes.dtx)")
             else
             let inner := titleBlocks ctx (← get)
             if inner.isEmpty then
-              warnOnce ctx "ctrl:maketitle" "W0309"
+              warnOnce ctx "ctrl:maketitle" .W0309
                 s!"'\\{n}' with nothing declared; no title is set" pos
                 (help := "declare \\title{...} (and \\author, \\date, ...) before it")
             else if ctx.slides then
@@ -1692,7 +1687,7 @@ specs are not modelled")
                 warnSkippedDecl ctx n pos
                 i := j
               else
-                diag ctx "E0304" s!"'\\{n}' needs a \{title}" pos
+                diag ctx .E0304 s!"'\\{n}' needs a \{title}" pos
         | .env n body pos =>
           i := i + 1
           if let some f := Parse.inputEnvFile? n then
@@ -1703,7 +1698,7 @@ specs are not modelled")
             let inl ← elabMathInline ctx true body pos
             blocks := blocks.push (.center #[.para #[inl]])
           else if mathEnvs.contains n then
-            warnOnce ctx ("math:env:" ++ n) "W0012"
+            warnOnce ctx ("math:env:" ++ n) .W0012
               s!"'\{{n}}' is not rendered yet; its math is set as source text" pos
               (help := "the rest of M6; see PLAN.md")
             blocks := blocks.push (.para #[.math true (rawSrc body)])
@@ -1711,7 +1706,7 @@ specs are not modelled")
             -- Rows survive as lines, cells as fixed-space-separated content:
             -- honest degradation until real table layout, and `&` never
             -- reaches inline elaboration as a stray reserved character.
-            warnOnce ctx "env:tabular" "W0308"
+            warnOnce ctx "env:tabular" .W0308
               "tables are not laid out yet; rows are set as plain lines" pos
               (help := "planned for M8; see PLAN.md")
             let mut k := skipSpaces body 0
@@ -1796,8 +1791,8 @@ specs are not modelled")
                   -- The last title wins, as in beamer, but never silently:
                   -- the author wrote two and only one can show.
                   unless title.isEmpty do
-                    diag ctx "W0311" "this '\\frametitle' replaces the frame's earlier title"
-                      (some fpos) (help := "the last one wins; remove the other") .warning
+                    diag ctx .W0311 "this '\\frametitle' replaces the frame's earlier title"
+                      (some fpos) (help := "the last one wins; remove the other")
                   title ← elabInlines ctx t
                   j := j + 2
                 | r', _ =>
@@ -1855,7 +1850,7 @@ specs are not modelled")
                     match overlayFrom w with
                     | some s => curStep := some s
                     | none =>
-                      warnOnce ctx "spec:overlay" "W0105"
+                      warnOnce ctx "spec:overlay" .W0105
                         s!"overlay specification '{w}' does not name a step; its \
 content is shown on every step" pos
                         (help := "dim-not-hide reads <2>, <2->, <2-3>; incremental \
@@ -1864,7 +1859,7 @@ specs are not modelled")
                 if seen then
                   curItem := curItem.push item
                 else if !isSpaceOrPar item && !strayDiagged then
-                  diag ctx "E0310" s!"content before the first '\\item'" pos
+                  diag ctx .E0310 s!"content before the first '\\item'" pos
                   strayDiagged := true
             if seen then
               items := items.push curItem
@@ -1914,11 +1909,11 @@ specs are not modelled")
                   match body[j]? with
                   | some (.group t _) =>
                     unless caption.isEmpty do
-                      diag ctx "W0311" "this '\\caption' replaces the figure's earlier caption"
-                        (some cpos) (help := "the last one wins; remove the other") .warning
+                      diag ctx .W0311 "this '\\caption' replaces the figure's earlier caption"
+                        (some cpos) (help := "the last one wins; remove the other")
                     caption ← elabInlines ctx t
                     j := j + 1
-                  | _ => diag ctx "E0304" "'\\caption' needs a {text} group" cpos
+                  | _ => diag ctx .E0304 "'\\caption' needs a {text} group" cpos
                 | .ctrl "centering" _ =>
                   -- The figure centres already; the declaration is satisfied.
                   j := j + 1
@@ -1965,7 +1960,7 @@ specs are not modelled")
                     let src := rawSrc wRaws
                     width := columnWidth src
                     if width.isNone then
-                      warnOnce ctx "env:column-width" "W0314"
+                      warnOnce ctx "env:column-width" .W0314
                         s!"column width '{src}' is not a fraction of the text width; \
 the column shares the leftover" cpos
                         (help := "write a factor like {0.5\\textwidth}")
@@ -1995,23 +1990,22 @@ the column shares the leftover" cpos
                 if Ir.backendNames.contains name then
                   targets := targets.push name
                 else
-                  diag ctx "W0323"
+                  diag ctx .W0323
                     s!"unknown backend '{name}' in '\\begin\{ifbackend}'; ignored"
                     (some gpos)
                     (help := s!"backends: {String.intercalate ", " Ir.backendNames}")
-                    .warning
               let eff := ctx.backendTargets.filter (targets.contains ·)
               if eff.isEmpty then
-                diag ctx "W0324"
+                diag ctx .W0324
                   "this content is addressed to no backend; no output will carry it"
                   (some pos)
                   (help := "name at least one of pdf, html, md; a nested \
-'\\begin{ifbackend}' intersects with its enclosing one") .warning
+'\\begin{ifbackend}' intersects with its enclosing one")
               let inner ← elabBlocks { ctx with backendTargets := eff }
                 (body.extract (j + 1) body.size)
               blocks := blocks.push (.only targets inner)
             | _ =>
-              diag ctx "E0304" "'\\begin{ifbackend}' needs a {backends} group" pos
+              diag ctx .E0304 "'\\begin{ifbackend}' needs a {backends} group" pos
                 (help := "write \\begin{ifbackend}{html} ... \\end{ifbackend}")
               blocks := blocks ++ (← elabBlocks ctx body)
           else if n == "nav" then
@@ -2030,13 +2024,13 @@ the column shares the leftover" cpos
             blocks := blocks ++ (← elabBlocks ctx (body.extract j body.size))
             blocks := blocks ++ (← elabBlocks envCtx env.endBody)
           else if let some milestone := reservedEnv.lookup n then
-            warnOnce ctx ("env:" ++ n) "W0307"
+            warnOnce ctx ("env:" ++ n) .W0307
               s!"'\{{n}}' is not implemented yet; its content is not rendered" pos
               (help := s!"planned for {milestone}; see PLAN.md")
           else
             -- An unknown wrapper's decoration is unknowable; its body is
             -- not. The arguments on the `\begin` line go with the wrapper.
-            warnOnce ctx ("env:" ++ n) "W0302" s!"unknown environment '\{{n}}'; its body is kept" pos
+            warnOnce ctx ("env:" ++ n) .W0302 s!"unknown environment '\{{n}}'; its body is kept" pos
               (help := "see PLAN.md for planned environments")
             let (kept, unclosed, dropped) := dropEnvArgs body pos
             if let some bpos := unclosed then
@@ -2060,7 +2054,7 @@ private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := 
   if s == "" || s == "()" then
     return #[]
   if !(s.startsWith "(" && s.endsWith ")") then
-    diag ctx "E0303" s!"malformed signature '{s}'" pos
+    diag ctx .E0303 s!"malformed signature '{s}'" pos
       (help := "expected (name: type, ..., opt?: type)")
     return #[]
   let inner := (String.ofList (s.toList.drop 1).dropLast).trimAscii.toString
@@ -2082,16 +2076,16 @@ private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := 
         | c :: rest => c.isAlpha && rest.all Char.isAlphanum
         | [] => false
       if !wellFormed then
-        diag ctx "E0303" s!"invalid parameter name '{name}'" pos
+        diag ctx .E0303 s!"invalid parameter name '{name}'" pos
           (help := "parameter names start with a letter")
       else
         match type? with
         | some t => params := params.push ⟨name, t, optional⟩
         | none =>
-          diag ctx "E0303" s!"unknown parameter type '{ty}' for '{name}'" pos
+          diag ctx .E0303 s!"unknown parameter type '{ty}' for '{name}'" pos
             (help := "types: text | content")
     | _ =>
-      diag ctx "E0303" s!"malformed parameter '{entry.trimAscii.toString}'" pos
+      diag ctx .E0303 s!"malformed parameter '{entry.trimAscii.toString}'" pos
         (help := "expected name: type")
   return params
 
@@ -2106,7 +2100,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       match pageSizes.lookup name.toLower with
       | some (w, h) => spec := { spec with width := w, height := h }
       | none =>
-        diag ctx "E0324" s!"unknown page size '{name}'" pos
+        diag ctx .E0324 s!"unknown page size '{name}'" pos
           (help := s!"known sizes: {String.intercalate ", " (pageSizes.map (·.1))}")
     | "width", .dim d => spec := { spec with width := d }
     | "height", .dim d => spec := { spec with height := d }
@@ -2122,14 +2116,14 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       -- ...and one without a unit reaches here as a name.
       match Decl.parseDecimal f with
       | some (m, s) => spec := { spec with leading := (m * 1000 / s).toNat }
-      | none => diag ctx "E0323" s!"'leading' in \\page expects a factor like 1.04, got '{f}'" pos
+      | none => diag ctx .E0323 s!"'leading' in \\page expects a factor like 1.04, got '{f}'" pos
     | "parskip", .glue g => spec := { spec with parskip := some g }
     | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
     | "fontsize", .dim d =>
       if d > 0 then
         spec := { spec with fontSize := d }
       else
-        diag ctx "E0323" "'fontsize' in \\page expects a positive dimension" pos
+        diag ctx .E0323 "'fontsize' in \\page expects a positive dimension" pos
     | "measure", .ident v =>
       -- `free`: the document takes responsibility for its line length, and
       -- the readable-band diagnostic (W0201) stays quiet.
@@ -2137,7 +2131,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "free" => spec := { spec with measureChecked := false }
       | "checked" => spec := { spec with measureChecked := true }
       | _ =>
-        diag ctx "E0323" s!"'measure' in \\page expects 'checked' or 'free', got '{v}'" pos
+        diag ctx .E0323 s!"'measure' in \\page expects 'checked' or 'free', got '{v}'" pos
     | "bleed", .dim d => spec := { spec with bleed := d }
     | "bleed", .int 0 => spec := { spec with bleed := 0 }
     | "hyphenate", .ident v =>
@@ -2145,19 +2139,19 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "on" | "true" => spec := { spec with hyphenate := some true }
       | "off" | "false" => spec := { spec with hyphenate := some false }
       | _ =>
-        diag ctx "E0323" s!"'hyphenate' in \\page expects on or off, got '{v}'" pos
+        diag ctx .E0323 s!"'hyphenate' in \\page expects on or off, got '{v}'" pos
     | "justify", .ident v =>
       match v with
       | "on" | "true" => spec := { spec with justify := some true }
       | "off" | "false" => spec := { spec with justify := some false }
       | _ =>
-        diag ctx "E0323" s!"'justify' in \\page expects on or off, got '{v}'" pos
+        diag ctx .E0323 s!"'justify' in \\page expects on or off, got '{v}'" pos
     | key, v =>
       if key == "header" || key == "footer" then
         -- The feature exists, just not as a page key: running content is
         -- inline content, which a key/value block cannot carry.
         let cmd := if key == "header" then "\\runninghead" else "\\runningfoot"
-        diag ctx "E0327" s!"'{key}' is not a \\page key" pos
+        diag ctx .E0327 s!"'{key}' is not a \\page key" pos
           (help := s!"declare it as {cmd}\{...} — it takes inline content, " ++
             "so use \\hfill to push part of it to the right")
       else if pageKeys.contains key then
@@ -2238,7 +2232,7 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | none =>
-      diag ctx "E0320" s!"invalid entry in \\tokens: {entry.quote}" pos
+      diag ctx .E0320 s!"invalid entry in \\tokens: {entry.quote}" pos
         (help := "entries look like: name = length")
     | some (key, valueSrc) =>
       -- A redeclared token replaces the earlier entry, so a later
@@ -2253,7 +2247,7 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
           diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
             "a length (10pt, 1.5ex, 0.6 * other)" v pos) }
       | none =>
-        diag ctx "E0321" s!"cannot read length for '{key}': {valueSrc.quote}" pos
+        diag ctx .E0321 s!"cannot read length for '{key}': {valueSrc.quote}" pos
           (help := "lengths look like 10pt, 1.5ex, 2em, or 0.6 * other-token")
   return acc
 
@@ -2268,14 +2262,14 @@ against the tokens declared so far. -/
 private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos : Pos) :
     EM Styles := do
   unless styleableElements.contains element do
-    diag ctx "E0328" s!"'{element}' is not a styleable element" pos
+    diag ctx .E0328 s!"'{element}' is not a styleable element" pos
       (help := s!"elements: {String.intercalate ", " styleableElements}")
     return styles
   let mut st : ElementStyle := (styles.find? element).getD {}
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | none =>
-      diag ctx "E0320" s!"invalid entry in \\style: {entry.quote}" pos
+      diag ctx .E0320 s!"invalid entry in \\style: {entry.quote}" pos
         (help := "entries look like: key = value")
     | some (key, valueSrc) =>
       let asInline : EM (Option (Array Inline)) := do
@@ -2293,7 +2287,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         | some (.glue g) => return some g
         | some (.dim d) => return some { width := Dim.Length.ofSp d }
         | _ =>
-          diag ctx "E0321" s!"cannot read length for '{key}' in \\style: {valueSrc.quote}" pos
+          diag ctx .E0321 s!"cannot read length for '{key}' in \\style: {valueSrc.quote}" pos
             (help := "lengths look like 10pt, 1.5ex, or a token name")
           return none
       match key with
@@ -2311,7 +2305,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         | none =>
           match Decl.parseValue valueSrc with
           | some (.color r g b) => st := { st with rule := some (⟨r, g, b⟩, none) }
-          | _ => diag ctx "E0326" s!"'{valueSrc}' is not in the palette" pos
+          | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
       | "separator" =>
         match ctx.palette.resolve valueSrc with
         | some c =>
@@ -2320,13 +2314,13 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         | none =>
           match Decl.parseValue valueSrc with
           | some (.color r g b) => st := { st with separator := some (⟨r, g, b⟩, none) }
-          | _ => diag ctx "E0326" s!"'{valueSrc}' is not in the palette" pos
+          | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
       | "align" =>
         match valueSrc.trimAscii.toString with
         | "left" => st := { st with align := some "left" }
         | "center" => st := { st with align := some "center" }
         | v =>
-          diag ctx "E0323" s!"'align' in \\style expects left or center, got '{v}'" pos
+          diag ctx .E0323 s!"'align' in \\style expects left or center, got '{v}'" pos
       | "hover" =>
         match ctx.palette.resolve valueSrc with
         | some c =>
@@ -2335,7 +2329,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         | none =>
           match Decl.parseValue valueSrc with
           | some (.color r g b) => st := { st with hover := some (⟨r, g, b⟩, none) }
-          | _ => diag ctx "E0326" s!"'{valueSrc}' is not in the palette" pos
+          | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
       | "focus" =>
         match ctx.palette.resolve valueSrc with
         | some c =>
@@ -2344,7 +2338,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         | none =>
           match Decl.parseValue valueSrc with
           | some (.color r g b) => st := { st with focus := some (⟨r, g, b⟩, none) }
-          | _ => diag ctx "E0326" s!"'{valueSrc}' is not in the palette" pos
+          | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
       | "motion" =>
         -- A duration, in milliseconds: the one unit CSS transitions and
         -- the reduced-motion literature both speak in.
@@ -2353,7 +2347,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         match digits.toNat? with
         | some ms => st := { st with motion := some ms }
         | none =>
-          diag ctx "E0323"
+          diag ctx .E0323
             s!"'motion' in \\style expects a duration in milliseconds, got '{v}'" pos
             (help := "write motion = 150ms")
       | _ =>
@@ -2374,14 +2368,14 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | none =>
-      diag ctx "E0320" s!"invalid entry in \\palette: {entry.quote}" pos
+      diag ctx .E0320 s!"invalid entry in \\palette: {entry.quote}" pos
         (help := "entries look like: name = #RRGGBB")
     | some (key, valueSrc) =>
       if !key.toList.all Decl.isIdentChar then
-        diag ctx "E0320" s!"invalid key in \\palette: {entry.quote}" pos
+        diag ctx .E0320 s!"invalid key in \\palette: {entry.quote}" pos
           (help := "entries look like: name = #RRGGBB")
       else if builtinNames.contains key then
-        diag ctx "E0303" s!"palette name '{key}' collides with a built-in command" pos
+        diag ctx .E0303 s!"palette name '{key}' collides with a built-in command" pos
       else
         let put (pal : Palette) (c : Color) : Palette :=
           pal.declare key c decorative
@@ -2395,14 +2389,14 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
           | none =>
             match v? with
             | some (.ident other) =>
-              diag ctx "E0326" s!"'{other}' is not in the palette" pos
+              diag ctx .E0326 s!"'{other}' is not in the palette" pos
                 (help := "declare it first; aliases read earlier entries")
             | some v =>
               modify fun st => { st with
                 diags := st.diags.push (Decl.wrongType ctx.file "palette" key
                   "a color like #7C3AED" v pos) }
             | none =>
-              diag ctx "E0321" s!"cannot read colour for '{key}': {valueSrc.quote}" pos
+              diag ctx .E0321 s!"cannot read colour for '{key}': {valueSrc.quote}" pos
                 (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
   return pal
 
@@ -2418,7 +2412,7 @@ private def applyChrome (ctx : Ctx) (src : String) (pos : Pos) : EM Chrome := do
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | none =>
-      diag ctx "E0320" s!"invalid entry in \\chrome: {entry.quote}" pos
+      diag ctx .E0320 s!"invalid entry in \\chrome: {entry.quote}" pos
         (help := "entries look like: footer = { left = \\sectiontitle, right = \\framenumber }")
     | some (key, valueSrc) =>
       if key == "footer" then
@@ -2427,7 +2421,7 @@ private def applyChrome (ctx : Ctx) (src : String) (pos : Pos) : EM Chrome := do
           for slotEntry in Decl.splitEntries inner do
             match Decl.splitEntry slotEntry with
             | none =>
-              diag ctx "E0320" s!"invalid entry in \\chrome footer: {slotEntry.quote}" pos
+              diag ctx .E0320 s!"invalid entry in \\chrome footer: {slotEntry.quote}" pos
                 (help := s!"entries look like: left = \\sectiontitle; {slotHelp}")
             | some (slotKey, slotVal) =>
               let v := slotVal.trimAscii.toString
@@ -2442,7 +2436,7 @@ private def applyChrome (ctx : Ctx) (src : String) (pos : Pos) : EM Chrome := do
                 | _ => none
               match datum with
               | none =>
-                diag ctx "E0321"
+                diag ctx .E0321
                   s!"cannot read the \\chrome footer slot '{slotKey}': {slotVal.quote}" pos
                   (help := slotHelp)
               | some d =>
@@ -2457,7 +2451,7 @@ private def applyChrome (ctx : Ctx) (src : String) (pos : Pos) : EM Chrome := do
             ctx.file "chrome" key
             "a block like { left = \\sectiontitle, right = \\framenumber }" v pos) }
         | none =>
-          diag ctx "E0321" s!"cannot read value for 'footer' in \\chrome: {valueSrc.quote}" pos
+          diag ctx .E0321 s!"cannot read value for 'footer' in \\chrome: {valueSrc.quote}" pos
             (help := "footer = { left = \\sectiontitle, right = \\framenumber }")
       else
         modify fun st => { st with diags := st.diags.push (Decl.unknownKey
@@ -2475,7 +2469,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
     if ["pdf", "html", "md"].contains f then
       return { o with
         formats := if o.formats.contains f then o.formats else o.formats.push f }
-    diag ctx "E0321" s!"'{f}' is not an output format" pos
+    diag ctx .E0321 s!"'{f}' is not an output format" pos
       (help := some "formats: pdf, html, md")
     return o
   for entry in Decl.splitEntries src do
@@ -2488,7 +2482,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
       if ["own", "bulma", "none"].contains v then
         o := { o with css := some v }
       else
-        diag ctx "E0321" s!"'{v}' is not a stylesheet mode" pos
+        diag ctx .E0321 s!"'{v}' is not a stylesheet mode" pos
           (help := some "css: own | bulma | none")
     | some ("stylesheet", v) =>
       inFormats := false
@@ -2507,7 +2501,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
       if inFormats then
         o ← addFormat o entry
       else
-        diag ctx "E0320" s!"invalid entry in \\output: {entry.quote}" pos
+        diag ctx .E0320 s!"invalid entry in \\output: {entry.quote}" pos
           (help := some "entries look like: formats = pdf, html")
   return o
 
@@ -2550,7 +2544,7 @@ private def parseAssert (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Asse
     let t := w.trimAscii.toString
     if t.isEmpty then none else some t
   let fail (why : String) : EM (Option Assertion) := do
-    diag ctx "E0325" s!"cannot read assertion: {src.trimAscii.toString.quote}" pos
+    diag ctx .E0325 s!"cannot read assertion: {src.trimAscii.toString.quote}" pos
       (help := some why)
     return none
   match words with
@@ -2641,10 +2635,10 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           i := j + 1
           docClass := (rawSrc nameRaws).trimAscii.toString
           if docClass != "article" && docClass != "slides" && docClass != "card" then
-            diag ctx "E0309" s!"unknown document class '{docClass}'" pos
+            diag ctx .E0309 s!"unknown document class '{docClass}'" pos
               (help := "classes: article | slides | card")
         | _ =>
-          diag ctx "E0304" "'\\documentclass' needs a {class}" pos
+          diag ctx .E0304 "'\\documentclass' needs a {class}" pos
       | .ctrl "define" pos =>
         i := i + 1
         let j := skipSpaces preamble i
@@ -2665,11 +2659,10 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             | none => break
           i := k
           if builtinNames.contains newName && (Lex.textSymbols.lookup newName).isNone then
-            modify fun st => { st with diags := st.diags.push {
-              severity := .warning, code := "W0303"
-              message := s!"'\\{newName}' is built in; this definition is ignored"
-              span := some ⟨ctx.file, npos⟩
-              help := some "the built-in does what most definitions of this name do" } }
+            modify fun st => { st with diags := st.diags.push (Diag.of .W0303
+              s!"'\\{newName}' is built in; this definition is ignored"
+              (some ⟨ctx.file, npos⟩)
+              (help := "the built-in does what most definitions of this name do")) }
           else
             match bodyRaws with
             | some b =>
@@ -2678,9 +2671,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                 user := ctx.user.push ⟨newName, params, trimRaws b⟩
                 limit := ctx.user.size + 1 }
             | none =>
-              diag ctx "E0303" s!"'\\define \\{newName}' is missing its \{body}" pos
+              diag ctx .E0303 s!"'\\define \\{newName}' is missing its \{body}" pos
         | _ =>
-          diag ctx "E0303" "expected '\\define \\name(...)  {body}'" pos
+          diag ctx .E0303 "expected '\\define \\name(...)  {body}'" pos
           i := j + 1
       | .ctrl "defineenv" pos =>
         -- `\defineenv{name}(sig) {begin} {end}`: the native spelling of
@@ -2711,11 +2704,10 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             | _ => none
           i := if endRaws.isSome then k2 + 1 else k
           if builtinEnvNames.contains envName then
-            modify fun st => { st with diags := st.diags.push {
-              severity := .warning, code := "W0303"
-              message := s!"'\{{envName}}' is built in; this definition is ignored"
-              span := some ⟨ctx.file, npos⟩
-              help := some "the built-in does what most definitions of this name do" } }
+            modify fun st => { st with diags := st.diags.push (Diag.of .W0303
+              s!"'\{{envName}}' is built in; this definition is ignored"
+              (some ⟨ctx.file, npos⟩)
+              (help := "the built-in does what most definitions of this name do")) }
           else
             match beginRaws, endRaws with
             | some b, some e =>
@@ -2725,9 +2717,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                   ⟨envName, params, trimRaws b, trimRaws e, ctx.limit⟩
                 envLimit := ctx.userEnvs.size + 1 }
             | _, _ =>
-              diag ctx "E0303" s!"'\\defineenv \{{envName}}' needs \{begin} and \{end}" pos
+              diag ctx .E0303 s!"'\\defineenv \{{envName}}' needs \{begin} and \{end}" pos
         | _ =>
-          diag ctx "E0303" "expected '\\defineenv {name}(...) {begin} {end}'" pos
+          diag ctx .E0303 "expected '\\defineenv {name}(...) {begin} {end}'" pos
           i := j + 1
       | .ctrl name pos =>
         i := i + 1
@@ -2749,9 +2741,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               | some ("from", v) =>
                 match v.trimAscii.toString.toNat? with
                 | some n => runningFrom := n
-                | none => diag ctx "E0321" s!"'from' needs a page number, got {v.quote}" pos
+                | none => diag ctx .E0321 s!"'from' needs a page number, got {v.quote}" pos
               | _ =>
-                diag ctx "E0320" s!"unknown option in \\{name}: {e.quote}" pos
+                diag ctx .E0320 s!"unknown option in \\{name}: {e.quote}" pos
                   (help := "options: from = <page>")
             j := skipSpaces preamble k
           match preamble[j]? with
@@ -2763,7 +2755,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             else
               foot := some content
           | _ =>
-            diag ctx "E0304" s!"'\\{name}' needs one group of inline content" pos
+            diag ctx .E0304 s!"'\\{name}' needs one group of inline content" pos
         else if name == "logo" then
           -- beamer's `\logo{...}`: one piece of inline content — normally an
           -- image — placed at the lower-right corner of every page carrying
@@ -2777,7 +2769,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             modify fun st => { st with
               logo := if content.isEmpty then none else some content }
           | _ =>
-            diag ctx "E0304" "'\\logo' needs one group of inline content" pos
+            diag ctx .E0304 "'\\logo' needs one group of inline content" pos
         else if name == "palette" then
           -- `\palette[decorative]{...}`: the block's entries are declared
           -- deliberately low-contrast and exempt from the pairing check. An
@@ -2799,8 +2791,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               if e == "decorative" then
                 decorative := true
               else
-                diag ctx "W0316" s!"unknown option in \\palette: {e.quote}; block skipped" pos
-                  (help := "options: decorative") (sev := .warning)
+                diag ctx .W0316 s!"unknown option in \\palette: {e.quote}; block skipped" pos
+                  (help := "options: decorative")
                 skipBlock := true
             j := skipSpaces preamble k
           match preamble[j]? with
@@ -2811,7 +2803,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               palette := pal
               ctx := { ctx with palette := pal }
           | _ =>
-            diag ctx "E0304" "'\\palette' needs a {...} block" pos
+            diag ctx .E0304 "'\\palette' needs a {...} block" pos
         else if name == "style" then
           let j := skipSpaces preamble i
           let j2 := skipSpaces preamble (j + 1)
@@ -2820,7 +2812,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             i := j2 + 1
             styles ← applyStyle ctx styles (rawSrc elem) (rawSrc body) pos
           | _, _ =>
-            diag ctx "E0304" "'\\style' needs {element} and a {...} block" pos
+            diag ctx .E0304 "'\\style' needs {element} and a {...} block" pos
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
           match preamble[j]? with
@@ -2863,9 +2855,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                 if th.chrome.hasFooter then
                   chrome := th.chrome
               | none =>
-                diag ctx "W0319" s!"unknown theme '{tname}'; the document is unthemed"
+                diag ctx .W0319 s!"unknown theme '{tname}'; the document is unthemed"
                   (some pos)
-                  (help := s!"themes: {String.intercalate ", " Theme.names}") .warning
+                  (help := s!"themes: {String.intercalate ", " Theme.names}")
             else if name == "assert" then
               if let some a ← parseAssert ctx src pos then
                 asserts := asserts.push a
@@ -2885,10 +2877,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               chrome ← applyChrome ctx src pos
               -- Inert chrome would be a silent failure: only slides draw it.
               if docClass != "slides" then
-                diag ctx "W0318"
+                diag ctx .W0318
                   s!"\\chrome is slides furniture; the {docClass} class never draws it"
                   (some pos) (help := "\\runninghead / \\runningfoot are the page furniture")
-                  .warning
             else
               let (entries, ds) := Decl.parseBlock ctx.file src pos name
               modify fun st => { st with diags := st.diags ++ ds }
@@ -2900,14 +2891,14 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               else
                 info ← applyMeta ctx info entries pos
           | _ =>
-            diag ctx "E0304" s!"'\\{name}' needs a \{...} block" pos
+            diag ctx .E0304 s!"'\\{name}' needs a \{...} block" pos
         else if titleCtrls.contains name then
           -- A declaration-only position: the malformed run is dropped with
           -- W0310 already pointing at it — the preamble has no content.
           let (j, _) ← takeTitleDecl ctx name preamble i pos
           i := j
         else if let some milestone := reservedCtrl.lookup name then
-          warnOnce ctx ("ctrl:" ++ name) "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
+          warnOnce ctx ("ctrl:" ++ name) .W0307 s!"'\\{name}' is not implemented yet; skipped" pos
             (help := s!"planned for {milestone}; see PLAN.md")
           let (j, unclosed) := skipReservedArgs preamble i pos
           match unclosed with
@@ -2921,7 +2912,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
         else
           -- Unknown preamble commands are configuration, not content: their
           -- arguments are skipped with them, never elaborated as stray text.
-          warnOnce ctx ("ctrl:" ++ name) "W0301" s!"unknown command '\\{name}' in the preamble; skipped" pos
+          warnOnce ctx ("ctrl:" ++ name) .W0301 s!"unknown command '\\{name}' in the preamble; skipped" pos
             (help := "define it with \\define, or see PLAN.md for planned commands")
           let (j, unclosed) := skipReservedArgs preamble i pos
           match unclosed with
@@ -2932,7 +2923,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
       | _ =>
         i := i + 1
         unless textDiagged do
-          diag ctx "E0313" "only declarations may appear before '\\begin{document}'" none
+          diag ctx .E0313 "only declarations may appear before '\\begin{document}'" none
           textDiagged := true
     else
       break
@@ -2994,9 +2985,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     if page.justify.isNone then
       page := { page with justify := some false }
     if head.isSome || foot.isSome then
-      diag ctx "W0317"
+      diag ctx .W0317
         "a card carries no running head or foot; the declaration is dropped" none
-        (sev := .warning)
       head := none
       foot := none
   else if !sawPage then
@@ -3010,9 +3000,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   -- The logo may have been declared in either half; a card carries none.
   let mut logo := (← get).logo
   if docClass == "card" && logo.isSome then
-    diag ctx "W0317"
+    diag ctx .W0317
       "a card carries no logo; the declaration is dropped" none
-      (sev := .warning)
     logo := none
   -- What a card guarantees, stated as the assertions the engine already
   -- enforces: content fits its faces, ink respects the safe margin, and
@@ -3041,7 +3030,7 @@ the trim; declare \\assert{ text.in_area } to take control" }
         help := some "1.4mm x-height is the fluent-reading floor at hand-held \
 distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control" }
   if trailing.any (!isSpaceOrPar ·) then
-    diag ctx "W0001" "content after '\\end{document}' is ignored" none (sev := .warning)
+    diag ctx .W0001 "content after '\\end{document}' is ignored" none
   -- PDF metadata falls back to the title declarations: a deck that says
   -- \title deserves an Info dictionary without saying it twice.
   let st ← get

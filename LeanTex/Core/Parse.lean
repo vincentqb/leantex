@@ -47,8 +47,8 @@ private def Frame.close (f : Frame) (body : Array Raw) : Array Raw :=
   | .displayMath => f.outer.push (.math true body f.openPos)
   | .env n => f.outer.push (.env n body f.openPos)
 
-private def err (file : String) (code msg : String) (pos : Pos) : Diag :=
-  { severity := .error, code := code, message := msg, span := some ⟨file, pos⟩ }
+private def err (file : String) (code : DiagCode) (msg : String) (pos : Pos) : Diag :=
+  Diag.of code msg (some ⟨file, pos⟩)
 
 /-- `{name}` after `\begin` or `\end`; returns the name and the next index. -/
 private def envName (toks : Array Token) (file : String) (i : Nat) (pos : Pos) :
@@ -56,10 +56,10 @@ private def envName (toks : Array Token) (file : String) (i : Nat) (pos : Pos) :
   match toks[i]?, toks[i + 1]?, toks[i + 2]? with
   | some ⟨.lbrace, _⟩, some ⟨.word n, _⟩, some ⟨.rbrace, _⟩ => (n, i + 3, #[])
   | some ⟨.lbrace, _⟩, some ⟨.word n, _⟩, _ =>
-    (n, i + 2, #[err file "E0205" "expected '}' after the environment name" pos])
+    (n, i + 2, #[err file .E0205 "expected '}' after the environment name" pos])
   | some ⟨.lbrace, _⟩, _, _ =>
-    ("", i + 1, #[err file "E0205" "expected an environment name" pos])
-  | _, _, _ => ("", i, #[err file "E0205" "expected '{name}' here" pos])
+    ("", i + 1, #[err file .E0205 "expected an environment name" pos])
+  | _, _, _ => ("", i, #[err file .E0205 "expected '{name}' here" pos])
 
 /-- Parse tokens into a `Raw` forest with one pass and an explicit frame
 stack: no recursion, so totality is immediate. Recovery is unchanged —
@@ -86,9 +86,9 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
             frames := frames.pop
             acc := f.close acc
           else
-            diags := diags.push (err file "E0202" "unexpected '}'" pos)
+            diags := diags.push (err file .E0202 "unexpected '}'" pos)
         | none =>
-          diags := diags.push (err file "E0202" "unexpected '}'" pos)
+          diags := diags.push (err file .E0202 "unexpected '}'" pos)
       | .math =>
         match frames.back? with
         | some f =>
@@ -111,9 +111,9 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
             frames := frames.pop
             acc := f.close acc
           else
-            diags := diags.push (err file "E0202" "unexpected '\\)'" pos)
+            diags := diags.push (err file .E0202 "unexpected '\\)'" pos)
         | none =>
-          diags := diags.push (err file "E0202" "unexpected '\\)'" pos)
+          diags := diags.push (err file .E0202 "unexpected '\\)'" pos)
       | .ctrl "[" =>
         frames := frames.push ⟨.displayMath, pos, acc⟩
         acc := #[]
@@ -124,9 +124,9 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
             frames := frames.pop
             acc := f.close acc
           else
-            diags := diags.push (err file "E0202" "unexpected '\\]'" pos)
+            diags := diags.push (err file .E0202 "unexpected '\\]'" pos)
         | none =>
-          diags := diags.push (err file "E0202" "unexpected '\\]'" pos)
+          diags := diags.push (err file .E0202 "unexpected '\\]'" pos)
       | .ctrl "begin" =>
         let (name, j, ds) := envName toks file i pos
         diags := diags ++ ds
@@ -143,14 +143,14 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
           | .env expected =>
             if name != expected then
               diags := diags.push
-                (err file "E0205" s!"'\\end\{{name}}' closes '\\begin\{{expected}}'" pos)
+                (err file .E0205 s!"'\\end\{{name}}' closes '\\begin\{{expected}}'" pos)
             frames := frames.pop
             acc := f.close acc
           | _ =>
-            diags := diags.push (err file "E0205"
+            diags := diags.push (err file .E0205
               s!"'\\end\{{name}}' without matching '\\begin\{{name}}'" pos)
         | none =>
-          diags := diags.push (err file "E0205"
+          diags := diags.push (err file .E0205
             s!"'\\end\{{name}}' without matching '\\begin\{{name}}'" pos)
       | .ctrl name => acc := acc.push (.ctrl name pos)
       | .word s => acc := acc.push (.word s pos)
@@ -163,7 +163,7 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
     match frames.back? with
     | some f =>
       diags := diags.push
-        (err file "E0201" s!"unclosed: expected {f.stop.name}" f.openPos)
+        (err file .E0201 s!"unclosed: expected {f.stop.name}" f.openPos)
       frames := frames.pop
       acc := f.close acc
     | none => pure ()

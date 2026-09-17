@@ -313,10 +313,9 @@ private structure FlattenSt where
   warnedMath : Bool := false
   diags : Array Diag := #[]
 
-private def warn (st : FlattenSt) (code msg : String) (help : Option String := none) :
-    FlattenSt :=
-  let d : Diag := { severity := .warning, code := code, message := msg, help := help }
-  { st with diags := st.diags.push d }
+private def warn (st : FlattenSt) (code : DiagCode) (msg : String)
+    (help : Option String := none) : FlattenSt :=
+  { st with diags := st.diags.push (Diag.of code msg (help := help)) }
 
 /-- Small caps, relative to the surrounding size. Synthesised: the faces we can
 count on ship no small-caps variant and the sfnt reader does not apply `smcp`,
@@ -407,7 +406,7 @@ private def flattenOne (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
       { st with toks := st.toks.push (.formula display sty body) }
     else
       let st := if st.warnedMath then st
-        else { warn st "W0003" "no math font is available; math is set as plain text"
+        else { warn st .W0003 "no math font is available; math is set as plain text"
                  (some "declare \\fonts{ math = \"...\" } naming an installed \
 OpenType math face; `leantex fonts` lists families") with warnedMath := true }
       pushText st sty src
@@ -912,19 +911,12 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   let mut diags := st.diags
   for (idx, c) in missing do
-    diags := diags.push {
-      severity := .warning
-      code := "W0004"
-      message :=
-        s!"'{(fs.get idx).family}' has no glyph for '{c}' (U+{hex c.toNat}); dropped"
-    }
+    diags := diags.push (Diag.of .W0004
+      s!"'{(fs.get idx).family}' has no glyph for '{c}' (U+{hex c.toNat}); dropped")
   for (idx, c, fb) in substs do
-    diags := diags.push {
-      severity := .warning
-      code := "W0009"
-      message := s!"'{(fs.get idx).family}' has no glyph for '{c}' \
-        (U+{hex c.toNat}); set from '{(fs.get fb).family}'"
-    }
+    diags := diags.push (Diag.of .W0009
+      s!"'{(fs.get idx).family}' has no glyph for '{c}' \
+        (U+{hex c.toNat}); set from '{(fs.get fb).family}'")
   return (items, diags, cache, extras)
 where
   hex (n : Nat) : String := Id.run do
@@ -1284,12 +1276,10 @@ private def B.finishPage (b : B) : B :=
       (b.cur.lines.zip b.shrinkAbove).map fun (l, above) =>
         { l with y := l.y - above * b.needed / b.pageShrink }
     else b.cur.lines
-  let diags := if b.needed > 0 then b.diags.push {
-      severity := .note
-      code := "N0200"
-      message := s!"page {b.pages.size + 1} set {b.needed / 65536}pt short: its skips gave " ++
-        s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink"
-    } else b.diags
+  let diags := if b.needed > 0 then b.diags.push (Diag.of .N0200
+      (s!"page {b.pages.size + 1} set {b.needed / 65536}pt short: its skips gave " ++
+        s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink"))
+    else b.diags
   -- The leftover between the content's bottom and the bottom margin,
   -- split by the page's declared ratio (`VDist`). Only what follows the
   -- `.pin` mark moves: the frame title and its bar are page-top chrome,
@@ -1378,11 +1368,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
       b.commit (mk firstY) depth 0 0
 
 private def B.warnOverfull (b : B) : B :=
-  { b with diags := b.diags.push {
-    severity := .warning
-    code := "W0005"
-    message := "overfull line (no feasible break)"
-  } }
+  { b with diags := b.diags.push (Diag.of .W0005 "overfull line (no feasible break)") }
 
 /-- One paragraph, measured and ready to break: everything `kp` and line
 placement need, gathered during the block walk so the breaking runs can
@@ -1822,11 +1808,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- reuses the fourth level's marking — best effort, never a blank page.
     let depth := (if ordered then a.enumDepth else a.itemDepth) + 1
     let level := min depth 4
-    let a := if depth > 4 then { a with diags := a.diags.push {
-        severity := .warning
-        code := "W0010"
-        message := s!"lists nest four levels; level {depth} reuses the fourth's marker"
-        help := "LaTeX errors here (\"Too deeply nested\"); flatten the nesting" } }
+    let a := if depth > 4 then { a with diags := a.diags.push (
+        Diag.of .W0010
+          s!"lists nest four levels; level {depth} reuses the fourth's marker"
+          (help := "LaTeX errors here (\"Too deeply nested\"); flatten the nesting")) }
       else a
     -- The level's own style, falling back to the kind's base style — so a
     -- bare `\style{itemize}{...}` keeps styling every level, as it did.
@@ -2297,13 +2282,11 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
         let up := (before.resolve geom.fontSize xHeight).width
         let down := (after.resolve geom.fontSize xHeight).width
         if down > up then
-          b := { b with diags := b.diags.push {
-            severity := .warning
-            code := "W0202"
-            message := s!"'{element}' sets more space below the heading " ++
-              s!"({down.toPtString}pt) than above it ({up.toPtString}pt)"
-            help := s!"a heading binds to the text it introduces: in " ++
-              s!"\\style\{{element}}\{...} keep 'after' at most 'before'" } }
+          b := { b with diags := b.diags.push (Diag.of .W0202
+            (s!"'{element}' sets more space below the heading " ++
+              s!"({down.toPtString}pt) than above it ({up.toPtString}pt)")
+            (help := s!"a heading binds to the text it introduces: in " ++
+              s!"\\style\{{element}}\{...} keep 'after' at most 'before'")) }
   let mut colSaves : Array ColSave := #[]
   let mut logoSpans : Array (Nat × Array Inline) := #[]
   for s in staged do
@@ -2404,13 +2387,11 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       let cpl10 := 450 + 200 * (geom.textWidth - l45) / (l65 - l45)
       if cpl10 < 450 || cpl10 > 900 then
         let dir := if cpl10 > 900 then "narrow" else "widen"
-        b := { b with diags := b.diags.push {
-          severity := .warning
-          code := "W0201"
-          message := s!"the measure holds about {(cpl10 + 5) / 10} characters " ++
-            "per line, outside the readable 45\u201390 band"
-          help := s!"{dir} the text block (\\page\{ hmargin = ... }; 66 characters " ++
-            "is the ideal) or declare \\page{ measure = free }" } }
+        b := { b with diags := b.diags.push (Diag.of .W0201
+          (s!"the measure holds about {(cpl10 + 5) / 10} characters " ++
+            "per line, outside the readable 45\u201390 band")
+          (help := s!"{dir} the text block (\\page\{ hmargin = ... }; 66 characters " ++
+            "is the ideal) or declare \\page{ measure = free }")) }
   let pages := b.pages
   -- Running content is laid out per page once the count is known, into the
   -- margin, so it never disturbs the body it annotates.
@@ -2427,11 +2408,9 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     -- A running line is one line by construction — the band reserves one
     -- ascent (`footBandFor`). Content that wraps would silently lose every
     -- line but its first, so losing it is a named diagnostic instead.
-    let ds := if breaks.size > 1 then ds.push {
-        severity := .warning
-        code := "W0319"
-        message := "running content wraps at the text width; only its first line is kept"
-        help := "the head, foot, and chrome bands hold one line each: shorten the content" }
+    let ds := if breaks.size > 1 then ds.push (Diag.of .W0328
+        "running content wraps at the text width; only its first line is kept"
+        (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
       else ds
     match breaks[0]? with
     | none => (none, ds, cache)

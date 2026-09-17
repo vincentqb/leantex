@@ -3073,9 +3073,9 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     "\\begin{frame}{A}\na\n\\end{frame}")
   let wOut := Layout.run (Layout.Geom.ofPage wDoc.page) oneFace none wDoc
   t "a wrapping running line warns by name"
-    (wOut.diags.any (·.code == "W0319"))
+    (wOut.diags.any (·.code == "W0328"))
   t "a one-line running line does not warn"
-    (!rOut.diags.any (·.code == "W0319"))
+    (!rOut.diags.any (·.code == "W0328"))
 
 /-- The deck's own footer route: `\setbeamertemplate{frame footer}` — alone
 or expanded from a `\newenvironment` wrapper — reaches the chrome footer's
@@ -3602,126 +3602,126 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       check ref s!"census {n}: {label}" ok
 
 
-/-- One diagnostic code, one meaning: this registry is the single place a
-code's meaning lives, and `diagChecks` holds the tree to it. Every
-quote-delimited code literal in the engine must appear here — a new code
-is forced through this table, where a collision with an existing number
-is visible before it ships — no number may appear twice, and no entry may
-outlive its last emission site. The defect class is real twice over: the
-card slice nearly renumbered W0315 over the contrast pairing (PLAN
-2026-09-17), and this check's first run found W0314 meaning both a column
-width and an unknown theme. -/
-def diagRegistry : List (String × String) := [
-  ("E0001", "cannot read an input file"),
-  ("E0002", "input is not valid UTF-8"),
-  ("E0101", "lone backslash at end of input"),
-  ("E0102", "unclosed verbatim environment"),
-  ("E0201", "unclosed group or environment at end of input"),
-  ("E0202", "unexpected closer"),
-  ("E0205", "malformed or mismatched environment name"),
-  ("E0303", "malformed \\define signature"),
-  ("E0304", "missing argument for a command"),
-  ("E0305", "parameter expects text"),
-  ("E0306", "unknown parameter reference in a definition body"),
-  ("E0309", "unknown document class"),
-  ("E0310", "content before the first \\item in a list"),
-  ("E0311", "reserved character in text"),
-  ("E0312", "block-level command used inline"),
-  ("E0313", "only declarations may appear before \\begin{document}"),
-  ("E0316", "unclosed optional argument"),
-  ("E0320", "invalid key or missing value in a declaration block"),
-  ("E0321", "unreadable value for a declaration key"),
-  ("E0322", "unknown key in a declaration block"),
-  ("E0323", "declaration key value has the wrong type"),
-  ("E0324", "unknown page size name"),
-  ("E0325", "unreadable \\assert expression"),
-  ("E0326", "name not in the palette where a colour is required"),
-  ("E0327", "not a \\page key"),
-  ("E0328", "not a styleable element"),
-  ("E0330", "layout assertion failed against the shipped pages"),
-  ("E0331", "unreadable length"),
-  ("E0401", "no usable font found on the host"),
-  ("E0402", "LEANTEX_FONT is unusable"),
-  ("E0403", "no installed font family by that name"),
-  ("E0404", "a font file could not be used"),
-  ("E0501", "\\input nesting too deep"),
-  ("N0100", "LaTeX idiom translated to its native declaration"),
-  ("N0101", "geometry keys without a native equivalent dropped"),
-  ("N0105", "\\setkomafont on a non-styleable element ignored"),
-  ("N0200", "page set short: its skips gave their shrink"),
-  ("W0001", "content after \\end{document} is ignored"),
-  ("W0003", "math is typeset as plain text until M6"),
-  ("W0004", "font has no glyph for a character; dropped"),
-  ("W0005", "overfull line, no feasible break"),
-  ("W0006", "declared face variant missing; another face substitutes"),
-  ("W0007", "running head/foot omitted from HTML"),
-  ("W0008", "\\fonts dir is not a directory"),
-  ("W0009", "no glyph in the declared face; set from a fallback face"),
-  ("W0010", "lists nest four levels; deeper levels reuse the fourth marker"),
-  ("W0011", "declared math face has no OpenType MATH table"),
-  ("W0012", "math construct not rendered yet; set as source text"),
-  ("W0102", "unsupported colour model"),
-  ("W0103", "unsupported package skipped"),
-  ("W0104", "unsupported TeX construct skipped"),
-  ("W0105", "overlay specification does not name a step"),
-  ("W0106", "expl3 code skipped"),
-  ("W0108", "\\centering is inert inside an argument"),
-  ("W0110", "unsupported \\includegraphics option; ignored"),
-  ("W0201", "measure outside the readable band"),
-  ("W0202", "heading sets more space below than above"),
-  ("W0301", "unknown command; arguments kept as text"),
-  ("W0302", "unknown environment; body kept"),
-  ("W0303", "built-in name cannot be redefined"),
-  ("W0304", "colour name not in the palette; content kept uncoloured"),
-  ("W0307", "environment not implemented yet; content not rendered"),
-  ("W0308", "tables are not laid out yet; rows set as plain lines"),
-  ("W0309", "\\maketitle with nothing declared"),
-  ("W0310", "'[' never closes; not an argument"),
-  ("W0311", "a second \\frametitle replaces the first"),
-  ("W0320", "heading levels skip a step (HTML §4.3.11, WCAG G141)"),
-  ("W0321", "the document title follows another heading"),
-  ("W0322", "a second \\maketitle is ignored; the title is typeset once"),
-  ("W0312", "no {...} group after a command; skipped"),
-  ("W0313", "{...} groups went with an unknown wrapper"),
-  ("W0314", "column width is not a fraction of the text width"),
-  ("W0318", "\\chrome outside the slides class; ignored"),
-  ("W0319", "unknown theme; the document is unthemed"),
-  ("W0323", "unknown backend name in \\begin{ifbackend}; ignored"),
-  ("W0324", "\\begin{ifbackend} content addressed to no backend"),
-  ("W0325", "more than one <nav> landmark on one page"),
-  ("W0326", "in-page link with no target anchor on the page"),
-  ("W0327", "two distinct section titles fold to the same anchor"),
-  ("W0315", "low-contrast colour pairing (WCAG 2.2)"),
-  ("W0316", "unknown option in \\palette; block skipped"),
-  ("W0317", "a card carries no running head or foot; declaration dropped"),
-  ("W0501", "\\input file not found; skipped"),
-  ("W0601", "image unreadable or not found; placeholder box placed"),
-  ("W0602", "image format unusable; placeholder box placed")]
+/- One diagnostic code, one meaning: `DiagCode` in Diag.lean is the single
+place a code lives — an unregistered code is unrepresentable, because every
+emission site passes a constructor, and a new code is forced through the
+`DiagCode.spec` match, where a collision with an existing number is visible
+before it ships. The defect class is real twice over: the card slice nearly
+renumbered W0315 over the contrast pairing (PLAN 2026-09-17), and the old
+string registry's first run found W0314 meaning both a column width and an
+unknown theme. What is left to check at runtime: the spec's code strings are
+unique (a constructor cannot claim another's number), each carries a
+meaning, and no constructor outlives its last emission site. -/
 
-/-- Is this quote-delimited string one diagnostic code (`E0330`)? -/
+/-- The source with string literals, char literals, and comments blanked, so
+the emission scan below reads code proper: a code named in a docstring or a
+help text is a mention, not an emission. Line comments, nested block
+comments, `\"` escapes, and char literals (whose `'\"'` would otherwise read
+as opening a string) are tracked. -/
+def stripNonCode (src : String) : String := Id.run do
+  let cs := src.toList.toArray
+  let mut out := ""
+  let mut i := 0
+  let mut depth := 0
+  let mut inStr := false
+  let mut inLine := false
+  let mut esc := false
+  for _ in [0:cs.size] do
+    if h : i < cs.size then
+      let c := cs[i]
+      if inStr then
+        if esc then esc := false
+        else if c == '\\' then esc := true
+        else if c == '"' then inStr := false
+        out := out.push ' '
+        i := i + 1
+      else if inLine then
+        if c == '\n' then
+          inLine := false
+          out := out.push '\n'
+        else
+          out := out.push ' '
+        i := i + 1
+      else if depth > 0 then
+        if c == '-' && cs[i + 1]? == some '/' then
+          depth := depth - 1
+          i := i + 2
+        else if c == '/' && cs[i + 1]? == some '-' then
+          depth := depth + 1
+          i := i + 2
+        else
+          out := out.push (if c == '\n' then '\n' else ' ')
+          i := i + 1
+      else if c == '/' && cs[i + 1]? == some '-' then
+        depth := 1
+        i := i + 2
+      else if c == '-' && cs[i + 1]? == some '-' then
+        inLine := true
+        i := i + 2
+      else if c == '\'' && cs[i + 1]? == some '\\' then
+        -- an escaped char literal ('\n', '\\', '\"', '\u00a0'): skip to its
+        -- closing quote
+        let mut j := i + 2
+        for _ in [0:8] do
+          if cs[j]? == some '\'' then break
+          j := j + 1
+        for _ in [i:j+1] do
+          out := out.push ' '
+        i := j + 1
+      else if c == '\'' && cs[i + 2]? == some '\'' && cs[i + 1]? != some '\'' then
+        -- a plain char literal ('x')
+        out := out ++ "   "
+        i := i + 3
+      else if c == '"' then
+        inStr := true
+        out := out.push ' '
+        i := i + 1
+      else
+        out := out.push c
+        i := i + 1
+    else break
+  return out
+
+/-- Is this token one diagnostic code (`E0330`)? -/
 def isDiagCode (s : String) : Bool :=
   match s.toList with
   | [k, a, b, c, d] =>
     (k == 'E' || k == 'W' || k == 'N') && [a, b, c, d].all Char.isDigit
   | _ => false
 
+/-- The `DiagCode` constructors a stripped source applies: every dot-applied
+code-shaped token (`.E0304`, `DiagCode.W0501`). -/
+def appliedCodes (stripped : String) : List String := Id.run do
+  let mut out : List String := []
+  for part in (stripped.splitOn ".").drop 1 do
+    let tok := String.ofList (part.toList.takeWhile Char.isAlphanum)
+    if isDiagCode tok && !out.contains tok then
+      out := tok :: out
+  return out
+
 def diagChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let codes := diagRegistry.map (·.1)
+  let codes := DiagCode.all.map (·.code)
   for c in codes.eraseDups do
     check ref s!"diag {c}: one code, one meaning"
       ((codes.filter (· == c)).length == 1)
-  -- Every code the engine can emit is registered, and no entry outlives
-  -- its last emission site. The scan is over quote-delimited literals,
-  -- which is the one spelling every emission helper takes its code in.
+  for c in DiagCode.all do
+    check ref s!"diag {c.code}: carries a meaning" (!c.meaning.isEmpty)
+    check ref s!"diag {c.code}: code string is code-shaped" (isDiagCode c.code)
+  -- No constructor outlives its last emission site, and an emitted
+  -- constructor's code string is registered under its own name (a
+  -- `spec` arm answering another arm's number would surface here).
+  -- The compiler already holds the other direction: a code that is not
+  -- a constructor cannot be emitted at all.
   let mut files := (← System.FilePath.walkDir "LeanTex").filter
     (·.toString.endsWith ".lean")
   files := files.push "Main.lean"
   let mut emitted : List String := []
   for f in files do
+    if f.toString.endsWith "Diag.lean" then continue
     let src ← IO.FS.readFile f
-    for part in src.splitOn "\"" do
-      if isDiagCode part && !emitted.contains part then
-        emitted := part :: emitted
+    for c in appliedCodes (stripNonCode src) do
+      if !emitted.contains c then
+        emitted := c :: emitted
   for c in emitted do
     check ref s!"diag {c}: emitted by the engine but not in the registry"
       (codes.contains c)
@@ -4155,13 +4155,8 @@ def argsChecks (ref : IO.Ref (List String)) : IO Unit := do
 def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- render: porcelain is stable, escaped JSONL
-  let d : Diag := {
-    severity := .error
-    code := "E0002"
-    message := "bad \"quote\"\nline"
-    span := some ⟨"a.tex", ⟨3, 7⟩⟩
-    help := some "fix it"
-  }
+  let d : Diag := Diag.of .E0002 "bad \"quote\"\nline" (some ⟨"a.tex", ⟨3, 7⟩⟩)
+    (help := "fix it")
   t "porcelain diag" (Render.porcelainDiag d ==
     "{\"event\":\"diagnostic\",\"severity\":\"error\",\"code\":\"E0002\"," ++
     "\"message\":\"bad \\\"quote\\\"\\nline\",\"file\":\"a.tex\",\"line\":3,\"col\":7," ++

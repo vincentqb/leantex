@@ -865,14 +865,11 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
           id := s!"{base}-{n}"
         | none => break
       if let some holder := clash then
-        diags := diags.push {
-          severity := .warning
-          code := "W0327"
-          message := s!"sections {holder.quote} and {text.quote} share the \
+        diags := diags.push (Diag.of .W0327
+          s!"sections {holder.quote} and {text.quote} share the \
 anchor '{base}'; the second becomes '{id}'"
-          help := some s!"an in-page link '#{base}' reaches only the first; \
-retitle one section, or link to '#{id}'"
-        }
+          (help := some s!"an in-page link '#{base}' reaches only the first; \
+retitle one section, or link to '#{id}'"))
       taken := taken.push (id, text)
       openId := some id
       cur := #[blockNode cfg b]
@@ -891,21 +888,15 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
   let doc := { doc with body := Ir.keepFor "html" doc.body }
   let mut diags : Array Diag := #[]
   if doc.head.isSome || doc.foot.isSome then
-    diags := diags.push {
-      severity := .warning
-      code := "W0007"
-      message := "running head/foot is paged-media furniture; omitted from HTML"
-      help := some "put a masthead in the document body if it should appear in both"
-    }
+    diags := diags.push (Diag.of .W0007
+      "running head/foot is paged-media furniture; omitted from HTML"
+      (help := "put a masthead in the document body if it should appear in both"))
   if doc.logo.isSome || doc.body.any (fun b => match b with
       | .logo c => !c.isEmpty
       | _ => false) then
-    diags := diags.push {
-      severity := .warning
-      code := "W0007"
-      message := "the \\logo is paged-media furniture; omitted from HTML"
-      help := some "put the image in the document body if it should appear in both"
-    }
+    diags := diags.push (Diag.of .W0007
+      "the \\logo is paged-media furniture; omitted from HTML"
+      (help := "put the image in the document body if it should appear in both"))
   let title := doc.info.title.getD "Untitled"
   let mut head : Array Node := #[
     Html.elem "meta" #[] #[("charset", "utf-8")],
@@ -1083,13 +1074,11 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
     -- (W3C ARIA Authoring Practices, Landmark Regions, Step 3 and the
     -- Navigation role). The engine has no label mechanism yet, so a second
     -- unlabeled <nav> is indistinguishable to assistive technology.
-    diags := diags.push {
-      severity := .warning
-      code := "W0325"
-      message := s!"{facts.navs} <nav> landmarks on one page are \
+    diags := diags.push (Diag.of .W0325
+      s!"{facts.navs} <nav> landmarks on one page are \
 indistinguishable to assistive technology"
-      help := some "keep one {nav}; repeated landmarks need unique labels \
-(ARIA Authoring Practices, Landmark Regions), which are not modelled yet" }
+      (help := some "keep one {nav}; repeated landmarks need unique labels \
+(ARIA Authoring Practices, Landmark Regions), which are not modelled yet"))
   -- Every navigation target exists: an in-page link resolves to an anchor
   -- this page emits, or it is named here rather than shipped broken. '#'
   -- and any-ASCII-case 'top' always resolve — the HTML spec's fragment
@@ -1102,15 +1091,13 @@ indistinguishable to assistive technology"
     let isTop := frag.isEmpty || frag.map Char.toLower == "top"
     unless isTop || facts.ids.contains frag || checked.contains fref do
       checked := checked.push fref
-      diags := diags.push {
-        severity := .warning
-        code := "W0326"
-        message := s!"in-page link '{fref}' has no target anchor on this page"
-        help := some (if facts.ids.isEmpty then
+      diags := diags.push (Diag.of .W0326
+        s!"in-page link '{fref}' has no target anchor on this page"
+        (help := some (if facts.ids.isEmpty then
             "no anchors are emitted; level-1 section titles become ids in \
 the article class"
           else s!"anchors on this page: \
-{String.intercalate ", " (facts.ids.toList.map ("#" ++ ·))}") }
+{String.intercalate ", " (facts.ids.toList.map ("#" ++ ·))}")))
   return (Html.document cfg.lang head body, diags)
 
 end LeanTex.Core.HtmlDoc

@@ -183,6 +183,16 @@ def ioInCore (l : String) : Bool :=
 
 def surfaceMods : List String := ["Lex", "Parse", "Elab", "Compat"]
 
+/-- Composed like the banned keywords: the gate scans this file's own staged
+diff, and the pattern must not read as a violation where it is defined. -/
+def kwSeverityAssign : String := "sever" ++ "ity :="
+
+/-- A literal severity assignment: severity derives from a `DiagCode`'s
+declared `Loss` through `Diag.of`, never chosen at a call site, so the field
+may be written in Diag.lean alone. String and comment content aside. -/
+def severityAssign (l : String) : Bool :=
+  containsSub (stripLineComment (stripStrings l)) kwSeverityAssign
+
 def surfaceImports : List String := surfaceMods.map ("import LeanTex.Core." ++ ·)
 
 /-- A qualified use `Mod.…` with nothing word-like before the name: catches
@@ -394,6 +404,17 @@ def selftest : IO UInt32 := do
     ("-- import Obligations would be rejected", false),
     ("import LeanTex.Core.Ir", false)]
 
+  expect "severityAssign" severityAssign [
+    -- the free-severity spellings the DiagCode gate closed over
+    ("    severity := .error", true),
+    ("  { d with severity := .warning }", true),
+    ("  let d : Diag := { severity := sev, code := code, message := msg }", true),
+    -- mentions in comments and strings, and reads of the field, stay legal
+    ("  -- severity := comes only from Diag.of, never a call site", false),
+    ("  say s!\"a string naming severity := x\"", false),
+    ("  let sev := d.severity", false),
+    ("    severity := c.loss.severity", true)]
+
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "precommit selftest: all passed"
@@ -501,6 +522,16 @@ def main (args : List String) : IO UInt32 := do
   The gated library must never depend on it (scripts/owed.lean also checks
   the whole tree).
   Fix: prove the statement and move it into its owner module first."
+    if file.endsWith ".lean" && file != "LeanTex/Core/Diag.lean" then
+      let bad := lines.filter severityAssign
+      if !bad.isEmpty then
+        say s!"pre-commit: a severity written outside Diag.lean, in {file}:
+{String.intercalate "\n" bad.toList}
+  Severity is a function of the code's declared Loss — a free severity is how
+  \"content silently gone\" shipped as a warning fourteen times (PLAN, the
+  severity policy).
+  Fix: emit through Diag.of with a DiagCode; if the code's loss category is
+  wrong, change it in DiagCode.spec."
     if file.startsWith "LeanTex/Core/" && file != "LeanTex/Core/FontDb.lean" then
       let bad := lines.filter ioInCore
       if !bad.isEmpty then

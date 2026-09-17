@@ -125,12 +125,8 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
                 pos := posOver cs i stop pos
                 i := stop
               | none =>
-                diags := diags.push {
-                  severity := .error
-                  code := "E0102"
-                  message := "unclosed verbatim: expected '\\end{verbatim}'"
-                  span := some ⟨file, here⟩
-                }
+                diags := diags.push (Diag.of .E0102
+                  "unclosed verbatim: expected '\\end{verbatim}'" (some ⟨file, here⟩))
                 toks := toks.push ⟨.verb (strFrom cs start cs.size), here⟩
                 pos := posOver cs i cs.size pos
                 i := cs.size
@@ -151,12 +147,8 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
             pos := posOver cs i (i + 2) pos
             i := i + 2
         else
-          diags := diags.push {
-            severity := .error
-            code := "E0101"
-            message := "lone backslash at end of input"
-            span := some ⟨file, here⟩
-          }
+          diags := diags.push (Diag.of .E0101
+            "lone backslash at end of input" (some ⟨file, here⟩))
           i := i + 1
       else if c == '{' then
         toks := toks.push ⟨.lbrace, here⟩

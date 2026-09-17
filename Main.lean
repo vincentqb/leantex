@@ -59,17 +59,9 @@ def loadOverride (path : String) : IO (Except Diag (Font.Font × String)) := do
     let data ← IO.FS.readBinFile path
     match Font.parse data with
     | .ok f => return .ok (f, path)
-    | .error e => return .error {
-        severity := .error
-        code := "E0402"
-        message := s!"cannot use LEANTEX_FONT '{path}': {e}"
-      }
+    | .error e => return .error (Diag.of .E0402 s!"cannot use LEANTEX_FONT '{path}': {e}")
   else
-    return .error {
-      severity := .error
-      code := "E0402"
-      message := s!"LEANTEX_FONT '{path}' does not exist"
-    }
+    return .error (Diag.of .E0402 s!"LEANTEX_FONT '{path}' does not exist")
 
 /-- TeX Live's font roots, asked of kpsewhich when it is installed, so
 `--font-dir` is almost never needed. `--show-path` returns the expanded list.
@@ -111,12 +103,9 @@ def texFontDirs : IO (List String) := do
   return roots
 
 /-- The scan produced nothing usable at all. -/
-def noFontDiag : Diag := {
-  severity := .error
-  code := "E0401"
-  message := "no usable font found"
-  help := some "install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT"
-}
+def noFontDiag : Diag :=
+  Diag.of .E0401 "no usable font found"
+    (help := "install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT")
 
 /-- Every face a document can reach: the three family slots crossed with the
 four bold/italic variants, loaded once and deduplicated by path. Faces the
@@ -154,11 +143,8 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     if ← p.isDir then
       docDirs := docDirs ++ [p.toString]
     else
-      diags := diags.push {
-        severity := .warning
-        code := "W0008"
-        message := s!"\\fonts dir '{d}' is not a directory ({p}); looking elsewhere"
-      }
+      diags := diags.push (Diag.of .W0008
+        s!"\\fonts dir '{d}' is not a directory ({p}); looking elsewhere")
   let t ← IO.monoMsNow
   let faces ← FontDb.scanRoots
     (docDirs ++ (← FontDb.systemRoots (ui.cfg.fontDirs.toList ++ (← texFontDirs))))
@@ -202,32 +188,21 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
           let near := FontDb.nearest all family
           let hint := if near.isEmpty then s!"{all.size} families are installed"
             else s!"did you mean: {String.intercalate ", " near.toList}?"
-          diags := diags.push {
-            severity := .error
-            code := "E0403"
-            message := s!"no installed font family named '{family}'"
-            help := some s!"{hint} — `leantex fonts` lists every family"
-          }
+          diags := diags.push (Diag.of .E0403
+            s!"no installed font family named '{family}'"
+            (help := s!"{hint} — `leantex fonts` lists every family"))
       | some (face, warning) =>
         if let some msg := warning then
           -- Slots share families, so the same substitution surfaces repeatedly.
           unless diags.any (·.message == msg) do
-            diags := diags.push {
-              severity := .warning
-              code := "W0006"
-              message := msg
-            }
+            diags := diags.push (Diag.of .W0006 msg)
         match paths.findIdx? (· == face.path) with
         | some i => index := index.push ((slot, bold, italic), i)
         | none =>
           let data ← IO.FS.readBinFile face.path
           match Font.parse data with
           | .error e =>
-            diags := diags.push {
-              severity := .error
-              code := "E0404"
-              message := s!"cannot use '{face.path}': {e}"
-            }
+            diags := diags.push (Diag.of .E0404 s!"cannot use '{face.path}': {e}")
           | .ok f =>
             index := index.push ((slot, bold, italic), fonts.size)
             fonts := fonts.push f
@@ -246,12 +221,9 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
         let near := FontDb.nearest all family
         let hint := if near.isEmpty then s!"{all.size} families are installed"
           else s!"did you mean: {String.intercalate ", " near.toList}?"
-        diags := diags.push {
-          severity := .error
-          code := "E0403"
-          message := s!"no installed font family named '{family}'"
-          help := some s!"{hint} — `leantex fonts` lists every family"
-        }
+        diags := diags.push (Diag.of .E0403
+          s!"no installed font family named '{family}'"
+          (help := s!"{hint} — `leantex fonts` lists every family"))
     | some (face, _) =>
       let loaded ← match paths.findIdx? (· == face.path) with
         | some i => pure (some i)
@@ -259,11 +231,7 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
           let data ← IO.FS.readBinFile face.path
           match Font.parse data with
           | .error e =>
-            diags := diags.push {
-              severity := .error
-              code := "E0404"
-              message := s!"cannot use '{face.path}': {e}"
-            }
+            diags := diags.push (Diag.of .E0404 s!"cannot use '{face.path}': {e}")
             pure none
           | .ok f =>
             fonts := fonts.push f
@@ -273,15 +241,12 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
         if (fonts[i]!).math.isSome then
           mathIdx := some i
         else
-          diags := diags.push {
-            severity := .warning
-            code := "W0011"
-            message := s!"'{(fonts[i]!).family}' ({face.path}) has no OpenType MATH \
+          diags := diags.push (Diag.of .W0011
+            s!"'{(fonts[i]!).family}' ({face.path}) has no OpenType MATH \
 table; math is set as plain text"
-            help := some "name a math face (Latin Modern Math, STIX Two Math, \
+            (help := "name a math face (Latin Modern Math, STIX Two Math, \
 TeX Gyre Pagella Math, Fira Math, ...) — its MATH table is where the engine \
-reads math spacing from"
-          }
+reads math spacing from"))
   if fonts.isEmpty then
     -- Every named family failed and `diags` carries the errors; the caller
     -- stops on them, but nothing downstream may ever see an empty set.
@@ -348,21 +313,17 @@ def loadImages (file : String) (doc : Ir.Doc) : IO (Image.Store × Array Diag) :
       | some (_, p) =>
         try pure (some (← IO.FS.readBinFile p))
         catch e =>
-          diags := diags.push {
-            severity := .warning
-            code := "W0601"
-            message := s!"cannot read image '{src}': {e}"
-            help := some "a placeholder box of the requested size is placed" }
+          diags := diags.push (Diag.of .W0601
+            s!"cannot read image '{src}': {e}"
+            (help := "a placeholder box of the requested size is placed"))
           pure none
       | none =>
         let p := if (System.FilePath.mk src).isAbsolute then System.FilePath.mk src
           else dir / src
-        diags := diags.push {
-          severity := .warning
-          code := "W0601"
-          message := s!"image file not found: '{src}'"
-          help := some s!"looked at {p} (also with .png/.jpg/.jpeg added); \
-a placeholder box of the requested size is placed" }
+        diags := diags.push (Diag.of .W0601
+          s!"image file not found: '{src}'"
+          (help := s!"looked at {p} (also with .png/.jpg/.jpeg added); \
+a placeholder box of the requested size is placed"))
         pure none
     let href := match hit with
       | some (cand, _) => if cand == src then "" else cand
@@ -374,11 +335,9 @@ a placeholder box of the requested size is placed" }
       | .ok info => entries := entries.push { src, href, info := some info }
       | .error e =>
         entries := entries.push { src, href }
-        diags := diags.push {
-          severity := .warning
-          code := "W0602"
-          message := s!"cannot use image '{src}': {e}"
-          help := some "PNG and JPEG embed natively; a placeholder box is placed" }
+        diags := diags.push (Diag.of .W0602
+          s!"cannot use image '{src}': {e}"
+          (help := "PNG and JPEG embed natively; a placeholder box is placed"))
   return ({ entries := entries }, diags)
 
 def countErrors (diags : Array Diag) : Nat :=
@@ -403,11 +362,8 @@ def readInput (dir : System.FilePath) (name : String) (pos : Pos) :
     -- file, and the wrapper is what carries that name to the elaborator.
     return (#[.env (Parse.inputEnv path.toString) sub pos], lexDs ++ parseDs)
   else
-    let d : Diag := {
-      severity := .warning
-      code := "W0501"
-      message := s!"\\input file not found: '{name}'; skipped"
-      span := some ⟨dir.toString, pos⟩ }
+    let d := Diag.of .W0501 s!"\\input file not found: '{name}'; skipped"
+      (some ⟨dir.toString, pos⟩)
     return (#[], #[d])
 
 mutual
@@ -448,10 +404,8 @@ def expandInputs (file : String) (raws : Array Parse.Raw) :
     unless hit do return (raws, diags)
   let (_, _, still) ← spliceList dir #[] #[] false raws.toList
   if still then
-    diags := diags.push {
-      severity := .error
-      code := "E0501"
-      message := "\\input nesting deeper than 8 files; is a file including itself?" }
+    diags := diags.push (Diag.of .E0501
+      "\\input nesting deeper than 8 files; is a file including itself?")
   return (raws, diags)
 
 /-- Read and decode the file, then run the front end, reporting phases.
@@ -461,7 +415,7 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := d
   let bytes ← try
     pure (some (← IO.FS.readBinFile file))
   catch e =>
-    ui.diag { severity := .error, code := "E0001", message := s!"cannot read '{file}': {e}" }
+    ui.diag (Diag.of .E0001 s!"cannot read '{file}': {e}")
     pure none
   let some bytes := bytes | return none
   ui.phase "read" s!"{bytes.size} bytes" (← since t0)
@@ -617,7 +571,7 @@ def hyphenate (ui : Ui) (words : List String) (file : Option String) : IO UInt32
     let contents ← try
       pure (some (← IO.FS.readFile path))
     catch e =>
-      ui.diag { severity := .error, code := "E0001", message := s!"cannot read '{path}': {e}" }
+      ui.diag (Diag.of .E0001 s!"cannot read '{path}': {e}")
       pure none
     let some contents := contents | return 1
     all := all ++ (contents.splitOn "\n").filterMap fun line =>

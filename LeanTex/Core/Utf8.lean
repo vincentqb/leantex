@@ -30,11 +30,8 @@ structure Err where
   deriving Repr, BEq
 
 def Err.toDiag (e : Err) (file : String) : Diag :=
-  { severity := .error
-    code := "E0002"
-    message := s!"invalid UTF-8: {e.kind.message} at byte offset {e.offset}"
-    span := some ⟨file, e.pos⟩
-    help := "leantex reads UTF-8 only; re-encode the file" }
+  Diag.of .E0002 s!"invalid UTF-8: {e.kind.message} at byte offset {e.offset}"
+    (some ⟨file, e.pos⟩) (help := "leantex reads UTF-8 only; re-encode the file")
 
 private def isCont (b : UInt8) : Bool := b &&& 0xC0 == 0x80
 

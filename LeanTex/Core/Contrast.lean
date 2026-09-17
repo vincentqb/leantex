@@ -365,15 +365,13 @@ def docDiags (doc : Doc) : Array Diag := Id.run do
       let label := match u.name with
         | some n => s!"'{n}' ({hexOf u.color})"
         | none => hexOf u.color
-      out := out.push {
-        severity := .warning
-        code := "W0315"
-        message := s!"text coloured {label} reads at {ratioString milli} " ++
+      out := out.push (Diag.of .W0315
+        (s!"text coloured {label} reads at {ratioString milli} " ++
           s!"on the page ({hexOf surface}), below the {ratioString threshold} " ++
-          s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)"
-        help := some ("deliberate low contrast is declared, not defaulted: " ++
+          s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
+        (help := some ("deliberate low contrast is declared, not defaulted: " ++
           "\\palette[decorative]{ " ++
-          s!"{(u.name.getD "quiet")} = {hexOf u.color} " ++ "}") }
+          s!"{(u.name.getD "quiet")} = {hexOf u.color} " ++ "}")))
   return out
 
 -- The built-in theme bundles, held to the same contract.

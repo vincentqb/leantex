@@ -1518,20 +1518,16 @@ def outlineDiags (doc : Doc) : Array Diag := Id.run do
     if let some p := prev then
       if l > p + 1 && !gapNamed then
         gapNamed := true
-        out := out.push {
-          severity := .warning
-          code := "W0320"
-          message := s!"heading levels skip a step: {levelName p} is followed by {levelName l}"
-          help := some "descend one level at a time (HTML §4.3.11, WCAG G141); \
-a screen reader reads the gap as a broken outline" }
+        out := out.push (Diag.of .W0320
+          s!"heading levels skip a step: {levelName p} is followed by {levelName l}"
+          (help := some "descend one level at a time (HTML §4.3.11, WCAG G141); \
+a screen reader reads the gap as a broken outline"))
       if l == 0 && !titleNamed then
         titleNamed := true
-        out := out.push {
-          severity := .warning
-          code := "W0321"
-          message := "the document title follows another heading"
-          help := some "put \\maketitle before the first \\section, so the \
-outline starts at its top" }
+        out := out.push (Diag.of .W0321
+          "the document title follows another heading"
+          (help := some "put \\maketitle before the first \\section, so the \
+outline starts at its top"))
     prev := some l
   return out
 

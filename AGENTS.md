@@ -69,7 +69,7 @@ in this repo; refer to the private reference corpus abstractly.
   | an `Ir` constructor | an explicit arm in every IR-to-IR walk and both backends — no wildcard (compiler + hook) — and its census fact once it ships ink |
   | a golden fixture | a `censusTable` row asserting its shipped pages (`lake test` coverage check) |
   | a backend emission | the census assertion that it appeared (`censusTable`) |
-  | a diagnostic code | a `diagRegistry` entry — one code, one meaning (`lake test`) — and a test that fires it |
+  | a diagnostic code | a `DiagCode` constructor with its declared `Loss` — severity derives from the loss, one code one meaning (compiler + `lake test`; the hook rejects a severity written outside Diag.lean) — and a test that fires it |
   | a design constant | a token, or the source written where it stands (hook, backend files) |
   | a recursive IR walk | a `List` companion + accumulator (hook), and its conservation statement where it is one |
   | a palette role or token the engine reads | one resolving site, its contrast contract, a per-bundle check (arrives with `Design`; today Contrast.lean + bundle pins) |

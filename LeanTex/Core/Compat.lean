@@ -94,25 +94,24 @@ private structure St where
 
 private abbrev M := StateM St
 
-private def say (sev : Severity) (code msg : String) (pos : Pos) (help : Option String := none) :
+private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option String := none) :
     M Unit :=
-  modify fun st => { st with diags := st.diags.push {
-    severity := sev, code := code, message := msg
-    span := some ⟨st.file, pos⟩, help := help } }
+  modify fun st => { st with
+    diags := st.diags.push (Diag.of code msg (some ⟨st.file, pos⟩) help) }
 
 /-- Keys are namespaced (`ctrl:`, `spec:`, `beamer:`), never bare names: the
 catch-all `beamer:` key set grows with `beamerConfig`, and a flat space would
 let a future entry claim a literal arm's key and silence it. -/
-private def sayOnce (key : String) (sev : Severity) (code msg : String) (pos : Pos)
+private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
     (help : Option String := none) : M Unit := do
   unless (← get).warned.contains key do
     modify fun st => { st with warned := st.warned.push key }
-    say sev code msg pos help
+    say code msg pos help
 
 /-- Every translation is one note in the same shape, so `-v` reads as a list
 of things the document could say directly. -/
 private def became (what native : String) (pos : Pos) : M Unit :=
-  say .note "N0100" s!"{what} → {native}" pos
+  say .N0100 s!"{what} → {native}" pos
 
 private def synth (s : String) : M (Array Raw) := do
   let file := (← get).file
@@ -256,7 +255,7 @@ private def geometry (opts : String) (pos : Pos) : M (Array Raw) := do
   let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
   became "\\usepackage{geometry}" native pos
   unless dropped.isEmpty do
-    say .note "N0101" s!"geometry keys without a native equivalent were dropped: \
+    say .N0101 s!"geometry keys without a native equivalent were dropped: \
 {String.intercalate ", " dropped.toList}" pos
   synthAt native pos
 
@@ -294,7 +293,7 @@ private def color (model value : String) (pos : Pos) : M (Option String) := do
       return some s!"#{hex (ch r rs)}{hex (ch g gs)}{hex (ch b bs)}"
     | _ => return none
   | _ =>
-    say .warning "W0102" s!"colour model '{model}' is not supported; use HTML or rgb" pos
+    say .W0102 s!"colour model '{model}' is not supported; use HTML or rgb" pos
     return none
 
 /-- KOMA's `\\sectionlinesformat` is a hook for drawing after a heading. The one
@@ -340,7 +339,7 @@ where
       else if nativePackages.contains p then
         became s!"\\usepackage\{{p}}" "nothing: the engine does this itself" pos
       else
-        say .warning "W0103" s!"package '{p}' is not supported; skipped" pos
+        say .W0103 s!"package '{p}' is not supported; skipped" pos
           (help := "leantex has no packages: see PLAN.md for the native declarations")
     return some (out, k)
   | "documentclass" =>
@@ -525,7 +524,7 @@ where
     for j in [start:raws.size] do
       k := j + 1
       if let some (.ctrl "ExplSyntaxOff" _) := raws[j]? then break
-    say .warning "W0106" "expl3 code (\\ExplSyntaxOn … \\ExplSyntaxOff) is not supported; skipped" pos
+    say .W0106 "expl3 code (\\ExplSyntaxOn … \\ExplSyntaxOff) is not supported; skipped" pos
     return some (#[], k)
   | "textbar" => return some (#[.word "|" pos], start)
   | "textperiodcentered" => return some (#[.ctrl "middot" pos], start)
@@ -546,7 +545,7 @@ where
           .group args[1] pos] pos
         return some ((← synthAt native pos).push font, k)
       else
-        say .note "N0105" s!"\\setkomafont\{{element}}: not a styleable element; ignored" pos
+        say .N0105 s!"\\setkomafont\{{element}}: not a styleable element; ignored" pos
         return some (#[], k)
     else return none
   | "RedeclareSectionCommand" =>
@@ -626,7 +625,7 @@ where
     return some (← synthAt native pos, k)
   | "directlua" =>
     let (_, k) := takeGroups raws start 1
-    sayOnce "ctrl:directlua" .warning "W0104"
+    sayOnce "ctrl:directlua" .W0104
       "'\\directlua' is Lua code for luatex; skipped" pos
       (help := "there is no Lua here; see PLAN.md for the native declarations")
     return some (#[], k)
@@ -643,7 +642,7 @@ where
         break
       | some _ => k := j + 1
       | none => break
-    sayOnce "ctrl:def" .warning "W0104" s!"TeX '\\{name}' is not supported; skipped" pos
+    sayOnce "ctrl:def" .W0104 s!"TeX '\\{name}' is not supported; skipped" pos
       (help := "\\define declares typed commands")
     return some (#[], if found then k else start)
   | "newenvironment" | "renewenvironment" =>
@@ -670,7 +669,7 @@ where
     for j in [start:raws.size] do
       k := j + 1
       if let some (.ctrl "fi" _) := raws[j]? then break
-    sayOnce "ctrl:ifdefined" .warning "W0104"
+    sayOnce "ctrl:ifdefined" .W0104
       s!"TeX conditional ('\\{name}' … '\\fi') is not supported; skipped whole" pos
     return some (#[], k)
   | "alert" =>
@@ -704,7 +703,7 @@ where
     else
       let (_, j) := takeOpt raws j
       let (_, k) := takeGroups raws j 1
-      sayOnce "beamer:setbeamertemplate" .warning "W0104"
+      sayOnce "beamer:setbeamertemplate" .W0104
         "'\\setbeamertemplate' is beamer configuration the engine does not have; skipped" pos
         (help := beamerNative.lookup "setbeamertemplate")
       return some (#[], k)
@@ -769,13 +768,13 @@ where
         became "\\setbeamercovered" native pos
         return some (← synthAt native pos, k)
       else
-        sayOnce "beamer:setbeamercovered" .warning "W0104"
+        sayOnce "beamer:setbeamercovered" .W0104
           s!"'\\setbeamercovered\{{src}}' asks for {if n == 0 then "invisible" else "undimmed"} \
 covered content; the engine always dims (dim-not-hide)" pos
           (help := "\\palette{ covered = ... } sets the dim colour")
         return some (#[], k)
     | none =>
-      sayOnce "beamer:setbeamercovered" .warning "W0104"
+      sayOnce "beamer:setbeamercovered" .W0104
         s!"'\\setbeamercovered\{{src}}' is not modelled; covered content always \
 dims (dim-not-hide), it is never hidden" pos
         (help := "\\palette{ covered = ... } sets the dim colour; 'transparent' \
@@ -786,7 +785,7 @@ and 'transparent=<n>' are understood")
     | some n =>
       let (_, j) := takeOpt raws start
       let (_, k) := takeGroups raws j n
-      sayOnce ("beamer:" ++ name) .warning "W0104"
+      sayOnce ("beamer:" ++ name) .W0104
         s!"'\\{name}' is beamer configuration the engine does not have; skipped" pos
         (help := (beamerNative.lookup name).getD
           "a theme is a token bundle here: \\theme selects one, and \\palette \

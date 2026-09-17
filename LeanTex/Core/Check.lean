@@ -109,12 +109,9 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
     minXHeight := minX }
 
 private def failure (a : Assertion) (actual : String) : Diag :=
-  { severity := .error
-    code := "E0330"
-    message := s!"assertion failed: {a.kind.source} (actual: {actual})"
-    span := a.span
-    help := some (a.help.getD
-      "the document shipped this; change the source or the assertion") }
+  Diag.of .E0330 s!"assertion failed: {a.kind.source} (actual: {actual})" a.span
+    (help := some (a.help.getD
+      "the document shipped this; change the source or the assertion"))
 
 /-- Check one assertion, returning a diagnostic when it does not hold. -/
 def one (shipped : Shipped) (a : Assertion) : Option Diag :=
