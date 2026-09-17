@@ -1,6 +1,7 @@
 import LeanTex.Core.Html
 import LeanTex.Core.Ir
 import LeanTex.Core.Dim
+import LeanTex.Core.Contrast
 
 namespace LeanTex.Core.HtmlDoc
 
@@ -155,15 +156,21 @@ where
 ship a framework to use four of its rules. Dark mode is a variant of the same
 token set, not an inversion hack. -/
 def baseCss (doc : Doc) : String :=
+  -- The two token sets are `Contrast.light`/`Contrast.dark`, not literals
+  -- here: every pairing they create is proved legible over there
+  -- (`light_contract`, `dark_contract`), and a value only a backend knows
+  -- would be a value no theorem covers.
+  let lt := Contrast.light
+  let dk := Contrast.dark
   ":root {\n" ++
   "    color-scheme: light dark;\n" ++
   s!"    --measure: {measureEm doc.page};\n" ++
-  "    --ink: #18181b;\n" ++
-  "    --surface: #fafaf9;\n" ++
-  "    --muted: #71717a;\n" ++
-  "    --accent: #1d4ed8;\n" ++
-  "    --tint: #f4f4f5;\n" ++
-  "    --rule: #e4e4e7;\n" ++
+  s!"    --ink: {cssColor lt.ink};\n" ++
+  s!"    --surface: {cssColor lt.surface};\n" ++
+  s!"    --muted: {cssColor lt.muted};\n" ++
+  s!"    --accent: {cssColor lt.accent};\n" ++
+  s!"    --tint: {cssColor lt.tint};\n" ++
+  s!"    --rule: {cssColor lt.rule};\n" ++
   "    --font-body: Georgia, \"Times New Roman\", serif;\n" ++
   "    --font-sans: system-ui, -apple-system, \"Segoe UI\", sans-serif;\n" ++
   "    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;\n" ++
@@ -171,11 +178,16 @@ def baseCss (doc : Doc) : String :=
   "}\n" ++
   "@media (prefers-color-scheme: dark) {\n" ++
   "  :root {\n" ++
-  "    --ink: #fafaf9;\n" ++
-  "    --surface: #18181b;\n" ++
-  "    --muted: #a1a1aa;\n" ++
-  "    --tint: #27272a;\n" ++
-  "    --rule: #3f3f46;\n" ++
+  s!"    --ink: {cssColor dk.ink};\n" ++
+  s!"    --surface: {cssColor dk.surface};\n" ++
+  s!"    --muted: {cssColor dk.muted};\n" ++
+  -- The light accent read at 2.64:1 on the dark surface -- under the 3:1
+  -- a focus indicator needs (WCAG 2.2 SC 1.4.11) -- so dark carries its
+  -- own accent; inverting ink and surface never fixed a hue chosen
+  -- against a light page.
+  s!"    --accent: {cssColor dk.accent};\n" ++
+  s!"    --tint: {cssColor dk.tint};\n" ++
+  s!"    --rule: {cssColor dk.rule};\n" ++
   "  }\n" ++
   "}\n" ++
   "*, *::before, *::after { box-sizing: border-box; }\n" ++

@@ -2987,6 +2987,18 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "illegible bundle names its ratio" (Contrast.ratioString
     (Contrast.contrastMilli Contrast.light.accent Contrast.dark.surface) == "2.64:1")
 
+  -- The stylesheet ships the proven token sets: the dark block overrides
+  -- the accent (the light one reads 2.64:1 on the dark surface, under SC
+  -- 1.4.11's 3:1), and both spellings come from the constants the
+  -- contract theorems cover.
+  let (page, _) := HtmlDoc.emit {} (elabStr "x").1
+  let darkBlock := ((page.splitOn "prefers-color-scheme: dark")[1]?.getD "").splitOn "}"
+    |>.headD ""
+  t "dark block re-accents"
+    ((darkBlock.splitOn s!"--accent: {HtmlDoc.cssColor Contrast.dark.accent}").length == 2)
+  t "light accent comes from the proven constant"
+    ((page.splitOn s!"--accent: {HtmlDoc.cssColor Contrast.light.accent}").length == 2)
+
   -- The built-in theme bundles, held to the same contract. The theorems
   -- hold over the pre-resolved palettes; these pins close the chain: the
   -- constants equal the pure bundle resolution, the pure resolution equals
