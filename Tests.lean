@@ -2910,14 +2910,14 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- \palette and colour
   let palSrc := "\\documentclass{article}\n" ++
-    "\\palette{ primary = #7C3AED, short = #abc }\n" ++
+    "\\palette{ primary = #7C3AED, short = #123 }\n" ++
     "\\begin{document}\\textcolor{primary}{x} {\\short y} z\\end{document}"
   let (palDoc, palDs) := elabStr palSrc
   t "palette source clean" palDs.isEmpty
   t "palette parsed" (palDoc.palette.find? "primary" ==
     some { r := 0x7C, g := 0x3A, b := 0xED })
   t "palette short hex expands" (palDoc.palette.find? "short" ==
-    some { r := 0xAA, g := 0xBB, b := 0xCC })
+    some { r := 0x11, g := 0x22, b := 0x33 })
   t "palette textcolor wraps" (palDoc.body.any fun b =>
     match b with
     | .para content => content.any fun x =>
@@ -2998,6 +2998,42 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((darkBlock.splitOn s!"--accent: {HtmlDoc.cssColor Contrast.dark.accent}").length == 2)
   t "light accent comes from the proven constant"
     ((page.splitOn s!"--accent: {HtmlDoc.cssColor Contrast.light.accent}").length == 2)
+
+  -- The pairing warning: a pale tint on the page fires W0315 with the
+  -- ratio and threshold; declaring intent silences it; covered is exempt
+  -- by role; large-scale text is held to 3:1 instead of 4.5:1; a declared
+  -- fg is judged against a declared bg directly.
+  let pale := "\\documentclass{article}\\palette{ washed = #DDDDDD }" ++
+    "\\begin{document}\\textcolor{washed}{faint}\\end{document}"
+  t "pale text pairing warns with ratio and threshold"
+    ((elabStr pale).2.any fun d => d.code == "W0315" &&
+      (d.message.splitOn "1.30:1").length == 2 &&
+      (d.message.splitOn "4.50:1").length == 2)
+  t "declared intent silences the pairing warning"
+    (!(warnCodes ("\\documentclass{article}" ++
+      "\\palette[decorative]{ washed = #DDDDDD }" ++
+      "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "W0315")
+  t "covered is exempt by role"
+    (!(warnCodes ("\\documentclass{article}\\palette{ covered = #DDDDDD }" ++
+      "\\begin{document}\\textcolor{covered}{later}\\end{document}")).contains "W0315")
+  t "unknown palette option warns and skips the block"
+    (warnCodes ("\\documentclass{article}\\palette[dark]{ a = #101010 }" ++
+      "\\begin{document}x\\end{document}") == ["W0316"])
+  -- #767676 on the shipped surface is 4.34:1 -- under 4.5 but over 3: as
+  -- body text it warns, as Huge (24.9pt) large-scale text it passes.
+  let grey (body : String) := "\\documentclass{article}" ++
+    "\\palette{ grey = #767676 }\\begin{document}" ++ body ++ "\\end{document}"
+  t "borderline grey warns as body text"
+    ((warnCodes (grey "\\textcolor{grey}{x}")).contains "W0315")
+  t "borderline grey passes as large-scale text"
+    (!(warnCodes (grey "{\\Huge \\textcolor{grey}{x}}")).contains "W0315")
+  t "a declared fg is judged against the declared bg"
+    ((warnCodes ("\\documentclass{article}" ++
+      "\\palette{ fg = #999999, bg = #888888 }" ++
+      "\\begin{document}x\\end{document}")).contains "W0315")
+  t "the built-in themes raise no pairing warning"
+    (!(warnCodes ("\\documentclass{slides}\\theme{moloch}\\begin{document}" ++
+      "\\begin{frame}x\\end{frame}\\end{document}")).contains "W0315")
 
   -- The built-in theme bundles, held to the same contract. The theorems
   -- hold over the pre-resolved palettes; these pins close the chain: the

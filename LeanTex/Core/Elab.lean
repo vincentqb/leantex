@@ -5,6 +5,7 @@ import LeanTex.Core.Dim
 import LeanTex.Core.Decl
 import LeanTex.Core.Theme
 import LeanTex.Core.Compat
+import LeanTex.Core.Contrast
 
 namespace LeanTex.Core.Elab
 
@@ -1839,7 +1840,7 @@ pre-parse would reject. A redeclared name replaces the earlier entry: a
 later declaration overrides, which is what lets a document override a
 theme's defaults. -/
 private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
-    (pos : Pos) : EM Palette := do
+    (pos : Pos) (decorative : Bool := false) : EM Palette := do
   let mut pal := pal
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
@@ -1854,7 +1855,11 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
         diag ctx "E0303" s!"palette name '{key}' collides with a built-in command" pos
       else
         let put (pal : Palette) (c : Color) : Palette :=
-          { pal with entries := (pal.entries.filter (·.1 != key)).push (key, c) }
+          { pal with
+            entries := (pal.entries.filter (·.1 != key)).push (key, c)
+            decorative := if decorative && !pal.decorative.contains key then
+                pal.decorative.push key
+              else pal.decorative }
         match Decl.parseValue valueSrc with
         | some (.color r g b) => pal := put pal ⟨r, g, b⟩
         | v? =>
@@ -2157,6 +2162,40 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               foot := some content
           | _ =>
             diag ctx "E0304" s!"'\\{name}' needs one group of inline content" pos
+        else if name == "palette" then
+          -- `\palette[decorative]{...}`: the block's entries are declared
+          -- deliberately low-contrast and exempt from the pairing check. An
+          -- unrecognised option skips the block rather than applying it as
+          -- the base palette -- a variant block applied as base would
+          -- silently restyle the document.
+          let mut j := skipSpaces preamble i
+          let mut decorative := false
+          let mut skipBlock := false
+          if let some (.sym '[' _) := preamble[j]? then
+            let mut opt : Array Raw := #[]
+            let mut k := j + 1
+            for _ in [k:preamble.size + 1] do
+              match preamble[k]? with
+              | some (.sym ']' _) => k := k + 1; break
+              | some r => opt := opt.push r; k := k + 1
+              | none => break
+            for e in Decl.splitEntries (rawSrc opt) do
+              if e == "decorative" then
+                decorative := true
+              else
+                diag ctx "W0316" s!"unknown option in \\palette: {e.quote}; block skipped" pos
+                  (help := "options: decorative") (sev := .warning)
+                skipBlock := true
+            j := skipSpaces preamble k
+          match preamble[j]? with
+          | some (.group body _) =>
+            i := j + 1
+            unless skipBlock do
+              let pal ← applyPalette ctx palette (rawSrc body) pos (decorative := decorative)
+              palette := pal
+              ctx := { ctx with palette := pal }
+          | _ =>
+            diag ctx "E0304" "'\\palette' needs a {...} block" pos
         else if name == "style" then
           let j := skipSpaces preamble i
           let j2 := skipSpaces preamble (j + 1)
@@ -2205,11 +2244,6 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               let tk ← applyTokens ctx tokens src pos
               tokens := tk
               ctx := { ctx with tokens := tk }
-            else if name == "palette" then
-              -- Its own entries too: a value may be a mix over earlier ones.
-              let pal ← applyPalette ctx palette src pos
-              palette := pal
-              ctx := { ctx with palette := pal }
             else
               let (entries, ds) := Decl.parseBlock ctx.file src pos name
               modify fun st => { st with diags := st.diags ++ ds }
@@ -2334,7 +2368,7 @@ def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag :=
   let (raws, compatDiags) := Compat.rewrite file raws
   let (doc, st) := (elabDoc file raws).run {}
-  (doc, earlier ++ compatDiags ++ st.diags)
+  (doc, earlier ++ compatDiags ++ st.diags ++ Contrast.docDiags doc)
 
 def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input

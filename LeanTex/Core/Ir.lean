@@ -91,6 +91,10 @@ def Tokens.find? (t : Tokens) (name : String) : Option SymGlue :=
 /-- Named colours declared by `\palette`. -/
 structure Palette where
   entries : Array (String × Color) := #[]
+  /-- Entries declared under `\palette[decorative]{...}`: deliberately
+  low-contrast — a watermark, a dimmed aside — and exempt from the pairing
+  diagnostic, the way WCAG 2.2 SC 1.4.3 exempts pure decoration. -/
+  decorative : Array String := #[]
   deriving Repr, BEq, Inhabited
 
 def Palette.find? (p : Palette) (name : String) : Option Color :=
@@ -747,7 +751,8 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
         | false, true => "italic" | true, true => "bolditalic"
       fontLine s!"{slotName}.{variant}" (some f))
   let paletteLines := String.join (doc.palette.entries.toList.map fun (n, c) =>
-    s!"palette {n} #{hex2 c.r}{hex2 c.g}{hex2 c.b}\n")
+    let mark := if doc.palette.decorative.contains n then " decorative" else ""
+    s!"palette {n} #{hex2 c.r}{hex2 c.g}{hex2 c.b}{mark}\n")
   let tokenLines := String.join (doc.tokens.entries.toList.map fun (n, g) =>
     s!"token {n} {dumpGlue g}\n")
   let runLines :=

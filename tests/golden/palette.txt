@@ -7,6 +7,7 @@ palette primary #7C3AED
 palette ink #18181B
 palette muted #71717A
 palette warn #B45309
+palette soft #D8C4FA decorative
 assert pages == 1
 section 1
   color primary #7C3AED
@@ -37,5 +38,14 @@ list unordered
       color ink #18181B
         text "ink"
       text "."
+  item
+    para
+      text "A declared decorative mix: "
+      color soft #D8C4FA
+        text "soft"
+      text ", and an inline pale one that earns the pairing warning: "
+      color #E1BA9D
+        text "a tint"
+      text "."
 -- diagnostics
-(none)
+warning[W0315] - text coloured #E1BA9D reads at 1.71:1 on the page (#FAFAF9), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3) | help: deliberate low contrast is declared, not defaulted: \palette[decorative]{ quiet = #E1BA9D }

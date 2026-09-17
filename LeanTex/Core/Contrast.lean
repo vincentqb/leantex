@@ -189,6 +189,157 @@ active. Pinned so the exemption is a recorded decision, not an oversight. -/
 theorem covered_is_deliberately_dim :
     contrastMilli coveredDefault Color.white < aaLargeText := by decide
 
+-- The document-level check: the pairings a document's own colours create.
+
+private def hexOf (c : Color) : String :=
+  let h (v : UInt8) : String :=
+    let d := "0123456789ABCDEF".toList
+    String.ofList [d.getD (v.toNat / 16) '0', d.getD (v.toNat % 16) '0']
+  s!"#{h c.r}{h c.g}{h c.b}"
+
+/-- One coloured text occurrence: the name it was used under when it had
+one, the colour, and whether it stood as large-scale text (≥ 18pt, or bold
+≥ 14pt — the WCAG 2.2 glossary sizes, against the 10pt body base). -/
+private structure Use where
+  name : Option String
+  color : Color
+  large : Bool
+  deriving BEq
+
+/-- The text-size context of the walk below. `scale` follows the layout
+semantics: a size declaration sets the per-mille factor over the base, it
+does not compound. -/
+private structure UseCx where
+  scale : Nat := 1000
+  bold : Bool := false
+  cur : Option (Option String × Color) := none
+
+private def UseCx.large (cx : UseCx) : Bool :=
+  cx.scale ≥ 1800 || (cx.bold && cx.scale ≥ 1400)
+
+private def UseCx.style (cx : UseCx) : Style → UseCx
+  | .bold => { cx with bold := true }
+  | .normal => { cx with scale := 1000, bold := false }
+  | .size n => match sizeScale.lookup n with
+    | some k => { cx with scale := k }
+    | none => cx
+  | _ => cx
+
+/-- The context a heading's title sets: layout's defaults per level, bold at
+14pt for level 1 — which the WCAG glossary counts as large-scale. -/
+private def headingCx : Nat → UseCx
+  | 1 => { scale := 1400, bold := true }
+  | 2 => { scale := 1200, bold := true }
+  | _ => { scale := 1000, bold := true }
+
+mutual
+
+private def usesInlines (cx : UseCx) (out : Array Use) (xs : List Inline) :
+    Array Use :=
+  match xs with
+  | [] => out
+  | x :: rest => usesInlines cx (usesInline cx out x) rest
+
+private def usesInline (cx : UseCx) (out : Array Use) : Inline → Array Use
+  | .text s =>
+    match cx.cur with
+    | some (nm, c) =>
+      if s.toList.any (fun ch => !ch.isWhitespace) then
+        out.push { name := nm, color := c, large := cx.large }
+      else out
+    | none => out
+  | .math _ _ | .pageNumber | .pageCount =>
+    match cx.cur with
+    | some (nm, c) => out.push { name := nm, color := c, large := cx.large }
+    | none => out
+  | .styled st body => usesInlines (cx.style st) out body.toList
+  | .colored c nm body => usesInlines { cx with cur := some (nm, c) } out body.toList
+  | .link _ body => usesInlines cx out body.toList
+  | .underline body => usesInlines cx out body.toList
+  | .step _ body => usesInlines cx out body.toList
+  | .fill | .linebreak _ => out
+
+private def usesBlocks (cx : UseCx) (out : Array Use) (xs : List Block) :
+    Array Use :=
+  match xs with
+  | [] => out
+  | b :: rest => usesBlocks cx (usesBlock cx out b) rest
+
+private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
+  | .para content => usesInlines cx out content.toList
+  | .section level _ title =>
+    usesInlines { headingCx level with cur := cx.cur } out title.toList
+  | .list _ items => usesItems cx out items.toList
+  | .center body => usesBlocks cx out body.toList
+  | .spaced _ body => usesBlocks cx out body.toList
+  | .columns cols => usesColumns cx out cols.toList
+  | .step _ body => usesBlocks cx out body.toList
+  | .frame title _ body =>
+    usesBlocks cx (usesInlines { headingCx 1 with cur := cx.cur } out title.toList)
+      body.toList
+  -- A note is a side channel, never page text; verbatim carries no colour.
+  | .note _ | .verbatim _ => out
+
+private def usesItems (cx : UseCx) (out : Array Use) :
+    List (Array Block) → Array Use
+  | [] => out
+  | item :: rest => usesItems cx (usesBlocks cx out item.toList) rest
+
+private def usesColumns (cx : UseCx) (out : Array Use) :
+    List (Option Nat × Array Block) → Array Use
+  | [] => out
+  | (_, body) :: rest => usesColumns cx (usesBlocks cx out body.toList) rest
+
+end
+
+/-- The pairings a document's own colours create, judged: every colour the
+document puts on text is paired with the page by the engine, so each is
+checked against the page — the palette's own `bg` entry when it
+declares one (the semantic key themes set), the shipped light surface
+otherwise (WCAG's contrast-ratio
+Note 3 assumes white when nothing is specified; the shipped surface is the
+marginally darker of the two, so passing here passes on the PDF's white
+page too). A pairing used only as large-scale text is held to 3:1, any
+other use to 4.5:1 (SC 1.4.3). `covered` is exempt by role — dimmed overlay
+content is deliberately quiet — and so is anything the document declared
+under `\palette[decorative]{...}`: the warning names that spelling, so poor
+contrast is a choice a document states, never a silent default. -/
+def docDiags (doc : Doc) : Array Diag := Id.run do
+  let surface := (doc.palette.find? "bg").getD light.surface
+  let mut uses := usesBlocks {} #[] doc.body.toList
+  -- `fg` colours every uncoloured run through the backends, never through
+  -- `.colored`, so the declared pair is judged directly.
+  if let some fg := doc.palette.find? "fg" then
+    uses := uses.push { name := some "fg", color := fg, large := false }
+  for run in [doc.head, doc.foot] do
+    if let some content := run then
+      uses := usesInlines {} uses content.toList
+  let mut out : Array Diag := #[]
+  let mut done : Array (Option String × Color) := #[]
+  for u in uses do
+    let key := (u.name, u.color)
+    if done.contains key then continue
+    done := done.push key
+    if let some n := u.name then
+      if n == "covered" || doc.palette.decorative.contains n then continue
+    let allLarge := uses.all fun v => (v.name, v.color) != key || v.large
+    let threshold := if allLarge then aaLargeText else aaText
+    let milli := contrastMilli u.color surface
+    if milli < threshold then
+      let label := match u.name with
+        | some n => s!"'{n}' ({hexOf u.color})"
+        | none => hexOf u.color
+      out := out.push {
+        severity := .warning
+        code := "W0315"
+        message := s!"text coloured {label} reads at {ratioString milli} " ++
+          s!"on the page ({hexOf surface}), below the {ratioString threshold} " ++
+          s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)"
+        help := some ("deliberate low contrast is declared, not defaulted: " ++
+          "\\palette[decorative]{ " ++
+          s!"{(u.name.getD "quiet")} = {hexOf u.color} " ++ "}") }
+  return out
+
 -- The built-in theme bundles, held to the same contract.
 
 /-- A theme bundle's palette, resolved the way `\theme` resolves it: entries

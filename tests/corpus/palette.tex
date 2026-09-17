@@ -11,6 +11,10 @@
   warn    = #B45309,
 }
 
+% A pale tint is deliberate here, so the block says so: decorative entries
+% are exempt from the contrast pairing warning.
+\palette[decorative]{ soft = primary!30 }
+
 \assert{ pages == 1 }
 
 \begin{document}
@@ -26,6 +30,8 @@ Ordinary text stays black. \textcolor{primary}{This clause is primary} and
 \begin{itemize}
   \item \textcolor{warn}{Warning-coloured item} with a black tail.
   \item Short hex works too: \textcolor{ink}{ink}.
+  \item A declared decorative mix: \textcolor{soft}{soft}, and an inline
+    pale one that earns the pairing warning: \textcolor{warn!40}{a tint}.
 \end{itemize}
 
 \end{document}
