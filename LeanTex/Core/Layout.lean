@@ -73,6 +73,9 @@ theorem bodyBottom_clears_footer (g : Geom) (ascent : Sp) (hm : 0 ≤ g.vmargin)
   rw [h]
   exact key g.pageH g.vmargin ascent lineskip hm
 
+/-- The height between the margins: what `0.3\textheight` sizes against. -/
+def Geom.textHeight (g : Geom) : Sp := g.pageH - 2 * g.vmargin
+
 /-- Resolve a document's `\page` declaration into layout geometry. One source
 of truth: layout reads geometry only from here. -/
 def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
@@ -212,6 +215,10 @@ inductive Item where
   | glue (g : Glue)
   | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Sp))
+  /-- An image: an unbreakable box `w` wide standing `h` above the baseline
+  with no depth. `store` indexes the `Image.Store`; `none` (or an entry that
+  did not load) is placed as a placeholder box of the same size. -/
+  | img (store : Option Nat) (w : Sp) (h : Sp)
   deriving Repr, Inhabited
 
 def forcedCost : Int := -10000
@@ -227,6 +234,10 @@ inductive Seg where
   /-- A horizontal rule, `w` wide and `thickness` thick, on the baseline plus
   `raise`. The heading rule of a designed section, filling its line. -/
   | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
+  /-- An image box: its bottom on the baseline, `h` up from there. `store`
+  indexes the `Image.Store` the backends were given; an entry that did not
+  load renders as an outlined placeholder of the same size. -/
+  | image (store : Option Nat) (w : Sp) (h : Sp)
   deriving Repr, Inhabited
 
 structure LineOut where
@@ -288,6 +299,8 @@ private inductive Tk where
   | space (style : TextStyle)
   | fill
   | brk (extra : SymGlue)
+  /-- An image reference, resolved against the store when items are built. -/
+  | img (src : String) (spec : Image.SizeSpec)
   deriving Repr
 
 private structure FlattenSt where
@@ -373,6 +386,7 @@ private def flattenList (st : FlattenSt) (sty : TextStyle) (xs : List Inline) : 
 private def flattenOne (st : FlattenSt) (sty : TextStyle) (x : Inline) : FlattenSt :=
   match x with
   | .text s => pushText st sty s
+  | .image src spec _ => { st with toks := st.toks.push (.img src spec) }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra) }
   | .fill => { st with toks := st.toks.push .fill }
   | .math _ src =>
@@ -658,7 +672,8 @@ use for it, and putting it in `Item` would make every pattern carry a field
 only the page builder reads. -/
 private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
-    (cache : Std.HashMap String (List Nat)) :
+    (cache : Std.HashMap String (List Nat)) (imgs : Image.Store := {})
+    (textW : Sp := 0) (textH : Sp := 0) :
     Array Item × Array Diag × Std.HashMap String (List Nat) ×
       Std.HashMap Nat Sp := Id.run do
   let st := flatten {} baseStyle xs
@@ -685,6 +700,17 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     | .fill =>
       -- Stretchable but not a legal breakpoint on its own.
       items := items.push (.glue { fil := true })
+    | .img src spec =>
+      -- The request resolves against the store the driver filled. An entry
+      -- that did not load (the driver has said why) keeps the requested
+      -- size around a default 1 in square, so the document still compiles
+      -- and the placeholder shows where the figure would stand.
+      let idx? := imgs.find? src
+      let (iW, iH) := match idx?.bind fun k => (imgs.get? k).bind (·.info) with
+        | some inf => (inf.width, inf.height)
+        | none => (Dim.inch 1, Dim.inch 1)
+      let (w, h) := Image.resolveSize spec iW iH textW textH
+      items := items.push (.img idx? (max 0 w) (max 0 h))
     | .brk extra =>
       items := items.push (.glue { fil := true, parfill := true })
       let sp := extra.width.resolve size xHeight
@@ -735,6 +761,7 @@ def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   | some (.glue _) =>
     match items[j-1]? with
     | some (.box _ _ _ _ _ _ _) => j > 0
+    | some (.img _ _ _) => j > 0
     | _ => false
   | some (.pen _ cost _ _ _ _) => cost < 10000
   | _ => false
@@ -759,6 +786,7 @@ def measure (items : Array Item) (a j : Nat) : Measure := Id.run do
   for k in [a:j] do
     match items[k]! with
     | .box w _ _ _ _ _ _ => m := { m with natural := m.natural + w }
+    | .img _ w _ => m := { m with natural := m.natural + w }
     | .glue g => m := { m with
         natural := m.natural + g.width
         stretch := m.stretch + g.stretch
@@ -829,6 +857,7 @@ def kpSums (items : Array Item) : KpSums := Id.run do
   for k in [0:n] do
     let (dw, dst, dsh, dfil) : Sp × Sp × Sp × Nat := match items[k]! with
       | .box w _ _ _ _ _ _ => (w, 0, 0, 0)
+      | .img _ w _ => (w, 0, 0, 0)
       | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0)
       | .pen _ _ _ _ _ _ => (0, 0, 0, 0)
     pw := pw.push (pw[k]! + dw)
@@ -960,6 +989,9 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
       -- advances would silently set it to zero.
       segs := segs.push
         (.run fontIdx color link w (glyphs.map fun (g, c, _) => (g, c)) size underline)
+      width := width + w
+    | .img idx w h =>
+      segs := segs.push (.image idx w h)
       width := width + w
     | .glue g =>
       let setW : Sp :=
@@ -1138,6 +1170,10 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
       let sz := if sz == 0 then nominal else sz
       (max acc.1 sz, max acc.2.1 (scaledAt sz font font.capHeight.toNat),
        max acc.2.2 (scaledAt sz font (-font.descent).toNat))
+    -- An image stands `h` above the baseline with no depth: it raises the
+    -- line's height, never its nominal size, so the leading after it is
+    -- decided by the text that follows, as TeX decides it.
+    | .image _ _ h => (acc.1, max acc.2.1 h, acc.2.2)
     | _ => acc) (nominal, b.capHeight * nominal / b.geom.fontSize,
                  b.descent * nominal / b.geom.fontSize)
   let bottom := b.geom.bodyBottom
@@ -1275,6 +1311,9 @@ private structure Acc where
   owed : Array Glue := #[]
   ops : Array Op := #[]
   hyphCache : Std.HashMap String (List Nat) := {}
+  /-- The document's loaded images, from the driver: layout only measures
+  and places them; the bytes ride to the backends. -/
+  imgs : Image.Store := {}
 
 /-- A declared length with its rubber: `1.8ex plus 0.8ex minus 0.4ex` keeps
 all three parts, so a page can take up the slack the author allowed. -/
@@ -1341,7 +1380,8 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
   let baseStyle := if baseStyle.color == Ir.Color.black then
       { baseStyle with color := a.fg } else baseStyle
   let (items, ds, cache, extras) :=
-    itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache
+    itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache a.imgs
+      a.geom.textWidth a.geom.textHeight
   let items := if a.geom.justify then items else raggedItems items
   -- A marker is content: set as a line of its own, unjustified, so it can
   -- carry any style the document gave it. Its diagnostics ride with the
@@ -1350,6 +1390,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     | some m =>
       let (mi, mds, cache, _) :=
         itemsOfInlines pats size a.xHeight fs { color := a.fg } m cache
+          a.imgs a.geom.textWidth a.geom.textHeight
       let (segs, w, _) := setLine mi (lineStart mi 0) (mi.size - 1) a.geom.textWidth false
       (some (segs, w), ds ++ mds, cache)
     | none => (none, ds, cache)
@@ -1731,6 +1772,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     match seg with
     | .gap w => x := x + w
     | .rule w _ _ _ => x := x + w
+    | .image _ w _ => x := x + w
     | .run fontIdx _ _ w glyphs size _ =>
       let font := fs.get fontIdx
       let sz := if size == 0 then lineSize else size
@@ -1762,6 +1804,9 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
       out := out.push (.gap w)
       x := x + w
     | .rule w _ _ _ =>
+      out := out.push (.gap w)
+      x := x + w
+    | .image _ w _ =>
       out := out.push (.gap w)
       x := x + w
     | .run fontIdx color _ w _ size underline =>
@@ -1885,7 +1930,8 @@ private structure ColSave where
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. -/
-def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc) :
+def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
+    (imgs : Image.Store := {}) :
     Out := Id.run do
   -- The geometry decides whether patterns apply at all: a card never
   -- hyphenates, whoever loaded the patterns.
@@ -1927,7 +1973,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
                       chromeL := if footAllowed then doc.chrome.footerLeft else none
                       chromeR := if footAllowed then doc.chrome.footerRight else none
                       footAllowed := footAllowed
-                      fg := (doc.palette.find? "fg").getD Ir.Color.black }
+                      fg := (doc.palette.find? "fg").getD Ir.Color.black
+                      imgs := imgs }
   -- One handout page per overlay step, driven here at the top level: a
   -- multi-step frame collects once per step with pending content dimmed
   -- (`Ir.dimBlocks`), under ONE `framesSeen` — the furniture belongs to the
@@ -2108,7 +2155,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       Option LineOut × Array Diag × _ :=
     let sub := substPage n total content
     let (items, ds, cache, _) :=
-      itemsOfInlines pats size xHeight fs baseStyle sub cache
+      itemsOfInlines pats size xHeight fs baseStyle sub cache imgs
+        geom.textWidth geom.textHeight
     let target := geom.textWidth
     let breaks := kp items target
     match breaks[0]? with
@@ -2124,6 +2172,23 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let mut out := pages
   let mut diags := b.diags
   let mut cache := acc.hyphCache
+  -- The deck logo: one line, laid out once — it names no page number — and
+  -- placed at the lower-right corner of every page carrying running
+  -- content, its right edge on the margin and its box standing on the
+  -- bottom margin line.
+  let mut logoLine : Option LineOut := none
+  if let some content := doc.logo then
+    let (items, ds, c, _) :=
+      itemsOfInlines pats geom.fontSize xHeight fs {} content cache imgs
+        geom.textWidth geom.textHeight
+    cache := c
+    diags := diags ++ ds
+    let breaks := kp items geom.textWidth
+    if let some brk := breaks[0]? then
+      let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
+      logoLine := some { x := geom.pageW - geom.hmargin - w
+                         y := geom.pageH - geom.vmargin
+                         size := geom.fontSize, segs := segs, setWidth := w }
   for i in [0:out.size] do
     let mut lines := out[i]!.lines
     -- Pages before `runningFrom` carry no furniture: an opening page reads
@@ -2147,6 +2212,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       diags := diags ++ ds
       cache := c
       if let some l := l? then lines := lines.push l
+    if let some l := logoLine then lines := lines.push l
     out := out.set! i { out[i]! with lines := lines }
   -- One report per problem: the same missing glyph or overfull shape in
   -- thirty code blocks is one thing to fix, not thirty lines of console.

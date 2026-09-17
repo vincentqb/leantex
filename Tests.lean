@@ -49,7 +49,7 @@ def goldenNames : List String :=
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
    "chrome", "lists", "lists-styled", "lists-deck",
-   "trio-page", "trio-deck", "trio-card", "valign"]
+   "trio-page", "trio-deck", "trio-card", "valign", "images"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -763,7 +763,8 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat def skipped through its body"
     (errCodes (pre "\\makeatletter\\def\\verbatim@font{\\footnotesize\\ttfamily}\\makeatother") == [])
   t "compat newenvironment defines; only its beamer-config body warns"
-    (warnCodes (pre "\\newenvironment{wrap}[1]{\\logo{#1}}{\\logo{}}") == ["W0104"])
+    (warnCodes (pre "\\newenvironment{wrap}[1]{\\titlegraphic{#1}}{\\titlegraphic{}}") ==
+      ["W0104"])
   -- Overlay specifications elaborate to steps; the content stays.
   t "uncover wraps its content in a step"
     ((elabStr "a \\uncover<2>{shown} b").1.body ==
@@ -3950,7 +3951,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     out.pages.any fun p => p.lines.any fun l =>
       l.segs.any fun s => match s with
         | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '-')
-        | .gap _ | .rule .. => false
+        | .gap _ | .rule .. | .image .. => false
   let narrowPage := "\\page{ width = 90pt, height = 400pt, margin = 10pt }\n"
   let word := "incomprehensibility incomprehensibility"
   t "an article at this measure does hyphenate"
@@ -4045,6 +4046,275 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (!(warnCodes (card "" "\\textcolor{washed}{faint}"
       "\\palette[decorative]{ washed = #DDDDDD }\n")).contains "W0315")
 
+/-- Images: the decoders' verdicts over synthetic bytes and the shipped
+fixtures, the sizing contract on placed pages, the placeholder path, the PDF
+embedding, and the HTML emit. Decoder totality over truncations and random
+bytes is fuzzed deeper in `scripts/img-fuzz.lean` (an oracle, not a
+theorem). -/
+def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  -- Synthetic PNGs, byte by byte. The decoder reads structure, not CRCs or
+  -- pixel data, so the CRC slots are zero and the IDAT payload arbitrary.
+  let be32 (n : Nat) : List UInt8 :=
+    [UInt8.ofNat (n / 16777216), UInt8.ofNat (n / 65536 % 256),
+     UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]
+  let chunk (tag : String) (data : List UInt8) : List UInt8 :=
+    be32 data.length ++ (tag.toList.map fun c => UInt8.ofNat c.toNat) ++ data ++
+      [0, 0, 0, 0]
+  let ihdr (w h bd ct interlace : Nat) : List UInt8 :=
+    be32 w ++ be32 h ++ [UInt8.ofNat bd, UInt8.ofNat ct, 0, 0, UInt8.ofNat interlace]
+  let pngSig : List UInt8 := [137, 80, 78, 71, 13, 10, 26, 10]
+  let mkPng (chunks : List UInt8) : ByteArray := bytes (pngSig ++ chunks)
+  let plain := mkPng (chunk "IHDR" (ihdr 64 40 8 2 0) ++ chunk "IDAT" [1, 2, 3] ++
+    chunk "IEND" [])
+  match Image.decodePng plain with
+  | .error e => failures ref s!"png decode: {e}"
+  | .ok inf =>
+    t "png dimensions" (inf.pxW == 64 && inf.pxH == 40)
+    t "png default density is one pixel per point"
+      (inf.dpiX == 72 && inf.width == Dim.pt 64 && inf.height == Dim.pt 40)
+    t "png space and depth" (inf.space == .rgb && inf.bitDepth == 8)
+    t "png idat survives" (inf.data == bytes [1, 2, 3])
+  -- pHYs at 5906 pixels per metre is 150 dpi to the spec's own rounding.
+  let physed := mkPng (chunk "IHDR" (ihdr 64 40 8 2 0) ++
+    chunk "pHYs" (be32 5906 ++ be32 5906 ++ [1]) ++ chunk "IDAT" [0] ++ chunk "IEND" [])
+  t "png pHYs density read"
+    (match Image.decodePng physed with
+     | .ok inf => inf.dpiX == 150 && inf.width == Dim.pt 64 * 72 / 150
+     | .error _ => false)
+  -- Refusals, each with its reason: alpha, interlace, palette-less indexed.
+  t "png alpha refused"
+    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 6 0) ++
+      chunk "IDAT" [0] ++ chunk "IEND" [])) with
+     | .error e => (e.splitOn "alpha").length == 2
+     | .ok _ => false)
+  t "png interlace refused"
+    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 2 1) ++
+      chunk "IDAT" [0] ++ chunk "IEND" [])) with
+     | .error e => (e.splitOn "interlaced").length == 2
+     | .ok _ => false)
+  t "png indexed without PLTE refused"
+    ((Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 3 0) ++
+      chunk "IDAT" [0] ++ chunk "IEND" []))).isOk == false)
+  t "png indexed with PLTE carries the palette"
+    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 3 0) ++
+      chunk "PLTE" [0, 0, 0, 255, 255, 255] ++ chunk "IDAT" [0] ++ chunk "IEND" [])) with
+     | .ok inf => inf.space == .indexed && inf.palette.size == 6
+     | .error _ => false)
+  t "png zero size refused"
+    ((Image.decodePng (mkPng (chunk "IHDR" (ihdr 0 8 8 2 0) ++
+      chunk "IDAT" [0] ++ chunk "IEND" []))).isOk == false)
+  t "png lying chunk length refused"
+    ((Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 2 0) ++
+      be32 99999 ++ ("IDAT".toList.map fun c => UInt8.ofNat c.toNat) ++ [0]))).isOk
+      == false)
+  -- A synthetic JPEG: SOI, JFIF APP0 declaring 144 dpi, SOF0 10×20 in three
+  -- components, SOS. The scan data never has to exist for the header walk.
+  let jfif (unit dx dy : Nat) : List UInt8 :=
+    [0xFF, 0xE0, 0, 16, 0x4A, 0x46, 0x49, 0x46, 0, 1, 1, UInt8.ofNat unit,
+     UInt8.ofNat (dx / 256), UInt8.ofNat (dx % 256),
+     UInt8.ofNat (dy / 256), UInt8.ofNat (dy % 256), 0, 0]
+  let sof0 (w h ncomp : Nat) : List UInt8 :=
+    [0xFF, 0xC0, 0, UInt8.ofNat (8 + 3 * ncomp), 8,
+     UInt8.ofNat (h / 256), UInt8.ofNat (h % 256),
+     UInt8.ofNat (w / 256), UInt8.ofNat (w % 256), UInt8.ofNat ncomp] ++
+     (List.range ncomp).flatMap fun k => [UInt8.ofNat (k + 1), 0x11, 0]
+  let jpg := bytes ([0xFF, 0xD8] ++ jfif 1 144 144 ++ sof0 10 20 3 ++ [0xFF, 0xDA])
+  match Image.decodeJpeg jpg with
+  | .error e => failures ref s!"jpeg decode: {e}"
+  | .ok inf =>
+    t "jpeg dimensions" (inf.pxW == 10 && inf.pxH == 20)
+    t "jpeg jfif density read" (inf.dpiX == 144 && inf.width == Dim.pt 10 * 72 / 144)
+    t "jpeg embeds whole" (inf.data.size == jpg.size)
+  t "jpeg cmyk refused"
+    (match Image.decodeJpeg (bytes ([0xFF, 0xD8] ++ sof0 4 4 4 ++ [0xFF, 0xDA])) with
+     | .error e => (e.splitOn "CMYK").length == 2
+     | .ok _ => false)
+  t "jpeg aspect-only density keeps the default"
+    (match Image.decodeJpeg (bytes ([0xFF, 0xD8] ++ jfif 0 1 1 ++ sof0 4 4 1 ++
+      [0xFF, 0xDA])) with
+     | .ok inf => inf.dpiX == 72 && inf.space == .gray
+     | .error _ => false)
+  t "decode rejects foreign bytes" ((Image.decode (bytes [0, 1, 2, 3])).isOk == false)
+  t "decode rejects empty" ((Image.decode (bytes [])).isOk == false)
+
+  -- The shipped fixtures: what `lake test` sees on every host.
+  let pngData ← IO.FS.readBinFile "tests/corpus/rects.png"
+  let jpgData ← IO.FS.readBinFile "tests/corpus/rects.jpg"
+  let pngInfo := Image.decode pngData
+  let jpgInfo := Image.decode jpgData
+  t "shipped png decodes 64x40 rgb"
+    (match pngInfo with
+     | .ok inf => inf.format == .png && inf.pxW == 64 && inf.pxH == 40 &&
+        inf.space == .rgb && inf.width == Dim.pt 64
+     | .error _ => false)
+  t "shipped jpeg decodes 64x40"
+    (match jpgInfo with
+     | .ok inf => inf.format == .jpeg && inf.pxW == 64 && inf.pxH == 40 &&
+        inf.width == Dim.pt 64
+     | .error _ => false)
+  -- Totality over truncations of both, as for fonts: reaching the count is
+  -- the property — a panic would take the run down.
+  t "png decode total over truncations"
+    (((List.range 64).map fun k =>
+      (Image.decode (pngData.extract 0 (pngData.size * k / 64))).isOk).length == 64)
+  t "jpeg decode total over truncations"
+    (((List.range 64).map fun k =>
+      (Image.decode (jpgData.extract 0 (jpgData.size * k / 64))).isOk).length == 64)
+
+  let store : Image.Store := { entries := #[
+    { src := "rects.png", info := pngInfo.toOption },
+    { src := "rects.jpg", info := jpgInfo.toOption }] }
+  let geom : Layout.Geom := {}
+  let imageSegs (out : Layout.Out) : Array (Option Nat × Dim.Sp × Dim.Sp) := Id.run do
+    let mut acc : Array (Option Nat × Dim.Sp × Dim.Sp) := #[]
+    for p in out.pages do
+      for l in p.lines do
+        for s in l.segs do
+          if let .image idx w h := s then acc := acc.push (idx, w, h)
+    return acc
+  let layoutOf (src : String) : Layout.Out :=
+    let (doc, _) := Elab.run "t" src
+    Layout.run geom oneFace none doc store
+
+  -- Intrinsic: no keys, the box is the file's physical size.
+  let outIntrinsic := layoutOf "\\includegraphics{rects.png}"
+  t "layout intrinsic size"
+    (imageSegs outIntrinsic == #[(some 0, Dim.pt 64, Dim.pt 40)])
+  -- `width = 0.8\textwidth`: the spelling every deck sizes a figure with.
+  let outTw := layoutOf "\\includegraphics[width=0.8\\textwidth]{rects.png}"
+  let expectW := geom.textWidth * 800 / 1000
+  t "layout width fraction of the measure"
+    (imageSegs outTw == #[(some 0, expectW, expectW * Dim.pt 40 / Dim.pt 64)])
+  -- Both dimensions declared win exactly.
+  let outBoth := layoutOf "\\includegraphics[width=32pt, height=40pt]{rects.png}"
+  t "layout declared size wins"
+    (imageSegs outBoth == #[(some 0, Dim.pt 32, Dim.pt 40)])
+  -- keepaspectratio fits inside the declared box: width binds (the image is
+  -- wider than tall), the height follows the intrinsic ratio.
+  let outKeep :=
+    layoutOf "\\includegraphics[width=32pt, height=32pt, keepaspectratio]{rects.jpg}"
+  t "layout keepaspect fits the box"
+    (imageSegs outKeep == #[(some 1, Dim.pt 32, Dim.pt 32 * 40 / 64)])
+  -- A source the store has no entry for is a placeholder box: the document
+  -- still compiles, at the requested size.
+  let outMissing := layoutOf "\\includegraphics[width=50pt]{missing.png}"
+  t "layout missing image keeps requested width"
+    (imageSegs outMissing == #[(none, Dim.pt 50, Dim.pt 50)] &&
+     outMissing.pages.size == 1)
+  t "layout missing image without a size is an inch square"
+    (imageSegs (layoutOf "\\includegraphics{missing.png}") ==
+      #[(none, Dim.inch 1, Dim.inch 1)])
+
+  -- The figure environment: a centred block, the caption a paragraph under
+  -- the content and the alt of the image it captions.
+  let (figDoc, figDiags) := Elab.run "t"
+    "\\begin{figure}[t]\\centering\\includegraphics{rects.png}\\caption{A mark}\\end{figure}"
+  t "figure elaborates clean" (figDiags.isEmpty)
+  t "figure reduces to a centred block with the caption"
+    (match figDoc.body.toList with
+     | [.center inner] =>
+       match inner.toList with
+       | [.para xs, .para cap] =>
+         (xs.any fun x => match x with
+           | .image "rects.png" _ alt => alt == "A mark"
+           | _ => false) &&
+         Ir.plainText cap == "A mark"
+       | _ => false
+     | _ => false)
+  t "figure image reaches the page"
+    ((imageSegs (Layout.run geom oneFace none figDoc store)).size == 1)
+  -- An image in a slide: the frame's page carries it.
+  let (slideDoc, _) := Elab.run "t"
+    "\\documentclass{slides}\\begin{document}\\begin{frame}{T}\\includegraphics{rects.png}\\end{frame}\\end{document}"
+  let slideGeom := Layout.Geom.ofPage slideDoc.page
+  t "slide image reaches the frame page"
+    ((imageSegs (Layout.run slideGeom oneFace none slideDoc store)).size == 1)
+  -- The deck logo: same image node, placed at the lower-right corner of
+  -- every page, its right edge on the margin.
+  let (logoDoc, logoDiags) := Elab.run "t"
+    "\\documentclass{slides}\\logo{\\includegraphics[height=8pt]{rects.png}}\
+\\begin{document}\\begin{frame}{A}x\\end{frame}\\begin{frame}{B}y\\end{frame}\\end{document}"
+  t "logo declaration elaborates clean" (logoDiags.isEmpty)
+  let logoGeom := Layout.Geom.ofPage logoDoc.page
+  let logoOut := Layout.run logoGeom oneFace none logoDoc store
+  let logoW := Dim.pt 8 * Dim.pt 64 / Dim.pt 40
+  t "logo placed on every page at the right margin"
+    (logoOut.pages.size == 2 && logoOut.pages.all fun p =>
+      p.lines.any fun l =>
+        l.x + l.setWidth == logoGeom.pageW - logoGeom.hmargin &&
+        l.segs.any fun s => match s with
+          | .image _ w h => w == logoW && h == Dim.pt 8
+          | _ => false)
+
+  -- The PDF: an XObject per used image, painted by a cm+Do pair; the xref
+  -- theorem-test still holds with the new objects in the file.
+  let (pdfDoc, _) := Elab.run "t"
+    "\\includegraphics{rects.png} and \\includegraphics{rects.jpg}"
+  let pdfOut := Layout.run geom oneFace none pdfDoc store
+  let pdf := Pdf.write geom oneFace pdfOut.pages {} store
+  t "pdf embeds the png as flate with the predictor"
+    (bytesContain pdf "/Subtype /Image" && bytesContain pdf "/FlateDecode" &&
+     bytesContain pdf "/Predictor 15")
+  t "pdf embeds the jpeg as dct" (bytesContain pdf "/DCTDecode")
+  t "pdf paints both images" (bytesContain pdf "/Im1 Do" && bytesContain pdf "/Im2 Do")
+  t "pdf page resources name the xobjects" (bytesContain pdf "/XObject <<")
+  match checkXref pdf with
+  | .ok n => t "pdf xref valid with images" (n > 0)
+  | .error e => failures ref s!"pdf xref with images: {e}"
+  -- The raw IDAT bytes must reach the file unchanged: the stream is the
+  -- pass-through, not a re-encoding.
+  let containsBytes (hay needle : ByteArray) : Bool := Id.run do
+    if needle.size == 0 || hay.size < needle.size then return false
+    for i in [0:hay.size - needle.size + 1] do
+      let mut ok := true
+      for j in [0:needle.size] do
+        if hay[i + j]! != needle[j]! then
+          ok := false
+          break
+      if ok then return true
+    return false
+  t "pdf carries the png stream verbatim"
+    (match pngInfo with
+     | .ok inf => containsBytes pdf inf.data
+     | .error _ => false)
+  -- The placeholder: an outlined box, no image object, a valid file.
+  let missOut := Layout.run geom oneFace none
+    ((Elab.run "t" "\\includegraphics[width=50pt]{missing.png}").1) store
+  let missPdf := Pdf.write geom oneFace missOut.pages {} store
+  t "pdf placeholder draws an outline, embeds nothing"
+    (bytesContain missPdf "re S" && !(bytesContain missPdf "/Subtype /Image"))
+  match checkXref missPdf with
+  | .ok _ => pure ()
+  | .error e => failures ref s!"pdf xref with placeholder: {e}"
+
+  -- The HTML: an <img> through the typed tree, intrinsic pixel size as
+  -- attributes so the page never reflows, the caption as alt, the requested
+  -- fraction as a percentage.
+  let hcfg : HtmlDoc.Config := { imgs := store }
+  let (figHtml, _) := HtmlDoc.emit hcfg figDoc
+  t "html figure image with alt and intrinsic size"
+    ((figHtml.splitOn "<img src=\"rects.png\" alt=\"A mark\" width=\"64\" height=\"40\">").length == 2)
+  let (twDoc, _) := Elab.run "t" "\\includegraphics[width=0.8\\textwidth]{rects.png}"
+  let (twHtml, _) := HtmlDoc.emit hcfg twDoc
+  t "html width fraction becomes a percentage"
+    ((twHtml.splitOn "style=\"width: 80%; height: auto\"").length == 2)
+  let (missHtml, _) := HtmlDoc.emit hcfg
+    ((Elab.run "t" "\\includegraphics{missing.png}").1)
+  t "html missing image still emits the img with alt"
+    ((missHtml.splitOn "<img src=\"missing.png\"").length == 2)
+
+  -- The surface diagnostics: a length that does not parse, an option the
+  -- engine does not model.
+  t "includegraphics bad length is E0331"
+    (errCodes "\\includegraphics[width=banana]{x.png}" == ["E0331"])
+  t "includegraphics em length is E0331"
+    (errCodes "\\includegraphics[width=2em]{x.png}" == ["E0331"])
+  t "includegraphics unknown option warns W0110"
+    (warnCodes "\\includegraphics[angle=45]{x.png}" == ["W0110"])
+  t "includegraphics without a file group is E0304"
+    (errCodes "\\includegraphics[width=3cm]" == ["E0304"])
+
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pats := Hyphen.load
@@ -4130,7 +4400,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
           | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '-')
-          | .gap _ | .rule .. => false
+          | .gap _ | .rule .. | .image .. => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       -- Display type never hyphenates (Butterick, "Hyphenation"): the same
       -- word that hyphenates as body text must set unbroken as a heading,
@@ -4139,7 +4409,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
         (Layout.run narrow oneFace (some pats) doc).pages.any fun p =>
           p.lines.any fun l => l.segs.any fun s => match s with
             | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '-')
-            | .gap _ | .rule .. => false
+            | .gap _ | .rule .. | .image .. => false
       t "a heading never hyphenates"
         (!hyphens (Elab.run "t" "\\section{incomprehensibility}").1)
       t "a frame title never hyphenates"
@@ -4177,7 +4447,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
           | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '•')
-          | .gap _ | .rule .. => false
+          | .gap _ | .rule .. | .image .. => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
 
@@ -4218,6 +4488,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       scannerChecks ref
       rhythmChecks ref oneFace
       measureChecks ref oneFace
+      imageChecks ref oneFace
 
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"

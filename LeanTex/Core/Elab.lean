@@ -504,6 +504,25 @@ private def needsSep (acc : Array Inline) (sb : String) : Bool :=
     | _ => true
   else !sb.endsWith " "
 
+/-- One `\includegraphics` dimension: a factor of `\textwidth` (or its
+`\linewidth`/`\columnwidth` spellings) or `\textheight`, or an absolute
+length. Font-relative units are refused — an image has no font size. -/
+private def imageLen (src : String) : Option Image.Len := Id.run do
+  let s := src.trimAscii.toString
+  let factor (f : String) : Option (Int × Nat) :=
+    let f := f.trimAscii.toString
+    if f.isEmpty then some (1, 1) else Decl.parseDecimal f
+  for suffix in ["\\textwidth", "\\linewidth", "\\columnwidth"] do
+    if s.endsWith suffix then
+      return (factor ((s.dropEnd suffix.length).toString)).map
+        fun (m, sc) => { tw := m * 1000 / sc }
+  if s.endsWith "\\textheight" then
+    return (factor ((s.dropEnd "\\textheight".length).toString)).map
+      fun (m, sc) => { th := m * 1000 / sc }
+  match Decl.parseLength s with
+  | some l => return if l.em == 0 && l.ex == 0 then some { sp := l.sp } else none
+  | none => return none
+
 mutual
 
 /-- Bind declared parameters from the call site — a user command's, or a
@@ -774,6 +793,55 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             acc := acc.push (.link url #[.text url])
           | _, _ =>
             diag ctx "E0304" s!"'\\{name}' needs a URL group, optionally followed by text" pos
+        else if name == "includegraphics" then
+          -- graphicx's command, native. The keys that size figures in real
+          -- documents are modelled — width, height, scale, keepaspectratio —
+          -- and anything else (rotation included) is named and skipped: a
+          -- silently dropped key would misplace the figure without a word.
+          let mut spec : Image.SizeSpec := {}
+          let mut j := skipSpaces raws i
+          if let some (.sym '[' _) := raws[j]? then
+            let mut optSrc : Array Raw := #[]
+            let mut k := j + 1
+            for _ in [k:raws.size + 1] do
+              match raws[k]? with
+              | some (.sym ']' _) => k := k + 1; break
+              | some r' => optSrc := optSrc.push r'; k := k + 1
+              | none => break
+            j := skipSpaces raws k
+            for e in Decl.splitEntries (rawSrc optSrc) do
+              match Decl.splitEntry e with
+              | some ("width", v) =>
+                match imageLen v with
+                | some l => spec := { spec with width := some l }
+                | none =>
+                  diag ctx "E0331" s!"cannot read a length from '{v}'" pos
+                    (help := "image sizes look like 3cm or 0.8\\textwidth")
+              | some ("height", v) =>
+                match imageLen v with
+                | some l => spec := { spec with height := some l }
+                | none =>
+                  diag ctx "E0331" s!"cannot read a length from '{v}'" pos
+                    (help := "image sizes look like 3cm or 0.3\\textheight")
+              | some ("scale", v) =>
+                match Decl.parseDecimal v with
+                | some (m, sc) => spec := { spec with scaleNum := m, scaleDen := sc }
+                | none => diag ctx "E0321" s!"'scale' needs a number, got {v.quote}" pos
+              | _ =>
+                if e.trimAscii.toString == "keepaspectratio" then
+                  spec := { spec with keepAspect := true }
+                else
+                  warnOnce ctx ("imgopt:" ++ e) "W0110"
+                    s!"unsupported \\includegraphics option '{e}'; ignored" pos
+                    (help := "modelled keys: width, height, scale, keepaspectratio")
+          match raws[j]? with
+          | some (.group pathRaw _) =>
+            i := j + 1
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (.image (argText ctx pathRaw) spec "")
+          | _ =>
+            diag ctx "E0304" "'\\includegraphics' needs a {file} group" pos
         else if name == "pagenumber" then
           acc := flushText acc sb
           sb := ""
@@ -992,7 +1060,8 @@ end
 
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String :=
-  ["itemize", "enumerate", "center", "document", "frame", "columns"]
+  ["itemize", "enumerate", "center", "document", "frame", "columns", "figure",
+   "figure*"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
@@ -1712,6 +1781,50 @@ specs are not modelled")
             blocks := blocks.push (.list (n == "enumerate") elabItems)
           else if n == "center" then
             blocks := blocks.push (.center (← elabBlocks ctx body))
+          else if n == "figure" || n == "figure*" then
+            -- A single-pass engine has nowhere for a float to float: the
+            -- figure becomes a centred block where it stands, `[placement]`
+            -- burned. Its caption is set under the content and becomes the
+            -- alt text of the images it captions; figure numbering is not
+            -- modelled yet (PLAN M8).
+            let mut k := 0
+            for _ in [0:body.size] do
+              match scanBracketArg body k pos with
+              | .took k' => k := k'
+              | .unclosed bpos =>
+                warnUnclosed ctx "'\\begin{figure}'" bpos
+                break
+              | .content => break
+            let mut rest : Array Raw := #[]
+            let mut caption : Array Inline := #[]
+            let mut j := k
+            for _ in [k:body.size] do
+              if h' : j < body.size then
+                match body[j] with
+                | .ctrl "caption" cpos =>
+                  j := j + 1
+                  let (j2, _, _) ← skipOptArg ctx "caption" body j cpos
+                  j := skipSpaces body j2
+                  match body[j]? with
+                  | some (.group t _) =>
+                    unless caption.isEmpty do
+                      diag ctx "W0311" "this '\\caption' replaces the figure's earlier caption"
+                        (some cpos) (help := "the last one wins; remove the other") .warning
+                    caption ← elabInlines ctx t
+                    j := j + 1
+                  | _ => diag ctx "E0304" "'\\caption' needs a {text} group" cpos
+                | .ctrl "centering" _ =>
+                  -- The figure centres already; the declaration is satisfied.
+                  j := j + 1
+                | r' =>
+                  rest := rest.push r'
+                  j := j + 1
+              else break
+            let mut inner ← elabBlocks ctx rest
+            unless caption.isEmpty do
+              inner := Ir.setAltBlocks (Ir.plainText caption) inner
+              inner := inner.push (.para caption)
+            blocks := blocks.push (.center inner)
           else if n == "columns" then
             -- `[T]`-and-friends alignment options are burned: columns are
             -- top-aligned (PLAN, M5). A column's width is its first group,
@@ -2299,6 +2412,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut tokens : Tokens := {}
   let mut head : Option (Array Inline) := none
   let mut foot : Option (Array Inline) := none
+  let mut logo : Option (Array Inline) := none
   let mut runningFrom : Nat := 1
   let mut styles : Styles := {}
   let mut chrome : Chrome := {}
@@ -2468,6 +2582,18 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               foot := some content
           | _ =>
             diag ctx "E0304" s!"'\\{name}' needs one group of inline content" pos
+        else if name == "logo" then
+          -- beamer's `\logo{...}`: one piece of inline content — normally an
+          -- image — placed at the lower-right corner of every page carrying
+          -- running content. The image inside is the same node
+          -- `\includegraphics` makes; only the placement is the deck's.
+          let j := skipSpaces preamble i
+          match preamble[j]? with
+          | some (.group body _) =>
+            i := j + 1
+            logo := some (← elabInlines ctx body)
+          | _ =>
+            diag ctx "E0304" "'\\logo' needs one group of inline content" pos
         else if name == "palette" then
           -- `\palette[decorative]{...}`: the block's entries are declared
           -- deliberately low-contrast and exempt from the pairing check. An
@@ -2672,6 +2798,11 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
         (sev := .warning)
       head := none
       foot := none
+    if logo.isSome then
+      diag ctx "W0317"
+        "a card carries no logo; the declaration is dropped" none
+        (sev := .warning)
+      logo := none
   else if !sawPage then
     -- An undeclared letter page takes Bringhurst's text block for a 10pt
     -- text face, 26 picas, not the word-processor inch: the default must
@@ -2732,6 +2863,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
     tokens := tokens
     head := head
     foot := foot
+    logo := logo
     runningFrom := runningFrom
     chrome := chrome
     styles := styles

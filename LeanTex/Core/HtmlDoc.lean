@@ -27,7 +27,9 @@ structure Config where
   A boundary, not a dependency: nothing is emitted unless asked for. -/
   mathBoundary : Option String := none
   styles : Styles := {}
-  deriving Repr
+  /-- The document's loaded images, from the driver: `<img>` carries the
+  intrinsic pixel size so the page never reflows while loading. -/
+  imgs : Image.Store := {}
 
 private def hex2 (v : UInt8) : String :=
   let d := "0123456789abcdef".toList
@@ -326,6 +328,45 @@ onto a class otherwise. The accumulator threads through the sibling walk:
 private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Array Node :=
   match x with
   | .text s => acc.push (Html.text s)
+  | .image src size alt =>
+    -- The typed tree and the escaper carry the attributes; the intrinsic
+    -- pixel size rides as width/height so the page never reflows while the
+    -- file loads, and the requested size becomes CSS. A fraction of the
+    -- text width is a percentage — HTML's measure is the container. A
+    -- `\textheight` fraction has no CSS analog and the intrinsic size
+    -- stands. `height: auto` (or width) keeps the browser on the intrinsic
+    -- ratio, the same invariant the PDF path proves.
+    let info? := (cfg.imgs.find? src).bind fun k => (cfg.imgs.get? k).bind (·.info)
+    let cssDim (l : Image.Len) : Option String :=
+      if l.tw != 0 && l.sp == 0 && l.th == 0 then
+        some (decMilli (l.tw * 100) ++ "%")
+      else if l.sp != 0 && l.tw == 0 && l.th == 0 then
+        some s!"{Dim.Sp.toPtString l.sp}pt"
+      else none
+    let wCss := size.width.bind cssDim
+    let hCss := size.height.bind cssDim
+    let style : Option String :=
+      match wCss, hCss with
+      | some w, some h =>
+        some (s!"width: {w}; height: {h}" ++
+          (if size.keepAspect then "; object-fit: contain" else ""))
+      | some w, none => some s!"width: {w}; height: auto"
+      | none, some h => some s!"height: {h}; width: auto"
+      | none, none =>
+        if size.width.isNone && size.height.isNone &&
+            (size.scaleNum != 1 || size.scaleDen != 1) then
+          info?.map fun inf =>
+            s!"width: {Dim.Sp.toPtString (inf.width * size.scaleNum / size.scaleDen)}pt; \
+height: auto"
+        else none
+    let attrs := #[("src", src), ("alt", alt)] ++
+      (match info? with
+       | some inf => #[("width", toString inf.pxW), ("height", toString inf.pxH)]
+       | none => #[]) ++
+      (match style with
+       | some st => #[("style", st)]
+       | none => #[])
+    acc.push (Html.elem "img" #[] attrs)
   | .math display src =>
     -- Until native MathML lands the source rides in a data attribute, so an
     -- optional client-side renderer can find it and nothing is faked.
@@ -561,6 +602,13 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
       code := "W0007"
       message := "running head/foot is paged-media furniture; omitted from HTML"
       help := some "put a masthead in the document body if it should appear in both"
+    }
+  if doc.logo.isSome then
+    diags := diags.push {
+      severity := .warning
+      code := "W0007"
+      message := "the \\logo is paged-media furniture; omitted from HTML"
+      help := some "put the image in the document body if it should appear in both"
     }
   let title := doc.info.title.getD "Untitled"
   let mut head : Array Node := #[

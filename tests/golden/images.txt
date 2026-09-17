@@ -1,0 +1,24 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section 1
+  text "Figures"
+para
+  text "An inline mark "
+  image "rects.png" height 8pt
+  text " sits in the line like a word."
+center
+  para
+    image "rects.png" width 800/1000tw
+center
+  para
+    image "rects.jpg" width 85.039pt height 85.039pt keepaspect alt "Three rectangles, fitted"
+  para
+    text "Three rectangles, fitted"
+para
+  text "Scaled to half: "
+  image "rects.png" scale 5/10
+  text ", and exactly sized: "
+  image "rects.png" width 32pt height 40pt
+  text "."
+-- diagnostics
+note[N0100] 6:1 \usepackage{graphicx} → nothing: the engine does this itself

@@ -58,7 +58,7 @@ def beamerConfig : List (String × Nat) :=
    ("addtobeamertemplate", 3),
    ("setbeamerfont", 2), ("setbeamercolor", 2),
    ("beamertemplatenavigationsymbolsempty", 0),
-   ("logo", 1), ("titlegraphic", 1)]
+   ("titlegraphic", 1)]
 
 /-- The native spelling a skipped beamer construct now has, named in its
 warning's help: a warning the author can act on beats a dead end. -/
@@ -710,13 +710,6 @@ where
     -- Its group stays in the stream: the URL renders as its own text.
     became "\\nolinkurl" "the URL as plain text" pos
     return some (#[], start)
-  | "includegraphics" =>
-    let (_, j) := takeOpt raws start
-    let (_, k) := takeGroups raws j 1
-    sayOnce "ctrl:includegraphics" .warning "W0107"
-      "'\\includegraphics' is not implemented yet; the image is not rendered" pos
-      (help := "asset embedding lands with M8; see PLAN.md")
-    return some (#[], k)
   | "multicolumn" =>
     -- `\multicolumn{n}{align}{text}`: spans are not laid out — tables
     -- degrade to rows and W0308 says so — but the cell's text is content

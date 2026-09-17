@@ -1,5 +1,6 @@
 import LeanTex.Core.Diag
 import LeanTex.Core.Dim
+import LeanTex.Core.Image
 
 namespace LeanTex.Core.Ir
 
@@ -345,6 +346,12 @@ inductive Inline where
   hides, so no step reflows the slide (PLAN M5). Zero metric impact — a
   pure grouping both backends may recolor or tag. -/
   | step (n : Nat) (last : Option Nat) (body : Array Inline)
+  /-- An external image (`\includegraphics`, and what a `figure` or a deck
+  logo reduces to): a box of raster content. `src` is the path as written —
+  the file itself is the driver's effect, surfaced through `imageRefs` and
+  fulfilled as an `Image.Store` — and `alt` is the accessible text (a
+  figure's caption), for the HTML backend. -/
+  | image (src : String) (size : Image.SizeSpec) (alt : String)
   deriving Repr, BEq, Inhabited
 
 /-- How a frame distributes its leftover vertical space: beamer's frame
@@ -535,6 +542,10 @@ structure Doc where
   out in the margin after the body, when the page count is known. -/
   head : Option (Array Inline) := none
   foot : Option (Array Inline) := none
+  /-- beamer's `\logo`: one piece of inline content — normally an image —
+  placed at the lower-right corner of every page carrying running content,
+  the way the head and foot are placed. -/
+  logo : Option (Array Inline) := none
   /-- First page that carries running content; `\thispagestyle{empty}` on the
   opening page is `2`. -/
   runningFrom : Nat := 1
@@ -588,6 +599,7 @@ def plainTextOne (x : Inline) : String :=
   | .underline body => plainTextList body.toList
   | .step _ _ body => plainTextList body.toList
   | .fill | .pageNumber | .pageCount => ""
+  | .image _ _ _ => ""
   | .linebreak _ => " "
 
 end
@@ -630,6 +642,20 @@ def dumpInline (ind : String) (x : Inline) : String :=
   | .fill => s!"{ind}fill\n"
   | .pageNumber => s!"{ind}pagenumber\n"
   | .pageCount => s!"{ind}pagecount\n"
+  | .image src size alt =>
+    let dim (label : String) (l : Image.Len) : String :=
+      let bits := (if l.sp != 0 then [s!"{l.sp.toPtString}pt"] else []) ++
+        (if l.tw != 0 then [s!"{l.tw}/1000tw"] else []) ++
+        (if l.th != 0 then [s!"{l.th}/1000th"] else [])
+      s!" {label} {if bits.isEmpty then "0" else String.intercalate "+" bits}"
+    let parts :=
+      (match size.width with | some l => dim "width" l | none => "") ++
+      (match size.height with | some l => dim "height" l | none => "") ++
+      (if size.scaleNum != 1 || size.scaleDen != 1 then
+        s!" scale {size.scaleNum}/{size.scaleDen}" else "") ++
+      (if size.keepAspect then " keepaspect" else "") ++
+      (if alt.isEmpty then "" else s!" alt {alt.quote}")
+    s!"{ind}image {src.quote}{parts}\n"
   | .linebreak extra =>
     if extra == ({} : SymGlue) then s!"{ind}linebreak\n"
     else s!"{ind}linebreak {dumpGlue extra}\n"
@@ -1011,6 +1037,10 @@ theorem shadeInline_text (dim : Color) (x : Inline) :
   | .step n last body =>
     rw [shadeInline]
     simp [plainTextOne, shadeInlines_text dim body.toList #[], plainTextList]
+  | .image _ _ _ =>
+    -- shading leaves an image node whole (raster content dims in the
+    -- backends' hands, not here), and its text census is empty either way
+    rfl
   | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _ =>
     rfl
 
@@ -1123,6 +1153,9 @@ theorem dimInline_text (dim : Color) (k : Nat) (x : Inline) :
         shadeInlines_text dim body.toList #[]]
     · simp [h, plainTextOne, dimInlineList_text dim k body.toList #[],
         plainTextList]
+  | .image _ _ _ =>
+    -- dimming leaves an image node whole; empty text census on both sides
+    rfl
   | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _ =>
     rfl
 
@@ -1202,6 +1235,118 @@ theorem dimBlocks_text (dim : Color) (k : Nat) (xs : Array Block) :
   simp [blocksText, dimBlocks, dimBlockList_text dim k xs.toList #[] "",
     blockTextList]
 
+-- Image walks: the request an image node states, and the caption an image
+-- inherits. Structural recursion through `List`, as the printers above.
+
+mutual
+
+/-- Every image source the inlines reference, in document order, `out`
+threading through so the walk is linear. -/
+def imageSrcsInlines (out : Array String) (xs : Array Inline) : Array String :=
+  imageSrcsInlineList out xs.toList
+
+def imageSrcsInlineList (out : Array String) : List Inline → Array String
+  | [] => out
+  | x :: rest => imageSrcsInlineList (imageSrcsInline out x) rest
+
+def imageSrcsInline (out : Array String) : Inline → Array String
+  | .image src _ _ => if out.contains src then out else out.push src
+  | .styled _ body => imageSrcsInlineList out body.toList
+  | .colored _ _ body => imageSrcsInlineList out body.toList
+  | .link _ body => imageSrcsInlineList out body.toList
+  | .underline body => imageSrcsInlineList out body.toList
+  | .step _ _ body => imageSrcsInlineList out body.toList
+  | _ => out
+
+end
+
+mutual
+
+def imageSrcsBlocks (out : Array String) (xs : Array Block) : Array String :=
+  imageSrcsBlockList out xs.toList
+
+def imageSrcsBlockList (out : Array String) : List Block → Array String
+  | [] => out
+  | b :: rest => imageSrcsBlockList (imageSrcsBlock out b) rest
+
+def imageSrcsBlock (out : Array String) : Block → Array String
+  | .para content => imageSrcsInlines out content
+  | .section _ _ title => imageSrcsInlines out title
+  | .list _ items => imageSrcsItems out items.toList
+  | .center body => imageSrcsBlockList out body.toList
+  | .spaced _ body => imageSrcsBlockList out body.toList
+  | .columns cols => imageSrcsColumns out cols.toList
+  | .step _ _ body => imageSrcsBlockList out body.toList
+  | .note body => imageSrcsBlockList out body.toList
+  | .verbatim _ _ => out
+  | .frame title _ _ body => imageSrcsBlockList (imageSrcsInlines out title) body.toList
+  | .framefoot content => imageSrcsInlines out content
+  | .rule _ _ _ => out
+
+def imageSrcsItems (out : Array String) : List (Array Block) → Array String
+  | [] => out
+  | item :: rest => imageSrcsItems (imageSrcsBlockList out item.toList) rest
+
+def imageSrcsColumns (out : Array String) : List (Option Nat × Array Block) → Array String
+  | [] => out
+  | (_, body) :: rest => imageSrcsColumns (imageSrcsBlockList out body.toList) rest
+
+end
+
+/-- Every image the document references, deduplicated, in document order:
+the request value the CLI driver fulfils by reading and decoding each file
+into the `Image.Store` layout and the backends consume. Files are effects,
+so the core never opens one — the same shape as fonts. -/
+def imageRefs (doc : Doc) : Array String := Id.run do
+  let mut out := imageSrcsBlocks #[] doc.body
+  if let some h := doc.head then out := imageSrcsInlines out h
+  if let some f := doc.foot then out := imageSrcsInlines out f
+  if let some l := doc.logo then out := imageSrcsInlines out l
+  for (_, st) in doc.styles.entries do
+    if let some tpl := st.font then out := imageSrcsInlines out tpl
+    if let some m := st.marker then out := imageSrcsInlines out m
+  return out
+
+mutual
+
+/-- Give every image that has no `alt` yet this text: how a `figure`'s
+caption becomes the accessible name of the image it captions. -/
+def setAltInlines (alt : String) (xs : Array Inline) : Array Inline :=
+  setAltInlineList alt #[] xs.toList
+
+def setAltInlineList (alt : String) (out : Array Inline) : List Inline → Array Inline
+  | [] => out
+  | x :: rest => setAltInlineList alt (out.push (setAltInline alt x)) rest
+
+def setAltInline (alt : String) : Inline → Inline
+  | .image src size old => .image src size (if old.isEmpty then alt else old)
+  | .styled st body => .styled st (setAltInlineList alt #[] body.toList)
+  | .colored c n body => .colored c n (setAltInlineList alt #[] body.toList)
+  | .link u body => .link u (setAltInlineList alt #[] body.toList)
+  | .underline body => .underline (setAltInlineList alt #[] body.toList)
+  | .step n l body => .step n l (setAltInlineList alt #[] body.toList)
+  | other => other
+
+end
+
+mutual
+
+def setAltBlocks (alt : String) (xs : Array Block) : Array Block :=
+  setAltBlockList alt #[] xs.toList
+
+def setAltBlockList (alt : String) (out : Array Block) : List Block → Array Block
+  | [] => out
+  | b :: rest => setAltBlockList alt (out.push (setAltBlock alt b)) rest
+
+def setAltBlock (alt : String) : Block → Block
+  | .para content => .para (setAltInlines alt content)
+  | .center body => .center (setAltBlockList alt #[] body.toList)
+  | .spaced g body => .spaced g (setAltBlockList alt #[] body.toList)
+  | .step n l body => .step n l (setAltBlockList alt #[] body.toList)
+  | other => other
+
+end
+
 def dumpDiag (d : Diag) : String :=
   let where' := match d.span with
     | some sp => s!"{sp.pos.line}:{sp.pos.col}"
@@ -1266,7 +1411,10 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
         | some v => s!" {label} {v.label}"
         | none => ""
       s!"chrome footer{slot "left" doc.chrome.footerLeft}{slot "right" doc.chrome.footerRight}\n"
-     else "")
+     else "") ++
+    (match doc.logo with
+     | some xs => "logo\n" ++ dumpInlines "  " xs
+     | none => "")
   let infoLines :=
     metaLine "title" doc.info.title ++ metaLine "author" doc.info.author ++
     metaLine "subject" doc.info.subject ++ metaLine "keywords" doc.info.keywords

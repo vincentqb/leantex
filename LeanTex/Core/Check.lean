@@ -43,6 +43,21 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
       for seg in l.segs do
         match seg with
         | .gap w => x := x + w
+        | .image _ w h =>
+          -- The image box is ink: its full rectangle must respect the area.
+          if geom.hmargin - x > worst then
+            worst := geom.hmargin - x
+            worstEdge := "left"
+          if x + w - right > worst then
+            worst := x + w - right
+            worstEdge := "right"
+          if geom.vmargin - (l.y - h) > worst then
+            worst := geom.vmargin - (l.y - h)
+            worstEdge := "top"
+          if l.y - bottom > worst then
+            worst := l.y - bottom
+            worstEdge := "bottom"
+          x := x + w
         | .rule w thickness raise _ =>
           if geom.hmargin - x > worst then
             worst := geom.hmargin - x

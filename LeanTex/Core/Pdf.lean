@@ -72,8 +72,8 @@ sixteen bits (macOS Preview drops the whole array past ±32767) never sees
 one that large. A rule-only line writes nothing here. A `TJ` array cannot
 switch fonts or colours mid-array, so a run in a different face or colour
 closes it, emits `Tf`/`rg`, and reopens it. -/
-private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
-    String := Id.run do
+private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
+    (page : PageOut) : String := Id.run do
   let mut s := ""
   -- Fills paint first, in order: the page background, then any bars, then
   -- the text over them.
@@ -85,8 +85,10 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
   let mut curSize : Sp := -1
   let mut curColor : Ir.Color := Ir.Color.black
   -- Rules are path operators, which may not appear inside BT/ET, so they are
-  -- gathered here and drawn after the text.
+  -- gathered here and drawn after the text. Images gather with them: `Do`
+  -- is likewise not a text-object operator.
   let mut rules : Array (Sp × Sp × Sp × Sp × Ir.Color) := #[]
+  let mut images : Array (Sp × Sp × Sp × Sp × Option Nat) := #[]
   for l in page.lines do
     -- Bleed shifts everything: layout works in trim coordinates and the
     -- trim box sits `bleed` in from the medium's corner.
@@ -100,6 +102,11 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
       match seg with
       | .rule w thickness raise color =>
         rules := rules.push (x, ypdf + raise, w, thickness, color)
+        x := x + w
+      | .image idx w h =>
+        -- Bottom on the baseline, `h` up: the `cm` maps the XObject's unit
+        -- square onto exactly the box layout measured.
+        images := images.push (x, ypdf, w, h, idx.bind fun k => imgMap[k]?.getD none)
         x := x + w
       | .gap w =>
         x := x + w
@@ -152,6 +159,17 @@ private def contentStream (geom : Geom) (remap : Array Nat) (page : PageOut) :
     if inArray then
       s := s ++ "] TJ\n"
   s := s ++ "ET"
+  for (ix, iy, iw, ih, res?) in images do
+    match res? with
+    | some n =>
+      s := s ++ s!"\nq {iw.toPtString} 0 0 {ih.toPtString} {ix.toPtString} \
+{iy.toPtString} cm /Im{n + 1} Do Q"
+    | none =>
+      -- The placeholder for an image that did not load: an outlined box of
+      -- the requested size, so the failure is visible where the figure
+      -- would stand and the diagnostic already said why.
+      s := s ++ s!"\nq 0.62 0.62 0.66 RG 0.75 w {ix.toPtString} {iy.toPtString} \
+{iw.toPtString} {ih.toPtString} re S Q"
   for (rx, ry, rw, rh, color) in rules do
     s := s ++ s!"\nq {color.pdfComponents} rg {rx.toPtString} {ry.toPtString} \
 {rw.toPtString} {rh.toPtString} re f Q"
@@ -185,6 +203,7 @@ private def linkRects (geom : Geom) (page : PageOut) :
         x := x + w
       | .gap w => x := x + w
       | .rule w _ _ _ => x := x + w
+      | .image _ w _ => x := x + w
   return out
 
 private def toUnicode (used : Array (Nat × Char)) : String := Id.run do
@@ -281,10 +300,11 @@ private def Wr.putB (w : Wr) (b : ByteArray) : Wr :=
 
 /-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
 object streams, one Identity-H CID font per face actually used (fully
-embedded, with its own ToUnicode), and the document information the source
-declared (Info dictionary plus XMP). -/
+embedded, with its own ToUnicode), image XObjects for every image actually
+placed, and the document information the source declared (Info dictionary
+plus XMP). -/
 def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
-    (info : Ir.Meta := {}) : ByteArray := Id.run do
+    (info : Ir.Meta := {}) (imgs : Image.Store := {}) : ByteArray := Id.run do
   let np := pages.size
   -- Only faces that actually contribute glyphs are embedded; a declared but
   -- unused face would otherwise cost a megabyte of font file.
@@ -300,9 +320,27 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     return r
   let usedPerFont : Array (Array (Nat × Char)) := keep.map fun k => allUsed[k]!
   let nf := keep.size
+  -- Images actually placed and loaded become XObjects, one per file however
+  -- often it is placed; a placeholder is drawn inline and needs no object.
+  let usedImgs : Array Nat := Id.run do
+    let mut out : Array Nat := #[]
+    for p in pages do
+      for l in p.lines do
+        for s in l.segs do
+          if let .image (some k) _ _ := s then
+            if ((imgs.get? k).bind (·.info)).isSome && !out.contains k then
+              out := out.push k
+    return out
+  let ni := usedImgs.size
+  let imgMap : Array (Option Nat) := Id.run do
+    let mut m : Array (Option Nat) := Array.replicate imgs.entries.size none
+    for (k, n) in usedImgs.zipIdx do
+      m := m.set! k (some n)
+    return m
   -- Object ids are laid out in fixed blocks so the xref can be built without
-  -- a second pass: 1 catalog, 2 pages, then four ids per font, then two per
-  -- page, then info, xmp, objstm, xref.
+  -- a second pass: 1 catalog, 2 pages, then four ids per font, one file per
+  -- font, one XObject per image, then two per page, then info, xmp, objstm,
+  -- xref.
   let fontBase := 3
   let type0Id (k : Nat) := fontBase + 4 * k
   let cidId (k : Nat) := fontBase + 4 * k + 1
@@ -310,7 +348,9 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let toUniId (k : Nat) := fontBase + 4 * k + 3
   let fileBase := fontBase + 4 * nf
   let fileId (k : Nat) := fileBase + k
-  let pageBase := fileBase + nf
+  let imgBase := fileBase + nf
+  let imgId (k : Nat) := imgBase + k
+  let pageBase := imgBase + ni
   let pageId (i : Nat) := pageBase + 2 * i
   let contentId (i : Nat) := pageBase + 2 * i + 1
   let infoId := pageBase + 2 * np
@@ -361,7 +401,10 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     let mediaH := geom.pageH + 2 * b
     let trim := if b == 0 then "" else
       s!" /TrimBox [{b.toPtString} {b.toPtString} {(geom.pageW + b).toPtString} {(geom.pageH + b).toPtString}]"
-    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {mediaW.toPtString} {mediaH.toPtString}]{trim} /Resources << /Font << {fontResources} >> >>{annots i} /Contents {contentId i} 0 R >>"
+    let xobj := if ni == 0 then "" else
+      " /XObject << " ++ String.intercalate " "
+        ((List.range ni).map fun n => s!"/Im{n + 1} {imgId n} 0 R") ++ " >>"
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {mediaW.toPtString} {mediaH.toPtString}]{trim} /Resources << /Font << {fontResources} >>{xobj} >>{annots i} /Contents {contentId i} 0 R >>"
   -- PDF 2.0 text strings are UTF-8, so declared metadata needs no escaping
   -- beyond the literal-string delimiters.
   let infoEntry (key : String) (v : Option String) : String :=
@@ -402,10 +445,36 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (w, off)
 
   for i in [0:np] do
-    let data := (contentStream geom remap pages[i]!).toUTF8
+    let data := (contentStream geom remap imgMap pages[i]!).toUTF8
     let (w', off) := putStream w (contentId i) "" data
     w := w'
     locs := locs.set! (contentId i) (1, off)
+
+  -- Image XObjects. A PNG's zlib stream passes through as `/FlateDecode`
+  -- with the PNG predictor declared (ISO 32000-2 §7.4.4.4: Predictor 15,
+  -- with Colors/BitsPerComponent/Columns describing the scanlines); a JPEG
+  -- embeds whole as `/DCTDecode`. The decoder already refused every form
+  -- for which this pass-through would be wrong.
+  for (k, n) in usedImgs.zipIdx do
+    if let some inf := (imgs.get? k).bind (·.info) then
+      let colorSpace := match inf.space with
+        | .gray => "/DeviceGray"
+        | .rgb => "/DeviceRGB"
+        | .indexed => Id.run do
+          let mut hex := ""
+          for byte in inf.palette do
+            hex := hex.push (hexDigit (byte.toNat / 16))
+            hex := hex.push (hexDigit byte.toNat)
+          return s!"[/Indexed /DeviceRGB {inf.palette.size / 3 - 1} <{hex}>]"
+      let filter := match inf.format with
+        | .png => s!"/Filter /FlateDecode /DecodeParms << /Predictor 15 \
+/Colors {inf.space.components} /BitsPerComponent {inf.bitDepth} /Columns {inf.pxW} >>"
+        | .jpeg => "/Filter /DCTDecode"
+      let dict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
+/Height {inf.pxH} /ColorSpace {colorSpace} /BitsPerComponent {inf.bitDepth} {filter}"
+      let (w', off) := putStream w (imgId n) dict inf.data
+      w := w'
+      locs := locs.set! (imgId n) (1, off)
 
   for k in [0:nf] do
     let font := fs.get keep[k]!

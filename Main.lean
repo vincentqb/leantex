@@ -268,6 +268,50 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
 def since (t0 : Nat) : IO Nat := do
   return (← IO.monoMsNow) - t0
 
+/-- The image request an elaborated document states (`Ir.imageRefs`),
+fulfilled: each path resolves against the document's own directory, like
+`\input`, and decodes in the pure core. A file that is missing or refuses
+to decode keeps its entry with no payload — layout places a placeholder box
+of the requested size, so the document still compiles and the diagnostic
+here says why the figure is a box. -/
+def loadImages (file : String) (doc : Ir.Doc) : IO (Image.Store × Array Diag) := do
+  let dir := (System.FilePath.mk file).parent.getD "."
+  let mut entries : Array Image.Loaded := #[]
+  let mut diags : Array Diag := #[]
+  for src in Ir.imageRefs doc do
+    let p := if (System.FilePath.mk src).isAbsolute then System.FilePath.mk src
+      else dir / src
+    let bytes? ← do
+      if ← p.pathExists then
+        try pure (some (← IO.FS.readBinFile p))
+        catch e =>
+          diags := diags.push {
+            severity := .warning
+            code := "W0601"
+            message := s!"cannot read image '{src}': {e}"
+            help := some "a placeholder box of the requested size is placed" }
+          pure none
+      else
+        diags := diags.push {
+          severity := .warning
+          code := "W0601"
+          message := s!"image file not found: '{src}'"
+          help := some s!"looked at {p}; a placeholder box of the requested size is placed" }
+        pure none
+    match bytes? with
+    | none => entries := entries.push { src }
+    | some bytes =>
+      match Image.decode bytes with
+      | .ok info => entries := entries.push { src, info := some info }
+      | .error e =>
+        entries := entries.push { src }
+        diags := diags.push {
+          severity := .warning
+          code := "W0602"
+          message := s!"cannot use image '{src}': {e}"
+          help := some "PNG and JPEG embed natively; a placeholder box is placed" }
+  return ({ entries := entries }, diags)
+
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
 
@@ -400,11 +444,17 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.phase "font" s!"{names} ({paths})" (← since t)
       let t ← IO.monoMsNow
+      let (imgs, imgDiags) ← loadImages file doc
+      for d in imgDiags do
+        ui.diag d
+      unless imgs.entries.isEmpty do
+        ui.phase "images" s!"{imgs.entries.size} files" (← since t)
+      let t ← IO.monoMsNow
       let pats := Hyphen.load
       ui.phase "hyphen" s!"{pats.map.size} patterns" (← since t)
       let t ← IO.monoMsNow
       let geom := Layout.Geom.ofPage doc.page
-      let out := Layout.run geom fs (some pats) doc
+      let out := Layout.run geom fs (some pats) doc imgs
       for d in out.diags do
         ui.diag d
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)
@@ -442,6 +492,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         let hcfg : HtmlDoc.Config := {
           css := cssMode
           mathBoundary := ui.cfg.mathBoundary
+          imgs := imgs
         }
         let (html, hdiags) := HtmlDoc.emit hcfg doc
         for d in hdiags do
@@ -452,7 +503,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         ui.phase "html" s!"{html.utf8ByteSize} bytes" (← since t)
       if emit.contains .pdf then
         let t ← IO.monoMsNow
-        let pdf := Pdf.write geom fs out.pages doc.info
+        let pdf := Pdf.write geom fs out.pages doc.info imgs
         let pdfPath := outPath ui.cfg.output outIsDir file .pdf
         IO.FS.writeBinFile pdfPath pdf
         written := written.push pdfPath

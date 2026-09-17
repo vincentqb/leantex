@@ -1,0 +1,28 @@
+% Images: \includegraphics with the keys real documents use, the figure
+% environment with a caption, and intrinsic sizing. The two fixtures beside
+% this file are synthetic (see images-note.md) and 64x40 px at the default
+% density, so their intrinsic size is 64pt x 40pt.
+\documentclass{article}
+\usepackage{graphicx}
+
+\begin{document}
+
+\section{Figures}
+
+An inline mark \includegraphics[height=8pt]{rects.png} sits in the line
+like a word.
+
+\begin{center}
+  \includegraphics[width=0.8\textwidth]{rects.png}
+\end{center}
+
+\begin{figure}
+  \centering
+  \includegraphics[width=3cm, height=3cm, keepaspectratio]{rects.jpg}
+  \caption{Three rectangles, fitted}
+\end{figure}
+
+Scaled to half: \includegraphics[scale=0.5]{rects.png}, and exactly sized:
+\includegraphics[width=32pt, height=40pt]{rects.png}.
+
+\end{document}

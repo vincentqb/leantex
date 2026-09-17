@@ -261,6 +261,9 @@ private def usesInline (cx : UseCx) (out : Array Use) : Inline → Array Use
   | .underline body => usesInlines cx out body.toList
   | .step _ _ body => usesInlines cx out body.toList
   | .fill | .linebreak _ => out
+  -- An image carries no text; its alt is read by a screen reader, not set
+  -- in a colour.
+  | .image _ _ _ => out
 
 private def usesBlocks (cx : UseCx) (out : Array Use) (xs : List Block) :
     Array Use :=
