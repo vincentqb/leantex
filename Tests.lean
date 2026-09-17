@@ -1242,6 +1242,14 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes (pre "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff") == ["W0106"])
   t "compat inert commands vanish"
     ((elabStr "a\\noindent\\relax b").2.isEmpty)
+  -- The silent list is only for constructs that change nothing the engine
+  -- models; one that does (justification, hyphenation language, furniture)
+  -- must name its loss instead of vanishing.
+  t "compat raggedright names its loss instead of vanishing"
+    ((elabStr "a\\raggedright b").2.any (·.code == "W0104"))
+  t "compat pagestyle names its loss and eats its argument"
+    (let (doc, ds) := elabStr "\\pagestyle{headings}a"
+     ds.any (·.code == "W0104") && doc.body == #[.para #[.text "a"]])
   -- Unsupported configuration is skipped as a whole construct — command,
   -- options, arguments — with one warning naming it. It must never leak its
   -- arguments into elaboration as stray content (that was an E0313 per

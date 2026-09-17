@@ -33,16 +33,46 @@ def articleClasses : List String :=
   ["scrartcl", "scrreprt", "scrbook", "report", "book", "memoir", "letter",
    "moderncv", "res"]
 
-/-- Commands that configure TeX's own machinery and have no meaning here.
-Dropped silently, arguments included; they say nothing about the document. -/
-def inert : List (String × Nat) :=
+/-- Commands that configure TeX's own machinery and change nothing this
+engine models — the test every entry must pass to earn silence; a construct
+that fails it warns from `configSkip` instead. Defended entry by entry:
+catcode and register machinery has no counterpart here (`makeatletter`,
+`makeatother`, `relax`, `newlength`); `clearpairofpagestyles` resets KOMA
+furniture defaults to the empty state this engine starts from;
+`frenchspacing`/`nonfrenchspacing` toggle inter-sentence space the engine
+sets uniformly either way; `raggedbottom`/`flushbottom` pick a vertical
+distribution the page-opening `vdist` obligation will own (AGENTS table);
+table rules (`midrule`, `toprule`, `bottomrule`, `addlinespace`, `hline`,
+`cline`) are inside the degradation W0308 already declares for the whole
+table; `noindent` and `urlstyle` adjust detail the engine does not yet
+style. -/
+def meaningFree : List (String × Nat) :=
   [("makeatletter", 0), ("makeatother", 0), ("relax", 0), ("noindent", 0),
-   ("clearpairofpagestyles", 0), ("pagestyle", 1), ("urlstyle", 1),
+   ("clearpairofpagestyles", 0), ("urlstyle", 1),
    ("KOMAoptions", 1), ("newlength", 1), ("frenchspacing", 0),
-   ("nonfrenchspacing", 0), ("sloppy", 0), ("raggedright", 0),
-   ("raggedbottom", 0), ("flushbottom", 0), ("selectlanguage", 1),
+   ("nonfrenchspacing", 0),
+   ("raggedbottom", 0), ("flushbottom", 0),
    ("column", 1), ("midrule", 0), ("toprule", 0), ("bottomrule", 0),
    ("addlinespace", 0), ("hline", 0), ("cline", 1)]
+
+/-- Declarations whose loss is real — justification, breaking tolerance,
+hyphenation language, page furniture — skipped with a warning that names
+what changed, never silently: they used to sit in the silent list under a
+comment claiming they say nothing about the document, and they do. Each
+entry: arguments consumed, the message, the help. -/
+def configSkip : List (String × Nat × String × String) :=
+  [("raggedright", 0,
+    "'\\raggedright' asks for unjustified setting; the document stays justified",
+    "declare \\page{ justify = false }"),
+   ("sloppy", 0,
+    "'\\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps its own",
+    "overfull lines already warn (W0005); no knob is needed"),
+   ("selectlanguage", 1,
+    "'\\selectlanguage' would change the hyphenation language; patterns are unchanged",
+    "hyphenation patterns are English-only today; see PLAN.md"),
+   ("pagestyle", 1,
+    "'\\pagestyle' names page furniture the engine does not model; ignored",
+    "\\runninghead / \\runningfoot declare the page furniture")]
 
 /-- Beamer configuration commands: how many `{...}` arguments each carries.
 The engine has no beamer templating layer, so each is skipped whole — the
@@ -792,7 +822,13 @@ and 'transparent=<n>' are understood")
 and \\tokens declare the design directly")
       return some (#[], k)
     | none =>
-    match inert.lookup name with
+    match configSkip.lookup name with
+    | some (n, msg, help) =>
+      let (_, k) := takeGroups raws start n
+      sayOnce ("ctrl:" ++ name) .W0104 msg pos (help := help)
+      return some (#[], k)
+    | none =>
+    match meaningFree.lookup name with
     | some n =>
       let (_, k) := takeGroups raws start n
       return some (#[], k)
