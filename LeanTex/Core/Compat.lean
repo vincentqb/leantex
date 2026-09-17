@@ -686,11 +686,6 @@ where
     match gs with
     | #[_, _, text] => return some (#[.group text pos], k)
     | _ => return none
-  | "centering" =>
-    sayOnce "ctrl:centering" .warning "W0108"
-      "'\\centering' is not honoured yet; content stays left-aligned" pos
-      (help := "wrap the content in \\begin{center} … \\end{center}")
-    return some (#[], start)
   | "bigskip" | "medskip" | "smallskip" =>
     let native := match name with
       | "bigskip" => "\\block[before = 12pt plus 4pt minus 4pt]{}"

@@ -1,0 +1,18 @@
+class slides
+page 362.835x272.126 vmargin 25.512 hmargin 28.346
+frame
+  title
+    text "Alignment"
+  para
+    text "Left-aligned lead."
+  center
+    para
+      text "One centred line."
+  para
+    text "Left again after the scope closes."
+frame
+  center
+    para
+      text "Questions?"
+-- diagnostics
+(none)

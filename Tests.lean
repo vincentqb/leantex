@@ -46,7 +46,7 @@ def warnCodes (s : String) : List String :=
 
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
-   "links", "resume", "talk", "deck", "latex-idioms", "wrapper"]
+   "links", "resume", "talk", "deck", "latex-idioms", "wrapper", "centering"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -475,6 +475,27 @@ def wrapperChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{boxed}first\n\nsecond\\end{boxed}")
   t "wrapper around block content keeps the blocks"
     (blkDs.all (·.severity == .note) && blk.body.size == 2)
+
+/-- `\centering` is a declaration: it centres the rest of its scope, the way
+`\bfseries` sets bold. Own function, same reason. -/
+def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (c1, ds1) := elabStr "{\\centering x\\par} y"
+  t "centering centres the rest of its group" (ds1.isEmpty &&
+    c1.body == #[.center #[.para #[.text "x"]], .para #[.text "y"]])
+  -- The declaration survives a paragraph end inside the scope, as \bfseries
+  -- does: both paragraphs centre.
+  t "centering carries across par like other declarations"
+    ((elabStr "{\\centering a\\par b}").1.body ==
+      #[.center #[.para #[.text "a"]], .center #[.para #[.text "b"]]])
+  -- The frame spelling, which is how every deck asks for a standout layout.
+  let (fr, frDs) := elabStr ("\\documentclass{slides}\\begin{document}" ++
+    "\\begin{frame}\\centering Questions?\\end{frame}\\end{document}")
+  t "centering inside a frame centres its content" (frDs.isEmpty &&
+    fr.body == #[.frame #[] #[.center #[.para #[.text "Questions?"]]]])
+  -- Inside inline content there is no block to centre; the warning stays.
+  t "centering in an argument still warns"
+    (warnCodes "\\textbf{\\centering x}" == ["W0108"])
 
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -2806,6 +2827,7 @@ def main (args : List String) : IO UInt32 := do
   tokensChecks ref
   compatChecks ref
   wrapperChecks ref
+  centeringChecks ref
   fontDiagChecks ref
   declaredFaceChecks ref
   fallbackChecks ref

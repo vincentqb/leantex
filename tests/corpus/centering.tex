@@ -1,0 +1,20 @@
+% Invented fixture: \centering as a declaration. The group form, the
+% carry-across-par form, and the frame form a deck's standout slide uses.
+\documentclass{slides}
+
+\begin{document}
+
+\begin{frame}{Alignment}
+Left-aligned lead.
+
+{\centering One centred line.\par}
+
+Left again after the scope closes.
+\end{frame}
+
+\begin{frame}
+\centering
+Questions?
+\end{frame}
+
+\end{document}

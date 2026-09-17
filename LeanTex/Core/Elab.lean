@@ -795,6 +795,12 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
               diag ctx "E0306" "expected a parameter reference like {\\team}" pos
           | _, _ =>
             diag ctx "E0304" "'\\ifgiven' needs {\\param} and {content}" pos
+        else if name == "centering" then
+          -- Between blocks the declaration centres the rest of its scope;
+          -- here, inside inline content, there is no block to centre.
+          warnOnce ctx "ctrl:centering" "W0108"
+            "'\\centering' centres nothing inside an argument; content stays left-aligned" pos
+            (help := "put it at the start of a group or environment body")
         else if let some milestone := reservedCtrl.lookup name then
           warnOnce ctx ("ctrl:" ++ name) "W0307" s!"'\\{name}' is not implemented yet; skipped" pos
             (help := s!"planned for {milestone}; see PLAN.md")
@@ -899,14 +905,19 @@ private def sectionLevel : String → Option Nat
   | _ => none
 
 /-- A declaration standing in a group applies to the rest of the group:
-`\Huge`, `\bfseries`, a palette name used bare. -/
+`\Huge`, `\bfseries`, `\centering`, a palette name used bare. -/
 private def isDeclaration (ctx : Ctx) : Raw → Bool
-  | .ctrl n _ => (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
+  | .ctrl n _ =>
+    n == "centering" || (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
   | _ => false
 
 private def isParRaw : Raw → Bool
   | .par _ => true
   | .ctrl "par" _ => true
+  | _ => false
+
+private def isCenteringRaw : Raw → Bool
+  | .ctrl "centering" _ => true
   | _ => false
 
 /-- Is a group here an argument? It is when, looking back over spaces and
@@ -1046,6 +1057,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .par _ => true
         | .ctrl "par" _ => true
         | .ctrl "block" _ => true
+        | .ctrl "centering" _ => true
         | .ctrl n _ =>
           (sectionLevel n).isSome ||
           -- A user command whose body produces blocks is itself a boundary.
@@ -1053,6 +1065,12 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
            | some (_, cmd) => bodyIsBlock cmd.body
            | none =>
              titleCtrls.contains n || n == "maketitle" || n == "titlepage")
+        | .group body _ =>
+          -- A scope group carrying a `\centering` declaration is a block
+          -- scope: the declaration needs blocks to centre, and the group's
+          -- edge is exactly how far it reaches. An argument group is the
+          -- command's, as in the par splice above.
+          body.any isCenteringRaw && !isArgument cur
         | .env n body _ =>
           -- The synthetic \input wrapper is provenance, not structure: an
           -- inline fragment splices into the paragraph that includes it,
@@ -1089,6 +1107,21 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           i := i + 1
         | .ctrl "par" _ =>
           i := i + 1
+        | .ctrl "centering" _ =>
+          -- The declaration form of \begin{center}: the rest of this scope
+          -- centres. Text flushed just above stays uncentred — LaTeX would
+          -- re-align the whole broken paragraph; this engine centres from
+          -- the declaration on.
+          i := i + 1
+          let inner ← elabBlocks ctx (raws.extract i raws.size)
+          i := raws.size
+          unless inner.isEmpty do
+            blocks := blocks.push (.center inner)
+        | .group gbody _ =>
+          -- A centering scope group: its own block sequence, so the
+          -- declaration stops at the closing brace.
+          i := i + 1
+          blocks := blocks ++ (← elabBlocks ctx gbody)
         | .ctrl "block" pos =>
           i := i + 1
           -- \block[before = <len>]{content}
