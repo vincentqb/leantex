@@ -52,7 +52,7 @@ private def randItems (g : Gen) : Array Item × Gen := Id.run do
         items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
     let (w, g') := g.next 60
     g := g'
-    items := items.push (.box (Dim.pt (w + 10)) 0 Ir.Color.black none #[] (Dim.pt 10) false)
+    items := items.push (.box (Dim.pt (w + 10)) 0 Ir.Color.black none #[] (Dim.pt 10) false 0)
   items := items.push (.glue { fil := true })
   items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   return (items, g)
