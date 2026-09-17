@@ -19,3 +19,4 @@ root = "Main"
 [[lean_exe]]
 name = "Tests"
 root = "Tests"
+moreLeancArgs = ["-O0"]
