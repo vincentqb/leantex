@@ -188,9 +188,24 @@ def usesQualified (l mod : String) : Bool :=
     | none => true
     | some c => !isWordChar c
 
-/-- Is `w` a bare variable as a pattern spells one: word characters only,
-opening lowercase — never a constructor (`.text`, `Nat.zero`), a literal,
-or a bracket. -/
+/-- A bare dimension literal (`pt 14`, `mm 5`, `inch 1`, `mm100 140`): a
+design value spelled at a use site with no same-line `--` comment to carry
+its source. The comment is taken as the source whatever it says — the gate
+checks that a why was written, not that it is right — and same-line is a
+stated limit of the diff scanner: it cannot see a comment on the line
+above. -/
+def dimLiteral (l : String) : Bool :=
+  if containsSub l "--" then false
+  else
+    ["pt", "mm", "mm100", "inch"].any fun u =>
+      let parts := l.splitOn (u ++ " ")
+      (parts.zip parts.tail).any fun (before, after) =>
+        (match before.toList.getLast? with
+         | none => true
+         | some c => !isWordChar c)
+        && (after.toList.head?.map Char.isDigit).getD false
+
+
 def isVarToken (w : String) : Bool :=
   !w.isEmpty && w.toList.all isWordChar
     && (w.toList.head?.map Char.isLower).getD false
@@ -339,6 +354,20 @@ def selftest : IO UInt32 := do
     ("  | .verbatim _ => 1", false),
     ("  | [] => 1", false)]
 
+  expect "dimLiteral" dimLiteral [
+    -- the unsourced design values this tree has carried
+    ("  | 1 => pt 14", true),
+    ("        fun g => (a.resolve g).width).getD (pt 1)", true),
+    ("  vmargin := Dim.mm 9", true),
+    ("  if w > inch 1 then", true),
+    ("  let floor := Dim.mm100 140", true),
+    -- sourced or token-borne spellings that must stay legal
+    ("  pageW : Sp := pt 612 -- US letter, the class default", false),
+    ("  let w := scaledAt size font (font.advance c)", false),
+    ("  let s := v.toPtString", false),
+    ("  let g := (a.resolve tok).width", false),
+    ("  let mmNames := [\"mm\", \"cm\"]", false)]
+
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "precommit selftest: all passed"
@@ -468,6 +497,15 @@ def main (args : List String) : IO UInt32 := do
   Backends consume the IR and nothing else; a backend that re-parses is how
   md→PDF and tex→HTML decay into N×M special cases (AGENTS.md, Conventions).
   Fix: put what the backend needs on the IR."
+      let bad := lines.filter dimLiteral
+      if !bad.isEmpty then
+        say s!"pre-commit: bare dimension literal in {file}:
+{String.intercalate "\n" bad.toList}
+  A design value in a backend is a token, or carries its source where it
+  stands (AGENTS.md, obligation table): a loose `pt 14` is how a heading
+  scale drifts from the type scale, invisibly.
+  Fix: read a token/style/palette entry, or put the source in a `--`
+  comment on the same line (the diff scanner cannot see the line above)."
 
   -- Warn-once keys are namespaced: a flat key space let an environment and a
   -- command of one name silence each other once (W0301/W0302), and a growing
