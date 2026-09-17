@@ -3820,13 +3820,12 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
 its resolved `Design` field (`Ir.Design.consumedRoles`) or documents use it
 as a content colour by name. A declared-but-unread role with a known coming
 consumer is a named warning in the build output, never silence; one nobody
-expects fails the suite. `separator` is the case in point: both bundles
-declare it, no backend reads it, and the title-page rule is its coming
-consumer — when that lands, move it into `consumedRoles` and drop it from
-the pending ledger here, or this check fails. -/
+expects fails the suite. The ledger is empty today — `separator` left it
+when the title-page rule landed with the vertical-distribution slice
+(`Elab.titleBlocks` reads it through the titlepage style). -/
 def roleChecks (ref : IO.Ref (List String)) : IO Unit := do
   let contentColours := ["alert", "example"]
-  let pendingConsumer := [("separator", "the title-page rule")]
+  let pendingConsumer : List (String × String) := []
   for th in Theme.builtin do
     for (role, _) in th.palette.entries do
       if contentColours.contains role || Ir.Design.consumedRoles.contains role then

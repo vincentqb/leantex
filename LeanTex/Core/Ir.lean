@@ -896,16 +896,17 @@ def Design.style (d : Design) (element : String) : ElementStyle :=
 /-- The palette keys whose resolved `Design` field a backend consumes today,
 each named with its consumers; `Tests.lean` checks every role a built-in
 bundle declares appears here or is a content colour, so a decorative key no
-code reads is a named warning, never silence. `separator` is deliberately
-absent: both bundles declare it, `Design` resolves it, and no backend reads
-it yet — the title-page rule is its coming consumer. -/
+code reads is a named warning, never silence. -/
 def Design.consumedRoles : List String :=
   ["fg", "bg",                        -- Layout.run / B.docBg, HtmlDoc.themeCss
    "covered",                         -- Layout.run's overlay dimming
    "muted",                           -- Layout.run's chrome footer, HtmlDoc.themeCss
    "frametitlefg", "frametitlebg",    -- Layout.collectBlock, HtmlDoc.themeCss
    "progressfg", "progressbg",        -- Layout.collectBlock, HtmlDoc.themeCss
-   "standoutfg", "standoutbg"]        -- Layout.collectBlock frame arm
+   "standoutfg", "standoutbg",        -- Layout.collectBlock frame arm
+   "separator"]                       -- the title-page rule (Elab.titleBlocks
+                                      -- via the titlepage style; Layout .rule,
+                                      -- HtmlDoc's <hr class="separator">)
 
 
 -- Overlay walks. Structural recursion through `List`, as the printers above.
