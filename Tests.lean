@@ -48,8 +48,8 @@ def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
-   "chrome", "footer-left", "footer-mixed", "lists", "lists-styled",
-   "lists-deck", "headroom",
+   "chrome", "footer-left", "footer-mixed", "footer-collide", "lists",
+   "lists-styled", "lists-deck", "headroom",
    "marker-styled", "marker-content",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav"]
@@ -2958,9 +2958,9 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "frame pages carry a footer, furniture pages none"
     (out.pages.map (·.foot.isSome) == #[true, false, true, true, false])
   t "the footer shows the frame's own number"
-    ((out.pages[0]?.bind (·.foot)).map Ir.plainText == some "1")
+    ((out.pages[0]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "1")
   t "the footer shows the section in force beside the number"
-    ((out.pages[2]?.bind (·.foot)).map Ir.plainText == some "Topic2")
+    ((out.pages[2]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "Topic2")
   t "a stepped frame's pages share one footer"
     (out.pages[2]?.bind (·.foot) == out.pages[3]?.bind (·.foot))
   let font := oneFace.body
@@ -3022,7 +3022,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     "\\begin{frame}{T}\nx\n\\end{frame}")
   let cOut := Layout.run (Layout.Geom.ofPage cDoc.page) oneFace none cDoc
   t "a bare chrome declaration draws its footer" (cDs.isEmpty &&
-    ((cOut.pages[0]?.bind (·.foot)).map Ir.plainText == some "1"))
+    ((cOut.pages[0]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "1"))
 
 /-- One numbering, every consumer: the numbering audit's constructed
 disagreements, pinned. The title page bears no footer and no number and the
@@ -3057,7 +3057,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (out.pages.foldl (fun (acc : List String) p =>
       match p.foot with
       | some f =>
-        let s := strip (Ir.plainText f)
+        let s := strip (Ir.plainText (Ir.bandInlines f))
         if acc.head? == some s then acc else s :: acc
       | none => acc) []).reverse
   -- The headline disagreement: the title page carried footer "1" and the
@@ -3074,7 +3074,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "the title page and the standout carry no footer, the content frame does"
     (out.pages.map (·.foot.isSome) == #[false, false, true, false])
   t "the content frame is frame 1, not 2"
-    ((out.pages[2]?.bind (·.foot)).map Ir.plainText == some "S1")
+    ((out.pages[2]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "S1")
   t "the progress bar shows 0 of 1 before any content frame"
     (match out.pages[1]? with
      | some p => (p.fills.any fun f => f.color == (⟨0xCB, 0xC0, 0xB6⟩ : Ir.Color)) &&
@@ -3105,7 +3105,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "a stepped frame's pages share one footer"
     (dOut.pages[1]?.bind (·.foot) == dOut.pages[2]?.bind (·.foot))
   t "the framefoot note sits beside the frame's own number"
-    ((dOut.pages[4]?.bind (·.foot)).map Ir.plainText == some "note2")
+    ((dOut.pages[4]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "note2")
   let (dHtml, _) := HtmlDoc.emit {} dDoc
   t "pdf and html footers agree across steps and notes"
     (pdfFoots dOut == htmlFoots dHtml && htmlFoots dHtml == ["1", "note2"])
@@ -3152,7 +3152,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     cDoc.chrome.footerRight == some .frameFraction)
   let cOut := Layout.run (Layout.Geom.ofPage cDoc.page) oneFace none cDoc
   t "the fraction footer reads n / N"
-    (cOut.pages.map (fun p => (p.foot.map Ir.plainText).getD "") ==
+    (cOut.pages.map (fun p => (p.foot.map (fun f => Ir.plainText (Ir.bandInlines f))).getD "") ==
       #["1 / 2", "2 / 2"])
   let (cHtml, _) := HtmlDoc.emit {} cDoc
   t "pdf and html agree on the fraction form"
@@ -3211,11 +3211,11 @@ def frameFootChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   -- pages: section page, One, Two, Three
   t "framefooter deck four pages" (out.pages.size == 4)
   t "before the wrapper the default footer stands"
-    ((out.pages[1]?.bind (·.foot)).map Ir.plainText == some "Topic1")
+    ((out.pages[1]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "Topic1")
   t "the wrapped frame carries the note beside its number"
-    ((out.pages[2]?.bind (·.foot)).map Ir.plainText == some "origin: example.org2")
+    ((out.pages[2]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "origin: example.org2")
   t "the wrapper's end clears back to the default"
-    ((out.pages[3]?.bind (·.foot)).map Ir.plainText == some "Topic3")
+    ((out.pages[3]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "Topic3")
   -- The bare template call, no wrapper, no theme: the note alone is a
   -- footer — an unthemed deck's framefooter is not silently dropped.
   let (bDoc, bDs) := elabStr (deck ""
@@ -3224,7 +3224,7 @@ def frameFootChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "a bare frame footer template is clean" (!bDs.any (·.code == "W0104"))
   let bOut := Layout.run (Layout.Geom.ofPage bDoc.page) oneFace none bDoc
   t "the unthemed note still lands"
-    ((bOut.pages[0]?.bind (·.foot)).map Ir.plainText == some "quiet note")
+    ((bOut.pages[0]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "quiet note")
   -- Other templates drop their body; a body carrying content is a dropped
   -- loss (footline carries the frame number), named with the native spelling.
   let (_, fDs) := elabStr (deck ""
@@ -3669,32 +3669,34 @@ def censusTable :
     ("alt shows its second beat covered first", pageCovered c 9 "The second beat."),
     ("alt covers the first beat on the later step", pageCovered c 10 "The first beat."),
     ("a pause inside a column dims below it", pageCovered c 7 "Below the pause.")]),
-  ("chrome", fun _ c => [
+  ("chrome", fun geom c => [
     ("pages", c.size == 5),
     -- The title page is `\frame[plain,noframenumbering]` (moloch): no chrome,
     -- and it does not advance the count — so the first content frame is 1, not
     -- 2, and nothing on page 1 carries the section title or a number.
-    ("the title page carries no footer", !pageHas c 0 "Slide Chrome 1"),
-    ("the section title does not reach the title page", !pageHas c 0 "Footers"),
-    ("numbering starts at the first countable frame", pageHas c 2 "Footers 1"),
+    ("the title page carries no footer",
+      !pageHas c 0 "Footers" &&
+        ((c[0]?.map fun p => p.lines.all (·.text != "1")).getD false)),
+    ("numbering starts at the first countable frame",
+      pageHas c 2 "Footers" && lineRightOf c 2 "1" == some (geom.pageW - geom.hmargin)),
     ("a framefoot note takes the left slot", pageHas c 3 "source: example.org/data"),
-    ("the default footer returns when the wrapper ends", pageHas c 4 "Footers 3")]),
-  -- The footline's slot layout is one declaration (moloch's own footline
-  -- row: left slot, \hfill, right slot — beamerouterthememoloch.dtx:216-228,
-  -- via Ir.Chrome.footSlots): which side a slot renders on is a function of
-  -- the declaration alone, so the empty-left case cannot move the number.
+    ("the default footer returns when the wrapper ends",
+      pageHas c 4 "Footers" && lineRightOf c 4 "3" == some (geom.pageW - geom.hmargin))]),
+  -- The footline's slots have fixed positions (FINDINGS F5 correction): a
+  -- slot's box is a function of the declared layout and the geometry alone
+  -- (`Layout.bandSlotX`), so the number holds the right edge whatever the
+  -- left slot holds — an empty left slot is not a case.
   ("footer-left", fun geom c => [
     ("pages", c.size == 4),
     ("the sectionless frame still numbers at the right edge",
       lineRightOf c 1 "1" == some (geom.pageW - geom.hmargin)),
-    ("the empty left slot ships nothing before the fill",
+    ("the number is a line of its own, whole and unmoved",
       ((c[1]?.bind fun p => p.lines.find? fun l => hasStr l.text "1").map
-        fun l => l.text.startsWith " ").getD false),
+        fun l => l.text == "1").getD false),
     ("the section title takes the left slot flush left",
-      ((c[3]?.bind fun p => p.lines.find? fun l => hasStr l.text "Placement 2").map
-        fun l => l.text.startsWith "Placement").getD false),
+      lineXOf c 3 "Placement" == some geom.hmargin),
     ("the sectioned frame numbers at the same right edge",
-      lineRightOf c 3 "Placement 2" == some (geom.pageW - geom.hmargin))]),
+      lineRightOf c 3 "2" == some (geom.pageW - geom.hmargin))]),
   -- FINDINGS F4: the two sequences share a band only by declaration. The
   -- stepped frame is where they visibly disagree: its pages advance the
   -- physical number and hold the frame number — one counter could never
@@ -3707,6 +3709,17 @@ def censusTable :
       (lineRightOf c 2 "p. 3").isSome && pageHas c 2 "1" && pageHas c 3 "1"),
     ("the plain frame carries the next of both",
       pageHas c 4 "p. 5" && pageHas c 4 "2")]),
+  -- The F5 correction's collision half: the boxes overlap and the number —
+  -- lower priority — yields IN PLACE: still at the right margin, painted
+  -- first so the note paints over it. The yield's diagnostic (W0333) and
+  -- the paint order are asserted in bandChecks; the census states the
+  -- boxes.
+  ("footer-collide", fun geom c => [
+    ("pages", c.size == 2),
+    ("the number still ends at the right margin",
+      lineRightOf c 1 "1" == some (geom.pageW - geom.hmargin)),
+    ("the overlong note still ships flush left",
+      lineXOf c 1 "0123456789" == some geom.hmargin)]),
   ("lists", fun _ c => [
     ("one page", c.size == 1),
     ("four itemize levels ship their four marks",
@@ -3857,6 +3870,59 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     for (label, ok) in facts geom c do
       check ref s!"census {n}: {label}" ok
 
+/-- The F5 correction, executably: a slot's box is a function of the
+declared layout and the geometry alone (`Layout.bandSlotX` — the other
+slot is not an argument), priorities decide who yields
+(`Ir.ChromeSlot.priority`, total by `priority_injective` and
+`BandSlot.rank_ne_of_side_ne`), and yielding is in place and named. One
+deck, three left slots — empty, a section title, an unbreakable overlong
+note — and the number's line must be byte-identical in x and width across
+all three. On the collision the number is painted first (under), still at
+the right margin, and W0333 names both the slot that yielded and the slot
+that displaced it. -/
+def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deck (pre body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n" ++ pre ++
+    "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let longTok := String.ofList (List.replicate 10 "0123456789".toList).flatten
+  let frame := "\\begin{frame}{F}\nx\n\\end{frame}"
+  let run (left : String) : Layout.Out × Array CensusPage :=
+    let (doc, _) := elabStr (deck "\\theme{moloch}\\title{T}\\author{A}"
+      (s!"\\maketitle\n{left}{frame}"))
+    let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+    (out, censusOf (coveredColorsOf doc) out)
+  -- The number's box on the frame's page: the line whose text is exactly
+  -- the number, as (x, width).
+  let numBox (c : Array CensusPage) (page : Nat) : Option (Dim.Sp × Dim.Sp) :=
+    (c[page]?.bind fun p => p.lines.find? (·.text == "1")).map fun l => (l.x, l.width)
+  let (emptyOut, emptyC) := run ""
+  let (secOut, secC) := run "\\section{S}\n"
+  let (noteOut, noteC) := run s!"\\framefoot\{{longTok}}\n"
+  t "band: the empty and filled left slots leave the number's box unmoved"
+    (numBox emptyC 1 == numBox secC 2 && (numBox emptyC 1).isSome)
+  t "band: the colliding left slot leaves the number's box unmoved too"
+    (numBox noteC 1 == numBox emptyC 1)
+  t "band: no collision, no yield" ((emptyOut.diags ++ secOut.diags).all
+    (·.code != "W0333"))
+  t "band: the yield is named with both slots"
+    (noteOut.diags.any fun d => d.code == "W0333" && d.severity == .warning &&
+      hasStr d.message "framenumber" && hasStr d.message "framefoot note")
+  t "band: the yielding number is painted first, under the note"
+    ((noteC[1]?.map fun p =>
+      match p.lines.findIdx? (·.text == "1"),
+            p.lines.findIdx? (fun l => hasStr l.text longTok) with
+      | some ni, some ti => ni < ti
+      | _, _ => false).getD false)
+  -- The section-title case of the same order: an unbreakable overlong
+  -- section title displaces the number, never the reverse.
+  let (secCollideOut, secCollideC) := run s!"\\section\{{longTok}}\n"
+  t "band: the number yields to the section title by declared priority"
+    (secCollideOut.diags.any fun d => d.code == "W0333" &&
+      hasStr d.message "framenumber yields" && hasStr d.message "sectiontitle")
+  t "band: and holds the right margin while yielding"
+    (numBox secCollideC 2 == numBox emptyC 1)
+
 -- Cross-backend agreement -------------------------------------------------
 
 mutual
@@ -3904,26 +3970,18 @@ end
 
 /-- Every chrome footer the PDF ships, in page order, as its two slots' text:
 `PageOut.foot` is the one footline declaration resolved per page
-(`Ir.Chrome.footLine`), its fill the slot boundary, and the physical pass
+(`Ir.Chrome.footBand`), each slot naming its side, and the physical pass
 applied exactly as the final layout pass applies it. -/
 def pdfFoots (out : Layout.Out) : Array (String × String) := Id.run do
   let mut res : Array (String × String) := #[]
   let total := out.pages.size
   for h : i in [0:out.pages.size] do
-    if let some content := out.pages[i].foot then
-      let sub := Layout.substPage (i + 1) total content
-      let mut left : Array Ir.Inline := #[]
-      let mut right : Array Ir.Inline := #[]
-      let mut seen := false
-      for x in sub do
-        if x == Ir.Inline.fill then
-          seen := true
-        else if seen then
-          right := right.push x
-        else
-          left := left.push x
-      res := res.push ((Ir.plainText left).trimAscii.toString,
-        (Ir.plainText right).trimAscii.toString)
+    if let some band := out.pages[i].foot then
+      let text (side : Ir.BandSide) : String :=
+        (band.filter (·.side == side)).foldl (fun acc s =>
+          acc ++ (Ir.plainText (Layout.substPage (i + 1) total s.content))) ""
+      res := res.push ((text .left).trimAscii.toString,
+        (text .right).trimAscii.toString)
   return res
 
 /-- Adjacent equal pairs collapsed: the pages of one stepped frame share
@@ -6196,6 +6254,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       headBandChecks ref oneFace
       cardChecks ref oneFace pats
       censusChecks ref oneFace pats
+      bandChecks ref oneFace
       agreeChecks ref oneFace pats
       quoteChecks ref oneFace
       titleChecks ref

@@ -1,0 +1,30 @@
+% Invented deck pinning the F5 correction's collision half: slot positions
+% are fixed, and when two boxes would overlap the lower-priority slot yields
+% in place — the frame number stays at the right margin, painted first so
+% the left slot paints over it, and the yield is named (W0333). The left
+% slot is a \framefoot note carrying one unbreakable serial token wider than
+% the measure, so the collision is a fact of the geometry, not of where a
+% line break happens to fall. Nothing here derives from any private document.
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{moloch}
+
+\fonts{
+  dir = "fonts",
+  body = "Open Sans",
+}
+
+\title{Colliding Slots}
+\author{Pat Placeholder}
+
+\begin{document}
+
+\maketitle
+
+\framefoot{0123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789}
+
+\begin{frame}{Collision}
+  The overlong note reaches the number, which yields in place.
+\end{frame}
+
+\end{document}

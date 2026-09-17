@@ -717,6 +717,62 @@ def ChromeSlot.label : ChromeSlot → String
   | .frameNumber => "framenumber"
   | .frameFraction => "framefraction"
 
+/-- The declared priority of a slot datum, the order that decides which slot
+yields when two boxes collide: the frame number is low — it yields to the
+section title, never the reverse (the user's design rule for this engine:
+positions are fixed, and on a collision the number "can be painted over,
+since [the] page number is lower priority"; a printed folio behaves the same
+way — fixed position, yielded by, never yielding to, the text). Distinct
+values by construction (`priority_injective`), so between two declared data
+"which one yields" is a fact of the declaration, never an accident of
+evaluation order. -/
+def ChromeSlot.priority : ChromeSlot → Nat
+  | .frameNumber => 0
+  | .frameFraction => 1
+  | .sectionTitle => 2
+
+theorem ChromeSlot.priority_injective : ∀ a b : ChromeSlot,
+    a.priority = b.priority → a = b := by
+  intro a b h
+  cases a <;> cases b <;> simp_all [priority]
+
+/-- A `\framefoot` note is the author's own content: it outranks every
+furniture datum. -/
+def notePriority : Nat := 3
+
+/-- Which side of a furniture band a slot occupies. The position is the
+declaration; a band holds at most one slot per side. -/
+inductive BandSide where
+  | left
+  | right
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+def BandSide.idx : BandSide → Nat
+  | .left => 0
+  | .right => 1
+
+/-- One slot of a furniture band, as both backends consume it: the declared
+side, the resolved content, and the declared priority. A band slot always
+ships ink — an empty slot is absent from the band, not a case its
+neighbours see. -/
+structure BandSlot where
+  side : BandSide
+  content : Array Inline
+  priority : Nat
+  label : String
+  deriving Repr, BEq, Inhabited
+
+/-- The band's paint order: declared priority first, side as the tiebreak.
+Over a band's slots this order is total with no ties — a band holds one
+slot per side (`rank_ne_of_side_ne`) — so the slot painted under, the one
+that yields on a collision, is a fact of the declaration. -/
+def BandSlot.rank (s : BandSlot) : Nat := 2 * s.priority + s.side.idx
+
+theorem BandSlot.rank_ne_of_side_ne (a b : BandSlot) (h : a.side ≠ b.side) :
+    a.rank ≠ b.rank := by
+  cases ha : a.side <;> cases hb : b.side <;>
+    simp_all [rank, BandSide.idx] <;> omega
+
 /-- The one place a frame number becomes text: both backends resolve a
 footer slot through this function, so the number's format is a datum of the
 IR and neither backend carries a format literal. `n` is the frame's own
@@ -763,14 +819,61 @@ def Chrome.footSlots (c : Chrome) (frameFoot : Option (Array Inline))
     | none => (c.footerLeft.map slot).getD #[]
   (left, (c.footerRight.map slot).getD #[])
 
-/-- The PDF's one-line rendering of the layout: left slot, a fill, right
-slot — the moloch footline row read as inline content. The fill is
-unconditional, exactly as the template's `\hfill` is: it separates the slots
-whether or not either is empty. -/
-def Chrome.footLine (c : Chrome) (frameFoot : Option (Array Inline))
-    (sectionTitle : Array Inline) (n total : Nat) : Array Inline :=
+/-- One band slot when its content ships ink, none when it is empty: an
+absent slot is how "the empty left slot" stops being a case at all. -/
+def bandSlotIf (side : BandSide) (content : Array Inline)
+    (priority : Nat) (label : String) : Array BandSlot :=
+  if content.isEmpty then #[] else #[{ side, content, priority, label }]
+
+theorem mem_bandSlotIf {s : BandSlot} {side : BandSide}
+    {content : Array Inline} {priority : Nat} {label : String}
+    (h : s ∈ bandSlotIf side content priority label) :
+    s.side = side ∧ s.content = content := by
+  unfold bandSlotIf at h
+  split at h
+  · simp at h
+  · simp only [Array.mem_singleton] at h
+    subst h
+    exact ⟨rfl, rfl⟩
+
+/-- The footline as a band of slots, the one object both backends consume:
+each slot carries its declared side, its content resolved by `footSlots`
+(the band never re-resolves), and its declared priority. Positions are the
+layout's, fixed per side (`Layout.bandSlotX`) — never derived from content —
+and on a collision the lower-rank slot yields by paint order, reported by
+name (W0332). -/
+def Chrome.footBand (c : Chrome) (frameFoot : Option (Array Inline))
+    (sectionTitle : Array Inline) (n total : Nat) : Array BandSlot :=
   let (left, right) := c.footSlots frameFoot sectionTitle n total
-  left ++ #[Inline.fill] ++ right
+  let (lp, ll) := match frameFoot, c.footerLeft with
+    | some _, _ => (notePriority, "the \\framefoot note")
+    | none, some s => (s.priority, s.label)
+    | none, none => (0, "")
+  bandSlotIf .left left lp ll ++
+    bandSlotIf .right right ((c.footerRight.map (·.priority)).getD 0)
+      ((c.footerRight.map (·.label)).getD "")
+
+/-- The band is a projection of the one slot pair: a left band slot's
+content is the pair's left component, a right one's the right — so the
+backends can only diverge by rendering the same pair, never by resolving
+different pairs (the role `footLine_eq_slots` played for the deleted
+one-line rendering). -/
+theorem Chrome.footBand_projects (c : Chrome) (ff : Option (Array Inline))
+    (sec : Array Inline) (n total : Nat) {s : BandSlot}
+    (h : s ∈ c.footBand ff sec n total) :
+    (s.side = .left ∧ s.content = (c.footSlots ff sec n total).1) ∨
+    (s.side = .right ∧ s.content = (c.footSlots ff sec n total).2) := by
+  unfold footBand at h
+  rw [Array.mem_append] at h
+  rcases h with h | h
+  · exact .inl (mem_bandSlotIf h)
+  · exact .inr (mem_bandSlotIf h)
+
+/-- A band's inline content read left to right — the reading order, as
+distinct from the paint order (`BandSlot.rank`). -/
+def bandInlines (b : Array BandSlot) : Array Inline :=
+  (b.filter (·.side == .left) ++ b.filter (·.side == .right)).flatMap
+    (·.content)
 
 /-- The right slot is a function of its own declaration: neither the left
 slot's declaration nor a `\framefoot` note in force can move or change it —
@@ -788,16 +891,6 @@ theorem Chrome.footSlots_left_ignores_right (c c' : Chrome)
     (h : c.footerLeft = c'.footerLeft) :
     (c.footSlots ff sec n total).1 = (c'.footSlots ff sec n total).1 := by
   simp [footSlots, h]
-
-/-- The two consumptions are projections of the one layout: the PDF's foot
-line is definitionally the left slot, the template's fill, the right slot —
-so the backends can only diverge by rendering the same pair differently,
-never by resolving different pairs. -/
-theorem Chrome.footLine_eq_slots (c : Chrome) (ff : Option (Array Inline))
-    (sec : Array Inline) (n total : Nat) :
-    c.footLine ff sec n total =
-      (c.footSlots ff sec n total).1 ++ #[Inline.fill] ++
-        (c.footSlots ff sec n total).2 := rfl
 
 mutual
 

@@ -116,6 +116,25 @@ theorem bodyTop_clears_head (g : Geom) (ascent descent : Sp) (hm : 0 ≤ g.vmarg
 /-- The height between the margins: what `0.3\textheight` sizes against. -/
 def Geom.textHeight (g : Geom) : Sp := g.pageH - 2 * g.vmargin
 
+/-- A band slot's horizontal position: the declared side and the geometry,
+plus the slot's own set width — no other slot is an argument, so nothing a
+slot contains can move another slot's box. The right slot's box ends at the
+right margin whatever it holds (`bandSlotX_right_pinned`): the folio has a
+fixed position, and an empty or overlong neighbour is not a case. -/
+def bandSlotX (g : Geom) (side : Ir.BandSide) (w : Sp) : Sp :=
+  match side with
+  | .left => g.hmargin
+  | .right => g.pageW - g.hmargin - w
+
+/-- The right slot's right edge is a constant of the geometry: `x + w` is
+the right margin for every width, so no content — its own included — moves
+the folio's anchor. -/
+theorem bandSlotX_right_pinned (g : Geom) (w : Sp) :
+    bandSlotX g .right w + w = g.pageW - g.hmargin := by
+  have key : ∀ a b c : Int, a - b - c + c = a - b := by intro a b c; omega
+  simp only [bandSlotX]
+  exact key g.pageW g.hmargin w
+
 /-- Resolve a document's `\page` declaration into layout geometry. One source
 of truth: layout reads geometry only from here. -/
 def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
@@ -362,10 +381,10 @@ structure PageOut where
   lines : Array LineOut := #[]
   fills : Array Fill := #[]
   /-- The chrome footer this page carries, resolved at collection time (the
-  frame's own number, the section in force): inline content the final pass
-  lays into the margin once the page count is known. `none` on section
+  frame's own number, the section in force): the band of slots the final
+  pass lays into the margin once the page count is known. `none` on section
   pages, standout frames, and every page of an unthemed document. -/
-  foot : Option (Array Inline) := none
+  foot : Option (Array Ir.BandSlot) := none
   deriving Repr, Inhabited
 
 structure Out where
@@ -1726,7 +1745,7 @@ private structure B where
   default; a standout frame or section page sets `.center`. -/
   vdist : VDist := .top
   /-- The chrome footer for pages closed from here on, from `.foot` ops. -/
-  curFoot : Option (Array Inline) := none
+  curFoot : Option (Array Ir.BandSlot) := none
   /-- Lines and fills already on the page when `.pin` arrived: page-top
   chrome (the frame title and its bar) the distribution never moves. -/
   pinnedLines : Nat := 0
@@ -1895,7 +1914,7 @@ private inductive Op where
   /-- The chrome footer for pages closed from here on: a frame sets it (its
   own number, the section in force), a section page or standout frame
   clears it, and a spill page inherits its frame's. -/
-  | foot (content : Option (Array Inline))
+  | foot (content : Option (Array Ir.BandSlot))
   /-- The logo state changes here: pages from this point carry `content`
   (empty clears). Applied by the furniture pass, keyed to page indexes. -/
   | setLogo (content : Array Ir.Inline)
@@ -2003,18 +2022,19 @@ private def Acc.pageBreak (a : Acc) : Acc :=
 private def Acc.style (a : Acc) (element : String) : Ir.ElementStyle :=
   (a.styles.find? element).getD {}
 
-/-- The chrome footer a frame's pages carry: the one declared slot layout
-(`Ir.Chrome.footLine` — left slot, fill, right slot, moloch's own footline
-row) resolved to this frame's data. A frame the numbering skips carries no
+/-- The chrome footer a frame's pages carry: the one declared slot band
+(`Ir.Chrome.footBand` — fixed sides, resolved content, declared priorities)
+resolved to this frame's data. A frame the numbering skips carries no
 footer (the caller already guards). `none` when nothing is declared. -/
-private def Acc.chromeFoot (a : Acc) : Option (Array Inline) :=
+private def Acc.chromeFoot (a : Acc) : Option (Array Ir.BandSlot) :=
   if a.chromeL.isNone && a.chromeR.isNone && a.frameFoot.isNone then none else
   match a.frameNum with
   | some n =>
     let chrome : Ir.Chrome := { footerLeft := a.chromeL, footerRight := a.chromeR }
-    some (chrome.footLine a.frameFoot a.curSection n a.frameCount)
+    some (chrome.footBand a.frameFoot a.curSection n a.frameCount)
   | none =>
-    some ((a.frameFoot.getD #[]) ++ #[Ir.Inline.fill])
+    some (Ir.bandSlotIf .left (a.frameFoot.getD #[]) Ir.notePriority
+      "the \\framefoot note")
 
 private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
@@ -2670,7 +2690,7 @@ private inductive StagedOp where
   | hrule (color : Ir.Color) (thickness : Sp)
   | pin
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
-  | foot (content : Option (Array Inline))
+  | foot (content : Option (Array Ir.BandSlot))
   | para (j : ParaJob) (t : Task (Array Nat))
   | colOpen
   | colNext
@@ -2951,10 +2971,10 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | some brk =>
       -- A running line is not a broken-off paragraph line: its leading glue
       -- is content, not break residue. `lineStart` would discard a leading
-      -- fill — which is exactly the chrome footer's empty-left case (the
-      -- layout's own `\hfill` before the right slot) — and the right slot
-      -- would collapse to the left margin. Only leading interword space is
-      -- skipped; a fill stays and takes the line's slack.
+      -- fill — `\runningfoot{\hfill right}` says the content stands at the
+      -- right edge — and the line would collapse to the left margin. Only
+      -- leading interword space is skipped; a fill stays and takes the
+      -- line's slack.
       let start := Id.run do
         let mut k := 0
         for _ in [0:items.size] do
@@ -2964,6 +2984,29 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
         return k
       let (segs, w, _) := setLine items start brk target true
       (some { x := geom.hmargin, y := y, size := size, segs := segs,
+              setWidth := w }, ds, cache)
+  -- A band slot is a line of its own at natural width, positioned by its
+  -- declared side and the geometry alone (`bandSlotX`): nothing another
+  -- slot contains enters its box.
+  let slotLine (side : Ir.BandSide) (content : Array Inline) (n : Nat)
+      (y size : Sp) (baseStyle : TextStyle) (cache : _) :
+      Option LineOut × Array Diag × _ :=
+    let sub := substPage n total content
+    let (items, ds, cache, _) :=
+      itemsOfInlines pats size xHeight fs baseStyle sub cache imgs
+        geom.textWidth geom.textHeight
+    let breaks := kp items geom.textWidth
+    -- The band holds one line, as the running bands do: a slot that wraps
+    -- loses every line but its first, named, never silent.
+    let ds := if breaks.size > 1 then ds.push (Diag.of .W0328
+        "running content wraps at the text width; only its first line is kept"
+        (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
+      else ds
+    match breaks[0]? with
+    | none => (none, ds, cache)
+    | some brk =>
+      let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
+      (some { x := bandSlotX geom side w, y := y, size := size, segs := segs,
               setWidth := w }, ds, cache)
   let headY := geom.vmargin / 2 + b0.ascent
   let footY := geom.pageH - geom.vmargin / 2
@@ -3012,14 +3055,34 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := lines.push l
-    -- The chrome footer the page's frame gave it: the muted key at the
-    -- scale's small step, both from declarations, neither from a backend.
-    if let some content := out[i]!.foot then
-      let (l?, ds, c) := runLine content (i + 1) footY footSize
-        { color := mutedC } cache
-      diags := diags ++ ds
-      cache := c
-      if let some l := l? then lines := lines.push l
+    -- The chrome footer the page's frame gave it, slot by slot: the muted
+    -- key at the scale's small step, both from declarations. Positions are
+    -- fixed (`bandSlotX`); when two boxes collide the lower-rank slot
+    -- yields — painted first, so every higher slot paints over it — and the
+    -- yield is reported by name (W0333). No box moves: yielding is by ink,
+    -- never by position.
+    if let some band := out[i]!.foot then
+      let mut placed : Array (Ir.BandSlot × LineOut) := #[]
+      for slot in band do
+        let (l?, ds, c) := slotLine slot.side slot.content (i + 1) footY
+          footSize { color := mutedC } cache
+        diags := diags ++ ds
+        cache := c
+        if let some l := l? then placed := placed.push (slot, l)
+      let slots := placed
+      for hj : j in [0:slots.size] do
+        for hk : k in [j+1:slots.size] do
+          let (a, la) := slots[j]
+          let (bs, lb) := slots[k]
+          if la.x < lb.x + lb.setWidth && lb.x < la.x + la.setWidth then
+            let (lo, hi) := if a.rank < bs.rank then (a, bs) else (bs, a)
+            diags := diags.push (Diag.of .W0333
+              s!"the footer's slots collide on page {i + 1}: {lo.label} \
+yields, painted over by {hi.label}"
+              (help := "slot positions are fixed and the lower-priority \
+slot yields in place: shorten the content or drop a slot"))
+      for p in slots.qsort (fun a b => a.1.rank < b.1.rank) do
+        lines := lines.push p.2
     let logoContent := logoSpans.foldl
       (fun acc (span : Nat × Array Inline) => if span.1 ≤ i then some span.2 else acc)
       doc.logo
