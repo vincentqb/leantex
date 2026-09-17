@@ -60,8 +60,7 @@ private def newlines (cs : Array Char) (a b : Nat) : Nat := Id.run do
       if cs[j] == '\n' then n := n + 1
   return n
 
-private def matchAt (cs : Array Char) (i : Nat) (pat : String) : Bool := Id.run do
-  let ps := pat.toList.toArray
+private def matchAt (cs : Array Char) (i : Nat) (ps : Array Char) : Bool := Id.run do
   if i + ps.size > cs.size then
     return false
   for k in [0:ps.size] do
@@ -69,14 +68,28 @@ private def matchAt (cs : Array Char) (i : Nat) (pat : String) : Bool := Id.run 
       return false
   return true
 
-private def findSub (cs : Array Char) (start : Nat) (pat : String) : Option Nat := Id.run do
+private def findSub (cs : Array Char) (start : Nat) (pat : Array Char) : Option Nat := Id.run do
   for k in [start:cs.size] do
     if matchAt cs k pat then
       return some k
   return none
 
+/-- The string over `[a, b)`, pushed a character at a time: going through
+`extract` and a `List` allocated a cons cell per character of every token. -/
+private def strFrom (cs : Array Char) (a b : Nat) : String := Id.run do
+  let mut s := ""
+  for j in [a:b] do
+    if h : j < cs.size then
+      s := s.push cs[j]
+  return s
+
+private def verbatimOpen : Array Char := "{verbatim}".toList.toArray
+private def verbatimClose : Array Char := "\\end{verbatim}".toList.toArray
+
 def lex (file : String) (input : String) : Array Token × Array Diag := Id.run do
-  let cs : Array Char := input.toList.toArray
+  -- Folded straight into an array: `toList.toArray` builds and drops a cons
+  -- cell per character of the document.
+  let cs : Array Char := input.foldl (fun a c => a.push c) (Array.mkEmpty input.utf8ByteSize)
   let mut toks : Array Token := #[]
   let mut diags : Array Diag := #[]
   let mut i := 0
@@ -101,14 +114,14 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
           let c1 := cs[i + 1]
           if c1.isAlpha then
             let j := scanWhile cs (i + 1) Char.isAlpha
-            let name := String.ofList ((cs.extract (i + 1) j).toList)
-            if name == "begin" && matchAt cs j "{verbatim}" then
+            let name := strFrom cs (i + 1) j
+            if name == "begin" && matchAt cs j verbatimOpen then
               -- verbatim is lexically blind: capture raw content in one token
-              let start := j + "{verbatim}".length
-              match findSub cs start "\\end{verbatim}" with
+              let start := j + verbatimOpen.size
+              match findSub cs start verbatimClose with
               | some k =>
-                let stop := k + "\\end{verbatim}".length
-                toks := toks.push ⟨.verb (String.ofList ((cs.extract start k).toList)), here⟩
+                let stop := k + verbatimClose.size
+                toks := toks.push ⟨.verb (strFrom cs start k), here⟩
                 pos := posOver cs i stop pos
                 i := stop
               | none =>
@@ -118,7 +131,7 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
                   message := "unclosed verbatim: expected '\\end{verbatim}'"
                   span := some ⟨file, here⟩
                 }
-                toks := toks.push ⟨.verb (String.ofList ((cs.extract start cs.size).toList)), here⟩
+                toks := toks.push ⟨.verb (strFrom cs start cs.size), here⟩
                 pos := posOver cs i cs.size pos
                 i := cs.size
             else
@@ -163,7 +176,7 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
         i := i + 1
       else
         let j := scanWhile cs i (fun c => !special c && !isWs c)
-        toks := toks.push ⟨.word (String.ofList ((cs.extract i j).toList)), here⟩
+        toks := toks.push ⟨.word (strFrom cs i j), here⟩
         pos := posOver cs i j pos
         i := j
   return (toks, diags)
