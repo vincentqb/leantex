@@ -408,6 +408,15 @@ inductive Block where
   | center (body : Array Block)
   /-- `\block[before = <len>]{...}`: content with declared space above. -/
   | spaced (before : SymGlue) (body : Array Block)
+  /-- `{quote}`/`{quotation}`: a quotation set off from the text by
+  indenting both margins by the list indent — classes.dtx defines both as
+  `\list{}{\rightmargin\leftmargin}`, so the right edge moves in exactly as
+  far as the left. The two environments differ only in
+  `\listparindent` (`quotation` indents each paragraph's first line
+  1.5 em); the engine sets no paragraph indent anywhere yet, so that
+  distinction has nothing to bind to and one node carries both. HTML sets
+  it as `<blockquote>`, markdown as `> ` lines. -/
+  | quote (body : Array Block)
   /-- `{verbatim}` content, kept literally: lines, spaces, and all. Both
   backends set it in the mono face and neither reflows it. `covered` is the
   dim colour painted by the overlay shade — code pending its step must read
@@ -950,6 +959,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
     let kind := if ordered then "ordered" else "unordered"
     s!"{ind}list {kind}\n" ++ dumpItems (ind ++ "  ") items.toList
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
+  | .quote body => s!"{ind}quote\n" ++ dumpBlocks (ind ++ "  ") body
   | .columns cols => s!"{ind}columns\n" ++ dumpColumns (ind ++ "  ") cols.toList
   | .step n last body =>
     s!"{ind}{dumpStepRange n last}\n" ++ dumpBlocks (ind ++ "  ") body
@@ -1106,6 +1116,7 @@ def maxStepBlock : Block → Nat
   | .para content => maxStepInlines content
   | .list _ items => maxStepItems items.toList
   | .center body => maxStepBlockList body.toList
+  | .quote body => maxStepBlockList body.toList
   | .spaced _ body => maxStepBlockList body.toList
   | .columns cols => maxStepColumns cols.toList
   | .step n last body => max (max n (last.getD n)) (maxStepBlockList body.toList)
@@ -1162,6 +1173,7 @@ def shadeBlock (dim : Color) : Block → Block
   | .para content => .para #[.colored dim none (shadeInlines dim #[] content.toList)]
   | .list o items => .list o (shadeItems dim #[] items.toList)
   | .center body => .center (shadeBlockList dim #[] body.toList)
+  | .quote body => .quote (shadeBlockList dim #[] body.toList)
   | .spaced g body => .spaced g (shadeBlockList dim #[] body.toList)
   | .columns cols => .columns (shadeColumns dim #[] cols.toList)
   | .step n last body => .step n last (shadeBlockList dim #[] body.toList)
@@ -1225,6 +1237,7 @@ def dimBlock (dim : Color) (k : Nat) : Block → Block
   | .para content => .para (dimInlines dim k content)
   | .list o items => .list o (dimItems dim k #[] items.toList)
   | .center body => .center (dimBlockList dim k #[] body.toList)
+  | .quote body => .quote (dimBlockList dim k #[] body.toList)
   | .spaced g body => .spaced g (dimBlockList dim k #[] body.toList)
   | .columns cols => .columns (dimColumns dim k #[] cols.toList)
   | .step n last body =>
@@ -1295,6 +1308,7 @@ def unwrapItemStepList (out : Array Block) : List Block → Array Block
 def unwrapItemStep : Block → Block
   | .list o items => .list o (unwrapItemStepItems #[] items.toList)
   | .center body => .center (unwrapItemStepList #[] body.toList)
+  | .quote body => .quote (unwrapItemStepList #[] body.toList)
   | .spaced g body => .spaced g (unwrapItemStepList #[] body.toList)
   | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
   | .step n l body => .step n l (unwrapItemStepList #[] body.toList)
@@ -1352,6 +1366,8 @@ def blockTextOne (acc : String) : Block → String
     acc ++ t
   | .list _ items => blockTextItems acc items.toList
   | .center body => blockTextList acc body.toList
+  -- A quotation's text is real census content, exactly as a paragraph's.
+  | .quote body => blockTextList acc body.toList
   | .spaced _ body => blockTextList acc body.toList
   | .columns cols => blockTextColumns acc cols.toList
   | .step _ _ body => blockTextList acc body.toList
@@ -1466,6 +1482,9 @@ theorem shadeBlock_text (dim : Color) (b : Block) (acc : String) :
     rw [shadeBlock]
     simp [blockTextOne, shadeItems_text dim items.toList #[] acc, blockTextItems]
   | .center body =>
+    rw [shadeBlock]
+    simp [blockTextOne, shadeBlockList_text dim body.toList #[] acc, blockTextList]
+  | .quote body =>
     rw [shadeBlock]
     simp [blockTextOne, shadeBlockList_text dim body.toList #[] acc, blockTextList]
   | .spaced g body =>
@@ -1589,6 +1608,9 @@ theorem dimBlock_text (dim : Color) (k : Nat) (b : Block) (acc : String) :
   | .center body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text dim k body.toList #[] acc, blockTextList]
+  | .quote body =>
+    rw [dimBlock]
+    simp [blockTextOne, dimBlockList_text dim k body.toList #[] acc, blockTextList]
   | .spaced g body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text dim k body.toList #[] acc, blockTextList]
@@ -1680,6 +1702,7 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .section _ _ title => imageSrcsInlines out title
   | .list _ items => imageSrcsItems out items.toList
   | .center body => imageSrcsBlockList out body.toList
+  | .quote body => imageSrcsBlockList out body.toList
   | .spaced _ body => imageSrcsBlockList out body.toList
   | .columns cols => imageSrcsColumns out cols.toList
   | .step _ _ body => imageSrcsBlockList out body.toList
@@ -1748,6 +1771,7 @@ def setAltBlockList (alt : String) (out : Array Block) : List Block → Array Bl
 def setAltBlock (alt : String) : Block → Block
   | .para content => .para (setAltInlines alt content)
   | .center body => .center (setAltBlockList alt #[] body.toList)
+  | .quote body => .quote (setAltBlockList alt #[] body.toList)
   | .spaced g body => .spaced g (setAltBlockList alt #[] body.toList)
   | .step n l body => .step n l (setAltBlockList alt #[] body.toList)
   | other => other

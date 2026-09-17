@@ -1105,7 +1105,7 @@ end
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "document", "frame", "columns", "figure",
-   "figure*"]
+   "figure*", "quote", "quotation"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
@@ -1854,6 +1854,12 @@ specs are not modelled")
             blocks := blocks.push (.list (n == "enumerate") elabItems)
           else if n == "center" then
             blocks := blocks.push (.center (← elabBlocks ctx body))
+          else if n == "quote" || n == "quotation" then
+            -- One node for both: they differ only in \listparindent
+            -- (quotation indents each paragraph's first line), and the
+            -- engine sets no paragraph indent anywhere yet — see the
+            -- constructor's docstring.
+            blocks := blocks.push (.quote (← elabBlocks ctx body))
           else if n == "figure" || n == "figure*" then
             -- A single-pass engine has nowhere for a float to float: the
             -- figure becomes a centred block where it stands, `[placement]`

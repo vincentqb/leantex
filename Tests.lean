@@ -50,7 +50,7 @@ def goldenNames : List String :=
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
    "chrome", "lists", "lists-styled", "lists-deck",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
-   "webpage"]
+   "webpage", "quotes", "quote-deck"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -650,6 +650,60 @@ def markdownChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\caption{A caption}\\end{figure}\\end{document}")
   t "figure caption fills only an undeclared alt"
     (((HtmlDoc.emit {} figImg).1.splitOn "alt=\"Declared wins\"").length == 2)
+
+/-- The quotation node: `{quote}` and `{quotation}` elaborate to the one
+`Block.quote` (classes.dtx defines both as `\list{}{\rightmargin
+\leftmargin}`; they differ only in a paragraph indent the engine cannot
+spell yet). The PDF sets it inside both margins, HTML as `<blockquote>`
+through the escaper, markdown as one `> `-marked block. Own function:
+`main`'s elaboration budget. -/
+def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "Before.\\begin{quote}One invented line.\\end{quote}" ++
+    "\\begin{quotation}First paragraph.\n\nSecond paragraph.\\end{quotation}" ++
+    "After.\\end{document}")
+  t "quote source is clean" ds.isEmpty
+  t "quote and quotation elaborate to the one quote node"
+    (doc.body.size == 4 &&
+      (match doc.body[1]?, doc.body[2]? with
+       | some (Ir.Block.quote q1), some (Ir.Block.quote q2) =>
+         q1.size == 1 && q2.size == 2
+       | _, _ => false))
+  -- Markdown: `> ` marks the quoted line, and the separator between two
+  -- quoted paragraphs keeps a bare `>` so the quotation stays one block
+  -- (CommonMark §5.1: a block quote does not continue across a blank line).
+  let md := MarkdownDoc.emit doc
+  t "markdown sets the quotation as > lines"
+    ((md.splitOn "> One invented line.").length == 2)
+  t "markdown keeps a two-paragraph quotation one block"
+    ((md.splitOn "> First paragraph.\n>\n> Second paragraph.").length == 2)
+  -- HTML: the platform's own construct, built through the typed tree.
+  let page := (HtmlDoc.emit {} doc).1
+  t "html sets the quotation as a blockquote"
+    (match (page.splitOn "<blockquote>")[1]? with
+     | some rest =>
+       ((rest.splitOn "</blockquote>")[0]?.map fun inner =>
+         (inner.splitOn "<p>One invented line.</p>").length == 2).getD false
+     | none => false)
+  let (esc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\begin{quote}2 < 3\\end{quote}\\end{document}")
+  t "html escapes quoted content like any other"
+    ((((HtmlDoc.emit {} esc).1.splitOn "2 &lt; 3").length == 2))
+  -- Both margins move in (classes.dtx: `\rightmargin\leftmargin`): the
+  -- quoted line starts one list indent past the left margin and its set
+  -- width never reaches past the narrowed right edge.
+  let geom : Layout.Geom := {}
+  let out := Layout.run geom oneFace none doc
+  let lines := out.pages.flatMap (·.lines)
+  let quoted := lines.filter fun l => l.x == geom.hmargin + geom.listIndent
+  t "pdf quotation indents from the left margin" (quoted.size ≥ 1)
+  t "pdf quotation keeps inside the narrowed right margin"
+    (quoted.all fun l =>
+      decide (l.x + l.setWidth ≤ geom.hmargin + geom.textWidth - geom.listIndent))
+  t "pdf prose around the quotation keeps the full measure"
+    (lines.any fun l => l.x == geom.hmargin)
+
 
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
 around the content, and nothing warns. Its own function: `main` is one `do`
@@ -3117,6 +3171,23 @@ def censusTable :
     ("prose around the display ships",
       hasStr (censusText c) "The paragraph continues after the display"),
     ("the out-of-scope radical keeps its source", hasStr (censusText c) "\\sqrt")]),
+  ("quotes", fun geom c => [
+    ("one page", c.size == 1),
+    ("the quotation's text ships", hasStr (censusText c) "A short invented epigraph"),
+    ("the quotation's second paragraph ships",
+      hasStr (censusText c) "The second paragraph of the same quotation"),
+    ("prose sits at the margin",
+      lineXOf c 0 "A paragraph before the quotation" == some geom.hmargin),
+    ("the quotation indents from the margin by the list indent",
+      lineXOf c 0 "A short invented epigraph"
+        == some (geom.hmargin + geom.listIndent))]),
+  ("quote-deck", fun geom c => [
+    ("one frame, one page", c.size == 1),
+    ("the quotation ships on the slide",
+      pageHas c 0 "Typesetting is invisible until it fails"),
+    ("the slide's quotation indents from the margin",
+      (lineXOf c 0 "Typesetting is invisible").any fun x =>
+        decide (x == geom.hmargin + geom.listIndent))]),
   ("overlays", fun _ c => [
     ("one handout page per step", c.size == 5),
     ("step one dims the later beats in place",
@@ -5272,6 +5343,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       vdistChecks ref geom oneFace
       cardChecks ref oneFace pats
       censusChecks ref oneFace pats
+      quoteChecks ref oneFace
       columnsChecks ref oneFace
       overlayChecks ref oneFace
       overlayBlockChecks ref oneFace

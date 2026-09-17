@@ -86,6 +86,15 @@ private def blockInto (ind acc : String) : Block → String
     acc ++ ind ++ hashes ++ " " ++ inlineText title ++ "\n\n"
   | .list ordered items => itemsInto ind ordered 1 acc items.toList ++ "\n"
   | .center body => blocksInto ind acc body.toList
+  -- Markdown's own quotation: every line of the body takes the `> `
+  -- marker as part of its prefix, and the separator line between two
+  -- quoted blocks keeps a bare `>` so the quotation stays one block
+  -- (CommonMark §5.1: a blockquote does not span a blank line).
+  | .quote body =>
+    let inner := blocksInto (ind ++ "> ") "" body.toList
+    let trimmed := String.ofList (inner.toList.reverse.dropWhile (· == '\n')).reverse
+    let joined := String.intercalate ("\n" ++ ind ++ ">\n") (trimmed.splitOn "\n\n")
+    acc ++ joined ++ "\n\n"
   | .spaced _ body => blocksInto ind acc body.toList
   | .verbatim _ s =>
     let lines := String.intercalate "\n" (verbatimLines s).toList

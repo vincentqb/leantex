@@ -524,6 +524,10 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem tag (listItemsInto cfg #[] items.toList)
   | .center body =>
     Html.elem "div" (blockNodesInto cfg #[] body.toList) #[("class", "centered")]
+  -- A quotation is HTML's own construct: `<blockquote>` carries the
+  -- set-off semantics that the PDF path expresses as margins.
+  | .quote body =>
+    Html.elem "blockquote" (blockNodesInto cfg #[] body.toList)
   | .columns cols =>
     -- Side-by-side columns as a grid: the declared fractions become
     -- percentage tracks, so the HTML column really is as wide as the PDF's.

@@ -1,0 +1,21 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+meta title "Set-Off Quotations"
+section* 1
+  text "Quoting"
+para
+  text "A paragraph before the quotation keeps the full measure, and is long enough to wrap so the margin either side of the set-off block is visible. The quotation that follows must sit inside both margins."
+quote
+  para
+    text "A short invented epigraph, set off from the text by indenting both margins, long enough to wrap at the narrowed measure it is set to."
+para
+  text "Prose between the two forms returns to the full measure."
+quote
+  para
+    text "The first paragraph of a longer invented quotation, still indented on both sides and wrapping at the narrowed measure."
+  para
+    text "The second paragraph of the same quotation follows after a paragraph break and stays inside the same margins."
+para
+  text "A closing paragraph returns to the full measure."
+-- diagnostics
+(none)

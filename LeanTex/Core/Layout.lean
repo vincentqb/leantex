@@ -610,6 +610,7 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
     let level := min (if ordered then enumD else itemD) 4
     scalarTextItems (out.push (ListMark.scalars ordered level)) itemD enumD items.toList
   | .center body => scalarTextList out itemD enumD body.toList
+  | .quote body => scalarTextList out itemD enumD body.toList
   | .spaced _ body => scalarTextList out itemD enumD body.toList
   | .columns cols => scalarTextCols out itemD enumD cols.toList
   | .step _ _ body => scalarTextList out itemD enumD body.toList
@@ -1828,6 +1829,18 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     | none => a
   | .center body =>
     collectCentered a pats fs body.toList indent
+  | .quote body =>
+    -- A quotation is set off by indenting both margins by the list indent:
+    -- classes.dtx defines quote and quotation as `\list{}{\rightmargin
+    -- \leftmargin}`, and a top-level list's \leftmargin is \leftmargini —
+    -- the same indent the engine's lists take. The right edge moves in by
+    -- narrowing the measure the body collects against; the outer measure
+    -- is restored after, exactly as a column restores it.
+    let saved := a.measure
+    let sub := { a with
+      measure := some ((a.measure.getD a.geom.textWidth) - a.geom.listIndent) }
+    let sub := collectBlocks sub pats fs body (indent + a.geom.listIndent)
+    { sub with measure := saved }
   | .columns cols =>
     -- Declared widths are per mille of the full measure. The leftover goes
     -- to the widthless columns in equal shares when there are any, and into

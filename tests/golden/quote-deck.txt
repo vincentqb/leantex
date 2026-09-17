@@ -1,0 +1,14 @@
+class slides
+page 362.835x272.126 vmargin 25.512 hmargin 28.346 fontsize 11
+frame
+  title
+    text "An Invented Epigraph"
+  para
+    text "Before the quotation, at the frame’s full measure."
+  quote
+    para
+      text "Typesetting is invisible until it fails, said no real person here."
+  para
+    text "After the quotation, back at the full measure."
+-- diagnostics
+(none)

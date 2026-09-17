@@ -276,6 +276,7 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
     usesInlines { headingCx cx.base level with cur := cx.cur } out title.toList
   | .list _ items => usesItems cx out items.toList
   | .center body => usesBlocks cx out body.toList
+  | .quote body => usesBlocks cx out body.toList
   | .spaced _ body => usesBlocks cx out body.toList
   | .columns cols => usesColumns cx out cols.toList
   | .step _ _ body => usesBlocks cx out body.toList

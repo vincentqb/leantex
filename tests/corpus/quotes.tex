@@ -1,0 +1,34 @@
+% Invented text — nothing from any private document. Exercises the two
+% LaTeX quotation environments: both set off their body by indenting BOTH
+% margins (classes.dtx defines each as \list{}{\rightmargin\leftmargin});
+% quotation's paragraph indent has no engine spelling yet and degrades.
+\documentclass{article}
+
+\pdfmeta{ title = "Set-Off Quotations" }
+
+\begin{document}
+
+\section*{Quoting}
+
+A paragraph before the quotation keeps the full measure, and is long
+enough to wrap so the margin either side of the set-off block is visible.
+The quotation that follows must sit inside both margins.
+
+\begin{quote}
+A short invented epigraph, set off from the text by indenting both
+margins, long enough to wrap at the narrowed measure it is set to.
+\end{quote}
+
+Prose between the two forms returns to the full measure.
+
+\begin{quotation}
+The first paragraph of a longer invented quotation, still indented on
+both sides and wrapping at the narrowed measure.
+
+The second paragraph of the same quotation follows after a paragraph
+break and stays inside the same margins.
+\end{quotation}
+
+A closing paragraph returns to the full measure.
+
+\end{document}
