@@ -1,0 +1,54 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 25.512 hmargin 28.346 fontsize 11
+font dir "fonts"
+font body "Open Sans"
+palette fg #23373B
+palette bg #FAFAFA
+palette alert #A55A13
+palette example #008080
+palette muted #647274
+palette frametitlefg #FAFAFA
+palette frametitlebg #23373B
+palette progressfg #A55A13
+palette progressbg #CBC0B6
+palette separator #A55A13
+palette standoutfg #FAFAFA
+palette standoutbg #23373B
+token progressheight 1pt
+chrome footer left sectiontitle right framenumber
+meta title "Slide Chrome"
+meta author "Pat Placeholder"
+frame
+  center
+    para
+      styled size:LARGE
+        styled bold
+          text "Slide Chrome"
+    para
+      text "Pat Placeholder"
+section 1
+  text "Footers"
+frame
+  title
+    text "Default"
+  para
+    text "The footer names the section and the frame."
+framefoot
+  text "source: example.org/data — invented"
+frame
+  title
+    text "Attributed"
+  para
+    text "This frame carries its own footer note beside the frame number."
+framefoot
+frame
+  title
+    text "Back to default"
+  para
+    text "The wrapper ended, so the section title returns."
+-- diagnostics
+note[N0100] 6:1 \documentclass{beamer} → \documentclass[aspectratio=169]{slides}
+note[N0100] 8:1 \usetheme → \theme{moloch}
+note[N0100] 15:1 \newenvironment{framefooter} → \defineenv{framefooter}(a1: content) {begin} {end}
+note[N0100] 15:33 \setbeamertemplate{frame footer} → \framefoot{...}
+note[N0100] 15:71 \setbeamertemplate{frame footer} → \framefoot{...}

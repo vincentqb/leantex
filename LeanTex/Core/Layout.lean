@@ -501,6 +501,8 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   | .verbatim _ s => out.push s
   | .frame title _ body =>
     scalarTextList (out.push (Ir.plainText title)) itemD enumD body.toList
+  -- A framefoot note is set on the page as footer text.
+  | .framefoot content => out.push (Ir.plainText content)
 
 private def scalarTextCols (out : Array String) (itemD enumD : Nat) :
     List (Option Nat × Array Block) → Array String
@@ -1154,6 +1156,12 @@ private structure Acc where
   footer off. -/
   chromeL : Option Ir.ChromeSlot := none
   chromeR : Option Ir.ChromeSlot := none
+  /-- Slides without a `\runningfoot`: the classes of documents whose pages
+  may carry a chrome footer at all. -/
+  footAllowed : Bool := false
+  /-- The `\framefoot` note in force: it takes the footer's left slot for
+  the frames that follow, until an empty one clears it. -/
+  frameFoot : Option (Array Inline) := none
   /-- Title of the section in force: what a `\sectiontitle` slot shows. -/
   curSection : Array Inline := #[]
   wantDefault : Bool := false
@@ -1201,19 +1209,18 @@ private def Acc.style (a : Acc) (element : String) : Ir.ElementStyle :=
 
 /-- The chrome footer a frame's pages carry: each slot resolved to its
 per-page datum — the section in force, the frame's own number — with a fill
-pushing the two apart. `none` when no slot is declared. -/
+pushing the two apart. A `\framefoot` note in force takes the left slot.
+`none` when nothing is declared. -/
 private def Acc.chromeFoot (a : Acc) : Option (Array Inline) :=
-  if a.chromeL.isNone && a.chromeR.isNone then none else
+  if a.chromeL.isNone && a.chromeR.isNone && a.frameFoot.isNone then none else
   let slot (s : Ir.ChromeSlot) : Array Inline :=
     match s with
     | .sectionTitle => a.curSection
     | .frameNumber => #[.text (toString a.framesSeen)]
-  some (((a.chromeL.map slot).getD #[]) ++ #[Ir.Inline.fill] ++
-    ((a.chromeR.map slot).getD #[]))
-
-/-- Chrome is on: `.foot` ops ride the stream so every page knows what it
-carries. Off, the stream is exactly what it was. -/
-private def Acc.chromeOn (a : Acc) : Bool := a.chromeL.isSome || a.chromeR.isSome
+  let left := match a.frameFoot with
+    | some xs => xs
+    | none => (a.chromeL.map slot).getD #[]
+  some (left ++ #[Ir.Inline.fill] ++ ((a.chromeR.map slot).getD #[]))
 
 private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
@@ -1381,7 +1388,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       let a := a.pageBreak
       -- A divider carries no footer; the break above closed the previous
       -- page with its own.
-      let a := if a.chromeOn then { a with ops := a.ops.push (.foot none) } else a
+      let a := if a.footAllowed then { a with ops := a.ops.push (.foot none) } else a
       let a := { a with ops := a.ops.push (.pageStyle none true) }
       let mp : Sp := a.geom.textWidth * 7875 / 10000
       let indent : Sp := (a.geom.textWidth - mp) / 2
@@ -1404,7 +1411,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- In slides, a section is a divider: its own page between frames rather
     -- than a heading dropped onto the bottom of the previous slide.
     let a := if a.slides then a.pageBreak else a
-    let a := if a.slides && a.chromeOn then
+    let a := if a.footAllowed then
         { a with ops := a.ops.push (.foot none) } else a
     let element := match level with
       | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
@@ -1496,6 +1503,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       | none => inner
     collectPara a none fs inner indent false
       (a.geom.fontSize * ((Ir.sizeScale.lookup "footnotesize").getD 1000) / 1000)
+  | .framefoot content =>
+    -- Not a line, a state change: the note the following frames' footers
+    -- carry. Empty clears back to the chrome default.
+    { a with frameFoot := if content.isEmpty then none else some content }
   | .frame title standout body =>
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never
@@ -1505,7 +1516,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- The footer belongs to the frame: its pages, spill pages included,
     -- carry the frame's own number; a standout frame carries none (its
     -- inverted page has no pairing for the muted key).
-    let a := if a.chromeOn then
+    let a := if a.footAllowed then
         { a with ops := a.ops.push (.foot (if standout then none else a.chromeFoot)) }
       else a
     if standout then
@@ -1735,9 +1746,15 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let font := fs.body
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
   -- The chrome footer draws when the document (usually through its theme)
-  -- declared one and no \runningfoot overrides it — and only on slides:
-  -- chrome is deck furniture.
-  let chromeActive := doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone
+  -- declared one — `\chrome` slots or a `\framefoot` note — and no
+  -- \runningfoot overrides it, and only on slides: chrome is deck
+  -- furniture. `\framefoot` wraps frames, so the scan is over top-level
+  -- blocks, where elaboration puts it.
+  let footAllowed := doc.docClass == "slides" && doc.foot.isNone
+  let hasFrameFoot := doc.body.any fun blk => match blk with
+    | .framefoot xs => !xs.isEmpty
+    | _ => false
+  let chromeActive := footAllowed && (doc.chrome.hasFooter || hasFrameFoot)
   -- The footer's size is a step of the scale and its colour a palette key,
   -- never a literal: the theme declares both.
   let footSize := geom.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
@@ -1760,8 +1777,9 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
                       pal := doc.palette
                       tokens := doc.tokens
                       framesTotal := framesTotal
-                      chromeL := if chromeActive then doc.chrome.footerLeft else none
-                      chromeR := if chromeActive then doc.chrome.footerRight else none
+                      chromeL := if footAllowed then doc.chrome.footerLeft else none
+                      chromeR := if footAllowed then doc.chrome.footerRight else none
+                      footAllowed := footAllowed
                       fg := (doc.palette.find? "fg").getD Ir.Color.black }
   -- One handout page per overlay step, driven here at the top level: a
   -- multi-step frame collects once per step with pending content dimmed

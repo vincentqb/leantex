@@ -49,11 +49,13 @@ The engine has no beamer templating layer, so each is skipped whole — the
 construct, its options, and its arguments — with one warning naming it (and
 its native spelling, where one exists). What must never happen is the
 arguments leaking into elaboration as stray content (that was an E0313
-cascade per construct). `\usetheme` is not here: it rewrites to `\theme`. -/
+cascade per construct). `\usetheme` is not here: it rewrites to `\theme`.
+Neither is `\setbeamertemplate`: `frame footer` has a native meaning
+(`\framefoot`) and its own arm; every other template skips there. -/
 def beamerConfig : List (String × Nat) :=
   [("usecolortheme", 1), ("usefonttheme", 1),
    ("setbeameroption", 1),
-   ("setbeamertemplate", 2), ("addtobeamertemplate", 3),
+   ("addtobeamertemplate", 3),
    ("setbeamerfont", 2), ("setbeamercolor", 2),
    ("beamertemplatenavigationsymbolsempty", 0),
    ("logo", 1), ("titlegraphic", 1)]
@@ -65,8 +67,9 @@ def beamerNative : List (String × String) :=
    ("usefonttheme", "\\fonts selects families; \\style{element}{ font = {...} } styles one element"),
    ("setbeamercolor", "declare the colour with \\palette{ name = #RRGGBB }"),
    ("setbeamerfont", "declare it with \\style{element}{ font = {...} }"),
-   ("setbeamertemplate", "\\style{element}{...} styles elements; \\runningfoot sets a frame footer"),
-   ("addtobeamertemplate", "\\style{element}{...} styles elements; \\runningfoot sets a frame footer")]
+   ("setbeamertemplate", "'frame footer' translates to \\framefoot{...}; \\style{element}{...} \
+styles elements; \\runningfoot sets a document footer"),
+   ("addtobeamertemplate", "\\style{element}{...} styles elements; \\framefoot sets a frame footer")]
 
 private structure St where
   file : String
@@ -674,6 +677,23 @@ where
     else
       became "\\alert" "\\textbf" pos
       return some (#[.ctrl "textbf" pos], start)
+  | "setbeamertemplate" =>
+    -- `frame footer` is the one template with a native meaning: its body
+    -- is the per-frame footer note. The body group STAYS in the stream —
+    -- the walk still rewrites what is inside it (a wrapper's `#1`
+    -- included) and `\framefoot` takes it at elaboration.
+    let (args, j) := takeGroups raws start 1
+    let element := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    if element == "frame footer" then
+      became "\\setbeamertemplate{frame footer}" "\\framefoot{...}" pos
+      return some (← synthAt "\\framefoot" pos, j)
+    else
+      let (_, j) := takeOpt raws j
+      let (_, k) := takeGroups raws j 1
+      sayOnce "beamer:setbeamertemplate" .warning "W0104"
+        "'\\setbeamertemplate' is beamer configuration the engine does not have; skipped" pos
+        (help := beamerNative.lookup "setbeamertemplate")
+      return some (#[], k)
   | "usetheme" =>
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1

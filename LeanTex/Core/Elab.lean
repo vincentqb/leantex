@@ -175,7 +175,7 @@ def escapes : List (String × String) :=
 
 def blockOnly : List String :=
   ["section", "subsection", "subsubsection", "item", "documentclass", "define",
-   "defineenv", "block"]
+   "defineenv", "block", "framefoot"]
 
 /-- The overlay commands, dim-not-hide (PLAN M5). `\alt` is not here: it
 takes two groups and is handled beside them. -/
@@ -1021,7 +1021,8 @@ A body that ends its own paragraph (`...\par`, the LaTeX habit for a
 one-line entry) produces one, so it is a block too. -/
 def bodyIsBlockOne : Raw → Bool
   | .ctrl n _ =>
-    n == "block" || n == "par" || ["section", "subsection", "subsubsection"].contains n
+    n == "block" || n == "par" || n == "framefoot"
+      || ["section", "subsection", "subsubsection"].contains n
   | .par _ => true
   | .verb _ _ => true
   | .env n body _ =>
@@ -1226,6 +1227,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .ctrl "block" _ => true
         | .ctrl "centering" _ => true
         | .ctrl "pause" _ => true
+        | .ctrl "framefoot" _ => true
         -- A note opening a paragraph is its own block; one met mid-sentence
         -- flows on inline, where it stashes for the enclosing frame instead
         -- of splitting the paragraph.
@@ -1322,6 +1324,18 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           -- declaration stops at the closing brace.
           i := i + 1
           blocks := blocks ++ (← elabBlocks ctx gbody)
+        | .ctrl "framefoot" fpos =>
+          -- The per-frame footer note (beamer's `frame footer` template,
+          -- through compat): sets the chrome footer's left slot for the
+          -- frames that follow; an empty group clears it.
+          i := i + 1
+          let j := skipSpaces raws i
+          match raws[j]? with
+          | some (.group fbody _) =>
+            i := j + 1
+            blocks := blocks.push (.framefoot (← elabInlines ctx fbody))
+          | _ =>
+            diag ctx "E0304" "'\\framefoot' needs one group of inline content" fpos
         | .ctrl "block" pos =>
           i := i + 1
           -- \block[before = <len>]{content}

@@ -1,0 +1,40 @@
+% Invented deck exercising the slide chrome end to end: the themed default
+% footer (section title left, frame number right, in the muted key at the
+% small step), a beamer-style framefooter wrapper whose \setbeamertemplate
+% reaches the same footer through \framefoot, and the return to the default
+% when the wrapper ends. Nothing here derives from any private document.
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{moloch}
+
+\fonts{
+  dir = "fonts",
+  body = "Open Sans",
+}
+
+\newenvironment{framefooter}[1]{\setbeamertemplate{frame footer}{#1}}{\setbeamertemplate{frame footer}{}}
+
+\title{Slide Chrome}
+\author{Pat Placeholder}
+
+\begin{document}
+
+\maketitle
+
+\section{Footers}
+
+\begin{frame}{Default}
+  The footer names the section and the frame.
+\end{frame}
+
+\begin{framefooter}{source: example.org/data --- invented}
+\begin{frame}{Attributed}
+  This frame carries its own footer note beside the frame number.
+\end{frame}
+\end{framefooter}
+
+\begin{frame}{Back to default}
+  The wrapper ended, so the section title returns.
+\end{frame}
+
+\end{document}

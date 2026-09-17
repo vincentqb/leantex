@@ -378,6 +378,10 @@ inductive Block where
   frame inverts (`standoutfg` on `standoutbg`, defaulting to the inverse of
   the page), centres, and sets Large bold. -/
   | frame (title : Array Inline) (standout : Bool) (body : Array Block)
+  /-- `\framefoot{...}` (beamer's `frame footer` template): the footer note
+  the frames from here on carry in the chrome footer's left slot, beside
+  the frame number. Empty content clears it back to the chrome default. -/
+  | framefoot (content : Array Inline)
   deriving Repr, BEq, Inhabited
 
 /-- Verbatim content, line-split: the newline after `\begin{verbatim}` and
@@ -656,6 +660,8 @@ def dumpBlock (ind : String) (b : Block) : String :=
     (if title.isEmpty then ""
      else s!"{ind}  title\n" ++ dumpInlines (ind ++ "    ") title) ++
     dumpBlocks (ind ++ "  ") body
+  | .framefoot content =>
+    s!"{ind}framefoot\n" ++ dumpInlines (ind ++ "  ") content
 
 end
 
@@ -898,6 +904,7 @@ def blockTextOne (acc : String) : Block → String
   | .note body => blockTextList acc body.toList
   | .verbatim _ s => acc ++ s
   | .frame title _ body => blockTextList (acc ++ plainText title) body.toList
+  | .framefoot content => acc ++ plainText content
 
 def blockTextItems (acc : String) : List (Array Block) → String
   | [] => acc
@@ -1006,7 +1013,7 @@ theorem shadeBlock_text (dim : Color) (b : Block) (acc : String) :
     rw [shadeBlock]
     simp [blockTextOne, shadeBlockList_text dim body.toList #[] acc, blockTextList]
   | .verbatim c s => rfl
-  | .section _ _ _ | .note _ | .frame _ _ _ => rfl
+  | .section _ _ _ | .note _ | .frame _ _ _ | .framefoot _ => rfl
 
 theorem shadeItems_text (dim : Color) (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :
@@ -1120,7 +1127,7 @@ theorem dimBlock_text (dim : Color) (k : Nat) (b : Block) (acc : String) :
         shadeBlockList_text dim body.toList #[] acc, blockTextList]
     · simp [h, blockTextOne, dimBlockList_text dim k body.toList #[] acc,
         blockTextList]
-  | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ => rfl
+  | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ | .framefoot _ => rfl
 
 theorem dimItems_text (dim : Color) (k : Nat) (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :

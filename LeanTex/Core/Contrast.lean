@@ -281,6 +281,10 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
     -- A frame title sets at `\large\bfseries`: 1.2 of the base, bold.
     let titleCx := { cx with size := cx.base * 1200 / 1000, bold := true }
     usesBlocks cx (usesInlines titleCx out title.toList) body.toList
+  -- A framefoot note lands as footer text on the page: its own declared
+  -- colours are judged; its default colour is the muted key, judged once
+  -- at the palette level.
+  | .framefoot content => usesInlines cx out content.toList
   -- A note is a side channel, never page text; verbatim carries no colour.
   | .note _ | .verbatim _ _ => out
 

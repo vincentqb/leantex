@@ -48,7 +48,7 @@ def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
-   "lists", "lists-styled", "lists-deck",
+   "chrome", "lists", "lists-styled", "lists-deck",
    "trio-page", "trio-deck", "trio-card"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
@@ -2404,6 +2404,61 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "a bare chrome declaration draws its footer" (cDs.isEmpty &&
     ((cOut.pages[0]?.bind (·.foot)).map Ir.plainText == some "1"))
 
+/-- The deck's own footer route: `\setbeamertemplate{frame footer}` — alone
+or expanded from a `\newenvironment` wrapper — reaches the chrome footer's
+left slot as `\framefoot`, instead of dying with W0104. The note holds for
+the frames that follow, an empty one clears back to the default, and the
+frame number keeps its slot throughout. -/
+def frameFootChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deck (pre body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n" ++ pre ++
+    "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  -- The wrapper exactly as a beamer deck defines it, through compat.
+  let wrapper := "\\newenvironment{framefooter}[1]" ++
+    "{\\setbeamertemplate{frame footer}{#1}}{\\setbeamertemplate{frame footer}{}}"
+  let body :=
+    "\\section{Topic}\n" ++
+    "\\begin{frame}{One}\na\n\\end{frame}\n" ++
+    "\\begin{framefooter}{origin: example.org}\n" ++
+    "\\begin{frame}{Two}\nb\n\\end{frame}\n" ++
+    "\\end{framefooter}\n" ++
+    "\\begin{frame}{Three}\nc\n\\end{frame}"
+  let (doc, ds) := elabStr (deck ("\\theme{moloch}" ++ wrapper) body)
+  t "framefooter deck raises no W0104" (!ds.any (·.code == "W0104"))
+  t "framefooter deck source clean" (ds.filter (·.severity == .error)).isEmpty
+  let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+  -- pages: section page, One, Two, Three
+  t "framefooter deck four pages" (out.pages.size == 4)
+  t "before the wrapper the default footer stands"
+    ((out.pages[1]?.bind (·.foot)).map Ir.plainText == some "Topic1")
+  t "the wrapped frame carries the note beside its number"
+    ((out.pages[2]?.bind (·.foot)).map Ir.plainText == some "origin: example.org2")
+  t "the wrapper's end clears back to the default"
+    ((out.pages[3]?.bind (·.foot)).map Ir.plainText == some "Topic3")
+  -- The bare template call, no wrapper, no theme: the note alone is a
+  -- footer — an unthemed deck's framefooter is not silently dropped.
+  let (bDoc, bDs) := elabStr (deck ""
+    ("\\setbeamertemplate{frame footer}{quiet note}\n" ++
+     "\\begin{frame}{T}\nx\n\\end{frame}"))
+  t "a bare frame footer template is clean" (!bDs.any (·.code == "W0104"))
+  let bOut := Layout.run (Layout.Geom.ofPage bDoc.page) oneFace none bDoc
+  t "the unthemed note still lands"
+    ((bOut.pages[0]?.bind (·.foot)).map Ir.plainText == some "quiet note")
+  -- Other templates keep the honest skip, naming the native spellings.
+  let (_, fDs) := elabStr (deck ""
+    ("\\setbeamertemplate{footline}{\\insertframenumber}\n" ++
+     "\\begin{frame}{T}\nx\n\\end{frame}"))
+  t "other templates still skip with W0104 naming framefoot"
+    (fDs.any fun d => d.code == "W0104" &&
+      ((d.help.getD "").splitOn "framefoot").length == 2)
+  -- The HTML backend reads the same override.
+  let (html, _) := HtmlDoc.emit {} doc
+  t "html wrapped frame carries the note"
+    ((html.splitOn "origin: example.org").length == 2)
+  t "html unwrapped frames keep the section title"
+    ((html.splitOn "<span>Topic</span>").length == 3)
+
 /-- The themed slides furniture, keyed on the semantic palette entries: page
 background and text colour, the frame-title bar, the section page with its
 progress bar. No theme machinery here — the keys are the API, so a theme
@@ -4045,6 +4100,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       chromeDeclChecks ref
       footerBandChecks ref oneFace
       chromeFooterChecks ref oneFace
+      frameFootChecks ref oneFace
       scannerChecks ref
       rhythmChecks ref oneFace
       measureChecks ref oneFace

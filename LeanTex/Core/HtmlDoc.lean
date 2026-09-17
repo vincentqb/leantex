@@ -138,7 +138,10 @@ def themeCss (doc : Doc) : String :=
     ".progress > div { background: var(--progressfg); height: 100%; }\n" else "") ++
   -- The chrome footer: colour from the muted key, size from the shared
   -- scale (`size-small` on the element), layout the only thing added here.
-  (if doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone then
+  (if doc.docClass == "slides" && doc.foot.isNone &&
+      (doc.chrome.hasFooter || doc.body.any fun b => match b with
+        | .framefoot xs => !xs.isEmpty
+        | _ => false) then
     "section.slide > footer.slide-foot { display: flex;\n" ++
     "  justify-content: space-between; gap: 1em; margin-top: 1.2rem;\n" ++
     "  color: var(--muted); }\n" else "")
@@ -506,6 +509,10 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       else #[Html.elem "header" #[Html.elem "h2" (inlines cfg title)]]
     let cls := if standout then "slide standout" else "slide"
     Html.elem "section" (header ++ blockNodesInto cfg #[] body.toList) #[("class", cls)]
+  | .framefoot _ =>
+    -- A state change for the deck walk in `emit`, not content: nothing to
+    -- render where one stands alone.
+    Html.text ""
 
 /-- The accumulator threads through the sibling walk, as in `inlineNodesInto`. -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
@@ -582,8 +589,13 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
     (doc.palette.find? "progressfg").isSome
   -- The chrome footer: every frame section closes with the section in
   -- force and its own frame number, in the muted key at the scale's small
-  -- step — the same declarations the PDF path reads.
-  let chromeFoot := doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone
+  -- step — the same declarations the PDF path reads. A `\framefoot` note
+  -- takes the left slot for the frames that follow.
+  let hasFrameFoot := doc.body.any fun b => match b with
+    | .framefoot xs => !xs.isEmpty
+    | _ => false
+  let chromeFoot := doc.docClass == "slides" && doc.foot.isNone &&
+    (doc.chrome.hasFooter || hasFrameFoot)
   let inner := if !themedSections && !chromeFoot then
       blockNodesInto cfg #[] doc.body.toList
     else Id.run do
@@ -591,9 +603,12 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
         | .frame _ _ _ => n + 1 | _ => n) 0
       let mut seen := 0
       let mut curSection : Array Inline := #[]
+      let mut frameFoot : Option (Array Inline) := none
       let mut acc : Array Node := #[]
       for b in doc.body do
         match b with
+        | .framefoot xs =>
+          frameFoot := if xs.isEmpty then none else some xs
         | .frame _ standout _ =>
           seen := seen + 1
           let node := blockNode cfg b
@@ -604,10 +619,12 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
                   match s with
                   | .sectionTitle => inlines cfg curSection
                   | .frameNumber => #[Html.text (toString seen)]
-                let side (s : Option Ir.ChromeSlot) : Node :=
-                  Html.elem "span" ((s.map slot).getD #[])
+                let left := match frameFoot with
+                  | some xs => inlines cfg xs
+                  | none => (doc.chrome.footerLeft.map slot).getD #[]
+                let right := (doc.chrome.footerRight.map slot).getD #[]
                 Node.elem tag attrs (kids.push (Html.elem "footer"
-                  #[side doc.chrome.footerLeft, side doc.chrome.footerRight]
+                  #[Html.elem "span" left, Html.elem "span" right]
                   #[("class", "slide-foot size-small")]))
               | other => other
             else node
