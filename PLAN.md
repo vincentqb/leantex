@@ -143,11 +143,12 @@ The rows, each with its why:
 - A document class owes sourced defaults and its contract as implied
   assertions — the card entry below is the template.
 
-Costs, measured (medians of 3, warm tree, a no-op change staged): the
-whole hook 1355 ms, of which `lake build --wfail -q` is 207 ms and
-interpreting the script dominates the rest; the hook at main measured
-1327 ms, so this entry's three new checks add ~30 ms. `lake test`
-including the census layout of all 22 fixtures runs in ~1.4 s.
+Costs, measured on the rebased tree (medians of 3, warm, a no-op change
+staged): the whole hook 1395 ms, of which `lake build --wfail -q` is
+208 ms and interpreting the script dominates the rest; the hook at main
+measured 1310 ms, so this entry's three new checks add ~85 ms. The test
+executable, census layout of all 27 fixtures and the diagnostic-code
+scan included, runs in ~1.6 s.
 
 The shared shapes, named once so the next agent extends instead of
 reinventing (status as of this entry):
