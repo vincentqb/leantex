@@ -4,6 +4,8 @@ namespace LeanTex.Cli
 inductive Emit where
   | pdf
   | html
+  /-- Markdown: the llms.txt convention's plain-text twin of the page. -/
+  | md
   deriving Repr, BEq
 
 /-- Which stylesheet the HTML backend writes. -/
@@ -60,6 +62,7 @@ private def vCount (s : String) : Option Nat :=
 def emitOne : String → Option Emit
   | "pdf" => some .pdf
   | "html" => some .html
+  | "md" => some .md
   | _ => none
 
 private def emitList (s : String) : Option (Array Emit) := do
@@ -121,10 +124,10 @@ def parse (argv : List String) : Except String Config := do
         match rest with
         | m :: rest' =>
           let some es := emitList m
-            | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html"
+            | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html, md"
           cfg := { cfg with emit := some es }
           args := rest'
-        | [] => throw "'--emit' needs a list: pdf, html"
+        | [] => throw "'--emit' needs a list: pdf, html, md"
       | "--css" =>
         match rest with
         | m :: rest' =>
@@ -158,7 +161,7 @@ def parse (argv : List String) : Except String Config := do
         else if a.startsWith "--emit=" then
           let m := (a.drop "--emit=".length).toString
           let some es := emitList m
-            | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html"
+            | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html, md"
           cfg := { cfg with emit := some es }
         else if a.startsWith "--css=" then
           let m := (a.drop "--css=".length).toString
@@ -214,11 +217,13 @@ def parse (argv : List String) : Except String Config := do
 def Emit.ext : Emit → String
   | .pdf => "pdf"
   | .html => "html"
+  | .md => "md"
 
 /-- The backend an output name asks for, when it names one. -/
 def emitOfPath (o : String) : Option Emit :=
   if o.endsWith ".pdf" then some .pdf
   else if o.endsWith ".html" then some .html
+  else if o.endsWith ".md" then some .md
   else none
 
 /-- Backends to run: explicit `--emit` > the output name > the document's
@@ -278,9 +283,9 @@ commands:
   version · help
 
 flags:
-  -o, --output <path>     output file (.pdf | .html) or directory
+  -o, --output <path>     output file (.pdf | .html | .md) or directory
   --watch                 rebuild when the source changes (Ctrl-C stops)
-  --emit <list>           backends: pdf, html — the way to get both at once
+  --emit <list>           backends: pdf, html, md — several at once
   --css <mode>            HTML stylesheet: own | bulma | none (default own)
   --math-boundary <tool>  attach a client-side math renderer to HTML output
   --font-dir <d>          also look for fonts here (repeatable)

@@ -570,6 +570,13 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         IO.FS.writeFile htmlPath html
         written := written.push htmlPath
         ui.phase "html" s!"{html.utf8ByteSize} bytes" (← since t)
+      if emit.contains .md then
+        let t ← IO.monoMsNow
+        let md := MarkdownDoc.emit doc
+        let mdPath := outPath ui.cfg.output outIsDir file .md
+        IO.FS.writeFile mdPath md
+        written := written.push mdPath
+        ui.phase "markdown" s!"{md.utf8ByteSize} bytes" (← since t)
       if emit.contains .pdf then
         let t ← IO.monoMsNow
         let pdf := Pdf.write geom fs out.pages doc.info imgs

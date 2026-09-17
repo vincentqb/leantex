@@ -1,0 +1,67 @@
+% A one-page web profile: the shape of a personal site, invented person and
+% invented text throughout. Exercises what a page needs beyond a paper —
+% declared outputs with a named stylesheet, the markdown twin from the same
+% source, section anchors, and in-page navigation.
+
+\documentclass{article}
+
+\pdfmeta{
+  author  = "Alex Doe",
+  title   = "Alex Doe, PhD",
+  subject = "Alex Doe, PhD, Example Scientist.",
+}
+
+\output{
+  formats = html, md,
+  css = own,
+  stylesheet = "webpage.css",
+}
+
+\palette{
+  accent = #B22222,
+  muted  = #71717A,
+}
+
+\begin{document}
+
+\begin{center}
+  {\sffamily\scshape\bfseries\Huge \accent{Alex} Doe, \accent{phd}}\\
+  Example Scientist
+
+  \href{mailto:alex@example.org}{Email} \middot
+  \href{https://example.org/alex}{Website} \middot
+  \href{https://example.org/code}{Code}
+
+  \href{#experience}{Experience} \middot
+  \href{#education}{Education} \middot
+  \href{#profile}{Profile}
+\end{center}
+
+\section*{Experience}
+
+\textbf{Example Scientist} \hfill 2021 -- Present\par
+\muted{\textit{Invented Laboratory}}
+\begin{itemize}
+  \item Studied an invented phenomenon and wrote it down.
+  \item Simplified a made-up pipeline until it fit on one page.
+\end{itemize}
+
+\textbf{Assistant Example} \hfill 2017 -- 2021\par
+\muted{\textit{Fictional Institute}}
+\begin{itemize}
+  \item Assisted with examples of every kind.
+\end{itemize}
+
+\section*{Education}
+
+\textbf{PhD Example Studies}, University of Examples\par
+\muted{\textit{Invented Fellowship, Fictional Scholarship}}
+
+\textbf{BSc Examples}, Example College
+
+\section*{Profile}
+
+Alex Doe is an entirely invented person who exists to exercise a
+document engine, and enjoys it.
+
+\end{document}

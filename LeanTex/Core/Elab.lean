@@ -2356,11 +2356,11 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
   let mut o := o0
   let mut inFormats := false
   let addFormat (o : OutputSpec) (f : String) : EM OutputSpec := do
-    if ["pdf", "html"].contains f then
+    if ["pdf", "html", "md"].contains f then
       return { o with
         formats := if o.formats.contains f then o.formats else o.formats.push f }
     diag ctx "E0321" s!"'{f}' is not an output format" pos
-      (help := some "formats: pdf, html")
+      (help := some "formats: pdf, html, md")
     return o
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with

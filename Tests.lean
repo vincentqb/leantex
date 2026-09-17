@@ -49,7 +49,8 @@ def goldenNames : List String :=
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
    "chrome", "lists", "lists-styled", "lists-deck",
-   "trio-page", "trio-deck", "trio-card", "valign", "images", "math"]
+   "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
+   "webpage"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -595,6 +596,48 @@ def anchorChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html no stylesheet, no link"
     (((HtmlDoc.emit {} doc).1.splitOn "<link rel=\"stylesheet\"").length == 1)
 
+/-- The markdown backend: the llms.txt twin comes from the same IR as the
+page. Metadata is the preamble, structure maps, decoration degrades to its
+text, and a speaker note stays a side channel. Invented content. -/
+def markdownChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr ("\\documentclass{article}" ++
+    "\\pdfmeta{ title = \"Alex Doe, PhD\", subject = \"An invented person.\" }" ++
+    "\\begin{document}" ++
+    "Intro with \\textbf{weight} and \\href{https://example.org}{a link}." ++
+    "\\section*{Field Notes}" ++
+    "Label \\hfill 2021\\par" ++
+    "\\begin{itemize}\\item One thing\\item Another\\end{itemize}" ++
+    "\\end{document}")
+  let md := MarkdownDoc.emit doc
+  t "markdown source is clean" ds.isEmpty
+  t "markdown metadata renders as the llms.txt preamble"
+    (md.startsWith "# Alex Doe, PhD\n\n> An invented person.\n\n")
+  t "markdown keeps meaning and degrades decoration"
+    ((md.splitOn "Intro with **weight** and [a link](https://example.org).").length == 2)
+  t "markdown reserves # for the title"
+    ((md.splitOn "\n## Field Notes\n").length == 2 && (md.splitOn "\n# ").length == 1)
+  t "markdown fill separates as an em dash"
+    ((md.splitOn "Label — 2021").length == 2)
+  t "markdown lists are lists"
+    ((md.splitOn "- One thing\n- Another\n").length == 2)
+  t "markdown ends with exactly one newline"
+    (md.endsWith "\n" && !(md.endsWith "\n\n"))
+  let (bare, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "Just a body: https://example.org text.\\end{document}")
+  t "markdown without metadata has no preamble"
+    ((MarkdownDoc.emit bare).startsWith "Just a body:")
+  let (deck, _) := elabStr ("\\documentclass{slides}\\begin{document}" ++
+    "\\begin{frame}{Opening}Visible.\\note{hidden aside}\\end{frame}\\end{document}")
+  let deckMd := MarkdownDoc.emit deck
+  t "markdown frames are sections, notes stay out"
+    ((deckMd.splitOn "## Opening").length == 2 &&
+     (deckMd.splitOn "hidden aside").length == 1)
+  let (esc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "under\\_score and 2*3\\end{document}")
+  t "markdown escapes what would read as markup"
+    (((MarkdownDoc.emit esc).splitOn "under\\_score and 2\\*3").length == 2)
+
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
 around the content, and nothing warns. Its own function: `main` is one `do`
 block and its elaboration budget is spent. -/
@@ -869,6 +912,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   styleChecks ref
   htmlLayoutChecks ref
   anchorChecks ref
+  markdownChecks ref
 
 /-- A synthetic face for resolution-order tests: pure data, no host fonts. -/
 def synthFace (family : String) (path : String := "") : FontDb.Face :=
@@ -2882,6 +2926,11 @@ def censusTable :
     ("the sentence around the inline image ships",
       hasStr (censusText c) "sits in the line"),
     ("the figure caption ships", hasStr (censusText c) "Three rectangles, fitted")]),
+  ("webpage", fun _ c => [
+    ("one page", c.size == 1),
+    ("the name ships", hasStr (censusText c) "Doe"),
+    ("the section headings ship",
+      hasStr (censusText c) "Experience" && hasStr (censusText c) "Education")]),
   ("math", fun _ c => [
     ("one page", c.size == 1),
     ("prose around the display ships",

@@ -1,0 +1,94 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+palette accent #B22222
+palette muted #71717A
+meta title "Alex Doe, PhD"
+meta author "Alex Doe"
+meta subject "Alex Doe, PhD, Example Scientist."
+output formats html,md
+output css own
+output stylesheet "webpage.css"
+center
+  para
+    styled sans
+      styled smallcaps
+        styled bold
+          styled size:Huge
+            color accent #B22222
+              text "Alex"
+            text " Doe, "
+            color accent #B22222
+              text "phd"
+    linebreak
+    text "Example Scientist"
+  para
+    link "mailto:alex@example.org"
+      text "Email"
+    text " · "
+    link "https://example.org/alex"
+      text "Website"
+    text " · "
+    link "https://example.org/code"
+      text "Code"
+  para
+    link "#experience"
+      text "Experience"
+    text " · "
+    link "#education"
+      text "Education"
+    text " · "
+    link "#profile"
+      text "Profile"
+section* 1
+  text "Experience"
+para
+  styled bold
+    text "Example Scientist"
+  text " "
+  fill
+  text "2021 – Present"
+para
+  color muted #71717A
+    styled italic
+      text "Invented Laboratory"
+list unordered
+  item
+    para
+      text "Studied an invented phenomenon and wrote it down."
+  item
+    para
+      text "Simplified a made-up pipeline until it fit on one page."
+para
+  styled bold
+    text "Assistant Example"
+  text " "
+  fill
+  text "2017 – 2021"
+para
+  color muted #71717A
+    styled italic
+      text "Fictional Institute"
+list unordered
+  item
+    para
+      text "Assisted with examples of every kind."
+section* 1
+  text "Education"
+para
+  styled bold
+    text "PhD Example Studies"
+  text ", University of Examples"
+para
+  color muted #71717A
+    styled italic
+      text "Invented Fellowship, Fictional Scholarship"
+para
+  styled bold
+    text "BSc Examples"
+  text ", Example College"
+section* 1
+  text "Profile"
+para
+  text "Alex Doe is an entirely invented person who exists to exercise a document engine, and enjoys it."
+-- diagnostics
+(none)
