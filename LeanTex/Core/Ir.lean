@@ -5,12 +5,21 @@ namespace LeanTex.Core.Ir
 
 open LeanTex.Core LeanTex.Core.Dim
 
+/-- The base font size every relative measure hangs off. It lives in the IR
+because both backends read it: layout sets body text at this size, and HTML
+derives its content measure from the page's text width in these units. -/
+def baseFontSize : Sp := Dim.pt 10
+
 /-- Page geometry, as declared by `\page`. -/
 structure PageSpec where
   width : Sp := pt 612
   height : Sp := pt 792
   vmargin : Sp := inch 1
   hmargin : Sp := inch 1
+  /-- The body size, `\page{ fontsize = 11pt }` or the class option. The
+  `slides` class defaults to `slidesFontSize`; everything else to
+  `baseFontSize`. -/
+  fontSize : Sp := baseFontSize
   /-- Line spacing as a factor over the default 1.2, in thousandths, so
   `\linespread{1.04}` has a home. -/
   leading : Nat := 1000
@@ -33,6 +42,22 @@ word-processor inch this replaces gave a 468 pt line, roughly a hundred
 characters at 10 pt — the measure the band diagnostic exists to catch. A
 document that declares any `\page` geometry keeps every value it named. -/
 def articleTextBlock : Sp := pt 312
+
+/-- The slides stage and its defaults, beamer's own where beamer names one:
+128×96 mm (the guide's "slides are by default only 128mm by 96mm large"),
+160×90 mm at `aspectratio=169`, side text margins of 1 cm ("the left and
+right margins, which default to 1 cm"), and an 11 pt base — beamer's
+documented default font size, chosen so that "between 10 and 20 lines
+should fit on each slide" and it is "difficult to fit too much onto a
+slide" (beamer user guide §5.6.1, §18.2.1). The vertical margin is the
+engine's own: beamer spends that band on headline and footline templates
+the engine does not render. The lines-per-slide theorem in Layout is what
+holds these numbers together. -/
+def slidesStage43 : Sp × Sp := (Dim.mm 128, Dim.mm 96)
+def slidesStage169 : Sp × Sp := (Dim.mm 160, Dim.mm 90)
+def slidesHMargin : Sp := Dim.mm 10
+def slidesVMargin : Sp := Dim.mm 9
+def slidesFontSize : Sp := Dim.pt 11
 
 /-- An sRGB colour. -/
 structure Color where
@@ -196,11 +221,6 @@ inductive Style where
   | normal
   | size (name : String)
   deriving Repr, BEq
-
-/-- The base font size every relative measure hangs off. It lives in the IR
-because both backends read it: layout sets body text at this size, and HTML
-derives its content measure from the page's text width in these units. -/
-def baseFontSize : Sp := Dim.pt 10
 
 /-- The LaTeX 10pt size scale, per mille of the surrounding size. It lives in
 the IR because both backends read it: they must agree on what `\Huge` means.
@@ -702,6 +722,8 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
   let page :=
     s!"page {doc.page.width.toPtString}x{doc.page.height.toPtString} " ++
     s!"vmargin {doc.page.vmargin.toPtString} hmargin {doc.page.hmargin.toPtString}" ++
+    (if doc.page.fontSize != baseFontSize
+      then s!" fontsize {doc.page.fontSize.toPtString}" else "") ++
     (match doc.page.parskip with
       | some g => s!" parskip {dumpGlue g}"
       | none => "") ++ "\n"

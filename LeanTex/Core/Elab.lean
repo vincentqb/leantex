@@ -121,7 +121,7 @@ def runningCtrl : List String := ["runninghead", "runningfoot"]
 
 def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin", "leading", "parskip",
-   "measure"]
+   "measure", "fontsize"]
 
 def metaKeys : List String := ["title", "author", "subject", "keywords"]
 
@@ -1653,6 +1653,11 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | none => diag ctx "E0323" s!"'leading' in \\page expects a factor like 1.04, got '{f}'" pos
     | "parskip", .glue g => spec := { spec with parskip := some g }
     | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
+    | "fontsize", .dim d =>
+      if d > 0 then
+        spec := { spec with fontSize := d }
+      else
+        diag ctx "E0323" "'fontsize' in \\page expects a positive dimension" pos
     | "measure", .ident v =>
       -- `free`: the document takes responsibility for its line length, and
       -- the readable-band diagnostic (W0201) stays quiet.
@@ -2252,6 +2257,22 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           textDiagged := true
     else
       break
+  -- The body size: `\page{ fontsize = ... }` wins, else the class option
+  -- (`fontsize=11pt`, KOMA's spelling, or the standard classes' bare
+  -- `11pt`), else the class default — beamer's documented 11pt for slides
+  -- (user guide §18.2.1), the engine's 10pt base otherwise.
+  if page.fontSize == ({} : PageSpec).fontSize then
+    let optSize := (classOptions.splitOn ",").findSome? fun o =>
+      let o := o.trimAscii.toString
+      let o := if o.startsWith "fontsize=" then (o.drop "fontsize=".length).toString else o
+      if o.endsWith "pt" then
+        ((o.dropEnd 2).toString.toNat?).filter (· > 0) |>.map fun n => Dim.pt n
+      else none
+    match optSize with
+    | some d => page := { page with fontSize := d }
+    | none =>
+      if docClass == "slides" then
+        page := { page with fontSize := Ir.slidesFontSize }
   -- Slides fill beamer's stage unless the document declared its own
   -- geometry: a handout on letter portrait is not best effort, it is wrong.
   if docClass == "slides" then
@@ -2259,12 +2280,12 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     if page.width == dflt.width && page.height == dflt.height then
       let ratio169 := (classOptions.splitOn ",").any
         fun o => o.trimAscii.toString == "aspectratio=169"
-      let (w, h) := if ratio169 then (Dim.mm 160, Dim.mm 90) else (Dim.mm 128, Dim.mm 96)
+      let (w, h) := if ratio169 then Ir.slidesStage169 else Ir.slidesStage43
       page := { page with width := w, height := h }
     if page.hmargin == dflt.hmargin then
-      page := { page with hmargin := Dim.mm 10 }
+      page := { page with hmargin := Ir.slidesHMargin }
     if page.vmargin == dflt.vmargin then
-      page := { page with vmargin := Dim.mm 9 }
+      page := { page with vmargin := Ir.slidesVMargin }
   else if !sawPage then
     -- An undeclared letter page takes Bringhurst's text block for a 10pt
     -- text face, 26 picas, not the word-processor inch: the default must

@@ -65,7 +65,7 @@ and its HTML is a faithful degradation, so the measure comes from `\page`
 rather than a fixed reading-column width. -/
 def measureEm (page : PageSpec) : String :=
   let textWidth := page.width - 2 * page.hmargin
-  s!"{decMilli (textWidth * 1000 / Ir.baseFontSize)}em"
+  s!"{decMilli (textWidth * 1000 / page.fontSize)}em"
 
 /-- `\style` declarations as CSS on the element selectors. A marker becomes
 `::marker` content only when it is plain text; styled markers fall back to the

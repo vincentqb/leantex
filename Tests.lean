@@ -3136,6 +3136,20 @@ def measureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "measure key rejects a stray value"
     ((elabStr "\\documentclass{article}\\page{ measure = loose }\\begin{document}x\\end{document}").2.any
       (·.code == "E0323"))
+  -- The body size: slides default to beamer's documented 11pt, articles to
+  -- the 10pt base; a class option or \page{ fontsize } takes precedence.
+  let pageOf (src : String) : Ir.PageSpec :=
+    (elabStr (src ++ "\\begin{document}x\\end{document}")).1.page
+  t "slides default to beamer's 11pt"
+    ((pageOf "\\documentclass{slides}").fontSize == Ir.slidesFontSize)
+  t "articles keep the 10pt base"
+    ((pageOf "\\documentclass{article}").fontSize == Ir.baseFontSize)
+  t "a bare size class option is honored"
+    ((pageOf "\\documentclass[10pt]{slides}").fontSize == Dim.pt 10)
+  t "a fontsize= class option is honored"
+    ((pageOf "\\documentclass[paper=letter, fontsize=12pt]{article}").fontSize == Dim.pt 12)
+  t "\\page fontsize wins over the class option"
+    ((pageOf "\\documentclass[10pt]{article}\\page{ fontsize = 14pt }").fontSize == Dim.pt 14)
 
 /-- Vertical-rhythm diagnostics: a heading binds to the text it introduces,
 so declared space below it must not exceed the declared space above. -/

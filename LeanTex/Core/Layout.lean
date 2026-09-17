@@ -32,6 +32,7 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     pageH := spec.height
     hmargin := spec.hmargin
     vmargin := spec.vmargin
+    fontSize := spec.fontSize
     leading := spec.leading
     parskip := spec.parskip.getD base.parskip }
 
@@ -53,6 +54,19 @@ above strictly exceed its space below. -/
 theorem default_rhythm_multiples :
     2 * ({} : Geom).parskip.width.sp = leadingFor Ir.baseFontSize ∧
     0 < ({} : Geom).parskip.width.sp := by decide
+
+/-- The slides stage carries a readable number of text lines. Tantau's rule
+for presentations is lines, not points: "between 10 and 20 lines should fit
+on each slide; the less lines, the more readable" (beamer user guide
+§5.6.1). Both default stages at the default margins and the 11 pt base sit
+inside that band — 15 full lines at 16:9, 16 at 4:3 — so the slides
+defaults cannot drift apart without this failing the build. -/
+theorem slides_lines_in_band :
+    10 ≤ (Ir.slidesStage169.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ∧
+    (Ir.slidesStage169.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ≤ 20 ∧
+    10 ≤ (Ir.slidesStage43.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ∧
+    (Ir.slidesStage43.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ≤ 20 := by
+  decide
 
 inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
