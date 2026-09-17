@@ -2956,6 +2956,37 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- xcolor's `!` mixing in the palette. Its own def: `main`'s elaboration
 budget is spent (see lineChecks). -/
+def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- The channel table against the WCAG formula it tabulates, evaluated in
+  -- Float: c' = c/255; c' ≤ 0.04045 → c'/12.92, else ((c'+0.055)/1.055)^2.4,
+  -- scaled by 1e7 and rounded (w3.org/TR/WCAG22/#dfn-relative-luminance).
+  let lin (c : Nat) : Nat :=
+    let s := c.toFloat / 255.0
+    let l := if s ≤ 0.04045 then s / 12.92
+      else ((s + 0.055) / 1.055) ^ (2.4 : Float)
+    (l * 10000000.0).round.toUInt32.toNat
+  t "contrast table is the WCAG formula, all 256 channels"
+    ((List.range 256).all fun c => Contrast.channelLinear.getD c 0 == lin c)
+  -- The definition's own extremes: black on white is 21:1, self is 1:1.
+  t "contrast black on white is 21:1"
+    (Contrast.contrastMilli .black .white == 21000)
+  t "contrast of a colour with itself is 1:1"
+    (Contrast.contrastMilli Contrast.light.accent Contrast.light.accent == 1000)
+  t "contrast does not care which side is the text"
+    (Contrast.contrastMilli Contrast.light.muted Contrast.light.surface ==
+     Contrast.contrastMilli Contrast.light.surface Contrast.light.muted)
+  t "ratio string" (Contrast.ratioString 4627 == "4.62:1" &&
+    Contrast.ratioString 21000 == "21.00:1" && Contrast.ratioString 1005 == "1.00:1")
+  -- The contract check fires on a deliberately illegible bundle: the dark
+  -- set with the light accent is the exact defect dark_contract guards
+  -- against (2.64:1 focus ring, under SC 1.4.11's 3:1).
+  t "contract rejects the illegible bundle"
+    (!({ Contrast.dark with accent := Contrast.light.accent } :
+      Contrast.ThemeColors).contractHolds)
+  t "illegible bundle names its ratio" (Contrast.ratioString
+    (Contrast.contrastMilli Contrast.light.accent Contrast.dark.surface) == "2.64:1")
+
 def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pal : Ir.Palette := { entries := #[("base", ⟨0x40, 0x00, 0x80⟩)] }
@@ -3345,6 +3376,7 @@ def main (args : List String) : IO UInt32 := do
   linkHtmlChecks ref
   paletteChecks ref
   mixChecks ref
+  contrastChecks ref
   themeChecks ref
   fontsDeclChecks ref
   fontSuiteChecks ref

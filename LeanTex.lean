@@ -4,6 +4,7 @@ import LeanTex.Core.Lex
 import LeanTex.Core.Parse
 import LeanTex.Core.Ir
 import LeanTex.Core.Theme
+import LeanTex.Core.Contrast
 import LeanTex.Core.Compat
 import LeanTex.Core.Elab
 import LeanTex.Core.Dim

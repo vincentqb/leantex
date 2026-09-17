@@ -1,0 +1,190 @@
+import LeanTex.Core.Ir
+
+/-!
+Colour as a checkable contract: WCAG 2.2 relative luminance and contrast
+ratio as pure integer arithmetic over the engine's 8-bit `Color`.
+
+Sources, and the rule taken from each:
+
+* https://www.w3.org/TR/WCAG22/#dfn-relative-luminance — for sRGB,
+  L = 0.2126·R + 0.7152·G + 0.0722·B where each channel c/255 is linearised
+  as c'/12.92 when c' ≤ 0.04045, else ((c' + 0.055)/1.055)^2.4. (The 0.04045
+  threshold is the errata'd value; the older 0.03928 makes no difference for
+  8-bit channels — no 8-bit value falls between them.)
+* https://www.w3.org/TR/WCAG22/#dfn-contrast-ratio — ratio =
+  (L1 + 0.05)/(L2 + 0.05), lighter over darker, range 1:1 to 21:1. Note 3
+  there: when no background is specified, white is assumed.
+* https://www.w3.org/TR/WCAG22/#contrast-minimum — SC 1.4.3 (AA): text 4.5:1;
+  large-scale text 3:1; text in inactive components or pure decoration exempt.
+  Large-scale is ≥ 18pt, or ≥ 14pt bold (glossary, "large scale").
+* https://www.w3.org/TR/WCAG22/#contrast-enhanced — SC 1.4.6 (AAA): 7:1,
+  large text 4.5:1.
+* https://www.w3.org/TR/WCAG22/#non-text-contrast — SC 1.4.11 (AA): visual
+  information required to identify UI components (the focus indicator here)
+  needs 3:1 against adjacent colours.
+* https://www.w3.org/TR/WCAG22/#use-of-color — SC 1.4.1 (A): colour must not
+  be the only visual means of conveying information. In this engine a link
+  carries an underline in both backends and `\alert` maps to bold, so neither
+  relies on colour; the checks live in the test suite.
+* https://ctan.org/pkg/xcolor (Kern, *Extending LaTeX's color facilities*),
+  §2 "colour expressions": `a!P!b` is the convex combination P/100·a +
+  (1−P/100)·b computed in the first colour's model, a trailing `!P` fills
+  up with white. `Ir.Color.mix`/`Ir.Palette.resolve` implement exactly
+  that, on raw sRGB components — the model xcolor computes rgb mixes in.
+  Consequence, stated rather than claimed away: sRGB components are not
+  perceptually linear, so `a!50!b` is xcolor's midpoint, not the colour a
+  viewer would judge halfway between `a` and `b`.
+
+WCAG 2.x is the standard in force; APCA (the WCAG 3 draft contrast method,
+https://www.w3.org/TR/wcag-3.0/) is not implemented here because it is a
+working draft.
+
+These are the thresholds the engine's own shipped pairings are proved
+against (kernel-checked `decide` over the integer arithmetic below), and
+the ones document-level diagnostics report.
+-/
+
+namespace LeanTex.Core.Contrast
+
+open LeanTex.Core.Ir
+
+/-- The WCAG channel linearisation, tabulated: entry `c` is the linearised
+value of channel `c` scaled by 10⁷ and rounded to nearest. A table rather
+than a `Float` formula so contrast is total integer arithmetic the kernel
+can evaluate inside a theorem; `Tests.lean` pins every entry to the spec
+formula evaluated in `Float`. Entries 0–10 take the `c'/12.92` branch
+(10/255 ≈ 0.0392 ≤ 0.04045), the rest the `((c'+0.055)/1.055)^2.4` branch. -/
+def channelLinear : Array Nat := #[
+  0, 3035, 6071, 9106, 12141, 15176, 18212, 21247, 24282, 27317,
+  30353, 33465, 36765, 40247, 43914, 47770, 51815, 56054, 60488, 65121,
+  69954, 74990, 80232, 85681, 91341, 97212, 103298, 109601, 116122, 122865,
+  129830, 137021, 144438, 152085, 159963, 168074, 176420, 185002, 193824, 202886,
+  212190, 221739, 231534, 241576, 251869, 262412, 273209, 284260, 295568, 307134,
+  318960, 331048, 343398, 356013, 368895, 382044, 395462, 409152, 423114, 437350,
+  451862, 466651, 481718, 497066, 512695, 528606, 544803, 561285, 578054, 595112,
+  612461, 630100, 648033, 666259, 684782, 703601, 722719, 742136, 761854, 781874,
+  802198, 822827, 843762, 865005, 886556, 908417, 930590, 953075, 975873, 998987,
+  1022417, 1046165, 1070231, 1094617, 1119324, 1144354, 1169707, 1195384, 1221388, 1247718,
+  1274377, 1301365, 1328683, 1356333, 1384316, 1412633, 1441285, 1470273, 1499598, 1529262,
+  1559265, 1589608, 1620294, 1651322, 1682694, 1714411, 1746474, 1778884, 1811642, 1844750,
+  1878208, 1912017, 1946178, 1980693, 2015563, 2050787, 2086369, 2122308, 2158605, 2195262,
+  2232280, 2269659, 2307400, 2345506, 2383976, 2422811, 2462013, 2501583, 2541521, 2581829,
+  2622507, 2663556, 2704978, 2746773, 2788943, 2831487, 2874408, 2917706, 2961383, 3005438,
+  3049873, 3094689, 3139887, 3185468, 3231432, 3277781, 3324515, 3371636, 3419144, 3467041,
+  3515326, 3564001, 3613068, 3662526, 3712377, 3762621, 3813260, 3864294, 3915725, 3967552,
+  4019778, 4072402, 4125426, 4178851, 4232677, 4286905, 4341536, 4396572, 4452012, 4507858,
+  4564110, 4620770, 4677838, 4735315, 4793202, 4851499, 4910208, 4969330, 5028865, 5088813,
+  5149177, 5209956, 5271151, 5332764, 5394795, 5457245, 5520114, 5583404, 5647115, 5711248,
+  5775804, 5840784, 5906188, 5972018, 6038273, 6104956, 6172066, 6239604, 6307571, 6375969,
+  6444797, 6514056, 6583748, 6653873, 6724432, 6795425, 6866853, 6938718, 7011019, 7083758,
+  7156935, 7230551, 7304607, 7379104, 7454042, 7529422, 7605245, 7681511, 7758222, 7835378,
+  7912979, 7991027, 8069523, 8148466, 8227858, 8307699, 8387990, 8468732, 8549926, 8631572,
+  8713671, 8796224, 8879231, 8962694, 9046612, 9130987, 9215819, 9301109, 9386857, 9473065,
+  9559734, 9646862, 9734453, 9822506, 9911021, 10000000]
+
+/-- WCAG relative luminance in units of 10⁻⁷ (0 = black, 10⁷ = white):
+0.2126·R + 0.7152·G + 0.0722·B over the linearised channels. The division
+truncates below 10⁻⁷ — three orders of magnitude finer than any threshold
+comparison made here. -/
+def luminance (c : Color) : Nat :=
+  (2126 * (channelLinear.getD c.r.toNat 0)
+    + 7152 * (channelLinear.getD c.g.toNat 0)
+    + 722 * (channelLinear.getD c.b.toNat 0)) / 10000
+
+/-- WCAG contrast ratio ×1000, truncated: (L₁ + 0.05)/(L₂ + 0.05) with the
+lighter luminance on top. `contrastMilli .black .white = 21000` — the 21:1
+the definition names as the maximum. Truncation misstates the real-valued
+ratio by less than 0.007 (channel rounding ≤ 1.5·10⁻⁷ per luminance, over
+the +0.05 floor); every claim proved here clears its threshold by margins
+a thousandfold wider. -/
+def contrastMilli (a b : Color) : Nat :=
+  let la := luminance a
+  let lb := luminance b
+  ((max la lb + 500000) * 1000) / (min la lb + 500000)
+
+/-- `4.62:1` from 4627: the human spelling of a milli ratio, for messages. -/
+def ratioString (milli : Nat) : String :=
+  let frac := (milli % 1000) / 10
+  s!"{milli / 1000}.{if frac < 10 then "0" else ""}{frac}:1"
+
+/-- SC 1.4.3 (AA), normal text: 4.5:1. -/
+def aaText : Nat := 4500
+/-- SC 1.4.3 (AA), large-scale text (≥ 18pt, or ≥ 14pt bold): 3:1. -/
+def aaLargeText : Nat := 3000
+/-- SC 1.4.11 (AA), non-text UI information such as the focus indicator: 3:1. -/
+def aaNonText : Nat := 3000
+/-- SC 1.4.6 (AAA), normal text: 7:1. Not enforced; readable in reports. -/
+def aaaText : Nat := 7000
+
+/-- The colour pairings one variant of the engine's own stylesheet creates:
+text inks over the two backgrounds it paints, and the focus indicator. A
+new token that gets paired with another belongs here, so the contract below
+covers it. -/
+structure ThemeColors where
+  ink : Color
+  surface : Color
+  muted : Color
+  accent : Color
+  tint : Color
+  rule : Color
+  deriving Repr, BEq
+
+/-- Every pairing this variant's stylesheet creates clears the threshold for
+its role: body and marker text on the page (SC 1.4.3, 4.5:1), code text on
+its tint (SC 1.4.3), and the focus indicator on the page (SC 1.4.11, 3:1).
+`rule` is pure decoration — a hairline under a heading conveys nothing the
+heading does not — and pure decoration is exempt by both criteria. -/
+def ThemeColors.contractHolds (t : ThemeColors) : Bool :=
+  contrastMilli t.ink t.surface ≥ aaText
+    && contrastMilli t.muted t.surface ≥ aaText
+    && contrastMilli t.ink t.tint ≥ aaText
+    && contrastMilli t.accent t.surface ≥ aaNonText
+
+/-- The light token set `HtmlDoc.baseCss` ships. -/
+def light : ThemeColors := {
+  ink := { r := 0x18, g := 0x18, b := 0x1B }
+  surface := { r := 0xFA, g := 0xFA, b := 0xF9 }
+  muted := { r := 0x71, g := 0x71, b := 0x7A }
+  accent := { r := 0x1D, g := 0x4E, b := 0xD8 }
+  tint := { r := 0xF4, g := 0xF4, b := 0xF5 }
+  rule := { r := 0xE4, g := 0xE4, b := 0xE7 }
+}
+
+/-- The dark token set behind `prefers-color-scheme: dark`. Not an inversion
+of `light`: the accent is the same hue two tints lighter, because the light
+accent reads at 2.64:1 on this surface — under the 3:1 the focus indicator
+needs (SC 1.4.11) — and inverting ink/surface does nothing for a colour that
+was chosen against a light page. -/
+def dark : ThemeColors := {
+  ink := { r := 0xFA, g := 0xFA, b := 0xF9 }
+  surface := { r := 0x18, g := 0x18, b := 0x1B }
+  muted := { r := 0xA1, g := 0xA1, b := 0xAA }
+  accent := { r := 0x60, g := 0xA5, b := 0xFA }
+  tint := { r := 0x27, g := 0x27, b := 0x2A }
+  rule := { r := 0x3F, g := 0x3F, b := 0x46 }
+}
+
+-- `decide` below walks the 256-entry table; that needs more elaborator
+-- stack than the default allows. The limit raised is depth, not trust.
+set_option maxRecDepth 4096
+
+/-- No shipped light bundle regresses into an illegible pair. -/
+theorem light_contract : light.contractHolds = true := by decide
+
+/-- The dark variant is held to the same contract, not assumed from the
+light one. -/
+theorem dark_contract : dark.contractHolds = true := by decide
+
+/-- The PDF default — black ink on the unpainted (white) page — clears the
+AA text threshold; 21:1 is the definition's own maximum. -/
+theorem pdf_default_text : contrastMilli Color.black Color.white ≥ aaText := by
+  decide
+
+/-- `coveredDefault` — pending overlay content, dimmed — reads at 2.56:1 on
+the PDF page. Deliberate and exempt: SC 1.4.3 places no contrast requirement
+on text in an inactive state, and covered content exists to read as not yet
+active. Pinned so the exemption is a recorded decision, not an oversight. -/
+theorem covered_is_deliberately_dim :
+    contrastMilli coveredDefault Color.white < aaLargeText := by decide
+
+end LeanTex.Core.Contrast
