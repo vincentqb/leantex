@@ -6124,7 +6124,7 @@ through one `Pic.Place` transform. The transform and bounding-box facts are
 theorems (`Pic.Place.ofPage_toPage`, `Pic.Picture.box_in_bbox`); what is
 checked here is the placement they license — where the box lands, that the
 label centres on its anchor, that `{center}` centres the box, and that
-W0331 fires when the box cannot fit the text area (the diagnostic half of
+W0335 fires when the box cannot fit the text area (the diagnostic half of
 the stays-in-its-box contract). -/
 def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -6171,7 +6171,7 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
     (!out.diags.any (·.code == "W0335"))
 
 /-- The picture subset's boundary is named, never silent: a construct
-outside the subset is W0330 naming it, an unreadable expression, range, or
+outside the subset is W0334 naming it, an unreadable expression, range, or
 colour inside it is E0333 — and the supported shapes around either still
 elaborate (the nothing-silently-skipped contract, as a test). The unroll
 and arithmetic facts are checked through the IR the elaborator ships. -/
