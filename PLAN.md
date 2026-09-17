@@ -200,6 +200,45 @@ the wrap diagnostic is now W0328; and W0324 (ifbackend content addressed
 to no backend) is a dropped loss under this entry's own test, so it
 promotes to error with the others, `\allow{W0324}` accepting it.
 
+2026-09-17 — a backend divergence is declared or reported: the
+backend-agreement slice (FINDINGS F1, F4, F5). The obligation behind all
+three findings — the same declared fact renders the same way in every
+backend, or a diagnostic names the difference — now has a mechanism: an
+agreement tier in Tests runs over every golden fixture, judging the
+footline's slot pair from `Layout.Out` against the slide footers off the
+typed HTML tree (`HtmlDoc.emitTree`, split from `emit` so the tree is
+judgeable before render), and every declared list marker against what
+`::marker` can express; a mismatch passes only when a diagnostic from
+the naming set stands (W0007 physical furniture omitted from HTML,
+W0328 marker substituted, W0329 sequences mixed). Per fact, both
+backends now consume one resolving function, so they can only diverge
+by rendering, never by resolving: `Ir.Chrome.footSlots`/`footLine`
+(moloch's own footline row, beamerouterthememoloch.dtx:216-228 — left
+slot, `\hfill`, right slot, the fill unconditional) and
+`HtmlDoc.markerCss?` (CSS Pseudo-Elements 4 §4.1: color and the font
+properties apply to ::marker, so a colour and a size step ARE
+expressible and the honest degradation boundary is arbitrary inline
+content). F5's PDF empty-left collapse was `runLine` discarding leading
+glue via `lineStart` (written for broken-off paragraph lines; a running
+line's leading fill is content) — theorems
+`footSlots_right_ignores_left`/`footLine_eq_slots` state the slot
+layout is a function of the declaration. F1's residual (a marker HTML
+cannot express) is W0328, warning, naming the backend and key;
+`markerCss?_text` proves expressed content is exactly the declared
+characters. F4 (a `\framefoot{p. \pagenumber}` beside the theme's frame
+slot) is declarable, not prevented: `Doc.chromeDeclared` records the
+author naming their own `\chrome`, undeclared mixing warns W0329
+naming both sequences, and the fusion direction is closed by theorems
+(`frame_sequence_carries_no_physical`, `substPage_id`,
+`substPage_leaves_frame_slot`: the physical pass rewrites exactly the
+placeholders, and the frame slot's rendering carries none). The census
+grew a per-line width so a fact can judge a right edge (fixtures
+footer-left, footer-mixed, marker-styled, marker-content). Grade of the
+strong agreement form: blocked — the two sides live in different result
+types, so agreement-by-one-function is proved and the artifact-level
+equality is held per fixture by the tier; recorded here so the next
+slice extends the tier instead of trusting the construction.
+
 2026-09-17 — declared once, derived everywhere: the web metadata slice
 (site-port gaps 1 and 7). `\pdfmeta` grows `url`, `image`, `favicon` — an
 extension of the one `Ir.Meta` record, not a second declaration — and each
