@@ -70,6 +70,35 @@ def measureEm (page : PageSpec) : String :=
   let textWidth := page.width - 2 * page.hmargin
   s!"{decMilli (textWidth * 1000 / page.fontSize)}em"
 
+/-- The reduced-motion guard for one selector: under the reader's reduce
+preference the transition is removed. `prefers-reduced-motion: reduce` is
+the user's request that the system "minimize the amount of non-essential
+motion" (CSS Media Queries 5 §12.1). -/
+def reducedMotionGuard (sel : String) : String :=
+  s!"@media (prefers-reduced-motion: reduce) \{ {sel} \{ transition: none; } }\n"
+
+/-- A declared motion's CSS: the transition and, unconditionally, its own
+reduced-motion guard. WCAG 2.2 SC 2.3.3 (Animation from Interactions)
+requires motion animation triggered by interaction to be disableable, and
+sufficient technique C39 is exactly this media query. The base stylesheet's
+global guard already covers a `css = own` page, but a `css = none` page
+ships only the declared rules, so the guard must travel with the
+declaration itself. This is the engine's only site that spells
+`transition:` into a document's styles (`motionSiteChecks` in Tests holds
+the tree to that), and `motionCss_guarded` is the by-construction form. -/
+def motionCss (sel : String) (ms : Nat) : String :=
+  s!"{sel} \{ transition: color {ms}ms, outline-color {ms}ms; }\n" ++
+    reducedMotionGuard sel
+
+/-- A declared motion carries its reduced-motion form by construction: the
+emitted CSS is definitionally a transition rule followed by the guard for
+the same selector, so no call to the one transition-emitting site can
+produce an unguarded transition (WCAG 2.2 SC 2.3.3; the guard's query is
+CSS Media Queries 5 §12.1). -/
+theorem motionCss_guarded (sel : String) (ms : Nat) :
+    ∃ rule, motionCss sel ms = rule ++ reducedMotionGuard sel :=
+  ⟨_, rfl⟩
+
 /-- `\style` declarations as CSS on the element selectors. A marker becomes
 `::marker` content only when it is plain text; styled markers fall back to the
 default, which is the honest degradation until `::marker` styling is portable.
@@ -85,6 +114,7 @@ def styleRules (doc : Doc) : String :=
     | "itemize4" => some "ul ul ul ul"
     | "enumerate2" => some "ol ol" | "enumerate3" => some "ol ol ol"
     | "enumerate4" => some "ol ol ol ol"
+    | "nav" => some "nav"
     | _ => none
   let markerSel : String → String
     | "ul" => "ul > li::marker, ul ul > li::marker, ul ul ul > li::marker, " ++
@@ -113,8 +143,23 @@ def styleRules (doc : Doc) : String :=
       (st.gap.map fun g => s!"{tag} > li \{ margin-top: {cssLength g.width}; }\n").toList ++
       (st.marker.bind plainText |>.map fun m =>
         s!"{markerSel tag} \{ content: \"{m}  \"; }\n").toList
+    -- Interaction states live on the element's links (the interactive
+    -- content a hover or focus can land on; for `nav` that is `nav a`).
+    -- The colour keeps its token spelling, like every named colour here,
+    -- and a declared motion goes through `motionCss` — the guarded form is
+    -- the only form the emitter has.
+    let iSel := s!"{tag} a"
+    let tokenColor (c : Ir.Color) (n : Option String) : String := match n with
+      | some name => s!"var(--{name}, {cssColor c})"
+      | none => cssColor c
+    let interDecls :=
+      (st.hover.map fun (c, n) =>
+        s!"{iSel}:hover \{ color: {tokenColor c n}; }\n").toList ++
+      (st.focus.map fun (c, n) =>
+        s!"{iSel}:focus-visible \{ outline-color: {tokenColor c n}; }\n").toList ++
+      (st.motion.map fun ms => motionCss iSel ms).toList
     let own := if decls.isEmpty then "" else s!"{tag} \{ {String.intercalate " " decls} }\n"
-    some (own ++ String.join liDecls))
+    some (own ++ String.join liDecls ++ String.join interDecls))
 
 /-- Furniture the semantic palette keys turn on — one shared rule set for
 every theme, so a theme stays a table of values. The conditions read the

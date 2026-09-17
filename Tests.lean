@@ -890,6 +890,52 @@ def landmarkChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!ddiags.any fun d =>
       (d.message.splitOn "#TOP").length > 1 || (d.message.splitOn "'#'").length > 1)
 
+/-- Interaction states are style keys, not a subsystem: `hover`/`focus`
+colour an element's links in that state, `motion` is the transition between
+them, and a declared motion cannot ship unguarded (`HtmlDoc.motionCss`;
+WCAG 2.2 SC 2.3.3 with sufficient technique C39, the
+`prefers-reduced-motion` query of CSS Media Queries 5 §12.1). The PDF path
+reads none of the three keys. Invented content. -/
+def interactionChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let has (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+  let (doc, ds) := elabStr ("\\documentclass{article}" ++
+    "\\palette{ ink = #1D4ED8 }" ++
+    "\\style{nav}{ hover = ink, focus = ink, motion = 150ms }" ++
+    "\\begin{document}\\begin{nav}\\href{#one-head}{One}\\end{nav}" ++
+    "\\section*{One Head}x\\end{document}")
+  t "interaction keys parse" (ds.isEmpty &&
+    ((doc.styles.find? "nav").bind (·.hover)).map (·.2) == some (some "ink") &&
+    ((doc.styles.find? "nav").bind (·.motion)) == some 150)
+  -- css = none ships only the declared rules, so the guard must ride with
+  -- the declaration: both halves are checked on the emitted page.
+  let (page, pds) := HtmlDoc.emit { css := .none } doc
+  t "declared hover and focus land on the nav's links" (pds.isEmpty &&
+    has page "nav a:hover { color: var(--ink, #1d4ed8); }" &&
+    has page "nav a:focus-visible { outline-color: var(--ink, #1d4ed8); }")
+  t "a declared motion ships with its guard even without the base sheet"
+    (has page "nav a { transition: color 150ms, outline-color 150ms; }" &&
+     has page ("@media (prefers-reduced-motion: reduce) " ++
+       "{ nav a { transition: none; } }"))
+  t "an unreadable motion duration is an error"
+    (errCodes ("\\documentclass{article}\\style{nav}{ motion = fast }" ++
+      "\\begin{document}x\\end{document}") == ["E0323"])
+
+/-- The single-emission-site check for `transition:`: nothing but
+`HtmlDoc.motionCss` and the base stylesheet's global reduce guard — both in
+HtmlDoc.lean — may spell a transition into emitted styles. This is the
+architectural half of the by-construction claim `motionCss_guarded`
+states; the scan is the same shape as `diagChecks`'. -/
+def motionSiteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let mut files := (← System.FilePath.walkDir "LeanTex").filter
+    (·.toString.endsWith ".lean")
+  files := files.push "Main.lean"
+  for f in files do
+    let src ← IO.FS.readFile f
+    if (src.splitOn "transition:").length > 1 then
+      check ref s!"transition is spelled only in HtmlDoc ({f})"
+        (f.toString.endsWith "HtmlDoc.lean")
+
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
 around the content, and nothing warns. Its own function: `main` is one `do`
 block and its elaboration budget is spent. -/
@@ -1167,6 +1213,8 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   markdownChecks ref
   backendChecks ref
   landmarkChecks ref
+  interactionChecks ref
+  motionSiteChecks ref
 
 /-- A synthetic face for resolution-order tests: pure data, no host fonts. -/
 def synthFace (family : String) (path : String := "") : FontDb.Face :=

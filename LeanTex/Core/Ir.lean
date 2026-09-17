@@ -645,6 +645,16 @@ structure ElementStyle where
   colour: the moloch title separator between the title block and the
   author block. -/
   separator : Option (Color × Option String) := none
+  /-- Interaction states, read by the HTML backend only — a printed page
+  has no hover or focus, so the PDF path ignores all three keys (said once
+  here, not per consumer). `hover` and `focus` colour the element's links
+  in that state, the same value shape as `rule`; `motion` is the duration,
+  in milliseconds, of the transition between those states, and its CSS
+  always ships inside its own `prefers-reduced-motion` guard
+  (`HtmlDoc.motionCss`, WCAG 2.2 SC 2.3.3). -/
+  hover : Option (Color × Option String) := none
+  focus : Option (Color × Option String) := none
+  motion : Option Nat := none
   deriving Repr, BEq, Inhabited
 
 /-- Elements a document may style. Section levels are `section`, `subsection`,
@@ -657,7 +667,7 @@ furniture (their `font` is read; `titlepage` also reads `align` and
 def styleableElements : List String :=
   ["section", "subsection", "subsubsection", "itemize", "enumerate",
    "itemize2", "itemize3", "itemize4", "enumerate2", "enumerate3", "enumerate4",
-   "frametitle", "sectionpage", "standout", "titlepage"]
+   "frametitle", "sectionpage", "standout", "titlepage", "nav"]
 
 structure Styles where
   entries : Array (String × ElementStyle) := #[]

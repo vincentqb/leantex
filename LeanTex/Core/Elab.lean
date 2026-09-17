@@ -2258,7 +2258,7 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
 
 def styleKeys : List String :=
   ["font", "before", "after", "rule", "marker", "indent", "gap",
-   "align", "separator"]
+   "align", "separator", "hover", "focus", "motion"]
 
 /-- `\style{element}{...}`: how an element kind looks. `font` and `marker`
 are inline content and elaborate as such; the rest are lengths and a palette
@@ -2326,6 +2326,35 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         | "center" => st := { st with align := some "center" }
         | v =>
           diag ctx "E0323" s!"'align' in \\style expects left or center, got '{v}'" pos
+      | "hover" =>
+        match ctx.palette.resolve valueSrc with
+        | some c =>
+          let name := if (ctx.palette.find? valueSrc).isSome then some valueSrc else none
+          st := { st with hover := some (c, name) }
+        | none =>
+          match Decl.parseValue valueSrc with
+          | some (.color r g b) => st := { st with hover := some (⟨r, g, b⟩, none) }
+          | _ => diag ctx "E0326" s!"'{valueSrc}' is not in the palette" pos
+      | "focus" =>
+        match ctx.palette.resolve valueSrc with
+        | some c =>
+          let name := if (ctx.palette.find? valueSrc).isSome then some valueSrc else none
+          st := { st with focus := some (c, name) }
+        | none =>
+          match Decl.parseValue valueSrc with
+          | some (.color r g b) => st := { st with focus := some (⟨r, g, b⟩, none) }
+          | _ => diag ctx "E0326" s!"'{valueSrc}' is not in the palette" pos
+      | "motion" =>
+        -- A duration, in milliseconds: the one unit CSS transitions and
+        -- the reduced-motion literature both speak in.
+        let v := valueSrc.trimAscii.toString
+        let digits := if v.endsWith "ms" then (v.dropEnd 2).toString.trimAscii.toString else v
+        match digits.toNat? with
+        | some ms => st := { st with motion := some ms }
+        | none =>
+          diag ctx "E0323"
+            s!"'motion' in \\style expects a duration in milliseconds, got '{v}'" pos
+            (help := "write motion = 150ms")
       | _ =>
         modify fun st' => { st' with
           diags := st'.diags.push (Decl.unknownKey ctx.file "style" key styleKeys pos) }
