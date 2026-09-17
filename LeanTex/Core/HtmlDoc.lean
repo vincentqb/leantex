@@ -70,11 +70,25 @@ def measureEm (page : PageSpec) : String :=
 
 /-- `\style` declarations as CSS on the element selectors. A marker becomes
 `::marker` content only when it is plain text; styled markers fall back to the
-default, which is the honest degradation until `::marker` styling is portable. -/
+default, which is the honest degradation until `::marker` styling is portable.
+A base list element styles every nesting level (as the PDF path does), so its
+marker rule is emitted at each depth — the depth-qualified selectors match
+the level defaults' specificity and, standing later in the sheet, win. -/
 def styleRules (doc : Doc) : String :=
   let sel : String → Option String
     | "section" => some "h2" | "subsection" => some "h3" | "subsubsection" => some "h4"
-    | "itemize" => some "ul" | "enumerate" => some "ol" | _ => none
+    | "itemize" => some "ul" | "enumerate" => some "ol"
+    | "itemize2" => some "ul ul" | "itemize3" => some "ul ul ul"
+    | "itemize4" => some "ul ul ul ul"
+    | "enumerate2" => some "ol ol" | "enumerate3" => some "ol ol ol"
+    | "enumerate4" => some "ol ol ol ol"
+    | _ => none
+  let markerSel : String → String
+    | "ul" => "ul > li::marker, ul ul > li::marker, ul ul ul > li::marker, " ++
+      "ul ul ul ul > li::marker"
+    | "ol" => "ol > li::marker, ol ol > li::marker, ol ol ol > li::marker, " ++
+      "ol ol ol ol > li::marker"
+    | tag => s!"{tag} > li::marker"
   let plainText (xs : Array Inline) : Option String :=
     xs.foldl (fun acc x => match acc, x with
       | some a, .text t => some (a ++ t)
@@ -95,7 +109,7 @@ def styleRules (doc : Doc) : String :=
     let liDecls :=
       (st.gap.map fun g => s!"{tag} > li \{ margin-top: {cssLength g.width}; }\n").toList ++
       (st.marker.bind plainText |>.map fun m =>
-        s!"{tag} > li::marker \{ content: \"{m}  \"; }\n").toList
+        s!"{markerSel tag} \{ content: \"{m}  \"; }\n").toList
     let own := if decls.isEmpty then "" else s!"{tag} \{ {String.intercalate " " decls} }\n"
     some (own ++ String.join liDecls))
 
@@ -217,6 +231,22 @@ def baseCss (doc : Doc) : String :=
   "ul, ol { margin: 0 0 1rem; padding-left: 1.35rem; }\n" ++
   "li { margin: 0.25rem 0; }\n" ++
   "li::marker { color: var(--muted); }\n" ++
+  -- The class-default list marking, per nesting level, matching the PDF
+  -- backend (classes.dtx: bullet, bold en-dash, centered asterisk, centered
+  -- dot; arabic., (alph), roman., Alph.). Descendant selectors count depth
+  -- per list kind, as LaTeX's \@itemdepth/\@enumdepth do. `disc` and
+  -- `decimal` are the browsers' own level-1 defaults, stated for symmetry.
+  "ul { list-style-type: disc; }\n" ++
+  "ul ul > li::marker { content: \"\u2013  \"; font-weight: 600; }\n" ++
+  "ul ul ul > li::marker { content: \"\u2217  \"; }\n" ++
+  "ul ul ul ul > li::marker { content: \"\u00b7  \"; }\n" ++
+  "ol { list-style-type: decimal; }\n" ++
+  "ol ol { list-style-type: lower-alpha; }\n" ++
+  "ol ol > li::marker { content: \"(\" counter(list-item, lower-alpha) \")  \"; }\n" ++
+  "ol ol ol { list-style-type: lower-roman; }\n" ++
+  "ol ol ol > li::marker { content: counter(list-item, lower-roman) \".  \"; }\n" ++
+  "ol ol ol ol { list-style-type: upper-alpha; }\n" ++
+  "ol ol ol ol > li::marker { content: counter(list-item, upper-alpha) \".  \"; }\n" ++
   -- A link inherits the document's colour, as it does in the PDF: the anchor
   -- imposes nothing, the underline and focus outline carry the affordance.
   "a { color: inherit; text-decoration-thickness: 1px;\n" ++
