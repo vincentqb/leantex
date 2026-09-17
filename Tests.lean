@@ -789,6 +789,34 @@ def inkGeometryChecks (ref : IO.Ref (List String)) : IO Unit := do
     #[0, 1, 0, 0, 0xFF, 0x38, 0, 0, 0, 0, 19, 136] ++ Array.replicate 8 (0 : UInt8)
   t "ink: point budget exceeded is undecodable"
     ((srcOf overPoints).inkAt 0 (-100) (-50) |>.isNone)
+  -- A composite whose declared bbox lies: the header says yMin 0, clear of
+  -- the band, but its component (glyph 0, a square reaching y −200) spans
+  -- it. The declared box is only the glyph's own point bbox for a simple
+  -- glyph; a composite's must be decoded, so a yMin shortcut trusting it
+  -- would paint a rule through ink.
+  let g0 : Array UInt8 :=
+    -- one contour, bbox (0,−200)–(100,0), 4 on-curve points
+    #[0, 1,  0, 0,  0xFF, 0x38,  0, 100,  0, 0,
+      0, 3,  0, 0,
+      0x31, 0x33, 0x15, 0x23,
+      100, 100, 200,
+      0]  -- pad to even length for short loca
+  let g1 : Array UInt8 :=
+    -- numberOfContours −1; bbox declares yMin 0; one component: glyph 0,
+    -- word xy args (0,0), no MORE_COMPONENTS
+    #[0xFF, 0xFF,  0, 0,  0, 0,  0, 100,  0, 0,
+      0, 3,  0, 0,  0, 0,  0, 0]
+  let compSrc : Ink.Src :=
+    let glyf := g0 ++ g1
+    let loca : ByteArray := ⟨#[0, 0,
+      0, UInt8.ofNat (g0.size / 2),
+      0, UInt8.ofNat (glyf.size / 2)]⟩
+    Ink.Src.make (mkSfnt #[("head", head52), ("loca", loca), ("glyf", ⟨glyf⟩)])
+      false 2
+  t "ink: composite with a lying bbox is decoded, not trusted"
+    (compSrc.inkAt 1 (-100) (-50) == some #[(0, 100)])
+  t "ink: the lying composite's simple component answers for itself"
+    (compSrc.inkAt 0 (-100) (-50) == some #[(0, 100)])
 
 /-- Native underline: a decoration never breaks a glyph. Drawn from the
 font's own `post` metrics and interrupted where a glyph's outline ink

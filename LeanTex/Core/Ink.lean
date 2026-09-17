@@ -896,9 +896,11 @@ def Src.inkAt (s : Src) (g : Nat) (bandLo bandHi : Int) :
       some #[]
     else if o2 < o1 || o2 > glyf.length || o1 + 10 > glyf.length then
       none
-    -- A header whose own yMin clears the band never needs its outline
-    -- decoded.
-    else if i16 b (glyf.offset + o1 + 4) ≥ bandHi then
+    -- A simple glyph whose own yMin clears the band never needs its outline
+    -- decoded: its declared bbox is its own point data's. A composite's
+    -- declared box need not bound its transformed components, so trusting it
+    -- would answer from data the invariant says must be decoded.
+    else if i16 b (glyf.offset + o1) ≥ 0 && i16 b (glyf.offset + o1 + 4) ≥ bandHi then
       some #[]
     else
       match glyfOutline b glyf loca long numGlyphs g with
