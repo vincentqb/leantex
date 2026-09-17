@@ -120,6 +120,84 @@ theorem slides_lines_in_band :
     (Ir.slidesStage43.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ≤ 20 := by
   decide
 
+/-- How a page distributes its leftover vertical space: declared shares of
+the stretch above and below the content, the ratio form of beamer's
+`\vfil`-glue model. Centring is 1:1, top-flush is 0:1 (all leftover
+below), bottom-flush 1:0, and the moloch title page 2618:1000 — the sum
+of its `0pt plus 1.618fil` and `\vfil` above against the `plus 1fil`
+below (beamerinnerthememoloch.dtx, the "golden ratio spacing" of its
+`title page` template). -/
+structure VDist where
+  above : Nat
+  below : Nat
+  deriving Repr, BEq, Inhabited
+
+def VDist.top : VDist := ⟨0, 1⟩
+def VDist.center : VDist := ⟨1, 1⟩
+def VDist.bottom : VDist := ⟨1, 0⟩
+def VDist.golden : VDist := ⟨2618, 1000⟩
+
+/-- The share of a page's leftover placed above the content. Content taller
+than the area (leftover ≤ 0) takes nothing above: it stays top-flush and
+spills below, never rides off the top of the page. -/
+def VDist.aboveShare (d : VDist) (leftover : Sp) : Sp :=
+  if leftover ≤ 0 then 0
+  else leftover * d.above / (d.above + d.below)
+
+/-- The split loses and invents nothing: the above share never leaves
+`[0, leftover]`, and the below share is the exact difference — so both
+shares are non-negative and sum to exactly the leftover, whatever the
+ratio and whatever rounding the division did. -/
+theorem VDist.split_exact (d : VDist) (l : Int) :
+    0 ≤ d.aboveShare l ∧ (0 ≤ l → d.aboveShare l ≤ l) ∧
+    d.aboveShare l + (l - d.aboveShare l) = l := by
+  have hsum : (0 : Int) ≤ (d.above : Int) + (d.below : Int) := by
+    have := Int.natCast_nonneg d.above
+    have := Int.natCast_nonneg d.below
+    omega
+  have hcancel : ∀ x y : Int, x + (y - x) = y := by omega
+  have hnn : 0 ≤ d.aboveShare l := by
+    unfold aboveShare
+    split
+    · exact Int.le_refl 0
+    · next hc =>
+      have hc2 : ¬l ≤ (0 : Int) := hc
+      have hl : (0 : Int) ≤ l := by omega
+      exact Int.ediv_nonneg (Int.mul_nonneg hl (Int.natCast_nonneg _)) hsum
+  refine ⟨hnn, ?_, hcancel _ _⟩
+  intro hl
+  unfold aboveShare
+  split
+  · exact hl
+  · next hc =>
+    by_cases hz : (d.above : Int) + (d.below : Int) = 0
+    · rw [hz, Int.ediv_zero]
+      exact hl
+    · have hmul : l * (d.above : Int) ≤ l * ((d.above : Int) + (d.below : Int)) := by
+        have hb := Int.natCast_nonneg d.below
+        exact Int.mul_le_mul_of_nonneg_left (by omega) hl
+      calc l * (d.above : Int) / ((d.above : Int) + (d.below : Int))
+          ≤ l * ((d.above : Int) + (d.below : Int)) / ((d.above : Int) + (d.below : Int)) :=
+            Int.ediv_le_ediv (by omega) hmul
+        _ = l := Int.mul_ediv_cancel l hz
+
+/-- Ratio 1:1 is the old vertical centring, division and guard included:
+the generalisation moves no standout frame and no section page. -/
+theorem VDist.center_is_halving (l : Sp) :
+    VDist.center.aboveShare l = if l ≤ 0 then 0 else l / 2 := by
+  unfold aboveShare center
+  split
+  · rfl
+  · simp
+
+/-- "All leftover below" is the old top-flush behaviour: the article page
+and every other undeclared page keep their lines exactly where they were. -/
+theorem VDist.top_is_flush (l : Sp) : VDist.top.aboveShare l = 0 := by
+  unfold aboveShare top
+  split
+  · rfl
+  · simp
+
 inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
       (glyphs : Array (Nat × Char × Sp)) (size : Sp) (underline : Bool)
