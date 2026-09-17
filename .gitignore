@@ -4,6 +4,7 @@ tests/corpus/*.pdf
 tests/corpus/*.html
 
 bench/lorem.tex
+bench/underline.tex
 bench/*.pdf
 
 # Review tooling writes its report into the worktree; the lesson belongs in a
