@@ -49,6 +49,69 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — the third artefact: a `card` document class, the sharpest
+test of the design system because at 85.60 × 53.98 mm nothing can be
+fudged. The class differs from `article` and `slides` in defaults only —
+every mechanism it uses is shared, and each default is sourced rather
+than guessed:
+
+- Trim sizes from the trade standards: ISO/IEC 7810 ID-1 by default (the
+  credit-card size most business cards follow; iso.org/standard/31432),
+  class options `us` (3.5 × 2 in) and `jis` (91 × 55 mm, the meishi
+  4-gou). Margins default to the print safe zone, 5 mm inside the trim
+  (banana-print.co.uk names 4–5 mm; solopress.com 3 mm as the minimum).
+  `\page{ bleed = 3mm }` — the 3 mm / 0.125 in shop convention
+  (solopress.com/support-guides/bleed) — grows the PDF medium, shifts the
+  content with the trim corner, and records the TrimBox (ISO 32000-2
+  §14.11.2); zero bleed is byte-identical output by `cmp` across the
+  corpus. Two faces are two `frame` environments: the page-boundary
+  mechanism every class already had.
+- What a card guarantees is stated as assertions the engine already fails
+  builds on, implied by the class and silenced by declaring the same
+  form: content fits its faces (`pages <= N`, N counted from the frames);
+  ink respects the safe margin (`text.in_area`, new, judged from the
+  shipped lines with each run's font cap height and descent at its size —
+  cap height because hhea ascent reserves accent headroom that is blank,
+  and the trio card's `\Large` name proved it by failing with no ink out
+  of bounds); and the smallest type clears the fluent-reading floor at
+  hand-held distance (`text.xheight >= 1.4mm`, the 0.2° angular x-height
+  at 40 cm bounding the fluent range in Legge & Bigelow 2011,
+  PMC3428264 — read from each font's own OS/2 x-height at the run size,
+  the metric the source speaks in). Each check was re-broken once and its
+  test failed. Contrast is deliberately absent here: it is the colour
+  worker's contract, and a card participates through the shared palette
+  like any other class.
+- The invariant whose absence made a plain-prose card impossible: below
+  the 40-character working minimum for justified text (Bringhurst,
+  Elements §2.1.2), a measure must be set ragged. At card width no line
+  has the stretch justification needs, so the breaker could only choose
+  among overfull lines and shipped one giant one. `justify = on|off` and
+  `hyphenate = on|off` are now `\page` keys with class defaults (both off
+  for card only); ragged is an item transform — glue keeps its natural
+  width and gains fil, `\raggedright`'s glue model — so `kp` itself is
+  untouched, and `scripts/kp-fuzz.lean` now holds the breaker optimal
+  over both item shapes (300 cases, justified and ragged). A first
+  flag-in-kp attempt was measured and rejected; with the transform,
+  alternating A/B bench runs on the underline arm read 404/405/408 ms
+  before vs 404/393/407 after — no attributable cost. The shipped-ink
+  walk behind the new assertions runs only when something asserts.
+- The trio fixtures (`trio-page`, `trio-deck`, `trio-card`) carry
+  byte-identical `\fonts`/`\palette`/`\tokens`/`\style` blocks; both
+  backends rendered, rasterized, and inspected — the amber ruled section
+  style reads identically on the page, the deck divider, and in the HTML
+  of all three; the card's two faces imposed on one sheet for the print
+  shop. All content invented.
+- What a fourth artefact would cost, from doing the third: one defaults
+  block in the elaborator plus any genuinely new page keys — no backend
+  was touched for `card` beyond the bleed mechanism, which is a `\page`
+  key any class may use. The residual wart is pre-existing, not new: the
+  `slides` class is tested by name in layout (`Acc.slides`: sections and
+  frames open fresh pages) and in the elaborator (`\maketitle` makes a
+  frame), so a fourth class wanting either behaviour would extend those
+  name tests. The clean form is a policy value beside `hyphenate`/
+  `justify` ("sections break pages"), left undone here to keep this diff
+  out of the concurrent workers' files.
+
 2026-09-17 — colour is a checkable contract now, not a palette of guesses.
 WCAG 2.2 gives contrast a formula (relative luminance over linearised
 sRGB, ratio (L1+0.05)/(L2+0.05)), so "every pairing the engine ships is
