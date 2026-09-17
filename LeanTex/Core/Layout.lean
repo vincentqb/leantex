@@ -614,6 +614,8 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   | .spaced _ body => scalarTextList out itemD enumD body.toList
   | .columns cols => scalarTextCols out itemD enumD cols.toList
   | .step _ _ body => scalarTextList out itemD enumD body.toList
+  | .only _ body => scalarTextList out itemD enumD body.toList
+  | .nav body => scalarTextList out itemD enumD body.toList
   -- A note is never set in either backend's pages; its glyphs are not asked
   -- for.
   | .note _ => out
@@ -1882,6 +1884,13 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .step _ _ body =>
     -- Pure grouping: any dimming was painted into colours before layout.
     collectBlocks a pats fs body indent
+  | .only _ body =>
+    -- `run` already kept this node for the PDF (`Ir.keepFor "pdf"`), so by
+    -- here it is pure grouping, exactly as a resolved step is.
+    collectBlocks a pats fs body indent
+  | .nav body =>
+    -- A landmark is an HTML notion; the page keeps the content, transparent.
+    collectBlocks a pats fs body indent
   | .note _ =>
     -- A speaker note is not handout content: no lines, no gap.
     a
@@ -2176,6 +2185,10 @@ the caller via `Geom.ofPage`, so layout has one source of truth. -/
 def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     (imgs : Image.Store := {}) :
     Out := Id.run do
+  -- The PDF's view of the document: backend conditionals resolve here, at
+  -- the backend's entry, so no later pass can see content another backend
+  -- owns (`Ir.keepFor_covers` is why dropping here cannot lose content).
+  let doc := { doc with body := Ir.keepFor "pdf" doc.body }
   -- The geometry decides whether patterns apply at all: a card never
   -- hyphenates, whoever loaded the patterns.
   let pats := if geom.hyphenate then pats else none

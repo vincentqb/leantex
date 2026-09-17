@@ -435,6 +435,22 @@ inductive Block where
   The PDF handout omits it; HTML keeps it as an inert hidden aside for the
   coming speaker view (PLAN M5). -/
   | note (body : Array Block)
+  /-- `{ifbackend}{html,md}`: content addressed to a subset of the backends
+  (`backendNames`). The engine elaborates once and emits several backends
+  from one IR, so the conditional cannot resolve at elaboration: the node
+  carries its target set and each backend keeps or drops it (`keepFor`,
+  applied with the backend's own name at each emitter's entry). Elaboration
+  diagnoses a target set that no backend answers along its nesting path
+  (W0324), and `keepFor_covers` is the conservation theorem that makes the
+  diagnostic sufficient: with every conditional answered, no declared text
+  leaf is dropped by every backend. -/
+  | only (targets : Array String) (body : Array Block)
+  /-- `{nav}`: a navigation landmark — a group of links for page or site
+  navigation, not a widget. HTML emits it as the `<nav>` element (the
+  `navigation` landmark, W3C ARIA Authoring Practices, Landmark Regions);
+  the PDF page and the markdown twin have no landmark to mark, so both keep
+  the body as a transparent group. -/
+  | nav (body : Array Block)
   /-- beamer's `\logo`, met in the body: a stateful declaration — the pages
   from here on carry this content at their lower-right corner, and an empty
   content clears it (`\logo{}` after a frame is how a deck scopes a logo to
@@ -964,6 +980,9 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .step n last body =>
     s!"{ind}{dumpStepRange n last}\n" ++ dumpBlocks (ind ++ "  ") body
   | .note body => s!"{ind}note\n" ++ dumpBlocks (ind ++ "  ") body
+  | .only targets body =>
+    s!"{ind}only {String.intercalate "," targets.toList}\n" ++ dumpBlocks (ind ++ "  ") body
+  | .nav body => s!"{ind}nav\n" ++ dumpBlocks (ind ++ "  ") body
   | .logo content =>
     if content.isEmpty then s!"{ind}logo clear\n"
     else s!"{ind}logo\n" ++ dumpInlines (ind ++ "  ") content
@@ -1120,6 +1139,10 @@ def maxStepBlock : Block → Nat
   | .spaced _ body => maxStepBlockList body.toList
   | .columns cols => maxStepColumns cols.toList
   | .step n last body => max (max n (last.getD n)) (maxStepBlockList body.toList)
+  -- Conditional content steps like any other content: a backend that keeps
+  -- it must give its overlays their pages. A nav's links may step too.
+  | .only _ body => maxStepBlockList body.toList
+  | .nav body => maxStepBlockList body.toList
   | .section _ _ _ => 1
   | .verbatim _ _ => 1
   | .note _ => 1
@@ -1177,6 +1200,8 @@ def shadeBlock (dim : Color) : Block → Block
   | .spaced g body => .spaced g (shadeBlockList dim #[] body.toList)
   | .columns cols => .columns (shadeColumns dim #[] cols.toList)
   | .step n last body => .step n last (shadeBlockList dim #[] body.toList)
+  | .only targets body => .only targets (shadeBlockList dim #[] body.toList)
+  | .nav body => .nav (shadeBlockList dim #[] body.toList)
   | .verbatim _ s => .verbatim (some dim) s
   | .section l st title => .section l st title
   | .note body => .note body
@@ -1243,6 +1268,8 @@ def dimBlock (dim : Color) (k : Nat) : Block → Block
   | .step n last body =>
     if stepPending n last k then .step n last (shadeBlocks dim body)
     else .step n last (dimBlockList dim k #[] body.toList)
+  | .only targets body => .only targets (dimBlockList dim k #[] body.toList)
+  | .nav body => .nav (dimBlockList dim k #[] body.toList)
   | .section l st title => .section l st title
   | .verbatim c s => .verbatim c s
   | .note body => .note body
@@ -1312,6 +1339,8 @@ def unwrapItemStep : Block → Block
   | .spaced g body => .spaced g (unwrapItemStepList #[] body.toList)
   | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
   | .step n l body => .step n l (unwrapItemStepList #[] body.toList)
+  | .only targets body => .only targets (unwrapItemStepList #[] body.toList)
+  | .nav body => .nav (unwrapItemStepList #[] body.toList)
   | .frame t s v body => .frame t s v (unwrapItemStepList #[] body.toList)
   | .para content => .para content
   | .section l st title => .section l st title
@@ -1371,6 +1400,11 @@ def blockTextOne (acc : String) : Block → String
   | .spaced _ body => blockTextList acc body.toList
   | .columns cols => blockTextColumns acc cols.toList
   | .step _ _ body => blockTextList acc body.toList
+  -- The census reads the DECLARED content: what a conditional addresses to
+  -- one backend is still content the document declares, so it counts here;
+  -- `keepFor` is where a backend's own view drops it.
+  | .only _ body => blockTextList acc body.toList
+  | .nav body => blockTextList acc body.toList
   | .note body => blockTextList acc body.toList
   | .verbatim _ s => acc ++ s
   | .logo content => acc ++ plainText content
@@ -1411,6 +1445,8 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .spaced _ body => headingLevelList out body.toList
   | .columns cols => headingLevelColumns out cols.toList
   | .step _ _ body => headingLevelList out body.toList
+  | .only _ body => headingLevelList out body.toList
+  | .nav body => headingLevelList out body.toList
   | .frame _ _ _ body => headingLevelList out body.toList
   | .note _ => out
   | .verbatim _ _ => out
@@ -1584,6 +1620,12 @@ theorem shadeBlock_text (dim : Color) (b : Block) (acc : String) :
   | .step n last body =>
     rw [shadeBlock]
     simp [blockTextOne, shadeBlockList_text dim body.toList #[] acc, blockTextList]
+  | .only targets body =>
+    rw [shadeBlock]
+    simp [blockTextOne, shadeBlockList_text dim body.toList #[] acc, blockTextList]
+  | .nav body =>
+    rw [shadeBlock]
+    simp [blockTextOne, shadeBlockList_text dim body.toList #[] acc, blockTextList]
   | .verbatim c s => rfl
   -- A logo declaration is page furniture: the shade never repaints it, so
   -- its census — the declaration's own inline text — is untouched.
@@ -1712,6 +1754,12 @@ theorem dimBlock_text (dim : Color) (k : Nat) (b : Block) (acc : String) :
         shadeBlockList_text dim body.toList #[] acc, blockTextList]
     · simp [h, blockTextOne, dimBlockList_text dim k body.toList #[] acc,
         blockTextList]
+  | .only targets body =>
+    rw [dimBlock]
+    simp [blockTextOne, dimBlockList_text dim k body.toList #[] acc, blockTextList]
+  | .nav body =>
+    rw [dimBlock]
+    simp [blockTextOne, dimBlockList_text dim k body.toList #[] acc, blockTextList]
   -- A logo declaration is page furniture: dimming never repaints it, so
   -- its census — the declaration's own inline text — is untouched.
   | .logo _ => rfl
@@ -1750,6 +1798,464 @@ theorem dimBlocks_text (dim : Color) (k : Nat) (xs : Array Block) :
     blocksText (dimBlocks dim k xs) = blocksText xs := by
   simp [blocksText, dimBlocks, dimBlockList_text dim k xs.toList #[] "",
     blockTextList]
+
+-- Backend conditionals: `keepFor` is one backend's view of the document,
+-- and `keepFor_covers` is what stops a conditional from becoming a silent
+-- delete. Structural recursion through `List`, as the walks above.
+
+/-- The backend names an `{ifbackend}` target may spell: one per emitter,
+exactly the values the CLI's `--emit` accepts (`Cli.Args.emitOne` mirrors
+this list, and each backend passes its own entry to `keepFor`). -/
+def backendNames : List String := ["pdf", "html", "md"]
+
+/-- Does backend `t` keep this block? Only a conditional can exclude one. -/
+def keptBy (t : String) : Block → Bool
+  | .only targets _ => targets.contains t
+  | .para _ | .section _ _ _ | .list _ _ | .center _ | .quote _ | .spaced _ _
+  | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
+  | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ | .nav _ => true
+
+mutual
+
+/-- The document as backend `t` sees it: an `.only` block whose targets
+exclude `t` is dropped whole, everything else is kept, and the walk carries
+into every body so a nested conditional resolves against its own targets.
+Each backend applies this once at its entry, with its own name — the drop
+decision lives here and nowhere else, so no backend can improvise a
+different reading of the same target set. -/
+def keepForOne (t : String) : Block → Block
+  | .only targets body => .only targets (keepForList t body.toList).toArray
+  | .nav body => .nav (keepForList t body.toList).toArray
+  | .list o items => .list o (keepForItems t items.toList).toArray
+  | .center body => .center (keepForList t body.toList).toArray
+  | .quote body => .quote (keepForList t body.toList).toArray
+  | .spaced g body => .spaced g (keepForList t body.toList).toArray
+  | .columns cols => .columns (keepForColumns t cols.toList).toArray
+  | .step n l body => .step n l (keepForList t body.toList).toArray
+  | .note body => .note (keepForList t body.toList).toArray
+  | .frame ti st v body => .frame ti st v (keepForList t body.toList).toArray
+  | .para c => .para c
+  | .section l st title => .section l st title
+  | .verbatim c s => .verbatim c s
+  | .logo c => .logo c
+  | .framefoot c => .framefoot c
+  | .rule c n th => .rule c n th
+
+def keepForList (t : String) : List Block → List Block
+  | [] => []
+  | b :: rest =>
+    match keptBy t b with
+    | true => keepForOne t b :: keepForList t rest
+    | false => keepForList t rest
+
+def keepForItems (t : String) : List (Array Block) → List (Array Block)
+  | [] => []
+  | item :: rest => (keepForList t item.toList).toArray :: keepForItems t rest
+
+def keepForColumns (t : String) :
+    List (Option Nat × Array Block) → List (Option Nat × Array Block)
+  | [] => []
+  | (w, body) :: rest => (w, (keepForList t body.toList).toArray) :: keepForColumns t rest
+
+end
+
+def keepFor (t : String) (xs : Array Block) : Array Block :=
+  (keepForList t xs.toList).toArray
+
+mutual
+
+/-- Every text leaf of the blocks — each paragraph's, title's, and verbatim
+block's plain text as one element (most recent first; the census is read as
+a set). The backend-conditional conservation theorem ranges over leaves
+rather than `blocksText`'s one concatenated string because a leaf survives
+`keepFor` whole or not at all: a character's membership in the
+concatenation could be satisfied by coincidence, a whole surviving leaf
+cannot be. -/
+def textLeavesList (acc : List String) : List Block → List String
+  | [] => acc
+  | b :: rest => textLeavesList (textLeavesOne acc b) rest
+
+def textLeavesOne (acc : List String) : Block → List String
+  | .para content => plainText content :: acc
+  | .section _ _ title => plainText title :: acc
+  | .verbatim _ s => s :: acc
+  | .logo content => plainText content :: acc
+  | .framefoot content => plainText content :: acc
+  | .list _ items => textLeavesItems acc items.toList
+  | .center body => textLeavesList acc body.toList
+  | .quote body => textLeavesList acc body.toList
+  | .spaced _ body => textLeavesList acc body.toList
+  | .columns cols => textLeavesColumns acc cols.toList
+  | .step _ _ body => textLeavesList acc body.toList
+  | .note body => textLeavesList acc body.toList
+  | .only _ body => textLeavesList acc body.toList
+  | .nav body => textLeavesList acc body.toList
+  | .frame title _ _ body => textLeavesList (plainText title :: acc) body.toList
+  -- A rule is decorative ink; it carries no text (as `blockTextOne` reads it).
+  | .rule _ _ _ => acc
+
+def textLeavesItems (acc : List String) : List (Array Block) → List String
+  | [] => acc
+  | item :: rest => textLeavesItems (textLeavesList acc item.toList) rest
+
+def textLeavesColumns (acc : List String) :
+    List (Option Nat × Array Block) → List String
+  | [] => acc
+  | (_, body) :: rest => textLeavesColumns (textLeavesList acc body.toList) rest
+
+end
+
+def textLeaves (xs : Array Block) : List String := textLeavesList [] xs.toList
+
+mutual
+
+/-- No content is addressed to no backend: along every nesting path, each
+`.only` node's targets keep at least one member of `avail` — the ambient
+set, `backendNames` at the top and the path intersection inside a
+conditional, so an `{ifbackend}{pdf}` inside an `{ifbackend}{html}`
+addresses the empty set whatever each node spells alone. Elaboration
+performs the same intersection as it walks in and fires W0324 exactly where
+this returns false (pinned by test; `Elab` is monadic, so the
+correspondence is not itself a theorem). -/
+def orphanFreeList (avail : List String) : List Block → Bool
+  | [] => true
+  | b :: rest => orphanFreeOne avail b && orphanFreeList avail rest
+
+def orphanFreeOne (avail : List String) : Block → Bool
+  | .only targets body =>
+    let eff := avail.filter (fun a => targets.contains a)
+    !eff.isEmpty && orphanFreeList eff body.toList
+  | .list _ items => orphanFreeItems avail items.toList
+  | .center body => orphanFreeList avail body.toList
+  | .quote body => orphanFreeList avail body.toList
+  | .spaced _ body => orphanFreeList avail body.toList
+  | .columns cols => orphanFreeColumns avail cols.toList
+  | .step _ _ body => orphanFreeList avail body.toList
+  | .note body => orphanFreeList avail body.toList
+  | .nav body => orphanFreeList avail body.toList
+  | .frame _ _ _ body => orphanFreeList avail body.toList
+  | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .rule _ _ _ => true
+
+def orphanFreeItems (avail : List String) : List (Array Block) → Bool
+  | [] => true
+  | item :: rest => orphanFreeList avail item.toList && orphanFreeItems avail rest
+
+def orphanFreeColumns (avail : List String) :
+    List (Option Nat × Array Block) → Bool
+  | [] => true
+  | (_, body) :: rest =>
+    orphanFreeList avail body.toList && orphanFreeColumns avail rest
+
+end
+
+def orphanFree (avail : List String) (xs : Array Block) : Bool :=
+  orphanFreeList avail xs.toList
+
+-- The accumulator lemmas: a leaf census over `acc` is the census over `[]`
+-- appended to `acc`, so membership statements can be read off `mem_append`.
+
+mutual
+
+private theorem textLeavesList_acc (acc : List String) (xs : List Block) :
+    textLeavesList acc xs = textLeavesList [] xs ++ acc := by
+  match xs with
+  | [] => simp [textLeavesList]
+  | b :: rest =>
+    rw [textLeavesList, textLeavesList,
+      textLeavesList_acc (textLeavesOne acc b) rest,
+      textLeavesList_acc (textLeavesOne [] b) rest,
+      textLeavesOne_acc acc b]
+    simp [List.append_assoc]
+
+private theorem textLeavesOne_acc (acc : List String) (b : Block) :
+    textLeavesOne acc b = textLeavesOne [] b ++ acc := by
+  match b with
+  | .para c => simp [textLeavesOne]
+  | .section l st title => simp [textLeavesOne]
+  | .verbatim c s => simp [textLeavesOne]
+  | .logo c => simp [textLeavesOne]
+  | .framefoot c => simp [textLeavesOne]
+  | .rule c n th => simp [textLeavesOne]
+  | .list o items =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesItems_acc acc items.toList
+  | .center body =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesList_acc acc body.toList
+  | .quote body =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesList_acc acc body.toList
+  | .spaced g body =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesList_acc acc body.toList
+  | .columns cols =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesColumns_acc acc cols.toList
+  | .step n l body =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesList_acc acc body.toList
+  | .note body =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesList_acc acc body.toList
+  | .only targets body =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesList_acc acc body.toList
+  | .nav body =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesList_acc acc body.toList
+  | .frame title st v body =>
+    rw [textLeavesOne, textLeavesOne,
+      textLeavesList_acc (plainText title :: acc) body.toList,
+      textLeavesList_acc [plainText title] body.toList]
+    simp
+
+private theorem textLeavesItems_acc (acc : List String) (items : List (Array Block)) :
+    textLeavesItems acc items = textLeavesItems [] items ++ acc := by
+  match items with
+  | [] => simp [textLeavesItems]
+  | item :: rest =>
+    rw [textLeavesItems, textLeavesItems,
+      textLeavesItems_acc (textLeavesList acc item.toList) rest,
+      textLeavesItems_acc (textLeavesList [] item.toList) rest,
+      textLeavesList_acc acc item.toList]
+    simp [List.append_assoc]
+
+private theorem textLeavesColumns_acc (acc : List String)
+    (cols : List (Option Nat × Array Block)) :
+    textLeavesColumns acc cols = textLeavesColumns [] cols ++ acc := by
+  match cols with
+  | [] => simp [textLeavesColumns]
+  | (w, body) :: rest =>
+    rw [textLeavesColumns, textLeavesColumns,
+      textLeavesColumns_acc (textLeavesList acc body.toList) rest,
+      textLeavesColumns_acc (textLeavesList [] body.toList) rest,
+      textLeavesList_acc acc body.toList]
+    simp [List.append_assoc]
+
+end
+
+private theorem keepForList_kept (t : String) (b : Block) (rest : List Block)
+    (h : keptBy t b = true) :
+    keepForList t (b :: rest) = keepForOne t b :: keepForList t rest := by
+  rw [keepForList, h]
+
+private theorem keepForList_dropped (t : String) (b : Block) (rest : List Block)
+    (h : keptBy t b = false) :
+    keepForList t (b :: rest) = keepForList t rest := by
+  rw [keepForList, h]
+
+mutual
+
+/-- The conservation theorem behind `keepFor_covers`, at the list level and
+generalized over the ambient target set, which shrinks by intersection at
+each nested conditional exactly as `orphanFree` and elaboration walk it. -/
+theorem keepForList_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail)
+    (xs : List Block) (h : orphanFreeList avail xs = true) :
+    ∀ s ∈ textLeavesList [] xs, ∃ t ∈ avail, s ∈ textLeavesList [] (keepForList t xs) := by
+  match xs with
+  | [] =>
+    intro s hs
+    simp [textLeavesList] at hs
+  | b :: rest =>
+    intro s hs
+    rw [orphanFreeList, Bool.and_eq_true] at h
+    rw [textLeavesList, textLeavesList_acc (textLeavesOne [] b) rest,
+      List.mem_append] at hs
+    cases hs with
+    | inr hone =>
+      obtain ⟨t, ht, hkept, hmem⟩ := keepForOne_covers avail t0 h0 b h.1 s hone
+      refine ⟨t, ht, ?_⟩
+      rw [keepForList_kept t b rest hkept, textLeavesList,
+        textLeavesList_acc (textLeavesOne [] (keepForOne t b)) (keepForList t rest)]
+      exact List.mem_append.mpr (.inr hmem)
+    | inl hrest =>
+      obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 rest h.2 s hrest
+      refine ⟨t, ht, ?_⟩
+      cases hk : keptBy t b with
+      | true =>
+        rw [keepForList_kept t b rest hk, textLeavesList,
+          textLeavesList_acc (textLeavesOne [] (keepForOne t b)) (keepForList t rest)]
+        exact List.mem_append.mpr (.inl hmem)
+      | false =>
+        rw [keepForList_dropped t b rest hk]
+        exact hmem
+
+theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail)
+    (b : Block) (h : orphanFreeOne avail b = true) :
+    ∀ s ∈ textLeavesOne [] b,
+      ∃ t ∈ avail, keptBy t b = true ∧ s ∈ textLeavesOne [] (keepForOne t b) := by
+  match b with
+  | .para c =>
+    intro s hs
+    exact ⟨t0, h0, rfl, hs⟩
+  | .section l st title =>
+    intro s hs
+    exact ⟨t0, h0, rfl, hs⟩
+  | .verbatim c str =>
+    intro s hs
+    exact ⟨t0, h0, rfl, hs⟩
+  | .logo c =>
+    intro s hs
+    exact ⟨t0, h0, rfl, hs⟩
+  | .framefoot c =>
+    intro s hs
+    exact ⟨t0, h0, rfl, hs⟩
+  | .rule c n th =>
+    intro s hs
+    simp [textLeavesOne] at hs
+  | .center body =>
+    intro s hs
+    rw [textLeavesOne] at hs
+    obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
+    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .quote body =>
+    intro s hs
+    rw [textLeavesOne] at hs
+    obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
+    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .spaced g body =>
+    intro s hs
+    rw [textLeavesOne] at hs
+    obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
+    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .step n l body =>
+    intro s hs
+    rw [textLeavesOne] at hs
+    obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
+    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .note body =>
+    intro s hs
+    rw [textLeavesOne] at hs
+    obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
+    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .nav body =>
+    intro s hs
+    rw [textLeavesOne] at hs
+    obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
+    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .list o items =>
+    intro s hs
+    rw [textLeavesOne] at hs
+    obtain ⟨t, ht, hmem⟩ := keepForItems_covers avail t0 h0 items.toList h s hs
+    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .columns cols =>
+    intro s hs
+    rw [textLeavesOne] at hs
+    obtain ⟨t, ht, hmem⟩ := keepForColumns_covers avail t0 h0 cols.toList h s hs
+    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .frame title st v body =>
+    intro s hs
+    rw [textLeavesOne, textLeavesList_acc [plainText title] body.toList,
+      List.mem_append] at hs
+    cases hs with
+    | inr hti =>
+      refine ⟨t0, h0, rfl, ?_⟩
+      rw [keepForOne, textLeavesOne,
+        textLeavesList_acc [plainText title] ((keepForList t0 body.toList).toArray.toList)]
+      exact List.mem_append.mpr (.inr hti)
+    | inl hbody =>
+      obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hbody
+      refine ⟨t, ht, rfl, ?_⟩
+      rw [keepForOne, textLeavesOne,
+        textLeavesList_acc [plainText title] ((keepForList t body.toList).toArray.toList)]
+      exact List.mem_append.mpr (.inl (by simpa using hmem))
+  | .only targets body =>
+    intro s hs
+    rw [orphanFreeOne, Bool.and_eq_true] at h
+    have hne : avail.filter (fun a => targets.contains a) ≠ [] := by
+      intro he
+      rw [he] at h
+      simp [List.isEmpty] at h
+    obtain ⟨t1, ht1⟩ := List.exists_mem_of_ne_nil _ hne
+    obtain ⟨t, ht, hmem⟩ := keepForList_covers
+      (avail.filter (fun a => targets.contains a)) t1 ht1 body.toList h.2 s
+      (by simpa [textLeavesOne] using hs)
+    have ht' := List.mem_filter.mp ht
+    refine ⟨t, ht'.1, ht'.2, ?_⟩
+    rw [keepForOne, textLeavesOne]
+    simpa using hmem
+
+theorem keepForItems_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail)
+    (items : List (Array Block)) (h : orphanFreeItems avail items = true) :
+    ∀ s ∈ textLeavesItems [] items,
+      ∃ t ∈ avail, s ∈ textLeavesItems [] (keepForItems t items) := by
+  match items with
+  | [] =>
+    intro s hs
+    simp [textLeavesItems] at hs
+  | item :: rest =>
+    intro s hs
+    rw [orphanFreeItems, Bool.and_eq_true] at h
+    rw [textLeavesItems, textLeavesItems_acc (textLeavesList [] item.toList) rest,
+      List.mem_append] at hs
+    cases hs with
+    | inr hitem =>
+      obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 item.toList h.1 s hitem
+      refine ⟨t, ht, ?_⟩
+      rw [keepForItems, textLeavesItems,
+        textLeavesItems_acc (textLeavesList [] (keepForList t item.toList).toArray.toList)
+          (keepForItems t rest)]
+      exact List.mem_append.mpr (.inr (by simpa using hmem))
+    | inl hrest =>
+      obtain ⟨t, ht, hmem⟩ := keepForItems_covers avail t0 h0 rest h.2 s hrest
+      refine ⟨t, ht, ?_⟩
+      rw [keepForItems, textLeavesItems,
+        textLeavesItems_acc (textLeavesList [] (keepForList t item.toList).toArray.toList)
+          (keepForItems t rest)]
+      exact List.mem_append.mpr (.inl hmem)
+
+theorem keepForColumns_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail)
+    (cols : List (Option Nat × Array Block))
+    (h : orphanFreeColumns avail cols = true) :
+    ∀ s ∈ textLeavesColumns [] cols,
+      ∃ t ∈ avail, s ∈ textLeavesColumns [] (keepForColumns t cols) := by
+  match cols with
+  | [] =>
+    intro s hs
+    simp [textLeavesColumns] at hs
+  | (w, body) :: rest =>
+    intro s hs
+    rw [orphanFreeColumns, Bool.and_eq_true] at h
+    rw [textLeavesColumns, textLeavesColumns_acc (textLeavesList [] body.toList) rest,
+      List.mem_append] at hs
+    cases hs with
+    | inr hbody =>
+      obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h.1 s hbody
+      refine ⟨t, ht, ?_⟩
+      rw [keepForColumns, textLeavesColumns,
+        textLeavesColumns_acc (textLeavesList [] (keepForList t body.toList).toArray.toList)
+          (keepForColumns t rest)]
+      exact List.mem_append.mpr (.inr (by simpa using hmem))
+    | inl hrest =>
+      obtain ⟨t, ht, hmem⟩ := keepForColumns_covers avail t0 h0 rest h.2 s hrest
+      refine ⟨t, ht, ?_⟩
+      rw [keepForColumns, textLeavesColumns,
+        textLeavesColumns_acc (textLeavesList [] (keepForList t body.toList).toArray.toList)
+          (keepForColumns t rest)]
+      exact List.mem_append.mpr (.inl hmem)
+
+end
+
+/-- **Nothing is addressable by no backend.** For a document whose backend
+conditionals are all answered — along every nesting path each `.only`
+node's target set keeps at least one available backend (`orphanFree`, the
+condition whose violation elaboration diagnoses as W0324) — every declared
+text leaf survives in at least one backend's kept document: the union over
+the backends of what each `keepFor` keeps is the declared content. This is
+the conservation theorem for the backend conditional, the one that stops
+`{ifbackend}` from becoming a silent delete: dropping is only ever the
+complement of another backend's keeping, or a named diagnostic. Stated over
+the same `plainText` census machinery as the overlay conservation theorems
+(`shadeBlocks_text`, `dimBlocks_text`), lifted to whole leaves because
+`keepFor` drops whole subtrees. -/
+theorem keepFor_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail)
+    (xs : Array Block) (h : orphanFree avail xs = true) :
+    ∀ s ∈ textLeaves xs, ∃ t ∈ avail, s ∈ textLeaves (keepFor t xs) := by
+  intro s hs
+  obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 xs.toList h s hs
+  exact ⟨t, ht, by simpa [textLeaves, keepFor] using hmem⟩
+
 
 -- Image walks: the request an image node states, and the caption an image
 -- inherits. Structural recursion through `List`, as the printers above.
@@ -1794,6 +2300,8 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .spaced _ body => imageSrcsBlockList out body.toList
   | .columns cols => imageSrcsColumns out cols.toList
   | .step _ _ body => imageSrcsBlockList out body.toList
+  | .only _ body => imageSrcsBlockList out body.toList
+  | .nav body => imageSrcsBlockList out body.toList
   | .note body => imageSrcsBlockList out body.toList
   | .logo content => imageSrcsInlines out content
   | .verbatim _ _ => out
@@ -1862,6 +2370,8 @@ def setAltBlock (alt : String) : Block → Block
   | .quote body => .quote (setAltBlockList alt #[] body.toList)
   | .spaced g body => .spaced g (setAltBlockList alt #[] body.toList)
   | .step n l body => .step n l (setAltBlockList alt #[] body.toList)
+  | .only targets body => .only targets (setAltBlockList alt #[] body.toList)
+  | .nav body => .nav (setAltBlockList alt #[] body.toList)
   | other => other
 
 end

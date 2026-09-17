@@ -595,6 +595,16 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- A state change for the deck walk in `emit`, not content: nothing to
     -- render where one stands alone.
     Html.text ""
+  | .only targets body =>
+    -- `emit` already kept this node for HTML (`Ir.keepFor "html"`): by here
+    -- it is a transparent group. The target set rides as data, so a reader
+    -- of the page can see the provenance of single-surface content.
+    Html.elem "div" (blockNodesInto cfg #[] body.toList)
+      #[("data-backend", String.intercalate "," targets.toList)]
+  | .nav body =>
+    -- The navigation landmark (ARIA's `navigation` role comes with the
+    -- element itself); `emit` diagnoses a second unlabeled one (W0322).
+    Html.elem "nav" (blockNodesInto cfg #[] body.toList)
   | .logo _ =>
     -- Paged-media furniture; `blockNodesInto` skips it (and `emit` says
     -- so), so this arm only closes the match.
@@ -671,6 +681,11 @@ raises — running content is the notable one: page furniture cannot be honoured
 in a continuous document, and dropping it silently would be the kind of quiet
 failure this engine exists to avoid. -/
 def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
+  -- The page's view of the document: backend conditionals resolve here, at
+  -- the backend's entry (`Ir.keepFor_covers` is why dropping cannot lose
+  -- content), so every walk below — sectioning, the deck chrome, the
+  -- landmark and anchor checks — sees only what this page carries.
+  let doc := { doc with body := Ir.keepFor "html" doc.body }
   let mut diags : Array Diag := #[]
   if doc.head.isSome || doc.foot.isSome then
     diags := diags.push {

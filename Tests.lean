@@ -788,6 +788,63 @@ def outlineChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes (body "\\subsection{Fragment}x") == [])
 
 
+/-- `{ifbackend}`: content addressed to a subset of the backends. One IR,
+elaborated once; each backend keeps or drops through `Ir.keepFor` at its own
+entry. The diagnostics, the `orphanFree` correspondence (the hypothesis of
+`Ir.keepFor_covers`, checked here on a real elaboration), and each backend's
+kept view are pinned. Invented content. Its own function: `main` is one `do`
+block and its elaboration budget is spent. -/
+def backendChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let has (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+  let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "Shared opening.\\begin{ifbackend}{html}Only the page carries this." ++
+    "\\end{ifbackend}\\begin{ifbackend}{pdf,md}Print and twin carry this." ++
+    "\\end{ifbackend}\\end{document}")
+  t "ifbackend source is clean" ds.isEmpty
+  t "ifbackend carries its target set"
+    (match doc.body[1]? with
+     | some (Ir.Block.only targets _) => targets == #["html"]
+     | _ => false)
+  let htmlBody := Ir.keepFor "html" doc.body
+  let mdBody := Ir.keepFor "md" doc.body
+  t "keepFor keeps the addressed subtree and drops the other"
+    (has (Ir.blocksText htmlBody) "Only the page carries this." &&
+     !has (Ir.blocksText htmlBody) "Print and twin" &&
+     has (Ir.blocksText mdBody) "Print and twin carry this." &&
+     !has (Ir.blocksText mdBody) "Only the page")
+  -- The theorem's hypothesis holds on the elaborated document, and its
+  -- conclusion is observable: every declared leaf survives in some backend.
+  t "declared content is orphan-free and every leaf survives somewhere"
+    (Ir.orphanFree Ir.backendNames doc.body &&
+     (Ir.textLeaves doc.body).all fun leaf =>
+        Ir.backendNames.any fun b =>
+          (Ir.textLeaves (Ir.keepFor b doc.body)).contains leaf)
+  let page := (HtmlDoc.emit {} doc).1
+  t "html emits only its own conditional content"
+    (has page "Only the page carries this." && !has page "Print and twin")
+  t "html marks conditional content with its target set"
+    (has page "<div data-backend=\"html\">")
+  let md := MarkdownDoc.emit doc
+  t "markdown emits only its own conditional content"
+    (has md "Print and twin carry this." && !has md "Only the page")
+  -- Diagnostics: an unknown backend name (W0323), and content no backend
+  -- answers (W0324) — flat by typo, or nested by empty intersection.
+  t "unknown backend name warns, and an emptied set warns with it"
+    (warnCodes ("\\documentclass{article}\\begin{document}" ++
+      "\\begin{ifbackend}{web}x\\end{ifbackend}\\end{document}")
+      == ["W0323", "W0324"])
+  let nested := "\\documentclass{article}\\begin{document}" ++
+    "\\begin{ifbackend}{html}\\begin{ifbackend}{pdf}Orphaned.\\end{ifbackend}" ++
+    "\\end{ifbackend}\\end{document}"
+  t "nested conditionals intersect to nothing and warn"
+    (warnCodes nested == ["W0324"])
+  t "orphanFree mirrors W0321 on the same document"
+    (!Ir.orphanFree Ir.backendNames (elabStr nested).1.body)
+  t "a missing backends group is an error"
+    (errCodes ("\\documentclass{article}\\begin{document}" ++
+      "\\begin{ifbackend}text\\end{ifbackend}\\end{document}") == ["E0304"])
+
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
 around the content, and nothing warns. Its own function: `main` is one `do`
 block and its elaboration budget is spent. -/
@@ -1063,6 +1120,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlLayoutChecks ref
   anchorChecks ref
   markdownChecks ref
+  backendChecks ref
 
 /-- A synthetic face for resolution-order tests: pure data, no host fonts. -/
 def synthFace (family : String) (path : String := "") : FontDb.Face :=
@@ -3416,6 +3474,8 @@ def diagRegistry : List (String × String) := [
   ("W0314", "column width is not a fraction of the text width"),
   ("W0318", "\\chrome outside the slides class; ignored"),
   ("W0319", "unknown theme; the document is unthemed"),
+  ("W0323", "unknown backend name in \\begin{ifbackend}; ignored"),
+  ("W0324", "\\begin{ifbackend} content addressed to no backend"),
   ("W0315", "low-contrast colour pairing (WCAG 2.2)"),
   ("W0316", "unknown option in \\palette; block skipped"),
   ("W0317", "a card carries no running head or foot; declaration dropped"),

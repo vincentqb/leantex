@@ -71,6 +71,11 @@ structure Ctx where
   stepBase : Nat := 0
   /-- The document class is `slides`: `\maketitle` makes a title frame. -/
   slides : Bool := false
+  /-- The effective backend target set of the enclosing `{ifbackend}`
+  nesting: every backend at the top, intersected at each conditional on the
+  way in, so a nested conditional that empties the set is diagnosed where
+  it stands (W0324) — the same walk `Ir.orphanFree` performs. -/
+  backendTargets : List String := Ir.backendNames
 
 structure ESt where
   diags : Array Diag := #[]
@@ -1110,7 +1115,7 @@ end
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "document", "frame", "columns", "figure",
-   "figure*", "quote", "quotation"]
+   "figure*", "quote", "quotation", "ifbackend", "nav"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
@@ -1971,6 +1976,47 @@ the column shares the leftover" cpos
               blocks := blocks.push (.columns cols)
             if strayRaws.any (!isSpaceOrPar ·) then
               blocks := blocks ++ (← elabBlocks ctx strayRaws)
+          else if n == "ifbackend" then
+            -- `{ifbackend}{html,md}`: block content addressed to a subset
+            -- of the backends. An unknown name is dropped from the set with
+            -- W0323; a set that keeps no backend along its nesting path is
+            -- W0324 — content nothing will emit. The body still elaborates
+            -- and the node still carries it (the IR reflects the document);
+            -- `Ir.keepFor` at each backend's entry is the one drop site,
+            -- and `Ir.keepFor_covers` is why the diagnostic is sufficient.
+            let j := skipSpaces body 0
+            match body[j]? with
+            | some (.group g gpos) =>
+              let names := (((rawSrc g).splitOn ",").map (·.trimAscii.toString)).filter
+                (!·.isEmpty)
+              let mut targets : Array String := #[]
+              for name in names do
+                if Ir.backendNames.contains name then
+                  targets := targets.push name
+                else
+                  diag ctx "W0323"
+                    s!"unknown backend '{name}' in '\\begin\{ifbackend}'; ignored"
+                    (some gpos)
+                    (help := s!"backends: {String.intercalate ", " Ir.backendNames}")
+                    .warning
+              let eff := ctx.backendTargets.filter (targets.contains ·)
+              if eff.isEmpty then
+                diag ctx "W0324"
+                  "this content is addressed to no backend; no output will carry it"
+                  (some pos)
+                  (help := "name at least one of pdf, html, md; a nested \
+'\\begin{ifbackend}' intersects with its enclosing one") .warning
+              let inner ← elabBlocks { ctx with backendTargets := eff }
+                (body.extract (j + 1) body.size)
+              blocks := blocks.push (.only targets inner)
+            | _ =>
+              diag ctx "E0304" "'\\begin{ifbackend}' needs a {backends} group" pos
+                (help := "write \\begin{ifbackend}{html} ... \\end{ifbackend}")
+              blocks := blocks ++ (← elabBlocks ctx body)
+          else if n == "nav" then
+            -- `{nav}`: the navigation landmark — a group of links, content
+            -- rather than a widget; the links inside are ordinary `\href`s.
+            blocks := blocks.push (.nav (← elabBlocks ctx body))
           else if let some (k, env) := lookupUserEnv ctx n then
             -- A defined wrapper at block level: the halves and the content
             -- each contribute their blocks, in order. An inline half becomes

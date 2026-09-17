@@ -106,6 +106,11 @@ private def blockInto (ind acc : String) : Block → String
     acc ++ "```\n" ++ lines ++ "\n```\n\n"
   | .columns cols => columnsInto ind acc cols.toList
   | .step _ _ body => blocksInto ind acc body.toList
+  -- `emit` already kept this node for markdown (`Ir.keepFor "md"`): by here
+  -- it is a transparent group, as a resolved step is.
+  | .only _ body => blocksInto ind acc body.toList
+  -- Markdown has no landmark; the navigation's content is content.
+  | .nav body => blocksInto ind acc body.toList
   -- A speaker note is a side channel in every backend; text is no exception.
   | .note _ => acc
   -- Frame-footer chrome is page furniture, as the running head is.
@@ -161,6 +166,10 @@ body that carries its own level-0 heading (`\maketitle`) already states
 the title where it stands, so the preamble line would double it — the
 body's heading is real content and wins. -/
 def emit (doc : Doc) : String :=
+  -- The twin's view of the document: backend conditionals resolve here, at
+  -- the backend's entry (`Ir.keepFor_covers` is why dropping cannot lose
+  -- content).
+  let doc := { doc with body := Ir.keepFor "md" doc.body }
   let title := match doc.info.title with
     | some t =>
       if (headingLevels doc.body).contains 0 then "" else s!"# {t}\n\n"
