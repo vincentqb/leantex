@@ -4132,6 +4132,22 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
           | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '-')
           | .gap _ | .rule .. => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
+      -- Display type never hyphenates (Butterick, "Hyphenation"): the same
+      -- word that hyphenates as body text must set unbroken as a heading,
+      -- a frame title, and the document title, patterns loaded or not.
+      let hyphens (doc : Ir.Doc) : Bool :=
+        (Layout.run narrow oneFace (some pats) doc).pages.any fun p =>
+          p.lines.any fun l => l.segs.any fun s => match s with
+            | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '-')
+            | .gap _ | .rule .. => false
+      t "a heading never hyphenates"
+        (!hyphens (Elab.run "t" "\\section{incomprehensibility}").1)
+      t "a frame title never hyphenates"
+        (!hyphens (Elab.run "t" ("\\documentclass{slides}\\begin{document}" ++
+          "\\begin{frame}{incomprehensibility}x\\end{frame}\\end{document}")).1)
+      t "the title page never hyphenates"
+        (!hyphens (Elab.run "t" ("\\documentclass{slides}\\begin{document}" ++
+          "\\title{incomprehensibility}\\maketitle\\end{document}")).1)
       t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
       -- Scale must survive the dedup: W0005 is spanless, so the count is
       -- the only signal of how much of the document overflowed.

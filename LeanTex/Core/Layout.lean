@@ -1367,6 +1367,19 @@ def sectionSize (geom : Geom) : Nat → Sp
   | 2 => pt 12
   | _ => geom.fontSize
 
+/-- Display type: headings, frame titles, section-page and standout text.
+Display is not body text and is never hyphenated (Butterick, Practical
+Typography, "Hyphenation": suppress automatic hyphenation where lines are
+short — headings foremost — because a break there costs more than it
+saves). The door takes no patterns at all, so no heading path can
+hyphenate by construction — the invariant is the signature. -/
+private def collectDisplay (a : Acc) (fs : FontSet)
+    (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
+    (baseStyle : TextStyle := {})
+    (rule : Option (Sp × Ir.Color) := none) : Acc :=
+  collectPara a none fs inlines indent center size (baseStyle := baseStyle)
+    (rule := rule)
+
 -- Block walk. Mutual recursion through `List` so the nested calls are
 -- structural: no `partial`, and the shape mirrors the IR.
 mutual
@@ -1473,9 +1486,9 @@ private def collectStandout (a : Acc) (pats : Option Hyphen.Patterns) (fs : Font
       | .para content =>
         match (a.style "standout").font with
         | some tpl =>
-          collectPara a pats fs (Ir.fillTemplate tpl content) indent true a.geom.fontSize
+          collectDisplay a fs (Ir.fillTemplate tpl content) indent true a.geom.fontSize
         | none =>
-          collectPara a pats fs content indent true (a.geom.fontSize * 1440 / 1000)
+          collectDisplay a fs content indent true (a.geom.fontSize * 1440 / 1000)
             (baseStyle := { bold := true })
       | _ => collectBlock a pats fs blk indent
     collectStandout (if rest.isEmpty then a else a.wantGap) pats fs rest indent
@@ -1502,9 +1515,9 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       let st := a.style "sectionpage"
       let a := match st.font with
         | some tpl =>
-          collectPara a pats fs (Ir.fillTemplate tpl title) indent false a.geom.fontSize
+          collectDisplay a fs (Ir.fillTemplate tpl title) indent false a.geom.fontSize
         | none =>
-          collectPara a pats fs title indent false (a.geom.fontSize * 1440 / 1000)
+          collectDisplay a fs title indent false (a.geom.fontSize * 1440 / 1000)
             (baseStyle := { bold := true })
       let fgC := (a.pal.find? "progressfg").getD a.fg
       let bgC := (a.pal.find? "progressbg").getD ((a.pal.find? "bg").getD Ir.Color.white)
@@ -1529,10 +1542,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- the bold face of the body family at the level's size.
     let a := match st.font with
       | some tpl =>
-        collectPara a pats fs (Ir.fillTemplate tpl title) indent false a.geom.fontSize
+        collectDisplay a fs (Ir.fillTemplate tpl title) indent false a.geom.fontSize
           (rule := st.rule.map fun (r : Ir.Color × Option String) => (pt 6 / 10, r.1))
       | none =>
-        collectPara a pats fs title indent false (sectionSize a.geom level)
+        collectDisplay a fs title indent false (sectionSize a.geom level)
           (baseStyle := { bold := true })
           (rule := st.rule.map fun (r : Ir.Color × Option String) => (pt 6 / 10, r.1))
     let a := match st.after with
@@ -1659,20 +1672,23 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
         let st := a.style "frametitle"
         let a := match st.font with
           | some tpl =>
-            collectPara a pats fs (Ir.fillTemplate tpl title) 0 false a.geom.fontSize
+            collectDisplay a fs (Ir.fillTemplate tpl title) 0 false a.geom.fontSize
           | none =>
-            collectPara a pats fs title 0 false (sectionSize a.geom 1)
+            collectDisplay a fs title 0 false (sectionSize a.geom 1)
               (baseStyle := { bold := true })
         let a := { a with fg := saved
                           ops := a.ops.push (.titleBar barBg (a.geom.fontSize / 2)) }
         { a with wantDefault := true }
       | none =>
-        let a := collectPara a pats fs title 0 false (sectionSize a.geom 1)
+        let a := collectDisplay a fs title 0 false (sectionSize a.geom 1)
           (baseStyle := { bold := true })
         { a with wantDefault := true }
     -- The title just placed is page-top chrome: the frame's distribution
     -- moves the body below it, never the title (beamer's frametitle).
     let a := if title.isEmpty then a else { a with ops := a.ops.push .pin }
+    -- A golden frame is the title page (only \maketitle declares golden),
+    -- and everything on it is display furniture: titles never hyphenate.
+    let pats := if valign matches .golden then none else pats
     let a := collectBlocks a pats fs body indent
     a.pageBreak
 
