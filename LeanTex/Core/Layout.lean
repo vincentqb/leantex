@@ -1390,10 +1390,10 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   let mut diags := st.diags
   for (idx, c) in missing do
-    diags := diags.push (Diag.of .W0004
+    diags := diags.push (Diag.of .E0405
       s!"'{(fs.get idx).family}' has no glyph for '{c}' (U+{hex c.toNat}); dropped"
       (help := "declare a face that covers it in \\fonts, or accept the loss \
-with \\allow{W0004}"))
+with \\allow{E0405}"))
   for (idx, c, fb) in substs do
     diags := diags.push (Diag.of .W0009
       s!"'{(fs.get idx).family}' has no glyph for '{c}' \

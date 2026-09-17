@@ -399,9 +399,9 @@ def readInput (dir : System.FilePath) (name : String) (pos : Pos) :
     -- file, and the wrapper is what carries that name to the elaborator.
     return (#[.env (Parse.inputEnv path.toString) sub pos], lexDs ++ parseDs)
   else
-    let d := Diag.of .W0501 s!"\\input file not found: '{name}'; skipped"
+    let d := Diag.of .E0502 s!"\\input file not found: '{name}'; skipped"
       (some ⟨dir.toString, pos⟩)
-      (help := "an entire file's content is absent; \\allow{W0501} accepts the loss")
+      (help := "an entire file's content is absent; \\allow{E0502} accepts the loss")
     return (#[], #[d])
 
 mutual

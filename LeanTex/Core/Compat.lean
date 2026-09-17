@@ -284,7 +284,7 @@ private def geometry (opts : String) (pos : Pos) : M (Array Raw) := do
   let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
   became "\\usepackage{geometry}" native pos
   unless dropped.isEmpty do
-    say .N0101 s!"geometry keys without a native equivalent were dropped: \
+    say .W0101 s!"geometry keys without a native equivalent were dropped: \
 {String.intercalate ", " dropped.toList}" pos
   synthAt native pos
 
@@ -582,7 +582,7 @@ where
           .group args[1] pos] pos
         return some ((← synthAt native pos).push font, k)
       else
-        say .N0105 s!"\\setkomafont\{{element}}: not a styleable element; ignored" pos
+        say .W0111 s!"\\setkomafont\{{element}}: not a styleable element; ignored" pos
         return some (#[], k)
     else return none
   | "RedeclareSectionCommand" =>

@@ -84,7 +84,7 @@ note[N0100] 9:1 \babelfont → \fonts{ dir = "fonts/", sans = "OpenSans-Regular.
 note[N0100] 10:1 \usepackage{microtype} → nothing: the engine does this itself
 note[N0100] 11:1 \usepackage{xcolor} → nothing: the engine does this itself
 note[N0100] 12:1 \usepackage{geometry} → \page{ size = letter, vmargin = 0.5in, hmargin = 0.75in }
-warning[N0101] 12:1 geometry keys without a native equivalent were dropped: headsep
+warning[W0101] 12:1 geometry keys without a native equivalent were dropped: headsep
 note[N0100] 13:1 \usepackage{scrlayer-scrpage} → nothing: the engine does this itself
 warning[W0104] 14:1 '\pagestyle' names page furniture the engine does not model; ignored | help: \runninghead / \runningfoot declare the page furniture
 note[N0100] 20:1 \setlength{\rhythm} → \tokens{ rhythm = 1.8ex plus 0.8ex minus 0.4ex }

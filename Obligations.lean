@@ -74,7 +74,7 @@ def outInk (o : Out) : List Char := o.pages.toList.flatMap pageInk
 /-- The diagnostics that name a legal drop: a glyph no face covers. A run
 that emitted none of them dropped nothing it did not report. -/
 def dropped (o : Out) : Bool :=
-  o.diags.any fun d => d.code == "W0004" || d.code == "W0009"
+  o.diags.any fun d => d.code == "E0405" || d.code == "W0009"
 
 -- owed: emission_conservation_paras
 -- owner: LeanTex.Core.Layout

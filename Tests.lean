@@ -343,7 +343,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let (_, glyphDiags) := runOn ("\\documentclass{article}\n" ++
     "\\style{itemize}{ marker = {✦} }\n\\begin{document}\n" ++
     "\\begin{itemize}\\item a\\end{itemize}\n\\end{document}")
-  t "an uncoverable marker glyph warns" (glyphDiags.any (·.code == "W0004"))
+  t "an uncoverable marker glyph warns" (glyphDiags.any (·.code == "E0405"))
   -- The scalar walk offers the default marker glyphs to the driver's
   -- fallback scan, per level actually reached.
   let scalars := Layout.docScalars (Elab.run "t"
@@ -911,19 +911,19 @@ def backendChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "markdown emits only its own conditional content"
     (has md "Print and twin carry this." && !has md "Only the page")
   -- Diagnostics: an unknown backend name (W0323), and content no backend
-  -- answers (W0324) — flat by typo, or nested by empty intersection.
+  -- answers (E0334) — flat by typo, or nested by empty intersection.
   t "unknown backend name warns, and an emptied set errors with it"
     (warnCodes ("\\documentclass{article}\\begin{document}" ++
       "\\begin{ifbackend}{web}x\\end{ifbackend}\\end{document}")
       == ["W0323"] &&
      errCodes ("\\documentclass{article}\\begin{document}" ++
       "\\begin{ifbackend}{web}x\\end{ifbackend}\\end{document}")
-      == ["W0324"])
+      == ["E0334"])
   let nested := "\\documentclass{article}\\begin{document}" ++
     "\\begin{ifbackend}{html}\\begin{ifbackend}{pdf}Orphaned.\\end{ifbackend}" ++
     "\\end{ifbackend}\\end{document}"
   t "nested conditionals intersect to nothing and error"
-    (errCodes nested == ["W0324"])
+    (errCodes nested == ["E0334"])
   t "orphanFree mirrors W0321 on the same document"
     (!Ir.orphanFree Ir.backendNames (elabStr nested).1.body)
   t "a missing backends group is an error"
@@ -1175,7 +1175,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- a note buried behind -v.
   t "compat geometry names what it dropped as a warning"
     ((elabStr (pre "\\usepackage[headsep=1in]{geometry}")).2.any fun d =>
-      d.code == "N0101" && d.severity == .warning && d.message.endsWith "headsep")
+      d.code == "W0101" && d.severity == .warning && d.message.endsWith "headsep")
   t "compat known package is a note, unknown a warning"
     ((elabStr (pre "\\usepackage{hyperref}")).2.all (·.severity == .note) &&
      warnCodes (pre "\\usepackage{tikz}") == ["W0103"])
@@ -1531,7 +1531,7 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- Per-glyph fallback: a scalar the styled face lacks is set from the face
 the driver's map names, at the same size; the diagnostic is one line per
 family+glyph, naming both families; a scalar no face covers is still an
-honest W0004 naming the family; and a document whose faces cover their text
+honest E0405 naming the family; and a document whose faces cover their text
 is untouched by the map — byte-identical output. The pick order over scanned
 faces is the documented one, not scan order. -/
 def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -1567,12 +1567,12 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fallback reports once per family+glyph, naming both faces"
     ((out.diags.filter (·.code == "W0009")).map (·.message) ==
       #["'Open Sans' has no glyph for '∀' (U+2200); set from 'Source Code Pro'"])
-  t "a covered scalar raises no W0004" (!out.diags.any (·.code == "W0004"))
+  t "a covered scalar raises no E0405" (!out.diags.any (·.code == "E0405"))
   -- No face covers it: dropped once per family+glyph, family named.
   let (dropDoc, _) := Elab.run "t" "lost ⟨ here\n\nand ⟨ there"
   let dropOut := Layout.run geom mapped none dropDoc
   t "an uncovered scalar drops once, naming the family"
-    ((dropOut.diags.filter (·.code == "W0004")).map (·.message) ==
+    ((dropOut.diags.filter (·.code == "E0405")).map (·.message) ==
       #["'Open Sans' has no glyph for '⟨' (U+27E8); dropped"])
   -- A document whose faces cover their text is untouched by the map.
   let (plainDoc, _) := Elab.run "t" "plain words only"
@@ -4135,7 +4135,7 @@ def isDiagCode (s : String) : Bool :=
   | _ => false
 
 /-- The `DiagCode` constructors a stripped source applies: every dot-applied
-code-shaped token (`.E0304`, `DiagCode.W0501`). -/
+code-shaped token (`.E0304`, `DiagCode.E0502`). -/
 def appliedCodes (stripped : String) : List String := Id.run do
   let mut out : List String := []
   for part in (stripped.splitOn ".").drop 1 do
@@ -4348,11 +4348,11 @@ def envBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- behaviour agree, or one of them is lying)
   t "dropped begin-line groups are named precisely, count included"
     (let ds := (elabStr "Two: \\begin{card}{First}{Second}kept body\\end{card} end.").2
-     ds.any fun d => d.code == "W0313" && d.message.startsWith "2 ")
+     ds.any fun d => d.code == "E0336" && d.message.startsWith "2 ")
   t "the block path warns about dropped begin-line groups too"
-    ((elabStr "\\begin{wrap}{arg}\none\n\ntwo\n\\end{wrap}").2.any (·.code == "W0313"))
+    ((elabStr "\\begin{wrap}{arg}\none\n\ntwo\n\\end{wrap}").2.any (·.code == "E0336"))
   t "no dropped-argument warning without begin-line groups"
-    (!(elabStr "Take \\begin{banner}the text\\end{banner} along.").2.any (·.code == "W0313"))
+    (!(elabStr "Take \\begin{banner}the text\\end{banner} along.").2.any (·.code == "E0336"))
   -- A spliced body's edge space is a separator, not wrapper furniture:
   -- dropping it glued `before` to `inner`, and keeping it twice would
   -- double the gap the author wrote once.
@@ -4615,7 +4615,7 @@ def allowChecks (ref : IO.Ref (List String)) : IO Unit := do
   let doc (pre : String) : String :=
     pre ++ "\n\\begin{document}\nx\n\\end{document}"
   t "allow stores its codes on the document"
-    ((elabStr (doc "\\allow{W0307, W0501}")).1.allow == #["W0307", "W0501"])
+    ((elabStr (doc "\\allow{W0307, E0502}")).1.allow == #["W0307", "E0502"])
   t "allow dedupes a repeated code"
     ((elabStr (doc "\\allow{W0307}\\allow{W0307}")).1.allow == #["W0307"])
   t "allow with an unknown code is an error"
@@ -4639,8 +4639,8 @@ def allowChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "unfired names the stale entries only"
     (Diag.unfired #["W0307", "W0308"] #["W0308", "W0308"] == #["W0307"])
   t "accepted losses line prints codes with counts"
-    (Render.humanAccepted false [("W0307", 2), ("W0501", 1)] ==
-      "accepted: 3 losses (W0307 ×2, W0501)")
+    (Render.humanAccepted false [("W0307", 2), ("E0502", 1)] ==
+      "accepted: 3 losses (W0307 ×2, E0502)")
 
 def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -6431,7 +6431,7 @@ of its atoms plus the spacing the table gives — recomputed here from the
 font's own advances, sharing nothing with the layout walk), script sizes
 and shifts from the constants, Bin degradation, script-style spacing
 suppression, the italic/upright convention, and that nothing is silently
-dropped: a glyph the math face lacks earns W0004 naming it, a document with
+dropped: a glyph the math face lacks earns E0405 naming it, a document with
 no math face earns one W0003 and its formulas set as source text, and every
 out-of-scope construct earns a W0010 naming it while its source survives. -/
 def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -6568,8 +6568,8 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- naming the face.
   let bDoc : Ir.Doc := { body := #[.para #[.formula false "₿"
     (.cons (.atom .ord (.sym '₿') .nil .nil false) .nil)]] }
-  t "a glyph the math face lacks warns W0004 naming it"
-    (((Layout.run geom mfs none bDoc).diags.filter (·.code == "W0004")).map (·.message)
+  t "a glyph the math face lacks warns E0405 naming it"
+    (((Layout.run geom mfs none bDoc).diags.filter (·.code == "E0405")).map (·.message)
       == #["'Fira Math' has no glyph for '₿' (U+20BF); dropped"])
   -- No math face: one W0003 for the document, formulas set as their source.
   let bare : Font.FontSet := { fonts := #[serif], index := allSlots }

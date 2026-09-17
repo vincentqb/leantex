@@ -636,7 +636,7 @@ inductive Block where
   carries its target set and each backend keeps or drops it (`keepFor`,
   applied with the backend's own name at each emitter's entry). Elaboration
   diagnoses a target set that no backend answers along its nesting path
-  (W0324), and `keepFor_covers` is the conservation theorem that makes the
+  (E0334), and `keepFor_covers` is the conservation theorem that makes the
   diagnostic sufficient: with every conditional answered, no declared text
   leaf is dropped by every backend. -/
   | only (targets : Array String) (body : Array Block)
@@ -2455,7 +2455,7 @@ mutual
 set, `backendNames` at the top and the path intersection inside a
 conditional, so an `{ifbackend}{pdf}` inside an `{ifbackend}{html}`
 addresses the empty set whatever each node spells alone. Elaboration
-performs the same intersection as it walks in and fires W0324 exactly where
+performs the same intersection as it walks in and fires E0334 exactly where
 this returns false (pinned by test; `Elab` is monadic, so the
 correspondence is not itself a theorem). -/
 def orphanFreeList (avail : List String) : List Block → Bool
@@ -2785,7 +2785,7 @@ end
 /-- **Nothing is addressable by no backend.** For a document whose backend
 conditionals are all answered — along every nesting path each `.only`
 node's target set keeps at least one available backend (`orphanFree`, the
-condition whose violation elaboration diagnoses as W0324) — every declared
+condition whose violation elaboration diagnoses as E0334) — every declared
 text leaf survives in at least one backend's kept document: the union over
 the backends of what each `keepFor` keeps is the declared content. This is
 the conservation theorem for the backend conditional, the one that stops

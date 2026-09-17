@@ -75,7 +75,7 @@ structure Ctx where
   /-- The effective backend target set of the enclosing `{ifbackend}`
   nesting: every backend at the top, intersected at each conditional on the
   way in, so a nested conditional that empties the set is diagnosed where
-  it stands (W0324) — the same walk `Ir.orphanFree` performs. -/
+  it stands (E0334) — the same walk `Ir.orphanFree` performs. -/
   backendTargets : List String := Ir.backendNames
 
 structure ESt where
@@ -502,7 +502,7 @@ private def warnDroppedArgs (ctx : Ctx) (name : String) (dropped : Nat)
     (pos : Pos) : EM Unit := do
   if dropped > 0 then
     let noun := if dropped == 1 then "group" else "groups"
-    diag ctx .W0313
+    diag ctx .E0336
       s!"{dropped} \{...} {noun} on the '\\begin\{{name}}' line went with the unknown wrapper" (some pos)
       (help := "content, not an argument? put it after the '\\begin' line")
 
@@ -2050,7 +2050,7 @@ the column shares the leftover" cpos
             -- `{ifbackend}{html,md}`: block content addressed to a subset
             -- of the backends. An unknown name is dropped from the set with
             -- W0323; a set that keeps no backend along its nesting path is
-            -- W0324 — content nothing will emit. The body still elaborates
+            -- E0334 — content nothing will emit. The body still elaborates
             -- and the node still carries it (the IR reflects the document);
             -- `Ir.keepFor` at each backend's entry is the one drop site,
             -- and `Ir.keepFor_covers` is why the diagnostic is sufficient.
@@ -2070,12 +2070,12 @@ the column shares the leftover" cpos
                     (help := s!"backends: {String.intercalate ", " Ir.backendNames}")
               let eff := ctx.backendTargets.filter (targets.contains ·)
               if eff.isEmpty then
-                diag ctx .W0324
+                diag ctx .E0334
                   "this content is addressed to no backend; no output will carry it"
                   (some pos)
                   (help := "name at least one of pdf, html, md; a nested \
 '\\begin{ifbackend}' intersects with its enclosing one; \
-\\allow{W0324} accepts the loss")
+\\allow{E0334} accepts the loss")
               let inner ← elabBlocks { ctx with backendTargets := eff }
                 (body.extract (j + 1) body.size)
               blocks := blocks.push (.only targets inner)
@@ -2922,7 +2922,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           | _, _ =>
             diag ctx .E0304 "'\\style' needs {element} and a {...} block" pos
         else if name == "allow" then
-          -- `\allow{W0307, W0501}`: the document accepts the named losses.
+          -- `\allow{W0307, E0502}`: the document accepts the named losses.
           -- The teeth: an unknown code is an error (a typo must not grant a
           -- silent blanket), an entry that never fires warns (Main), and
           -- the acceptance always prints in the build summary.
