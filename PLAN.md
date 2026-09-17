@@ -65,11 +65,12 @@ list.
 - `page_background_survives` — weak observable form of arch-provable I5
   (page conservation); the fill-vanishing `B.commit` bug was its
   counterexample.
-- `pages_count_frame_steps` — provisional numbering: one page per overlay
-  step of a titled frame (replace with audit-numbering's statement when
-  its report lands).
-- `frame_pages_footed` — provisional numbering: every page of a footed
-  deck is footed.
+- `pages_count_frame_steps` — numbering, page-count face of
+  audit-numbering's model: one page per overlay step of a titled countable
+  frame (restate as its T2–T4 verbatim once `Ir.frameNumbers` lands).
+- `frame_pages_footed` — numbering: every page of a footed countable-frame
+  deck is footed (audit-numbering T2's page face; excludes the golden
+  title frame so the statement survives its refactor 1).
 - `builtin_palette_contract_engine` — arch-provable I2 over what `\theme`
   installs, through the real pipeline; unblocked by typed theme values,
   which then delete the `molochResolved`/`plainResolved` spec copies.

@@ -114,20 +114,22 @@ def frameSteps : Ir.Block → Nat
   | .frame _ _ _ body => max 1 (Ir.maxStepBlocks body)
   | _ => 0
 
-/-- A deck whose top level is only real frames: non-standout, visibly
-titled. What the provisional numbering statements range over. -/
+/-- A deck whose top level is only countable frames in audit-numbering's
+sense: non-standout, not the golden-valign title page, visibly titled.
+What the numbering statements range over. -/
 def framedDeck (doc : Ir.Doc) : Prop :=
   doc.body ≠ #[] ∧ ∀ b ∈ doc.body, ∃ title valign body,
-    b = Ir.Block.frame title false valign body ∧ Ir.plainText title ≠ ""
+    b = Ir.Block.frame title false valign body ∧ valign ≠ Ir.VAlign.golden ∧
+      Ir.plainText title ≠ ""
 
 -- owed: pages_count_frame_steps
 -- owner: LeanTex.Core.Layout
--- source: audit-numbering, whose refactor 1 has since LANDED; arch-provable I4's page side
--- blocker: partly cleared under us. `framesSeen`/`framesTotal` are gone and `Ir.frameNumbers`/`Ir.frameCount` are public, so the *counting* side of this is now statable directly and audit-numbering's T2–T4 are proved there. What this weak form still owes is the page side — that the page count equals the summed overlay steps — which needs the collect walk's induction, i.e. the Acc split (arch-provable R3). Restate over frameNumbers when discharging.
+-- source: audit-numbering, whose refactor 1 has since LANDED (its model: a frame yields ≥1 pages — steps, spills; this is the page-count face of it); arch-provable I4's page side
+-- blocker: partly cleared under us. `framesSeen`/`framesTotal` are gone and `Ir.frameNumbers`/`Ir.frameCount` are public, so the counting side is statable directly and audit-numbering's T2–T4 are proved there. What this weak form still owes is the page side — that the page count equals the summed overlay steps — which needs the collect walk's induction, i.e. the Acc split (arch-provable R3). Restate over frameNumbers when discharging.
 -- goldens: no
 /-- Numbered pages are exactly the countable ones, weak form: a deck of
-titled frames ships one page per overlay step, `frameSteps` many in total,
-when no diagnostic reported a dropped glyph. -/
+titled countable frames ships one page per overlay step, `frameSteps` many
+in total, when no diagnostic reported a dropped glyph. -/
 theorem pages_count_frame_steps
     (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (hclass : doc.docClass = "slides")
@@ -139,8 +141,8 @@ theorem pages_count_frame_steps
 
 -- owed: frame_pages_footed
 -- owner: LeanTex.Core.Layout
--- source: audit-numbering, whose refactor 1 has since LANDED; the chrome-footer slice (PLAN 2026-09-17)
--- blocker: the density half is discharged elsewhere — `frameNumbers_gapless` and `frameNumbers_last_is_count` are theorems now, and footer presence is `frameNum.isSome`, so a non-countable frame provably has no number to show. What remains here is page-to-frame attribution, which `Out` still does not carry: publicly statable only as “every page of a footed deck is footed”.
+-- source: audit-numbering T2's page face, whose refactor 1 has since LANDED: its countable predicate (non-standout, non-golden) is why framedDeck excludes the title page — a golden frame's pages bear no footer, and this statement stays true across that landing; the chrome-footer slice (PLAN 2026-09-17)
+-- blocker: the density half is discharged elsewhere — `frameNumbers_gapless` and `frameNumbers_last_is_count` are theorems now, and footer presence is `frameNum.isSome`, so a non-countable frame provably has no number to show. What remains is page-to-frame attribution, which `Out` still does not carry: publicly statable only as “every page of a footed countable-frame deck is footed”.
 -- goldens: no
 /-- One numbering, weak form: in a deck with a chrome footer and no
 `\runningfoot` override, every shipped page of a titled non-standout frame
