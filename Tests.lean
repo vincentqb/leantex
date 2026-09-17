@@ -302,6 +302,15 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     "\\end{itemize}\\end{frame}\n\\end{document}")
   t "stepped items keep their markers on every page"
     (stepLines.size == 4 && (stepLines.map markerOf).all (· == "•"))
+  -- Dim-not-hide dims the marker with its item: on the first handout page
+  -- the second item is covered, marker included.
+  let markerColor (l : Layout.LineOut) : Option Ir.Color :=
+    match l.segs[0]? with
+    | some (Layout.Seg.run _ c _ _ _ _ _) => some c
+    | _ => none
+  t "a covered item's marker dims with it"
+    (markerColor stepLines[1]! == some Ir.coveredDefault &&
+     markerColor stepLines[0]! == some Ir.Color.black)
   -- Declared markers: the base element styles every level; a level style
   -- overrides its own level only.
   let (ovLines, _) := runOn ("\\documentclass{article}\n" ++

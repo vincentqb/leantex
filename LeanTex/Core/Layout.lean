@@ -1210,6 +1210,13 @@ private def collectItem (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     let a := if first then a else a.wantGap
     let a := match blk, first with
       | .para content, true =>
+        -- A covered item (dim-not-hide, PLAN M5) is one anonymous colour
+        -- wrapper around the whole paragraph, painted by the shade walk;
+        -- the marker dims with its item, as beamer's transparent cover
+        -- dims the bullet.
+        let marker := match content with
+          | #[.colored c none _] => #[Ir.Inline.colored c none marker]
+          | _ => marker
         collectPara a pats fs content indent false a.geom.fontSize
           (marker := some marker)
       | _, _ => collectBlock a pats fs blk indent
