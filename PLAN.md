@@ -45,6 +45,32 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — the developer loop, measured and two costs deleted. Medians
+of ≥3, this host, `lake build --wfail` unless said otherwise. Cold build
+(`lake clean` first) 14.6 s — the "~2 min" folk number is the first-ever
+toolchain fetch, not a clean rebuild. Warm no-op 0.20 s. A comment-only
+edit rebuilds only its own module: lake hashes the produced olean and
+cuts downstream off when it is unchanged, so Pdf.lean alone was 1.8 s. An
+interface-visible edit (a def added) costs 5.1 s in a leaf like Pdf and
+12.2 s in Diag, which everything imports — that path is Compat→Elab→
+Layout elaboration plus their C, and stays. `lake test` warm is 0.28 s:
+0.20 s lake no-op plus a 79 ms test binary; no single check dominates
+(the font scan reads the nine shipped faces). The two deletions:
+Tests.lean's `main` was one ~710-line do block, and the compiler's LCNF
+pass is superlinear in block size — 5.4 s of the file's 9.7 s elaboration
+was that one decl (`lake env lean -D profiler=true Tests.lean`). Split
+verbatim into per-section defs (the shape the file already used for
+lineChecks), elaboration is 3.3 s and the core-edit-to-green loop
+(def added to Pdf.lean, then `lake test`) 13.6 → 7.1 s. And Tests:c.o
+was 4 s of clang at the default optimization: `-O0` on the test
+executable only makes the add-a-test loop (append a def to Tests.lean,
+`lake test`) 9.2 → 5.5 s and the binary 43 → 79 ms. Measured and left
+alone: HyphenData.lean elaborates in ~10 ms over the per-module floor
+(675 vs 665 ms), so its flat-string form is already the cheap one; -O1
+saves almost nothing (3.9 s c.o); the pre-commit hook is 13 ms on an
+irrelevant commit and ~1.0 s on a relevant one, most of it the lean
+interpreter starting on precommit.lean, honest both ways.
+
 2026-09-16 — correction to the M3a entry below: the pending-key mechanism
 is gone. `pagePending` reported a declared-but-unimplemented `\page` key as
 pending with its milestone rather than as a type error; its last entry
