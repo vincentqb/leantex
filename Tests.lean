@@ -4258,6 +4258,10 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      bytesContain pdf "/Predictor 15")
   t "pdf embeds the jpeg as dct" (bytesContain pdf "/DCTDecode")
   t "pdf paints both images" (bytesContain pdf "/Im1 Do" && bytesContain pdf "/Im2 Do")
+  -- The cm matrix must carry the placed size: a Do behind a degenerate
+  -- matrix is a blank box that every structural check would miss.
+  t "pdf image matrix carries the placed size"
+    (bytesContain pdf "q 64 0 0 40 ")
   t "pdf page resources name the xobjects" (bytesContain pdf "/XObject <<")
   match checkXref pdf with
   | .ok n => t "pdf xref valid with images" (n > 0)
