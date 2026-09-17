@@ -3251,6 +3251,13 @@ def measureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     ((w0201 (diagsOf "\\documentclass{article}\\page{ hmargin = 1in, measure = free }" prose)).isEmpty)
   t "slides are outside the rule's scope"
     ((w0201 (diagsOf "\\documentclass{slides}" prose)).isEmpty)
+  -- A card is display text too, and its default measure (~214pt, under 45
+  -- characters) would earn "widen" in an article: the band is about
+  -- continuous reading and does not apply to the class.
+  let (cardProse, _) := Elab.run "t" ("\\documentclass{card}\\begin{document}" ++
+    prose ++ "\\end{document}")
+  t "cards are outside the rule's scope"
+    ((w0201 (Layout.run (Layout.Geom.ofPage cardProse.page) oneFace none cardProse).diags).isEmpty)
   t "short text is not continuous reading"
     ((w0201 (diagsOf "\\documentclass{article}\\page{ hmargin = 1in }" "one line.")).isEmpty)
   let narrowGeom : Layout.Geom :=
@@ -3370,8 +3377,8 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (!hyphenRendered (elabStr (card "" word narrowPage)).1)
   -- A card carries no running furniture: the declaration is dropped loudly.
   let (rDoc, rDs) := elabStr (card "" "x" "\\runninghead{name \\pagenumber}\n")
-  t "card drops running content with W0315"
-    (rDs.any (·.code == "W0315") && rDoc.head.isNone)
+  t "card drops running content with W0317"
+    (rDs.any (·.code == "W0317") && rDoc.head.isNone)
   -- Two faces are two frames: one page each, through the same page-boundary
   -- mechanism every class shares.
   let two := card "" "\\begin{frame}front\\end{frame}\n\\begin{frame}back\\end{frame}"
@@ -3407,7 +3414,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "card implies its three guarantees"
     (plainAsserts.any (·.kind == .pages .le 1) &&
      plainAsserts.any (·.kind == .textInArea) &&
-     plainAsserts.any (·.kind == .minXHeight (Dim.mm100 140)))
+     plainAsserts.any (·.kind == .minXHeight Ir.cardXHeightFloor))
   t "two faces raise the fits bound" ((cardAsserts two).any (·.kind == .pages .le 2))
   t "declared intent silences the class default"
     (((cardAsserts (card "" "x" "\\assert{ pages <= 4 }\n")).filter
@@ -3440,6 +3447,21 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       (d.message.splitOn "text.xheight").length == 2)
   t "a reasonable card passes its whole contract"
     ((judge (card "" "Pat Placeholder\\\\ {\\small pat@example.org}")).isEmpty)
+  -- The card's base size resolves through the same PageSpec path every
+  -- class uses: declared \page{fontsize} first, then the class option,
+  -- then the shared 10pt base — never a card-private constant.
+  t "card takes the shared base size" (cDoc.page.fontSize == Ir.baseFontSize)
+  t "a card class option sets the base size through the shared path"
+    ((elabStr (card "[12pt]" "x")).1.page.fontSize == Dim.pt 12)
+  -- Contrast is the colour slice's contract, reused rather than restated:
+  -- the pairing warning and its declared-intent silence reach a card
+  -- through the same docDiags walk as every other class.
+  t "an illegible card pairing earns the colour contract's W0315"
+    ((warnCodes (card "" "\\textcolor{washed}{faint}"
+      "\\palette{ washed = #DDDDDD }\n")).contains "W0315")
+  t "declared decorative intent silences it on a card too"
+    (!(warnCodes (card "" "\\textcolor{washed}{faint}"
+      "\\palette[decorative]{ washed = #DDDDDD }\n")).contains "W0315")
 
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

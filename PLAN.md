@@ -49,6 +49,44 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — the card slice reconciled with the three slices that landed
+under it (typography, colour, M5b themes), each conflict a design
+question, not a merge:
+
+- Base size: the card takes the shared `PageSpec` resolution the
+  typography slice introduced (`\page{ fontsize }` → class option → the
+  10 pt base) — no card-private constant existed or was added; pinned by
+  test on the default and on a `[12pt]` class option.
+- The legibility floor composes with the type scale now:
+  `Ir.cardXHeightFloor` names the 1.4 mm bound and
+  `card_floor_within_scale` proves every scale step from `footnotesize`
+  up clears it at the card's own base size under the conventional
+  x-height ratio — the class never implies an assertion its own defaults
+  violate, and what fails the floor (`scriptsize`, `tiny`) is exactly
+  what the shipped-ink judge exists to catch, font by font.
+- Contrast stays the colour slice's contract, reused rather than
+  restated: a card runs through the same `docDiags` walk as every class,
+  so an illegible pairing earns W0315 and `\palette[decorative]`
+  silences it — both pinned in cardChecks; nothing card-side was
+  reimplemented.
+- The card's dropped-running-furniture warning renumbered W0315 → W0317:
+  the colour slice owns W0315 (the pairing warning) and one code must
+  mean one thing.
+- W0201, the measure band, does not apply to a card: the band's own rule
+  is about continuous reading and a card is display text like slides.
+  The class gate in layout is pinned by test at the card's default
+  measure (~214 pt, which would earn "widen" in an article).
+- `Block.frame` grew to (title, standout, body) in the M5b slice; the
+  card's face count follows the arity.
+- trio-deck's golden regenerated through the harness: the IR dump
+  records `fontsize 11` for slides since the typography slice; nothing
+  else in the trio moved. Verified post-rebase from scratch: build
+  --wfail, tests, kp-fuzz 200 (justified and ragged, all optimal), bench
+  medians 77/275/408 ms (paragraphs/lorem/underline — within the noise
+  band of the entries below), trio fixtures rendered to PDF and HTML and
+  inspected on both backends, and an over-full card refused with both
+  E0330s and no output file.
+
 2026-09-17 — the third artefact: a `card` document class, the sharpest
 test of the design system because at 85.60 × 53.98 mm nothing can be
 fudged. The class differs from `article` and `slides` in defaults only —

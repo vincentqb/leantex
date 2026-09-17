@@ -2371,7 +2371,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     if page.justify.isNone then
       page := { page with justify := some false }
     if head.isSome || foot.isSome then
-      diag ctx "W0315"
+      diag ctx "W0317"
         "a card carries no running head or foot; the declaration is dropped" none
         (sev := .warning)
       head := none
@@ -2393,7 +2393,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   if docClass == "card" then
     let faces : Int := max 1 (blocks.foldl (init := 0) fun n b =>
       match b with
-      | .frame _ _ => n + 1
+      | .frame _ _ _ => n + 1
       | _ => n)
     unless asserts.any (fun a => match a.kind with | .pages _ _ => true | _ => false) do
       asserts := asserts.push {
@@ -2407,7 +2407,7 @@ declare \\assert\{ pages <= N } to take control" }
 the trim; declare \\assert{ text.in_area } to take control" }
     unless asserts.any (fun a => match a.kind with | .minXHeight _ => true | _ => false) do
       asserts := asserts.push {
-        kind := .minXHeight (Dim.mm100 140)
+        kind := .minXHeight Ir.cardXHeightFloor
         help := some "1.4mm x-height is the fluent-reading floor at hand-held \
 distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control" }
   if trailing.any (!isSpaceOrPar ·) then

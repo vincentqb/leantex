@@ -74,6 +74,12 @@ def slidesHMargin : Sp := Dim.mm 10
 def slidesVMargin : Sp := Dim.mm 9
 def slidesFontSize : Sp := Dim.pt 11
 
+/-- The card class's legibility floor: an angular x-height of 0.2° at the
+40 cm hand-held distance is 1.4 mm, the bound of the fluent-reading range
+in Legge & Bigelow 2011. The class implies `text.xheight >=` this;
+`card_floor_within_scale` ties it to the size scale. -/
+def cardXHeightFloor : Sp := Dim.mm100 140
+
 /-- An sRGB colour. -/
 structure Color where
   r : UInt8
@@ -292,6 +298,17 @@ rounding: each step is `\magstep`'s minor-third ratio, |6a − 5b| ≤ 4‰. -/
 theorem sizeScale_display_geometric :
     ∀ p ∈ sizeScaleSteps, 1000 ≤ p.1 →
       6 * p.1 ≤ 5 * p.2 + 4 ∧ 5 * p.2 ≤ 6 * p.1 + 4 := by decide
+
+/-- The card's contract and the type scale agree at the card's own base
+size: at the conventional x-height ratio (half the nominal size, the
+fallback the shipped-ink judge uses for a font that declares none), every
+scale step from `footnotesize` up clears the 1.4 mm legibility floor the
+class implies — the class never states an assertion its own defaults
+violate, and what fails (`scriptsize`, `tiny`) is exactly what the
+assertion exists to catch on the shipped pages. -/
+theorem card_floor_within_scale :
+    ∀ p ∈ sizeScale, 800 ≤ p.2 →
+      baseFontSize * (p.2 : Int) / 1000 / 2 ≥ cardXHeightFloor := by decide
 
 def Style.label : Style → String
   | .bold => "bold"
