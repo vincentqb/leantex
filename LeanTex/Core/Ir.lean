@@ -18,7 +18,21 @@ structure PageSpec where
   engine's default. LaTeX classes declare `0pt`, `\parskip` and the parskip
   package their own. -/
   parskip : Option SymGlue := none
+  /-- Whether the measure is checked against the readable band (W0201).
+  `\page{ measure = free }` declares that the document takes responsibility
+  for its line length and silences the diagnostic. -/
+  measureChecked : Bool := true
   deriving Repr, BEq, Inhabited
+
+/-- The text block of an undeclared letter page: 26 picas (312 pt).
+Bringhurst's copy-fitting table sets a text face whose lowercase alphabet
+runs 130 pt — the middle of the 10 pt text-face range — on a measure of
+about 26 picas for a single column (Elements of Typographic Style §2.1.2
+and its table, as abridged in the memoir manual, Table 2.2). The
+word-processor inch this replaces gave a 468 pt line, roughly a hundred
+characters at 10 pt — the measure the band diagnostic exists to catch. A
+document that declares any `\page` geometry keeps every value it named. -/
+def articleTextBlock : Sp := pt 312
 
 /-- An sRGB colour. -/
 structure Color where

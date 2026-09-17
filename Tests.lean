@@ -3092,6 +3092,51 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   | none => failures ref "fontdb: Source Serif Pro BoldItalic not found"
   t "fontdb unknown family" (FontDb.resolve faces "No Such Family Here" {} |>.isNone)
 
+/-- The measure band (W0201): fires on continuous text set too wide or too
+narrow, is scoped to pages rather than slides, and is silenced by declaring
+`\page{ measure = free }`. -/
+def measureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  -- Long enough to set at least four full lines at any measure under test.
+  let prose := String.intercalate " " (List.replicate 40 "typesetting is the arrangement of type")
+  let diagsOf (pre : String) (body : String) (geom : Layout.Geom := {}) : Array Diag :=
+    let src := pre ++ "\\begin{document}" ++ body ++ "\\end{document}"
+    (Layout.run geom oneFace none (Elab.run "t" src).1).diags
+  let w0201 (ds : Array Diag) : Array Diag := ds.filter (·.code == "W0201")
+  -- The word-processor default this engine replaced: letter with 1in
+  -- margins holds ~100 characters at 10pt, far outside 45–90.
+  let wide := diagsOf "\\documentclass{article}\\page{ hmargin = 1in }" prose
+  t "wide measure warns" ((w0201 wide).size == 1)
+  t "wide measure says narrow"
+    ((w0201 wide).all fun d => (d.help.getD "").startsWith "narrow")
+  t "measure = free silences the band"
+    ((w0201 (diagsOf "\\documentclass{article}\\page{ hmargin = 1in, measure = free }" prose)).isEmpty)
+  t "slides are outside the rule's scope"
+    ((w0201 (diagsOf "\\documentclass{slides}" prose)).isEmpty)
+  t "short text is not continuous reading"
+    ((w0201 (diagsOf "\\documentclass{article}\\page{ hmargin = 1in }" "one line.")).isEmpty)
+  let narrowGeom : Layout.Geom :=
+    { pageW := Dim.pt 200, pageH := Dim.pt 2000, hmargin := Dim.pt 10, vmargin := Dim.pt 10 }
+  let narrow := diagsOf "\\documentclass{article}" prose narrowGeom
+  t "narrow measure warns and says widen"
+    ((w0201 narrow).size == 1 &&
+     (w0201 narrow).all fun d => (d.help.getD "").startsWith "widen")
+  -- The default article page carries Bringhurst's 26-pica text block, and
+  -- the band it was chosen for holds on it.
+  let (dfltDoc, _) := Elab.run "t" ("\\documentclass{article}\\begin{document}" ++
+    prose ++ "\\end{document}")
+  t "default article text block is 26 picas"
+    (dfltDoc.page.width - 2 * dfltDoc.page.hmargin == Ir.articleTextBlock)
+  t "default article measure is in band"
+    ((w0201 (Layout.run (Layout.Geom.ofPage dfltDoc.page) oneFace none dfltDoc).diags).isEmpty)
+  -- A document that declared any \page geometry keeps every value it named.
+  let (declDoc, _) := Elab.run "t"
+    "\\documentclass{article}\\page{ vmargin = 0.5in }\\begin{document}x\\end{document}"
+  t "declared \\page keeps the named margins" (declDoc.page.hmargin == Dim.inch 1)
+  t "measure key rejects a stray value"
+    ((elabStr "\\documentclass{article}\\page{ measure = loose }\\begin{document}x\\end{document}").2.any
+      (·.code == "E0323"))
+
 /-- Vertical-rhythm diagnostics: a heading binds to the text it introduces,
 so declared space below it must not exceed the declared space above. -/
 def rhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
@@ -3247,6 +3292,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       themeReconcileChecks ref oneFace
       scannerChecks ref
       rhythmChecks ref oneFace
+      measureChecks ref oneFace
 
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"

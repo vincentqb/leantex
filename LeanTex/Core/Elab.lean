@@ -120,7 +120,8 @@ a key/value block: running head and foot. -/
 def runningCtrl : List String := ["runninghead", "runningfoot"]
 
 def pageKeys : List String :=
-  ["size", "width", "height", "margin", "vmargin", "hmargin", "leading", "parskip"]
+  ["size", "width", "height", "margin", "vmargin", "hmargin", "leading", "parskip",
+   "measure"]
 
 def metaKeys : List String := ["title", "author", "subject", "keywords"]
 
@@ -1652,6 +1653,14 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | none => diag ctx "E0323" s!"'leading' in \\page expects a factor like 1.04, got '{f}'" pos
     | "parskip", .glue g => spec := { spec with parskip := some g }
     | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
+    | "measure", .ident v =>
+      -- `free`: the document takes responsibility for its line length, and
+      -- the readable-band diagnostic (W0201) stays quiet.
+      match v with
+      | "free" => spec := { spec with measureChecked := false }
+      | "checked" => spec := { spec with measureChecked := true }
+      | _ =>
+        diag ctx "E0323" s!"'measure' in \\page expects 'checked' or 'free', got '{v}'" pos
     | key, v =>
       if key == "header" || key == "footer" then
         -- The feature exists, just not as a page key: running content is
@@ -1661,7 +1670,9 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           (help := s!"declare it as {cmd}\{...} — it takes inline content, " ++
             "so use \\hfill to push part of it to the right")
       else if pageKeys.contains key then
-        let expected := if key == "size" then "a page size name" else "a dimension"
+        let expected := if key == "size" then "a page size name"
+          else if key == "measure" then "'checked' or 'free'"
+          else "a dimension"
         modify fun st => { st with
           diags := st.diags.push (Decl.wrongType ctx.file "page" key expected v pos) }
       else
@@ -1967,6 +1978,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut docClass := "article"
   let mut classOptions := ""
   let mut page : PageSpec := {}
+  let mut sawPage := false
   let mut fonts : FontSpec := {}
   let mut palette : Palette := {}
   let mut tokens : Tokens := {}
@@ -2198,6 +2210,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               modify fun st => { st with diags := st.diags ++ ds }
               if name == "page" then
                 page ← applyPage ctx page entries pos
+                sawPage := true
               else if name == "fonts" then
                 fonts ← applyFonts ctx fonts entries pos
               else
@@ -2252,6 +2265,12 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
       page := { page with hmargin := Dim.mm 10 }
     if page.vmargin == dflt.vmargin then
       page := { page with vmargin := Dim.mm 9 }
+  else if !sawPage then
+    -- An undeclared letter page takes Bringhurst's text block for a 10pt
+    -- text face, 26 picas, not the word-processor inch: the default must
+    -- satisfy the measure band the engine checks (W0201). A document that
+    -- declares any \page geometry keeps every value it named.
+    page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
   ctx := { ctx with slides := docClass == "slides" }
   let blocks ← elabBlocks ctx body
   if trailing.any (!isSpaceOrPar ·) then

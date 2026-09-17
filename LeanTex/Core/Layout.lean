@@ -1611,6 +1611,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     docBg := doc.palette.find? "bg"
   }
   let mut b := b0
+  let mut prose : Nat := 0
   -- A heading binds to the text it introduces, so its space above must not
   -- be the smaller of the two (the standard rule; Butterick, "space above
   -- and below": the space below should be smaller so the heading sits
@@ -1683,11 +1684,44 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
                      color := fg }
       b := { b with cur := { b.cur with fills := fills },
                     prevDepth := b.prevDepth + gap + thick }
-    | .para j t => b := placePara fs b j t.get
+    | .para j t =>
+      let breaks := t.get
+      -- A plain full-measure text paragraph is the continuous reading the
+      -- measure band is about; headings, items, code, and columns are not.
+      if j.target == geom.textWidth && !j.center && j.size == geom.fontSize &&
+          j.bullet.isNone && j.markerSegs.isNone && j.rule.isNone then
+        prose := max prose breaks.size
+      b := placePara fs b j breaks
   -- The trailing boundary of a final frame has already closed its page; a
   -- document is never given an empty page for it.
   if !b.cur.lines.isEmpty || b.pages.isEmpty then
     b := b.finishPage
+  -- The measure, checked against the readable band once the document has
+  -- shown continuous text (a paragraph of four or more full-measure lines).
+  -- Bringhurst: 45–75 characters is satisfactory for a single column of
+  -- text-size prose and 66 is the ideal (Elements §2.1.2); Butterick allows
+  -- 45–90. The character count comes from the body face's own lowercase
+  -- alphabet length through the copy-fitting table's fitted lines
+  -- (memoir manual eqs. 2.1–2.2: L₆₅ = 2.042α + 33.41 pt,
+  -- L₄₅ = 1.415α + 23.03 pt). Slides are display text, not continuous
+  -- reading, and are out of the rule's own scope; `\page{ measure = free }`
+  -- declares the document takes responsibility.
+  if doc.docClass != "slides" && doc.page.measureChecked && prose ≥ 4 then
+    let alphabet := (List.range 26).foldl (fun acc k =>
+      acc + scaledAt geom.fontSize font (font.advance (Char.ofNat ('a'.toNat + k)))) 0
+    if alphabet > 0 then
+      let l45 := 1415 * alphabet / 1000 + 2303 * spPerPt / 100
+      let l65 := 2042 * alphabet / 1000 + 3341 * spPerPt / 100
+      let cpl10 := 450 + 200 * (geom.textWidth - l45) / (l65 - l45)
+      if cpl10 < 450 || cpl10 > 900 then
+        let dir := if cpl10 > 900 then "narrow" else "widen"
+        b := { b with diags := b.diags.push {
+          severity := .warning
+          code := "W0201"
+          message := s!"the measure holds about {(cpl10 + 5) / 10} characters " ++
+            "per line, outside the readable 45\u201390 band"
+          help := s!"{dir} the text block (\\page\{ hmargin = ... }; 66 characters " ++
+            "is the ideal) or declare \\page{ measure = free }" } }
   let pages := b.pages
   -- Running content is laid out per page once the count is known, into the
   -- margin, so it never disturbs the body it annotates.

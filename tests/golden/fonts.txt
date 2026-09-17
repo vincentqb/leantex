@@ -1,5 +1,5 @@
 class article
-page 612x792 vmargin 72 hmargin 72
+page 612x792 vmargin 72 hmargin 150
 font dir "fonts"
 font body "Source Serif Pro"
 font sans "Open Sans"
