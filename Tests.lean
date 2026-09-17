@@ -1013,13 +1013,31 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
      bytesContain pdf "/Title (Alex Doe, PhD)")
   t "the one declared url reaches the pdf as XMP dc:identifier"
     (bytesContain pdf "<dc:identifier>https://example.org/alex</dc:identifier>")
+  -- JSON-LD is the same record again, as a data block. Values pass the
+  -- certified JSON escaper, so a hostile title can neither end its own
+  -- string nor close the script element.
   let (bare, _) := elabStr ("\\documentclass{article}" ++
     "\\pdfmeta{ title = \"Quiet Page\" }\\begin{document}x\\end{document}")
+  t "html json-ld derives from the one record"
+    (has "<script type=\"application/ld+json\">" &&
+     has "\"@type\": \"WebPage\"" &&
+     has "\"name\": \"Alex Doe, PhD\"" &&
+     has "\"url\": \"https://example.org/alex\"" &&
+     has "\"author\": {\"@type\": \"Person\", \"name\": \"Alex Doe\"}")
+  let hostile := { bare with info := { bare.info with
+    url := some "https://example.org/x"
+    title := some "a\"</script><b>b" } }
+  let hostilePage := (HtmlDoc.emit {} hostile).1
+  t "html json-ld escapes a hostile value and survives the payload guard"
+    ((hostilePage.splitOn
+        "\"name\": \"a\\u0022\\u003c/script>\\u003cb>b\"").length == 2 &&
+     (hostilePage.splitOn "/* removed */").length == 1)
   let barePage := (HtmlDoc.emit {} bare).1
   t "html without a declared web identity emits none of the web head"
     ((barePage.splitOn "og:").length == 1 &&
      (barePage.splitOn "rel=\"canonical\"").length == 1 &&
-     (barePage.splitOn "twitter:").length == 1)
+     (barePage.splitOn "twitter:").length == 1 &&
+     (barePage.splitOn "ld+json").length == 1)
 
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
 around the content, and nothing warns. Its own function: `main` is one `do`
@@ -2362,12 +2380,12 @@ def rawPayloadChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((Html.render (Html.elem "p" #[Html.Node.style "x</Style>bad"]) 0).splitOn
       "</Style").length == 1)
   t "html script payload cannot close its own tag in upper case inline"
-    (((Html.render (Html.elem "p" #[Html.Node.script "x</SCRIPT>bad"]) 0).splitOn
+    (((Html.render (Html.elem "p" #[Html.Node.script #[] "x</SCRIPT>bad"]) 0).splitOn
       "</SCRIPT").length == 1)
   -- The terminator literal omits the closing `>`, which is what catches a
   -- spaced or self-closed end tag; pinned so the case fix cannot regress it.
   t "html script payload with a spaced terminator is removed"
-    (((Html.render (Html.elem "p" #[Html.Node.script "x</script >bad"]) 0).splitOn
+    (((Html.render (Html.elem "p" #[Html.Node.script #[] "x</script >bad"]) 0).splitOn
       "/* removed */").length == 2)
 
 /-- The pre-commit gate's own predicates, exercised through the script's
@@ -4526,7 +4544,7 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((Html.render (Html.elem "p" #[Html.Node.style "x</style>bad"]) 0).splitOn
       "</style>").length == 2)
   t "html script payload cannot close its own tag inline"
-    (((Html.render (Html.elem "p" #[Html.Node.script "x</script>bad"]) 0).splitOn
+    (((Html.render (Html.elem "p" #[Html.Node.script #[] "x</script>bad"]) 0).splitOn
       "</script>").length == 2)
   rawPayloadChecks ref
   precommitChecks ref

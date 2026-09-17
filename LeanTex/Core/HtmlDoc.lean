@@ -698,7 +698,7 @@ mutual
 private def pageFactsOne (acc : PageFacts) : Node → PageFacts
   | .text _ => acc
   | .style _ => acc
-  | .script _ => acc
+  | .script _ _ => acc
   | .elem tag attrs kids =>
     let acc := if tag == "nav" then { acc with navs := acc.navs + 1 } else acc
     let acc := attrs.foldl (init := acc) fun a kv =>
@@ -941,6 +941,33 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
     head := head.push (og "og:type" "website")
     head := head.push (Html.elem "meta" #[]
       #[("name", "twitter:card"), ("content", "summary")])
+  -- JSON-LD: the machine-readable projection of the same record, carried
+  -- as a data block — a script with a non-JavaScript type is data, not
+  -- behaviour (HTML §4.12.1), so the no-script architecture holds. The
+  -- shape is schema.org's WebPage (name, description, url, image) with
+  -- the author as a bare Person. Every value goes through the certified
+  -- JSON escaper: `escapeJson_no_quote` says no value can end its own
+  -- string, `escapeJson_no_lt` that the payload can never contain
+  -- `</script` and so survives the raw-payload guard verbatim. The typed
+  -- \person/\organization declaration the site-port report asks for is
+  -- recorded in PLAN as owed; this emits only what the existing
+  -- declarations already support.
+  if doc.info.url.isSome then
+    let jstr (s : String) : String := "\"" ++ Html.escapeJson s ++ "\""
+    let field (k : String) : Option String → List String
+      | some v => [s!"  {jstr k}: {jstr v}"]
+      | none => []
+    let author := match doc.info.author with
+      | some a =>
+        [s!"  {jstr "author"}: \{{jstr "@type"}: {jstr "Person"}, {jstr "name"}: {jstr a}}"]
+      | none => []
+    let fields :=
+      [s!"  {jstr "@context"}: {jstr "https://schema.org"}",
+       s!"  {jstr "@type"}: {jstr "WebPage"}"] ++
+      field "name" doc.info.title ++ field "description" doc.info.subject ++
+      field "url" doc.info.url ++ field "image" doc.info.image ++ author
+    head := head.push (Node.script #[("type", "application/ld+json")]
+      ("{\n" ++ String.intercalate ",\n" fields ++ "\n}"))
   head := head.push (Html.elem "meta" #[] #[("name", "generator"), ("content", "leantex")])
   -- Element styles are the document's own design and ride along in every
   -- mode: they are declarations, not a framework.

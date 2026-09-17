@@ -93,14 +93,96 @@ theorem escapeAttr_no_quote (s : String) : '"' ∉ (escapeAttr s).toList := by
     simp only [escapeAttr.go, List.mem_append, not_or]
     exact ⟨escapeCharAttr_no_quote c, ih⟩
 
+/-- Escape one character of a JSON string embedded in a `<script>` data
+block. RFC 8259 §7 lets any character be written as `\uXXXX`, so the three
+that could break the embedding are: the quote (would end the JSON string),
+the backslash (would start an escape), and `<` (could begin `</script>`,
+the one sequence a script data block cannot contain — HTML §4.12.1.3's
+restrictions for contents of script elements). The named C0 escapes RFC
+8259 spells keep their two-character forms; the remaining C0 controls,
+which RFC 8259 forbids raw and which have no meaning in metadata, are
+dropped. Every branch is a concrete literal, which is what lets the two
+safety theorems below close by `decide`. -/
+def escapeCharJson (c : Char) : List Char :=
+  if c == '"' then "\\u0022".toList
+  else if c == '\\' then "\\u005c".toList
+  else if c == '<' then "\\u003c".toList
+  else if c == '\n' then "\\n".toList
+  else if c == '\t' then "\\t".toList
+  else if c == '\r' then "\\r".toList
+  else if c.toNat < 0x20 then []
+  else [c]
+
+/-- Escape a JSON string value for embedding in a script data block. The
+accumulator threads through the walk (the `#[x] ++ rest` trap). -/
+def escapeJson (s : String) : String :=
+  String.ofList (go #[] s.toList).toList
+where
+  go (acc : Array Char) : List Char → Array Char
+    | [] => acc
+    | c :: rest => go (acc ++ (escapeCharJson c).toArray) rest
+
+private theorem escapeCharJson_safe (c : Char) :
+    '"' ∉ escapeCharJson c ∧ '<' ∉ escapeCharJson c := by
+  unfold escapeCharJson
+  split
+  · decide
+  · split
+    · decide
+    · split
+      · decide
+      · split
+        · decide
+        · split
+          · decide
+          · split
+            · decide
+            · split
+              · decide
+              · next h1 _ h3 _ _ _ _ =>
+                simp only [List.mem_singleton]
+                constructor
+                · intro hc
+                  exact absurd hc.symm (by simp_all)
+                · intro hc
+                  exact absurd hc.symm (by simp_all)
+
+private theorem escapeJson_go_safe (l : List Char) (acc : Array Char)
+    (hacc : '"' ∉ acc.toList ∧ '<' ∉ acc.toList) :
+    '"' ∉ (escapeJson.go acc l).toList ∧ '<' ∉ (escapeJson.go acc l).toList := by
+  induction l generalizing acc with
+  | nil => simpa [escapeJson.go] using hacc
+  | cons c rest ih =>
+    simp only [escapeJson.go]
+    apply ih
+    have hc := escapeCharJson_safe c
+    simp only [Array.toList_append, List.mem_append, not_or]
+    exact ⟨⟨hacc.1, hc.1⟩, ⟨hacc.2, hc.2⟩⟩
+
+/-- The JSON injection claim, in miniature: escaped content carries no raw
+quote, so no value can end its own string and smuggle structure into the
+object around it. -/
+theorem escapeJson_no_quote (s : String) : '"' ∉ (escapeJson s).toList := by
+  simp only [escapeJson, String.toList_ofList]
+  exact (escapeJson_go_safe s.toList #[] (by simp)).1
+
+/-- And no `<` at all: the escaped payload can never contain `</script`, so
+the `rawPayload` guard below never fires on it and the data block reaches
+the page intact rather than as `/* removed */`. -/
+theorem escapeJson_no_lt (s : String) : '<' ∉ (escapeJson s).toList := by
+  simp only [escapeJson, String.toList_ofList]
+  exact (escapeJson_go_safe s.toList #[] (by simp)).2
+
 inductive Node where
   | text (s : String)
   | elem (tag : String) (attrs : Array (String × String)) (kids : Array Node)
   /-- Stylesheet content. Not escaped — CSS has its own grammar — but the
   emitter refuses a payload containing its own end tag. -/
   | style (css : String)
-  /-- Script content, same contract as `style`. -/
-  | script (js : String)
+  /-- Script content, same contract as `style`. The attrs carry a `type`:
+  a script with a non-JavaScript MIME type is a data block (HTML §4.12.1),
+  which is how JSON-LD rides without emitting behaviour. -/
+  | script (attrs : Array (String × String)) (js : String)
   deriving Inhabited
 
 /-- Elements with no closing tag. -/
@@ -187,8 +269,9 @@ private def renderInto (acc : String) (n : Node) (indent : Nat) : String :=
   | .text s => acc ++ pad ++ escapeText s ++ "\n"
   | .style css =>
     acc ++ pad ++ "<style>\n" ++ rawPayload "</style" css ++ "\n" ++ pad ++ "</style>\n"
-  | .script js =>
-    acc ++ pad ++ "<script>\n" ++ rawPayload "</script" js ++ "\n" ++ pad ++ "</script>\n"
+  | .script attrs js =>
+    acc ++ pad ++ "<script" ++ attrString attrs ++ ">\n" ++
+      rawPayload "</script" js ++ "\n" ++ pad ++ "</script>\n"
   | .elem tag attrs kids =>
     let open' := "<" ++ tag ++ attrString attrs ++ ">"
     if voidTags.contains tag then
@@ -205,7 +288,8 @@ private def inlineRenderInto (acc : String) (n : Node) : String :=
   match n with
   | .text s => acc ++ escapeText s
   | .style css => acc ++ "<style>" ++ rawPayload "</style" css ++ "</style>"
-  | .script js => acc ++ "<script>" ++ rawPayload "</script" js ++ "</script>"
+  | .script attrs js =>
+    acc ++ "<script" ++ attrString attrs ++ ">" ++ rawPayload "</script" js ++ "</script>"
   | .elem tag attrs kids =>
     let open' := "<" ++ tag ++ attrString attrs ++ ">"
     if voidTags.contains tag then acc ++ open'
