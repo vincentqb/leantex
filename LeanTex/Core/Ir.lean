@@ -675,6 +675,52 @@ theorem Place.toPage_box (t : Place) (b : Box) (u : Sp × Sp)
 
 end Pic
 
+/-- Horizontal alignment of a table column's cells: `l`, `c`, `r`. -/
+inductive HAlign where
+  | left
+  | center
+  | right
+  deriving Repr, BEq, Inhabited
+
+/-- A table column's declared width. `p{0.31\linewidth}` is a fraction of
+the measure, `p{54pt}` an absolute length; `l`/`c`/`r` size to the widest
+cell (`natural`), as LaTeX's own column types do. -/
+inductive ColWidth where
+  | natural
+  | frac (permille : Nat)
+  | abs (w : Sp)
+  deriving Repr, BEq, Inhabited
+
+/-- One column of a table, from the `tabular` column spec. A `p` column
+wraps its cells at the declared width; `l`/`c`/`r` set each cell as one
+unbreakable line. -/
+structure ColSpec where
+  width : ColWidth
+  align : HAlign
+  deriving Repr, BEq, Inhabited
+
+/-- A horizontal rule (or declared row gap) inside a table, booktabs'
+vocabulary: `top` and `bottom` draw at `heavyRuleWidth`, `mid` at
+`lightRuleWidth`, and each carries its documented padding
+(`aboveTopSep`/`aboveRuleSep` over it, `belowRuleSep`/`belowBottomSep`
+under). `cmid` is `\cmidrule`: `cmidRuleWidth` across columns `a`–`b`
+(1-based, inclusive), each end trimmed by `cmidRuleKern` when its flag is
+set. `gap` is `\addlinespace` (and `\\[len]`): no ink, declared space. -/
+inductive TableRule where
+  | top
+  | mid
+  | bottom
+  | cmid (a : Nat) (b : Nat) (trimL : Bool) (trimR : Bool)
+  | gap (space : SymGlue)
+  deriving Repr, BEq, Inhabited
+
+/-- What a float wraps: `{figure}` or `{table}`. They differ in name and
+(unmodelled) numbering; the caption and separation machinery is one. -/
+inductive FloatKind where
+  | figure
+  | table
+  deriving Repr, BEq, Inhabited
+
 inductive Block where
   | para (content : Array Inline)
   | section (level : Nat) (starred : Bool) (title : Array Inline)
@@ -752,6 +798,25 @@ inductive Block where
   the subset never reaches here — it is diagnosed by name where it stood
   (W0334/E0333), so nothing a picture declares goes silently missing. -/
   | picture (pic : Pic.Picture)
+  /-- `{tabular}`: a formal table, booktabs-shaped by construction — three
+  rule weights with their padding, no vertical rules ever ("Never, ever use
+  vertical rules", booktabs.dtx §The layout of formal tables; a `|` in the
+  spec warns and is not drawn). `rows` is rectangular: elaboration pads a
+  short row and widens the grid for a long one, warning either way (W0337),
+  so every walk below may trust `cols.size`. `rules` are drawn before the
+  content row of their index (`rows.size` = after the last); order within
+  one index is document order. `padLeft`/`padRight` are the outer
+  `tabColSep` pads, deleted by `@{}` as in LaTeX. -/
+  | table (cols : Array ColSpec) (padLeft : Bool) (padRight : Bool)
+      (rows : Array (Array (Array Inline))) (rules : Array (Nat × TableRule))
+  /-- `{figure}`/`{table}`: a captioned object. A single-pass engine has
+  nowhere for a float to float, so it stands where written, centred, set
+  off from the text by `floatsep` with its caption bound `captionsep` from
+  it (`caption_gaps_rhythm` holds the defaults to the rhythm). `capAbove`
+  is source order: a `\caption` written before the content stands above
+  it, the convention for tables. An empty caption is a bare float. -/
+  | float (kind : FloatKind) (capAbove : Bool) (body : Array Block)
+      (caption : Array Inline)
   deriving Repr, BEq, Inhabited
 
 /-- The frames the deck numbers: a `.frame` that is neither standout nor
@@ -1424,6 +1489,40 @@ def dumpInline (ind : String) (x : Inline) : String :=
 
 end
 
+/-- One column spec, for the dump: the align letter, then the declared
+width. `l:310/1000` is a left `p{.31\linewidth}`; a bare letter is a
+natural column. -/
+def dumpColSpec (c : ColSpec) : String :=
+  let al := match c.align with
+    | .left => "l"
+    | .center => "c"
+    | .right => "r"
+  match c.width with
+  | .natural => al
+  | .frac f => s!"{al}:{f}/1000"
+  | .abs w => s!"{al}:{w.toPtString}pt"
+
+def dumpTableRule (r : TableRule) : String :=
+  match r with
+  | .top => "top"
+  | .mid => "mid"
+  | .bottom => "bottom"
+  | .cmid a b tl tr =>
+    let trim := (if tl then "l" else "") ++ (if tr then "r" else "")
+    s!"cmid {a}-{b}{if trim.isEmpty then "" else s!"({trim})"}"
+  | .gap g => s!"gap {dumpGlue g}"
+
+def dumpTableCells (ind : String) (acc : String) : List (Array Inline) -> String
+  | [] => acc
+  | cell :: rest =>
+    let inner := dumpInlines (ind ++ "  ") cell
+    dumpTableCells ind (acc ++ s!"{ind}cell\n" ++ inner) rest
+
+def dumpTableRows (ind : String) (acc : String) : List (Array (Array Inline)) -> String
+  | [] => acc
+  | row :: rest =>
+    dumpTableRows ind (dumpTableCells (ind ++ "  ") (acc ++ s!"{ind}row\n") row.toList) rest
+
 mutual
 
 def dumpBlocks (ind : String) (xs : Array Block) : String :=
@@ -1506,6 +1605,20 @@ def dumpBlock (ind : String) (b : Block) : String :=
       | .label x y t c sc =>
         s!"{ind}  label {x.toPtString} {y.toPtString} {t.quote} \
 #{hex2 c.r}{hex2 c.g}{hex2 c.b} {sc}\n")
+  | .table cols padL padR rows rules =>
+    let spec := String.intercalate "," (cols.toList.map dumpColSpec)
+    let pads := (if padL then "" else "@{}") ++ spec ++ (if padR then "" else "@{}")
+    let ruleLines := String.join (rules.toList.map fun (i, r) =>
+      s!"{ind}  rule {i} {dumpTableRule r}\n")
+    dumpTableRows (ind ++ "  ") (s!"{ind}table {pads}\n" ++ ruleLines) rows.toList
+  | .float kind capAbove body caption =>
+    let k := match kind with
+      | .figure => "figure"
+      | .table => "table"
+    s!"{ind}float {k}{if capAbove then " caption-above" else ""}\n" ++
+    (if caption.isEmpty then ""
+     else s!"{ind}  caption\n" ++ dumpInlines (ind ++ "    ") caption) ++
+    dumpBlocks (ind ++ "  ") body
 
 end
 
@@ -1665,6 +1778,18 @@ def maxStepBlock : Block → Nat
   | .rule _ _ _ => 1
   -- A picture is concrete ink with no overlay structure inside it.
   | .picture _ => 1
+  -- A cell's content may step (an overlay reveal per row); the caption is
+  -- furniture and does not multiply pages, as a frame title does not.
+  | .table _ _ _ rows _ => maxStepTableRows rows.toList
+  | .float _ _ body _ => maxStepBlockList body.toList
+
+def maxStepTableRows : List (Array (Array Inline)) → Nat
+  | [] => 1
+  | row :: rest => max (maxStepTableCells row.toList) (maxStepTableRows rest)
+
+def maxStepTableCells : List (Array Inline) → Nat
+  | [] => 1
+  | cell :: rest => max (maxStepInlines cell) (maxStepTableCells rest)
 
 def maxStepItems : List (Array Block) → Nat
   | [] => 1
@@ -1729,6 +1854,29 @@ def shadeBlock (cover : Cover) : Block → Block
   -- A covered picture is the same picture, quieter: each shape takes its
   -- own colour's cover, exactly as a coloured run does.
   | .picture p => .picture (p.recolor cover.of)
+  -- Each cell covers as a paragraph does: wrapped in the plain cover, its
+  -- own colours covered per colour. Rules are decorative ink and keep
+  -- their weight; the caption covers with its float.
+  | .table cols pl pr rows rules =>
+    .table cols pl pr (shadeTableRows cover #[] rows.toList) rules
+  | .float k ca body caption =>
+    .float k ca (shadeBlockList cover #[] body.toList)
+      (if caption.isEmpty then caption
+       else #[.colored cover.plain none (shadeInlines cover #[] caption.toList)])
+
+def shadeTableRows (cover : Cover) (out : Array (Array (Array Inline))) :
+    List (Array (Array Inline)) → Array (Array (Array Inline))
+  | [] => out
+  | row :: rest => shadeTableRows cover (out.push (shadeTableCells cover #[] row.toList)) rest
+
+def shadeTableCells (cover : Cover) (out : Array (Array Inline)) :
+    List (Array Inline) → Array (Array Inline)
+  | [] => out
+  | cell :: rest =>
+    let covered : Array Inline :=
+      if cell.isEmpty then cell
+      else #[.colored cover.plain none (shadeInlines cover #[] cell.toList)]
+    shadeTableCells cover (out.push covered) rest
 
 def shadeItems (cover : Cover) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
@@ -1800,6 +1948,22 @@ def dimBlock (cover : Cover) (k : Nat) : Block → Block
   -- No overlay structure inside a picture: dimming happens where a `.step`
   -- wraps it, through `shadeBlock`.
   | .picture p => .picture p
+  -- Cells and caption dim in place: only colours change, so no step can
+  -- reflow the grid, exactly the cover-not-hide invariant of a paragraph.
+  | .table cols pl pr rows rules =>
+    .table cols pl pr (dimTableRows cover k #[] rows.toList) rules
+  | .float fk ca body caption =>
+    .float fk ca (dimBlockList cover k #[] body.toList) (dimInlines cover k caption)
+
+def dimTableRows (cover : Cover) (k : Nat) (out : Array (Array (Array Inline))) :
+    List (Array (Array Inline)) → Array (Array (Array Inline))
+  | [] => out
+  | row :: rest => dimTableRows cover k (out.push (dimTableCells cover k #[] row.toList)) rest
+
+def dimTableCells (cover : Cover) (k : Nat) (out : Array (Array Inline)) :
+    List (Array Inline) → Array (Array Inline)
+  | [] => out
+  | cell :: rest => dimTableCells cover k (out.push (dimInlines cover k cell)) rest
 
 def dimItems (cover : Cover) (k : Nat) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
@@ -1873,6 +2037,11 @@ def unwrapItemStep : Block → Block
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
   | .picture p => .picture p
+  -- A cell holds inlines and a caption is furniture: no item paragraph can
+  -- hide below either, so both nodes pass whole (float body walked: a
+  -- listed figure body may hold a list).
+  | .table cols pl pr rows rules => .table cols pl pr rows rules
+  | .float k ca body caption => .float k ca (unwrapItemStepList #[] body.toList) caption
 
 def unwrapItemStepItems (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
@@ -1940,6 +2109,19 @@ def blockTextOne (acc : String) : Block → String
   -- shipped-page census through the label runs layout sets, and the census
   -- rows assert them there.
   | .picture _ => acc
+  -- Every cell's text is census content — the conservation the user reads
+  -- as "no cell silently vanished". The caption counts with its float,
+  -- before the body, as a frame's title does.
+  | .table _ _ _ rows _ => blockTextTableRows acc rows.toList
+  | .float _ _ body caption => blockTextList (acc ++ plainText caption) body.toList
+
+def blockTextTableRows (acc : String) : List (Array (Array Inline)) → String
+  | [] => acc
+  | row :: rest => blockTextTableRows (blockTextTableCells acc row.toList) rest
+
+def blockTextTableCells (acc : String) : List (Array Inline) → String
+  | [] => acc
+  | cell :: rest => blockTextTableCells (acc ++ plainText cell) rest
 
 def blockTextItems (acc : String) : List (Array Block) → String
   | [] => acc
@@ -1982,6 +2164,9 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .logo _ => out
   | .rule _ _ _ => out
   | .picture _ => out
+  -- Cells and captions hold inline content; no heading can stand in either.
+  | .table _ _ _ _ _ => out
+  | .float _ _ body _ => headingLevelList out body.toList
 
 def headingLevelItems (out : Array Nat) : List (Array Block) → Array Nat
   | [] => out
@@ -2152,6 +2337,22 @@ private theorem blockTextColumns_chain (l1 l2 : List (Option Nat × Array Block)
   | nil => simp [blockTextColumns]
   | cons col rest ih => simp [blockTextColumns, ih]
 
+private theorem blockTextTableRows_chain (l1 l2 : List (Array (Array Inline)))
+    (acc : String) :
+    blockTextTableRows acc (l1 ++ l2)
+      = blockTextTableRows (blockTextTableRows acc l1) l2 := by
+  induction l1 generalizing acc with
+  | nil => simp [blockTextTableRows]
+  | cons row rest ih => simp [blockTextTableRows, ih]
+
+private theorem blockTextTableCells_chain (l1 l2 : List (Array Inline))
+    (acc : String) :
+    blockTextTableCells acc (l1 ++ l2)
+      = blockTextTableCells (blockTextTableCells acc l1) l2 := by
+  induction l1 generalizing acc with
+  | nil => simp [blockTextTableCells]
+  | cons cell rest ih => simp [blockTextTableCells, ih]
+
 mutual
 
 theorem shadeInlines_text (cover : Cover) (xs : List Inline) (out : Array Inline) :
@@ -2194,6 +2395,32 @@ theorem shadeInline_text (cover : Cover) (x : Inline) :
     rfl
 
 end
+
+/-- A covered cell keeps every character: the cell wrapper recolours, as a
+paragraph's does. -/
+theorem shadeTableCells_text (cover : Cover) (cells : List (Array Inline))
+    (out : Array (Array Inline)) (acc : String) :
+    blockTextTableCells acc (shadeTableCells cover out cells).toList
+      = blockTextTableCells (blockTextTableCells acc out.toList) cells := by
+  match cells with
+  | [] => simp [shadeTableCells, blockTextTableCells]
+  | cell :: rest =>
+    rw [shadeTableCells, shadeTableCells_text cover rest _ acc]
+    by_cases h : cell.isEmpty
+    · simp [h, blockTextTableCells, blockTextTableCells_chain]
+    · simp [h, blockTextTableCells, blockTextTableCells_chain, plainText,
+        plainTextList, plainTextOne, shadeInlines_text cover cell.toList #[]]
+
+theorem shadeTableRows_text (cover : Cover) (rows : List (Array (Array Inline)))
+    (out : Array (Array (Array Inline))) (acc : String) :
+    blockTextTableRows acc (shadeTableRows cover out rows).toList
+      = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
+  match rows with
+  | [] => simp [shadeTableRows, blockTextTableRows]
+  | row :: rest =>
+    rw [shadeTableRows, shadeTableRows_text cover rest _ acc]
+    simp [blockTextTableRows, blockTextTableRows_chain,
+      shadeTableCells_text cover row.toList #[], blockTextTableCells]
 
 mutual
 
@@ -2247,6 +2474,18 @@ theorem shadeBlock_text (cover : Cover) (b : Block) (acc : String) :
   -- text either side.
   | .picture _ => rfl
   | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ => rfl
+  | .table cols pl pr rows rules =>
+    rw [shadeBlock]
+    simp [blockTextOne, shadeTableRows_text cover rows.toList #[] acc,
+      blockTextTableRows]
+  | .float k ca body caption =>
+    rw [shadeBlock]
+    by_cases h : caption.isEmpty
+    · simp [h, blockTextOne, shadeBlockList_text cover body.toList #[] _,
+        blockTextList]
+    · simp [h, blockTextOne, plainText, plainTextList, plainTextOne,
+        shadeInlines_text cover caption.toList #[],
+        shadeBlockList_text cover body.toList #[] _, blockTextList]
 
 theorem shadeItems_text (cover : Cover) (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :
@@ -2329,6 +2568,30 @@ theorem dimInline_text (cover : Cover) (k : Nat) (x : Inline) :
 
 end
 
+/-- A dimmed cell keeps every character, as a dimmed paragraph does. -/
+theorem dimTableCells_text (cover : Cover) (k : Nat) (cells : List (Array Inline))
+    (out : Array (Array Inline)) (acc : String) :
+    blockTextTableCells acc (dimTableCells cover k out cells).toList
+      = blockTextTableCells (blockTextTableCells acc out.toList) cells := by
+  match cells with
+  | [] => simp [dimTableCells, blockTextTableCells]
+  | cell :: rest =>
+    rw [dimTableCells, dimTableCells_text cover k rest _ acc]
+    simp [blockTextTableCells, blockTextTableCells_chain, plainText, dimInlines,
+      dimInlineList_text cover k cell.toList #[], plainTextList]
+
+theorem dimTableRows_text (cover : Cover) (k : Nat)
+    (rows : List (Array (Array Inline)))
+    (out : Array (Array (Array Inline))) (acc : String) :
+    blockTextTableRows acc (dimTableRows cover k out rows).toList
+      = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
+  match rows with
+  | [] => simp [dimTableRows, blockTextTableRows]
+  | row :: rest =>
+    rw [dimTableRows, dimTableRows_text cover k rest _ acc]
+    simp [blockTextTableRows, blockTextTableRows_chain,
+      dimTableCells_text cover k row.toList #[], blockTextTableCells]
+
 mutual
 
 theorem dimBlockList_text (cover : Cover) (k : Nat) (xs : List Block)
@@ -2381,6 +2644,15 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (b : Block) (acc : String) :
   | .logo _ => rfl
   | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
   | .rule _ _ _ | .picture _ => rfl
+  | .table cols pl pr rows rules =>
+    rw [dimBlock]
+    simp [blockTextOne, dimTableRows_text cover k rows.toList #[] acc,
+      blockTextTableRows]
+  | .float fk ca body caption =>
+    rw [dimBlock]
+    simp [blockTextOne, plainText, dimInlines,
+      dimInlineList_text cover k caption.toList #[], plainTextList,
+      dimBlockList_text cover k body.toList #[] _, blockTextList]
 
 theorem dimItems_text (cover : Cover) (k : Nat) (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :
@@ -2429,7 +2701,8 @@ def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
   | .para _ | .section _ _ _ | .list _ _ | .center _ | .quote _ | .spaced _ _
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
-  | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ | .nav _ | .picture _ => true
+  | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ | .nav _ | .picture _
+  | .table _ _ _ _ _ | .float _ _ _ _ => true
 
 mutual
 
@@ -2457,6 +2730,10 @@ def keepForOne (t : String) : Block → Block
   | .framefoot c => .framefoot c
   | .rule c n th => .rule c n th
   | .picture p => .picture p
+  -- Cells hold inlines: no conditional can nest in a table. A float's
+  -- body is blocks, so the walk carries in, as through a frame.
+  | .table c pl pr rows rules => .table c pl pr rows rules
+  | .float k ca body caption => .float k ca (keepForList t body.toList).toArray caption
 
 def keepForList (t : String) : List Block → List Block
   | [] => []
@@ -2513,6 +2790,20 @@ def textLeavesOne (acc : List String) : Block → List String
   -- A picture's labels reach the census through the shipped runs, as
   -- `blockTextOne` reads it.
   | .picture _ => acc
+  -- Each cell is one leaf: it survives a backend's view whole or not at
+  -- all, which is what the conservation theorem needs to range over. The
+  -- caption is a leaf beside its float's body, as a frame's title is.
+  | .table _ _ _ rows _ => textLeavesTableRows acc rows.toList
+  | .float _ _ body caption => textLeavesList (plainText caption :: acc) body.toList
+
+def textLeavesTableRows (acc : List String) :
+    List (Array (Array Inline)) → List String
+  | [] => acc
+  | row :: rest => textLeavesTableRows (textLeavesTableCells acc row.toList) rest
+
+def textLeavesTableCells (acc : List String) : List (Array Inline) → List String
+  | [] => acc
+  | cell :: rest => textLeavesTableCells (plainText cell :: acc) rest
 
 def textLeavesItems (acc : List String) : List (Array Block) → List String
   | [] => acc
@@ -2555,7 +2846,8 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .nav body => orphanFreeList avail body.toList
   | .frame _ _ _ body => orphanFreeList avail body.toList
   | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
-  | .rule _ _ _ | .picture _ => true
+  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => true
+  | .float _ _ body _ => orphanFreeList avail body.toList
 
 def orphanFreeItems (avail : List String) : List (Array Block) → Bool
   | [] => true
@@ -2574,6 +2866,28 @@ def orphanFree (avail : List String) (xs : Array Block) : Bool :=
 
 -- The accumulator lemmas: a leaf census over `acc` is the census over `[]`
 -- appended to `acc`, so membership statements can be read off `mem_append`.
+
+private theorem textLeavesTableCells_acc (acc : List String)
+    (cells : List (Array Inline)) :
+    textLeavesTableCells acc cells = textLeavesTableCells [] cells ++ acc := by
+  induction cells generalizing acc with
+  | nil => simp [textLeavesTableCells]
+  | cons cell rest ih =>
+    rw [textLeavesTableCells, textLeavesTableCells, ih (plainText cell :: acc),
+      ih [plainText cell]]
+    simp
+
+private theorem textLeavesTableRows_acc (acc : List String)
+    (rows : List (Array (Array Inline))) :
+    textLeavesTableRows acc rows = textLeavesTableRows [] rows ++ acc := by
+  induction rows generalizing acc with
+  | nil => simp [textLeavesTableRows]
+  | cons row rest ih =>
+    rw [textLeavesTableRows, textLeavesTableRows,
+      ih (textLeavesTableCells acc row.toList),
+      ih (textLeavesTableCells [] row.toList),
+      textLeavesTableCells_acc acc row.toList]
+    simp
 
 mutual
 
@@ -2629,6 +2943,14 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
     rw [textLeavesOne, textLeavesOne,
       textLeavesList_acc (plainText title :: acc) body.toList,
       textLeavesList_acc [plainText title] body.toList]
+    simp
+  | .table c pl pr rows rules =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesTableRows_acc acc rows.toList
+  | .float k ca body caption =>
+    rw [textLeavesOne, textLeavesOne,
+      textLeavesList_acc (plainText caption :: acc) body.toList,
+      textLeavesList_acc [plainText caption] body.toList]
     simp
 
 private theorem textLeavesItems_acc (acc : List String) (items : List (Array Block)) :
@@ -2728,6 +3050,28 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
   | .picture p =>
     intro s hs
     simp [textLeavesOne] at hs
+  | .table c pl pr rows rules =>
+    -- kept whole by every backend: its own leaves survive untouched
+    intro s hs
+    exact ⟨t0, h0, rfl, hs⟩
+  | .float k ca body caption =>
+    intro s hs
+    rw [textLeavesOne, textLeavesList_acc [plainText caption] body.toList,
+      List.mem_append] at hs
+    cases hs with
+    | inr hcap =>
+      refine ⟨t0, h0, rfl, ?_⟩
+      rw [keepForOne, textLeavesOne,
+        textLeavesList_acc [plainText caption]
+          ((keepForList t0 body.toList).toArray.toList)]
+      exact List.mem_append.mpr (.inr hcap)
+    | inl hbody =>
+      obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hbody
+      refine ⟨t, ht, rfl, ?_⟩
+      rw [keepForOne, textLeavesOne,
+        textLeavesList_acc [plainText caption]
+          ((keepForList t body.toList).toArray.toList)]
+      exact List.mem_append.mpr (.inl (by simpa using hmem))
   | .center body =>
     intro s hs
     rw [textLeavesOne] at hs
@@ -2933,6 +3277,20 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .framefoot content => imageSrcsInlines out content
   | .rule _ _ _ => out
   | .picture _ => out
+  -- A cell may carry an inline image; a float's body is where
+  -- `\includegraphics` usually stands, and a caption may hold one too.
+  | .table _ _ _ rows _ => imageSrcsTableRows out rows.toList
+  | .float _ _ body caption =>
+    imageSrcsBlockList (imageSrcsInlines out caption) body.toList
+
+def imageSrcsTableRows (out : Array String) :
+    List (Array (Array Inline)) → Array String
+  | [] => out
+  | row :: rest => imageSrcsTableRows (imageSrcsTableCells out row.toList) rest
+
+def imageSrcsTableCells (out : Array String) : List (Array Inline) → Array String
+  | [] => out
+  | cell :: rest => imageSrcsTableCells (imageSrcsInlines out cell) rest
 
 def imageSrcsItems (out : Array String) : List (Array Block) → Array String
   | [] => out
@@ -2997,7 +3355,20 @@ def setAltBlock (alt : String) : Block → Block
   | .step n l body => .step n l (setAltBlockList alt #[] body.toList)
   | .only targets body => .only targets (setAltBlockList alt #[] body.toList)
   | .nav body => .nav (setAltBlockList alt #[] body.toList)
+  -- A cell may hold the image a table's caption names. A nested float owns
+  -- its caption and is left whole: the inner caption already applied.
+  | .table c pl pr rows rules => .table c pl pr (setAltTableRows alt #[] rows.toList) rules
   | other => other
+
+def setAltTableRows (alt : String) (out : Array (Array (Array Inline))) :
+    List (Array (Array Inline)) → Array (Array (Array Inline))
+  | [] => out
+  | row :: rest => setAltTableRows alt (out.push (setAltTableCells alt #[] row.toList)) rest
+
+def setAltTableCells (alt : String) (out : Array (Array Inline)) :
+    List (Array Inline) → Array (Array Inline)
+  | [] => out
+  | cell :: rest => setAltTableCells alt (out.push (setAltInlines alt cell)) rest
 
 end
 

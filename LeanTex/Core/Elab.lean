@@ -586,6 +586,117 @@ private def imageLen (src : String) : Option Image.Len := Id.run do
   | some l => return if l.em == 0 && l.ex == 0 then some { sp := l.sp } else none
   | none => return none
 
+/-- One `p{...}` column width: a fraction of `\linewidth` (or its
+`\textwidth`/`\columnwidth` spellings) in permille, or an absolute length.
+`none` is unreadable. -/
+private def colWidth (src : String) : Option Ir.ColWidth := Id.run do
+  let s := src.trimAscii.toString
+  for suffix in ["\\linewidth", "\\textwidth", "\\columnwidth"] do
+    if s.endsWith suffix then
+      let f := (s.dropEnd suffix.length).toString.trimAscii.toString
+      if f.isEmpty then return some (.frac 1000)
+      return (Decl.parseDecimal f).map fun (m, sc) => .frac (m * 1000 / sc).toNat
+  match Decl.parseLength s with
+  | some l =>
+    return if l.em == 0 && l.ex == 0 then some (.abs l.sp) else none
+  | none => return none
+
+/-- The `tabular` column spec: `l`/`c`/`r` natural columns, `p{width}`
+(and `m`/`b`, set as `p`: the engine has no per-cell vertical alignment),
+`@{}` deleting the outer pad on its edge, `|` warned and never drawn —
+"Never, ever use vertical rules" (booktabs.dtx §The layout of formal
+tables). Returns the columns, the outer-pad flags, and warnings as
+(key, message, help) for the caller's `warnOnce`. -/
+private def parseColSpec (spec : Array Raw) :
+    Array Ir.ColSpec × Bool × Bool × Array (String × String × String) := Id.run do
+  let mut cols : Array Ir.ColSpec := #[]
+  let mut padL := true
+  let mut padR := true
+  let mut warns : Array (String × String × String) := #[]
+  let mut i := 0
+  for _ in [0:spec.size] do
+    if h : i < spec.size then
+      match spec[i] with
+      | .sym '|' _ =>
+        warns := warns.push ("vrule",
+          "'|' asks for a vertical rule; formal tables never draw one \
+(booktabs), so it is not drawn",
+          "widen the column gap instead: vertical rules mark a gap that is \
+too small")
+        i := i + 1
+      | .sym '@' _ =>
+        match spec[i + 1]? with
+        | some (.group g _) =>
+          if g.all isSpaceOrPar then
+            if cols.isEmpty then padL := false else padR := false
+          else
+            warns := warns.push ("atgroup",
+              "'@{...}' with content between columns is not supported; \
+only the empty '@{}' deleting an outer pad is",
+              "")
+          i := i + 2
+        | _ => i := i + 1
+      | .word w _ =>
+        let last := w.toList.length - 1
+        let mut ci := 0
+        let mut tookGroup := false
+        for c in w.toList do
+          match c with
+          | 'l' => cols := cols.push { width := .natural, align := .left }
+          | 'c' => cols := cols.push { width := .natural, align := .center }
+          | 'r' => cols := cols.push { width := .natural, align := .right }
+          | 'p' | 'm' | 'b' =>
+            let widthGroup := if ci == last then
+              match spec[i + 1]? with
+              | some (.group g _) => some (Parse.rawSrc g)
+              | _ => none
+            else none
+            let mut width : Ir.ColWidth := .natural
+            if let some src := widthGroup then
+              match colWidth src with
+              | some cw => width := cw
+              | none =>
+                warns := warns.push ("pwidth",
+                  s!"unreadable column width '{src}'; the column takes \
+the full measure",
+                  "a fraction of \\linewidth or an absolute length")
+                width := .frac 1000
+            tookGroup := tookGroup || widthGroup.isSome
+            if c != 'p' then
+              warns := warns.push ("mb",
+                s!"'{c}\{...}' vertical cell alignment is not modelled; set \
+as 'p'", "")
+            cols := cols.push { width := width, align := .left }
+          | _ =>
+            if !c.isWhitespace then
+              warns := warns.push ("colspec",
+                s!"unsupported column type '{c}'; set as 'l'", "")
+              cols := cols.push { width := .natural, align := .left }
+          ci := ci + 1
+        i := i + (if tookGroup then 2 else 1)
+      | _ => i := i + 1
+  return (cols, padL, padR, warns)
+
+/-- The `{a-b}` range of a `\cmidrule`/`\cline`, 1-based inclusive. -/
+private def cmidRange (src : String) : Option (Nat × Nat) :=
+  match (src.trimAscii.toString.splitOn "-").map (·.trimAscii.toString.toNat?) with
+  | [some a, some b] => some (a, b)
+  | [some a] => some (a, a)
+  | _ => none
+
+/-- A table cell's edges: LaTeX ignores the spaces around `&` and `\\`
+(the template's `\ignorespaces`/`\unskip`). -/
+private def trimRawEdges (raws : Array Raw) : Array Raw := Id.run do
+  let mut rs := raws
+  repeat
+    match rs.back? with
+    | some r => if isSpaceOrPar r then rs := rs.pop else break
+    | none => break
+  let mut k := 0
+  for r in rs do
+    if isSpaceOrPar r then k := k + 1 else break
+  return rs.extract k rs.size
+
 mutual
 
 /-- Bind declared parameters from the call site — a user command's, or a
@@ -1150,7 +1261,7 @@ end
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "document", "frame", "columns", "figure",
-   "figure*", "quote", "quotation", "ifbackend", "nav"]
+   "figure*", "table", "table*", "quote", "quotation", "ifbackend", "nav"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
@@ -1756,49 +1867,149 @@ specs are not modelled")
             let inl ← elabMathEnv ctx n kind numbered body pos
             blocks := blocks.push (.center #[.para #[inl]])
           else if n == "tabular" || n == "tabular*" then
-            -- Rows survive as lines, cells as fixed-space-separated content:
-            -- honest degradation until real table layout, and `&` never
-            -- reaches inline elaboration as a stray reserved character.
-            warnOnce ctx "env:tabular" .W0308
-              "tables are not laid out yet; rows are set as plain lines" pos
+            -- A formal table, booktabs-shaped by construction: the column
+            -- spec drives `.table`'s columns, `&`/`\\` split cells and
+            -- rows, and the rule commands become typed rules at their
+            -- index. Elaboration delivers the rectangularity the layout
+            -- trusts: a short row is padded, a long one widens the grid,
+            -- warning either way (W0337).
             let mut k := skipSpaces body 0
             if n == "tabular*" then
               if let some (.group _ _) := body[k]? then
+                warnOnce ctx "tabular:starwidth" .N0102
+                  "'tabular*' total width is ignored: columns take their \
+declared widths" pos
                 k := skipSpaces body (k + 1)
-            if let some (.group _ _) := body[k]? then
+            if let .took k' := scanBracketArg body k pos then
+              warnOnce ctx "tabular:valign" .N0102
+                "'tabular' [t]/[b] alignment is ignored: the table stands \
+where written" pos
+              k := skipSpaces body k'
+            let mut cols : Array Ir.ColSpec := #[]
+            let mut padL := true
+            let mut padR := true
+            match body[k]? with
+            | some (.group spec _) =>
+              let (cs, pl, pr, warns) := parseColSpec spec
+              cols := cs
+              padL := pl
+              padR := pr
+              for (key, msg, help) in warns do
+                warnOnce ctx ("tabular:" ++ key) .W0104 msg pos
+                  (help := if help.isEmpty then none else some help)
               k := k + 1
+            | _ => diag ctx .E0304 s!"'\{{n}}' needs a \{column spec} group" pos
             let mut rows : Array (Array (Array Inline)) := #[]
+            let mut rules : Array (Nat × Ir.TableRule) := #[]
             let mut cells : Array (Array Inline) := #[]
             let mut cellRaws : Array Raw := #[]
-            for j in [k:body.size] do
+            let mut j := k
+            let ruleNames := ["toprule", "midrule", "bottomrule", "hline",
+              "cmidrule", "cline", "addlinespace"]
+            for _ in [k:body.size] do
               if h' : j < body.size then
                 match body[j] with
-                | .ctrl "\\" _ =>
-                  cells := cells.push (← elabInlines ctx cellRaws)
+                | .ctrl "\\" bpos =>
+                  cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
                   cellRaws := #[]
                   rows := rows.push cells
                   cells := #[]
+                  j := j + 1
+                  -- `\\[len]`: declared space after the row, booktabs'
+                  -- class-2 gap.
+                  let j0 := skipSpaces body j
+                  match scanBracketArg body j bpos with
+                  | .took j' =>
+                    let src := Parse.rawSrc (body.extract (j0 + 1) (j' - 1))
+                    match Decl.parseLength src with
+                    | some l => do
+                      rules := rules.push (rows.size, .gap { width := l })
+                      j := j'
+                    | none =>
+                      diag ctx .E0331 s!"unreadable length '{src}' in '\\\\[...]'" (some bpos)
+                      j := j'
+                  | _ => pure ()
                 | .sym '&' _ =>
-                  cells := cells.push (← elabInlines ctx cellRaws)
+                  cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
                   cellRaws := #[]
-                | r' => cellRaws := cellRaws.push r'
+                  j := j + 1
+                | .ctrl name rpos =>
+                  if ruleNames.contains name &&
+                      cellRaws.all isSpaceOrPar && cells.isEmpty then
+                    j := j + 1
+                    cellRaws := #[]
+                    -- booktabs' optional [width] per rule is not modelled:
+                    -- the three weights are the design, one source.
+                    if let .took j' := scanBracketArg body j rpos then
+                      warnOnce ctx "tabular:rulewidth" .N0102
+                        s!"'\\{name}' [width] is ignored: rule weights come \
+from the design tokens" rpos
+                      j := j'
+                    match name with
+                    | "toprule" => rules := rules.push (rows.size, .top)
+                    | "midrule" | "hline" => rules := rules.push (rows.size, .mid)
+                    | "bottomrule" => rules := rules.push (rows.size, .bottom)
+                    | "addlinespace" =>
+                      rules := rules.push (rows.size,
+                        .gap { width := Ir.defaultAddSpace })
+                    | _ =>
+                      -- `\cmidrule(lr){a-b}`, `\cline{a-b}`
+                      let mut trimL := false
+                      let mut trimR := false
+                      if let some (.sym '(' _) := body[j]? then
+                        let mut t := j + 1
+                        for _ in [j:body.size] do
+                          match body[t]? with
+                          | some (.sym ')' _) =>
+                            t := t + 1
+                            break
+                          | some (.word w _) =>
+                            trimL := trimL || w.contains 'l'
+                            trimR := trimR || w.contains 'r'
+                            t := t + 1
+                          | some _ => t := t + 1
+                          | none => break
+                        j := t
+                      match body[skipSpaces body j]? with
+                      | some (.group g _) =>
+                        j := skipSpaces body j + 1
+                        match cmidRange (Parse.rawSrc g) with
+                        | some (a, b) =>
+                          rules := rules.push (rows.size, .cmid a b trimL trimR)
+                        | none =>
+                          diag ctx .E0304
+                            s!"'\\{name}' needs a \{from-to} column range" (some rpos)
+                      | _ =>
+                        diag ctx .E0304
+                          s!"'\\{name}' needs a \{from-to} column range" (some rpos)
+                  else
+                    cellRaws := cellRaws.push body[j]
+                    j := j + 1
+                | r' =>
+                  cellRaws := cellRaws.push r'
+                  j := j + 1
+              else break
             if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
-              cells := cells.push (← elabInlines ctx cellRaws)
+              cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
               rows := rows.push cells
-            let mut content : Array Inline := #[]
-            for row in rows do
-              if row.any (!·.isEmpty) then
-                unless content.isEmpty do
-                  content := content.push (.linebreak {})
-                let mut first := true
-                for cell in row do
-                  unless cell.isEmpty do
-                    unless first do
-                      content := content.push (.text "\u00a0\u00a0")
-                    content := content ++ cell
-                    first := false
-            unless content.isEmpty do
-              blocks := blocks.push (.para content)
+            -- Rectangularity: every walk below trusts `cols.size`.
+            let widest := rows.foldl (fun m r => max m r.size) cols.size
+            if cols.size < widest then
+              warnOnce ctx "tabular:wide" .W0337
+                s!"a row carries {widest} cells but the column spec declares \
+{cols.size}; the grid widens" pos
+                (help := "declare one column type per cell: l, c, r, or p{width}")
+              for _ in [cols.size:widest] do
+                cols := cols.push { width := .natural, align := .left }
+            if rows.any (·.size < cols.size) then
+              warnOnce ctx "tabular:ragged" .W0337
+                "a row carries fewer cells than the column spec; it is \
+padded with empty cells" pos
+            rows := rows.map fun r =>
+              if r.size < cols.size then
+                r ++ (Array.range (cols.size - r.size)).map (fun _ => #[])
+              else r
+            blocks := blocks.push (.table cols padL padR rows rules)
           else if n == "frame" then
             -- \begin{frame}[options]{title}: options are ignored with a
             -- note (fragile, plain say how beamer should cope, not what to
@@ -1940,26 +2151,30 @@ specs are not modelled")
             -- engine sets no paragraph indent anywhere yet — see the
             -- constructor's docstring.
             blocks := blocks.push (.quote (← elabBlocks ctx body))
-          else if n == "figure" || n == "figure*" then
+          else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
             -- A single-pass engine has nowhere for a float to float: the
-            -- figure becomes a centred block where it stands, `[placement]`
-            -- ignored with a note saying so. Its caption is set under the
-            -- content and becomes the alt text of the images it captions;
-            -- figure numbering is not modelled yet (PLAN M8).
+            -- float stands where written as a `.float`, `[placement]`
+            -- ignored with a note saying so. Its caption keeps its source
+            -- side — before the content it stands above, the table
+            -- convention — and becomes the alt text of the images it
+            -- captions; float numbering is not modelled yet (PLAN M8).
+            let kind : Ir.FloatKind :=
+              if n == "table" || n == "table*" then .table else .figure
             let mut k := 0
             for _ in [0:body.size] do
               match scanBracketArg body k pos with
               | .took k' =>
                 warnOnce ctx "figure:placement" .N0102
-                  "figure '[placement]' is ignored: a single-pass engine has \
-nowhere for a float to float" pos
+                  s!"'\{{n}}' [placement] is ignored: a single-pass engine \
+has nowhere for a float to float" pos
                 k := k'
               | .unclosed bpos =>
-                warnUnclosed ctx "'\\begin{figure}'" bpos
+                warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
                 break
               | .content => break
             let mut rest : Array Raw := #[]
             let mut caption : Array Inline := #[]
+            let mut capAbove := false
             let mut j := k
             for _ in [k:body.size] do
               if h' : j < body.size then
@@ -1971,13 +2186,14 @@ nowhere for a float to float" pos
                   match body[j]? with
                   | some (.group t _) =>
                     unless caption.isEmpty do
-                      diag ctx .W0311 "this '\\caption' replaces the figure's earlier caption"
+                      diag ctx .W0311 s!"this '\\caption' replaces the {n}'s earlier caption"
                         (some cpos) (help := "the last one wins; remove the other '\\caption'")
                     caption ← elabInlines ctx t
+                    capAbove := rest.all isSpaceOrPar
                     j := j + 1
                   | _ => diag ctx .E0304 "'\\caption' needs a {text} group" cpos
                 | .ctrl "centering" _ =>
-                  -- The figure centres already; the declaration is satisfied.
+                  -- The float centres already; the declaration is satisfied.
                   j := j + 1
                 | r' =>
                   rest := rest.push r'
@@ -1986,8 +2202,7 @@ nowhere for a float to float" pos
             let mut inner ← elabBlocks ctx rest
             unless caption.isEmpty do
               inner := Ir.setAltBlocks (Ir.plainText caption) inner
-              inner := inner.push (.para caption)
-            blocks := blocks.push (.center inner)
+            blocks := blocks.push (.float kind capAbove inner caption)
           else if n == "columns" then
             -- `[T]`-and-friends alignment options are ignored with a note:
             -- columns are top-aligned (PLAN, M5). A column's width is its

@@ -4314,7 +4314,6 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .W0302 => dvE (dvDoc "" "\\begin{banner}\nx\n\\end{banner}")
   | .W0303 => dvE (dvDoc "\\define \\textbf(a: content) {\\a}\n" "x")
   | .W0304 => dvE "\\textcolor{nope}{x}"
-  | .W0308 => dvE (dvDoc "" "\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}")
   | .W0309 => dvE (dvDoc "" "\\maketitle")
   | .W0310 => dvE (dvDoc "" "\\section[oops\nnever closed")
   | .W0311 => dvE (dvDeck "" ("\\begin{frame}\n\\frametitle{One}\n" ++
@@ -4353,6 +4352,9 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
       "\\draw (0,0) circle (1);\n\\end{tikzpicture}"))
   | .W0335 => dvL one (dvDoc "" ("\\begin{tikzpicture}\n" ++
       "\\fill (0,0) rectangle (40,1);\n\\end{tikzpicture}"))
+  | .W0337 => dvE (dvDoc "" "\\begin{tabular}{ll}\na & b & c \\\\\nd \\\\\n\\end{tabular}")
+  | .W0338 => dvL one (dvDoc "" ("\\begin{tabular}{p{0.8\\linewidth}p{0.8\\linewidth}}\n" ++
+      "a & b \\\\\n\\end{tabular}"))
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
@@ -4589,24 +4591,35 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
          rows.rows.map (·.length) == [2, 2]
      | _ => false)
   let tabSrc := "\\begin{tabular}{ll}a & b \\\\ c & d\\end{tabular}"
-  t "tabular keeps cells as rows without errors"
+  t "tabular elaborates to a rectangular table without errors"
     (errCodes tabSrc == [] &&
      match (elabStr tabSrc).1.body with
-     | #[.para xs] => xs.contains (.linebreak {}) &&
-         ["a", "b", "c", "d"].all fun w => ((Ir.plainText xs).splitOn w).length == 2
+     | #[.table cols true true rows #[]] =>
+       cols == #[{ width := .natural, align := .left },
+                 { width := .natural, align := .left }] &&
+       rows.map (·.map Ir.plainText) == #[#["a", "b"], #["c", "d"]]
      | _ => false)
-  -- The classic rules, not just booktabs: \hline and \cline are inert, and
-  -- \multicolumn keeps its cell text without the span count or alignment
-  -- spec leaking in beside it.
+  -- The classic rules, not just booktabs: \hline is a light rule, \cline a
+  -- full-width subrule, and \multicolumn keeps its cell text without the
+  -- span count or alignment spec leaking in beside it.
   let classicTab := "\\begin{tabular}{ll}\\hline\n" ++
     "\\multicolumn{2}{X}{Head} \\\\ \\cline{1-2}\na & b \\\\ \\hline\\end{tabular}"
   let (ctDoc, ctDs) := elabStr classicTab
-  t "classic tabular rules are inert" (!ctDs.any (·.code == "W0301"))
+  t "classic tabular rules are typed rules, not unknown commands"
+    (!ctDs.any (·.code == "W0301") &&
+     match ctDoc.body with
+     | #[.table _ _ _ _ rules] =>
+       rules == #[(0, .mid), (1, .cmid 1 2 false false), (2, .mid)]
+     | _ => false)
   t "multicolumn keeps only its cell text"
     (match ctDoc.body with
-     | #[.para xs] =>
-       let s := Ir.plainText xs
-       (s.splitOn "Head").length == 2 && !s.toList.contains '2' && !s.toList.contains 'X'
+     | #[.table cols _ _ rows _] =>
+       let s := String.join (rows.toList.map fun r =>
+         String.join (r.toList.map Ir.plainText))
+       -- the span is lost, the short row padded to the grid, and W0337 says so
+       (s.splitOn "Head").length == 2 && !s.toList.contains '2' &&
+         !s.toList.contains 'X' &&
+         rows.all (·.size == cols.size) && ctDs.any (·.code == "W0337")
      | _ => false)
   -- [standout]: the one frame option that says what the frame IS. It
   -- inverts, centres, and sets Large bold in both backends; the other
@@ -4972,9 +4985,9 @@ def allowChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let (d, acc) := Diag.accept #[] true e
      acc && d.severity == .warning)
   t "accept never touches a warning"
-    (Diag.accept #["W0308"] true (Diag.of .W0308 "t") == (Diag.of .W0308 "t", false))
+    (Diag.accept #["W0338"] true (Diag.of .W0338 "t") == (Diag.of .W0338 "t", false))
   t "unfired names the stale entries only"
-    (Diag.unfired #["W0307", "W0308"] #["W0308", "W0308"] == #["W0307"])
+    (Diag.unfired #["W0307", "W0338"] #["W0338", "W0338"] == #["W0307"])
   t "accepted losses line prints codes with counts"
     (Render.humanAccepted false [("W0307", 2), ("E0502", 1)] ==
       "accepted: 3 losses (W0307 ×2, E0502)")
@@ -6305,17 +6318,17 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (imageSegs (layoutOf "\\includegraphics{missing.png}") ==
       #[(none, Dim.inch 1, Dim.inch 1)])
 
-  -- The figure environment: a centred block, the caption a paragraph under
-  -- the content and the alt of the image it captions.
+  -- The figure environment: a float standing where written, the caption on
+  -- its source side (below here) and the alt of the image it captions.
   let (figDoc, figDiags) := Elab.run "t"
     "\\begin{figure}[t]\\centering\\includegraphics{rects.png}\\caption{A mark}\\end{figure}"
   t "figure elaborates with its placement registered as a note"
     (figDiags.all (·.severity == .note) && figDiags.any (·.code == "N0102"))
-  t "figure reduces to a centred block with the caption"
+  t "figure elaborates to a float carrying its caption"
     (match figDoc.body.toList with
-     | [.center inner] =>
+     | [.float .figure false inner cap] =>
        match inner.toList with
-       | [.para xs, .para cap] =>
+       | [.para xs] =>
          (xs.any fun x => match x with
            | .image "rects.png" _ alt => alt == "A mark"
            | _ => false) &&

@@ -209,8 +209,6 @@ warning[W0304]: 'nope' is not in the palette; content kept uncoloured
   help: declare colours with \palette{ name = #RRGGBB }
 ── W0307 (pending) construct not implemented yet; its content is not rendered
 warning[W0307]: '{external}' is not implemented yet; its content is not rendered
-── W0308 (degraded) tables are not laid out yet; rows set as plain lines
-warning[W0308]: tables are not laid out yet; rows are set as plain lines
 ── W0309 (config) \maketitle with nothing declared
 warning[W0309]: '\maketitle' with nothing declared; no title is set
   help: declare \title{...} (and \author, \date, ...) before it
@@ -284,6 +282,13 @@ warning[W0334]: '\draw' is outside the rendered picture subset; not drawn
 ── W0335 (degraded) picture larger than the text area; it may overrun the page
 warning[W0335]: the picture is 1133.858pt × 28.346pt against a text area of 312pt × 648pt; it may overrun the page
   help: shrink the picture ([scale=...]) or widen the text area (\page{ margin = ... })
+── W0337 (degraded) table row disagrees with its column spec; padded to the grid
+warning[W0337]: a row carries 3 cells but the column spec declares 2; the grid widens
+  help: declare one column type per cell: l, c, r, or p{width}
+warning[W0337]: a row carries fewer cells than the column spec; it is padded with empty cells
+── W0338 (degraded) table is wider than the measure
+warning[W0338]: the table is 211.2pt wider than the measure
+  help: narrow the p{...} column widths, or widen the text block
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

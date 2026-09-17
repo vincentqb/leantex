@@ -126,6 +126,27 @@ private def blockInto (ind acc : String) : Block → String
   | .frame title _ _ body =>
     let head := if title.isEmpty then "" else ind ++ "## " ++ inlineText title ++ "\n\n"
     blocksInto ind (acc ++ head) body.toList
+  -- Markdown's own table is the pipe table: one line per row, the GFM
+  -- separator (which plays the head rule) after the first, alignment from
+  -- the column spec. booktabs' rule weights have no markdown spelling.
+  | .table cols _ _ rows _ =>
+    let line (row : Array (Array Inline)) : String :=
+      "| " ++ String.intercalate " | " (row.toList.map inlineText) ++ " |"
+    let sep := "|" ++ String.join (cols.toList.map fun c =>
+      match c.align with
+      | .left => " --- |"
+      | .center => " :---: |"
+      | .right => " ---: |")
+    match rows.toList with
+    | [] => acc
+    | first :: rest =>
+      acc ++ ind ++ line first ++ "\n" ++ ind ++ sep ++ "\n"
+        ++ String.join (rest.map fun r => ind ++ line r ++ "\n") ++ "\n"
+  -- A float's caption is a paragraph beside its content, in source order.
+  | .float _ capAbove body caption =>
+    let cap := if caption.isEmpty then "" else ind ++ inlineText caption ++ "\n\n"
+    if capAbove then blocksInto ind (acc ++ cap) body.toList
+    else blocksInto ind acc body.toList ++ cap
 
 private def blocksInto (ind acc : String) : List Block → String
   | [] => acc

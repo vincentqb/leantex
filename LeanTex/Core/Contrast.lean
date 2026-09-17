@@ -258,6 +258,12 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
   -- colours are judged; its default colour is the muted key, judged once
   -- at the palette level.
   | .framefoot content => usesInlines cx out content.toList
+  -- Every cell is page text at the body size, judged in whatever colour
+  -- wraps it; a caption is page text beside its float's body.
+  | .table _ _ _ rows _ =>
+    rows.foldl (fun o row => row.foldl (fun o cell => usesInlines cx o cell.toList) o) out
+  | .float _ _ body caption =>
+    usesBlocks cx (usesInlines cx out caption.toList) body.toList
   -- A note is a side channel, never page text; verbatim carries no
   -- colour; a rule is decorative ink, not text, so the text-contrast
   -- contract does not judge it; a logo declaration is furniture, not

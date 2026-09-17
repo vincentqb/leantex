@@ -522,6 +522,36 @@ def baseCss (doc : Doc) : String :=
   -- otherwise, which is the better of the two mechanisms; the PDF path can only
   -- synthesise.
   ".sc { font-variant-caps: small-caps; }\n" ++
+  -- booktabs' formal table: the three rule weights and their paddings come
+  -- from the sourced constants in Ir (booktabs.dtx §The code), emitted
+  -- here so the two backends cannot drift; each is overridable through
+  -- its token (`--heavyrulewidth` etc. land in `tokenVars` when declared).
+  -- Borders take `currentColor`, as the PDF path draws rules in `fg`.
+  "table.booktabs { border-collapse: collapse; }\n" ++
+  s!"table.booktabs td \{ padding: 0 var(--tabcolsep, {cssLength Ir.tabColSep});\n" ++
+  "  vertical-align: top; }\n" ++
+  "table.booktabs.nopadl tr > td:first-child { padding-left: 0; }\n" ++
+  "table.booktabs.nopadr tr > td:last-child { padding-right: 0; }\n" ++
+  s!"tr.bt-heavy-above > td \{ border-top: var(--heavyrulewidth, {cssLength Ir.heavyRuleWidth}) solid;\n" ++
+  s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
+  s!"tr.bt-light-above > td \{ border-top: var(--lightrulewidth, {cssLength Ir.lightRuleWidth}) solid;\n" ++
+  s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
+  s!"tr.bt-heavy-below > td \{ border-bottom: var(--heavyrulewidth, {cssLength Ir.heavyRuleWidth}) solid;\n" ++
+  s!"  padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
+  s!"tr.bt-light-below > td \{ border-bottom: var(--lightrulewidth, {cssLength Ir.lightRuleWidth}) solid;\n" ++
+  s!"  padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
+  s!"tr.bt-pre > td \{ padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
+  s!"td.bt-cmid \{ border-top: var(--cmidrulewidth, {cssLength Ir.cmidRuleWidth}) solid;\n" ++
+  s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
+  -- Float and caption gaps: the same tokens the PDF path reads, defaults
+  -- held to the rhythm by `Layout.caption_gaps_rhythm`.
+  s!"figure.float \{ margin: var(--floatsep, {cssLength Ir.floatSepDefault.width}) auto; }\n" ++
+  "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
+  "figure.float > img { display: block; margin: 0 auto; }\n" ++
+  s!"figure.float > figcaption \{ margin-top: var(--captionsep, {cssLength Ir.captionSepDefault.width});\n" ++
+  "  text-align: center; text-wrap: balance; }\n" ++
+  s!"figure.float > figcaption:first-child \{ margin-top: 0;\n" ++
+  s!"  margin-bottom: var(--captionsep, {cssLength Ir.captionSepDefault.width}); }\n" ++
   -- Slides, as the linear handout: one bordered section per frame, printing
   -- one per page. The interactive controller is the rest of M5.
   "section.slide { border: 1px solid var(--rule); border-radius: 8px;\n" ++
@@ -874,6 +904,69 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       ("height", s!"{h.toPtString}pt"),
       ("role", "img"),
       ("class", "picture")]
+  -- booktabs' formal table. Rules land as border classes on the row they
+  -- precede (`-below` on the last row for a rule written after it), and
+  -- the stylesheet draws each class at the sourced weight with its
+  -- declared padding — `Ir.heavyRuleWidth` and friends drive both
+  -- backends from one site. A `gap` rule and `\cmidrule` end-trimming
+  -- have no HTML spelling yet; the PDF path carries both.
+  | .table cols padL padR rows rules =>
+    let ruleAt (i : Nat) : Array Ir.TableRule :=
+      rules.foldl (fun out (k, r) => if k == i then out.push r else out) #[]
+    let drawn (r : Ir.TableRule) : Bool := match r with
+      | .gap _ => false
+      | _ => true
+    let colEls := cols.filterMap fun c =>
+      match c.width with
+      | .frac f => some (Html.elem "col" #[] #[("style", s!"width: {decMilli (f * 100)}%")])
+      | .abs w => some (Html.elem "col" #[] #[("style", s!"width: {w.toPtString}pt")])
+      | .natural => some (Html.elem "col" #[] #[])
+    let rowEls := rows.mapIdx fun i row =>
+      let cls := Id.run do
+        let mut cls : Array String := #[]
+        for r in ruleAt i do
+          match r with
+          | .top | .bottom => cls := cls.push "bt-heavy-above"
+          | .mid => cls := cls.push "bt-light-above"
+          | _ => pure ()
+        if i + 1 == rows.size then
+          for r in ruleAt rows.size do
+            match r with
+            | .top | .bottom => cls := cls.push "bt-heavy-below"
+            | .mid => cls := cls.push "bt-light-below"
+            | _ => pure ()
+        else if (ruleAt (i + 1)).any drawn then
+          cls := cls.push "bt-pre"
+        return String.intercalate " " cls.toList
+      let cmids := (ruleAt i).foldl (fun out r => match r with
+        | .cmid a b _ _ => out.push (a, b)
+        | _ => out) (#[] : Array (Nat × Nat))
+      let cells := row.mapIdx fun j cell =>
+        let al := match (cols[j]?.map (·.align)).getD .left with
+          | .center => #[("style", "text-align: center")]
+          | .right => #[("style", "text-align: right")]
+          | .left => #[]
+        let attrs := if cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b)
+          then al.push ("class", "bt-cmid") else al
+        Html.elem "td" (inlines cfg cell) attrs
+      Html.elem "tr" cells (if cls.isEmpty then #[] else #[("class", cls)])
+    let cls := "booktabs" ++ (if padL then "" else " nopadl")
+      ++ (if padR then "" else " nopadr")
+    Html.elem "table" (#[Html.elem "colgroup" colEls] ++ rowEls) #[("class", cls)]
+  -- `<figure>`/`<figcaption>` is HTML's own construct for a captioned
+  -- object; the caption keeps its source-order side. The gaps are the
+  -- same tokens the PDF path reads (`--floatsep`, `--captionsep`), with
+  -- the rhythm defaults from `caption_gaps_rhythm` as fallbacks.
+  | .float kind capAbove body caption =>
+    let capNode : Array Node :=
+      if caption.isEmpty then #[]
+      else #[Html.elem "figcaption" (inlines cfg caption)]
+    let kids := blockNodesInto cfg #[] body.toList
+    let cls := match kind with
+      | .table => "float table-float"
+      | .figure => "float"
+    Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode)
+      #[("class", cls)]
 
 /-- The accumulator threads through the sibling walk, as in `inlineNodesInto`. -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node

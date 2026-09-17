@@ -96,10 +96,10 @@ inductive DiagCode where
   | W0011 | W0012 | W0013 | W0014 | W0015
   | W0101 | W0102 | W0103 | W0104 | W0105 | W0106 | W0108 | W0110 | W0111
   | W0201 | W0202
-  | W0301 | W0302 | W0303 | W0304 | W0307 | W0308 | W0309 | W0310 | W0311
+  | W0301 | W0302 | W0303 | W0304 | W0307 | W0309 | W0310 | W0311
   | W0312 | W0314 | W0315 | W0316 | W0317 | W0318 | W0319
   | W0320 | W0321 | W0322 | W0323 | W0325 | W0326 | W0327 | W0328
-  | W0329 | W0330 | W0331 | W0332 | W0333 | W0334 | W0335
+  | W0329 | W0330 | W0331 | W0332 | W0333 | W0334 | W0335 | W0337 | W0338
   | W0601 | W0602
   deriving Repr, BEq, DecidableEq
 
@@ -181,7 +181,6 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0303 => ("0303", .config, "built-in name cannot be redefined")
   | .W0304 => ("0304", .degraded, "colour name not in the palette; content kept uncoloured")
   | .W0307 => ("0307", .pending, "construct not implemented yet; its content is not rendered")
-  | .W0308 => ("0308", .degraded, "tables are not laid out yet; rows set as plain lines")
   | .W0309 => ("0309", .config, "\\maketitle with nothing declared")
   | .W0310 => ("0310", .degraded, "'[' never closes; not an argument")
   | .W0311 => ("0311", .degraded, "a second \\frametitle replaces the first")
@@ -210,6 +209,8 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0333 => ("0333", .degraded, "band slots collide; the lower-priority slot is painted over")
   | .W0334 => ("0334", .pending, "picture construct outside the rendered subset; not drawn")
   | .W0335 => ("0335", .degraded, "picture larger than the text area; it may overrun the page")
+  | .W0337 => ("0337", .degraded, "table row disagrees with its column spec; padded to the grid")
+  | .W0338 => ("0338", .degraded, "table is wider than the measure")
   | .E0502 => ("0502", .dropped, "\\input file not found; skipped")
   | .W0601 => ("0601", .degraded, "image unreadable or not found; placeholder box placed")
   | .W0602 => ("0602", .degraded, "image format unusable; placeholder box placed")
@@ -244,11 +245,11 @@ def DiagCode.all : List DiagCode :=
    .N0102, .N0103, .N0200, .W0001, .W0003, .W0005, .W0006, .W0007, .W0008,
    .W0009, .W0010, .W0011, .W0012, .W0013, .W0014, .W0015, .W0101, .W0102,
    .W0103, .W0104, .W0105, .W0106, .W0108,
-   .W0110, .W0111, .W0201, .W0202, .W0301, .W0302, .W0303, .W0304, .W0307, .W0308,
+   .W0110, .W0111, .W0201, .W0202, .W0301, .W0302, .W0303, .W0304, .W0307,
    .W0309, .W0310, .W0311, .W0312, .W0314, .W0315, .W0316, .W0317,
    .W0318, .W0319, .W0320, .W0321, .W0322, .W0323, .W0325, .W0326,
    .W0327, .W0328, .W0329, .W0330, .W0331, .W0332, .W0333, .W0334, .W0335,
-   .W0601, .W0602]
+   .W0337, .W0338, .W0601, .W0602]
 
 theorem DiagCode.all_complete (c : DiagCode) : DiagCode.all.contains c := by
   cases c <;> rfl

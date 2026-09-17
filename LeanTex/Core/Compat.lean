@@ -42,18 +42,16 @@ furniture defaults to the empty state this engine starts from;
 `frenchspacing`/`nonfrenchspacing` toggle inter-sentence space the engine
 sets uniformly either way; `raggedbottom`/`flushbottom` pick a vertical
 distribution the page-opening `vdist` obligation will own (AGENTS table);
-table rules (`midrule`, `toprule`, `bottomrule`, `addlinespace`, `hline`,
-`cline`) are inside the degradation W0308 already declares for the whole
-table; `noindent` and `urlstyle` adjust detail the engine does not yet
-style. -/
+`noindent` and `urlstyle` adjust detail the engine does not yet
+style. Table rules (`midrule`, `toprule`, …) are NOT here: they are the
+table elaborator's vocabulary and must reach it. -/
 def meaningFree : List (String × Nat) :=
   [("makeatletter", 0), ("makeatother", 0), ("relax", 0), ("noindent", 0),
    ("clearpairofpagestyles", 0), ("urlstyle", 1),
    ("KOMAoptions", 1), ("newlength", 1), ("frenchspacing", 0),
    ("nonfrenchspacing", 0),
    ("raggedbottom", 0), ("flushbottom", 0),
-   ("column", 1), ("midrule", 0), ("toprule", 0), ("bottomrule", 0),
-   ("addlinespace", 0), ("hline", 0), ("cline", 1)]
+   ("column", 1)]
 
 /-- Declarations whose loss is real — justification, breaking tolerance,
 hyphenation language, page furniture — skipped with a warning that names
@@ -782,9 +780,9 @@ where
     became "\\nolinkurl" "the URL as plain text" pos
     return some (#[], start)
   | "multicolumn" =>
-    -- `\multicolumn{n}{align}{text}`: spans are not laid out — tables
-    -- degrade to rows and W0308 says so — but the cell's text is content
-    -- and the span count and alignment spec are not.
+    -- `\multicolumn{n}{align}{text}`: spans are not modelled — the cell's
+    -- text lands in its own single cell, and the short row is padded with
+    -- a W0337 naming it. The span count and alignment spec are dropped.
     let (gs, k) := takeGroups raws start 3
     match gs with
     | #[_, _, text] => return some (#[.group text pos], k)

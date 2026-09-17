@@ -758,6 +758,21 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
     scalarTextList (out.push (Ir.plainText title)) itemD enumD body.toList
   -- A framefoot note is set on the page as footer text.
   | .framefoot content => out.push (Ir.plainText content)
+  -- Every cell's text, and a caption's, reaches the scalar census: the
+  -- fallback scan must see a glyph before layout asks a face for it.
+  | .table _ _ _ rows _ => scalarTextTableRows out rows.toList
+  | .float _ _ body caption =>
+    scalarTextList (out.push (Ir.plainText caption)) itemD enumD body.toList
+
+private def scalarTextTableRows (out : Array String) :
+    List (Array (Array Inline)) → Array String
+  | [] => out
+  | row :: rest => scalarTextTableRows (scalarTextTableCells out row.toList) rest
+
+private def scalarTextTableCells (out : Array String) :
+    List (Array Inline) → Array String
+  | [] => out
+  | cell :: rest => scalarTextTableCells (out.push (Ir.plainText cell)) rest
 
 private def scalarTextCols (out : Array String) (itemD enumD : Nat) :
     List (Option Nat × Array Block) → Array String
@@ -1751,6 +1766,11 @@ private structure B where
   on the page: a later column rewound to a fresh page's start must place
   its first line where the first column placed its. -/
   freshStart : Bool := false
+  /-- The last thing placed was a table rule: the next line stacks flush
+  under it — its height plus pending skips, no leading, no lineskip — as
+  TeX marks `\prevdepth` ignored after an `\hrule` so the box after a rule
+  takes exactly the explicit glue. booktabs' rule padding depends on it. -/
+  noInterline : Bool := false
   /-- Background of the page being built, from `.pageStyle`; reset when it
   closes. -/
   pageBg : Option Ir.Color := none
@@ -1817,6 +1837,7 @@ private def B.commit (b : B) (line : LineOut) (depth above overflow : Sp) : B :=
            needed := max b.needed overflow
            y := line.y
            freshStart := false
+           noInterline := false
            prevDepth := depth
            skip := {} }
 
@@ -1862,7 +1883,8 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   if b.cur.lines.isEmpty || b.freshStart then
     b.commit (mk firstY) depth 0 0
   else
-    let interline := max (leadingFor tallest b.geom.leading) (b.prevDepth + height + lineskip)
+    let interline := if b.noInterline then height
+      else max (leadingFor tallest b.geom.leading) (b.prevDepth + height + lineskip)
     let y := b.y + b.skip.width + interline
     let overflow := y + depth - bottom
     let above := b.pageShrink + b.skip.shrink
@@ -1920,6 +1942,11 @@ private inductive Op where
   separator. Placed through `placeLine`, so it spaces, breaks pages, and
   distributes exactly as a line of text does. -/
   | hrule (color : Ir.Color) (thickness : Sp)
+  /-- A table rule row, already set: rule (and gap) segs starting at `x`,
+  covering `w`. Placed at exactly the pending skip below the previous ink —
+  booktabs' padding is the declared seps and nothing else — and it marks
+  the builder `noInterline`, so the row below stacks flush too. -/
+  | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
   /-- Content placed so far on the open page is chrome pinned to the page
   top — the frame title and its bar: the page's vertical distribution
   moves only the lines and fills that follow, as beamer distributes the
@@ -2114,6 +2141,203 @@ private def collectDisplay (a : Acc) (fs : FontSet)
   let sub := collectPara { a with geom := { a.geom with justify := false } }
     none fs inlines indent center size (baseStyle := baseStyle) (rule := rule)
   { sub with geom := a.geom }
+
+/-- The natural (unstretched, unshrunk) width of a set of items: what the
+cell takes when nothing bends. Penalties add nothing — a pen's width is
+paid only at a break, and a natural cell never breaks. -/
+private def itemsNaturalWidth (items : Array Item) : Sp :=
+  items.foldl (fun w it => match it with
+    | .box bw .. => w + bw
+    | .glue g => w + g.width
+    | .pen .. => w
+    | .img _ bw _ => w + bw
+    | .rule bw .. => w + bw) 0
+
+/-- Lay out a `.table`: booktabs' formal table. Columns take their declared
+fraction of the measure (or their widest cell), separated by `2·tabcolsep`
+(classes.dtx) with the outer pads under `@{}`'s control; each row places
+its cells through the column machinery (`colOpen`/`colNext`/`colClose`), so
+a row advances by its tallest cell; rules are set rows of rule segments at
+booktabs' weights, padded by exactly their declared seps — `tableRule`
+placement stacks flush, no leading. `center` centres the whole table box in
+the measure (a table under `\centering` or inside a float). -/
+private def collectTable (a0 : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+    (cols : Array Ir.ColSpec) (padL padR : Bool)
+    (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule))
+    (indent : Sp) (center : Bool) : Acc := Id.run do
+  if cols.isEmpty then
+    return a0
+  let mut a := a0.flushGap
+  let size := a.geom.fontSize
+  let tok (name : String) (dflt : Dim.Length) : Sp :=
+    match a.tokens.find? name with
+    | some g => (a.resolve g).width
+    | none => dflt.resolve size a.xHeight
+  let colsep := tok "tabcolsep" Ir.tabColSep
+  let total := (a.measure.getD a.geom.textWidth) - indent
+  -- Natural widths, measured per cell (needed for `l`/`c`/`r` column
+  -- widths and for right-aligned placement). The measuring pass drops its
+  -- diagnostics: the setting pass below emits them once.
+  let mut nats : Array (Array Sp) := #[]
+  let mut cache := a.hyphCache
+  for row in rows do
+    let mut rowNats : Array Sp := #[]
+    for cell in row do
+      let (items, _, c, _) :=
+        itemsOfInlines pats size a.xHeight fs { color := a.fg } cell cache
+          a.imgs a.geom.textWidth a.geom.textHeight
+      cache := c
+      rowNats := rowNats.push (itemsNaturalWidth items)
+    nats := nats.push rowNats
+  a := { a with hyphCache := cache }
+  let mut widths : Array Sp := #[]
+  for j in [0:cols.size] do
+    let spec := cols[j]!
+    let w : Sp := match spec.width with
+      | .natural => nats.foldl (fun m r => max m ((r[j]?).getD 0)) 0
+      | .frac f => total * f / 1000
+      | .abs w => w
+    widths := widths.push w
+  let lead : Sp := if padL then colsep else 0
+  let trail : Sp := if padR then colsep else 0
+  let innerGaps : Sp := 2 * colsep * ((cols.size : Int) - 1)
+  let tableW : Sp := lead + widths.foldl (· + ·) 0 + innerGaps + trail
+  if tableW > total then
+    a := { a with diags := a.diags.push (Diag.of .W0338
+      (s!"the table is {(tableW - total).toPtString}pt wider than the measure")
+      (help := "narrow the p{...} column widths, or widen the text block")) }
+  let x0 : Sp := indent + (if center && tableW < total then (total - tableW) / 2 else 0)
+  -- The left edge of column j's cell box.
+  let colX (j : Nat) : Sp := Id.run do
+    let mut x := x0 + lead
+    for i in [0:j] do
+      x := x + widths[i]! + 2 * colsep
+    return x
+  let fg := a.fg
+  let heavy := tok "heavyrulewidth" Ir.heavyRuleWidth
+  let light := tok "lightrulewidth" Ir.lightRuleWidth
+  let cmidW := tok "cmidrulewidth" Ir.cmidRuleWidth
+  let aboveSep := tok "aboverulesep" Ir.aboveRuleSep
+  let belowSep := tok "belowrulesep" Ir.belowRuleSep
+  let aboveTop := tok "abovetopsep" Ir.aboveTopSep
+  let belowBottom := tok "belowbottomsep" Ir.belowBottomSep
+  let kern := tok "cmidrulekern" Ir.cmidRuleKern
+  let dbl := tok "doublerulesep" Ir.doubleRuleSep
+  -- The extent of a `\cmidrule{a-b}`: the cells' span pads included, as
+  -- LaTeX's `\multispan` draws it, each end kerned in when trimmed.
+  let cmidSeg (ca cb : Nat) (tl tr : Bool) : Sp × Sp :=
+    let ca := min (max ca 1) cols.size
+    let cb := min (max cb ca) cols.size
+    let left := colX (ca - 1) - (if ca == 1 then lead else colsep)
+      + (if tl then kern else 0)
+    let right := colX (cb - 1) + widths[cb - 1]!
+      + (if cb == cols.size then trail else colsep) - (if tr then kern else 0)
+    (left, max 0 (right - left))
+  -- Emission: elements in document order. The seps are booktabs' rule
+  -- classes: a rule after content takes its own sep above; a rule directly
+  -- after another rule takes `doublerulesep` in place of both seps (drawn,
+  -- since booktabs draws it); an `\addlinespace` (class 2) replaces the
+  -- neighbouring rule seps by exactly its space. `pendBelow` is the sep
+  -- the last rule owes below itself, paid before the next content row.
+  let mut pendBelow : Option Sp := none
+  -- 0 = content (or table start), 1 = a drawn rule, 2 = an \addlinespace
+  let mut prev : Nat := 0
+  for i in [0:rows.size + 1] do
+    let mut here : Array Ir.TableRule := #[]
+    for (k, r) in rules do
+      if k == i then here := here.push r
+    let mut hi := 0
+    for _ in [0:here.size] do
+      if h : hi < here.size then
+        match here[hi] with
+        | .gap g =>
+          -- exactly this space: it replaces a neighbouring rule's sep
+          pendBelow := none
+          a := { a with ops := a.ops.push (.skip { width := (a.resolve g).width }) }
+          prev := 2
+          hi := hi + 1
+        | .cmid _ _ _ _ =>
+          -- a run of consecutive cmids is one rule row
+          let mut segs : Array Seg := #[]
+          let mut x : Sp := 0
+          let mut lineX : Sp := 0
+          let mut first := true
+          for _ in [hi:here.size] do
+            if h' : hi < here.size then
+              match here[hi] with
+              | .cmid ca cb tl tr =>
+                let (l, w) := cmidSeg ca cb tl tr
+                let l' := a.geom.hmargin + l
+                if first then
+                  lineX := l'
+                  x := l'
+                  first := false
+                if l' > x then segs := segs.push (.gap (l' - x))
+                segs := segs.push (.rule w cmidW 0 fg)
+                x := max x (l' + w)
+                hi := hi + 1
+              | _ => break
+          let sep := match prev with
+            | 1 => dbl
+            | 2 => 0
+            | _ => aboveSep
+          let ops := (a.ops.push (.skip { width := sep })).push
+            (.tableRule cmidW lineX (x - lineX) segs)
+          a := { a with ops := ops }
+          pendBelow := some belowSep
+          prev := 1
+        | r =>
+          let (th, ab, be) := match r with
+            | .top => (heavy, aboveTop, belowSep)
+            | .bottom => (heavy, aboveSep, belowBottom)
+            | _ => (light, aboveSep, belowSep)
+          let sep := match prev with
+            | 1 => dbl
+            | 2 => 0
+            | _ => ab
+          let ops := (a.ops.push (.skip { width := sep })).push
+            (.tableRule th (a.geom.hmargin + x0) tableW #[.rule tableW th 0 fg])
+          a := { a with ops := ops }
+          pendBelow := some be
+          prev := 1
+          hi := hi + 1
+    if h : i < rows.size then
+      if let some pb := pendBelow then
+        a := { a with ops := a.ops.push (.skip { width := pb }) }
+        pendBelow := none
+      prev := 0
+      let row := rows[i]
+      a := { a with ops := a.ops.push .colOpen }
+      for j in [0:row.size] do
+        let spec := cols[j]?.getD { width := .natural, align := .left }
+        let wj := widths[j]?.getD 0
+        let x := colX j
+        let cell := row[j]!
+        unless cell.isEmpty do
+          let sub := { a with
+            measure := some (x + wj)
+            ops := #[]
+            wantDefault := false
+            owed := #[] }
+          let sub := match spec.align with
+            | .center => collectPara sub pats fs cell x true size
+            | .right =>
+              let nat := ((nats[i]?).bind (·[j]?)).getD 0
+              collectPara sub pats fs cell (x + max 0 (wj - nat)) false size
+            | .left => collectPara sub pats fs cell x false size
+          a := { a with
+            ops := a.ops ++ sub.ops
+            hyphCache := sub.hyphCache
+            diags := sub.diags }
+        let closer : Op := if j + 1 == row.size then .colClose else .colNext
+        a := { a with ops := a.ops.push closer }
+      if row.isEmpty then
+        a := { a with ops := a.ops.push .colClose }
+  -- A trailing sep below the last rule joins the gap after the table.
+  if let some pb := pendBelow then
+    if pb > 0 then
+      a := a.vskip { width := pb }
+  return a
 
 -- Block walk. Mutual recursion through `List` so the nested calls are
 -- structural: no `partial`, and the shape mirrors the IR.
@@ -2445,6 +2669,36 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- Left on the current indent, as LaTeX places the box where it stands;
     -- a `{center}` around it goes through `collectCentered`'s arm.
     collectPicture a pic indent false
+  | .table cols padL padR rows rules =>
+    collectTable a pats fs cols padL padR rows rules indent false
+  | .float _ capAbove body caption =>
+    -- Set off from the text by `floatsep` on both sides, the caption bound
+    -- `captionsep` from the content (`caption_gaps_rhythm` holds the
+    -- defaults to the rhythm); the body centres, the figure convention the
+    -- old center-wrapping gave. Both gaps are `\addvspace`-style: an
+    -- element's own space, never stacked onto a neighbour's.
+    let floatSep := a.resolve ((a.tokens.find? "floatsep").getD Ir.floatSepDefault)
+    let capSep := a.resolve ((a.tokens.find? "captionsep").getD Ir.captionSepDefault)
+    let a := a.addvspace floatSep
+    -- classes.dtx `\@makecaption`: a caption that fits one line centres; a
+    -- longer one sets as an ordinary paragraph.
+    let setCaption (a : Acc) : Acc :=
+      if caption.isEmpty then a else
+      let (items, _, cache, _) :=
+        itemsOfInlines pats a.geom.fontSize a.xHeight fs { color := a.fg } caption
+          a.hyphCache a.imgs a.geom.textWidth a.geom.textHeight
+      let a := { a with hyphCache := cache }
+      let fits := itemsNaturalWidth items ≤ (a.measure.getD a.geom.textWidth) - indent
+      collectPara a pats fs caption indent fits a.geom.fontSize
+    let a := if capAbove then
+      let a := setCaption a
+      let a := if caption.isEmpty then a else a.addvspace capSep
+      collectCentered a pats fs body.toList indent
+    else
+      let a := collectCentered a pats fs body.toList indent
+      let a := if caption.isEmpty then a else a.addvspace capSep
+      setCaption a
+    a.addvspace floatSep
   | .frame title standout valign body =>
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never
@@ -2741,6 +2995,7 @@ private inductive StagedOp where
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
   | titleBar (color : Ir.Color) (pad : Sp)
   | hrule (color : Ir.Color) (thickness : Sp)
+  | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
   | pin
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
   | foot (content : Option (Array Ir.BandSlot))
@@ -2758,6 +3013,9 @@ private structure ColSave where
   prevDepth : Sp
   skip : Glue
   fresh : Bool
+  /-- The `noInterline` state at the open: every cell of a row under a
+  table rule stacks flush, not only the first. -/
+  flush : Bool
   bottomY : Sp
   bottomDepth : Sp
 
@@ -2860,6 +3118,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .pageStyle bg c => .pageStyle bg c
     | .titleBar color pad => .titleBar color pad
     | .hrule color th => .hrule color th
+    | .tableRule th x w segs => .tableRule th x w segs
     | .pin => .pin
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
     | .foot c => .foot c
@@ -2922,6 +3181,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       colSaves := colSaves.push {
         y := b.y, prevDepth := b.prevDepth, skip := b.skip
         fresh := b.cur.lines.isEmpty || b.freshStart
+        flush := b.noInterline
         bottomY := b.y, bottomDepth := b.prevDepth }
     | .colNext =>
       if let some save := colSaves.back? then
@@ -2930,14 +3190,14 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
           else save
         colSaves := colSaves.pop.push save
         b := { b with y := save.y, prevDepth := save.prevDepth, skip := save.skip
-                      freshStart := save.fresh }
+                      freshStart := save.fresh, noInterline := save.flush }
     | .colClose =>
       if let some save := colSaves.back? then
         colSaves := colSaves.pop
         let (bottomY, bottomDepth) := if b.y > save.bottomY
           then (b.y, b.prevDepth) else (save.bottomY, save.bottomDepth)
         b := { b with y := bottomY, prevDepth := bottomDepth, skip := {}
-                      freshStart := false }
+                      freshStart := false, noInterline := false }
     | .titleBar color pad =>
       -- The bar sits behind the line just placed: full page width, page
       -- top to `pad` below the line's depth.
@@ -2953,6 +3213,25 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       -- treat it as they treat text.
       b := b.placeLine fs b.geom.hmargin 0 #[.rule b.geom.textWidth th 0 color]
         b.geom.textWidth
+    | .tableRule th x w segs =>
+      -- Exactly the pending sep below the previous ink, never a text
+      -- leading: the rule's padding is booktabs' declared seps and nothing
+      -- else. The seg's ink stands `th` above its baseline, so the
+      -- baseline is the band's bottom; `commit` then owes zero depth, and
+      -- `noInterline` makes the next line stack flush, as TeX ignores
+      -- `\prevdepth` after an `\hrule`.
+      let mk (y : Sp) : LineOut := { x := x, y := y, size := 0, segs := segs, setWidth := w }
+      if b.cur.lines.isEmpty || b.freshStart then
+        b := { b.commit (mk (b.geom.vmargin + th)) 0 0 0 with noInterline := true }
+      else
+        let y := b.y + b.prevDepth + b.skip.width + th
+        let overflow := y - b.geom.bodyBottom
+        let above := b.pageShrink + b.skip.shrink
+        if overflow ≤ above then
+          b := { b.commit (mk y) 0 above overflow with noInterline := true }
+        else
+          b := b.finishPage
+          b := { b.commit (mk (b.geom.vmargin + th)) 0 0 0 with noInterline := true }
     | .progress num den fg bg thick x w =>
       -- Half a line under the last baseline: the track, then the elapsed
       -- share over it. The bar joins the page's depth so following content
