@@ -2647,6 +2647,32 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let (cHtml, _) := HtmlDoc.emit {} cDoc
   t "pdf and html agree on the fraction form"
     (pdfFoots cOut == htmlFoots cHtml && htmlFoots cHtml == ["1/2", "2/2"])
+  -- The physical gate does not silence frame furniture: \runninghead's
+  -- [from = 2] keeps the head off the opening page (the physical model),
+  -- while the opening frame's own chrome footer — the frame model — stays.
+  let (gDoc, gDs) := elabStr (deck
+    "\\theme{moloch}\\runninghead[from = 2]{An Invented Head}"
+    ("\\begin{frame}{A}\na\n\\end{frame}\n\\begin{frame}{B}\nb\n\\end{frame}"))
+  t "gated deck source clean" gDs.isEmpty
+  let gGeom := Layout.Geom.ofPage gDoc.page
+  let gOut := Layout.run gGeom oneFace none gDoc
+  let gFont := oneFace.body
+  let headY := gGeom.vmargin / 2 + gFont.ascent * gGeom.fontSize / (gFont.unitsPerEm : Int)
+  let footY := gGeom.pageH - gGeom.vmargin / 2
+  t "runningFrom keeps the head off page 1 and on page 2"
+    ((gOut.pages.map fun p => p.lines.any (·.y == headY)) == #[false, true])
+  t "runningFrom does not gate the frame's chrome footer"
+    (gOut.pages.all fun p => p.lines.any (·.y == footY))
+  -- A running line that wraps is a named diagnostic, never a silent
+  -- truncation to its first line.
+  let longFoot := String.intercalate " " (List.replicate 40 "an overlong footer")
+  let (wDoc, _) := elabStr (deck s!"\\runningfoot\{{longFoot}}"
+    "\\begin{frame}{A}\na\n\\end{frame}")
+  let wOut := Layout.run (Layout.Geom.ofPage wDoc.page) oneFace none wDoc
+  t "a wrapping running line warns by name"
+    (wOut.diags.any (·.code == "W0319"))
+  t "a one-line running line does not warn"
+    (!rOut.diags.any (·.code == "W0319"))
 
 /-- The deck's own footer route: `\setbeamertemplate{frame footer}` — alone
 or expanded from a `\newenvironment` wrapper — reaches the chrome footer's
@@ -3041,9 +3067,14 @@ def censusTable :
     ("a pause inside a column dims below it", pageCovered c 7 "Below the pause.")]),
   ("chrome", fun _ c => [
     ("pages", c.size == 5),
-    ("the footer names the section and the frame number", pageHas c 2 "Footers 2"),
+    -- The title page is `\frame[plain,noframenumbering]` (moloch): no chrome,
+    -- and it does not advance the count — so the first content frame is 1, not
+    -- 2, and nothing on page 1 carries the section title or a number.
+    ("the title page carries no footer", !pageHas c 0 "Slide Chrome 1"),
+    ("the section title does not reach the title page", !pageHas c 0 "Footers"),
+    ("numbering starts at the first countable frame", pageHas c 2 "Footers 1"),
     ("a framefoot note takes the left slot", pageHas c 3 "source: example.org/data"),
-    ("the default footer returns when the wrapper ends", pageHas c 4 "Footers 4")]),
+    ("the default footer returns when the wrapper ends", pageHas c 4 "Footers 3")]),
   ("lists", fun _ c => [
     ("one page", c.size == 1),
     ("four itemize levels ship their four marks",

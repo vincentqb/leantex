@@ -183,6 +183,48 @@ reinventing (status as of this entry):
   quadratic spelling and, now, the wildcard one.
 
 
+2026-09-17 — one frame numbering, and the model stated. The engine now has
+exactly **two** number sequences, each with one definition site, never mixed
+implicitly:
+
+- **Frame numbers** — `Ir.frameNumbers`/`Ir.frameCount`: the k-th countable
+  frame (a `.frame` with `standout = false` and `valign ≠ .golden`; only
+  `\maketitle` produces `.golden`) bears k, everything else none. moloch's
+  own semantics: `\maketitle` is `\frame[plain,noframenumbering]{\titlepage}`
+  (beamerinnerthememoloch.dtx:314-320), standout likewise (:777-778), and
+  beamer's `noframenumbering` does not advance the counter (user guide §8.1).
+  Chrome footers, the progress bar, and the HTML deck all read this array;
+  a new count consumer reads it too, never counts for itself.
+- **Physical pages** — `\pagenumber`/`\pagecount`, substituted per page by
+  `substPage`, `\pagecount = pages.size` by definition. Page furniture is
+  physical (beamer's page counter is too); collapsing the two sequences
+  would re-create the confusion one level down, so a document mixing them
+  in one footer band gets each slot per its own model, explicably.
+
+Invariants at their closed strength: numbered iff countable
+(`frameNumbers_numbered_iff_countable`, theorem); monotone/gapless somes =
+`range' 1 count` (`frameNumbers_gapless`, theorem); every number ≤ count
+and the count reached (`frameNumbers_le_count`,
+`frameNumbers_last_is_count`, theorems) — so the progress clamps were dead
+and are deleted, with emission gated on `frameCount > 0` (moloch clamps
+only because its total lags in the aux file; nothing here lags). One
+numbering for both backends is structural, not a theorem: the second
+counters (`Acc.framesSeen`/`framesTotal`, HtmlDoc's `seen`/`total`) are
+deleted and both backends index the one array, pinned by the corpus test
+that the PDF footer text equals the HTML footer text. A frame number
+becomes text only in `Ir.ChromeSlot.render` (slot `framefraction` added:
+moloch's `numbering=fraction`, beamerouterthememoloch.dtx:156-188).
+`runningFrom` now gates only physical furniture (head, foot, logo), not
+frame chrome; a running line that would wrap warns by name (W0319) instead
+of silently keeping its first line.
+
+Owed from this slice: the running **head** has no reserved band — `headY`
+is `vmargin/2 + ascent` with no top analogue of `footBand`, so a small
+declared `vmargin` can collide the head with body text. The fix is the
+`footBandFor` analogue (`headBandFor`) reserving the band in `Geom` and a
+`bodyTop` the placements read, with the mirror of
+`bodyBottom_clears_footer`. Separate slice.
+
 2026-09-17 — the theme contract ranges over the engine's values now, and
 the resolved design is a type. Correction to the colour entry below: its
 bundle theorems held over hand-transcribed palettes (`molochResolved`)

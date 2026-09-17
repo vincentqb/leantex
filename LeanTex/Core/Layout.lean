@@ -2382,6 +2382,15 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
         geom.textWidth geom.textHeight
     let target := geom.textWidth
     let breaks := kp items target
+    -- A running line is one line by construction — the band reserves one
+    -- ascent (`footBandFor`). Content that wraps would silently lose every
+    -- line but its first, so losing it is a named diagnostic instead.
+    let ds := if breaks.size > 1 then ds.push {
+        severity := .warning
+        code := "W0319"
+        message := "running content wraps at the text width; only its first line is kept"
+        help := "the head, foot, and chrome bands hold one line each: shorten the content" }
+      else ds
     match breaks[0]? with
     | none => (none, ds, cache)
     | some brk =>
@@ -2417,19 +2426,25 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
               size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
   for i in [0:out.size] do
     let mut lines := out[i]!.lines
-    -- Pages before `runningFrom` carry no furniture: an opening page reads
-    -- as a title page, not as page one of a run.
-    if i + 1 < doc.runningFrom then continue
-    if let some content := doc.head then
-      let (l?, ds, c) := runLine content (i + 1) headY geom.fontSize {} cache
-      diags := diags ++ ds
-      cache := c
-      if let some l := l? then lines := #[l] ++ lines
-    if let some content := doc.foot then
-      let (l?, ds, c) := runLine content (i + 1) footY geom.fontSize {} cache
-      diags := diags ++ ds
-      cache := c
-      if let some l := l? then lines := lines.push l
+    -- Pages before `runningFrom` carry no running content: an opening page
+    -- reads as a title page, not as page one of a run. The gate is the
+    -- physical-page model's (`\runninghead[from = 2]`), so it governs only
+    -- the physical furniture — head, foot, logo. The chrome footer is
+    -- frame furniture on the frame model: whether a page carries it is
+    -- decided by its frame's number, and a physical declaration must not
+    -- silently gate it.
+    let running := doc.runningFrom ≤ i + 1
+    if running then
+      if let some content := doc.head then
+        let (l?, ds, c) := runLine content (i + 1) headY geom.fontSize {} cache
+        diags := diags ++ ds
+        cache := c
+        if let some l := l? then lines := #[l] ++ lines
+      if let some content := doc.foot then
+        let (l?, ds, c) := runLine content (i + 1) footY geom.fontSize {} cache
+        diags := diags ++ ds
+        cache := c
+        if let some l := l? then lines := lines.push l
     -- The chrome footer the page's frame gave it: the muted key at the
     -- scale's small step, both from declarations, neither from a backend.
     if let some content := out[i]!.foot then
@@ -2441,12 +2456,13 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     let logoContent := logoSpans.foldl
       (fun acc (span : Nat × Array Inline) => if span.1 ≤ i then some span.2 else acc)
       doc.logo
-    if let some content := logoContent then
-      unless content.isEmpty do
-        let (l?, ds, c) := mkLogoLine content cache
-        diags := diags ++ ds
-        cache := c
-        if let some l := l? then lines := lines.push l
+    if running then
+      if let some content := logoContent then
+        unless content.isEmpty do
+          let (l?, ds, c) := mkLogoLine content cache
+          diags := diags ++ ds
+          cache := c
+          if let some l := l? then lines := lines.push l
     out := out.set! i { out[i]! with lines := lines }
   -- One report per problem: the same missing glyph or overfull shape in
   -- thirty code blocks is one thing to fix, not thirty lines of console.
