@@ -211,7 +211,7 @@ def VDist.of : Ir.VAlign → VDist
 
 inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
-      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (underline : Bool)
+      (glyphs : Array (Nat × Char × Sp)) (size : Sp) (underline : Bool) (raise : Sp)
   | glue (g : Glue)
   | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Sp))
@@ -227,9 +227,11 @@ def hyphenPenalty : Int := 50
 
 inductive Seg where
   /-- A glyph run. `width` is carried so link rectangles and alignment can be
-  computed without re-measuring against the font. -/
+  computed without re-measuring against the font. `raise` lifts the run's
+  baseline above the line's (negative sinks it): a superscript is a raised
+  run at script size. -/
   | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
-      (glyphs : Array (Nat × Char)) (size : Sp) (underline : Bool)
+      (glyphs : Array (Nat × Char)) (size : Sp) (underline : Bool) (raise : Sp)
   | gap (w : Sp)
   /-- A horizontal rule, `w` wide and `thickness` thick, on the baseline plus
   `raise`. The heading rule of a designed section, filling its line. -/
@@ -301,6 +303,9 @@ private inductive Tk where
   | brk (extra : SymGlue)
   /-- An image reference, resolved against the store when items are built. -/
   | img (src : String) (spec : Image.SizeSpec)
+  /-- An elaborated formula, measured against the math face by
+  `itemsOfInlines`: one unbreakable run of boxes and kerns. -/
+  | formula (display : Bool) (style : TextStyle) (body : Math.MList)
   deriving Repr
 
 private structure FlattenSt where
@@ -308,8 +313,10 @@ private structure FlattenSt where
   warnedMath : Bool := false
   diags : Array Diag := #[]
 
-private def warn (st : FlattenSt) (code msg : String) : FlattenSt :=
-  { st with diags := st.diags.push { severity := .warning, code := code, message := msg } }
+private def warn (st : FlattenSt) (code msg : String) (help : Option String := none) :
+    FlattenSt :=
+  let d : Diag := { severity := .warning, code := code, message := msg, help := help }
+  { st with diags := st.diags.push d }
 
 /-- Small caps, relative to the surrounding size. Synthesised: the faces we can
 count on ship no small-caps variant and the sfnt reader does not apply `smcp`,
@@ -375,34 +382,45 @@ private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
 
 mutual
 
-private def flatten (st : FlattenSt) (sty : TextStyle) (xs : Array Inline) : FlattenSt :=
-  flattenList st sty xs.toList
+private def flatten (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
+    (xs : Array Inline) : FlattenSt :=
+  flattenList mathOk st sty xs.toList
 
-private def flattenList (st : FlattenSt) (sty : TextStyle) (xs : List Inline) : FlattenSt :=
+private def flattenList (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
+    (xs : List Inline) : FlattenSt :=
   match xs with
   | [] => st
-  | x :: rest => flattenList (flattenOne st sty x) sty rest
+  | x :: rest => flattenList mathOk (flattenOne mathOk st sty x) sty rest
 
-private def flattenOne (st : FlattenSt) (sty : TextStyle) (x : Inline) : FlattenSt :=
+private def flattenOne (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
+    (x : Inline) : FlattenSt :=
   match x with
   | .text s => pushText st sty s
   | .image src spec _ => { st with toks := st.toks.push (.img src spec) }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra) }
   | .fill => { st with toks := st.toks.push .fill }
-  | .math _ src =>
-    let st := if st.warnedMath then st
-      else { warn st "W0003" "math is typeset as plain text until M6" with warnedMath := true }
-    pushText st sty src
-  | .styled s body => flatten st (applyStyle sty s) body
-  | .colored c _ body => flatten st { sty with color := c } body
+  -- Math carried as source (the constructs M6 still owes): the elaborator
+  -- warned by name; here the source sets as plain text, so nothing drops.
+  | .math _ src => pushText st sty src
+  | .formula display src body =>
+    if mathOk then
+      { st with toks := st.toks.push (.formula display sty body) }
+    else
+      let st := if st.warnedMath then st
+        else { warn st "W0003" "no math font is available; math is set as plain text"
+                 (some "declare \\fonts{ math = \"...\" } naming an installed \
+OpenType math face; `leantex fonts` lists families") with warnedMath := true }
+      pushText st sty src
+  | .styled s body => flatten mathOk st (applyStyle sty s) body
+  | .colored c _ body => flatten mathOk st { sty with color := c } body
   -- The underline is the link's affordance in both backends (the HTML
   -- anchor keeps the browser's): never colour alone, and never nothing
   -- (WCAG 2.2 SC 1.4.1, use of colour).
-  | .link url body => flatten st { sty with link := some url, underline := true } body
-  | .underline body => flatten st { sty with underline := true } body
+  | .link url body => flatten mathOk st { sty with link := some url, underline := true } body
+  | .underline body => flatten mathOk st { sty with underline := true } body
   -- A step is pure grouping here: the PDF path dims pending content by
   -- recolouring copies before layout (`run`'s step driver), never by metrics.
-  | .step _ _ body => flatten st sty body
+  | .step _ _ body => flatten mathOk st sty body
   -- Placeholders are substituted before layout; reaching here means the
   -- document used one outside running content.
   | .pageNumber => pushText st sty "?"
@@ -456,7 +474,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
   let mut box : Array (Nat × Char × Sp) := #[]
   let mut boxW : Sp := 0
   let flush (items : Array Item) (box : Array (Nat × Char × Sp)) (w : Sp) : Array Item :=
-    if box.isEmpty then items else items.push (.box w fontIdx color link box size underline)
+    if box.isEmpty then items else items.push (.box w fontIdx color link box size underline 0)
   let mut i := 0
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
@@ -502,7 +520,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
               items := flush items box boxW
               box := #[]
               boxW := 0
-              items := items.push (.box g.2.2 fb color link #[g] size underline)
+              items := items.push (.box g.2.2 fb color link #[g] size underline 0)
               unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c') do
                 substs := substs.push (fontIdx, c', fb)
             | none =>
@@ -517,7 +535,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
           items := flush items box boxW
           box := #[]
           boxW := 0
-          items := items.push (.box (size * num / den) fontIdx color link #[] size underline)
+          items := items.push (.box (size * num / den) fontIdx color link #[] size underline 0)
           i := i + 1
         | none =>
         if c == '\u00a0' then
@@ -526,7 +544,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
           box := #[]
           boxW := 0
           items := items.push
-            (.box (scaledAt size font (font.advance ' ')) fontIdx color link #[] size underline)
+            (.box (scaledAt size font (font.advance ' ')) fontIdx color link #[] size underline 0)
           i := i + 1
         else
         match glyphOf size font c with
@@ -540,7 +558,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
             items := flush items box boxW
             box := #[]
             boxW := 0
-            items := items.push (.box g.2.2 fb color link #[g] size underline)
+            items := items.push (.box g.2.2 fb color link #[g] size underline 0)
             unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c) do
               substs := substs.push (fontIdx, c, fb)
           | none =>
@@ -666,6 +684,153 @@ def docScalars (doc : Doc) : Array Char := Id.run do
       out := out.push (Char.ofNat n)
   return out ++ set.toArray.qsort (· < ·)
 
+-- Math -------------------------------------------------------------------------
+
+/-- One mu: 1/18 of an em at the given size (TeXbook p. 168). -/
+private def muAt (size : Sp) (mu : Int) : Sp :=
+  size * mu / 18
+
+/-- Everything measuring a formula needs: the math face and its constants,
+and the run properties the formula inherits from its surroundings. -/
+private structure MathEnv where
+  idx : Nat
+  font : Font
+  consts : MathConsts
+  color : Ir.Color
+  link : Option String
+  underline : Bool
+  base : Sp
+
+/-- Font size at a style: base for display and text, the face's declared
+percentages for the script styles (`Math.sizeFor`, clamped on parse). -/
+private def MathEnv.sizeAt (e : MathEnv) (st : Math.MathStyle) : Sp :=
+  Math.sizeFor e.consts.scales e.base st
+
+/-- A MATH constant (font design units) scaled at a size. Constants are read
+from the font of the base and scale with the base's size (OpenType MATH
+spec, MathConstants). -/
+private def MathEnv.constAt (e : MathEnv) (size : Sp) (v : Int) : Sp :=
+  v * size / (e.font.unitsPerEm : Int)
+
+/-- A kern in the math stream: width, no glyphs, never a breakpoint. -/
+private def mathKern (e : MathEnv) (size w : Sp) : Item :=
+  .box w e.idx e.color e.link #[] size e.underline 0
+
+/-- Width of assembled math items: boxes only ever enter the stream, so the
+advance of a math box is the sum of what it contains plus the kerns the
+spacing table put between them — `mathBoxChecks` holds the two ways of
+computing it equal in sp. -/
+def mathItemsWidth (items : Array Item) : Sp :=
+  items.foldl (fun w it => match it with
+    | .box bw _ _ _ _ _ _ _ => w + bw
+    | _ => w) 0
+
+private abbrev MAcc := Array Item × Array (Nat × Char)
+
+mutual
+
+/-- Lay one math list: spacing between adjacent atoms from the degraded
+classes (`cls`, precomputed per level), atoms measured by `layMathItem`.
+`prev` is the previous atom's degraded class; an explicit space resets it,
+so spacing is inserted only between directly adjacent atoms. -/
+private def layMathTail (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
+    (cls : List Math.MathClass) (prev : Option Math.MathClass) (acc : MAcc) :
+    Math.MList → MAcc
+  | .nil => acc
+  | .cons x rest =>
+    match x.classOf with
+    | none =>
+      let mu := match x with
+        | .space m => m
+        | _ => 0
+      let size := e.sizeAt st
+      let acc := ((acc.1.push (mathKern e size (muAt size mu))), acc.2)
+      layMathTail e st raise cls none acc rest
+    | some _ =>
+      let (c, cs) := match cls with
+        | c :: cs => (c, cs)
+        | [] => (x.classOf.getD .ord, [])
+      let size := e.sizeAt st
+      let acc := match prev with
+        | some p =>
+          let mu := (Math.spacing p c st).mu
+          if mu == 0 then acc
+          else ((acc.1.push (mathKern e size (muAt size (mu : Int)))), acc.2)
+        | none => acc
+      let acc := layMathItem e st raise x acc
+      layMathTail e st raise cs (some c) acc rest
+
+/-- Lay one atom: its nucleus at the current style, then its scripts at the
+script styles, raised and dropped by the base's constants
+(`superscriptShiftUp` / `superscriptShiftUpCramped` / `subscriptShiftDown`),
+with `spaceAfterScript` after. When both scripts are present they stack at
+one horizontal position: the subscript rewinds by the superscript's width
+through a negative kern, and the atom advances by the wider of the two. -/
+private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
+    (x : Math.MItem) (acc : MAcc) : MAcc :=
+  match x with
+  | .space mu =>
+    let size := e.sizeAt st
+    ((acc.1.push (mathKern e size (muAt size mu))), acc.2)
+  | .atom _ nuc sup sub =>
+    let acc := layMathNucleus e st raise nuc acc
+    let size := e.sizeAt st
+    let upShift := e.constAt size
+      (if st.cramped then e.consts.superscriptShiftUpCramped
+       else e.consts.superscriptShiftUp)
+    let downShift := e.constAt size e.consts.subscriptShiftDown
+    let (supItems, m1) := layMathTail e st.sup (raise + upShift)
+      (Math.degrade sup.classes) none (#[], acc.2) sup
+    let (subItems, m2) := layMathTail e st.sub (raise - downShift)
+      (Math.degrade sub.classes) none (#[], m1) sub
+    if supItems.isEmpty && subItems.isEmpty then
+      (acc.1, m2)
+    else
+      let spaceAfter := e.constAt size e.consts.spaceAfterScript
+      let supW := mathItemsWidth supItems
+      let subW := mathItemsWidth subItems
+      if supItems.isEmpty then
+        ((acc.1 ++ subItems).push (mathKern e size spaceAfter), m2)
+      else if subItems.isEmpty then
+        ((acc.1 ++ supItems).push (mathKern e size spaceAfter), m2)
+      else
+        let items := (acc.1 ++ supItems).push (mathKern e size (-supW)) ++ subItems
+        (items.push (mathKern e size (max supW subW - subW + spaceAfter)), m2)
+
+private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
+    (nuc : Math.MNucleus) (acc : MAcc) : MAcc :=
+  match nuc with
+  | .sym c =>
+    let size := e.sizeAt st
+    match glyphOf size e.font c with
+    | some g =>
+      ((acc.1.push (.box g.2.2 e.idx e.color e.link #[g] size e.underline raise)), acc.2)
+    | none =>
+      if acc.2.contains (e.idx, c) then acc
+      else (acc.1, acc.2.push (e.idx, c))
+  | .word s =>
+    -- An upright word (a function name): one box in the math face.
+    let size := e.sizeAt st
+    let (glyphs, w, missing) := s.foldl (fun (gs, w, m) c =>
+      match glyphOf size e.font c with
+      | some g => (gs.push g, w + g.2.2, m)
+      | none => (gs, w, if m.contains (e.idx, c) then m else m.push (e.idx, c)))
+      ((#[] : Array (Nat × Char × Sp)), (0 : Sp), acc.2)
+    ((acc.1.push (.box w e.idx e.color e.link glyphs size e.underline raise)), missing)
+  | .list body =>
+    layMathTail e st raise (Math.degrade body.classes) none acc body
+
+end
+
+/-- A formula's items: one unbreakable run of boxes and kerns — no glue, so
+the line breaker never breaks inside it, and no stretch, so a math box has
+one width. Inline math starts in text style, display math in display style
+(TeXbook ch. 17). -/
+private def mathItems (e : MathEnv) (display : Bool) (body : Math.MList)
+    (missing : Array (Nat × Char)) : Array Item × Array (Nat × Char) :=
+  let st : Math.MathStyle := if display then .display false else .text false
+  layMathTail e st 0 (Math.degrade body.classes) none (#[], missing) body
+
 /-- Flatten inlines into Knuth-Plass items. The fourth component maps the
 index of a forced-break penalty to extra vertical space the document asked for
 there (`\\[1ex]`); it rides beside the items because the line breaker has no
@@ -677,7 +842,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (textW : Sp := 0) (textH : Sp := 0) :
     Array Item × Array Diag × Std.HashMap String (List Nat) ×
       Std.HashMap Nat Sp := Id.run do
-  let st := flatten {} baseStyle xs
+  let st := flatten (fs.mathFont?.isSome) {} baseStyle xs
   let mut items : Array Item := #[]
   let mut missing : Array (Nat × Char) := #[]
   let mut substs : Array (Nat × Char × Nat) := #[]
@@ -695,6 +860,21 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       substs := s
       cache := c'
       items := items ++ ws
+    | .formula display sty body =>
+      -- The flatten pass pushes a formula token only when a math face with
+      -- constants is present.
+      match fs.mathFont? with
+      | some (idx, font, consts) =>
+        let e : MathEnv := {
+          idx, font, consts
+          color := sty.color
+          link := sty.link
+          underline := sty.underline
+          base := size * sty.scale / 1000 }
+        let (ms, m) := mathItems e display body missing
+        missing := m
+        items := items ++ ms
+      | none => pure ()
     | .space sty =>
       let idx := fs.lookup sty.slot sty.bold sty.italic
       items := items.push (.glue (interword (size * sty.scale / 1000) (fs.get idx)))
@@ -761,7 +941,7 @@ def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   match items[j]? with
   | some (.glue _) =>
     match items[j-1]? with
-    | some (.box _ _ _ _ _ _ _) => j > 0
+    | some (.box _ _ _ _ _ _ _ _) => j > 0
     | some (.img _ _ _) => j > 0
     | _ => false
   | some (.pen _ cost _ _ _ _) => cost < 10000
@@ -786,7 +966,7 @@ def measure (items : Array Item) (a j : Nat) : Measure := Id.run do
   let mut m : Measure := {}
   for k in [a:j] do
     match items[k]! with
-    | .box w _ _ _ _ _ _ => m := { m with natural := m.natural + w }
+    | .box w _ _ _ _ _ _ _ => m := { m with natural := m.natural + w }
     | .img _ w _ => m := { m with natural := m.natural + w }
     | .glue g => m := { m with
         natural := m.natural + g.width
@@ -857,7 +1037,7 @@ def kpSums (items : Array Item) : KpSums := Id.run do
   pforced := pforced.push 0
   for k in [0:n] do
     let (dw, dst, dsh, dfil) : Sp × Sp × Sp × Nat := match items[k]! with
-      | .box w _ _ _ _ _ _ => (w, 0, 0, 0)
+      | .box w _ _ _ _ _ _ _ => (w, 0, 0, 0)
       | .img _ w _ => (w, 0, 0, 0)
       | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0)
       | .pen _ _ _ _ _ _ => (0, 0, 0, 0)
@@ -984,12 +1164,12 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let mut width : Sp := 0
   for k in [a:j] do
     match items[k]! with
-    | .box w fontIdx color link glyphs size underline =>
+    | .box w fontIdx color link glyphs size underline raise =>
       -- The declared width is authoritative, as it already is in `measure`: a
       -- kern is a box with a width and no glyphs, and recomputing from the
       -- advances would silently set it to zero.
       segs := segs.push
-        (.run fontIdx color link w (glyphs.map fun (g, c, _) => (g, c)) size underline)
+        (.run fontIdx color link w (glyphs.map fun (g, c, _) => (g, c)) size underline raise)
       width := width + w
     | .img idx w h =>
       segs := segs.push (.image idx w h)
@@ -1024,10 +1204,10 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
       -- A hyphenation point sits inside a word, so the hyphen is set at the
       -- size (and under the underline) of the run it interrupts.
       let (inherited, inheritedUl) := segs.foldl (fun acc s => match s with
-        | .run _ _ _ _ _ sz ul => (if sz != 0 then sz else acc.1, ul)
+        | .run _ _ _ _ _ sz ul _ => (if sz != 0 then sz else acc.1, ul)
         | _ => acc) ((0 : Sp), false)
       segs := segs.push
-        (.run fontIdx color none w (glyphs.map fun (g, c, _) => (g, c)) inherited inheritedUl)
+        (.run fontIdx color none w (glyphs.map fun (g, c, _) => (g, c)) inherited inheritedUl 0)
       width := width + w
   -- drop trailing gaps (paragraph-final fill)
   let mut segs' := segs
@@ -1166,11 +1346,12 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   -- Each run measured in its own face: a sans title is as tall as the sans
   -- says, not as the body face would be at that size.
   let (tallest, height, depth) := segs.foldl (fun (acc : Sp × Sp × Sp) s => match s with
-    | .run idx _ _ _ _ sz _ =>
+    | .run idx _ _ _ _ sz _ raise =>
       let font := fs.get idx
       let sz := if sz == 0 then nominal else sz
-      (max acc.1 sz, max acc.2.1 (scaledAt sz font font.capHeight.toNat),
-       max acc.2.2 (scaledAt sz font (-font.descent).toNat))
+      (max acc.1 sz,
+       max acc.2.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
+       max acc.2.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
     -- An image stands `h` above the baseline with no depth: it raises the
     -- line's height, never its nominal size, so the leading after it is
     -- decided by the text that follows, as TeX decides it.
@@ -1769,7 +1950,7 @@ run, so the common case allocates nothing. -/
 private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     Array Seg := Id.run do
   unless segs.any (fun s => match s with
-      | .run _ _ _ _ _ _ true => true
+      | .run _ _ _ _ _ _ true _ => true
       | _ => false) do
     return #[]
   -- Pass 1: obstruction intervals in line coordinates, each glyph's
@@ -1781,7 +1962,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     | .gap w => x := x + w
     | .rule w _ _ _ => x := x + w
     | .image _ w _ => x := x + w
-    | .run fontIdx _ _ w glyphs size _ =>
+    | .run fontIdx _ _ w glyphs size _ _ =>
       let font := fs.get fontIdx
       let sz := if size == 0 then lineSize else size
       let upem : Int := font.unitsPerEm
@@ -1817,7 +1998,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     | .image _ w _ =>
       out := out.push (.gap w)
       x := x + w
-    | .run fontIdx color _ w _ size underline =>
+    | .run fontIdx color _ w _ size underline _ =>
       if !underline then
         out := out.push (.gap w)
       else

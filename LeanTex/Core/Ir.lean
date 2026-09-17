@@ -1,6 +1,7 @@
 import LeanTex.Core.Diag
 import LeanTex.Core.Dim
 import LeanTex.Core.Image
+import LeanTex.Core.Math
 
 namespace LeanTex.Core.Ir
 
@@ -169,6 +170,10 @@ structure FontSpec where
   body : Option String := none
   sans : Option String := none
   mono : Option String := none
+  /-- The math face (`\fonts{ math = ... }`, fontspec's `\setmathfont`):
+  resolved like any named face, and required to carry an OpenType MATH
+  table to be used. -/
+  math : Option String := none
   dirs : Array String := #[]
   /-- Per-variant faces the document named (fontspec's `UprightFont=`,
   `BoldFont=`, `ItalicFont=`, `BoldItalicFont=`): `(slot, bold, italic)` →
@@ -324,6 +329,12 @@ def Style.label : Style → String
 inductive Inline where
   | text (s : String)
   | math (display : Bool) (src : String)
+  /-- An elaborated formula: atoms with TeX's classes and scripts, ready to
+  measure against a MATH face. `src` is carried whole so the HTML backend's
+  boundary emission and every plain-text reading stay exactly what `.math`
+  gives them — a formula's meaning lives in `body`, its spelling in `src`.
+  Math the elaborator cannot yet model stays `.math`, warned by name. -/
+  | formula (display : Bool) (src : String) (body : Math.MList)
   | styled (style : Style) (body : Array Inline)
   /-- `name` is the palette entry this came from, when it had one, so the
   HTML backend can emit `var(--name)` and let a host page override it. -/
@@ -598,6 +609,7 @@ def plainTextOne (x : Inline) : String :=
   match x with
   | .text s => s
   | .math _ src => src
+  | .formula _ src _ => src
   | .styled _ body => plainTextList body.toList
   | .colored _ _ body => plainTextList body.toList
   | .link _ body => plainTextList body.toList
@@ -618,6 +630,46 @@ def dumpStepRange (n : Nat) (last : Option Nat) : String :=
 
 mutual
 
+/-- One line of a formula's structure, for the IR dump: every atom's class,
+scalar, and scripts, so a golden pins exactly what elaboration decided.
+`ord:𝑥^{ord:2} bin:+ ord:𝑦` reads as it sets. The accumulator threads
+through the walk, as every structural printer here does. -/
+def dumpMathItem (acc : String) (x : Math.MItem) : String :=
+  match x with
+  | .atom cls nuc sup sub =>
+    dumpMathSub (dumpMathSup (dumpMathNucleus (acc ++ s!"{cls.label}:") nuc) sup) sub
+  | .space mu => acc ++ s!"mu:{mu}"
+
+def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
+  match n with
+  | .sym c => acc.push c
+  | .word s => acc ++ s.quote
+  | .list body => (dumpMathList (acc.push '{') body).push '}'
+
+def dumpMathSup (acc : String) (l : Math.MList) : String :=
+  match l with
+  | .nil => acc
+  | .cons x rest => (dumpMathRest (dumpMathItem (acc ++ "^{") x) rest).push '}'
+
+def dumpMathSub (acc : String) (l : Math.MList) : String :=
+  match l with
+  | .nil => acc
+  | .cons x rest => (dumpMathRest (dumpMathItem (acc ++ "_{") x) rest).push '}'
+
+def dumpMathList (acc : String) (l : Math.MList) : String :=
+  match l with
+  | .nil => acc
+  | .cons x rest => dumpMathRest (dumpMathItem acc x) rest
+
+def dumpMathRest (acc : String) (l : Math.MList) : String :=
+  match l with
+  | .nil => acc
+  | .cons x rest => dumpMathRest (dumpMathItem (acc ++ " ") x) rest
+
+end
+
+mutual
+
 def dumpInlines (ind : String) (xs : Array Inline) : String :=
   dumpInlineList ind xs.toList
 
@@ -632,6 +684,9 @@ def dumpInline (ind : String) (x : Inline) : String :=
   | .math d src =>
     let kind := if d then "display" else "inline"
     s!"{ind}math {kind} {src.quote}\n"
+  | .formula d src body =>
+    let kind := if d then "display" else "inline"
+    s!"{ind}formula {kind} {src.quote}\n{ind}  {dumpMathList "" body}\n"
   | .styled st body => s!"{ind}styled {st.label}\n" ++ dumpInlines (ind ++ "  ") body
   | .colored c name body =>
     let tag := match name with
@@ -1050,6 +1105,10 @@ theorem shadeInline_text (dim : Color) (x : Inline) :
     -- shading leaves an image node whole (raster content dims in the
     -- backends' hands, not here), and its text census is empty either way
     rfl
+  | .formula _ _ _ =>
+    -- shading leaves a formula node whole (a pending formula dims in the
+    -- backends' hands); its census is its source, untouched on both sides
+    rfl
   | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _ =>
     rfl
 
@@ -1167,6 +1226,10 @@ theorem dimInline_text (dim : Color) (k : Nat) (x : Inline) :
         plainTextList]
   | .image _ _ _ =>
     -- dimming leaves an image node whole; empty text census on both sides
+    rfl
+  | .formula _ _ _ =>
+    -- dimming leaves a formula node whole; its census is its source,
+    -- untouched on both sides
     rfl
   | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _ =>
     rfl

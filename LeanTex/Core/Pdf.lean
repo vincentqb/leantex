@@ -50,7 +50,7 @@ private def usedGlyphs (fontIdx numGlyphs : Nat) (pages : Array PageOut) :
   for p in pages do
     for l in p.lines do
       for s in l.segs do
-        if let .run idx _ _ _ glyphs _ _ := s then
+        if let .run idx _ _ _ glyphs _ _ _ := s then
           if idx == fontIdx then
             for (g, c) in glyphs do
               if h : g < seen.size then
@@ -96,8 +96,10 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
     let mut inArray := false
     let mut x := geom.bleed + l.x
     -- Where the pen is, when it is known: a fresh line has no position until
-    -- its first glyph run sets one.
-    let mut pen : Option Sp := none
+    -- its first glyph run sets one. A raised run (a math script) moves the
+    -- baseline too, so the pen is a point: a `TJ` adjustment can only move
+    -- x, and any vertical move is an absolute `Tm`.
+    let mut pen : Option (Sp × Sp) := none
     for seg in l.segs do
       match seg with
       | .rule w thickness raise color =>
@@ -110,29 +112,30 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
         x := x + w
       | .gap w =>
         x := x + w
-      | .run idx color _ w glyphs segSize _ =>
+      | .run idx color _ w glyphs segSize _ raise =>
         if glyphs.isEmpty then
           -- A kern: width, no glyphs. It moves the layout position like a gap.
           x := x + w
         else
+        let runY := ypdf + raise
         let size := if segSize == 0 then l.size else segSize
         let changes := curFont != idx || curSize != size || curColor != color
         -- Bring the pen to the run. Inside an open array with the face
-        -- unchanged, a small move is an adjustment in the live size; any
-        -- other move is absolute, and closes the array.
+        -- unchanged, a small horizontal move is an adjustment in the live
+        -- size; any other move is absolute, and closes the array.
         match pen with
-        | some here =>
-          if here != x then
-            let v : Int := (x - here) * 1000 / curSize
-            if inArray && !changes && v.natAbs ≤ 32000 then
+        | some (hx, hy) =>
+          if hx != x || hy != runY then
+            let v : Int := (x - hx) * 1000 / curSize
+            if inArray && !changes && hy == runY && v.natAbs ≤ 32000 then
               s := s ++ s!"{-v}"
             else
               if inArray then
                 s := s ++ "] TJ\n"
                 inArray := false
-              s := s ++ s!"1 0 0 1 {x.toPtString} {ypdf.toPtString} Tm\n"
+              s := s ++ s!"1 0 0 1 {x.toPtString} {runY.toPtString} Tm\n"
         | none =>
-          s := s ++ s!"1 0 0 1 {x.toPtString} {ypdf.toPtString} Tm\n"
+          s := s ++ s!"1 0 0 1 {x.toPtString} {runY.toPtString} Tm\n"
         if changes then
           if inArray then
             s := s ++ "] TJ\n"
@@ -155,7 +158,7 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
           s := s.push (hexDigit g)
         s := s.push '>'
         x := x + w
-        pen := some x
+        pen := some (x, runY)
     if inArray then
       s := s ++ "] TJ\n"
   s := s ++ "ET"
@@ -188,7 +191,7 @@ private def linkRects (geom : Geom) (page : PageOut) :
     let pad := l.size
     for seg in l.segs do
       match seg with
-      | .run _ _ link w _ segSize _ =>
+      | .run _ _ link w _ segSize _ _ =>
         let size := if segSize == 0 then l.size else segSize
         let y0 := geom.bleed + geom.pageH - l.y - size / 4
         let y1 := geom.bleed + geom.pageH - l.y + size * 4 / 5

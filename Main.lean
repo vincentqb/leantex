@@ -138,6 +138,7 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     IO (Except Diag (Font.FontSet × Array Diag × String)) := do
   let spec := doc.fonts
   let bare := spec.body.isNone && spec.sans.isNone && spec.mono.isNone
+    && spec.math.isNone
   if bare then
     if let some path ← IO.getEnv "LEANTEX_FONT" then
       match ← loadOverride path with
@@ -231,6 +232,56 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
             index := index.push ((slot, bold, italic), fonts.size)
             fonts := fonts.push f
             paths := paths.push face.path
+  -- The math face: resolved like any named family, and installed only when
+  -- it carries an OpenType MATH table — constants are never invented, so a
+  -- face without the table earns a diagnostic naming it and math is set as
+  -- source text (PLAN, M6 design decision 1).
+  let mut mathIdx : Option Nat := none
+  if let some family := spec.math then
+    match FontDb.resolveVariant faces family none {} with
+    | none =>
+      unless missing.contains family do
+        missing := missing.push family
+        let all := FontDb.families faces
+        let near := FontDb.nearest all family
+        let hint := if near.isEmpty then s!"{all.size} families are installed"
+          else s!"did you mean: {String.intercalate ", " near.toList}?"
+        diags := diags.push {
+          severity := .error
+          code := "E0403"
+          message := s!"no installed font family named '{family}'"
+          help := some s!"{hint} — `leantex fonts` lists every family"
+        }
+    | some (face, _) =>
+      let loaded ← match paths.findIdx? (· == face.path) with
+        | some i => pure (some i)
+        | none =>
+          let data ← IO.FS.readBinFile face.path
+          match Font.parse data with
+          | .error e =>
+            diags := diags.push {
+              severity := .error
+              code := "E0404"
+              message := s!"cannot use '{face.path}': {e}"
+            }
+            pure none
+          | .ok f =>
+            fonts := fonts.push f
+            paths := paths.push face.path
+            pure (some (fonts.size - 1))
+      if let some i := loaded then
+        if (fonts[i]!).math.isSome then
+          mathIdx := some i
+        else
+          diags := diags.push {
+            severity := .warning
+            code := "W0011"
+            message := s!"'{(fonts[i]!).family}' ({face.path}) has no OpenType MATH \
+table; math is set as plain text"
+            help := some "name a math face (Latin Modern Math, STIX Two Math, \
+TeX Gyre Pagella Math, Fira Math, ...) — its MATH table is where the engine \
+reads math spacing from"
+          }
   if fonts.isEmpty then
     -- Every named family failed and `diags` carries the errors; the caller
     -- stops on them, but nothing downstream may ever see an empty set.
@@ -262,8 +313,12 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
           fallback := fallback.push (c, fonts.size)
           fonts := fonts.push f
           paths := paths.push path
-  return .ok ({ fonts := fonts, index := index, fallback := fallback }, diags,
-    String.intercalate ", " paths.toList)
+  let set : Font.FontSet := {
+    fonts := fonts
+    index := index
+    fallback := fallback
+    math := mathIdx }
+  return .ok (set, diags, String.intercalate ", " paths.toList)
 
 def since (t0 : Nat) : IO Nat := do
   return (← IO.monoMsNow) - t0

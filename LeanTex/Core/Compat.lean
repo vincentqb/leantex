@@ -603,13 +603,27 @@ where
     modify fun st => { st with bodyNext := 1 }
     return some (← synthAt native pos, j)
   | "setmathfont" =>
-    let (_, j) := takeOpt raws start
-    let (_, k) := takeGroups raws j 1
-    let (_, k) := takeOpt raws k
-    sayOnce "ctrl:setmathfont" .warning "W0104"
-      "'\\setmathfont' is not supported yet; skipped" pos
-      (help := "math layout and its font land with M6; see PLAN.md")
-    return some (#[], k)
+    -- fontspec's math sibling: the named face fills the math slot, and a
+    -- `Path=` rides into `dir` exactly as `\setmainfont`'s does.
+    let (optBefore, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    let (optAfter, k) := takeOpt raws k
+    let family := rawSrc (args.getD 0 #[])
+    let path : Option String :=
+      ([optBefore, optAfter].filterMap id).findSome? fun opts =>
+        (Decl.splitEntries opts).findSome? fun kv =>
+          match Decl.splitEntry kv with
+          | some ("Path", v) =>
+            some (if v.startsWith "{" && v.endsWith "}" then
+              ((v.drop 1).toString.dropEnd 1).toString.trimAscii.toString
+            else v)
+          | _ => none
+    let dirPart := match path with
+      | some d => s!"dir = \"{d}\", "
+      | none => ""
+    let native := s!"\\fonts\{ {dirPart}math = \"{family}\" }"
+    became "\\setmathfont" native pos
+    return some (← synthAt native pos, k)
   | "directlua" =>
     let (_, k) := takeGroups raws start 1
     sayOnce "ctrl:directlua" .warning "W0104"

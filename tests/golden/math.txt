@@ -1,0 +1,37 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+section 1
+  text "Formulas"
+para
+  text "Inline math sits inside its sentence: the map "
+  formula inline "f(x) = -x^2 + 3"
+    ord:𝑓 open:( ord:𝑥 close:) rel:= bin:− ord:𝑥^{ord:2} bin:+ ord:3
+  text " keeps its leading sign tight against the variable, a function name stays upright as in "
+  formula inline "\\sin x \\approx x - x^3"
+    op:"sin" ord:𝑥 rel:≈ ord:𝑥 bin:− ord:𝑥^{ord:3}
+  text ", scripts nest to the scriptscript floor in "
+  formula inline "x^{y^z}"
+    ord:𝑥^{ord:𝑦^{ord:𝑧}}
+  text ", and a pair stacks in "
+  formula inline "a_i^2 + b^{n}_{m}"
+    ord:𝑎^{ord:2}_{ord:𝑖} bin:+ ord:𝑏^{ord:𝑛}_{ord:𝑚}
+  text ". The paren form "
+  formula inline "2\\pi r"
+    ord:2 ord:𝜋 ord:𝑟
+  text " is the same inline math."
+center
+  para
+    formula display "\\sum _i \\alpha _i x^i \\le \\Gamma (n) \\cdot \\prod _j \\beta _j"
+      op:∑_{ord:𝑖} ord:𝛼_{ord:𝑖} ord:𝑥^{ord:𝑖} rel:≤ ord:Γ open:( ord:𝑛 close:) bin:⋅ op:∏_{ord:𝑗} ord:𝛽_{ord:𝑗}
+para
+  text "The paragraph continues after the display. What this slice does not model keeps its source and a warning that names it: "
+  math inline "\\sqrt {x + 1}"
+  text " stays text."
+center
+  para
+    formula display "e^{i\\pi} + 1 = 0"
+      ord:𝑒^{ord:𝑖 ord:𝜋} bin:+ ord:1 rel:= ord:0
+-- diagnostics
+warning[W0010] 19:47 math with \sqrt is not rendered yet; the formula is set as source text | help: the rest of M6; see PLAN.md

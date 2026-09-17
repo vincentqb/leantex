@@ -72,7 +72,7 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
             worst := l.y - raise - bottom
             worstEdge := "bottom"
           x := x + w
-        | .run idx _ _ w glyphs size _ =>
+        | .run idx _ _ w glyphs size _ raise =>
           unless glyphs.isEmpty do
             let font := fs.get idx
             let sz := if size == 0 then l.size else size
@@ -80,17 +80,20 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
             let asc := (if font.capHeight > 0 then font.capHeight else font.ascent)
               * sz / upem
             let desc := (-font.descent) * sz / upem
+            -- A raised run's ink is judged from its own baseline: a
+            -- superscript rides above the line's.
+            let base := l.y - raise
             if geom.hmargin - x > worst then
               worst := geom.hmargin - x
               worstEdge := "left"
             if x + w - right > worst then
               worst := x + w - right
               worstEdge := "right"
-            if geom.vmargin - (l.y - asc) > worst then
-              worst := geom.vmargin - (l.y - asc)
+            if geom.vmargin - (base - asc) > worst then
+              worst := geom.vmargin - (base - asc)
               worstEdge := "top"
-            if l.y + desc - bottom > worst then
-              worst := l.y + desc - bottom
+            if base + desc - bottom > worst then
+              worst := base + desc - bottom
               worstEdge := "bottom"
             let xhUnits := if font.xHeight > 0 then font.xHeight else upem / 2
             let xh := xhUnits * sz / upem

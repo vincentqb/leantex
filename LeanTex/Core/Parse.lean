@@ -20,6 +20,7 @@ inductive Raw where
 inductive Stop where
   | brace
   | math
+  | parenMath
   | displayMath
   | env (name : String)
   deriving Repr, BEq, Inhabited
@@ -27,6 +28,7 @@ inductive Stop where
 def Stop.name : Stop → String
   | .brace => "'}'"
   | .math => "closing '$'"
+  | .parenMath => "'\\)'"
   | .displayMath => "'\\]'"
   | .env n => s!"'\\end\{{n}}'"
 
@@ -41,6 +43,7 @@ private def Frame.close (f : Frame) (body : Array Raw) : Array Raw :=
   match f.stop with
   | .brace => f.outer.push (.group body f.openPos)
   | .math => f.outer.push (.math false body f.openPos)
+  | .parenMath => f.outer.push (.math false body f.openPos)
   | .displayMath => f.outer.push (.math true body f.openPos)
   | .env n => f.outer.push (.env n body f.openPos)
 
@@ -98,6 +101,19 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
         | none =>
           frames := frames.push ⟨.math, pos, acc⟩
           acc := #[]
+      | .ctrl "(" =>
+        frames := frames.push ⟨.parenMath, pos, acc⟩
+        acc := #[]
+      | .ctrl ")" =>
+        match frames.back? with
+        | some f =>
+          if f.stop == .parenMath then
+            frames := frames.pop
+            acc := f.close acc
+          else
+            diags := diags.push (err file "E0202" "unexpected '\\)'" pos)
+        | none =>
+          diags := diags.push (err file "E0202" "unexpected '\\)'" pos)
       | .ctrl "[" =>
         frames := frames.push ⟨.displayMath, pos, acc⟩
         acc := #[]

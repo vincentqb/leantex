@@ -86,4 +86,5 @@ note[N0100] 12:1 \newenvironment{banner} → \defineenv{banner}(a1: content) {be
 note[N0100] 35:19 \alert → \textbf
 warning[W0314] 9:1 unknown theme 'example'; the document is unthemed | help: themes: moloch, plain
 warning[W0304] 11:22 'quiet!50' is not in the palette; content kept uncoloured | help: declare colours with \palette{ name = #RRGGBB }
+warning[W0010] 54:5 '{align*}' is not rendered yet; its math is set as source text | help: the rest of M6; see PLAN.md
 warning[W0308] 59:5 tables are not laid out yet; rows are set as plain lines | help: planned for M8; see PLAN.md

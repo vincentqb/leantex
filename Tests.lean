@@ -49,7 +49,7 @@ def goldenNames : List String :=
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
    "chrome", "lists", "lists-styled", "lists-deck",
-   "trio-page", "trio-deck", "trio-card", "valign", "images"]
+   "trio-page", "trio-deck", "trio-card", "valign", "images", "math"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -65,7 +65,7 @@ def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
   let mut items : Array Layout.Item := #[]
   for p in ps do
     match p with
-    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10) false)
+    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10) false 0)
     | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
     | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true 0 Ir.Color.black #[])
     | .B =>
@@ -257,7 +257,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (out.pages.flatMap (·.lines), out.diags)
   let markerOf (l : Layout.LineOut) : String :=
     match l.segs[0]? with
-    | some (Layout.Seg.run _ _ _ _ glyphs _ _) => String.ofList (glyphs.toList.map (·.2))
+    | some (Layout.Seg.run _ _ _ _ glyphs _ _ _) => String.ofList (glyphs.toList.map (·.2))
     | _ => ""
   -- The numbering functions and their decoders (`\labelenum*`, classes.dtx).
   t "enum labels match the class defaults"
@@ -306,7 +306,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- the second item is covered, marker included.
   let markerColor (l : Layout.LineOut) : Option Ir.Color :=
     match l.segs[0]? with
-    | some (Layout.Seg.run _ c _ _ _ _ _) => some c
+    | some (Layout.Seg.run _ c _ _ _ _ _ _) => some c
     | _ => none
   t "a covered item's marker dims with it"
     (markerColor stepLines[1]! == some Ir.coveredDefault &&
@@ -381,7 +381,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   let scOut := Layout.run geom oneFace none (Elab.run "t" "\\scshape aB").1
   let scRuns := (scOut.pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
     match s with
-    | .run _ _ _ _ glyphs size _ => some (glyphs.map (·.2), size)
+    | .run _ _ _ _ glyphs size _ _ => some (glyphs.map (·.2), size)
     | _ => none)
   t "small caps raises lowercase"
     (scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
@@ -972,7 +972,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   let runs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   t "fallback sets the glyph from the mapped face"
     (runs.any fun s => match s with
-      | .run 1 _ _ _ glyphs _ _ => glyphs.any (·.2 == '∀')
+      | .run 1 _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '∀')
       | _ => false)
   t "fallback reports once per family+glyph, naming both faces"
     ((out.diags.filter (·.code == "W0009")).map (·.message) ==
@@ -1262,7 +1262,7 @@ def linkSignalChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (Elab.run "t" "see \\href{https://example.org/}{the example} here").1
   let segs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   let linkRuns := segs.filterMap fun s => match s with
-    | .run _ _ (some _) _ _ _ ul => some ul
+    | .run _ _ (some _) _ _ _ ul _ => some ul
     | _ => none
   t "pdf link runs exist" (!linkRuns.isEmpty)
   t "pdf link runs are underlined" (linkRuns.all (· == true))
@@ -1408,7 +1408,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
             let lines := ((outOf mixedSet src).pages.flatMap (·.lines))
             let runW := ((lines[0]?.map (·.segs)).getD #[]).filterMap fun s =>
               match s with
-              | .run _ _ _ w _ _ _ => some w
+              | .run _ _ _ w _ _ _ _ => some w
               | _ => none
             let ruleW := ((lines[1]?.map (·.segs)).getD #[]).filterMap fun s =>
               match s with
@@ -1974,7 +1974,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      | _, _ => false)
   let lineColors (p : Layout.PageOut) : Array Ir.Color :=
     p.lines.filterMap fun l => l.segs.findSome? fun s => match s with
-      | .run _ c _ _ _ _ _ => some c
+      | .run _ c _ _ _ _ _ _ => some c
       | _ => none
   t "pdf pending content is dimmed, then undimmed"
     (match out.pages[0]?, out.pages[2]? with
@@ -2006,7 +2006,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      | some p1, some p3 =>
        let colorOf (p : Layout.PageOut) (k : Nat) : Option Ir.Color :=
          p.lines[k]?.bind fun l => l.segs.findSome? fun s => match s with
-           | .run _ c _ _ _ _ _ => some c
+           | .run _ c _ _ _ _ _ _ => some c
            | _ => none
        -- Page 1: the <1> item crisp, the rest dimmed. Page 3: the <1> item
        -- dimmed again — its range ended — and the rest crisp.
@@ -2020,7 +2020,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   -- other text.
   let runColors (p : Layout.PageOut) : Array Ir.Color :=
     p.lines.flatMap fun l => l.segs.filterMap fun s => match s with
-      | .run _ c _ _ _ _ _ => some c
+      | .run _ c _ _ _ _ _ _ => some c
       | _ => none
   let colorSrc := "\\documentclass[aspectratio=169]{slides}\n" ++
     "\\palette{ hot = #AA0000 }\n\\begin{document}\n\\begin{frame}\n" ++
@@ -2204,7 +2204,7 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
       f.x == 0 && f.y == 0 && f.w == geom.pageW && f.h == geom.pageH && f.color == fg)
   t "standout text keeps standoutfg on every step page"
     (so.pages.all fun p => p.lines.any fun l => l.segs.any fun s => match s with
-      | .run _ c _ _ _ _ _ => c == bg
+      | .run _ c _ _ _ _ _ _ => c == bg
       | _ => false)
   -- The furniture is the frame's, not the step's: three step pages advance
   -- the deck position by ONE frame, so the section page after them shows
@@ -2353,7 +2353,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (match out.pages[0]? with
      | some p => p.lines.any fun l => l.y == footY && l.size == footSize &&
          l.segs.any fun s => match s with
-           | .run _ c _ _ _ _ _ => c == (⟨0x64, 0x72, 0x74⟩ : Ir.Color)
+           | .run _ c _ _ _ _ _ _ => c == (⟨0x64, 0x72, 0x74⟩ : Ir.Color)
            | _ => false
      | none => false)
   -- Invariant (a) of the footer: body ink never reaches the footer's ink,
@@ -2494,13 +2494,13 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "frame title text takes frametitlefg"
     (match out.pages[0]?.bind (·.lines[0]?) with
      | some l => l.segs.any fun s => match s with
-        | .run _ c _ _ _ _ _ => c == bg
+        | .run _ c _ _ _ _ _ _ => c == bg
         | _ => false
      | none => false)
   t "body text takes fg"
     (match out.pages[0]? with
      | some p => p.lines.any fun l => l.segs.any fun s => match s with
-        | .run _ c _ _ _ _ _ => c == fg
+        | .run _ c _ _ _ _ _ _ => c == fg
         | _ => false
      | none => false)
   let mp : Dim.Sp := geom.textWidth * 7875 / 10000
@@ -2741,7 +2741,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | some p => p.lines.any fun l =>
          l.size == sGeom.fontSize * 1440 / 1000 &&
          l.segs.any fun s => match s with
-           | .run _ c _ _ _ _ _ => c == Ir.Color.white
+           | .run _ c _ _ _ _ _ _ => c == Ir.Color.white
            | _ => false
      | none => false)
   t "standout content centres vertically"
@@ -3109,7 +3109,9 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- elab: clean documents
   let (doc1, d1) := elabStr "hello $x$ world"
   t "elab snippet clean" (d1.isEmpty && doc1.body ==
-    #[.para #[.text "hello ", .math false "x", .text " world"]])
+    #[.para #[.text "hello ",
+      .formula false "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil) .nil),
+      .text " world"]])
   let (doc2, d2) := elabStr "\\textbf{a} {\\itshape b c} d"
   t "elab styles" (d2.isEmpty && doc2.body ==
     #[.para #[.styled .bold #[.text "a"], .text " ", .styled .italic #[.text "b c"], .text " d"]])
@@ -3950,7 +3952,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace (some pats) doc
     out.pages.any fun p => p.lines.any fun l =>
       l.segs.any fun s => match s with
-        | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '-')
+        | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '-')
         | .gap _ | .rule .. | .image .. => false
   let narrowPage := "\\page{ width = 90pt, height = 400pt, margin = 10pt }\n"
   let word := "incomprehensibility incomprehensibility"
@@ -4475,7 +4477,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hyOut := Layout.run narrow oneFace (some pats) hyDoc
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '-')
+          | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '-')
           | .gap _ | .rule .. | .image .. => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       -- Display type never hyphenates (Butterick, "Hyphenation"): the same
@@ -4484,7 +4486,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hyphens (doc : Ir.Doc) : Bool :=
         (Layout.run narrow oneFace (some pats) doc).pages.any fun p =>
           p.lines.any fun l => l.segs.any fun s => match s with
-            | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '-')
+            | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '-')
             | .gap _ | .rule .. | .image .. => false
       t "a heading never hyphenates"
         (!hyphens (Elab.run "t" "\\section{incomprehensibility}").1)
@@ -4522,7 +4524,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
         p.lines.any (·.size == Dim.pt 14)
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '•')
+          | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '•')
           | .gap _ | .rule .. | .image .. => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
@@ -4566,6 +4568,150 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       measureChecks ref oneFace
       imageChecks ref oneFace
 
+/-- M6's first slice, pinned end to end: the MATH constants read from the
+shipped face, the box-is-box widths in sp (a math box's advance is the sum
+of its atoms plus the spacing the table gives — recomputed here from the
+font's own advances, sharing nothing with the layout walk), script sizes
+and shifts from the constants, Bin degradation, script-style spacing
+suppression, the italic/upright convention, and that nothing is silently
+dropped: a glyph the math face lacks earns W0004 naming it, a document with
+no math face earns one W0003 and its formulas set as source text, and every
+out-of-scope construct earns a W0010 naming it while its source survives. -/
+def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let load (name : String) : IO Font.Font := do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"math: {name} unparsable: {e}")
+  let serif ← load "SourceSerifPro-Regular.otf"
+  let fira ← load "FiraMath-Regular.otf"
+  -- The MATH table parses to the face's own constants (read independently
+  -- with a struct-unpacking script against the OpenType spec offsets).
+  t "text faces carry no MATH table" serif.math.isNone
+  t "fira math constants" (fira.math == some {
+    scales := { script := 72, scriptscript := 58 }
+    axisHeight := 280
+    subscriptShiftDown := 350
+    superscriptShiftUp := 400
+    superscriptShiftUpCramped := 270
+    spaceAfterScript := 41 })
+  let allSlots : Array ((Nat × Bool × Bool) × Nat) :=
+    ((List.range 3).flatMap fun slot =>
+      [((slot, false, false), 0), ((slot, true, false), 0),
+       ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
+  let mfs : Font.FontSet := {
+    fonts := #[serif, fira]
+    index := allSlots
+    math := some 1 }
+  let geom : Layout.Geom := {}
+  let base := geom.fontSize
+  let upem : Int := fira.unitsPerEm
+  let adv (size : Dim.Sp) (c : Char) : Dim.Sp := (fira.advance c : Int) * size / upem
+  let mu (size : Dim.Sp) (n : Int) : Dim.Sp := size * n / 18
+  let konst (size : Dim.Sp) (v : Int) : Dim.Sp := v * size / upem
+  let scriptSize := base * 72 / 100
+  let ssSize := base * 58 / 100
+  let lineOf (src : String) : Layout.LineOut :=
+    let (d, _) := Elab.run "t" src
+    (((Layout.run geom mfs none d).pages.flatMap (·.lines))[0]?).getD default
+  let widthOf (src : String) : Dim.Sp := (lineOf src).setWidth
+  -- A box is a box: the advance equals the sum of what it contains plus
+  -- the spacing the table gives, in sp, recomputed from the font alone.
+  t "box is a box: a+b is two medium spaces"
+    (widthOf "$a+b$" ==
+      adv base '𝑎' + mu base 4 + adv base '+' + mu base 4 + adv base '𝑏')
+  t "leading minus is a sign, not an operation"
+    (widthOf "$-x$" == adv base '−' + adv base '𝑥')
+  t "relation earns thick space"
+    (widthOf "$a=b$" ==
+      adv base '𝑎' + mu base 5 + adv base '=' + mu base 5 + adv base '𝑏')
+  t "superscript: script size, spaceAfterScript, shifted by the constant"
+    (widthOf "$x^2$" ==
+      adv base '𝑥' + adv scriptSize '2' + konst base 41)
+  let supRuns (src : String) : Array (Dim.Sp × Dim.Sp) :=
+    (lineOf src).segs.filterMap fun s => match s with
+      | .run _ _ _ _ glyphs sz _ raise =>
+        if raise != 0 && !glyphs.isEmpty then some (sz, raise) else none
+      | _ => none
+  t "superscript raise is superscriptShiftUp at the base size"
+    (supRuns "$x^2$" == #[(scriptSize, konst base 400)])
+  t "subscript drop is subscriptShiftDown"
+    (supRuns "$x_i$" == #[(scriptSize, -konst base 350)])
+  -- Nested scripts: scriptscript size, shifts accumulating, the inner one
+  -- scaled at its own base (the script size), cramped nowhere here.
+  t "nested superscript reaches scriptscript and stacks its shifts"
+    (supRuns "$x^{y^z}$" ==
+      #[(scriptSize, konst base 400),
+        (ssSize, konst base 400 + konst scriptSize 400)])
+  -- Script styles suppress the conditional spacing: the + inside the
+  -- superscript gets no medium space.
+  t "no medium space inside a script"
+    (widthOf "$x^{a+b}$" ==
+      adv base '𝑥' + adv scriptSize '𝑎' + adv scriptSize '+' +
+        adv scriptSize '𝑏' + konst base 41)
+  -- Both scripts stack at one position: the atom advances by the wider.
+  t "sup and sub stack, advancing by the wider"
+    (widthOf "$x^a_b$" ==
+      adv base '𝑥' + max (adv scriptSize '𝑎') (adv scriptSize '𝑏') + konst base 41)
+  -- Variables italic, digits and function names upright (ISO 80000-2 §7,
+  -- TeXbook ch. 18): x maps to U+1D465, sin and 2 stay ASCII.
+  let glyphChars (src : String) : Array Char :=
+    (lineOf src).segs.flatMap fun s => match s with
+      | .run _ _ _ _ glyphs _ _ _ => glyphs.map (·.2)
+      | _ => #[]
+  t "variables italic, functions and digits upright"
+    (glyphChars "$\\sin 2x$" == #['s', 'i', 'n', '2', '𝑥'])
+  t "sin binds with a thin space"
+    (widthOf "$\\sin x$" ==
+      adv base 's' + adv base 'i' + adv base 'n' + mu base 3 + adv base '𝑥')
+  -- Nothing is silently dropped: a scalar the math face lacks warns,
+  -- naming the face.
+  let bDoc : Ir.Doc := { body := #[.para #[.formula false "₿"
+    (.cons (.atom .ord (.sym '₿') .nil .nil) .nil)]] }
+  t "a glyph the math face lacks warns W0004 naming it"
+    (((Layout.run geom mfs none bDoc).diags.filter (·.code == "W0004")).map (·.message)
+      == #["'Fira Math' has no glyph for '₿' (U+20BF); dropped"])
+  -- No math face: one W0003 for the document, formulas set as their source.
+  let bare : Font.FontSet := { fonts := #[serif], index := allSlots }
+  let (nd, _) := Elab.run "t" "$x^2$ and $y$"
+  let nOut := Layout.run geom bare none nd
+  t "no math face warns W0003 once" ((nOut.diags.filter (·.code == "W0003")).size == 1)
+  t "no math face sets the source text"
+    ((nOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
+      | .run 0 _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '^')
+      | _ => false)
+  -- Elaboration shapes: display math is its own centred block; \(..\) is
+  -- inline; equation* renders; align and \frac stay warned source.
+  let (dd, dds) := Elab.run "t" "a \\[x\\] b"
+  t "display math splits its paragraph into a centred block"
+    (dds.isEmpty && dd.body ==
+      #[.para #[.text "a"],
+        .center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil) .nil)]],
+        .para #[.text "b"]])
+  t "paren math is inline math"
+    ((Elab.run "t" "\\(y\\)").1.body ==
+      #[.para #[.formula false "y" (.cons (.atom .ord (.sym '𝑦') .nil .nil) .nil)]])
+  t "equation* is display math"
+    ((Elab.run "t" "\\begin{equation*}x\\end{equation*}").1.body ==
+      #[.center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil) .nil)]]])
+  t "align keeps its source and warns by name"
+    (warnCodes "\\begin{align}a &= b\\end{align}" == ["W0010"] &&
+      (Elab.run "t" "\\begin{align}a &= b\\end{align}").1.body ==
+        #[.para #[.math true "a &= b"]])
+  t "frac keeps its source and warns by name"
+    (warnCodes "$\\frac{a}{b}$" == ["W0010"] &&
+      ((Elab.run "t" "$\\frac{a}{b}$").1.body.any fun b => match b with
+        | .para xs => xs.any fun x => match x with
+          | .math false _ => true
+          | _ => false
+        | _ => false))
+  t "setmathfont fills the math slot"
+    ((Elab.run "t" ("\\documentclass{article}\\setmathfont{Fira Math}" ++
+      "\\begin{document}x\\end{document}")).1.fonts.math == some "Fira Math")
+  t "fonts math key fills the math slot"
+    ((Elab.run "t" ("\\documentclass{article}\\fonts{ math = \"Fira Math\" }" ++
+      "\\begin{document}x\\end{document}")).1.fonts.math == some "Fira Math")
+
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
@@ -4607,6 +4753,7 @@ def main (args : List String) : IO UInt32 := do
   themeChecks ref
   fontsDeclChecks ref
   fontSuiteChecks ref
+  mathChecks ref
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then

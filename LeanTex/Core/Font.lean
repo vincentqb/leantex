@@ -1,9 +1,48 @@
 import LeanTex.Core.Diag
 import LeanTex.Core.Ink
+import LeanTex.Core.Math
 
 namespace LeanTex.Core.Font
 
 open LeanTex.Core.Ink
+
+/-- The constants this slice reads from an OpenType `MATH` table's
+MathConstants (learn.microsoft.com/typography/opentype/spec/math), in font
+design units: the script scale percentages (sanitized, see
+`Math.ScriptScales.clamp`) and the script-attachment shifts. Per the spec,
+attachment constants are read from the font of the base and scale with the
+base's size. -/
+structure MathConsts where
+  scales : Math.ScriptScales
+  axisHeight : Int
+  subscriptShiftDown : Int
+  superscriptShiftUp : Int
+  superscriptShiftUpCramped : Int
+  spaceAfterScript : Int
+  deriving Repr, BEq, Inhabited
+
+/-- Parse the MathConstants this slice uses out of a `MATH` table, or
+`none` when the face has no readable table — the caller's diagnostic names
+the face; constants are never invented (PLAN, M6 design entry). Layout:
+header (version, three Offset16s), then MathConstants with two int16
+percentages, two UFWORDs, and MathValueRecords (FWORD value + device
+offset) from offset 8. -/
+private def parseMath (b : ByteArray) : Option MathConsts := do
+  let t ← findTable b "MATH"
+  unless fits b t do failure
+  unless t.length ≥ 10 do failure
+  let cOff := t.offset + u16 b (t.offset + 4)
+  -- through spaceAfterScript at offset 60: 64 bytes of constants
+  unless cOff + 64 ≤ b.size do failure
+  let value (rec : Nat) : Int := i16 b (cOff + rec)
+  return {
+    scales := Math.ScriptScales.clamp (value 0) (value 2)
+    axisHeight := value 12
+    subscriptShiftDown := value 24
+    superscriptShiftUp := value 36
+    superscriptShiftUpCramped := value 40
+    spaceAfterScript := value 60
+  }
 
 /-- A parsed sfnt font: the metrics the layout engine needs, the char→glyph
 map, and the raw bytes for embedding. Pure data; loading the file is the
@@ -41,6 +80,9 @@ structure Font where
   or truncated outline data obstructs its whole advance, never panics and
   never leaves a rule through ink it could not read. -/
   underlineInk : Array (Thunk (Array (Int × Int)))
+  /-- OpenType MATH constants, when the face carries the table: what makes
+  a face usable as a document's math font. -/
+  math : Option MathConsts
   deriving Inhabited
 
 private def parseCmap4 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × UInt32) := Id.run do
@@ -313,6 +355,7 @@ def parse (data : ByteArray) : Except String Font := do
     underlinePosition := upos
     underlineThickness := uthick
     underlineInk := underlineInk
+    math := parseMath data
   }
 
 /-- Glyph id for a scalar in sorted cmap ranges, or `none`. Binary search. -/
@@ -377,6 +420,9 @@ structure FontSet where
   only on a missing glyph, so a document whose faces cover their text is
   untouched by construction. -/
   fallback : Array (Char × Nat) := #[]
+  /-- Index of the document's math face: declared, resolved, and carrying a
+  MATH table. `none` sets math as source text with the W0003 warning. -/
+  math : Option Nat := none
   deriving Inhabited
 
 namespace FontSet
@@ -384,6 +430,13 @@ namespace FontSet
 def body (fs : FontSet) : Font := fs.fonts[0]!
 
 def get (fs : FontSet) (i : Nat) : Font := fs.fonts[i]?.getD fs.body
+
+/-- The math face and its constants, when the document has a usable one. -/
+def mathFont? (fs : FontSet) : Option (Nat × Font × MathConsts) := do
+  let i ← fs.math
+  let f ← fs.fonts[i]?
+  let c ← f.math
+  pure (i, f, c)
 
 /-- Slot 0 = body/serif, 1 = sans, 2 = mono. -/
 def lookup (fs : FontSet) (slot : Nat) (bold italic : Bool) : Nat :=

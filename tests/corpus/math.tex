@@ -1,0 +1,25 @@
+% Synthetic math fixture: every formula invented. Ships its own faces so the
+% checkout renders as a function of the checkout.
+\documentclass{article}
+\fonts{ dir = "fonts", body = "Source Serif Pro", math = "Fira Math" }
+
+\begin{document}
+
+\section{Formulas}
+
+Inline math sits inside its sentence: the map $f(x) = -x^2 + 3$ keeps its
+leading sign tight against the variable, a function name stays upright as
+in $\sin x \approx x - x^3$, scripts nest to the scriptscript floor in
+$x^{y^z}$, and a pair stacks in $a_i^2 + b^{n}_{m}$. The paren form
+\(2\pi r\) is the same inline math.
+
+\[ \sum_i \alpha_i x^i \le \Gamma(n) \cdot \prod_j \beta_j \]
+
+The paragraph continues after the display. What this slice does not model
+keeps its source and a warning that names it: $\sqrt{x + 1}$ stays text.
+
+\begin{equation*}
+  e^{i\pi} + 1 = 0
+\end{equation*}
+
+\end{document}

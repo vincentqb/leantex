@@ -379,6 +379,14 @@ height: auto"
     acc.push (Html.elem tag #[Html.text src]
       #[("class", if display then "math math-display" else "math"),
         ("data-tex", src)])
+  | .formula display src _ =>
+    -- The HTML backend is unchanged by the M6 PDF slice: an elaborated
+    -- formula still ships its source for the `--math-boundary` renderer.
+    -- Native MathML from the parsed atoms is what M6 still owes here.
+    let tag := if display then "div" else "span"
+    acc.push (Html.elem tag #[Html.text src]
+      #[("class", if display then "math math-display" else "math"),
+        ("data-tex", src)])
   | .styled st body =>
     let kids := inlineNodesInto cfg #[] body.toList
     match st with

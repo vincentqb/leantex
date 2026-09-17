@@ -251,7 +251,7 @@ private def usesInline (cx : UseCx) (out : Array Use) : Inline → Array Use
         out.push { name := nm, color := c, large := cx.large }
       else out
     | none => out
-  | .math _ _ | .pageNumber | .pageCount =>
+  | .math _ _ | .formula _ _ _ | .pageNumber | .pageCount =>
     match cx.cur with
     | some (nm, c) => out.push { name := nm, color := c, large := cx.large }
     | none => out

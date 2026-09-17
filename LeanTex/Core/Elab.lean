@@ -1,5 +1,6 @@
 import LeanTex.Core.Lex
 import LeanTex.Core.Parse
+import LeanTex.Core.MathParse
 import LeanTex.Core.Ir
 import LeanTex.Core.Dim
 import LeanTex.Core.Decl
@@ -113,6 +114,19 @@ private def warnOnce (ctx : Ctx) (key code msg : String) (pos : Pos)
     modify fun st => { st with warnedUnknown := st.warnedUnknown.push key }
     diag ctx code msg (some pos) help .warning
 
+/-- One formula: parsed into math atoms when this slice can model it, kept
+as source text with a warning naming the construct when it cannot — out of
+scope is a named warning, never a silent drop. -/
+private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
+    (pos : Pos) : EM Ir.Inline := do
+  match MathParse.parseMath body with
+  | .ok l => return .formula display (Parse.rawSrc body) l
+  | .error what =>
+    warnOnce ctx ("math:" ++ what) "W0010"
+      s!"math with {what} is not rendered yet; the formula is set as source text" pos
+      (help := "the rest of M6; see PLAN.md")
+    return .math display (Parse.rawSrc body)
+
 def reservedCtrl : List (String × String) :=
   [("vspace", "M3"), ("noindent", "M3"),
    ("fontfallback", "M8"), ("figure", "M8")]
@@ -132,7 +146,7 @@ def pageKeys : List String :=
 
 def metaKeys : List String := ["title", "author", "subject", "keywords"]
 
-def fontKeys : List String := ["body", "sans", "mono", "rm", "sf", "tt", "dir"]
+def fontKeys : List String := ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir"]
 
 /-- Named page sizes, in sp. -/
 def pageSizes : List (String × (Sp × Sp)) :=
@@ -144,11 +158,17 @@ def pageSizes : List (String × (Sp × Sp)) :=
 def reservedEnv : List (String × String) :=
   [("external", "M8"), ("tikzpicture", "M8")]
 
-/-- Math environments: their body is math source, carried whole. The engine
-emits math as source until M6, and elaborating `&` and `\\` as text would
-shred exactly the alignment the author wrote. -/
+/-- Math environments whose body is carried whole as math source: the
+alignment forms M6 still owes. Elaborating their `&` and `\\` as text would
+shred exactly the alignment the author wrote. `equation*` and
+`displaymath` are not here — they are `\[...\]` under another name and
+elaborate to formulas. -/
 def mathEnvs : List String :=
-  ["align", "align*", "equation", "equation*", "gather", "gather*", "displaymath"]
+  ["align", "align*", "equation", "gather", "gather*"]
+
+/-- The display-math environments this slice renders. -/
+def displayMathEnvs : List String :=
+  ["equation*", "displaymath"]
 
 /-- Title-page declarations, storable from the preamble or the body. -/
 def titleCtrls : List String :=
@@ -619,10 +639,10 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
         else
           diag ctx "E0311" s!"reserved character '{c}'" pos (help := s!"escape it as '\\{c}'")
         i := i + 1
-      | .math d body _ =>
+      | .math d body mpos =>
         acc := flushText acc sb
         sb := ""
-        acc := acc.push (.math d (rawSrc body))
+        acc := acc.push (← elabMathInline ctx d body mpos)
         i := i + 1
       | .group body _ =>
         acc := flushText acc sb
@@ -635,10 +655,18 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           acc := flushText acc sb
           sb := ""
           acc := acc ++ (← elabInlines { ctx with file := f } body)
+        else if displayMathEnvs.contains name then
+          i := i + 1
+          acc := flushText acc sb
+          sb := ""
+          acc := acc.push (← elabMathInline ctx true body pos)
         else if mathEnvs.contains name then
           i := i + 1
           acc := flushText acc sb
           sb := ""
+          warnOnce ctx ("math:env:" ++ name) "W0010"
+            s!"'\{{name}}' is not rendered yet; its math is set as source text" pos
+            (help := "the rest of M6; see PLAN.md")
           acc := acc.push (.math true (rawSrc body))
         else if let some (k, env) := lookupUserEnv ctx name then
           -- A defined wrapper: its parameters bind from the groups after
@@ -1102,10 +1130,11 @@ def bodyIsBlockOne : Raw → Bool
       || ["section", "subsection", "subsubsection"].contains n
   | .par _ => true
   | .verb _ _ => true
+  | .math display _ _ => display
   | .env n body _ =>
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
     else
-      blockEnvs.contains n || mathEnvs.contains n
+      blockEnvs.contains n || mathEnvs.contains n || displayMathEnvs.contains n
         || n == "tabular" || n == "tabular*"
         || (reservedEnv.lookup n).isSome || bodyIsBlockList body.toList
   | .group body _ => bodyIsBlockList body.toList
@@ -1335,6 +1364,10 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .ctrl "centering" _ => true
         | .ctrl "pause" _ => true
         | .ctrl "framefoot" _ => true
+        -- Display math is its own centred block, as LaTeX sets a display:
+        -- the paragraph splits around it. Inline `$...$` stays in its
+        -- sentence.
+        | .math display _ _ => display
         -- A note opening a paragraph is its own block; one met mid-sentence
         -- flows on inline, where it stashes for the enclosing frame instead
         -- of splitting the paragraph.
@@ -1364,7 +1397,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           -- sentence.
           if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
           else
-            blockEnvs.contains n || mathEnvs.contains n
+            blockEnvs.contains n || mathEnvs.contains n || displayMathEnvs.contains n
               || n == "tabular" || n == "tabular*"
               || (reservedEnv.lookup n).isSome
               || (match lookupUserEnv ctx n with
@@ -1391,6 +1424,12 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           i := i + 1
         | .ctrl "par" _ =>
           i := i + 1
+        | .math _ body mpos =>
+          -- A display formula: one centred block of its own, so it
+          -- participates in the block machinery like any other line.
+          i := i + 1
+          let inl ← elabMathInline ctx true body mpos
+          blocks := blocks.push (.center #[.para #[inl]])
         | .ctrl "centering" _ =>
           -- The declaration form of \begin{center}: the rest of this scope
           -- centres. Text flushed just above stays uncentred — LaTeX would
@@ -1622,7 +1661,13 @@ specs are not modelled")
             -- An \input file's blocks, elaborated under its own name so a
             -- diagnostic points at the file that holds the construct.
             blocks := blocks ++ (← elabBlocks { ctx with file := f } body)
+          else if displayMathEnvs.contains n then
+            let inl ← elabMathInline ctx true body pos
+            blocks := blocks.push (.center #[.para #[inl]])
           else if mathEnvs.contains n then
+            warnOnce ctx ("math:env:" ++ n) "W0010"
+              s!"'\{{n}}' is not rendered yet; its math is set as source text" pos
+              (help := "the rest of M6; see PLAN.md")
             blocks := blocks.push (.para #[.math true (rawSrc body)])
           else if n == "tabular" || n == "tabular*" then
             -- Rows survive as lines, cells as fixed-space-separated content:
@@ -2078,6 +2123,7 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
     | "sf", .str f => spec := { spec with sans := some f }
     | "mono", .str f => spec := { spec with mono := some f }
     | "tt", .str f => spec := { spec with mono := some f }
+    | "math", .str f => spec := { spec with math := some f }
     | "dir", .str d =>
       spec := if spec.dirs.contains d then spec else { spec with dirs := spec.dirs.push d }
     | key, v =>
