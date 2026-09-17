@@ -2441,6 +2441,10 @@ private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : Font
       -- A centred picture: its box centres in the measure, as the lines of
       -- a centred paragraph do.
       | .picture pic => collectPicture a pic indent true
+      -- A table under \centering (or in a float's centred body) centres
+      -- as one box in the measure; its cells keep their own alignment.
+      | .table cols pl pr rows rules =>
+        collectTable a pats fs cols pl pr rows rules indent true
       | _ => collectBlock a pats fs blk indent
     collectCentered (if rest.isEmpty then a else a.wantGap) pats fs rest indent
 

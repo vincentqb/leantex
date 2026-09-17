@@ -667,6 +667,24 @@ the full measure",
                 s!"'{c}\{...}' vertical cell alignment is not modelled; set \
 as 'p'", "")
             cols := cols.push { width := width, align := .left }
+          | '@' =>
+            -- `@{...}` lexes as a word character with the group beside it:
+            -- the empty `@{}` deletes the outer pad on its edge.
+            if cols.isEmpty then padL := false else padR := false
+            if ci == last then
+              if let some (.group g _) := spec[i + 1]? then
+                tookGroup := true
+                unless g.all isSpaceOrPar do
+                  warns := warns.push ("atgroup",
+                    "'@{...}' with content between columns is not supported; \
+only the empty '@{}' deleting an outer pad is",
+                    "")
+          | '|' =>
+            warns := warns.push ("vrule",
+              "'|' asks for a vertical rule; formal tables never draw one \
+(booktabs), so it is not drawn",
+              "widen the column gap instead: vertical rules mark a gap that \
+is too small")
           | _ =>
             if !c.isWhitespace then
               warns := warns.push ("colspec",
@@ -1953,23 +1971,15 @@ from the design tokens" rpos
                       rules := rules.push (rows.size,
                         .gap { width := Ir.defaultAddSpace })
                     | _ =>
-                      -- `\cmidrule(lr){a-b}`, `\cline{a-b}`
+                      -- `\cmidrule(lr){a-b}`, `\cline{a-b}`: the trim spec
+                      -- lexes as one word, "(lr)"
                       let mut trimL := false
                       let mut trimR := false
-                      if let some (.sym '(' _) := body[j]? then
-                        let mut t := j + 1
-                        for _ in [j:body.size] do
-                          match body[t]? with
-                          | some (.sym ')' _) =>
-                            t := t + 1
-                            break
-                          | some (.word w _) =>
-                            trimL := trimL || w.contains 'l'
-                            trimR := trimR || w.contains 'r'
-                            t := t + 1
-                          | some _ => t := t + 1
-                          | none => break
-                        j := t
+                      if let some (.word w _) := body[j]? then
+                        if w.startsWith "(" then
+                          trimL := w.contains 'l'
+                          trimR := w.contains 'r'
+                          j := j + 1
                       match body[skipSpaces body j]? with
                       | some (.group g _) =>
                         j := skipSpaces body j + 1
@@ -2005,10 +2015,7 @@ from the design tokens" rpos
               warnOnce ctx "tabular:ragged" .W0337
                 "a row carries fewer cells than the column spec; it is \
 padded with empty cells" pos
-            rows := rows.map fun r =>
-              if r.size < cols.size then
-                r ++ (Array.range (cols.size - r.size)).map (fun _ => #[])
-              else r
+            rows := Ir.padTableRows rows cols.size
             blocks := blocks.push (.table cols padL padR rows rules)
           else if n == "frame" then
             -- \begin{frame}[options]{title}: options are ignored with a

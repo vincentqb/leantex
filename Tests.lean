@@ -53,7 +53,7 @@ def goldenNames : List String :=
    "marker-styled", "marker-content",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav",
-   "diagram", "diagram-overflow"]
+   "diagram", "diagram-overflow", "tables", "tables-ragged"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -3793,6 +3793,30 @@ def censusTable :
     ("one page", c.size == 1),
     ("the band ships as a fill", (c[0]?.map (·.fills == 1)).getD false),
     ("its label ships", hasStr (censusText c) "wide band")]),
+  ("tables", fun geom c => [
+    ("one page", c.size == 1),
+    ("the header row ships", hasStr (censusText c) "Construct"
+      && hasStr (censusText c) "Meaning"),
+    ("every body cell ships", hasStr (censusText c) "invented row"
+      && hasStr (censusText c) "alpha" && hasStr (censusText c) "beta"),
+    ("both table captions ship",
+      hasStr (censusText c) "A booktabs table with declared spacing."
+        && hasStr (censusText c) "The caption above: the table convention."),
+    ("the figure caption ships",
+      hasStr (censusText c) "A figure’s caption, bound below what it captions."),
+    -- top + mid + bottom, then top + cmid + bottom: six drawn rules.
+    ("the booktabs rules draw", ((c[0]?.map (·.rules)).getD 0) == 6),
+    ("cells sit in their declared columns: the second column right of the first",
+      ((lineXOf c 0 "Construct").bind fun a =>
+        (lineXOf c 0 "Meaning").map fun b => decide (a < b)).getD false),
+    ("the floated table centres: its first cell sits past the margin",
+      (lineXOf c 0 "invented row").any fun x => decide (x > geom.hmargin))]),
+  ("tables-ragged", fun _ c => [
+    ("one page", c.size == 1),
+    ("every declared cell ships, the ragged row's included",
+      hasStr (censusText c) "alpha" && hasStr (censusText c) "gamma"
+        && hasStr (censusText c) "delta" && hasStr (censusText c) "epsilon"),
+    ("the rules draw", ((c[0]?.map (·.rules)).getD 0) == 2)]),
   ("math", fun _ c => [
     ("one page", c.size == 1),
     ("prose around the display ships",
@@ -4512,6 +4536,59 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
       unless g == out do
         failures ref s!"diag voice: golden mismatch, {firstDiff g out} \
 (if intended, run: lake exe Tests --update)"
+
+/-- Tables and floats: the too-wide diagnostic, the caption's source side,
+and the rule extents on the shipped page — a rule claim is judged from
+`Layout.Out`, never the IR dump. Its own function: `main`'s do block has no
+elaboration budget left. -/
+def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let wrap (tab : String) : String :=
+    "\\documentclass{article}\n\\begin{document}\n" ++ tab ++ "\n\\end{document}"
+  let layoutDiags (src : String) : Array Diag :=
+    let doc := (elabStr src).1
+    (Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc).diags
+  t "a table wider than the measure is named, in points"
+    ((layoutDiags (wrap "\\begin{tabular}{p{0.8\\linewidth}p{0.8\\linewidth}}a & b \\\\\\end{tabular}")).any
+      (·.code == "W0338"))
+  t "a fitting table is not named"
+    (!(layoutDiags (wrap "\\begin{tabular}{ll}a & b \\\\\\end{tabular}")).any
+      (·.code == "W0338"))
+  t "a caption written above its table stands above"
+    (match (elabStr (wrap "\\begin{table}\\caption{Above}\\begin{tabular}{l}a\\\\\\end{tabular}\\end{table}")).1.body with
+     | #[.float .table true _ cap] => Ir.plainText cap == "Above"
+     | _ => false)
+  t "a caption written below its table stands below"
+    (match (elabStr (wrap "\\begin{table}\\begin{tabular}{l}a\\\\\\end{tabular}\\caption{Below}\\end{table}")).1.body with
+     | #[.float .table false _ cap] => Ir.plainText cap == "Below"
+     | _ => false)
+  -- Rules span exactly their columns, judged on the page: the full rules
+  -- share one left edge and one width; the trimmed \cmidrule lies strictly
+  -- inside them. An executable check, not a theorem — the extents live in
+  -- `collectTable`'s local arithmetic.
+  let doc := (elabStr (wrap ("\\begin{tabular}{ll}\\toprule\na & b \\\\ \\cmidrule(lr){2-2}\nc & d \\\\ \\bottomrule\\end{tabular}"))).1
+  let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+  let ruleSegs : Array (Dim.Sp × Dim.Sp) := Id.run do
+    let mut acc : Array (Dim.Sp × Dim.Sp) := #[]
+    for p in out.pages do
+      for l in p.lines do
+        let mut x := l.x
+        for s in l.segs do
+          match s with
+          | .rule w _ _ _ =>
+            acc := acc.push (x, w)
+            x := x + w
+          | .gap g => x := x + g
+          | .run _ _ _ w _ _ _ _ => x := x + w
+          | .image _ w _ => x := x + w
+    return acc
+  t "the three rules ship" (ruleSegs.size == 3)
+  t "toprule and bottomrule span the same extent"
+    ((ruleSegs[0]?).isSome && ruleSegs[0]? == ruleSegs[2]?)
+  t "the trimmed cmidrule lies strictly inside the full rules"
+    (match ruleSegs[0]?, ruleSegs[1]? with
+     | some (fx, fw), some (cx, cw) => decide (fx < cx && cx + cw < fx + fw)
+     | _, _ => false)
 
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
@@ -6749,6 +6826,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       inkGeometryChecks ref
       spacingChecks ref geom oneFace font
       slideChecks ref oneFace
+      tableChecks ref oneFace
       vdistChecks ref geom oneFace
       headBandChecks ref oneFace
       cardChecks ref oneFace pats

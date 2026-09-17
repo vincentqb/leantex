@@ -1,0 +1,22 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+para
+  text "A ragged row is padded to the grid, and the diagnostic names it rather than letting the grid drift."
+table l,l,l
+  rule 0 top
+  rule 2 bottom
+  row
+    cell
+      text "alpha"
+    cell
+      text "beta"
+    cell
+      text "gamma"
+  row
+    cell
+      text "delta"
+    cell
+      text "epsilon"
+    cell
+-- diagnostics
+warning[W0337] 11:1 a row carries fewer cells than the column spec; it is padded with empty cells

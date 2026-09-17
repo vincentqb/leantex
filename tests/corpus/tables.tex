@@ -1,0 +1,56 @@
+% Synthetic tables fixture — invented text, nothing from any private
+% document. Exercises the booktabs default: three rule weights with their
+% declared padding, p-column widths as fractions of the measure, `@{}`
+% killing the outer pads, a caption below (figure convention) and above
+% (table convention), `\cmidrule` with trimming, `\addlinespace`, and a
+% figure float whose caption binds to its body.
+\documentclass{article}
+\fonts{ dir = "fonts", body = "Source Serif Pro", math = "Fira Math" }
+
+\pdfmeta{ title = "Formal Tables" }
+
+\begin{document}
+
+\section{Formal tables}
+
+A table between paragraphs takes booktabs' shape: a heavier rule above and
+below, a lighter one under the head, padding that belongs to the rules, and
+never a vertical line.
+
+\begin{table}
+\centering
+\begin{tabular}{@{}p{0.29\linewidth}p{0.55\linewidth}p{0.06\linewidth}@{}}
+  \toprule
+  \textbf{Construct} & \textbf{Meaning} & \textbf{Ok} \\
+  \midrule
+  invented row & \texttt{alpha} & yes \\
+  $x \leq y$ & \texttt{beta} & yes \\
+  \bottomrule
+\end{tabular}
+\caption{A booktabs table with \textbf{declared} spacing.}
+\end{table}
+
+\begin{table}
+\caption{The caption above: the table convention.}
+\centering
+\begin{tabular}{lcr}
+  \toprule
+  left & centre & right \\
+  \cmidrule(lr){1-2}
+  a & b & c \\
+  \addlinespace
+  d & e & f \\
+  \bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}
+\centering
+A placeholder figure body, one centred paragraph standing in for an image.
+\caption{A figure's caption, bound below what it captions.}
+\end{figure}
+
+A closing paragraph, so the last float's separation from following text is
+on the page too.
+
+\end{document}

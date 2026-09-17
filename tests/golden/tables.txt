@@ -1,0 +1,84 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+meta title "Formal Tables"
+section 1
+  text "Formal tables"
+para
+  text "A table between paragraphs takes booktabs’ shape: a heavier rule above and below, a lighter one under the head, padding that belongs to the rules, and never a vertical line."
+float table
+  caption
+    text "A booktabs table with "
+    styled bold
+      text "declared"
+    text " spacing."
+  table @{}l:290/1000,l:550/1000,l:60/1000@{}
+    rule 0 top
+    rule 1 mid
+    rule 3 bottom
+    row
+      cell
+        styled bold
+          text "Construct"
+      cell
+        styled bold
+          text "Meaning"
+      cell
+        styled bold
+          text "Ok"
+    row
+      cell
+        text "invented row"
+      cell
+        styled mono
+          text "alpha"
+      cell
+        text "yes"
+    row
+      cell
+        formula inline "x \\leq y"
+          ord:𝑥 rel:≤ ord:𝑦
+      cell
+        styled mono
+          text "beta"
+      cell
+        text "yes"
+float table caption-above
+  caption
+    text "The caption above: the table convention."
+  table l,c,r
+    rule 0 top
+    rule 1 cmid 1-2(lr)
+    rule 2 gap 500/1000em
+    rule 3 bottom
+    row
+      cell
+        text "left"
+      cell
+        text "centre"
+      cell
+        text "right"
+    row
+      cell
+        text "a"
+      cell
+        text "b"
+      cell
+        text "c"
+    row
+      cell
+        text "d"
+      cell
+        text "e"
+      cell
+        text "f"
+float figure
+  caption
+    text "A figure’s caption, bound below what it captions."
+  para
+    text "A placeholder figure body, one centred paragraph standing in for an image."
+para
+  text "A closing paragraph, so the last float’s separation from following text is on the page too."
+-- diagnostics
+(none)

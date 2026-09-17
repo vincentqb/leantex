@@ -721,6 +721,38 @@ inductive FloatKind where
   | table
   deriving Repr, BEq, Inhabited
 
+/-- Pad each table row to `n` cells with empty cells, the door elaboration
+takes to the rectangularity `.table` declares. The same statement shape as
+the alignment grid's `MRows.pad_rectangular` (one property, two
+consumers), restated here because a table's cell is `Array Inline`, not a
+math list. -/
+def padTableRows (rows : Array (Array (Array Inline))) (n : Nat) :
+    Array (Array (Array Inline)) :=
+  rows.map fun r => r ++ Array.replicate (n - r.size) #[]
+
+/-- Padding conserves content exactly: each padded row is the original's
+cells followed by empties — nothing dropped, nothing reordered. -/
+theorem padTableRows_cells (rows : Array (Array (Array Inline))) (n i : Nat)
+    (h : i < rows.size) :
+    (padTableRows rows n)[i]'(by simpa [padTableRows] using h)
+      = rows[i] ++ Array.replicate (n - rows[i].size) #[] := by
+  simp [padTableRows]
+
+/-- A padded grid is rectangular: every row of `padTableRows rows n` has
+exactly `n` cells when none had more — the invariant every walk over
+`.table` trusts (`cols.size` is every row's size), sourced from the same
+need as the alignment grid's: a column's alignment point is one x for
+every row. -/
+theorem padTableRows_rectangular (rows : Array (Array (Array Inline))) (n : Nat)
+    (h : ∀ r ∈ rows, r.size ≤ n) :
+    ∀ r ∈ padTableRows rows n, r.size = n := by
+  intro r hr
+  rw [padTableRows, Array.mem_map] at hr
+  obtain ⟨r0, hmem, rfl⟩ := hr
+  have hle := h r0 hmem
+  simp [Array.size_append]
+  omega
+
 inductive Block where
   | para (content : Array Inline)
   | section (level : Nat) (starred : Bool) (title : Array Inline)

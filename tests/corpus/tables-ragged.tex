@@ -1,0 +1,18 @@
+% Synthetic fixture — invented text. A ragged row: the second content row
+% declares two cells against a three-column spec, so elaboration pads it to
+% the grid and W0337 names it. The table still ships every declared cell.
+\documentclass{article}
+
+\begin{document}
+
+A ragged row is padded to the grid, and the diagnostic names it rather
+than letting the grid drift.
+
+\begin{tabular}{lll}
+  \toprule
+  alpha & beta & gamma \\
+  delta & epsilon \\
+  \bottomrule
+\end{tabular}
+
+\end{document}
