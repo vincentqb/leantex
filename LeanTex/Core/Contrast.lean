@@ -136,7 +136,7 @@ def dark : ThemeColors := {
 
 -- `decide` below walks the 256-entry table; that needs more elaborator
 -- stack than the default allows. The limit raised is depth, not trust.
-set_option maxRecDepth 4096
+set_option maxRecDepth 8192
 
 /-- No shipped light bundle regresses into an illegible pair. -/
 theorem light_contract : light.contractHolds = true := by decide
@@ -386,29 +386,65 @@ theorem moloch_contract : paletteContract Theme.moloch.palette = true := by deci
 
 theorem plain_contract : paletteContract Theme.plain.palette = true := by decide
 
-/-- Covered reads as covered on the design's own page. Quieter than the
-body ink (a lower contrast against `bg` than `fg` has — SC 1.4.3 exempts
-inactive text, so no minimum binds it), yet the dimming itself must be
-seen: the ink and its cover differ by at least 3:1, the ratio SC 1.4.11
-asks of visual information that identifies a state. The two together are
-what "visibly covered" means, judged from the resolved design's own
-cover — `Design.cover`, the one resolving site — not an eyeball. -/
-def coveredContract (d : Design) : Bool :=
-  contrastMilli d.cover.plain d.bg < contrastMilli d.fg d.bg
-    && contrastMilli d.fg d.cover.plain ≥ aaLargeText
+/-- Covered reads as covered on the design's own page, per colour — the
+contract ranges over the cover of every colour the bundle puts on text
+(`fg`, `alert`, `example`), never over `fg` alone: one global fraction
+that works for the ink can fail a chromatic role (at 38% moloch's alert
+reaches only 2.89:1 against its active form), and a cover the reader
+cannot see is a covering defect wherever it happens. Each colour must be
+quieter than its active form against the page (SC 1.4.3 exempts inactive
+text, so no minimum binds the covered text itself), and each active/
+covered pair must differ by at least 3:1 — the ratio WCAG 2.2 SC 1.4.11
+asks of visual information that identifies a state. The plain cover
+(runs with no colour of their own) is held to the same two bounds
+against `fg`. Judged from `Design.cover`, the one resolving site. If a
+bundle needs a smaller fraction to close, that is a finding about the
+bundle — moloch's 31% — never a reason to weaken this contract. -/
+def coveredContract (pal : Palette) : Bool :=
+  let d := Design.ofDoc { palette := pal }
+  let cov := d.cover
+  let visiblyCovered (c : Color) : Bool :=
+    contrastMilli (cov.of c) d.bg < contrastMilli c d.bg
+      && contrastMilli c (cov.of c) ≥ aaNonText
+  visiblyCovered d.fg
+    && (match pal.find? "alert" with | some c => visiblyCovered c | none => true)
+    && (match pal.find? "example" with | some c => visiblyCovered c | none => true)
+    && contrastMilli cov.plain d.bg < contrastMilli d.fg d.bg
+    && contrastMilli d.fg cov.plain ≥ aaNonText
+
+/-- Covering twice quiets further: the cover of a covered colour reads
+quieter against the page than the cover itself, for every text role the
+bundle ships — the monotonicity that makes "more covered" mean what it
+says. The general integer statement needs luminance monotonicity through
+the whole pipeline (a refactor, tracked in PLAN, not claimed here); this
+is its per-bundle kernel check, with a property test over random colours
+in `Tests.lean` beside it. -/
+def coverMonotone (pal : Palette) : Bool :=
+  let d := Design.ofDoc { palette := pal }
+  let cov := d.cover
+  let quieter (c : Color) : Bool :=
+    contrastMilli (cov.of (cov.of c)) d.bg < contrastMilli (cov.of c) d.bg
+  quieter d.fg
+    && (match pal.find? "alert" with | some c => quieter c | none => true)
+    && (match pal.find? "example" with | some c => quieter c | none => true)
 
 /-- The default surface: black ink, white page, covered at
 `coveredFractionDefault` — 38% of the ink over the page, mixed in Oklab
 (the Material disabled-state opacity, applied as the opacity it is). -/
-theorem default_covered : coveredContract (Design.ofDoc {}) = true := by decide
+theorem default_covered : coveredContract {} = true := by decide
 
-theorem moloch_covered :
-    coveredContract (Design.ofDoc { palette := Theme.moloch.palette }) = true := by
-  decide
+/-- At the bundle's own 31%: at Material's 38% the alert and example
+reach only 2.89:1 and 2.75:1 against their active forms, so the fraction
+is the finding, not the contract. -/
+theorem moloch_covered : coveredContract Theme.moloch.palette = true := by decide
 
-theorem plain_covered :
-    coveredContract (Design.ofDoc { palette := Theme.plain.palette }) = true := by
-  decide
+theorem plain_covered : coveredContract Theme.plain.palette = true := by decide
+
+theorem default_cover_monotone : coverMonotone {} = true := by decide
+
+theorem moloch_cover_monotone : coverMonotone Theme.moloch.palette = true := by decide
+
+theorem plain_cover_monotone : coverMonotone Theme.plain.palette = true := by decide
 
 /-- Quantified over the shipped list itself, so a third bundle enters the
 contract by being added, not by someone remembering a theorem: every
@@ -420,12 +456,9 @@ theorem builtin_designs_legible :
                                      tokens := th.tokens
                                      styles := th.styles })) = true := by decide
 
-/-- The covered contract, quantified the same way: every built-in bundle's
-resolved design is visibly covered when dimmed. -/
+/-- The covered contract, quantified the same way: every built-in
+bundle's palette is visibly covered when dimmed, per colour. -/
 theorem builtin_designs_covered :
-    Theme.builtin.all (fun th =>
-      coveredContract (Design.ofDoc { palette := th.palette
-                                      tokens := th.tokens
-                                      styles := th.styles })) = true := by decide
+    Theme.builtin.all (fun th => coveredContract th.palette) = true := by decide
 
 end LeanTex.Core.Contrast

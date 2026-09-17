@@ -4785,6 +4785,31 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "illegible bundle names its ratio" (Contrast.ratioString
     (Contrast.contrastMilli Contrast.light.accent Contrast.dark.surface) == "2.64:1")
 
+  -- The covered contract fires on the finding it encodes: moloch at
+  -- Material's 38% leaves alert (2.89:1) and example (2.75:1) under the
+  -- 3:1 state change — the fraction is the bundle's, the bound is not.
+  t "covered contract rejects moloch at 38%"
+    (!Contrast.coveredContract
+      { Theme.moloch.palette with coveredFraction := some 38 })
+  -- Monotone quieting as a property over pseudo-random colours: covering
+  -- never raises contrast against the page, and covering a cover quiets
+  -- further (≤: equality is reachable at the page itself). The per-bundle
+  -- strict form is the coverMonotone kernel checks.
+  let quietingHolds := Id.run do
+    let cov := (Ir.Design.ofDoc {}).cover
+    let mut seed : Nat := 1
+    for _ in [0:400] do
+      seed := (seed * 1103515245 + 12345) % 2147483648
+      let c : Ir.Color := ⟨UInt8.ofNat (seed % 256), UInt8.ofNat ((seed / 256) % 256),
+        UInt8.ofNat ((seed / 65536) % 256)⟩
+      let c1 := cov.of c
+      let c2 := cov.of c1
+      if Contrast.contrastMilli c1 Ir.Color.white > Contrast.contrastMilli c Ir.Color.white
+          || Contrast.contrastMilli c2 Ir.Color.white > Contrast.contrastMilli c1 Ir.Color.white then
+        return false
+    return true
+  t "covering quiets monotonically over random colours" quietingHolds
+
   -- The stylesheet ships the proven token sets: the dark block overrides
   -- the accent (the light one reads 2.64:1 on the dark surface, under SC
   -- 1.4.11's 3:1), and both spellings come from the constants the
