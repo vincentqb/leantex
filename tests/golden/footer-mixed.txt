@@ -14,7 +14,7 @@ palette progressbg #CBC0B6
 palette separator #A55A13
 palette standoutfg #FAFAFA
 palette standoutbg #23373B
-palette covered #A8B0B1
+palette covered 31%
 token progressheight 1pt
 token separatorheight 0.5pt
 token subtitlegap 300/1000em
