@@ -1,0 +1,55 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 25.512 hmargin 28.346 fontsize 11
+font dir "fonts"
+font body "Open Sans"
+palette fg #23373B
+palette bg #FAFAFA
+palette alert #A55A13
+palette example #008080
+palette frametitlefg #FAFAFA
+palette frametitlebg #23373B
+palette progressfg #A55A13
+palette progressbg #CBC0B6
+palette separator #A55A13
+palette standoutfg #FAFAFA
+palette standoutbg #23373B
+token progressheight 1pt
+meta title "List Marks"
+meta author "Pat Placeholder"
+frame
+  center
+    para
+      styled size:LARGE
+        styled bold
+          text "List Marks"
+    para
+      text "Pat Placeholder"
+frame
+  title
+    text "Steps keep their marks"
+  list unordered
+    item
+      step 1
+        para
+          text "Alpha placeholder point"
+    item
+      step 2
+        para
+          text "Beta placeholder point"
+        list unordered
+          item
+            para
+              text "Nested under the stepped item"
+frame
+  title
+    text "Order on a slide"
+  list ordered
+    item
+      para
+        text "First placeholder"
+    item
+      para
+        text "Second placeholder"
+-- diagnostics
+note[N0100] 4:1 \documentclass{beamer} → \documentclass[aspectratio=169]{slides}
+note[N0100] 6:1 \usetheme → \theme{moloch}

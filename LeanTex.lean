@@ -3,6 +3,7 @@ import LeanTex.Core.Utf8
 import LeanTex.Core.Lex
 import LeanTex.Core.Parse
 import LeanTex.Core.Ir
+import LeanTex.Core.ListMark
 import LeanTex.Core.Theme
 import LeanTex.Core.Contrast
 import LeanTex.Core.Compat

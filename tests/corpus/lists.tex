@@ -1,0 +1,51 @@
+% Invented fixture: list marking end to end. Four itemize levels (bullet,
+% bold en dash, centered asterisk, centered dot), four enumerate levels
+% (1., (a), i., A.), a nested enumerate that resets and lets the enclosing
+% counter resume, and mixed nesting of the two kinds. Nothing here derives
+% from any private document.
+\documentclass{article}
+
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+
+\begin{document}
+
+Placeholder prose from example.org, standing before the lists.
+
+\begin{itemize}
+\item Outer point one
+  \begin{itemize}
+  \item Second level
+    \begin{itemize}
+    \item Third level
+      \begin{itemize}
+      \item Fourth level
+      \end{itemize}
+    \end{itemize}
+  \end{itemize}
+\item Outer point two
+\end{itemize}
+
+\begin{enumerate}
+\item First
+\item Second
+  \begin{enumerate}
+  \item Nested resets to one
+  \item Nested second
+    \begin{enumerate}
+    \item Third level
+      \begin{enumerate}
+      \item Fourth level
+      \end{enumerate}
+    \end{enumerate}
+  \end{enumerate}
+\item Third, the enclosing counter resumed
+\end{enumerate}
+
+\begin{itemize}
+\item An itemize item
+  \begin{enumerate}
+  \item with an ordered child at its own first level
+  \end{enumerate}
+\end{itemize}
+
+\end{document}

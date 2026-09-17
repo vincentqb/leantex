@@ -48,6 +48,7 @@ def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "notes", "furniture",
+   "lists", "lists-styled", "lists-deck",
    "trio-page", "trio-deck", "trio-card"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
@@ -238,6 +239,106 @@ def runGoldens (update : Bool) (fail : String → IO Unit) : IO Unit := do
       | some g =>
         unless g == out do
           fail s!"golden {n}: mismatch, {firstDiff g out} (if intended, run: lake exe Tests --update)"
+
+/-- List marking over the positioned page: enumerate shows its order per
+level and a nested list resets while the enclosing counter resumes; itemize
+marks depth, degrading to a stand-in only where no face covers the class
+glyph; an overlay-stepped item keeps its marker on every handout page (the
+slides bug); declared markers override per level and fall back to the base
+element; depth past four warns and still renders. Own function: `main`'s
+elaboration budget. -/
+def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (font : Font.Font) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let runOn (src : String) : Array Layout.LineOut × Array Diag :=
+    let (d, _) := Elab.run "t" src
+    let out := Layout.run geom oneFace none d
+    (out.pages.flatMap (·.lines), out.diags)
+  let markerOf (l : Layout.LineOut) : String :=
+    match l.segs[0]? with
+    | some (Layout.Seg.run _ _ _ _ glyphs _ _) => String.ofList (glyphs.toList.map (·.2))
+    | _ => ""
+  -- The numbering functions and their decoders (`\labelenum*`, classes.dtx).
+  t "enum labels match the class defaults"
+    (ListMark.enumLabel 1 1 == "1." && ListMark.enumLabel 2 1 == "(a)" &&
+     ListMark.enumLabel 3 4 == "iv." && ListMark.enumLabel 4 2 == "B." &&
+     ListMark.enumLabel 1 12 == "12." && ListMark.enumLabel 2 26 == "(z)")
+  t "alph past its range degrades to arabic, distinctly"
+    (ListMark.enumLabel 2 27 == "(27)")
+  -- Roman injectivity, the one level the theorems leave to a decoder check:
+  -- the round-trip over LaTeX's whole counter range implies it.
+  t "roman round-trips over the counter range"
+    ((List.range 32767).all fun k =>
+      ListMark.romanVal (ListMark.romanN (k + 1)).toList == k + 1)
+  -- Order is shown on the page.
+  let (enumLines, _) := runOn
+    "\\begin{enumerate}\\item alpha\\item beta\\item gamma\\end{enumerate}"
+  t "enumerate numbers its items in order"
+    (enumLines.map markerOf == #["1.", "2.", "3."])
+  -- Nesting resets, the enclosing counter resumes, the level styles differ.
+  let (nestLines, _) := runOn ("\\begin{enumerate}\\item one\\item two" ++
+    "\\begin{enumerate}\\item inner\\item inner too\\end{enumerate}" ++
+    "\\item three\\end{enumerate}")
+  t "nested enumerate resets and the outer resumes"
+    (nestLines.map markerOf == #["1.", "2.", "(a)", "(b)", "3."])
+  -- Depth is shown: four itemize levels, each marker nonempty, adjacent
+  -- levels distinct. Whether level 3 is the class asterisk or its stand-in
+  -- follows the face, which is what keeps this hermetic.
+  let (itemLines, _) := runOn ("\\begin{itemize}\\item a" ++
+    "\\begin{itemize}\\item b\\begin{itemize}\\item c" ++
+    "\\begin{itemize}\\item d\\end{itemize}\\end{itemize}\\end{itemize}\\end{itemize}")
+  let marks := itemLines.map markerOf
+  let lvl3 := if (font.gid '∗').isSome then "∗" else "*"
+  t "itemize marks the four class levels"
+    (marks == #["•", "–", lvl3, "·"])
+  t "no itemize marker is empty" (marks.all (!·.isEmpty))
+  t "adjacent itemize levels differ"
+    (marks[0]! != marks[1]! && marks[1]! != marks[2]! && marks[2]! != marks[3]!)
+  -- A stepped item keeps its marker: two items, two handout pages, a
+  -- marker on every item line of both (this is the deck's page-3 bug).
+  let (stepLines, _) := runOn ("\\documentclass{beamer}\n\\begin{document}\n" ++
+    "\\begin{frame}\\begin{itemize}\\item<1-> alpha\\item<2-> beta" ++
+    "\\end{itemize}\\end{frame}\n\\end{document}")
+  t "stepped items keep their markers on every page"
+    (stepLines.size == 4 && (stepLines.map markerOf).all (· == "•"))
+  -- Declared markers: the base element styles every level; a level style
+  -- overrides its own level only.
+  let (ovLines, _) := runOn ("\\documentclass{article}\n" ++
+    "\\style{itemize}{ marker = {x} }\n\\begin{document}\n" ++
+    "\\begin{itemize}\\item a\\begin{itemize}\\item b\\end{itemize}\\end{itemize}\n" ++
+    "\\end{document}")
+  t "a base marker override styles every level"
+    (ovLines.map markerOf == #["x", "x"])
+  let (lvLines, _) := runOn ("\\documentclass{article}\n" ++
+    "\\style{itemize2}{ marker = {+} }\n\\begin{document}\n" ++
+    "\\begin{itemize}\\item a\\begin{itemize}\\item b\\end{itemize}\\end{itemize}\n" ++
+    "\\end{document}")
+  t "a level marker override styles its level alone"
+    (lvLines.map markerOf == #["•", "+"])
+  -- Depth past the class's four levels warns and still renders, reusing
+  -- the fourth level's marker.
+  let (deepLines, deepDiags) := runOn ("\\begin{itemize}\\item a" ++
+    "\\begin{itemize}\\item b\\begin{itemize}\\item c\\begin{itemize}\\item d" ++
+    "\\begin{itemize}\\item e\\end{itemize}\\end{itemize}\\end{itemize}" ++
+    "\\end{itemize}\\end{itemize}")
+  t "a fifth level warns W0010" (deepDiags.any (·.code == "W0010"))
+  t "a fifth level still renders the fourth's marker"
+    (deepLines.size == 5 && markerOf deepLines[4]! == "·")
+  -- A declared marker whose glyph no face covers warns rather than
+  -- vanishing silently: the diagnostics ride with the paragraph's.
+  let (_, glyphDiags) := runOn ("\\documentclass{article}\n" ++
+    "\\style{itemize}{ marker = {✦} }\n\\begin{document}\n" ++
+    "\\begin{itemize}\\item a\\end{itemize}\n\\end{document}")
+  t "an uncoverable marker glyph warns" (glyphDiags.any (·.code == "W0004"))
+  -- The scalar walk offers the default marker glyphs to the driver's
+  -- fallback scan, per level actually reached.
+  let scalars := Layout.docScalars (Elab.run "t"
+    ("\\begin{itemize}\\item a\\begin{itemize}\\item b\\end{itemize}" ++
+     "\\end{itemize}")).1
+  t "docScalars carries the reached default markers"
+    (scalars.contains '•' && scalars.contains '–' &&
+     scalars.contains '*' && scalars.contains '-' && !scalars.contains '∗')
 
 /-- Line-level typesetting checks against a one-face set. Its own function:
 `main` is a single `do` block, and Lean's elaboration budget for one block
@@ -3569,7 +3670,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
         p.lines.any (·.size == Dim.pt 14)
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '–')
+          | .run _ _ _ _ glyphs _ _ => glyphs.any (·.2 == '•')
           | .gap _ | .rule .. => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
@@ -3590,6 +3691,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       pdfFaceChecks ref geom oneFace font
 
       lineChecks ref geom oneFace
+      listChecks ref oneFace font
       underlineChecks ref geom oneFace font
       linkSignalChecks ref geom oneFace
       inkGeometryChecks ref

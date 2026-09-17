@@ -415,7 +415,7 @@ structure ElementStyle where
   after : Option SymGlue := none
   /-- A rule filling the rest of the heading's line, in this palette colour. -/
   rule : Option (Color × Option String) := none
-  /-- List marker content, replacing the default en dash. -/
+  /-- List marker content, replacing the level's class-default marker. -/
   marker : Option (Array Inline) := none
   indent : Option SymGlue := none
   /-- Space between list items. -/
@@ -423,11 +423,14 @@ structure ElementStyle where
   deriving Repr, BEq, Inhabited
 
 /-- Elements a document may style. Section levels are `section`, `subsection`,
-`subsubsection`; lists are `itemize` and `enumerate`; `frametitle`,
-`sectionpage`, and `standout` are the slides furniture (their `font` is
-read; the other keys have no meaning there yet). -/
+`subsubsection`; lists are `itemize` and `enumerate` — those two style every
+nesting level, and `itemize2`..`itemize4` / `enumerate2`..`enumerate4`
+override one level, the way `\labelitemii` or `\setlist[itemize,2]` does;
+`frametitle`, `sectionpage`, and `standout` are the slides furniture (their
+`font` is read; the other keys have no meaning there yet). -/
 def styleableElements : List String :=
   ["section", "subsection", "subsubsection", "itemize", "enumerate",
+   "itemize2", "itemize3", "itemize4", "enumerate2", "enumerate3", "enumerate4",
    "frametitle", "sectionpage", "standout"]
 
 structure Styles where
@@ -752,6 +755,47 @@ def dimInline (dim : Color) (k : Nat) : Inline → Inline
     if n > k then .step n #[.colored dim none body]
     else .step n (dimInlineList dim k #[] body.toList)
   | other => other
+
+end
+
+mutual
+
+/-- Inside a list item, a leading `.step` (an overlay `\item<2->`) is pure
+grouping by the time layout runs — dimming is already painted into colours —
+but it hides the item's first paragraph from the walk that attaches the
+marker. Flatten it, so the marker lands where LaTeX puts the label. Layout's
+own pre-pass; the HTML backend keeps the wrapper for its `data-step`. -/
+def unwrapItemSteps (xs : Array Block) : Array Block :=
+  unwrapItemStepList #[] xs.toList
+
+def unwrapItemStepList (out : Array Block) : List Block → Array Block
+  | [] => out
+  | b :: rest => unwrapItemStepList (out.push (unwrapItemStep b)) rest
+
+def unwrapItemStep : Block → Block
+  | .list o items => .list o (unwrapItemStepItems #[] items.toList)
+  | .center body => .center (unwrapItemStepList #[] body.toList)
+  | .spaced g body => .spaced g (unwrapItemStepList #[] body.toList)
+  | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
+  | .step n body => .step n (unwrapItemStepList #[] body.toList)
+  | .frame t s body => .frame t s (unwrapItemStepList #[] body.toList)
+  | other => other
+
+def unwrapItemStepItems (out : Array (Array Block)) :
+    List (Array Block) → Array (Array Block)
+  | [] => out
+  | item :: rest =>
+    let item := unwrapItemStepList #[] item.toList
+    let item := match item[0]? with
+      | some (Block.step _ body) => body ++ item.extract 1 item.size
+      | _ => item
+    unwrapItemStepItems (out.push item) rest
+
+def unwrapItemStepCols (out : Array (Option Nat × Array Block)) :
+    List (Option Nat × Array Block) → Array (Option Nat × Array Block)
+  | [] => out
+  | (w, body) :: rest =>
+    unwrapItemStepCols (out.push (w, unwrapItemStepList #[] body.toList)) rest
 
 end
 

@@ -1,0 +1,27 @@
+% Invented fixture: declared list markers. A base itemize override that
+% styles every level, a per-level override in a declared palette colour,
+% and the level styles falling back to the base where undeclared. Nothing
+% here derives from any private document.
+\documentclass{article}
+
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+
+\palette{ markerink = #205E3B }
+\style{itemize}{ marker = {\endash} }
+\style{itemize2}{ marker = {\textcolor{markerink}{\bullet}} }
+
+\begin{document}
+
+Placeholder prose from example.org.
+
+\begin{itemize}
+\item The base override, an en dash
+  \begin{itemize}
+  \item The level override, a coloured bullet
+    \begin{itemize}
+    \item The base override again: level three declares nothing
+    \end{itemize}
+  \end{itemize}
+\end{itemize}
+
+\end{document}

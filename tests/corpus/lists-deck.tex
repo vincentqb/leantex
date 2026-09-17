@@ -1,0 +1,35 @@
+% Invented deck: list marking on a themed deck. Overlay-stepped items keep
+% their markers on every handout page, and nesting shows through the theme.
+% Nothing here derives from any private document.
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{moloch}
+
+\fonts{ dir = "fonts", body = "Open Sans" }
+
+\title{List Marks}
+\author{Pat Placeholder}
+\date{}
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{Steps keep their marks}
+  \begin{itemize}
+  \item<1-> Alpha placeholder point
+  \item<2-> Beta placeholder point
+    \begin{itemize}
+    \item Nested under the stepped item
+    \end{itemize}
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Order on a slide}
+  \begin{enumerate}
+  \item First placeholder
+  \item Second placeholder
+  \end{enumerate}
+\end{frame}
+
+\end{document}

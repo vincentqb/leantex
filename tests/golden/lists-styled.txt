@@ -1,0 +1,21 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+palette markerink #205E3B
+para
+  text "Placeholder prose from example.org."
+list unordered
+  item
+    para
+      text "The base override, an en dash"
+    list unordered
+      item
+        para
+          text "The level override, a coloured bullet"
+        list unordered
+          item
+            para
+              text "The base override again: level three declares nothing"
+-- diagnostics
+(none)

@@ -3,6 +3,7 @@ import LeanTex.Core.Dim
 import LeanTex.Core.Font
 import LeanTex.Core.Hyphen
 import LeanTex.Core.Ir
+import LeanTex.Core.ListMark
 import LeanTex.Core.Diag
 
 namespace LeanTex.Core.Layout
@@ -280,11 +281,6 @@ def hyphenGlyph (size : Sp) (font : Font) : Array (Nat × Char × Sp) :=
   | some g => #[g]
   | none => #[]
 
-def bulletGlyphs (size : Sp) (font : Font) : Array (Nat × Char × Sp) :=
-  match glyphOf size font '–' with
-  | some g => #[g]
-  | none => hyphenGlyph size font
-
 /-- Fixed-width spaces, as a fraction of the em. These are kerns, not
 characters: a Type 1-derived face has no glyph at U+2009, so looking one up
 drops the space that `\,` asked for. `\!`-style negative kerns are not here
@@ -435,45 +431,58 @@ def raggedItems (items : Array Item) : Array Item :=
 
 mutual
 
-private def scalarTextList (out : Array String) : List Block → Array String
+private def scalarTextList (out : Array String) (itemD enumD : Nat) :
+    List Block → Array String
   | [] => out
-  | b :: rest => scalarTextList (scalarTextOne out b) rest
+  | b :: rest => scalarTextList (scalarTextOne out itemD enumD b) itemD enumD rest
 
-private def scalarTextOne (out : Array String) : Block → Array String
+private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
+    Block → Array String
   | .para xs => out.push (Ir.plainText xs)
   | .section _ _ title => out.push (Ir.plainText title)
-  | .list _ items => scalarTextItems out items.toList
-  | .center body => scalarTextList out body.toList
-  | .spaced _ body => scalarTextList out body.toList
-  | .columns cols => scalarTextCols out cols.toList
-  | .step _ body => scalarTextList out body.toList
+  | .list ordered items =>
+    -- The level's default marker rides along, so the fallback face is
+    -- found before layout asks for the glyph. Per-kind depth, as LaTeX
+    -- counts it (`\@itemdepth`/`\@enumdepth`).
+    let (itemD, enumD) := if ordered then (itemD, enumD + 1) else (itemD + 1, enumD)
+    let level := min (if ordered then enumD else itemD) 4
+    scalarTextItems (out.push (ListMark.scalars ordered level)) itemD enumD items.toList
+  | .center body => scalarTextList out itemD enumD body.toList
+  | .spaced _ body => scalarTextList out itemD enumD body.toList
+  | .columns cols => scalarTextCols out itemD enumD cols.toList
+  | .step _ body => scalarTextList out itemD enumD body.toList
   -- A note is never set in either backend's pages; its glyphs are not asked
   -- for.
   | .note _ => out
   | .verbatim s => out.push s
-  | .frame title _ body => scalarTextList (out.push (Ir.plainText title)) body.toList
+  | .frame title _ body =>
+    scalarTextList (out.push (Ir.plainText title)) itemD enumD body.toList
 
-private def scalarTextCols (out : Array String) :
+private def scalarTextCols (out : Array String) (itemD enumD : Nat) :
     List (Option Nat × Array Block) → Array String
   | [] => out
-  | (_, body) :: rest => scalarTextCols (scalarTextList out body.toList) rest
+  | (_, body) :: rest =>
+    scalarTextCols (scalarTextList out itemD enumD body.toList) itemD enumD rest
 
-private def scalarTextItems (out : Array String) : List (Array Block) → Array String
+private def scalarTextItems (out : Array String) (itemD enumD : Nat) :
+    List (Array Block) → Array String
   | [] => out
-  | bs :: rest => scalarTextItems (scalarTextList out bs.toList) rest
+  | bs :: rest =>
+    scalarTextItems (scalarTextList out itemD enumD bs.toList) itemD enumD rest
 
 end
 
 /-- Every scalar the document's text can ask a face for, sorted: body text,
-titles, verbatim, running content (with the digits page numbers become), and
-style templates and markers — plus each cased scalar's uppercase, because
+titles, verbatim, running content (with the digits page numbers become),
+style templates and markers, and each list level's default marker — plus
+each cased scalar's uppercase, because
 small caps set lowercase as its uppercase. Whitespace and the fixed-space
 kerns are excluded; they never look a glyph up. The driver checks these
 against the loaded faces to precompute `FontSet.fallback` before layout
 begins, which is what keeps layout pure: finding a covering face on disk is
 the driver's effect, and by layout time it has already happened. -/
 def docScalars (doc : Doc) : Array Char := Id.run do
-  let mut texts : Array String := scalarTextList #[] doc.body.toList
+  let mut texts : Array String := scalarTextList #[] 0 0 doc.body.toList
   if let some h := doc.head then
     texts := (texts.push (Ir.plainText h)).push "0123456789"
   if let some f := doc.foot then
@@ -1026,13 +1035,10 @@ private structure ParaJob where
   /-- Justified or ragged, from the page: ragged lines break free of
   stretch badness and are set at their natural width. -/
   justify : Bool := true
-  bullet : Option (Nat × Array (Nat × Char × Sp)) := none
   /-- Marker content set as its own items and placed before the first line. -/
   markerSegs : Option (Array Seg × Sp) := none
   /-- A rule filling the first line after the content. -/
   rule : Option (Sp × Ir.Color) := none
-  /-- Colour of a synthesised bullet: the page's text colour. -/
-  fg : Ir.Color := Ir.Color.black
 
 /-- The block walk emits vertical skips and paragraph jobs; placement replays
 them in document order, so the page builder stays sequential and the output
@@ -1088,6 +1094,14 @@ private structure Acc where
   bar is the deck position. -/
   framesSeen : Nat := 0
   framesTotal : Nat := 0
+  /-- Nesting depth of the list being walked, one counter per list kind, as
+  LaTeX counts them (`\@itemdepth`/`\@enumdepth`): an itemize inside an
+  enumerate inside an itemize is itemize level 2. -/
+  itemDepth : Nat := 0
+  enumDepth : Nat := 0
+  /-- Diagnostics the block walk itself raises (list depth past the class's
+  four levels); joined into the placement diagnostics by `run`. -/
+  diags : Array Diag := #[]
   wantDefault : Bool := false
   owed : Array Glue := #[]
   ops : Array Op := #[]
@@ -1134,7 +1148,6 @@ private def Acc.style (a : Acc) (element : String) : Ir.ElementStyle :=
 private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
-    (bullet : Option (Nat × Array (Nat × Char × Sp)) := none)
     (marker : Option (Array Inline) := none)
     (rule : Option (Sp × Ir.Color) := none) : Acc :=
   let a := a.flushGap
@@ -1146,20 +1159,24 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
   let (items, ds, cache, extras) :=
     itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache
   let items := if a.geom.justify then items else raggedItems items
-  -- A declared marker is content: set as a line of its own, unjustified, so
-  -- it can carry any style the document gave it.
-  let markerSegs := marker.map fun m =>
-    let (mi, _, _, _) := itemsOfInlines pats size a.xHeight fs { color := a.fg } m cache
-    let (segs, w, _) := setLine mi (lineStart mi 0) (mi.size - 1) a.geom.textWidth false
-    (segs, w)
+  -- A marker is content: set as a line of its own, unjustified, so it can
+  -- carry any style the document gave it. Its diagnostics ride with the
+  -- paragraph's — a marker glyph no face covers must warn, not vanish.
+  let (markerSegs, ds, cache) := match marker with
+    | some m =>
+      let (mi, mds, cache, _) :=
+        itemsOfInlines pats size a.xHeight fs { color := a.fg } m cache
+      let (segs, w, _) := setLine mi (lineStart mi 0) (mi.size - 1) a.geom.textWidth false
+      (some (segs, w), ds ++ mds, cache)
+    | none => (none, ds, cache)
   { a with
     hyphCache := cache
     ops := a.ops.push (.para {
       items := items, extras := extras, diags := ds
       target := (a.measure.getD a.geom.textWidth) - indent
-      indent := indent, center := center, size := size, bullet := bullet
+      indent := indent, center := center, size := size
       justify := a.geom.justify
-      markerSegs := markerSegs, rule := rule, fg := a.fg }) }
+      markerSegs := markerSegs, rule := rule }) }
 
 def sectionSize (geom : Geom) : Nat → Sp
   | 1 => pt 14
@@ -1186,7 +1203,7 @@ private def collectBlockList (a : Acc) (pats : Option Hyphen.Patterns) (fs : Fon
 
 /-- One list item: its leading paragraph carries the marker. -/
 private def collectItem (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (item : List Block) (indent : Sp) (first : Bool) (st : Ir.ElementStyle) : Acc :=
+    (item : List Block) (indent : Sp) (first : Bool) (marker : Array Inline) : Acc :=
   match item with
   | [] => a
   | blk :: rest =>
@@ -1194,23 +1211,30 @@ private def collectItem (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     let a := match blk, first with
       | .para content, true =>
         collectPara a pats fs content indent false a.geom.fontSize
-          (bullet := some (0, bulletGlyphs a.geom.fontSize fs.body))
-          (marker := st.marker)
+          (marker := some marker)
       | _, _ => collectBlock a pats fs blk indent
-    collectItem a pats fs rest indent false st
+    collectItem a pats fs rest indent false marker
 
 private def collectItems (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
-    (items : List (Array Block)) (indent : Sp) (first : Bool) (st : Ir.ElementStyle) : Acc :=
+    (items : List (Array Block)) (indent : Sp) (st : Ir.ElementStyle)
+    (ordered : Bool) (level : Nat) (idx : Nat) : Acc :=
   match items with
   | [] => a
   | item :: rest =>
     -- Items are peers separated by the declared gap. The default is none,
     -- as it was: a list is one block, and its leading is its rhythm.
-    let a := match first, st.gap with
+    let a := match idx == 1, st.gap with
       | false, some g => a.addvspace (a.resolve g)
       | _, _ => a
-    let a := collectItem a pats fs item.toList indent true st
-    collectItems a pats fs rest indent false st
+    -- The item's marker: the declared style, or the class default for the
+    -- level and, for enumerate, this item's number. The class glyph is
+    -- checked against the loaded faces so it degrades to its stand-in
+    -- rather than to nothing.
+    let covered := fun c =>
+      (fs.body.gid c).isSome || (fs.fallbackFor c).isSome
+    let marker := st.marker.getD (ListMark.marker ordered level idx covered)
+    let a := collectItem a pats fs item.toList indent true marker
+    collectItems a pats fs rest indent st ordered level (idx + 1)
 
 /-- Centered content: paragraphs center, anything else nests unchanged. -/
 private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
@@ -1318,13 +1342,31 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       | none => a
     if a.slides then a.pageBreak else a
   | .list ordered items =>
-    let st := a.style (if ordered then "enumerate" else "itemize")
+    -- Depth is per list kind, as LaTeX counts it. The class defines four
+    -- levels; where LaTeX errors ("Too deeply nested"), leantex warns and
+    -- reuses the fourth level's marking — best effort, never a blank page.
+    let depth := (if ordered then a.enumDepth else a.itemDepth) + 1
+    let level := min depth 4
+    let a := if depth > 4 then { a with diags := a.diags.push {
+        severity := .warning
+        code := "W0010"
+        message := s!"lists nest four levels; level {depth} reuses the fourth's marker"
+        help := "LaTeX errors here (\"Too deeply nested\"); flatten the nesting" } }
+      else a
+    -- The level's own style, falling back to the kind's base style — so a
+    -- bare `\style{itemize}{...}` keeps styling every level, as it did.
+    let element := if ordered then "enumerate" else "itemize"
+    let st := if level == 1 then a.style element
+      else (a.styles.find? s!"{element}{level}").getD (a.style element)
     -- LaTeX's `topsep`: the declared space stands above the list and below it.
     let a := match st.before with
       | some g => a.addvspace (a.resolve g)
       | none => a
     let indent := indent + (st.indent.map fun g => (a.resolve g).width).getD a.geom.listIndent
-    let a := collectItems a pats fs items.toList indent true st
+    let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
+    let a := collectItems a pats fs items.toList indent st ordered level 1
+    let a := if ordered then { a with enumDepth := depth - 1 }
+      else { a with itemDepth := depth - 1 }
     match st.before with
     | some g => a.addvspace (a.resolve g)
     | none => a
@@ -1514,18 +1556,10 @@ private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) 
     let mut w := w
     if first then
       let sep := geom.fontSize * 2 / 5
-      match j.markerSegs, j.bullet with
-      | some (ms, mw), _ =>
+      if let some (ms, mw) := j.markerSegs then
         segs := ms ++ #[Seg.gap sep] ++ segs
         x := x - mw - sep
         w := w + mw + sep
-      | none, some (bulletFont, bg) =>
-        let bw := bg.foldl (fun acc (_, _, adv) => acc + adv) 0
-        segs := #[Seg.run bulletFont j.fg none bw
-          (bg.map fun (g, c, _) => (g, c)) j.size false, Seg.gap sep] ++ segs
-        x := x - bw - sep
-        w := w + bw + sep
-      | none, none => pure ()
       if let some (thickness, color) := j.rule then
         -- The rule fills what the heading left of its line, a word-space
         -- away from the text, sitting at half the x-height like a dash.
@@ -1630,12 +1664,13 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       acc := { acc with framesSeen := acc.framesSeen + 1 }
       let steps := Ir.maxStepBlocks body
       if steps ≤ 1 then
-        acc := collectBlock acc pats fs (.frame title standout body) 0
+        acc := collectBlock acc pats fs
+          (.frame title standout (Ir.unwrapItemSteps body)) 0
       else
         for k in [1:steps + 1] do
           acc := collectBlock acc pats fs
-            (.frame title standout (Ir.dimBlocks dim k body)) 0
-    | other => acc := collectBlock acc pats fs other 0
+            (.frame title standout (Ir.unwrapItemSteps (Ir.dimBlocks dim k body))) 0
+    | other => acc := collectBlock acc pats fs (Ir.unwrapItemStep other) 0
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
   -- so the tasks race on nothing; joining in document order below keeps the
   -- output independent of scheduling.
@@ -1657,6 +1692,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     capHeight := scale font.capHeight
     xHeight := xHeight
     docBg := doc.palette.find? "bg"
+    diags := acc.diags
   }
   let mut b := b0
   let mut prose : Nat := 0
@@ -1737,7 +1773,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       -- A plain full-measure text paragraph is the continuous reading the
       -- measure band is about; headings, items, code, and columns are not.
       if j.target == geom.textWidth && !j.center && j.size == geom.fontSize &&
-          j.bullet.isNone && j.markerSegs.isNone && j.rule.isNone then
+          j.markerSegs.isNone && j.rule.isNone then
         prose := max prose breaks.size
       b := placePara fs b j breaks
   -- The trailing boundary of a final frame has already closed its page; a
