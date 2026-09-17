@@ -1149,6 +1149,22 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat setbeamercovered transparent=n sets the covered fraction"
     ((elabStr (themedPre "\\setbeamercovered{transparent=25}")).1.palette.coveredFraction
       == some 25)
+  -- The boundary: labMix above 100 extrapolates with a negative surface
+  -- weight (color-factor F9), so no parse path may hand a fraction past
+  -- the clamp. The palette route errors E0332 (tested with the palette
+  -- key); this pins the compat route: out-of-range keeps the fraction
+  -- unset and warns instead of forwarding the number. Unthemed, so the
+  -- only possible source of a fraction is the rejected declaration.
+  let barePre (decls : String) : String :=
+    "\\documentclass{beamer}\n" ++ decls ++
+    "\n\\begin{document}\\begin{frame}x\\end{frame}\\end{document}"
+  t "compat setbeamercovered transparent=100 never reaches the fraction"
+    ((elabStr (barePre "\\setbeamercovered{transparent=100}")).1.palette.coveredFraction
+      == none &&
+     (warnCodes (barePre "\\setbeamercovered{transparent=100}")).contains "W0104")
+  t "compat setbeamercovered transparent=0 never reaches the fraction"
+    ((elabStr (barePre "\\setbeamercovered{transparent=0}")).1.palette.coveredFraction
+      == none)
   t "compat setbeamercovered invisible keeps the honest warning"
     (warnCodes (themedPre "\\setbeamercovered{invisible}") == ["W0104"])
   t "compat definecolor rgb" ((elabStr (pre "\\definecolor{c}{rgb}{1,0,0.5}")).1.palette.find? "c" ==
