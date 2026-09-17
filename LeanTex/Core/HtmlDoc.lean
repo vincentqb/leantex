@@ -501,7 +501,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       (match covered with
        | some c => #[("style", s!"color: {cssColor c}")]
        | none => #[])
-  | .frame title standout body =>
+  | .frame title standout _ body =>
     -- One slide of the deck. With no controller yet this is the no-JS
     -- rendering the plan promises anyway: a linear readable handout, every
     -- slide a section.
@@ -600,7 +600,7 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
       blockNodesInto cfg #[] doc.body.toList
     else Id.run do
       let total := doc.body.foldl (fun n b => match b with
-        | .frame _ _ _ => n + 1 | _ => n) 0
+        | .frame _ _ _ _ => n + 1 | _ => n) 0
       let mut seen := 0
       let mut curSection : Array Inline := #[]
       let mut frameFoot : Option (Array Inline) := none
@@ -609,7 +609,7 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
         match b with
         | .framefoot xs =>
           frameFoot := if xs.isEmpty then none else some xs
-        | .frame _ standout _ =>
+        | .frame _ standout _ _ =>
           seen := seen + 1
           let node := blockNode cfg b
           let node := if chromeFoot && !standout then

@@ -604,7 +604,7 @@ def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (fr, frDs) := elabStr ("\\documentclass{slides}\\begin{document}" ++
     "\\begin{frame}\\centering Questions?\\end{frame}\\end{document}")
   t "centering inside a frame centres its content" (frDs.isEmpty &&
-    fr.body == #[.frame #[] false #[.center #[.para #[.text "Questions?"]]]])
+    fr.body == #[.frame #[] false .center #[.center #[.para #[.text "Questions?"]]]])
   -- Inside inline content there is no block to centre; the warning stays.
   t "centering in an argument still warns"
     (warnCodes "\\textbf{\\centering x}" == ["W0108"])
@@ -1905,7 +1905,7 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "\\begin{column}{0.4\\textwidth}\nright\n\\end{column}\n\\end{columns}")
   let (doc, ds) := elabStr src
   t "columns elaborate with widths, warning nothing" (ds.isEmpty &&
-    doc.body == #[.frame #[] false #[.columns #[
+    doc.body == #[.frame #[] false .center #[.columns #[
       (some 600, #[.para #[.text "left"]]),
       (some 400, #[.para #[.text "right"]])]]])
   -- PDF: the columns' first lines share a baseline, and the second sits
@@ -1934,7 +1934,7 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "an absolute column width warns and degrades to a share"
     (aDs.any (·.code == "W0314") &&
      (match aDoc.body with
-      | #[.frame _ _ #[.columns cols]] => cols.map (·.1) == #[none, some 500]
+      | #[.frame _ _ _ #[.columns cols]] => cols.map (·.1) == #[none, some 500]
       | _ => false))
 
 /-- Overlays, dim-not-hide (PLAN M5): steps ride the IR, the PDF handout
@@ -1951,7 +1951,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "\\uncover<2>{tail}")
   let (doc, ds) := elabStr src
   t "overlay specs elaborate to steps, warning nothing" (ds.isEmpty &&
-    doc.body == #[.frame #[] false #[
+    doc.body == #[.frame #[] false .center #[
       .list false #[
         #[.step 1 none #[.para #[.text "first"]]],
         #[.step 2 none #[.para #[.text "second"]]]],
@@ -1959,7 +1959,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   -- \pause steps the rest of the scope.
   let (pDoc, pDs) := elabStr (deck "one\n\n\\pause\ntwo\n\n\\pause\nthree")
   t "pause steps the rest, cumulatively" (pDs.isEmpty &&
-    pDoc.body == #[.frame #[] false #[
+    pDoc.body == #[.frame #[] false .center #[
       .para #[.text "one"],
       .step 2 none #[.para #[.text "two"], .step 3 none #[.para #[.text "three"]]]]])
   -- PDF: one page per step; pending content dims, nothing moves.
@@ -1995,7 +1995,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   -- as beamer's transparent covering does; <2-3> reads the same way.
   t "a range spec carries its end"
     ((elabStr (deck "\\uncover<2-3>{ranged}")).1.body ==
-      #[.frame #[] false #[.para #[.step 2 (some 3) #[.text "ranged"]]]])
+      #[.frame #[] false .center #[.para #[.step 2 (some 3) #[.text "ranged"]]]])
   let (rDoc, rDs) := elabStr (deck ("\\begin{itemize}\n\\item<1> opening\n" ++
     "\\item<2-> second\n\\item<3-> third\n\\end{itemize}"))
   let rOut := Layout.run (Layout.Geom.ofPage rDoc.page) oneFace none rDoc
@@ -2058,13 +2058,13 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let (lDoc, lDs) := elabStr (deck
     "\\onslide<2->{\n\\begin{itemize}\n\\item Stepped item.\n\\end{itemize}\n}")
   t "a list inside an overlay group steps whole, erroring nothing"
-    (lDs.isEmpty && lDoc.body == #[.frame #[] false #[
+    (lDs.isEmpty && lDoc.body == #[.frame #[] false .center #[
       .step 2 none #[.list false #[#[.para #[.text "Stepped item."]]]]]])
   -- A multi-paragraph group: every paragraph stays inside the step (the
   -- par splice used to strip all but the first).
   let (mDoc, mDs) := elabStr (deck "\\uncover<2>{\nFirst covered.\n\nSecond covered.\n}")
   t "every paragraph of an overlay group stays inside its step"
-    (mDs.isEmpty && mDoc.body == #[.frame #[] false #[
+    (mDs.isEmpty && mDoc.body == #[.frame #[] false .center #[
       .step 2 (some 2) #[.para #[.text "First covered."],
         .para #[.text "Second covered."]]]])
   -- Block and inline agree: the same spec around the same words reaches the
@@ -2074,21 +2074,21 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     "\\uncover<2->{\n\\begin{itemize}\n\\item same words\n\\end{itemize}\n}")
   t "block and inline agree on steps"
     (match iDoc.body, bDoc.body with
-     | #[.frame _ _ ib], #[.frame _ _ bb] =>
+     | #[.frame _ _ _ ib], #[.frame _ _ _ bb] =>
        Ir.maxStepBlocks ib == 2 && Ir.maxStepBlocks bb == 2
      | _, _ => false)
   -- The open form between blocks: the rest of the scope steps (it used to
   -- produce an empty step and leave the content unstepped).
   let (oDoc, oDs) := elabStr (deck "shown\n\n\\onslide<2->\nlater one\n\nlater two")
   t "bare onslide between blocks steps the rest of the scope"
-    (oDs.isEmpty && oDoc.body == #[.frame #[] false #[
+    (oDs.isEmpty && oDoc.body == #[.frame #[] false .center #[
       .para #[.text "shown"],
       .step 2 none #[.para #[.text "later one"], .para #[.text "later two"]]]])
   -- \pause between items steps the rest of the list, not nothing.
   let (pDoc, pDs) := elabStr (deck
     "\\begin{itemize}\n\\item first\n\\pause\n\\item second\n\\pause\n\\item third\n\\end{itemize}")
   t "pause between items steps the later items"
-    (pDs.isEmpty && pDoc.body == #[.frame #[] false #[
+    (pDs.isEmpty && pDoc.body == #[.frame #[] false .center #[
       .list false #[
         #[.para #[.text "first"]],
         #[.step 2 none #[.para #[.text "second"]]],
@@ -2101,7 +2101,7 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
      "\\end{column}\n\\begin{column}{0.5\\textwidth}\nsteady\n\\end{column}\n\\end{columns}"))
   t "pause inside a column steps the column's rest"
     (cDs.isEmpty && (match cDoc.body with
-      | #[.frame _ _ #[.columns cols]] =>
+      | #[.frame _ _ _ #[.columns cols]] =>
         (match cols[0]? with
          | some (_, body) => body == #[.para #[.text "above"],
              .step 2 none #[.para #[.text "below"]]]
@@ -2114,20 +2114,20 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   -- its spec, the other before it.
   let (aDoc, aDs) := elabStr (deck "\\alt<2>{after}{before}")
   t "alt inline yields the step and its complement"
-    (aDs.isEmpty && aDoc.body == #[.frame #[] false #[.para #[
+    (aDs.isEmpty && aDoc.body == #[.frame #[] false .center #[.para #[
       .step 2 (some 2) #[.text "after"],
       .step 1 (some 1) #[.text "before"]]]])
   let (abDoc, abDs) := elabStr (deck
     "\\alt<2->{\nAfter one.\n\nAfter two.\n}{\nBefore.\n}")
   t "alt with block alternatives steps both at block level"
-    (abDs.isEmpty && abDoc.body == #[.frame #[] false #[
+    (abDs.isEmpty && abDoc.body == #[.frame #[] false .center #[
       .step 2 none #[.para #[.text "After one."], .para #[.text "After two."]],
       .step 1 (some 1) #[.para #[.text "Before."]]]])
   -- A spec the model cannot number keeps W0105 and shows the block content.
   let (uDoc, uDs) := elabStr (deck
     "\\onslide<+->{\n\\begin{itemize}\n\\item shown anyway\n\\end{itemize}\n}")
   t "an unnumberable spec on a block group warns and shows the content"
-    ((uDs.map (·.code)) == #["W0105"] && uDoc.body == #[.frame #[] false #[
+    ((uDs.map (·.code)) == #["W0105"] && uDoc.body == #[.frame #[] false .center #[
       .list false #[#[.para #[.text "shown anyway"]]]]])
 
 /-- Speaker notes: a side channel — never slide content, omitted from the
@@ -2140,7 +2140,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
     body ++ "\n\\end{frame}\n\\end{document}"
   let (doc, ds) := elabStr (deck "Visible words.\n\\note{Hidden speaker words.}")
   t "note elaborates to a side channel, warning nothing" (ds.isEmpty &&
-    doc.body == #[.frame #[] false #[
+    doc.body == #[.frame #[] false .center #[
       .para #[.text "Visible words."],
       .note #[.para #[.text "Hidden speaker words."]]]])
   -- PDF: the note adds nothing — the page is the page without it.
@@ -2160,7 +2160,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   t "a mid-sentence note leaves its paragraph whole and drains to the frame"
     (inlDs.isEmpty &&
      (match inl.body with
-      | #[.frame _ _ #[.para content, .note nbody]] =>
+      | #[.frame _ _ _ #[.para content, .note nbody]] =>
         Ir.plainText content == "bold text" &&
         ((Ir.dumpBlocks "" nbody).splitOn "never shown").length == 2
       | _ => false))
@@ -2172,7 +2172,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   t "reserved characters in a note stay literal, erroring nothing"
     (resvDs.isEmpty &&
      (match resv.body with
-      | #[.frame _ _ #[_, .note nbody]] =>
+      | #[.frame _ _ _ #[_, .note nbody]] =>
         ((Ir.dumpBlocks "" nbody).splitOn "name_with_underscores & more").length == 2
       | _ => false))
 
@@ -2533,6 +2533,63 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let plainOut := Layout.run (Layout.Geom.ofPage plainDoc.page) oneFace none plainDoc
   t "unthemed pages carry no fills" (plainOut.pages.all (·.fills.isEmpty))
 
+/-- Vertical distribution: beamer's frame options select the split, the
+default centres (beamer user guide §8.1), and a titled frame's page-top
+chrome never moves with the body. -/
+def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deck (body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n\\begin{document}\n" ++ body ++
+    "\n\\end{document}"
+  let linesOf (src : String) : Array Layout.LineOut :=
+    (Layout.run geom oneFace none (elabStr src).1).pages.flatMap (·.lines)
+  let firstY (body : String) : Dim.Sp :=
+    ((linesOf (deck body))[0]?.map (·.y)).getD 0
+  let yT := firstY "\\begin{frame}[t]\nhello\n\\end{frame}"
+  let yC := firstY "\\begin{frame}\nhello\n\\end{frame}"
+  let yB := firstY "\\begin{frame}[b]\nhello\n\\end{frame}"
+  t "a frame centres by default, [t] sits above it" (yT < yC)
+  t "[b] sits below the centre" (yC < yB)
+  -- 1:1 is the halving and 1:0 the whole leftover: centre is halfway
+  -- between top and bottom, up to the division's rounding.
+  t "centre is halfway between [t] and [b]"
+    (yB - yC == yC - yT || yB - yC == yC - yT + 1)
+  -- Ratio 0:1 reproduces the undistributed placement exactly
+  -- (VDist.top_is_flush at page level): a [t] frame's first line sits
+  -- where an article's does.
+  t "[t] is the old top-flush placement"
+    (yT == firstY "hello")
+  t "[t] parses to top"
+    ((elabStr (deck "\\begin{frame}[t]\nx\n\\end{frame}")).1.body ==
+      #[.frame #[] false .top #[.para #[.text "x"]]])
+  t "[b] parses to bottom"
+    ((elabStr (deck "\\begin{frame}[b]\nx\n\\end{frame}")).1.body ==
+      #[.frame #[] false .bottom #[.para #[.text "x"]]])
+  t "[t,standout] keeps both"
+    ((elabStr (deck "\\begin{frame}[t,standout]\nx\n\\end{frame}")).1.body ==
+      #[.frame #[] true .top #[.para #[.text "x"]]])
+  -- A titled frame's title is page-top chrome: distributing the body must
+  -- not move the title line, and the title bar keeps its height.
+  let titled (opt : String) : String :=
+    deck ("\\begin{frame}" ++ opt ++ "{Head}\nbody text\n\\end{frame}")
+  let tLines := linesOf (titled "[t]")
+  let cLines := linesOf (titled "")
+  t "a titled frame has title and body lines" (tLines.size ≥ 2 && cLines.size ≥ 2)
+  t "the title never moves with the distribution"
+    (((tLines[0]?).map (·.y)) == ((cLines[0]?).map (·.y)))
+  t "the body distributes below the title"
+    ((((tLines[1]?).map (·.y)).getD 0) < (((cLines[1]?).map (·.y)).getD 0))
+  -- With a frametitlebg palette the title is a colour bar; centring the
+  -- body must not stretch it.
+  let barH (opt : String) : Dim.Sp :=
+    let src := "\\documentclass[aspectratio=169]{slides}\n" ++
+      "\\palette{frametitlebg = #23373B}\n\\begin{document}\n" ++
+      "\\begin{frame}" ++ opt ++ "{Head}\nbody text\n\\end{frame}\n\\end{document}"
+    (((Layout.run geom oneFace none (elabStr src).1).pages.flatMap
+      (·.fills))[0]?.map (·.h)).getD 0
+  t "the title bar keeps its height under centring" (barH "" == barH "[t]")
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
@@ -2544,22 +2601,22 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let (fDoc, fDs) := elabStr (deck "\\begin{frame}{T}\nbody\n\\end{frame}")
   t "frame source clean" fDs.isEmpty
   t "frame is first-class with its title"
-    (fDoc.body == #[.frame #[.text "T"] false #[.para #[.text "body"]]])
+    (fDoc.body == #[.frame #[.text "T"] false .center #[.para #[.text "body"]]])
   -- A group after a paragraph break is content, not a title: LaTeX's own
   -- argument scanning stops looking there too.
   t "frame title after a blank line is content"
     ((elabStr (deck "\\begin{frame}[plain]\n\n{scope group}\n\\end{frame}")).1.body ==
-      #[.frame #[] false #[.para #[.text "scope group"]]])
+      #[.frame #[] false .center #[.para #[.text "scope group"]]])
   t "frametitle names the frame"
     ((elabStr (deck "\\begin{frame}\n\\frametitle{Named}\nbody\n\\end{frame}")).1.body ==
-      #[.frame #[.text "Named"] false #[.para #[.text "body"]]])
+      #[.frame #[.text "Named"] false .center #[.para #[.text "body"]]])
   -- Two titles: the last wins, as in beamer, but never silently.
   let (dupDoc, dupDs) := elabStr
     (deck "\\begin{frame}\n\\frametitle{One}\n\\frametitle{Two}\nbody\n\\end{frame}")
   t "a second frametitle warns and wins"
     (dupDs.any (·.code == "W0311") &&
      match dupDoc.body with
-     | #[.frame title _ _] => Ir.plainText title == "Two"
+     | #[.frame title _ _ _] => Ir.plainText title == "Two"
      | _ => false)
   -- \title and friends may sit in the body, as beamer documents do; an
   -- empty declaration (\date{}) is deliberately blank and sets nothing.
@@ -2569,7 +2626,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "maketitle source clean" tDs.isEmpty
   t "maketitle is a centered title frame with the empty date dropped"
     (match tDoc.body[0]? with
-     | some (Ir.Block.frame title _ #[.center inner]) => title.isEmpty && inner.size == 3
+     | some (Ir.Block.frame title _ _ #[.center inner]) => title.isEmpty && inner.size == 3
      | _ => false)
   t "pdf metadata falls back to the title declarations"
     (tDoc.info.title == some "A Deck" && tDoc.info.author == some "Pat Placeholder")
@@ -2627,11 +2684,11 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- options stay burned.
   t "standout option marks the frame"
     (match (elabStr (deck "\\begin{frame}[fragile,standout]\nQ\n\\end{frame}")).1.body with
-     | #[.frame _ true _] => true
+     | #[.frame _ true _ _] => true
      | _ => false)
   t "other frame options do not mark it"
     (match (elabStr (deck "\\begin{frame}[plain]\nQ\n\\end{frame}")).1.body with
-     | #[.frame _ false _] => true
+     | #[.frame _ false _ _] => true
      | _ => false)
   let (sDoc, _) := elabStr (deck ("\\begin{frame}{A}\na\n\\end{frame}\n" ++
     "\\begin{frame}[standout]\nQ\n\\end{frame}"))
@@ -2797,18 +2854,18 @@ def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (fDoc, fDs) := elabStr (deck "\\begin{frame}[unclosed\nBody survives.\n\\end{frame}")
   t "unclosed bracket keeps the frame body"
     (match fDoc.body with
-     | #[.frame _ _ body] => body.any fun b => (blockText b).endsWith "Body survives."
+     | #[.frame _ _ _ body] => body.any fun b => (blockText b).endsWith "Body survives."
      | _ => false)
   t "unclosed bracket in a frame warns" (fDs.any (·.code == "W0310"))
   -- a bracket opening the frame's content is content, not an option
   t "frame content starting with a bracket survives"
     (match (elabStr (deck "\\begin{frame}\n[1] Reference survives.\n\\end{frame}")).1.body with
-     | #[.frame _ _ #[.para xs]] => Ir.plainText xs == "[1] Reference survives."
+     | #[.frame _ _ _ #[.para xs]] => Ir.plainText xs == "[1] Reference survives."
      | _ => false)
   -- options on the begin line are still arguments, bracket runs included
   t "frame options on the begin line are burned"
     (match (elabStr (deck "\\begin{frame}[plain][t]{T}\nbody\n\\end{frame}")).1.body with
-     | #[.frame title _ #[.para xs]] =>
+     | #[.frame title _ _ #[.para xs]] =>
        Ir.plainText title == "T" && Ir.plainText xs == "body"
      | _ => false)
   -- unknown environment: unclosed bracket keeps the body, later-line bracket is content
@@ -3576,7 +3633,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\begin{frame}\\alert{hot}\\end{frame}\\end{document}")
   t "themed alert is colour and bold" (themedAlert.1.body.any fun b =>
     match b with
-    | .frame _ _ body => body.any fun blk =>
+    | .frame _ _ _ body => body.any fun blk =>
       match blk with
       | .para content => content.any fun x =>
         match x with
@@ -3677,7 +3734,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{frame}{T}\n\\alert{hot}\n\\end{frame}")
   t "themed alert is the alert colour"
     (match aDoc.body with
-     | #[.frame _ _ body] => body.any fun b => match b with
+     | #[.frame _ _ _ body] => body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
           | .colored c (some "alert") _ => c == ⟨0xA5, 0x5A, 0x13⟩
           | _ => false
@@ -3685,7 +3742,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
      | _ => false)
   t "unthemed alert stays bold"
     (match (elabStr (deck "" "\\begin{frame}{T}\n\\alert{hot}\n\\end{frame}")).1.body with
-     | #[.frame _ _ body] => body.any fun b => match b with
+     | #[.frame _ _ _ body] => body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
           | .styled .bold _ => true
           | _ => false
@@ -4090,6 +4147,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       inkGeometryChecks ref
       spacingChecks ref geom oneFace font
       slideChecks ref oneFace
+      vdistChecks ref geom oneFace
       cardChecks ref oneFace pats
       columnsChecks ref oneFace
       overlayChecks ref oneFace

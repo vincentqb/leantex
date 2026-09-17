@@ -277,7 +277,7 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
   | .spaced _ body => usesBlocks cx out body.toList
   | .columns cols => usesColumns cx out cols.toList
   | .step _ _ body => usesBlocks cx out body.toList
-  | .frame title _ body =>
+  | .frame title _ _ body =>
     -- A frame title sets at `\large\bfseries`: 1.2 of the base, bold.
     let titleCx := { cx with size := cx.base * 1200 / 1000, bold := true }
     usesBlocks cx (usesInlines titleCx out title.toList) body.toList

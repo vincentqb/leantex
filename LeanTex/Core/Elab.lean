@@ -1464,7 +1464,7 @@ specs are not modelled")
                 s!"'\\{n}' with nothing declared; no title is set" pos
                 (help := "declare \\title{...} (and \\author, \\date, ...) before it")
             else if ctx.slides then
-              blocks := blocks.push (.frame #[] false #[.center inner])
+              blocks := blocks.push (.frame #[] false .center #[.center inner])
             else
               blocks := blocks.push (.center inner)
           else
@@ -1546,19 +1546,27 @@ specs are not modelled")
           else if n == "frame" then
             -- \begin{frame}[options]{title}: options are burned (fragile,
             -- plain say how beamer should cope, not what to say) except
-            -- `standout`, which says what the frame IS; the title group
-            -- counts only when it follows directly — a paragraph break
-            -- before a group makes it content, which is where LaTeX's own
-            -- argument scanning stops looking too.
+            -- `standout`, which says what the frame IS, and `t`/`c`/`b`,
+            -- which say how it distributes its leftover vertical space
+            -- (beamer user guide §8.1; `c` is beamer's default); the title
+            -- group counts only when it follows directly — a paragraph
+            -- break before a group makes it content, which is where LaTeX's
+            -- own argument scanning stops looking too.
             let mut k := 0
             let mut standout := false
+            let mut valign : VAlign := .center
             for _ in [0:body.size] do
               let j0 := skipSpaces body k
               match scanBracketArg body k pos with
               | .took k' =>
                 let inner := rawSrc (body.extract (j0 + 1) (k' - 1))
-                if (inner.splitOn ",").any (·.trimAscii.toString == "standout") then
-                  standout := true
+                for opt in (inner.splitOn ",").map (·.trimAscii.toString) do
+                  match opt with
+                  | "standout" => standout := true
+                  | "t" => valign := .top
+                  | "c" => valign := .center
+                  | "b" => valign := .bottom
+                  | _ => pure ()
                 k := k'
               | .unclosed bpos =>
                 warnUnclosed ctx "'\\begin{frame}'" bpos
@@ -1595,7 +1603,7 @@ specs are not modelled")
             modify fun st => { st with pendingNotes := #[] }
             for nb in stash do
               inner := inner.push (.note (← elabBlocks { ctx with noteBody := true } nb))
-            blocks := blocks.push (.frame title standout inner)
+            blocks := blocks.push (.frame title standout valign inner)
           else if n == "itemize" || n == "enumerate" then
             let mut items : Array (Array Raw) := #[]
             let mut steps : Array (Option (Nat × Option Nat)) := #[]
@@ -2625,7 +2633,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   if docClass == "card" then
     let faces : Int := max 1 (blocks.foldl (init := 0) fun n b =>
       match b with
-      | .frame _ _ _ => n + 1
+      | .frame _ _ _ _ => n + 1
       | _ => n)
     unless asserts.any (fun a => match a.kind with | .pages _ _ => true | _ => false) do
       asserts := asserts.push {

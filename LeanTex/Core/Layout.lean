@@ -198,6 +198,14 @@ theorem VDist.top_is_flush (l : Sp) : VDist.top.aboveShare l = 0 := by
   · rfl
   · simp
 
+/-- The distribution a frame's declaration names. `golden` is the moloch
+title page's 2618:1000. -/
+def VDist.of : Ir.VAlign → VDist
+  | .top => .top
+  | .center => .center
+  | .bottom => .bottom
+  | .golden => .golden
+
 inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
       (glyphs : Array (Nat × Char × Sp)) (size : Sp) (underline : Bool)
@@ -577,7 +585,7 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   -- for.
   | .note _ => out
   | .verbatim _ s => out.push s
-  | .frame title _ body =>
+  | .frame title _ _ body =>
     scalarTextList (out.push (Ir.plainText title)) itemD enumD body.toList
   -- A framefoot note is set on the page as footer text.
   | .framefoot content => out.push (Ir.plainText content)
@@ -1044,6 +1052,10 @@ private structure B where
   vdist : VDist := .top
   /-- The chrome footer for pages closed from here on, from `.foot` ops. -/
   curFoot : Option (Array Inline) := none
+  /-- Lines and fills already on the page when `.pin` arrived: page-top
+  chrome (the frame title and its bar) the distribution never moves. -/
+  pinnedLines : Nat := 0
+  pinnedFills : Nat := 0
   diags : Array Diag := #[]
 
 /-- Close the current page. A page that overflowed at natural size within
@@ -1061,17 +1073,18 @@ private def B.finishPage (b : B) : B :=
         s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink"
     } else b.diags
   -- The leftover between the content's bottom and the bottom margin,
-  -- split by the page's declared ratio (`VDist`): a standout frame or a
-  -- section page centres (1:1), a title page takes the golden split, and
-  -- the undeclared page leaves everything where the walk put it. The
-  -- page's fills ride with their lines.
-  let delta := if !lines.isEmpty then
+  -- split by the page's declared ratio (`VDist`). Only what follows the
+  -- `.pin` mark moves: the frame title and its bar are page-top chrome,
+  -- and beamer distributes the body below the frametitle, never the
+  -- frametitle itself. The page's fills ride with their lines.
+  let delta := if lines.size > b.pinnedLines then
       let lastY := lines.foldl (fun m l => max m l.y) 0
       b.vdist.aboveShare (b.geom.bodyBottom - (lastY + b.prevDepth))
     else 0
-  let lines := if delta == 0 then lines else lines.map fun l => { l with y := l.y + delta }
+  let lines := if delta == 0 then lines else
+    lines.mapIdx fun i l => if i < b.pinnedLines then l else { l with y := l.y + delta }
   let fills := if delta == 0 then b.cur.fills else
-    b.cur.fills.map fun f => { f with y := f.y + delta }
+    b.cur.fills.mapIdx fun i f => if i < b.pinnedFills then f else { f with y := f.y + delta }
   let fills := match b.pageBg.orElse (fun _ => b.docBg) with
     | some c => #[({ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
                      color := c } : Fill)] ++ fills
@@ -1079,7 +1092,8 @@ private def B.finishPage (b : B) : B :=
   { b with pages := b.pages.push { lines := lines, fills := fills, foot := b.curFoot },
            cur := {},
            shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
-           pageBg := none, vdist := .top, diags := diags }
+           pageBg := none, vdist := .top, pinnedLines := 0, pinnedFills := 0,
+           diags := diags }
 
 /-- A line that shares its baseline with the last one (underline rules)
 rides with it, including its share of the page's shrink. -/
@@ -1188,6 +1202,11 @@ private inductive Op where
   /-- A colour bar behind the line just placed — the frame title. Full page
   width, from the page top to `pad` below the line's depth. -/
   | titleBar (color : Ir.Color) (pad : Sp)
+  /-- Content placed so far on the open page is chrome pinned to the page
+  top — the frame title and its bar: the page's vertical distribution
+  moves only the lines and fills that follow, as beamer distributes the
+  body below the frametitle, never the frametitle itself. -/
+  | pin
   /-- A progress bar under the line just placed: `bg` across `w` from `x`,
   `fg` over the leading `num/den` of it, `thick` tall. -/
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
@@ -1589,7 +1608,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- Not a line, a state change: the note the following frames' footers
     -- carry. Empty clears back to the chrome default.
     { a with frameFoot := if content.isEmpty then none else some content }
-  | .frame title standout body =>
+  | .frame title standout valign body =>
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never
     -- clipped. `framesSeen` is counted by `run`'s top-level driver, once
@@ -1601,17 +1620,21 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let a := if a.footAllowed then
         { a with ops := a.ops.push (.foot (if standout then none else a.chromeFoot)) }
       else a
+    -- Every frame declares its distribution (beamer's default is centring,
+    -- user guide §8.1); only the article page and a continuation page keep
+    -- the builder's top-flush default.
     if standout then
       -- Inverted, centred, Large bold. The palette's standout keys
       -- override; without them the frame inverts the page's own colours.
       let bg := (a.pal.find? "standoutbg").getD ((a.pal.find? "fg").getD Ir.Color.black)
       let fg := (a.pal.find? "standoutfg").getD ((a.pal.find? "bg").getD Ir.Color.white)
-      let a := { a with ops := a.ops.push (.pageStyle (some bg) VDist.center) }
+      let a := { a with ops := a.ops.push (.pageStyle (some bg) (VDist.of valign)) }
       let saved := a.fg
       let a := collectStandout { a with fg := fg } pats fs body.toList indent
       let a := { a with fg := saved }
       a.pageBreak
     else
+    let a := { a with ops := a.ops.push (.pageStyle none (VDist.of valign)) }
     let a := if title.isEmpty then a else
       match a.pal.find? "frametitlebg" with
       | some barBg =>
@@ -1635,6 +1658,9 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
         let a := collectPara a pats fs title 0 false (sectionSize a.geom 1)
           (baseStyle := { bold := true })
         { a with wantDefault := true }
+    -- The title just placed is page-top chrome: the frame's distribution
+    -- moves the body below it, never the title (beamer's frametitle).
+    let a := if title.isEmpty then a else { a with ops := a.ops.push .pin }
     let a := collectBlocks a pats fs body indent
     a.pageBreak
 
@@ -1801,6 +1827,7 @@ private inductive StagedOp where
   | brk
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
   | titleBar (color : Ir.Color) (pad : Sp)
+  | pin
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
   | foot (content : Option (Array Inline))
   | para (j : ParaJob) (t : Task (Array Nat))
@@ -1852,7 +1879,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     else geom
   let xHeight := scale font.xHeight
   let framesTotal := doc.body.foldl (fun n b => match b with
-    | .frame _ _ _ => n + 1 | _ => n) 0
+    | .frame _ _ _ _ => n + 1 | _ => n) 0
   let dim := (doc.palette.find? "covered").getD Ir.coveredDefault
   let acc0 : Acc := { geom := geom, xHeight := xHeight, styles := doc.styles
                       slides := doc.docClass == "slides"
@@ -1875,16 +1902,16 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     acc := if firstBlk then acc else acc.wantGap
     firstBlk := false
     match blk with
-    | .frame title standout body =>
+    | .frame title standout valign body =>
       acc := { acc with framesSeen := acc.framesSeen + 1 }
       let steps := Ir.maxStepBlocks body
       if steps ≤ 1 then
         acc := collectBlock acc pats fs
-          (.frame title standout (Ir.unwrapItemSteps body)) 0
+          (.frame title standout valign (Ir.unwrapItemSteps body)) 0
       else
         for k in [1:steps + 1] do
           acc := collectBlock acc pats fs
-            (.frame title standout (Ir.unwrapItemSteps (Ir.dimBlocks dim k body))) 0
+            (.frame title standout valign (Ir.unwrapItemSteps (Ir.dimBlocks dim k body))) 0
     | other => acc := collectBlock acc pats fs (Ir.unwrapItemStep other) 0
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
   -- so the tasks race on nothing; joining in document order below keeps the
@@ -1895,6 +1922,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .brk => .brk
     | .pageStyle bg c => .pageStyle bg c
     | .titleBar color pad => .titleBar color pad
+    | .pin => .pin
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
     | .foot c => .foot c
     | .para j => .para j (Task.spawn fun _ => kp j.items j.target)
@@ -1941,9 +1969,11 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       if !b.cur.lines.isEmpty then
         b := b.finishPage
       else
-        b := { b with pageBg := none, vdist := .top }
+        b := { b with pageBg := none, vdist := .top, pinnedLines := 0, pinnedFills := 0 }
     | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
     | .foot c => b := { b with curFoot := c }
+    | .pin =>
+      b := { b with pinnedLines := b.cur.lines.size, pinnedFills := b.cur.fills.size }
     | .colOpen =>
       colSaves := colSaves.push {
         y := b.y, prevDepth := b.prevDepth, skip := b.skip
