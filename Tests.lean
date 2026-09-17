@@ -1619,6 +1619,20 @@ def envBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr "before\n\\begin{aside}one\n\ntwo\n\\end{aside}\nafter").1.body ==
       #[.para #[.text "before"], .para #[.text "one"], .para #[.text "two"],
         .para #[.text "after"]])
+  -- bodyIsBlock mirrors the boundary rule: verbatim is a first-class block
+  -- on this branch, so it is block inside a body too — degrading it to
+  -- inline <code> loses the literal lines
+  t "a verbatim inside an unknown environment stays a block"
+    (match (elabStr
+        "\\begin{gizmo}\n\\begin{verbatim}\nliteral line one\n\\end{verbatim}\n\\end{gizmo}").1.body with
+     | #[.verbatim s] => s.trimAscii.toString == "literal line one"
+     | _ => false)
+  -- ...and the judgment descends into scope groups: block content one
+  -- group deeper is still block content
+  t "block content one group deeper still makes a body block"
+    ((elabStr "before\n\\begin{gizmo}\n{one \\par two}\n\\end{gizmo}\nafter").1.body ==
+      #[.para #[.text "before"], .para #[.text "one"], .para #[.text "two"],
+        .para #[.text "after"]])
   t "an inline unknown environment's begin-line argument goes with the wrapper"
     (match (elabStr "Take \\begin{banner}{Logo}the text\\end{banner} along.").1.body with
      | #[.para xs] => Ir.plainText xs == "Take the text along."

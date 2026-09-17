@@ -806,19 +806,41 @@ end
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String := ["itemize", "enumerate", "center", "document", "frame"]
 
+mutual
+
+/-- One raw's verdict for `bodyIsBlock`; the `List` companion below carries
+the walk, as everywhere a tree with `Array` children is recursed. The arms
+mirror the boundary rule in `elabBlocks` — verbatim included, since it is a
+first-class block on this branch — and descend into scope groups and
+environment bodies: block content one group deeper is still block content.
+A body that ends its own paragraph (`...\par`, the LaTeX habit for a
+one-line entry) produces one, so it is a block too. -/
+def bodyIsBlockOne : Raw → Bool
+  | .ctrl n _ =>
+    n == "block" || n == "par" || ["section", "subsection", "subsubsection"].contains n
+  | .par _ => true
+  | .verb _ _ => true
+  | .env n body _ =>
+    if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
+    else
+      blockEnvs.contains n || mathEnvs.contains n
+        || n == "tabular" || n == "tabular*"
+        || (reservedEnv.lookup n).isSome || bodyIsBlockList body.toList
+  | .group body _ => bodyIsBlockList body.toList
+  | _ => false
+
+def bodyIsBlockList : List Raw → Bool
+  | [] => false
+  | r :: rest => bodyIsBlockOne r || bodyIsBlockList rest
+
+end
+
 /-- Does this body produce block-level content? Decides whether a user command
 called between paragraphs expands as blocks or as inline content. A purely
 inline macro must stay inline, or `\role{Ada} and more text` would split the
 paragraph. -/
 def bodyIsBlock (raws : Array Raw) : Bool :=
-  raws.any fun r =>
-    match r with
-    -- A body that ends its own paragraph (`...\par`, the LaTeX habit for a
-    -- one-line entry) produces one, so it is a block too.
-    | .ctrl n _ => n == "block" || n == "par" || ["section", "subsection", "subsubsection"].contains n
-    | .par _ => true
-    | .env n _ _ => blockEnvs.contains n
-    | _ => false
+  bodyIsBlockList raws.toList
 
 private def sectionLevel : String → Option Nat
   | "section" => some 1
