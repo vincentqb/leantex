@@ -3921,9 +3921,12 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- Math environments carry their source whole — elaborating `&` and `\\`
   -- as text would shred the alignment; tables degrade to rows of cells and
   -- `&` never reaches inline elaboration as a reserved-character error.
-  t "align* is one display-math block, source intact"
+  t "align* is one display-math grid, cells and rows intact"
     (match (elabStr "\\begin{align*}1 &= 1 \\\\ 2 &= 4\\end{align*}").1.body with
-     | #[.para #[.math true src]] => (src.splitOn "&").length == 3
+     | #[.center #[.para #[.formula true src
+         (.cons (.atom _ (.grid .align rows) _ _ _) .nil)]]] =>
+       (src.splitOn "&").length == 3 &&
+         rows.rows.map (·.length) == [2, 2]
      | _ => false)
   let tabSrc := "\\begin{tabular}{ll}a & b \\\\ c & d\\end{tabular}"
   t "tabular keeps cells as rows without errors"
@@ -4376,7 +4379,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc1, d1) := elabStr "hello $x$ world"
   t "elab snippet clean" (d1.isEmpty && doc1.body ==
     #[.para #[.text "hello ",
-      .formula false "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil) .nil),
+      .formula false "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil false) .nil),
       .text " world"]])
   let (doc2, d2) := elabStr "\\textbf{a} {\\itshape b c} d"
   t "elab styles" (d2.isEmpty && doc2.body ==
@@ -6113,7 +6116,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Nothing is silently dropped: a scalar the math face lacks warns,
   -- naming the face.
   let bDoc : Ir.Doc := { body := #[.para #[.formula false "₿"
-    (.cons (.atom .ord (.sym '₿') .nil .nil) .nil)]] }
+    (.cons (.atom .ord (.sym '₿') .nil .nil false) .nil)]] }
   t "a glyph the math face lacks warns W0004 naming it"
     (((Layout.run geom mfs none bDoc).diags.filter (·.code == "W0004")).map (·.message)
       == #["'Fira Math' has no glyph for '₿' (U+20BF); dropped"])
@@ -6132,25 +6135,137 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "display math splits its paragraph into a centred block"
     (dds.isEmpty && dd.body ==
       #[.para #[.text "a"],
-        .center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil) .nil)]],
+        .center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil false) .nil)]],
         .para #[.text "b"]])
   t "paren math is inline math"
     ((Elab.run "t" "\\(y\\)").1.body ==
-      #[.para #[.formula false "y" (.cons (.atom .ord (.sym '𝑦') .nil .nil) .nil)]])
+      #[.para #[.formula false "y" (.cons (.atom .ord (.sym '𝑦') .nil .nil false) .nil)]])
   t "equation* is display math"
     ((Elab.run "t" "\\begin{equation*}x\\end{equation*}").1.body ==
-      #[.center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil) .nil)]]])
-  t "align keeps its source and warns by name"
-    (warnCodes "\\begin{align}a &= b\\end{align}" == ["W0012"] &&
-      (Elab.run "t" "\\begin{align}a &= b\\end{align}").1.body ==
-        #[.para #[.math true "a &= b"]])
-  t "frac keeps its source and warns by name"
-    (warnCodes "$\\frac{a}{b}$" == ["W0012"] &&
-      ((Elab.run "t" "$\\frac{a}{b}$").1.body.any fun b => match b with
+      #[.center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil false) .nil)]]])
+  -- What still is not modelled keeps its source and its name.
+  t "an accent keeps its source and warns by name"
+    (warnCodes "$\\hat{x}$" == ["W0012"] &&
+      ((Elab.run "t" "$\\hat{x}$").1.body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
           | .math false _ => true
           | _ => false
         | _ => false))
+  -- The alignment family renders as grids now; the numbered forms warn
+  -- W0014 (numbers are owed, the mathematics is not), a ragged row is
+  -- W0013 and still renders padded.
+  t "align renders as a grid; its numbers warn W0015"
+    (warnCodes "\\begin{align}a &= b\\end{align}" == ["W0015"] &&
+      ((Elab.run "t" "\\begin{align}a &= b\\end{align}").1.body.any fun b => match b with
+        | .center bs => bs.any fun b2 => match b2 with
+          | .para xs => xs.any fun x => match x with
+            | .formula true _ _ => true
+            | _ => false
+          | _ => false
+        | _ => false))
+  t "a ragged align row is W0014 and still renders"
+    (warnCodes "\\begin{align*}a &= b \\\\ z\\end{align*}" == ["W0014"])
+  -- Per-glyph positions: (char, gid, x, raise, advance) over every line.
+  let glyphInfo (src : String) : Array (Char × Nat × Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
+    let (d, _) := Elab.run "t" src
+    let mut out : Array (Char × Nat × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
+    for page in (Layout.run geom mfs none d).pages do
+      for l in page.lines do
+        let mut x := l.x
+        for s in l.segs do
+          match s with
+          | .gap w => x := x + w
+          | .rule w _ _ _ => x := x + w
+          | .image _ w _ => x := x + w
+          | .run _ _ _ w glyphs sz _ raise =>
+            let mut gx := x
+            for (g, c) in glyphs do
+              let a := (fira.widths[g]?.getD 0 : Int) * sz / upem
+              out := out.push (c, g, gx, raise, a)
+              gx := gx + a
+            x := x + w
+    return out
+  let rules (src : String) : Array (Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
+    let (d, _) := Elab.run "t" src
+    let mut out : Array (Dim.Sp × Dim.Sp × Dim.Sp) := #[]
+    for page in (Layout.run geom mfs none d).pages do
+      for l in page.lines do
+        for s in l.segs do
+          if let .rule w thickness raise _ := s then
+            out := out.push (w, thickness, raise)
+    return out
+  -- Fractions: parts at their styles' sizes, numerator raised and
+  -- denominator dropped, the bar fractionRuleThickness thick, and the
+  -- advance the wider part plus \nulldelimiterspace each side.
+  t "frac advance is the wider part plus null delimiters"
+    (widthOf "$\\frac12$" ==
+      2 * (base * 12 / 100) + max (adv scriptSize '1') (adv scriptSize '2'))
+  t "frac raises its numerator and drops its denominator"
+    (match (glyphInfo "$\\frac12$").toList with
+      | [('1', _, _, up, _), ('2', _, _, down, _)] => up > 0 && down < 0
+      | _ => false)
+  t "the fraction bar is fractionRuleThickness thick, as wide as the parts"
+    (rules "$\\frac12$" ==
+      #[(max (adv scriptSize '1') (adv scriptSize '2'), konst base 76,
+         konst base 280 - konst base 76 / 2)])
+  -- The radical: the surd's ink top meets the overbar, radicand under it.
+  t "sqrt draws surd and overbar over the radicand"
+    ((glyphInfo "$\\sqrt{x}$").any (fun g => g.1 == '\u221A') &&
+      (rules "$\\sqrt{x}$").size == 1 &&
+      (glyphInfo "$\\sqrt{x}$").any (fun g => g.1 == '𝑥'))
+  t "a root index sets small before the surd"
+    ((glyphInfo "$\\sqrt[3]{x}$").any (fun g => g.1 == '3' && g.2.2.2.1 > 0))
+  -- \left...\right grows through the variant ladder: around a tall display
+  -- fraction the paren is no longer the base glyph (gid 9 in Fira Math).
+  t "left paren grows over a display fraction"
+    ((glyphInfo "\\[\\left(\\frac{a}{b}\\right)\\]").any fun g =>
+      g.1 == '(' && g.2.1 != 9)
+  t "an inline paren around a scalar stays the base glyph"
+    ((glyphInfo "$\\left(a\\right)$").any fun g => g.1 == '(' && g.2.1 == 9)
+  -- Big operators: display style takes the face's display-size variant
+  -- (gid 1584) with limits above and below, centred; text style keeps the
+  -- base glyph (753) and its scripts beside.
+  t "display sum takes the display variant"
+    ((glyphInfo "\\[\\sum_{i=1}^{n} i\\]").any fun g => g.1 == '\u2211' && g.2.1 == 1584)
+  t "inline sum keeps the text-size glyph and scripts beside"
+    ((glyphInfo "$\\sum_{i=1}^{n} i$").any fun g => g.1 == '\u2211' && g.2.1 == 753)
+  t "display limits centre on the operator within a scaled point"
+    (Id.run do
+      let gs := glyphInfo "\\[\\sum_{j=2}^{m} j\\]"
+      let some (_, _, sx, _, sa) := gs.find? (fun g => g.1 == '\u2211') | return false
+      let some (_, _, mx, mraise, ma) := gs.find? (fun g => g.1 == '𝑚') | return false
+      return mraise > 0 && ((2 * mx + ma) - (2 * sx + sa)).natAbs ≤ 2)
+  t "the lower limit sits below the operator"
+    ((glyphInfo "\\[\\sum_{j=2}^{m} j\\]").any fun g => g.1 == '2' && g.2.2.2.1 < 0)
+  -- Alignment points align: the relation opening every even align cell
+  -- sits at one x for every row, and the right-aligned column pushes a
+  -- short cell right by exactly the width difference.
+  t "align columns share their alignment point"
+    (Id.run do
+      let gs := glyphInfo "\\begin{align*}ab &= c \\\\ x &= yz\\end{align*}"
+      let eqs := gs.filter (fun g => g.1 == '=')
+      let some (_, _, x1, r1, _) := eqs[0]? | return false
+      let some (_, _, x2, r2, _) := eqs[1]? | return false
+      return x1 == x2 && r1 != r2)
+  t "a right-aligned align cell pads by the width difference"
+    (Id.run do
+      let gs := glyphInfo "\\begin{align*}ab &= c \\\\ x &= yz\\end{align*}"
+      let some (_, _, ax, _, _) := gs.find? (fun g => g.1 == '𝑎') | return false
+      let some (_, _, xx, _, _) := gs.find? (fun g => g.1 == '𝑥') | return false
+      return xx - ax == (adv base '𝑎' + adv base '𝑏') - adv base '𝑥')
+  t "gather centres its rows on one axis"
+    (Id.run do
+      let gs := glyphInfo "\\begin{gather*}aaaa \\\\ b\\end{gather*}"
+      let some (_, _, ax, _, _) := gs.find? (fun g => g.1 == '𝑎') | return false
+      let some (_, _, bx, _, ba) := gs.find? (fun g => g.1 == '𝑏') | return false
+      let w1 := 4 * adv base '𝑎'
+      return ((2 * bx + ba) - (2 * ax + w1)).natAbs ≤ 2)
+  -- Primes and \text.
+  t "a prime is a raised superscript prime"
+    ((glyphInfo "$x'$").any fun g => g.1 == '\u2032' && g.2.2.2.1 == konst base 400)
+  t "text inside math keeps its letters and spaces upright"
+    (glyphChars "$\\text{if }x$" == #['i', 'f', ' ', '𝑥'] ||
+      glyphChars "$\\text{if }x$" == #['i', 'f', '𝑥'])
   t "setmathfont fills the math slot"
     ((Elab.run "t" ("\\documentclass{article}\\setmathfont{Fira Math}" ++
       "\\begin{document}x\\end{document}")).1.fonts.math == some "Fira Math")

@@ -72,6 +72,28 @@ def sub (s : MathStyle) : MathStyle :=
   | .script _ => .script true
   | .scriptscript _ => .scriptscript true
 
+/-- The cramped variant of a style: how a radicand sets (TeXbook
+Appendix G rule 11 — the radicand of `\sqrt` is set in the cramped
+current style). -/
+def cramp : MathStyle → MathStyle
+  | .display _ => .display true
+  | .text _ => .text true
+  | .script _ => .script true
+  | .scriptscript _ => .scriptscript true
+
+/-- The style of a fraction's numerator (TeXbook Appendix G rule 15:
+display sets its numerator in text style, text in script, script and
+scriptscript in scriptscript; cramping carries). -/
+def fracNum : MathStyle → MathStyle
+  | .display c => .text c
+  | .text c => .script c
+  | .script c | .scriptscript c => .scriptscript c
+
+/-- The style of a fraction's denominator: the numerator's, cramped
+(TeXbook Appendix G rule 15). -/
+def fracDen (s : MathStyle) : MathStyle :=
+  s.fracNum.cramp
+
 /-- Script styles suppress the conditional entries of the spacing table:
 TeX inserts medium and thick spaces (and the parenthesized thin ones) "in
 display and text styles only" (TeXbook p. 170). -/
@@ -97,6 +119,16 @@ theorem scriptscript_fixed_point :
 
 /-- A subscript is always cramped (TeXbook p. 141). -/
 theorem sub_cramped : ∀ s ∈ allStyles, s.sub.cramped = true := by decide
+
+/-- The fraction styles descend like the script styles (TeXbook Appendix G
+rule 15): a numerator never ranks above its base, a denominator is always
+cramped, and cramping preserves rank — the radicand of rule 11 sets at the
+base's own size. With `sizeFor_mono_rank`, none of these constituents ever
+sets larger than the formula it stands in. -/
+theorem frac_styles_descend :
+    ∀ s ∈ allStyles,
+      s.fracNum.rank ≤ s.rank ∧ s.fracDen.rank ≤ s.rank ∧
+      s.fracDen.cramped = true ∧ s.cramp.rank = s.rank := by decide
 
 /-- Sanitized script scale percentages from a font's MathConstants: the
 spec suggests 80/60 but declares no bounds, and "script sizes never grow"
@@ -140,7 +172,10 @@ private theorem size_pct_le_base (base : Int) (hb : 0 ≤ base) (p : Nat) (hp : 
 
 /-- Sizes shrink monotonically along the progression: for every font's
 (clamped) percentages, a script's size never exceeds its base's, at every
-style — so no script ever sets larger than the formula it hangs from. -/
+style — so no script ever sets larger than the formula it hangs from.
+Limits are scripts (Appendix G rule 13a sets an upper limit in superscript
+style and a lower limit in subscript style), so this theorem covers limit
+sizes too — no restatement needed. -/
 theorem sizes_shrink (a b base : Int) (hb : 0 ≤ base) (s : MathStyle) :
     sizeFor (ScriptScales.clamp a b) base s.sup ≤
       sizeFor (ScriptScales.clamp a b) base s ∧
@@ -158,6 +193,33 @@ theorem sizes_shrink (a b base : Int) (hb : 0 ≤ base) (s : MathStyle) :
     simp only [sizeFor, MathStyle.sup, MathStyle.sub] <;>
     exact ⟨by first | exact hbase | exact hscript | exact Int.le_refl _,
            by first | exact hbase | exact hscript | exact Int.le_refl _⟩
+
+/-- `sizeFor` is monotone in the style's rank, over every font's clamped
+percentages: a style no deeper in the progression never sets larger. This
+is what turns `frac_styles_descend` into sizes — a numerator, denominator,
+or radicand never sets larger than its base. -/
+theorem sizeFor_mono_rank (a b base : Int) (hb : 0 ≤ base) (s s' : MathStyle)
+    (h : s'.rank ≤ s.rank) :
+    sizeFor (ScriptScales.clamp a b) base s' ≤
+      sizeFor (ScriptScales.clamp a b) base s := by
+  have hsc := clamp_le_100 a b
+  have hss := clamp_ss_le_script a b
+  have hscript :
+      base * (ScriptScales.clamp a b).scriptscript / 100 ≤
+        base * (ScriptScales.clamp a b).script / 100 :=
+    size_scale_le base hb _ _ hss
+  have hbase : base * (ScriptScales.clamp a b).script / 100 ≤ base :=
+    size_pct_le_base base hb _ hsc
+  cases s <;> cases s' <;>
+    simp only [MathStyle.rank] at h <;>
+    first
+      | omega
+      | (simp only [sizeFor] <;>
+         first
+           | exact Int.le_refl _
+           | exact hbase
+           | exact hscript
+           | exact Int.le_trans hscript hbase)
 
 /-- Inter-atom space: none, thin (3 mu), medium (4 mu), or thick (5 mu),
 where 18 mu is one em of the math font at the current style's size
@@ -308,25 +370,182 @@ theorem spacing_agrees_with_luatex :
       (((luatexProbe s.scriptish).getD (allClasses.idxOf l) []).getD
         (allClasses.idxOf r) 1001) := by decide
 
+/-- How a grid column places a narrower cell inside the column's width. -/
+inductive ColAlign where
+  | left
+  | center
+  | right
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The column model of a math grid. `align` alternates right- and
+left-aligned columns in pairs that abut at the alignment point, each even
+cell opening with an empty Ord atom so a leading relation keeps its thick
+space — amsmath's `\align@preamble`, whose even columns read `{}#`
+(amsmath.dtx). `gather` is one centred column. `array` takes its
+alignments from the document's own column spec (`{lcr}`), text-style
+cells, `\arraycolsep` padding around every column (article.cls sets
+`\arraycolsep` to 5pt at the 10pt base — half an em a side). -/
+inductive GridKind where
+  | align
+  | gather
+  | array (cols : Array ColAlign)
+  deriving Repr, BEq, Inhabited
+
+/-- The alignment of column `k` under a grid kind. An `array` column past
+its spec centres — the spec mismatch was already diagnosed at elaboration. -/
+def GridKind.colAlign : GridKind → Nat → ColAlign
+  | .align, k => if k % 2 == 0 then .right else .left
+  | .gather, _ => .center
+  | .array cols, k => cols.getD k .center
+
+/-- The gap after column `k` of `n`, in mu (18ths of an em at the current
+size). `align`'s pair halves abut (the alignment point is exactly the
+column boundary); between pairs it takes 2 em — amsmath stretches tabskip
+glue across the display width there, which a fixed-width box cannot, so
+this is a stated stand-in, not a sourced constant. `array` pays
+`\arraycolsep` each side of every column boundary: 5pt+5pt at the 10pt
+base is 18 mu (article.cls). -/
+def GridKind.gapAfter : GridKind → Nat → Nat → Nat
+  | .align, k, n => if k + 1 == n then 0 else if k % 2 == 0 then 0 else 36
+  | .gather, _, _ => 0
+  | .array _, k, n => if k + 1 == n then 0 else 18
+
+/-- Where column `k` starts, given each column's width and the gap that
+follows it: the sum of everything before it. One definition placed cells
+and the width theorem both read, so "alignment points align" is a fact
+about this function — every row consults the same offsets. -/
+def colOffset (cols : List (Int × Int)) (k : Nat) : Int :=
+  match cols, k with
+  | _, 0 => 0
+  | [], _ + 1 => 0
+  | (w, g) :: rest, k + 1 => w + g + colOffset rest k
+
+/-- Past the last column, the offset is the whole grid: the assembled width
+is the sum of the column widths plus the declared gaps — no drift, whatever
+the widths. -/
+theorem colOffset_total (cols : List (Int × Int)) :
+    colOffset cols cols.length = (cols.map fun c => c.1 + c.2).foldr (· + ·) 0 := by
+  induction cols with
+  | nil => rfl
+  | cons c rest ih =>
+    simp only [colOffset, List.length, List.map, List.foldr, ih]
+
+/-- The kern that places a box `inner` wide inside a column `outer` wide. -/
+def ColAlign.pad (a : ColAlign) (outer inner : Int) : Int :=
+  match a with
+  | .left => 0
+  | .right => outer - inner
+  | .center => (outer - inner) / 2
+
+/-- Padding stays inside the column: the cell starts at or after the
+column's left edge and ends at or before its right edge — so a padded cell
+can never disturb a neighbouring column's alignment point. -/
+theorem pad_within (a : ColAlign) (outer inner : Int) (_h : inner ≤ outer) :
+    0 ≤ a.pad outer inner ∧ a.pad outer inner + inner ≤ outer := by
+  cases a <;> simp only [ColAlign.pad] <;> omega
+
+/-- Centring is symmetric to within the one sp integer division may owe:
+the space left after the cell differs from the space before it by at most
+one. Also what "display limits are centred on the operator" means in sp. -/
+theorem pad_center_symmetric (outer inner : Int) (_h : inner ≤ outer) :
+    0 ≤ outer - (2 * ColAlign.pad .center outer inner + inner) ∧
+    outer - (2 * ColAlign.pad .center outer inner + inner) ≤ 1 := by
+  simp only [ColAlign.pad]
+  omega
+
+/-- The variant a delimiter (or radical, or display operator) grows to: the
+first in the font's size ladder at least `target` tall, else the last —
+the MATH spec orders variants by increasing size, so the last is the
+largest the font offers (glyph assembly, past it, is not read in this
+slice). -/
+def pickVariant (target : Int) : List (Nat × Int) → Option (Nat × Int)
+  | [] => none
+  | [v] => some v
+  | v :: rest@(_ :: _) => if target ≤ v.2 then some v else pickVariant target rest
+
+/-- A grown delimiter covers its content whenever the font can: if any
+variant reaches the target, the picked one does. With the spec's
+increasing-size order this is the smallest sufficient variant; without it,
+still a sufficient one. -/
+theorem pickVariant_covers (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
+    (hp : pickVariant target vs = some v) (hw : ∃ w ∈ vs, target ≤ w.2) :
+    target ≤ v.2 := by
+  induction vs with
+  | nil => simp [pickVariant] at hp
+  | cons x rest ih =>
+    obtain ⟨w, hmem, hwt⟩ := hw
+    cases rest with
+    | nil =>
+      simp only [pickVariant, Option.some.injEq] at hp
+      rcases List.mem_singleton.mp hmem with rfl
+      exact hp ▸ hwt
+    | cons y t =>
+      simp only [pickVariant] at hp
+      split at hp
+      next hx =>
+        cases hp
+        exact hx
+      next hx =>
+        rcases List.mem_cons.mp hmem with rfl | hmem'
+        · exact absurd hwt hx
+        · exact ih hp ⟨w, hmem', hwt⟩
+
+/-- What is picked is a variant the font really has — never an invented
+glyph. -/
+theorem pickVariant_mem (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
+    (hp : pickVariant target vs = some v) : v ∈ vs := by
+  induction vs with
+  | nil => simp [pickVariant] at hp
+  | cons x rest ih =>
+    cases rest with
+    | nil =>
+      simp only [pickVariant, Option.some.injEq] at hp
+      subst hp
+      exact List.mem_singleton_self ..
+    | cons y t =>
+      simp only [pickVariant] at hp
+      split at hp
+      next =>
+        cases hp
+        exact List.mem_cons_self ..
+      next =>
+        exact List.mem_cons_of_mem x (ih hp)
+
 mutual
 
-/-- What an atom sets: one scalar, an upright word (a function name), or a
-braced sub-list. The scalar of a `sym` is final — variables were mapped to
-their mathematical-alphanumeric italic code points at elaboration (`x` is
-U+1D465), digits and function names stay upright, per the convention TeX
-and ISO 80000-2 share: variables italic, everything with a fixed meaning
-upright. -/
+/-- What an atom sets: one scalar, an upright word (a function name), a
+braced sub-list, or one of the assembled constructions — a fraction, a
+radical, a `\left…\right` group, a grid. The scalar of a `sym` is final —
+variables were mapped to their mathematical-alphanumeric italic code
+points at elaboration (`x` is U+1D465), digits and function names stay
+upright, per the convention TeX and ISO 80000-2 share: variables italic,
+everything with a fixed meaning upright. -/
 inductive MNucleus where
   | sym (c : Char)
   | word (s : String)
   | list (body : MList)
+  /-- `\frac`/`\over`: numerator over denominator, positioned from the
+  MATH constants, spaced as one Inner atom (TeXbook ch. 17 — fractions and
+  `\left…\right` groups are Inner). -/
+  | frac (num den : MList)
+  /-- `\sqrt[deg]{body}`: `deg` is `.nil` for the plain square root. -/
+  | rad (deg : MList) (body : MList)
+  /-- `\left l body \right r`: `none` is the empty `.` delimiter. -/
+  | delim (l : Option Char) (r : Option Char) (body : MList)
+  /-- An alignment: `align`/`gather`/`array` rows, rectangular by the time
+  layout sees them (`MRows.pad`; a ragged source row was diagnosed). -/
+  | grid (kind : GridKind) (rows : MRows)
   deriving Repr, BEq
 
-/-- One item of a math list: an atom with its class, nucleus, and scripts,
-or an explicit space. Scripts are `MList`s with `.nil` meaning none: an
-empty script and an absent one set the same nothing. -/
+/-- One item of a math list: an atom with its class, nucleus, scripts, and
+whether its scripts set as limits in display style (TeX's
+`\displaylimits`, the default for `\sum` and the limit-taking function
+names of TeXbook p. 162) — or an explicit space. Scripts are `MList`s with
+`.nil` meaning none: an empty script and an absent one set the same
+nothing. -/
 inductive MItem where
   | atom (cls : MathClass) (nuc : MNucleus) (sup : MList) (sub : MList)
+      (limits : Bool)
   /-- Explicit space in mu (18ths of an em at the current size); negative
   for `\!`. -/
   | space (mu : Int)
@@ -337,21 +556,131 @@ inductive MList where
   | cons (head : MItem) (tail : MList)
   deriving Repr, BEq
 
+/-- One grid row: its cells. -/
+inductive MRow where
+  | nil
+  | cons (cell : MList) (tail : MRow)
+  deriving Repr, BEq
+
+inductive MRows where
+  | nil
+  | cons (row : MRow) (tail : MRows)
+  deriving Repr, BEq
+
 end
 
 instance : Inhabited MList := ⟨.nil⟩
 instance : Inhabited MItem := ⟨.space 0⟩
 instance : Inhabited MNucleus := ⟨.sym '?'⟩
+instance : Inhabited MRow := ⟨.nil⟩
+instance : Inhabited MRows := ⟨.nil⟩
 
 def MList.ofList (xs : List MItem) : MList :=
   match xs with
   | [] => .nil
   | x :: rest => .cons x (ofList rest)
 
+def MRow.ofList (xs : List MList) : MRow :=
+  match xs with
+  | [] => .nil
+  | x :: rest => .cons x (ofList rest)
+
+def MRows.ofList (xs : List MRow) : MRows :=
+  match xs with
+  | [] => .nil
+  | x :: rest => .cons x (ofList rest)
+
+def MRow.cells : MRow → List MList
+  | .nil => []
+  | .cons c rest => c :: cells rest
+
+def MRows.rows : MRows → List MRow
+  | .nil => []
+  | .cons r rest => r :: rows rest
+
+def MRow.length (r : MRow) : Nat := r.cells.length
+
+/-- `n` empty cells. -/
+def MRow.blanks : Nat → MRow
+  | 0 => .nil
+  | n + 1 => .cons .nil (blanks n)
+
+def MRow.append (r : MRow) (s : MRow) : MRow :=
+  match r with
+  | .nil => s
+  | .cons c rest => .cons c (rest.append s)
+
+/-- The row padded to `n` cells with empty ones — how a diagnosed ragged
+row still renders everything it wrote. -/
+def MRow.pad (r : MRow) (n : Nat) : MRow :=
+  r.append (blanks (n - r.length))
+
+theorem MRow.blanks_cells (n : Nat) :
+    (MRow.blanks n).cells = List.replicate n .nil := by
+  induction n with
+  | zero => rfl
+  | succ n ih => simp only [blanks, cells, ih, List.replicate]
+
+theorem MRow.append_cells : ∀ (r s : MRow), (r.append s).cells = r.cells ++ s.cells
+  | .nil, _ => rfl
+  | .cons c rest, s => by
+    simp only [append, cells, append_cells rest s, List.cons_append]
+
+/-- Padding conserves content exactly: the padded row is the original's
+cells followed by empties — nothing dropped, nothing reordered, and (for
+`length ≤ n`) exactly `n` cells. -/
+theorem MRow.pad_cells (r : MRow) (n : Nat) :
+    (r.pad n).cells = r.cells ++ List.replicate (n - r.length) .nil := by
+  simp only [pad, append_cells, blanks_cells]
+
+theorem MRow.pad_length (r : MRow) (n : Nat) (h : r.length ≤ n) :
+    (r.pad n).length = n := by
+  simp only [length] at h
+  simp only [length, pad_cells, List.length_append, List.length_replicate]
+  omega
+
+/-- The widest row: what every row pads to. -/
+def MRows.maxCols (rs : MRows) : Nat :=
+  (rs.rows.map (·.length)).foldr Nat.max 0
+
+def MRows.pad (rs : MRows) (n : Nat) : MRows :=
+  match rs with
+  | .nil => .nil
+  | .cons r rest => .cons (r.pad n) (pad rest n)
+
+theorem MRows.pad_rows : ∀ (rs : MRows) (n : Nat),
+    (rs.pad n).rows = rs.rows.map (·.pad n)
+  | .nil, _ => rfl
+  | .cons r rest, n => by
+    simp only [pad, rows, pad_rows rest n, List.map]
+
+private theorem MRows.length_le_maxCols :
+    ∀ (rs : MRows), ∀ r ∈ rs.rows, r.length ≤ rs.maxCols
+  | .nil => by intro r h; simp [rows] at h
+  | .cons x rest => by
+    intro r h
+    rcases List.mem_cons.mp h with rfl | h'
+    · simp only [maxCols, rows, List.map, List.foldr]
+      exact Nat.le_max_left _ _
+    · have hrec := length_le_maxCols rest r h'
+      simp only [maxCols] at hrec
+      simp only [maxCols, rows, List.map, List.foldr]
+      exact Nat.le_trans hrec (Nat.le_max_right _ _)
+
+/-- A padded grid is rectangular: every row of `pad rs rs.maxCols` has
+exactly `maxCols` cells — the invariant that keeps a column's alignment
+point one x for every row. -/
+theorem MRows.pad_rectangular (rs : MRows) :
+    ∀ r ∈ (rs.pad rs.maxCols).rows, r.length = rs.maxCols := by
+  intro r h
+  rw [pad_rows] at h
+  obtain ⟨r0, hmem, rfl⟩ := List.mem_map.mp h
+  exact MRow.pad_length r0 _ (length_le_maxCols rs r0 hmem)
+
 /-- The class an item contributes to spacing. Spaces carry none — spacing
 is inserted only between directly adjacent atoms. -/
 def MItem.classOf : MItem → Option MathClass
-  | .atom cls _ _ _ => some cls
+  | .atom cls _ _ _ _ => some cls
   | .space _ => none
 
 /-- The classes of a list's atoms in order, spaces skipped: what `degrade`
@@ -359,7 +688,7 @@ normalizes and the spacing walk consumes. Shallow — each sub-list is
 normalized independently, as TeX processes each mlist. -/
 def MList.classes : MList → List MathClass
   | .nil => []
-  | .cons (.atom cls _ _ _) rest => cls :: classes rest
+  | .cons (.atom cls _ _ _ _) rest => cls :: classes rest
   | .cons (.space _) rest => classes rest
 
 mutual
@@ -367,7 +696,7 @@ mutual
 /-- Every scalar a math list can ask the math face for, `docScalars`-style:
 the driver checks coverage before layout, keeping layout pure. -/
 def MItem.scalars (acc : Array Char) : MItem → Array Char
-  | .atom _ nuc sup sub =>
+  | .atom _ nuc sup sub _ =>
     MList.scalarsList (MList.scalarsList (nuc.scalars acc) sup) sub
   | .space _ => acc
 
@@ -375,10 +704,29 @@ def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
   | .sym c => acc.push c
   | .word s => s.foldl (·.push ·) acc
   | .list body => MList.scalarsList acc body
+  | .frac num den => MList.scalarsList (MList.scalarsList acc num) den
+  | .rad deg body => MList.scalarsList (MList.scalarsList acc deg) body
+  | .delim l r body =>
+    let acc := match l with
+      | some c => acc.push c
+      | none => acc
+    let acc := match r with
+      | some c => acc.push c
+      | none => acc
+    MList.scalarsList acc body
+  | .grid _ rows => MRows.scalarsRows acc rows
 
 def MList.scalarsList (acc : Array Char) : MList → Array Char
   | .nil => acc
   | .cons x rest => MList.scalarsList (x.scalars acc) rest
+
+def MRow.scalarsRow (acc : Array Char) : MRow → Array Char
+  | .nil => acc
+  | .cons c rest => MRow.scalarsRow (MList.scalarsList acc c) rest
+
+def MRows.scalarsRows (acc : Array Char) : MRows → Array Char
+  | .nil => acc
+  | .cons r rest => MRows.scalarsRows (MRow.scalarsRow acc r) rest
 
 end
 

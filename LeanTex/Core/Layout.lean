@@ -311,6 +311,10 @@ inductive Item where
   with no depth. `store` indexes the `Image.Store`; `none` (or an entry that
   did not load) is placed as a placeholder box of the same size. -/
   | img (store : Option Nat) (w : Sp) (h : Sp)
+  /-- A horizontal rule in the stream — a fraction bar, a radical's
+  overbar: `w` wide, `thickness` tall, its bottom at the baseline plus
+  `raise`. Never a breakpoint, like any box. -/
+  | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
   deriving Repr, Inhabited
 
 def forcedCost : Int := -10000
@@ -678,7 +682,7 @@ def raggedItems (items : Array Item) : Array Item :=
   items.map fun it =>
     match it with
     | .glue g => .glue { width := g.width, fil := true, parfill := g.parfill }
-    | .box .. | .pen .. | .img .. => it
+    | .box .. | .pen .. | .img .. | .rule .. => it
 
 -- The document's scalars, for the driver's per-glyph fallback ------------------
 
@@ -806,6 +810,15 @@ spec, MathConstants). -/
 private def MathEnv.constAt (e : MathEnv) (size : Sp) (v : Int) : Sp :=
   v * size / (e.font.unitsPerEm : Int)
 
+/-- A glyph's vertical ink extent `(top, bottom)` scaled at a size, from
+its own outline; a face the decoder cannot answer for falls back to the
+cap height and the baseline. -/
+private def MathEnv.glyphExtent (e : MathEnv) (size : Sp) (g : Nat) : Sp × Sp :=
+  match e.font.yExtent g with
+  | some (lo, hi) =>
+    (hi * size / (e.font.unitsPerEm : Int), lo * size / (e.font.unitsPerEm : Int))
+  | none => (e.font.capHeight * size / (e.font.unitsPerEm : Int), 0)
+
 /-- A kern in the math stream: width, no glyphs, never a breakpoint. -/
 private def mathKern (e : MathEnv) (size w : Sp) : Item :=
   .box w e.idx e.color e.link #[] size e.underline 0
@@ -820,6 +833,257 @@ def mathItemsWidth (items : Array Item) : Sp :=
     | _ => w) 0
 
 private abbrev MAcc := Array Item × Array (Nat × Char)
+
+/-- The vertical ink extent `(top, bottom)` of assembled math items,
+relative to the surrounding baseline: each glyph's outline extent scaled at
+its box's size and shifted by its raise; a rule spans `raise` to
+`raise + thickness`. Glyphless boxes — kerns, struts — carry no ink.
+`(0, 0)` when nothing has ink. -/
+private def mathItemsExtent (font : Font) (items : Array Item) : Sp × Sp := Id.run do
+  let mut top : Sp := 0
+  let mut bot : Sp := 0
+  let upem : Int := font.unitsPerEm
+  for it in items do
+    match it with
+    | .box _ _ _ _ glyphs size _ raise =>
+      for (g, _, _) in glyphs do
+        match font.yExtent g with
+        | some (lo, hi) =>
+          top := max top (raise + hi * size / upem)
+          bot := min bot (raise + lo * size / upem)
+        | none =>
+          top := max top (raise + font.capHeight * size / upem)
+          bot := min bot raise
+    | .rule _ t r _ =>
+      top := max top (r + t)
+      bot := min bot r
+    | .glue _ | .pen _ _ _ _ _ _ | .img _ _ _ => pure ()
+  return (top, bot)
+
+/-- The same items shifted vertically: every raise moves, no width does. -/
+private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
+  if delta == 0 then items else
+  items.map fun it => match it with
+    | .box w i c l g s u r => .box w i c l g s u (r + delta)
+    | .rule w t r c => .rule w t (r + delta) c
+    | .glue g => .glue g
+    | .pen w c f i col g => .pen w c f i col g
+    | .img s w h => .img s w h
+
+/-- TeX's strut: an invisible box whose only effect is the line's height or
+depth. `placeLine` reads a run's height as its cap height (at the run's
+size) plus its raise, so a 1 sp box raised to `top` (and one sunk to `bot`)
+tells the line builder exactly the room an assembled construction needs —
+the fraction hanging above and below, the grown delimiter's reach. -/
+private def struts (e : MathEnv) (top bot : Sp) : Array Item :=
+  #[.box 0 e.idx e.color e.link #[] 1 false (max 0 top),
+    .box 0 e.idx e.color e.link #[] 1 false (min 0 bot)]
+
+/-- The size ladder a glyph grows through: its vertical variants, or just
+itself when the face grows it no further. -/
+private def variantLadder (e : MathEnv) (g : Nat) : List (Nat × Int) :=
+  let vs := e.font.vertVariants g
+  if vs.isEmpty then
+    match e.font.yExtent g with
+    | some (lo, hi) => [(g, hi - lo)]
+    | none => [(g, 0)]
+  else vs.toList
+
+/-- Assemble a laid `\left…\right` body between its grown delimiters
+(TeXbook Appendix G rule 19 with plain TeX's `\delimiterfactor` 901 and
+`\delimitershortfall` 5 pt at the 10 pt base): the delimiter grows through
+the face's variants until it covers the body's reach from the axis, and
+the chosen glyph centres its ink on the axis. The empty `.` delimiter is a
+`\nulldelimiterspace` kern. -/
+private def delimAssemble (e : MathEnv) (size raise : Sp) (l r : Option Char)
+    (bItems : Array Item) (missing0 : Array (Nat × Char)) :
+    Array Item × Array (Nat × Char) := Id.run do
+  let axis := e.constAt size e.consts.axisHeight
+  let (bTop, bBot) := mathItemsExtent e.font bItems
+  let δ := max (bTop - axis) (axis - bBot)
+  let target := max (2 * δ * 901 / 1000) (2 * δ - size / 2)
+  let targetDu := target * (e.font.unitsPerEm : Int) / size
+  let nd := size * 12 / 100
+  let mut items : Array Item := #[]
+  let mut missing := missing0
+  let mut top := bTop
+  let mut bot := bBot
+  let one := fun (c : Char) (items : Array Item) (missing : Array (Nat × Char)) =>
+    match glyphOf size e.font c with
+    | some (g, _, _) =>
+      let (gv, _) := (Math.pickVariant targetDu (variantLadder e g)).getD (g, 0)
+      let (vTop, vBot) := e.glyphExtent size gv
+      let w := scaledAt size e.font (e.font.widths[gv]?.getD 0)
+      let dRaise := raise + axis - (vTop + vBot) / 2
+      (items.push (Item.box w e.idx e.color e.link #[(gv, c, w)] size e.underline dRaise),
+       missing, dRaise - raise + vTop, dRaise - raise + vBot)
+    | none =>
+      (items, if missing.contains (e.idx, c) then missing else missing.push (e.idx, c),
+       bTop, bBot)
+  match l with
+  | some c =>
+    let (its, m, t, b) := one c items missing
+    items := its
+    missing := m
+    top := max top t
+    bot := min bot b
+  | none => items := items.push (mathKern e size nd)
+  let raisedBody := raiseItems raise bItems
+  items := items ++ raisedBody
+  match r with
+  | some c =>
+    let (its, m, t, b) := one c items missing
+    items := its
+    missing := m
+    top := max top t
+    bot := min bot b
+  | none => items := items.push (mathKern e size nd)
+  items := items ++ struts e (raise + top) (raise + bot)
+  return (items, missing)
+
+/-- Assemble laid grid cells (TeXbook ch. 22's `\halign` rule: each column
+as wide as its widest cell): cells padded into their columns per the grid
+kind at offsets every row shares (`Math.colOffset`), rows a baselineskip
+plus `\jot` apart (plain TeX's 12 pt and 3 pt at the 10 pt base; amsmath
+opens display alignments by `\jot`) or further when ink would collide, and
+the whole grid centred on the axis, as `\vcenter` centres a matrix. -/
+private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
+    (cells : Array (Array (Array Item))) : Array Item := Id.run do
+  let axis := e.constAt size e.consts.axisHeight
+  let n := cells.foldl (fun m row => max m row.size) 0
+  if n == 0 then
+    return #[]
+  let mut colW : Array Sp := Array.replicate n 0
+  for row in cells do
+    for k in [0:row.size] do
+      colW := colW.set! k (max colW[k]! (mathItemsWidth row[k]!))
+  let cols : List (Sp × Sp) := (List.range n).map fun k =>
+    (colW[k]!, muAt size (kind.gapAfter k n : Int))
+  let total := Math.colOffset cols n
+  let bl := size * 12 / 10
+  let lineskip := size / 10
+  let jot := match kind with
+    | .array _ => 0
+    | _ => size * 3 / 10
+  let rowExtents := cells.map fun row =>
+    row.foldl (fun (t, b) cell =>
+      let (ct, cb) := mathItemsExtent e.font cell
+      (max t ct, min b cb)) ((0 : Sp), (0 : Sp))
+  let mut ys : Array Sp := #[]
+  let mut y : Sp := 0
+  for i in [0:cells.size] do
+    if i > 0 then
+      let d := max (bl + jot)
+        ((-(rowExtents[i-1]!.2)) + rowExtents[i]!.1 + lineskip)
+      y := y - d
+    ys := ys.push y
+  let top := rowExtents[0]!.1
+  let bot := y + (rowExtents[cells.size - 1]!).2
+  let Δ := raise + axis - (top + bot) / 2
+  let mut items : Array Item := #[]
+  for i in [0:cells.size] do
+    let row := cells[i]!
+    let mut cur : Sp := 0
+    for k in [0:row.size] do
+      let cellItems := row[k]!
+      let cw := mathItemsWidth cellItems
+      let x := Math.colOffset cols k + (kind.colAlign k).pad colW[k]! cw
+      items := items.push (mathKern e size (x - cur))
+      items := items ++ raiseItems (Δ + ys[i]!) cellItems
+      cur := x + cw
+    items := items.push (mathKern e size (total - cur))
+    items := items.push (mathKern e size (-total))
+  items := items.push (mathKern e size total)
+  items := items ++ struts e (Δ + top) (Δ + bot)
+  return items
+
+/-- Assemble a laid fraction (TeXbook Appendix G rule 15 over the MATH
+constants): numerator shifted up, denominator shifted down, the bar
+`fractionRuleThickness` thick with its middle on the axis, the shifts
+opened until the spec's minimum gaps clear the ink, both parts centred
+over the bar, and plain TeX's `\nulldelimiterspace` (1.2 pt at the 10 pt
+base) each side. -/
+private def fracAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
+    (numItems denItems : Array Item) : Array Item :=
+  let axis := e.constAt size e.consts.axisHeight
+  let θ := e.constAt size e.consts.fractionRuleThickness
+  let u0 := e.constAt size (if display then e.consts.fractionNumeratorDisplayStyleShiftUp
+    else e.consts.fractionNumeratorShiftUp)
+  let v0 := e.constAt size (if display then e.consts.fractionDenominatorDisplayStyleShiftDown
+    else e.consts.fractionDenominatorShiftDown)
+  let gapN := e.constAt size (if display then e.consts.fractionNumDisplayStyleGapMin
+    else e.consts.fractionNumeratorGapMin)
+  let gapD := e.constAt size (if display then e.consts.fractionDenomDisplayStyleGapMin
+    else e.consts.fractionDenominatorGapMin)
+  let (numTop, numBot) := mathItemsExtent e.font numItems
+  let (denTop, denBot) := mathItemsExtent e.font denItems
+  let u := max u0 (axis + θ / 2 + gapN - numBot)
+  let v := max v0 (denTop + gapD - (axis - θ / 2))
+  let numW := mathItemsWidth numItems
+  let denW := mathItemsWidth denItems
+  let ruleW := max numW denW
+  let nd := size * 12 / 100
+  let numPad := Math.ColAlign.pad .center ruleW numW
+  let denPad := Math.ColAlign.pad .center ruleW denW
+  (#[mathKern e size nd, mathKern e size numPad]
+      ++ raiseItems (raise + u) numItems)
+    ++ (#[mathKern e size (ruleW - numPad - numW), mathKern e size (-ruleW),
+          Item.rule ruleW θ (raise + axis - θ / 2) e.color,
+          mathKern e size (-ruleW), mathKern e size denPad]
+      ++ raiseItems (raise - v) denItems)
+    ++ #[mathKern e size (ruleW - denPad - denW), mathKern e size nd]
+    ++ struts e (raise + u + numTop) (raise - v + denBot)
+
+/-- Assemble a laid radical (MATH spec radical constants): the radicand
+under an overbar `radicalRuleThickness` thick and `radicalVerticalGap`
+above its ink (`radicalDisplayStyleVerticalGap` in display), the surd
+grown through the face's variants until it spans bar and body, its ink top
+at the bar's top; the degree kerned by `radicalKernBeforeDegree` /
+`radicalKernAfterDegree` and raised `radicalDegreeBottomRaisePercent` of
+the surd's height. -/
+private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
+    (bItems degItems : Array Item) (missing0 : Array (Nat × Char)) :
+    Array Item × Array (Nat × Char) :=
+  let θ := e.constAt size e.consts.radicalRuleThickness
+  let ψ := e.constAt size (if display then e.consts.radicalDisplayStyleVerticalGap
+    else e.consts.radicalVerticalGap)
+  let (bTop, bBot) := mathItemsExtent e.font bItems
+  let ruleBot := bTop + ψ
+  let ruleTop := ruleBot + θ
+  let bodyW := mathItemsWidth bItems
+  let extraAsc := e.constAt size e.consts.radicalExtraAscender
+  match glyphOf size e.font '\u221A' with
+  | none =>
+    let missing := if missing0.contains (e.idx, '\u221A') then missing0
+      else missing0.push (e.idx, '\u221A')
+    let raisedBody := raiseItems raise bItems
+    let items := (#[(Item.rule bodyW θ (raise + ruleBot) e.color),
+        mathKern e size (-bodyW)]
+      ++ raisedBody)
+      ++ struts e (raise + ruleTop + extraAsc) (raise + bBot)
+    (items, missing)
+  | some (g, _, _) =>
+    let targetDu := (ruleTop - min 0 bBot) * (e.font.unitsPerEm : Int) / size
+    let (gv, _) := (Math.pickVariant targetDu (variantLadder e g)).getD (g, 0)
+    let (vTop, vBot) := e.glyphExtent size gv
+    let surdW := scaledAt size e.font (e.font.widths[gv]?.getD 0)
+    let surdRaise := raise + ruleTop - vTop
+    let raisedBody := raiseItems raise bItems
+    let degPrefix :=
+      if degItems.isEmpty then #[] else Id.run do
+        let degRaise := surdRaise + vBot +
+          (vTop - vBot) * e.consts.radicalDegreeBottomRaisePercent / 100
+        let kernB := e.constAt size e.consts.radicalKernBeforeDegree
+        let kernA := e.constAt size e.consts.radicalKernAfterDegree
+        return (#[mathKern e size kernB] ++ raiseItems degRaise degItems).push
+          (mathKern e size kernA)
+    let items := (degPrefix.push
+        (.box surdW e.idx e.color e.link #[(gv, '\u221A', surdW)] size e.underline surdRaise)
+      |>.push (Item.rule bodyW θ (raise + ruleBot) e.color)
+      |>.push (mathKern e size (-bodyW)))
+      ++ raisedBody
+      ++ struts e (raise + ruleTop + extraAsc) (min (raise + bBot) (surdRaise + vBot))
+    (items, missing0)
 
 mutual
 
@@ -854,21 +1118,79 @@ private def layMathTail (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       let acc := layMathItem e st raise x acc
       layMathTail e st raise cs (some c) acc rest
 
-/-- Lay one atom: its nucleus at the current style, then its scripts at the
-script styles, raised and dropped by the base's constants
-(`superscriptShiftUp` / `superscriptShiftUpCramped` / `subscriptShiftDown`),
-with `spaceAfterScript` after. When both scripts are present they stack at
-one horizontal position: the subscript rewinds by the superscript's width
-through a negative kern, and the atom advances by the wider of the two. -/
+/-- Lay one atom: its nucleus at the current style — an Op nucleus in
+display style grown to the face's display-size variant and centred on the
+axis (MATH spec `displayOperatorMinHeight`; TeXbook Appendix G rule 13) —
+then its scripts. A limit-taking operator in display style sets its scripts
+as limits above and below, centred (rule 13a, gaps and rises from the MATH
+constants); everything else takes the script styles at the base's shift
+constants (`superscriptShiftUp` / `superscriptShiftUpCramped` /
+`subscriptShiftDown`), with `spaceAfterScript` after. When both scripts are
+present they stack at one horizontal position: the subscript rewinds by the
+superscript's width through a negative kern, and the atom advances by the
+wider of the two. -/
 private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     (x : Math.MItem) (acc : MAcc) : MAcc :=
   match x with
   | .space mu =>
     let size := e.sizeAt st
     ((acc.1.push (mathKern e size (muAt size mu))), acc.2)
-  | .atom _ nuc sup sub =>
-    let acc := layMathNucleus e st raise nuc acc
+  | .atom cls nuc sup sub lim =>
     let size := e.sizeAt st
+    let display := st.rank == 3
+    -- The nucleus, laid into its own run so the limit path can measure it.
+    let (nucItems, m0) :=
+      match nuc, cls, display with
+      | .sym c, .op, true =>
+        match glyphOf size e.font c with
+        | some (g, _, _) =>
+          let (gv, _) := (Math.pickVariant e.consts.displayOperatorMinHeight
+            (variantLadder e g)).getD (g, 0)
+          let w := scaledAt size e.font (e.font.widths[gv]?.getD 0)
+          let (vTop, vBot) := e.glyphExtent size gv
+          let axis := e.constAt size e.consts.axisHeight
+          let vRaise := raise + axis - (vTop + vBot) / 2
+          (#[(Item.box w e.idx e.color e.link #[(gv, c, w)] size e.underline vRaise)]
+            ++ struts e (vRaise + vTop) (vRaise + vBot), acc.2)
+        | none =>
+          if acc.2.contains (e.idx, c) then (#[], acc.2)
+          else (#[], acc.2.push (e.idx, c))
+      | _, _, _ => layMathNucleus e st raise nuc (#[], acc.2)
+    if lim && display && !(sup == .nil && sub == .nil) then
+      -- Limits: scripts above and below the operator, centred on it.
+      let (supItems, m1) := layMathTail e st.sup 0
+        (Math.degrade sup.classes) none (#[], m0) sup
+      let (subItems, m2) := layMathTail e st.sub 0
+        (Math.degrade sub.classes) none (#[], m1) sub
+      let (opTop, opBot) := mathItemsExtent e.font nucItems
+      let (supTop, supBot) := mathItemsExtent e.font supItems
+      let (subTop, subBot) := mathItemsExtent e.font subItems
+      let opW := mathItemsWidth nucItems
+      let supW := mathItemsWidth supItems
+      let subW := mathItemsWidth subItems
+      let w := max opW (max supW subW)
+      let rise := max (opTop + e.constAt size e.consts.upperLimitBaselineRiseMin)
+        (opTop + e.constAt size e.consts.upperLimitGapMin - supBot)
+      let low := min (opBot - e.constAt size e.consts.lowerLimitBaselineDropMin)
+        (opBot - e.constAt size e.consts.lowerLimitGapMin - subTop)
+      let place (items : Array Item) (itemsW : Sp) (delta : Sp) : Array Item :=
+        if items.isEmpty then #[] else
+        let padK := Math.ColAlign.pad .center w itemsW
+        let shifted := raiseItems delta items
+        (#[mathKern e size padK] ++ shifted).push
+          (mathKern e size (w - padK - itemsW)) |>.push (mathKern e size (-w))
+      let placedNuc := place nucItems opW 0
+      let placedSup := place supItems supW rise
+      let placedSub := place subItems subW low
+      let items := placedNuc ++ placedSup ++ placedSub
+      -- The last placed run rewound to the start; advance by the width.
+      let items := items.push (mathKern e size w)
+      let items := items ++ struts e
+        (if supItems.isEmpty then opTop else rise + supTop)
+        (if subItems.isEmpty then opBot else low + subBot)
+      (acc.1 ++ items, m2)
+    else
+    let acc := (acc.1 ++ nucItems, m0)
     let upShift := e.constAt size
       (if st.cramped then e.consts.superscriptShiftUpCramped
        else e.consts.superscriptShiftUp)
@@ -903,7 +1225,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       if acc.2.contains (e.idx, c) then acc
       else (acc.1, acc.2.push (e.idx, c))
   | .word s =>
-    -- An upright word (a function name): one box in the math face.
+    -- An upright word (a function name, `\text`): one box in the math face.
     let size := e.sizeAt st
     let (glyphs, w, missing) := s.foldl (fun (gs, w, m) c =>
       match glyphOf size e.font c with
@@ -913,6 +1235,49 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     ((acc.1.push (.box w e.idx e.color e.link glyphs size e.underline raise)), missing)
   | .list body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
+  | .frac num den =>
+    let (numItems, m1) := layMathTail e st.fracNum 0
+      (Math.degrade num.classes) none (#[], acc.2) num
+    let (denItems, m2) := layMathTail e st.fracDen 0
+      (Math.degrade den.classes) none (#[], m1) den
+    (acc.1 ++ fracAssemble e (e.sizeAt st) (st.rank == 3) raise numItems denItems, m2)
+  | .rad deg body =>
+    let (bItems, m1) := layMathTail e st.cramp 0
+      (Math.degrade body.classes) none (#[], acc.2) body
+    let (degItems, m2) := layMathTail e (.scriptscript st.cramped) 0
+      (Math.degrade deg.classes) none (#[], m1) deg
+    let (items, missing) := radAssemble e (e.sizeAt st) (st.rank == 3) raise
+      bItems degItems m2
+    (acc.1 ++ items, missing)
+  | .delim l r body =>
+    let (bItems, m1) := layMathTail e st 0
+      (Math.degrade body.classes) none (#[], acc.2) body
+    let (items, missing) := delimAssemble e (e.sizeAt st) raise l r bItems m1
+    (acc.1 ++ items, missing)
+  | .grid kind rows =>
+    let cellSt : Math.MathStyle := match kind with
+      | .array _ => if st.rank > 2 then .text st.cramped else st
+      | _ => st
+    let (cells, missing) := layGridRows e cellSt (#[], acc.2) rows
+    (acc.1 ++ gridAssemble e (e.sizeAt st) raise kind cells, missing)
+
+/-- The cells of one row, each laid into its own run. -/
+private def layGridRow (e : MathEnv) (st : Math.MathStyle)
+    (acc : Array (Array Item) × Array (Nat × Char)) :
+    Math.MRow → Array (Array Item) × Array (Nat × Char)
+  | .nil => acc
+  | .cons cell rest =>
+    let (items, m) := layMathTail e st 0
+      (Math.degrade cell.classes) none (#[], acc.2) cell
+    layGridRow e st (acc.1.push items, m) rest
+
+private def layGridRows (e : MathEnv) (st : Math.MathStyle)
+    (acc : Array (Array (Array Item)) × Array (Nat × Char)) :
+    Math.MRows → Array (Array (Array Item)) × Array (Nat × Char)
+  | .nil => acc
+  | .cons row rest =>
+    let (cells, m) := layGridRow e st (#[], acc.2) row
+    layGridRows e st (acc.1.push cells, m) rest
 
 end
 
@@ -1032,6 +1397,7 @@ def canBreakAt (items : Array Item) (j : Nat) : Bool :=
     match items[j-1]? with
     | some (.box _ _ _ _ _ _ _ _) => j > 0
     | some (.img _ _ _) => j > 0
+    | some (.rule _ _ _ _) => j > 0
     | _ => false
   | some (.pen _ cost _ _ _ _) => cost < 10000
   | _ => false
@@ -1057,6 +1423,7 @@ def measure (items : Array Item) (a j : Nat) : Measure := Id.run do
     match items[k]! with
     | .box w _ _ _ _ _ _ _ => m := { m with natural := m.natural + w }
     | .img _ w _ => m := { m with natural := m.natural + w }
+    | .rule w _ _ _ => m := { m with natural := m.natural + w }
     | .glue g => m := { m with
         natural := m.natural + g.width
         stretch := m.stretch + g.stretch
@@ -1128,6 +1495,7 @@ def kpSums (items : Array Item) : KpSums := Id.run do
     let (dw, dst, dsh, dfil) : Sp × Sp × Sp × Nat := match items[k]! with
       | .box w _ _ _ _ _ _ _ => (w, 0, 0, 0)
       | .img _ w _ => (w, 0, 0, 0)
+      | .rule w _ _ _ => (w, 0, 0, 0)
       | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0)
       | .pen _ _ _ _ _ _ => (0, 0, 0, 0)
     pw := pw.push (pw[k]! + dw)
@@ -1262,6 +1630,9 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
       width := width + w
     | .img idx w h =>
       segs := segs.push (.image idx w h)
+      width := width + w
+    | .rule w thickness raise color =>
+      segs := segs.push (.rule w thickness raise color)
       width := width + w
     | .glue g =>
       let setW : Sp :=
@@ -1443,6 +1814,10 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     -- line's height, never its nominal size, so the leading after it is
     -- decided by the text that follows, as TeX decides it.
     | .image _ _ h => (acc.1, max acc.2.1 h, acc.2.2)
+    -- A math rule (a fraction bar) reaches from `raise` to
+    -- `raise + thickness`: it can add height above the baseline or depth
+    -- below it, never both.
+    | .rule _ t r _ => (acc.1, max acc.2.1 (r + t), max acc.2.2 (-r))
     | _ => acc) (nominal, b.capHeight * nominal / b.geom.fontSize,
                  b.descent * nominal / b.geom.fontSize)
   let bottom := b.geom.bodyBottom

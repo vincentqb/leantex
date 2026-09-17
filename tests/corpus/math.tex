@@ -15,8 +15,36 @@ $x^{y^z}$, and a pair stacks in $a_i^2 + b^{n}_{m}$. The paren form
 
 \[ \sum_i \alpha_i x^i \le \Gamma(n) \cdot \prod_j \beta_j \]
 
-The paragraph continues after the display. What this slice does not model
-keeps its source and a warning that names it: $\sqrt{x + 1}$ stays text.
+The paragraph continues after the display. Fractions nest as
+$\frac{1}{1 + \frac{1}{n}}$, a radical takes an index in $\sqrt[3]{x + 1}$,
+and a grown pair covers a tall fraction:
+
+\[ \left( \frac{a + b}{c} \right)^2 = \frac{a^2 + 2ab + b^2}{c^2} \]
+
+A big operator carries its limits below and above in display style,
+
+\[ \sum_{i=1}^{n} i = \frac{n(n+1)}{2}, \qquad \lim_{x \to 0} \frac{\sin x}{x} = 1, \]
+
+while inline $\sum_{i=1}^{n} i$ keeps them beside. Alignment points share
+one x per column:
+
+\begin{align*}
+  2 + 4 + \cdots + 2n &= n(n+1) \\
+  f(x) &= x^2 - 1 \\
+       &= (x-1)(x+1)
+\end{align*}
+
+\begin{gather*}
+  a + b = c \\
+  x^2 + y^2 = z^2
+\end{gather*}
+
+A matrix is an array between grown delimiters, its cells in text style:
+
+\[ M = \left[ \begin{array}{cc} 1 & x \\ x' & \frac{1}{2} \end{array} \right] \]
+
+What this slice does not model keeps its source and a warning that names
+it: $\hat{x} + 1$ stays text.
 
 \begin{equation*}
   e^{i\pi} + 1 = 0

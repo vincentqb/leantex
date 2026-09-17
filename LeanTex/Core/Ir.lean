@@ -884,8 +884,9 @@ scalar, and scripts, so a golden pins exactly what elaboration decided.
 through the walk, as every structural printer here does. -/
 def dumpMathItem (acc : String) (x : Math.MItem) : String :=
   match x with
-  | .atom cls nuc sup sub =>
-    dumpMathSub (dumpMathSup (dumpMathNucleus (acc ++ s!"{cls.label}:") nuc) sup) sub
+  | .atom cls nuc sup sub lim =>
+    let acc := acc ++ s!"{cls.label}:" ++ (if lim then "lim:" else "")
+    dumpMathSub (dumpMathSup (dumpMathNucleus acc nuc) sup) sub
   | .space mu => acc ++ s!"mu:{mu}"
 
 def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
@@ -893,6 +894,41 @@ def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
   | .sym c => acc.push c
   | .word s => acc ++ s.quote
   | .list body => (dumpMathList (acc.push '{') body).push '}'
+  | .frac num den =>
+    ((dumpMathList (acc ++ "frac{") num ++ "}{" |> fun a =>
+      dumpMathList a den)).push '}'
+  | .rad deg body =>
+    let acc := match deg with
+      | .nil => acc ++ "sqrt"
+      | _ => (dumpMathList (acc ++ "sqrt[") deg) ++ "]"
+    (dumpMathList (acc.push '{') body).push '}'
+  | .delim l r body =>
+    let name (c : Option Char) : String := match c with
+      | some c => String.ofList [c]
+      | none => "."
+    (dumpMathList (acc ++ s!"left{name l}\{") body) ++ s!"}right{name r}"
+  | .grid kind rows =>
+    let tag := match kind with
+      | .align => "align"
+      | .gather => "gather"
+      | .array cols =>
+        "array:" ++ String.join (cols.toList.map fun a => match a with
+          | .left => "l"
+          | .center => "c"
+          | .right => "r")
+    dumpMathRows (acc ++ tag ++ "[") rows ++ "]"
+
+def dumpMathRows (acc : String) (rs : Math.MRows) : String :=
+  match rs with
+  | .nil => acc
+  | .cons r rest =>
+    dumpMathRows (dumpMathRow (acc ++ "(") r ++ ")") rest
+
+def dumpMathRow (acc : String) (r : Math.MRow) : String :=
+  match r with
+  | .nil => acc
+  | .cons cell rest =>
+    dumpMathRow (dumpMathList (acc ++ "|") cell) rest
 
 def dumpMathSup (acc : String) (l : Math.MList) : String :=
   match l with

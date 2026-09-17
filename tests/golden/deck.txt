@@ -52,8 +52,10 @@ frame
     text "Arithmetic"
   para
     text "The first squares:"
-  para
-    math display "1 &= 1^2 \\\\ 1 + 3 &= 2^2"
+  center
+    para
+      formula display "1 &= 1^2 \\\\ 1 + 3 &= 2^2"
+        ord:align[(|ord:1|ord:{} rel:= ord:1^{ord:2})(|ord:1 bin:+ ord:3|ord:{} rel:= ord:2^{ord:2})]
   para
     text " "
     styled bold
@@ -85,5 +87,4 @@ note[N0100] 35:19 \alert → \textbf
 warning[W0319] 9:1 unknown theme 'example'; the document is unthemed | help: themes: moloch, plain
 note[N0102] 41:5 frame option 'fragile' is not modelled; ignored
 warning[W0304] 11:22 'quiet!50' is not in the palette; content kept uncoloured | help: declare colours with \palette{ name = #RRGGBB }
-warning[W0012] 54:5 '{align*}' is not rendered yet; its math is set as source text | help: the rest of M6; see PLAN.md
 warning[W0308] 59:5 tables are not laid out yet; rows are set as plain lines | help: planned for M8; see PLAN.md

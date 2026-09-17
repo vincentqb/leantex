@@ -121,16 +121,44 @@ private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
 
 /-- One formula: parsed into math atoms when this slice can model it, kept
 as source text with a warning naming the construct when it cannot — out of
-scope is a named warning, never a silent drop. -/
+scope is a named warning, never a silent drop. A ragged alignment row
+inside the formula (an `array`) is W0014: padded with empty cells, named. -/
 private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
     (pos : Pos) : EM Ir.Inline := do
   match MathParse.parseMath body with
-  | .ok l => return .formula display (Parse.rawSrc body) l
+  | .ok (l, notes) =>
+    for note in notes do
+      warnOnce ctx ("math:ragged:" ++ note) .W0014
+        s!"alignment {note}" pos
+    return .formula display (Parse.rawSrc body) l
   | .error what =>
     warnOnce ctx ("math:" ++ what) .W0012
       s!"math with {what} is not rendered yet; the formula is set as source text" pos
       (help := "the rest of M6; see PLAN.md")
     return .math display (Parse.rawSrc body)
+
+/-- One alignment environment (`align`/`gather` and their starred forms):
+its rows parsed into one display grid formula. A construct the parser
+cannot model keeps the whole environment as source, named (W0012); a
+ragged row is W0014, padded; a numbered form warns W0015 once — the
+equation numbers are owed, the mathematics is not. -/
+private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
+    (numbered : Bool) (body : Array Parse.Raw) (pos : Pos) : EM Ir.Inline := do
+  match MathParse.parseMathRows kind body with
+  | .ok (l, notes) =>
+    for note in notes do
+      warnOnce ctx ("math:ragged:" ++ note) .W0014
+        s!"'\{{name}}': {note}" pos
+    if numbered then
+      warnOnce ctx "math:eqnum" .W0015
+        s!"equation numbers are not rendered yet; '\{{name}}' sets unnumbered" pos
+        (help := s!"the starred '\{{name}}*' says what renders today; see PLAN.md")
+    return .formula true (Parse.rawSrc body) l
+  | .error what =>
+    warnOnce ctx ("math:" ++ what) .W0012
+      s!"math with {what} is not rendered yet; '\{{name}}' is set as source text" pos
+      (help := "the rest of M6; see PLAN.md")
+    return .math true (Parse.rawSrc body)
 
 /-- Reserved control words: the milestone that will implement each, and the
 code its skip earns — W0307 (dropped, an error) when the skipped arguments
@@ -168,17 +196,21 @@ def pageSizes : List (String × (Sp × Sp)) :=
 def reservedEnv : List (String × String) :=
   [("external", "M8"), ("tikzpicture", "M8")]
 
-/-- Math environments whose body is carried whole as math source: the
-alignment forms M6 still owes. Elaborating their `&` and `\\` as text would
-shred exactly the alignment the author wrote. `equation*` and
-`displaymath` are not here — they are `\[...\]` under another name and
-elaborate to formulas. -/
-def mathEnvs : List String :=
-  ["align", "align*", "equation", "gather", "gather*"]
+/-- The alignment environments this slice renders as grids: the column
+model, and whether LaTeX numbers the rows (numbers are owed, W0014).
+`array` is not here — it lives inside math and the math parser owns it. -/
+def alignEnvs : List (String × Math.GridKind × Bool) :=
+  [("align", .align, true), ("align*", .align, false),
+   ("gather", .gather, true), ("gather*", .gather, false)]
 
-/-- The display-math environments this slice renders. -/
-def displayMathEnvs : List String :=
-  ["equation*", "displaymath"]
+/-- The display-math environments rendered as one centred formula, and
+whether LaTeX numbers them (`equation` renders unnumbered under W0014). -/
+def displayMathEnvs : List (String × Bool) :=
+  [("equation*", false), ("displaymath", false), ("equation", true)]
+
+/-- Is this environment display mathematics — its own centred block? -/
+def isMathEnv (name : String) : Bool :=
+  (displayMathEnvs.lookup name).isSome || (alignEnvs.lookup name).isSome
 
 /-- Title-page declarations, storable from the preamble or the body. -/
 def titleCtrls : List String :=
@@ -665,19 +697,20 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           acc := flushText acc sb
           sb := ""
           acc := acc ++ (← elabInlines { ctx with file := f } body)
-        else if displayMathEnvs.contains name then
+        else if let some numbered := displayMathEnvs.lookup name then
           i := i + 1
           acc := flushText acc sb
           sb := ""
+          if numbered then
+            warnOnce ctx "math:eqnum" .W0015
+              s!"equation numbers are not rendered yet; '\{{name}}' sets unnumbered" pos
+              (help := s!"the starred '\{{name}}*' says what renders today; see PLAN.md")
           acc := acc.push (← elabMathInline ctx true body pos)
-        else if mathEnvs.contains name then
+        else if let some (kind, numbered) := alignEnvs.lookup name then
           i := i + 1
           acc := flushText acc sb
           sb := ""
-          warnOnce ctx ("math:env:" ++ name) .W0012
-            s!"'\{{name}}' is not rendered yet; its math is set as source text" pos
-            (help := "the rest of M6; see PLAN.md")
-          acc := acc.push (.math true (rawSrc body))
+          acc := acc.push (← elabMathEnv ctx name kind numbered body pos)
         else if let some (k, env) := lookupUserEnv ctx name then
           -- A defined wrapper: its parameters bind from the groups after
           -- `\begin{name}`, its halves elaborate around the content. The
@@ -1128,7 +1161,8 @@ def blockEnvs : List String :=
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
 def builtinEnvNames : List String :=
-  blockEnvs ++ mathEnvs ++ ["verbatim", "tabular", "tabular*", "column"] ++
+  blockEnvs ++ (alignEnvs.map (·.1)) ++ (displayMathEnvs.map (·.1)) ++
+  ["verbatim", "tabular", "tabular*", "column", "array"] ++
   (reservedEnv.map (·.1))
 
 /-- A column width as per mille of the text width: `0.48\textwidth`,
@@ -1163,7 +1197,7 @@ def bodyIsBlockOne : Raw → Bool
   | .env n body _ =>
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
     else
-      blockEnvs.contains n || mathEnvs.contains n || displayMathEnvs.contains n
+      blockEnvs.contains n || isMathEnv n
         || n == "tabular" || n == "tabular*"
         || (reservedEnv.lookup n).isSome || bodyIsBlockList body.toList
   | .group body _ => bodyIsBlockList body.toList
@@ -1431,7 +1465,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           -- sentence.
           if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
           else
-            blockEnvs.contains n || mathEnvs.contains n || displayMathEnvs.contains n
+            blockEnvs.contains n || isMathEnv n
               || n == "tabular" || n == "tabular*"
               || (reservedEnv.lookup n).isSome
               || (match lookupUserEnv ctx n with
@@ -1717,14 +1751,16 @@ specs are not modelled")
             -- An \input file's blocks, elaborated under its own name so a
             -- diagnostic points at the file that holds the construct.
             blocks := blocks ++ (← elabBlocks { ctx with file := f } body)
-          else if displayMathEnvs.contains n then
+          else if let some numbered := displayMathEnvs.lookup n then
+            if numbered then
+              warnOnce ctx "math:eqnum" .W0015
+                s!"equation numbers are not rendered yet; '\{{n}}' sets unnumbered" pos
+                (help := s!"the starred '\{{n}}*' says what renders today; see PLAN.md")
             let inl ← elabMathInline ctx true body pos
             blocks := blocks.push (.center #[.para #[inl]])
-          else if mathEnvs.contains n then
-            warnOnce ctx ("math:env:" ++ n) .W0012
-              s!"'\{{n}}' is not rendered yet; its math is set as source text" pos
-              (help := "the rest of M6; see PLAN.md")
-            blocks := blocks.push (.para #[.math true (rawSrc body)])
+          else if let some (kind, numbered) := alignEnvs.lookup n then
+            let inl ← elabMathEnv ctx n kind numbered body pos
+            blocks := blocks.push (.center #[.para #[inl]])
           else if n == "tabular" || n == "tabular*" then
             -- Rows survive as lines, cells as fixed-space-separated content:
             -- honest degradation until real table layout, and `&` never
