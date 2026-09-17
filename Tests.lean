@@ -4174,6 +4174,243 @@ def diagChecks (ref : IO.Ref (List String)) : IO Unit := do
     check ref s!"diag {c}: registered but no longer emitted"
       (emitted.contains c)
 
+/- Every registered diagnostic renders into one golden a person can read
+whole: tests/golden/diagnostics.txt. The witness table below holds one
+firing input per code — an exhaustive match, so a new `DiagCode`
+constructor does not build until it names the input that fires it, and the
+coverage check holds each witness to actually firing its code. -/
+
+def dvDoc (pre body : String) : String :=
+  "\\documentclass{article}\n" ++ pre ++ "\\begin{document}\n" ++ body ++ "\n\\end{document}"
+
+def dvDeck (pre body : String) : String :=
+  "\\documentclass{slides}\n" ++ pre ++ "\\begin{document}\n" ++ body ++ "\n\\end{document}"
+
+/-- Elaboration diagnostics of a source. -/
+def dvE (src : String) : Array Diag := (elabStr src).2
+
+/-- Diagnostics after layout too. -/
+def dvL (fonts : Font.FontSet) (src : String) : Array Diag :=
+  let (doc, ds) := elabStr src
+  ds ++ (Layout.run (Layout.Geom.ofPage doc.page) fonts none doc).diags
+
+/-- Diagnostics after the HTML backend. -/
+def dvH (src : String) : Array Diag :=
+  let (doc, ds) := elabStr src
+  ds ++ (HtmlDoc.emit {} doc).2
+
+/-- One firing input per code. `one` maps every slot to one face;
+`mapped` adds a second face and a fallback map for the substitution codes.
+The synthetic driver arguments mirror what Main.lean passes. -/
+def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
+  | .E0001 => #[DriverDiag.unreadableInput "doc.tex"
+      "no such file or directory (error code: 2)"]
+  | .E0002 =>
+    match Utf8.validate (ByteArray.mk #[0xC3, 0x28]) with
+    | some e => #[e.toDiag "doc.tex"]
+    | none => #[]
+  | .E0101 => dvE "a\\"
+  | .E0102 => dvE "\\begin{verbatim}\nx"
+  | .E0111 => dvE (dvDeck "" ("\\setbeamertemplate{footline}{\\insertframenumber}\n" ++
+      "\\begin{frame}{T}\nx\n\\end{frame}"))
+  | .E0112 => dvE (dvDoc "\\titlegraphic{\\includegraphics{logo.png}}\n" "x")
+  | .E0113 => dvE (dvDoc
+      "\\renewcommand\\sectionlinesformat[4]{\\raisebox{-1pt}{#3}}\n" "x")
+  | .E0201 => dvE "{a"
+  | .E0202 => dvE "a}"
+  | .E0205 => dvE "\\begin{ x"
+  | .E0303 => dvE (dvDoc "\\define \\x(a b {y}\n" "x")
+  | .E0304 => dvE (dvDoc "\\page\n" "x")
+  | .E0305 => dvE (dvDoc "\\define \\role(who: text) {\\textbf{\\who}}\n" "\\role{$x$}")
+  | .E0306 => dvE (dvDoc "\\define \\x(a?: text) {\\ifgiven{\\b}{y}}\n" "\\x{z}")
+  | .E0309 => dvE "\\documentclass{poster}\n\\begin{document}\nx\n\\end{document}"
+  | .E0310 => dvE (dvDoc "" "\\begin{itemize}\nstray\n\\item x\n\\end{itemize}")
+  | .E0311 => dvE "a & b"
+  | .E0312 => dvE "\\textbf{\\section{x}}"
+  | .E0313 => dvE "\\documentclass{article}\nstray text\n\\begin{document}\nx\n\\end{document}"
+  | .E0316 => dvE (dvDoc "\\define \\x(a?: text) {\\a}\n" "\\x[oops")
+  | .E0320 => dvE (dvDoc "\\page{ oops }\n" "x")
+  | .E0321 => dvE "\\includegraphics[scale=big]{x.png}"
+  | .E0322 => dvE (dvDoc "\\page{ zoom = 3 }\n" "x")
+  | .E0323 => dvE (dvDoc "\\page{ vmargin = \"x\" }\n" "x")
+  | .E0324 => dvE (dvDoc "\\page{ size = quarto }\n" "x")
+  | .E0325 => dvE (dvDoc "\\assert{ pages =~ 1 }\n" "x")
+  | .E0326 => dvE (dvDoc "\\palette{ a = missingname }\n" "x")
+  | .E0327 => dvE (dvDoc "\\page{ header = x }\n" "x")
+  | .E0328 => dvE (dvDoc "\\style{banana}{ color = ink }\n" "x")
+  | .E0329 => dvE (dvDoc "\\allow{W9999}\n" "x")
+  | .E0330 =>
+    (Check.one { pages := 2, fontsEmbedded := true }
+      { kind := .pages .eq 1, span := none }).toArray
+  | .E0331 => dvE "\\includegraphics[width=banana]{x.png}"
+  | .E0332 => dvE (dvDoc "\\palette{covered = 100\\%}\n" "x")
+  | .E0333 => dvE (dvDoc "" ("\\begin{tikzpicture}\n" ++
+      "\\fill (\\nope,0) rectangle (1,1);\n\\end{tikzpicture}"))
+  | .E0336 => dvE (dvDoc "" "\\begin{banner}{Logo}\nx\n\\end{banner}")
+  | .E0334 => dvE (dvDoc "" ("\\begin{ifbackend}{html}\\begin{ifbackend}{pdf}\n" ++
+      "orphaned\n\\end{ifbackend}\\end{ifbackend}"))
+  | .E0401 => #[DriverDiag.noFont]
+  | .E0402 => #[DriverDiag.envFontMissing "/tmp/face.ttf",
+      DriverDiag.envFontUnusable "/tmp/face.ttf" "not a TrueType or OpenType file"]
+  | .E0403 => #[DriverDiag.familyMissing "Sourse Serif Pro" ["Source Serif Pro"] 0,
+      DriverDiag.familyMissing "Kaputt Grotesk" [] 12]
+  | .E0404 => #[DriverDiag.fontFileUnusable "fonts/Broken-Regular.otf"
+      "not a TrueType or OpenType file"]
+  | .E0405 => dvL mapped "lost \u27e8 here"
+  | .E0501 => #[DriverDiag.inputTooDeep]
+  | .E0502 => #[DriverDiag.inputMissing "chapter1.tex" none]
+  | .N0100 => dvE (dvDoc "\\usepackage[margin=1in]{geometry}\n" "x")
+  | .N0102 => dvE (dvDeck "" "\\begin{frame}[fragile]{T}\nx\n\\end{frame}")
+  | .N0103 => dvE (dvDoc "" "\\section[short]{A long title}\nx")
+  | .N0200 => dvL one (dvDoc "\\page{ height = 115pt, margin = 20pt }\n"
+      "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc")
+  | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
+  | .W0003 => dvL one (dvDoc "" "$x^2$")
+  | .W0005 => dvL one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+  | .W0006 =>
+    let face : FontDb.Face := { path := "fonts/DemoSerif-Regular.otf"
+                                family := "Demo Serif"
+                                subfamily := "Regular"
+                                bold := false
+                                italic := false
+                                fixedPitch := false
+                                weight := 400 }
+    let ask (declared : Option String) : Array Diag :=
+      match FontDb.resolveVariant #[face] "Demo Serif" declared { bold := true } with
+      | some (_, some msg) => #[Diag.of .W0006 msg]
+      | _ => #[]
+    ask none ++ ask (some "DemoSerif-Bold.otf")
+  | .W0007 => dvH (dvDoc "\\runninghead{name}\n" "x")
+  | .W0008 => #[DriverDiag.fontsDirMissing "fonts" "/documents/fonts"]
+  | .W0009 => dvL mapped "for all is \u2200 set"
+  | .W0010 => dvL one (dvDoc "" (String.join
+      ((List.range 5).map fun _ => "\\begin{itemize}\\item x\n") ++
+      String.join ((List.range 5).map fun _ => "\\end{itemize}\n")))
+  | .W0011 => #[DriverDiag.mathFaceNoTable "Demo Serif" "fonts/DemoSerif-Regular.otf"]
+  | .W0012 => dvE "$\\hat{x}$"
+  | .W0013 => #[DriverDiag.allowUnfired "E0333"]
+  | .W0014 => dvE "\\begin{align*}a &= b \\\\ c\\end{align*}"
+  | .W0015 => dvE "\\begin{align}a &= b\\end{align}"
+  | .W0101 => dvE (dvDoc "\\usepackage[headsep=1in]{geometry}\n" "x")
+  | .W0102 => dvE (dvDoc "\\definecolor{c}{cmyk}{0,0,0,1}\n" "x")
+  | .W0103 => dvE (dvDoc "\\usepackage{tikz}\n" "x")
+  | .W0104 => dvE (dvDoc (String.intercalate "\n"
+      ["\\directlua{tex.print('x')}", "\\def\\x{y}", "\\raggedright",
+       "\\sloppy", "\\selectlanguage{german}", "\\pagestyle{scrheadings}",
+       "\\ifdefined\\x\\fi", "\\usecolortheme{dove}",
+       "\\setbeamercovered{transparent}", "\\titlegraphic{}"] ++ "\n") "x")
+  | .W0105 => dvE "\\uncover<zz>{x}"
+  | .W0106 => dvE (dvDoc "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff\n" "x")
+  | .W0108 => dvE "\\textbf{\\centering x}"
+  | .W0110 => dvE "\\includegraphics[angle=45]{x.png}"
+  | .W0111 => dvE (dvDoc "\\setkomafont{banana}{\\bfseries}\n" "x")
+  | .W0201 => dvL one (dvDoc "\\page{ hmargin = 1in }\n"
+      (String.intercalate " " (List.replicate 40 "typesetting is the arrangement of type")))
+  | .W0202 => dvL one (dvDoc "\\style{section}{ before = 2pt, after = 10pt }\n"
+      "\\section{a}\nbody")
+  | .W0301 => dvE "\\mystery{x}"
+  | .W0302 => dvE (dvDoc "" "\\begin{banner}\nx\n\\end{banner}")
+  | .W0303 => dvE (dvDoc "\\define \\textbf(a: content) {\\a}\n" "x")
+  | .W0304 => dvE "\\textcolor{nope}{x}"
+  | .W0307 => dvE (dvDoc "" "\\begin{external}\nx\n\\end{external}")
+  | .W0308 => dvE (dvDoc "" "\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}")
+  | .W0309 => dvE (dvDoc "" "\\maketitle")
+  | .W0310 => dvE (dvDoc "" "\\section[oops\nnever closed")
+  | .W0311 => dvE (dvDeck "" ("\\begin{frame}\n\\frametitle{One}\n" ++
+      "\\frametitle{Two}\nx\n\\end{frame}"))
+  | .W0312 => dvE "\\title[never closes\n\\begin{document}\nx\n\\end{document}"
+  | .W0314 => dvE (dvDeck "" ("\\begin{frame}{T}\\begin{columns}\n" ++
+      "\\begin{column}{banana}\nx\n\\end{column}\n\\end{columns}\\end{frame}"))
+  | .W0315 => dvE (dvDoc "\\palette{ washed = #DDDDDD }\n" "\\textcolor{washed}{faint}")
+  | .W0316 => dvE (dvDoc "\\palette[dark]{ a = #101010 }\n" "x")
+  | .W0317 => dvE ("\\documentclass{card}\n\\runninghead{name}\n" ++
+      "\\begin{document}\nx\n\\end{document}")
+  | .W0318 => dvE (dvDoc "\\chrome{ footer = { left = \\sectiontitle } }\n" "x")
+  | .W0319 => dvE (dvDoc "\\theme{banana}\n" "x")
+  | .W0320 => dvE (dvDoc "" "\\section{a}\n\n\\subsubsection{b}\nx")
+  | .W0321 => dvE (dvDoc "\\title{T}\n" "\\section{a}\nx\n\n\\maketitle")
+  | .W0322 => dvE (dvDoc "\\title{T}\n" "\\maketitle\n\n\\maketitle")
+  | .W0323 => dvE (dvDoc "" "\\begin{ifbackend}{banana}\nx\n\\end{ifbackend}")
+  | .W0325 => dvH (dvDoc "" ("\\begin{nav}\\link{#a}{A}\\end{nav}\n\n" ++
+      "\\begin{nav}\\link{#b}{B}\\end{nav}\n\n\\section{a}\nx"))
+  | .W0326 => dvH (dvDoc "" "\\link{#nowhere}{dead}")
+  | .W0327 => dvH (dvDoc "" "\\section{Signal Path}\nx\n\n\\section{Signal, Path}\ny")
+  | .W0328 => dvL one (dvDoc
+      (s!"\\runningfoot\{{String.intercalate " " (List.replicate 40 "an overlong footer")}}\n")
+      "x")
+  | .W0329 => dvE (dvDoc "\\fontfallback{x}\n" "x")
+  | .W0330 => dvE (dvDoc "\\palette{ bg = #18181B }\n" "x")
+  | .W0331 => dvH (dvDoc
+      "\\style{itemize}{ marker = {\\includegraphics{rects.png}} }\n"
+      "\\begin{itemize}\n\\item a\n\\end{itemize}")
+  | .W0332 => dvE (dvDeck "\\theme{moloch}\n"
+      "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}")
+  | .W0333 => dvL one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
+      (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 100 '0')}}\n" ++
+       "\\begin{frame}{F}\nx\n\\end{frame}"))
+  | .W0334 => dvE (dvDoc "" ("\\begin{tikzpicture}\n" ++
+      "\\draw (0,0) circle (1);\n\\end{tikzpicture}"))
+  | .W0335 => dvL one (dvDoc "" ("\\begin{tikzpicture}\n" ++
+      "\\fill (0,0) rectangle (40,1);\n\\end{tikzpicture}"))
+  | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
+      DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
+  | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
+      "not a PNG or JPEG file"]
+
+/-- The voice golden and its coverage: every registered code fires from its
+witness, and every fired form renders into tests/golden/diagnostics.txt —
+the one place the whole voice is reviewable in a diff. Spans are dropped:
+the witnesses' line numbers are noise. -/
+def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
+  let load (name : String) : IO (Option Font.Font) := do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
+    | .ok f => pure (some f)
+    | .error _ => pure none
+  let some sans ← load "OpenSans-Regular.ttf"
+    | failures ref "diag voice: OpenSans-Regular.ttf missing"; return
+  let some code ← load "SourceCodePro-Regular.otf"
+    | failures ref "diag voice: SourceCodePro-Regular.otf missing"; return
+  let allVariants (slot idx : Nat) : List ((Nat × Bool × Bool) × Nat) :=
+    [((slot, false, false), idx), ((slot, true, false), idx),
+     ((slot, false, true), idx), ((slot, true, true), idx)]
+  let one : Font.FontSet := {
+    fonts := #[sans]
+    index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
+  let mapped : Font.FontSet := {
+    fonts := #[sans, code]
+    index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 1).toArray
+    fallback := #[('\u2200', 1)] }
+  let lossLabel : Loss → String
+    | .dropped => "dropped"
+    | .pending => "pending"
+    | .degraded => "degraded"
+    | .config => "config"
+    | .info => "info"
+  let mut out := ""
+  for c in DiagCode.all do
+    let fired := (diagWitness one mapped c).filter (·.code == c.code)
+    check ref s!"diag voice {c.code}: the witness fires it" (!fired.isEmpty)
+    out := out ++ s!"── {c.code} ({lossLabel c.loss}) {c.meaning}\n"
+    let mut seen : Array String := #[]
+    for d in fired do
+      let r := Render.human false { d with span := none }
+      unless seen.contains r do
+        seen := seen.push r
+        out := out ++ r ++ "\n"
+  let path := "tests/golden/diagnostics.txt"
+  if update then
+    IO.FS.writeFile path out
+    IO.println s!"updated {path}"
+  else
+    let golden ← try pure (some (← IO.FS.readFile path)) catch _ => pure none
+    match golden with
+    | none => failures ref s!"diag voice: missing {path} (run: lake exe Tests --update)"
+    | some g =>
+      unless g == out do
+        failures ref s!"diag voice: golden mismatch, {firstDiff g out} \
+(if intended, run: lake exe Tests --update)"
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
@@ -6755,6 +6992,7 @@ def main (args : List String) : IO UInt32 := do
   walkChecks ref
   diagChecks ref
   pictureElabChecks ref
+  diagVoiceChecks ref update
   allowChecks ref
   declChecks ref
   tokensChecks ref

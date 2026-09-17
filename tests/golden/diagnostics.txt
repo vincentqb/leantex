@@ -1,0 +1,300 @@
+── E0001 (dropped) cannot read an input file
+error[E0001]: cannot read 'doc.tex': no such file or directory (error code: 2)
+── E0002 (dropped) input is not valid UTF-8
+error[E0002]: invalid UTF-8: invalid continuation byte 0x28 at byte offset 0
+  help: leantex reads UTF-8 only; re-encode the file
+── E0101 (dropped) lone backslash at end of input
+error[E0101]: lone backslash at end of input
+── E0102 (dropped) unclosed verbatim environment
+error[E0102]: unclosed verbatim: expected '\end{verbatim}'
+── E0111 (dropped) beamer template body carrying content dropped
+error[E0111]: '\setbeamertemplate{footline}' is dropped with its template body, which carries content
+  help: 'frame footer' translates to \framefoot{...}; \style{element}{...} styles elements; \runningfoot sets a document footer; \allow{E0111} accepts the loss
+── E0112 (dropped) \titlegraphic content dropped
+error[E0112]: '\titlegraphic' declares title-page content the engine does not place; the content is dropped
+  help: \logo places an image on running pages; \allow{E0112} accepts the loss
+── E0113 (dropped) unrecognised \sectionlinesformat body dropped
+error[E0113]: '\sectionlinesformat' body is not the rule idiom; it is dropped
+  help: \style{section}{ rule = <colour> } declares the section rule; \allow{E0113} accepts the loss
+── E0201 (dropped) unclosed group or environment at end of input
+error[E0201]: unclosed: expected '}'
+── E0202 (dropped) unexpected closer
+error[E0202]: unexpected '}'
+── E0205 (dropped) malformed or mismatched environment name
+error[E0205]: expected an environment name
+── E0303 (dropped) malformed \define signature
+error[E0303]: malformed signature '(a b'
+  help: expected (name: type, ..., opt?: type)
+── E0304 (dropped) missing argument for a command
+error[E0304]: '\page' needs a {...} block
+── E0305 (dropped) parameter expects text
+error[E0305]: parameter 'who' of '\role' expects text
+── E0306 (dropped) unknown parameter reference in a definition body
+error[E0306]: unknown parameter '\b'
+── E0309 (dropped) unknown document class
+error[E0309]: unknown document class 'poster'
+  help: classes: article | slides | card
+── E0310 (dropped) content before the first \item in a list
+error[E0310]: content before the first '\item'
+── E0311 (dropped) reserved character in text
+error[E0311]: reserved character '&'
+  help: escape it as '\&'
+── E0312 (dropped) block-level command used inline
+error[E0312]: '\section' is not allowed here
+  help: it is a block-level command: use it between paragraphs, not inside inline content or a command body
+── E0313 (dropped) only declarations may appear before \begin{document}
+error[E0313]: only declarations may appear before '\begin{document}'
+── E0316 (dropped) unclosed optional argument
+error[E0316]: unclosed optional argument for '\x'
+── E0320 (dropped) invalid key or missing value in a declaration block
+error[E0320]: 'oops' in \page has no value
+  help: entries look like: key = value
+── E0321 (dropped) unreadable value for a declaration key
+error[E0321]: 'scale' needs a number, got "big"
+── E0322 (dropped) unknown key in a declaration block
+error[E0322]: \page has no key 'zoom'
+  help: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify
+── E0323 (dropped) declaration key value has the wrong type
+error[E0323]: 'vmargin' in \page expects a dimension, got a string
+── E0324 (dropped) unknown page size name
+error[E0324]: unknown page size 'quarto'
+  help: known sizes: letter, legal, a4, a5
+── E0325 (dropped) unreadable \assert expression
+error[E0325]: cannot read assertion: "pages =~ 1"
+  help: '=~' is not a comparison (== != <= < >= >)
+── E0326 (dropped) name not in the palette where a colour is required
+error[E0326]: 'missingname' is not in the palette
+  help: declare it first; aliases read earlier entries
+── E0327 (dropped) not a \page key
+error[E0327]: 'header' is not a \page key
+  help: declare it as \runninghead{...} — it takes inline content, so use \hfill to push part of it to the right
+── E0328 (dropped) not a styleable element
+error[E0328]: 'banana' is not a styleable element
+  help: elements: section, subsection, subsubsection, itemize, enumerate, itemize2, itemize3, itemize4, enumerate2, enumerate3, enumerate4, frametitle, sectionpage, standout, titlepage, nav
+── E0329 (dropped) unknown diagnostic code in \allow
+error[E0329]: \allow names no diagnostic code 'W9999'
+  help: codes look like W0307; each names the one loss it accepts
+── E0330 (dropped) layout assertion failed against the shipped pages
+error[E0330]: assertion failed: pages == 1 (actual: 2)
+  help: the document shipped this; change the source or the assertion
+── E0331 (dropped) unreadable length
+error[E0331]: cannot read a length from 'banana'
+  help: image sizes look like 3cm or 0.8\textwidth
+── E0332 (dropped) covered fraction outside 1–99 percent
+error[E0332]: covered fraction must be 1–99 percent, got '100\%'
+  help: the fraction of each covered colour kept over the page; the default is 38\%
+── E0333 (dropped) picture expression unreadable or unresolvable; its shape is not drawn
+error[E0333]: in '\fill', unknown macro '\nope'; the shape is not drawn
+  help: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro; the full graphics story is M8 (PLAN.md)
+── E0334 (dropped) \begin{ifbackend} content addressed to no backend
+error[E0334]: this content is addressed to no backend; no output will carry it
+  help: name at least one of pdf, html, md; a nested '\begin{ifbackend}' intersects with its enclosing one; \allow{E0334} accepts the loss
+── E0336 (dropped) {...} groups went with an unknown wrapper
+error[E0336]: 1 {...} group on the '\begin{banner}' line went with the unknown wrapper
+  help: content, not an argument? put it after the '\begin' line
+── E0401 (dropped) no usable font found on the host
+error[E0401]: no usable font found
+  help: install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT
+── E0402 (dropped) LEANTEX_FONT is unusable
+error[E0402]: LEANTEX_FONT '/tmp/face.ttf' does not exist
+error[E0402]: cannot use LEANTEX_FONT '/tmp/face.ttf': not a TrueType or OpenType file
+── E0403 (dropped) no installed font family by that name
+error[E0403]: no installed font family named 'Sourse Serif Pro'
+  help: did you mean: Source Serif Pro? — `leantex fonts` lists every family
+error[E0403]: no installed font family named 'Kaputt Grotesk'
+  help: 12 families are installed — `leantex fonts` lists every family
+── E0404 (dropped) a font file could not be used
+error[E0404]: cannot use 'fonts/Broken-Regular.otf': not a TrueType or OpenType file
+── E0405 (dropped) font has no glyph for a character; dropped
+error[E0405]: 'Open Sans' has no glyph for '⟨' (U+27E8); dropped
+  help: declare a face that covers it in \fonts, or accept the loss with \allow{E0405}
+── E0501 (dropped) \input nesting too deep
+error[E0501]: \input nesting deeper than 8 files; is a file including itself?
+── E0502 (dropped) \input file not found; skipped
+error[E0502]: \input file not found: 'chapter1.tex'; skipped
+  help: an entire file's content is absent; \allow{E0502} accepts the loss
+── N0100 (info) LaTeX idiom translated to its native declaration
+note[N0100]: \usepackage{geometry} → \page{ margin = 1in }
+── N0102 (info) option ignored: it configures machinery the engine does not model
+note[N0102]: frame option 'fragile' is not modelled; ignored
+── N0103 (info) \section short title unused: nothing consumes it yet
+note[N0103]: '\section[short]' short title is unused: nothing consumes it yet
+── N0200 (info) page set short: its skips gave their shrink
+note[N0200]: page 1 set 2pt short: its skips gave 16% of their 16pt of shrink
+── W0001 (config) content after \end{document} is ignored
+warning[W0001]: content after '\end{document}' is ignored
+── W0003 (degraded) math is typeset as plain text until M6
+warning[W0003]: no math font is available; math is set as plain text
+  help: declare \fonts{ math = "..." } naming an installed OpenType math face; `leantex fonts` lists families
+── W0005 (degraded) overfull line, no feasible break
+warning[W0005]: overfull line (no feasible break)
+── W0006 (degraded) declared face variant missing; another face substitutes
+warning[W0006]: 'Demo Serif' has no bold face; using "Demo Serif Regular"
+warning[W0006]: 'Demo Serif' declares "DemoSerif-Bold.otf" as its bold face, which is not installed; using "Demo Serif Regular"
+── W0007 (degraded) paged-media furniture omitted from HTML
+warning[W0007]: running head/foot is paged-media furniture; omitted from HTML
+  help: put a masthead in the document body if it should appear in both
+── W0008 (config) \fonts dir is not a directory
+warning[W0008]: \fonts dir 'fonts' is not a directory (/documents/fonts); looking elsewhere
+── W0009 (degraded) no glyph in the declared face; set from a fallback face
+warning[W0009]: 'Open Sans' has no glyph for '∀' (U+2200); set from 'Source Code Pro'
+── W0010 (degraded) lists nest four levels; deeper levels reuse the fourth marker
+warning[W0010]: lists nest four levels; level 5 reuses the fourth's marker
+  help: LaTeX errors here ("Too deeply nested"); flatten the nesting
+── W0011 (degraded) declared math face has no OpenType MATH table
+warning[W0011]: 'Demo Serif' (fonts/DemoSerif-Regular.otf) has no OpenType MATH table; math is set as plain text
+  help: name a math face (Latin Modern Math, STIX Two Math, TeX Gyre Pagella Math, Fira Math, ...) — its MATH table is where the engine reads math spacing from
+── W0012 (degraded) math construct not rendered yet; set as source text
+warning[W0012]: math with \hat is not rendered yet; the formula is set as source text
+  help: the rest of M6; see PLAN.md
+── W0013 (config) an \allow'd code never fired
+warning[W0013]: \allow'd code E0333 never fired
+  help: the document no longer needs to accept it; drop it from \allow
+── W0014 (degraded) alignment row disagrees with its grid's columns; padded
+warning[W0014]: '{align*}': row 2 has 1 cell(s) where 2 align; padded with empty cells
+── W0015 (degraded) equation numbers not rendered yet; rows set unnumbered
+warning[W0015]: equation numbers are not rendered yet; '{align}' sets unnumbered
+  help: the starred '{align}*' says what renders today; see PLAN.md
+── W0101 (config) geometry keys without a native equivalent dropped
+warning[W0101]: geometry keys without a native equivalent were dropped: headsep
+── W0102 (degraded) unsupported colour model
+warning[W0102]: colour model 'cmyk' is not supported; use HTML or rgb
+── W0103 (config) unsupported package skipped
+warning[W0103]: package 'tikz' is not supported; skipped
+  help: leantex has no packages: see PLAN.md for the native declarations
+── W0104 (config) unsupported TeX construct skipped
+warning[W0104]: '\directlua' is Lua code for luatex; skipped
+  help: there is no Lua here; see PLAN.md for the native declarations
+warning[W0104]: TeX '\def' is not supported; skipped
+  help: \define declares typed commands; later uses of the defined name fall to W0301, their arguments kept as text
+warning[W0104]: '\raggedright' asks for unjustified setting; the document stays justified
+  help: declare \page{ justify = false }
+warning[W0104]: '\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps its own
+  help: overfull lines already warn (W0005); no knob is needed
+warning[W0104]: '\selectlanguage' would change the hyphenation language; patterns are unchanged
+  help: hyphenation patterns are English-only today; see PLAN.md
+warning[W0104]: '\pagestyle' names page furniture the engine does not model; ignored
+  help: \runninghead / \runningfoot declare the page furniture
+warning[W0104]: TeX conditional ('\ifdefined' … '\fi') is not supported; skipped whole
+warning[W0104]: '\usecolortheme' is beamer configuration the engine does not have; skipped
+  help: \theme{name} selects a token bundle; \palette overrides its entries
+warning[W0104]: '\titlegraphic{}' clears beamer configuration the engine does not have; skipped
+── W0105 (degraded) overlay specification does not name a step
+warning[W0105]: overlay specification '<zz>' does not name a step; its content is shown on every step
+  help: dim-not-hide reads <2>, <2->, <2-3>; incremental specs are not modelled
+── W0106 (config) expl3 code skipped
+warning[W0106]: expl3 code (\ExplSyntaxOn … \ExplSyntaxOff) is not supported; skipped
+── W0108 (degraded) \centering is inert inside an argument
+warning[W0108]: '\centering' centres nothing inside an argument; content stays left-aligned
+  help: put it at the start of a group or environment body
+── W0110 (degraded) unsupported \includegraphics option; ignored
+warning[W0110]: unsupported \includegraphics option 'angle=45'; ignored
+  help: modelled keys: width, height, scale, keepaspectratio, alt
+── W0111 (config) \setkomafont on a non-styleable element ignored
+warning[W0111]: \setkomafont{banana}: not a styleable element; ignored
+── W0201 (degraded) measure outside the readable band
+warning[W0201]: the measure holds about 98 characters per line, outside the readable 45–90 band
+  help: narrow the text block (\page{ hmargin = ... }; 66 characters is the ideal) or declare \page{ measure = free }
+── W0202 (degraded) heading sets more space below than above
+warning[W0202]: 'section' sets more space below the heading (10pt) than above it (2pt)
+  help: a heading binds to the text it introduces: in \style{section}{...} keep 'after' at most 'before'
+── W0301 (degraded) unknown command; arguments kept as text
+warning[W0301]: unknown command '\mystery'; its arguments were kept as text
+  help: define it with \define, or see PLAN.md for planned commands
+── W0302 (degraded) unknown environment; body kept
+warning[W0302]: unknown environment '{banner}'; its body is kept
+  help: see PLAN.md for planned environments
+── W0303 (config) built-in name cannot be redefined
+warning[W0303]: '\textbf' is built in; this definition is ignored
+  help: the built-in does what most definitions of this name do
+── W0304 (degraded) colour name not in the palette; content kept uncoloured
+warning[W0304]: 'nope' is not in the palette; content kept uncoloured
+  help: declare colours with \palette{ name = #RRGGBB }
+── W0307 (pending) construct not implemented yet; its content is not rendered
+warning[W0307]: '{external}' is not implemented yet; its content is not rendered
+  help: planned for M8; \allow{W0307} accepts the loss until then
+── W0308 (degraded) tables are not laid out yet; rows set as plain lines
+warning[W0308]: tables are not laid out yet; rows are set as plain lines
+  help: planned for M8; see PLAN.md
+── W0309 (config) \maketitle with nothing declared
+warning[W0309]: '\maketitle' with nothing declared; no title is set
+  help: declare \title{...} (and \author, \date, ...) before it
+── W0310 (degraded) '[' never closes; not an argument
+warning[W0310]: '[' after '\section' never closes; it is not an argument
+  help: add the matching ']'
+── W0311 (degraded) a second \frametitle replaces the first
+warning[W0311]: this '\frametitle' replaces the frame's earlier title
+  help: the last one wins; remove the other
+── W0312 (degraded) no {...} group after a command; skipped
+warning[W0312]: no {...} group after '\title'; it is skipped
+  help: write \title{...}
+── W0314 (degraded) column width is not a fraction of the text width
+warning[W0314]: column width 'banana' is not a fraction of the text width; the column shares the leftover
+  help: write a factor like {0.5\textwidth}
+── W0315 (degraded) low-contrast colour pairing (WCAG 2.2)
+warning[W0315]: text coloured 'washed' (#DDDDDD) reads at 1.30:1 on the page (#FAFAF9), below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
+  help: deliberate low contrast is declared, not defaulted: \palette[decorative]{ washed = #DDDDDD }
+── W0316 (config) unknown option in \palette; block skipped
+warning[W0316]: unknown option in \palette: "dark"; block skipped
+  help: options: decorative
+── W0317 (config) a card carries no running head or foot; declaration dropped
+warning[W0317]: a card carries no running head or foot; the declaration is dropped
+── W0318 (config) \chrome outside the slides class; ignored
+warning[W0318]: \chrome is slides furniture; the article class never draws it
+  help: \runninghead / \runningfoot are the page furniture
+── W0319 (degraded) unknown theme; the document is unthemed
+warning[W0319]: unknown theme 'banana'; the document is unthemed
+  help: themes: moloch, plain
+── W0320 (degraded) heading levels skip a step (HTML §4.3.11, WCAG G141)
+warning[W0320]: heading levels skip a step: '\section' is followed by '\subsubsection'
+  help: descend one level at a time (HTML §4.3.11, WCAG G141); a screen reader reads the gap as a broken outline
+── W0321 (degraded) the document title follows another heading
+warning[W0321]: the document title follows another heading
+  help: put \maketitle before the first \section, so the outline starts at its top
+── W0322 (config) a second \maketitle is ignored; the title is typeset once
+warning[W0322]: a second '\maketitle' is ignored; the title is typeset once
+  help: LaTeX's \maketitle disables itself after use (classes.dtx)
+── W0323 (config) unknown backend name in \begin{ifbackend}; ignored
+warning[W0323]: unknown backend 'banana' in '\begin{ifbackend}'; ignored
+  help: backends: pdf, html, md
+── W0325 (degraded) more than one <nav> landmark on one page
+warning[W0325]: 2 <nav> landmarks on one page are indistinguishable to assistive technology
+  help: keep one {nav}; repeated landmarks need unique labels (ARIA Authoring Practices, Landmark Regions), which are not modelled yet
+── W0326 (degraded) in-page link with no target anchor on the page
+warning[W0326]: in-page link '#nowhere' has no target anchor on this page
+  help: no anchors are emitted; level-1 section titles become ids in the article class
+── W0327 (degraded) two distinct section titles fold to the same anchor
+warning[W0327]: sections "Signal Path" and "Signal, Path" share the anchor 'signal-path'; the second becomes 'signal-path-2'
+  help: an in-page link '#signal-path' reaches only the first; retitle one section, or link to '#signal-path-2'
+── W0328 (degraded) running content wraps; only its first line is kept
+warning[W0328]: running content wraps at the text width; only its first line is kept
+  help: the head, foot, and chrome bands hold one line each: shorten the content
+── W0329 (config) reserved layout-only construct skipped; no content is affected
+warning[W0329]: '\fontfallback' is not implemented yet; skipped
+  help: planned for M8; see PLAN.md
+── W0330 (degraded) declared page with a defaulted ink is illegible (WCAG 2.2)
+warning[W0330]: the page is declared #18181B but the ink is left defaulted: #000000 text reads at 1.18:1, below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
+  help: a declared surface chooses its ink: declare \palette{ fg = ... } beside bg
+── W0331 (degraded) declared marker not expressible in this backend; default substituted
+warning[W0331]: the declared 'itemize' marker is not expressible in HTML; the level default marks these items
+  help: a ::marker rule carries text with colour and font styling (CSS Pseudo-Elements 4 §4.1); a link, an image, math, or an overlay step in a marker does not reach it
+── W0332 (degraded) footer mixes the frame and physical page sequences undeclared
+warning[W0332]: the footer mixes the physical page number with the frame number: the two sequences are distinct, and a stepped frame advances one and not the other
+  help: declare the footer's slots yourself (\chrome{ footer = { left = ..., right = \framenumber } }) to say the mixing is meant, or drop \pagenumber from \framefoot
+── W0333 (degraded) band slots collide; the lower-priority slot is painted over
+warning[W0333]: the footer's slots collide on page 2: framenumber yields, painted over by the \framefoot note
+  help: slot positions are fixed and the lower-priority slot yields in place: shorten the content or drop a slot
+── W0334 (pending) picture construct outside the rendered subset; not drawn
+warning[W0334]: '\draw' is outside the rendered picture subset; not drawn
+  help: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro; the full graphics story is M8 (PLAN.md)
+── W0335 (degraded) picture larger than the text area; it may overrun the page
+warning[W0335]: the picture is 1133.858pt × 28.346pt against a text area of 312pt × 648pt; it may overrun the page
+  help: shrink the picture ([scale=...]) or widen the text area (\page{ margin = ... })
+── W0601 (degraded) image unreadable or not found; placeholder box placed
+warning[W0601]: image file not found: 'figures/plot.png'
+  help: looked at /documents/figures/plot.png (also with .png/.jpg/.jpeg added); a placeholder box of the requested size is placed
+warning[W0601]: cannot read image 'figures/plot.png': permission denied (error code: 13)
+  help: a placeholder box of the requested size is placed
+── W0602 (degraded) image format unusable; placeholder box placed
+warning[W0602]: cannot use image 'figures/plot.gif': not a PNG or JPEG file
+  help: PNG and JPEG embed natively; a placeholder box is placed
