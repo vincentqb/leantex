@@ -21,4 +21,4 @@ frame
       para
         text "right half"
 -- diagnostics
-(none)
+note[N0102] 9:1 'columns' alignment options are ignored: columns are top-aligned

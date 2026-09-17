@@ -1314,6 +1314,14 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat enumitem list" (((koma.1.styles.find? "itemize").bind (·.gap)).map (·.width) == some { sp := Dim.pt 3 } &&
     ((koma.1.styles.find? "itemize").bind (·.marker)).isSome)
   t "compat thispagestyle empty starts running content on page 2" (koma.1.runningFrom == 2)
+  -- A \sectionlinesformat body that is not the rule idiom is a dropped
+  -- loss and errors; an empty body asks for no decoration and is silent.
+  t "compat unrecognised sectionlinesformat body is a dropped loss"
+    (errCodes (pre "\\renewcommand\\sectionlinesformat[4]{\\raisebox{-1pt}{#3}}") ==
+      ["E0113"])
+  t "compat empty sectionlinesformat body is deliberate silence"
+    ((elabStr (pre "\\renewcommand\\sectionlinesformat[4]{}")).2.all
+      (·.severity == .note))
 
   -- A diagnostic inside an \input file names that file, not the including
   -- one, in the body and in the preamble both.
@@ -2431,7 +2439,7 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let src := deck ("\\begin{columns}[T]\n\\begin{column}{0.6\\textwidth}\nleft\n\\end{column}\n" ++
     "\\begin{column}{0.4\\textwidth}\nright\n\\end{column}\n\\end{columns}")
   let (doc, ds) := elabStr src
-  t "columns elaborate with widths, warning nothing" (ds.isEmpty &&
+  t "columns elaborate with widths, its option a note" (ds.all (·.severity == .note) &&
     doc.body == #[.frame #[] false .center #[.columns #[
       (some 600, #[.para #[.text "left"]]),
       (some 400, #[.para #[.text "right"]])]]])
@@ -3761,6 +3769,11 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "frame title after a blank line is content"
     ((elabStr (deck "\\begin{frame}[plain]\n\n{scope group}\n\\end{frame}")).1.body ==
       #[.frame #[] false .center #[.para #[.text "scope group"]]])
+  -- Options that say how beamer should cope (fragile, plain) are ignored
+  -- with a registered note, never silently.
+  t "an unmodelled frame option is a note"
+    ((elabStr (deck "\\begin{frame}[fragile]{T}\nbody\n\\end{frame}")).2.any
+      fun d => d.code == "N0102" && d.severity == .note)
   t "frametitle names the frame"
     ((elabStr (deck "\\begin{frame}\n\\frametitle{Named}\nbody\n\\end{frame}")).1.body ==
       #[.frame #[.text "Named"] false .center #[.para #[.text "body"]]])
@@ -3835,7 +3848,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | _ => false)
   -- [standout]: the one frame option that says what the frame IS. It
   -- inverts, centres, and sets Large bold in both backends; the other
-  -- options stay burned.
+  -- options stay ignored, as notes.
   t "standout option marks the frame"
     (match (elabStr (deck "\\begin{frame}[fragile,standout]\nQ\n\\end{frame}")).1.body with
      | #[.frame _ true _ _] => true
@@ -3966,9 +3979,11 @@ def optArgChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- shared scanner instead of a fatal E0304
   let (secDoc, secDs) := elabStr "\\section[Short]{Long Title}\n\nBody."
   t "section takes its short form and keeps the long title"
-    (secDs.isEmpty && match secDoc.body with
+    (secDs.all (·.severity == .note) && match secDoc.body with
      | #[.section 1 false title, .para _] => Ir.plainText title == "Long Title"
      | _ => false)
+  -- The short title is unused today, and that is registered, never silent.
+  t "an unused short title is a note" (secDs.any (·.code == "N0103"))
   t "section recovers its title past an unclosed bracket"
     (match (elabStr "\\section[never closes {Recovered}\nBody.").1.body with
      | #[.para _, .section 1 false title, .para _] => Ir.plainText title == "Recovered"
@@ -4017,7 +4032,7 @@ def scannerChecks (ref : IO.Ref (List String)) : IO Unit := do
      | #[.frame _ _ _ #[.para xs]] => Ir.plainText xs == "[1] Reference survives."
      | _ => false)
   -- options on the begin line are still arguments, bracket runs included
-  t "frame options on the begin line are burned"
+  t "frame options on the begin line are consumed, never content"
     (match (elabStr (deck "\\begin{frame}[plain][t]{T}\nbody\n\\end{frame}")).1.body with
      | #[.frame title _ _ #[.para xs]] =>
        Ir.plainText title == "T" && Ir.plainText xs == "body"
@@ -5459,7 +5474,8 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- the content and the alt of the image it captions.
   let (figDoc, figDiags) := Elab.run "t"
     "\\begin{figure}[t]\\centering\\includegraphics{rects.png}\\caption{A mark}\\end{figure}"
-  t "figure elaborates clean" (figDiags.isEmpty)
+  t "figure elaborates with its placement registered as a note"
+    (figDiags.all (·.severity == .note) && figDiags.any (·.code == "N0102"))
   t "figure reduces to a centred block with the caption"
     (match figDoc.body.toList with
      | [.center inner] =>

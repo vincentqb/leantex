@@ -51,3 +51,4 @@ frame
 -- diagnostics
 note[N0100] 5:1 \documentclass{beamer} → \documentclass[aspectratio=169]{slides}
 note[N0100] 7:1 \newenvironment{callout} → \defineenv{callout}(a1: content) {begin} {end}
+note[N0102] 27:1 'columns' alignment options are ignored: columns are top-aligned

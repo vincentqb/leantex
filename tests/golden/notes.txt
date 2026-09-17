@@ -12,4 +12,4 @@ frame
     para
       text "Say hello to the room."
 -- diagnostics
-(none)
+note[N0102] 12:1 '\note' placement and overlay options are ignored: the note is a side channel, never slide content

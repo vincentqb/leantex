@@ -1045,10 +1045,17 @@ specs are not modelled")
           -- A speaker note met mid-sentence: no block can stand here, so
           -- the body is stashed for the enclosing frame to drain — the
           -- paragraph flows on unbroken and the note never leaks into it.
+          if let .took _ := scanBracketArg raws i pos then
+            warnOnce ctx "note:options" .N0102
+              "'\\note' placement and overlay options are ignored: the note is \
+a side channel, never slide content" pos
           let (j, _, _) ← skipOptArg ctx "note" raws i pos
           i := j
           let js := skipSpaces raws i
           if (raws[js]?.bind specWord?).isSome then
+            warnOnce ctx "note:options" .N0102
+              "'\\note' placement and overlay options are ignored: the note is \
+a side channel, never slide content" pos
             i := js + 1
           let j2 := skipSpaces raws i
           if let some (.group nbody _) := raws[j2]? then
@@ -1479,12 +1486,20 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             blocks := blocks.push (.step (ctx.stepBase + 2) none inner)
         | .ctrl "note" npos =>
           -- \note[placement]<spec>{...}: the placement and the spec are
-          -- burned; the body is the side channel, never slide content.
+          -- ignored with a note saying so; the body is the side channel,
+          -- never slide content.
           i := i + 1
+          if let .took _ := scanBracketArg raws i npos then
+            warnOnce ctx "note:options" .N0102
+              "'\\note' placement and overlay options are ignored: the note is \
+a side channel, never slide content" npos
           let (j, _, _) ← skipOptArg ctx "note" raws i npos
           i := j
           let js := skipSpaces raws i
           if (raws[js]?.bind specWord?).isSome then
+            warnOnce ctx "note:options" .N0102
+              "'\\note' placement and overlay options are ignored: the note is \
+a side channel, never slide content" npos
             i := js + 1
           let j2 := skipSpaces raws i
           match raws[j2]? with
@@ -1676,10 +1691,13 @@ specs are not modelled")
             if let some (.word "*" _) := raws[i]? then
               starred := true
               i := i + 1
-            -- `\section[short]{long}`: the short form feeds furniture we do
-            -- not render, and its bracket obeys the shared scanner. The
-            -- malformed run of an unclosed bracket is content here
-            -- (Principle 8), exactly as in the scanner's sibling paths.
+            -- `\section[short]{long}`: the short form feeds furniture no
+            -- backend consumes yet, and its bracket obeys the shared
+            -- scanner. The malformed run of an unclosed bracket is content
+            -- here, exactly as in the scanner's sibling paths.
+            if let .took _ := scanBracketArg raws i pos then
+              warnOnce ctx "section:short" .N0103
+                s!"'\\{n}[short]' short title is unused: nothing consumes it yet" pos
             let (j, recovered, junk) ← skipOptArg ctx n raws i pos
             if let some p ← mkPara ctx junk then
               blocks := blocks.push p
@@ -1753,8 +1771,9 @@ specs are not modelled")
             unless content.isEmpty do
               blocks := blocks.push (.para content)
           else if n == "frame" then
-            -- \begin{frame}[options]{title}: options are burned (fragile,
-            -- plain say how beamer should cope, not what to say) except
+            -- \begin{frame}[options]{title}: options are ignored with a
+            -- note (fragile, plain say how beamer should cope, not what to
+            -- say) except
             -- `standout`, which says what the frame IS, and `t`/`c`/`b`,
             -- which say how it distributes its leftover vertical space
             -- (beamer user guide §8.1; `c` is beamer's default); the title
@@ -1775,7 +1794,12 @@ specs are not modelled")
                   | "t" => valign := .top
                   | "c" => valign := .center
                   | "b" => valign := .bottom
-                  | _ => pure ()
+                  | other =>
+                    -- fragile, plain, and friends say how beamer should
+                    -- cope, not what to say: registered, never silent.
+                    unless other.isEmpty do
+                      warnOnce ctx ("frame:opt:" ++ other) .N0102
+                        s!"frame option '{other}' is not modelled; ignored" pos
                 k := k'
               | .unclosed bpos =>
                 warnUnclosed ctx "'\\begin{frame}'" bpos
@@ -1890,13 +1914,17 @@ specs are not modelled")
           else if n == "figure" || n == "figure*" then
             -- A single-pass engine has nowhere for a float to float: the
             -- figure becomes a centred block where it stands, `[placement]`
-            -- burned. Its caption is set under the content and becomes the
-            -- alt text of the images it captions; figure numbering is not
-            -- modelled yet (PLAN M8).
+            -- ignored with a note saying so. Its caption is set under the
+            -- content and becomes the alt text of the images it captions;
+            -- figure numbering is not modelled yet (PLAN M8).
             let mut k := 0
             for _ in [0:body.size] do
               match scanBracketArg body k pos with
-              | .took k' => k := k'
+              | .took k' =>
+                warnOnce ctx "figure:placement" .N0102
+                  "figure '[placement]' is ignored: a single-pass engine has \
+nowhere for a float to float" pos
+                k := k'
               | .unclosed bpos =>
                 warnUnclosed ctx "'\\begin{figure}'" bpos
                 break
@@ -1932,14 +1960,18 @@ specs are not modelled")
               inner := inner.push (.para caption)
             blocks := blocks.push (.center inner)
           else if n == "columns" then
-            -- `[T]`-and-friends alignment options are burned: columns are
-            -- top-aligned (PLAN, M5). A column's width is its first group,
-            -- a fraction of the text width; content standing outside any
-            -- column keeps its place as ordinary blocks — never dropped.
+            -- `[T]`-and-friends alignment options are ignored with a note:
+            -- columns are top-aligned (PLAN, M5). A column's width is its
+            -- first group, a fraction of the text width; content standing
+            -- outside any column keeps its place as ordinary blocks — never
+            -- dropped.
             let mut k := 0
             for _ in [0:body.size] do
               match scanBracketArg body k pos with
-              | .took k' => k := k'
+              | .took k' =>
+                warnOnce ctx "columns:options" .N0102
+                  "'columns' alignment options are ignored: columns are top-aligned" pos
+                k := k'
               | .unclosed bpos =>
                 warnUnclosed ctx "'\\begin{columns}'" bpos
                 break

@@ -327,8 +327,16 @@ private def color (model value : String) (pos : Pos) : M (Option String) := do
 
 /-- KOMA's `\\sectionlinesformat` is a hook for drawing after a heading. The one
 idiom worth reading is a rule in a colour, `\\textcolor{X}{\\leaders\\hrule …}`;
-anything else is dropped. -/
+any other non-empty body is a dropped loss and says so — an empty body asks
+for no decoration, which is what an unstyled section already draws. -/
 private def sectionRule (src : String) (pos : Pos) : M (Array Raw) := do
+  let dropped : M (Array Raw) := do
+    unless src.trimAscii.toString.isEmpty do
+      say .E0113
+        "'\\sectionlinesformat' body is not the rule idiom; it is dropped" pos
+        (help := "\\style{section}{ rule = <colour> } declares the section \
+rule; \\allow{E0113} accepts the loss")
+    return #[]
   match (src.splitOn "\\textcolor {")[1]? with
   | some rest =>
     let color := ((rest.splitOn "}").headD "").trimAscii.toString
@@ -336,8 +344,8 @@ private def sectionRule (src : String) (pos : Pos) : M (Array Raw) := do
       let native := s!"\\style\{section}\{ rule = {color} }"
       became "\\sectionlinesformat" native pos
       synthAt native pos
-    else return #[]
-  | none => return #[]
+    else dropped
+  | none => dropped
 
 /-- Rewrite the control sequence `name` given what follows it. Returns the
 replacement and how many following elements it consumed, or `none` to leave

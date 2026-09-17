@@ -59,14 +59,14 @@ compiler-exhaustive. The letter prefix is the code's history, not its
 severity — severity comes from the declared `Loss` alone. -/
 inductive DiagCode where
   | E0001 | E0002
-  | E0101 | E0102 | E0111 | E0112
+  | E0101 | E0102 | E0111 | E0112 | E0113
   | E0201 | E0202 | E0205
   | E0303 | E0304 | E0305 | E0306 | E0309 | E0310 | E0311 | E0312 | E0313
   | E0316 | E0320 | E0321 | E0322 | E0323 | E0324 | E0325 | E0326 | E0327
   | E0328 | E0329 | E0330 | E0331
   | E0401 | E0402 | E0403 | E0404
   | E0501
-  | N0100 | N0101 | N0105 | N0200
+  | N0100 | N0101 | N0102 | N0103 | N0105 | N0200
   | W0001 | W0003 | W0004 | W0005 | W0006 | W0007 | W0008 | W0009 | W0010
   | W0011 | W0012 | W0013
   | W0102 | W0103 | W0104 | W0105 | W0106 | W0108 | W0110
@@ -90,6 +90,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .E0102 => ("E0102", .dropped, "unclosed verbatim environment")
   | .E0111 => ("E0111", .dropped, "beamer template body carrying content dropped")
   | .E0112 => ("E0112", .dropped, "\\titlegraphic content dropped")
+  | .E0113 => ("E0113", .dropped, "unrecognised \\sectionlinesformat body dropped")
   | .E0201 => ("E0201", .dropped, "unclosed group or environment at end of input")
   | .E0202 => ("E0202", .dropped, "unexpected closer")
   | .E0205 => ("E0205", .dropped, "malformed or mismatched environment name")
@@ -122,6 +123,8 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .E0501 => ("E0501", .dropped, "\\input nesting too deep")
   | .N0100 => ("N0100", .info, "LaTeX idiom translated to its native declaration")
   | .N0101 => ("N0101", .config, "geometry keys without a native equivalent dropped")
+  | .N0102 => ("N0102", .info, "option ignored: it configures machinery the engine does not model")
+  | .N0103 => ("N0103", .info, "\\section short title unused: nothing consumes it yet")
   | .N0105 => ("N0105", .config, "\\setkomafont on a non-styleable element ignored")
   | .N0200 => ("N0200", .info, "page set short: its skips gave their shrink")
   | .W0001 => ("W0001", .config, "content after \\end{document} is ignored")
@@ -185,11 +188,11 @@ def DiagCode.meaning (c : DiagCode) : String := c.spec.2.2
 /-- Every code, for the registry checks in Tests.lean; `all_complete` holds
 the list to the type. -/
 def DiagCode.all : List DiagCode :=
-  [.E0001, .E0002, .E0101, .E0102, .E0111, .E0112, .E0201, .E0202, .E0205, .E0303, .E0304,
+  [.E0001, .E0002, .E0101, .E0102, .E0111, .E0112, .E0113, .E0201, .E0202, .E0205, .E0303, .E0304,
    .E0305, .E0306, .E0309, .E0310, .E0311, .E0312, .E0313, .E0316, .E0320,
    .E0321, .E0322, .E0323, .E0324, .E0325, .E0326, .E0327, .E0328, .E0329,
    .E0330, .E0331, .E0401, .E0402, .E0403, .E0404, .E0501, .N0100, .N0101,
-   .N0105, .N0200, .W0001, .W0003, .W0004, .W0005, .W0006, .W0007, .W0008,
+   .N0102, .N0103, .N0105, .N0200, .W0001, .W0003, .W0004, .W0005, .W0006, .W0007, .W0008,
    .W0009, .W0010, .W0011, .W0012, .W0013, .W0102, .W0103, .W0104, .W0105, .W0106, .W0108,
    .W0110, .W0201, .W0202, .W0301, .W0302, .W0303, .W0304, .W0307, .W0308,
    .W0309, .W0310, .W0311, .W0312, .W0313, .W0314, .W0315, .W0316, .W0317,
