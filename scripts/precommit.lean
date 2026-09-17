@@ -85,16 +85,48 @@ def main : IO UInt32 := do
 
   -- Warn-once keys are namespaced: a flat key space let an environment and a
   -- command of one name silence each other once (W0301/W0302), and a growing
-  -- catch-all table re-creates the collision quietly.
-  let onceKeys (l : String) : List String :=
-    ["sayOnce \"", "warnOnce ctx \""].flatMap fun pat =>
-      ((l.splitOn pat).drop 1).map fun rest => ((rest.splitOn "\"").headD "")
-  let bad := added.filter fun l => (onceKeys l).any fun k => !containsSub k ":"
+  -- catch-all table re-creates the collision quietly. The check is
+  -- structural about the call site, not about one literal spelling: every
+  -- warn-once call in core code must spell its namespace where it stands —
+  -- a string literal containing ':', alone or opening a concatenation. A
+  -- key the line cannot prove namespaced (`sayOnce name`, a variable, an
+  -- interpolation, a call split across lines) is rejected outright.
+  let addedInCore : List String := Id.run do
+    let mut file := ""
+    let mut out : List String := []
+    for l in diff.splitOn "\n" do
+      if l.startsWith "+++ b/" then
+        file := (l.drop "+++ b/".length).toString
+      else if l.startsWith "+" && !l.startsWith "+++" && file.startsWith "LeanTex/" then
+        out := (l.drop 1).toString :: out
+    return out.reverse
+  let patSay := "say" ++ "Once "
+  let patWarn := "warn" ++ "Once "
+  let keyNamespaced (rest : String) : Bool :=
+    let r := rest.trimAscii.toString
+    let r := if r.startsWith "(" then ((r.drop 1).toString.trimAscii.toString) else r
+    r.startsWith "\"" && containsSub ((((r.drop 1).toString.splitOn "\"").headD "")) ":"
+  let onceCallFlat (l : String) : Bool := Id.run do
+    if containsSub l ("def say" ++ "Once") || containsSub l ("def warn" ++ "Once") then
+      return false
+    for pat in [patSay, patWarn] do
+      for rest in (l.splitOn pat).drop 1 do
+        -- warnOnce takes the context first; the key follows it
+        let rest := if pat == patWarn then
+            match rest.splitOn " " with
+            | _ :: rs => String.intercalate " " rs
+            | [] => rest
+          else rest
+        if !keyNamespaced rest then
+          return true
+    return false
+  let bad := addedInCore.filter onceCallFlat
   if !bad.isEmpty then
-    say s!"pre-commit: warn-once key without a namespace prefix in staged .lean changes:
+    say s!"pre-commit: warn-once call whose key is not visibly namespaced at the call site:
 {String.intercalate "\n" bad}
-  Keys share one flat store per module; prefix them (\"ctrl:\", \"env:\", \"spec:\", ...)
-  so two constructs of one name cannot silence each other."
+  Keys share one flat store per module; spell the namespace where the call is —
+  a literal (\"ctrl:x\") or a concatenation opening with one ((\"env:\" ++ name)) —
+  so two constructs of one name cannot silence each other, and this check can see it."
 
   if ← failed.get then
     return 1
