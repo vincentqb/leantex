@@ -49,6 +49,43 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — the overlay slice: covered content must be visibly covered.
+A real deck showed four ways it was not, each fixed to its invariant:
+
+- Range ends are modelled: `Ir.step` carries an optional inclusive end,
+  so `\onslide<1>{...}` dims again from step 2 and `<2-3>` gives a frame
+  three pages — beamer's transparent covering, which the earlier "the
+  range's end is not modelled" reading silently dropped. `stepPending`
+  names the page test.
+- Covered means covered: the shade repaints nested explicit colours (an
+  alert-heavy slide used to defeat its own covering — every inner
+  `.colored` won over the wrapper) and verbatim dims through a `covered`
+  field (paused code used to stay crisp while its sentence dimmed).
+  Nothing vanishes is now a theorem: `Ir.dimBlocks_text` /
+  `shadeBlocks_text` prove the walks preserve every character, so each
+  handout page carries the whole frame.
+- Block content steps whole: an overlay group routes through the block
+  elaborator when its body is block-shaped (the same judgment environment
+  bodies get), so a list inside `\onslide<2->{...}` steps instead of dying
+  with E0312, a multi-paragraph group is not spliced down to its first
+  paragraph, and the bare open form between blocks steps the rest of the
+  scope instead of an empty step. `\alt<n>{a}{b}` joins at both levels: b
+  is a step through n−1. `\pause` between list items steps the rest of
+  the list (it used to step the empty rest of the previous item).
+- Themes own their dim: `covered = fg!38!bg` in both bundles (38% is the
+  Material disabled-state opacity, and what the default #A1A1AA already
+  encoded over white), held by theorem to `Contrast.coveredContract` —
+  quieter than the body ink, and the state change ≥ 3:1 (SC 1.4.11's
+  ratio for state-identifying information; SC 1.4.3 exempts the covered
+  text itself, as already pinned). `\setbeamercovered{transparent}` is
+  agreement with dim-not-hide and no longer warns; `transparent=<n>`
+  declares the covered colour as an n% mix; `invisible` keeps the honest
+  warning naming the divergence.
+
+Verified: build --wfail, tests, bench medians 77/288/384 ms (within the
+noise band of the entries below); the reference deck renders with covered
+steps reading as covered on the pages that used to show them crisp.
+
 2026-09-17 — the card slice reconciled with the three slices that landed
 under it (typography, colour, M5b themes), each conflict a design
 question, not a merge:
@@ -345,21 +382,30 @@ each a construct that was a warning and is now a meaning:
   recorded: vertical alignment options (top only), absolute widths, a
   column outliving its page, exact page-shrink bookkeeping inside columns,
   the `\column` command spelling (still inert).
-- Overlays: `Inline.step`/`Block.step` carry visible-from-step content as
-  pure grouping. `\uncover`/`\visible`/`\only<n>{...}` (one dim semantics
-  for all three), `\item<n->`, and `\pause` (a block boundary numbering
-  cumulatively through `Ctx.stepBase`) elaborate to steps; `<+->`-style
-  specs keep W0105, now naming the spec. The PDF path expands each
-  multi-step frame to one page per step before layout (`Ir.expandOverlays`),
-  recolouring pending content to palette `covered` (default #A1A1AA — the
-  HTML muted token; declare `covered` to restyle). Only colours differ
-  between the copies, so no step reflows — the invariant holds by
-  construction and by test. HTML keeps one slide per frame with
-  `class="step" data-step="n"`, everything visible: the no-JS handout.
-  Recorded limits: `\onslide` reaches only its own paragraph, a
-  mid-paragraph `\pause` splits its paragraph, dimmed items keep black
-  bullets, range upper bounds are ignored, absolute specs do not
-  synchronise with `\pause` counting.
+- Overlays: `Inline.step`/`Block.step` carry an overlay range (from-step
+  plus optional inclusive end) as pure grouping. `\uncover`/`\visible`/
+  `\only`/`\onslide<spec>{...}` (one dim semantics for all), `\alt` (both
+  alternatives on the page, the active one crisp within its spec),
+  `\item<n->`, and `\pause` (a block boundary numbering cumulatively
+  through `Ctx.stepBase`, list items included) elaborate to steps; a
+  grouped body routes through the block elaborator when it is
+  block-shaped, so lists and multi-paragraph groups step whole;
+  `<+->`-style specs keep W0105, naming the spec. The PDF path expands
+  each multi-step frame to one page per step before layout, recolouring
+  pending content — nested explicit colours and verbatim included; covered
+  means covered — to palette `covered` (default #A1A1AA, 38% black: the
+  Material disabled-state opacity; themes declare `covered = fg!38!bg`,
+  held to `Contrast.coveredContract`; declare `covered` to restyle).
+  Only colours differ between the copies, so no step reflows — by
+  construction, by test, and `Ir.dimBlocks_text` proves no character
+  vanishes. HTML keeps one slide per frame with `class="step"
+  data-step="n"` (`data-step-last` for ranges), everything visible: the
+  no-JS handout. Recorded limits: a mid-paragraph `\pause` splits its
+  paragraph, dimmed items keep black bullets, section headings inside a
+  pending step stay crisp, absolute specs do not synchronise with `\pause`
+  counting beyond the wrapper's own base, bare `\onslide` cannot close an
+  open-form step already begun, and `\alt`'s otherwise-side dims past a
+  mid-deck range (the complement of a range is not one range).
 - `\note` is `Block.note`, a side channel: omitted from the PDF handout
   (the page is byte-identical to the same frame without it), an inert
   hidden `<aside class="note">` in HTML for the coming speaker view. A
