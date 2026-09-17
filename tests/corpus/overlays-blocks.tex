@@ -1,0 +1,62 @@
+% Invented fixture: block content inside overlay commands — the shapes a
+% real deck steps. A list inside \onslide, a multi-paragraph \uncover,
+% \pause between list items and inside a column, \alt's two alternatives,
+% and an incremental spec the model cannot number (kept, with its warning).
+\documentclass[aspectratio=169]{slides}
+
+\begin{document}
+
+\begin{frame}{A list revealed whole}
+\onslide<2->{
+\begin{itemize}
+\item Placeholder point one.
+\item Placeholder point two.
+\end{itemize}
+}
+\end{frame}
+
+\begin{frame}{Paragraphs revealed together}
+\uncover<2>{
+The first covered paragraph.
+
+The second covered paragraph, revealed with it.
+}
+\end{frame}
+
+\begin{frame}{Paused list}
+\begin{itemize}
+\item Always here.
+\pause
+\item After one pause.
+\pause
+\item After two.
+\end{itemize}
+\end{frame}
+
+\begin{frame}{Paused column}
+\begin{columns}
+\begin{column}{0.5\textwidth}
+Above the pause.
+
+\pause
+Below the pause.
+\end{column}
+\begin{column}{0.5\textwidth}
+The steady column.
+\end{column}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Alternation}
+\alt<2>{The second beat.}{The first beat.}
+\end{frame}
+
+\begin{frame}{Incremental spec}
+\onslide<+->{
+\begin{itemize}
+\item Shown on every step.
+\end{itemize}
+}
+\end{frame}
+
+\end{document}

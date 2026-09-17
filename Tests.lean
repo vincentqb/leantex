@@ -47,7 +47,7 @@ def warnCodes (s : String) : List String :=
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
-   "centering", "columns", "overlays", "notes", "furniture",
+   "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
    "lists", "lists-styled", "lists-deck",
    "trio-page", "trio-deck", "trio-card"]
 
@@ -2028,6 +2028,91 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
         (runColors p2).all (· == Ir.Color.black)
       | _, _ => false))
 
+/-- Block content inside overlay commands, the block/inline agreement, and
+`\pause` where a deck actually puts it. Own function: `main`'s do block has
+no budget left. -/
+def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deck (body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n\\begin{document}\n\\begin{frame}\n" ++
+    body ++ "\n\\end{frame}\n\\end{document}"
+  -- A list inside an overlay group: the step wrapper survives at block
+  -- level (this was E0312).
+  let (lDoc, lDs) := elabStr (deck
+    "\\onslide<2->{\n\\begin{itemize}\n\\item Stepped item.\n\\end{itemize}\n}")
+  t "a list inside an overlay group steps whole, erroring nothing"
+    (lDs.isEmpty && lDoc.body == #[.frame #[] false #[
+      .step 2 none #[.list false #[#[.para #[.text "Stepped item."]]]]]])
+  -- A multi-paragraph group: every paragraph stays inside the step (the
+  -- par splice used to strip all but the first).
+  let (mDoc, mDs) := elabStr (deck "\\uncover<2>{\nFirst covered.\n\nSecond covered.\n}")
+  t "every paragraph of an overlay group stays inside its step"
+    (mDs.isEmpty && mDoc.body == #[.frame #[] false #[
+      .step 2 (some 2) #[.para #[.text "First covered."],
+        .para #[.text "Second covered."]]]])
+  -- Block and inline agree: the same spec around the same words reaches the
+  -- same step, whether the content is a paragraph or a list item.
+  let (iDoc, _) := elabStr (deck "\\uncover<2->{same words}")
+  let (bDoc, _) := elabStr (deck
+    "\\uncover<2->{\n\\begin{itemize}\n\\item same words\n\\end{itemize}\n}")
+  t "block and inline agree on steps"
+    (match iDoc.body, bDoc.body with
+     | #[.frame _ _ ib], #[.frame _ _ bb] =>
+       Ir.maxStepBlocks ib == 2 && Ir.maxStepBlocks bb == 2
+     | _, _ => false)
+  -- The open form between blocks: the rest of the scope steps (it used to
+  -- produce an empty step and leave the content unstepped).
+  let (oDoc, oDs) := elabStr (deck "shown\n\n\\onslide<2->\nlater one\n\nlater two")
+  t "bare onslide between blocks steps the rest of the scope"
+    (oDs.isEmpty && oDoc.body == #[.frame #[] false #[
+      .para #[.text "shown"],
+      .step 2 none #[.para #[.text "later one"], .para #[.text "later two"]]]])
+  -- \pause between items steps the rest of the list, not nothing.
+  let (pDoc, pDs) := elabStr (deck
+    "\\begin{itemize}\n\\item first\n\\pause\n\\item second\n\\pause\n\\item third\n\\end{itemize}")
+  t "pause between items steps the later items"
+    (pDs.isEmpty && pDoc.body == #[.frame #[] false #[
+      .list false #[
+        #[.para #[.text "first"]],
+        #[.step 2 none #[.para #[.text "second"]]],
+        #[.step 3 none #[.para #[.text "third"]]]]]])
+  let pOut := Layout.run (Layout.Geom.ofPage pDoc.page) oneFace none pDoc
+  t "a paused list gets one handout page per step" (pOut.pages.size == 3)
+  -- \pause inside a column steps the column's remaining blocks.
+  let (cDoc, cDs) := elabStr (deck
+    ("\\begin{columns}\n\\begin{column}{0.5\\textwidth}\nabove\n\n\\pause\nbelow\n" ++
+     "\\end{column}\n\\begin{column}{0.5\\textwidth}\nsteady\n\\end{column}\n\\end{columns}"))
+  t "pause inside a column steps the column's rest"
+    (cDs.isEmpty && (match cDoc.body with
+      | #[.frame _ _ #[.columns cols]] =>
+        (match cols[0]? with
+         | some (_, body) => body == #[.para #[.text "above"],
+             .step 2 none #[.para #[.text "below"]]]
+         | none => false) &&
+        (match cols[1]? with
+         | some (_, body) => body == #[.para #[.text "steady"]]
+         | none => false)
+      | _ => false))
+  -- \alt: both alternatives are on the page — the active one crisp within
+  -- its spec, the other before it.
+  let (aDoc, aDs) := elabStr (deck "\\alt<2>{after}{before}")
+  t "alt inline yields the step and its complement"
+    (aDs.isEmpty && aDoc.body == #[.frame #[] false #[.para #[
+      .step 2 (some 2) #[.text "after"],
+      .step 1 (some 1) #[.text "before"]]]])
+  let (abDoc, abDs) := elabStr (deck
+    "\\alt<2->{\nAfter one.\n\nAfter two.\n}{\nBefore.\n}")
+  t "alt with block alternatives steps both at block level"
+    (abDs.isEmpty && abDoc.body == #[.frame #[] false #[
+      .step 2 none #[.para #[.text "After one."], .para #[.text "After two."]],
+      .step 1 (some 1) #[.para #[.text "Before."]]]])
+  -- A spec the model cannot number keeps W0105 and shows the block content.
+  let (uDoc, uDs) := elabStr (deck
+    "\\onslide<+->{\n\\begin{itemize}\n\\item shown anyway\n\\end{itemize}\n}")
+  t "an unnumberable spec on a block group warns and shows the content"
+    ((uDs.map (·.code)) == #["W0105"] && uDoc.body == #[.frame #[] false #[
+      .list false #[#[.para #[.text "shown anyway"]]]]])
+
 /-- Speaker notes: a side channel — never slide content, omitted from the
 PDF handout, an inert hidden aside in HTML for the coming speaker view.
 Own function: `main`'s do block has no budget left. -/
@@ -3762,6 +3847,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       cardChecks ref oneFace pats
       columnsChecks ref oneFace
       overlayChecks ref oneFace
+      overlayBlockChecks ref oneFace
       noteChecks ref oneFace
       themeFurnitureChecks ref oneFace
       themeReconcileChecks ref oneFace

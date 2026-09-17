@@ -1,0 +1,66 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 25.512 hmargin 28.346 fontsize 11
+frame
+  title
+    text "A list revealed whole"
+  step 2
+    list unordered
+      item
+        para
+          text "Placeholder point one."
+      item
+        para
+          text "Placeholder point two."
+frame
+  title
+    text "Paragraphs revealed together"
+  step 2-2
+    para
+      text "The first covered paragraph."
+    para
+      text "The second covered paragraph, revealed with it."
+frame
+  title
+    text "Paused list"
+  list unordered
+    item
+      para
+        text "Always here."
+    item
+      step 2
+        para
+          text "After one pause."
+    item
+      step 3
+        para
+          text "After two."
+frame
+  title
+    text "Paused column"
+  columns
+    column 500/1000
+      para
+        text "Above the pause."
+      step 2
+        para
+          text "Below the pause."
+    column 500/1000
+      para
+        text "The steady column."
+frame
+  title
+    text "Alternation"
+  para
+    step 2-2
+      text "The second beat."
+    step 1-1
+      text "The first beat."
+frame
+  title
+    text "Incremental spec"
+  list unordered
+    item
+      para
+        text "Shown on every step."
+-- diagnostics
+warning[W0105] 55:1 overlay specification '<+->' does not name a step; its content is shown on every step | help: dim-not-hide reads <2>, <2->, <2-3>; incremental specs are not modelled

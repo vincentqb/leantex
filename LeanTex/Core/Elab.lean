@@ -177,6 +177,11 @@ def blockOnly : List String :=
   ["section", "subsection", "subsubsection", "item", "documentclass", "define",
    "defineenv", "block"]
 
+/-- The overlay commands, dim-not-hide (PLAN M5). `\alt` is not here: it
+takes two groups and is handled beside them. -/
+def overlayCtrls : List String :=
+  ["uncover", "visible", "only", "onslide"]
+
 def builtinNames : List String :=
   ["begin", "end", "par", "define", "ifgiven", "documentclass", "textcolor",
    -- Underline is native; a document's own \varul (soul-style) is ignored.
@@ -845,8 +850,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
               diag ctx "E0306" "expected a parameter reference like {\\team}" pos
           | _, _ =>
             diag ctx "E0304" "'\\ifgiven' needs {\\param} and {content}" pos
-        else if name == "uncover" || name == "visible" || name == "only"
-            || name == "onslide" then
+        else if overlayCtrls.contains name then
           -- Overlay commands, dim-not-hide (PLAN M5): the content wraps in
           -- a step and dims before its turn — \only included, one overlay
           -- semantics for both backends. Without a group the spec declares:
@@ -877,6 +881,36 @@ shown on every step" pos
 specs are not modelled")
               i := j + 1
           | none => pure ()
+        else if name == "alt" then
+          -- `\alt<spec>{active}{otherwise}`: under dim-not-hide both
+          -- alternatives are on the page — the active one crisp within its
+          -- spec, the other before it — so alternation reads as emphasis
+          -- moving, and nothing reflows. The complement of a mid-deck range
+          -- is not one range, so the otherwise side stays dimmed past it.
+          let j := skipSpaces raws i
+          let (spec, j2) := match raws[j]?.bind specWord? with
+            | some w => (overlayFrom w, skipSpaces raws (j + 1))
+            | none => (none, j)
+          let j3 := skipSpaces raws (j2 + 1)
+          match raws[j2]?, raws[j3]? with
+          | some (.group ga _), some (.group gb _) =>
+            i := j3 + 1
+            acc := flushText acc sb
+            sb := ""
+            match spec with
+            | some (n, last) =>
+              acc := acc.push (.step n last (← elabInlines ctx ga))
+              acc := acc.push (.step 1 (some (n - 1)) (← elabInlines ctx gb))
+            | none =>
+              warnOnce ctx "spec:overlay" "W0105"
+                "'\\alt' without a numbered specification shows both \
+alternatives on every step" pos
+                (help := "dim-not-hide reads <2>, <2->, <2-3>; incremental \
+specs are not modelled")
+              acc := acc ++ (← elabInlines ctx ga)
+              acc := acc ++ (← elabInlines ctx gb)
+          | _, _ =>
+            diag ctx "E0304" "'\\alt' needs <spec>{content}{content}" pos
         else if name == "pause" then
           -- Reachable only inside an argument or definition body; between
           -- blocks the boundary rule steps the rest of the scope.
@@ -1011,6 +1045,25 @@ inline macro must stay inline, or `\role{Ada} and more text` would split the
 paragraph. -/
 def bodyIsBlock (raws : Array Raw) : Bool :=
   bodyIsBlockList raws.toList
+
+/-- Does an overlay command standing at `i` take the block path? Grouped
+content is judged by its shape, exactly as an environment body is — a list
+or a paragraph break inside `\onslide{...}` is block content wherever the
+command stands. The open form (a spec with no group) steps the rest of the
+scope, so it is block-level only where a paragraph has not begun; begun,
+it steps the rest of its sentence inline. `\alt` (two groups) takes the
+block path when either alternative is block-shaped. -/
+private def overlayTakesBlocks (raws : Array Raw) (i : Nat) (curEmpty : Bool)
+    (twoGroups : Bool) : Bool :=
+  let j := skipSpaces raws (i + 1)
+  let jg := if (raws[j]?.bind specWord?).isSome then skipSpaces raws (j + 1) else j
+  match raws[jg]? with
+  | some (.group g1 _) =>
+    bodyIsBlock g1 ||
+      (twoGroups && (match raws[skipSpaces raws (jg + 1)]? with
+        | some (.group g2 _) => bodyIsBlock g2
+        | _ => false))
+  | _ => curEmpty && !twoGroups
 
 private def sectionLevel : String → Option Nat
   | "section" => some 1
@@ -1183,6 +1236,8 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           (match lookupUser ctx n with
            | some (_, cmd) => bodyIsBlock cmd.body
            | none =>
+             ((overlayCtrls.contains n || n == "alt") &&
+               overlayTakesBlocks raws i cur.isEmpty (n == "alt")) ||
              titleCtrls.contains n || n == "maketitle" || n == "titlepage")
         | .group body _ =>
           -- A scope group carrying a `\centering` declaration is a block
@@ -1319,7 +1374,70 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             let callCtx : Ctx := { ctx with limit := k, args := bindings }
             blocks := blocks ++ (← elabBlocks callCtx cmd.body)
           | none =>
-          if titleCtrls.contains n then
+          if overlayCtrls.contains n || n == "alt" then
+            -- Block-level overlay: the step wrapper survives at block
+            -- level, so a list or a multi-paragraph group inside
+            -- \onslide<2->{...} steps whole — elaborated as blocks, never
+            -- squeezed through a paragraph. A spec the model cannot number
+            -- keeps the honest W0105 and the content stays shown. `\pause`
+            -- inside the wrapped content counts from the wrapper's own
+            -- step, so pending stays pending.
+            let j := skipSpaces raws i
+            let mut spec : Option (Nat × Option Nat) := none
+            let mut jg := j
+            match raws[j]?.bind specWord? with
+            | some w =>
+              jg := skipSpaces raws (j + 1)
+              match overlayFrom w with
+              | some p => spec := some p
+              | none =>
+                warnOnce ctx "spec:overlay" "W0105"
+                  s!"overlay specification '{w}' does not name a step; its \
+content is shown on every step" pos
+                  (help := "dim-not-hide reads <2>, <2->, <2-3>; incremental \
+specs are not modelled")
+            | none => pure ()
+            if n == "alt" then
+              let j3 := skipSpaces raws (jg + 1)
+              match raws[jg]?, raws[j3]? with
+              | some (.group ga _), some (.group gb _) =>
+                i := j3 + 1
+                match spec with
+                | some (s, last) =>
+                  let ia ← elabBlocks
+                    { ctx with stepBase := max ctx.stepBase (s - 1) } ga
+                  let ib ← elabBlocks ctx gb
+                  blocks := blocks.push (.step s last ia)
+                  blocks := blocks.push (.step 1 (some (s - 1)) ib)
+                | none =>
+                  blocks := blocks ++ (← elabBlocks ctx ga)
+                  blocks := blocks ++ (← elabBlocks ctx gb)
+              | _, _ =>
+                diag ctx "E0304" "'\\alt' needs <spec>{content}{content}" pos
+            else
+              match raws[jg]? with
+              | some (.group gbody _) =>
+                i := jg + 1
+                match spec with
+                | some (s, last) =>
+                  let inner ← elabBlocks
+                    { ctx with stepBase := max ctx.stepBase (s - 1) } gbody
+                  unless inner.isEmpty do
+                    blocks := blocks.push (.step s last inner)
+                | none =>
+                  blocks := blocks ++ (← elabBlocks ctx gbody)
+              | _ =>
+                -- The open form: the rest of this scope steps. Bare
+                -- \onslide (no spec) ends stepping — the rest simply flows.
+                i := jg
+                if let some (s, last) := spec then
+                  let inner ← elabBlocks
+                    { ctx with stepBase := max ctx.stepBase (s - 1) }
+                    (raws.extract i raws.size)
+                  i := raws.size
+                  unless inner.isEmpty do
+                    blocks := blocks.push (.step s last inner)
+          else if titleCtrls.contains n then
             let (j, junk) ← takeTitleDecl ctx n raws i pos
             i := j
             -- The malformed run of an unclosed bracket is content here.
@@ -1467,8 +1585,14 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           else if n == "itemize" || n == "enumerate" then
             let mut items : Array (Array Raw) := #[]
             let mut steps : Array (Option (Nat × Option Nat)) := #[]
+            -- `\pause` between items steps the rest of the LIST, not just
+            -- the rest of an item's own blocks: each item records how many
+            -- pauses stand before it and reveals one step after the last.
+            let mut pauses := 0
+            let mut itemPauses : Array Nat := #[]
             let mut curItem : Array Raw := #[]
             let mut curStep : Option (Nat × Option Nat) := none
+            let mut curPauses := 0
             let mut awaitSpec := false
             let mut seen := false
             let mut strayDiagged := false
@@ -1478,10 +1602,19 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
                 if seen then
                   items := items.push curItem
                   steps := steps.push curStep
+                  itemPauses := itemPauses.push curPauses
                 curItem := #[]
                 curStep := none
+                curPauses := pauses
                 awaitSpec := true
                 seen := true
+              | .ctrl "pause" _ =>
+                -- Counted for the items that follow; kept in the item so a
+                -- mid-item pause still steps the item's own remaining
+                -- blocks.
+                pauses := pauses + 1
+                if seen then
+                  curItem := curItem.push item
               | _ =>
                 -- `\item<2->`: the spec directly after the item names the
                 -- step its content reveals at, dim-not-hide (PLAN M5).
@@ -1505,12 +1638,15 @@ specs are not modelled")
             if seen then
               items := items.push curItem
               steps := steps.push curStep
+              itemPauses := itemPauses.push curPauses
             let mut elabItems : Array (Array Block) := #[]
-            for (it, st?) in items.zip steps do
-              let inner ← elabBlocks ctx it
+            for ((it, st?), p) in (items.zip steps).zip itemPauses do
+              let inner ← elabBlocks { ctx with stepBase := ctx.stepBase + p } it
               elabItems := elabItems.push (match st? with
                 | some (s, last) => #[.step s last inner]
-                | none => inner)
+                | none =>
+                  if p > 0 then #[.step (ctx.stepBase + p + 1) none inner]
+                  else inner)
             blocks := blocks.push (.list (n == "enumerate") elabItems)
           else if n == "center" then
             blocks := blocks.push (.center (← elabBlocks ctx body))
