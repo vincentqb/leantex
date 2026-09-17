@@ -1,0 +1,32 @@
+% Invented deck pinning the footline's slot layout (moloch's own footline:
+% left slot, \hfill, right slot — beamerouterthememoloch.dtx): a countable
+% frame BEFORE any section has an empty left slot, and the frame number must
+% hold the right edge anyway — the empty-left collapse was F1's sibling
+% divergence (FINDINGS F5). Nothing here derives from any private document.
+\documentclass[aspectratio=169]{beamer}
+
+\usetheme{moloch}
+
+\fonts{
+  dir = "fonts",
+  body = "Open Sans",
+}
+
+\title{Footline Slots}
+\author{Pat Placeholder}
+
+\begin{document}
+
+\maketitle
+
+\begin{frame}{Before any section}
+  No section is in force, so the left slot is empty.
+\end{frame}
+
+\section{Placement}
+
+\begin{frame}{Inside a section}
+  The section title takes the left slot.
+\end{frame}
+
+\end{document}

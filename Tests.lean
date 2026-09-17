@@ -48,7 +48,7 @@ def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
-   "chrome", "lists", "lists-styled", "lists-deck", "headroom",
+   "chrome", "footer-left", "lists", "lists-styled", "lists-deck", "headroom",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav"]
 
@@ -3417,14 +3417,21 @@ palette entry). Deliberately thin: it grows toward
 the role census `Check.Shipped` is heading for; what `censusChecks`
 enforces today is coverage — no fixture enters the golden set witnessed by
 its IR dump alone. -/
+structure CensusLine where
+  x : Dim.Sp
+  /-- The line's set width, so a fact can judge its right edge — where a
+  footer's right slot must sit whatever the left slot holds. -/
+  width : Dim.Sp
+  text : String
+
 structure CensusPage where
-  lines : Array (Dim.Sp × String)
+  lines : Array CensusLine
   covered : String
   rules : Nat
   fills : Nat
 
 def CensusPage.text (p : CensusPage) : String :=
-  String.intercalate " " (p.lines.toList.map (·.2))
+  String.intercalate " " (p.lines.toList.map (·.text))
 
 /-- The colours covering can paint in a document: the plain cover (runs
 with no colour of their own) and the per-colour cover of every palette
@@ -3442,7 +3449,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
     Array CensusPage := Id.run do
   let mut pages : Array CensusPage := #[]
   for p in out.pages do
-    let mut lines : Array (Dim.Sp × String) := #[]
+    let mut lines : Array CensusLine := #[]
     let mut covered := ""
     let mut rules := 0
     for l in p.lines do
@@ -3464,7 +3471,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
         | .rule .. => rules := rules + 1
         -- an image is decorative ink to the text census, like a rule
         | .image .. => pure ()
-      lines := lines.push (l.x, chars)
+      lines := lines.push { x := l.x, width := l.setWidth, text := chars }
       covered := covered.push ' '
     pages := pages.push { lines := lines
                           covered := covered
@@ -3488,7 +3495,13 @@ def pageAllRevealed (c : Array CensusPage) (i : Nat) : Bool :=
 
 /-- The x of the first shipped line on page `i` containing `needle`. -/
 def lineXOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
-  (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.2 needle).map (·.1)
+  (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map (·.x)
+
+/-- The right edge (x plus set width) of the first shipped line on page `i`
+containing `needle`: where a footer's right slot must end. -/
+def lineRightOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
+  (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map
+    fun l => l.x + l.width
 
 /-- Census assertions, one row per golden fixture: what each fixture's
 shipped pages must show, judged from `Layout.Out` — never from the IR dump,
@@ -3523,8 +3536,8 @@ def censusTable :
   ("fill", fun _ c => [
     ("one page", c.size == 1),
     ("hfill sets both edges on one line",
-      ((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.2 "Left edge").map
-        fun l => hasStr l.2 "right edge").getD false)]),
+      ((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.text "Left edge").map
+        fun l => hasStr l.text "right edge").getD false)]),
   ("links", fun _ c => [
     ("one page", c.size == 1),
     ("the running foot resolves page number and count", hasStr (censusText c) "page 1 of 1"),
@@ -3600,6 +3613,22 @@ def censusTable :
     ("numbering starts at the first countable frame", pageHas c 2 "Footers 1"),
     ("a framefoot note takes the left slot", pageHas c 3 "source: example.org/data"),
     ("the default footer returns when the wrapper ends", pageHas c 4 "Footers 3")]),
+  -- The footline's slot layout is one declaration (moloch's own footline
+  -- row: left slot, \hfill, right slot — beamerouterthememoloch.dtx:216-228,
+  -- via Ir.Chrome.footSlots): which side a slot renders on is a function of
+  -- the declaration alone, so the empty-left case cannot move the number.
+  ("footer-left", fun geom c => [
+    ("pages", c.size == 4),
+    ("the sectionless frame still numbers at the right edge",
+      lineRightOf c 1 "1" == some (geom.pageW - geom.hmargin)),
+    ("the empty left slot ships nothing before the fill",
+      ((c[1]?.bind fun p => p.lines.find? fun l => hasStr l.text "1").map
+        fun l => l.text.startsWith " ").getD false),
+    ("the section title takes the left slot flush left",
+      ((c[3]?.bind fun p => p.lines.find? fun l => hasStr l.text "Placement 2").map
+        fun l => l.text.startsWith "Placement").getD false),
+    ("the sectioned frame numbers at the same right edge",
+      lineRightOf c 3 "Placement 2" == some (geom.pageW - geom.hmargin))]),
   ("lists", fun _ c => [
     ("one page", c.size == 1),
     ("four itemize levels ship their four marks",

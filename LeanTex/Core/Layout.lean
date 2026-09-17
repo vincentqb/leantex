@@ -2003,20 +2003,18 @@ private def Acc.pageBreak (a : Acc) : Acc :=
 private def Acc.style (a : Acc) (element : String) : Ir.ElementStyle :=
   (a.styles.find? element).getD {}
 
-/-- The chrome footer a frame's pages carry: each slot resolved to its
-per-page datum — the section in force, the frame's own number — with a fill
-pushing the two apart. A `\framefoot` note in force takes the left slot.
-`none` when nothing is declared. -/
+/-- The chrome footer a frame's pages carry: the one declared slot layout
+(`Ir.Chrome.footLine` — left slot, fill, right slot, moloch's own footline
+row) resolved to this frame's data. A frame the numbering skips carries no
+footer (the caller already guards). `none` when nothing is declared. -/
 private def Acc.chromeFoot (a : Acc) : Option (Array Inline) :=
   if a.chromeL.isNone && a.chromeR.isNone && a.frameFoot.isNone then none else
-  let slot (s : Ir.ChromeSlot) : Array Inline :=
-    match a.frameNum with
-    | some n => s.render a.curSection n a.frameCount
-    | none => #[]
-  let left := match a.frameFoot with
-    | some xs => xs
-    | none => (a.chromeL.map slot).getD #[]
-  some (left ++ #[Ir.Inline.fill] ++ ((a.chromeR.map slot).getD #[]))
+  match a.frameNum with
+  | some n =>
+    let chrome : Ir.Chrome := { footerLeft := a.chromeL, footerRight := a.chromeR }
+    some (chrome.footLine a.frameFoot a.curSection n a.frameCount)
+  | none =>
+    some ((a.frameFoot.getD #[]) ++ #[Ir.Inline.fill])
 
 private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
@@ -2896,7 +2894,20 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     match breaks[0]? with
     | none => (none, ds, cache)
     | some brk =>
-      let (segs, w, _) := setLine items (lineStart items 0) brk target true
+      -- A running line is not a broken-off paragraph line: its leading glue
+      -- is content, not break residue. `lineStart` would discard a leading
+      -- fill — which is exactly the chrome footer's empty-left case (the
+      -- layout's own `\hfill` before the right slot) — and the right slot
+      -- would collapse to the left margin. Only leading interword space is
+      -- skipped; a fill stays and takes the line's slack.
+      let start := Id.run do
+        let mut k := 0
+        for _ in [0:items.size] do
+          match items[k]? with
+          | some (Item.glue g) => if g.fil then break else k := k + 1
+          | _ => break
+        return k
+      let (segs, w, _) := setLine items start brk target true
       (some { x := geom.hmargin, y := y, size := size, segs := segs,
               setWidth := w }, ds, cache)
   let headY := geom.vmargin / 2 + b0.ascent

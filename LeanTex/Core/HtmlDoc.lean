@@ -1031,14 +1031,15 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
           let node := if chromeFoot then
               match num, node with
               | some n, .elem tag attrs kids =>
-                let slot (s : Ir.ChromeSlot) : Array Node :=
-                  inlines cfg (s.render curSection n total)
-                let left := match frameFoot with
-                  | some xs => inlines cfg xs
-                  | none => (doc.chrome.footerLeft.map slot).getD #[]
-                let right := (doc.chrome.footerRight.map slot).getD #[]
+                -- The one slot layout (`Ir.Chrome.footSlots`): the same
+                -- function the PDF's foot line consumes, so the two
+                -- backends resolve the same pair and can only diverge by
+                -- rendering it — the spans are left and right, and the
+                -- stylesheet's `space-between` is the template's `\hfill`.
+                let (left, right) := doc.chrome.footSlots frameFoot curSection n total
                 Node.elem tag attrs (kids.push (Html.elem "footer"
-                  #[Html.elem "span" left, Html.elem "span" right]
+                  #[Html.elem "span" (inlines cfg left),
+                    Html.elem "span" (inlines cfg right)]
                   #[("class", "slide-foot size-small")]))
               | _, other => other
             else node

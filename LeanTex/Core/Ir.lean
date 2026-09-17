@@ -743,6 +743,62 @@ structure Chrome where
 def Chrome.hasFooter (c : Chrome) : Bool :=
   c.footerLeft.isSome || c.footerRight.isSome
 
+/-- The footline's slot layout, resolved once for both backends: the left
+slot — a `\framefoot` note in force, else the declared left datum — and the
+right slot. The layout is moloch's own footline template
+(beamerouterthememoloch.dtx:216-228, `\defbeamertemplate{footline}{plain}`):
+`\usebeamertemplate*{frame footer}` `\hfill` `\usebeamertemplate*{page number
+in head/foot}` — left slot, stretch, right slot, and the `\hfill` stands
+whether or not the left template is empty, so an empty left slot never moves
+the right slot off the right edge. Both backends consume this function and
+neither carries its own slot arithmetic; which side a slot renders on is
+thereby a function of the declaration alone (`footSlots_right_ignores_left`,
+`footSlots_left_ignores_right`). -/
+def Chrome.footSlots (c : Chrome) (frameFoot : Option (Array Inline))
+    (sectionTitle : Array Inline) (n total : Nat) :
+    Array Inline × Array Inline :=
+  let slot (s : ChromeSlot) : Array Inline := s.render sectionTitle n total
+  let left := match frameFoot with
+    | some xs => xs
+    | none => (c.footerLeft.map slot).getD #[]
+  (left, (c.footerRight.map slot).getD #[])
+
+/-- The PDF's one-line rendering of the layout: left slot, a fill, right
+slot — the moloch footline row read as inline content. The fill is
+unconditional, exactly as the template's `\hfill` is: it separates the slots
+whether or not either is empty. -/
+def Chrome.footLine (c : Chrome) (frameFoot : Option (Array Inline))
+    (sectionTitle : Array Inline) (n total : Nat) : Array Inline :=
+  let (left, right) := c.footSlots frameFoot sectionTitle n total
+  left ++ #[Inline.fill] ++ right
+
+/-- The right slot is a function of its own declaration: neither the left
+slot's declaration nor a `\framefoot` note in force can move or change it —
+the empty-left case cannot move the number. -/
+theorem Chrome.footSlots_right_ignores_left (c c' : Chrome)
+    (ff ff' : Option (Array Inline)) (sec : Array Inline) (n total : Nat)
+    (h : c.footerRight = c'.footerRight) :
+    (c.footSlots ff sec n total).2 = (c'.footSlots ff' sec n total).2 := by
+  simp [footSlots, h]
+
+/-- And the left slot of its own: the right slot's declaration never reaches
+it. -/
+theorem Chrome.footSlots_left_ignores_right (c c' : Chrome)
+    (ff : Option (Array Inline)) (sec : Array Inline) (n total : Nat)
+    (h : c.footerLeft = c'.footerLeft) :
+    (c.footSlots ff sec n total).1 = (c'.footSlots ff sec n total).1 := by
+  simp [footSlots, h]
+
+/-- The two consumptions are projections of the one layout: the PDF's foot
+line is definitionally the left slot, the template's fill, the right slot —
+so the backends can only diverge by rendering the same pair differently,
+never by resolving different pairs. -/
+theorem Chrome.footLine_eq_slots (c : Chrome) (ff : Option (Array Inline))
+    (sec : Array Inline) (n total : Nat) :
+    c.footLine ff sec n total =
+      (c.footSlots ff sec n total).1 ++ #[Inline.fill] ++
+        (c.footSlots ff sec n total).2 := rfl
+
 mutual
 
 /-- The walk of `fillTemplate`. Exhaustive over `Inline` by design: any
