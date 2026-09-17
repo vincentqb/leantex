@@ -89,6 +89,56 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — behaviour is declared, and a backend can decline: the web
+surface's three gaps (site-port gaps 3, 4, 5), one slice because the nav
+is the case that needs the conditional and its hover states are the
+interaction states.
+
+- **`{ifbackend}{html,md}`** (`Ir.Block.only`): content addressed to a
+  subset of the backends. The engine still elaborates once; each backend
+  resolves the conditional at its own entry with `Ir.keepFor`, the one
+  drop site. The conservation theorem `Ir.keepFor_covers` (proved): with
+  every conditional keeping at least one backend along its nesting path
+  (`Ir.orphanFree` — path intersection, so `{pdf}` nested in `{html}`
+  addresses nothing), every declared text leaf survives in some backend's
+  kept view — stated over the `plainText` census like the overlay
+  conservation theorems, lifted to whole leaves because `keepFor` drops
+  whole subtrees. Elaboration walks the same intersection and fires W0324
+  exactly where `orphanFree` goes false (pinned by test, not theorem —
+  `Elab` is monadic); W0323 names a typo'd backend.
+- **`{nav}`** (`Ir.Block.nav`): a landmark, not a widget — `<nav>` in
+  HTML, a transparent group in the PDF and the markdown twin. Two
+  contracts judged over the *emitted typed tree*, never the IR (a
+  conditional may keep a nav on one surface only): at most one unlabeled
+  `<nav>` per page (W0325; ARIA Authoring Practices, Landmark Regions:
+  a repeated landmark role needs unique labels, and no label mechanism is
+  modelled yet) and every in-page link resolves to an emitted anchor
+  (W0326, naming the anchors; `#` and any-ASCII-case `#top` exempt per
+  the HTML spec's "select the indicated part").
+- **Interaction states are style keys**: `hover`, `focus`, `motion` on
+  `\style`, beside the keys already there; they style the element's links
+  (`nav` is styleable now), keep token spelling in CSS, and the PDF reads
+  none of them. The invariant: a declared motion carries its
+  reduced-motion form *by construction* — WCAG 2.2 SC 2.3.3 (Animation
+  from Interactions, technique C39) over CSS Media Queries 5 §12.1.
+  `HtmlDoc.motionCss` is the engine's only `transition:`-spelling site
+  (`motionSiteChecks` scans the tree, the `diagChecks` shape), appends
+  the guard unconditionally, and `motionCss_guarded` proves output =
+  rule ++ guard — deleting the guard fails the build, observed once. The
+  guard travels per declaration because `css = none` ships no base sheet.
+- The boundary decision stands: declarative platform, no script emission
+  (`--math-boundary` remains the only script path). Nothing else became
+  declarable here; a burger-menu disclosure is `<details>`, content the
+  existing tree can carry when a document asks.
+- Costs: bench medians 80/285/400 ms (paragraphs/lorem/underline) vs the
+  77/275/408 recorded above — noise, so `keepFor`'s extra pass is free at
+  these sizes. resume/deck/talk rebuilt to all nine outputs before and
+  after: byte-identical.
+- Found by looking at the rendered fixture, not by the suite: a document
+  palette name that collides with a base-stylesheet token (`ink`)
+  silently restyles the page — recorded, not fixed; a token-namespace
+  question for the Design work.
+
 2026-09-17 — compound engineering: the obligation table, and the gates
 that make it mechanical. A user found six defects by looking at one page
 while every check was green; the root cause was not six bugs but that
