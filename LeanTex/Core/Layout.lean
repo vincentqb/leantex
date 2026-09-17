@@ -454,7 +454,7 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   -- A note is never set in either backend's pages; its glyphs are not asked
   -- for.
   | .note _ => out
-  | .verbatim s => out.push s
+  | .verbatim _ s => out.push s
   | .frame title _ body =>
     scalarTextList (out.push (Ir.plainText title)) itemD enumD body.toList
 
@@ -1407,12 +1407,17 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .note _ =>
     -- A speaker note is not handout content: no lines, no gap.
     a
-  | .verbatim s =>
+  | .verbatim covered s =>
     -- Code lines, kept literally, at the scale's own \footnotesize (the
     -- code-frame convention) — derived from the table, not a loose decimal.
     -- No hyphenation patterns: the engine must never invent a hyphen inside
-    -- an identifier.
-    collectPara a none fs #[.styled .mono (Ir.verbatimInlines s)] indent false
+    -- an identifier. A pending overlay's shade rides in `covered`: code
+    -- must read as covered like any other text.
+    let inner : Array Ir.Inline := #[.styled .mono (Ir.verbatimInlines s)]
+    let inner := match covered with
+      | some c => #[.colored c none inner]
+      | none => inner
+    collectPara a none fs inner indent false
       (a.geom.fontSize * ((Ir.sizeScale.lookup "footnotesize").getD 1000) / 1000)
   | .frame title standout body =>
     -- A frame is a page boundary, not an article paragraph. Content past

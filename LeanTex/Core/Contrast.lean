@@ -282,7 +282,7 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
     let titleCx := { cx with size := cx.base * 1200 / 1000, bold := true }
     usesBlocks cx (usesInlines titleCx out title.toList) body.toList
   -- A note is a side channel, never page text; verbatim carries no colour.
-  | .note _ | .verbatim _ => out
+  | .note _ | .verbatim _ _ => out
 
 private def usesItems (cx : UseCx) (out : Array Use) :
     List (Array Block) → Array Use

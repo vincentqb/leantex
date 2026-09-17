@@ -355,8 +355,10 @@ inductive Block where
   /-- `\block[before = <len>]{...}`: content with declared space above. -/
   | spaced (before : SymGlue) (body : Array Block)
   /-- `{verbatim}` content, kept literally: lines, spaces, and all. Both
-  backends set it in the mono face and neither reflows it. -/
-  | verbatim (content : String)
+  backends set it in the mono face and neither reflows it. `covered` is the
+  dim colour painted by the overlay shade — code pending its step must read
+  as covered like any other text; `none` everywhere else. -/
+  | verbatim (covered : Option Color) (content : String)
   /-- Side-by-side columns (`{columns}`/`{column}`): each column carries its
   declared width as per mille of the text width, or `none` to share the
   leftover equally. Columns are top-aligned; the alignment options and
@@ -617,8 +619,9 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .note body => s!"{ind}note\n" ++ dumpBlocks (ind ++ "  ") body
   | .spaced before body =>
     s!"{ind}block before {dumpGlue before}\n" ++ dumpBlocks (ind ++ "  ") body
-  | .verbatim s =>
-    s!"{ind}verbatim\n" ++ String.join ((verbatimLines s).toList.map
+  | .verbatim covered s =>
+    s!"{ind}verbatim{if covered.isSome then " covered" else ""}\n" ++
+    String.join ((verbatimLines s).toList.map
       fun l => s!"{ind}  {l.quote}\n")
   | .frame title standout body =>
     s!"{ind}frame{if standout then " standout" else ""}\n" ++
@@ -688,9 +691,12 @@ end
 mutual
 
 /-- Every paragraph below here recoloured to the covered colour: the body
-of a step that has not arrived. Explicit colours nested inside win, as any
-inner wrapper does; verbatim and section blocks carry no colour and stay
-(recorded in PLAN). -/
+of a step that is pending. Covered means covered: an explicit colour nested
+inside (an alert, a palette name) is repainted too, exactly as beamer's
+transparent covering mutes coloured text — a covering the content's own
+colours could defeat would leave a colour-rich slide reading as never
+covered. Verbatim dims through its own `covered` field; section blocks
+carry no colour and stay (recorded in PLAN). -/
 def shadeBlocks (dim : Color) (xs : Array Block) : Array Block :=
   shadeBlockList dim #[] xs.toList
 
@@ -699,12 +705,13 @@ def shadeBlockList (dim : Color) (out : Array Block) : List Block → Array Bloc
   | b :: rest => shadeBlockList dim (out.push (shadeBlock dim b)) rest
 
 def shadeBlock (dim : Color) : Block → Block
-  | .para content => .para #[.colored dim none content]
+  | .para content => .para #[.colored dim none (shadeInlines dim #[] content.toList)]
   | .list o items => .list o (shadeItems dim #[] items.toList)
   | .center body => .center (shadeBlockList dim #[] body.toList)
   | .spaced g body => .spaced g (shadeBlockList dim #[] body.toList)
   | .columns cols => .columns (shadeColumns dim #[] cols.toList)
   | .step n last body => .step n last (shadeBlockList dim #[] body.toList)
+  | .verbatim _ s => .verbatim (some dim) s
   | other => other
 
 def shadeItems (dim : Color) (out : Array (Array Block)) :
@@ -717,6 +724,18 @@ def shadeColumns (dim : Color) (out : Array (Option Nat × Array Block)) :
   | [] => out
   | (w, body) :: rest =>
     shadeColumns dim (out.push (w, shadeBlockList dim #[] body.toList)) rest
+
+def shadeInlines (dim : Color) (out : Array Inline) : List Inline → Array Inline
+  | [] => out
+  | x :: rest => shadeInlines dim (out.push (shadeInline dim x)) rest
+
+def shadeInline (dim : Color) : Inline → Inline
+  | .colored _ _ body => .colored dim none (shadeInlines dim #[] body.toList)
+  | .styled st body => .styled st (shadeInlines dim #[] body.toList)
+  | .link u body => .link u (shadeInlines dim #[] body.toList)
+  | .underline body => .underline (shadeInlines dim #[] body.toList)
+  | .step n last body => .step n last (shadeInlines dim #[] body.toList)
+  | other => other
 
 end
 
@@ -770,7 +789,8 @@ def dimInline (dim : Color) (k : Nat) : Inline → Inline
   | .link u body => .link u (dimInlineList dim k #[] body.toList)
   | .underline body => .underline (dimInlineList dim k #[] body.toList)
   | .step n last body =>
-    if stepPending n last k then .step n last #[.colored dim none body]
+    if stepPending n last k then
+      .step n last #[.colored dim none (shadeInlines dim #[] body.toList)]
     else .step n last (dimInlineList dim k #[] body.toList)
   | other => other
 
@@ -795,7 +815,7 @@ def unwrapItemStep : Block → Block
   | .center body => .center (unwrapItemStepList #[] body.toList)
   | .spaced g body => .spaced g (unwrapItemStepList #[] body.toList)
   | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
-  | .step n body => .step n (unwrapItemStepList #[] body.toList)
+  | .step n l body => .step n l (unwrapItemStepList #[] body.toList)
   | .frame t s body => .frame t s (unwrapItemStepList #[] body.toList)
   | other => other
 
@@ -805,7 +825,7 @@ def unwrapItemStepItems (out : Array (Array Block)) :
   | item :: rest =>
     let item := unwrapItemStepList #[] item.toList
     let item := match item[0]? with
-      | some (Block.step _ body) => body ++ item.extract 1 item.size
+      | some (Block.step _ _ body) => body ++ item.extract 1 item.size
       | _ => item
     unwrapItemStepItems (out.push item) rest
 
@@ -816,6 +836,296 @@ def unwrapItemStepCols (out : Array (Option Nat × Array Block)) :
     unwrapItemStepCols (out.push (w, unwrapItemStepList #[] body.toList)) rest
 
 end
+
+-- Nothing vanishes: dimming recolours, never removes. The text of a frame's
+-- body is identical on every handout page, so the union of what the steps
+-- show is the whole content — each page already shows all of it, dimmed or
+-- not. Stated over the walks above and proved by the same structural
+-- recursion; a step function that dropped or reordered content would fail
+-- these equalities.
+
+mutual
+
+/-- The characters of block content with every mark stripped: the block
+companion of `plainText`, and what the overlay walks must preserve. The
+accumulator threads through, as every walk here does. -/
+def blocksText (xs : Array Block) : String := blockTextList "" xs.toList
+
+def blockTextList (acc : String) : List Block → String
+  | [] => acc
+  | b :: rest => blockTextList (blockTextOne acc b) rest
+
+def blockTextOne (acc : String) : Block → String
+  | .para content =>
+    let t := plainText content
+    acc ++ t
+  | .section _ _ title =>
+    let t := plainText title
+    acc ++ t
+  | .list _ items => blockTextItems acc items.toList
+  | .center body => blockTextList acc body.toList
+  | .spaced _ body => blockTextList acc body.toList
+  | .columns cols => blockTextColumns acc cols.toList
+  | .step _ _ body => blockTextList acc body.toList
+  | .note body => blockTextList acc body.toList
+  | .verbatim _ s => acc ++ s
+  | .frame title _ body => blockTextList (acc ++ plainText title) body.toList
+
+def blockTextItems (acc : String) : List (Array Block) → String
+  | [] => acc
+  | item :: rest => blockTextItems (blockTextList acc item.toList) rest
+
+def blockTextColumns (acc : String) : List (Option Nat × Array Block) → String
+  | [] => acc
+  | (_, body) :: rest => blockTextColumns (blockTextList acc body.toList) rest
+
+end
+
+private theorem plainTextList_append (l1 l2 : List Inline) :
+    plainTextList (l1 ++ l2) = plainTextList l1 ++ plainTextList l2 := by
+  induction l1 with
+  | nil => simp [plainTextList]
+  | cons x rest ih => simp [plainTextList, ih, String.append_assoc]
+
+private theorem blockTextList_chain (l1 l2 : List Block) (acc : String) :
+    blockTextList acc (l1 ++ l2) = blockTextList (blockTextList acc l1) l2 := by
+  induction l1 generalizing acc with
+  | nil => simp [blockTextList]
+  | cons b rest ih => simp [blockTextList, ih]
+
+private theorem blockTextItems_chain (l1 l2 : List (Array Block)) (acc : String) :
+    blockTextItems acc (l1 ++ l2) = blockTextItems (blockTextItems acc l1) l2 := by
+  induction l1 generalizing acc with
+  | nil => simp [blockTextItems]
+  | cons item rest ih => simp [blockTextItems, ih]
+
+private theorem blockTextColumns_chain (l1 l2 : List (Option Nat × Array Block))
+    (acc : String) :
+    blockTextColumns acc (l1 ++ l2)
+      = blockTextColumns (blockTextColumns acc l1) l2 := by
+  induction l1 generalizing acc with
+  | nil => simp [blockTextColumns]
+  | cons col rest ih => simp [blockTextColumns, ih]
+
+mutual
+
+theorem shadeInlines_text (dim : Color) (xs : List Inline) (out : Array Inline) :
+    plainTextList (shadeInlines dim out xs).toList
+      = plainTextList out.toList ++ plainTextList xs := by
+  match xs with
+  | [] => simp [shadeInlines, plainTextList]
+  | x :: rest =>
+    rw [shadeInlines, shadeInlines_text dim rest (out.push (shadeInline dim x))]
+    simp [plainTextList, plainTextList_append, shadeInline_text dim x,
+      String.append_assoc]
+
+theorem shadeInline_text (dim : Color) (x : Inline) :
+    plainTextOne (shadeInline dim x) = plainTextOne x := by
+  match x with
+  | .colored c n body =>
+    rw [shadeInline]
+    simp [plainTextOne, shadeInlines_text dim body.toList #[], plainTextList]
+  | .styled st body =>
+    rw [shadeInline]
+    simp [plainTextOne, shadeInlines_text dim body.toList #[], plainTextList]
+  | .link u body =>
+    rw [shadeInline]
+    simp [plainTextOne, shadeInlines_text dim body.toList #[], plainTextList]
+  | .underline body =>
+    rw [shadeInline]
+    simp [plainTextOne, shadeInlines_text dim body.toList #[], plainTextList]
+  | .step n last body =>
+    rw [shadeInline]
+    simp [plainTextOne, shadeInlines_text dim body.toList #[], plainTextList]
+  | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _ =>
+    rfl
+
+end
+
+mutual
+
+theorem shadeBlockList_text (dim : Color) (xs : List Block) (out : Array Block)
+    (acc : String) :
+    blockTextList acc (shadeBlockList dim out xs).toList
+      = blockTextList (blockTextList acc out.toList) xs := by
+  match xs with
+  | [] => simp [shadeBlockList, blockTextList]
+  | b :: rest =>
+    rw [shadeBlockList,
+      shadeBlockList_text dim rest (out.push (shadeBlock dim b)) acc]
+    simp [blockTextList, blockTextList_chain, shadeBlock_text dim b]
+
+theorem shadeBlock_text (dim : Color) (b : Block) (acc : String) :
+    blockTextOne acc (shadeBlock dim b) = blockTextOne acc b := by
+  match b with
+  | .para content =>
+    rw [shadeBlock]
+    simp [blockTextOne, plainText, plainTextList, plainTextOne,
+      shadeInlines_text dim content.toList #[]]
+  | .list o items =>
+    rw [shadeBlock]
+    simp [blockTextOne, shadeItems_text dim items.toList #[] acc, blockTextItems]
+  | .center body =>
+    rw [shadeBlock]
+    simp [blockTextOne, shadeBlockList_text dim body.toList #[] acc, blockTextList]
+  | .spaced g body =>
+    rw [shadeBlock]
+    simp [blockTextOne, shadeBlockList_text dim body.toList #[] acc, blockTextList]
+  | .columns cols =>
+    rw [shadeBlock]
+    simp [blockTextOne, shadeColumns_text dim cols.toList #[] acc, blockTextColumns]
+  | .step n last body =>
+    rw [shadeBlock]
+    simp [blockTextOne, shadeBlockList_text dim body.toList #[] acc, blockTextList]
+  | .verbatim c s => rfl
+  | .section _ _ _ | .note _ | .frame _ _ _ => rfl
+
+theorem shadeItems_text (dim : Color) (items : List (Array Block))
+    (out : Array (Array Block)) (acc : String) :
+    blockTextItems acc (shadeItems dim out items).toList
+      = blockTextItems (blockTextItems acc out.toList) items := by
+  match items with
+  | [] => simp [shadeItems, blockTextItems]
+  | item :: rest =>
+    rw [shadeItems,
+      shadeItems_text dim rest (out.push (shadeBlockList dim #[] item.toList)) acc]
+    simp [blockTextItems, blockTextItems_chain,
+      shadeBlockList_text dim item.toList #[], blockTextList]
+
+theorem shadeColumns_text (dim : Color) (cols : List (Option Nat × Array Block))
+    (out : Array (Option Nat × Array Block)) (acc : String) :
+    blockTextColumns acc (shadeColumns dim out cols).toList
+      = blockTextColumns (blockTextColumns acc out.toList) cols := by
+  match cols with
+  | [] => simp [shadeColumns, blockTextColumns]
+  | (w, body) :: rest =>
+    rw [shadeColumns,
+      shadeColumns_text dim rest
+        (out.push (w, shadeBlockList dim #[] body.toList)) acc]
+    simp [blockTextColumns, blockTextColumns_chain,
+      shadeBlockList_text dim body.toList #[], blockTextList]
+
+end
+
+/-- Shading preserves every character: covered content is recoloured,
+never removed. -/
+theorem shadeBlocks_text (dim : Color) (xs : Array Block) :
+    blocksText (shadeBlocks dim xs) = blocksText xs := by
+  simp [blocksText, shadeBlocks, shadeBlockList_text dim xs.toList #[] "",
+    blockTextList]
+
+mutual
+
+theorem dimInlineList_text (dim : Color) (k : Nat) (xs : List Inline)
+    (out : Array Inline) :
+    plainTextList (dimInlineList dim k out xs).toList
+      = plainTextList out.toList ++ plainTextList xs := by
+  match xs with
+  | [] => simp [dimInlineList, plainTextList]
+  | x :: rest =>
+    rw [dimInlineList, dimInlineList_text dim k rest]
+    simp [plainTextList, plainTextList_append, dimInline_text dim k x,
+      String.append_assoc]
+
+theorem dimInline_text (dim : Color) (k : Nat) (x : Inline) :
+    plainTextOne (dimInline dim k x) = plainTextOne x := by
+  match x with
+  | .styled st body =>
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text dim k body.toList #[], plainTextList]
+  | .colored c nm body =>
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text dim k body.toList #[], plainTextList]
+  | .link u body =>
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text dim k body.toList #[], plainTextList]
+  | .underline body =>
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text dim k body.toList #[], plainTextList]
+  | .step n last body =>
+    rw [dimInline]
+    by_cases h : stepPending n last k = true
+    · simp [h, plainTextOne, plainTextList,
+        shadeInlines_text dim body.toList #[]]
+    · simp [h, plainTextOne, dimInlineList_text dim k body.toList #[],
+        plainTextList]
+  | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _ =>
+    rfl
+
+end
+
+mutual
+
+theorem dimBlockList_text (dim : Color) (k : Nat) (xs : List Block)
+    (out : Array Block) (acc : String) :
+    blockTextList acc (dimBlockList dim k out xs).toList
+      = blockTextList (blockTextList acc out.toList) xs := by
+  match xs with
+  | [] => simp [dimBlockList, blockTextList]
+  | b :: rest =>
+    rw [dimBlockList, dimBlockList_text dim k rest]
+    simp [blockTextList, blockTextList_chain, dimBlock_text dim k b]
+
+theorem dimBlock_text (dim : Color) (k : Nat) (b : Block) (acc : String) :
+    blockTextOne acc (dimBlock dim k b) = blockTextOne acc b := by
+  match b with
+  | .para content =>
+    rw [dimBlock]
+    simp [blockTextOne, plainText, dimInlines,
+      dimInlineList_text dim k content.toList #[], plainTextList]
+  | .list o items =>
+    rw [dimBlock]
+    simp [blockTextOne, dimItems_text dim k items.toList #[] acc, blockTextItems]
+  | .center body =>
+    rw [dimBlock]
+    simp [blockTextOne, dimBlockList_text dim k body.toList #[] acc, blockTextList]
+  | .spaced g body =>
+    rw [dimBlock]
+    simp [blockTextOne, dimBlockList_text dim k body.toList #[] acc, blockTextList]
+  | .columns cols =>
+    rw [dimBlock]
+    simp [blockTextOne, dimColumns_text dim k cols.toList #[] acc, blockTextColumns]
+  | .step n last body =>
+    rw [dimBlock]
+    by_cases h : stepPending n last k = true
+    · simp [h, blockTextOne, shadeBlocks,
+        shadeBlockList_text dim body.toList #[] acc, blockTextList]
+    · simp [h, blockTextOne, dimBlockList_text dim k body.toList #[] acc,
+        blockTextList]
+  | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ => rfl
+
+theorem dimItems_text (dim : Color) (k : Nat) (items : List (Array Block))
+    (out : Array (Array Block)) (acc : String) :
+    blockTextItems acc (dimItems dim k out items).toList
+      = blockTextItems (blockTextItems acc out.toList) items := by
+  match items with
+  | [] => simp [dimItems, blockTextItems]
+  | item :: rest =>
+    rw [dimItems, dimItems_text dim k rest]
+    simp [blockTextItems, blockTextItems_chain,
+      dimBlockList_text dim k item.toList #[], blockTextList]
+
+theorem dimColumns_text (dim : Color) (k : Nat)
+    (cols : List (Option Nat × Array Block))
+    (out : Array (Option Nat × Array Block)) (acc : String) :
+    blockTextColumns acc (dimColumns dim k out cols).toList
+      = blockTextColumns (blockTextColumns acc out.toList) cols := by
+  match cols with
+  | [] => simp [dimColumns, blockTextColumns]
+  | (w, body) :: rest =>
+    rw [dimColumns, dimColumns_text dim k rest]
+    simp [blockTextColumns, blockTextColumns_chain,
+      dimBlockList_text dim k body.toList #[], blockTextList]
+
+end
+
+/-- Nothing vanishes: page `k` of a stepped frame carries every character
+the frame carries — dimming recolours pending content, it never hides it.
+The union of what the steps show is therefore the whole content. -/
+theorem dimBlocks_text (dim : Color) (k : Nat) (xs : Array Block) :
+    blocksText (dimBlocks dim k xs) = blocksText xs := by
+  simp [blocksText, dimBlocks, dimBlockList_text dim k xs.toList #[] "",
+    blockTextList]
 
 def dumpDiag (d : Diag) : String :=
   let where' := match d.span with

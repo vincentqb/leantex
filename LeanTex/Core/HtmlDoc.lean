@@ -483,10 +483,15 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let style := s!"margin-top: {cssLength before.width}"
     Html.elem "div" (blockNodesInto cfg #[] body.toList)
       #[("class", "spaced"), ("style", style)]
-  | .verbatim s =>
+  | .verbatim covered s =>
     -- `<pre>` preserves the raw lines; the escaper makes the content inert.
+    -- The covered shade never reaches HTML (dimming is the PDF handout's;
+    -- the HTML deck keeps every step visible), but honesty if it ever does.
     Html.elem "pre" #[Html.elem "code"
       #[Html.text (String.intercalate "\n" (verbatimLines s).toList)]]
+      (match covered with
+       | some c => #[("style", s!"color: {cssColor c}")]
+       | none => #[])
   | .frame title standout body =>
     -- One slide of the deck. With no controller yet this is the no-JS
     -- rendering the plan promises anyway: a linear readable handout, every

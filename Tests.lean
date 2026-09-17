@@ -1996,6 +1996,37 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
        colorOf p3 0 != some Ir.Color.black && colorOf p3 1 == some Ir.Color.black &&
        colorOf p3 2 == some Ir.Color.black
      | _, _ => false))
+  -- Covered means covered: a pending step's own colours (an alert, a
+  -- palette name) are repainted by the shade — beamer's transparent
+  -- covering mutes coloured text too — and pending code dims like any
+  -- other text.
+  let runColors (p : Layout.PageOut) : Array Ir.Color :=
+    p.lines.flatMap fun l => l.segs.filterMap fun s => match s with
+      | .run _ c _ _ _ _ _ => some c
+      | _ => none
+  let colorSrc := "\\documentclass[aspectratio=169]{slides}\n" ++
+    "\\palette{ hot = #AA0000 }\n\\begin{document}\n\\begin{frame}\n" ++
+    "opening\n\n\\pause\n\\hot{closing beat}\n\\end{frame}\n\\end{document}"
+  let (cDoc, cDs) := elabStr colorSrc
+  let cOut := Layout.run (Layout.Geom.ofPage cDoc.page) oneFace none cDoc
+  t "a pending step's explicit colours are repainted by the shade"
+    (cDs.isEmpty && cOut.pages.size == 2 &&
+     (match cOut.pages[0]?, cOut.pages[1]? with
+      | some p1, some p2 =>
+        !(runColors p1).contains ⟨0xAA, 0, 0⟩ &&
+        (runColors p2).contains ⟨0xAA, 0, 0⟩
+      | _, _ => false))
+  let (vDoc, vDs) := elabStr
+    (deck "opening\n\n\\pause\n\\begin{verbatim}\ncode line\n\\end{verbatim}")
+  let vOut := Layout.run (Layout.Geom.ofPage vDoc.page) oneFace none vDoc
+  t "pending verbatim dims like any other text"
+    (vDs.isEmpty && vOut.pages.size == 2 &&
+     (match vOut.pages[0]?, vOut.pages[1]? with
+      | some p1, some p2 =>
+        (runColors p1).size ≥ 2 &&
+        (runColors p1).count Ir.Color.black == 1 &&
+        (runColors p2).all (· == Ir.Color.black)
+      | _, _ => false))
 
 /-- Speaker notes: a side channel — never slide content, omitted from the
 PDF handout, an inert hidden aside in HTML for the coming speaker view.
@@ -2320,7 +2351,7 @@ def envBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a verbatim inside an unknown environment stays a block"
     (match (elabStr
         "\\begin{gizmo}\n\\begin{verbatim}\nliteral line one\n\\end{verbatim}\n\\end{gizmo}").1.body with
-     | #[.verbatim s] => s.trimAscii.toString == "literal line one"
+     | #[.verbatim none s] => s.trimAscii.toString == "literal line one"
      | _ => false)
   -- ...and the judgment descends into scope groups: block content one
   -- group deeper is still block content
@@ -2761,7 +2792,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- verbatim: lexically blind content, kept literally as its own block.
   let verbSrc := "\\begin{verbatim}\ndef f(n):\n    return n\n\nf(2)  # two spaces\n\\end{verbatim}"
   t "elab verbatim is a block, content untouched"
-    ((elabStr verbSrc).1.body == #[.verbatim "\ndef f(n):\n    return n\n\nf(2)  # two spaces\n"] &&
+    ((elabStr verbSrc).1.body == #[.verbatim none "\ndef f(n):\n    return n\n\nf(2)  # two spaces\n"] &&
      (elabStr verbSrc).2.isEmpty)
   t "verbatim lines trim the delimiters, keep blanks and indentation"
     (Ir.verbatimLines "\nabc\n  in\n\nz\n  " == #["abc", "  in", "", "z"])

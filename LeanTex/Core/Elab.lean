@@ -1587,7 +1587,7 @@ the column shares the leftover" cpos
             blocks := blocks ++ (← elabBlocks ctx kept)
         | .verb s _ =>
           i := i + 1
-          blocks := blocks.push (.verbatim s)
+          blocks := blocks.push (.verbatim none s)
         | _ =>
           i := i + 1
     else
