@@ -49,6 +49,41 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — colour is a checkable contract now, not a palette of guesses.
+WCAG 2.2 gives contrast a formula (relative luminance over linearised
+sRGB, ratio (L1+0.05)/(L2+0.05)), so "every pairing the engine ships is
+legible" became a theorem rather than a review comment. `Core/Contrast.lean`
+tabulates the channel linearisation at 1e-7 (all 256 entries pinned to the
+spec formula by test) and kernel-checked `decide` proves the pairings:
+both baseCss token sets clear their thresholds — 4.5:1 text (SC 1.4.3),
+3:1 focus indicator (SC 1.4.11) — and both built-in theme bundles clear
+theirs (fg/alert/example on bg at 4.5:1; frametitle pair at 4.5:1, 12pt
+bold being under WCAG's large-scale sizes; standout pair at 3:1, 14.4pt
+bold being over them). The bundle theorems hold over pre-resolved
+palettes because the kernel cannot evaluate the string parse; tests pin
+the constants to `bundlePalette` and that to what `\theme` installs. The
+check found two real defects on arrival: dark mode kept the light accent
+(2.64:1 on the dark surface; dark now carries the same hue two tints
+lighter, 6.97:1, and baseCss renders the proven constants so stylesheet
+and theorem cannot drift), and moloch's alert — metropolis's own
+#EB811B — read at 2.61:1 as body text (now #A55A13, the same hue at 70%
+over black, 4.94:1). The covered default stays deliberately dim, pinned
+as an exemption (SC 1.4.3, inactive); progress bar and separator are
+exempt as supplementary indicators outside SC 1.4.11's scope, recorded.
+Document-side, the same arithmetic drives W0315: text coloured below its
+threshold against the page (palette `bg` or the shipped surface) warns
+with the measured ratio — large-scale text held to 3:1, a declared fg
+judged against bg directly — and themed.tex's own fg!50!bg mix earns it
+at 2.79:1. `\palette[decorative]{...}` declares intent and silences;
+`covered` is exempt by role; an unknown `\palette` option skips the block
+with W0316 rather than restyling the base. SC 1.4.1 (colour never the
+only signal) closed two gaps: themed `\alert` is colour AND bold now
+(metropolis colours only; deliberate divergence), and a PDF link draws
+the underline the HTML anchor always had — it previously had no visual
+signal at all. `docDiags` is a whole-document pass, measured: 0.07 ms on
+the 30-page bench document. APCA stays out: a WCAG 3 working draft; 2.x
+is the standard in force.
+
 2026-09-17 — typography as enforced relations: the measure, the type
 scale, the vertical rhythm, and the slides stage each carry a sourced
 invariant now, as a theorem where one closes and a diagnostic where the
