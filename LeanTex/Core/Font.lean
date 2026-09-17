@@ -9,9 +9,10 @@ open LeanTex.Core.Ink
 /-- The constants this slice reads from an OpenType `MATH` table's
 MathConstants (learn.microsoft.com/typography/opentype/spec/math), in font
 design units: the script scale percentages (sanitized, see
-`Math.ScriptScales.clamp`) and the script-attachment shifts. Per the spec,
-attachment constants are read from the font of the base and scale with the
-base's size. -/
+`Math.ScriptScales.clamp`), the script-attachment shifts, and the
+fraction, radical, limit, and delimiter constants the M6 constructions
+position from. Per the spec, attachment constants are read from the font
+of the base and scale with the base's size. -/
 structure MathConsts where
   scales : Math.ScriptScales
   axisHeight : Int
@@ -19,21 +20,44 @@ structure MathConsts where
   superscriptShiftUp : Int
   superscriptShiftUpCramped : Int
   spaceAfterScript : Int
+  /-- "Minimum height of n-ary operators (such as integral and summation)
+  for formulas in display mode" (MATH spec, MathConstants). -/
+  displayOperatorMinHeight : Int
+  upperLimitGapMin : Int
+  upperLimitBaselineRiseMin : Int
+  lowerLimitGapMin : Int
+  lowerLimitBaselineDropMin : Int
+  fractionNumeratorShiftUp : Int
+  fractionNumeratorDisplayStyleShiftUp : Int
+  fractionDenominatorShiftDown : Int
+  fractionDenominatorDisplayStyleShiftDown : Int
+  fractionNumeratorGapMin : Int
+  fractionNumDisplayStyleGapMin : Int
+  fractionRuleThickness : Int
+  fractionDenominatorGapMin : Int
+  fractionDenomDisplayStyleGapMin : Int
+  radicalVerticalGap : Int
+  radicalDisplayStyleVerticalGap : Int
+  radicalRuleThickness : Int
+  radicalExtraAscender : Int
+  radicalKernBeforeDegree : Int
+  radicalKernAfterDegree : Int
+  radicalDegreeBottomRaisePercent : Int
   deriving Repr, BEq, Inhabited
 
 /-- Parse the MathConstants this slice uses out of a `MATH` table, or
 `none` when the face has no readable table — the caller's diagnostic names
 the face; constants are never invented (PLAN, M6 design entry). Layout:
 header (version, three Offset16s), then MathConstants with two int16
-percentages, two UFWORDs, and MathValueRecords (FWORD value + device
-offset) from offset 8. -/
+percentages, two UFWORDs, MathValueRecords (FWORD value + device offset)
+from offset 8 through radicalKernAfterDegree at 208, and a final int16
+percentage at 212 — 214 bytes, the spec's full fixed-size record. -/
 private def parseMath (b : ByteArray) : Option MathConsts := do
   let t ← findTable b "MATH"
   unless fits b t do failure
   unless t.length ≥ 10 do failure
   let cOff := t.offset + u16 b (t.offset + 4)
-  -- through spaceAfterScript at offset 60: 64 bytes of constants
-  unless cOff + 64 ≤ b.size do failure
+  unless cOff + 214 ≤ b.size do failure
   let value (rec : Nat) : Int := i16 b (cOff + rec)
   return {
     scales := Math.ScriptScales.clamp (value 0) (value 2)
@@ -42,7 +66,73 @@ private def parseMath (b : ByteArray) : Option MathConsts := do
     superscriptShiftUp := value 36
     superscriptShiftUpCramped := value 40
     spaceAfterScript := value 60
+    displayOperatorMinHeight := u16 b (cOff + 6)
+    upperLimitGapMin := value 64
+    upperLimitBaselineRiseMin := value 68
+    lowerLimitGapMin := value 72
+    lowerLimitBaselineDropMin := value 76
+    fractionNumeratorShiftUp := value 120
+    fractionNumeratorDisplayStyleShiftUp := value 124
+    fractionDenominatorShiftDown := value 128
+    fractionDenominatorDisplayStyleShiftDown := value 132
+    fractionNumeratorGapMin := value 136
+    fractionNumDisplayStyleGapMin := value 140
+    fractionRuleThickness := value 144
+    fractionDenominatorGapMin := value 148
+    fractionDenomDisplayStyleGapMin := value 152
+    radicalVerticalGap := value 188
+    radicalDisplayStyleVerticalGap := value 192
+    radicalRuleThickness := value 196
+    radicalExtraAscender := value 200
+    radicalKernBeforeDegree := value 204
+    radicalKernAfterDegree := value 208
+    radicalDegreeBottomRaisePercent := value 212
   }
+
+/-- A coverage table's glyph list (OpenType spec, coverage formats 1 and 2):
+the base glyphs a MathVariants construction list covers, in coverage order —
+the order the construction offsets follow. -/
+private def parseCoverage (b : ByteArray) (off : Nat) : Array Nat := Id.run do
+  let mut out : Array Nat := #[]
+  match u16 b off with
+  | 1 =>
+    let n := u16 b (off + 2)
+    for i in [0:n] do
+      out := out.push (u16 b (off + 4 + 2 * i))
+  | 2 =>
+    let n := u16 b (off + 2)
+    for i in [0:n] do
+      let s := u16 b (off + 4 + 6 * i)
+      let e := u16 b (off + 6 + 6 * i)
+      -- Bounded: a malformed range never expands past the glyph space.
+      for g in [s : min (e + 1) 0x10000] do
+        out := out.push g
+  | _ => pure ()
+  return out
+
+/-- The vertical glyph variants of a `MATH` table's MathVariants
+(learn.microsoft.com/typography/opentype/spec/math): per base glyph, its
+size variants as `(glyph id, advance height in design units)`, "in order of
+increasing size" per the spec — what grows a delimiter, a radical, or a
+display operator over its content. Glyph assemblies (building past the
+largest variant from parts) are not read in this slice; the largest variant
+is the ceiling, recorded in PLAN. Empty when the face has none. -/
+private def parseVertVariants (b : ByteArray) : Array (Nat × Array (Nat × Int)) := Id.run do
+  let some t := findTable b "MATH" | return #[]
+  unless fits b t && t.length ≥ 10 do return #[]
+  let mv := t.offset + u16 b (t.offset + 8)
+  unless mv + 10 ≤ b.size do return #[]
+  let covered := parseCoverage b (mv + u16 b (mv + 2))
+  let vertCount := u16 b (mv + 6)
+  let mut out : Array (Nat × Array (Nat × Int)) := #[]
+  for i in [0:min vertCount covered.size] do
+    let cons := mv + u16 b (mv + 10 + 2 * i)
+    let n := u16 b (cons + 2)
+    let mut vs : Array (Nat × Int) := #[]
+    for k in [0:n] do
+      vs := vs.push (u16 b (cons + 4 + 4 * k), (u16 b (cons + 6 + 4 * k) : Int))
+    out := out.push (covered[i]!, vs)
+  return out
 
 /-- A parsed sfnt font: the metrics the layout engine needs, the char→glyph
 map, and the raw bytes for embedding. Pure data; loading the file is the
@@ -83,6 +173,16 @@ structure Font where
   /-- OpenType MATH constants, when the face carries the table: what makes
   a face usable as a document's math font. -/
   math : Option MathConsts
+  /-- The MATH table's vertical glyph variants: per base glyph, the size
+  variants that grow a delimiter, radical, or display operator. Empty when
+  the face carries none. -/
+  mathVariants : Array (Nat × Array (Nat × Int))
+  /-- Per-gid, lazily: the glyph's vertical ink extent `(minY, maxY)` in
+  font units, from its own outline — control-point hull, so the true ink is
+  inside it. `none` where the outline could not be decoded; the consumer
+  falls back to nominal metrics. Memoized like `underlineInk`, so only
+  glyphs math actually measures ever decode. -/
+  inkExtent : Array (Thunk (Option (Int × Int)))
   deriving Inhabited
 
 private def parseCmap4 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × UInt32) := Id.run do
@@ -333,6 +433,11 @@ def parse (data : ByteArray) : Except String Font := do
         | some iv => iv
         | none => #[(0, (widths[g]?.getD 0 : Int))])
     return ink
+  let inkExtent : Array (Thunk (Option (Int × Int))) := Id.run do
+    let mut ext : Array (Thunk (Option (Int × Int))) := Array.mkEmpty numGlyphs
+    for g in [0:numGlyphs] do
+      ext := ext.push (Thunk.mk fun _ => src.yExtentAt g)
+    return ext
   return {
     data := data
     isCff := isCff
@@ -356,6 +461,8 @@ def parse (data : ByteArray) : Except String Font := do
     underlineThickness := uthick
     underlineInk := underlineInk
     math := parseMath data
+    mathVariants := parseVertVariants data
+    inkExtent := inkExtent
   }
 
 /-- Glyph id for a scalar in sorted cmap ranges, or `none`. Binary search. -/
@@ -400,6 +507,20 @@ Forces the lazy decode; the answer is memoized in the font. -/
 def Font.inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
   match f.underlineInk[g]? with
   | some t => t.get
+  | none => #[]
+
+/-- The vertical ink extent `(minY, maxY)` of glyph `g` in font units, from
+its own outline. `none` for an undecodable outline or a gid past the table;
+the consumer falls back to nominal metrics. Memoized in the font. -/
+def Font.yExtent (f : Font) (g : Nat) : Option (Int × Int) :=
+  (f.inkExtent[g]?).bind (·.get)
+
+/-- The vertical size variants of glyph `g` — `(glyph id, advance height)`
+in increasing size per the MATH spec — or empty when the face grows it no
+further. -/
+def Font.vertVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
+  match f.mathVariants.find? (·.1 == g) with
+  | some (_, vs) => vs
   | none => #[]
 
 /-- This face's normalized underline band: `(position, thickness)` in font

@@ -870,6 +870,52 @@ def Src.make (b : ByteArray) (isCff : Bool) (numGlyphs : Nat) : Src :=
         .opaque
     | _, _, _ => .opaque
 
+/-- The vertical extent `(minY, maxY)` of an outline's points, control
+points included: by the convex-hull property the curve itself never leaves
+them, so the true ink is inside the answer (loose by at most a control
+point's overshoot). `(0, 0)` for an empty outline. -/
+def Outline.yExtent (o : Outline) : Int × Int := Id.run do
+  let mut lo : Int := 0x40000000
+  let mut hi : Int := -0x40000000
+  for c in o.cmds do
+    match c with
+    | .move _ y | .line _ y =>
+      lo := min lo y
+      hi := max hi y
+    | .quad _ cy _ y =>
+      lo := min lo (min cy y)
+      hi := max hi (max cy y)
+    | .cube _ c1y _ c2y _ y =>
+      lo := min lo (min c1y (min c2y y))
+      hi := max hi (max c1y (max c2y y))
+  if hi < lo then return (0, 0)
+  return (lo, hi)
+
+/-- The vertical ink extent `(minY, maxY)` of glyph `g` in font units, or
+`none` where the outline could not be decoded: what math layout needs to
+grow a delimiter over its content and to hang limits off an operator.
+Total over arbitrary bytes, like `inkAt`. -/
+def Src.yExtentAt (s : Src) (g : Nat) : Option (Int × Int) :=
+  match s with
+  | .opaque => none
+  | .cffSrc b c => do
+    let cs ← c.charStrings[g]?
+    let o ← runCharstring b c cs
+    some o.yExtent
+  | .glyfSrc b glyf loca long numGlyphs =>
+    let o1 := if long then u32 b (loca.offset + 4 * g)
+      else 2 * u16 b (loca.offset + 2 * g)
+    let o2 := if long then u32 b (loca.offset + 4 * (g + 1))
+      else 2 * u16 b (loca.offset + 2 * (g + 1))
+    if g ≥ numGlyphs then
+      none
+    else if o2 == o1 then
+      some (0, 0)
+    else if o2 < o1 || o2 > glyf.length || o1 + 10 > glyf.length then
+      none
+    else
+      (glyfOutline b glyf loca long numGlyphs g).map (·.yExtent)
+
 /-- Merged ink intervals of glyph `g` inside the underline band, or `none`
 where the outline could not be decoded and the caller must fall back. Total
 over arbitrary bytes. -/

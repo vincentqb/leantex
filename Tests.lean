@@ -5997,7 +5997,50 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     subscriptShiftDown := 350
     superscriptShiftUp := 400
     superscriptShiftUpCramped := 270
-    spaceAfterScript := 41 })
+    spaceAfterScript := 41
+    displayOperatorMinHeight := 1500
+    upperLimitGapMin := 150
+    upperLimitBaselineRiseMin := 150
+    lowerLimitGapMin := 150
+    lowerLimitBaselineDropMin := 600
+    fractionNumeratorShiftUp := 450
+    fractionNumeratorDisplayStyleShiftUp := 580
+    fractionDenominatorShiftDown := 480
+    fractionDenominatorDisplayStyleShiftDown := 700
+    fractionNumeratorGapMin := 80
+    fractionNumDisplayStyleGapMin := 200
+    fractionRuleThickness := 76
+    fractionDenominatorGapMin := 80
+    fractionDenomDisplayStyleGapMin := 200
+    radicalVerticalGap := 96
+    radicalDisplayStyleVerticalGap := 142
+    radicalRuleThickness := 76
+    radicalExtraAscender := 76
+    radicalKernBeforeDegree := 276
+    radicalKernAfterDegree := -400
+    radicalDegreeBottomRaisePercent := 64 })
+  -- MathVariants: the vertical size variants a delimiter grows through,
+  -- checked against an independent struct-unpacking of the same face.
+  t "fira grows ( through sixteen sizes"
+    (((fira.gid '(').map fun g => fira.vertVariants g) ==
+      some #[(9, 991), (1637, 1320), (1638, 1648), (1639, 1976), (1640, 2304),
+             (1641, 2632), (1642, 2960), (1643, 3288), (1644, 3616), (1645, 3944),
+             (1646, 4272), (1647, 4600), (1648, 4928), (1649, 5256), (1650, 5584),
+             (1651, 5913)])
+  t "fira grows the sum sign to display size"
+    (((fira.gid '\u2211').map fun g => fira.vertVariants g) ==
+      some #[(753, 863), (1584, 1528)])
+  t "a text face grows nothing" (serif.mathVariants.isEmpty)
+  -- Glyph vertical ink extents from the outline: the sum sign reaches well
+  -- below the baseline and above the x-height; a period hugs the baseline.
+  t "sum sign ink extent brackets the axis"
+    (match (fira.gid '\u2211').bind fira.yExtent with
+      | some (lo, hi) => lo < -100 && hi > 600
+      | none => false)
+  t "period ink sits on the baseline"
+    (match (fira.gid '.').bind fira.yExtent with
+      | some (lo, hi) => lo ≥ -30 && lo ≤ 0 && hi > 0 && hi < 300
+      | none => false)
   let allSlots : Array ((Nat × Bool × Bool) × Nat) :=
     ((List.range 3).flatMap fun slot =>
       [((slot, false, false), 0), ((slot, true, false), 0),
