@@ -742,9 +742,7 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
               match num, node with
               | some n, .elem tag attrs kids =>
                 let slot (s : Ir.ChromeSlot) : Array Node :=
-                  match s with
-                  | .sectionTitle => inlines cfg curSection
-                  | .frameNumber => #[Html.text (toString n)]
+                  inlines cfg (s.render curSection n total)
                 let left := match frameFoot with
                   | some xs => inlines cfg xs
                   | none => (doc.chrome.footerLeft.map slot).getD #[]

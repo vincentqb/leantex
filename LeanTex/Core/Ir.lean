@@ -655,11 +655,29 @@ and no backend learns a theme's name. -/
 inductive ChromeSlot where
   | sectionTitle
   | frameNumber
+  /-- The `n / N` form: moloch's `numbering=fraction`, beamer's
+  `[totalframenumber]` template (beamerouterthememoloch.dtx:156-188). -/
+  | frameFraction
   deriving Repr, BEq, Inhabited
 
 def ChromeSlot.label : ChromeSlot → String
   | .sectionTitle => "sectiontitle"
   | .frameNumber => "framenumber"
+  | .frameFraction => "framefraction"
+
+/-- The one place a frame number becomes text: both backends resolve a
+footer slot through this function, so the number's format is a datum of the
+IR and neither backend carries a format literal. `n` is the frame's own
+number off `frameNumbers`, `total` the count. `sectionTitle` is content,
+not a number — the caller passes the section in force. The physical
+`\pagenumber`/`\pagecount` are the other, deliberately separate sequence,
+rendered only by `substPage`. -/
+def ChromeSlot.render (s : ChromeSlot) (sectionTitle : Array Inline)
+    (n total : Nat) : Array Inline :=
+  match s with
+  | .sectionTitle => sectionTitle
+  | .frameNumber => #[.text (toString n)]
+  | .frameFraction => #[.text s!"{n} / {total}"]
 
 /-- Page furniture a theme (or the document, via `\chrome`) declares: the
 slide footer's two slots. A document's own `\runningfoot` overrides the

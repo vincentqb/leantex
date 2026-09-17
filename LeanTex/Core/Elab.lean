@@ -2311,7 +2311,7 @@ Redeclaring replaces, so a theme's chrome is a default exactly as its
 palette is. -/
 private def applyChrome (ctx : Ctx) (src : String) (pos : Pos) : EM Chrome := do
   let mut chrome : Chrome := {}
-  let slotHelp := "slots are \\sectiontitle or \\framenumber"
+  let slotHelp := "slots are \\sectiontitle, \\framenumber, or \\framefraction"
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | none =>
@@ -2334,6 +2334,8 @@ private def applyChrome (ctx : Ctx) (src : String) (pos : Pos) : EM Chrome := do
                 | "sectiontitle" => some .sectionTitle
                 -- The deck spelling and the beamer lineage's name one datum.
                 | "framenumber" | "slidenumber" => some .frameNumber
+                -- moloch's numbering=fraction: the n / N form.
+                | "framefraction" => some .frameFraction
                 | _ => none
               match datum with
               | none =>

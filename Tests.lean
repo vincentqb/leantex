@@ -2632,6 +2632,21 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
        !(p.fills.any fun f => f.color == (⟨0xCB, 0xC0, 0xB6⟩ : Ir.Color)))
   t "html draws no progress bar with no countable frame"
     (((HtmlDoc.emit {} zDoc).1.splitOn "class=\"progress\"").length == 1)
+  -- The fraction slot: moloch's numbering=fraction, reachable as
+  -- \framefraction, rendered by the one Ir.ChromeSlot.render site on both
+  -- backends — the denominator is the same frameCount everywhere.
+  let (cDoc, cDs) := elabStr (deck
+    "\\chrome{ footer = { right = \\framefraction } }"
+    ("\\begin{frame}{A}\na\n\\end{frame}\n\\begin{frame}{B}\nb\n\\end{frame}"))
+  t "framefraction parses to its slot" (cDs.isEmpty &&
+    cDoc.chrome.footerRight == some .frameFraction)
+  let cOut := Layout.run (Layout.Geom.ofPage cDoc.page) oneFace none cDoc
+  t "the fraction footer reads n / N"
+    (cOut.pages.map (fun p => (p.foot.map Ir.plainText).getD "") ==
+      #["1 / 2", "2 / 2"])
+  let (cHtml, _) := HtmlDoc.emit {} cDoc
+  t "pdf and html agree on the fraction form"
+    (pdfFoots cOut == htmlFoots cHtml && htmlFoots cHtml == ["1/2", "2/2"])
 
 /-- The deck's own footer route: `\setbeamertemplate{frame footer}` — alone
 or expanded from a `\newenvironment` wrapper — reaches the chrome footer's

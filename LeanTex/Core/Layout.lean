@@ -1552,11 +1552,9 @@ pushing the two apart. A `\framefoot` note in force takes the left slot.
 private def Acc.chromeFoot (a : Acc) : Option (Array Inline) :=
   if a.chromeL.isNone && a.chromeR.isNone && a.frameFoot.isNone then none else
   let slot (s : Ir.ChromeSlot) : Array Inline :=
-    match s with
-    | .sectionTitle => a.curSection
-    | .frameNumber => match a.frameNum with
-      | some n => #[.text (toString n)]
-      | none => #[]
+    match a.frameNum with
+    | some n => s.render a.curSection n a.frameCount
+    | none => #[]
   let left := match a.frameFoot with
     | some xs => xs
     | none => (a.chromeL.map slot).getD #[]
