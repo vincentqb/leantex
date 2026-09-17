@@ -49,6 +49,76 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — typography as enforced relations: the measure, the type
+scale, the vertical rhythm, and the slides stage each carry a sourced
+invariant now, as a theorem where one closes and a diagnostic where the
+check is about a document. Sources are primary or the citable record of
+one: Bringhurst's *Elements* §2.1.2 (45–75 characters satisfactory for a
+single column of text-size prose, 66 ideal) and his copy-fitting table
+through the memoir manual's fitted lines (L₆₅ = 2.042α + 33.41 pt,
+L₄₅ = 1.415α + 23.03 pt over the lowercase alphabet length α), §2.2.1
+(10/12 is a routine setting; longer measures need more lead), §2.2.2
+(vertical space in measured intervals), Butterick's *Practical
+Typography* (line length 45–90; space below a heading smaller than the
+space above), and the beamer user guide (§5.6.1, §18.2.1, §8.3).
+
+- The scale: the `\tiny`–`\Huge` table is LaTeX's size10.clo ladder, and
+  what makes it a scale is now four theorems — strict monotonicity, every
+  adjacent ratio inside [10⁄9, 7⁄5], ×1.2 (`\magstep`, to per-mille
+  rounding) above `normalsize`, and the `normalsize` anchor. Checked
+  against Material 3 (role steps ~1.14–1.27) and Apple HIG (~1.08–1.3):
+  a 1.2 modular scale sits inside current practice, so the values stand.
+  Verbatim's 4/5 was the scale's own footnotesize and is now spelled as
+  the lookup — the one engine-internal size that was a loose decimal.
+- The measure: layout computes the characters per line the text width
+  holds from the body face's own lowercase alphabet through the fitted
+  copy-fitting lines, and W0201 fires when an article document sets
+  continuous text (a paragraph of ≥4 full-measure lines) outside 45–90;
+  `\page{ measure = free }` declares the document takes responsibility,
+  and slides are display text outside the rule's own scope. Calibration,
+  measured: the estimate says ~100 characters for 10 pt Source Serif Pro
+  on a 1-inch-margin letter page, pdftotext counts 102–105 on the set
+  lines; the new default sets 68–71 against the 66 ideal. The default
+  itself was the violation: the word-processor inch gave a 468 pt line.
+  An undeclared letter page now takes a 26-pica text block — Bringhurst's
+  table's own suggestion for a 130 pt alphabet, the middle of the 10 pt
+  text-face range — and a document that declares any `\page` geometry
+  keeps every value it named. Goldens: one page line in each of the seven
+  default-geometry fixtures.
+- The rhythm: the defaults were one system nobody had written down —
+  parskip (6 pt) is half the base leading, so a heading's default space
+  above (2×parskip) is exactly one rhythm unit — and
+  `default_rhythm_multiples` now holds it, positivity making the
+  heading's space above strictly exceed its space below. For declared
+  styles the same rule is W0202: `\style` with `after` resolving larger
+  than `before` warns, both-sides-declared only.
+- The slides stage: the base size moves into `PageSpec` (resolved
+  `\page{ fontsize }` → class option `11pt`/`fontsize=11pt` → 11 pt for
+  slides, the 10 pt base otherwise) and the stage constants into Ir, so
+  beamer's documented defaults are the engine's and HTML derives its
+  measure from the same value. `slides_lines_in_band` pins Tantau's rule:
+  both default stages carry 15 (16:9) and 16 (4:3) full lines, inside his
+  10–20. Slide fixture page counts are unchanged at 11 pt (talk 6, deck
+  8, furniture 6); the verbatim code-frame convention carries 75 columns
+  of a 0.6 em mono at 16:9 now, not the 80 the 10 pt base gave.
+- The baseline grid: decided against, and why is a result. The engine
+  sets pages the way it sets lines — skips shrink within declared rubber
+  before a break is taken (N0200), and a line's height follows the
+  tallest run on it — and a hard grid forbids exactly those two
+  mechanisms; TeX's own model made the same trade. Bringhurst's rule is
+  not a device grid but measured intervals, which survives here as the
+  rhythm-multiple theorem over the values the engine owns; a grid
+  quantization diagnostic on documents would fire on any document using
+  the rubber the resume was written with, i.e. on reasonable documents.
+
+Bench, medians of 5, same session, across the default-measure change:
+paragraphs 78 → 73 ms, lorem 279 → 281 ms, underline 387 → 405 ms — the
+underline arm sets more lines at the narrower default; no pass changed
+shape. Every diagnostic is silent on the shipped corpus (checked through
+the CLI on every non-PENDING fixture), W0201/W0202 tests were each shown
+failing with the check weakened and restored, and the wide/narrow/free/
+slides/short-text cases are pinned in `measureChecks`.
+
 2026-09-17 — the theme slice rebased onto the frame-furniture batch; the
 crossing of standout frames with overlay steps resolved as one design
 rather than two flags. `Block.frame` carries title, standout, and body —
@@ -1330,6 +1400,22 @@ is evidence, not a theorem.
 - Repo naming once markdown and HTML are visible faces of the engine.
 
 ## Decisions
+
+- 2026-09-17: no baseline grid. The page model is glue with declared
+  rubber, set at one ratio per page, with line height following the
+  tallest run — a hard grid forbids both, and TeX made the same trade.
+  Bringhurst's "measured intervals" rule survives as the rhythm-multiple
+  theorem over the engine's own defaults instead; a per-document grid
+  diagnostic would fire on any document using rubber, which the diagnostic
+  boundary forbids. Revisit only if a fixed-layout class (no shrinkable
+  glue) ever lands.
+- 2026-09-17: the readable-measure band is enforced as W0201 (45–90
+  characters per line, Bringhurst's satisfactory band widened to
+  Butterick's outer edge), computed from the body face's lowercase
+  alphabet length via the copy-fitting fits, scoped to continuous text in
+  page classes, silenced by `\page{ measure = free }`. The undeclared
+  letter page takes a 26-pica text block so the default satisfies the band
+  it enforces.
 
 - 2026-09-15: LaTeX-lookalike with clean semantics over TeX compatibility.
   Rationale: the corpus shows compatibility preserves the warts; the goal is
