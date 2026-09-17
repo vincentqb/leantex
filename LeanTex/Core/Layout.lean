@@ -1038,8 +1038,10 @@ private structure B where
   /-- Background every page gets: the palette's `bg`, when declared. A
   page's own `.pageStyle` background wins. -/
   docBg : Option Ir.Color := none
-  /-- Whether the page being built centres its content vertically. -/
-  centerV : Bool := false
+  /-- How the page being built distributes its leftover vertical space;
+  reset when it closes. `.top` (all leftover below) is the undeclared
+  default; a standout frame or section page sets `.center`. -/
+  vdist : VDist := .top
   /-- The chrome footer for pages closed from here on, from `.foot` ops. -/
   curFoot : Option (Array Inline) := none
   diags : Array Diag := #[]
@@ -1058,13 +1060,14 @@ private def B.finishPage (b : B) : B :=
       message := s!"page {b.pages.size + 1} set {b.needed / 65536}pt short: its skips gave " ++
         s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink"
     } else b.diags
-  -- Vertical centring (a standout frame, a section page): the leftover
-  -- between the content's bottom and the bottom margin, split evenly. The
+  -- The leftover between the content's bottom and the bottom margin,
+  -- split by the page's declared ratio (`VDist`): a standout frame or a
+  -- section page centres (1:1), a title page takes the golden split, and
+  -- the undeclared page leaves everything where the walk put it. The
   -- page's fills ride with their lines.
-  let delta := if b.centerV && !lines.isEmpty then
+  let delta := if !lines.isEmpty then
       let lastY := lines.foldl (fun m l => max m l.y) 0
-      let leftover := b.geom.bodyBottom - (lastY + b.prevDepth)
-      if leftover > 0 then leftover / 2 else 0
+      b.vdist.aboveShare (b.geom.bodyBottom - (lastY + b.prevDepth))
     else 0
   let lines := if delta == 0 then lines else lines.map fun l => { l with y := l.y + delta }
   let fills := if delta == 0 then b.cur.fills else
@@ -1076,7 +1079,7 @@ private def B.finishPage (b : B) : B :=
   { b with pages := b.pages.push { lines := lines, fills := fills, foot := b.curFoot },
            cur := {},
            shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
-           pageBg := none, centerV := false, diags := diags }
+           pageBg := none, vdist := .top, diags := diags }
 
 /-- A line that shares its baseline with the last one (underline rules)
 rides with it, including its share of the page's shrink. -/
@@ -1177,10 +1180,11 @@ private inductive Op where
   | colOpen
   | colNext
   | colClose
-  /-- Style for the page being opened: a background fill, and whether its
-  content centres vertically (a standout frame, a section page). Applies
-  when the page closes and resets with it. -/
-  | pageStyle (bg : Option Ir.Color) (centerV : Bool)
+  /-- Style for the page being opened: a background fill, and how its
+  content distributes the leftover vertical space (a standout frame and a
+  section page centre; a title page takes the golden split). Applies when
+  the page closes and resets with it. -/
+  | pageStyle (bg : Option Ir.Color) (vdist : VDist)
   /-- A colour bar behind the line just placed — the frame title. Full page
   width, from the page top to `pad` below the line's depth. -/
   | titleBar (color : Ir.Color) (pad : Sp)
@@ -1467,7 +1471,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       -- A divider carries no footer; the break above closed the previous
       -- page with its own.
       let a := if a.footAllowed then { a with ops := a.ops.push (.foot none) } else a
-      let a := { a with ops := a.ops.push (.pageStyle none true) }
+      let a := { a with ops := a.ops.push (.pageStyle none VDist.center) }
       let mp : Sp := a.geom.textWidth * 7875 / 10000
       let indent : Sp := (a.geom.textWidth - mp) / 2
       let st := a.style "sectionpage"
@@ -1602,7 +1606,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       -- override; without them the frame inverts the page's own colours.
       let bg := (a.pal.find? "standoutbg").getD ((a.pal.find? "fg").getD Ir.Color.black)
       let fg := (a.pal.find? "standoutfg").getD ((a.pal.find? "bg").getD Ir.Color.white)
-      let a := { a with ops := a.ops.push (.pageStyle (some bg) true) }
+      let a := { a with ops := a.ops.push (.pageStyle (some bg) VDist.center) }
       let saved := a.fg
       let a := collectStandout { a with fg := fg } pats fs body.toList indent
       let a := { a with fg := saved }
@@ -1795,7 +1799,7 @@ end
 private inductive StagedOp where
   | skip (g : Glue)
   | brk
-  | pageStyle (bg : Option Ir.Color) (centerV : Bool)
+  | pageStyle (bg : Option Ir.Color) (vdist : VDist)
   | titleBar (color : Ir.Color) (pad : Sp)
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
   | foot (content : Option (Array Inline))
@@ -1937,8 +1941,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       if !b.cur.lines.isEmpty then
         b := b.finishPage
       else
-        b := { b with pageBg := none, centerV := false }
-    | .pageStyle bg c => b := { b with pageBg := bg, centerV := c }
+        b := { b with pageBg := none, vdist := .top }
+    | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
     | .foot c => b := { b with curFoot := c }
     | .colOpen =>
       colSaves := colSaves.push {
