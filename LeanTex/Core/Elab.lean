@@ -175,26 +175,55 @@ private def isSpaceOrPar : Raw → Bool
   | .par _ => true
   | _ => false
 
-private def skipSpaces (raws : Array Raw) (i : Nat) : Nat := Id.run do
+/-- The one forward walk over sibling raws: the index past the run
+satisfying `p`. Every scan here — spaces, the junk after a malformed
+argument, an edge trim — is this walk; a caller's intent is its predicate,
+never a hand-rolled loop of its own. -/
+private def spanRaws (raws : Array Raw) (i : Nat) (p : Raw → Bool) : Nat := Id.run do
   let mut j := i
   for _ in [i:raws.size] do
     if h : j < raws.size then
-      if isSpace raws[j] then j := j + 1 else break
+      if p raws[j] then j := j + 1 else break
     else break
   return j
 
-/-- Drop whitespace at both edges: a define body's braces delimit, the
-padding inside them is not content. -/
-private def trimRaws (raws : Array Raw) : Array Raw := Id.run do
-  let mut a := 0
-  for _ in [0:raws.size] do
-    if h : a < raws.size then
-      if isSpaceOrPar raws[a] then a := a + 1 else break
-    else break
+/-- The backward companion: the index before the trailing run satisfying `p`. -/
+private def spanRawsEnd (raws : Array Raw) (p : Raw → Bool) : Nat := Id.run do
   let mut b := raws.size
   for _ in [0:raws.size] do
-    if b > a && isSpaceOrPar raws[b - 1]! then b := b - 1 else break
-  return raws.extract a b
+    match raws[b - 1]? with
+    | some r => if b > 0 && p r then b := b - 1 else break
+    | none => break
+  return b
+
+private def skipSpaces (raws : Array Raw) (i : Nat) : Nat :=
+  spanRaws raws i isSpace
+
+/-- The array between its edge runs of `p`. -/
+private def trimBy (raws : Array Raw) (p : Raw → Bool) : Array Raw :=
+  raws.extract (spanRaws raws 0 p) (spanRawsEnd raws p)
+
+/-- Drop whitespace at both edges: a define body's braces delimit, the
+padding inside them is not content. -/
+private def trimRaws (raws : Array Raw) : Array Raw :=
+  trimBy raws isSpaceOrPar
+
+/-- The run an unclosed `[` still owns: tokens on its command's own line —
+the stop-at-the-anchor's-line rule, stated once. A raw on a later line, or
+any construct (a control word, an environment, verbatim, a paragraph
+break), is the author's next thing, never consumed with the junk. A group
+or math on the anchor's line counts as junk only where no group can be the
+argument the author wrote (`groups := true`, a skipped configuration
+command); elsewhere a group ends the run, because it may be that argument. -/
+private def malformedRun (raws : Array Raw) (i : Nat) (anchor : Pos)
+    (groups : Bool) : Nat :=
+  spanRaws raws i fun r =>
+    match r with
+    | .space => true
+    | .word _ p | .sym _ p => p.line == anchor.line
+    | .group _ p | .math _ _ p => groups && p.line == anchor.line
+    | _ => false
+
 
 private def allText (xs : Array Inline) : Bool :=
   xs.all fun x => match x with
@@ -282,19 +311,13 @@ recovered command with no group left is skipped with a warning by its caller,
 never a fatal error. -/
 private def skipOptArg (ctx : Ctx) (name : String) (raws : Array Raw)
     (start : Nat) (pos : Pos) : EM (Nat × Bool) := do
-  let mut j := skipSpaces raws start
+  let j := skipSpaces raws start
   match scanBracketArg raws start pos with
   | .took k => return (skipSpaces raws k, false)
   | .content => return (j, false)
   | .unclosed bpos =>
     warnUnclosed ctx s!"'\\{name}'" bpos
-    for _ in [j:raws.size] do
-      match raws[j]? with
-      | some .space => j := j + 1
-      | some (.word _ p) | some (.sym _ p) =>
-        if p.line == pos.line then j := j + 1 else break
-      | _ => break
-    return (j, true)
+    return (malformedRun raws j pos (groups := false), true)
 
 /-- The body of an unknown environment without its arguments: leading `[...]`
 runs and `{...}` groups on the `\begin` line are the environment's own
@@ -320,18 +343,8 @@ private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
 /-- A body without its edge spaces: the newline after `\begin{...}` and the
 one before `\end{...}` belong to the dropped wrapper, not to the sentence
 the body splices into. -/
-private def trimEdgeSpaces (raws : Array Raw) : Array Raw := Id.run do
-  let mut a := 0
-  for r in raws do
-    match r with
-    | .space => a := a + 1
-    | _ => break
-  let mut b := raws.size
-  for _ in [0:raws.size] do
-    match raws[b - 1]? with
-    | some .space => b := b - 1
-    | _ => break
-  return raws.extract a b
+private def trimEdgeSpaces (raws : Array Raw) : Array Raw :=
+  trimBy raws isSpace
 
 /-- A command whose group never materialised after an unclosed `[` is
 dropped whole: W0310 already named the typo, and one skipped declaration
@@ -345,15 +358,8 @@ malformed arguments. The junk ends with the command's line, and a control
 word, an environment, or a verbatim block ends it early: the author's next
 declaration is never consumed with the junk, whether it follows the line or
 shares it. -/
-private def skipMalformedArgs (raws : Array Raw) (i : Nat) (anchor : Pos) : Nat := Id.run do
-  let mut j := i
-  for _ in [i:raws.size] do
-    match raws[j]? with
-    | some .space => j := j + 1
-    | some (.word _ p) | some (.sym _ p) | some (.group _ p) | some (.math _ _ p) =>
-      if p.line > anchor.line then break else j := j + 1
-    | _ => break
-  return j
+private def skipMalformedArgs (raws : Array Raw) (i : Nat) (anchor : Pos) : Nat :=
+  malformedRun raws i anchor (groups := true)
 
 /-- Skip a `[...]` run and at most one group: argument recovery after a
 reserved (not yet implemented) or unknown command. Returns the next index
