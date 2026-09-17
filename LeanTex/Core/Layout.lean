@@ -169,6 +169,20 @@ theorem default_rhythm_multiples :
     2 * ({} : Geom).parskip.width.sp = leadingFor Ir.baseFontSize ∧
     0 < ({} : Geom).parskip.width.sp := by decide
 
+/-- Caption and float gaps sit on the same rhythm: the caption gap is the
+half-unit (one `parskip`), the float gap the full unit (two, which is also
+exactly LaTeX's `\intextsep` 12pt, classes.dtx 10pt option), and the
+caption binds tighter to its object than the float to its page — the
+ordering LaTeX's own `\abovecaptionskip` 10pt < `\intextsep` 12pt states
+(classes.dtx). A default edit that breaks the quantization or the ordering
+fails the build; this is the user-visible "spacing around tables and
+figures" contract, stated over the values the engine ships. -/
+theorem caption_gaps_rhythm :
+    Ir.captionSepDefault.width.sp = ({} : Geom).parskip.width.sp ∧
+    Ir.floatSepDefault.width.sp = 2 * ({} : Geom).parskip.width.sp ∧
+    Ir.floatSepDefault.width.sp = leadingFor Ir.baseFontSize ∧
+    Ir.captionSepDefault.width.sp < Ir.floatSepDefault.width.sp := by decide
+
 /-- The slides stage carries a readable number of text lines. Tantau's rule
 for presentations is lines, not points: "between 10 and 20 lines should fit
 on each slide; the less lines, the more readable" (beamer user guide

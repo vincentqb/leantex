@@ -117,6 +117,85 @@ bundle go through the same door. -/
 def Tokens.declare (t : Tokens) (key : String) (g : SymGlue) : Tokens :=
   { entries := (t.entries.filter (·.1 != key)).push (key, g) }
 
+-- Table rule weights and paddings: booktabs' documented defaults
+-- (booktabs.dtx v1.61803398, §"The code": `\heavyrulewidth=.08em
+-- \lightrulewidth=.05em \cmidrulewidth=.03em \belowrulesep=.65ex
+-- \aboverulesep=.4ex \abovetopsep=0pt \belowbottomsep=0pt
+-- \cmidrulekern=.5em \defaultaddspace=.5em`). booktabs is this engine's
+-- table layout, not a package: "what distinguishes these from plain LaTeX
+-- tables is the default use of additional space above and below rules, and
+-- rules of varying 'thickness'" (booktabs.dtx §Introduction) — the padding
+-- is part of the rule, never left to the author. Em/ex-relative, resolved
+-- at the table's own size like every token; each is overridable through
+-- `\tokens{ <latex name> = ... }` under its LaTeX name.
+
+/-- `\toprule`/`\bottomrule` weight: booktabs `\heavyrulewidth` (.08em). -/
+def heavyRuleWidth : Dim.Length := { em := 80 }
+/-- `\midrule` weight: booktabs `\lightrulewidth` (.05em). -/
+def lightRuleWidth : Dim.Length := { em := 50 }
+/-- `\cmidrule` weight: booktabs `\cmidrulewidth` (.03em). -/
+def cmidRuleWidth : Dim.Length := { em := 30 }
+/-- Space under a rule, above the content it heads: booktabs
+`\belowrulesep` (.65ex). -/
+def belowRuleSep : Dim.Length := { ex := 650 }
+/-- Space over a rule, under the content above it: booktabs `\aboverulesep`
+(.4ex). -/
+def aboveRuleSep : Dim.Length := { ex := 400 }
+/-- Space over a `\toprule`: zero — "which seems sensible for a rule
+designed to go at the top" (booktabs.dtx); the float's own caption gap
+owns that space here. -/
+def aboveTopSep : Dim.Length := {}
+/-- Space under a `\bottomrule`: zero, as booktabs' `\belowbottomsep`. -/
+def belowBottomSep : Dim.Length := {}
+/-- Default end-trim of a trimmed `\cmidrule`: booktabs `\cmidrulekern`
+(.5em). -/
+def cmidRuleKern : Dim.Length := { em := 500 }
+/-- `\addlinespace` default: booktabs `\defaultaddspace` (.5em). -/
+def defaultAddSpace : Dim.Length := { em := 500 }
+/-- Half the gap between two table columns: LaTeX's `\tabcolsep` — "the
+columns in a tabular environment are separated by 2\tabcolsep", 6pt
+(classes.dtx §Array and tabular). An `@{}` in the column spec deletes the
+outer pad, as in LaTeX. -/
+def tabColSep : Dim.Length := { sp := Dim.pt 6 }
+/-- Two stacked full rules separate by LaTeX's `\doublerulesep`, 2pt
+(classes.dtx §Array and tabular) — drawn, but warned: "never use double
+rules" (booktabs.dtx §The layout of formal tables). -/
+def doubleRuleSep : Dim.Length := { sp := Dim.pt 2 }
+
+/-- The three rule weights are a hierarchy, not three loose numbers: "the
+top and bottom rules are heavier than the middle rule, which is in turn
+heavier than the subrule" (booktabs.dtx §Introduction, of its own first
+example). A weight edit that flattens the hierarchy fails the build. -/
+theorem rule_weights_ordered :
+    0 < cmidRuleWidth.em ∧ cmidRuleWidth.em < lightRuleWidth.em ∧
+    lightRuleWidth.em < heavyRuleWidth.em := by decide
+
+/-- A rule clears more below than above: booktabs' `\belowrulesep` (.65ex)
+against `\aboverulesep` (.4ex) — a rule binds to the content it closes and
+clears the content it heads, which is exactly the "space above and below
+rules" the package exists to add. -/
+theorem rule_seps_ordered : 0 < aboveRuleSep.ex ∧ aboveRuleSep.ex < belowRuleSep.ex := by
+  decide
+
+-- Float and caption separation. LaTeX's own defaults order the three gaps
+-- — `\abovecaptionskip` 10pt between object and caption, `\intextsep` 12pt
+-- between an in-text float and the text (classes.dtx, 10pt option) — the
+-- caption binds tighter to its object than the float to its page. The
+-- engine keeps that ordering and quantizes both to the vertical rhythm
+-- (Bringhurst §2.2.2, `Layout.default_rhythm_multiples`): the caption gap
+-- is the half-unit (6pt at the 10pt base, replacing the 10pt that is a
+-- multiple of nothing here — the drift the rhythm rule exists to stop),
+-- the float gap one full unit (12pt, exactly LaTeX's `\intextsep`). No
+-- authority fixes the caption gap's absolute value; the half-unit is the
+-- smallest rhythm multiple that keeps LaTeX's ordering.
+
+/-- Gap between a float's content and its caption. Overridable as
+`\tokens{ captionsep = ... }`. -/
+def captionSepDefault : SymGlue := { width := { sp := Dim.pt 6 } }
+/-- Gap between a float and the text around it. Overridable as
+`\tokens{ floatsep = ... }`. -/
+def floatSepDefault : SymGlue := { width := { sp := Dim.pt 12 } }
+
 /-- Named colours declared by `\palette`. -/
 structure Palette where
   entries : Array (String × Color) := #[]
