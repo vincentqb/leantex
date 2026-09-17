@@ -1,0 +1,24 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 25.512 hmargin 28.346
+frame
+  title
+    text "Two measures"
+  columns
+    column 550/1000
+      para
+        text "A wider column whose sentence is long enough that it must break into several lines inside its own measure."
+    column 400/1000
+      para
+        text "A narrow aside."
+frame
+  title
+    text "Equal shares"
+  columns
+    column
+      para
+        text "left half"
+    column
+      para
+        text "right half"
+-- diagnostics
+(none)

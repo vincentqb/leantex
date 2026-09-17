@@ -46,7 +46,7 @@ def warnCodes (s : String) : List String :=
 
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
-   "links", "resume", "talk", "deck", "latex-idioms", "wrapper", "centering"]
+   "links", "resume", "talk", "deck", "latex-idioms", "wrapper", "centering", "columns"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -1738,6 +1738,49 @@ def precommitChecks (ref : IO.Ref (List String)) : IO Unit := do
     { cmd := "lean", args := #["--run", "scripts/precommit.lean", "--selftest"] }
   check ref s!"precommit selftest:\n{out.stderr}" (out.exitCode == 0)
 
+/-- `columns`/`column`: side-by-side blocks with declared widths, in the IR
+and both backends. Own function: `main`'s do block has no budget left. -/
+def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deck (body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n\\begin{document}\n\\begin{frame}\n" ++
+    body ++ "\n\\end{frame}\n\\end{document}"
+  let src := deck ("\\begin{columns}[T]\n\\begin{column}{0.6\\textwidth}\nleft\n\\end{column}\n" ++
+    "\\begin{column}{0.4\\textwidth}\nright\n\\end{column}\n\\end{columns}")
+  let (doc, ds) := elabStr src
+  t "columns elaborate with widths, warning nothing" (ds.isEmpty &&
+    doc.body == #[.frame #[] #[.columns #[
+      (some 600, #[.para #[.text "left"]]),
+      (some 400, #[.para #[.text "right"]])]]])
+  -- PDF: the columns' first lines share a baseline, and the second sits
+  -- past the first one's measure — visibly two columns, by geometry.
+  let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+  t "pdf columns share a baseline side by side"
+    (match (out.pages[0]?.map (·.lines)).getD #[] with
+     | #[l, r] => l.y == r.y && r.x > l.x && r.x ≥ l.x + l.setWidth
+     | _ => false)
+  -- A column keeps its measure: its paragraph breaks at the column width,
+  -- not the text width.
+  let wide := deck ("\\begin{columns}\\begin{column}{0.5\\textwidth}\n" ++
+    "several words that cannot possibly fit one half measure line\n" ++
+    "\\end{column}\\begin{column}{0.5\\textwidth}\nright\n\\end{column}\\end{columns}")
+  let (wDoc, _) := elabStr wide
+  let wOut := Layout.run (Layout.Geom.ofPage wDoc.page) oneFace none wDoc
+  t "a column breaks lines at its own measure"
+    (((wOut.pages[0]?.map (·.lines)).getD #[]).size > 2)
+  -- HTML: a grid whose tracks carry the declared widths.
+  let (html, _) := HtmlDoc.emit {} doc
+  t "html columns are a grid with the declared widths"
+    ((html.splitOn "grid-template-columns: 60% 40%").length == 2)
+  -- An unreadable width warns and shares the leftover instead.
+  let (aDoc, aDs) := elabStr (deck ("\\begin{columns}\\begin{column}{3cm}\na\n\\end{column}" ++
+    "\\begin{column}{0.5\\textwidth}\nb\n\\end{column}\\end{columns}"))
+  t "an absolute column width warns and degrades to a share"
+    (aDs.any (·.code == "W0314") &&
+     (match aDoc.body with
+      | #[.frame _ #[.columns cols]] => cols.map (·.1) == #[none, some 500]
+      | _ => false))
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
@@ -2796,6 +2839,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       inkGeometryChecks ref
       spacingChecks ref geom oneFace font
       slideChecks ref oneFace
+      columnsChecks ref oneFace
       scannerChecks ref
 
 def main (args : List String) : IO UInt32 := do

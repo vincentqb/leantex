@@ -812,6 +812,10 @@ private structure B where
   /-- How far the current page overflows at natural glue: what closing it
   must take out of the shrink. -/
   needed : Sp := 0
+  /-- The next line opens at the page top, even though lines already stand
+  on the page: a later column rewound to a fresh page's start must place
+  its first line where the first column placed its. -/
+  freshStart : Bool := false
   diags : Array Diag := #[]
 
 /-- TeX's `\lineskip`: the least space between a line's depth and the next
@@ -847,6 +851,7 @@ private def B.commit (b : B) (line : LineOut) (depth above overflow : Sp) : B :=
            pageShrink := above
            needed := max b.needed overflow
            y := line.y
+           freshStart := false
            prevDepth := depth
            skip := {} }
 
@@ -880,7 +885,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   let bottom := b.geom.pageH - b.geom.vmargin
   let mk (y : Sp) : LineOut := { x := x, y := y, size := size, segs := segs, setWidth := w }
   let firstY := b.geom.vmargin + max b.ascent height
-  if b.cur.lines.isEmpty then
+  if b.cur.lines.isEmpty || b.freshStart then
     b.commit (mk firstY) depth 0 0
   else
     let interline := max (leadingFor tallest b.geom.leading) (b.prevDepth + height + lineskip)
@@ -925,6 +930,12 @@ private inductive Op where
   | para (job : ParaJob)
   /-- A page boundary: a frame is a page of the handout, whatever fits it. -/
   | brk
+  /-- Column markers, kept flat so staging stays a map: `colOpen` saves the
+  vertical position, `colNext` rewinds to it for the next column, `colClose`
+  resumes below the tallest column. Nesting works through a stack. -/
+  | colOpen
+  | colNext
+  | colClose
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -941,6 +952,9 @@ private structure Acc where
   styles : Ir.Styles := {}
   /-- The `slides` class: frames and sections open fresh pages. -/
   slides : Bool := false
+  /-- The right edge paragraphs break against, from the page's left margin:
+  the text width, unless a column narrows it. -/
+  measure : Option Sp := none
   wantDefault : Bool := false
   owed : Array Glue := #[]
   ops : Array Op := #[]
@@ -1003,7 +1017,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     hyphCache := cache
     ops := a.ops.push (.para {
       items := items, extras := extras, diags := ds
-      target := a.geom.textWidth - indent
+      target := (a.measure.getD a.geom.textWidth) - indent
       indent := indent, center := center, size := size, bullet := bullet
       markerSegs := markerSegs, rule := rule }) }
 
@@ -1069,6 +1083,29 @@ private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : Font
       | _ => collectBlock a pats fs blk indent
     collectCentered (if rest.isEmpty then a else a.wantGap) pats fs rest indent
 
+/-- One column after another: each collects against its own measure at its
+own offset, a `colNext` marker between two so placement rewinds the
+vertical position. The hyphenation cache threads through; the outer
+measure and gap state are restored per column. -/
+private def collectColumns (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+    (cols : List (Option Nat × Array Block)) (x0 shareW gutter total : Sp) : Acc :=
+  match cols with
+  | [] => a
+  | (w, body) :: rest =>
+    let wi := match w with
+      | some f => total * f / 1000
+      | none => shareW
+    let sub := { a with
+      measure := some (x0 + wi)
+      ops := #[]
+      wantDefault := false
+      owed := #[] }
+    let sub := collectBlocks sub pats fs body x0
+    let a := { a with
+      ops := a.ops ++ sub.ops ++ (if rest.isEmpty then #[] else #[Op.colNext])
+      hyphCache := sub.hyphCache }
+    collectColumns a pats fs rest (x0 + wi + gutter) shareW gutter total
+
 private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (blk : Block) (indent : Sp) : Acc :=
   match blk with
@@ -1110,6 +1147,22 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     | none => a
   | .center body =>
     collectCentered a pats fs body.toList indent
+  | .columns cols =>
+    -- Declared widths are per mille of the full measure. The leftover goes
+    -- to the widthless columns in equal shares when there are any, and into
+    -- equal gutters between the columns otherwise.
+    let a := a.flushGap
+    let total := (a.measure.getD a.geom.textWidth) - indent
+    let declared := cols.foldl (fun s (c : Option Nat × Array Block) =>
+      s + ((c.1.map fun f => total * f / 1000).getD 0)) 0
+    let unspecified := cols.foldl (fun c (col : Option Nat × Array Block) =>
+      if col.1.isNone then c + 1 else c) 0
+    let rem := max 0 (total - declared)
+    let shareW := if unspecified > 0 then rem / unspecified else 0
+    let gutter := if unspecified == 0 && cols.size > 1 then rem / (cols.size - 1) else 0
+    let a := { a with ops := a.ops.push .colOpen }
+    let a := collectColumns a pats fs cols.toList indent shareW gutter total
+    { a with ops := a.ops.push .colClose }
   | .spaced before body =>
     -- Declared space above the block, resolved against the body font: the
     -- gap in place of the default, added to any other declared glue — a
@@ -1304,6 +1357,19 @@ private inductive StagedOp where
   | skip (g : Glue)
   | brk
   | para (j : ParaJob) (t : Task (Array Nat))
+  | colOpen
+  | colNext
+  | colClose
+
+/-- Placement state saved at a `colOpen`, restored per column: where the
+columns start, and the lowest bottom any column reached so far. -/
+private structure ColSave where
+  y : Sp
+  prevDepth : Sp
+  skip : Glue
+  fresh : Bool
+  bottomY : Sp
+  bottomDepth : Sp
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. -/
@@ -1323,6 +1389,9 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .skip g => .skip g
     | .brk => .brk
     | .para j => .para j (Task.spawn fun _ => kp j.items j.target)
+    | .colOpen => .colOpen
+    | .colNext => .colNext
+    | .colClose => .colClose
   let b0 : B := {
     geom := geom
     ascent := scale font.ascent
@@ -1331,6 +1400,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     xHeight := xHeight
   }
   let mut b := b0
+  let mut colSaves : Array ColSave := #[]
   for s in staged do
     match s with
     | .skip g => b := { b with skip := b.skip.add g }
@@ -1339,6 +1409,26 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       -- adjacent frames share one boundary, not an empty page.
       if !b.cur.lines.isEmpty then
         b := b.finishPage
+    | .colOpen =>
+      colSaves := colSaves.push {
+        y := b.y, prevDepth := b.prevDepth, skip := b.skip
+        fresh := b.cur.lines.isEmpty || b.freshStart
+        bottomY := b.y, bottomDepth := b.prevDepth }
+    | .colNext =>
+      if let some save := colSaves.back? then
+        let save := if b.y > save.bottomY
+          then { save with bottomY := b.y, bottomDepth := b.prevDepth }
+          else save
+        colSaves := colSaves.pop.push save
+        b := { b with y := save.y, prevDepth := save.prevDepth, skip := save.skip
+                      freshStart := save.fresh }
+    | .colClose =>
+      if let some save := colSaves.back? then
+        colSaves := colSaves.pop
+        let (bottomY, bottomDepth) := if b.y > save.bottomY
+          then (b.y, b.prevDepth) else (save.bottomY, save.bottomDepth)
+        b := { b with y := bottomY, prevDepth := bottomDepth, skip := {}
+                      freshStart := false }
     | .para j t => b := placePara fs b j t.get
   -- The trailing boundary of a final frame has already closed its page; a
   -- document is never given an empty page for it.

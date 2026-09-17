@@ -854,13 +854,27 @@ where
 end
 
 /-- Block environments: those whose content is a block sequence. -/
-def blockEnvs : List String := ["itemize", "enumerate", "center", "document", "frame"]
+def blockEnvs : List String :=
+  ["itemize", "enumerate", "center", "document", "frame", "columns"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
 def builtinEnvNames : List String :=
-  blockEnvs ++ mathEnvs ++ ["verbatim", "tabular", "tabular*"] ++
+  blockEnvs ++ mathEnvs ++ ["verbatim", "tabular", "tabular*", "column"] ++
   (reservedEnv.map (·.1))
+
+/-- A column width as per mille of the text width: `0.48\textwidth`,
+`.5\linewidth`, or a bare factor. An absolute length is not modelled. -/
+private def columnWidth (src : String) : Option Nat := Id.run do
+  let mut s := src.trimAscii.toString
+  for suffix in ["\\textwidth", "\\linewidth", "\\columnwidth"] do
+    if s.endsWith suffix then
+      s := ((s.dropEnd suffix.length).trimAscii).toString
+  if s.isEmpty then return none
+  match Decl.parseDecimal s with
+  | some (m, sc) =>
+    if m ≥ 0 && sc > 0 then return some ((m * 1000 / sc).toNat) else return none
+  | none => return none
 
 mutual
 
@@ -1330,6 +1344,52 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             blocks := blocks.push (.list (n == "enumerate") elabItems)
           else if n == "center" then
             blocks := blocks.push (.center (← elabBlocks ctx body))
+          else if n == "columns" then
+            -- `[T]`-and-friends alignment options are burned: columns are
+            -- top-aligned (PLAN, M5). A column's width is its first group,
+            -- a fraction of the text width; content standing outside any
+            -- column keeps its place as ordinary blocks — never dropped.
+            let mut k := 0
+            for _ in [0:body.size] do
+              match scanBracketArg body k pos with
+              | .took k' => k := k'
+              | .unclosed bpos =>
+                warnUnclosed ctx "'\\begin{columns}'" bpos
+                break
+              | .content => break
+            let mut cols : Array (Option Nat × Array Block) := #[]
+            let mut strayRaws : Array Raw := #[]
+            let mut j := k
+            for _ in [k:body.size] do
+              if h' : j < body.size then
+                match body[j] with
+                | .env "column" cbody cpos =>
+                  if strayRaws.any (!isSpaceOrPar ·) then
+                    unless cols.isEmpty do
+                      blocks := blocks.push (.columns cols)
+                      cols := #[]
+                    blocks := blocks ++ (← elabBlocks ctx strayRaws)
+                  strayRaws := #[]
+                  let m := skipSpaces cbody 0
+                  let mut width : Option Nat := none
+                  let mut m2 := m
+                  if let some (.group wRaws _) := cbody[m]? then
+                    m2 := m + 1
+                    let src := rawSrc wRaws
+                    width := columnWidth src
+                    if width.isNone then
+                      warnOnce ctx "env:column-width" "W0314"
+                        s!"column width '{src}' is not a fraction of the text width; \
+the column shares the leftover" cpos
+                        (help := "write a factor like {0.5\\textwidth}")
+                  cols := cols.push (width, ← elabBlocks ctx (cbody.extract m2 cbody.size))
+                | r' => strayRaws := strayRaws.push r'
+                j := j + 1
+              else break
+            unless cols.isEmpty do
+              blocks := blocks.push (.columns cols)
+            if strayRaws.any (!isSpaceOrPar ·) then
+              blocks := blocks ++ (← elabBlocks ctx strayRaws)
           else if let some (k, env) := lookupUserEnv ctx n then
             -- A defined wrapper at block level: the halves and the content
             -- each contribute their blocks, in order. An inline half becomes

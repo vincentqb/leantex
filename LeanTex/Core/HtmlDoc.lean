@@ -340,6 +340,17 @@ private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) 
     Html.elem "span" (inlines cfg group) #[("class", "group")])
     #[("class", rowClass)]
 
+/-- Grid tracks from the declared widths: a per-mille width is a percentage
+track, a widthless column an `fr` share of the leftover. With every width
+declared the leftover spreads between the tracks, which is the PDF path's
+gutter rule. -/
+private def gridTracks (cols : Array (Option Nat × Array Block)) : String :=
+  String.intercalate " " (cols.toList.map fun (w, _) =>
+    match w with
+    | some f =>
+      if f % 10 == 0 then s!"{f / 10}%" else s!"{f / 10}.{f % 10}%"
+    | none => "1fr")
+
 mutual
 
 def blockNode (cfg : Config) (b : Block) : Node :=
@@ -369,6 +380,13 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem tag (listItemsInto cfg #[] items.toList)
   | .center body =>
     Html.elem "div" (blockNodesInto cfg #[] body.toList) #[("class", "centered")]
+  | .columns cols =>
+    -- Side-by-side columns as a grid: the declared fractions become
+    -- percentage tracks, so the HTML column really is as wide as the PDF's.
+    Html.elem "div" (columnNodesInto cfg #[] cols.toList)
+      #[("class", "columns"),
+        ("style", s!"display: grid; grid-template-columns: {gridTracks cols}; " ++
+          "justify-content: space-between; column-gap: 0.75rem")]
   | .spaced before body =>
     let style := s!"margin-top: {cssLength before.width}"
     Html.elem "div" (blockNodesInto cfg #[] body.toList)
@@ -389,6 +407,14 @@ def blockNode (cfg : Config) (b : Block) : Node :=
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
   | [] => acc
   | b :: rest => blockNodesInto cfg (acc.push (blockNode cfg b)) rest
+
+private def columnNodesInto (cfg : Config) (acc : Array Node) :
+    List (Option Nat × Array Block) → Array Node
+  | [] => acc
+  | (_, body) :: rest =>
+    columnNodesInto cfg
+      (acc.push (Html.elem "div" (blockNodesInto cfg #[] body.toList)
+        #[("class", "column")])) rest
 
 private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block) → Array Node
   | [] => acc

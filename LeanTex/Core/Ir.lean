@@ -198,6 +198,11 @@ inductive Block where
   /-- `{verbatim}` content, kept literally: lines, spaces, and all. Both
   backends set it in the mono face and neither reflows it. -/
   | verbatim (content : String)
+  /-- Side-by-side columns (`{columns}`/`{column}`): each column carries its
+  declared width as per mille of the text width, or `none` to share the
+  leftover equally. Columns are top-aligned; the alignment options and
+  absolute widths are not modelled (PLAN, M5). -/
+  | columns (cols : Array (Option Nat × Array Block))
   /-- One slide. First-class and never flattened into article paragraphs:
   HTML makes it a `<section>` of the deck, the PDF handout gives it a page.
   An empty title is a bare frame. -/
@@ -401,6 +406,16 @@ def dumpItems (ind : String) (items : List (Array Block)) : String :=
   | item :: rest =>
     s!"{ind}item\n" ++ dumpBlocks (ind ++ "  ") item ++ dumpItems ind rest
 
+def dumpColumns (ind : String) (cols : List (Option Nat × Array Block)) : String :=
+  match cols with
+  | [] => ""
+  | (w, body) :: rest =>
+    let self := (match w with
+      | some f => s!"{ind}column {f}/1000\n"
+      | none => s!"{ind}column\n") ++ dumpBlocks (ind ++ "  ") body
+    let tail := dumpColumns ind rest
+    self ++ tail
+
 def dumpBlock (ind : String) (b : Block) : String :=
   match b with
   | .para content => s!"{ind}para\n" ++ dumpInlines (ind ++ "  ") content
@@ -411,6 +426,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
     let kind := if ordered then "ordered" else "unordered"
     s!"{ind}list {kind}\n" ++ dumpItems (ind ++ "  ") items.toList
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
+  | .columns cols => s!"{ind}columns\n" ++ dumpColumns (ind ++ "  ") cols.toList
   | .spaced before body =>
     s!"{ind}block before {dumpGlue before}\n" ++ dumpBlocks (ind ++ "  ") body
   | .verbatim s =>

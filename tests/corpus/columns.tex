@@ -1,0 +1,31 @@
+% Invented fixture: side-by-side columns, the shape a deck uses for a
+% figure beside its text. Declared widths, a widthless pair, and text
+% long enough to prove each column breaks at its own measure.
+\documentclass[aspectratio=169]{slides}
+
+\begin{document}
+
+\begin{frame}{Two measures}
+\begin{columns}[T]
+\begin{column}{0.55\textwidth}
+A wider column whose sentence is long enough that it must break into
+several lines inside its own measure.
+\end{column}
+\begin{column}{0.4\textwidth}
+A narrow aside.
+\end{column}
+\end{columns}
+\end{frame}
+
+\begin{frame}{Equal shares}
+\begin{columns}
+\begin{column}
+left half
+\end{column}
+\begin{column}
+right half
+\end{column}
+\end{columns}
+\end{frame}
+
+\end{document}
