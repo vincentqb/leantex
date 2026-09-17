@@ -331,3 +331,17 @@ theorem toward_surface (f : Nat) (hf : f ≤ 100) (c s : Lab) (h : s.L ≤ c.L) 
   omega
 
 end LeanTex.Core.Oklab
+
+namespace LeanTex.Core.Ir
+
+/-- The one resolving site for covering (the palette-role obligation,
+AGENTS.md): the per-colour cover at the design's fraction toward its
+surface, and the plain cover for runs with no colour of their own — the
+declared `covered` colour when the document names one, the fraction of
+the body ink otherwise. Everything that covers — the layout dim walks,
+the contrast contract — reads this and nothing else. -/
+def Design.cover (d : Design) : Cover :=
+  let of := Oklab.cover d.coveredFraction d.bg
+  { plain := d.covered.getD (of d.fg), of := of }
+
+end LeanTex.Core.Ir

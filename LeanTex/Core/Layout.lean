@@ -3,6 +3,7 @@ import LeanTex.Core.Dim
 import LeanTex.Core.Font
 import LeanTex.Core.Hyphen
 import LeanTex.Core.Ir
+import LeanTex.Core.Oklab
 import LeanTex.Core.ListMark
 import LeanTex.Core.Diag
 
@@ -2205,7 +2206,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
           footBandFor geom.vmargin (font.ascent * footSize / (font.unitsPerEm : Int)) }
     else geom
   let xHeight := scale font.xHeight
-  let dim := (doc.palette.find? "covered").getD Ir.coveredDefault
+  let cover := (Ir.Design.ofDoc doc).cover
   let acc0 : Acc := { geom := geom, xHeight := xHeight, styles := doc.styles
                       slides := doc.docClass == "slides"
                       pal := doc.palette
@@ -2242,7 +2243,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       else
         for k in [1:steps + 1] do
           acc := collectBlock acc pats fs
-            (.frame title standout valign (Ir.unwrapItemSteps (Ir.dimBlocks dim k body))) 0
+            (.frame title standout valign (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
     | other => acc := collectBlock acc pats fs (Ir.unwrapItemStep other) 0
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
   -- so the tasks race on nothing; joining in document order below keeps the

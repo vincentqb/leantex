@@ -310,7 +310,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     | some (Layout.Seg.run _ c _ _ _ _ _ _) => some c
     | _ => none
   t "a covered item's marker dims with it"
-    (markerColor stepLines[1]! == some Ir.coveredDefault &&
+    (markerColor stepLines[1]! == some (Ir.Design.ofDoc {}).cover.plain &&
      markerColor stepLines[0]! == some Ir.Color.black)
   -- Declared markers: the base element styles every level; a level style
   -- overrides its own level only.
@@ -2561,11 +2561,15 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "opening\n\n\\pause\n\\hot{closing beat}\n\\end{frame}\n\\end{document}"
   let (cDoc, cDs) := elabStr colorSrc
   let cOut := Layout.run (Layout.Geom.ofPage cDoc.page) oneFace none cDoc
-  t "a pending step's explicit colours are repainted by the shade"
+  let hotCover := (Ir.Design.ofDoc cDoc).cover.of ⟨0xAA, 0, 0⟩
+  t "a pending step's explicit colours are covered as themselves, quieter"
     (cDs.isEmpty && cOut.pages.size == 2 &&
      (match cOut.pages[0]?, cOut.pages[1]? with
       | some p1, some p2 =>
         !(runColors p1).contains ⟨0xAA, 0, 0⟩ &&
+        -- the covered run is the ink's own cover, not the plain grey
+        (runColors p1).contains hotCover &&
+        hotCover != (Ir.Design.ofDoc cDoc).cover.plain &&
         (runColors p2).contains ⟨0xAA, 0, 0⟩
       | _, _ => false))
   let (vDoc, vDs) := elabStr
@@ -3339,8 +3343,9 @@ def walkChecks (ref : IO.Ref (List String)) : IO Unit := do
 claim may cite (AGENTS.md, the page-claim rule). Chars come from the set
 glyph runs — gaps become single spaces and lines join with one space, so a
 phrase survives a line break but not a hyphenation. `covered` collects the
-runs recoloured to `Ir.coveredDefault`, the dim of every fixture that
-declares no `covered` palette entry. Deliberately thin: it grows toward
+runs painted in one of the document's own covered colours
+(`coveredColorsOf`: the plain cover plus the per-colour cover of every
+palette entry). Deliberately thin: it grows toward
 the role census `Check.Shipped` is heading for; what `censusChecks`
 enforces today is coverage — no fixture enters the golden set witnessed by
 its IR dump alone. -/
@@ -3353,7 +3358,15 @@ structure CensusPage where
 def CensusPage.text (p : CensusPage) : String :=
   String.intercalate " " (p.lines.toList.map (·.2))
 
-def censusOf (out : Layout.Out) : Array CensusPage := Id.run do
+/-- The colours covering can paint in a document: the plain cover (runs
+with no colour of their own) and the per-colour cover of every palette
+entry — computed from the same `Design.cover` layout reads. -/
+def coveredColorsOf (doc : Ir.Doc) : Array Ir.Color :=
+  let cov := (Ir.Design.ofDoc doc).cover
+  (doc.palette.entries.map fun (_, c) => cov.of c).push cov.plain
+
+def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
+    Array CensusPage := Id.run do
   let mut pages : Array CensusPage := #[]
   for p in out.pages do
     let mut lines : Array (Dim.Sp × String) := #[]
@@ -3364,7 +3377,7 @@ def censusOf (out : Layout.Out) : Array CensusPage := Id.run do
       for seg in l.segs do
         match seg with
         | .run _ color _ _ glyphs _ _ _ =>
-          if color == Ir.coveredDefault then
+          if coveredColors.contains color then
             for (_, c) in glyphs do
               chars := chars.push c
               covered := covered.push c
@@ -3620,7 +3633,7 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let (doc, _) := Elab.run s!"{n}.tex" src
     let geom := Layout.Geom.ofPage doc.page
     let out := Layout.run geom oneFace (some pats) doc
-    let c := censusOf out
+    let c := censusOf (coveredColorsOf doc) out
     for (label, ok) in facts geom c do
       check ref s!"census {n}: {label}" ok
 
@@ -4967,7 +4980,10 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
     (bare.frametitle.isNone && bare.progress.isNone)
   t "bare design standout inverts the page"
     (bare.standout == { fg := Ir.Color.white, bg := Ir.Color.black })
-  t "bare design dims to the covered default" (bare.covered == Ir.coveredDefault)
+  t "bare design declares no covered constant and takes the 38% fraction"
+    (bare.covered == none && bare.coveredFraction == Ir.coveredFractionDefault)
+  t "bare design covers plain runs to 38% of black over white"
+    (bare.cover.plain == { r := 0x86, g := 0x86, b := 0x86 })
   t "bare design mutes to the ink" (bare.muted == bare.fg)
   t "bare design separator defaults to the ink" (bare.separator == bare.fg)
   t "bare design progress bar is 1pt thick"

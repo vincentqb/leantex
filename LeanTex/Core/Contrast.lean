@@ -150,13 +150,6 @@ AA text threshold; 21:1 is the definition's own maximum. -/
 theorem pdf_default_text : contrastMilli Color.black Color.white ≥ aaText := by
   decide
 
-/-- `coveredDefault` — pending overlay content, dimmed — reads at 2.56:1 on
-the PDF page. Deliberate and exempt: SC 1.4.3 places no contrast requirement
-on text in an inactive state, and covered content exists to read as not yet
-active. Pinned so the exemption is a recorded decision, not an oversight. -/
-theorem covered_is_deliberately_dim :
-    contrastMilli coveredDefault Color.white < aaLargeText := by decide
-
 -- The document-level check: the pairings a document's own colours create.
 
 private def hexOf (c : Color) : String :=
@@ -396,17 +389,17 @@ theorem plain_contract : paletteContract Theme.plain.palette = true := by decide
 /-- Covered reads as covered on the design's own page. Quieter than the
 body ink (a lower contrast against `bg` than `fg` has — SC 1.4.3 exempts
 inactive text, so no minimum binds it), yet the dimming itself must be
-seen: `fg` and `covered` differ by at least 3:1, the ratio SC 1.4.11 asks
-of visual information that identifies a state. The two together are what
-"visibly covered" means, judged from the resolved design — defaults
-applied once in `Design.ofDoc`, not re-derived here — not an eyeball. -/
+seen: the ink and its cover differ by at least 3:1, the ratio SC 1.4.11
+asks of visual information that identifies a state. The two together are
+what "visibly covered" means, judged from the resolved design's own
+cover — `Design.cover`, the one resolving site — not an eyeball. -/
 def coveredContract (d : Design) : Bool :=
-  contrastMilli d.covered d.bg < contrastMilli d.fg d.bg
-    && contrastMilli d.fg d.covered ≥ aaLargeText
+  contrastMilli d.cover.plain d.bg < contrastMilli d.fg d.bg
+    && contrastMilli d.fg d.cover.plain ≥ aaLargeText
 
-/-- The default surface: black ink, white page, `coveredDefault` (38%
-black, the Material disabled-state opacity, as the themes' `covered`
-mixes are). -/
+/-- The default surface: black ink, white page, covered at
+`coveredFractionDefault` — 38% of the ink over the page, mixed in Oklab
+(the Material disabled-state opacity, applied as the opacity it is). -/
 theorem default_covered : coveredContract (Design.ofDoc {}) = true := by decide
 
 theorem moloch_covered :
