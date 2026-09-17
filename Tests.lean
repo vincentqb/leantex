@@ -2514,6 +2514,105 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   t "a bare chrome declaration draws its footer" (cDs.isEmpty &&
     ((cOut.pages[0]?.bind (·.foot)).map Ir.plainText == some "1"))
 
+/-- One numbering, every consumer: the numbering audit's constructed
+disagreements, pinned. The title page bears no footer and no number and the
+first content frame is 1 (moloch: `\maketitle` is
+`\frame[plain,noframenumbering]{\titlepage}`); the section-page progress
+reads the same numbering, 0/N before any content frame; a stepped frame's
+pages share one number and a `\framefoot` note sits beside it; the chrome
+frame number and the physical `\pagenumber`/`\pagecount` stay two declared
+sequences; and the PDF footer text is the HTML footer text, frame for
+frame — both read `Ir.frameNumbers` and neither counts. -/
+def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deck (pre body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n" ++ pre ++
+    "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  -- The HTML tree pretty-prints, so tags and indentation are stripped and
+  -- the comparison is over the footer's own characters.
+  let strip (s : String) : String := Id.run do
+    let mut out := ""
+    let mut inTag := false
+    for c in s.toList do
+      if c == '<' then inTag := true
+      else if c == '>' then inTag := false
+      else if !inTag && !c.isWhitespace then out := out.push c
+    return out
+  let htmlFoots (html : String) : List String :=
+    ((html.splitOn "class=\"slide-foot size-small\">").drop 1).map fun s =>
+      strip ((s.splitOn "</footer>")[0]?.getD "")
+  -- Consecutive pages sharing one footer are one frame (steps, spills):
+  -- the frame-level sequence both backends must agree on.
+  let pdfFoots (out : Layout.Out) : List String :=
+    (out.pages.foldl (fun (acc : List String) p =>
+      match p.foot with
+      | some f =>
+        let s := strip (Ir.plainText f)
+        if acc.head? == some s then acc else s :: acc
+      | none => acc) []).reverse
+  -- The headline disagreement: the title page carried footer "1" and the
+  -- first content frame showed "2"; the progress fraction counted both.
+  let (doc, ds) := elabStr (deck "\\theme{moloch}\\title{T}\\author{A}"
+    ("\\maketitle\n\\section{S}\n\\begin{frame}{One}\na\n\\end{frame}\n" ++
+     "\\begin{frame}[standout]\nQ\n\\end{frame}"))
+  t "numbering deck source clean" ds.isEmpty
+  t "the numbering skips title and standout and reaches its count"
+    (doc.frameCount == 1 && doc.frameNumbers.toList.filterMap id == [1])
+  let geom := Layout.Geom.ofPage doc.page
+  let out := Layout.run geom oneFace none doc
+  t "numbering deck four pages" (out.pages.size == 4)
+  t "the title page and the standout carry no footer, the content frame does"
+    (out.pages.map (·.foot.isSome) == #[false, false, true, false])
+  t "the content frame is frame 1, not 2"
+    ((out.pages[2]?.bind (·.foot)).map Ir.plainText == some "S1")
+  t "the progress bar shows 0 of 1 before any content frame"
+    (match out.pages[1]? with
+     | some p => (p.fills.any fun f => f.color == (⟨0xCB, 0xC0, 0xB6⟩ : Ir.Color)) &&
+         !(p.fills.any fun f => f.color == (⟨0xA5, 0x5A, 0x13⟩ : Ir.Color))
+     | none => false)
+  let (html, _) := HtmlDoc.emit {} doc
+  t "html gives the title and standout frames no footer"
+    ((html.splitOn "class=\"slide-foot size-small\"").length == 2)
+  t "html numbers the content frame 1"
+    ((html.splitOn "<span>1</span>").length == 2)
+  t "html progress is 0% before any content frame"
+    ((html.splitOn "width: 0%").length == 2)
+  t "pdf and html footers are the same text" (pdfFoots out == htmlFoots html)
+  -- Steps, a \framefoot note, and the two-sequences deck: the note takes
+  -- the left slot beside the frame's number, a stepped frame's pages share
+  -- one number, and the backends agree frame for frame.
+  let (dDoc, dDs) := elabStr (deck "\\theme{moloch}\\title{T}\\author{A}"
+    ("\\maketitle\n" ++
+     "\\begin{frame}{A}\na\n\n\\pause\nb\n\\end{frame}\n" ++
+     "\\section{S}\n\\framefoot{note}\n" ++
+     "\\begin{frame}{B}\nc\n\\end{frame}\n" ++
+     "\\begin{frame}[standout]\nQ\n\\end{frame}"))
+  t "two-sequences deck source clean" dDs.isEmpty
+  t "two content frames count 1 and 2"
+    (dDoc.frameCount == 2 && dDoc.frameNumbers.toList.filterMap id == [1, 2])
+  let dOut := Layout.run (Layout.Geom.ofPage dDoc.page) oneFace none dDoc
+  t "two-sequences deck six pages" (dOut.pages.size == 6)
+  t "a stepped frame's pages share one footer"
+    (dOut.pages[1]?.bind (·.foot) == dOut.pages[2]?.bind (·.foot))
+  t "the framefoot note sits beside the frame's own number"
+    ((dOut.pages[4]?.bind (·.foot)).map Ir.plainText == some "note2")
+  let (dHtml, _) := HtmlDoc.emit {} dDoc
+  t "pdf and html footers agree across steps and notes"
+    (pdfFoots dOut == htmlFoots dHtml && htmlFoots dHtml == ["1", "note2"])
+  -- \pagenumber/\pagecount stay the physical sequence: a \runningfoot deck
+  -- numbers its pages 1..pages.size (title page included), while the frame
+  -- count is its own declared sequence — two models, both stated.
+  let (rDoc, rDs) := elabStr (deck
+    ("\\theme{moloch}\\title{T}\\author{A}" ++
+     "\\runningfoot{page \\pagenumber\\ of \\pagecount}")
+    ("\\maketitle\n\\begin{frame}{One}\na\n\\end{frame}"))
+  t "physical deck source clean" rDs.isEmpty
+  let rOut := Layout.run (Layout.Geom.ofPage rDoc.page) oneFace none rDoc
+  t "runningfoot suppresses chrome and the physical count is the page count"
+    (rOut.pages.size == 2 && rOut.pages.all (·.foot.isNone) && rDoc.frameCount == 1)
+  t "the physical sequence substitutes per page"
+    (Ir.plainText (Layout.substPage 2 2 (rDoc.foot.getD #[])) == "page 2 of 2")
+
 /-- The deck's own footer route: `\setbeamertemplate{frame footer}` — alone
 or expanded from a `\newenvironment` wrapper — reaches the chrome footer's
 left slot as `\framefoot`, instead of dying with W0104. The note holds for
@@ -5113,6 +5212,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       chromeDeclChecks ref
       footerBandChecks ref oneFace
       chromeFooterChecks ref oneFace
+      numberingChecks ref oneFace
       frameFootChecks ref oneFace
       scannerChecks ref
       rhythmChecks ref oneFace

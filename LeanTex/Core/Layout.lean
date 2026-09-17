@@ -1467,10 +1467,17 @@ private structure Acc where
   tokens : Ir.Tokens := {}
   /-- Default text colour: the palette's `fg` when declared, else black. -/
   fg : Ir.Color := Ir.Color.black
-  /-- Frames seen so far / in the whole document: a section page's progress
-  bar is the deck position. -/
-  framesSeen : Nat := 0
-  framesTotal : Nat := 0
+  /-- The number of the frame being collected, from `Ir.frameNumbers`:
+  `some k` for the k-th countable frame, `none` for a title or standout
+  frame. Threaded by `run`'s driver off the one numbering — nothing in the
+  walk counts. -/
+  frameNum : Option Nat := none
+  /-- Countable frames elapsed at this point, read off the same numbering
+  (the last `some` the driver threaded): a section page's progress bar is
+  the deck position. -/
+  framesDone : Nat := 0
+  /-- The numbering's denominator, `Ir.frameCount`. -/
+  frameCount : Nat := 0
   /-- Nesting depth of the list being walked, one counter per list kind, as
   LaTeX counts them (`\@itemdepth`/`\@enumdepth`): an itemize inside an
   enumerate inside an itemize is itemize level 2. -/
@@ -1547,7 +1554,9 @@ private def Acc.chromeFoot (a : Acc) : Option (Array Inline) :=
   let slot (s : Ir.ChromeSlot) : Array Inline :=
     match s with
     | .sectionTitle => a.curSection
-    | .frameNumber => #[.text (toString a.framesSeen)]
+    | .frameNumber => match a.frameNum with
+      | some n => #[.text (toString n)]
+      | none => #[]
   let left := match a.frameFoot with
     | some xs => xs
     | none => (a.chromeL.map slot).getD #[]
@@ -1755,7 +1764,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       let thick := ((a.tokens.find? "progressheight").map
         fun g => (a.resolve g).width).getD (pt 1)
       let a := { a with ops := a.ops.push (.progress
-        (min a.framesSeen a.framesTotal) (max a.framesTotal 1) fgC bgC thick
+        (min a.framesDone a.frameCount) (max a.frameCount 1) fgC bgC thick
         (a.geom.hmargin + indent) mp) }
       a.pageBreak
     else
@@ -1871,14 +1880,17 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .frame title standout valign body =>
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never
-    -- clipped. `framesSeen` is counted by `run`'s top-level driver, once
-    -- per logical frame, so a stepped frame's pages share it.
+    -- clipped. The frame's number rides in from `run`'s top-level driver,
+    -- read off `Ir.frameNumbers`, once per logical frame, so a stepped
+    -- frame's pages share it.
     let a := a.pageBreak
     -- The footer belongs to the frame: its pages, spill pages included,
-    -- carry the frame's own number; a standout frame carries none (its
-    -- inverted page has no pairing for the muted key).
+    -- carry the frame's own number. A frame the numbering skips — the
+    -- title page, a standout — carries no footer at all: moloch renders
+    -- both plain (beamerinnerthememoloch.dtx:314-320, 777-778), and a
+    -- number slot with no number has nothing true to show.
     let a := if a.footAllowed then
-        { a with ops := a.ops.push (.foot (if standout then none else a.chromeFoot)) }
+        { a with ops := a.ops.push (.foot (if a.frameNum.isNone then none else a.chromeFoot)) }
       else a
     -- Every frame declares its distribution (beamer's default is centring,
     -- user guide §8.1); only the article page and a continuation page keep
@@ -2159,14 +2171,12 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
           footBandFor geom.vmargin (font.ascent * footSize / (font.unitsPerEm : Int)) }
     else geom
   let xHeight := scale font.xHeight
-  let framesTotal := doc.body.foldl (fun n b => match b with
-    | .frame _ _ _ _ => n + 1 | _ => n) 0
   let dim := (doc.palette.find? "covered").getD Ir.coveredDefault
   let acc0 : Acc := { geom := geom, xHeight := xHeight, styles := doc.styles
                       slides := doc.docClass == "slides"
                       pal := doc.palette
                       tokens := doc.tokens
-                      framesTotal := framesTotal
+                      frameCount := doc.frameCount
                       chromeL := if footAllowed then doc.chrome.footerLeft else none
                       chromeR := if footAllowed then doc.chrome.footerRight else none
                       footAllowed := footAllowed
@@ -2174,18 +2184,23 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
                       imgs := imgs }
   -- One handout page per overlay step, driven here at the top level: a
   -- multi-step frame collects once per step with pending content dimmed
-  -- (`Ir.dimBlocks`), under ONE `framesSeen` — the furniture belongs to the
+  -- (`Ir.dimBlocks`), under ONE frame number — the furniture belongs to the
   -- frame, not the step, so a stepped frame's pages share their progress
   -- position and their frame count. Steps and standout are orthogonal: the
-  -- flag rides onto every step page unchanged.
+  -- flag rides onto every step page unchanged. The number itself is read
+  -- off `Ir.frameNumbers`, the one numbering (its T2–T4 are the contract);
+  -- nothing below this loop counts.
+  let nums := doc.frameNumbers
   let mut acc := acc0
   let mut firstBlk := true
-  for blk in doc.body do
+  for h : i in [0:doc.body.size] do
+    let blk := doc.body[i]
     acc := if firstBlk then acc else acc.wantGap
     firstBlk := false
     match blk with
     | .frame title standout valign body =>
-      acc := { acc with framesSeen := acc.framesSeen + 1 }
+      let num := nums[i]?.getD none
+      acc := { acc with frameNum := num, framesDone := num.getD acc.framesDone }
       let steps := Ir.maxStepBlocks body
       if steps ≤ 1 then
         acc := collectBlock acc pats fs

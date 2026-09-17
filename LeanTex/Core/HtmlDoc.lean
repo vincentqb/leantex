@@ -720,26 +720,31 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
     else if !themedSections && !chromeFoot then
       blockNodesInto cfg #[] doc.body.toList
     else Id.run do
-      let total := doc.body.foldl (fun n b => match b with
-        | .frame _ _ _ _ => n + 1 | _ => n) 0
-      let mut seen := 0
+      -- The one numbering: the same array the PDF path threads
+      -- (`Ir.frameNumbers`, T2–T4). This walk indexes it and counts
+      -- nothing, so the two backends cannot disagree.
+      let nums := doc.frameNumbers
+      let total := doc.frameCount
+      let mut done := 0
       let mut curSection : Array Inline := #[]
       let mut frameFoot : Option (Array Inline) := none
       let mut acc : Array Node := #[]
-      for b in doc.body do
+      for h : i in [0:doc.body.size] do
+        let b := doc.body[i]
         match b with
         | .framefoot xs =>
           frameFoot := if xs.isEmpty then none else some xs
-        | .frame _ standout _ _ =>
-          seen := seen + 1
+        | .frame _ _ _ _ =>
+          let num := nums[i]?.getD none
+          done := num.getD done
           let node := blockNode cfg b
-          let node := if chromeFoot && !standout then
-              match node with
-              | .elem tag attrs kids =>
+          let node := if chromeFoot then
+              match num, node with
+              | some n, .elem tag attrs kids =>
                 let slot (s : Ir.ChromeSlot) : Array Node :=
                   match s with
                   | .sectionTitle => inlines cfg curSection
-                  | .frameNumber => #[Html.text (toString seen)]
+                  | .frameNumber => #[Html.text (toString n)]
                 let left := match frameFoot with
                   | some xs => inlines cfg xs
                   | none => (doc.chrome.footerLeft.map slot).getD #[]
@@ -747,13 +752,13 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
                 Node.elem tag attrs (kids.push (Html.elem "footer"
                   #[Html.elem "span" left, Html.elem "span" right]
                   #[("class", "slide-foot size-small")]))
-              | other => other
+              | _, other => other
             else node
           acc := acc.push node
         | .section 1 starred title =>
           curSection := title
           if themedSections then
-            let pct := (min seen total) * 100 / max total 1
+            let pct := (min done total) * 100 / max total 1
             acc := acc.push (Html.elem "section" #[
               Html.elem "h2" (inlines cfg title),
               Html.elem "div" #[Html.elem "div" #[] #[("style", s!"width: {pct}%")]]
