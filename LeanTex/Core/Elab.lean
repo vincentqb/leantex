@@ -2414,6 +2414,24 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
           (help := "entries look like: name = #RRGGBB")
       else if builtinNames.contains key then
         diag ctx .E0303 s!"palette name '{key}' collides with a built-in command" pos
+      else if key == "covered" && (valueSrc.endsWith "\\%" || valueSrc.endsWith "%") then
+        -- `covered = 38\%`: cover each colour to 38% of itself over the
+        -- page (beamer's \setbeamercovered{transparent=38}). TeX comments
+        -- make a bare % unwritable, so the escaped spelling is the
+        -- declared one; the raw source shows it as `\%`. A colour value
+        -- stays accepted below as the cover of uncoloured runs.
+        let digits := if valueSrc.endsWith "\\%" then (valueSrc.dropEnd 2).toString
+          else (valueSrc.dropEnd 1).toString
+        match (digits.trimAscii.toString).toNat? with
+        | some n =>
+          if 1 ≤ n && n ≤ 99 then
+            pal := { pal with coveredFraction := some n }
+          else
+            diag ctx .E0332 s!"covered fraction must be 1–99 percent, got '{valueSrc}'" pos
+              (help := "the fraction of each covered colour kept over the page; the default is 38\\%")
+        | none =>
+          diag ctx .E0321 s!"cannot read covered fraction: {valueSrc.quote}" pos
+            (help := "a percentage like: covered = 38\\%")
       else
         let put (pal : Palette) (c : Color) : Palette :=
           pal.declare key c decorative
@@ -2889,6 +2907,11 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               | some th =>
                 let pal := th.palette.entries.foldl
                   (fun p (kc : String × Ir.Color) => p.declare kc.1 kc.2) palette
+                -- The bundle's covered fraction rides with its palette,
+                -- through the same replace-on-redeclare door: a document's
+                -- own `covered = <n>\%` after this site overrides it.
+                let pal := { pal with
+                  coveredFraction := th.palette.coveredFraction <|> pal.coveredFraction }
                 palette := pal
                 ctx := { ctx with palette := pal }
                 let tk := th.tokens.entries.foldl

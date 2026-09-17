@@ -120,6 +120,11 @@ def Tokens.declare (t : Tokens) (key : String) (g : SymGlue) : Tokens :=
 /-- Named colours declared by `\palette`. -/
 structure Palette where
   entries : Array (String × Color) := #[]
+  /-- `covered = <n>%`: the fraction of each covered run's own ink over
+  the surface — beamer's `\setbeamercovered{transparent=<n>}`, and the
+  per-bundle knob the covered contract ranges over. `none` takes
+  `coveredFractionDefault`. -/
+  coveredFraction : Option Nat := none
   /-- Entries declared under `\palette[decorative]{...}`: deliberately
   low-contrast — a watermark, a dimmed aside — and exempt from the pairing
   diagnostic, the way WCAG 2.2 SC 1.4.3 exempts pure decoration. -/
@@ -1104,7 +1109,7 @@ def Design.ofDoc (doc : Doc) : Design :=
     bg := bg
     fgDeclared := (pal.find? "fg").isSome
     bgDeclared := (pal.find? "bg").isSome
-    coveredFraction := coveredFractionDefault
+    coveredFraction := pal.coveredFraction.getD coveredFractionDefault
     covered := pal.find? "covered"
     muted := (pal.find? "muted").getD fg
     frametitle := (pal.find? "frametitlebg").map fun barBg =>
@@ -2464,7 +2469,10 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
       fontLine s!"{slotName}.{variant}" (some f))
   let paletteLines := String.join (doc.palette.entries.toList.map fun (n, c) =>
     let mark := if doc.palette.decorative.contains n then " decorative" else ""
-    s!"palette {n} #{hex2 c.r}{hex2 c.g}{hex2 c.b}{mark}\n")
+    s!"palette {n} #{hex2 c.r}{hex2 c.g}{hex2 c.b}{mark}\n") ++
+    (match doc.palette.coveredFraction with
+     | some f => s!"palette covered {f}%\n"
+     | none => "")
   let tokenLines := String.join (doc.tokens.entries.toList.map fun (n, g) =>
     s!"token {n} {dumpGlue g}\n")
   let runLines :=

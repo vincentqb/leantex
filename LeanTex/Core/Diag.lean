@@ -63,7 +63,7 @@ inductive DiagCode where
   | E0201 | E0202 | E0205
   | E0303 | E0304 | E0305 | E0306 | E0309 | E0310 | E0311 | E0312 | E0313
   | E0316 | E0320 | E0321 | E0322 | E0323 | E0324 | E0325 | E0326 | E0327
-  | E0328 | E0329 | E0330 | E0331
+  | E0328 | E0329 | E0330 | E0331 | E0332
   | E0401 | E0402 | E0403 | E0404
   | E0501
   | N0100 | N0101 | N0102 | N0103 | N0105 | N0200
@@ -116,6 +116,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .E0329 => ("E0329", .dropped, "unknown diagnostic code in \\allow")
   | .E0330 => ("E0330", .dropped, "layout assertion failed against the shipped pages")
   | .E0331 => ("E0331", .dropped, "unreadable length")
+  | .E0332 => ("E0332", .dropped, "covered fraction outside 1–99 percent")
   | .E0401 => ("E0401", .dropped, "no usable font found on the host")
   | .E0402 => ("E0402", .dropped, "LEANTEX_FONT is unusable")
   | .E0403 => ("E0403", .dropped, "no installed font family by that name")
@@ -191,7 +192,7 @@ def DiagCode.all : List DiagCode :=
   [.E0001, .E0002, .E0101, .E0102, .E0111, .E0112, .E0113, .E0201, .E0202, .E0205, .E0303, .E0304,
    .E0305, .E0306, .E0309, .E0310, .E0311, .E0312, .E0313, .E0316, .E0320,
    .E0321, .E0322, .E0323, .E0324, .E0325, .E0326, .E0327, .E0328, .E0329,
-   .E0330, .E0331, .E0401, .E0402, .E0403, .E0404, .E0501, .N0100, .N0101,
+   .E0330, .E0331, .E0332, .E0401, .E0402, .E0403, .E0404, .E0501, .N0100, .N0101,
    .N0102, .N0103, .N0105, .N0200, .W0001, .W0003, .W0004, .W0005, .W0006, .W0007, .W0008,
    .W0009, .W0010, .W0011, .W0012, .W0013, .W0102, .W0103, .W0104, .W0105, .W0106, .W0108,
    .W0110, .W0201, .W0202, .W0301, .W0302, .W0303, .W0304, .W0307, .W0308,

@@ -51,23 +51,27 @@ def moloch : Theme :=
   let progressfg := alert
   let progressbg := (progressfg.mix 50 .black).mix 30 .white  -- progressfg!50!black!30
   { name := "moloch"
-    palette := { entries := #[
-      ("fg", fg), ("bg", bg), ("alert", alert), ("example", ⟨0x00, 0x80, 0x80⟩),
-      -- The muted step: the theme's own ink mixed 70:30 into its page, the
-      -- strongest quieting that still clears the 4.5:1 WCAG 2.2 SC 1.4.3
-      -- asks of the small footer text (4.79:1 here; moloch_contract is the
-      -- kernel check, and 60:40 already fails at 3.65:1).
-      ("muted", fg.mix 70 bg),                                -- fg!70!bg
-      ("frametitlefg", bg), ("frametitlebg", fg),
-      ("progressfg", progressfg), ("progressbg", progressbg),
-      ("separator", progressfg),
-      ("standoutfg", bg), ("standoutbg", fg),
-      -- Covered overlay content shows at 38% of the body ink over the page —
-      -- the Material Design disabled-state opacity (m2.material.io/design/
-      -- interaction/states.html#disabled); WCAG 2.2 SC 1.4.3 exempts text in
-      -- an inactive state, and Contrast.coveredContract holds the value to
-      -- "quieter than body, still distinguishable" for every bundle.
-      ("covered", fg.mix 38 bg)] }                            -- fg!38!bg
+    palette := {
+      entries := #[
+        ("fg", fg), ("bg", bg), ("alert", alert), ("example", ⟨0x00, 0x80, 0x80⟩),
+        -- The muted step: the theme's own ink mixed 70:30 into its page, the
+        -- strongest quieting that still clears the 4.5:1 WCAG 2.2 SC 1.4.3
+        -- asks of the small footer text (4.79:1 here; moloch_contract is the
+        -- kernel check, and 60:40 already fails at 3.65:1).
+        ("muted", fg.mix 70 bg),                              -- fg!70!bg
+        ("frametitlefg", bg), ("frametitlebg", fg),
+        ("progressfg", progressfg), ("progressbg", progressbg),
+        ("separator", progressfg),
+        ("standoutfg", bg), ("standoutbg", fg)]
+      -- Covered overlay content keeps each colour at 31% of itself over
+      -- the page, mixed in Oklab (Core/Oklab.lean). Material's
+      -- disabled-state opacity is 38% (m2.material.io/design/interaction/
+      -- states.html#disabled), but at 38% this bundle's alert and example
+      -- read at 2.89:1 and 2.75:1 against their active forms — under the
+      -- 3:1 WCAG 2.2 SC 1.4.11 asks of state-identifying information; 31%
+      -- is the largest fraction where every text role clears it
+      -- (Contrast.moloch_covered is the kernel check).
+      coveredFraction := some 31 }
     -- The title page's inter-part spacing, from the moloch source
     -- (beamerinnerthememoloch.dtx): 0.3em above the subtitle, 0.8em below
     -- the separator (its default linewidth is 0.5pt), 0.5em below the
@@ -103,17 +107,21 @@ def plain : Theme :=
   let fg : Color := ⟨0x1B, 0x1B, 0x1F⟩
   let bg : Color := ⟨0xFF, 0xFF, 0xFF⟩
   { name := "plain"
-    palette := { entries := #[
-      ("fg", fg), ("bg", bg), ("alert", ⟨0xB3, 0x26, 0x1E⟩),
-      ("example", ⟨0x20, 0x5E, 0x3B⟩),
-      -- Same muted rule as moloch: ink 70:30 into the page (6.36:1 here).
-      ("muted", fg.mix 70 bg),                                -- fg!70!bg
-      ("progressfg", fg.mix 60 .white),                       -- fg!60
-      ("progressbg", fg.mix 15 .white),                       -- fg!15
-      ("separator", fg.mix 40 .white),                        -- fg!40
-      ("standoutfg", bg), ("standoutbg", fg),
-      -- The same 38% disabled-state convention as moloch's covered.
-      ("covered", fg.mix 38 bg)] }                            -- fg!38!bg
+    palette := {
+      entries := #[
+        ("fg", fg), ("bg", bg), ("alert", ⟨0xB3, 0x26, 0x1E⟩),
+        ("example", ⟨0x20, 0x5E, 0x3B⟩),
+        -- Same muted rule as moloch: ink 70:30 into the page (6.36:1 here).
+        ("muted", fg.mix 70 bg),                              -- fg!70!bg
+        ("progressfg", fg.mix 60 .white),                     -- fg!60
+        ("progressbg", fg.mix 15 .white),                     -- fg!15
+        ("separator", fg.mix 40 .white),                      -- fg!40
+        ("standoutfg", bg), ("standoutbg", fg)]
+      -- Covered keeps each colour at 38% of itself over the page — the
+      -- Material disabled-state opacity, per colour in Oklab; this
+      -- bundle's roles all clear the 3:1 state change at 38%
+      -- (Contrast.plain_covered is the kernel check).
+      coveredFraction := some 38 }
     tokens := { entries := #[("progressheight", pt1)] }
     styles := { entries := #[
       ("sectionpage", boldFont "Large"),

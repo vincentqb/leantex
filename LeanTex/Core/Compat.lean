@@ -804,10 +804,12 @@ fall to W0301, their arguments kept as text")
     -- M5), so `transparent` asks for what already happens — agreement, not
     -- missing configuration, and no warning. `transparent=<n>` shows
     -- covered text at n% opaqueness (beamer manual, \setbeamercovered:
-    -- 0 transparent .. 100 opaque; 15 is the default), which over the page
-    -- is an n% mix of the body ink into it: the covered colour, declared.
-    -- Everything else (invisible, dynamic, still/again covered) asks for
-    -- hiding or per-slide opacity the engine deliberately does not do.
+    -- 0 transparent .. 100 opaque; 15 is the default): exactly the
+    -- engine's covered fraction, so the two spellings are one idea —
+    -- `\palette{ covered = n% }`, each covered colour kept at n% of
+    -- itself over the page. Everything else (invisible, dynamic,
+    -- still/again covered) asks for hiding or per-slide opacity the
+    -- engine deliberately does not do.
     let (args, k) := takeGroups raws start 1
     let src := (rawSrc (args.getD 0 #[])).trimAscii.toString
     if src == "transparent" then
@@ -821,23 +823,20 @@ fall to W0301, their arguments kept as text")
     match pct? with
     | some n =>
       if 1 ≤ n && n ≤ 99 then
-        -- Unthemed there is no fg/bg to mix over: the page is white, the
-        -- ink black.
-        let native := if (← get).themed then s!"\\palette\{ covered = fg!{n}!bg }"
-          else s!"\\palette\{ covered = black!{n} }"
+        let native := s!"\\palette\{ covered = {n}\\% }"
         became "\\setbeamercovered" native pos
         return some (← synthAt native pos, k)
       else
         sayOnce "beamer:setbeamercovered" .W0104
           s!"'\\setbeamercovered\{{src}}' asks for {if n == 0 then "invisible" else "undimmed"} \
 covered content; the engine always dims (dim-not-hide)" pos
-          (help := "\\palette{ covered = ... } sets the dim colour")
+          (help := "\\palette{ covered = <n>% } sets the covered fraction")
         return some (#[], k)
     | none =>
       sayOnce "beamer:setbeamercovered" .W0104
         s!"'\\setbeamercovered\{{src}}' is not modelled; covered content always \
 dims (dim-not-hide), it is never hidden" pos
-        (help := "\\palette{ covered = ... } sets the dim colour; 'transparent' \
+        (help := "\\palette{ covered = <n>% } sets the covered fraction; 'transparent' \
 and 'transparent=<n>' are understood")
       return some (#[], k)
   | _ =>

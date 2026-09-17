@@ -1146,10 +1146,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\n\\begin{document}\\begin{frame}x\\end{frame}\\end{document}"
   t "compat setbeamercovered transparent agrees, warning nothing"
     (warnCodes (themedPre "\\setbeamercovered{transparent}") == [])
-  t "compat setbeamercovered transparent=n sets the covered colour"
-    ((elabStr (themedPre "\\setbeamercovered{transparent=25}")).1.palette.find? "covered"
-      == some (Ir.Color.mix ((Theme.moloch.palette.find? "fg").getD Ir.Color.black)
-          25 ((Theme.moloch.palette.find? "bg").getD Ir.Color.white)))
+  t "compat setbeamercovered transparent=n sets the covered fraction"
+    ((elabStr (themedPre "\\setbeamercovered{transparent=25}")).1.palette.coveredFraction
+      == some 25)
   t "compat setbeamercovered invisible keeps the honest warning"
     (warnCodes (themedPre "\\setbeamercovered{invisible}") == ["W0104"])
   t "compat definecolor rgb" ((elabStr (pre "\\definecolor{c}{rgb}{1,0,0.5}")).1.palette.find? "c" ==
@@ -4733,6 +4732,16 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((palSrc "{\\mut in} out").body == #[.para #[
       .colored { r := 0x88, g := 0x88, b := 0x88 } (some "mut") #[.text "in"],
       .text " out"]])
+  t "palette covered fraction declares" (
+    (elabStr ("\\documentclass{article}\\palette{covered = 21\\%}" ++
+      "\\begin{document}x\\end{document}")).1.palette.coveredFraction == some 21)
+  t "palette covered fraction out of range" (errCodes
+    ("\\documentclass{article}\\palette{covered = 100\\%}" ++
+     "\\begin{document}x\\end{document}") == ["E0332"])
+  t "palette covered still accepts a colour" (
+    (elabStr ("\\documentclass{article}\\palette{covered = #808080}" ++
+      "\\begin{document}x\\end{document}")).1.palette.find? "covered"
+      == some ⟨0x80, 0x80, 0x80⟩)
   t "palette wrong type" (errCodes ("\\documentclass{article}\\palette{a = 3pt}" ++
     "\\begin{document}x\\end{document}") == ["E0323"])
   t "palette cannot shadow builtin" (errCodes
