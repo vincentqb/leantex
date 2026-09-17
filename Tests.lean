@@ -2230,6 +2230,40 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "a themed standout frame does not print its speaker note"
     (nOut.pages.map (·.lines.size) == bOut.pages.map (·.lines.size))
 
+/-- The footer band is reserved, never overlaid: `Geom.bodyBottom` is the one
+place a footer's band comes out of the page, placement reads the bottom only
+from there, and `bodyBottom_clears_footer` is the arithmetic that the
+reservation suffices. This pins layout to actually reading it, on a page
+whose margin is too small to hold the foot line. -/
+def footerBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let para := String.intercalate " " (List.replicate 300 "filler words run on")
+  let src := "\\page{ vmargin = 2pt }\n\\runningfoot{quiet foot}\n" ++
+    "\\begin{document}\n" ++ para ++ "\n\n" ++ para ++ "\n\\end{document}"
+  let (doc, ds) := elabStr src
+  t "band source clean" (ds.filter (·.severity == .error)).isEmpty
+  let geom0 := Layout.Geom.ofPage doc.page
+  let out := Layout.run geom0 oneFace none doc
+  let font := oneFace.body
+  let ascent : Dim.Sp := font.ascent * geom0.fontSize / (font.unitsPerEm : Int)
+  let descent : Dim.Sp := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
+  let geom := { geom0 with footBand := Layout.footBandFor geom0.vmargin ascent }
+  t "a 6pt margin cannot hold the foot line, so the band bites"
+    (geom.footBand > (0 : Dim.Sp))
+  let footY := geom.pageH - geom.vmargin / 2
+  t "the foot line is laid on every page"
+    (!out.pages.isEmpty && out.pages.all fun p => p.lines.any (·.y == footY))
+  t "body ink stops above the reserved band"
+    (out.pages.all fun p => p.lines.all fun l =>
+      l.y == footY || l.y + descent ≤ geom.bodyBottom)
+  -- The check is load-bearing: without the reservation, this document's
+  -- last body line reaches into the footer's band.
+  let (bare, _) := elabStr ("\\page{ vmargin = 2pt }\n\\begin{document}\n" ++
+    para ++ "\n\n" ++ para ++ "\n\\end{document}")
+  let bareOut := Layout.run (Layout.Geom.ofPage bare.page) oneFace none bare
+  t "the fixture reaches the band it is about"
+    (bareOut.pages.any fun p => p.lines.any fun l => l.y + descent > geom.bodyBottom)
+
 /-- The themed slides furniture, keyed on the semantic palette entries: page
 background and text colour, the frame-title bar, the section page with its
 progress bar. No theme machinery here — the keys are the API, so a theme
@@ -3868,6 +3902,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       noteChecks ref oneFace
       themeFurnitureChecks ref oneFace
       themeReconcileChecks ref oneFace
+      footerBandChecks ref oneFace
       scannerChecks ref
       rhythmChecks ref oneFace
       measureChecks ref oneFace

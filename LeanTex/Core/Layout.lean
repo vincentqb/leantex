@@ -30,9 +30,48 @@ structure Geom where
   /-- Bleed past the trim edge, for the PDF writer: layout works in trim
   coordinates and never sees it. -/
   bleed : Sp := 0
+  /-- The band a page footer reserves above the bottom margin: what its ink
+  and clearance need beyond the half margin its baseline sits below the body
+  area. Zero when there is no footer or the margin already holds it, so an
+  undeclared page is unchanged. `Layout.run` computes it (`footBandFor`);
+  everything else reads it only through `bodyBottom`. -/
+  footBand : Sp := 0
   deriving Repr
 
 def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
+
+/-- TeX's `\lineskip`: the least space between a line's depth and the next
+line's height when the leading cannot hold them apart. Also the least
+clearance between the body's ink and a footer's. -/
+def lineskip : Sp := pt 1
+
+/-- The lowest y a body line's ink may reach: the bottom margin, less the
+band a footer reserves. Every placement decision reads the page bottom from
+here and nowhere else — a footer that draws over the last line of body text
+is a worse bug than no footer. -/
+def Geom.bodyBottom (g : Geom) : Sp := g.pageH - g.vmargin - g.footBand
+
+/-- The band a footer of ink height `ascent` reserves: its baseline sits
+`vmargin/2` below the body area, so whatever of `ascent + lineskip` the half
+margin cannot hold comes out of the body. -/
+def footBandFor (vmargin ascent : Sp) : Sp := max 0 (ascent + lineskip - vmargin / 2)
+
+/-- The reservation is sufficient, for every geometry: with the band from
+`footBandFor`, body ink stops at least `lineskip` above the footer's ink top
+(`footY - ascent`, the baseline at half the bottom margin less what the
+footer reaches above it). The key inequality is proved over bare `Int`
+binders because `omega` does not see through the `Sp` abbreviation. -/
+theorem bodyBottom_clears_footer (g : Geom) (ascent : Sp) (hm : 0 ≤ g.vmargin)
+    (h : g.footBand = footBandFor g.vmargin ascent) :
+    g.bodyBottom + ascent + lineskip ≤ g.pageH - g.vmargin / 2 := by
+  have key : ∀ pageH m a l : Int, 0 ≤ m →
+      pageH - m - max 0 (a + l - m / 2) + a + l ≤ pageH - m / 2 := by
+    intro pageH m a l hm
+    simp only [Int.max_def]
+    split <;> omega
+  simp only [Geom.bodyBottom, footBandFor] at h ⊢
+  rw [h]
+  exact key g.pageH g.vmargin ascent lineskip hm
 
 /-- Resolve a document's `\page` declaration into layout geometry. One source
 of truth: layout reads geometry only from here. -/
@@ -918,10 +957,6 @@ private structure B where
   centerV : Bool := false
   diags : Array Diag := #[]
 
-/-- TeX's `\lineskip`: the least space between a line's depth and the next
-line's height when the leading cannot hold them apart. -/
-private def lineskip : Sp := pt 1
-
 /-- Close the current page. A page that overflowed at natural size within
 its shrink is set to fit: every line moves up by its share of the shrink
 above it, the glue set at one ratio like a justified line's. -/
@@ -941,7 +976,7 @@ private def B.finishPage (b : B) : B :=
   -- page's fills ride with their lines.
   let delta := if b.centerV && !lines.isEmpty then
       let lastY := lines.foldl (fun m l => max m l.y) 0
-      let leftover := (b.geom.pageH - b.geom.vmargin) - (lastY + b.prevDepth)
+      let leftover := b.geom.bodyBottom - (lastY + b.prevDepth)
       if leftover > 0 then leftover / 2 else 0
     else 0
   let lines := if delta == 0 then lines else lines.map fun l => { l with y := l.y + delta }
@@ -998,7 +1033,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
        max acc.2.2 (scaledAt sz font (-font.descent).toNat))
     | _ => acc) (nominal, b.capHeight * nominal / b.geom.fontSize,
                  b.descent * nominal / b.geom.fontSize)
-  let bottom := b.geom.pageH - b.geom.vmargin
+  let bottom := b.geom.bodyBottom
   let mk (y : Sp) : LineOut := { x := x, y := y, size := size, segs := segs, setWidth := w }
   let firstY := b.geom.vmargin + max b.ascent height
   if b.cur.lines.isEmpty || b.freshStart then
@@ -1650,6 +1685,13 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let pats := if geom.hyphenate then pats else none
   let font := fs.body
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
+  -- A running foot reserves its band before anything is placed, so no body
+  -- line can land in it (`bodyBottom_clears_footer` is the sufficiency
+  -- proof). With the default margins the half margin holds the foot line
+  -- whole and the band is zero: an undeclared page is unchanged.
+  let geom := if doc.foot.isSome then
+      { geom with footBand := footBandFor geom.vmargin (scale font.ascent) }
+    else geom
   let xHeight := scale font.xHeight
   let framesTotal := doc.body.foldl (fun n b => match b with
     | .frame _ _ _ => n + 1 | _ => n) 0
