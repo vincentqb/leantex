@@ -17,7 +17,10 @@ Knuth–Plass and Liang hyphenation, font families with true bold/italic/mono
 faces, the `\tiny`–`\Huge` size scale, small caps, named colours,
 font-relative design tokens, page geometry, running head/foot, hyperlinks as
 link annotations, document metadata, images (`\includegraphics`, `figure`,
-beamer's `\logo`; PNG including alpha, JPEG), and layout assertions that
+beamer's `\logo`; PNG including alpha, JPEG), formal tables (booktabs by
+construction: three sourced rule weights, padding that belongs to the
+rules, no vertical lines) with captioned floats whose gaps are held to the
+vertical rhythm by theorem, and layout assertions that
 fail the build. HTML5: a typed tree with a certified escaper, semantic
 markup, tokens
 as CSS custom properties, `--css bulma` interop, one self-contained file.
@@ -90,6 +93,55 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — M8's table story: booktabs is the layout, not a package, and
+float/caption spacing is declared, rhythm-held, and enforced. The user's
+two asks, in order of stated value: consistent spacing first, booktabs
+second. The IR gains `.table` (columns from the spec, rectangular rows,
+typed rules) and `.float` (figure/table, caption on its source side) with
+every walk arm explicit and the conservation theorems over them
+(`shadeTableRows_text`, `dimTableRows_text`, `keepForOne_covers`,
+`textLeaves` arms). Design values are sourced constants in Ir —
+booktabs.dtx's documented defaults (`\heavyrulewidth` .08em,
+`\lightrulewidth` .05em, `\cmidrulewidth` .03em, `\belowrulesep` .65ex >
+`\aboverulesep` .4ex, `\cmidrulekern` .5em, `\defaultaddspace` .5em),
+classes.dtx's `\tabcolsep` 6pt and `\doublerulesep` 2pt — each held by a
+theorem: `rule_weights_ordered` (the three-weight hierarchy),
+`rule_seps_ordered` (a rule binds to what it closes), and
+`caption_gaps_rhythm`, the user's complaint stated as an invariant: the
+caption gap is the half rhythm unit (6pt), the float gap the full unit
+(12pt, exactly LaTeX's `\intextsep`), quantized to `parskip` so spacing
+cannot drift per document — no authority fixes the caption gap's absolute
+value, so the statement takes the weakest sufficient property (ordering +
+quantization) rather than an invented threshold. Rectangularity is the
+alignment grid's statement shape restated for tables
+(`padTableRows_rectangular`, `padTableRows_cells`; `MRows.pad_rectangular`
+is monomorphic over math's own row type, so the shape transfers, the
+theorem does not — one property, two statements, noted rather than
+hidden). Layout places rules flush (`noInterline`, as TeX ignores
+`\prevdepth` after an `\hrule`) padded by exactly their declared seps;
+cells set through the column machinery so a row advances by its tallest
+cell. Both backends read the same constants: HTML draws the rule classes
+from `Ir.heavyRuleWidth` and friends as CSS custom properties with the
+booktabs defaults as fallbacks; markdown sets the pipe table. Codes:
+W0337 (ragged row padded/widened), W0338 (table wider than the measure,
+in points) — drafted as W0336/W0337, moved once when the diagnostic slice
+landed E0336 on main (the registry as landed wins a number race);
+W0308 (tables as plain lines) lost its last emission site and
+left the registry. `\hline` maps to the light rule, `\cline` to an
+untrimmed `\cmidrule`, `\multicolumn` keeps its text and W0337 names the
+lost span. Fixtures `tables` (the user's p-column shape, captions both
+sides, a figure) and `tables-ragged`, each with census rows; rule extents
+judged from `Layout.Out` in `tableChecks` (toprule = bottomrule extent,
+cmidrule strictly inside — an executable check, not a theorem: the
+extents live in `collectTable`'s local arithmetic). Owed, named here so
+the next slice starts where this stopped: caption–object inseparability
+across a page break (nothing prevents the break today; the page machinery
+has no keep-together yet), the table width-sum-no-drift statement as a
+theorem (needs `colX`/`tableW` extracted from `collectTable`),
+`\multicolumn` spans, `\addlinespace`/gap rules and cmid trims in HTML,
+per-rule `[width]` overrides (declined deliberately: weights are the
+design), and `p`-cell vertical alignment (`m`/`b` set as `p`).
+
 2026-09-17 — the diagnostic voice is gated, not groomed. Real output
 carried `error[W0307]` (a warning-lettered error), `see PLAN.md` (a file
 the reader does not have), and milestone names (`M6`, `M8`). Three
@@ -122,6 +174,7 @@ string literals at the source level (`repoRefInString`). The rewrite that
 followed is mechanical fallout: milestones and `see PLAN.md` deleted from
 every message, helps that named no action dropped or given a spelling.
 
+||||||| base
 2026-09-17 — covered means the same colour, quieter. Covering used to
 erase a colour: `shadeInline` repainted every nested `.colored` run to
 the one palette `covered` constant, so a covered alert and a covered
