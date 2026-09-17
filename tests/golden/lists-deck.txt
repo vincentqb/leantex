@@ -6,6 +6,7 @@ palette fg #23373B
 palette bg #FAFAFA
 palette alert #A55A13
 palette example #008080
+palette muted #647274
 palette frametitlefg #FAFAFA
 palette frametitlebg #23373B
 palette progressfg #A55A13
@@ -15,6 +16,7 @@ palette standoutfg #FAFAFA
 palette standoutbg #23373B
 palette covered #A8B0B1
 token progressheight 1pt
+chrome footer left sectiontitle right framenumber
 meta title "List Marks"
 meta author "Pat Placeholder"
 frame

@@ -14,6 +14,7 @@ palette progressbg #CBC0B6
 palette separator #A55A13
 palette standoutfg #FAFAFA
 palette standoutbg #23373B
+palette covered #A8B0B1
 token progressheight 1pt
 chrome footer left sectiontitle right framenumber
 meta title "Slide Chrome"
