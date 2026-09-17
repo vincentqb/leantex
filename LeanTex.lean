@@ -4,6 +4,8 @@ import LeanTex.Core.Flate
 import LeanTex.Core.Image
 import LeanTex.Core.Lex
 import LeanTex.Core.Parse
+import LeanTex.Core.Math
+import LeanTex.Core.MathParse
 import LeanTex.Core.Ir
 import LeanTex.Core.ListMark
 import LeanTex.Core.Theme
