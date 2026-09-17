@@ -575,6 +575,25 @@ def anchorChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{frame}{One}a\\end{frame}\\end{document}")
   t "html slides sectioning is untouched"
     (((HtmlDoc.emit {} deck).1.splitOn "<section id=").length == 1)
+  -- The declared stylesheet: named by the document, linked after the inline
+  -- styles in every css mode, and quoted or bare spellings agree.
+  let sheetSrc (v : String) := "\\documentclass{article}" ++
+    s!"\\output\{ stylesheet = {v} }\\begin\{document}x\\end\{document}"
+  let (sheetDoc, sheetDs) := elabStr (sheetSrc "\"site.css\"")
+  let (bareDoc, bareDs) := elabStr (sheetSrc "site.css")
+  let link := "<link rel=\"stylesheet\" href=\"site.css\">"
+  t "output stylesheet parses quoted and bare" (sheetDs.isEmpty && bareDs.isEmpty &&
+    sheetDoc.output.stylesheet == some "site.css" &&
+    bareDoc.output.stylesheet == some "site.css")
+  t "html links the declared stylesheet in every css mode"
+    ([HtmlDoc.CssMode.own, .bulma, .none].all fun mode =>
+      ((HtmlDoc.emit { css := mode } sheetDoc).1.splitOn link).length == 2)
+  t "html declared stylesheet follows the inline styles"
+    (match ((HtmlDoc.emit {} sheetDoc).1.splitOn link)[0]? with
+     | some before => (before.splitOn "</style>").length == 2
+     | none => false)
+  t "html no stylesheet, no link"
+    (((HtmlDoc.emit {} doc).1.splitOn "<link rel=\"stylesheet\"").length == 1)
 
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
 around the content, and nothing warns. Its own function: `main` is one `do`

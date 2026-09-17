@@ -694,6 +694,11 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
       "    --bulma-body-family: var(--font-body, inherit);\n" ++
       "}\n" ++ styled))
   | .none => unless styled.isEmpty do head := head.push (Node.style styled)
+  -- The declared sheet comes after the inline styles: at equal specificity
+  -- the later rule wins, so the document's own stylesheet can restyle the
+  -- defaults instead of fighting them.
+  if let some href := doc.output.stylesheet then
+    head := head.push (Html.elem "link" #[] #[("rel", "stylesheet"), ("href", href)])
   let bodyClass := match cfg.css with
     | .bulma => "content"
     | _ => ""

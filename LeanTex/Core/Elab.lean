@@ -2374,11 +2374,19 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
       else
         diag ctx "E0321" s!"'{v}' is not a stylesheet mode" pos
           (help := some "css: own | bulma | none")
+    | some ("stylesheet", v) =>
+      inFormats := false
+      -- A path is a string; the quotes other declarations require are
+      -- accepted but not demanded, as `formats` entries are bare too.
+      let v := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
+          String.ofList (v.toList.drop 1).dropLast
+        else v
+      o := { o with stylesheet := some v }
     | some (key, _) =>
       inFormats := false
       modify fun st => { st with
         diags := st.diags.push (Decl.unknownKey ctx.file "output" key
-          ["formats", "css"] pos) }
+          ["formats", "css", "stylesheet"] pos) }
     | none =>
       if inFormats then
         o ← addFormat o entry

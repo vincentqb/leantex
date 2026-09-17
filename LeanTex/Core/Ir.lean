@@ -209,6 +209,12 @@ so the core does not know the CLI's option types. -/
 structure OutputSpec where
   formats : Array String := #[]
   css : Option String := none
+  /-- A stylesheet the HTML page links, resolved by the browser relative to
+  the page. `css = none` promised "bring your own stylesheet" but gave the
+  document no way to name it; this is that way, and it composes with every
+  css mode (the link comes after the inline styles, so the named sheet wins
+  ties). -/
+  stylesheet : Option String := none
   deriving Repr, BEq, Inhabited
 
 /-- PDF document information, as declared by `\pdfmeta`. -/
@@ -1673,6 +1679,15 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
   let infoLines :=
     metaLine "title" doc.info.title ++ metaLine "author" doc.info.author ++
     metaLine "subject" doc.info.subject ++ metaLine "keywords" doc.info.keywords
+  let outputLines :=
+    (if doc.output.formats.isEmpty then ""
+     else s!"output formats {String.intercalate "," doc.output.formats.toList}\n") ++
+    (match doc.output.css with
+     | some c => s!"output css {c}\n"
+     | none => "") ++
+    (match doc.output.stylesheet with
+     | some s => s!"output stylesheet {s.quote}\n"
+     | none => "")
   let asserts := String.join (doc.asserts.toList.map fun a =>
     s!"assert {a.kind.source}\n")
   let body := dumpBlocks "" doc.body
@@ -1681,6 +1696,6 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
       "-- diagnostics\n(none)\n"
     else
       "-- diagnostics\n" ++ String.join (diags.toList.map dumpDiag)
-  head ++ page ++ fontLines ++ paletteLines ++ tokenLines ++ runLines ++ infoLines ++ asserts ++ body ++ ds
+  head ++ page ++ fontLines ++ paletteLines ++ tokenLines ++ runLines ++ infoLines ++ outputLines ++ asserts ++ body ++ ds
 
 end LeanTex.Core.Ir
