@@ -2612,6 +2612,26 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     (rOut.pages.size == 2 && rOut.pages.all (·.foot.isNone) && rDoc.frameCount == 1)
   t "the physical sequence substitutes per page"
     (Ir.plainText (Layout.substPage 2 2 (rDoc.foot.getD #[])) == "page 2 of 2")
+  -- The clamps are gone because they cannot fire: the position is a some
+  -- of the numbering, ≤ the count by theorem. The bar fills exactly at the
+  -- end, and a deck with no countable frame draws no bar at all.
+  let (fDoc, _) := elabStr (deck "\\theme{moloch}\\title{T}\\author{A}"
+    ("\\begin{frame}{One}\na\n\\end{frame}\n\\section{End}"))
+  let fGeom := Layout.Geom.ofPage fDoc.page
+  let fOut := Layout.run fGeom oneFace none fDoc
+  let mp : Dim.Sp := fGeom.textWidth * 7875 / 10000
+  t "a section after every frame fills the bar exactly"
+    (fOut.pages.any fun p => p.fills.any fun f =>
+      f.w == mp && f.color == (⟨0xA5, 0x5A, 0x13⟩ : Ir.Color))
+  let (zDoc, zDs) := elabStr (deck "\\theme{moloch}\\title{T}\\author{A}"
+    ("\\maketitle\n\\section{S}\n\\begin{frame}[standout]\nQ\n\\end{frame}"))
+  t "zero-count deck source clean" zDs.isEmpty
+  t "a deck with no countable frame draws no progress bar"
+    (zDoc.frameCount == 0 &&
+     (Layout.run (Layout.Geom.ofPage zDoc.page) oneFace none zDoc).pages.all fun p =>
+       !(p.fills.any fun f => f.color == (⟨0xCB, 0xC0, 0xB6⟩ : Ir.Color)))
+  t "html draws no progress bar with no countable frame"
+    (((HtmlDoc.emit {} zDoc).1.splitOn "class=\"progress\"").length == 1)
 
 /-- The deck's own footer route: `\setbeamertemplate{frame footer}` — alone
 or expanded from a `\newenvironment` wrapper — reaches the chrome footer's

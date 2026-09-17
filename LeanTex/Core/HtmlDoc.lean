@@ -758,12 +758,15 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
         | .section 1 starred title =>
           curSection := title
           if themedSections then
-            let pct := (min done total) * 100 / max total 1
-            acc := acc.push (Html.elem "section" #[
-              Html.elem "h2" (inlines cfg title),
-              Html.elem "div" #[Html.elem "div" #[] #[("style", s!"width: {pct}%")]]
-                #[("class", "progress")]]
-              #[("class", "section-page")])
+            -- No clamp, as on the PDF path: `done ≤ total` by theorem
+            -- over the numbering both walks read; a deck with no
+            -- countable frame draws no bar.
+            let kids := #[Html.elem "h2" (inlines cfg title)]
+            let kids := if total == 0 then kids else
+              kids.push (Html.elem "div"
+                #[Html.elem "div" #[] #[("style", s!"width: {done * 100 / total}%")]]
+                #[("class", "progress")])
+            acc := acc.push (Html.elem "section" kids #[("class", "section-page")])
           else
             acc := acc.push (blockNode cfg (.section 1 starred title))
         | _ => acc := acc.push (blockNode cfg b)

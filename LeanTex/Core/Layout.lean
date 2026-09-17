@@ -1763,9 +1763,16 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       let bgC := (a.pal.find? "progressbg").getD ((a.pal.find? "bg").getD Ir.Color.white)
       let thick := ((a.tokens.find? "progressheight").map
         fun g => (a.resolve g).width).getD (pt 1)
-      let a := { a with ops := a.ops.push (.progress
-        (min a.framesDone a.frameCount) (max a.frameCount 1) fgC bgC thick
-        (a.geom.hmargin + indent) mp) }
+      -- No clamp: every threaded position is a some of `Ir.frameNumbers`,
+      -- ≤ the denominator by theorem (`frameNumbers_le_count`) — moloch
+      -- clamps (beamerouterthememoloch.dtx:290) only because its total
+      -- comes from a lagging aux file, and this engine has no aux file to
+      -- lag. A deck with no countable frame has no position to show, so
+      -- it draws no bar at all rather than a fraction over a fake 1.
+      let a := if a.frameCount == 0 then a else
+        { a with ops := a.ops.push (.progress
+          a.framesDone a.frameCount fgC bgC thick
+          (a.geom.hmargin + indent) mp) }
       a.pageBreak
     else
     -- In slides, a section is a divider: its own page between frames rather
