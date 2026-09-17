@@ -53,6 +53,135 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — compound engineering: the obligation table, and the gates
+that make it mechanical. A user found six defects by looking at one page
+while every check was green; the root cause was not six bugs but that
+nobody knew, when adding a feature, which invariant that kind of feature
+owes. The knowledge is now a table (condensed in AGENTS.md, full rows
+here), and every row that is checkable today is a gate that fails the
+commit or the suite rather than a rule an agent can forget. Derived from
+the three architecture audits (faithfulness, provability, design) and
+the defects themselves.
+
+The rows, each with its why:
+
+- An `Ir` constructor owes an explicit arm in every IR-to-IR walk and
+  both backend consumers — no wildcard. The walk catch-alls were how
+  covered content could ship undimmed; a future constructor (`.image`,
+  M8) must answer everywhere before it compiles. Enforced: the ten
+  catch-alls (`Ir.fillOne`, `maxStepBlock`, `maxStepInline`,
+  `shadeBlock`, `shadeInline`, `dimBlock`, `dimInline`,
+  `unwrapItemStep`; `Layout.substPageOne`, `raggedItems`) are spelled
+  out, so the compiler rejects an unanswered constructor, and the hook
+  rejects the two spellings that would silence it again (`| other =>
+  other` anywhere in core, `| _ => <numeral>` in Ir.lean). One
+  catch-all was a real drop and gained a real arm with a test that
+  failed first: a font template's hole inside a link or step wrapper
+  now fills. A step inside a section title stays one handout page —
+  furniture sits outside the overlay model, as the dim walks already
+  decided — but the answer is now an explicit arm pinned by test, not a
+  wildcard's accident. The gate showed its worth mid-flight: the chrome
+  slice added `Block.framefoot` while this one was in review, and the
+  closed walks refused to build until every walk answered for it.
+  The arms that deliberately keep a block whole under shade/dim
+  (section, note, frame, framefoot) now say so where they stand.
+- A golden fixture owes a `censusTable` row in Tests.lean: assertions
+  over the pages the engine ships (`Layout.Out`), so no fixture enters
+  the suite witnessed by its IR dump alone. All six defects were
+  invisible to goldens by construction — goldens witness elaboration
+  only. Enforced: `censusChecks` fails when a `goldenNames` entry has no
+  row; proven by deleting the notes row (coverage failed) and by
+  re-breaking the dim walk (the covered facts of talk, overlays, and
+  furniture failed).
+- A backend emission owes the census assertion that it appeared — the
+  footer that is declared and read by nothing is the defect shape.
+  Enforced per fixture today (fills, rules, covered runs, resolved page
+  numbers, line positions for centring and columns); the role census the
+  faithfulness audit designed extends `Check.Shipped` and should absorb
+  the Tests-side table when it lands.
+- A diagnostic code owes one meaning, held in `diagRegistry`, and a test
+  that fires it. The registry's first run found W0314 already meaning
+  both "column width is not a fraction" and "unknown theme"; while the
+  renumber was in flight the chrome slice took W0318 for "\chrome
+  outside slides" — the third collision of the same day, so the theme
+  meaning is W0319 (deck golden regenerated). The card slice had dodged
+  the same class by hand (W0315 → W0317). Enforced: `diagChecks` scans
+  every quote-delimited code literal in the engine — each must be
+  registered, no number twice, no entry outliving its last emission
+  site. The firing test stays convention, not yet checked.
+- A design constant owes a source or a token. `sectionSize`'s pt 14 /
+  pt 12 ignoring the type scale and the progressheight fallback `pt 1`
+  are the standing examples (design audit I3/I4, still open). Enforced:
+  the hook rejects an added bare `pt`/`mm`/`mm100`/`inch` literal on a
+  commentless line in the four backend files; it checks that a why was
+  written, not that it is right.
+- A recursive IR walk owes a `List` companion with a threaded
+  accumulator (the existing append hook holds the cost half) and its
+  conservation statement where it is one. The overlay slice landed
+  exactly these for the dim walks — `Ir.shadeBlocks_text` /
+  `dimBlocks_text` prove shading and dimming preserve every character —
+  by the accumulator-lemma-then-mutual pattern the faithfulness audit
+  demonstrated; `substPage` and `fillTemplate` owe theirs the same way.
+- A palette role or token the engine reads owes a single resolving site,
+  its contrast contract, and a per-bundle completeness check. moloch
+  declares `separator` and no code reads it; sectionpage alignment fell
+  back per `getD` site. Enforcement arrives with the resolve-once
+  `Design` record (below); today Contrast.lean carries the pairing
+  contract and the bundles are pinned by test.
+- A page-opening path owes a declared vertical distribution, never a
+  default. The title jammed at the top of its page, and the plain-frame
+  branch opens a page with no `pageStyle` at all. Enforcement arrives
+  with `vdist` on `Op.pageStyle` (design audit R1; its `distribute_sum`
+  lemma is already proved in that audit's scratch); until then a new
+  page-opening path sets `centerV` deliberately.
+- A furniture element owes a declared alignment: `\maketitle` hard-codes
+  `.center` where the moloch source is ragged-left under golden-ratio
+  glue. Arrives with `align` on `ElementStyle` (design audit R2).
+- An `AssertKind` owes its judge in `Check.one` (the match is exhaustive
+  — the compiler collects) and a test that re-breaks each guarantee once
+  (the card slice's pattern).
+- A document class owes sourced defaults and its contract as implied
+  assertions — the card entry below is the template.
+
+Costs, measured (medians of 3, warm tree, a no-op change staged): the
+whole hook 1355 ms, of which `lake build --wfail -q` is 207 ms and
+interpreting the script dominates the rest; the hook at main measured
+1327 ms, so this entry's three new checks add ~30 ms. `lake test`
+including the census layout of all 22 fixtures runs in ~1.4 s.
+
+The shared shapes, named once so the next agent extends instead of
+reinventing (status as of this entry):
+
+- Resolve-once-then-total: `Design.ofDoc : Palette → Tokens → Styles →
+  Design`, semantic fields non-Option, every default applied at one
+  construction site, backends and `Layout.collect*` read only the
+  record — never `find?`+`getD` per site. Proposal (provability audit's
+  keystone R1+R2, with themes as typed values); what it deletes is ~29
+  per-site fallbacks and the Contrast spec copies.
+- Ratio vertical distribution: `vdist : Nat × Nat` on `Op.pageStyle` and
+  `B`, `finishPage` calling `distribute`, exhaustiveness making
+  "unowned leftover" unrepresentable. Proposal (design audit R1);
+  today `centerV : Bool` with a hard-coded ½ split.
+- Declared alignment: `align` and `separator` keys on `ElementStyle`,
+  `titlepage` styleable. Proposal (design audit R2); today the struct
+  has neither key.
+- One bracket scanner: exists — `Elab.scanBracketArg`, the single scan
+  that four disagreeing copies collapsed into (2026-09-16 entry).
+- One census: `Check.Shipped` exists and is the lever; the role census
+  (text per page, marker runs with kind, fills, covered runs, link
+  rectangles, per-line x) extends it. The `censusTable` in Tests.lean is
+  deliberately thin and local so that growth absorbs it rather than
+  competing with it.
+- One bottom edge: exists — the chrome slice landed `Geom.bodyBottom`
+  as the one place the page bottom is read, with the footer band
+  reserved inside it (`bodyBottom_clears_footer`); Check's own bottom
+  reading should migrate to it.
+- Every tree walk: `List` companion in a `mutual` block with a threaded
+  `Array` accumulator (`Compat.rewriteList`, `Html.render`, the Ir
+  overlay walks). Exists as the house pattern; the hook rejects the
+  quadratic spelling and, now, the wildcard one.
+
+
 2026-09-17 — the theme contract ranges over the engine's values now, and
 the resolved design is a type. Correction to the colour entry below: its
 bundle theorems held over hand-transcribed palettes (`molochResolved`)

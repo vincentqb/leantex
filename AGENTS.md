@@ -48,6 +48,32 @@ in this repo; refer to the private reference corpus abstractly.
   to that invariant, not to the symptom. The test fails before and passes
   after; if the lesson generalises, it becomes a rule here or a hook check.
 
+- A claim about what a page shows comes only from a rendered page or the
+  shipped-page census (`censusChecks` over `Layout.Out`, `Check.Shipped`),
+  never from an IR dump or golden — goldens witness elaboration, not the
+  artifact; six visual defects once passed a fully green suite this way. A
+  visual bug's regression test asserts over `Layout.Out` or the typed HTML
+  tree (or a raster), never over `Ir.dump`.
+
+- The obligation table: adding a kind of thing owes an invariant, decided
+  before the code. The PLAN 2026-09-17 obligations entry carries each
+  row's why and the defect it would have caught; enforcement in
+  parentheses.
+
+  | when you add… | you owe… |
+  |---|---|
+  | an `Ir` constructor | an explicit arm in every IR-to-IR walk and both backends — no wildcard (compiler + hook) — and its census fact once it ships ink |
+  | a golden fixture | a `censusTable` row asserting its shipped pages (`lake test` coverage check) |
+  | a backend emission | the census assertion that it appeared (`censusTable`) |
+  | a diagnostic code | a `diagRegistry` entry — one code, one meaning (`lake test`) — and a test that fires it |
+  | a design constant | a token, or the source written where it stands (hook, backend files) |
+  | a recursive IR walk | a `List` companion + accumulator (hook), and its conservation statement where it is one |
+  | a palette role or token the engine reads | one resolving site, its contrast contract, a per-bundle check (arrives with `Design`; today Contrast.lean + bundle pins) |
+  | a page-opening path | a declared vertical distribution, never a default (arrives with `vdist`; until then set `centerV` deliberately) |
+  | a furniture element | a declared alignment, never a hard-coded `.center` (arrives with `align` on `ElementStyle`) |
+  | an `AssertKind` | its judge in `Check.one` (exhaustive match) and a test that breaks it once |
+  | a document class | sourced defaults, and its contract as implied assertions |
+
 - Pure core: modules under `LeanTex/Core/` do no IO (`FontDb` is the one
   exception; the pre-commit hook rejects new IO in core). Files, fonts,
   anything external surfaces as request values the CLI driver fulfills
