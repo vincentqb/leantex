@@ -53,34 +53,6 @@ private def isFontFile (p : String) : Bool :=
   let ext := (p.splitOn ".").getLast? |>.map String.toLower
   ext == some "ttf" || ext == some "otf"
 
-/-- Font files under `dir`, `depth` levels deep. Structural on `depth`: a
-directory tree is not an inductive type the checker can see, so the bound is
-the recursion measure, and four is deeper than any font tree goes. -/
-def listFonts (dir : System.FilePath) : Nat → IO (Array String)
-  | 0 => pure #[]
-  | depth + 1 => do
-    -- Threads the accumulator: `out ++ (← recurse)` copied it at every
-    -- subdirectory, and a font tree has hundreds.
-    go dir depth #[]
-where
-  go (dir : System.FilePath) : Nat → Array String → IO (Array String)
-    | 0, acc => pure acc
-    | depth + 1, acc => do
-      -- Sorted: `readDir` returns filesystem order, which differs between
-      -- hosts, and resolution breaks ties by scan order. The same files must
-      -- give the same faces in the same order everywhere.
-      let entries := (← try dir.readDir catch _ => pure #[]).qsort
-        fun a b => a.fileName < b.fileName
-      let mut acc := acc
-      for e in entries do
-        let p := e.path
-        -- A name with a font extension is a file; nothing else is worth a stat.
-        if isFontFile p.toString then
-          acc := acc.push p.toString
-        else if ← p.isDir then
-          acc ← go p depth acc
-      return acc
-
 /-- Read just enough of a font file to classify it: the table directory, then
 the `name`, `OS/2`, `head`, and `post` tables. Full files are large (a
 megabyte each is common) and a scan touches every installed face. -/
@@ -167,15 +139,16 @@ def cacheDir : IO (Option System.FilePath) := do
 private def cachePath : IO (Option System.FilePath) := do
   return (← cacheDir).map (· / "fontdb.tsv")
 
-/-- One line per file, tab-separated: the key fields, then the classification
--- or nothing after the key for a file `probe` rejected, so a rejected font is
-not read again on every run. Family names may hold spaces and never tabs,
-which is why the format is TSV and not something that needs an escaper. -/
-private def faceLine (path size mtime : String) (f : Option Face) : String :=
+/-- One line per file, tab-separated: the key (path, size, mtime joined by
+tabs), then the classification — or nothing after the key for a file `probe`
+rejected, so a rejected font is not read again on every run. Family names may
+hold spaces and never tabs, which is why the format is TSV and not something
+that needs an escaper. -/
+private def faceLine (key : String) (f : Option Face) : String :=
   match f with
-  | some f => String.intercalate "\t" [path, size, mtime, f.family, f.subfamily,
+  | some f => String.intercalate "\t" [key, f.family, f.subfamily,
       toString f.bold, toString f.italic, toString f.fixedPitch, toString f.weight]
-  | none => String.intercalate "\t" [path, size, mtime]
+  | none => key
 
 private def parseLine (line : String) : Option (String × Option Face) :=
   match line.splitOn "\t" with
@@ -192,6 +165,94 @@ private def fileKey (path : String) : IO (Option (String × String)) := do
     return some (toString md.byteSize, s!"{md.modified.sec}.{md.modified.nsec}")
   catch _ => return none
 
+/-! ## The listing cache
+
+On a warm run the walk itself is what remains: a `readDir` per directory and
+a stat per entry, ~50 ms on a host with a TeX Live tree — more than
+everything else the scan does. The set of names under a directory is a
+function of that directory's own entries, and POSIX moves a directory's
+mtime whenever an entry is added, removed, or renamed, so each directory's
+listing is cached keyed by its mtime: a hit costs one stat instead of a
+listing. A file edited in place keeps its name — the cached listing stays
+correct — and changes its own size or mtime, which the per-file probe key
+catches. A new subdirectory appears in its parent's listing, whose mtime
+moved, so the walk that first sees the parent fresh discovers it. As with
+the probe cache, nothing here can make the answer differ from a real walk. -/
+
+private def dirsPath : IO (Option System.FilePath) := do
+  return (← cacheDir).map (· / "fontdb-dirs.tsv")
+
+/-- One line per directory: path, mtime, then each entry in sorted order
+prefixed `F` (a font file) or `D` (a subdirectory). Entries the walk skips
+(non-font files) are not recorded; order is kept because resolution breaks
+ties by scan order. -/
+private def dirLine (path mtime : String) (entries : Array (Bool × String)) : String :=
+  String.intercalate "\t" (path :: mtime :: entries.toList.map fun (isFont, n) =>
+    (if isFont then "F" else "D") ++ n)
+
+private def parseDirLine (line : String) :
+    Option (String × String × Array (Bool × String)) := Id.run do
+  match line.splitOn "\t" with
+  | path :: mtime :: rest =>
+    if path.isEmpty || mtime.isEmpty then
+      return none
+    let mut entries : Array (Bool × String) := #[]
+    for e in rest do
+      if e.startsWith "F" then
+        entries := entries.push (true, (e.drop 1).toString)
+      else if e.startsWith "D" then
+        entries := entries.push (false, (e.drop 1).toString)
+      else
+        return none
+    return some (path, mtime, entries)
+  | _ => return none
+
+/-- The walk behind `scanRoots`, through the listing cache. Structural on
+`depth`: a directory tree is not an inductive type the checker can see, so
+the bound is the recursion measure, and six is deeper than any font tree
+goes. Accumulates the font files found, the listing of every directory
+visited (for the cache rewrite), and whether any directory had to be listed
+fresh. Listings are sorted: `readDir` returns filesystem order, which
+differs between hosts, and resolution breaks ties by scan order. -/
+private def walkCached (known : Std.HashMap String (String × Array (Bool × String))) :
+    Nat → System.FilePath → Array String →
+    Array (String × String × Array (Bool × String)) → Bool →
+    IO (Array String × Array (String × String × Array (Bool × String)) × Bool)
+  | 0, _, files, seen, dirty => pure (files, seen, dirty)
+  | depth + 1, dir, files, seen, dirty => do
+    match ← dir.metadata.toBaseIO with
+    | .error _ => pure (files, seen, dirty)
+    | .ok md =>
+      let key := dir.toString
+      let mtime := s!"{md.modified.sec}.{md.modified.nsec}"
+      let hit := match known[key]? with
+        | some (m, es) => if m == mtime then some es else none
+        | none => none
+      let (entries, freshlyListed) ← match hit with
+        | some es => pure (es, false)
+        | none => do
+          let raw := (← try dir.readDir catch _ => pure #[]).qsort
+            fun a b => a.fileName < b.fileName
+          let mut es : Array (Bool × String) := #[]
+          for e in raw do
+            if isFontFile e.fileName then
+              es := es.push (true, e.fileName)
+            else if ← e.path.isDir then
+              es := es.push (false, e.fileName)
+          pure (es, true)
+      let mut files := files
+      let mut seen := seen.push (key, mtime, entries)
+      let mut dirty := dirty || freshlyListed
+      for (isFont, name) in entries do
+        if isFont then
+          files := files.push (dir / name).toString
+        else
+          let (f, s, d) ← walkCached known depth (dir / name) files seen dirty
+          files := f
+          seen := s
+          dirty := d
+      pure (files, seen, dirty)
+
 /-- The built-in locations plus `dirs`, in resolution order. -/
 def systemRoots (dirs : List String := []) : IO (List String) := do
   return searchDirs ++ (← extraDirs) ++ dirs
@@ -204,11 +265,37 @@ face, so chunks of files are probed in parallel; joining in chunk order keeps
 the face array exactly what the sequential scan produced, which matters
 because resolution prefers earlier faces on ties. -/
 def scanRoots (roots : List String) : IO (Array Face) := do
+  -- The walk, through the listing cache: a stat per unchanged directory.
+  let dirsFile ← dirsPath
+  let mut knownDirs : Std.HashMap String (String × Array (Bool × String)) := {}
+  if let some df := dirsFile then
+    if ← df.pathExists then
+      let text ← try IO.FS.readFile df catch _ => pure ""
+      for line in text.splitOn "\n" do
+        if let some (path, mtime, entries) := parseDirLine line then
+          knownDirs := knownDirs.insert path (mtime, entries)
   let mut files : Array String := #[]
+  let mut seenDirs : Array (String × String × Array (Bool × String)) := #[]
+  let mut dirsDirty := false
   for d in roots do
     let p := System.FilePath.mk d
     if ← p.pathExists then
-      files := files ++ (← listFonts p 6)
+      let (f, s, dirty) ← walkCached knownDirs 6 p files seenDirs dirsDirty
+      files := f
+      seenDirs := s
+      dirsDirty := dirty
+  -- Merged, not replaced: a scan of one small root (a document's own font
+  -- directory, the test corpus) must not evict what other roots cost to list.
+  if dirsDirty then
+    if let some df := dirsFile then
+      let mut merged := knownDirs
+      for (k, m, es) in seenDirs do
+        merged := merged.insert k (m, es)
+      try
+        if let some parent := df.parent then IO.FS.createDirAll parent
+        IO.FS.writeFile df (String.intercalate "\n"
+          (merged.toList.map fun (k, m, es) => dirLine k m es) ++ "\n")
+      catch _ => pure ()
   -- What the cache remembers, keyed by path + size + mtime.
   let cacheFile ← cachePath
   let mut known : Std.HashMap String (Option Face) := {}
@@ -220,9 +307,23 @@ def scanRoots (roots : List String) : IO (Array Face) := do
           known := known.insert key face
   -- Hits come from the cache; misses are probed in parallel chunks, in
   -- listing order either way so resolution's tie-breaking is unchanged.
+  -- The per-file keys are stats, thousands of them and nothing else touching
+  -- the disk while they run, so they go in parallel chunks too.
+  let chunk := 64
   let mut keyed : Array (String × Option (String × String)) := #[]
-  for f in files do
-    keyed := keyed.push (f, ← fileKey f)
+  let mut keyTasks : Array (Task (Except IO.Error
+      (Array (String × Option (String × String))))) := #[]
+  for c in [0:(files.size + chunk - 1) / chunk] do
+    let slice := files.extract (c * chunk) ((c + 1) * chunk)
+    keyTasks := keyTasks.push (← IO.asTask do
+      let mut out : Array (String × Option (String × String)) := #[]
+      for f in slice do
+        out := out.push (f, ← fileKey f)
+      return out)
+  for t in keyTasks do
+    match t.get with
+    | .ok out => keyed := keyed ++ out
+    | .error e => throw e
   let mut toProbe : Array (Nat × String) := #[]
   let mut result : Array (Option Face) := Array.replicate files.size none
   for h : i in [0:keyed.size] do
@@ -233,7 +334,6 @@ def scanRoots (roots : List String) : IO (Array Face) := do
       | some face? => result := result.set! i face?
       | none => toProbe := toProbe.push (i, f)
     | none => toProbe := toProbe.push (i, f)
-  let chunk := 64
   let mut tasks : Array (Task (Except IO.Error (Array (Nat × Option Face)))) := #[]
   for c in [0:(toProbe.size + chunk - 1) / chunk] do
     let slice := toProbe.extract (c * chunk) ((c + 1) * chunk)
@@ -247,17 +347,20 @@ def scanRoots (roots : List String) : IO (Array Face) := do
     | .ok out => for (i, face?) in out do result := result.set! i face?
     | .error e => throw e
   -- Rewrite the cache only when something was probed: the common case reads
-  -- one file and writes none.
+  -- one file and writes none. Merged like the listing cache, so probing a
+  -- new face under one root keeps every other root's classifications.
   if !toProbe.isEmpty then
     if let some cf := cacheFile then
-      let mut lines : Array String := #[]
+      let mut merged := known
       for h : i in [0:keyed.size] do
         match keyed[i] with
-        | (path, some (size, mtime)) => lines := lines.push (faceLine path size mtime result[i]!)
+        | (path, some (size, mtime)) =>
+          merged := merged.insert (path ++ "\t" ++ size ++ "\t" ++ mtime) result[i]!
         | _ => pure ()
       try
         if let some parent := cf.parent then IO.FS.createDirAll parent
-        IO.FS.writeFile cf (String.intercalate "\n" lines.toList ++ "\n")
+        IO.FS.writeFile cf (String.intercalate "\n"
+          (merged.toList.map fun (key, face?) => faceLine key face?) ++ "\n")
       catch _ => pure ()
   return result.filterMap id
 
