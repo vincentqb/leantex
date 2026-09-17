@@ -50,7 +50,7 @@ def goldenNames : List String :=
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
    "chrome", "lists", "lists-styled", "lists-deck",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
-   "webpage", "quotes", "quote-deck", "outline"]
+   "webpage", "quotes", "quote-deck", "outline", "outline-gap"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -763,6 +763,29 @@ def titleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the deck's title frame carries the one h1"
     ((((HtmlDoc.emit {} deck).1.splitOn "<h1>An Invented Deck</h1>").length == 2) &&
       (((HtmlDoc.emit {} deck).1.splitOn "<h1").length == 2))
+
+/-- The outline diagnostics: heading levels must not skip as the outline
+descends (HTML §4.3.11's conformance rule; WCAG G141), and the title comes
+first. Warnings over the IR, firing once per document; a proper ladder and
+a climb back up fire nothing. Own function: `main`'s elaboration budget. -/
+def outlineChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let body (s : String) := s!"\\documentclass\{article}\\begin\{document}{s}\\end\{document}"
+  t "a section-to-subsubsection gap warns W0320 once"
+    (warnCodes (body "\\section{A}x\\subsubsection{B}y\\subsubsection{C}z")
+      == ["W0320"])
+  t "a title-to-subsection gap warns W0320"
+    (warnCodes ("\\documentclass{article}\\title{T}\\begin{document}" ++
+      "\\maketitle\\subsection{S}x\\end{document}") == ["W0320"])
+  t "a title after another heading warns W0321"
+    (warnCodes ("\\documentclass{article}\\begin{document}" ++
+      "\\section{A}x\\title{T}\\maketitle\\end{document}") == ["W0321"])
+  t "a proper ladder warns nothing"
+    (warnCodes (body "\\section{A}x\\subsection{B}y\\subsubsection{C}z") == [])
+  t "climbing back up warns nothing"
+    (warnCodes (body "\\section{A}x\\subsection{B}y\\section{C}z") == [])
+  t "a document whose first heading is deep warns nothing"
+    (warnCodes (body "\\subsection{Fragment}x") == [])
 
 
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
@@ -3256,6 +3279,11 @@ def censusTable :
     ("every rung of the heading ladder ships",
       ["Habitats", "Wetlands", "Reed Beds", "Migration"].all
         fun h => hasStr (censusText c) h)]),
+  ("outline-gap", fun _ c => [
+    ("one page", c.size == 1),
+    ("the diagnosed document still ships every heading",
+      hasStr (censusText c) "Field Notes" &&
+        hasStr (censusText c) "A Detail Too Deep")]),
   ("overlays", fun _ c => [
     ("one handout page per step", c.size == 5),
     ("step one dims the later beats in place",
@@ -3380,6 +3408,8 @@ def diagRegistry : List (String × String) := [
   ("W0309", "\\maketitle with nothing declared"),
   ("W0310", "'[' never closes; not an argument"),
   ("W0311", "a second \\frametitle replaces the first"),
+  ("W0320", "heading levels skip a step (HTML §4.3.11, WCAG G141)"),
+  ("W0321", "the document title follows another heading"),
   ("W0322", "a second \\maketitle is ignored; the title is typeset once"),
   ("W0312", "no {...} group after a command; skipped"),
   ("W0313", "{...} groups went with an unknown wrapper"),
@@ -5414,6 +5444,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       censusChecks ref oneFace pats
       quoteChecks ref oneFace
       titleChecks ref
+      outlineChecks ref
       columnsChecks ref oneFace
       overlayChecks ref oneFace
       overlayBlockChecks ref oneFace

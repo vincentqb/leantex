@@ -1,0 +1,12 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section 1
+  text "Field Notes"
+para
+  text "A paragraph under the section."
+section 3
+  text "A Detail Too Deep"
+para
+  text "The heading above skips the subsection level."
+-- diagnostics
+warning[W0320] - heading levels skip a step: '\section' is followed by '\subsubsection' | help: descend one level at a time (HTML §4.3.11, WCAG G141); a screen reader reads the gap as a broken outline

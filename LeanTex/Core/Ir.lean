@@ -1428,6 +1428,55 @@ def headingLevelColumns (out : Array Nat) : List (Option Nat × Array Block) →
 
 end
 
+/-- A heading level in the author's own vocabulary. -/
+private def levelName : Nat → String
+  | 0 => "the title"
+  | 1 => "'\\section'"
+  | 2 => "'\\subsection'"
+  | _ => "'\\subsubsection'"
+
+/-- Outline diagnostics over the document's heading levels — the two
+machine-checkable rules the authorities state, checked on the IR without
+rendering anything.
+
+Levels must not skip as the outline descends: each heading following
+another must have a level "less than, equal to, or 1 greater" than its
+lead (HTML §4.3.11, the conformance rule; WCAG technique G141 spells the
+same proper nesting). The jump is what a screen reader reports as a
+broken outline. And the level-0 title, when the document has one, comes
+first: a title standing mid-outline heads nothing before it (the
+elaborator already keeps it unique; its position is the document's).
+
+Warnings, once each per document, never errors: a document that skips a
+level still means something and still renders — the diagnostic names the
+native spelling that repairs it. -/
+def outlineDiags (doc : Doc) : Array Diag := Id.run do
+  let levels := headingLevels doc.body
+  let mut out : Array Diag := #[]
+  let mut prev : Option Nat := none
+  let mut gapNamed := false
+  let mut titleNamed := false
+  for l in levels do
+    if let some p := prev then
+      if l > p + 1 && !gapNamed then
+        gapNamed := true
+        out := out.push {
+          severity := .warning
+          code := "W0320"
+          message := s!"heading levels skip a step: {levelName p} is followed by {levelName l}"
+          help := some "descend one level at a time (HTML §4.3.11, WCAG G141); \
+a screen reader reads the gap as a broken outline" }
+      if l == 0 && !titleNamed then
+        titleNamed := true
+        out := out.push {
+          severity := .warning
+          code := "W0321"
+          message := "the document title follows another heading"
+          help := some "put \\maketitle before the first \\section, so the \
+outline starts at its top" }
+    prev := some l
+  return out
+
 private theorem plainTextList_append (l1 l2 : List Inline) :
     plainTextList (l1 ++ l2) = plainTextList l1 ++ plainTextList l2 := by
   induction l1 with

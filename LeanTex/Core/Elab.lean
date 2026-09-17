@@ -3003,7 +3003,9 @@ def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag :=
   let (raws, compatDiags) := Compat.rewrite file raws
   let (doc, st) := (elabDoc file raws).run {}
-  (doc, earlier ++ compatDiags ++ st.diags ++ Contrast.docDiags doc)
+  let contrast := Contrast.docDiags doc
+  let outline := Ir.outlineDiags doc
+  (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline)
 
 def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input

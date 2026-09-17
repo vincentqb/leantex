@@ -1,0 +1,16 @@
+% Invented text. A deliberate outline gap: \section jumps straight to
+% \subsubsection. The engine must diagnose the gap (W0320) and still
+% render every heading — a broken outline is a warning, never a refusal.
+\documentclass{article}
+
+\begin{document}
+
+\section{Field Notes}
+
+A paragraph under the section.
+
+\subsubsection{A Detail Too Deep}
+
+The heading above skips the subsection level.
+
+\end{document}
