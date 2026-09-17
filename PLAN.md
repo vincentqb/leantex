@@ -43,13 +43,74 @@ speaker notes as a side channel.
 are `partial` — three, not the two an earlier entry claimed; an audit found
 ten and seven were removed (2026-09-16 entry). The Knuth–Plass optimality
 theorem is held empirically by `scripts/kp-fuzz.lean`. Small caps are
-synthesised rather than drawn, math is emitted as source, and element styling
+synthesised rather than drawn, math renders its first slice (atoms,
+spacing, scripts — the 2026-09-17 M6 entry lists what still carries a
+named warning), and element styling
 (section fonts, list spacing) is not yet declarable, which is what keeps the
 real resume from matching its lualatex build exactly.
 
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-17 — M6's first vertical slice: formulas render. `$x^2$` is glyphs
+now, not the characters `x^2` — inline `$...$`/`\(...\)` and display
+`\[...\]`/`equation*`/`displaymath` elaborate to math atoms (TeX's eight
+classes) and set from the document's math face (`\fonts{ math = ... }`,
+fontspec's `\setmathfont` rewritten onto it) as one unbreakable box in the
+existing line machinery; display math is its own centred block. Variables
+set italic via the Mathematical Alphanumeric scalars, digits and the
+TeXbook's named functions upright (ISO 80000-2 §7 / TeXbook ch. 18).
+Scripts set at the MATH table's script percentages, shifted by the
+base-size-scaled constants, cramped variant under subscripts, stacked
+sup/sub advancing by the wider plus `spaceAfterScript`.
+
+The invariants, in their strongest closed forms:
+
+- Style recursion terminates — theorem (`style_progression_decreasing`,
+  `scriptscript_fixed_point`): the progression decreases and bottoms out at
+  scriptscript; the layout recursion itself is structural on the formula
+  tree (no new `partial`), the theorem is what makes its style parameter
+  meaningful.
+- The spacing table is total and correct — theorem
+  (`spacing_agrees_with_luatex`): spacing is a total function of (left,
+  right, style); degrade-then-space reproduces by `decide`, over all 64
+  class pairs in both style bands, exactly the named muskips luatex
+  inserts (`\showbox` probe, TeX Live 2026), Bin degradation included —
+  `$-x$` sets tight (`bin_leading_degrades`).
+- Sizes shrink monotonically — theorem (`sizes_shrink`): over every font's
+  percentages (clamped into (0,100] on parse, ss ≤ script), no script sets
+  larger than its base at any style.
+- A box is a box — test (`mathChecks`): a formula's advance equals the sum
+  of its glyph advances plus the table's kerns, held in sp against widths
+  recomputed from the font's own advances, formula by formula (a+b's two
+  medium spaces, =' s thick ones, script suppression, stacked-script max,
+  spaceAfterScript). A theorem would quantify over the layout walk itself;
+  the walk computes width as the fold the test checks, and the honest label
+  today is test.
+- Nothing silently dropped — diagnostics, each pinned by test: an
+  out-of-scope construct earns W0010 naming it and its source still sets
+  (align kept its `&`); a glyph the math face lacks is W0004 naming the
+  face; no usable math face is one W0003 with the declaring fix in help; a
+  declared face without a MATH table is W0011 naming face and path.
+
+What M6 still owes, warned by name today: fractions, radicals,
+`\left...\right` with grown delimiters (MathVariants), big-operator
+display-size variants and above/below limits, `align`/`gather`/`array`/
+matrices, `\over`, accents, `\text{}` in math, primes, italic correction
+and math kerning (MathGlyphInfo), stretchy muskips, numbered `equation`,
+and native MathML on the HTML path — the HTML backend is deliberately
+unchanged (source in `data-tex`, `--math-boundary` still the tool).
+
+Measured: bench medians 77/287/398 ms (paragraphs/lorem/underline),
+within the noise band of the entries above — the math pass costs only
+documents that carry formulas. The fixture renders on both backends and
+was inspected as pixels beside a lualatex + unicode-math twin on the same
+shipped faces: same glyphs, same script placement, same spacing classes;
+the visible differences are exactly the owed items (display-size ∑ with
+limits below, italic correction). With the slice: the pre-commit keyword
+gate now strips string literals first — the math tables' `"partial"`
+(TeX's `\partial`) was a data entry, not a declaration.
 
 2026-09-17 — M6 opens: the two design decisions, written before the code.
 
