@@ -4162,7 +4162,7 @@ def diagChecks (ref : IO.Ref (List String)) : IO Unit := do
   files := files.push "Main.lean"
   let mut emitted : List String := []
   for f in files do
-    if f.toString.endsWith "Diag.lean" then continue
+    if f.toString == "LeanTex/Core/Diag.lean" then continue
     let src ← IO.FS.readFile f
     for c in appliedCodes (stripNonCode src) do
       if !emitted.contains c then

@@ -27,6 +27,7 @@ import LeanTex.Core.Check
 import LeanTex.Core.Pdf
 import LeanTex.Cli.Args
 import LeanTex.Cli.Render
+import LeanTex.Cli.DriverDiag
 
 namespace LeanTex
 
