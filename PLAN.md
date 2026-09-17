@@ -89,6 +89,44 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — covered means the same colour, quieter. Covering used to
+erase a colour: `shadeInline` repainted every nested `.colored` run to
+the one palette `covered` constant, so a covered alert and a covered
+example were the same grey (ΔEOK = 0 by construction; measured hue shift
+149.0° for moloch's alert) — and the constant's own comment cited
+Material, whose 38% disabled state is an *opacity*, per colour, not a
+repaint. Cover is now a function: `cover c` keeps `c` at the bundle's
+fraction of itself over the surface, mixed in Oklab (`Core/Oklab.lean`,
+pure Nat/Int — the table-inverted transfer function makes the 8-bit
+answer exact; `scripts/oklab-roundtrip.lean` checked the identity over
+all 2²⁴ inputs, 0 mismatches). Because both shipped surfaces are exact
+greys, hue preservation and chroma×fraction are algebra, not tolerance:
+`Oklab.hue_preserved` / `chroma_scaled` / `toward_surface` are theorems
+over the engine's own `labMix`; `icbrt_spec` bounds the one nonlinearity.
+`Design.cover` is the one resolving site; the walks take `Ir.Cover` and
+keep their shape, so `dimBlocks_text`/`shadeBlocks_text` survive.
+`covered = <n>\%` declares the fraction per bundle — exactly beamer's
+`\setbeamercovered{transparent=<n>}`, now lowered to it — and a colour
+value stays accepted as the cover of uncoloured runs.
+`Contrast.coveredContract` ranges over the per-colour cover of every
+text role, not `fg` alone: at 38% moloch's alert/example reach only
+2.89:1/2.75:1 against their active forms (under SC 1.4.11's 3:1), so
+moloch declares 31% — the largest closing fraction, a finding about the
+bundle, not a weakening of the contract. `coverMonotone` pins
+cover∘cover quieter per bundle; the general integer statement needs
+luminance monotonicity through the whole pipeline — a refactor this
+slice does not claim, tracked here. Scope held: covered ONLY, not the
+`!` mixes — cover is engine semantics, `!` is xcolor's declaration
+language, and Contrast.lean pins its sRGB model as a fidelity anchor
+(moving it would silently restyle every bundle: muted 4.79→5.24,
+progressbg #CBC0B6→#C2B5AD). Verified: build --wfail, tests, the
+exhaustive round-trip oracle, integer output byte-identical to the CSS
+Color 4 float reference on every shipped role (no clipping; at 38%
+chroma ×0.380–0.382, 8-bit hue shift ≤ 0.55°, 0 pre-quantisation by
+theorem), themed pages rastered and looked at (covered alert dims
+orange—or the fixture's declared pink—covered example dims teal, never
+one grey), bench medians 74/281/393 ms (baseline 79/290/396, noise).
+
 2026-09-17 — severity stops being a choice: it derives from a declared
 loss. The user's charge ("how come unsupported features are not Erroring
 out? … looks like you are generally taking shortcuts") audited out to one
