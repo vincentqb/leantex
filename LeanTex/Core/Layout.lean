@@ -1687,6 +1687,12 @@ private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : Font
   | blk :: rest =>
     let a := match blk with
       | .para content => collectPara a pats fs content indent true a.geom.fontSize
+      -- The centred title block: the level-0 heading centres with the
+      -- furniture around it, at the same LARGE bold the uncentred path sets.
+      | .section 0 _ title =>
+        collectDisplay a fs title indent true
+          (a.geom.fontSize * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000)
+          (baseStyle := { bold := true })
       | _ => collectBlock a pats fs blk indent
     collectCentered (if rest.isEmpty then a else a.wantGap) pats fs rest indent
 
@@ -1738,6 +1744,16 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .para content =>
     collectPara a pats fs content indent false a.geom.fontSize
   | .section level _ title =>
+    if level == 0 then
+      -- The document title, a heading at level 0: display type at the
+      -- scale's LARGE step in the bold face — classes.dtx's \@maketitle
+      -- sets {\LARGE \@title \par}. Never a divider: it stands inside the
+      -- furniture \maketitle built (the title frame, the centred block),
+      -- so it opens no page of its own even in slides.
+      collectDisplay a fs title indent false
+        (a.geom.fontSize * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000)
+        (baseStyle := { bold := true })
+    else
     -- The section in force, for the footer's \sectiontitle slot.
     let a := if level == 1 then { a with curSection := title } else a
     if a.slides && level == 1 && (a.pal.find? "progressfg").isSome then

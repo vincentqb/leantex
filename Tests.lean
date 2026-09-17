@@ -50,7 +50,7 @@ def goldenNames : List String :=
    "centering", "columns", "overlays", "overlays-blocks", "notes", "furniture",
    "chrome", "lists", "lists-styled", "lists-deck",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
-   "webpage", "quotes", "quote-deck"]
+   "webpage", "quotes", "quote-deck", "outline"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -703,6 +703,66 @@ def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
       decide (l.x + l.setWidth ≤ geom.hmargin + geom.textWidth - geom.listIndent))
   t "pdf prose around the quotation keeps the full measure"
     (lines.any fun l => l.x == geom.hmargin)
+
+/-- One fact, three renderings: a heading's level maps to the same rank in
+every backend — `#`-count and `h`-number are both level + 1 (the PDF side
+is the census assertion that the title text ships as furniture). Stated
+over the two functions the backends actually run. -/
+theorem heading_renderings_agree :
+    (MarkdownDoc.headingMarker 0 = "#" ∧ HtmlDoc.headingTag 0 = "h1") ∧
+    (MarkdownDoc.headingMarker 1 = "##" ∧ HtmlDoc.headingTag 1 = "h2") ∧
+    (MarkdownDoc.headingMarker 2 = "###" ∧ HtmlDoc.headingTag 2 = "h3") ∧
+    (MarkdownDoc.headingMarker 3 = "####" ∧ HtmlDoc.headingTag 3 = "h4") := by
+  decide
+
+/-- The document title is a level-0 heading (`\maketitle`): one per
+document by construction — the elaborator disables a second `\maketitle`
+exactly as LaTeX does (classes.dtx: `\global\let\maketitle\relax`) — and
+each backend renders the same fact: `<h1>` in HTML, `#` first in markdown
+(the metadata preamble never doubles it), the LARGE bold furniture in the
+PDF (census rows for outline and the deck fixtures). Own function:
+`main`'s elaboration budget. -/
+def titleChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr ("\\documentclass{article}" ++
+    "\\title{An Invented Title}\\author{Alex Doe}\\begin{document}" ++
+    "\\maketitle Body text.\\section{First}More.\\end{document}")
+  t "maketitle source is clean" ds.isEmpty
+  t "the title elaborates as a level-0 heading before the sections"
+    (Ir.headingLevels doc.body == #[0, 1])
+  let page := (HtmlDoc.emit {} doc).1
+  t "html sets the title as the one h1"
+    ((page.splitOn "<h1>An Invented Title</h1>").length == 2 &&
+      (page.splitOn "<h1").length == 2)
+  let md := MarkdownDoc.emit doc
+  t "markdown opens with the title as the one # line"
+    (md.startsWith "# An Invented Title\n\n" &&
+      (md.splitOn "\n# ").length == 1)
+  -- The metadata preamble falls back to the declared \title; with the
+  -- body carrying the level-0 heading it must not state the title twice.
+  t "markdown never doubles the title"
+    ((md.splitOn "# An Invented Title").length == 2)
+  -- A second \maketitle is a no-op, named: LaTeX typesets the title once.
+  let second := "\\documentclass{article}\\title{Once}\\begin{document}" ++
+    "\\maketitle\\maketitle x\\end{document}"
+  t "a second maketitle warns W0322" (warnCodes second == ["W0322"])
+  t "a second maketitle sets no second level-0 heading"
+    (Ir.headingLevels (elabStr second).1.body == #[0])
+  -- A \maketitle with nothing declared (W0309) spends nothing: the title
+  -- declared later still sets.
+  let late := "\\documentclass{article}\\begin{document}" ++
+    "\\maketitle\\title{Late}\\maketitle x\\end{document}"
+  t "an empty maketitle does not spend the title"
+    (warnCodes late == ["W0309"] && Ir.headingLevels (elabStr late).1.body == #[0])
+  -- Slides: the title heading stands inside the golden title frame and is
+  -- still the deck's one h1.
+  let (deck, deckDs) := elabStr ("\\documentclass{slides}" ++
+    "\\title{An Invented Deck}\\begin{document}\\maketitle" ++
+    "\\begin{frame}{One}a\\end{frame}\\end{document}")
+  t "deck title source is clean" deckDs.isEmpty
+  t "the deck's title frame carries the one h1"
+    ((((HtmlDoc.emit {} deck).1.splitOn "<h1>An Invented Deck</h1>").length == 2) &&
+      (((HtmlDoc.emit {} deck).1.splitOn "<h1").length == 2))
 
 
 /-- `\newenvironment` wrappers: the definition binds, the halves contribute
@@ -3188,6 +3248,14 @@ def censusTable :
     ("the slide's quotation indents from the margin",
       (lineXOf c 0 "Typesetting is invisible").any fun x =>
         decide (x == geom.hmargin + geom.listIndent))]),
+  ("outline", fun _ c => [
+    ("one page", c.size == 1),
+    ("the level-0 title ships as the title furniture",
+      hasStr (censusText c) "An Invented Field Guide"),
+    ("the author line ships under it", hasStr (censusText c) "Alex Doe"),
+    ("every rung of the heading ladder ships",
+      ["Habitats", "Wetlands", "Reed Beds", "Migration"].all
+        fun h => hasStr (censusText c) h)]),
   ("overlays", fun _ c => [
     ("one handout page per step", c.size == 5),
     ("step one dims the later beats in place",
@@ -3312,6 +3380,7 @@ def diagRegistry : List (String × String) := [
   ("W0309", "\\maketitle with nothing declared"),
   ("W0310", "'[' never closes; not an argument"),
   ("W0311", "a second \\frametitle replaces the first"),
+  ("W0322", "a second \\maketitle is ignored; the title is typeset once"),
   ("W0312", "no {...} group after a command; skipped"),
   ("W0313", "{...} groups went with an unknown wrapper"),
   ("W0314", "column width is not a fraction of the text width"),
@@ -5344,6 +5413,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       cardChecks ref oneFace pats
       censusChecks ref oneFace pats
       quoteChecks ref oneFace
+      titleChecks ref
       columnsChecks ref oneFace
       overlayChecks ref oneFace
       overlayBlockChecks ref oneFace

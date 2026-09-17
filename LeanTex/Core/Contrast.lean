@@ -227,9 +227,12 @@ private def UseCx.style (cx : UseCx) : Style → UseCx
   | _ => cx
 
 /-- The context a heading's title sets: layout's per-level sizes (14pt and
-12pt are absolute, level 3 the base), bold — 14pt bold is what the WCAG
-glossary counts as large-scale. -/
+12pt are absolute, level 3 the base; the level-0 title takes the scale's
+LARGE step), bold — 14pt bold is what the WCAG glossary counts as
+large-scale. -/
 private def headingCx (base : Sp) : Nat → UseCx
+  | 0 => { base, size := base * ((sizeScale.lookup "LARGE").getD 1000) / 1000
+           bold := true }
   | 1 => { base, size := Dim.pt 14, bold := true }
   | 2 => { base, size := Dim.pt 12, bold := true }
   | _ => { base, size := base, bold := true }

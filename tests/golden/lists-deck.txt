@@ -25,10 +25,8 @@ chrome footer left sectiontitle right framenumber
 meta title "List Marks"
 meta author "Pat Placeholder"
 frame golden
-  para
-    styled size:LARGE
-      styled bold
-        text "List Marks"
+  section* 0
+    text "List Marks"
   rule separator 0.5pt
   block before 800/1000em
     para

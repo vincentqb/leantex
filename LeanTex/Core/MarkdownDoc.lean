@@ -74,16 +74,21 @@ end
 private def inlineText (xs : Array Inline) : String :=
   inlinesInto "" xs.toList
 
+/-- The heading marker a section level takes: `#` marks the level-0
+document title, exactly as the HTML backend reserves `<h1>` for it, and
+each deeper level adds one `#` (capped at `####`, the deepest level the
+elaborator produces plus one). One fact, shared with the HTML backend's
+tag; `heading_renderings_agree` in Tests pins the agreement. -/
+def headingMarker (level : Nat) : String :=
+  String.ofList (List.replicate (min (level + 1) 4) '#')
+
 mutual
 
-/-- One block onto `acc`. `ind` is the current line prefix (list nesting).
-Level-1 sections are `##`: `#` is the document title's, exactly as the HTML
-backend reserves `<h1>`. -/
+/-- One block onto `acc`. `ind` is the current line prefix (list nesting). -/
 private def blockInto (ind acc : String) : Block → String
   | .para xs => acc ++ ind ++ inlineText xs ++ "\n\n"
   | .section level _ title =>
-    let hashes := if level ≤ 1 then "##" else if level == 2 then "###" else "####"
-    acc ++ ind ++ hashes ++ " " ++ inlineText title ++ "\n\n"
+    acc ++ ind ++ headingMarker level ++ " " ++ inlineText title ++ "\n\n"
   | .list ordered items => itemsInto ind ordered 1 acc items.toList ++ "\n"
   | .center body => blocksInto ind acc body.toList
   -- Markdown's own quotation: every line of the body takes the `> `
@@ -151,10 +156,14 @@ private def tighten (s : String) : String :=
   if trimmed.isEmpty then trimmed else trimmed ++ "\n"
 
 /-- Emit the document. The metadata renders as the llms.txt preamble: the
-title as the one `#` heading, the subject as the summary blockquote. -/
+title as the one `#` heading, the subject as the summary blockquote. A
+body that carries its own level-0 heading (`\maketitle`) already states
+the title where it stands, so the preamble line would double it — the
+body's heading is real content and wins. -/
 def emit (doc : Doc) : String :=
   let title := match doc.info.title with
-    | some t => s!"# {t}\n\n"
+    | some t =>
+      if (headingLevels doc.body).contains 0 then "" else s!"# {t}\n\n"
     | none => ""
   let summary := match doc.info.subject with
     | some s => s!"> {s}\n\n"

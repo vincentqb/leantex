@@ -26,10 +26,8 @@ chrome footer left sectiontitle right framenumber
 meta title "A Themed Deck"
 meta author "Pat Placeholder"
 frame golden
-  para
-    styled size:LARGE
-      styled bold
-        text "A Themed Deck"
+  section* 0
+    text "A Themed Deck"
   rule separator 0.5pt
   block before 800/1000em
     para

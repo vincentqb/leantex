@@ -13,10 +13,8 @@ meta author "Pat Placeholder"
 assert fonts.all_embedded
 frame golden
   center
-    para
-      styled size:LARGE
-        styled bold
-          text "Cardamom Press"
+    section* 0
+      text "Cardamom Press"
     para
       text "Pat Placeholder"
 frame

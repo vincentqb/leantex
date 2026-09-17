@@ -86,6 +86,11 @@ structure ESt where
   author : Option (Array Inline) := none
   institute : Option (Array Inline) := none
   date : Option (Array Inline) := none
+  /-- A `\maketitle` already set the title: LaTeX typesets a title once
+  (classes.dtx: `\maketitle` ends with `\global\let\maketitle\relax`), and
+  keeping to that is what makes the level-0 heading unique by
+  construction — a second call warns and produces nothing. -/
+  titleDone : Bool := false
   /-- Speaker-note bodies met inside inline content, where a block cannot
   stand: the enclosing frame drains them to its end, so a mid-sentence
   `\note` neither splits its paragraph nor loses its words. -/
@@ -1328,7 +1333,12 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   let mut inner : Array Block := #[]
   let mut pending : Option SymGlue := none
   if let some xs := part st.title then
-    inner := push inner none (.para #[.styled (.size "LARGE") #[.styled .bold xs]])
+    -- The document title is a heading at level 0, not a decorated
+    -- paragraph: the heading outline starts here (HTML §4.3.11 renders it
+    -- as the one <h1>, markdown as the one #), and layout gives it the
+    -- scale's LARGE step in the bold face — classes.dtx's \@maketitle sets
+    -- {\LARGE \@title \par}. Starred: a title is never numbered.
+    inner := push inner none (.section 0 true xs)
   if let some xs := part st.subtitle then
     inner := push inner (ctx.tokens.find? "subtitlegap") (.para #[.styled (.size "large") xs])
   if let some (c, nm) := tps.separator then
@@ -1627,6 +1637,15 @@ specs are not modelled")
             | _ =>
               diag ctx "E0304" "'\\logo' needs one group of inline content" pos
           else if n == "maketitle" || n == "titlepage" then
+            if (← get).titleDone then
+              -- LaTeX typesets the title once: \maketitle disables itself
+              -- (classes.dtx, \global\let\maketitle\relax), which is also
+              -- what keeps the document to one level-0 heading. Named,
+              -- never silent.
+              warnOnce ctx "ctrl:maketitle2" "W0322"
+                s!"a second '\\{n}' is ignored; the title is typeset once" pos
+                (help := "LaTeX's \\maketitle disables itself after use (classes.dtx)")
+            else
             let inner := titleBlocks ctx (← get)
             if inner.isEmpty then
               warnOnce ctx "ctrl:maketitle" "W0309"
@@ -1638,10 +1657,12 @@ specs are not modelled")
               -- against `plus 1fil` below), and its horizontal alignment is
               -- the `titlepage` style's declaration: moloch sets its title
               -- matter ragged left; undeclared, the title page centres.
+              modify fun st => { st with titleDone := true }
               let tps := (ctx.styles.find? "titlepage").getD {}
               let content := if tps.align == some "left" then inner else #[.center inner]
               blocks := blocks.push (.frame #[] false .golden content)
             else
+              modify fun st => { st with titleDone := true }
               blocks := blocks.push (.center inner)
           else
             let level := (sectionLevel n).getD 1

@@ -4,10 +4,8 @@ meta title "Frame Furniture"
 meta author "Pat Placeholder"
 frame golden
   center
-    para
-      styled size:LARGE
-        styled bold
-          text "Frame Furniture"
+    section* 0
+      text "Frame Furniture"
     para
       text "Pat Placeholder"
 frame

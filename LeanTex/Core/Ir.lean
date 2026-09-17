@@ -1389,6 +1389,45 @@ def blockTextColumns (acc : String) : List (Option Nat × Array Block) → Strin
 
 end
 
+mutual
+
+/-- Every `.section` level in document order: the document's heading
+outline, the fact the outline diagnostics and the markdown preamble read.
+A frame's body is walked (a deck's title heading stands inside the title
+frame); a note is a side channel and never ships a heading. The
+accumulator threads through, as every walk here does. -/
+def headingLevels (xs : Array Block) : Array Nat := headingLevelList #[] xs.toList
+
+def headingLevelList (out : Array Nat) : List Block → Array Nat
+  | [] => out
+  | b :: rest => headingLevelList (headingLevelOne out b) rest
+
+def headingLevelOne (out : Array Nat) : Block → Array Nat
+  | .section level _ _ => out.push level
+  | .para _ => out
+  | .list _ items => headingLevelItems out items.toList
+  | .center body => headingLevelList out body.toList
+  | .quote body => headingLevelList out body.toList
+  | .spaced _ body => headingLevelList out body.toList
+  | .columns cols => headingLevelColumns out cols.toList
+  | .step _ _ body => headingLevelList out body.toList
+  | .frame _ _ _ body => headingLevelList out body.toList
+  | .note _ => out
+  | .verbatim _ _ => out
+  | .framefoot _ => out
+  | .logo _ => out
+  | .rule _ _ _ => out
+
+def headingLevelItems (out : Array Nat) : List (Array Block) → Array Nat
+  | [] => out
+  | item :: rest => headingLevelItems (headingLevelList out item.toList) rest
+
+def headingLevelColumns (out : Array Nat) : List (Option Nat × Array Block) → Array Nat
+  | [] => out
+  | (_, body) :: rest => headingLevelColumns (headingLevelList out body.toList) rest
+
+end
+
 private theorem plainTextList_append (l1 l2 : List Inline) :
     plainTextList (l1 ++ l2) = plainTextList l1 ++ plainTextList l2 := by
   induction l1 with

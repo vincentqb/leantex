@@ -78,6 +78,7 @@ marker rule is emitted at each depth — the depth-qualified selectors match
 the level defaults' specificity and, standing later in the sheet, win. -/
 def styleRules (doc : Doc) : String :=
   let sel : String → Option String
+    | "titlepage" => some "h1"
     | "section" => some "h2" | "subsection" => some "h3" | "subsubsection" => some "h4"
     | "itemize" => some "ul" | "enumerate" => some "ol"
     | "itemize2" => some "ul ul" | "itemize3" => some "ul ul ul"
@@ -477,6 +478,18 @@ private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
     | other => cur := cur.push other
   return out.push cur
 
+/-- The heading tag a section level takes: level 0 is the document title —
+`h1` is "for a top-level section" (HTML §4.3.6) — and each deeper level
+takes the next tag, so an IR outline without gaps ships as a page outline
+without gaps (§4.3.11's conformance rule). One fact, shared with the
+markdown backend's `#` count; `heading_renderings_agree` in Tests pins the
+agreement. -/
+def headingTag : Nat → String
+  | 0 => "h1"
+  | 1 => "h2"
+  | 2 => "h3"
+  | _ => "h4"
+
 private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) : Node :=
   let groups := splitAtFills xs
   let rowClass := if groups.size == 2 then baseClass ++ " entry-pair" else baseClass
@@ -510,10 +523,12 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     else
       Html.elem "p" (inlines cfg content)
   | .section level _ title =>
-    let (tag, element) := match level with
-      | 1 => ("h2", "section")
-      | 2 => ("h3", "subsection")
-      | _ => ("h4", "subsubsection")
+    let element := match level with
+      | 0 => "titlepage"
+      | 1 => "section"
+      | 2 => "subsection"
+      | _ => "subsubsection"
+    let tag := headingTag level
     let st := (cfg.styles.find? element).getD {}
     let title := match st.font with
       | some tpl => fillTemplate tpl title

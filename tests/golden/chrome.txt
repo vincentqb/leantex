@@ -25,10 +25,8 @@ chrome footer left sectiontitle right framenumber
 meta title "Slide Chrome"
 meta author "Pat Placeholder"
 frame golden
-  para
-    styled size:LARGE
-      styled bold
-        text "Slide Chrome"
+  section* 0
+    text "Slide Chrome"
   rule separator 0.5pt
   block before 800/1000em
     para

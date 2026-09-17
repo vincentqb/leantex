@@ -7,10 +7,8 @@ meta title "A Certified Deck"
 meta author "Pat Placeholder"
 frame golden
   center
-    para
-      styled size:LARGE
-        styled bold
-          text "A Certified Deck"
+    section* 0
+      text "A Certified Deck"
     para
       styled size:large
         text "Slides from one IR"
