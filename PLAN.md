@@ -43,9 +43,10 @@ speaker notes as a side channel.
 are `partial` — three, not the two an earlier entry claimed; an audit found
 ten and seven were removed (2026-09-16 entry). The Knuth–Plass optimality
 theorem is held empirically by `scripts/kp-fuzz.lean`. Small caps are
-synthesised rather than drawn, math renders its first slice (atoms,
-spacing, scripts — the 2026-09-17 M6 entry lists what still carries a
-named warning), and element styling
+synthesised rather than drawn, math renders its first two slices (atoms,
+spacing, scripts; then fractions, radicals, grown delimiters, big-operator
+limits, and alignment grids — the second 2026-09-17 M6 entry lists what
+still carries a named warning), and element styling
 (section fonts, list spacing) is not yet declarable, which is what keeps the
 real resume from matching its lualatex build exactly.
 
@@ -510,6 +511,67 @@ definitions to even state a measure), and walk-coverage (arch-provable I3,
 a compiler-exhaustiveness property, not a proposition). The gate was
 proved load-bearing by staging a hole outside the path and an unrecorded
 hole inside it and watching both commits fail.
+
+2026-09-17 — M6's second slice: math renders as math, alignment first. The
+reference deck's display math is `align*`, which the first slice left to
+source text — raw backslash commands on a projected page. Now
+`align`/`align*`, `gather`/`gather*`, and `array` (inside math) elaborate
+to one grid nucleus: every cell runs through the existing atom pipeline,
+one assembly places cells at column offsets every row shares
+(`Math.colOffset`), pads them into their columns (`ColAlign.pad`,
+alternating right/left for align with amsmath's `{}#` empty Ord opening
+the even cells, so a leading relation keeps its thick space), sets rows a
+baselineskip plus `\jot` apart (plain TeX's 12 pt and 3 pt at the 10 pt
+base) or further when ink would collide, and centres the grid on the
+axis. With it: `\frac`/`\over` (Appendix G rule 15 over the MATH
+constants, gaps opened until ink clears, `\nulldelimiterspace` each
+side), `\sqrt` with its index (radical constants; the surd grows through
+MathVariants, ink top at the overbar), `\left…\right` (rule 19 with
+plain's `\delimiterfactor`/`\delimitershortfall`, the chosen variant
+centred on the axis), big operators at `displayOperatorMinHeight` with
+limits above/below in display style (rule 13/13a, the upper/lower limit
+constants), primes, `\limits`/`\nolimits`, `\text`/`\mbox`/`\operatorname`.
+The engine reads glyph ink extents from the outlines (`Ink.yExtentAt`,
+memoized per gid like `underlineInk`) — gap minima, delimiter growth, and
+limit placement are against real ink, not nominal metrics; `Item.rule`
+carries fraction bars and overbars to the existing `Seg.rule`; struts tell
+`placeLine` the true height of an assembled construction.
+
+Invariants, strongest closed form: a padded grid is rectangular and
+conserves its cells — theorem (`MRows.pad_rectangular`, `MRow.pad_cells`);
+cell padding stays inside its column and centring is symmetric to the sp —
+theorems (`pad_within`, `pad_center_symmetric`); the assembled grid width
+is the column widths plus the declared gaps exactly — theorem
+(`colOffset_total`) over the same function the assembly places cells with,
+so alignment points share one x per column by construction (pinned in sp
+by `mathChecks` across rows); the picked variant covers its content
+whenever the font can, and is never an invented glyph — theorems
+(`pickVariant_covers`, `pickVariant_mem`); fraction constituents never set
+larger than their base — theorems (`frac_styles_descend`,
+`sizeFor_mono_rank`); limits are scripts (rule 13a), so `sizes_shrink`
+covers their sizes, said in its docstring. Assembly conserves content at
+test strength: the census (now rendering math-declaring fixtures with the
+shipped math face) witnesses the display ∑, an aligned row's glyphs, and
+all eight fixture rules; nothing-silently-dropped stays the diagnostic
+regime — a ragged row is W0014, padded and rendered; a numbered
+`align`/`gather`/`equation` renders its rows under one W0015 naming the
+owed numbers; everything else keeps W0012 with the construct's name.
+Verified against lualatex + unicode-math on the same shipped face, as
+pixels; the reference deck went from five slides showing raw math source
+to zero.
+
+What M6 still owes, warned by name today: accents (`\hat`, `\bar`, …),
+`\binom`/`\atop`, the amsmath matrix wrappers (`pmatrix`, `bmatrix` — the
+plain `array` renders), `\\[len]` extra row space in alignments, equation
+numbers (W0015) and `\tag`, glyph assembly past the largest MathVariants
+size (the largest variant is the ceiling), `\dfrac`/`\tfrac` style forcing
+(set as `\frac`), amsmath's stretching tabskip between align pairs (a
+fixed 2 em stands in, stated unsourced), italic correction and math
+kerning (MathGlyphInfo), stretchy muskips, and native MathML on the HTML
+path — the HTML backend is deliberately unchanged (source in `data-tex`,
+`--math-boundary` still the tool). `\text` sets in the math face, not the
+body face — visible only when the two differ. Line heights inside math now
+follow real ink through struts; plain text lines keep capHeight+raise.
 
 2026-09-17 — M6's first vertical slice: formulas render. `$x^2$` is glyphs
 now, not the characters `x^2` — inline `$...$`/`\(...\)` and display

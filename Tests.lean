@@ -3645,7 +3645,11 @@ def censusTable :
     ("one page", c.size == 1),
     ("prose around the display ships",
       hasStr (censusText c) "The paragraph continues after the display"),
-    ("the out-of-scope radical keeps its source", hasStr (censusText c) "\\sqrt")]),
+    ("the display-size sum ships as a glyph", hasStr (censusText c) "∑"),
+    ("an align row ships aligned glyphs", hasStr (censusText c) "=(𝑥−1)(𝑥+1)"),
+    ("every fraction bar and overbar ships as a rule",
+      ((c[0]?.map (·.rules)).getD 0) == 8),
+    ("the out-of-scope accent keeps its source", hasStr (censusText c) "\\hat")]),
   ("quotes", fun geom c => [
     ("one page", c.size == 1),
     ("the quotation's text ships", hasStr (censusText c) "A short invented epigraph"),
@@ -3707,9 +3711,18 @@ def censusTable :
     ("the back ships the contact", pageHas c 1 "press@example.org")])]
 
 /-- The census tier: every golden fixture also appears in `censusTable`,
-and each row's facts hold on the pages the engine actually ships. -/
+and each row's facts hold on the pages the engine actually ships. A
+fixture that declares a math face renders its census with the shipped
+Fira Math in the math slot — the assertions over fraction bars and grown
+glyphs are exactly what `oneFace` alone could never witness. -/
 def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
+  let fira ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraMath-Regular.otf")) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"census: FiraMath unparsable: {e}")
+  let mathSet : Font.FontSet := { oneFace with
+    fonts := oneFace.fonts.push fira
+    math := some oneFace.fonts.size }
   for n in goldenNames do
     check ref s!"census covers {n}" (censusTable.any (·.1 == n))
   for (n, _) in censusTable do
@@ -3718,7 +3731,8 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
     let (doc, _) := Elab.run s!"{n}.tex" src
     let geom := Layout.Geom.ofPage doc.page
-    let out := Layout.run geom oneFace (some pats) doc
+    let fs := if doc.fonts.math.isSome then mathSet else oneFace
+    let out := Layout.run geom fs (some pats) doc
     let c := censusOf (coveredColorsOf doc) out
     for (label, ok) in facts geom c do
       check ref s!"census {n}: {label}" ok
