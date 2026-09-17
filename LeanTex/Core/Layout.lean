@@ -210,7 +210,7 @@ private def flattenOne (st : FlattenSt) (sty : TextStyle) (x : Inline) : Flatten
   | .link url body => flatten st { sty with link := some url } body
   | .underline body => flatten st { sty with underline := true } body
   -- A step is pure grouping here: the PDF path dims pending content by
-  -- recolouring copies before layout (Ir.expandOverlays), never by metrics.
+  -- recolouring copies before layout (`run`'s step driver), never by metrics.
   | .step _ body => flatten st sty body
   -- Placeholders are substituted before layout; reaching here means the
   -- document used one outside running content.
@@ -845,6 +845,9 @@ private structure B where
   /-- Background of the page being built, from `.pageStyle`; reset when it
   closes. -/
   pageBg : Option Ir.Color := none
+  /-- Background every page gets: the palette's `bg`, when declared. A
+  page's own `.pageStyle` background wins. -/
+  docBg : Option Ir.Color := none
   /-- Whether the page being built centres its content vertically. -/
   centerV : Bool := false
   diags : Array Diag := #[]
@@ -878,7 +881,7 @@ private def B.finishPage (b : B) : B :=
   let lines := if delta == 0 then lines else lines.map fun l => { l with y := l.y + delta }
   let fills := if delta == 0 then b.cur.fills else
     b.cur.fills.map fun f => { f with y := f.y + delta }
-  let fills := match b.pageBg with
+  let fills := match b.pageBg.orElse (fun _ => b.docBg) with
     | some c => #[({ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
                      color := c } : Fill)] ++ fills
     | none => fills
@@ -889,11 +892,11 @@ private def B.finishPage (b : B) : B :=
 /-- A line that shares its baseline with the last one (underline rules)
 rides with it, including its share of the page's shrink. -/
 private def B.pushSibling (b : B) (l : LineOut) : B :=
-  { b with cur := { lines := b.cur.lines.push l },
+  { b with cur := { b.cur with lines := b.cur.lines.push l },
            shrinkAbove := b.shrinkAbove.push (b.shrinkAbove.back?.getD 0) }
 
 private def B.commit (b : B) (line : LineOut) (depth above overflow : Sp) : B :=
-  { b with cur := { lines := b.cur.lines.push line }
+  { b with cur := { b.cur with lines := b.cur.lines.push line }
            shrinkAbove := b.shrinkAbove.push above
            pageShrink := above
            needed := max b.needed overflow
@@ -989,6 +992,12 @@ private inductive Op where
   content centres vertically (a standout frame, a section page). Applies
   when the page closes and resets with it. -/
   | pageStyle (bg : Option Ir.Color) (centerV : Bool)
+  /-- A colour bar behind the line just placed — the frame title. Full page
+  width, from the page top to `pad` below the line's depth. -/
+  | titleBar (color : Ir.Color) (pad : Sp)
+  /-- A progress bar under the line just placed: `bg` across `w` from `x`,
+  `fg` over the leading `num/den` of it, `thick` tall. -/
+  | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -1011,8 +1020,14 @@ private structure Acc where
   /-- The document's palette: the semantic keys (`fg`, `standoutbg`, …)
   drive the themed furniture, and their absence turns it off. -/
   pal : Ir.Palette := {}
+  /-- The document's tokens: `progressheight` sizes the progress bar. -/
+  tokens : Ir.Tokens := {}
   /-- Default text colour: the palette's `fg` when declared, else black. -/
   fg : Ir.Color := Ir.Color.black
+  /-- Frames seen so far / in the whole document: a section page's progress
+  bar is the deck position. -/
+  framesSeen : Nat := 0
+  framesTotal : Nat := 0
   wantDefault : Bool := false
   owed : Array Glue := #[]
   ops : Array Op := #[]
@@ -1179,8 +1194,12 @@ private def collectStandout (a : Acc) (pats : Option Hyphen.Patterns) (fs : Font
   | blk :: rest =>
     let a := match blk with
       | .para content =>
-        collectPara a pats fs content indent true (a.geom.fontSize * 1440 / 1000)
-          (baseStyle := { bold := true })
+        match (a.style "standout").font with
+        | some tpl =>
+          collectPara a pats fs (Ir.fillTemplate tpl content) indent true a.geom.fontSize
+        | none =>
+          collectPara a pats fs content indent true (a.geom.fontSize * 1440 / 1000)
+            (baseStyle := { bold := true })
       | _ => collectBlock a pats fs blk indent
     collectStandout (if rest.isEmpty then a else a.wantGap) pats fs rest indent
 
@@ -1190,6 +1209,30 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .para content =>
     collectPara a pats fs content indent false a.geom.fontSize
   | .section level _ title =>
+    if a.slides && level == 1 && (a.pal.find? "progressfg").isSome then
+      -- The themed section page: its own page, vertically centred, the
+      -- title ragged-left in a centred measure with the deck position
+      -- drawn under it as a progress bar.
+      let a := a.pageBreak
+      let a := { a with ops := a.ops.push (.pageStyle none true) }
+      let mp : Sp := a.geom.textWidth * 7875 / 10000
+      let indent : Sp := (a.geom.textWidth - mp) / 2
+      let st := a.style "sectionpage"
+      let a := match st.font with
+        | some tpl =>
+          collectPara a pats fs (Ir.fillTemplate tpl title) indent false a.geom.fontSize
+        | none =>
+          collectPara a pats fs title indent false (a.geom.fontSize * 1440 / 1000)
+            (baseStyle := { bold := true })
+      let fgC := (a.pal.find? "progressfg").getD a.fg
+      let bgC := (a.pal.find? "progressbg").getD ((a.pal.find? "bg").getD Ir.Color.white)
+      let thick := ((a.tokens.find? "progressheight").map
+        fun g => (a.resolve g).width).getD (pt 1)
+      let a := { a with ops := a.ops.push (.progress
+        (min a.framesSeen a.framesTotal) (max a.framesTotal 1) fgC bgC thick
+        (a.geom.hmargin + indent) mp) }
+      a.pageBreak
+    else
     -- In slides, a section is a divider: its own page between frames rather
     -- than a heading dropped onto the bottom of the previous slide.
     let a := if a.slides then a.pageBreak else a
@@ -1263,7 +1306,8 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .frame title standout body =>
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never
-    -- clipped.
+    -- clipped. `framesSeen` is counted by `run`'s top-level driver, once
+    -- per logical frame, so a stepped frame's pages share it.
     let a := a.pageBreak
     if standout then
       -- Inverted, centred, Large bold. The palette's standout keys
@@ -1277,9 +1321,28 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       a.pageBreak
     else
     let a := if title.isEmpty then a else
-      let a := collectPara a pats fs title 0 false (sectionSize a.geom 1)
-        (baseStyle := { bold := true })
-      { a with wantDefault := true }
+      match a.pal.find? "frametitlebg" with
+      | some barBg =>
+        -- The themed frame title is a colour bar across the whole page,
+        -- its text in frametitlefg on it.
+        let ftFg := (a.pal.find? "frametitlefg").getD
+          ((a.pal.find? "bg").getD Ir.Color.white)
+        let saved := a.fg
+        let a := { a with fg := ftFg }
+        let st := a.style "frametitle"
+        let a := match st.font with
+          | some tpl =>
+            collectPara a pats fs (Ir.fillTemplate tpl title) 0 false a.geom.fontSize
+          | none =>
+            collectPara a pats fs title 0 false (sectionSize a.geom 1)
+              (baseStyle := { bold := true })
+        let a := { a with fg := saved
+                          ops := a.ops.push (.titleBar barBg (a.geom.fontSize / 2)) }
+        { a with wantDefault := true }
+      | none =>
+        let a := collectPara a pats fs title 0 false (sectionSize a.geom 1)
+          (baseStyle := { bold := true })
+        { a with wantDefault := true }
     let a := collectBlocks a pats fs body indent
     a.pageBreak
 
@@ -1453,6 +1516,8 @@ private inductive StagedOp where
   | skip (g : Glue)
   | brk
   | pageStyle (bg : Option Ir.Color) (centerV : Bool)
+  | titleBar (color : Ir.Color) (pad : Sp)
+  | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
   | para (j : ParaJob) (t : Task (Array Nat))
   | colOpen
   | colNext
@@ -1475,12 +1540,37 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let font := fs.body
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
   let xHeight := scale font.xHeight
-  let acc := collectBlocks { geom := geom, xHeight := xHeight, styles := doc.styles
-                             slides := doc.docClass == "slides"
-                             pal := doc.palette
-                             fg := (doc.palette.find? "fg").getD Ir.Color.black }
-    pats fs (Ir.expandOverlays ((doc.palette.find? "covered").getD Ir.coveredDefault)
-      doc.body) 0
+  let framesTotal := doc.body.foldl (fun n b => match b with
+    | .frame _ _ _ => n + 1 | _ => n) 0
+  let dim := (doc.palette.find? "covered").getD Ir.coveredDefault
+  let acc0 : Acc := { geom := geom, xHeight := xHeight, styles := doc.styles
+                      slides := doc.docClass == "slides"
+                      pal := doc.palette
+                      tokens := doc.tokens
+                      framesTotal := framesTotal
+                      fg := (doc.palette.find? "fg").getD Ir.Color.black }
+  -- One handout page per overlay step, driven here at the top level: a
+  -- multi-step frame collects once per step with pending content dimmed
+  -- (`Ir.dimBlocks`), under ONE `framesSeen` — the furniture belongs to the
+  -- frame, not the step, so a stepped frame's pages share their progress
+  -- position and their frame count. Steps and standout are orthogonal: the
+  -- flag rides onto every step page unchanged.
+  let mut acc := acc0
+  let mut firstBlk := true
+  for blk in doc.body do
+    acc := if firstBlk then acc else acc.wantGap
+    firstBlk := false
+    match blk with
+    | .frame title standout body =>
+      acc := { acc with framesSeen := acc.framesSeen + 1 }
+      let steps := Ir.maxStepBlocks body
+      if steps ≤ 1 then
+        acc := collectBlock acc pats fs (.frame title standout body) 0
+      else
+        for k in [1:steps + 1] do
+          acc := collectBlock acc pats fs
+            (.frame title standout (Ir.dimBlocks dim k body)) 0
+    | other => acc := collectBlock acc pats fs other 0
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
   -- so the tasks race on nothing; joining in document order below keeps the
   -- output independent of scheduling.
@@ -1489,6 +1579,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .skip g => .skip g
     | .brk => .brk
     | .pageStyle bg c => .pageStyle bg c
+    | .titleBar color pad => .titleBar color pad
+    | .progress num den fg bg thick x w => .progress num den fg bg thick x w
     | .para j => .para j (Task.spawn fun _ => kp j.items j.target)
     | .colOpen => .colOpen
     | .colNext => .colNext
@@ -1499,6 +1591,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     descent := scale (-font.descent)
     capHeight := scale font.capHeight
     xHeight := xHeight
+    docBg := doc.palette.find? "bg"
   }
   let mut b := b0
   let mut colSaves : Array ColSave := #[]
@@ -1534,6 +1627,27 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
           then (b.y, b.prevDepth) else (save.bottomY, save.bottomDepth)
         b := { b with y := bottomY, prevDepth := bottomDepth, skip := {}
                       freshStart := false }
+    | .titleBar color pad =>
+      -- The bar sits behind the line just placed: full page width, page
+      -- top to `pad` below the line's depth.
+      b := match b.cur.lines.back? with
+        | some l =>
+          let fill : Fill := { x := 0, y := 0, w := b.geom.pageW,
+                               h := l.y + b.prevDepth + pad, color := color }
+          { b with cur := { b.cur with fills := b.cur.fills.push fill } }
+        | none => b
+    | .progress num den fg bg thick x w =>
+      -- Half a line under the last baseline: the track, then the elapsed
+      -- share over it. The bar joins the page's depth so following content
+      -- spaces below it.
+      let gap := b.geom.fontSize / 2
+      let y := b.y + b.prevDepth + gap
+      let fills := b.cur.fills.push { x := x, y := y, w := w, h := thick, color := bg }
+      let fills := if num == 0 then fills else
+        fills.push { x := x, y := y, w := w * (num : Int) / (den : Int), h := thick,
+                     color := fg }
+      b := { b with cur := { b.cur with fills := fills },
+                    prevDepth := b.prevDepth + gap + thick }
     | .para j t => b := placePara fs b j t.get
   -- The trailing boundary of a final frame has already closed its page; a
   -- document is never given an empty page for it.

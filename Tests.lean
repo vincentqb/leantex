@@ -1884,6 +1884,80 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
         ((Ir.dumpBlocks "" nbody).splitOn "name_with_underscores & more").length == 2
       | _ => false))
 
+/-- The themed slides furniture, keyed on the semantic palette entries: page
+background and text colour, the frame-title bar, the section page with its
+progress bar. No theme machinery here — the keys are the API, so a theme
+stays a table of values. -/
+def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src := "\\documentclass[aspectratio=169]{slides}\n" ++
+    "\\palette{ fg = #23373B, bg = black!2, alert = #EB811B,\n" ++
+    "  frametitlefg = bg, frametitlebg = fg,\n" ++
+    "  progressfg = alert, progressbg = progressfg!50!black!30 }\n" ++
+    "\\tokens{ progressheight = 2pt }\n" ++
+    "\\begin{document}\n" ++
+    "\\begin{frame}{First}\nalpha\n\\end{frame}\n" ++
+    "\\section{Middle}\n" ++
+    "\\begin{frame}{Second}\nbeta\n\\end{frame}\n" ++
+    "\\end{document}"
+  let (doc, ds) := elabStr src
+  t "furniture source clean" ds.isEmpty
+  let geom := Layout.Geom.ofPage doc.page
+  let out := Layout.run geom oneFace none doc
+  t "furniture three pages: frame, divider, frame" (out.pages.size == 3)
+  let bg : Ir.Color := ⟨0xFA, 0xFA, 0xFA⟩
+  let fg : Ir.Color := ⟨0x23, 0x37, 0x3B⟩
+  t "every page carries the background"
+    (out.pages.all fun p => p.fills.any fun f =>
+      f.x == 0 && f.y == 0 && f.w == geom.pageW && f.h == geom.pageH && f.color == bg)
+  t "frame title is a colour bar"
+    (match out.pages[0]? with
+     | some p => p.fills.any fun f =>
+        f.color == fg && f.w == geom.pageW && f.y == 0 && f.h < geom.pageH / 3
+     | none => false)
+  t "frame title text takes frametitlefg"
+    (match out.pages[0]?.bind (·.lines[0]?) with
+     | some l => l.segs.any fun s => match s with
+        | .run _ c _ _ _ _ _ => c == bg
+        | _ => false
+     | none => false)
+  t "body text takes fg"
+    (match out.pages[0]? with
+     | some p => p.lines.any fun l => l.segs.any fun s => match s with
+        | .run _ c _ _ _ _ _ => c == fg
+        | _ => false
+     | none => false)
+  let mp : Dim.Sp := geom.textWidth * 7875 / 10000
+  let alert : Ir.Color := ⟨0xEB, 0x81, 0x1B⟩
+  t "section page draws the progress track in the mixed colour"
+    (match out.pages[1]? with
+     | some p => p.fills.any fun f =>
+        f.w == mp && f.h == Dim.pt 2 &&
+        f.color == ((alert.mix 50 Ir.Color.black).mix 30 Ir.Color.white)
+     | none => false)
+  t "the elapsed share is the deck position (1 of 2 frames)"
+    (match out.pages[1]? with
+     | some p => p.fills.any fun f => f.w == mp / 2 && f.h == Dim.pt 2 && f.color == alert
+     | none => false)
+  t "section page centres vertically"
+    (match out.pages[1]?.bind (·.lines[0]?), out.pages[0]?.bind (·.lines[0]?) with
+     | some sl, some fl => sl.y > fl.y + geom.pageH / 4
+     | _, _ => false)
+  let (html, _) := HtmlDoc.emit {} doc
+  t "html body takes bg and fg"
+    ((html.splitOn "body { background: var(--bg); }").length == 2 &&
+     (html.splitOn "body { color: var(--fg); }").length == 2)
+  t "html frame header is a bar"
+    ((html.splitOn "section.slide > header { background: var(--frametitlebg);").length == 2)
+  t "html section page carries its position"
+    ((html.splitOn "class=\"section-page\"").length == 2 &&
+     (html.splitOn "width: 50%").length == 2)
+  -- Unthemed output is untouched: no keys, no fills, black text.
+  let (plainDoc, _) := elabStr ("\\documentclass[aspectratio=169]{slides}\n" ++
+    "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}")
+  let plainOut := Layout.run (Layout.Geom.ofPage plainDoc.page) oneFace none plainDoc
+  t "unthemed pages carry no fills" (plainOut.pages.all (·.fills.isEmpty))
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
@@ -3027,6 +3101,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       columnsChecks ref oneFace
       overlayChecks ref oneFace
       noteChecks ref oneFace
+      themeFurnitureChecks ref oneFace
       scannerChecks ref
 
 def main (args : List String) : IO UInt32 := do

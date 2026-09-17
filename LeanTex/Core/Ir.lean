@@ -308,9 +308,12 @@ structure ElementStyle where
   deriving Repr, BEq, Inhabited
 
 /-- Elements a document may style. Section levels are `section`, `subsection`,
-`subsubsection`; lists are `itemize` and `enumerate`. -/
+`subsubsection`; lists are `itemize` and `enumerate`; `frametitle`,
+`sectionpage`, and `standout` are the slides furniture (their `font` is
+read; the other keys have no meaning there yet). -/
 def styleableElements : List String :=
-  ["section", "subsection", "subsubsection", "itemize", "enumerate"]
+  ["section", "subsection", "subsubsection", "itemize", "enumerate",
+   "frametitle", "sectionpage", "standout"]
 
 structure Styles where
   entries : Array (String × ElementStyle) := #[]
@@ -636,24 +639,6 @@ def dimInline (dim : Color) (k : Nat) : Inline → Inline
   | other => other
 
 end
-
-/-- One handout page per overlay step: each top-level multi-step frame
-becomes one frame per step, pending content dimmed. The PDF path calls
-this; HTML keeps the single frame and its step data. A step and a standout
-frame are orthogonal: the flag rides onto every step page unchanged. -/
-def expandOverlays (dim : Color) (blocks : Array Block) : Array Block := Id.run do
-  let mut out : Array Block := #[]
-  for b in blocks do
-    match b with
-    | .frame title standout body =>
-      let steps := maxStepBlocks body
-      if steps ≤ 1 then
-        out := out.push (.frame title standout body)
-      else
-        for k in [1:steps + 1] do
-          out := out.push (.frame title standout (dimBlocks dim k body))
-    | other => out := out.push other
-  return out
 
 def dumpDiag (d : Diag) : String :=
   let where' := match d.span with

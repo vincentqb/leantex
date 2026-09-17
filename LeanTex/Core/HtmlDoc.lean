@@ -98,6 +98,30 @@ def styleRules (doc : Doc) : String :=
     let own := if decls.isEmpty then "" else s!"{tag} \{ {String.intercalate " " decls} }\n"
     some (own ++ String.join liDecls))
 
+/-- Furniture the semantic palette keys turn on — one shared rule set for
+every theme, so a theme stays a table of values. Each rule fires only when
+its key is declared, mirroring the PDF path: `bg`/`fg` colour the page,
+`frametitlebg` turns the frame title into a colour bar, `progressfg` styles
+the section pages and their progress bar. -/
+def themeCss (doc : Doc) : String :=
+  let has (k : String) : Bool := (doc.palette.find? k).isSome
+  (if has "bg" then "body { background: var(--bg); }\n" else "") ++
+  (if has "fg" then "body { color: var(--fg); }\n" else "") ++
+  (if has "frametitlebg" then
+    "section.slide > header { background: var(--frametitlebg);\n" ++
+    "  color: var(--frametitlefg, var(--bg, #fff));\n" ++
+    "  margin: -1.4rem -1.8rem 0.8rem; padding: 0.7rem 1.8rem;\n" ++
+    "  border-radius: 7px 7px 0 0; }\n" ++
+    "section.slide > header h2 { color: inherit; }\n" else "") ++
+  (if has "progressfg" then
+    "section.section-page { text-align: center; padding: 2.5rem 0;\n" ++
+    "  break-inside: avoid; }\n" ++
+    "section.section-page h2 { display: inline-block; text-align: left;\n" ++
+    "  min-width: 60%; margin: 0; }\n" ++
+    ".progress { background: var(--progressbg, var(--rule)); height: 3px;\n" ++
+    "  width: 60%; margin: 0.6rem auto 0; }\n" ++
+    ".progress > div { background: var(--progressfg); height: 100%; }\n" else "")
+
 /-- Design tokens become CSS custom properties, so the same declarations drive
 both backends and a reader's stylesheet can override them. -/
 def tokenVars (doc : Doc) : String :=
@@ -480,7 +504,7 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
   -- mode: they are declarations, not a framework.
   let styled := styleRules doc
   match cfg.css with
-  | .own => head := head.push (Node.style (baseCss doc ++ "\n" ++ styled))
+  | .own => head := head.push (Node.style (baseCss doc ++ "\n" ++ themeCss doc ++ styled))
   | .bulma =>
     -- Bind our tokens onto Bulma's own custom properties so a host page's
     -- theme and ours agree instead of fighting.
@@ -493,7 +517,30 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
     | .bulma => "content"
     | _ => ""
   let cfg := { cfg with styles := doc.styles }
-  let inner := blockNodesInto cfg #[] doc.body.toList
+  -- The themed section page: in a slides document with progress keys, a
+  -- top-level section becomes its own deck section carrying the position.
+  let themedSections := doc.docClass == "slides" &&
+    (doc.palette.find? "progressfg").isSome
+  let inner := if !themedSections then blockNodesInto cfg #[] doc.body.toList
+    else Id.run do
+      let total := doc.body.foldl (fun n b => match b with
+        | .frame _ _ _ => n + 1 | _ => n) 0
+      let mut seen := 0
+      let mut acc : Array Node := #[]
+      for b in doc.body do
+        match b with
+        | .frame _ _ _ =>
+          seen := seen + 1
+          acc := acc.push (blockNode cfg b)
+        | .section 1 _ title =>
+          let pct := (min seen total) * 100 / max total 1
+          acc := acc.push (Html.elem "section" #[
+            Html.elem "h2" (inlines cfg title),
+            Html.elem "div" #[Html.elem "div" #[] #[("style", s!"width: {pct}%")]]
+              #[("class", "progress")]]
+            #[("class", "section-page")])
+        | _ => acc := acc.push (blockNode cfg b)
+      return acc
   let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]
     else #[("class", bodyClass)])
   let mut body : Array Node := #[main]
