@@ -16,8 +16,10 @@ pipeline. flashtex sets the speed bar.
 Knuth–Plass and Liang hyphenation, font families with true bold/italic/mono
 faces, the `\tiny`–`\Huge` size scale, small caps, named colours,
 font-relative design tokens, page geometry, running head/foot, hyperlinks as
-link annotations, document metadata, and layout assertions that fail the
-build. HTML5: a typed tree with a certified escaper, semantic markup, tokens
+link annotations, document metadata, images (`\includegraphics`, `figure`,
+beamer's `\logo`; PNG including alpha, JPEG), and layout assertions that
+fail the build. HTML5: a typed tree with a certified escaper, semantic
+markup, tokens
 as CSS custom properties, `--css bulma` interop, one self-contained file.
 A document written for lualatex compiles as written: LaTeX idioms translate
 to the native declarations, unknown constructs degrade to their content with
@@ -48,6 +50,51 @@ real resume from matching its lualatex build exactly.
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-17 — images exist: `\includegraphics` through PNG/JPEG to both
+backends, the first native piece of M8's asset story. The shape is effects
+as data, exactly as fonts: the IR carries one image node (source path, size
+request, alt text), `Ir.imageRefs` lists the files a document names, the
+CLI driver reads and decodes them into an `Image.Store`, and layout and
+both backends consume that value — `LeanTex/Core/Image.lean` and
+`Flate.lean` do no IO. The `figure` environment (caption becomes the
+image's alt and a paragraph, placement option burned, numbering not yet)
+and beamer's `\logo` reduce to the same node. `\logo` is stateful as in
+beamer — the body form is a `Block.logo` declaration replayed per page, so
+`\logo{...}` before a frame and `\logo{}` after badge exactly that frame's
+pages at the lower-right; the preamble form is the initial state. In layout
+an image is an unbreakable box with height and no depth through the
+existing item machinery; missing files warn (W0601) and place an outlined
+box of the requested size, best effort as everywhere. Invariants, strongest
+closing form: sizing is a theorem (`resolveSize_*`: declared size wins to
+the sp, a derived dimension holds the intrinsic ratio to within one sp,
+`keepaspectratio` fits inside its box — re-breaking it fails the build,
+tried); decoders are total over `ByteArray` (bounds-checked reads; unit
+tests plus `scripts/img-fuzz.lean`, 15347 inputs, an oracle not a theorem);
+the PDF xref self-check holds with image XObjects in the file, and the
+content stream's `cm` matrix is asserted to carry the placed size (the
+check that catches a blank box a structural test would miss). Formats: PNG
+greyscale/truecolour/indexed pass their zlib stream through as
+`/FlateDecode` with the predictor declared (ISO 32000-2 §7.4.4.4),
+byte-identical (tested); 8-bit alpha really decodes — a total inflate (RFC
+1950/1951), the scanline unfilter, colour/alpha split, stored-block zlib
+back out, `/SMask` in the PDF; JPEG (JFIF, 1- and 3-component, 8-bit)
+embeds whole as `/DCTDecode`. Undeclared density is 72 ppi (PNG leaves it
+unknown without pHYs, ISO/IEC 15948 §11.3.5.3; JFIF unit 0 is aspect-only;
+72 is pdfTeX's `\pdfimageresolution` default) and that convention is a
+theorem (`width_at_default_dpi`). HTML emits `<img>` through the typed
+tree: intrinsic pixel size as attributes so the page never reflows,
+`0.8\textwidth` as a percentage, `height: auto` carrying the ratio
+invariant; a bare graphicx name (`figures/plot`) resolves to the file on
+disk and the link names it. Not in this slice, recorded: interlaced PNG,
+16-bit alpha, CMYK JPEG (each refused with its reason and a placeholder
+box), tRNS transparency on passthrough types, figure numbering, `\label`
+inside figures, PDF-page embedding (form XObjects), and beamer's
+`keepaspectratio`-free `totalheight` is mapped to `height` since an image
+box has no depth. Fixtures are synthetic and shipped
+(`tests/corpus/rects.{png,jpg}`, `rects-alpha.png`, provenance in
+`images-note.md`); pages rastered and eyeballed, not just golden-checked.
+Bench medians 77/283/395 ms vs 74/276/383 at base (noise).
 
 2026-09-17 — the overlay slice: covered content must be visibly covered.
 A real deck showed four ways it was not, each fixed to its invariant:
@@ -1579,9 +1626,10 @@ is evidence, not a theorem.
 - M7 markdown surface: our strict CommonMark-shaped parser (total by
   construction, span-preserving), desugaring, `expand` with the round-trip
   theorem, the spec-suite classifier, frontmatter, directives.
-- M8 figures and boundaries: asset embedding (PDF pages, PNG, JPEG), the
-  external-render boundary with content-hash cache (TikZ), verbatim code
-  blocks, per-glyph font fallback chains.
+- M8 figures and boundaries: asset embedding (PNG and JPEG landed
+  2026-09-17, including alpha via SMask; PDF pages as form XObjects
+  remain), the external-render boundary with content-hash cache (TikZ),
+  verbatim code blocks, per-glyph font fallback chains.
 - M9 verified inclusions: the boundary, freshness assertions, inclusion
   inventory in porcelain output, and the `lean = …` theorem binding.
   Acceptance (CI): a synthetic publication twin builds with live counts, and

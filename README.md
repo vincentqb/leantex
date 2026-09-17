@@ -62,7 +62,9 @@ Open Sans — see the license files there), so they build on any machine:
 ```
 
 `declared.tex`, `layout.tex`, and `paragraphs.tex` name no font and take the
-machine's default sans. `talk.tex` and `deck.tex` are slide decks: each
+machine's default sans. `images.tex` shows `\includegraphics` and `figure`:
+the synthetic PNG/JPEG fixtures beside it embed into the PDF and link from
+the HTML. `talk.tex` and `deck.tex` are slide decks: each
 frame is one `<section>` of the HTML deck and one page of the PDF handout.
 `themed.tex` selects the built-in `moloch` theme (`leantex themes` in help:
 `\usetheme{moloch}` or `\theme{moloch}`; `plain` is the quieter bundle) and
