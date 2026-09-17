@@ -36,7 +36,7 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
   let mut worstEdge := ""
   let mut minX : Option Sp := none
   let right := geom.pageW - geom.hmargin
-  let bottom := geom.pageH - geom.vmargin
+  let bottom := geom.bodyBottom
   for p in out.pages do
     for l in p.lines do
       let mut x := l.x
