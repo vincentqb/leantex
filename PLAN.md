@@ -89,6 +89,41 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — declared once, derived everywhere: the web metadata slice
+(site-port gaps 1 and 7). `\pdfmeta` grows `url`, `image`, `favicon` — an
+extension of the one `Ir.Meta` record, not a second declaration — and each
+surface derives its own rendering: the HTML head gets `rel=canonical`
+(RFC 6596), `rel=icon`, `rel=alternate type=text/markdown` to the llms.txt
+twin (name passed in by the driver, which is the one who knows it),
+the Open Graph set plus `og:type=website` (ogp.me: og:url required,
+website its own default type), `twitter:card=summary` (X falls back to
+og:* for the facts), and a JSON-LD `WebPage`; the PDF reads `url` into XMP
+`dc:identifier` (ISO 16684-1 §8.3); the markdown twin keeps its preamble.
+og:title and `<title>` are the same fact rendered twice — the drift the
+site port measured ("Experience" vs "Professional Experience") is now
+unrepresentable, pinned cross-backend by `webMetaChecks`. JSON-LD goes
+through a certified escaper, never a blob: `escapeJson_no_quote` and
+`escapeJson_no_lt` are theorems in Html.lean, and the second composes
+with the raw-payload guard (no `<` means no `</script`, so the data block
+survives verbatim). `Node.script` carries attrs now; a script with a
+non-JS type is a data block (HTML §4.12.1), so the no-script rule —
+which is about behaviour — holds. Owed, recorded here: a typed
+`\person`/`\organization` declaration rendering to full JSON-LD (today
+only fields the existing declarations carry are emitted), and Unicode
+NFC normalisation of slugs (UAX #15) — two spellings of `é` still make
+two anchors, stated in `slug`'s docstring rather than hidden.
+Slugs themselves (gap 7): the fold to ASCII degraded accented and CJK
+anchors and could silently merge two distinct titles. `slugChar` now
+keeps any non-White_Space scalar (HTML §3.2.6 forbids only ASCII
+whitespace in an id; WHATWG URL §4.3 keeps the fragment addressable) —
+`slug_no_whitespace` proves that half of the id contract — and
+`sectionize` assigns ids uniquely against the set of *assigned* ids,
+which also closed a real hole: a title whose own slug was `noise-2`
+used to collide with the number handed to a repeated `Noise`. Two
+distinct titles that still fold together warn as W0327 and take
+distinct ids; a repeated identical title numbers quietly. Each
+regression test was shown failing with its defect re-introduced.
+
 2026-09-17 — behaviour is declared, and a backend can decline: the web
 surface's three gaps (site-port gaps 3, 4, 5), one slice because the nav
 is the case that needs the conditional and its hover states are the

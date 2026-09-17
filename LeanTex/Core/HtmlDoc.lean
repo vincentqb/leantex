@@ -762,7 +762,9 @@ def slugGo (acc : Array Char) (sep : Bool) : List Char → Array Char
 ids this way, so an in-page `\href{#experience}` has a target by construction
 rather than by a label the author must remember to declare. Non-emptiness —
 the other half of HTML §3.2.6's requirement — is `sectionize`'s job: an
-all-separator title takes the id `section`. -/
+all-separator title takes the id `section`. Not done, stated rather than
+hidden: Unicode normalisation (UAX #15 NFC) — a composed and a decomposed
+`é` make two different anchors; PLAN carries the debt. -/
 def slug (title : Array Inline) : String :=
   String.ofList (slugGo #[] false (Ir.plainText title).toList).toList
 
