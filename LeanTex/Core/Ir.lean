@@ -448,6 +448,126 @@ inductive Block where
   | rule (color : Color) (name : Option String) (thickness : SymGlue)
   deriving Repr, BEq, Inhabited
 
+/-- The frames the deck numbers: a `.frame` that is neither standout nor
+golden. Only `\maketitle` produces `.golden`, and moloch's `\maketitle` is
+`\frame[plain,noframenumbering]{\titlepage}` (beamerinnerthememoloch.dtx:314-320);
+its standout frames are likewise `noframenumbering` (:777-778). beamer's
+`noframenumbering` does not advance the frame counter (user guide §8.1), so
+the k-th countable frame in document order bears number k — the fold below —
+and a non-countable frame bears none. -/
+def Block.countable : Block → Bool
+  | .frame _ standout valign _ => !standout && !(valign matches .golden)
+  | _ => false
+
+/-- Count of `true` in a mask: the numbering's denominator. -/
+def countTrue : List Bool → Nat
+  | [] => 0
+  | b :: rest => (if b then 1 else 0) + countTrue rest
+
+/-- The numbering fold: masked positions take k+1, k+2, …; the rest take
+none. One definition site for every frame number the engine ever shows —
+both backends read this array, and nothing else counts. -/
+def numbersFrom (k : Nat) : List Bool → List (Option Nat)
+  | [] => []
+  | b :: rest =>
+    if b then some (k + 1) :: numbersFrom (k + 1) rest
+    else none :: numbersFrom k rest
+
+/-- The somes of the fold are exactly `1..countTrue`: the numbering is
+monotone and gapless, whatever the mask. -/
+theorem numbers_gapless (k : Nat) (bs : List Bool) :
+    (numbersFrom k bs).filterMap id = List.range' (k + 1) (countTrue bs) := by
+  induction bs generalizing k with
+  | nil => rfl
+  | cons b rest ih =>
+    cases b with
+    | false => simp [numbersFrom, countTrue, ih]
+    | true =>
+      have h1 : countTrue (true :: rest) = countTrue rest + 1 := by
+        simp [countTrue, Nat.add_comm]
+      rw [h1]
+      simp [numbersFrom, ih, List.range'_succ]
+
+/-- Every assigned number is ≤ the total: a progress clamp is dead code. -/
+theorem numbers_le_total (bs : List Bool) (n : Nat)
+    (h : n ∈ (numbersFrom 0 bs).filterMap id) : n ≤ countTrue bs := by
+  rw [numbers_gapless] at h
+  have := List.mem_range'.mp h
+  omega
+
+/-- The last number is the total: the denominator is reached. -/
+theorem last_number_is_total (bs : List Bool) (h : 0 < countTrue bs) :
+    ((numbersFrom 0 bs).filterMap id).getLast? = some (countTrue bs) := by
+  obtain ⟨m, hm⟩ : ∃ m, countTrue bs = m + 1 :=
+    ⟨countTrue bs - 1, (Nat.succ_pred_eq_of_pos h).symm⟩
+  rw [numbers_gapless, hm, List.range'_concat, List.getLast?_concat]
+  exact congrArg some (by omega)
+
+/-- A position is numbered exactly when its mask bit is set. -/
+theorem numbersFrom_isSome (k : Nat) (bs : List Bool) (i : Nat) :
+    ((numbersFrom k bs)[i]?.getD none).isSome = (bs[i]?.getD false) := by
+  induction bs generalizing k i with
+  | nil => rfl
+  | cons b rest ih =>
+    cases i with
+    | zero => cases b <;> simp [numbersFrom]
+    | succ n => cases b <;> simp [numbersFrom, ih]
+
+theorem numbersFrom_length (k : Nat) (bs : List Bool) :
+    (numbersFrom k bs).length = bs.length := by
+  induction bs generalizing k with
+  | nil => rfl
+  | cons b rest ih => cases b <;> simp [numbersFrom, ih]
+
+/-- The countable mask of a document body: the fold's instantiation. -/
+def frameMask (body : Array Block) : List Bool :=
+  body.toList.map Block.countable
+
+/-- The frame number each top-level block bears: `some k` for the k-th
+countable frame, `none` for everything else. THE numbering — the chrome
+footer, the progress bar, and the HTML deck all index this array; a new
+count consumer reads it, never counts for itself. -/
+def frameNumbers (body : Array Block) : Array (Option Nat) :=
+  (numbersFrom 0 (frameMask body)).toArray
+
+/-- The numbering's denominator: how many countable frames the body has. -/
+def frameCount (body : Array Block) : Nat :=
+  countTrue (frameMask body)
+
+/-- T2, numbered iff countable: position i bears a number exactly when
+block i is a countable frame. -/
+theorem frameNumbers_numbered_iff_countable (body : Array Block) (i : Nat) :
+    ((frameNumbers body)[i]?.getD none).isSome =
+      ((body[i]?.map Block.countable).getD false) := by
+  have h := numbersFrom_isSome 0 (frameMask body) i
+  simpa [frameNumbers, frameMask, List.getElem?_map] using h
+
+/-- T3, monotone and gapless: the numbers assigned, in document order, are
+exactly `1, 2, …, frameCount`. -/
+theorem frameNumbers_gapless (body : Array Block) :
+    (frameNumbers body).toList.filterMap id =
+      List.range' 1 (frameCount body) := by
+  simpa [frameNumbers, frameCount] using numbers_gapless 0 (frameMask body)
+
+/-- T4a: every number the engine can show is ≤ the denominator — the
+`min`/`max` clamps around a progress fraction cannot fire. -/
+theorem frameNumbers_le_count (body : Array Block) (n : Nat)
+    (h : n ∈ (frameNumbers body).toList.filterMap id) : n ≤ frameCount body := by
+  exact numbers_le_total (frameMask body) n (by simpa [frameNumbers] using h)
+
+/-- T4b: the denominator is reached — the last numbered frame bears
+`frameCount` itself, so a full deck ends at n/n, never n−1/n. -/
+theorem frameNumbers_last_is_count (body : Array Block)
+    (h : 0 < frameCount body) :
+    ((frameNumbers body).toList.filterMap id).getLast? =
+      some (frameCount body) := by
+  simpa [frameNumbers, frameCount] using
+    last_number_is_total (frameMask body) (by simpa [frameCount] using h)
+
+theorem frameNumbers_size (body : Array Block) :
+    (frameNumbers body).size = body.size := by
+  simp [frameNumbers, frameMask, numbersFrom_length]
+
 /-- Verbatim content, line-split: the newline after `\begin{verbatim}` and
 the blank tail before `\end{verbatim}` delimit — every trailing blank line
 goes, not one — and everything between is content, interior blank lines
@@ -619,6 +739,14 @@ structure Doc where
   asserts : Array Assertion := #[]
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
+
+/-- The document's one frame numbering (T2–T4 hold over it). -/
+def Doc.frameNumbers (doc : Doc) : Array (Option Nat) :=
+  Ir.frameNumbers doc.body
+
+/-- The numbering's denominator for the document. -/
+def Doc.frameCount (doc : Doc) : Nat :=
+  Ir.frameCount doc.body
 
 /-- Render a symbolic glue the way it was declared, so goldens show intent
 rather than a resolved number. -/
