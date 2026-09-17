@@ -118,14 +118,21 @@ theorem icbrtGo_spec (fuel n lo hi : Nat) (h1 : lo ^ 3 ≤ n) (h2 : n < hi ^ 3)
       exact ⟨h1, this ▸ h2⟩
 
 /-- The bracketing spec the fixed-point error bound rests on: `icbrt n` is
-the cube root rounded down, exactly. -/
-theorem icbrt_spec (n : Nat) (hn : n < 1000000 ^ 3) :
+the cube root rounded down, exactly. The domain is `n ≤ 10 ^ 18` because
+`labOf` reaches that bound exactly: each M1 row sums to exactly 10¹⁰, so
+pure white produces n = 10¹⁸ at the gamut corner — a hypothesis of
+`n < 1000000 ^ 3` would exclude a reachable input (color-factor F6). -/
+theorem icbrt_spec (n : Nat) (hn : n ≤ 10 ^ 18) :
     (icbrt n) ^ 3 ≤ n ∧ n < (icbrt n + 1) ^ 3 :=
   icbrtGo_spec 20 n 0 1000001 (by simp) (by omega) (by omega) (by omega)
 
 -- Kernel-evaluates, the feasibility every `decide` contract below rests on.
 example : icbrt 1000000000000000000 = 1000000 := by decide
 example : icbrt (10 ^ 18 - 1) = 999999 := by decide
+
+-- The gamut corner itself: the input pure white produces, now inside the domain.
+example : (icbrt (10 ^ 18)) ^ 3 ≤ 10 ^ 18 ∧ 10 ^ 18 < (icbrt (10 ^ 18) + 1) ^ 3 :=
+  icbrt_spec _ (Nat.le_refl _)
 
 /-- An Oklab value at fixed scale: `labOf` produces coordinates scaled by
 10¹⁸ (L in [0, 10¹⁸], a and b in roughly ±4·10¹⁷), `labMix` by 10²⁰. -/
