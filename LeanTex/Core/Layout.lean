@@ -166,6 +166,11 @@ structure Fill where
 structure PageOut where
   lines : Array LineOut := #[]
   fills : Array Fill := #[]
+  /-- The chrome footer this page carries, resolved at collection time (the
+  frame's own number, the section in force): inline content the final pass
+  lays into the margin once the page count is known. `none` on section
+  pages, standout frames, and every page of an unthemed document. -/
+  foot : Option (Array Inline) := none
   deriving Repr, Inhabited
 
 structure Out where
@@ -955,6 +960,8 @@ private structure B where
   docBg : Option Ir.Color := none
   /-- Whether the page being built centres its content vertically. -/
   centerV : Bool := false
+  /-- The chrome footer for pages closed from here on, from `.foot` ops. -/
+  curFoot : Option (Array Inline) := none
   diags : Array Diag := #[]
 
 /-- Close the current page. A page that overflowed at natural size within
@@ -986,7 +993,8 @@ private def B.finishPage (b : B) : B :=
     | some c => #[({ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
                      color := c } : Fill)] ++ fills
     | none => fills
-  { b with pages := b.pages.push { lines := lines, fills := fills }, cur := {},
+  { b with pages := b.pages.push { lines := lines, fills := fills, foot := b.curFoot },
+           cur := {},
            shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
            pageBg := none, centerV := false, diags := diags }
 
@@ -1099,6 +1107,10 @@ private inductive Op where
   /-- A progress bar under the line just placed: `bg` across `w` from `x`,
   `fg` over the leading `num/den` of it, `thick` tall. -/
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
+  /-- The chrome footer for pages closed from here on: a frame sets it (its
+  own number, the section in force), a section page or standout frame
+  clears it, and a spill page inherits its frame's. -/
+  | foot (content : Option (Array Inline))
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -1137,6 +1149,13 @@ private structure Acc where
   /-- Diagnostics the block walk itself raises (list depth past the class's
   four levels); joined into the placement diagnostics by `run`. -/
   diags : Array Diag := #[]
+  /-- The chrome footer's slots, when a themed deck draws one (`\chrome`
+  declared, no `\runningfoot` overriding it). Both `none` turns the whole
+  footer off. -/
+  chromeL : Option Ir.ChromeSlot := none
+  chromeR : Option Ir.ChromeSlot := none
+  /-- Title of the section in force: what a `\sectiontitle` slot shows. -/
+  curSection : Array Inline := #[]
   wantDefault : Bool := false
   owed : Array Glue := #[]
   ops : Array Op := #[]
@@ -1179,6 +1198,22 @@ private def Acc.pageBreak (a : Acc) : Acc :=
 
 private def Acc.style (a : Acc) (element : String) : Ir.ElementStyle :=
   (a.styles.find? element).getD {}
+
+/-- The chrome footer a frame's pages carry: each slot resolved to its
+per-page datum — the section in force, the frame's own number — with a fill
+pushing the two apart. `none` when no slot is declared. -/
+private def Acc.chromeFoot (a : Acc) : Option (Array Inline) :=
+  if a.chromeL.isNone && a.chromeR.isNone then none else
+  let slot (s : Ir.ChromeSlot) : Array Inline :=
+    match s with
+    | .sectionTitle => a.curSection
+    | .frameNumber => #[.text (toString a.framesSeen)]
+  some (((a.chromeL.map slot).getD #[]) ++ #[Ir.Inline.fill] ++
+    ((a.chromeR.map slot).getD #[]))
+
+/-- Chrome is on: `.foot` ops ride the stream so every page knows what it
+carries. Off, the stream is exactly what it was. -/
+private def Acc.chromeOn (a : Acc) : Bool := a.chromeL.isSome || a.chromeR.isSome
 
 private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
@@ -1337,11 +1372,16 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .para content =>
     collectPara a pats fs content indent false a.geom.fontSize
   | .section level _ title =>
+    -- The section in force, for the footer's \sectiontitle slot.
+    let a := if level == 1 then { a with curSection := title } else a
     if a.slides && level == 1 && (a.pal.find? "progressfg").isSome then
       -- The themed section page: its own page, vertically centred, the
       -- title ragged-left in a centred measure with the deck position
       -- drawn under it as a progress bar.
       let a := a.pageBreak
+      -- A divider carries no footer; the break above closed the previous
+      -- page with its own.
+      let a := if a.chromeOn then { a with ops := a.ops.push (.foot none) } else a
       let a := { a with ops := a.ops.push (.pageStyle none true) }
       let mp : Sp := a.geom.textWidth * 7875 / 10000
       let indent : Sp := (a.geom.textWidth - mp) / 2
@@ -1364,6 +1404,8 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- In slides, a section is a divider: its own page between frames rather
     -- than a heading dropped onto the bottom of the previous slide.
     let a := if a.slides then a.pageBreak else a
+    let a := if a.slides && a.chromeOn then
+        { a with ops := a.ops.push (.foot none) } else a
     let element := match level with
       | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
     let st := a.style element
@@ -1460,6 +1502,12 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- clipped. `framesSeen` is counted by `run`'s top-level driver, once
     -- per logical frame, so a stepped frame's pages share it.
     let a := a.pageBreak
+    -- The footer belongs to the frame: its pages, spill pages included,
+    -- carry the frame's own number; a standout frame carries none (its
+    -- inverted page has no pairing for the muted key).
+    let a := if a.chromeOn then
+        { a with ops := a.ops.push (.foot (if standout then none else a.chromeFoot)) }
+      else a
     if standout then
       -- Inverted, centred, Large bold. The palette's standout keys
       -- override; without them the frame inverts the page's own colours.
@@ -1661,6 +1709,7 @@ private inductive StagedOp where
   | pageStyle (bg : Option Ir.Color) (centerV : Bool)
   | titleBar (color : Ir.Color) (pad : Sp)
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
+  | foot (content : Option (Array Inline))
   | para (j : ParaJob) (t : Task (Array Nat))
   | colOpen
   | colNext
@@ -1685,12 +1734,22 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let pats := if geom.hyphenate then pats else none
   let font := fs.body
   let scale (u : Int) : Sp := u * geom.fontSize / font.unitsPerEm
-  -- A running foot reserves its band before anything is placed, so no body
-  -- line can land in it (`bodyBottom_clears_footer` is the sufficiency
-  -- proof). With the default margins the half margin holds the foot line
-  -- whole and the band is zero: an undeclared page is unchanged.
+  -- The chrome footer draws when the document (usually through its theme)
+  -- declared one and no \runningfoot overrides it — and only on slides:
+  -- chrome is deck furniture.
+  let chromeActive := doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone
+  -- The footer's size is a step of the scale and its colour a palette key,
+  -- never a literal: the theme declares both.
+  let footSize := geom.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
+  -- A footer reserves its band before anything is placed, so no body line
+  -- can land in it (`bodyBottom_clears_footer` is the sufficiency proof).
+  -- With the default margins the half margin holds the foot line whole and
+  -- the band is zero: an undeclared page is unchanged.
   let geom := if doc.foot.isSome then
       { geom with footBand := footBandFor geom.vmargin (scale font.ascent) }
+    else if chromeActive then
+      { geom with footBand :=
+          footBandFor geom.vmargin (font.ascent * footSize / (font.unitsPerEm : Int)) }
     else geom
   let xHeight := scale font.xHeight
   let framesTotal := doc.body.foldl (fun n b => match b with
@@ -1701,6 +1760,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
                       pal := doc.palette
                       tokens := doc.tokens
                       framesTotal := framesTotal
+                      chromeL := if chromeActive then doc.chrome.footerLeft else none
+                      chromeR := if chromeActive then doc.chrome.footerRight else none
                       fg := (doc.palette.find? "fg").getD Ir.Color.black }
   -- One handout page per overlay step, driven here at the top level: a
   -- multi-step frame collects once per step with pending content dimmed
@@ -1735,6 +1796,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .pageStyle bg c => .pageStyle bg c
     | .titleBar color pad => .titleBar color pad
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
+    | .foot c => .foot c
     | .para j => .para j (Task.spawn fun _ => kp j.items j.target)
     | .colOpen => .colOpen
     | .colNext => .colNext
@@ -1781,6 +1843,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       else
         b := { b with pageBg := none, centerV := false }
     | .pageStyle bg c => b := { b with pageBg := bg, centerV := c }
+    | .foot c => b := { b with curFoot := c }
     | .colOpen =>
       colSaves := colSaves.push {
         y := b.y, prevDepth := b.prevDepth, skip := b.skip
@@ -1865,21 +1928,24 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- Running content is laid out per page once the count is known, into the
   -- margin, so it never disturbs the body it annotates.
   let total := pages.size
-  let runLine (content : Array Inline) (n : Nat) (y : Sp) (cache : _) :
+  let runLine (content : Array Inline) (n : Nat) (y size : Sp) (baseStyle : TextStyle)
+      (cache : _) :
       Option LineOut × Array Diag × _ :=
     let sub := substPage n total content
     let (items, ds, cache, _) :=
-      itemsOfInlines pats geom.fontSize xHeight fs {} sub cache
+      itemsOfInlines pats size xHeight fs baseStyle sub cache
     let target := geom.textWidth
     let breaks := kp items target
     match breaks[0]? with
     | none => (none, ds, cache)
     | some brk =>
       let (segs, w, _) := setLine items (lineStart items 0) brk target true
-      (some { x := geom.hmargin, y := y, size := geom.fontSize, segs := segs,
+      (some { x := geom.hmargin, y := y, size := size, segs := segs,
               setWidth := w }, ds, cache)
   let headY := geom.vmargin / 2 + b0.ascent
   let footY := geom.pageH - geom.vmargin / 2
+  let mutedC := (doc.palette.find? "muted").getD
+    ((doc.palette.find? "fg").getD Ir.Color.black)
   let mut out := pages
   let mut diags := b.diags
   let mut cache := acc.hyphCache
@@ -1889,12 +1955,20 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     -- as a title page, not as page one of a run.
     if i + 1 < doc.runningFrom then continue
     if let some content := doc.head then
-      let (l?, ds, c) := runLine content (i + 1) headY cache
+      let (l?, ds, c) := runLine content (i + 1) headY geom.fontSize {} cache
       diags := diags ++ ds
       cache := c
       if let some l := l? then lines := #[l] ++ lines
     if let some content := doc.foot then
-      let (l?, ds, c) := runLine content (i + 1) footY cache
+      let (l?, ds, c) := runLine content (i + 1) footY geom.fontSize {} cache
+      diags := diags ++ ds
+      cache := c
+      if let some l := l? then lines := lines.push l
+    -- The chrome footer the page's frame gave it: the muted key at the
+    -- scale's small step, both from declarations, neither from a backend.
+    if let some content := out[i]!.foot then
+      let (l?, ds, c) := runLine content (i + 1) footY footSize
+        { color := mutedC } cache
       diags := diags ++ ds
       cache := c
       if let some l := l? then lines := lines.push l

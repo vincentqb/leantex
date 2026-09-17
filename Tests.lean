@@ -2316,6 +2316,94 @@ def footerBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   t "the fixture reaches the band it is about"
     (bareOut.pages.any fun p => p.lines.any fun l => l.y + descent > geom.bodyBottom)
 
+/-- The chrome footer through layout and the HTML backend: frame pages carry
+the section in force and their frame's own number, furniture pages carry
+none, a stepped frame's pages share one number, `\runningfoot` overrides the
+whole footer, and an unthemed deck is untouched. -/
+def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let deck (pre body : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n" ++ pre ++
+    "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let body :=
+    "\\begin{frame}{One}\na\n\\end{frame}\n" ++
+    "\\section{Topic}\n" ++
+    "\\begin{frame}{Two}\nb\n\n\\pause\nc\n\\end{frame}\n" ++
+    "\\begin{frame}[standout]\nQ\n\\end{frame}"
+  let (doc, ds) := elabStr (deck "\\theme{moloch}" body)
+  t "chrome deck source clean" ds.isEmpty
+  let geom0 := Layout.Geom.ofPage doc.page
+  let out := Layout.run geom0 oneFace none doc
+  t "chrome deck five pages" (out.pages.size == 5)
+  t "frame pages carry a footer, furniture pages none"
+    (out.pages.map (·.foot.isSome) == #[true, false, true, true, false])
+  t "the footer shows the frame's own number"
+    ((out.pages[0]?.bind (·.foot)).map Ir.plainText == some "1")
+  t "the footer shows the section in force beside the number"
+    ((out.pages[2]?.bind (·.foot)).map Ir.plainText == some "Topic2")
+  t "a stepped frame's pages share one footer"
+    (out.pages[2]?.bind (·.foot) == out.pages[3]?.bind (·.foot))
+  let font := oneFace.body
+  let footSize := geom0.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
+  let footAscent : Dim.Sp := font.ascent * footSize / (font.unitsPerEm : Int)
+  let descent : Dim.Sp := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
+  let footY := geom0.pageH - geom0.vmargin / 2
+  t "the foot line lands in the margin at the small step, in muted"
+    (match out.pages[0]? with
+     | some p => p.lines.any fun l => l.y == footY && l.size == footSize &&
+         l.segs.any fun s => match s with
+           | .run _ c _ _ _ _ _ => c == (⟨0x64, 0x72, 0x74⟩ : Ir.Color)
+           | _ => false
+     | none => false)
+  -- Invariant (a) of the footer: body ink never reaches the footer's ink,
+  -- on a frame whose body demonstrably fills the page.
+  let para := String.intercalate " " (List.replicate 120 "filler words run on")
+  let (tallDoc, _) := elabStr (deck "\\theme{moloch}"
+    ("\\begin{frame}{Tall}\n" ++ para ++ "\n\n" ++ para ++ "\n\\end{frame}"))
+  let tallOut := Layout.run geom0 oneFace none tallDoc
+  t "a tall frame spills and every spill page keeps its footer"
+    (tallOut.pages.size > 1 && tallOut.pages.all (·.foot.isSome))
+  t "body ink never reaches the footer ink"
+    (tallOut.pages.all fun p => p.lines.all fun l =>
+      l.y == footY || l.y + descent ≤ footY - footAscent - Layout.lineskip)
+  t "the tall frame demonstrably fills the body area"
+    (tallOut.pages.any fun p => p.lines.any fun l =>
+      l.y != footY && l.y + descent + Layout.leadingFor geom0.fontSize >
+        (Layout.Geom.ofPage tallDoc.page).bodyBottom)
+  -- \runningfoot is the author's whole footer: chrome yields entirely.
+  let (rDoc, _) := elabStr (deck "\\theme{moloch}\\runningfoot{own foot}" body)
+  let rOut := Layout.run (Layout.Geom.ofPage rDoc.page) oneFace none rDoc
+  t "runningfoot suppresses the chrome footer"
+    (rOut.pages.all (·.foot.isNone))
+  t "runningfoot itself is laid on every page"
+    (rOut.pages.all fun p => p.lines.any (·.y == footY))
+  -- No theme, no footer: the unthemed deck's output is untouched.
+  let (uDoc, _) := elabStr (deck "" body)
+  let uOut := Layout.run (Layout.Geom.ofPage uDoc.page) oneFace none uDoc
+  t "an unthemed deck carries no footer at all"
+    (uOut.pages.all fun p => p.foot.isNone && p.lines.all (·.y != footY))
+  -- The HTML backend reads the same declarations: each non-standout frame
+  -- section closes with the footer, styled by the muted token and the
+  -- shared size scale.
+  let (html, _) := HtmlDoc.emit {} doc
+  t "html frames close with the footer, standout none"
+    ((html.splitOn "class=\"slide-foot size-small\"").length == 3)
+  t "html footer carries the frame number"
+    ((html.splitOn "<span>2</span>").length == 2)
+  t "html footer styling comes from the tokens"
+    ((html.splitOn "section.slide > footer.slide-foot").length == 2 &&
+     (((html.splitOn "footer.slide-foot {")[1]?.getD "").splitOn
+       "var(--muted)").length == 2)
+  let (rHtml, _) := HtmlDoc.emit {} rDoc
+  t "html drops the chrome footer under runningfoot too"
+    ((rHtml.splitOn "slide-foot").length == 1)
+  -- \chrome without a theme: the declaration alone is enough.
+  let (cDoc, cDs) := elabStr (deck "\\chrome{ footer = { right = \\framenumber } }"
+    "\\begin{frame}{T}\nx\n\\end{frame}")
+  let cOut := Layout.run (Layout.Geom.ofPage cDoc.page) oneFace none cDoc
+  t "a bare chrome declaration draws its footer" (cDs.isEmpty &&
+    ((cOut.pages[0]?.bind (·.foot)).map Ir.plainText == some "1"))
+
 /-- The themed slides furniture, keyed on the semantic palette entries: page
 background and text colour, the frame-title bar, the section page with its
 progress bar. No theme machinery here — the keys are the API, so a theme
@@ -3956,6 +4044,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       themeReconcileChecks ref oneFace
       chromeDeclChecks ref
       footerBandChecks ref oneFace
+      chromeFooterChecks ref oneFace
       scannerChecks ref
       rhythmChecks ref oneFace
       measureChecks ref oneFace

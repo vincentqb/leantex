@@ -135,7 +135,13 @@ def themeCss (doc : Doc) : String :=
     "  min-width: 60%; margin: 0; }\n" ++
     ".progress { background: var(--progressbg, var(--rule)); height: 3px;\n" ++
     "  width: 60%; margin: 0.6rem auto 0; }\n" ++
-    ".progress > div { background: var(--progressfg); height: 100%; }\n" else "")
+    ".progress > div { background: var(--progressfg); height: 100%; }\n" else "") ++
+  -- The chrome footer: colour from the muted key, size from the shared
+  -- scale (`size-small` on the element), layout the only thing added here.
+  (if doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone then
+    "section.slide > footer.slide-foot { display: flex;\n" ++
+    "  justify-content: space-between; gap: 1em; margin-top: 1.2rem;\n" ++
+    "  color: var(--muted); }\n" else "")
 
 /-- Design tokens become CSS custom properties, so the same declarations drive
 both backends and a reader's stylesheet can override them. -/
@@ -574,24 +580,49 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
   -- top-level section becomes its own deck section carrying the position.
   let themedSections := doc.docClass == "slides" &&
     (doc.palette.find? "progressfg").isSome
-  let inner := if !themedSections then blockNodesInto cfg #[] doc.body.toList
+  -- The chrome footer: every frame section closes with the section in
+  -- force and its own frame number, in the muted key at the scale's small
+  -- step — the same declarations the PDF path reads.
+  let chromeFoot := doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone
+  let inner := if !themedSections && !chromeFoot then
+      blockNodesInto cfg #[] doc.body.toList
     else Id.run do
       let total := doc.body.foldl (fun n b => match b with
         | .frame _ _ _ => n + 1 | _ => n) 0
       let mut seen := 0
+      let mut curSection : Array Inline := #[]
       let mut acc : Array Node := #[]
       for b in doc.body do
         match b with
-        | .frame _ _ _ =>
+        | .frame _ standout _ =>
           seen := seen + 1
-          acc := acc.push (blockNode cfg b)
-        | .section 1 _ title =>
-          let pct := (min seen total) * 100 / max total 1
-          acc := acc.push (Html.elem "section" #[
-            Html.elem "h2" (inlines cfg title),
-            Html.elem "div" #[Html.elem "div" #[] #[("style", s!"width: {pct}%")]]
-              #[("class", "progress")]]
-            #[("class", "section-page")])
+          let node := blockNode cfg b
+          let node := if chromeFoot && !standout then
+              match node with
+              | .elem tag attrs kids =>
+                let slot (s : Ir.ChromeSlot) : Array Node :=
+                  match s with
+                  | .sectionTitle => inlines cfg curSection
+                  | .frameNumber => #[Html.text (toString seen)]
+                let side (s : Option Ir.ChromeSlot) : Node :=
+                  Html.elem "span" ((s.map slot).getD #[])
+                Node.elem tag attrs (kids.push (Html.elem "footer"
+                  #[side doc.chrome.footerLeft, side doc.chrome.footerRight]
+                  #[("class", "slide-foot size-small")]))
+              | other => other
+            else node
+          acc := acc.push node
+        | .section 1 starred title =>
+          curSection := title
+          if themedSections then
+            let pct := (min seen total) * 100 / max total 1
+            acc := acc.push (Html.elem "section" #[
+              Html.elem "h2" (inlines cfg title),
+              Html.elem "div" #[Html.elem "div" #[] #[("style", s!"width: {pct}%")]]
+                #[("class", "progress")]]
+              #[("class", "section-page")])
+          else
+            acc := acc.push (blockNode cfg (.section 1 starred title))
         | _ => acc := acc.push (blockNode cfg b)
       return acc
   let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]
