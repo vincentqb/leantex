@@ -111,6 +111,12 @@ structure Tokens where
 def Tokens.find? (t : Tokens) (name : String) : Option SymGlue :=
   (t.entries.find? (·.1 == name)).map (·.2)
 
+/-- Replace-on-redeclare: a later declaration overrides, keeping one entry
+per name. The one install mechanism — a document's `\tokens` and a theme's
+bundle go through the same door. -/
+def Tokens.declare (t : Tokens) (key : String) (g : SymGlue) : Tokens :=
+  { entries := (t.entries.filter (·.1 != key)).push (key, g) }
+
 /-- Named colours declared by `\palette`. -/
 structure Palette where
   entries : Array (String × Color) := #[]
@@ -122,6 +128,17 @@ structure Palette where
 
 def Palette.find? (p : Palette) (name : String) : Option Color :=
   (p.entries.find? (·.1 == name)).map (·.2)
+
+/-- Replace-on-redeclare: a later declaration overrides, keeping one entry
+per name. The one install mechanism — a document's `\palette` and a theme's
+bundle go through the same door. -/
+def Palette.declare (p : Palette) (key : String) (c : Color)
+    (decorative : Bool := false) : Palette :=
+  { p with
+    entries := (p.entries.filter (·.1 != key)).push (key, c)
+    decorative := if decorative && !p.decorative.contains key then
+        p.decorative.push key
+      else p.decorative }
 
 def Color.white : Color := { r := 255, g := 255, b := 255 }
 
@@ -497,6 +514,12 @@ structure Styles where
 
 def Styles.find? (s : Styles) (element : String) : Option ElementStyle :=
   (s.entries.find? (·.1 == element)).map (·.2)
+
+/-- Replace-on-redeclare, one entry per element — the same install mechanism
+as `Palette.declare`/`Tokens.declare`. A `\style` block edits keys of the
+element's existing entry first; what is declared here is the whole record. -/
+def Styles.declare (s : Styles) (element : String) (st : ElementStyle) : Styles :=
+  { entries := (s.entries.filter (·.1 != element)).push (element, st) }
 
 /-- What a chrome footer slot shows, resolved per page by the backends: the
 title of the current top-level section, or the index of the page's own frame

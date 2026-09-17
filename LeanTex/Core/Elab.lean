@@ -2149,7 +2149,7 @@ token may be defined by scaling an earlier one (`sep = 0.6 * rhythm`);
 parsing the block in one shot would leave those references unresolved. -/
 private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
     EM Tokens := do
-  let mut acc : Array (String × SymGlue) := toks.entries
+  let mut acc : Tokens := toks
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | none =>
@@ -2160,11 +2160,9 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
       -- declaration overrides — a theme's defaults included. Entries
       -- already derived from the old value keep it: references resolve
       -- when the entry is read, in declaration order.
-      let put (acc : Array (String × SymGlue)) (g : SymGlue) :=
-        (acc.filter (·.1 != key)).push (key, g)
-      match Decl.parseValue valueSrc acc with
-      | some (.glue g) => acc := put acc g
-      | some (.dim d) => acc := put acc { width := Dim.Length.ofSp d }
+      match Decl.parseValue valueSrc acc.entries with
+      | some (.glue g) => acc := acc.declare key g
+      | some (.dim d) => acc := acc.declare key { width := Dim.Length.ofSp d }
       | some v =>
         modify fun st => { st with
           diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
@@ -2172,7 +2170,7 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
       | none =>
         diag ctx "E0321" s!"cannot read length for '{key}': {valueSrc.quote}" pos
           (help := "lengths look like 10pt, 1.5ex, 2em, or 0.6 * other-token")
-  return { entries := acc }
+  return acc
 
 def styleKeys : List String :=
   ["font", "before", "after", "rule", "marker", "indent", "gap",
@@ -2247,8 +2245,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
       | _ =>
         modify fun st' => { st' with
           diags := st'.diags.push (Decl.unknownKey ctx.file "style" key styleKeys pos) }
-  let rest := styles.entries.filter (·.1 != element)
-  return { entries := rest.push (element, st) }
+  return styles.declare element st
 
 /-- `\palette{...}`: named colours. Every entry becomes usable both as
 `\textcolor{name}{...}` and as a bare `\name` declaration. Parses its own
@@ -2273,11 +2270,7 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
         diag ctx "E0303" s!"palette name '{key}' collides with a built-in command" pos
       else
         let put (pal : Palette) (c : Color) : Palette :=
-          { pal with
-            entries := (pal.entries.filter (·.1 != key)).push (key, c)
-            decorative := if decorative && !pal.decorative.contains key then
-                pal.decorative.push key
-              else pal.decorative }
+          pal.declare key c decorative
         match Decl.parseValue valueSrc with
         | some (.color r g b) => pal := put pal ⟨r, g, b⟩
         | v? =>
@@ -2708,23 +2701,40 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             i := j + 1
             let src := rawSrc body
             if name == "theme" then
-              -- A theme is a named bundle of declarations in the surface
-              -- language, applied here as if the document had written them.
-              -- Everything after this site overrides: the theme is a
-              -- default, never a lock.
+              -- A theme is a named bundle of typed values, installed here
+              -- through the same replace-on-redeclare door the document's
+              -- own declarations use. Everything after this site overrides:
+              -- the theme is a default, never a lock.
               let tname := src.trimAscii.toString
               match Theme.find? tname with
               | some th =>
-                let pal ← applyPalette ctx palette th.palette pos
+                let pal := th.palette.entries.foldl
+                  (fun p (kc : String × Ir.Color) => p.declare kc.1 kc.2) palette
                 palette := pal
                 ctx := { ctx with palette := pal }
-                let tk ← applyTokens ctx tokens th.tokens pos
+                let tk := th.tokens.entries.foldl
+                  (fun t (kg : String × Dim.SymGlue) => t.declare kg.1 kg.2) tokens
                 tokens := tk
                 ctx := { ctx with tokens := tk }
-                for (element, styleSrc) in th.styles do
-                  styles ← applyStyle ctx styles element styleSrc pos
-                unless th.chrome.isEmpty do
-                  chrome ← applyChrome ctx th.chrome pos
+                for (element, st) in th.styles.entries do
+                  -- Key-wise onto any entry the document already declared,
+                  -- exactly as a `\style` block edits keys of the existing
+                  -- entry.
+                  let cur := (styles.find? element).getD {}
+                  styles := styles.declare element { cur with
+                    font := st.font <|> cur.font
+                    before := st.before <|> cur.before
+                    after := st.after <|> cur.after
+                    rule := st.rule <|> cur.rule
+                    marker := st.marker <|> cur.marker
+                    indent := st.indent <|> cur.indent
+                    gap := st.gap <|> cur.gap
+                    align := st.align <|> cur.align
+                    separator := st.separator <|> cur.separator }
+                -- The bundle's chrome is typed data: installing it replaces,
+                -- exactly as a document's own `\chrome` redeclaration does.
+                if th.chrome.hasFooter then
+                  chrome := th.chrome
               | none =>
                 diag ctx "W0314" s!"unknown theme '{tname}'; the document is unthemed"
                   (some pos)

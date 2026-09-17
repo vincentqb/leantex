@@ -1,6 +1,5 @@
 import LeanTex.Core.Ir
 import LeanTex.Core.Theme
-import LeanTex.Core.Decl
 
 /-!
 Colour as a checkable contract: WCAG 2.2 relative luminance and contrast
@@ -364,24 +363,10 @@ def docDiags (doc : Doc) : Array Diag := Id.run do
 
 -- The built-in theme bundles, held to the same contract.
 
-/-- A theme bundle's palette, resolved the way `\theme` resolves it: entries
-in order, a redeclared name replacing the earlier one, a value either a
-`#RRGGBB` literal or a mix expression over what is declared so far. A pure
-mirror of the elaborator's value semantics — `Tests.lean` pins the two to
-each other on every built-in bundle, so this cannot drift into checking
-colours the engine does not ship. -/
-def bundlePalette (th : Theme.Theme) : Palette := Id.run do
-  let mut pal : Palette := {}
-  for entry in Decl.splitEntries th.palette do
-    if let some (key, valueSrc) := Decl.splitEntry entry then
-      let put (c : Color) : Palette :=
-        { entries := (pal.entries.filter (·.1 != key)).push (key, c) }
-      match Decl.parseValue valueSrc with
-      | some (.color r g b) => pal := put ⟨r, g, b⟩
-      | _ =>
-        if let some c := pal.resolve valueSrc then
-          pal := put c
-  return pal
+/-- A theme bundle's palette. The bundle carries typed values, so this is
+the identity — kept as the name the contract theorems and tests speak,
+and `Tests.lean` still pins it to what `\theme` actually installs. -/
+def bundlePalette (th : Theme.Theme) : Palette := th.palette
 
 /-- Every text pairing a theme bundle itself creates clears its threshold:
 `fg`, `alert`, and `example` colour body text on `bg` (4.5:1, SC 1.4.3), and
