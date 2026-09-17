@@ -371,6 +371,25 @@ def scan (dirs : List String := []) : IO (Array Face) := do
 private def norm (s : String) : String :=
   String.ofList ((s.toLower.toList).filter fun c => c.isAlphanum)
 
+/-- Does `s` normalise to exactly `target` (itself already normalised, as
+chars)? The same answer as `norm s == String.ofList target.toList` without
+the four intermediate structures `norm` allocates per name: `resolve` asks
+this of every installed face, and a build resolves twelve slot–variant
+pairs, so on a 2856-face host the `norm` form was ~15 ms of every build —
+most of what resolution cost. -/
+private def normEq (s : String) (target : Array Char) : Bool :=
+  let fin := s.foldl (init := some 0) fun i? c =>
+    match i? with
+    | none => none
+    | some i =>
+      let c := c.toLower
+      if c.isAlphanum then
+        if h : i < target.size then
+          if target[i] == c then some (i + 1) else none
+        else none
+      else some i
+  fin == some target.size
+
 /-- Canonical subfamily names. A face whose subfamily is exactly one of these
 is the family's plain face; anything else carries an extra descriptor
 ("Condensed Bold", "ExtraLight"), which must not win over the plain one —
@@ -420,8 +439,8 @@ serving a genuine bold, so that counts as satisfied; one with no italic at
 all does not, and the caller warns. -/
 def resolve (faces : Array Face) (family : String) (v : Variant) :
     Option (Face × Bool) :=
-  let target := norm (familyOf faces family)
-  let inFamily := faces.filter fun f => norm f.family == target
+  let target := (norm (familyOf faces family)).toList.toArray
+  let inFamily := faces.filter fun f => normEq f.family target
   if inFamily.isEmpty then
     none
   else
