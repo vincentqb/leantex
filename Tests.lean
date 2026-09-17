@@ -1008,13 +1008,13 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The scanned-face pick order is documented: families in normalised order,
   -- upright regular first — never scan luck.
   let shipped ← FontDb.scanRoots [testFonts]
-  let picks ← FontDb.fallbackPicks shipped #['∀', '₿', '⟨']
+  let picks ← FontDb.fallbackPicks shipped #['∀', '₿', '𓀀']
   t "picks the first covering family in sorted order"
-    (picks.contains ('∀', testFonts ++ "/SourceCodePro-Regular.otf"))
+    (picks.contains ('∀', testFonts ++ "/FiraMath-Regular.otf"))
   t "picks the regular face of a family with variants"
     (picks.contains ('₿', testFonts ++ "/SourceSerifPro-Regular.otf"))
   t "a scalar no face covers is absent from the picks"
-    (!picks.any (·.1 == '⟨'))
+    (!picks.any (·.1 == '𓀀'))
   -- Malformed and missing candidates stay total: no answer, never an abort.
   t "tableImage of a missing file is none"
     ((← FontDb.tableImage "/nonexistent/leantex-x.otf" (fun _ => true)).isNone)
@@ -3799,7 +3799,7 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   -- Resolution runs on the shipped faces, never the host's.
   let faces ← FontDb.scanRoots [testFonts]
-  t "fontdb finds the nine shipped faces" (faces.size == 9)
+  t "fontdb finds the ten shipped faces" (faces.size == 10)
   t "fontdb finds source serif" ((FontDb.families faces).any (· == "Source Serif Pro"))
   defaultFontChecks ref
   shippedFontChecks ref faces

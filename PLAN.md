@@ -51,6 +51,42 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — M6 opens: the two design decisions, written before the code.
+
+- **Math metrics come from the OpenType `MATH` table** (Microsoft OpenType
+  spec, learn.microsoft.com/typography/opentype/spec/math), not TeX's
+  `\fontdimen` parameters. The engine is OpenType-only by principle 4 —
+  there is no TFM to read a `\fontdimen` from — and every math face a
+  document can name (Latin Modern Math, the TeX Gyre maths, STIX Two, Fira
+  Math) is an OpenType MATH font whose designer tuned exactly these
+  constants; the table's `MathConstants` are the direct successors of
+  Appendix G's σ and ξ parameters. Appendix G and TeXbook chapters 17–18
+  remain the *algorithm* of record where the spec describes only data: atom
+  classes, the inter-atom spacing table, the style recursion, Bin
+  degradation. Two consequences the spec states and the engine follows:
+  script-attachment constants are read from the font of the *base* and
+  scale with the base's size, and `scriptPercentScaleDown` /
+  `scriptScriptPercentScaleDown` set the script sizes (sanitized into
+  (0,100] on parse, so "script sizes never grow" is a theorem over every
+  font, not a hope about well-behaved ones). A declared math face with no
+  MATH table earns a diagnostic naming the face and the formula is set as
+  source text — never silent wrong spacing from invented constants.
+- **The math fixture ships Fira Math** (`FiraMath-Regular.otf`, 180 KB, SIL
+  OFL 1.1, copyright Xiangdong Zeng, licence text alongside): the smallest
+  real-MATH-table face found — smaller than the already-shipped
+  SourceSerifPro-Regular (218 KB) — it is CFF like the Source faces the
+  parser already exercises, and a Fira-class sans math face is the pairing
+  the M5b theme direction already names. Considered and passed over on
+  size: Latin Modern Math (GUST, 734 KB), TeX Gyre Pagella Math (601 KB),
+  STIX Two Math (838 KB), Asana Math (436 KB).
+- The inter-atom spacing table was transcribed from TeXbook p. 170 and then
+  read back out of luatex itself before being encoded: a probe boxes every
+  (left class, right class) pair under anchor Ord atoms in all four styles
+  and reads the named muskip out of `\showbox` dumps (`\thinmuskip` /
+  `\medmuskip` / `\thickmuskip`), including that a Bin first, last, or
+  after Bin/Op/Rel/Open/Punct degrades to Ord. The engine's table is
+  pinned to that transcription by `decide` over all 64 pairs × 4 styles.
+
 2026-09-17 — images exist: `\includegraphics` through PNG/JPEG to both
 backends, the first native piece of M8's asset story. The shape is effects
 as data, exactly as fonts: the IR carries one image node (source path, size
