@@ -9,6 +9,7 @@ import LeanTex.Core.MathParse
 import LeanTex.Core.Ir
 import LeanTex.Core.ListMark
 import LeanTex.Core.Theme
+import LeanTex.Core.Oklab
 import LeanTex.Core.Contrast
 import LeanTex.Core.Compat
 import LeanTex.Core.Elab

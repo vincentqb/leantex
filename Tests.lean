@@ -4743,7 +4743,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
       else ((s + 0.055) / 1.055) ^ (2.4 : Float)
     (l * 10000000.0).round.toUInt32.toNat
   t "contrast table is the WCAG formula, all 256 channels"
-    ((List.range 256).all fun c => Contrast.channelLinear.getD c 0 == lin c)
+    ((List.range 256).all fun c => Oklab.channelLinear.getD c 0 == lin c)
   -- The definition's own extremes: black on white is 21:1, self is 1:1.
   t "contrast black on white is 21:1"
     (Contrast.contrastMilli .black .white == 21000)
