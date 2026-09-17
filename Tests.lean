@@ -6192,6 +6192,15 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((picOf (wrap "\\foreach \\k/\\lbl in {1/aa,2/bb}{\\node at (\\k,0) {\\lbl};}")).map
       (·.shapes) == some #[.label cm 0 "aa" Ir.Color.black 1000,
                            .label (2 * cm) 0 "bb" Ir.Color.black 1000])
+  t "truncatemacro floors to a whole unit"
+    ((picOf (wrap "\\pgfmathtruncatemacro{\\k}{7/2}\\fill (0,0) rectangle (\\k,1);")).map
+      (·.shapes) == some #[.rect 0 0 (3 * cm) cm Ir.Color.black])
+  t "ifthenelse picks its branch by the comparison"
+    ((picOf (wrap "\\foreach \\k in {1,2}{\
+\\pgfmathsetmacro{\\c}{ifthenelse(\\k<2,\"black\",\"white\")}\
+\\node[text=\\c] at (\\k,0) {x};}")).map
+      (·.shapes) == some #[.label cm 0 "x" Ir.Color.black 1000,
+                           .label (2 * cm) 0 "x" Ir.Color.white 1000])
   t "max and * evaluate inside a coordinate"
     ((picOf (wrap "\\fill (0,0) rectangle (max(1,2)*2, 1);")).map (·.shapes) ==
       some #[.rect 0 0 (4 * cm) cm Ir.Color.black])

@@ -6,12 +6,14 @@ import LeanTex.Core.Decl
 The rendered `tikzpicture` subset: a coordinate system with `scale=`,
 `\fill ... rectangle` with a colour expression, `\node[...] at (x,y) {text}`,
 `\foreach` over a literal list (the `{a,...,b}` range and the `\x/\y` pair
-form included), and `\pgfmathsetmacro` with the arithmetic those need
-(`+ - * /`, parens, `max`/`min`). The subset is scoped to what one real
-diagram needs (PLAN M8, the tikz slice): everything is evaluated here, at
-elaboration — loops unrolled, expressions reduced, colours resolved through
-the document palette, `scale=` applied — so the IR carries concrete shapes
-(`Ir.Pic.Shape`) and the backends never see the source.
+form included), and `\pgfmathsetmacro`/`\pgfmathtruncatemacro` with the
+arithmetic those need (`+ - * /`, `<`/`>`, parens, `max`/`min`,
+`ifthenelse` with `"..."` string branches). The subset is scoped to what
+one real diagram needs (PLAN M8, the tikz slice): everything is evaluated
+here, at elaboration — loops unrolled, expressions reduced, colours
+resolved through the document palette, `scale=` applied — so the IR
+carries concrete shapes (`Ir.Pic.Shape`) and the backends never see the
+source.
 
 The boundary is named, never silent: a construct outside the subset is
 W0334 (pending — the graphics story continues in M8) naming the construct;
@@ -145,28 +147,43 @@ def Val.text : Val → String
   | .num m => milliString m
   | .str s => s
 
+/-- A token named for a diagnostic. -/
+private def tokText : Tok → String
+  | .ctrl n => s!"'\\{n}'"
+  | .ident s => s!"'{s}'"
+  | .num m => s!"'{milliString m}'"
+  | .sym c => s!"'{c}'"
+  | .space => "a space"
+  | .group _ => "'{...}'"
+  | .other what => what
+
 /-- One RPN element of a parsed expression. -/
 private inductive Rp where
-  | push (m : Int)
+  | push (v : Val)
   | neg
   | add | sub | mul | div
-  | fmax | fmin
+  | lt | gt
+  | fmax | fmin | fite
   deriving Repr, BEq
 
-/-- Operator precedence for the shunting yard; `neg` binds tightest. -/
+/-- Operator precedence for the shunting yard; `neg` binds tightest,
+comparisons loosest (pgfmath's ordering). -/
 private def prec : Rp → Nat
-  | .neg => 3
-  | .mul | .div => 2
-  | .add | .sub => 1
+  | .neg => 4
+  | .mul | .div => 3
+  | .add | .sub => 2
+  | .lt | .gt => 1
   | _ => 0
 
 /-- Evaluate an expression's micro-tokens against the macro environment:
 shunting-yard to RPN, then a stack evaluation — two flat passes, total by
-construction. Every failure names what stopped it. -/
-def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Int := Id.run do
+construction. Values are numbers in milli or strings (`"black"`, an
+`ifthenelse` branch); arithmetic on a string names it. Every failure names
+what stopped it. -/
+def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Val := Id.run do
   -- To RPN. `expectOperand` distinguishes unary minus from subtraction.
   let mut out : Array Rp := #[]
-  let mut ops : Array Rp := #[]  -- operators and '(' markers (fmax/fmin double as call markers)
+  let mut ops : Array Rp := #[]  -- operators and '(' markers (calls double as markers)
   let mut marks : Array Bool := #[]  -- per '(': is it a function call
   let mut expectOperand := true
   let mut i := 0
@@ -176,7 +193,7 @@ def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Int
     for _ in [0:ops.size] do
       match ops.back? with
       | some op =>
-        if prec op ≥ p && op != .fmax && op != .fmin then
+        if prec op ≥ p && op != .fmax && op != .fmin && op != .fite then
           out := out.push op
           ops := ops.pop
         else break
@@ -189,25 +206,33 @@ def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Int
       match t with
       | .space => pure ()
       | .num m =>
-        out := out.push (.push m)
+        out := out.push (.push (.num m))
         expectOperand := false
       | .ctrl name =>
         match env.lookup name with
-        | some (.num m) =>
-          out := out.push (.push m)
+        | some v =>
+          out := out.push (.push v)
           expectOperand := false
-        | some (.str s) => return .error s!"'\\{name}' holds '{s}', not a number"
         | none => return .error s!"unknown macro '\\{name}'"
-      | .ident "max" | .ident "min" =>
-        let f := if t == .ident "max" then Rp.fmax else Rp.fmin
+      | .ident "max" | .ident "min" | .ident "ifthenelse" =>
+        let f := if t == .ident "max" then Rp.fmax
+          else if t == .ident "min" then Rp.fmin else Rp.fite
         match toks[i]? with
         | some (.sym '(') =>
           i := i + 1
           ops := ops.push f
           marks := marks.push true
           expectOperand := true
-        | _ => return .error s!"'{if f == .fmax then "max" else "min"}' needs '(...)'"
+        | _ => return .error s!"{tokText t} needs '(...)'"
       | .ident name => return .error s!"unknown function or name '{name}'"
+      | .sym '"' =>
+        -- A pgfmath string literal: one word between quotes.
+        match toks[i]?, toks[i+1]? with
+        | some (.ident s), some (.sym '"') =>
+          i := i + 2
+          out := out.push (.push (.str s))
+          expectOperand := false
+        | _, _ => return .error "an unreadable \"...\" string"
       | .sym '(' =>
         ops := ops.push .fmax  -- placeholder marker; marks says it is bare
         marks := marks.push false
@@ -233,26 +258,36 @@ def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Int
         if expectOperand then
           ops := ops.push .neg
         else
-          let (o2, p2) := flushTo out ops 1
+          let (o2, p2) := flushTo out ops 2
           out := o2
           ops := p2.push .sub
           expectOperand := true
       | .sym '+' =>
         if expectOperand then pure ()  -- unary plus
         else
-          let (o2, p2) := flushTo out ops 1
+          let (o2, p2) := flushTo out ops 2
           out := o2
           ops := p2.push .add
           expectOperand := true
       | .sym '*' =>
-        let (o2, p2) := flushTo out ops 2
+        let (o2, p2) := flushTo out ops 3
         out := o2
         ops := p2.push .mul
         expectOperand := true
       | .sym '/' =>
-        let (o2, p2) := flushTo out ops 2
+        let (o2, p2) := flushTo out ops 3
         out := o2
         ops := p2.push .div
+        expectOperand := true
+      | .sym '<' =>
+        let (o2, p2) := flushTo out ops 1
+        out := o2
+        ops := p2.push .lt
+        expectOperand := true
+      | .sym '>' =>
+        let (o2, p2) := flushTo out ops 1
+        out := o2
+        ops := p2.push .gt
         expectOperand := true
       | .sym c => return .error s!"'{c}' in an expression"
       | .group _ => return .error "'{...}' in an expression"
@@ -260,40 +295,69 @@ def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Int
   let (o2, p2) := flushTo out ops 1
   out := o2
   for op in p2.reverse do
-    if op == .fmax || op == .fmin then
+    if op == .fmax || op == .fmin || op == .fite then
       return .error "unclosed '('"
     out := out.push op
-  -- Evaluate the RPN.
-  let mut stack : Array Int := #[]
+  -- Evaluate the RPN. Arithmetic wants numbers; a string operand names
+  -- itself. `ifthenelse` is pgfmath's: a nonzero condition picks the
+  -- second argument, zero the third, and the branches may be strings.
+  let mut stack : Array Val := #[]
+  let num (v : Val) : Except String Int :=
+    match v with
+    | .num m => .ok m
+    | .str s => .error s!"'{s}' where a number is needed"
   for r in out do
     match r with
-    | .push m => stack := stack.push m
+    | .push v => stack := stack.push v
     | .neg =>
       match stack.back? with
-      | some a => stack := stack.pop.push (-a)
+      | some a =>
+        match num a with
+        | .ok m => stack := stack.pop.push (.num (-m))
+        | .error e => return .error e
       | none => return .error "misplaced '-'"
+    | .fite =>
+      match stack.back?, stack.pop.back?, stack.pop.pop.back? with
+      | some no, some yes, some c =>
+        let stack' := stack.pop.pop.pop
+        match num c with
+        | .ok m => stack := stack'.push (if m != 0 then yes else no)
+        | .error e => return .error e
+      | _, _, _ => return .error "'ifthenelse' needs (condition, value, value)"
     | op =>
       match stack.back? with
-      | some b =>
+      | some bv =>
         match stack.pop.back? with
-        | some a =>
+        | some av =>
           let stack' := stack.pop.pop
-          match op with
-          | .add => stack := stack'.push (a + b)
-          | .sub => stack := stack'.push (a - b)
-          | .mul => stack := stack'.push (a * b / 1000)
-          | .fmax => stack := stack'.push (max a b)
-          | .fmin => stack := stack'.push (min a b)
-          | .div =>
-            if b == 0 then return .error "division by zero"
-            else stack := stack'.push (a * 1000 / b)
-          | _ => return .error "malformed expression"
+          match num av, num bv with
+          | .ok a, .ok b =>
+            match op with
+            | .add => stack := stack'.push (.num (a + b))
+            | .sub => stack := stack'.push (.num (a - b))
+            | .mul => stack := stack'.push (.num (a * b / 1000))
+            | .fmax => stack := stack'.push (.num (max a b))
+            | .fmin => stack := stack'.push (.num (min a b))
+            | .lt => stack := stack'.push (.num (if a < b then 1000 else 0))
+            | .gt => stack := stack'.push (.num (if a > b then 1000 else 0))
+            | .div =>
+              if b == 0 then return .error "division by zero"
+              else stack := stack'.push (.num (a * 1000 / b))
+            | _ => return .error "malformed expression"
+          | .error e, _ | _, .error e => return .error e
         | none => return .error "operator missing an operand"
       | none => return .error "operator missing an operand"
   match stack.toList with
   | [v] => return .ok v
   | [] => return .error "empty expression"
   | _ => return .error "malformed expression"
+
+/-- An expression in a place that needs a number: a coordinate, a scale. -/
+def evalNum (env : List (String × Val)) (toks : Array Tok) : Except String Int :=
+  match evalExpr env toks with
+  | .ok (.num m) => .ok m
+  | .ok (.str s) => .error s!"'{s}' where a number is needed"
+  | .error e => .error e
 
 -- `\foreach` ranges: the count is decided before the values exist.
 
@@ -342,7 +406,8 @@ the bindings live. -/
 inductive Stmt where
   | fill (toks : Array Tok)
   | node (toks : Array Tok)
-  | set (name : String) (expr : Array Tok)
+  /-- `\pgfmathsetmacro`, and `\pgfmathtruncatemacro` when `trunc`. -/
+  | set (name : String) (expr : Array Tok) (trunc : Bool)
   | foreach (vars : Array String) (list : Array Tok) (body : List Stmt)
   deriving Repr, Inhabited
 
@@ -351,10 +416,10 @@ private inductive Mode where
   | top
   /-- Collecting a `\fill`/`\node` statement's tokens to its `;`. -/
   | stmt (isFill : Bool) (acc : Array Tok)
-  /-- After `\pgfmathsetmacro`, expecting `{\name}`. -/
-  | sname
+  /-- After `\pgfmathsetmacro` (or the truncating form), expecting `{\name}`. -/
+  | sname (trunc : Bool)
   /-- After `{\name}`, expecting the `{expr}` group. -/
-  | sexpr (name : String)
+  | sexpr (name : String) (trunc : Bool)
   /-- After `\foreach`, collecting `\x` or `\x/\y` until `in`. -/
   | fvars (vars : Array String)
   /-- After `in`, expecting the `{list}` group. -/
@@ -404,7 +469,8 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .ctrl "fill" => { st with mode := .stmt true #[] }
     | .ctrl "node" => { st with mode := .stmt false #[] }
     | .ctrl "foreach" => { st with mode := .fvars #[] }
-    | .ctrl "pgfmathsetmacro" => { st with mode := .sname }
+    | .ctrl "pgfmathsetmacro" => { st with mode := .sname false }
+    | .ctrl "pgfmathtruncatemacro" => { st with mode := .sname true }
     | .ctrl name => { (st.outside s!"'\\{name}'") with mode := .skip }
     | .sym ';' | .space => st
     | .other what => { (st.outside what) with mode := .skip }
@@ -416,19 +482,19 @@ private def step (t : Tok) (st : PSt) : PSt :=
     match t with
     | .sym ';' => st.finish (if isFill then .fill acc else .node acc)
     | _ => { st with mode := .stmt isFill (acc.push t) }
-  | .sname =>
+  | .sname trunc =>
     match t with
     | .space => st
     | .group g =>
       match g.filter (· != .space) with
-      | [.ctrl name] => { st with mode := .sexpr name }
+      | [.ctrl name] => { st with mode := .sexpr name trunc }
       | _ => { st.diag .E0333 "'\\pgfmathsetmacro' needs '{\\name}' first" with mode := .top }
     | _ =>
       { st.diag .E0333 "'\\pgfmathsetmacro' needs '{\\name}' first" with mode := .top }
-  | .sexpr name =>
+  | .sexpr name trunc =>
     match t with
     | .space => st
-    | .group g => st.finish (.set name g.toArray)
+    | .group g => st.finish (.set name g.toArray trunc)
     | _ =>
       { st.diag .E0333 s!"'\\pgfmathsetmacro' of '\\{name}' needs an expression group"
         with mode := .top }
@@ -505,16 +571,6 @@ structure Cx where
 scale. One multiplication, one rounding division. -/
 def Cx.toSp (cx : Cx) (m : Int) : Sp :=
   m * cx.scale * Dim.mm 10 / 1000000
-
-/-- A token named for a diagnostic. -/
-private def tokText : Tok → String
-  | .ctrl n => s!"'\\{n}'"
-  | .ident s => s!"'{s}'"
-  | .num m => s!"'{milliString m}'"
-  | .sym c => s!"'{c}'"
-  | .space => "a space"
-  | .group _ => "'{...}'"
-  | .other what => what
 
 /-- Split on a separator symbol at zero paren depth (groups are subtrees,
 so only `(`/`)` count). -/
@@ -646,7 +702,7 @@ subset; the shape is not drawn")
   if h : i2 < ts.size then
     return .error (.W0334, s!"'\\fill' continues with {tokText ts[i2]}, outside the \
 rendered picture subset; the shape is not drawn")
-  let vals ← match evalExpr env x1s, evalExpr env y1s, evalExpr env x2s, evalExpr env y2s with
+  let vals ← match evalNum env x1s, evalNum env y1s, evalNum env x2s, evalNum env y2s with
     | .ok a, .ok b, .ok c, .ok d => pure (a, b, c, d)
     | .error e, _, _, _ | _, .error e, _, _ | _, _, .error e, _ | _, _, _, .error e =>
       return .error (.E0333, s!"in '\\fill', {e}; the shape is not drawn")
@@ -722,7 +778,7 @@ picture subset; the node is not drawn")
   | .ok ((xs, ys), i2) =>
     match ts[i2]? with
     | some (.group body) =>
-      match evalExpr env xs, evalExpr env ys, textOf env body with
+      match evalNum env xs, evalNum env ys, textOf env body with
       | .ok xm, .ok ym, .ok text =>
         if h : i2 + 1 < ts.size then
           return ev.diag (.W0334, s!"'\\node' continues with {tokText ts[i2+1]}, \
@@ -759,7 +815,7 @@ private def readItems (env : List (String × Val)) (toks : Array Tok) :
       let mut vs : Array Val := #[]
       for sub in splitTop part '/' do
         match evalExpr env sub with
-        | .ok m => vs := vs.push (.num m)
+        | .ok v => vs := vs.push v
         | .error e =>
           match sub.toList.filter (· != .space) with
           | [.ident w] => vs := vs.push (.str w)
@@ -838,9 +894,20 @@ def evalOne (cx : Cx) : Stmt → List (String × Val) → Ev →
     | .ok shape => (env, { ev with shapes := ev.shapes.push shape })
     | .error d => (env, ev.diag d)
   | .node toks, env, ev => (env, evalNode cx env toks ev)
-  | .set name expr, env, ev =>
+  | .set name expr trunc, env, ev =>
     match evalExpr env expr with
-    | .ok m => ((name, .num m) :: env, ev)
+    | .ok (.num m) =>
+      -- The truncating form floors toward zero to a whole unit, as
+      -- `\pgfmathtruncatemacro` does.
+      let m := if trunc then
+          (if m ≥ 0 then m / 1000 * 1000 else -((-m) / 1000 * 1000))
+        else m
+      ((name, Val.num m) :: env, ev)
+    | .ok (.str s) =>
+      if trunc then
+        (env, ev.diag (.E0333, s!"in '\\pgfmathtruncatemacro' of '\\{name}', '{s}' \
+where a number is needed; the macro is not set"))
+      else ((name, Val.str s) :: env, ev)
     | .error e =>
       (env, ev.diag (.E0333, s!"in '\\pgfmathsetmacro' of '\\{name}', {e}; the macro \
 is not set"))
@@ -894,7 +961,7 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw) :
       for opt in splitTop inner ',' do
         match opt.toList.filter (· != .space) with
         | .ident "scale" :: .sym '=' :: rest =>
-          match evalExpr [] rest.toArray with
+          match evalNum [] rest.toArray with
           | .ok m =>
             if m ≤ 0 then
               diags := diags.push (.E0333, "'scale' must be positive; it is ignored")

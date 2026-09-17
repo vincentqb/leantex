@@ -28,9 +28,9 @@ center
     rect 51.024 51.024 15.307 15.307 #3B7B5C
     label 7.654 7.654 "aa" #14141A 900
     label 24.661 24.661 "bb" #14141A 900
-    label 41.669 41.669 "cc" #14141A 900
-    label 58.677 58.677 "dd" #14141A 900
+    label 41.669 41.669 "cc" #FFFFFF 900
+    label 58.677 58.677 "dd" #FFFFFF 900
 para
   text "After the diagram stands another, so the flow resumes."
 -- diagnostics
-warning[W0334] 23:1 '\draw' is outside the rendered picture subset; not drawn | help: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmathsetmacro; the full graphics story is M8 (PLAN.md)
+warning[W0334] 25:1 '\draw' is outside the rendered picture subset; not drawn | help: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro; the full graphics story is M8 (PLAN.md)

@@ -2108,7 +2108,7 @@ the column shares the leftover" cpos
             for (code, msg) in pdiags do
               warnOnce ctx ("picture:" ++ msg) code msg pos
                 (help := "the rendered subset is \\fill...rectangle, \\node at, \
-\\foreach, and \\pgfmathsetmacro; the full graphics story is M8 (PLAN.md)")
+\\foreach, and \\pgfmath(truncate)setmacro; the full graphics story is M8 (PLAN.md)")
             unless pic.shapes.isEmpty do
               blocks := blocks.push (.picture pic)
           else if let some milestone := reservedEnv.lookup n then
