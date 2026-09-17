@@ -86,6 +86,57 @@ Verified: build --wfail, tests, bench medians 77/288/384 ms (within the
 noise band of the entries below); the reference deck renders with covered
 steps reading as covered on the pages that used to show them crisp.
 
+2026-09-17 — slide chrome: the frame footer, from defect ("the frame
+footer to the slide is not visible") to declared data. Four units:
+
+- The band before the ink: `Geom.bodyBottom` is the one place the page
+  bottom is read (placement and vertical centring), and a footer
+  reserves its band inside it (`footBandFor`: what the foot line's
+  ascent plus `lineskip` clearance needs beyond the half margin its
+  baseline sits below the body). `bodyBottom_clears_footer` proves the
+  reservation sufficient for every geometry; with default margins the
+  band is zero and undeclared pages are unchanged. This helper is the
+  agreed merge seam with the vertical-placement slice, which named the
+  same function without the band term — reconcile to this one.
+- Chrome as data: `\chrome{ footer = { left = \sectiontitle, right =
+  \framenumber } }` (the theme-modern sketch's surface), `Ir.Chrome` in
+  the IR, both bundles declaring it — moloch's footline read as data,
+  not imitated as code. The footer's colour is the new semantic key
+  `muted = fg!70!bg`, the strongest quieting that still clears SC
+  1.4.3's 4.5:1 at the footer's small size (4.79:1 moloch, 6.36:1
+  plain; 60:40 fails at 3.65:1); `moloch_contract`/`plain_contract`
+  now kernel-check the pairing, and a document overriding `muted` under
+  an active footer is judged by W0315 like a declared `fg`. `\chrome`
+  outside slides warns (W0318) rather than dying silently.
+- Laying it: frames emit a `.foot` op under the driver's single
+  `framesSeen`, so a footer shows its frame's OWN number and a stepped
+  frame's pages share it; section pages and standout frames carry none;
+  spill pages inherit their frame's. PDF lays the line into the bottom
+  half margin at the scale's small step in `muted`; HTML closes each
+  frame `<section>` with a `footer.slide-foot size-small` styled by
+  `var(--muted)` — one design, two backends, no literals.
+  `\runningfoot` still overrides the whole footer; an unthemed deck's
+  output is byte-identical.
+- The deck's own spelling: `\setbeamertemplate{frame footer}{...}` —
+  alone or expanded from a `\newenvironment` wrapper — is now the
+  native `\framefoot{...}` (`Block.framefoot`, a state change in
+  document order): the note takes the footer's left slot for the frames
+  that follow, empty clears back to the default, the frame number keeps
+  its slot. Other templates keep the honest W0104, naming `\framefoot`.
+  `tests/corpus/chrome.tex` is the end-to-end fixture.
+
+Every invariant pinned in chromeDeclChecks / footerBandChecks /
+chromeFooterChecks / frameFootChecks, the band and frame-number ones
+shown failing with their bugs re-introduced. Bench 77–78/278–290/388 ms
+(vs 73–78/276–283/376–405 recorded — noise). The reference deck: 62
+pages, 18 warnings against 19 at the base commit (the frame-footer
+skip is gone), and its footer now renders. Known coarse edges, recorded
+not hidden: the title frame (`\maketitle`) carries the footer with
+frame number 1 (`\thispagestyle{empty}` suppresses page 1's furniture,
+the same spelling articles use); the running head has no symmetric band
+at the page top; the chrome band assumes the footer sets at its
+declared small step (an override styling itself larger is not measured).
+
 2026-09-17 — the card slice reconciled with the three slices that landed
 under it (typography, colour, M5b themes), each conflict a design
 question, not a merge:
