@@ -53,6 +53,40 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — the theme contract ranges over the engine's values now, and
+the resolved design is a type. Correction to the colour entry below: its
+bundle theorems held over hand-transcribed palettes (`molochResolved`)
+because `Theme` stored its bundles as unparsed surface strings the kernel
+could not evaluate — a theorem about a parallel definition reads as a
+guarantee and is not one. `Theme` now carries palette/tokens/styles as
+typed values, mixes evaluated at definition time with the same `Color.mix`
+step the document path folds, installed at `\theme` through the shared
+`Palette.declare`/`Tokens.declare`/`Styles.declare` replace-on-redeclare
+helpers the document declarations use; `moloch_contract`/`plain_contract`
+restate over `Theme.moloch.palette` by the same `decide` (the raised
+`maxRecDepth 4096` sufficed — the mixes are integer arithmetic, not a
+string parse) and the transcriptions and their pinning tests are deleted.
+The two roles the slices below added ride along typed: `muted` and
+`covered` as `Color.mix` chains (xcolor spelling beside each), and the
+bundles' chrome as typed `Ir.Chrome` — declared data, not colour, no
+theorem over it. `Ir.Design` is the resolved design: one `Design.ofDoc`
+applies every default the consumers used to apply per site (`fg`/`bg`,
+`covered`, `muted`, the frame-title and progress pairs, the standout
+inversion, `separator`, `progressheight`, per-element style),
+presence-is-the-feature fields (`frametitle`, `progress`) as `Option` of
+total pairs. Contrast's `docDiags` and `paletteContract` and HtmlDoc's
+`themeCss` read it; `builtin_designs_legible` quantifies the contrast
+contract (muted's 4.5:1 included) over `Theme.builtin` itself, and
+`coveredContract` restates over the resolved design, quantified the same
+way (`builtin_designs_covered`). A role census in Tests names any bundle
+key no backend consumes — it found what it exists for: both bundles
+declare `separator` and nothing reads it (why the title-page rule never
+draws); it stays a named warning until its consumer lands. Verified:
+goldens unmoved, whole corpus byte-identical by `cmp` (PDF and HTML)
+against the base commit. Follow-up, deliberately not here:
+`Layout.Acc`'s `pal`/`tokens`/`styles`/`fg` collapse onto `Design` —
+Layout.lean has six concurrent workers in it.
+
 2026-09-17 — M6's first vertical slice: formulas render. `$x^2$` is glyphs
 now, not the characters `x^2` — inline `$...$`/`\(...\)` and display
 `\[...\]`/`equation*`/`displaymath` elaborate to math atoms (TeX's eight

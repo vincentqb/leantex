@@ -3779,6 +3779,67 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
         | _ => false
      | _ => false)
 
+/-- The resolved `Design`: one construction site applies every default, so
+these pin the values the record resolves to — the un-themed document, the
+themed one, and the standout inversion a half-declared pair falls back to.
+Totality itself is the record type, not a test. -/
+def designChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let designOf (pre : String) : Ir.Design :=
+    Ir.Design.ofDoc (elabStr ("\\documentclass{slides}" ++ pre ++
+      "\\begin{document}\\begin{frame}x\\end{frame}\\end{document}")).1
+  let bare := designOf ""
+  t "bare design inks black on white, undeclared"
+    (bare.fg == Ir.Color.black && bare.bg == Ir.Color.white &&
+     !bare.fgDeclared && !bare.bgDeclared)
+  t "bare design has no bar and no themed sections"
+    (bare.frametitle.isNone && bare.progress.isNone)
+  t "bare design standout inverts the page"
+    (bare.standout == { fg := Ir.Color.white, bg := Ir.Color.black })
+  t "bare design dims to the covered default" (bare.covered == Ir.coveredDefault)
+  t "bare design mutes to the ink" (bare.muted == bare.fg)
+  t "bare design separator defaults to the ink" (bare.separator == bare.fg)
+  t "bare design progress bar is 1pt thick"
+    (bare.progressheight == { width := Dim.Length.ofSp (Dim.pt 1) })
+  let themed := designOf "\\theme{moloch}"
+  t "themed design carries the bundle's bar pair"
+    (themed.frametitle == some { fg := ⟨0xFA, 0xFA, 0xFA⟩, bg := ⟨0x23, 0x37, 0x3B⟩ })
+  t "themed design carries the progress pair"
+    (themed.progress == some { fg := ⟨0xA5, 0x5A, 0x13⟩, bg := ⟨0xCB, 0xC0, 0xB6⟩ })
+  t "themed design reads the declared separator"
+    (themed.separator == ⟨0xA5, 0x5A, 0x13⟩)
+  t "themed design reads the declared muted step"
+    (themed.muted == ⟨0x64, 0x72, 0x74⟩)
+  -- A half-declared standout keeps the declared half and defaults the rest
+  -- from the page's own colours — the fallback Layout applied per site.
+  let half := designOf "\\palette{ standoutbg = #102030 }"
+  t "half-declared standout defaults its fg from the page"
+    (half.standout == { fg := Ir.Color.white, bg := ⟨0x10, 0x20, 0x30⟩ })
+
+/-- Every role a built-in bundle declares is read: either a backend consumes
+its resolved `Design` field (`Ir.Design.consumedRoles`) or documents use it
+as a content colour by name. A declared-but-unread role with a known coming
+consumer is a named warning in the build output, never silence; one nobody
+expects fails the suite. `separator` is the case in point: both bundles
+declare it, no backend reads it, and the title-page rule is its coming
+consumer — when that lands, move it into `consumedRoles` and drop it from
+the pending ledger here, or this check fails. -/
+def roleChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let contentColours := ["alert", "example"]
+  let pendingConsumer := [("separator", "the title-page rule")]
+  for th in Theme.builtin do
+    for (role, _) in th.palette.entries do
+      if contentColours.contains role || Ir.Design.consumedRoles.contains role then
+        pure ()
+      else match pendingConsumer.lookup role with
+        | some consumer =>
+          IO.println (s!"warning: theme '{th.name}' declares '{role}' and no " ++
+            s!"backend reads it yet ({consumer} is its coming consumer)")
+        | none =>
+          failures ref s!"theme '{th.name}' declares '{role}', which no code reads"
+  check ref "pending roles are really unread"
+    (pendingConsumer.all fun (r, _) => !Ir.Design.consumedRoles.contains r)
+
 def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- \fonts declarations and family resolution
@@ -4747,6 +4808,8 @@ def main (args : List String) : IO UInt32 := do
   mixChecks ref
   contrastChecks ref
   themeChecks ref
+  designChecks ref
+  roleChecks ref
   fontsDeclChecks ref
   fontSuiteChecks ref
   mathChecks ref

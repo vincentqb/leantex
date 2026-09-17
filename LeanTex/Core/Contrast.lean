@@ -318,17 +318,23 @@ content is deliberately quiet — and so is anything the document declared
 under `\palette[decorative]{...}`: the warning names that spelling, so poor
 contrast is a choice a document states, never a silent default. -/
 def docDiags (doc : Doc) : Array Diag := Id.run do
-  let surface := (doc.palette.find? "bg").getD light.surface
+  let d := Design.ofDoc doc
+  -- The check judges against the declared page, or the shipped surface
+  -- when none is: WCAG's Note 3 semantics, not the PDF's white default —
+  -- the shipped surface is the marginally darker of the two.
+  let surface := if d.bgDeclared then d.bg else light.surface
   let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
   let mut uses := usesBlocks base #[] doc.body.toList
   -- `fg` colours every uncoloured run through the backends, never through
   -- `.colored`, so the declared pair is judged directly.
-  if let some fg := doc.palette.find? "fg" then
-    uses := uses.push { name := some "fg", color := fg, large := false }
+  if d.fgDeclared then
+    uses := uses.push { name := some "fg", color := d.fg, large := false }
   -- The chrome footer draws small text in `muted` on the page: a document
   -- that overrides the key is judged on the pairing it creates, exactly as
   -- a declared `fg` is (the shipped bundles are covered by the palette
-  -- contract theorems below).
+  -- contract theorems below). Declaredness gates the check — the resolved
+  -- design's `muted` is total, but an undeclared key creates no pairing of
+  -- its own beyond the `fg` one already judged.
   if doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone then
     if let some muted := doc.palette.find? "muted" then
       uses := uses.push { name := some "muted", color := muted, large := false }
@@ -363,31 +369,39 @@ def docDiags (doc : Doc) : Array Diag := Id.run do
 
 -- The built-in theme bundles, held to the same contract.
 
+/-- Every pairing a resolved design ships is legible: body ink on the page
+(SC 1.4.3, 4.5:1); `muted` — the chrome footer's small text — on the page,
+under WCAG's large-scale sizes, so 4.5:1 as well (total: undeclared it is
+the body ink, so the clause collapses into the first); the frame-title bar
+pair when the design has one — `\large\bfseries` is 12pt bold, under WCAG's
+large-scale sizes, so 4.5:1; and the standout pair — `\Large\bfseries`,
+14.4pt bold, large-scale, so 3:1 — which resolution makes total, so a
+defaulted inversion is checked, never assumed. The progress bar and
+separator are not checked: supplementary position indicators the section
+title already carries, outside SC 1.4.11's "required to understand the
+content"; `covered` is exempt as inactive (`covered_is_deliberately_dim`
+pins the decision; `coveredContract` below holds it to visibly-covered). -/
+def designContract (d : Design) : Bool :=
+  contrastMilli d.fg d.bg ≥ aaText
+    && contrastMilli d.muted d.bg ≥ aaText
+    && (match d.frametitle with
+        | some p => contrastMilli p.fg p.bg ≥ aaText
+        | none => true)
+    && contrastMilli d.standout.fg d.standout.bg ≥ aaLargeText
 
-/-- Every text pairing a theme bundle itself creates clears its threshold:
-`fg`, `alert`, and `example` colour body text on `bg` (4.5:1, SC 1.4.3), and
-`muted` colours the chrome footer's small text on `bg` — under the
-large-scale sizes, so 4.5:1 as well; the frame title sets `frametitlefg` on
-its `frametitlebg` bar at `\large\bfseries` — 12pt bold, under the
-large-scale sizes, so 4.5:1 too; a standout frame sets `standoutfg` on
-`standoutbg` at `\Large\bfseries` — 14.4pt bold, large-scale — so 3:1. The
-progress bar and separator are not checked: supplementary position
-indicators the section title already carries, outside SC 1.4.11's "required
-to understand the content". A key a bundle does not declare creates no
-pairing and passes vacuously. -/
+/-- A palette's whole contract: `alert` and `example` colour body text on
+`bg` (4.5:1, SC 1.4.3) — content colours the design record does not carry —
+and every semantic pairing (`muted` included) is the resolved design's,
+judged with its defaults applied rather than passed vacuously when a key is
+absent. -/
 def paletteContract (pal : Palette) : Bool :=
   let bg := (pal.find? "bg").getD Color.white
   let text (k : String) : Bool :=
     match pal.find? k with
     | some c => contrastMilli c bg ≥ aaText
     | none => true
-  let pair (f b : String) (threshold : Nat) : Bool :=
-    match pal.find? f, pal.find? b with
-    | some cf, some cb => contrastMilli cf cb ≥ threshold
-    | _, _ => true
-  text "fg" && text "alert" && text "example" && text "muted"
-    && pair "frametitlefg" "frametitlebg" aaText
-    && pair "standoutfg" "standoutbg" aaLargeText
+  text "alert" && text "example"
+    && designContract (Design.ofDoc { palette := pal })
 
 def Theme.contractHolds (th : LeanTex.Core.Theme.Theme) : Bool :=
   paletteContract th.palette
@@ -403,26 +417,46 @@ theorem moloch_contract : paletteContract Theme.moloch.palette = true := by deci
 
 theorem plain_contract : paletteContract Theme.plain.palette = true := by decide
 
-/-- Covered reads as covered on the palette's own page. Quieter than the
+/-- Covered reads as covered on the design's own page. Quieter than the
 body ink (a lower contrast against `bg` than `fg` has — SC 1.4.3 exempts
 inactive text, so no minimum binds it), yet the dimming itself must be
 seen: `fg` and `covered` differ by at least 3:1, the ratio SC 1.4.11 asks
 of visual information that identifies a state. The two together are what
-"visibly covered" means, judged from the palette, not an eyeball. -/
-def coveredContract (pal : Palette) : Bool :=
-  let bg := (pal.find? "bg").getD Color.white
-  let fg := (pal.find? "fg").getD Color.black
-  let covered := (pal.find? "covered").getD coveredDefault
-  contrastMilli covered bg < contrastMilli fg bg
-    && contrastMilli fg covered ≥ aaLargeText
+"visibly covered" means, judged from the resolved design — defaults
+applied once in `Design.ofDoc`, not re-derived here — not an eyeball. -/
+def coveredContract (d : Design) : Bool :=
+  contrastMilli d.covered d.bg < contrastMilli d.fg d.bg
+    && contrastMilli d.fg d.covered ≥ aaLargeText
 
 /-- The default surface: black ink, white page, `coveredDefault` (38%
 black, the Material disabled-state opacity, as the themes' `covered`
 mixes are). -/
-theorem default_covered : coveredContract { entries := #[] } = true := by decide
+theorem default_covered : coveredContract (Design.ofDoc {}) = true := by decide
 
-theorem moloch_covered : coveredContract Theme.moloch.palette = true := by decide
+theorem moloch_covered :
+    coveredContract (Design.ofDoc { palette := Theme.moloch.palette }) = true := by
+  decide
 
-theorem plain_covered : coveredContract Theme.plain.palette = true := by decide
+theorem plain_covered :
+    coveredContract (Design.ofDoc { palette := Theme.plain.palette }) = true := by
+  decide
+
+/-- Quantified over the shipped list itself, so a third bundle enters the
+contract by being added, not by someone remembering a theorem: every
+built-in bundle's resolved design — the values `\theme` installs, with
+every default applied — satisfies the contrast contract. -/
+theorem builtin_designs_legible :
+    Theme.builtin.all (fun th =>
+      designContract (Design.ofDoc { palette := th.palette
+                                     tokens := th.tokens
+                                     styles := th.styles })) = true := by decide
+
+/-- The covered contract, quantified the same way: every built-in bundle's
+resolved design is visibly covered when dimmed. -/
+theorem builtin_designs_covered :
+    Theme.builtin.all (fun th =>
+      coveredContract (Design.ofDoc { palette := th.palette
+                                      tokens := th.tokens
+                                      styles := th.styles })) = true := by decide
 
 end LeanTex.Core.Contrast

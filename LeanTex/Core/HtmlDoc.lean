@@ -116,21 +116,22 @@ def styleRules (doc : Doc) : String :=
     some (own ++ String.join liDecls))
 
 /-- Furniture the semantic palette keys turn on — one shared rule set for
-every theme, so a theme stays a table of values. Each rule fires only when
-its key is declared, mirroring the PDF path: `bg`/`fg` colour the page,
-`frametitlebg` turns the frame title into a colour bar, `progressfg` styles
-the section pages and their progress bar. -/
+every theme, so a theme stays a table of values. The conditions read the
+resolved `Design`, the same record the PDF path consumes; a rule fires only
+when the design carries the feature. The colour *values* stay CSS custom
+properties rather than resolved literals, deliberately: a reader's
+stylesheet can override a token, which is the HTML backend's contract. -/
 def themeCss (doc : Doc) : String :=
-  let has (k : String) : Bool := (doc.palette.find? k).isSome
-  (if has "bg" then "body { background: var(--bg); }\n" else "") ++
-  (if has "fg" then "body { color: var(--fg); }\n" else "") ++
-  (if has "frametitlebg" then
+  let d := Design.ofDoc doc
+  (if d.bgDeclared then "body { background: var(--bg); }\n" else "") ++
+  (if d.fgDeclared then "body { color: var(--fg); }\n" else "") ++
+  (if d.frametitle.isSome then
     "section.slide > header { background: var(--frametitlebg);\n" ++
     "  color: var(--frametitlefg, var(--bg, #fff));\n" ++
     "  margin: -1.4rem -1.8rem 0.8rem; padding: 0.7rem 1.8rem;\n" ++
     "  border-radius: 7px 7px 0 0; }\n" ++
     "section.slide > header h2 { color: inherit; }\n" else "") ++
-  (if has "progressfg" then
+  (if d.progress.isSome then
     "section.section-page { text-align: center; padding: 2.5rem 0;\n" ++
     "  break-inside: avoid; }\n" ++
     "section.section-page h2 { display: inline-block; text-align: left;\n" ++
@@ -662,7 +663,7 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag := Id.run do
   -- The themed section page: in a slides document with progress keys, a
   -- top-level section becomes its own deck section carrying the position.
   let themedSections := doc.docClass == "slides" &&
-    (doc.palette.find? "progressfg").isSome
+    (Design.ofDoc doc).progress.isSome
   -- The chrome footer: every frame section closes with the section in
   -- force and its own frame number, in the muted key at the scale's small
   -- step — the same declarations the PDF path reads. A `\framefoot` note

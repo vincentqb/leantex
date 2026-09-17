@@ -819,6 +819,95 @@ palette declares `covered`: the same value as the HTML muted token, so the
 two backends' handouts agree. -/
 def coveredDefault : Color := { r := 0xA1, g := 0xA1, b := 0xAA }
 
+/-- One foreground/background pairing a themed element ships. -/
+structure ColorPair where
+  fg : Color
+  bg : Color
+  deriving Repr, BEq
+
+/-- The document's resolved design: every semantic role the backends read,
+with every default applied here and nowhere else — the type is the totality
+claim, so a consumer can never invent a per-site fallback for a missing
+key. `frametitle` and `progress` are `Option` because their *presence* is
+the design (declaring `frametitlebg` is what turns the frame title into a
+bar; `progressfg` is what themes the section pages) — but each carries a
+total pair, so once a feature is on, no colour in it can be absent.
+`fgDeclared`/`bgDeclared` record what the document said, because the
+backends honour it: the PDF paints no page and HTML emits no body rule for
+an undeclared colour (HTML's own un-themed ink and surface live in the
+stylesheet, dark variant included, and are proved legible in `Contrast`). -/
+structure Design where
+  fg : Color
+  bg : Color
+  fgDeclared : Bool
+  bgDeclared : Bool
+  /-- Pending overlay content dims to this. -/
+  covered : Color
+  /-- Quieted secondary furniture — the chrome footer's small text draws in
+  it; the body ink when undeclared. -/
+  muted : Color
+  /-- The frame-title bar, when the design has one. -/
+  frametitle : Option ColorPair
+  /-- The themed section page and its progress bar, when the design has one. -/
+  progress : Option ColorPair
+  /-- A `[standout]` frame's pair — total: without the keys it inverts the
+  page's own colours. -/
+  standout : ColorPair
+  /-- The title-page rule's colour; the ink when undeclared. Declared by
+  both shipped bundles and consumed by no backend yet — the role check in
+  `Tests.lean` names it until the title-page rule lands. -/
+  separator : Color
+  /-- Thickness of the progress bar, resolved at layout like any token. -/
+  progressheight : SymGlue
+  styles : Styles
+  deriving Repr, BEq
+
+/-- The one construction site: every default the backends used to apply at
+their own use sites (`find?` + `getD`, each with its own chain) is applied
+here, once. -/
+def Design.ofDoc (doc : Doc) : Design :=
+  let pal := doc.palette
+  let fg := (pal.find? "fg").getD Color.black
+  let bg := (pal.find? "bg").getD Color.white
+  { fg := fg
+    bg := bg
+    fgDeclared := (pal.find? "fg").isSome
+    bgDeclared := (pal.find? "bg").isSome
+    covered := (pal.find? "covered").getD coveredDefault
+    muted := (pal.find? "muted").getD fg
+    frametitle := (pal.find? "frametitlebg").map fun barBg =>
+      { fg := (pal.find? "frametitlefg").getD bg
+        bg := barBg }
+    progress := (pal.find? "progressfg").map fun barFg =>
+      { fg := barFg
+        bg := (pal.find? "progressbg").getD bg }
+    standout := { fg := (pal.find? "standoutfg").getD bg
+                  bg := (pal.find? "standoutbg").getD fg }
+    separator := (pal.find? "separator").getD fg
+    progressheight := (doc.tokens.find? "progressheight").getD
+      { width := Dim.Length.ofSp (Dim.pt 1) }
+    styles := doc.styles }
+
+/-- Per-element style, total: the empty style is the default, applied here
+rather than at each consumer. -/
+def Design.style (d : Design) (element : String) : ElementStyle :=
+  (d.styles.find? element).getD {}
+
+/-- The palette keys whose resolved `Design` field a backend consumes today,
+each named with its consumers; `Tests.lean` checks every role a built-in
+bundle declares appears here or is a content colour, so a decorative key no
+code reads is a named warning, never silence. `separator` is deliberately
+absent: both bundles declare it, `Design` resolves it, and no backend reads
+it yet — the title-page rule is its coming consumer. -/
+def Design.consumedRoles : List String :=
+  ["fg", "bg",                        -- Layout.run / B.docBg, HtmlDoc.themeCss
+   "covered",                         -- Layout.run's overlay dimming
+   "muted",                           -- Layout.run's chrome footer, HtmlDoc.themeCss
+   "frametitlefg", "frametitlebg",    -- Layout.collectBlock, HtmlDoc.themeCss
+   "progressfg", "progressbg",        -- Layout.collectBlock, HtmlDoc.themeCss
+   "standoutfg", "standoutbg"]        -- Layout.collectBlock frame arm
+
+
 -- Overlay walks. Structural recursion through `List`, as the printers above.
 
 /-- Is a step's content pending on page `k`: before its range starts, or
