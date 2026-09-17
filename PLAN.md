@@ -47,6 +47,40 @@ real resume from matching its lualatex build exactly.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-17 — the round-three review: two corrections to the second-round
+entry below, and one root cause under its four remaining symptoms. The
+entry claims the recovery "takes the group wherever the line break falls";
+when written, a blank line still killed the build — the recovery broke at
+`.par`, W0312 said "skipped", and the orphaned group died as E0313, the
+never-fatal path creating the fatal case. The claim is true only as of
+this batch: the group is taken across any whitespace, blank lines
+included, and never past another construct. The same entry claims the
+pre-commit check "rejects any future flat warn-once key in either store";
+it read keys only from two literal spellings, inspected two lines in the
+whole tree, and would have passed the round-two offender `sayOnce name`.
+The check is now structural about the call site — every warn-once call in
+core code must spell its namespace where it stands, and a key the line
+cannot prove namespaced is rejected outright — which is the enforceable
+version of the claim, and what it now says.
+
+The root cause behind the symptoms: five near-duplicate forward walks
+over `Array Raw` that disagreed about when junk ends and what it is. One
+`spanRaws` now carries the walk, `malformedRun` states the
+stop-at-the-anchor's-line rule once, and the disagreements closed with
+it: an unclosed bracket's run is content wherever content can live
+(`\section[never closes IMPORTANTWORDS {Recovered}` keeps its words; only
+the preamble drops the run, with W0310 already pointing at it); an
+unknown environment's body splices into the same inline scan that reads
+its neighbours, so its edge spaces separate words — whitespace is one
+separator, never a glue and never a double — and `trimEdgeSpaces` is
+deleted rather than taught what a newline is; the begin-line groups that
+go with an unknown wrapper are counted by a new W0313, so W0302's "its
+body is kept" no longer overstates; and `bodyIsBlock` gained the `.verb`
+arm the boundary rule already had and descends into scope groups and
+environment bodies — block content one group deeper is block content.
+Every behavioural fix carries a test shown failing before it, and each
+was re-broken once to watch its test fail.
+
 2026-09-17 — underline skip-ink is decided by the font's own outlines. A
 new `LeanTex/Core/Ink.lean` decodes TrueType `glyf` (simple and composite)
 and CFF Type 2 charstrings, flattens curves to eight chords, and reports
