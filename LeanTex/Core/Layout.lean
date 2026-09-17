@@ -1297,12 +1297,12 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- A speaker note is not handout content: no lines, no gap.
     a
   | .verbatim s =>
-    -- Code lines, kept literally, at 4/5 of the body size (the
-    -- \footnotesize convention for code frames — an 80-column line fits a
-    -- 16:9 slide). No hyphenation patterns: the engine must never invent a
-    -- hyphen inside an identifier.
+    -- Code lines, kept literally, at the scale's own \footnotesize (the
+    -- code-frame convention) — derived from the table, not a loose decimal.
+    -- No hyphenation patterns: the engine must never invent a hyphen inside
+    -- an identifier.
     collectPara a none fs #[.styled .mono (Ir.verbatimInlines s)] indent false
-      (a.geom.fontSize * 4 / 5)
+      (a.geom.fontSize * ((Ir.sizeScale.lookup "footnotesize").getD 1000) / 1000)
   | .frame title standout body =>
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never

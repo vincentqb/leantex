@@ -189,11 +189,44 @@ derives its content measure from the page's text width in these units. -/
 def baseFontSize : Sp := Dim.pt 10
 
 /-- The LaTeX 10pt size scale, per mille of the surrounding size. It lives in
-the IR because both backends read it: they must agree on what `\Huge` means. -/
+the IR because both backends read it: they must agree on what `\Huge` means.
+
+The values are LaTeX's own (`size10.clo`: 5, 7, 8, 9, 10, 12, 14.4, 17.28,
+20.74, 24.88 pt), which above `normalsize` is a geometric modular scale of
+ratio 1.2 — TeX's `\magstep` — to per-mille rounding, and below it takes the
+traditional smaller steps down to the fixed footnote and script sizes. The
+theorems after the table are what make it a scale rather than a list of
+numbers: it is strictly monotone, every step's ratio stays inside a stated
+band, and the display steps really are ×1.2. -/
 def sizeScale : List (String × Nat) :=
   [("tiny", 500), ("scriptsize", 700), ("footnotesize", 800), ("small", 900),
    ("normalsize", 1000), ("large", 1200), ("Large", 1440), ("LARGE", 1728),
    ("huge", 2074), ("Huge", 2488)]
+
+/-- Adjacent steps of the scale, in order: what the scale theorems below
+quantify over. -/
+def sizeScaleSteps : List (Nat × Nat) :=
+  (sizeScale.map (·.2)).zip (sizeScale.map (·.2)).tail
+
+/-- The scale is strictly monotone: a larger name is a larger size, so a
+document can rank two declared sizes by rank alone. -/
+theorem sizeScale_monotone : ∀ p ∈ sizeScaleSteps, p.1 < p.2 := by decide
+
+/-- Every step's ratio lies in [10⁄9, 7⁄5]: no two adjacent sizes collapse
+into each other (at least a major second apart) and no step jumps more than
+`tiny`'s catch-up to `scriptsize` (a ratio band, the modular-scale property,
+stated over the integers). -/
+theorem sizeScale_ratio_band :
+    ∀ p ∈ sizeScaleSteps, 10 * p.1 ≤ 9 * p.2 ∧ 5 * p.2 ≤ 7 * p.1 := by decide
+
+/-- `normalsize` is the identity: the scale is anchored at the body size. -/
+theorem sizeScale_normalsize : sizeScale.lookup "normalsize" = some 1000 := by decide
+
+/-- Above `normalsize` the scale is geometric with ratio 1.2 to per-mille
+rounding: each step is `\magstep`'s minor-third ratio, |6a − 5b| ≤ 4‰. -/
+theorem sizeScale_display_geometric :
+    ∀ p ∈ sizeScaleSteps, 1000 ≤ p.1 →
+      6 * p.1 ≤ 5 * p.2 + 4 ∧ 5 * p.2 ≤ 6 * p.1 + 4 := by decide
 
 def Style.label : Style → String
   | .bold => "bold"
