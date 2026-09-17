@@ -2640,6 +2640,249 @@ def walkChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "maxStep keeps furniture outside the overlay model"
     (Ir.maxStepBlocks #[.section 1 false #[.step 2 none #[.text "t"]]] == 1)
 
+/-- The shipped-page census over `Layout.Out`: the observable facts a page
+claim may cite (AGENTS.md, the page-claim rule). Chars come from the set
+glyph runs — gaps become single spaces and lines join with one space, so a
+phrase survives a line break but not a hyphenation. `covered` collects the
+runs recoloured to `Ir.coveredDefault`, the dim of every fixture that
+declares no `covered` palette entry. Deliberately thin: it grows toward
+the role census `Check.Shipped` is heading for; what `censusChecks`
+enforces today is coverage — no fixture enters the golden set witnessed by
+its IR dump alone. -/
+structure CensusPage where
+  lines : Array (Dim.Sp × String)
+  covered : String
+  rules : Nat
+  fills : Nat
+
+def CensusPage.text (p : CensusPage) : String :=
+  String.intercalate " " (p.lines.toList.map (·.2))
+
+def censusOf (out : Layout.Out) : Array CensusPage := Id.run do
+  let mut pages : Array CensusPage := #[]
+  for p in out.pages do
+    let mut lines : Array (Dim.Sp × String) := #[]
+    let mut covered := ""
+    let mut rules := 0
+    for l in p.lines do
+      let mut chars := ""
+      for seg in l.segs do
+        match seg with
+        | .run _ color _ _ glyphs _ _ _ =>
+          if color == Ir.coveredDefault then
+            for (_, c) in glyphs do
+              chars := chars.push c
+              covered := covered.push c
+          else
+            for (_, c) in glyphs do
+              chars := chars.push c
+            covered := covered.push ' '
+        | .gap _ =>
+          chars := chars.push ' '
+          covered := covered.push ' '
+        | .rule .. => rules := rules + 1
+        -- an image is decorative ink to the text census, like a rule
+        | .image .. => pure ()
+      lines := lines.push (l.x, chars)
+      covered := covered.push ' '
+    pages := pages.push { lines := lines
+                          covered := covered
+                          rules := rules
+                          fills := p.fills.size }
+  return pages
+
+def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+
+def censusText (c : Array CensusPage) : String :=
+  String.intercalate " " (c.toList.map (·.text))
+
+def pageHas (c : Array CensusPage) (i : Nat) (needle : String) : Bool :=
+  (c[i]?.map fun p => hasStr p.text needle).getD false
+
+def pageCovered (c : Array CensusPage) (i : Nat) (needle : String) : Bool :=
+  (c[i]?.map fun p => hasStr p.covered needle).getD false
+
+def pageAllRevealed (c : Array CensusPage) (i : Nat) : Bool :=
+  (c[i]?.map fun p => (p.covered.trimAscii.toString).isEmpty).getD false
+
+/-- The x of the first shipped line on page `i` containing `needle`. -/
+def lineXOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
+  (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.2 needle).map (·.1)
+
+/-- Census assertions, one row per golden fixture: what each fixture's
+shipped pages must show, judged from `Layout.Out` — never from the IR dump,
+which witnesses elaboration only. `censusChecks` fails when a fixture in
+`goldenNames` has no row here, so a fixture cannot enter the suite
+witnessed by its golden alone. Facts are observable page claims: text
+shipped (or deliberately not, for a note), covered-coloured runs on step
+pages, rules and fills drawn, line positions for centring and columns. -/
+def censusTable :
+    List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
+  ("paragraphs", fun _ c => [
+    ("one page", c.size == 1),
+    ("the opening sentence ships", hasStr (censusText c) "Typesetting is the arrangement of type"),
+    ("it wraps to at least four lines", (c[0]?.map fun p => decide (p.lines.size ≥ 4)).getD false)]),
+  ("layout", fun _ c => [
+    ("one page", c.size == 1),
+    ("the heading ships", hasStr (censusText c) "The first section"),
+    ("a list marker ships beside its item", hasStr (censusText c) "• One concise point")]),
+  ("declared", fun _ c => [
+    ("one page, as the fixture asserts", c.size == 1),
+    ("the heading ships", hasStr (censusText c) "Declared geometry")]),
+  ("fonts", fun _ c => [
+    ("one page", c.size == 1),
+    ("the heading ships", hasStr (censusText c) "Faces"),
+    ("the body claim ships", hasStr (censusText c) "Body text is set in the serif family")]),
+  ("palette", fun _ c => [
+    ("one page", c.size == 1),
+    ("the coloured heading ships", hasStr (censusText c) "A coloured heading")]),
+  ("tokens", fun _ c => [
+    ("one page", c.size == 1),
+    ("the heading ships", hasStr (censusText c) "Declared spacing")]),
+  ("fill", fun _ c => [
+    ("one page", c.size == 1),
+    ("hfill sets both edges on one line",
+      ((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.2 "Left edge").map
+        fun l => hasStr l.2 "right edge").getD false)]),
+  ("links", fun _ c => [
+    ("one page", c.size == 1),
+    ("the running foot resolves page number and count", hasStr (censusText c) "page 1 of 1"),
+    ("link underlines ship as rules", (c[0]?.map fun p => decide (p.rules ≥ 1)).getD false)]),
+  ("resume", fun _ c => [
+    ("one page", c.size == 1),
+    ("the name ships", hasStr (censusText c) "Alex Doe"),
+    ("the contact line ships", hasStr (censusText c) "alex@example.org")]),
+  ("talk", fun _ c => [
+    ("a page per overlay step plus one per remaining frame", c.size == 6),
+    ("the first step page dims the pending lines in place",
+      pageCovered c 0 "Metrics are queryable"),
+    ("the dimmed text still ships", pageHas c 0 "Metrics are queryable"),
+    ("the final step page has nothing covered", pageAllRevealed c 2)]),
+  ("deck", fun _ c => [
+    ("a page per frame, divider, and step", c.size == 8),
+    ("the title frame ships the title", pageHas c 0 "A Certified Deck"),
+    ("the standout frame fills its background", (c[7]?.map (·.fills == 1)).getD false),
+    ("the standout content ships", pageHas c 7 "Questions?")]),
+  ("themed", fun _ c => [
+    ("pages", c.size == 4),
+    ("the section page carries its progress-bar fills", (c[1]?.map fun p => decide (p.fills ≥ 2)).getD false),
+    ("the frame-title bar fills", (c[2]?.map fun p => decide (p.fills ≥ 1)).getD false),
+    ("the standout frame fills its background", (c[3]?.map fun p => decide (p.fills ≥ 1)).getD false)]),
+  ("latex-idioms", fun _ c => [
+    ("one page", c.size == 1),
+    ("the running head ships", hasStr (censusText c) "Alex Doe"),
+    ("the section rules draw", c.any fun p => decide (p.rules ≥ 1))]),
+  ("wrapper", fun _ c => [
+    ("both wrapper halves ship around the body",
+      hasStr (censusText c) "First: body one (end First)"),
+    ("the renewed environment ships its new half", hasStr (censusText c) "Aside. body two")]),
+  ("centering", fun geom c => [
+    ("the lead line sits at the margin",
+      lineXOf c 0 "Left-aligned lead." == some geom.hmargin),
+    ("the centred line sits past the margin",
+      (lineXOf c 0 "One centred line.").any fun x => decide (x > geom.hmargin)),
+    ("the standout line is centred",
+      (lineXOf c 1 "Questions?").any fun x => decide (x > geom.hmargin))]),
+  ("columns", fun geom c => [
+    ("two frames, two pages", c.size == 2),
+    ("the narrow column sets right of the wide one",
+      (lineXOf c 0 "A narrow aside.").any fun x => decide (x > geom.hmargin)),
+    ("both equal shares ship", pageHas c 1 "left half" && pageHas c 1 "right half")]),
+  ("overlays-blocks", fun _ c => [
+    ("a page per step across all frames", c.size == 12),
+    ("a list revealed whole is covered whole",
+      pageCovered c 0 "Placeholder point one." && pageCovered c 0 "Placeholder point two."),
+    ("the covered list still ships its markers", pageHas c 0 "• Placeholder point one."),
+    ("alt shows its second beat covered first", pageCovered c 9 "The second beat."),
+    ("alt covers the first beat on the later step", pageCovered c 10 "The first beat."),
+    ("a pause inside a column dims below it", pageCovered c 7 "Below the pause.")]),
+  ("chrome", fun _ c => [
+    ("pages", c.size == 5),
+    ("the footer names the section and the frame number", pageHas c 2 "Footers 2"),
+    ("a framefoot note takes the left slot", pageHas c 3 "source: example.org/data"),
+    ("the default footer returns when the wrapper ends", pageHas c 4 "Footers 4")]),
+  ("lists", fun _ c => [
+    ("one page", c.size == 1),
+    ("four itemize levels ship their four marks",
+      ["• Outer point one", "– Second level", "* Third level", "· Fourth level"].all
+        fun m => hasStr (censusText c) m),
+    ("enumerate marks per level", ["1. First", "(a) Nested resets to one",
+      "i. Third level", "A. Fourth level"].all fun m => hasStr (censusText c) m),
+    ("the enclosing counter resumes", hasStr (censusText c) "3. Third")]),
+  ("lists-styled", fun _ c => [
+    ("one page", c.size == 1),
+    ("the base override ships", hasStr (censusText c) "– The base override"),
+    ("the level override ships", hasStr (censusText c) "• The level override")]),
+  ("lists-deck", fun _ c => [
+    ("pages", c.size == 4),
+    ("nesting shows through the theme", pageHas c 1 "– Nested under the stepped item"),
+    ("ordered marks on a slide", pageHas c 3 "1. First placeholder")]),
+  -- the census carries x and text, not y; the [t]/[c]/[b] geometry itself
+  -- is pinned by vdistChecks over Layout.LineOut
+  ("valign", fun _ c => [
+    ("five frames, the overflow spilling once", c.size == 6),
+    ("each declared frame ships its body",
+      pageHas c 0 "A short body sits midway" && pageHas c 1 "This body hugs its title"
+        && pageHas c 2 "This body sits on the bottom margin"),
+    ("the spill page carries the overflow", pageHas c 5 "resolved to enumerate")]),
+  ("images", fun _ c => [
+    ("one page", c.size == 1),
+    ("the sentence around the inline image ships",
+      hasStr (censusText c) "sits in the line"),
+    ("the figure caption ships", hasStr (censusText c) "Three rectangles, fitted")]),
+  ("math", fun _ c => [
+    ("one page", c.size == 1),
+    ("prose around the display ships",
+      hasStr (censusText c) "The paragraph continues after the display"),
+    ("the out-of-scope radical keeps its source", hasStr (censusText c) "\\sqrt")]),
+  ("overlays", fun _ c => [
+    ("one handout page per step", c.size == 5),
+    ("step one dims the later beats in place",
+      pageCovered c 0 "Second beat." && pageCovered c 0 "Third beat."),
+    ("the dimmed beats still ship", pageHas c 0 "Second beat."),
+    ("the last step reveals everything", pageAllRevealed c 2),
+    ("pause dims what follows it", pageCovered c 3 "After the pause.")]),
+  ("notes", fun _ c => [
+    ("one page", c.size == 1),
+    ("the note never ships on the handout", !hasStr (censusText c) "Say hello"),
+    ("the paragraph flows on unbroken", hasStr (censusText c) "never breaks the flow")]),
+  ("furniture", fun _ c => [
+    ("pages", c.size == 6),
+    ("the title ships", pageHas c 0 "Frame Furniture"),
+    ("the centred line ships", hasStr (censusText c) "This line is centred."),
+    ("the step page dims its pending beats", pageCovered c 3 "Second beat."),
+    ("the narrow column ships", hasStr (censusText c) "The narrow column.")]),
+  ("trio-page", fun _ c => [
+    ("one page", c.size == 1),
+    ("the studio name ships", hasStr (censusText c) "Cardamom Press"),
+    ("the shared section style draws its rules", (c[0]?.map (·.rules == 2)).getD false)]),
+  ("trio-deck", fun _ c => [
+    ("pages", c.size == 4),
+    ("the title ships", pageHas c 0 "Cardamom Press"),
+    ("the divider draws the section rule", (c[2]?.map (·.rules == 1)).getD false)]),
+  ("trio-card", fun _ c => [
+    ("two faces, two pages", c.size == 2),
+    ("the front ships the name", pageHas c 0 "Pat Placeholder"),
+    ("the back ships the contact", pageHas c 1 "press@example.org")])]
+
+/-- The census tier: every golden fixture also appears in `censusTable`,
+and each row's facts hold on the pages the engine actually ships. -/
+def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (pats : Hyphen.Patterns) : IO Unit := do
+  for n in goldenNames do
+    check ref s!"census covers {n}" (censusTable.any (·.1 == n))
+  for (n, _) in censusTable do
+    check ref s!"census row {n} names a golden fixture" (goldenNames.contains n)
+  for (n, facts) in censusTable do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, _) := Elab.run s!"{n}.tex" src
+    let geom := Layout.Geom.ofPage doc.page
+    let out := Layout.run geom oneFace (some pats) doc
+    let c := censusOf out
+    for (label, ok) in facts geom c do
+      check ref s!"census {n}: {label}" ok
+
+
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
 the title frame, and the page-per-frame contract in layout. Its own
 function: `main`'s do block has no elaboration budget left. -/
@@ -4627,6 +4870,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       slideChecks ref oneFace
       vdistChecks ref geom oneFace
       cardChecks ref oneFace pats
+      censusChecks ref oneFace pats
       columnsChecks ref oneFace
       overlayChecks ref oneFace
       overlayBlockChecks ref oneFace
