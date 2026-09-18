@@ -347,6 +347,39 @@ def surfaceReach (l : String) : Bool :=
     || (t.startsWith "open " && surfaceMods.any (hasWord t ·))
     || surfaceMods.any (usesQualified l ·)
 
+/-- HTML built by concatenating tag strings: the exact shape AGENTS.md bans
+(`"<" ++ …`) everywhere but the typed tree's own renderer (Html.lean, which
+the caller exempts by file). A multi-character tag literal (`"<div>" ++`)
+is a stated blind spot — Pdf.lean's CMap and XMP writers legitimately build
+non-HTML angle-bracket text that way. -/
+def tagStringEmit (l : String) : Bool :=
+  ((stripLineComment l).splitOn "\"<\"").drop 1 |>.any fun rest =>
+    rest.trimAscii.toString.startsWith patAppend
+
+/-- `pat` with no identifier character following — so `FontDb.scan` does not
+match `FontDb.scanRoots`. `hasWord` cannot carry a dotted name: the dot is
+a word delimiter. -/
+def hasCall (line pat : String) : Bool :=
+  ((line.splitOn pat).drop 1).any fun rest =>
+    match rest.toList with
+    | [] => true
+    | c :: _ => !isWordChar c
+
+/-- A host font scan in a test: `FontDb.scan` where only the shipped-corpus
+`FontDb.scanRoots [testFonts]` is hermetic (AGENTS.md, Conventions). -/
+def fontScanInTest (l : String) : Bool :=
+  hasCall (stripLineComment (stripStrings l)) "FontDb.scan"
+
+/-- The marker stating why an `Ir.dump` read in a test is not a page claim;
+its presence on the line is the escape the gate honours. -/
+def irTierMark : String := "-- ir tier:"
+
+/-- An IR dump in a test without its stated tier. `Ir.dump` and its walk
+companions all match: each reads the IR, and a page claim judged there is
+the six-visual-defects shape (AGENTS.md, Conventions). -/
+def irDumpUnmarked (l : String) : Bool :=
+  containsSub (stripLineComment (stripStrings l)) "Ir.dump" && !containsSub l irTierMark
+
 /-- The line's string-literal contents, concatenated — `stripStrings`'
 complement, with its stated line-scanner limitations. What the engine says
 to a user lives in string literals; this is the text the self-containment
@@ -523,6 +556,36 @@ def selftest : IO UInt32 := do
     ("  -- a backend never calls Parse.scanOpt; the IR carries it", false),
     ("  let reparse := myParse.run s", false),
     ("  openTag := elem tag attrs kids", false)]
+
+  expect "tagStringEmit" tagStringEmit [
+    -- the renderer's own shape: outside Html.lean it must fire, spaced or not
+    ("    let open' := \"<\" " ++ patAppend ++ " tag " ++ patAppend ++ " attrString attrs", true),
+    ("  out := out " ++ patAppend ++ " \"<\"" ++ patAppend ++ "tag", true),
+    -- angle-bracket text that is not the banned shape stays legal:
+    -- a multi-char literal (stated blind spot), an escaper arm, a CMap
+    -- interpolation, and the shape quoted in a comment
+    ("  \"<!DOCTYPE html>\\n\" " ++ patAppend, false),
+    ("  if c == '<' then out := out " ++ patAppend ++ " \"&lt;\"", false),
+    ("  s := s " ++ patAppend ++ " s!\"<{hex4 g}> <{utf16Hex c}>\\n\"", false),
+    ("  -- writing \"<\" " ++ patAppend ++ " tag is banned here", false)]
+
+  expect "fontScanInTest" fontScanInTest [
+    -- the driver's spelling, which in a test is the hermeticity break
+    ("  let faces ← FontDb.scan (cfg.fontDirs.toList ++ (← texFontDirs))", true),
+    ("  let faces ← FontDb.scan", true),
+    -- the hermetic spelling, a comment, and a string naming the call
+    ("  let shipped ← FontDb.scanRoots [testFonts]", false),
+    ("  -- FontDb.scan here would break hermeticity", false),
+    ("  t \"a message naming FontDb.scan stays data\" true", false)]
+
+  expect "irDumpUnmarked" irDumpUnmarked [
+    -- dump and its walk companions, unmarked: all must fire
+    ("    let out := Ir.dump doc diags", true),
+    ("        ((Ir.dumpBlocks \"\" nbody).splitOn \"never shown\").length == 2", true),
+    -- the stated-tier escape, a comment, and a string naming the call
+    ("    let out := Ir.dump doc diags " ++ irTierMark ++ " goldens witness elaboration", false),
+    ("  -- Ir.dump is rejected in tests without a tier", false),
+    ("  t \"a message naming Ir.dump stays data\" true", false)]
 
   expect "identityArm" identityArm [
     -- the wildcard drops the walk audit found, all of which must fire
@@ -845,6 +908,32 @@ def main (args : List String) : IO UInt32 := do
   scale drifts from the type scale, invisibly.
   Fix: read a token/style/palette entry, or put the source in a `--`
   comment on the same line (the diff scanner cannot see the line above)."
+    if backendFiles.contains file && file != "LeanTex/Core/Html.lean" then
+      let bad := lines.filter tagStringEmit
+      if !bad.isEmpty then
+        say s!"pre-commit: HTML built from tag strings, in {file}:
+{String.intercalate "\n" bad.toList}
+  HTML is a typed tree with a certified escaper; a concatenated tag skips
+  the escaper by construction (AGENTS.md, Conventions). Html.lean's own
+  renderer is the one sanctioned site.
+  Fix: build the node with the typed constructors; the renderer emits it."
+    if file == "Tests.lean" || file.startsWith "Tests/" then
+      let bad := lines.filter fontScanInTest
+      if !bad.isEmpty then
+        say s!"pre-commit: FontDb.scan in {file}:
+{String.intercalate "\n" bad.toList}
+  Tests scan only the shipped corpus fonts — FontDb.scanRoots [testFonts]
+  (AGENTS.md, Conventions); a host scan makes the suite depend on what
+  this machine has installed.
+  Fix: ship the font in tests/corpus/fonts/ and scan through testFonts."
+      let bad := lines.filter irDumpUnmarked
+      if !bad.isEmpty then
+        say s!"pre-commit: Ir.dump in {file} without its stated tier:
+{String.intercalate "\n" bad.toList}
+  A claim about what a page shows never comes from an IR dump — six visual
+  defects once passed a fully green suite that way (AGENTS.md, Conventions).
+  Fix: assert over Layout.Out or the typed HTML tree; an IR-tier fact that
+  is not a page claim says so on the line: `{irTierMark} <why>`."
 
   -- Warn-once keys are namespaced: a flat key space let an environment and a
   -- command of one name silence each other once (W0301/W0302), and a growing

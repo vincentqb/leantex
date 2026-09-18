@@ -300,7 +300,7 @@ def runGoldens (update : Bool) (fail : String → IO Unit) : IO Unit := do
   for n in goldenNames do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
     let (doc, diags) := Elab.run s!"{n}.tex" src
-    let out := Ir.dump doc diags
+    let out := Ir.dump doc diags -- ir tier: goldens witness elaboration, not the artifact
     let path := s!"tests/golden/{n}.txt"
     if update then
       IO.FS.writeFile path out
@@ -3570,7 +3570,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
      (match inl.body with
       | #[.frame _ _ _ #[.para content, .note nbody]] =>
         Ir.plainText content == "bold text" &&
-        ((Ir.dumpBlocks "" nbody).splitOn "never shown").length == 2
+        ((Ir.dumpBlocks "" nbody).splitOn "never shown").length == 2 -- ir tier: note content, not a page claim
       | _ => false))
 
   -- A note body is absorbed, as beamer absorbs it: a reserved character
@@ -3581,7 +3581,7 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
     (resvDs.isEmpty &&
      (match resv.body with
       | #[.frame _ _ _ #[_, .note nbody]] =>
-        ((Ir.dumpBlocks "" nbody).splitOn "name_with_underscores & more").length == 2
+        ((Ir.dumpBlocks "" nbody).splitOn "name_with_underscores & more").length == 2 -- ir tier: note content, not a page claim
       | _ => false))
 
 /-- The theme × frame-furniture reconciliation invariants: standout and
@@ -6379,7 +6379,7 @@ def allowChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "allow with an unknown code is an error"
     (errCodes (doc "\\allow{W9999}") == ["E0329"])
   t "allow dumps as a declaration"
-    (((Ir.dump (elabStr (doc "\\allow{W0307}")).1 #[]).splitOn "allow W0307").length == 2)
+    (((Ir.dump (elabStr (doc "\\allow{W0307}")).1 #[]).splitOn "allow W0307").length == 2) -- ir tier: the dump's own feature under test
   -- The total function severity resolution is: an allowed error or warning
   -- becomes a note — a declared document emits nothing at default
   -- verbosity — and the acceptance summary is what keeps it visible.
