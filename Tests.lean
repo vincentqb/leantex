@@ -7652,6 +7652,13 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     ((gOut.pages.map fun p => p.lines.any (·.y == headY)) == #[true, true] &&
      (gOut.pages.map fun p => p.lines.any (·.y == footY)) == #[false, true])
 
+  -- Compat: a repeated fancyhdr field is redefined (fancyhdr manual:
+  -- \lhead redefines), never concatenated.
+  let (kDoc, _) := elabStr (wrap "\\lhead{First}\n\\lhead{Second}\n")
+  let kText := Ir.plainText (kDoc.head.getD #[])
+  t "a repeated fancyhdr field is redefined, not concatenated"
+    ((kText.splitOn "Second").length == 2 && (kText.splitOn "First").length == 1)
+
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pats := Hyphen.load

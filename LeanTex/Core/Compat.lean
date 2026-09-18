@@ -111,8 +111,10 @@ styles elements; \\runningfoot sets a document footer"),
 private structure St where
   file : String
   diags : Array Diag := #[]
-  /-- Running-content pieces gather across `\ihead`/`\chead`/`\ohead` and land
-  as one declaration once the preamble ends. Slot 0 inner, 1 centre, 2 outer. -/
+  /-- Running-content slots gathered across `\ihead`/`\chead`/`\ohead`,
+  landing as one declaration once the preamble ends. Slot 0 inner, 1 centre,
+  2 outer — one entry per slot: a same-slot repeat replaces, as fancyhdr
+  defines it (fancyhdr manual §2: `\lhead` *redefines* the field). -/
   head : Array (Nat × String) := #[]
   foot : Array (Nat × String) := #[]
   runPos : Pos := ⟨1, 1⟩
@@ -693,8 +695,10 @@ where
       else if name.startsWith "c" then 1 else 2
     modify fun st =>
       let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := pos } else st
-      if name.endsWith "head" then { st with head := st.head.push (slot, src) }
-      else { st with foot := st.foot.push (slot, src) }
+      if name.endsWith "head" then
+        { st with head := (st.head.filter (·.1 != slot)).push (slot, src) }
+      else
+        { st with foot := (st.foot.filter (·.1 != slot)).push (slot, src) }
     return some (#[], k)
   | "thispagestyle" =>
     -- Only the opening page can be meant from the preamble or the document's
