@@ -1064,6 +1064,36 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             i := j + 1
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
+        else if name == "paragraph" || name == "subparagraph" then
+          -- The level-4 and level-5 headings are run-in in article
+          -- (clsguide §2.2; classes.dtx defines both with a negative
+          -- afterskip of 1 em): the title sets bold at the body size on
+          -- the text's own line, an em quad between title and text —
+          -- never display type, so `heading_hierarchy`'s display levels
+          -- are untouched and no new level joins that statement. Both are
+          -- below article's secnumdepth of 3, so neither numbers.
+          let mut j := skipSpaces raws i
+          if let some (.word "*" _) := raws[j]? then
+            j := skipSpaces raws (j + 1)
+          if let .took k := scanBracketArg raws j pos then
+            warnOnce ctx "section:short" .N0103
+              s!"'\\{name}[short]' short title is unused: nothing consumes it yet" pos
+            j := skipSpaces raws k
+          match raws[j]? with
+          | some (.group body _) =>
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (.styled .bold (← elabInlines ctx body))
+            -- The run-in gap: classes.dtx's 1 em, as the em quad U+2003
+            -- (a fixed-width space, kerned in layout like the \, family).
+            sb := "\u2003"
+            i := j + 1
+            -- Whitespace after the title collapses into the quad: the gap
+            -- is the declared em, not the em plus the source's newline.
+            for _ in [i:raws.size] do
+              if let some .space := raws[i]? then i := i + 1 else break
+          | _ =>
+            diag ctx .E0304 s!"'\\{name}' needs a \{title}" pos
         else if name == "href" || name == "link" then
           let j := skipSpaces raws i
           let j2 := skipSpaces raws (j + 1)
