@@ -242,6 +242,24 @@ private theorem declare_collapse {α : Type} (xs : Array (String × α)) (k : St
   rw [Array.filter_push]
   simp
 
+/-- The locality half over the same store: a declaration changes exactly
+the key it names — every other key reads back as before. -/
+private theorem declare_keeps {α : Type} (xs : Array (String × α)) (k k' : String) (v : α)
+    (h : k' ≠ k) :
+    ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k') = xs.find? (·.1 == k') := by
+  rw [Array.find?_push, Array.find?_filter]
+  have hpred : (fun a : String × α => decide ((a.fst != k) = true ∧ (a.fst == k') = true))
+      = (fun a : String × α => a.fst == k') := by
+    funext x
+    by_cases hx : (x.1 == k') = true
+    · have hxe : x.1 = k' := by simpa using hx
+      simp [hxe, h]
+    · simp [hx]
+  rw [hpred]
+  have hkk : (k == k') = false := by
+    simpa using fun hk => h hk.symm
+  simp [hkk]
+
 /-- Keyed last-wins, read side (T2): `\tokens{ k = v }` means `find? k` is
 `v`, whatever was declared before. -/
 theorem Tokens.declare_last_wins (t : Tokens) (k : String) (g : SymGlue) :
@@ -257,6 +275,14 @@ theorem Tokens.declare_overwrite (t : Tokens) (k : String) (g g' : SymGlue) :
     (t.declare k g).declare k g' = t.declare k g' := by
   unfold declare
   rw [declare_collapse]
+
+/-- An override changes exactly what it names (T2's locality half, the
+`Tokens` twin of `Palette.declare_keeps_others`): every other token
+resolves as it did before. -/
+theorem Tokens.declare_keeps_others (t : Tokens) (k k' : String) (g : SymGlue)
+    (h : k' ≠ k) : (t.declare k g).find? k' = t.find? k' := by
+  unfold declare find?
+  rw [declare_keeps _ _ _ _ h]
 
 -- Table rule weights and paddings: booktabs' documented defaults
 -- (booktabs.dtx v1.61803398, §"The code": `\heavyrulewidth=.08em
@@ -447,19 +473,8 @@ declaration; values, not expressions, per the `Theme` docstring and PLAN
 what let a document's `\muted` erase a theme role silently. -/
 theorem Palette.declare_keeps_others (p : Palette) (k k' : String) (c : Color) (d : Bool)
     (h : k' ≠ k) : (p.declare k c d).find? k' = p.find? k' := by
-  simp only [Palette.declare, Palette.find?, Array.find?_push]
-  rw [Array.find?_filter]
-  have hpred : (fun a : String × Color => decide ((a.fst != k) = true ∧ (a.fst == k') = true))
-      = (fun a : String × Color => a.fst == k') := by
-    funext x
-    by_cases hx : (x.1 == k') = true
-    · have hxe : x.1 = k' := by simpa using hx
-      simp [hxe, h]
-    · simp [hx]
-  rw [hpred]
-  have hkk : (k == k') = false := by
-    simpa using fun hk => h hk.symm
-  simp [hkk]
+  unfold declare find?
+  rw [declare_keeps _ _ _ _ h]
 
 /-- A colour override never touches the covered fraction. -/
 theorem Palette.declare_keeps_covered (p : Palette) (k : String) (c : Color) (d : Bool) :
