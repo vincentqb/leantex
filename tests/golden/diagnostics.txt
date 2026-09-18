@@ -313,6 +313,11 @@ warning[W0341]: '[16]' went with unknown command '\textls'; an option run is not
 ── W0342 (degraded) a definition shadows a palette role; the role is frozen where it is used
 warning[W0342]: '\muted' is also a palette role; this definition freezes it, so the palette and the contrast check no longer reach it
   help: drop the definition and '\muted' colours as declared; declared: fg, bg, alert, example, muted, progressfg, progressbg, separator, standoutfg, standoutbg
+── W0343 (config) one setting is given two different values; the later declaration wins
+warning[W0343]: 'margin' in '\page' was already set to '20pt'; this later value wins
+  help: one value per key: keep the 'margin = ...' you mean
+warning[W0343]: a second '\runningfoot' replaces the first
+  help: one '\runningfoot' declares the line; delete the one you do not mean
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

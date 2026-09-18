@@ -5110,6 +5110,9 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .W0341 => dvE "\\textls[16]{spaced}.example.org"
   | .W0342 => dvE (dvDoc "\\theme{plain}\n\\define \\muted(word: content) {\\word}\n"
       "\\muted{x}")
+  | .W0343 =>
+    dvE (dvDoc "\\page{ margin = 20pt }\n\\page{ margin = 30pt }\n" "x") ++
+    dvE (dvDoc "\\runningfoot{one}\n\\runningfoot{two}\n" "x")
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
@@ -7594,10 +7597,12 @@ def roleLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     ((Pdf.write geom oneFace out1.pages).data == (Pdf.write geom oneFace out2.pages).data)
 
 /-- Repeat semantics across the settings surface: a second declaration of
-the same setting composes predictably. This slice: `[from]` is each running
-declaration's own — `\runningfoot[from = 3]` must not move the head's
-start page, and a redeclaration resets its own gate rather than keeping a
-sticky option. -/
+the same setting composes predictably — keyed merge for maps, replace for
+scalars, and a *conflicting* scalar repeat is said aloud (W0343) while a
+same-value repeat stays silent. Each check pins one audited accident:
+first-wins faces, chrome's across-block wholesale replace, the shared
+running `[from]`, fancyhdr concatenation, and `sawPage` forfeiting the
+Bringhurst margin on a rhythm-only block. -/
 def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let wrap (pre : String) : String :=
@@ -7605,6 +7610,7 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let deck (pre body : String) : String :=
     "\\documentclass{slides}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++
       "\n\\end{document}"
+  let w0343 (s : String) : Bool := (warnCodes s).contains "W0343"
 
   -- A redeclared variant face replaces: fontspec's later BoldFont= wins,
   -- and the store keeps one entry per variant (`faceFor_last_declared`).
@@ -7652,6 +7658,13 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     ((gOut.pages.map fun p => p.lines.any (·.y == headY)) == #[true, true] &&
      (gOut.pages.map fun p => p.lines.any (·.y == footY)) == #[false, true])
 
+  -- Compat: a repeated fancyhdr field is redefined (fancyhdr manual:
+  -- \lhead redefines), never concatenated.
+  let (kDoc, _) := elabStr (wrap "\\lhead{First}\n\\lhead{Second}\n")
+  let kText := Ir.plainText (kDoc.head.getD #[])
+  t "a repeated fancyhdr field is redefined, not concatenated"
+    ((kText.splitOn "Second").length == 2 && (kText.splitOn "First").length == 1)
+
   -- Only geometry keys claim the page: a rhythm-only \page block keeps the
   -- Bringhurst text-block margin; declared geometry keeps every value.
   let (pDoc, _) := elabStr (wrap "\\page{ parskip = 12pt }\n")
@@ -7663,12 +7676,42 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "declared geometry keeps every value it named"
     (hDoc.page.hmargin == Dim.inch 1)
 
-  -- Compat: a repeated fancyhdr field is redefined (fancyhdr manual:
-  -- \lhead redefines), never concatenated.
-  let (kDoc, _) := elabStr (wrap "\\lhead{First}\n\\lhead{Second}\n")
-  let kText := Ir.plainText (kDoc.head.getD #[])
-  t "a repeated fancyhdr field is redefined, not concatenated"
-    ((kText.splitOn "Second").length == 2 && (kText.splitOn "First").length == 1)
+  -- W0343 fires on a conflicting scalar repeat and only there.
+  t "a conflicting page repeat warns"
+    (w0343 (wrap "\\page{ margin = 20pt }\n\\page{ margin = 30pt }\n"))
+  t "a same-value page repeat is silent"
+    (!w0343 (wrap "\\page{ margin = 20pt }\n\\page{ margin = 20pt }\n"))
+  t "a different-key refinement is silent"
+    (!w0343 (wrap "\\page{ margin = 20pt }\n\\page{ hmargin = 30pt }\n"))
+  t "a family alias conflict warns"
+    (w0343 (wrap "\\fonts{ body = \"A Face\" }\n\\fonts{ rm = \"B Face\" }\n"))
+  t "keyed-merge stores never warn"
+    (!w0343 (wrap
+      "\\tokens{ sep = 6pt }\n\\tokens{ sep = 12pt }\n\\palette{ night = #101010 }\n\\palette{ night = #202020 }\n"))
+  let (sDoc, sDs) := elabStr (deck
+    ("\\chrome{ footer = { left = \\sectiontitle } }\n" ++
+     "\\chrome{ footer = { left = \\framenumber } }") frame)
+  t "a conflicting chrome slot warns and the later wins"
+    (sDoc.chrome.footerLeft == some .frameNumber &&
+     sDs.any (·.code == "W0343"))
+  let (s2Doc, s2Ds) := elabStr (deck
+    ("\\chrome{ footer = { right = \\framenumber } }\n" ++
+     "\\chrome{ footer = { right = \\slidenumber } }") frame)
+  t "one datum under two spellings is silent"
+    (s2Doc.chrome.footerRight == some .frameNumber &&
+     !s2Ds.any (·.code == "W0343"))
+  t "a second running head with different content warns"
+    (w0343 (wrap "\\runninghead{a}\n\\runninghead{b}\n"))
+  t "an identical running head repeat is silent"
+    (!w0343 (wrap "\\runninghead{a}\n\\runninghead{a}\n"))
+  t "output css conflict warns"
+    (w0343 (wrap "\\output{ css = own }\n\\output{ css = bulma }\n"))
+  t "output formats accumulate silently"
+    (!w0343 (wrap "\\output{ formats = pdf }\n\\output{ formats = html }\n"))
+  -- Overriding a theme's default is layering, not a conflict: the theme
+  -- installs outside the document's store, so this stays silent.
+  t "a document override after a theme never warns"
+    (!w0343 (deck "\\theme{moloch}\n\\chrome{ footer = { left = \\sectiontitle } }" frame))
 
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

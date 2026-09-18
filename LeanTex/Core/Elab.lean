@@ -116,6 +116,12 @@ structure ESt where
   bodyPalette : Option Palette := none
   /-- Body-declared tokens (`\setlength` mid-document), same door. -/
   bodyTokens : Option Tokens := none
+  /-- Scalar settings the preamble has declared so far, `(decl, key) ↦` the
+  value as written: the store behind W0343, which fires only when the same
+  key returns with a *different* value — a same-value repeat is harmless
+  and stays silent. Holds document declarations only: a theme install never
+  writes here, so overriding a theme's default never warns. -/
+  seenScalars : Array (String × String × String) := #[]
 
 abbrev EM := StateM ESt
 
@@ -2840,6 +2846,40 @@ private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := 
 
 /-- `\page{...}`: geometry. `size` names a standard page; `width`/`height`
 override it; `margin` sets both axes, `vmargin`/`hmargin` one each. -/
+private def hexByte (v : UInt8) : String :=
+  let d := "0123456789ABCDEF".toList
+  String.ofList [d[v.toNat / 16]!, d[v.toNat % 16]!]
+
+/-- A declared value as its author would rewrite it: what W0343 quotes back
+when a later declaration overwrites it. -/
+private def renderValue : Decl.Value → String
+  | .str s => s
+  | .dim sp => s!"{sp.toPtString}pt"
+  | .int n => toString n
+  | .ident s => s
+  | .block src => "{" ++ src ++ "}"
+  | .color r g b => s!"#{hexByte r}{hexByte g}{hexByte b}"
+  | .cmyk c m y k => s!"cmyk({c}, {m}, {y}, {k})"
+  | .glue g => Ir.dumpGlue g
+
+/-- One scalar setting was declared: warn (W0343) when this `(decl, key)`
+was already given a *different* value — the earlier write is dead
+configuration, and silence here is how `\fonts` faces stayed first-wins for
+so long — then record the new value, the one that wins. A repeat of the
+same value stays silent: it changes nothing and is often synthesized
+(a class option beside its `\usepackage` spelling). Keyed-merge stores
+(tokens, palette, styles) never come through here: redeclare-to-override is
+their layering mechanism, not a conflict. -/
+private def noteScalar (ctx : Ctx) (decl key value : String) (pos : Pos) : EM Unit := do
+  if let some prev := (← get).seenScalars.find? (fun e => e.1 == decl && e.2.1 == key) then
+    if prev.2.2 != value then
+      diag ctx .W0343
+        s!"'{key}' in '\\{decl}' was already set to '{prev.2.2}'; this later value wins"
+        (some pos)
+        (help := s!"one value per key: keep the '{key} = ...' you mean")
+  modify fun st => { st with seenScalars :=
+    (st.seenScalars.filter fun e => !(e.1 == decl && e.2.1 == key)).push (decl, key, value) }
+
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     (pos : Pos) : EM PageSpec := do
   -- A page dimension may be a declared token or an expression over them
@@ -2853,6 +2893,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | _ => none
   let mut spec := spec
   for e in entries do
+    let before := (← get).diags.size
     match e.key, e.value with
     | "size", .ident name =>
       match pageSizes.lookup name.toLower with
@@ -2943,6 +2984,10 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       else
         modify fun st => { st with
           diags := st.diags.push (Decl.unknownKey ctx.file "page" key pageKeys pos) }
+    -- Every failing arm above pushes a diagnostic, so a clean count means
+    -- the entry applied: record it, and warn if it overwrote (W0343).
+    if (← get).diags.size == before then
+      noteScalar ctx "page" e.key (renderValue e.value) pos
   return spec
 
 private def fontSlot? (name : String) : Option Nat :=
@@ -2974,6 +3019,7 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
     (pos : Pos) : EM FontSpec := do
   let mut spec := spec
   for e in entries do
+    let before := (← get).diags.size
     match e.key, e.value with
     | "body", .str f => spec := { spec with body := some f }
     | "rm", .str f => spec := { spec with body := some f }
@@ -3000,6 +3046,15 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
           modify fun st => { st with
             diags := st.diags.push (Decl.unknownKey ctx.file "fonts" key
               (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic"]) pos) }
+    -- A family slot is a scalar; `dir` is a list and a dotted face is
+    -- fontspec's own replace idiom, so only the families report an
+    -- overwrite. The aliases fold onto the slot they name: `rm` after
+    -- `body` is the same setting twice.
+    if (← get).diags.size == before then
+      let aliases := [("rm", "body"), ("sf", "sans"), ("tt", "mono")]
+      let canonical := (aliases.lookup e.key).getD e.key
+      if ["body", "sans", "mono", "math"].contains canonical then
+        noteScalar ctx "fonts" canonical (renderValue e.value) pos
   return spec
 
 def styleKeys : List String :=
@@ -3157,8 +3212,12 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) : E
                   (help := slotHelp)
               | some d =>
                 match slotKey with
-                | "left" => chrome := { chrome with footerLeft := some d }
-                | "right" => chrome := { chrome with footerRight := some d }
+                | "left" =>
+                  noteScalar ctx "chrome" "footer.left" s!"\\{d.label}" pos
+                  chrome := { chrome with footerLeft := some d }
+                | "right" =>
+                  noteScalar ctx "chrome" "footer.right" s!"\\{d.label}" pos
+                  chrome := { chrome with footerRight := some d }
                 | _ =>
                   modify fun st => { st with diags := st.diags.push (Decl.unknownKey
                     ctx.file "chrome footer" slotKey ["left", "right"] pos) }
@@ -3197,6 +3256,7 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
       inFormats := false
       if ["own", "bulma", "none"].contains v then
         o := { o with css := some v }
+        noteScalar ctx "output" "css" v pos
       else
         diag ctx .E0321 s!"'{v}' is not a stylesheet mode" pos
           (help := "css: own, bulma, none")
@@ -3208,12 +3268,14 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
           String.ofList (v.toList.drop 1).dropLast
         else v
       o := { o with stylesheet := some v }
+      noteScalar ctx "output" "stylesheet" v pos
     | some ("md", v) =>
       inFormats := false
       let v := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
           String.ofList (v.toList.drop 1).dropLast
         else v
       o := { o with md := some v }
+      noteScalar ctx "output" "md" v pos
     | some (key, _) =>
       inFormats := false
       modify fun st => { st with
@@ -3232,6 +3294,7 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     (pos : Pos) : EM Meta := do
   let mut m := m0
   for e in entries do
+    let before := (← get).diags.size
     match e.key, e.value with
     | "title", .str s => m := { m with title := some s }
     | "author", .str s => m := { m with author := some s }
@@ -3247,6 +3310,8 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
       else
         modify fun st => { st with
           diags := st.diags.push (Decl.unknownKey ctx.file "pdfmeta" key metaKeys pos) }
+    if (← get).diags.size == before then
+      noteScalar ctx "pdfmeta" e.key (renderValue e.value) pos
   return m
 
 private def cmpOp : String → Option CmpOp
@@ -3479,6 +3544,19 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           | some (.group body _) =>
             i := j + 1
             let content ← elabInlines ctx body
+            -- The whole declaration is one scalar: a second one replaces
+            -- the first, said aloud when their content differs (the same
+            -- store W0343's keyed sites use; a byte-identical repeat is
+            -- silent).
+            let raw := (rawSrc body).trimAscii.toString
+            let store := (← get).seenScalars
+            if let some prev := store.find? (fun e => e.1 == name && e.2.1 == "content") then
+              if prev.2.2 != raw then
+                diag ctx .W0343 s!"a second '\\{name}' replaces the first" (some pos)
+                  (help := s!"one '\\{name}' declares the line; delete the one you do not mean")
+            let store := (store.filter fun e => !(e.1 == name && e.2.1 == "content"))
+            let store := store.push (name, "content", raw)
+            modify fun st => { st with seenScalars := store }
             if name == "runninghead" then
               head := some content
               headFrom := fromPage
