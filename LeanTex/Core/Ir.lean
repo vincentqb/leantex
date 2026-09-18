@@ -2168,6 +2168,14 @@ def unwrapItemStepCols (out : Array (Option Nat × Array Block)) :
 
 end
 
+/-- The conservation shape, named once: `f` leaves the census fixed. Every
+public IR-to-IR walk states its conservation as an instance of this — one
+shape, many instances — so an instance is grep-recognisable and the
+pre-commit hook can ask a new walk for one (or for the one-line refusal
+naming why none holds). -/
+def Conserves (census : α → β) (f : α → α) : Prop :=
+  ∀ x, census (f x) = census x
+
 -- Nothing vanishes: dimming recolours, never removes. The text of a frame's
 -- body is identical on every handout page, so the union of what the steps
 -- show is the whole content — each page already shows all of it, dimmed or
@@ -2649,8 +2657,8 @@ end
 the frame carries — dimming recolours pending content, it never hides it,
 in either mode of the one walk. The union of what the steps show is
 therefore the whole content. -/
-theorem dimBlocks_text (cover : Cover) (k : Nat) (xs : Array Block) :
-    blocksText (dimBlocks cover k xs) = blocksText xs := by
+theorem dimBlocks_text (cover : Cover) (k : Nat) :
+    Conserves blocksText (dimBlocks cover k) := fun xs => by
   simp [blocksText, dimBlocks, dimBlockList_text cover k false xs.toList #[] "",
     blockTextList]
 
@@ -2762,10 +2770,9 @@ theorem unwrapItemStepCols_text (cols : List (Option Nat × Array Block))
 end
 
 /-- Unwrapping item steps loses no text: the marker pre-pass flattens a
-leading `\item<2->` wrapper, it never drops the item's content. The last
-public IR-to-IR walk gains its conservation theorem (arch-faithful I1). -/
-theorem unwrapItemSteps_text (xs : Array Block) :
-    blocksText (unwrapItemSteps xs) = blocksText xs := by
+leading `\item<2->` wrapper, it never drops the item's content
+(arch-faithful I1). -/
+theorem unwrapItemSteps_text : Conserves blocksText unwrapItemSteps := fun xs => by
   simp [blocksText, unwrapItemSteps, unwrapItemStepList_text xs.toList #[] "",
     blockTextList]
 
