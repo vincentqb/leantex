@@ -1957,6 +1957,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((preDs.filterMap (·.span)).any (·.file == "pre.tex") &&
      !(preDs.filterMap (·.span)).any (·.file == "main.tex"))
 
+/-- The backend blocks, dispatched together so each stays a leaf the
+module split can place; main runs this right after compatChecks, which
+used to carry these calls as its tail. -/
+def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   styleChecks ref
   htmlLayoutChecks ref
   htmlRhythmChecks ref
@@ -8421,6 +8425,16 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "a document override after a theme never warns"
     (!w0343 (deck "\\theme{moloch}\n\\chrome{ footer = { left = \\sectiontitle } }" frame))
 
+/-- A one-face set: every slot and variant maps to index 0. Both
+fontSuiteChecks and the layout dispatch build their set through this one
+def, so the two can never drift. -/
+def oneFaceOf (font : Font.Font) : Font.FontSet := {
+  fonts := #[font]
+  index := ((List.range 3).flatMap fun slot =>
+    [((slot, false, false), 0), ((slot, true, false), 0),
+     ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
+}
+
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pats := Hyphen.load
@@ -8482,12 +8496,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
           (Font.classify (fontData.extract 0 (fontData.size * k / 64))).isOk).length == 64)
 
       -- A one-face set: every slot and variant maps to index 0.
-      let oneFace : Font.FontSet := {
-        fonts := #[font]
-        index := ((List.range 3).flatMap fun slot =>
-          [((slot, false, false), 0), ((slot, true, false), 0),
-           ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
-      }
+      let oneFace := oneFaceOf font
       t "fontset lookup body" (oneFace.lookup 0 false false == 0)
       t "fontset lookup falls back" (oneFace.lookup 2 true true == 0)
 
@@ -8570,48 +8579,61 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       | .ok n => t s!"pdf xref valid" (n > 0)
       | .error e => failures ref s!"pdf xref: {e}"
 
-      pdfFaceChecks ref geom oneFace font
-      webMetaChecks ref geom oneFace
 
-      lineChecks ref geom oneFace
-      listChecks ref oneFace font
-      filChecks ref oneFace
-      underlineChecks ref geom oneFace font
-      linkSignalChecks ref geom oneFace
-      inkGeometryChecks ref
-      spacingChecks ref geom oneFace font
-      slideChecks ref oneFace
-      tableChecks ref oneFace
-      recoveryChecks ref oneFace
-      roleLayoutChecks ref geom oneFace
-      vdistChecks ref geom oneFace
-      headBandChecks ref oneFace
-      cardChecks ref oneFace pats
-      censusChecks ref oneFace pats
-      scopeChecks ref oneFace
-      bandChecks ref oneFace
-      agreeChecks ref oneFace pats
-      pictureLayoutChecks ref oneFace
-      quoteChecks ref oneFace
-      titleChecks ref
-      outlineChecks ref
-      columnsChecks ref oneFace
-      overlayChecks ref oneFace
-      overlayBlockChecks ref oneFace
-      noteChecks ref oneFace
-      themeFurnitureChecks ref oneFace
-      themeReconcileChecks ref oneFace
-      chromeDeclChecks ref
-      layerDiagChecks ref
-      footerBandChecks ref oneFace
-      chromeFooterChecks ref oneFace
-      numberingChecks ref oneFace
-      composeChecks ref oneFace
-      frameFootChecks ref oneFace
-      scannerChecks ref
-      rhythmChecks ref oneFace
-      measureChecks ref oneFace
-      imageChecks ref oneFace
+
+/-- The layout, census, theme, and chrome blocks all read the same shipped
+face; dispatched together so each stays a leaf the module split can place.
+fontSuiteChecks used to carry these calls in its parse-success arm — it
+still owns reporting a missing or unparsable font, so failure here only
+skips. -/
+def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let pats := Hyphen.load
+  let some fontData ← findFont | return ()
+  let .ok font := Font.parse fontData | return ()
+  let oneFace := oneFaceOf font
+  let geom : Layout.Geom := {}
+  pdfFaceChecks ref geom oneFace font
+  webMetaChecks ref geom oneFace
+
+  lineChecks ref geom oneFace
+  listChecks ref oneFace font
+  filChecks ref oneFace
+  underlineChecks ref geom oneFace font
+  linkSignalChecks ref geom oneFace
+  inkGeometryChecks ref
+  spacingChecks ref geom oneFace font
+  slideChecks ref oneFace
+  tableChecks ref oneFace
+  recoveryChecks ref oneFace
+  roleLayoutChecks ref geom oneFace
+  vdistChecks ref geom oneFace
+  headBandChecks ref oneFace
+  cardChecks ref oneFace pats
+  censusChecks ref oneFace pats
+  scopeChecks ref oneFace
+  bandChecks ref oneFace
+  agreeChecks ref oneFace pats
+  pictureLayoutChecks ref oneFace
+  quoteChecks ref oneFace
+  titleChecks ref
+  outlineChecks ref
+  columnsChecks ref oneFace
+  overlayChecks ref oneFace
+  overlayBlockChecks ref oneFace
+  noteChecks ref oneFace
+  themeFurnitureChecks ref oneFace
+  themeReconcileChecks ref oneFace
+  chromeDeclChecks ref
+  layerDiagChecks ref
+  footerBandChecks ref oneFace
+  chromeFooterChecks ref oneFace
+  numberingChecks ref oneFace
+  composeChecks ref oneFace
+  frameFootChecks ref oneFace
+  scannerChecks ref
+  rhythmChecks ref oneFace
+  measureChecks ref oneFace
+  imageChecks ref oneFace
 
 /-- M6's first slice, pinned end to end: the MATH constants read from the
 shipped face, the box-is-box widths in sp (a math box's advance is the sum
@@ -8978,6 +9000,7 @@ def main (args : List String) : IO UInt32 := do
   declChecks ref
   tokensChecks ref
   compatChecks ref
+  backendSuiteChecks ref
   unitChecks ref
   exprChecks ref
   wrapperChecks ref
@@ -8999,6 +9022,7 @@ def main (args : List String) : IO UInt32 := do
   roleShadowChecks ref
   fontsDeclChecks ref
   fontSuiteChecks ref
+  layoutSuiteChecks ref
   mathChecks ref
 
   let failed := (← ref.get).reverse
