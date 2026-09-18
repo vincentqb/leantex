@@ -6672,6 +6672,17 @@ def roleInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
          | #[.para #[.colored c' (some n) inner]] =>
            c' == c && n == key && Ir.plainText inner == "x"
          | _ => false)
+  -- The two halves of palette-dependence meet on the real page: the use
+  -- references the token (role_use_names_its_token) and :root declares it
+  -- (paletteVar, the site role_use_is_palette_dependent ranges over).
+  let (qDoc, qDs) := elabStr ("\\documentclass{article}\\palette{ quiet = #123456 }" ++
+    "\\begin{document}\\quiet{x}\\end{document}")
+  t "role page source clean" qDs.isEmpty
+  let qPage := (HtmlDoc.emit {} qDoc).1
+  t "a role use references its token on the page"
+    ((qPage.splitOn "color: var(--quiet, #123456)").length == 2)
+  t "the page declares the token the use references"
+    ((qPage.splitOn "--quiet: #123456;").length == 2)
 
 def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

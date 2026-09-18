@@ -40,7 +40,7 @@ private def hex2 (v : UInt8) : String :=
   let d := "0123456789abcdef".toList
   String.ofList [d[v.toNat / 16]!, d[v.toNat % 16]!]
 
-def cssColor (c : Color) : String := s!"#{hex2 c.r}{hex2 c.g}{hex2 c.b}"
+def cssColor (c : Color) : String := "#" ++ hex2 c.r ++ hex2 c.g ++ hex2 c.b
 
 /-- Thousandths to a decimal, so `1.2em` round-trips as `1.2em`. It was once
 emitted as `120%`, which for padding is a fraction of the container and pushed
@@ -424,11 +424,90 @@ def themeCss (doc : Doc) : String :=
     "footer.slide-foot > .band-right { position: absolute; right: 0;\n" ++
     "  white-space: nowrap; }\n" else "")
 
+/-- One palette entry as the CSS custom-property declaration `:root`
+carries: the definition site a role use's `var(--name, …)` reference
+resolves against. This is where a role's palette-dependence lives in the
+artifact, so `role_use_is_palette_dependent` is stated over it. -/
+def paletteVar (n : String) (c : Ir.Color) : String :=
+  "    --" ++ n ++ ": " ++ cssColor c ++ ";"
+
+/-- Every palette entry's declaration line, in declaration order. -/
+def paletteVars (p : Ir.Palette) : List String :=
+  p.entries.toList.map fun (n, c) => paletteVar n c
+
+private theorem hexDigit_inj :
+    ∀ i < 16, ∀ j < 16,
+      "0123456789abcdef".toList[i]! = "0123456789abcdef".toList[j]! → i = j := by
+  decide
+
+private theorem hex2_inj (a b : UInt8) (h : hex2 a = hex2 b) : a = b := by
+  have hl := congrArg String.toList h
+  simp only [hex2, String.toList_ofList, List.cons.injEq, and_true] at hl
+  have ha : a.toNat < 256 := a.toNat_lt
+  have hb : b.toNat < 256 := b.toNat_lt
+  have hdiv := hexDigit_inj (a.toNat / 16) (by omega) (b.toNat / 16) (by omega) hl.1
+  have hmod := hexDigit_inj (a.toNat % 16) (by omega) (b.toNat % 16) (by omega) hl.2
+  have : a.toNat = b.toNat := by omega
+  exact UInt8.toNat_inj.mp this
+
+/-- Two colours never share a rendered hex form unless they agree as sRGB:
+`cssColor` determines the screen-facing components exactly — what makes a
+differing `:root` declaration a differing artifact. The CMYK rider is not
+determined and not claimed: it is the PDF's declared-model channel
+(`cmyk_components_kept`), invisible to this backend by design. -/
+theorem cssColor_inj (a b : Ir.Color) (h : cssColor a = cssColor b) :
+    a.r = b.r ∧ a.g = b.g ∧ a.b = b.b := by
+  have hl := congrArg String.toList h
+  simp only [cssColor, hex2, String.toList_append, String.toList_ofList,
+    List.cons_append, List.nil_append, List.append_assoc] at hl
+  have hl6 := List.append_cancel_left hl
+  simp only [List.cons.injEq, and_true] at hl6
+  obtain ⟨hr1, hr2, hg1, hg2, hb1, hb2⟩ := hl6
+  have har : a.r.toNat < 256 := a.r.toNat_lt
+  have hag : a.g.toNat < 256 := a.g.toNat_lt
+  have hab : a.b.toNat < 256 := a.b.toNat_lt
+  have hbr : b.r.toNat < 256 := b.r.toNat_lt
+  have hbg : b.g.toNat < 256 := b.g.toNat_lt
+  have hbb : b.b.toNat < 256 := b.b.toNat_lt
+  have er1 := hexDigit_inj _ (by omega) _ (by omega) hr1
+  have er2 := hexDigit_inj _ (by omega) _ (by omega) hr2
+  have eg1 := hexDigit_inj _ (by omega) _ (by omega) hg1
+  have eg2 := hexDigit_inj _ (by omega) _ (by omega) hg2
+  have eb1 := hexDigit_inj _ (by omega) _ (by omega) hb1
+  have eb2 := hexDigit_inj _ (by omega) _ (by omega) hb2
+  exact ⟨UInt8.toNat_inj.mp (by omega), UInt8.toNat_inj.mp (by omega),
+    UInt8.toNat_inj.mp (by omega)⟩
+
+/-- The good theorem, the contrapositive of "frozen at authoring time": for
+a role `r` and palettes that differ at `r`, the emitted `:root` custom
+property declarations differ — so a use of `r` renders in the palette's
+colour for `r`, because its span references `var(--r, …)`
+(`role_use_names_its_token`) and that reference resolves against exactly
+this block. A hardcoded `\textcolor{#808080}` cannot satisfy this: it
+emits no variable reference and no palette can reach it. Stated over
+`paletteVars ∘ Palette.declare` — the palette-to-artifact dependence lives
+here, not in the whole `emit` string, whose `intercalate` structure would
+only obscure the same fact. -/
+theorem role_use_is_palette_dependent (p : Ir.Palette) (r : String)
+    (c₁ c₂ : Ir.Color) (hne : (c₁.r, c₁.g, c₁.b) ≠ (c₂.r, c₂.g, c₂.b)) :
+    paletteVars (p.declare r c₁) ≠ paletteVars (p.declare r c₂) := by
+  simp only [paletteVars, Ir.Palette.declare, Array.toList_push, List.map_append,
+    List.map_cons, List.map_nil]
+  intro h
+  have hlast := List.append_cancel_left h
+  simp only [List.cons.injEq, and_true] at hlast
+  have hl := congrArg String.toList hlast
+  simp only [paletteVar, String.toList_append, List.append_assoc] at hl
+  have h1 := List.append_cancel_left hl
+  have h2 := List.append_cancel_left h1
+  have h3 := List.append_cancel_left h2
+  have hrgb := cssColor_inj c₁ c₂ (String.ext (List.append_cancel_right h3))
+  exact hne (by simp [hrgb.1, hrgb.2.1, hrgb.2.2])
+
 /-- Design tokens become CSS custom properties, so the same declarations drive
 both backends and a reader's stylesheet can override them. -/
 def tokenVars (doc : Doc) : String :=
-  let palette := doc.palette.entries.toList.map fun (n, c) =>
-    s!"    --{n}: {cssColor c};"
+  let palette := paletteVars doc.palette
   let tokens := doc.tokens.entries.toList.map fun (n, g) =>
     s!"    --{n}: {cssLength g.width};"
   let fonts :=
@@ -794,6 +873,21 @@ end
 
 private def inlines (cfg : Config) (xs : Array Inline) : Array Node :=
   inlineNodesInto cfg #[] xs.toList
+
+/-- A use of a role in the artifact references the role, not only its frozen
+value: the emitted span's colour is `var(--n, …)`, resolved against the
+`:root` declaration `paletteVar` writes — so the words follow the palette
+(and a host page's override of the token), with the elaboration-time colour
+only the fallback. Together with `role_use_is_palette_dependent` this is
+the contrapositive of "frozen at authoring time"; a colour that arrived
+with no palette name (`name = none`) has no variable to follow and really
+is frozen. -/
+theorem role_use_names_its_token (cfg : Config) (acc : Array Node)
+    (c : Ir.Color) (n : String) (body : Array Inline) :
+    inlineNodeInto cfg acc (.colored c (some n) body) =
+      acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
+        #[("style", s!"color: var(--{n}, {cssColor c})")]) := by
+  simp [inlineNodeInto]
 
 /-- Does this paragraph use `\hfill`? If so it becomes a flex row, which is
 the CSS equivalent of the stretch it asked for. -/
