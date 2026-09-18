@@ -5807,6 +5807,22 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!(warnCodes ("\\documentclass{article}" ++
       "\\palette[decorative]{ washed = #DDDDDD }" ++
       "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "W0315")
+  -- An anonymous use (a mixed colour) has no name, so the decorative
+  -- escape matches it by value — the help's own printed line must be the
+  -- line that silences the warning it rides on.
+  let anon := "\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
+    "\\begin{document}\\textcolor{fg!50!bg}{quiet}\\end{document}"
+  let anonDiag := ((elabStr anon).2.filter (·.code == "W0315"))[0]?
+  t "an anonymous mixed colour warns" anonDiag.isSome
+  t "the help's own line silences the anonymous pairing"
+    (match anonDiag.bind (·.help) with
+     | some h =>
+       let decl := ((h.splitOn ": ")[1]?).getD ""
+       decl.startsWith "\\palette[decorative]" &&
+         !(warnCodes ("\\documentclass{article}\\palette{ fg = #23373B, bg = #FAFAFA }" ++
+           decl ++
+           "\\begin{document}\\textcolor{fg!50!bg}{quiet}\\end{document}")).contains "W0315"
+     | none => false)
   t "covered is exempt by role"
     (!(warnCodes ("\\documentclass{article}\\palette{ covered = #DDDDDD }" ++
       "\\begin{document}\\textcolor{covered}{later}\\end{document}")).contains "W0315")

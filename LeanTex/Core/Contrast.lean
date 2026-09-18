@@ -368,6 +368,14 @@ where
       done := done.push key
       if let some n := u.name then
         if n == "covered" || doc.palette.decorative.contains n then continue
+      else
+        -- An anonymous use (a mixed colour, a literal) has no name the
+        -- decorative list could carry, so the declared escape matches it
+        -- by value: the help's own spelling — a decorative entry naming
+        -- this exact colour — is what silences it. Without this arm the
+        -- help promised a line that changed nothing.
+        if doc.palette.decorative.any (fun n => doc.palette.find? n == some u.color) then
+          continue
       let allLarge := uses.all fun v => (v.name, v.color) != key || v.large
       let threshold := if allLarge then aaLargeText else aaText
       let milli := contrastMilli u.color surface
