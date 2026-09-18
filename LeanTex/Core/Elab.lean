@@ -1373,6 +1373,26 @@ a side channel, never slide content" pos
           if let some bpos := unclosed then
             warnUnclosed ctx s!"'\\{name}'" bpos
           i := j
+        else if declCtrl.contains name || runningCtrl.contains name then
+          -- A native declaration met inside inline content is ours,
+          -- misplaced — never "unknown": its arguments address the engine,
+          -- not the sentence, so they go with the declaration. A running
+          -- declaration carries content, so skipping it is a drop (E0347);
+          -- the key/value rest is configuration (W0346).
+          if runningCtrl.contains name then
+            diag ctx .E0347 s!"'\\{name}' in the body is dropped with its content" pos
+              (help := "declare it in the preamble, before '\\begin{document}'")
+          else
+            warnOnce ctx ("ctrl:" ++ name) .W0346
+              s!"'\\{name}' is a declaration; inside inline content it is ignored" pos
+              (help := if name == "palette" || name == "tokens" then
+                  s!"write '\\{name}' between paragraphs, after a blank line; there it applies \
+from where it stands"
+                else "declare it in the preamble, before '\\begin{document}'")
+          let (j, unclosed) := skipReservedArgs raws i pos (maxGroups := 2)
+          if let some bpos := unclosed then
+            warnUnclosed ctx s!"'\\{name}'" bpos
+          i := j
         else if blockOnly.contains name then
           diag ctx .E0312 s!"'\\{name}' is not allowed here" pos
             (help := "it is a block-level command: use it between paragraphs, " ++
@@ -1853,7 +1873,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .ctrl n _ =>
           (sectionLevel n).isSome ||
           -- A declaration between paragraphs stands at block level.
-          declCtrl.contains n ||
+          declCtrl.contains n || runningCtrl.contains n ||
           -- A user command whose body produces blocks is itself a boundary.
           (match lookupUser ctx n with
            | some (_, cmd) => bodyIsBlock cmd.body
@@ -2075,6 +2095,16 @@ a side channel, never slide content" npos
               s!"'\\{n}' is a declaration; in the body it is ignored" pos
               (help := "declare it in the preamble, before '\\begin{document}'")
             let (j, unclosed) := skipReservedArgs raws i pos (maxGroups := 2)
+            if let some bpos := unclosed then
+              warnUnclosed ctx s!"'\\{n}'" bpos
+            i := j
+          else if runningCtrl.contains n then
+            -- Running head/foot in the body: ours, misplaced — never
+            -- "unknown". The declaration carries content, so skipping it
+            -- drops that content: an error, not a config warning.
+            diag ctx .E0347 s!"'\\{n}' in the body is dropped with its content" pos
+              (help := "declare it in the preamble, before '\\begin{document}'")
+            let (j, unclosed) := skipReservedArgs raws i pos
             if let some bpos := unclosed then
               warnUnclosed ctx s!"'\\{n}'" bpos
             i := j

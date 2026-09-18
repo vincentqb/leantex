@@ -330,6 +330,16 @@ warning[W0345]: the standout frame pairs #DDDDDD on #FAFAFA at 1.30:1, below the
   help: deliberate low contrast is declared, not defaulted: \palette[decorative]{ standoutfg = #DDDDDD }
 warning[W0345]: covering 'covered' does not quiet it: the covered form reads as loud on the page as the active one
   help: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
+── W0346 (config) a declaration inside inline content is ignored
+warning[W0346]: '\palette' is a declaration; inside inline content it is ignored
+  help: write '\palette' between paragraphs, after a blank line; there it applies from where it stands
+warning[W0346]: '\page' is a declaration; inside inline content it is ignored
+  help: declare it in the preamble, before '\begin{document}'
+── E0347 (dropped) a running head or foot declared in the body is dropped with its content
+error[E0347]: '\runninghead' in the body is dropped with its content
+  help: declare it in the preamble, before '\begin{document}'
+error[E0347]: '\runningfoot' in the body is dropped with its content
+  help: declare it in the preamble, before '\begin{document}'
 ── W0348 (config) a theme replaces a key the document already declared; the theme wins
 warning[W0348]: theme 'moloch' replaces the document's earlier 'alert' from '\palette'
   help: overrides go after '\theme': move the declaration below it

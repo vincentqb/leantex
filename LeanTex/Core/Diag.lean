@@ -102,7 +102,8 @@ inductive DiagCode where
   | W0312 | W0314 | W0315 | W0316 | W0317 | W0318 | W0319
   | W0320 | W0321 | W0322 | W0323 | W0325 | W0326 | W0327 | W0328
   | W0329 | W0330 | W0331 | W0332 | W0333 | W0334 | W0335 | W0337 | W0338 | W0339
-  | W0340 | W0341 | W0342 | W0343 | W0344 | W0345 | W0348
+  | W0340 | W0341 | W0342 | W0343 | W0344 | W0345 | W0346 | W0348
+  | E0347
   | W0601 | W0602
   deriving Repr, BEq, DecidableEq
 
@@ -224,6 +225,8 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0343 => ("0343", .config, "one setting is given two different values; the later declaration wins")
   | .W0344 => ("0344", .degraded, "small caps have no markdown spelling; their text is set as typed")
   | .W0345 => ("0345", .degraded, "a themed element's resolved colour pairing is illegible (WCAG 2.2)")
+  | .W0346 => ("0346", .config, "a declaration inside inline content is ignored")
+  | .E0347 => ("0347", .dropped, "a running head or foot declared in the body is dropped with its content")
   | .W0348 => ("0348", .config, "a theme replaces a key the document already declared; the theme wins")
   | .E0502 => ("0502", .dropped, "\\input file not found; skipped")
   | .W0601 => ("0601", .degraded, "image unreadable or not found; placeholder box placed")
@@ -263,8 +266,8 @@ def DiagCode.all : List DiagCode :=
    .W0309, .W0310, .W0311, .W0312, .W0314, .W0315, .W0316, .W0317,
    .W0318, .W0319, .W0320, .W0321, .W0322, .W0323, .W0325, .W0326,
    .W0327, .W0328, .W0329, .W0330, .W0331, .W0332, .W0333, .W0334, .W0335,
-   .W0337, .W0338, .W0339, .W0340, .W0341, .W0342, .W0343, .W0344, .W0345, .W0348,
-   .W0601, .W0602]
+   .W0337, .W0338, .W0339, .W0340, .W0341, .W0342, .W0343, .W0344, .W0345,
+   .W0346, .E0347, .W0348, .W0601, .W0602]
 
 theorem DiagCode.all_complete (c : DiagCode) : DiagCode.all.contains c := by
   cases c <;> rfl

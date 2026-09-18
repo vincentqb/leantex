@@ -4819,6 +4819,50 @@ def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   t "band: and holds the right margin while yielding"
     (numBox secCollideC 2 == numBox emptyC 1)
 
+/-- Scope: a setting's effect is confined to its declared extent. First the
+misplaced-declaration door: a native declaration met where it cannot stand
+is ours — named as misplaced, never "unknown" — and its arguments never
+become page ink. The invariant whose absence allowed the defect: an
+argument that addresses the engine is not content, so no recovery path may
+keep it as text. Ink claims are asserted over `Layout.Out` (the census),
+never an IR dump. -/
+def scopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let doc (body : String) : String :=
+    s!"\\documentclass\{article}\\begin\{document}\n{body}\n\\end\{document}"
+  let censusOfSrc (src : String) : Array CensusPage :=
+    let (d, _) := elabStr src
+    censusOf (coveredColorsOf d) (Layout.run geom oneFace none d)
+  -- t1: a body running head is a named drop, never body ink.
+  let headSrc := doc "\\runninghead{Chapter One}\n\nBody text stands alone."
+  let ds1 := (elabStr headSrc).2
+  t "a body runninghead is E0347, never unknown"
+    (ds1.any (·.code == "E0347") && ds1.all (·.code != "W0301"))
+  t "the dropped head text never ships as body ink"
+    (let c := censusOfSrc headSrc
+     !hasStr (censusText c) "Chapter One" && hasStr (censusText c) "Body text stands alone.")
+  t "a body runningfoot with [from] is the same door"
+    (let ds := (elabStr (doc "x\n\n\\runningfoot[from=2]{page \\pagenumber}\n\ny")).2
+     ds.any (·.code == "E0347") && ds.all (·.code != "W0301"))
+  -- t3: a declaration inside inline content is misplaced, never unknown —
+  -- and its key/value block never leaks into the sentence (the old path
+  -- kept `q = #112233` as text and E0311'd the `#`).
+  let inlSrc := doc "a {\\palette{ q = #112233 } b} c"
+  let dsi := (elabStr inlSrc).2
+  t "an inline palette is W0346, never unknown, and its block never errors"
+    (dsi.any (·.code == "W0346") && dsi.all (·.code != "W0301") &&
+      dsi.all (·.code != "E0311"))
+  t "the inline declaration's block never ships as ink"
+    (let c := censusOfSrc inlSrc
+     !hasStr (censusText c) "112233" && hasStr (censusText c) "b c")
+  t "an inline preamble-only declaration is W0346 too"
+    (let ds := (elabStr (doc "\\textbf{\\page{ size = a5 } x}")).2
+     ds.any (·.code == "W0346") && ds.all (·.code != "W0301"))
+  t "an inline runninghead drops content, an error like the body form"
+    (let ds := (elabStr (doc "\\textbf{\\runninghead{X} y}")).2
+     ds.any (·.code == "E0347") && ds.all (·.code != "W0301"))
+
 -- Cross-backend agreement -------------------------------------------------
 
 mutual
@@ -5271,6 +5315,12 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
       "\\begin{frame}[standout]\nS\n\\end{frame}") ++
     dvE (dvDeck "\\palette{ covered = #000000 }\n"
       "\\begin{frame}{T}\n\\uncover<2>{x}\n\\end{frame}")
+  | .W0346 =>
+    dvE (dvDoc "" "a {\\palette{ q = #112233 } b} c") ++
+    dvE (dvDoc "" "\\textbf{\\page{ size = a5 } x}")
+  | .E0347 =>
+    dvE (dvDoc "" "\\runninghead{Chapter One}\n\nx") ++
+    dvE (dvDoc "" "\\textbf{\\runningfoot{Y} z}")
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
@@ -8113,6 +8163,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       headBandChecks ref oneFace
       cardChecks ref oneFace pats
       censusChecks ref oneFace pats
+      scopeChecks ref oneFace
       bandChecks ref oneFace
       agreeChecks ref oneFace pats
       pictureLayoutChecks ref oneFace
