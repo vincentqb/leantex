@@ -17,9 +17,10 @@ structure Geom where
   hmargin : Sp := inch 1
   vmargin : Sp := inch 1
   fontSize : Sp := Ir.baseFontSize
-  /-- The gap between peer paragraphs. The default is the engine's own; a
-  document declares its own through `\page{ parskip = ... }`. -/
-  parskip : SymGlue := { width := Dim.Length.ofSp (pt 6) }
+  /-- The gap between peer paragraphs. The default is the declared token
+  (`Ir.parskipDefault`, one rhythm quantum); a document declares its own
+  through `\page{ parskip = ... }`. -/
+  parskip : SymGlue := Ir.parskipDefault
   /-- Per-level list indent. The default is the engine's own choice — 1.5 em
   at the 10 pt base, shallower than classes.dtx's 2.5/2.2/1.87 em stack,
   which reads deep at this engine's narrower default measure; no external
@@ -177,40 +178,6 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     hyphenate := spec.hyphenate.getD base.hyphenate
     justify := spec.justify.getD base.justify
     bleed := spec.bleed }
-
-/-- Baseline distance for a size: `Ir.leadingMilli` of it (6⁄5 — the ratio's
-source, Bringhurst §2.2.1's routine settings, and its one spelling live
-with the scale in Ir; the HTML stylesheet emits the same constant), scaled
-by the page's `leading` factor (`\linespread`'s home). The factor is where
-a document declares the extra lead a wide measure wants; the engine never
-raises it silently. -/
-def leadingFor (size : Sp) (factor : Nat := 1000) : Sp :=
-  size * (Ir.leadingMilli : Int) / 1000 * factor / 1000
-
-/-- The default vertical rhythm is one system, not three numbers: the peer
-gap (`parskip`, 6pt at the 10pt base) is half the base leading, so the
-heading's default space above — `2 × parskip` in the block walk — is exactly
-one full rhythm unit, and every default gap is a multiple of the half-unit
-(Bringhurst §2.2.2: add vertical space in measured intervals, multiples of
-the basic leading). The positivity conjunct is what makes a heading's space
-above strictly exceed its space below. -/
-theorem default_rhythm_multiples :
-    2 * ({} : Geom).parskip.width.sp = leadingFor Ir.baseFontSize ∧
-    0 < ({} : Geom).parskip.width.sp := by decide
-
-/-- Caption and float gaps sit on the same rhythm: the caption gap is the
-half-unit (one `parskip`), the float gap the full unit (two, which is also
-exactly LaTeX's `\intextsep` 12pt, classes.dtx 10pt option), and the
-caption binds tighter to its object than the float to its page — the
-ordering LaTeX's own `\abovecaptionskip` 10pt < `\intextsep` 12pt states
-(classes.dtx). A default edit that breaks the quantization or the ordering
-fails the build; this is the user-visible "spacing around tables and
-figures" contract, stated over the values the engine ships. -/
-theorem caption_gaps_rhythm :
-    Ir.captionSepDefault.width.sp = ({} : Geom).parskip.width.sp ∧
-    Ir.floatSepDefault.width.sp = 2 * ({} : Geom).parskip.width.sp ∧
-    Ir.floatSepDefault.width.sp = leadingFor Ir.baseFontSize ∧
-    Ir.captionSepDefault.width.sp < Ir.floatSepDefault.width.sp := by decide
 
 /-- The slides stage carries a readable number of text lines. Tantau's rule
 for presentations is lines, not points: "between 10 and 20 lines should fit

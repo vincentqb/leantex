@@ -2769,7 +2769,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let pagesOf (g : Layout.Geom) (src : String) : Nat :=
     (Layout.run g oneFace none (Elab.run "t" src).1).pages.size
   let body := geom.fontSize
-  let leading := Layout.leadingFor body geom.leading
+  let leading := Ir.leadingFor body geom.leading
   let scaled (sz : Dim.Sp) (units : Int) : Dim.Sp := units * sz / font.unitsPerEm
   -- Interline: body lines sit one leading apart, and a body line after a
   -- Huge one is one body leading below it plus what the Huge line hangs
@@ -2786,7 +2786,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (huge.size == 2 && huge[1]! - huge[0]! ==
       max leading (hugeDepth + bodyHeight + Dim.pt 1) + (geom.parskip.resolve body 0).width)
   t "the line after a Huge title is not a Huge leading away"
-    (huge.size == 2 && huge[1]! - huge[0]! < Layout.leadingFor hugeSize geom.leading)
+    (huge.size == 2 && huge[1]! - huge[0]! < Ir.leadingFor hugeSize geom.leading)
   t "the first line hangs the title's own height below the margin"
     (huge.size == 2 && huge[0]! == geom.vmargin + max (scaled body font.ascent) (scaled hugeSize font.capHeight))
   -- Gaps: `\vspace` is the gap in place of parskip and adds to other declared
@@ -2810,7 +2810,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let sec := ysOf geom secSrc
   t "a heading after a list takes the larger space, not the sum"
     (sec.size == 3 && sec[1]! - sec[0]! ==
-      max (Layout.leadingFor (Layout.sectionSize geom 1) geom.leading)
+      max (Ir.leadingFor (Layout.sectionSize geom 1) geom.leading)
         (scaled body (-font.descent) + scaled (Layout.sectionSize geom 1) font.capHeight + Dim.pt 1)
       + Dim.pt 15)
   -- parskip is a page property with rubber.
@@ -3527,7 +3527,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
       l.y == footY || l.y + descent ≤ footY - footAscent - Layout.lineskip)
   t "the tall frame demonstrably fills the body area"
     (tallOut.pages.any fun p => p.lines.any fun l =>
-      l.y != footY && l.y + descent + Layout.leadingFor geom0.fontSize >
+      l.y != footY && l.y + descent + Ir.leadingFor geom0.fontSize >
         (Layout.Geom.ofPage tallDoc.page).bodyBottom)
   -- \runningfoot is the author's whole footer: chrome yields entirely.
   let (rDoc, _) := elabStr (deck "\\theme{moloch}\\runningfoot{own foot}" body)

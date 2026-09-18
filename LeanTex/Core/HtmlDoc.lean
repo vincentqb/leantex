@@ -781,7 +781,7 @@ def baseCss (doc : Doc) : String :=
   s!"td.bt-cmid \{ border-top: var(--cmidrulewidth, {cssLength Ir.cmidRuleWidth}) solid;\n" ++
   s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
   -- Float and caption gaps: the same tokens the PDF path reads, defaults
-  -- held to the rhythm by `Layout.caption_gaps_rhythm`.
+  -- held to the rhythm by `Ir.caption_gaps_rhythm`.
   s!"figure.float \{ margin: var(--floatsep, {cssLength Ir.floatSepDefault.width}) auto; }\n" ++
   "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
   "figure.float > img { display: block; margin: 0 auto; }\n" ++
@@ -1269,7 +1269,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   -- `<figure>`/`<figcaption>` is HTML's own construct for a captioned
   -- object; the caption keeps its source-order side. The gaps are the
   -- same tokens the PDF path reads (`--floatsep`, `--captionsep`), with
-  -- the rhythm defaults from `caption_gaps_rhythm` as fallbacks.
+  -- the rhythm defaults from `Ir.caption_gaps_rhythm` as fallbacks.
   | .float kind capAbove body caption =>
     let capNode : Array Node :=
       if caption.isEmpty then #[]
