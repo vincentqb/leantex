@@ -117,6 +117,12 @@ private def blockInto (summary ind acc : String) : Block → String
     let joined := String.intercalate ("\n" ++ ind ++ ">\n") (trimmed.splitOn "\n\n")
     acc ++ joined ++ "\n\n"
   | .spaced _ body => blocksInto summary ind acc body.toList
+  -- The class's own titled block: a heading line, then the body plain --
+  -- the twin mirrors the HTML <section> with its heading, not the PDF's
+  -- quotation margins, which are ink. "Abstract" is class furniture
+  -- (article.cls's \abstractname), generated here as in both backends.
+  | .abstract body =>
+    blocksInto summary ind (acc ++ (ind ++ "## Abstract\n\n")) body.toList
   -- the role's class is a web styling hook; the twin keeps the content
   | .role _ body => blocksInto summary ind acc body.toList
   | .verbatim _ s =>
@@ -317,6 +323,9 @@ private theorem blockInto_extends (summary ind acc : String) :
   | .quote _ => by
     simp only [blockInto]
     exact append_chain₂ _ _ _
+  | .abstract body =>
+    extends_comp ⟨_, rfl⟩ (blocksInto_extends summary ind
+      (acc ++ (ind ++ "## Abstract\n\n")) body.toList)
   | .spaced _ body => blocksInto_extends summary ind acc body.toList
   | .role _ body => blocksInto_extends summary ind acc body.toList
   | .verbatim _ _ => by
@@ -560,6 +569,7 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .list _ items, out, h => headingLevelItems_mem x items.toList out h
   | .center body, out, h => headingLevelList_mem x body.toList out h
   | .quote body, out, h => headingLevelList_mem x body.toList out h
+  | .abstract body, out, h => headingLevelList_mem x body.toList out h
   | .role _ body, out, h => headingLevelList_mem x body.toList out h
   | .spaced _ body, out, h => headingLevelList_mem x body.toList out h
   | .columns cols, out, h => headingLevelColumns_mem x cols.toList out h

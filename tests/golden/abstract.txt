@@ -1,0 +1,18 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+meta title "A Study of Invented Placeholder Methods"
+meta author "Alex Doe"
+center
+  section* 0
+    text "A Study of Invented Placeholder Methods"
+  para
+    text "Alex Doe"
+abstract
+  para
+    text "Entirely synthetic findings about placeholder methods, stated briefly so the titled block has a body to set off from the text around it."
+section 1
+  text "Introduction"
+para
+  text "Body text follows the abstract at the full measure."
+-- diagnostics
+(none)

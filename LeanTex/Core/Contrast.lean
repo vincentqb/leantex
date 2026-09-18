@@ -308,6 +308,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .list _ items => usesItems cx acc items.toList
   | .center body => usesBlocks cx acc body.toList
   | .quote body => usesBlocks cx acc body.toList
+  | .abstract body => usesBlocks cx acc body.toList
   | .role _ body => usesBlocks cx acc body.toList
   | .spaced _ body => usesBlocks cx acc body.toList
   | .columns cols => usesColumns cx acc cols.toList

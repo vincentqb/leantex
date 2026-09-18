@@ -84,7 +84,7 @@ grep over this file — `("class", "…")` literals, the `rowClass`/`cls`
 builders, `styleClass`, and the `size-` names `styleClass` derives from
 `Ir.sizeScale`; `roleClass_engine_disjoint` is the reason the list exists. -/
 def engineClasses : List String :=
-  ["b", "i", "mono", "sc", "em", "sans", "normal",
+  ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal",
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
    "bt-light-above", "centered", "column", "columns", "content", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
@@ -1319,6 +1319,15 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>
     Html.elem "blockquote" (blockNodesInto cfg.into #[] body.toList)
+  -- The abstract is HTML's own titled region: a <section> with a heading,
+  -- exactly the thing a reader's tooling looks for. The heading word is
+  -- class furniture (article.cls's \abstractname), generated here as the
+  -- PDF generates its centred bold line.
+  | .abstract body =>
+    Html.elem "section"
+      (#[Html.elem "h2" #[Html.text "Abstract"]] ++
+        blockNodesInto cfg.into #[] body.toList)
+      #[("class", "abstract")]
   | .columns cols =>
     -- Side-by-side columns as a grid: the declared fractions become
     -- percentage tracks, so the HTML column really is as wide as the PDF's.

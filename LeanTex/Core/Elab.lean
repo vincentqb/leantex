@@ -1492,8 +1492,8 @@ end
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "document", "frame", "columns", "figure",
-   "figure*", "table", "table*", "quote", "quotation", "ifbackend", "nav",
-   "minipage"]
+   "figure*", "table", "table*", "quote", "quotation", "abstract", "ifbackend",
+   "nav", "minipage"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
@@ -2634,6 +2634,11 @@ the box takes the whole measure" pos
             -- engine sets no paragraph indent anywhere yet — see the
             -- constructor's docstring.
             blocks := blocks.push (.quote (← elabBlocks ctx body))
+          else if n == "abstract" then
+            -- article's unnumbered titled block: quotation-shaped with a
+            -- centred heading in the PDF, a <section> with a heading in
+            -- HTML — see the constructor's docstring for the split.
+            blocks := blocks.push (.abstract (← elabBlocks ctx body))
           else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
             -- A single-pass engine has nowhere for a float to float: the
             -- float stands where written as a `.float`, `[placement]`

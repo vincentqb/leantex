@@ -1216,6 +1216,14 @@ inductive Block where
   distinction has nothing to bind to and one node carries both. HTML sets
   it as `<blockquote>`, markdown as `> ` lines. -/
   | quote (body : Array Block)
+  /-- `{abstract}`: article's unnumbered titled block — `\small`, a centred
+  bold "Abstract" heading, then the body on quotation margins (article.cls
+  §abstract: `\small`, `\begin{center}{\bfseries\abstractname}\end{center}`,
+  `\quotation`). Its own node rather than a `.quote`, because the backends
+  express it differently: HTML sets a `<section class="abstract">` with a
+  heading — exactly the region a reader's tooling looks for — while the PDF
+  keeps the class's quotation shape. -/
+  | abstract (body : Array Block)
   /-- `{verbatim}` content, kept literally: lines, spaces, and all. Both
   backends set it in the mono face and neither reflows it. `covered` is the
   dim colour painted by the overlay shade — code pending its step must read
@@ -1495,6 +1503,9 @@ def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .quote body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .quote body2)
+  | .abstract body =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    (c2, .abstract body2)
   | .role n body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .role n body2)
@@ -1570,6 +1581,7 @@ def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .list _ items => floatNumsItems k out items.toList
   | .center body => floatNumsList k out body.toList
   | .quote body => floatNumsList k out body.toList
+  | .abstract body => floatNumsList k out body.toList
   | .role _ body => floatNumsList k out body.toList
   | .spaced _ body => floatNumsList k out body.toList
   | .columns cols => floatNumsCols k out cols.toList
@@ -1667,6 +1679,10 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
   | .quote body =>
+    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .abstract body =>
     obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
@@ -2569,6 +2585,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
     s!"{ind}list {kind}\n" ++ dumpItems (ind ++ "  ") items.toList
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
   | .quote body => s!"{ind}quote\n" ++ dumpBlocks (ind ++ "  ") body
+  | .abstract body => s!"{ind}abstract\n" ++ dumpBlocks (ind ++ "  ") body
   | .role n body => s!"{ind}role {n}\n" ++ dumpBlocks (ind ++ "  ") body
   | .columns cols => s!"{ind}columns\n" ++ dumpColumns (ind ++ "  ") cols.toList
   | .step n last body =>
@@ -2802,6 +2819,7 @@ def maxStepBlock : Block → Nat
   | .list _ items => maxStepItems items.toList
   | .center body => maxStepBlockList body.toList
   | .quote body => maxStepBlockList body.toList
+  | .abstract body => maxStepBlockList body.toList
   | .role _ body => maxStepBlockList body.toList
   | .spaced _ body => maxStepBlockList body.toList
   | .columns cols => maxStepColumns cols.toList
@@ -2890,6 +2908,7 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
   | .list o items => .list o (dimItems cover k pending #[] items.toList)
   | .center body => .center (dimBlockList cover k pending #[] body.toList)
   | .quote body => .quote (dimBlockList cover k pending #[] body.toList)
+  | .abstract body => .abstract (dimBlockList cover k pending #[] body.toList)
   | .role n body => .role n (dimBlockList cover k pending #[] body.toList)
   | .spaced g body => .spaced g (dimBlockList cover k pending #[] body.toList)
   | .columns cols => .columns (dimColumns cover k pending #[] cols.toList)
@@ -3024,6 +3043,7 @@ def unwrapItemStep : Block → Block
   | .list o items => .list o (unwrapItemStepItems #[] items.toList)
   | .center body => .center (unwrapItemStepList #[] body.toList)
   | .quote body => .quote (unwrapItemStepList #[] body.toList)
+  | .abstract body => .abstract (unwrapItemStepList #[] body.toList)
   | .role n body => .role n (unwrapItemStepList #[] body.toList)
   | .spaced g body => .spaced g (unwrapItemStepList #[] body.toList)
   | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
@@ -3100,6 +3120,7 @@ def blockTextOne (acc : String) : Block → String
   | .center body => blockTextList acc body.toList
   -- A quotation's text is real census content, exactly as a paragraph's.
   | .quote body => blockTextList acc body.toList
+  | .abstract body => blockTextList acc body.toList
   | .role _ body => blockTextList acc body.toList
   | .spaced _ body => blockTextList acc body.toList
   | .columns cols => blockTextColumns acc cols.toList
@@ -3167,6 +3188,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .list _ items => headingLevelItems out items.toList
   | .center body => headingLevelList out body.toList
   | .quote body => headingLevelList out body.toList
+  | .abstract body => headingLevelList out body.toList
   | .role _ body => headingLevelList out body.toList
   | .spaced _ body => headingLevelList out body.toList
   | .columns cols => headingLevelColumns out cols.toList
@@ -3491,6 +3513,9 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
   | .quote body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+  | .abstract body =>
+    rw [dimBlock]
+    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
   | .role n body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
@@ -3624,6 +3649,10 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
       blockTextList]
+  | .abstract body =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
+      blockTextList]
   | .role n body =>
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
@@ -3726,6 +3755,9 @@ theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
   | .quote body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
+  | .abstract body =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatList_text c #[] body.toList, blockTextList]
   | .role _ body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
@@ -3801,7 +3833,8 @@ def backendNames : List String := ["pdf", "html", "md"]
 /-- Does backend `t` keep this block? Only a conditional can exclude one. -/
 def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
-  | .para _ | .section _ _ _ | .list _ _ | .center _ | .quote _ | .role _ _
+  | .para _ | .section _ _ _ | .list _ _ | .center _ | .quote _ | .abstract _
+  | .role _ _
   | .spaced _ _
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
   | .frame _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
@@ -3822,6 +3855,7 @@ def keepForOne (t : String) : Block → Block
   | .list o items => .list o (keepForItems t items.toList).toArray
   | .center body => .center (keepForList t body.toList).toArray
   | .quote body => .quote (keepForList t body.toList).toArray
+  | .abstract body => .abstract (keepForList t body.toList).toArray
   | .role n body => .role n (keepForList t body.toList).toArray
   | .spaced g body => .spaced g (keepForList t body.toList).toArray
   | .columns cols => .columns (keepForColumns t cols.toList).toArray
@@ -3890,6 +3924,7 @@ def textLeavesOne (acc : List String) : Block → List String
   | .list _ items => textLeavesItems acc items.toList
   | .center body => textLeavesList acc body.toList
   | .quote body => textLeavesList acc body.toList
+  | .abstract body => textLeavesList acc body.toList
   | .role _ body => textLeavesList acc body.toList
   | .spaced _ body => textLeavesList acc body.toList
   | .columns cols => textLeavesColumns acc cols.toList
@@ -3952,6 +3987,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .list _ items => orphanFreeItems avail items.toList
   | .center body => orphanFreeList avail body.toList
   | .quote body => orphanFreeList avail body.toList
+  | .abstract body => orphanFreeList avail body.toList
   | .role _ body => orphanFreeList avail body.toList
   | .spaced _ body => orphanFreeList avail body.toList
   | .columns cols => orphanFreeColumns avail cols.toList
@@ -4037,6 +4073,9 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
   | .quote body =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesList_acc acc body.toList
+  | .abstract body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
   | .role n body =>
@@ -4208,6 +4247,11 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
     exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
   | .quote body =>
+    intro s hs
+    rw [textLeavesOne] at hs
+    obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
+    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .abstract body =>
     intro s hs
     rw [textLeavesOne] at hs
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
@@ -4400,6 +4444,7 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .list _ items => imageSrcsItems out items.toList
   | .center body => imageSrcsBlockList out body.toList
   | .quote body => imageSrcsBlockList out body.toList
+  | .abstract body => imageSrcsBlockList out body.toList
   | .role _ body => imageSrcsBlockList out body.toList
   | .spaced _ body => imageSrcsBlockList out body.toList
   | .columns cols => imageSrcsColumns out cols.toList
@@ -4495,6 +4540,7 @@ def setAltBlock (alt : String) : Block → Block
   | .para content => .para (setAltInlines alt content)
   | .center body => .center (setAltBlockList alt #[] body.toList)
   | .quote body => .quote (setAltBlockList alt #[] body.toList)
+  | .abstract body => .abstract (setAltBlockList alt #[] body.toList)
   | .spaced g body => .spaced g (setAltBlockList alt #[] body.toList)
   | .step n l body => .step n l (setAltBlockList alt #[] body.toList)
   | .only targets body => .only targets (setAltBlockList alt #[] body.toList)

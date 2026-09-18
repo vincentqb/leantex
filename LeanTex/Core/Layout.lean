@@ -842,6 +842,10 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     scalarTextItems { out with texts := out.texts.push (ListMark.scalars ordered level) } itemD enumD items.toList
   | .center body => scalarTextList out itemD enumD body.toList
   | .quote body => scalarTextList out itemD enumD body.toList
+  -- The abstract's heading word is class furniture set in the bold face;
+  -- its glyphs are asked for like any other text.
+  | .abstract body =>
+    scalarTextList { out with texts := out.texts.push "Abstract" } itemD enumD body.toList
   | .role _ body => scalarTextList out itemD enumD body.toList
   | .spaced _ body => scalarTextList out itemD enumD body.toList
   | .columns cols => scalarTextCols out itemD enumD cols.toList
@@ -3074,6 +3078,24 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       measure := some ((a.measure.getD a.geom.textWidth) - a.geom.listIndent) }
     let sub := collectBlocks sub pats fs body (indent + a.geom.listIndent)
     { sub with measure := saved }
+  | .abstract body =>
+    -- article.cls §abstract: `\small`, a centred `{\bfseries\abstractname}`
+    -- heading, then the body on quotation margins. The heading word is
+    -- class furniture, generated here exactly as the HTML backend
+    -- generates its <h2>; the body takes the scale's own \small, the
+    -- quotation margins are the quote arm's, and the outer state is
+    -- restored the way a quote restores its measure.
+    let small := a.geom.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
+    let a := collectDisplay a fs #[.text "Abstract"] indent true small
+      (baseStyle := { bold := true })
+    let a := a.wantGap
+    let saved := a.measure
+    let savedSize := a.geom.fontSize
+    let sub := { a with
+      measure := some ((a.measure.getD a.geom.textWidth) - a.geom.listIndent)
+      geom := { a.geom with fontSize := small } }
+    let sub := collectBlocks sub pats fs body (indent + a.geom.listIndent)
+    { sub with measure := saved, geom := { sub.geom with fontSize := savedSize } }
   | .columns cols =>
     -- Declared widths are per mille of the full measure. The leftover goes
     -- to the widthless columns in equal shares when there are any, and into
