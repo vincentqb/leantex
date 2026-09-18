@@ -39,3 +39,10 @@ globs = ["Tests.+"]
 name = "Tests"
 root = "Tests"
 moreLeancArgs = ["-O0"]
+
+# The pre-commit gate, compiled: the sh trampoline execs this binary when it
+# is newer than the script (interpreting the 1,000-line script cost ~1.9 s of
+# a 2.1 s hook); the gate's own build step refreshes it.
+[[lean_exe]]
+name = "precommit"
+root = "scripts.precommit"

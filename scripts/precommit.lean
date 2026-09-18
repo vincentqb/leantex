@@ -1036,7 +1036,8 @@ def main (args : List String) : IO UInt32 := do
     let pre := prefixOut.stdout.trimAscii.toString
     env := #[("LEAN_CC", some clang), ("LIBRARY_PATH", some s!"{pre}/lib:{pre}/lib/lean")]
 
-  let build ← IO.Process.output { cmd := "lake", args := #["build", "--wfail", "-q"], env }
+  let build ← IO.Process.output
+    { cmd := "lake", args := #["build", "--wfail", "-q", "leantex", "precommit"], env }
   if build.exitCode != 0 then
     IO.eprintln "pre-commit: lake build --wfail failed (linter warnings fail too):"
     IO.eprint build.stdout
