@@ -885,7 +885,6 @@ def evalList (cx : Cx) : List Stmt → List (String × Val) → Ev →
   | s :: rest, env, ev =>
     let (env2, ev2) := evalOne cx s env ev
     evalList cx rest env2 ev2
-termination_by xs _ _ => (sizeOf xs, 0)
 
 def evalOne (cx : Cx) : Stmt → List (String × Val) → Ev →
     List (String × Val) × Ev
@@ -921,7 +920,6 @@ is not set"))
         -- The loop's bindings are scoped to its body: the environment
         -- given back is the caller's own.
         (env, evalForeach cx vars body expanded.toList env ev)
-termination_by s _ _ => (sizeOf s, 0)
 
 /-- One body evaluation per item: the recursion is on the item list, the
 body a fixed subterm of its `\foreach`, so the unrolling is bounded by the
@@ -932,7 +930,6 @@ def evalForeach (cx : Cx) (vars : Array String) (body : List Stmt) :
   | item :: rest, env, ev =>
     let (_, ev2) := evalList cx body (bindVars vars item env) ev
     evalForeach cx vars body rest env ev2
-termination_by items _ _ => (sizeOf body, items.length + 1)
 
 end
 

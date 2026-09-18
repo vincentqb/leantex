@@ -21,7 +21,6 @@ open LeanTex.Core
 def digitsRev (n : Nat) : List Char :=
   if h : n < 10 then [Nat.digitChar n]
   else Nat.digitChar (n % 10) :: digitsRev (n / 10)
-decreasing_by omega
 
 def digitVal (c : Char) : Nat :=
   if c.toNat ≥ 48 then c.toNat - 48 else 0
@@ -43,8 +42,6 @@ theorem undigitsRev_digitsRev (n : Nat) : undigitsRev (digitsRev n) = n := by
     simp [undigitsRev, digitVal_digitChar (Nat.mod_lt n (by omega)),
       undigitsRev_digitsRev (n / 10)]
     omega
-termination_by n
-decreasing_by omega
 
 theorem digitChar_ascii {d : Nat} (h : d < 10) :
     48 ≤ (Nat.digitChar d).toNat ∧ (Nat.digitChar d).toNat ≤ 57 := by
@@ -68,8 +65,6 @@ theorem digitsRev_digits {n : Nat} {c : Char} (h : c ∈ digitsRev n) :
       subst h
       exact digitChar_ascii (Nat.mod_lt n (by omega))
     | inr h => exact digitsRev_digits h
-termination_by n
-decreasing_by omega
 
 /-- `\@arabic`: 1, 2, 3, … -/
 def arabicN (n : Nat) : String := String.ofList (digitsRev n).reverse

@@ -78,9 +78,5 @@ where
       | .error kind => some ⟨i, pos, kind⟩
       | .ok width =>
         go (i + max 1 width) (pos.next (bs[i]! == 0x0A))
-  termination_by bs.size - i
-  decreasing_by
-    simp_wf
-    omega
 
 end LeanTex.Core.Utf8
