@@ -240,7 +240,7 @@ private def markerStyleDecls : Style → Option (Array String)
   | .emph => some #["font-style: italic;"]
   | .mono => some #["font-family: var(--font-mono);"]
   | .sans => some #["font-family: var(--font-sans);"]
-  | .smallcaps => some #["font-variant-caps: small-caps;"]
+  | .smallcaps => some #["font-variant-caps: all-small-caps;"]
   | .normal => some #[]
   | .size name => (Ir.sizeScale.lookup name).map fun k =>
       #[s!"font-size: {decMilli k}em;"]
@@ -936,10 +936,13 @@ def baseCss (doc : Doc) : String :=
   ".entry-rows { display: flex; flex-direction: column; }\n" ++
   ".sans { font-family: var(--font-sans); }\n" ++
   ".ruled::after { content: \"\"; flex: 1; border-top: 1px solid var(--rule-color); }\n" ++
-  -- The browser uses the face's own small caps when it has them and synthesises
-  -- otherwise, which is the better of the two mechanisms; the PDF path can only
-  -- synthesise.
-  ".sc { font-variant-caps: small-caps; }\n" ++
+  -- Uniform small caps (CSS Fonts 4 §font-variant-caps: `all-small-caps`
+  -- asks for c2sc + smcp), so mixed-case source sets at one height and the
+  -- text carries the real casing. The browser uses the face's own small
+  -- caps when it has them and synthesises otherwise, which is the better
+  -- of the two mechanisms; the PDF path does the same from its own GSUB
+  -- read, so the two backends agree on what \scshape means.
+  ".sc { font-variant-caps: all-small-caps; }\n" ++
   -- booktabs' formal table: the three rule weights and their paddings come
   -- from the sourced constants in Ir (booktabs.dtx §The code), emitted
   -- here so the two backends cannot drift; each is overridable through

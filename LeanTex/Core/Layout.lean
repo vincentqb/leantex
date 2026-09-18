@@ -486,38 +486,25 @@ private def warn (st : FlattenSt) (code : DiagCode) (msg : String)
     (help : Option String := none) : FlattenSt :=
   { st with diags := st.diags.push (Diag.of code msg (help := help)) }
 
-/-- Small caps, relative to the surrounding size. Synthesised: the faces we can
-count on ship no small-caps variant and the sfnt reader does not apply `smcp`,
-so lowercase becomes uppercase set smaller. Real small caps are drawn, not
-scaled, so this is a stand-in until a face's own feature can be used. -/
+/-- Small caps at synthesis size, relative to the surrounding text. The
+fallback for a face that ships no `smcp`+`c2sc` (`Font.smallCaps`): letters
+take their capital form set smaller. Real small caps are drawn, not scaled,
+so this is a stand-in ratio until the face itself can answer. -/
 def smallCapScale : Nat := 800
 
-/-- Split a small-caps word so each run carries its own size: capitals stay,
-lowercase is raised and set at `smallCapScale`. The runs are separate words
-with no glue between them, so they set as one unbreakable unit -- which also
-means a small-caps word is not hyphenated. -/
-private def smallCapRuns (sty : TextStyle) (cur : Array Char) : Array Tk := Id.run do
-  let mut out : Array Tk := #[]
-  let mut run : Array Char := #[]
-  let mut lower := false
-  for c in cur do
-    let isLower := c.isLower
-    if !run.isEmpty && isLower != lower then
-      let s := if lower then { sty with scale := sty.scale * smallCapScale / 1000 } else sty
-      out := out.push (.word s run)
-      run := #[]
-    lower := isLower
-    run := run.push (if isLower then c.toUpper else c)
-  unless run.isEmpty do
-    let s := if lower then { sty with scale := sty.scale * smallCapScale / 1000 } else sty
-    out := out.push (.word s run)
-  return out
+/-- The synthesised uniform small-caps form of one word: every letter its
+capital form, the whole word at `smallCapScale` — one style, one size, so
+mixed case cannot come out at two heights. The invariant whose absence was
+the defect: the old synthesis kept capitals full-size beside their scaled
+neighbours, and `{\scshape PhD}` set a full P and D against a small H.
+Chosen only when the face carries no real small caps (`Font.smallCaps`);
+`\scshape` means uniform small capitals in both mechanisms (the PLAN
+2026-09-18 entry carries the decision). -/
+def smallCapSynth (sty : TextStyle) (chars : Array Char) : TextStyle × Array Char :=
+  ({ sty with scale := sty.scale * smallCapScale / 1000 }, chars.map (·.toUpper))
 
 private def pushWord (st : FlattenSt) (sty : TextStyle) (cur : Array Char) : FlattenSt :=
-  if sty.smallcaps then
-    { st with toks := st.toks ++ smallCapRuns sty cur }
-  else
-    { st with toks := st.toks.push (.word sty cur) }
+  { st with toks := st.toks.push (.word sty cur) }
 
 private def pushText (st : FlattenSt) (sty : TextStyle) (s : String) : FlattenSt := Id.run do
   let mut st := st
@@ -620,6 +607,16 @@ private def glyphOf (size : Sp) (font : Font) (c : Char) : Option (Nat × Char �
   | some g => some (g, c, scaledAt size font (font.widths[g]?.getD 0))
   | none => none
 
+/-- `glyphOf`, through the face's own small-caps substitution when the run
+is small caps: the substituted glyph carries its own advance, and the char
+stays as typed — the artifact's text is the author's casing, only the drawn
+form changes. A face that maps a gid nowhere keeps it (digits, punctuation). -/
+private def glyphOfSc (smallcaps : Bool) (size : Sp) (font : Font) (c : Char) :
+    Option (Nat × Char × Sp) :=
+  (font.gid c).map fun g0 =>
+    let g := if smallcaps then font.smallCapGid g0 else g0
+    (g, c, scaledAt size font (font.widths[g]?.getD 0))
+
 def hyphenGlyph (size : Sp) (font : Font) : Array (Nat × Char × Sp) :=
   match glyphOf size font '-' with
   | some g => #[g]
@@ -641,9 +638,13 @@ carrying the hyphen glyph) and by explicit hyphens (unflagged, no glyph).
 A scalar the styled face lacks is set from the precomputed fallback face
 (`FontSet.fallback`) at the same size — its own one-glyph box, since a box
 carries one face — or dropped when no face covers it. `missing` and `substs`
-carry `(styled font, scalar)` so the diagnostic can name the family. -/
+carry `(styled font, scalar)` so the diagnostic can name the family.
+`smallcaps` routes every glyph lookup — styled face and fallback alike —
+through that face's own `smcp`+`c2sc` substitution (`glyphOfSc`); it is set
+only when the styled face has one, synthesis having already rewritten the
+word otherwise. -/
 private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat)
-    (color : Ir.Color) (link : Option String) (underline : Bool)
+    (color : Ir.Color) (link : Option String) (underline : Bool) (smallcaps : Bool)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
     (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (List Nat)) :
     Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
@@ -691,13 +692,13 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
             boxW := 0
             items := items.push
               (.pen hyphW hyphenPenalty true fontIdx color (hyphenGlyph size font))
-          match glyphOf size font c' with
+          match glyphOfSc smallcaps size font c' with
           | some g =>
             box := box.push g
             boxW := boxW + g.2.2
           | none =>
             match fs.fallbackFor c' |>.bind fun fb =>
-                (glyphOf size (fs.get fb) c').map (fb, ·) with
+                (glyphOfSc smallcaps size (fs.get fb) c').map (fb, ·) with
             | some (fb, g) =>
               items := flush items box boxW
               box := #[]
@@ -729,13 +730,13 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
             (.box (scaledAt size font (font.advance ' ')) fontIdx color link #[] size underline 0)
           i := i + 1
         else
-        match glyphOf size font c with
+        match glyphOfSc smallcaps size font c with
         | some g =>
           box := box.push g
           boxW := boxW + g.2.2
         | none =>
           match fs.fallbackFor c |>.bind fun fb =>
-              (glyphOf size (fs.get fb) c).map (fb, ·) with
+              (glyphOfSc smallcaps size (fs.get fb) c).map (fb, ·) with
           | some (fb, g) =>
             items := flush items box boxW
             box := #[]
@@ -1548,9 +1549,16 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     match tk with
     | .word sty chars =>
       let idx := fs.lookup sty.slot sty.bold sty.italic
+      let font := fs.get idx
+      -- Small caps: the face's own `smcp`+`c2sc` when it carries them — the
+      -- word stays as typed and the gids substitute in `wordItems` — and
+      -- uniform synthesis otherwise. One meaning, two mechanisms.
+      let useGsub := sty.smallcaps && !font.smallCaps.isEmpty
+      let (sty, chars) :=
+        if sty.smallcaps && !useGsub then smallCapSynth sty chars else (sty, chars)
       let sz := size * sty.scale / 1000
       let (ws, m, s, c') :=
-        wordItems pats sz idx sty.color sty.link sty.underline fs (fs.get idx) chars
+        wordItems pats sz idx sty.color sty.link sty.underline useGsub fs font chars
           missing substs cache
       missing := m
       substs := s

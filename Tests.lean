@@ -438,18 +438,19 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   t "escaped tilde is a literal tilde"
     ((Elab.run "t" "a\\~b").1.body == #[.para #[.text "a~b"]])
 
-  -- Small caps are synthesised: lowercase raised and set smaller, in runs
-  -- that carry their own size. `\scshape` used to do nothing at all.
+  -- Small caps on a face without smcp+c2sc are synthesised UNIFORM: every
+  -- letter its capital form, the whole word at one reduced size — mixed
+  -- case cannot come out at two heights. (`\scshape` used to do nothing at
+  -- all; then it kept capitals full-size beside scaled lowercase.)
   let scOut := Layout.run geom oneFace none (Elab.run "t" "\\scshape aB").1
   let scRuns := (scOut.pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
     match s with
     | .run _ _ _ _ glyphs size _ _ => some (glyphs.map (·.2), size)
     | _ => none)
-  t "small caps raises lowercase"
-    (scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
-  t "small caps sets the raised run smaller"
-    (scRuns.any (·.2 == geom.fontSize * Layout.smallCapScale / 1000) &&
-     scRuns.any (·.2 == geom.fontSize))
+  t "synthesised small caps carry no lowercase form"
+    (!scRuns.isEmpty && scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
+  t "synthesised small caps are uniform: mixed case sets at one reduced size"
+    (scRuns.all (·.2 == geom.fontSize * Layout.smallCapScale / 1000))
 
   -- `\hfill` on a paragraph's last line must reach the margin. The
   -- line-running fill is also fil glue, and sharing the leftover with it
@@ -2200,6 +2201,69 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   let sans ← load "OpenSans-Regular.ttf"
   t "a face without the features maps every gid to itself"
     ((sans.gid 'a').all fun g => sans.smallCapGid g == g)
+  -- The rendered claim, over Layout.Out (never an IR dump): what the page
+  -- draws for a small-caps run is the same glyphs at the same sizes
+  -- whatever the casing of the source — that is what "uniform" means — and
+  -- differs from the plain rendering. Both mechanisms are held to it: real
+  -- substitution on the serif face, synthesis on the sans face.
+  let geom : Layout.Geom := {}
+  let allVariants (slot idx : Nat) : List ((Nat × Bool × Bool) × Nat) :=
+    [((slot, false, false), idx), ((slot, true, false), idx),
+     ((slot, false, true), idx), ((slot, true, true), idx)]
+  let set (f : Font.Font) : Font.FontSet := {
+    fonts := #[f]
+    index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
+  let drawn (fs : Font.FontSet) (src : String) : Array (Array (Nat × Char) × Dim.Sp) :=
+    ((Layout.run geom fs none (Elab.run "t" src).1).pages.flatMap (·.lines)).flatMap
+      (·.segs.filterMap fun s =>
+        match s with
+        | .run _ _ _ _ glyphs size _ _ => some (glyphs, size)
+        | _ => none)
+  let ink (rs : Array (Array (Nat × Char) × Dim.Sp)) : Array (Nat × Dim.Sp) :=
+    rs.flatMap fun (glyphs, size) => glyphs.map fun (g, _) => (g, size)
+  let scSerif := drawn (set serif) "{\\scshape PhD}"
+  t "gsub small caps draw the same ink for PhD, phd, and PHD"
+    (ink scSerif == ink (drawn (set serif) "{\\scshape phd}") &&
+     ink scSerif == ink (drawn (set serif) "{\\scshape PHD}") &&
+     ink scSerif != ink (drawn (set serif) "PhD"))
+  t "gsub small caps set at full size with substituted glyphs, text as typed"
+    (scSerif.all (·.2 == geom.fontSize) &&
+     (scSerif.flatMap (·.1.map (·.2))) == #['P', 'h', 'D'] &&
+     scSerif.all fun (glyphs, _) => glyphs.all fun (g, c) =>
+       some g == (serif.gid c).map serif.smallCapGid)
+  let scSans := drawn (set sans) "{\\scshape PhD}"
+  t "synthesised small caps draw the same ink for PhD, phd, and PHD"
+    (ink scSans == ink (drawn (set sans) "{\\scshape phd}") &&
+     ink scSans == ink (drawn (set sans) "{\\scshape PHD}") &&
+     ink scSans != ink (drawn (set sans) "PhD"))
+  t "synthesised small caps set every letter at one reduced size"
+    (!scSans.isEmpty &&
+     scSans.all (·.2 == geom.fontSize * Layout.smallCapScale / 1000))
+  -- The HTML side, judged on the typed tree and the stylesheet: the run
+  -- keeps the authored casing as text under the `sc` class, and the class
+  -- asks for uniform small caps (CSS Fonts 4: `all-small-caps` is c2sc +
+  -- smcp, the same pair the PDF path reads).
+  let (scDoc, scDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "{\\scshape PhD}\\end{document}")
+  t "small caps html source clean" scDs.isEmpty
+  let scTree := HtmlDoc.blockNode {} scDoc.body[0]!
+  let scText : Html.Node → Bool
+    | .elem _ attrs kids => attrs.contains ("class", "sc") && kids.any fun k =>
+        match k with
+        | .text s => s == "PhD"
+        | _ => false
+    | _ => false
+  let hasScText : Html.Node → Bool
+    | .elem _ _ kids => kids.any fun k => scText k ||
+        match k with
+        | .elem _ _ kids2 => kids2.any scText
+        | _ => false
+    | n => scText n
+  t "the typed tree carries the authored casing under the sc class"
+    (scText scTree || hasScText scTree)
+  t "the stylesheet asks for uniform small caps"
+    (((HtmlDoc.emit {} scDoc).1.splitOn
+      ".sc { font-variant-caps: all-small-caps; }").length == 2)
 
 /-- Per-glyph fallback: a scalar the styled face lacks is set from the face
 the driver's map names, at the same size; the diagnostic is one line per
