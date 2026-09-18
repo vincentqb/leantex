@@ -181,7 +181,7 @@ theorem builtin_palette_contract_engine :
 -- owed: titlepage_align_declared_engine
 -- owner: LeanTex.Core.Theme
 -- source: arch-design I2 (furniture alignment is declared, never a constant; consumes the once-unread `separator`)
--- blocker: same as builtin_palette_contract_engine — bundle styles are surface strings, so the statement must go through the elaborator, which `decide` cannot evaluate. Unblocked by arch-provable R2 (typed theme values).
+-- blocker: the value half is discharged — typed theme values (arch-provable R2) landed, and `Theme.titlepage_align_declared` proves by `decide` over `Theme.builtin` that every bundle styling the title page declares align and separator. What this statement still owes is the reading through the elaborator (`themedDoc` runs Elab.run), blocked exactly as builtin_palette_contract_engine: Elab.run is kernel-opaque (its three tracked non-total functions), so neither `decide` nor unfolding reaches the installed styles.
 -- goldens: no
 /-- Every shipped bundle that styles the title page declares its alignment
 and its separator — the moloch title matter is ragged left with a rule by

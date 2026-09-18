@@ -131,6 +131,18 @@ def plain : Theme :=
 
 def builtin : List Theme := [moloch, plain]
 
+/-- Arch-design I2, the value half: every shipped bundle that styles the
+title page declares its alignment and its separator — moloch's title
+matter is ragged left with a rule by declaration
+(beamerinnerthememoloch.dtx's `title page` template is `\raggedright`
+with a separator rule), never by a backend constant. The stronger
+reading — that the declaration survives `\theme` through the elaborator —
+is the staged `titlepage_align_declared_engine`. -/
+theorem titlepage_align_declared :
+    ∀ t ∈ builtin,
+      ((t.styles.find? "titlepage").all fun st =>
+        st.align.isSome && st.separator.isSome) = true := by decide
+
 def find? (name : String) : Option Theme :=
   builtin.find? (·.name == name)
 
