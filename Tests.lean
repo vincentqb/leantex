@@ -171,6 +171,96 @@ def bibChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "bib: sentence case keeps the first char, protection, and colon starts"
     (Bib.sentenceCase "The Great {DNA} Hunt: A Survey" == "The great {DNA} hunt: A survey")
 
+/-- The four style axes: one field renderer under per-type field orders,
+citation rendering per style, name formatting, and the named records. The
+expected strings transcribe plainnat.bst's output shapes for each FUNCTION
+named in `standardOrder`'s docstring. -/
+def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let entry (kind : String) (fields : List (String × String)) : Bib.Entry :=
+    { kind
+      key := "k1"
+      fields := fields.toArray
+      pos := {} }
+  let render (e : Bib.Entry) : String :=
+    Ir.plainText (Bib.renderEntry {} (Bib.standardOrder e.kind) e)
+  t "bibstyle: article renders authors, sentence title, journal group"
+    (render (entry "article"
+      [("author", "Doe, Alex and Roe, Sam"), ("title", "A Grand Study of Things"),
+       ("journal", "Journal of Tests"), ("volume", "12"), ("number", "3"),
+       ("pages", "45--67"), ("year", "2024")]) ==
+      "Alex Doe and Sam Roe. A grand study of things. Journal of Tests, 12(3):45–67, 2024.")
+  t "bibstyle: book keeps its title case, emphasized, publisher group"
+    (render (entry "book"
+      [("author", "Doe, Alex"), ("title", "The Grand Book"),
+       ("publisher", "Example Press"), ("edition", "Third"), ("year", "2020")]) ==
+      "Alex Doe. The Grand Book. Example Press, Third edition, 2020.")
+  t "bibstyle: inproceedings takes In booktitle, pages spelled out"
+    (render (entry "inproceedings"
+      [("author", "Doe, Alex"), ("title", "On Tests"),
+       ("booktitle", "Proceedings of Examples"), ("pages", "1--10"),
+       ("year", "2021")]) ==
+      "Alex Doe. On tests. In Proceedings of Examples, pages 1–10, 2021.")
+  t "bibstyle: misc renders howpublished and a linked URL"
+    (let out := Bib.renderEntry {} (Bib.standardOrder "misc") (entry "misc"
+      [("author", "Doe, Alex"), ("title", "A Web Thing"),
+       ("howpublished", "Online"), ("year", "2022"),
+       ("url", "https://example.org/x")])
+     Ir.plainText out ==
+       "Alex Doe. A web thing. Online, 2022. URL https://example.org/x." &&
+     out.any fun x => match x with
+       | .link u _ => u == "https://example.org/x"
+       | _ => false)
+  t "bibstyle: an absent sentence leaves nothing, no stray period"
+    (render (entry "article" [("author", "Doe, Alex"), ("title", "T"),
+      ("year", "2024")]) == "Alex Doe. T. 2024.")
+  t "bibstyle: an entry with no author falls back to editors"
+    (render (entry "book" [("editor", "Roe, Sam"), ("title", "Edited"),
+      ("year", "2019")]) == "Sam Roe, editors. Edited. 2019.")
+  let e1 : Bib.Entry := entry "article"
+    [("author", "Doe, Alex and Roe, Sam"), ("year", "2024")]
+  let r1 : Bib.Resolved := { key := "k1", position := 3, entry := e1 }
+  let e2 : Bib.Entry :=
+    { kind := "misc"
+      key := "k2"
+      fields := #[("author", "Poe, Kim and others"), ("year", "2020")]
+      pos := {} }
+  let r2 : Bib.Resolved := { key := "k2", position := 1, entry := e2 }
+  let cite (s : Bib.CiteStyle) (tx : Bool) (ps : Array (Option Bib.Resolved)) :=
+    Ir.plainText (Bib.renderCite s tx ps)
+  t "bibstyle: numeric citep brackets and joins"
+    (cite .numeric false #[some r1, some r2] == "[3, 1]")
+  t "bibstyle: numeric citet names then bracket"
+    (cite .numeric true #[some r1] == "Doe and Roe [3]")
+  t "bibstyle: author-year citep parenthesizes with semicolons"
+    (cite .authorYear false #[some r1, some r2] ==
+      "(Doe and Roe, 2024; Poe et al., 2020)")
+  t "bibstyle: author-year citet puts the year in parens"
+    (cite .authorYear true #[some r1, some r2] ==
+      "Doe and Roe (2024); Poe et al. (2020)")
+  t "bibstyle: an unresolved key prints ? in place"
+    (cite .numeric false #[some r1, none] == "[3, ?]")
+  t "bibstyle: citation pieces link to the entry anchor"
+    ((Bib.renderCite .numeric false #[some r1]).any fun x => match x with
+      | .link u _ => u == "#ref-k1"
+      | _ => false)
+  t "bibstyle: named styles pair the axes; unknown is none"
+    (((Bib.Style.named "unsrtnat").map (fun s => (s.cite, s.sort)))
+        == some (.numeric, .citation) &&
+      ((Bib.Style.named "plainnat").map (fun s => (s.cite, s.sort)))
+        == some (.authorYear, .authorYear) &&
+      ((Bib.Style.named "plain").map (fun s => (s.cite, s.sort)))
+        == some (.numeric, .authorYear) &&
+      (Bib.Style.named "mystery").isNone)
+  t "bibstyle: initials and last-first are name-format axes"
+    (({ initials := true } : Bib.NameFormat).render (Bib.parseName "Doe, Alex B.")
+        == "A. B. Doe" &&
+      ({ lastFirst := true } : Bib.NameFormat).render
+        (Bib.parseName "van der Berg, Alex") == "Berg, van der Alex")
+  t "bibstyle: et-al truncation is a name-format axis"
+    (({ etAlAfter := some 2 } : Bib.NameFormat).renderList
+      "Doe, Alex and Roe, Sam and Poe, Kim" == "Alex Doe et al.")
+
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
@@ -233,6 +323,7 @@ def main (args : List String) : IO UInt32 := do
   layoutSuiteChecks ref
   mathChecks ref
   bibChecks ref
+  bibStyleChecks ref
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then
