@@ -485,16 +485,21 @@ def paletteContract (pal : Palette) : Bool :=
 def Theme.contractHolds (th : LeanTex.Core.Theme.Theme) : Bool :=
   paletteContract th.palette
 
--- The theorems range over the bundles the engine installs: `Theme.moloch`
--- carries its palette as values (mixes evaluated at definition time), so
+-- The theorems range over the bundles the engine installs: `Theme.builtin`
+-- carries each palette as values (mixes evaluated at definition time), so
 -- the kernel walks the same entries `\theme` declares — no transcription
--- stands between the statement and the engine.
+-- stands between the statement and the engine. Each contract quantifies
+-- over the shipped list itself, so a third bundle enters every contract by
+-- being added, not by someone remembering three theorems; only the default
+-- surface (`{}` is not in `builtin`) keeps its own statements.
 
-/-- No shipped moloch pairing is illegible — with the alert corrected: the
-lineage's own #EB811B read at 2.61:1 on this page, under SC 1.4.3. -/
-theorem moloch_contract : paletteContract Theme.moloch.palette = true := by decide
-
-theorem plain_contract : paletteContract Theme.plain.palette = true := by decide
+/-- No shipped bundle's pairing is illegible: every built-in palette — the
+content colours (`alert`, `example`) and the resolved design's semantic
+pairings, defaults applied — clears its WCAG 2.2 threshold. Moloch's alert
+is the corrected one: the lineage's own #EB811B read at 2.61:1 on this
+page, under SC 1.4.3. -/
+theorem builtin_palettes_contract :
+    Theme.builtin.all (fun th => paletteContract th.palette) = true := by decide
 
 /-- Covered reads as covered on the design's own page, per colour — the
 contract ranges over the cover of every colour the bundle puts on text
@@ -540,21 +545,16 @@ def coverMonotone (pal : Palette) : Bool :=
 
 /-- The default surface: black ink, white page, covered at
 `coveredFractionDefault` — 38% of the ink over the page, mixed in Oklab
-(the Material disabled-state opacity, applied as the opacity it is). -/
+(the Material disabled-state opacity, applied as the opacity it is). `{}`
+is not in `Theme.builtin`, so the default keeps its own statement. -/
 theorem default_covered : coveredContract {} = true := by decide
-
-/-- At the bundle's own 31%: at Material's 38% the alert and example
-reach only 2.89:1 and 2.75:1 against their active forms, so the fraction
-is the finding, not the contract. -/
-theorem moloch_covered : coveredContract Theme.moloch.palette = true := by decide
-
-theorem plain_covered : coveredContract Theme.plain.palette = true := by decide
 
 theorem default_cover_monotone : coverMonotone {} = true := by decide
 
-theorem moloch_cover_monotone : coverMonotone Theme.moloch.palette = true := by decide
-
-theorem plain_cover_monotone : coverMonotone Theme.plain.palette = true := by decide
+/-- Cover monotonicity, quantified over the shipped list: covering twice
+quiets further for every built-in bundle's text roles. -/
+theorem builtin_covers_monotone :
+    Theme.builtin.all (fun th => coverMonotone th.palette) = true := by decide
 
 /-- Quantified over the shipped list itself, so a third bundle enters the
 contract by being added, not by someone remembering a theorem: every

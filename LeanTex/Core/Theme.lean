@@ -10,7 +10,8 @@ replace-on-redeclare path a document's own declarations use. A document's
 later declarations override, so a theme is a default, never a lock — and a
 new theme is a new table here, values only, no code. Values rather than
 surface strings so a theorem about a bundle ranges over what `\theme`
-installs (`Contrast.moloch_contract` closes by `decide` over these entries);
+installs (`Contrast.builtin_palettes_contract` closes by `decide` over
+these entries, for every bundle in `builtin` at once);
 colour arithmetic a bundle wants (xcolor's `!` mixes) is evaluated right
 here, at definition time, with the same `Color.mix` step
 `Ir.Palette.resolve` folds at document use sites. The semantic palette keys
@@ -56,8 +57,9 @@ def moloch : Theme :=
         ("fg", fg), ("bg", bg), ("alert", alert), ("example", { r := 0x00, g := 0x80, b := 0x80 }),
         -- The muted step: the theme's own ink mixed 70:30 into its page, the
         -- strongest quieting that still clears the 4.5:1 WCAG 2.2 SC 1.4.3
-        -- asks of the small footer text (4.79:1 here; moloch_contract is the
-        -- kernel check, and 60:40 already fails at 3.65:1).
+        -- asks of the small footer text (4.79:1 here;
+        -- Contrast.builtin_palettes_contract is the kernel check, and
+        -- 60:40 already fails at 3.65:1).
         ("muted", fg.mix 70 bg),                              -- fg!70!bg
         ("frametitlefg", bg), ("frametitlebg", fg),
         ("progressfg", progressfg), ("progressbg", progressbg),
@@ -70,7 +72,7 @@ def moloch : Theme :=
       -- read at 2.89:1 and 2.75:1 against their active forms — under the
       -- 3:1 WCAG 2.2 SC 1.4.11 asks of state-identifying information; 31%
       -- is the largest fraction where every text role clears it
-      -- (Contrast.moloch_covered is the kernel check).
+      -- (Contrast.builtin_designs_covered is the kernel check).
       coveredFraction := some 31 }
     -- The title page's inter-part spacing, from the moloch source
     -- (beamerinnerthememoloch.dtx): 0.3em above the subtitle, 0.8em below
@@ -120,7 +122,7 @@ def plain : Theme :=
       -- Covered keeps each colour at 38% of itself over the page — the
       -- Material disabled-state opacity, per colour in Oklab; this
       -- bundle's roles all clear the 3:1 state change at 38%
-      -- (Contrast.plain_covered is the kernel check).
+      -- (Contrast.builtin_designs_covered is the kernel check).
       coveredFraction := some 38 }
     tokens := { entries := #[("progressheight", pt1)] }
     styles := { entries := #[
