@@ -159,7 +159,7 @@ warning[W0101]: geometry keys without a native equivalent were dropped: headsep
 ── W0102 (degraded) unsupported colour model
 warning[W0102]: colour model 'cmyk' is not supported; use HTML or rgb
 ── W0103 (config) unsupported package skipped
-warning[W0103]: package 'tikz' is not supported; skipped
+warning[W0103]: package 'pgfplots' is not supported; skipped
 ── W0104 (config) unsupported TeX construct skipped
 warning[W0104]: '\directlua' is Lua code for luatex; skipped
 warning[W0104]: TeX '\def' is not supported; skipped

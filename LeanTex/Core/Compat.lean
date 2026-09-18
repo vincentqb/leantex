@@ -20,13 +20,18 @@ brace it did not create; and translated content re-enters through the lexer
 and parser, so it obeys exactly the rules hand-written input does. -/
 
 /-- Packages whose whole job the engine does natively. Seeing one is a note,
-not a warning: nothing was lost. -/
+not a warning: nothing was lost at the `\usepackage` line — a construct one
+of these packages provides that the engine cannot render is named where it
+is used, never at the load (`tikzpicture` renders its subset and W0334 or
+E0333 names each shape outside it; `\appendix` is an unknown command and
+W0301 says so where it stands). -/
 def nativePackages : List String :=
   ["geometry", "hyperref", "xcolor", "color", "microtype", "enumitem", "babel",
    "fontspec", "url", "scrlayer-scrpage", "inputenc", "fontenc", "lmodern",
    "amsmath", "amssymb", "unicode-math", "parskip", "titlesec", "fancyhdr",
    "textcomp", "csquotes", "polyglossia", "graphicx", "booktabs", "array",
-   "calc", "etoolbox", "xparse", "kvoptions", "setspace", "soul"]
+   "calc", "etoolbox", "xparse", "kvoptions", "setspace", "soul", "tikz",
+   "appendixnumberbeamer"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=

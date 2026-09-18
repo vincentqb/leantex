@@ -1178,7 +1178,16 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       d.code == "W0101" && d.severity == .warning && d.message.endsWith "headsep")
   t "compat known package is a note, unknown a warning"
     ((elabStr (pre "\\usepackage{hyperref}")).2.all (·.severity == .note) &&
-     warnCodes (pre "\\usepackage{tikz}") == ["W0103"])
+     warnCodes (pre "\\usepackage{pgfplots}") == ["W0103"])
+  -- The picture subset renders, so loading tikz loses nothing at the load:
+  -- a shape outside the subset is named where it is drawn (W0334, E0333),
+  -- never at the `\usepackage` line.
+  t "compat tikz package is native; the loss lives at the picture"
+    ((elabStr (pre "\\usepackage{tikz}")).2.all (·.severity == .note))
+  t "compat appendixnumberbeamer is native; \\appendix warns where it stands"
+    ((elabStr (pre "\\usepackage{appendixnumberbeamer}")).2.all (·.severity == .note) &&
+     warnCodes ("\\documentclass{article}\n\\usepackage{appendixnumberbeamer}\n" ++
+       "\\begin{document}\n\\appendix\nx\n\\end{document}") == ["W0301"])
   t "compat definecolor" ((elabStr (pre "\\definecolor{c}{HTML}{0F766E}")).1.palette.find? "c" ==
     some { r := 0x0F, g := 0x76, b := 0x6E })
   -- \setbeamercovered{transparent} asks for what the engine always does
@@ -4318,7 +4327,7 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .W0015 => dvE "\\begin{align}a &= b\\end{align}"
   | .W0101 => dvE (dvDoc "\\usepackage[headsep=1in]{geometry}\n" "x")
   | .W0102 => dvE (dvDoc "\\definecolor{c}{cmyk}{0,0,0,1}\n" "x")
-  | .W0103 => dvE (dvDoc "\\usepackage{tikz}\n" "x")
+  | .W0103 => dvE (dvDoc "\\usepackage{pgfplots}\n" "x")
   | .W0104 => dvE (dvDoc (String.intercalate "\n"
       ["\\directlua{tex.print('x')}", "\\def\\x{y}", "\\raggedright",
        "\\sloppy", "\\selectlanguage{german}", "\\pagestyle{scrheadings}",
