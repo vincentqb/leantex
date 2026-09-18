@@ -721,6 +721,40 @@ def raggedItems (items : Array Item) : Array Item :=
 
 mutual
 
+/-- The scalars a run's formulas ask the math face for — the Mathematical
+Alphanumeric code points elaboration mapped variables to live nowhere in
+the plain text, so the census must walk the formula bodies themselves. -/
+private def mathScalarTextList (acc : Array Char) : List Ir.Inline → Array Char
+  | [] => acc
+  | x :: rest => mathScalarTextList (mathScalarTextOne acc x) rest
+
+private def mathScalarTextOne (acc : Array Char) : Ir.Inline → Array Char
+  | .formula _ _ body => Math.MList.scalarsList acc body
+  | .styled _ body => mathScalarTextList acc body.toList
+  | .colored _ _ body => mathScalarTextList acc body.toList
+  | .link _ body => mathScalarTextList acc body.toList
+  | .underline body => mathScalarTextList acc body.toList
+  | .step _ _ body => mathScalarTextList acc body.toList
+  | .text _ => acc
+  | .math _ _ => acc
+  | .image _ _ _ => acc
+  | .linebreak _ => acc
+  | .fill => acc
+  | .pageNumber => acc
+  | .pageCount => acc
+
+end
+
+/-- The plain text of a run and, when it carries formulas, their math
+scalars as one more census string: what keeps the per-scalar fallback one
+mechanism — a math scalar enters the same precompute a text scalar does. -/
+private def textAndMath (out : Array String) (xs : Array Ir.Inline) : Array String :=
+  let ms := mathScalarTextList #[] xs.toList
+  let out := out.push (Ir.plainText xs)
+  if ms.isEmpty then out else out.push (String.ofList ms.toList)
+
+mutual
+
 private def scalarTextList (out : Array String) (itemD enumD : Nat) :
     List Block → Array String
   | [] => out
@@ -728,8 +762,8 @@ private def scalarTextList (out : Array String) (itemD enumD : Nat) :
 
 private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
     Block → Array String
-  | .para xs => out.push (Ir.plainText xs)
-  | .section _ _ title => out.push (Ir.plainText title)
+  | .para xs => textAndMath out xs
+  | .section _ _ title => textAndMath out title
   | .list ordered items =>
     -- The level's default marker rides along, so the fallback face is
     -- found before layout asks for the glyph. Per-kind depth, as LaTeX
@@ -747,7 +781,7 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   -- A note is never set in either backend's pages; its glyphs are not asked
   -- for.
   | .note _ => out
-  | .logo content => out.push (Ir.plainText content)
+  | .logo content => textAndMath out content
   | .verbatim _ s => out.push s
   -- A rule has no glyphs.
   | .rule _ _ _ => out
@@ -755,14 +789,14 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   -- the body face like any other text.
   | .picture pic => out ++ pic.labelTexts
   | .frame title _ _ body =>
-    scalarTextList (out.push (Ir.plainText title)) itemD enumD body.toList
+    scalarTextList (textAndMath out title) itemD enumD body.toList
   -- A framefoot note is set on the page as footer text.
-  | .framefoot content => out.push (Ir.plainText content)
+  | .framefoot content => textAndMath out content
   -- Every cell's text, and a caption's, reaches the scalar census: the
   -- fallback scan must see a glyph before layout asks a face for it.
   | .table _ _ _ rows _ => scalarTextTableRows out rows.toList
   | .float _ _ body caption =>
-    scalarTextList (out.push (Ir.plainText caption)) itemD enumD body.toList
+    scalarTextList (textAndMath out caption) itemD enumD body.toList
 
 private def scalarTextTableRows (out : Array String) :
     List (Array (Array Inline)) → Array String
@@ -772,7 +806,7 @@ private def scalarTextTableRows (out : Array String) :
 private def scalarTextTableCells (out : Array String) :
     List (Array Inline) → Array String
   | [] => out
-  | cell :: rest => scalarTextTableCells (out.push (Ir.plainText cell)) rest
+  | cell :: rest => scalarTextTableCells (textAndMath out cell) rest
 
 private def scalarTextCols (out : Array String) (itemD enumD : Nat) :
     List (Option Nat × Array Block) → Array String
@@ -800,9 +834,9 @@ the driver's effect, and by layout time it has already happened. -/
 def docScalars (doc : Doc) : Array Char := Id.run do
   let mut texts : Array String := scalarTextList #[] 0 0 doc.body.toList
   if let some h := doc.head then
-    texts := (texts.push (Ir.plainText h)).push "0123456789"
+    texts := (textAndMath texts h).push "0123456789"
   if let some f := doc.foot then
-    texts := (texts.push (Ir.plainText f)).push "0123456789"
+    texts := (textAndMath texts f).push "0123456789"
   for (_, st) in doc.styles.entries do
     if let some tpl := st.font then
       texts := texts.push (Ir.plainText tpl)
@@ -840,11 +874,13 @@ private def muAt (size : Sp) (mu : Int) : Sp :=
   size * mu / 18
 
 /-- Everything measuring a formula needs: the math face and its constants,
+the font set whose per-scalar fallback serves a glyph the math face lacks,
 and the run properties the formula inherits from its surroundings. -/
 private structure MathEnv where
   idx : Nat
   font : Font
   consts : MathConsts
+  fs : FontSet
   color : Ir.Color
   link : Option String
   underline : Bool
@@ -1273,17 +1309,43 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     | some g =>
       ((acc.1.push (.box g.2.2 e.idx e.color e.link #[g] size e.underline raise)), acc.2)
     | none =>
-      if acc.2.contains (e.idx, c) then acc
-      else (acc.1, acc.2.push (e.idx, c))
-  | .word s =>
-    -- An upright word (a function name, `\text`): one box in the math face.
+      -- A scalar the math face lacks goes through the per-scalar chain the
+      -- driver precomputed for text (`FontSet.fallback`) — one mechanism,
+      -- at the math size, its own box since a box carries one face.
+      match e.fs.fallbackFor c |>.bind fun fb =>
+          (glyphOf size (e.fs.get fb) c).map (fb, ·) with
+      | some (fb, g) =>
+        ((acc.1.push (.box g.2.2 fb e.color e.link #[g] size e.underline raise)), acc.2)
+      | none =>
+        if acc.2.contains (e.idx, c) then acc
+        else (acc.1, acc.2.push (e.idx, c))
+  | .word s => Id.run do
+    -- An upright word (a function name, `\text`): boxes in the math face,
+    -- split only where the chain substitutes — a box carries one face.
     let size := e.sizeAt st
-    let (glyphs, w, missing) := s.foldl (fun (gs, w, m) c =>
-      match glyphOf size e.font c with
-      | some g => (gs.push g, w + g.2.2, m)
-      | none => (gs, w, if m.contains (e.idx, c) then m else m.push (e.idx, c)))
-      ((#[] : Array (Nat × Char × Sp)), (0 : Sp), acc.2)
-    ((acc.1.push (.box w e.idx e.color e.link glyphs size e.underline raise)), missing)
+    let mut items := acc.1
+    let mut missing := acc.2
+    let mut cur := e.idx
+    let mut glyphs : Array (Nat × Char × Sp) := #[]
+    let mut w : Sp := 0
+    for c in s.toList do
+      let hit := match glyphOf size e.font c with
+        | some g => some (e.idx, g)
+        | none => e.fs.fallbackFor c |>.bind fun fb =>
+            (glyphOf size (e.fs.get fb) c).map (fb, ·)
+      match hit with
+      | some (fi, g) =>
+        if fi != cur && !glyphs.isEmpty then
+          items := items.push (.box w cur e.color e.link glyphs size e.underline raise)
+          glyphs := #[]
+          w := 0
+        cur := fi
+        glyphs := glyphs.push g
+        w := w + g.2.2
+      | none =>
+        unless missing.contains (e.idx, c) do
+          missing := missing.push (e.idx, c)
+    return (items.push (.box w cur e.color e.link glyphs size e.underline raise), missing)
   | .list body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
   | .frac num den =>
@@ -1381,13 +1443,22 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
         let around := fs.get (fs.lookup sty.slot sty.bold sty.italic)
         let runSize := size * sty.scale / 1000
         let e : MathEnv := {
-          idx, font, consts
+          idx, font, consts, fs
           color := sty.color
           link := sty.link
           underline := sty.underline
           base := (Math.mathSize runSize.toNat around.xHeightOptical
             around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
         let (ms, m) := mathItems e display body missing
+        -- The substitutions the chain made, named like text's (W0009):
+        -- a scalar the math face lacks that a fallback face set. One the
+        -- assembly paths recorded missing was never substituted — a grown
+        -- construction is one face — so `m` excludes it here.
+        for c in Math.MList.scalarsList #[] body do
+          if (font.gid c).isNone && !m.contains (idx, c) then
+            if let some fb := fs.fallbackFor c then
+              if ((fs.get fb).gid c).isSome && !substs.contains (idx, c, fb) then
+                substs := substs.push (idx, c, fb)
         missing := m
         items := items ++ ms
       | none => pure ()

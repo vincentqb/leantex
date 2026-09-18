@@ -7150,6 +7150,21 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a glyph the math face lacks warns E0405 naming it"
     (((Layout.run geom mfs none bDoc).diags.filter (·.code == "E0405")).map (·.message)
       == #["'Fira Math' has no glyph for '₿' (U+20BF); dropped"])
+  -- The chain, extended to math scalars: the census walk carries a
+  -- formula's scalars to the driver's precompute, and a scalar the math
+  -- face lacks that the precomputed chain covers sets from that face,
+  -- named W0009 — never dropped.
+  t "docScalars carries a formula's math scalars"
+    ((Layout.docScalars (Elab.run "t" "$x$").1).contains '𝑥')
+  let cfs : Font.FontSet := { mfs with fallback := #[('₿', 0)] }
+  let cOut := Layout.run geom cfs none bDoc
+  t "a math scalar the chain covers sets from the fallback face, named W0009"
+    ((cOut.diags.filter (·.code == "E0405")).isEmpty &&
+      (cOut.diags.filter (·.code == "W0009")).map (·.message) ==
+        #["'Fira Math' has no glyph for '₿' (U+20BF); set from 'Source Serif Pro'"] &&
+      ((cOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
+        | .run 0 _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '₿')
+        | _ => false))
   -- No math face: one W0003 for the document, formulas set as their source.
   let bare : Font.FontSet := { fonts := #[serif], index := allSlots }
   let (nd, _) := Elab.run "t" "$x^2$ and $y$"
