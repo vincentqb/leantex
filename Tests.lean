@@ -6321,6 +6321,19 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((warnCodes (grey "\\textcolor{grey}{x}")).contains "W0315")
   t "borderline grey passes as large-scale text"
     (!(warnCodes (grey "{\\Huge \\textcolor{grey}{x}}")).contains "W0315")
+  -- The judge reads the layout's own scale (contrast_judges_what_layout_sets):
+  -- at a 9 pt base a section sets at 12.96 pt — not WCAG large-scale — while
+  -- the old absolute 14 pt bold was, so the judge passed text the page fails.
+  -- #767676 reads at 4.34:1 on the shipped surface: over 3:1, under 4.5:1.
+  -- At the 10 pt base the section sets at 14.4 pt bold, large-scale either
+  -- way: the verdicts agree, which is why the drift went unseen.
+  let sizedSection (size : String) := "\\documentclass{article}" ++
+    "\\page{ fontsize = " ++ size ++ " }\\palette{ grey = #767676 }" ++
+    "\\begin{document}\\section{\\textcolor{grey}{Head}}x\\end{document}"
+  t "a 9pt-base section title is judged at the size the layout sets"
+    ((warnCodes (sizedSection "9pt")).contains "W0315")
+  t "a 10pt-base section title stays large-scale, judge and page agreeing"
+    (!(warnCodes (sizedSection "10pt")).contains "W0315")
   t "a declared fg is judged against the declared bg"
     ((warnCodes ("\\documentclass{article}" ++
       "\\palette{ fg = #999999, bg = #888888 }" ++

@@ -1,5 +1,6 @@
 import LeanTex.Core.Oklab
 import LeanTex.Core.Theme
+import LeanTex.Core.Layout
 
 /-!
 Colour as a checkable contract: WCAG 2.2 relative luminance and contrast
@@ -188,16 +189,31 @@ private def UseCx.style (cx : UseCx) : Style → UseCx
     | none => cx
   | _ => cx
 
-/-- The context a heading's title sets: layout's per-level sizes (14pt and
-12pt are absolute, level 3 the base; the level-0 title takes the scale's
-LARGE step), bold — 14pt bold is what the WCAG glossary counts as
-large-scale. -/
+/-- The context a heading's title sets: the layout's own per-level sizes —
+`Layout.sectionSize`, the one function titles are set with — in bold. The
+level-0 title takes the scale's LARGE step, the elaborator's `\maketitle`
+size, which `sectionSize` does not serve. Judging at the size the page
+ships is what makes the large-scale call (WCAG 2.2 glossary: ≥ 18pt, or
+bold ≥ 14pt) the page's own: a re-spelled absolute here once judged a
+phantom 14 pt bold while a 9 pt base set its sections at 12.96 pt. -/
 private def headingCx (base : Sp) : Nat → UseCx
   | 0 => { base, size := base * ((sizeScale.lookup "LARGE").getD 1000) / 1000
            bold := true }
-  | 1 => { base, size := Dim.pt 14, bold := true }
-  | 2 => { base, size := Dim.pt 12, bold := true }
-  | _ => { base, size := base, bold := true }
+  | l => { base, size := Layout.sectionSize { fontSize := base } l, bold := true }
+
+/-- The judge and the page agree on heading sizes by construction: for the
+sectioning levels, `headingCx` reads `Layout.sectionSize` — the function
+the layout sets titles with — so the WCAG large-scale judgement is made at
+the size the page ships, never at a re-spelled absolute. Stated so the
+derivation cannot drift back: the old 14 pt / 12 pt absolutes passed a
+9 pt-base section (12.96 pt on the page, not large-scale) as a phantom
+14 pt bold, which is — the judge passing text the page fails, the exact
+defect class it exists to catch. -/
+theorem contrast_judges_what_layout_sets (base : Sp) :
+    ∀ l : Nat, 0 < l →
+      (headingCx base l).size = Layout.sectionSize { fontSize := base } l
+  | _ + 1, _ => rfl
+  | 0, h => absurd h (Nat.lt_irrefl 0)
 
 mutual
 
@@ -257,8 +273,9 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
   | .only _ body => usesBlocks cx out body.toList
   | .nav _ body => usesBlocks cx out body.toList
   | .frame title _ _ body =>
-    -- A frame title sets at `\large\bfseries`: 1.2 of the base, bold.
-    let titleCx := { cx with size := cx.base * 1200 / 1000, bold := true }
+    -- A frame title sets at `\large\bfseries` (the shipped bundles'
+    -- template): the scale's own step, never a re-spelled factor.
+    let titleCx := { cx.style (.size "large") with bold := true }
     usesBlocks cx (usesInlines titleCx out title.toList) body.toList
   -- A framefoot note lands as footer text on the page: its own declared
   -- colours are judged; its default colour is the muted key, judged once
