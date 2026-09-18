@@ -2763,6 +2763,15 @@ private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := 
 override it; `margin` sets both axes, `vmargin`/`hmargin` one each. -/
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     (pos : Pos) : EM PageSpec := do
+  -- A page dimension may be a declared token or an expression over them
+  -- (`\geometry{paperheight=\bleedingheight}`), which parses as glue: it
+  -- is a dimension when nothing font-relative or infinite rides in it —
+  -- the page exists before any font is chosen.
+  let asDim : Decl.Value → Option Sp
+    | .dim d => some d
+    | .glue g =>
+      if g.width.em == 0 && g.width.ex == 0 && !g.fil then some g.width.sp else none
+    | _ => none
   let mut spec := spec
   for e in entries do
     match e.key, e.value with
@@ -2772,11 +2781,26 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | none =>
         diag ctx .E0324 s!"unknown page size '{name}'" pos
           (help := s!"known sizes: {String.intercalate ", " (pageSizes.map (·.1))}")
-    | "width", .dim d => spec := { spec with width := d }
-    | "height", .dim d => spec := { spec with height := d }
-    | "margin", .dim d => spec := { spec with vmargin := d, hmargin := d }
-    | "vmargin", .dim d => spec := { spec with vmargin := d }
-    | "hmargin", .dim d => spec := { spec with hmargin := d }
+    | "width", v =>
+      if let some d := asDim v then spec := { spec with width := d }
+      else modify fun st => { st with
+        diags := st.diags.push (Decl.wrongType ctx.file "page" "width" "a dimension" v pos) }
+    | "height", v =>
+      if let some d := asDim v then spec := { spec with height := d }
+      else modify fun st => { st with
+        diags := st.diags.push (Decl.wrongType ctx.file "page" "height" "a dimension" v pos) }
+    | "margin", v =>
+      if let some d := asDim v then spec := { spec with vmargin := d, hmargin := d }
+      else modify fun st => { st with
+        diags := st.diags.push (Decl.wrongType ctx.file "page" "margin" "a dimension" v pos) }
+    | "vmargin", v =>
+      if let some d := asDim v then spec := { spec with vmargin := d }
+      else modify fun st => { st with
+        diags := st.diags.push (Decl.wrongType ctx.file "page" "vmargin" "a dimension" v pos) }
+    | "hmargin", v =>
+      if let some d := asDim v then spec := { spec with hmargin := d }
+      else modify fun st => { st with
+        diags := st.diags.push (Decl.wrongType ctx.file "page" "hmargin" "a dimension" v pos) }
     | "leading", .int n => spec := { spec with leading := n.toNat * 1000 }
     | "leading", .dim d =>
       -- A bare decimal like 1.04 reads as a dimension in points; the factor
@@ -2802,8 +2826,11 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "checked" => spec := { spec with measureChecked := true }
       | _ =>
         diag ctx .E0323 s!"'measure' in '\\page' expects 'checked' or 'free', got '{v}'" pos
-    | "bleed", .dim d => spec := { spec with bleed := d }
     | "bleed", .int 0 => spec := { spec with bleed := 0 }
+    | "bleed", v =>
+      if let some d := asDim v then spec := { spec with bleed := d }
+      else modify fun st => { st with
+        diags := st.diags.push (Decl.wrongType ctx.file "page" "bleed" "a dimension" v pos) }
     | "hyphenate", .ident v =>
       match v with
       | "on" | "true" => spec := { spec with hyphenate := some true }
@@ -3523,7 +3550,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                   s!"'\\chrome' is slides furniture; the {docClass} class never draws it"
                   (some pos) (help := "\\runninghead / \\runningfoot are the page furniture")
             else
-              let (entries, ds) := Decl.parseBlock ctx.file src pos name
+              let (entries, ds) := Decl.parseBlock ctx.file src pos name tokens.entries
               modify fun st => { st with diags := st.diags ++ ds }
               if name == "page" then
                 page ← applyPage ctx page entries pos

@@ -56,6 +56,7 @@ def meaningFree : List (String × Nat) :=
    ("KOMAoptions", 1), ("newlength", 1), ("frenchspacing", 0),
    ("nonfrenchspacing", 0),
    ("raggedbottom", 0), ("flushbottom", 0),
+   ("selectfont", 0),
    ("column", 1)]
 
 /-- Declarations whose loss is real — justification, breaking tolerance,
@@ -67,6 +68,9 @@ def configSkip : List (String × Nat × String × Option String) :=
   [("raggedright", 0,
     "'\\raggedright' asks for unjustified setting; the document stays justified",
     some "declare \\page{ justify = false }"),
+   ("fontseries", 1,
+    "'\\fontseries' selects a font series; the family's regular weight is used",
+    none),
    ("sloppy", 0,
     "'\\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps \
 its own and an overfull line warns by itself", none),
@@ -442,12 +446,18 @@ private def geometry (opts : String) (pos : Pos) : M (Array Raw) := do
       let f := flag.trimAscii.toString
       if f.endsWith "paper" then
         keys := keys.push s!"size = {(f.dropEnd "paper".length).toString}"
+      else if f == "noheadfoot" || f == "nohead" || f == "nofoot" then
+        -- Asks for no running furniture, the state the engine starts from.
+        pure ()
       else dropped := dropped.push f
     | k :: v =>
       let k := k.trimAscii.toString
       let v := (String.intercalate "=" v).trimAscii.toString
+      -- geometry's width/height size the text block, paperwidth/paperheight
+      -- the page (geometry manual §5.2); \page speaks in page dimensions.
+      let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
       if ["margin", "vmargin", "hmargin", "width", "height"].contains k then
-        keys := keys.push s!"{k} = {v}"
+        keys := keys.push s!"{k} = {lengthOfTeX v}"
       else dropped := dropped.push k
     | [] => pure ()
   let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
@@ -632,6 +642,11 @@ where
       became "\\colorlet" native pos
       return some (← synthAt native pos, k)
     else return none
+  | "geometry" =>
+    -- The command form: the same keys the package options carry.
+    let (args, k) := takeGroups raws start 1
+    if args.isEmpty then return none
+    return some (← geometry (rawSrc (args.getD 0 #[])) pos, k)
   | "setlength" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
