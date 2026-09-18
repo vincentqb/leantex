@@ -3425,8 +3425,8 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     (nOut.pages.map (·.lines.size) == bOut.pages.map (·.lines.size))
 
 /-- `\chrome` and the bundles' chrome: page furniture as declared data, a
-slot naming a per-page datum, redeclaration replacing — a theme's chrome is
-a default exactly as its palette is. -/
+slot naming a per-page datum, redeclaration merging per slot — a theme's
+chrome is a default exactly as its palette is. -/
 def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let deck (pre body : String) : String :=
@@ -3444,12 +3444,15 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (deck "\\theme{plain}" frame)).1.chrome.hasFooter)
   t "an unthemed deck has no chrome"
     (!(elabStr (deck "" frame)).1.chrome.hasFooter)
-  -- A later \chrome replaces the theme's whole footer, as \palette entries
-  -- replace: the theme is a default, never a lock.
+  -- A later \chrome refines the theme's footer per slot, as \palette
+  -- entries override per name and keep their siblings: the theme is a
+  -- default, never a lock — and never an all-or-nothing one. Clearing the
+  -- whole band is `\runningfoot`, which outranks chrome.
   let (oDoc, oDs) := elabStr (deck
     "\\theme{moloch}\\chrome{ footer = { right = \\slidenumber } }" frame)
-  t "a document's chrome overrides the theme's whole footer" (oDs.isEmpty &&
-    oDoc.chrome.footerLeft.isNone && oDoc.chrome.footerRight == some .frameNumber)
+  t "a document's chrome refines the theme's footer per slot" (oDs.isEmpty &&
+    oDoc.chrome.footerLeft == some .sectionTitle &&
+    oDoc.chrome.footerRight == some .frameNumber)
   -- The sketch's spelling and the beamer lineage's name one datum.
   t "slidenumber and framenumber are one datum"
     ((elabStr (deck "\\chrome{ footer = { right = \\framenumber } }" frame)).1.chrome ==
@@ -7610,6 +7613,18 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "a redeclared variant face resolves to the second"
     (fDoc.fonts.faceFor 0 true false == some "Second Face")
   t "a redeclared variant face keeps one entry" (fDoc.fonts.faces.size == 1)
+
+  -- \chrome slots merge across blocks exactly as within one block.
+  let frame := "\\begin{frame}{A}\na\n\\end{frame}"
+  let (cDoc, _) := elabStr (deck
+    ("\\chrome{ footer = { left = \\sectiontitle } }\n" ++
+     "\\chrome{ footer = { right = \\framenumber } }") frame)
+  let (c1Doc, _) := elabStr (deck
+    "\\chrome{ footer = { left = \\sectiontitle, right = \\framenumber } }" frame)
+  t "chrome slots merge across blocks as within one"
+    (cDoc.chrome == c1Doc.chrome &&
+     cDoc.chrome.footerLeft == some .sectionTitle &&
+     cDoc.chrome.footerRight == some .frameNumber)
 
   -- [from] is each running declaration's own, and a redeclare resets it.
   let (rDoc, rDs) := elabStr

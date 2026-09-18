@@ -3110,10 +3110,12 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
 page furniture as declared data. A slot names a per-page datum the engine
 supplies — the current section's title, or the frame's own number — never
 literal content (that is `\runningfoot`, which overrides the whole footer).
-Redeclaring replaces, so a theme's chrome is a default exactly as its
-palette is. -/
-private def applyChrome (ctx : Ctx) (src : String) (pos : Pos) : EM Chrome := do
-  let mut chrome : Chrome := {}
+Redeclaring merges per slot onto the chrome already declared — across
+blocks exactly as within one, and onto a theme's default exactly as a
+`\palette` entry overrides the theme's — so a second block refines the slot
+it names and leaves its sibling standing. -/
+private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) : EM Chrome := do
+  let mut chrome : Chrome := c0
   let slotHelp := "slots are \\sectiontitle, \\framenumber, or \\framefraction"
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
@@ -3621,7 +3623,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             else if name == "chrome" then
               -- Parses its own entries: slot values are `\sectiontitle`
               -- spellings a key/value pre-parse would reject.
-              chrome ← applyChrome ctx src pos
+              chrome ← applyChrome ctx chrome src pos
               -- The author has named what the footer band holds: mixing
               -- the frame and physical sequences there is now declared
               -- (`footerSequenceDiags`).
