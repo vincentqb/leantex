@@ -771,29 +771,36 @@ def raggedItems (items : Array Item) : Array Item :=
 
 mutual
 
-/-- The scalars a run's formulas ask the math face for — the Mathematical
-Alphanumeric code points elaboration mapped variables to live nowhere in
-the plain text, so the census must walk the formula bodies themselves. -/
-private def mathScalarTextList (acc : Array Char) : List Ir.Inline → Array Char
-  | [] => acc
-  | x :: rest => mathScalarTextList (mathScalarTextOne acc x) rest
+/-- The scalars a run's leaves ask a face for beyond its plain text: the
+Mathematical Alphanumeric code points elaboration mapped formula variables
+to, and each icon's glyph (its plain text is its text alternative) — neither
+lives in the plain text, so the census must walk the bodies themselves. One
+walk, both leaf kinds: `icons` collects `.icon` glyphs, `math` the formula
+scalars, so the two censuses cannot drift apart arm by arm. -/
+private def leafScalarsList (icons math : Array Char) :
+    List Ir.Inline → Array Char × Array Char
+  | [] => (icons, math)
+  | x :: rest =>
+    let (icons, math) := leafScalarsOne icons math x
+    leafScalarsList icons math rest
 
-private def mathScalarTextOne (acc : Array Char) : Ir.Inline → Array Char
-  | .formula _ _ body => Math.MList.scalarsList acc body
-  | .styled _ body => mathScalarTextList acc body.toList
-  | .colored _ _ body => mathScalarTextList acc body.toList
-  | .role _ body => mathScalarTextList acc body.toList
-  | .link _ body => mathScalarTextList acc body.toList
-  | .underline body => mathScalarTextList acc body.toList
-  | .step _ _ body => mathScalarTextList acc body.toList
-  | .text _ => acc
-  | .math _ _ => acc
-  | .image _ _ _ => acc
-  | .icon _ _ => acc
-  | .linebreak _ => acc
-  | .fill => acc
-  | .pageNumber => acc
-  | .pageCount => acc
+private def leafScalarsOne (icons math : Array Char) :
+    Ir.Inline → Array Char × Array Char
+  | .formula _ _ body => (icons, Math.MList.scalarsList math body)
+  | .icon c _ => (icons.push c, math)
+  | .styled _ body => leafScalarsList icons math body.toList
+  | .colored _ _ body => leafScalarsList icons math body.toList
+  | .role _ body => leafScalarsList icons math body.toList
+  | .link _ body => leafScalarsList icons math body.toList
+  | .underline body => leafScalarsList icons math body.toList
+  | .step _ _ body => leafScalarsList icons math body.toList
+  | .text _ => (icons, math)
+  | .math _ _ => (icons, math)
+  | .image _ _ _ => (icons, math)
+  | .linebreak _ => (icons, math)
+  | .fill => (icons, math)
+  | .pageNumber => (icons, math)
+  | .pageCount => (icons, math)
 
 end
 
@@ -805,42 +812,14 @@ private structure ScalarAcc where
   texts : Array String := #[]
   math : Array Char := #[]
 
-mutual
-
-/-- Icon scalars, gathered like math scalars: an icon's plain text is its
-text alternative, so its glyph would never enter the census through
-`plainText` — this walk is what routes it into the same per-scalar
-fallback precompute every other scalar uses. -/
-private def iconScalarTextList (acc : Array Char) : List Ir.Inline → Array Char
-  | [] => acc
-  | x :: rest => iconScalarTextList (iconScalarTextOne acc x) rest
-
-private def iconScalarTextOne (acc : Array Char) : Ir.Inline → Array Char
-  | .icon c _ => acc.push c
-  | .styled _ body => iconScalarTextList acc body.toList
-  | .colored _ _ body => iconScalarTextList acc body.toList
-  | .role _ body => iconScalarTextList acc body.toList
-  | .link _ body => iconScalarTextList acc body.toList
-  | .underline body => iconScalarTextList acc body.toList
-  | .step _ _ body => iconScalarTextList acc body.toList
-  | .text _ => acc
-  | .math _ _ => acc
-  | .formula _ _ _ => acc
-  | .image _ _ _ => acc
-  | .linebreak _ => acc
-  | .fill => acc
-  | .pageNumber => acc
-  | .pageCount => acc
-
-end
-
 /-- The plain text of a run and, when it carries formulas or icons, their
 scalars: what keeps the per-scalar fallback one mechanism — a math or icon
 scalar enters the same precompute a text scalar does. -/
 private def textAndMath (out : ScalarAcc) (xs : Array Ir.Inline) : ScalarAcc :=
+  let (icons, math) := leafScalarsList #[] out.math xs.toList
   { texts := (out.texts.push (Ir.plainText xs)).push
-      (String.ofList (iconScalarTextList #[] xs.toList).toList)
-    math := mathScalarTextList out.math xs.toList }
+      (String.ofList icons.toList)
+    math }
 
 mutual
 
