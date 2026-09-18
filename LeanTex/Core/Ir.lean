@@ -1978,187 +1978,119 @@ end
 
 mutual
 
-/-- Every paragraph below here covered: the body of a step that is
-pending. Covered means covered — an explicit colour nested inside (an
-alert, a palette name) is covered too, exactly as beamer's transparent
-covering mutes coloured text — but covered means *the same colour,
-quieter*: each coloured run takes its own cover (`cover.of`), never a
-repaint to one constant that would make a covered alert and a covered
-example the same grey. Runs with no colour of their own take
-`cover.plain`. Verbatim dims through its own `covered` field; section
-blocks carry no colour and stay (recorded in PLAN). -/
-def shadeBlocks (cover : Cover) (xs : Array Block) : Array Block :=
-  shadeBlockList cover #[] xs.toList
-
-def shadeBlockList (cover : Cover) (out : Array Block) : List Block → Array Block
+/-- One overlay walk, two modes, selected by `pending`. Off, it is the dim
+walk: the frame's body as step `k` of its overlay shows it — content
+outside a step's declared range flips the flag and covers, everything else
+stays. On, it is the cover itself: every paragraph below here covered.
+Covered means covered — an explicit colour nested inside (an alert, a
+palette name) is covered too, exactly as beamer's transparent covering
+mutes coloured text — but covered means *the same colour, quieter*: each
+coloured run takes its own cover (`cover.of`), never a repaint to one
+constant that would make a covered alert and a covered example the same
+grey. Runs with no colour of their own take `cover.plain`; verbatim dims
+through its own `covered` field; section blocks carry no colour and stay
+(recorded in PLAN). Only colours change in either mode, so no step can
+reflow the slide — the cover-not-hide invariant, by construction. -/
+def dimBlockList (cover : Cover) (k : Nat) (pending : Bool) (out : Array Block) :
+    List Block → Array Block
   | [] => out
-  | b :: rest => shadeBlockList cover (out.push (shadeBlock cover b)) rest
+  | b :: rest =>
+    dimBlockList cover k pending (out.push (dimBlock cover k pending b)) rest
 
-def shadeBlock (cover : Cover) : Block → Block
-  | .para content => .para #[.colored cover.plain none (shadeInlines cover #[] content.toList)]
-  | .list o items => .list o (shadeItems cover #[] items.toList)
-  | .center body => .center (shadeBlockList cover #[] body.toList)
-  | .quote body => .quote (shadeBlockList cover #[] body.toList)
-  | .spaced g body => .spaced g (shadeBlockList cover #[] body.toList)
-  | .columns cols => .columns (shadeColumns cover #[] cols.toList)
-  | .step n last body => .step n last (shadeBlockList cover #[] body.toList)
-  | .only targets body => .only targets (shadeBlockList cover #[] body.toList)
-  | .nav spec body => .nav spec (shadeBlockList cover #[] body.toList)
-  | .verbatim _ s => .verbatim (some cover.plain) s
+def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
+  | .para content =>
+    if pending then
+      .para #[.colored cover.plain none (dimInlineList cover k true #[] content.toList)]
+    else .para (dimInlineList cover k false #[] content.toList)
+  | .list o items => .list o (dimItems cover k pending #[] items.toList)
+  | .center body => .center (dimBlockList cover k pending #[] body.toList)
+  | .quote body => .quote (dimBlockList cover k pending #[] body.toList)
+  | .spaced g body => .spaced g (dimBlockList cover k pending #[] body.toList)
+  | .columns cols => .columns (dimColumns cover k pending #[] cols.toList)
+  -- The mode flip: a pending step's body covers, and inside a cover a
+  -- nested step stays covered — `\uncover<2>` covers on 1 and again from 3,
+  -- exactly as beamer's transparent covering does.
+  | .step n last body =>
+    .step n last (dimBlockList cover k (pending || stepPending n last k) #[] body.toList)
+  | .only targets body => .only targets (dimBlockList cover k pending #[] body.toList)
+  | .nav spec body => .nav spec (dimBlockList cover k pending #[] body.toList)
   | .section l st title => .section l st title
+  | .verbatim c s => .verbatim (if pending then some cover.plain else c) s
   | .note body => .note body
   | .frame t st v body => .frame t st v body
   | .framefoot content => .framefoot content
   | .pagebreak => .pagebreak
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
-  -- A covered picture is the same picture, quieter: each shape takes its
-  -- own colour's cover, exactly as a coloured run does.
-  | .picture p => .picture (p.recolor cover.of)
-  -- Each cell covers as a paragraph does: wrapped in the plain cover, its
-  -- own colours covered per colour. Rules are decorative ink and keep
-  -- their weight; the caption covers with its float.
+  -- A picture has no overlay structure inside it: covered, each shape takes
+  -- its own colour's cover, exactly as a coloured run does.
+  | .picture p => .picture (if pending then p.recolor cover.of else p)
+  -- Cells cover as paragraphs do and dim in place: only colours change, so
+  -- no step can reflow the grid. Rules are decorative ink and keep their
+  -- weight; the caption covers and dims with its float.
   | .table cols pl pr rows rules =>
-    .table cols pl pr (shadeTableRows cover #[] rows.toList) rules
-  | .float k ca body caption =>
-    .float k ca (shadeBlockList cover #[] body.toList)
-      (if caption.isEmpty then caption
-       else #[.colored cover.plain none (shadeInlines cover #[] caption.toList)])
+    .table cols pl pr (dimTableRows cover k pending #[] rows.toList) rules
+  | .float fk ca body caption =>
+    .float fk ca (dimBlockList cover k pending #[] body.toList)
+      (if pending then
+        if caption.isEmpty then caption
+        else #[.colored cover.plain none (dimInlineList cover k true #[] caption.toList)]
+       else dimInlineList cover k false #[] caption.toList)
 
-def shadeTableRows (cover : Cover) (out : Array (Array (Array Inline))) :
+def dimTableRows (cover : Cover) (k : Nat) (pending : Bool)
+    (out : Array (Array (Array Inline))) :
     List (Array (Array Inline)) → Array (Array (Array Inline))
   | [] => out
-  | row :: rest => shadeTableRows cover (out.push (shadeTableCells cover #[] row.toList)) rest
+  | row :: rest =>
+    dimTableRows cover k pending (out.push (dimTableCells cover k pending #[] row.toList)) rest
 
-def shadeTableCells (cover : Cover) (out : Array (Array Inline)) :
+def dimTableCells (cover : Cover) (k : Nat) (pending : Bool)
+    (out : Array (Array Inline)) :
     List (Array Inline) → Array (Array Inline)
   | [] => out
   | cell :: rest =>
-    let covered : Array Inline :=
-      if cell.isEmpty then cell
-      else #[.colored cover.plain none (shadeInlines cover #[] cell.toList)]
-    shadeTableCells cover (out.push covered) rest
+    dimTableCells cover k pending (out.push
+      (if pending then
+        if cell.isEmpty then cell
+        else #[.colored cover.plain none (dimInlineList cover k true #[] cell.toList)]
+       else dimInlineList cover k false #[] cell.toList)) rest
 
-def shadeItems (cover : Cover) (out : Array (Array Block)) :
+def dimItems (cover : Cover) (k : Nat) (pending : Bool) (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
   | [] => out
-  | item :: rest => shadeItems cover (out.push (shadeBlockList cover #[] item.toList)) rest
+  | item :: rest =>
+    dimItems cover k pending (out.push (dimBlockList cover k pending #[] item.toList)) rest
 
-def shadeColumns (cover : Cover) (out : Array (Option Nat × Array Block)) :
+def dimColumns (cover : Cover) (k : Nat) (pending : Bool)
+    (out : Array (Option Nat × Array Block)) :
     List (Option Nat × Array Block) → Array (Option Nat × Array Block)
   | [] => out
   | (w, body) :: rest =>
-    shadeColumns cover (out.push (w, shadeBlockList cover #[] body.toList)) rest
+    dimColumns cover k pending (out.push (w, dimBlockList cover k pending #[] body.toList)) rest
 
-def shadeInlines (cover : Cover) (out : Array Inline) : List Inline → Array Inline
-  | [] => out
-  | x :: rest => shadeInlines cover (out.push (shadeInline cover x)) rest
-
-def shadeInline (cover : Cover) : Inline → Inline
-  | .colored c _ body => .colored (cover.of c) none (shadeInlines cover #[] body.toList)
-  | .styled st body => .styled st (shadeInlines cover #[] body.toList)
-  | .link u body => .link u (shadeInlines cover #[] body.toList)
-  | .underline body => .underline (shadeInlines cover #[] body.toList)
-  | .step n last body => .step n last (shadeInlines cover #[] body.toList)
-  | .text s => .text s
-  | .math d src => .math d src
-  -- shading leaves formula and image nodes whole: a pending formula or
-  -- raster dims in the backends' hands, not in this walk
-  | .formula d src body => .formula d src body
-  | .image src size alt => .image src size alt
-  | .icon s l => .icon s l
-  | .fill => .fill
-  | .pageNumber => .pageNumber
-  | .pageCount => .pageCount
-  | .linebreak e => .linebreak e
-
-end
-
-mutual
-
-/-- The frame's body as step `k` of its overlay shows it: content outside
-its declared range dims to `cover`, everything else stays. Only colours
-change, so no step can reflow the slide — the cover-not-hide invariant, by
-construction. -/
-def dimBlocks (cover : Cover) (k : Nat) (xs : Array Block) : Array Block :=
-  dimBlockList cover k #[] xs.toList
-
-def dimBlockList (cover : Cover) (k : Nat) (out : Array Block) :
-    List Block → Array Block
-  | [] => out
-  | b :: rest => dimBlockList cover k (out.push (dimBlock cover k b)) rest
-
-def dimBlock (cover : Cover) (k : Nat) : Block → Block
-  | .para content => .para (dimInlines cover k content)
-  | .list o items => .list o (dimItems cover k #[] items.toList)
-  | .center body => .center (dimBlockList cover k #[] body.toList)
-  | .quote body => .quote (dimBlockList cover k #[] body.toList)
-  | .spaced g body => .spaced g (dimBlockList cover k #[] body.toList)
-  | .columns cols => .columns (dimColumns cover k #[] cols.toList)
-  | .step n last body =>
-    if stepPending n last k then .step n last (shadeBlocks cover body)
-    else .step n last (dimBlockList cover k #[] body.toList)
-  | .only targets body => .only targets (dimBlockList cover k #[] body.toList)
-  | .nav spec body => .nav spec (dimBlockList cover k #[] body.toList)
-  | .section l st title => .section l st title
-  | .verbatim c s => .verbatim c s
-  | .note body => .note body
-  | .frame t st v body => .frame t st v body
-  | .framefoot content => .framefoot content
-  | .pagebreak => .pagebreak
-  | .logo content => .logo content
-  | .rule c nm th => .rule c nm th
-  -- No overlay structure inside a picture: dimming happens where a `.step`
-  -- wraps it, through `shadeBlock`.
-  | .picture p => .picture p
-  -- Cells and caption dim in place: only colours change, so no step can
-  -- reflow the grid, exactly the cover-not-hide invariant of a paragraph.
-  | .table cols pl pr rows rules =>
-    .table cols pl pr (dimTableRows cover k #[] rows.toList) rules
-  | .float fk ca body caption =>
-    .float fk ca (dimBlockList cover k #[] body.toList) (dimInlines cover k caption)
-
-def dimTableRows (cover : Cover) (k : Nat) (out : Array (Array (Array Inline))) :
-    List (Array (Array Inline)) → Array (Array (Array Inline))
-  | [] => out
-  | row :: rest => dimTableRows cover k (out.push (dimTableCells cover k #[] row.toList)) rest
-
-def dimTableCells (cover : Cover) (k : Nat) (out : Array (Array Inline)) :
-    List (Array Inline) → Array (Array Inline)
-  | [] => out
-  | cell :: rest => dimTableCells cover k (out.push (dimInlines cover k cell)) rest
-
-def dimItems (cover : Cover) (k : Nat) (out : Array (Array Block)) :
-    List (Array Block) → Array (Array Block)
-  | [] => out
-  | item :: rest => dimItems cover k (out.push (dimBlockList cover k #[] item.toList)) rest
-
-def dimColumns (cover : Cover) (k : Nat) (out : Array (Option Nat × Array Block)) :
-    List (Option Nat × Array Block) → Array (Option Nat × Array Block)
-  | [] => out
-  | (w, body) :: rest =>
-    dimColumns cover k (out.push (w, dimBlockList cover k #[] body.toList)) rest
-
-def dimInlines (cover : Cover) (k : Nat) (xs : Array Inline) : Array Inline :=
-  dimInlineList cover k #[] xs.toList
-
-def dimInlineList (cover : Cover) (k : Nat) (out : Array Inline) :
+def dimInlineList (cover : Cover) (k : Nat) (pending : Bool) (out : Array Inline) :
     List Inline → Array Inline
   | [] => out
-  | x :: rest => dimInlineList cover k (out.push (dimInline cover k x)) rest
+  | x :: rest =>
+    dimInlineList cover k pending (out.push (dimInline cover k pending x)) rest
 
-def dimInline (cover : Cover) (k : Nat) : Inline → Inline
-  | .styled st body => .styled st (dimInlineList cover k #[] body.toList)
-  | .colored c nm body => .colored c nm (dimInlineList cover k #[] body.toList)
-  | .link u body => .link u (dimInlineList cover k #[] body.toList)
-  | .underline body => .underline (dimInlineList cover k #[] body.toList)
+def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → Inline
+  | .styled st body => .styled st (dimInlineList cover k pending #[] body.toList)
+  | .colored c nm body =>
+    if pending then .colored (cover.of c) none (dimInlineList cover k true #[] body.toList)
+    else .colored c nm (dimInlineList cover k false #[] body.toList)
+  | .link u body => .link u (dimInlineList cover k pending #[] body.toList)
+  | .underline body => .underline (dimInlineList cover k pending #[] body.toList)
+  -- The inline flip wraps: a covered paragraph's plain cover comes from its
+  -- block wrapper, but a pending inline step must bring its own.
   | .step n last body =>
-    if stepPending n last k then
-      .step n last #[.colored cover.plain none (shadeInlines cover #[] body.toList)]
-    else .step n last (dimInlineList cover k #[] body.toList)
+    if !pending && stepPending n last k then
+      .step n last #[.colored cover.plain none (dimInlineList cover k true #[] body.toList)]
+    else .step n last (dimInlineList cover k pending #[] body.toList)
   | .text s => .text s
   | .math d src => .math d src
-  -- dimming leaves formula and image nodes whole, as the shade does
+  -- the walk leaves formula and image nodes whole: a pending formula or
+  -- raster dims in the backends' hands, not here
   | .formula d src body => .formula d src body
   | .image src size alt => .image src size alt
   | .icon s l => .icon s l
@@ -2168,6 +2100,11 @@ def dimInline (cover : Cover) (k : Nat) : Inline → Inline
   | .linebreak e => .linebreak e
 
 end
+
+/-- The frame's body as step `k` of its overlay shows it: the walk's page
+entry, `pending` off. -/
+def dimBlocks (cover : Cover) (k : Nat) (xs : Array Block) : Array Block :=
+  dimBlockList cover k false #[] xs.toList
 
 /-- The item flatten itself: a leading `.step` wrapper opens into its item,
 the body standing where the wrapper stood. Named so its text conservation
@@ -2528,40 +2465,47 @@ private theorem blockTextTableCells_chain (l1 l2 : List (Array Inline))
 
 mutual
 
-theorem shadeInlines_text (cover : Cover) (xs : List Inline) (out : Array Inline) :
-    plainTextList (shadeInlines cover out xs).toList
+theorem dimInlineList_text (cover : Cover) (k : Nat) (pending : Bool)
+    (xs : List Inline) (out : Array Inline) :
+    plainTextList (dimInlineList cover k pending out xs).toList
       = plainTextList out.toList ++ plainTextList xs := by
   match xs with
-  | [] => simp [shadeInlines, plainTextList]
+  | [] => simp [dimInlineList, plainTextList]
   | x :: rest =>
-    rw [shadeInlines, shadeInlines_text cover rest (out.push (shadeInline cover x))]
-    simp [plainTextList, plainTextList_append, shadeInline_text cover x,
+    rw [dimInlineList, dimInlineList_text cover k pending rest]
+    simp [plainTextList, plainTextList_append, dimInline_text cover k pending x,
       String.append_assoc]
 
-theorem shadeInline_text (cover : Cover) (x : Inline) :
-    plainTextOne (shadeInline cover x) = plainTextOne x := by
+theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : Inline) :
+    plainTextOne (dimInline cover k pending x) = plainTextOne x := by
   match x with
-  | .colored c n body =>
-    rw [shadeInline]
-    simp [plainTextOne, shadeInlines_text cover body.toList #[], plainTextList]
   | .styled st body =>
-    rw [shadeInline]
-    simp [plainTextOne, shadeInlines_text cover body.toList #[], plainTextList]
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
+  | .colored c nm body =>
+    rw [dimInline]
+    by_cases h : pending = true
+    · simp [h, plainTextOne, dimInlineList_text cover k true body.toList #[], plainTextList]
+    · simp [h, plainTextOne, dimInlineList_text cover k false body.toList #[], plainTextList]
   | .link u body =>
-    rw [shadeInline]
-    simp [plainTextOne, shadeInlines_text cover body.toList #[], plainTextList]
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
   | .underline body =>
-    rw [shadeInline]
-    simp [plainTextOne, shadeInlines_text cover body.toList #[], plainTextList]
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
   | .step n last body =>
-    rw [shadeInline]
-    simp [plainTextOne, shadeInlines_text cover body.toList #[], plainTextList]
+    rw [dimInline]
+    by_cases h : (!pending && stepPending n last k) = true
+    · simp [h, plainTextOne, plainTextList,
+        dimInlineList_text cover k true body.toList #[]]
+    · simp [h, plainTextOne, dimInlineList_text cover k pending body.toList #[],
+        plainTextList]
   | .image _ _ _ =>
-    -- shading leaves an image node whole (raster content dims in the
-    -- backends' hands, not here), and its text census is empty either way
+    -- the walk leaves an image node whole (raster content dims in the
+    -- backends' hands), and its text census is empty either way
     rfl
   | .formula _ _ _ =>
-    -- shading leaves a formula node whole (a pending formula dims in the
+    -- the walk leaves a formula node whole (a pending formula dims in the
     -- backends' hands); its census is its source, untouched on both sides
     rfl
   | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _
@@ -2570,303 +2514,150 @@ theorem shadeInline_text (cover : Cover) (x : Inline) :
 
 end
 
-/-- A covered cell keeps every character: the cell wrapper recolours, as a
-paragraph's does. -/
-theorem shadeTableCells_text (cover : Cover) (cells : List (Array Inline))
+/-- A covered or dimmed cell keeps every character: the cover's cell wrapper
+recolours, as a paragraph's does. -/
+theorem dimTableCells_text (cover : Cover) (k : Nat) (pending : Bool)
+    (cells : List (Array Inline))
     (out : Array (Array Inline)) (acc : String) :
-    blockTextTableCells acc (shadeTableCells cover out cells).toList
-      = blockTextTableCells (blockTextTableCells acc out.toList) cells := by
-  match cells with
-  | [] => simp [shadeTableCells, blockTextTableCells]
-  | cell :: rest =>
-    rw [shadeTableCells, shadeTableCells_text cover rest _ acc]
-    by_cases h : cell.isEmpty
-    · simp [h, blockTextTableCells, blockTextTableCells_chain]
-    · simp [h, blockTextTableCells, blockTextTableCells_chain, plainText,
-        plainTextList, plainTextOne, shadeInlines_text cover cell.toList #[]]
-
-theorem shadeTableRows_text (cover : Cover) (rows : List (Array (Array Inline)))
-    (out : Array (Array (Array Inline))) (acc : String) :
-    blockTextTableRows acc (shadeTableRows cover out rows).toList
-      = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
-  match rows with
-  | [] => simp [shadeTableRows, blockTextTableRows]
-  | row :: rest =>
-    rw [shadeTableRows, shadeTableRows_text cover rest _ acc]
-    simp [blockTextTableRows, blockTextTableRows_chain,
-      shadeTableCells_text cover row.toList #[], blockTextTableCells]
-
-mutual
-
-theorem shadeBlockList_text (cover : Cover) (xs : List Block) (out : Array Block)
-    (acc : String) :
-    blockTextList acc (shadeBlockList cover out xs).toList
-      = blockTextList (blockTextList acc out.toList) xs := by
-  match xs with
-  | [] => simp [shadeBlockList, blockTextList]
-  | b :: rest =>
-    rw [shadeBlockList,
-      shadeBlockList_text cover rest (out.push (shadeBlock cover b)) acc]
-    simp [blockTextList, blockTextList_chain, shadeBlock_text cover b]
-
-theorem shadeBlock_text (cover : Cover) (b : Block) (acc : String) :
-    blockTextOne acc (shadeBlock cover b) = blockTextOne acc b := by
-  match b with
-  | .para content =>
-    rw [shadeBlock]
-    simp [blockTextOne, plainText, plainTextList, plainTextOne,
-      shadeInlines_text cover content.toList #[]]
-  | .list o items =>
-    rw [shadeBlock]
-    simp [blockTextOne, shadeItems_text cover items.toList #[] acc, blockTextItems]
-  | .center body =>
-    rw [shadeBlock]
-    simp [blockTextOne, shadeBlockList_text cover body.toList #[] acc, blockTextList]
-  | .quote body =>
-    rw [shadeBlock]
-    simp [blockTextOne, shadeBlockList_text cover body.toList #[] acc, blockTextList]
-  | .spaced g body =>
-    rw [shadeBlock]
-    simp [blockTextOne, shadeBlockList_text cover body.toList #[] acc, blockTextList]
-  | .columns cols =>
-    rw [shadeBlock]
-    simp [blockTextOne, shadeColumns_text cover cols.toList #[] acc, blockTextColumns]
-  | .step n last body =>
-    rw [shadeBlock]
-    simp [blockTextOne, shadeBlockList_text cover body.toList #[] acc, blockTextList]
-  | .only targets body =>
-    rw [shadeBlock]
-    simp [blockTextOne, shadeBlockList_text cover body.toList #[] acc, blockTextList]
-  | .nav spec body =>
-    rw [shadeBlock]
-    simp [blockTextOne, shadeBlockList_text cover body.toList #[] acc, blockTextList]
-  | .verbatim c s => rfl
-  -- A logo declaration is page furniture: the shade never repaints it, so
-  -- its census — the declaration's own inline text — is untouched.
-  | .logo _ => rfl
-  -- A shaded picture recolours its shapes and keeps its labels: no census
-  -- text either side.
-  | .picture _ => rfl
-  | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _ | .rule _ _ _
-  | .pagebreak => rfl
-  | .table cols pl pr rows rules =>
-    rw [shadeBlock]
-    simp [blockTextOne, shadeTableRows_text cover rows.toList #[] acc,
-      blockTextTableRows]
-  | .float k ca body caption =>
-    rw [shadeBlock]
-    by_cases h : caption.isEmpty
-    · simp [h, blockTextOne, shadeBlockList_text cover body.toList #[] _,
-        blockTextList]
-    · simp [h, blockTextOne, plainText, plainTextList, plainTextOne,
-        shadeInlines_text cover caption.toList #[],
-        shadeBlockList_text cover body.toList #[] _, blockTextList]
-
-theorem shadeItems_text (cover : Cover) (items : List (Array Block))
-    (out : Array (Array Block)) (acc : String) :
-    blockTextItems acc (shadeItems cover out items).toList
-      = blockTextItems (blockTextItems acc out.toList) items := by
-  match items with
-  | [] => simp [shadeItems, blockTextItems]
-  | item :: rest =>
-    rw [shadeItems,
-      shadeItems_text cover rest (out.push (shadeBlockList cover #[] item.toList)) acc]
-    simp [blockTextItems, blockTextItems_chain,
-      shadeBlockList_text cover item.toList #[], blockTextList]
-
-theorem shadeColumns_text (cover : Cover) (cols : List (Option Nat × Array Block))
-    (out : Array (Option Nat × Array Block)) (acc : String) :
-    blockTextColumns acc (shadeColumns cover out cols).toList
-      = blockTextColumns (blockTextColumns acc out.toList) cols := by
-  match cols with
-  | [] => simp [shadeColumns, blockTextColumns]
-  | (w, body) :: rest =>
-    rw [shadeColumns,
-      shadeColumns_text cover rest
-        (out.push (w, shadeBlockList cover #[] body.toList)) acc]
-    simp [blockTextColumns, blockTextColumns_chain,
-      shadeBlockList_text cover body.toList #[], blockTextList]
-
-end
-
-/-- Shading preserves every character: covered content is recoloured,
-never removed. -/
-theorem shadeBlocks_text (cover : Cover) (xs : Array Block) :
-    blocksText (shadeBlocks cover xs) = blocksText xs := by
-  simp [blocksText, shadeBlocks, shadeBlockList_text cover xs.toList #[] "",
-    blockTextList]
-
-mutual
-
-theorem dimInlineList_text (cover : Cover) (k : Nat) (xs : List Inline)
-    (out : Array Inline) :
-    plainTextList (dimInlineList cover k out xs).toList
-      = plainTextList out.toList ++ plainTextList xs := by
-  match xs with
-  | [] => simp [dimInlineList, plainTextList]
-  | x :: rest =>
-    rw [dimInlineList, dimInlineList_text cover k rest]
-    simp [plainTextList, plainTextList_append, dimInline_text cover k x,
-      String.append_assoc]
-
-theorem dimInline_text (cover : Cover) (k : Nat) (x : Inline) :
-    plainTextOne (dimInline cover k x) = plainTextOne x := by
-  match x with
-  | .styled st body =>
-    rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k body.toList #[], plainTextList]
-  | .colored c nm body =>
-    rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k body.toList #[], plainTextList]
-  | .link u body =>
-    rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k body.toList #[], plainTextList]
-  | .underline body =>
-    rw [dimInline]
-    simp [plainTextOne, dimInlineList_text cover k body.toList #[], plainTextList]
-  | .step n last body =>
-    rw [dimInline]
-    by_cases h : stepPending n last k = true
-    · simp [h, plainTextOne, plainTextList,
-        shadeInlines_text cover body.toList #[]]
-    · simp [h, plainTextOne, dimInlineList_text cover k body.toList #[],
-        plainTextList]
-  | .image _ _ _ =>
-    -- dimming leaves an image node whole; empty text census on both sides
-    rfl
-  | .formula _ _ _ =>
-    -- dimming leaves a formula node whole; its census is its source,
-    -- untouched on both sides
-    rfl
-  | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _
-  | .icon _ _ =>
-    rfl
-
-end
-
-/-- A dimmed cell keeps every character, as a dimmed paragraph does. -/
-theorem dimTableCells_text (cover : Cover) (k : Nat) (cells : List (Array Inline))
-    (out : Array (Array Inline)) (acc : String) :
-    blockTextTableCells acc (dimTableCells cover k out cells).toList
+    blockTextTableCells acc (dimTableCells cover k pending out cells).toList
       = blockTextTableCells (blockTextTableCells acc out.toList) cells := by
   match cells with
   | [] => simp [dimTableCells, blockTextTableCells]
   | cell :: rest =>
-    rw [dimTableCells, dimTableCells_text cover k rest _ acc]
-    simp [blockTextTableCells, blockTextTableCells_chain, plainText, dimInlines,
-      dimInlineList_text cover k cell.toList #[], plainTextList]
+    rw [dimTableCells, dimTableCells_text cover k pending rest _ acc]
+    by_cases h : pending = true
+    · by_cases hc : cell.isEmpty
+      · simp [h, hc, blockTextTableCells, blockTextTableCells_chain]
+      · simp [h, hc, blockTextTableCells, blockTextTableCells_chain, plainText,
+          plainTextList, plainTextOne, dimInlineList_text cover k true cell.toList #[]]
+    · simp [h, blockTextTableCells, blockTextTableCells_chain, plainText,
+        dimInlineList_text cover k false cell.toList #[], plainTextList]
 
-theorem dimTableRows_text (cover : Cover) (k : Nat)
+theorem dimTableRows_text (cover : Cover) (k : Nat) (pending : Bool)
     (rows : List (Array (Array Inline)))
     (out : Array (Array (Array Inline))) (acc : String) :
-    blockTextTableRows acc (dimTableRows cover k out rows).toList
+    blockTextTableRows acc (dimTableRows cover k pending out rows).toList
       = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
   match rows with
   | [] => simp [dimTableRows, blockTextTableRows]
   | row :: rest =>
-    rw [dimTableRows, dimTableRows_text cover k rest _ acc]
+    rw [dimTableRows, dimTableRows_text cover k pending rest _ acc]
     simp [blockTextTableRows, blockTextTableRows_chain,
-      dimTableCells_text cover k row.toList #[], blockTextTableCells]
+      dimTableCells_text cover k pending row.toList #[], blockTextTableCells]
 
 mutual
 
-theorem dimBlockList_text (cover : Cover) (k : Nat) (xs : List Block)
-    (out : Array Block) (acc : String) :
-    blockTextList acc (dimBlockList cover k out xs).toList
+theorem dimBlockList_text (cover : Cover) (k : Nat) (pending : Bool)
+    (xs : List Block) (out : Array Block) (acc : String) :
+    blockTextList acc (dimBlockList cover k pending out xs).toList
       = blockTextList (blockTextList acc out.toList) xs := by
   match xs with
   | [] => simp [dimBlockList, blockTextList]
   | b :: rest =>
-    rw [dimBlockList, dimBlockList_text cover k rest]
-    simp [blockTextList, blockTextList_chain, dimBlock_text cover k b]
+    rw [dimBlockList, dimBlockList_text cover k pending rest]
+    simp [blockTextList, blockTextList_chain, dimBlock_text cover k pending b]
 
-theorem dimBlock_text (cover : Cover) (k : Nat) (b : Block) (acc : String) :
-    blockTextOne acc (dimBlock cover k b) = blockTextOne acc b := by
+theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
+    (acc : String) :
+    blockTextOne acc (dimBlock cover k pending b) = blockTextOne acc b := by
   match b with
   | .para content =>
     rw [dimBlock]
-    simp [blockTextOne, plainText, dimInlines,
-      dimInlineList_text cover k content.toList #[], plainTextList]
+    by_cases h : pending = true
+    · simp [h, blockTextOne, plainText, plainTextList, plainTextOne,
+        dimInlineList_text cover k true content.toList #[]]
+    · simp [h, blockTextOne, plainText,
+        dimInlineList_text cover k false content.toList #[], plainTextList]
   | .list o items =>
     rw [dimBlock]
-    simp [blockTextOne, dimItems_text cover k items.toList #[] acc, blockTextItems]
+    simp [blockTextOne, dimItems_text cover k pending items.toList #[] acc, blockTextItems]
   | .center body =>
     rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k body.toList #[] acc, blockTextList]
+    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
   | .quote body =>
     rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k body.toList #[] acc, blockTextList]
+    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
   | .spaced g body =>
     rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k body.toList #[] acc, blockTextList]
+    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
   | .columns cols =>
     rw [dimBlock]
-    simp [blockTextOne, dimColumns_text cover k cols.toList #[] acc, blockTextColumns]
+    simp [blockTextOne, dimColumns_text cover k pending cols.toList #[] acc, blockTextColumns]
   | .step n last body =>
+    -- No case split: the mode flip is just the argument the recursion takes.
     rw [dimBlock]
-    by_cases h : stepPending n last k = true
-    · simp [h, blockTextOne, shadeBlocks,
-        shadeBlockList_text cover body.toList #[] acc, blockTextList]
-    · simp [h, blockTextOne, dimBlockList_text cover k body.toList #[] acc,
-        blockTextList]
+    simp [blockTextOne,
+      dimBlockList_text cover k (pending || stepPending n last k) body.toList #[] acc,
+      blockTextList]
   | .only targets body =>
     rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k body.toList #[] acc, blockTextList]
+    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
   | .nav spec body =>
     rw [dimBlock]
-    simp [blockTextOne, dimBlockList_text cover k body.toList #[] acc, blockTextList]
-  -- A logo declaration is page furniture: dimming never repaints it, so
-  -- its census — the declaration's own inline text — is untouched.
+    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+  -- A logo declaration is page furniture: the walk never repaints it, so
+  -- its census — the declaration's own inline text — is untouched. The
+  -- verbatim recolour and the picture recolour keep their text census by
+  -- construction: neither constructor's census reads a colour.
   | .logo _ => rfl
   | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
   | .rule _ _ _ | .picture _ | .pagebreak => rfl
   | .table cols pl pr rows rules =>
     rw [dimBlock]
-    simp [blockTextOne, dimTableRows_text cover k rows.toList #[] acc,
+    simp [blockTextOne, dimTableRows_text cover k pending rows.toList #[] acc,
       blockTextTableRows]
   | .float fk ca body caption =>
     rw [dimBlock]
-    simp [blockTextOne, plainText, dimInlines,
-      dimInlineList_text cover k caption.toList #[], plainTextList,
-      dimBlockList_text cover k body.toList #[] _, blockTextList]
+    by_cases h : pending = true
+    · by_cases hc : caption.isEmpty
+      · simp [h, hc, blockTextOne,
+          dimBlockList_text cover k true body.toList #[] _, blockTextList]
+      · simp [h, hc, blockTextOne, plainText, plainTextList, plainTextOne,
+          dimInlineList_text cover k true caption.toList #[],
+          dimBlockList_text cover k true body.toList #[] _, blockTextList]
+    · simp [h, blockTextOne, plainText,
+        dimInlineList_text cover k false caption.toList #[], plainTextList,
+        dimBlockList_text cover k false body.toList #[] _, blockTextList]
 
-theorem dimItems_text (cover : Cover) (k : Nat) (items : List (Array Block))
+theorem dimItems_text (cover : Cover) (k : Nat) (pending : Bool)
+    (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :
-    blockTextItems acc (dimItems cover k out items).toList
+    blockTextItems acc (dimItems cover k pending out items).toList
       = blockTextItems (blockTextItems acc out.toList) items := by
   match items with
   | [] => simp [dimItems, blockTextItems]
   | item :: rest =>
-    rw [dimItems, dimItems_text cover k rest]
+    rw [dimItems, dimItems_text cover k pending rest]
     simp [blockTextItems, blockTextItems_chain,
-      dimBlockList_text cover k item.toList #[], blockTextList]
+      dimBlockList_text cover k pending item.toList #[], blockTextList]
 
-theorem dimColumns_text (cover : Cover) (k : Nat)
+theorem dimColumns_text (cover : Cover) (k : Nat) (pending : Bool)
     (cols : List (Option Nat × Array Block))
     (out : Array (Option Nat × Array Block)) (acc : String) :
-    blockTextColumns acc (dimColumns cover k out cols).toList
+    blockTextColumns acc (dimColumns cover k pending out cols).toList
       = blockTextColumns (blockTextColumns acc out.toList) cols := by
   match cols with
   | [] => simp [dimColumns, blockTextColumns]
   | (w, body) :: rest =>
-    rw [dimColumns, dimColumns_text cover k rest]
+    rw [dimColumns, dimColumns_text cover k pending rest]
     simp [blockTextColumns, blockTextColumns_chain,
-      dimBlockList_text cover k body.toList #[], blockTextList]
+      dimBlockList_text cover k pending body.toList #[], blockTextList]
 
 end
 
 /-- Nothing vanishes: page `k` of a stepped frame carries every character
-the frame carries — dimming recolours pending content, it never hides it.
-The union of what the steps show is therefore the whole content. -/
+the frame carries — dimming recolours pending content, it never hides it,
+in either mode of the one walk. The union of what the steps show is
+therefore the whole content. -/
 theorem dimBlocks_text (cover : Cover) (k : Nat) (xs : Array Block) :
     blocksText (dimBlocks cover k xs) = blocksText xs := by
-  simp [blocksText, dimBlocks, dimBlockList_text cover k xs.toList #[] "",
+  simp [blocksText, dimBlocks, dimBlockList_text cover k false xs.toList #[] "",
     blockTextList]
 
 -- The item-step flatten: unwrapping loses no text. A leading `\item<2->`
 -- wrapper opens into its item, nothing recoloured, nothing reordered, so
 -- the block census is fixed. Same accumulator-lemma-then-mutual-induction
--- shape as the shade and dim walks above.
+-- shape as the dim walk above.
 
 private theorem flattenLeadStep_text (item : Array Block) (acc : String) :
     blockTextList acc (flattenLeadStep item).toList
@@ -3512,7 +3303,7 @@ the conservation theorem for the backend conditional, the one that stops
 `{ifbackend}` from becoming a silent delete: dropping is only ever the
 complement of another backend's keeping, or a named diagnostic. Stated over
 the same `plainText` census machinery as the overlay conservation theorems
-(`shadeBlocks_text`, `dimBlocks_text`), lifted to whole leaves because
+(`dimBlocks_text`), lifted to whole leaves because
 `keepFor` drops whole subtrees. -/
 theorem keepFor_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail)
     (xs : Array Block) (h : orphanFree avail xs = true) :
