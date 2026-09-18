@@ -87,6 +87,53 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-18 — settings compose: repeat semantics are decided by the key's
+type, and the four accidents that broke that rule are gone.
+
+- **The rule (audit-compose, landed).** The surface's repeat semantics are
+  now uniform enough to predict from the key's type: keyed merge for open
+  maps (palette/tokens/styles, per-slot chrome), append+dedup for genuine
+  lists (formats, dirs, allow, asserts), last-wins for scalars. The four
+  accidents: `\fonts` dotted faces were silently FIRST-wins (push read by
+  `find?` — `FontSpec.declareFace` now mirrors `Tokens.declare`, per the
+  fontspec manual's replace rule, with `faceFor_last_declared`);
+  `applyChrome` merged slots within a block but replaced wholesale across
+  blocks (now threads the previous chrome — one declaration, one meaning;
+  a document block after `\theme` therefore refines per slot, the palette
+  analogy its docstring already claimed); `[from]` was one variable shared
+  by `\runninghead` and `\runningfoot` and sticky across redeclares (now
+  `headFrom`/`footFrom`, each declaration's own, reset when the option is
+  absent; the logo waits for the later of the two); Compat concatenated
+  repeated fancyhdr fields that the fancyhdr manual defines as redefining.
+  And `sawPage` is set only by geometry keys (`pageGeometryKeys`), so
+  `\page{ parskip = … }` no longer silently forfeits the Bringhurst margin.
+- **The conflict is named (W0343, config).** A scalar key given two
+  *different* values warns at the preamble apply sites — page, pdfmeta,
+  fonts families (aliases folded), output's css/stylesheet/md, chrome
+  slots, replaced running content. Same-value repeats are silent (classes
+  synthesize them); tokens/palette/style are exempt because
+  redeclare-to-override is the layering mechanism; theme installs write
+  outside the store, so overriding a theme default never warns.
+- **The set-not-sequence claim, honestly graded.** T2
+  (`Tokens/Palette.declare_last_wins`, `declare_overwrite`) and T4
+  (`OutputSpec.addFormat_nodup`) are theorems; T3
+  (`faceFor_last_declared`) likewise. T1 (adjacent preamble declarations
+  commute up to the named exceptions — same key, reference→referent,
+  `\theme` position) is **oracle-only**: `scripts/compose-fuzz.lean` swaps
+  every adjacent pair with different heads, or the same head with
+  field-disjoint key sets (`size` counted as width+height, `margin` as
+  both margins), over the corpus plus synthetic preambles, comparing the
+  `Doc` and the diagnostic-code multiset. An executable oracle is
+  evidence, not a theorem. T1 is not merely unproved but *unstatable*
+  today: the audit's statement quantifies over declaration values, and the
+  preamble loop is an imperative scanner with no such values — the
+  `applyDecl` fold extraction (audit-compose item 7) is the statement's
+  precondition, not just the proof's. It also needs the elaboration state
+  split so diagnostics, which legitimately reorder under a swap, live
+  outside the compared projection. Left for the successor slice with the
+  oracle riding; the oracle was watched catching the chrome
+  wholesale-replace defect when that fix was temporarily reverted.
+
 2026-09-18 — the rhythm is declared where both backends read, and each
 backend proves it realizes it.
 
@@ -137,6 +184,7 @@ backend proves it realizes it.
   `vmargin_on_rhythm` pins the article inch = 6 units so the coincidence
   cannot drift silently.
 
+||||||| parent of 0e09921 (Record the compose decisions in the plan)
 2026-09-18 — palette roles: a role is defined by the palette, and a use of
 it can never freeze.
 
