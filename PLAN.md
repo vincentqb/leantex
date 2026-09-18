@@ -87,6 +87,66 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-18 — icons, the pinned control, and the declared reveal: the
+site-polish slice, three pieces the site port asked for.
+
+- **Icons are glyphs in a declared face with a required text alternative**
+  (`Ir.Inline.icon`). The fontawesome5 spellings work as the package
+  defines them — `\faGithub`, `\faIcon{arrow-up}`, the starred `-alt`
+  forms — from a generated table (`FaData`, 1457 icons out of
+  fontawesome5-mapping.def, CTAN 5.15.4, joined with Font Awesome's own
+  `label` metadata; `scripts/gen-fa-data.lean` regenerates). No second
+  font mechanism: the icon scalar rides `docScalars` (its own gather
+  walk, since an icon's `plainText` is its label) into the per-scalar
+  fallback precompute, so the face is whichever declared or installed
+  face covers it — TeX Live's FontAwesome.otf serves a host that has it,
+  a shipped `\fonts{dir=}` face serves hermetically, and no coverage is
+  the ordinary E0405. Landing on the fallback face is the designed path,
+  so no W0009. The invariant, decided before the code (WCAG 2.2
+  SC 1.1.1): an icon without a text alternative is unrepresentable — the
+  constructor requires the label, `\faIcon[label = ...]` overrides it —
+  and HTML hides the PUA glyph from AT while naming the wrapper
+  (`role="img"` + `aria-label`; WAI-ARIA 1.2 makes an img role's children
+  presentational). The markdown twin renders the label. E0340 names an
+  unknown icon; W0110's meaning widened to any command's unmodelled
+  option. The corpus ships an invented "Example Icons" face (five original
+  shapes at the FA codepoints, CC0, `scripts/gen-test-icons.py`), so
+  `icons.tex` builds anywhere; its census row asserts the five glyphs as
+  shipped ink, and `censusChecks` mirrors the driver's precompute for PUA
+  scalars only — anything wider would silently upgrade the stand-in
+  degradations `listChecks` pins.
+- **A nav declares its label and its pin** (`Ir.NavSpec`, `Ir.Pin`).
+  `label` is the landmark's accessible name (ARIA APG Landmark Regions:
+  a repeated role needs unique labels), and W0325 counts only unlabeled
+  navs now — the label mechanism it named as missing exists. `pin` is
+  fixed positioning at a declared corner and offset (CSS Positioned
+  Layout 3 §3.3), read by the HTML backend alone; the PDF and markdown
+  walks read the body only, so a printed page ignores a pin by
+  construction. `px` joined the unit table as the CSS pixel (1px =
+  1/96 in, CSS Values 4 §6.2; relation in `unitScale_consistent`).
+- **The reveal is declared, and the script boundary opened one notch** —
+  a revision of the 2026-09-17 "no script emission" decision, on
+  evidence: MDN browser-compat-data (2026-09-18) has
+  `animation-timeline: scroll()` in Chrome 115+ and Safari 26+ but
+  Firefox preview-only, and the user's reveal must work in release
+  Firefox. `reveal = scroll | <length>` on a pinned nav ships, judged
+  over the emitted tree: the `@supports` scroll-driven CSS (declarative
+  where the platform has it) and a constant script fallback through the
+  typed tree's `Node.script`. Boundary guarantees: the payload is an
+  engine constant — no document byte enters it, it carries no `<`
+  (`revealScriptClean`; the theorem form did not close under kernel
+  reduction of `String.contains`, so this is a test and says so) — it
+  ships only when a reveal is declared, and it exits where the
+  declarative form exists, so no browser runs both. The reveal fades
+  opacity/visibility only — a fade is not motion animation, so SC 2.3.3
+  stays with the guarded `motion` key — and with neither script nor
+  scroll-timelines the control is always visible: degradation, never
+  breakage. `--math-boundary` remains the only other script path.
+- Costs: bench medians 87–96/286–298/404–409 ms over two runs
+  (paragraphs/lorem/underline) vs 80/285/400 recorded above — within the
+  run-to-run spread on a loaded host, so the icon gather walk and the
+  tree-facts extension are free at these sizes.
+
 2026-09-18 — zero diagnostics has a definition, and `--werror` enforces
 it: **a document that declares its intent (an `\allow` for an accepted
 loss, a `\palette[decorative]` for a deliberate low contrast) and uses
