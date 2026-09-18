@@ -160,14 +160,45 @@ private def hexOf (c : Color) : String :=
   s!"#{h c.r}{h c.g}{h c.b}"
 
 /-- One coloured text occurrence: the name it was used under when it had
-one, the colour, and whether it stood as large-scale text (≥ 18pt, or bold
+one, the colour, whether it stood as large-scale text (≥ 18pt, or bold
 ≥ 14pt — the WCAG 2.2 glossary sizes, against the document's own resolved
-base size). -/
+base size) — and the epoch it stood in: the effective page under it and
+whether it was decorative-exempt there. A pairing is judged against the
+palette in force where it is used, never the document's final one. -/
 private structure Use where
   name : Option String
   color : Color
   large : Bool
+  /-- The effective page under this use: the epoch palette's `bg`, the
+  shipped light surface when undeclared (WCAG contrast-ratio Note 3). -/
+  surface : Color
+  /-- Exempt where it stood: `covered`, a name the epoch's decorative set
+  carries, or an anonymous value a decorative entry names. -/
+  exempt : Bool
   deriving BEq
+
+/-- The walk's fold state: the palette in force (epoch), the uses with
+their epochs resolved, and the design sites the per-epoch resolved-pair
+judge needs — which epochs shipped a titled frame, a standout frame, or
+pending overlay content. Palettes dedup on push: a document has few
+epochs, and each is judged once. -/
+private structure UseAcc where
+  pal : Palette
+  uses : Array Use := #[]
+  /-- Every `.setPalette` snapshot met, in flow order: the epochs whose
+  effective ink/page pair is judged beside epoch 0's. -/
+  epochs : Array Palette := #[]
+  titledPals : Array Palette := #[]
+  standoutPals : Array Palette := #[]
+  pendingPals : Array Palette := #[]
+
+private def pushUnique (xs : Array Palette) (p : Palette) : Array Palette :=
+  if xs.contains p then xs else xs.push p
+
+/-- The effective page of a palette: its `bg`, else the shipped light
+surface (the same rule `effectivePair` applies to epoch 0). -/
+private def surfaceOf (pal : Palette) : Color :=
+  (pal.find? "bg").getD light.surface
 
 /-- The text-size context of the walk below. `size` follows the layout
 semantics: a size declaration sets a factor over the document base (`base`
@@ -188,6 +219,26 @@ private def UseCx.style (cx : UseCx) : Style → UseCx
     | some k => { cx with size := cx.base * k / 1000 }
     | none => cx
   | _ => cx
+
+private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option String)
+    (c : Color) : UseAcc :=
+  let exempt := match nm with
+    | some n => n == "covered" || acc.pal.decorative.contains n
+    | none => acc.pal.decorative.any (fun n => acc.pal.find? n == some c)
+  let u : Use := { name := nm
+                   color := c
+                   large := cx.large
+                   surface := surfaceOf acc.pal
+                   exempt := exempt }
+  { acc with uses := acc.uses.push u }
+
+/-- Pending overlay content: a step whose range starts (or ends) past the
+first step covers on some handout page — the fact that gates the covered
+judgement, recorded against the epoch it happens in. -/
+private def UseAcc.step (acc : UseAcc) (n : Nat) (last : Option Nat) : UseAcc :=
+  if max n (last.getD n) ≥ 2 then
+    { acc with pendingPals := pushUnique acc.pendingPals acc.pal }
+  else acc
 
 /-- The context a heading's title sets: the layout's own per-level sizes —
 `Layout.sectionSize`, the one function titles are set with — in bold. The
@@ -217,79 +268,91 @@ theorem contrast_judges_what_layout_sets (base : Sp) :
 
 mutual
 
-private def usesInlines (cx : UseCx) (out : Array Use) (xs : List Inline) :
-    Array Use :=
+private def usesInlines (cx : UseCx) (acc : UseAcc) (xs : List Inline) :
+    UseAcc :=
   match xs with
-  | [] => out
-  | x :: rest => usesInlines cx (usesInline cx out x) rest
+  | [] => acc
+  | x :: rest => usesInlines cx (usesInline cx acc x) rest
 
-private def usesInline (cx : UseCx) (out : Array Use) : Inline → Array Use
+private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   | .text s =>
     match cx.cur with
     | some (nm, c) =>
       if s.toList.any (fun ch => !ch.isWhitespace) then
-        out.push { name := nm, color := c, large := cx.large }
-      else out
-    | none => out
+        acc.use cx nm c
+      else acc
+    | none => acc
   | .math _ _ | .formula _ _ _ | .pageNumber | .pageCount =>
     match cx.cur with
-    | some (nm, c) => out.push { name := nm, color := c, large := cx.large }
-    | none => out
-  | .styled st body => usesInlines (cx.style st) out body.toList
-  | .colored c nm body => usesInlines { cx with cur := some (nm, c) } out body.toList
+    | some (nm, c) => acc.use cx nm c
+    | none => acc
+  | .styled st body => usesInlines (cx.style st) acc body.toList
+  | .colored c nm body => usesInlines { cx with cur := some (nm, c) } acc body.toList
   -- a role names its content; the ink inside keeps the current colour
-  | .role _ body => usesInlines cx out body.toList
-  | .link _ body => usesInlines cx out body.toList
-  | .underline body => usesInlines cx out body.toList
-  | .step _ _ body => usesInlines cx out body.toList
-  | .fill | .linebreak _ => out
+  | .role _ body => usesInlines cx acc body.toList
+  | .link _ body => usesInlines cx acc body.toList
+  | .underline body => usesInlines cx acc body.toList
+  | .step n last body => usesInlines cx (acc.step n last) body.toList
+  | .fill | .linebreak _ => acc
   -- An image carries no text; its alt is read by a screen reader, not set
   -- in a colour.
-  | .image _ _ _ => out
+  | .image _ _ _ => acc
   -- An icon is ink in the current colour: it holds the contrast contract
   -- like a glyph of text, because it is one.
   | .icon _ _ =>
     match cx.cur with
-    | some (nm, c) => out.push { name := nm, color := c, large := cx.large }
-    | none => out
+    | some (nm, c) => acc.use cx nm c
+    | none => acc
 
-private def usesBlocks (cx : UseCx) (out : Array Use) (xs : List Block) :
-    Array Use :=
+private def usesBlocks (cx : UseCx) (acc : UseAcc) (xs : List Block) :
+    UseAcc :=
   match xs with
-  | [] => out
-  | b :: rest => usesBlocks cx (usesBlock cx out b) rest
+  | [] => acc
+  | b :: rest => usesBlocks cx (usesBlock cx acc b) rest
 
-private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
-  | .para content => usesInlines cx out content.toList
+private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
+  | .para content => usesInlines cx acc content.toList
   | .section level _ title =>
-    usesInlines { headingCx cx.base level with cur := cx.cur } out title.toList
-  | .list _ items => usesItems cx out items.toList
-  | .center body => usesBlocks cx out body.toList
-  | .quote body => usesBlocks cx out body.toList
-  | .role _ body => usesBlocks cx out body.toList
-  | .spaced _ body => usesBlocks cx out body.toList
-  | .columns cols => usesColumns cx out cols.toList
-  | .step _ _ body => usesBlocks cx out body.toList
+    usesInlines { headingCx cx.base level with cur := cx.cur } acc title.toList
+  | .list _ items => usesItems cx acc items.toList
+  | .center body => usesBlocks cx acc body.toList
+  | .quote body => usesBlocks cx acc body.toList
+  | .role _ body => usesBlocks cx acc body.toList
+  | .spaced _ body => usesBlocks cx acc body.toList
+  | .columns cols => usesColumns cx acc cols.toList
+  | .step n last body => usesBlocks cx (acc.step n last) body.toList
   -- Conditional content is judged whichever backend carries it: a colour
   -- pairing is wrong on the surface that shows it, so no target set
   -- exempts it. A nav's links are page text like any other.
-  | .only _ body => usesBlocks cx out body.toList
-  | .nav _ body => usesBlocks cx out body.toList
-  | .frame title _ _ body =>
+  | .only _ body => usesBlocks cx acc body.toList
+  | .nav _ body => usesBlocks cx acc body.toList
+  | .frame title standout _ body =>
     -- A frame title sets at `\large\bfseries` (the shipped bundles'
-    -- template): the scale's own step, never a re-spelled factor.
+    -- template): the scale's own step, never a re-spelled factor. The
+    -- frame is a design site of its epoch: the resolved-pair judge tests
+    -- the frame-title bar and the standout inversion against the palette
+    -- in force here, not the document's final one.
+    let acc := if title.isEmpty then acc else
+      { acc with titledPals := pushUnique acc.titledPals acc.pal }
+    let acc := if standout then
+      { acc with standoutPals := pushUnique acc.standoutPals acc.pal }
+      else acc
     let titleCx := { cx.style (.size "large") with bold := true }
-    usesBlocks cx (usesInlines titleCx out title.toList) body.toList
+    usesBlocks cx (usesInlines titleCx acc title.toList) body.toList
   -- A framefoot note lands as footer text on the page: its own declared
   -- colours are judged; its default colour is the muted key, judged once
   -- at the palette level.
-  | .framefoot content => usesInlines cx out content.toList
+  | .framefoot content => usesInlines cx acc content.toList
+  -- The epoch boundary: the palette in force changes here, in flow order,
+  -- and every use after it is judged against the new state.
+  | .setPalette p => { acc with pal := p, epochs := acc.epochs.push p }
+  | .setTokens _ => acc
   -- Every cell is page text at the body size, judged in whatever colour
   -- wraps it; a caption is page text beside its float's body.
   | .table _ _ _ rows _ =>
-    rows.foldl (fun o row => row.foldl (fun o cell => usesInlines cx o cell.toList) o) out
+    rows.foldl (fun o row => row.foldl (fun o cell => usesInlines cx o cell.toList) o) acc
   | .float _ _ body caption =>
-    usesBlocks cx (usesInlines cx out caption.toList) body.toList
+    usesBlocks cx (usesInlines cx acc caption.toList) body.toList
   -- A note is a side channel, never page text; verbatim carries no
   -- colour; a rule is decorative ink, not text, so the text-contrast
   -- contract does not judge it; a logo declaration is furniture, not
@@ -298,20 +361,17 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
   -- the wrong pairing; the label-on-fill contract is still owed (recorded
   -- in the slice report).
   | .note _ | .verbatim _ _ | .rule _ _ _ | .logo _ | .picture _
-  -- A body palette/tokens declaration carries no text; the per-epoch
-  -- judgement it induces is `docDiags`' own walk, not a use.
-  | .setPalette _ | .setTokens _
-  | .pagebreak => out
+  | .pagebreak => acc
 
-private def usesItems (cx : UseCx) (out : Array Use) :
-    List (Array Block) → Array Use
-  | [] => out
-  | item :: rest => usesItems cx (usesBlocks cx out item.toList) rest
+private def usesItems (cx : UseCx) (acc : UseAcc) :
+    List (Array Block) → UseAcc
+  | [] => acc
+  | item :: rest => usesItems cx (usesBlocks cx acc item.toList) rest
 
-private def usesColumns (cx : UseCx) (out : Array Use) :
-    List (Option Nat × Array Block) → Array Use
-  | [] => out
-  | (_, body) :: rest => usesColumns cx (usesBlocks cx out body.toList) rest
+private def usesColumns (cx : UseCx) (acc : UseAcc) :
+    List (Option Nat × Array Block) → UseAcc
+  | [] => acc
+  | (_, body) :: rest => usesColumns cx (usesBlocks cx acc body.toList) rest
 
 end
 
@@ -354,6 +414,38 @@ def effectivePairDiags (doc : Doc) : Array Diag :=
             "\\palette{ fg = ... }" ++ " beside bg"))]
     else #[]
 
+/-- Each body epoch's effective pair, judged as epoch 0's is
+(`effectivePairDiags`): a `\palette` mid-document that leaves its ink
+illegible on its page is the same defect wherever it is declared, and it
+is judged against the state in force from that point — never the
+document's final state. A pair already judged is silent. -/
+private def epochPairDiags (doc : Doc) (epochs : Array Palette) : Array Diag := Id.run do
+  let d0 := Design.ofDoc doc
+  let mut out : Array Diag := #[]
+  let mut done : Array ColorPair := #[{ fg := d0.fg, bg := (effectivePair doc).bg }]
+  for pal in epochs do
+    if pal.decorative.contains "fg" then continue
+    let p : ColorPair := { fg := (pal.find? "fg").getD Color.black, bg := surfaceOf pal }
+    if done.contains p then continue
+    done := done.push p
+    let milli := contrastMilli p.fg p.bg
+    if milli < aaText then
+      if (pal.find? "fg").isSome then
+        out := out.push (Diag.of .W0315
+          (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
+            s!"on the page ({hexOf p.bg}), below the {ratioString aaText} " ++
+            "WCAG 2.2 asks of text (SC 1.4.3)")
+          (help := some ("deliberate low contrast is declared, not defaulted: " ++
+            "\\palette[decorative]{ " ++ s!"fg = {hexOf p.fg} " ++ "}")))
+      else
+        out := out.push (Diag.of .W0330
+          (s!"declared page {hexOf p.bg} keeps the defaulted {hexOf p.fg} ink: " ++
+            s!"{ratioString milli}, below the " ++
+            s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
+          (help := some ("a declared surface chooses its ink: declare " ++
+            "\\palette{ fg = ... }" ++ " beside bg")))
+  return out
+
 /-- The resolved design's own pairs, judged for the document that ships
 them — the pairs `Design.ofDoc` creates out of declared and defaulted keys
 together, which the per-use walk in `docDiags` cannot see because no body
@@ -363,41 +455,41 @@ text is coloured with them: the frame-title bar (its template sets
 large-scale, so 3:1), and the covering (SC 1.4.11's 3:1 between an active
 and an inactive state, and quieter-than-active — `coveredContract`'s own
 two bounds, judged from `Design.cover`, the one resolving site). Each is
-judged only when the element ships: a titled frame for the bar, a standout
-frame for the inversion, pending overlay content for the cover — a warning
-about furniture the document never draws would be noise. The shipped
-bundles are proved (`builtin_designs_legible`, `builtin_designs_covered`),
-so only a document's own override can fire this; the decorative escape is
-the same one the per-use walk honours, on the pair's ink key. -/
-def resolvedPairDiags (doc : Doc) : Array Diag := Id.run do
-  let d := Design.ofDoc doc
-  let dec (n : String) : Bool := doc.palette.decorative.contains n
+judged only when the element ships, and against the palette in force
+where it ships — the walk records which epochs carry a titled frame, a
+standout frame, or pending overlay content, so a body `\palette` before a
+frame is judged for that frame and a declaration after it is not. The
+shipped bundles are proved (`builtin_designs_legible`,
+`builtin_designs_covered`), so only a document's own override can fire
+this; the decorative escape is the same one the per-use walk honours, on
+the pair's ink key. -/
+private def resolvedPairDiagsAt (doc : Doc)
+    (titled standout pending : Array Palette) : Array Diag := Id.run do
   let mut out : Array Diag := #[]
-  if doc.body.any (fun b => match b with
-      | .frame title _ _ _ => !title.isEmpty | _ => false) then
+  for pal in titled do
+    let d := Design.ofDoc { doc with palette := pal }
     if let some p := d.frametitle then
       let milli := contrastMilli p.fg p.bg
-      if milli < aaText && !dec "frametitlefg" then
+      if milli < aaText && !pal.decorative.contains "frametitlefg" then
         out := out.push (Diag.of .W0345
           (s!"the frame-title bar pairs {hexOf p.fg} on {hexOf p.bg} at " ++
             s!"{ratioString milli}, below the {ratioString aaText} " ++
             "WCAG 2.2 asks of text (SC 1.4.3)")
           (help := some ("deliberate low contrast is declared, not defaulted: " ++
             "\\palette[decorative]{ " ++ s!"frametitlefg = {hexOf p.fg} " ++ "}")))
-  if doc.body.any (fun b => match b with
-      | .frame _ standout _ _ => standout | _ => false) then
+  for pal in standout do
+    let d := Design.ofDoc { doc with palette := pal }
     let milli := contrastMilli d.standout.fg d.standout.bg
-    if milli < aaLargeText && !dec "standoutfg" then
+    if milli < aaLargeText && !pal.decorative.contains "standoutfg" then
       out := out.push (Diag.of .W0345
         (s!"the standout frame pairs {hexOf d.standout.fg} on " ++
           s!"{hexOf d.standout.bg} at {ratioString milli}, below the " ++
           s!"{ratioString aaLargeText} WCAG 2.2 asks of large-scale text (SC 1.4.3)")
         (help := some ("deliberate low contrast is declared, not defaulted: " ++
           "\\palette[decorative]{ " ++ s!"standoutfg = {hexOf d.standout.fg} " ++ "}")))
-  let hasPending := doc.body.any fun b =>
-    maxStepBlock b ≥ 2 || (match b with
-      | .frame _ _ _ fb => maxStepBlocks fb ≥ 2 | _ => false)
-  if hasPending && !dec "covered" then
+  for pal in pending do
+    if pal.decorative.contains "covered" then continue
+    let d := Design.ofDoc { doc with palette := pal }
     let cov := d.cover
     let coverHelp := some ("a cover is a declaration too: lower " ++
       "'covered = <n>%', or declare \\palette{ covered = ... } " ++
@@ -424,79 +516,76 @@ def resolvedPairDiags (doc : Doc) : Array Diag := Id.run do
     if d.covered.isSome then
       out := out ++ judge "covered" d.fg cov.plain
     for role in ["alert", "example"] do
-      if let some c := doc.palette.find? role then
+      if let some c := pal.find? role then
         out := out ++ judge role c (cov.of c)
   return out
 
 /-- The pairings a document's own colours create, judged: every colour the
 document puts on text is paired with the page by the engine, so each is
-checked against the page — the effective page (`effectivePair`), and the
-effective ink first of all, whether or not the document spelled it: a
-document that declares a dark page and leaves the ink defaulted ships
-black-on-dark, and the contract judges what ships, never only what was
-spelled. A pairing used only as large-scale text is held to 3:1, any
-other use to 4.5:1 (SC 1.4.3). `covered` is exempt by role — dimmed overlay
-content is deliberately quiet — and so is anything the document declared
-under `\palette[decorative]{...}`: the warning names that spelling, so poor
-contrast is a choice a document states, never a silent default. -/
+checked against the page in force where it is used — the epoch's effective
+page, and the effective ink first of all, whether or not the document
+spelled it: a document that declares a dark page and leaves the ink
+defaulted ships black-on-dark, and the contract judges what ships, never
+only what was spelled. A pairing used only as large-scale text is held to
+3:1, any other use to 4.5:1 (SC 1.4.3). `covered` is exempt by role —
+dimmed overlay content is deliberately quiet — and so is anything the
+palette in force at the use declared under `\palette[decorative]{...}`:
+the warning names that spelling, so poor contrast is a choice a document
+states, never a silent default. -/
+private def declaredUseDiags (doc : Doc) (walk : UseAcc) : Array Diag := Id.run do
+  let d := Design.ofDoc doc
+  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
+  -- Page furniture is document state, not flow content: the chrome
+  -- footer's muted text and the running head/foot are judged against
+  -- epoch 0, whatever the body declared later.
+  let mut acc := { walk with pal := doc.palette }
+  if doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone then
+    if let some muted := doc.palette.find? "muted" then
+      acc := acc.use base (some "muted") muted
+  for run in [doc.head, doc.foot] do
+    if let some content := run then
+      acc := usesInlines base acc content.toList
+  let mut out : Array Diag := #[]
+  -- The effective pair is judged in `effectivePairDiags` (and per epoch in
+  -- `epochPairDiags`); a body use of the same pairing must not report it
+  -- twice.
+  let mut done : Array (Option String × Color × Color) :=
+    #[(some "fg", d.fg, (effectivePair doc).bg)]
+  for u in acc.uses do
+    -- The exemption is judged before the dedup: an exempt use must not
+    -- consume the key a later, non-exempt epoch's use of the same pairing
+    -- would be judged under.
+    if u.exempt then continue
+    let key := (u.name, u.color, u.surface)
+    if done.contains key then continue
+    done := done.push key
+    let allLarge := acc.uses.all fun v => (v.name, v.color, v.surface) != key || v.large
+    let threshold := if allLarge then aaLargeText else aaText
+    let milli := contrastMilli u.color u.surface
+    if milli < threshold then
+      let label := match u.name with
+        | some n => s!"'{n}' ({hexOf u.color})"
+        | none => hexOf u.color
+      out := out.push (Diag.of .W0315
+        (s!"text coloured {label} reads at {ratioString milli} " ++
+          s!"on the page ({hexOf u.surface}), below the {ratioString threshold} " ++
+          s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
+        (help := some ("deliberate low contrast is declared, not defaulted: " ++
+          "\\palette[decorative]{ " ++
+          s!"{(u.name.getD "quiet")} = {hexOf u.color} " ++ "}")))
+  return out
+
+/-- The whole document-level contrast contract, one walk: the uses with
+their epochs, the design sites per epoch, and the epoch boundaries are
+read off `doc.body` once; then each half judges against the palette in
+force where the pairing ships. -/
 def docDiags (doc : Doc) : Array Diag :=
-  -- A one-off append, not a walk: the declared-use half is bound to a name
-  -- so the join reads as the two-part contract it is; the resolved-design
-  -- half judges the pairs no body use carries.
-  let declared := declaredUseDiags doc
-  let resolved := resolvedPairDiags doc
-  effectivePairDiags doc ++ declared ++ resolved
-where
-  declaredUseDiags (doc : Doc) : Array Diag := Id.run do
-    let d := Design.ofDoc doc
-    let surface := (effectivePair doc).bg
-    let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
-    let mut uses := usesBlocks base #[] doc.body.toList
-    -- The chrome footer draws small text in `muted` on the page: a document
-    -- that overrides the key is judged on the pairing it creates, exactly as
-    -- the effective ink is (the shipped bundles are covered by the palette
-    -- contract theorems below). Declaredness gates the check — the resolved
-    -- design's `muted` is total, but an undeclared key creates no pairing of
-    -- its own beyond the effective pair already judged.
-    if doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone then
-      if let some muted := doc.palette.find? "muted" then
-        uses := uses.push { name := some "muted", color := muted, large := false }
-    for run in [doc.head, doc.foot] do
-      if let some content := run then
-        uses := usesInlines base uses content.toList
-    let mut out : Array Diag := #[]
-    -- The effective pair is judged in `effectivePairDiags`; a body use of
-    -- the same pairing must not report it twice.
-    let mut done : Array (Option String × Color) := #[(some "fg", d.fg)]
-    for u in uses do
-      let key := (u.name, u.color)
-      if done.contains key then continue
-      done := done.push key
-      if let some n := u.name then
-        if n == "covered" || doc.palette.decorative.contains n then continue
-      else
-        -- An anonymous use (a mixed colour, a literal) has no name the
-        -- decorative list could carry, so the declared escape matches it
-        -- by value: the help's own spelling — a decorative entry naming
-        -- this exact colour — is what silences it. Without this arm the
-        -- help promised a line that changed nothing.
-        if doc.palette.decorative.any (fun n => doc.palette.find? n == some u.color) then
-          continue
-      let allLarge := uses.all fun v => (v.name, v.color) != key || v.large
-      let threshold := if allLarge then aaLargeText else aaText
-      let milli := contrastMilli u.color surface
-      if milli < threshold then
-        let label := match u.name with
-          | some n => s!"'{n}' ({hexOf u.color})"
-          | none => hexOf u.color
-        out := out.push (Diag.of .W0315
-          (s!"text coloured {label} reads at {ratioString milli} " ++
-            s!"on the page ({hexOf surface}), below the {ratioString threshold} " ++
-            s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
-          (help := some ("deliberate low contrast is declared, not defaulted: " ++
-            "\\palette[decorative]{ " ++
-            s!"{(u.name.getD "quiet")} = {hexOf u.color} " ++ "}")))
-    return out
+  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
+  let walk := usesBlocks base { pal := doc.palette } doc.body.toList
+  let declared := declaredUseDiags doc walk
+  let resolved := resolvedPairDiagsAt doc walk.titledPals walk.standoutPals
+    walk.pendingPals
+  effectivePairDiags doc ++ epochPairDiags doc walk.epochs ++ declared ++ resolved
 
 /-- The judged pair is the shipped pair: what `effectivePairDiags` judges is
 the resolved design's own ink — the field `Layout.run` colours every

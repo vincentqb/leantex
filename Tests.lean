@@ -5084,6 +5084,39 @@ Outside after.")
     (match confWith.pages[1]?, confWithout.pages[1]? with
      | some p1, some p2 => reprStr p1 != reprStr p2
      | _, _ => false)
+  -- Contrast per epoch: a pairing is judged against the palette in force
+  -- where it is used, never the document's final (or initial) one.
+  let codesOf (src : String) : Array Diag := (elabStr src).2
+  -- A use whose epoch declares a dark page is judged on that page.
+  let dsDark := codesOf (doc
+    "\\palette{ bg = #202020, dim = #333333 }\n\n\\textcolor{dim}{dim words} here.")
+  t "a use inside a dark-page epoch is judged on that page"
+    (dsDark.any fun d => d.code == "W0315" && hasStr d.message "#202020")
+  -- A body epoch that declares a page and leaves the ink defaulted is the
+  -- W0330 defect wherever it is declared.
+  t "a body epoch's defaulted ink on its declared page is W0330"
+    ((codesOf (doc "x\n\n\\palette{ bg = #111111 }\n\ny")).any (·.code == "W0330"))
+  -- The decorative exemption is the epoch's: a plain redeclaration removes
+  -- it for the uses after, and only those.
+  let dsRedecl := codesOf ("\\documentclass{article}\
+\\palette[decorative]{ q = #BBBBBB }\\begin{document}\n\
+\\textcolor{q}{quiet before} stays exempt.\n\n\\palette{ q = #BBBBBB }\n\n\
+\\textcolor{q}{loud after} is judged.\n\\end{document}")
+  t "a plain body redeclaration removes the decorative exemption from here on"
+    (dsRedecl.any fun d => d.code == "W0315" && hasStr d.message "'q'")
+  -- The resolved-design judge (W0345) is per epoch: a bad frame-title
+  -- pair declared before a frame is judged for it; declared after the
+  -- last frame, it styles nothing and stays silent.
+  let deckDoc (mid tail : String) : String :=
+    "\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
+\\begin{frame}{A}\none\n\\end{frame}\n\n" ++ mid ++
+    "\\begin{frame}{B}\ntwo\n\\end{frame}\n\n" ++ tail ++ "\\end{document}"
+  t "a bad frame-title pair declared before a frame is judged for it"
+    ((codesOf (deckDoc "\\palette{ frametitlebg = #F2F2F0 }\n\n" "")).any
+      (·.code == "W0345"))
+  t "a bad frame-title pair declared after the last frame styles nothing"
+    ((codesOf (deckDoc "" "\\palette{ frametitlebg = #F2F2F0 }\n\n")).all
+      (·.code != "W0345"))
 
 /-- The cross-backend agreement tier, over every golden fixture: a declared
 fact both backends render — a footer's slot contents and their sides, a
