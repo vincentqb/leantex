@@ -1920,6 +1920,11 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .error e => throw (IO.userError s!"icons: {name} unparsable: {e}")
   let sans ← load "OpenSans-Regular.ttf"
   let iconsFace ← load "ExampleIcons-Regular.ttf"
+  -- post.italicAngle is the PDF descriptor's derivation: the parser reads
+  -- the face's own declared slant, zero when it declares none.
+  let italicFace ← load "OpenSans-Italic.ttf"
+  t "the parser reads the declared slant from post"
+    (italicFace.italicAngle == -12 && sans.italicAngle == 0)
   t "coverage premise: only the invented icon face has U+F09B"
     ((sans.gid '\uF09B').isNone && (iconsFace.gid '\uF09B').isSome)
   let allVariants (slot idx : Nat) : List ((Nat × Bool × Bool) × Nat) :=
@@ -2885,6 +2890,15 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- One face only: nothing unused is embedded, so no /F2 exists.
   let plainPdf := Pdf.write geom oneFace (Layout.run geom oneFace none bigDoc).pages
   t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
+  -- The descriptor states the parsed metrics (ISO 32000-2 §9.8.1:
+  -- CapHeight is the cap height), never a stand-in: the fixture face
+  -- declares a cap height under its ascent, so the old CapHeight := ascent
+  -- is distinguishable and must stay dead.
+  let cap1000 := font.capHeight * 1000 / (font.unitsPerEm : Int)
+  let asc1000 := font.ascent * 1000 / (font.unitsPerEm : Int)
+  t "pdf descriptor CapHeight is the face's own, not the ascent"
+    (cap1000 != asc1000 && bytesContain plainPdf s!"/CapHeight {cap1000}" &&
+     !bytesContain plainPdf s!"/CapHeight {asc1000}")
   pdfStreamChecks ref oneFace
 
 /-- Differential fuzz of the UTF-8 validator against the core decoder

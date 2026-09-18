@@ -443,19 +443,30 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     let baseFont := pdfName font.psName
     let ascent1000 := font.ascent * 1000 / font.unitsPerEm
     let descent1000 := font.descent * 1000 / font.unitsPerEm
+    -- The descriptor states the parsed metrics, not stand-ins: CapHeight is
+    -- the face's own (OS/2 sCapHeight through `Font.capHeight` — `ascent`
+    -- once stood in for it), and ItalicAngle is the slant the face declares
+    -- (post.italicAngle); only a face flagged italic that declares none
+    -- keeps the conventional -12°.
+    let capHeight1000 := font.capHeight * 1000 / font.unitsPerEm
     let cidSubtype := if font.isCff then "CIDFontType0" else "CIDFontType2"
     let cidToGid := if font.isCff then "" else " /CIDToGIDMap /Identity"
     let fontFileKey := if font.isCff then "FontFile3" else "FontFile2"
-    let italicAngle := if font.isItalic then -12 else 0
+    let italicAngle := if font.italicAngle == 0 && font.isItalic then -12
+      else font.italicAngle
     -- Flags: bit 1 fixed pitch, bit 3 symbolic, bit 7 italic (1-based).
     let flags := 4 + (if font.isFixedPitch then 1 else 0) + (if font.isItalic then 64 else 0)
+    -- StemV and the FontBBox x-bounds are conventional stand-ins, said so:
+    -- an unhinted OpenType face declares neither (a stem width lives in
+    -- hinting data the parser does not keep), so these are the trade's
+    -- usual values, not measurements.
     let stemV := if font.isBold then 140 else 80
     [(type0Id k,
       s!"<< /Type /Font /Subtype /Type0 /BaseFont /{baseFont} /Encoding /Identity-H /DescendantFonts [{cidId k} 0 R] /ToUnicode {toUniId k} 0 R >>"),
      (cidId k,
       s!"<< /Type /Font /Subtype /{cidSubtype} /BaseFont /{baseFont} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {fdId k} 0 R /DW 1000 /W {wArray font used}{cidToGid} >>"),
      (fdId k,
-      s!"<< /Type /FontDescriptor /FontName /{baseFont} /Flags {flags} /FontBBox [-1000 {descent1000} 2000 {ascent1000}] /ItalicAngle {italicAngle} /Ascent {ascent1000} /Descent {descent1000} /CapHeight {ascent1000} /StemV {stemV} /{fontFileKey} {fileId k} 0 R >>")]
+      s!"<< /Type /FontDescriptor /FontName /{baseFont} /Flags {flags} /FontBBox [-1000 {descent1000} 2000 {ascent1000}] /ItalicAngle {italicAngle} /Ascent {ascent1000} /Descent {descent1000} /CapHeight {capHeight1000} /StemV {stemV} /{fontFileKey} {fileId k} 0 R >>")]
   let annots (i : Nat) : String :=
     let rects := linkRects geom pages[i]!
     if rects.isEmpty then "" else

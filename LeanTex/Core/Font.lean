@@ -162,6 +162,10 @@ structure Font where
   the consumer supplies a fallback. -/
   underlinePosition : Int
   underlineThickness : Int
+  /-- `post` italicAngle in whole degrees, counter-clockwise from vertical
+  (so a right-leaning italic is negative). Zero means the face declared
+  none; the PDF descriptor supplies its convention then. -/
+  italicAngle : Int
   /-- Per-gid, lazily: merged x-intervals (font units) of glyph ink inside
   the band the underline rule occupies, from the glyph's own outline. Empty
   means the rule runs unbroken under the glyph. Decoding happens on first
@@ -432,12 +436,17 @@ def parse (data : ByteArray) : Except String Font := do
   -- Seven tenths of the em is where capitals top out in most text faces.
   let capHeight := os2Metric 88 ((unitsPerEm : Int) * 7 / 10)
   let upem := if unitsPerEm == 0 then 1000 else unitsPerEm
-  -- post underline metrics: FWords at offsets 8 and 10.
-  let (upos, uthick) := match findTable data "post" with
+  -- post underline metrics: FWords at offsets 8 and 10 — and italicAngle,
+  -- the face's own declared slant: a signed 16.16 Fixed in degrees at
+  -- offset 4 (OpenType post table), floored to whole degrees.
+  let (upos, uthick, italicAngle) := match findTable data "post" with
     | some t =>
-      if t.offset + 12 ≤ data.size then (i16 data (t.offset + 8), i16 data (t.offset + 10))
-      else ((0 : Int), (0 : Int))
-    | none => (0, 0)
+      if t.offset + 12 ≤ data.size then
+        let raw : Int := u32 data (t.offset + 4)
+        let fixed := if raw ≥ 2147483648 then raw - 4294967296 else raw
+        (i16 data (t.offset + 8), i16 data (t.offset + 10), fixed / 65536)
+      else ((0 : Int), (0 : Int), (0 : Int))
+    | none => (0, 0, 0)
   -- A glyph interrupts the rule where its ink crosses the band the rule
   -- occupies, `[position - thickness, position]` after normalization. Any
   -- glyph the decoder cannot answer for — malformed or truncated tables, a
@@ -486,6 +495,7 @@ def parse (data : ByteArray) : Except String Font := do
     numGlyphs := numGlyphs
     underlinePosition := upos
     underlineThickness := uthick
+    italicAngle := italicAngle
     underlineInk := underlineInk
     math := parseMath data
     mathVariants := parseVertVariants data
