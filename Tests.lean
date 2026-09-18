@@ -1019,16 +1019,20 @@ def pinChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has page "position: fixed; bottom: 1.5em; right: 1.5em")
   t "the declared reveal range rides as a custom property, in points"
     (has page "--reveal-range: 225pt")
-  t "the reveal ships its declarative form and its script fallback"
+  t "the reveal ships its declarative form, and only that"
     (has page "@supports (animation-timeline: scroll())" &&
-      has page "@keyframes ltx-reveal" && has page "CSS.supports")
-  t "the script fallback is the engine constant, and it carries no '<'"
-    (HtmlDoc.revealScriptClean && has page "js-reveal")
+      has page "@keyframes ltx-reveal")
+  -- Compatibility is the framework's job, not the engine's: where the
+  -- platform lacks scroll-driven animations the control is simply visible,
+  -- and no backend emits script to hide that.
+  t "no backend emits script for the reveal"
+    (!has page "CSS.supports" && !has page "js-reveal" &&
+      !has page "addEventListener")
   -- No reveal declared: none of the machinery ships.
   let (plain, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\begin{nav}\\href{#one-head}{One}\\end{nav}\\section*{One Head}x\\end{document}")
   let (plainPage, _) := HtmlDoc.emit {} plain
-  t "no declared reveal, no reveal css and no script"
+  t "no declared reveal, no reveal css"
     (!has plainPage "ltx-reveal" && !has plainPage "CSS.supports")
   -- A reveal another backend owns ships nothing here: judged over the tree.
   let (kept, _) := elabStr ("\\documentclass{article}\\begin{document}" ++

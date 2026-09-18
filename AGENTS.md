@@ -92,6 +92,15 @@ in this repo; refer to the private reference corpus abstractly.
 - HTML is built as a typed tree with a certified escaper, never by
   concatenating tag strings. Any new node type goes through the escaper by
   construction; if you find yourself writing `"<" ++ …`, stop.
+- No backend emits script to compensate for a platform. Say what the page
+  means, declaratively, and let the platform — or the stylesheet framework a
+  document chooses — decide how widely it works. Where a declarative feature
+  is unevenly supported, the honest floor is the degraded state (a control
+  that is always visible, not one that is permanently hidden), and shipping a
+  shim instead buys a small effect at the cost of a permanent escaping
+  obligation and a rule that then holds only approximately. `--math-boundary`
+  remains the one script path, for genuinely computational behaviour a
+  document asks for by name.
 - Design tokens are the styling API for both backends: a new visual knob is a
   token, not a hard-coded constant in a backend.
 - Hot paths use `Array`/`ByteArray`/packed `UInt32`; no `List`. A structural

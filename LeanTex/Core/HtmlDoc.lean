@@ -108,62 +108,25 @@ theorem motionCss_guarded (sel : String) (ms : Nat) :
 `reveal-scroll` element. Where the platform has scroll-driven animations
 (CSS scroll-driven animations, `animation-timeline: scroll()`), the reveal
 is declarative: the element fades in over the first `--reveal-range` of
-scroll (its default is one viewport — the element appears as the first
-screenful scrolls away). Elsewhere `revealScript` toggles `is-revealed`,
-and the `js-reveal` gate on the root keeps the element visible when no
-mechanism runs at all: a permanently hidden control would be a breakage,
-not a degradation. The reveal is opacity and visibility only — a fade is
-not motion animation, so SC 2.3.3 is not engaged here; motion belongs to
-the declared `motion` style key, which carries its guard. -/
+scroll, whose default is one viewport, so the element appears as the first
+screenful scrolls away. Where it does not, the element is simply visible.
+
+That degradation is the whole design, and it is why no script is emitted
+here. A compatibility shim is the stylesheet framework's job, not the
+document engine's: the engine states what the page *means* and lets the
+declarative platform — or the framework a document chooses — decide how
+widely it works. Emitting script to paper over one engine's release
+schedule buys a fade and costs a permanent escaping obligation, a payload
+to audit, and a rule ("the backends emit no script") that would then hold
+only approximately. A control that is always visible is not broken; it is
+the honest floor. -/
 def revealCss : String :=
   "@keyframes ltx-reveal { from { opacity: 0; visibility: hidden } \
 to { opacity: 1; visibility: visible } }\n" ++
   "@supports (animation-timeline: scroll()) { .reveal-scroll { \
 animation: ltx-reveal linear both; animation-timeline: scroll(); \
-animation-range: 0 var(--reveal-range, 100vh); } }\n" ++
-  ".js-reveal .reveal-scroll:not(.is-revealed) { opacity: 0; \
-visibility: hidden; }\n" ++
-  ".js-reveal .reveal-scroll { transition: opacity 200ms, \
-visibility 200ms; }\n"
+animation-range: 0 var(--reveal-range, 100vh); } }\n"
 
-/-- The reveal's script fallback: release Firefox has no scroll-driven
-animations (MDN browser-compat-data: `animation-timeline` is Firefox
-"preview" only, Chrome 115+, Safari 26+, checked 2026-09-18), so the
-declared reveal needs script there. The boundary's guarantees: the payload
-is this engine constant — no document byte ever enters it
-(`revealScriptClean`, checked in Tests, keeps it below the raw-payload
-guard's radar, so it reaches the page verbatim) — it ships only when a document declares a
-reveal, and it exits immediately where the platform's declarative form
-exists, so no browser runs both mechanisms. -/
-def revealScript : String :=
-  "(function () {\n" ++
-  "  if (CSS.supports('animation-timeline: scroll()')) return;\n" ++
-  "  var els = document.querySelectorAll('.reveal-scroll');\n" ++
-  "  if (els.length === 0) return;\n" ++
-  "  document.documentElement.classList.add('js-reveal');\n" ++
-  "  function range(el) {\n" ++
-  "    var v = el.style.getPropertyValue('--reveal-range').trim();\n" ++
-  "    var n = parseFloat(v);\n" ++
-  "    if (n > 0 && v.endsWith('px')) return n;\n" ++
-  "    if (n > 0 && v.endsWith('pt')) return n * 96 / 72;\n" ++
-  "    return window.innerHeight;\n" ++
-  "  }\n" ++
-  "  function update() {\n" ++
-  "    els.forEach(function (el) {\n" ++
-  "      el.classList.toggle('is-revealed', window.scrollY > range(el));\n" ++
-  "    });\n" ++
-  "  }\n" ++
-  "  addEventListener('scroll', update, { passive: true });\n" ++
-  "  update();\n" ++
-  "})();"
-
-/-- The reveal payload carries no `<` at all: it cannot spell `</script`,
-so the raw-payload guard never rewrites it and the page receives exactly
-this constant (the argument `escapeJson_no_lt` makes as a theorem for
-data blocks; here kernel reduction of `String.contains` over the built
-constant does not close, so the executable form lives in Tests —
-`iconChecks`' sibling `revealChecks` runs it — a test, not a theorem). -/
-def revealScriptClean : Bool := !revealScript.contains '<'
 
 /-- A declared marker resolved to what a `::marker` rule can say: the text
 it shows, and the CSS declarations its wrappers translate to. CSS
@@ -948,7 +911,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- unlabeled navs toward W0325. A declared pin becomes `position:
     -- fixed` at the declared corner and offset (CSS Positioned Layout 3
     -- §3.3); the reveal rides as the `reveal-scroll` class plus its range,
-    -- resolved by `revealCss`/`revealScript` at the page level.
+    -- resolved by `revealCss` at the page level.
     let labelAttrs : Array (String × String) :=
       match spec.label with
       | some l => #[("aria-label", l)]
@@ -1521,7 +1484,6 @@ Regions): give each one a name, \\begin{nav}[label = Site]"))
     -- where the platform has scroll-driven animations) and the constant
     -- script fallback ship exactly when the tree carries one.
     head := head.push (Node.style revealCss)
-    body := body.push (Node.script #[] revealScript)
   -- Every navigation target exists: an in-page link resolves to an anchor
   -- this page emits, or it is named here rather than shipped broken. '#'
   -- and any-ASCII-case 'top' always resolve — the HTML spec's fragment
