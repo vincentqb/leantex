@@ -437,6 +437,33 @@ theorem Palette.declare_overwrite (p : Palette) (k : String) (c c' : Color) :
   rw [declare_collapse]
   simp
 
+/-- An override changes exactly what it names, the locality half: every
+other key resolves as it did before, whether or not the declaration is
+decorative. With `declare_last_wins` above this is the whole per-key
+layering contract — every layer (engine default, theme bundle, document
+declaration; values, not expressions, per the `Theme` docstring and PLAN
+2026-09-17) installs through this one door, and the statement's absence is
+what let a document's `\muted` erase a theme role silently. -/
+theorem Palette.declare_keeps_others (p : Palette) (k k' : String) (c : Color) (d : Bool)
+    (h : k' ≠ k) : (p.declare k c d).find? k' = p.find? k' := by
+  simp only [Palette.declare, Palette.find?, Array.find?_push]
+  rw [Array.find?_filter]
+  have hpred : (fun a : String × Color => decide ((a.fst != k) = true ∧ (a.fst == k') = true))
+      = (fun a : String × Color => a.fst == k') := by
+    funext x
+    by_cases hx : (x.1 == k') = true
+    · have hxe : x.1 = k' := by simpa using hx
+      simp [hxe, h]
+    · simp [hx]
+  rw [hpred]
+  have hkk : (k == k') = false := by
+    simpa using fun hk => h hk.symm
+  simp [hkk]
+
+/-- A colour override never touches the covered fraction. -/
+theorem Palette.declare_keeps_covered (p : Palette) (k : String) (c : Color) (d : Bool) :
+    (p.declare k c d).coveredFraction = p.coveredFraction := rfl
+
 def Color.white : Color := { r := 255, g := 255, b := 255 }
 
 /-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`,
