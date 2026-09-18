@@ -5559,21 +5559,27 @@ def argsChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- as the filename.
   t "args flag after command" (parse ["build", "--color", "never", "a.tex"] ==
     .ok { cmd := .build "a.tex", color := .never })
-  t "args emit list" ((parse ["build", "--emit", "pdf,html", "a.tex"]).map (·.emit) ==
-    .ok (some #[.pdf, .html]))
-  t "args emit eq after command"
-    ((parse ["build", "--emit=html", "a.tex"]).map (·.emit) == .ok (some #[.html]))
   t "args emit default is pdf"
     ((parse ["build", "a.tex"]).map (·.effectiveEmit #[]) == .ok #[.pdf])
-  t "args emit bad" ((parse ["build", "--emit", "ps", "a.tex"]).isOk == false)
-  t "args css after command"
-    ((parse ["build", "--css", "bulma", "a.tex"]).map (·.css) == .ok (some .bulma))
-  t "args css default is own"
-    ((parse ["build", "a.tex"]).map (·.effectiveCss none) == .ok .own)
-  t "args css bad" ((parse ["build", "--css", "tailwind", "a.tex"]).isOk == false)
+  t "args css default is own" (cssFor none == .own)
   t "args math boundary"
     ((parse ["build", "--math-boundary", "katex", "a.tex"]).map (·.mathBoundary) ==
       .ok (some "katex"))
+  -- The removed artifact-shaping flags fail as usage, and the message names
+  -- the declaration that replaces each: a human under time pressure gets
+  -- the spelling to paste, not just a refusal.
+  let removed (argv : List String) (declKey : String) : Bool :=
+    match parse argv with
+    | .error m => (m.splitOn "\\output{").length ≥ 2 && (m.splitOn declKey).length ≥ 2
+    | .ok _ => false
+  t "args --css is usage error naming the declaration"
+    (removed ["build", "--css", "bulma", "a.tex"] "css =")
+  t "args --css= is usage error naming the declaration"
+    (removed ["a.tex", "--css=bulma"] "css =")
+  t "args --emit is usage error naming the declaration"
+    (removed ["build", "--emit", "pdf,html", "a.tex"] "formats =")
+  t "args --emit= is usage error naming the declaration"
+    (removed ["a.tex", "--emit=html"] "formats =")
   -- args: the file is the command; the output name chooses the backend
   t "args file is the command" (parse ["a.tex"] == .ok { cmd := .build "a.tex" })
   t "args md reserved for markdown" (parse ["notes.md"] == .ok { cmd := .build "notes.md" })
@@ -5586,16 +5592,12 @@ def argsChecks (ref : IO.Ref (List String)) : IO Unit := do
     (·.effectiveEmit #[]) == .ok #[.html])
   t "args output infers pdf" ((parse ["a.tex", "-o", "b/x.pdf"]).map
     (·.effectiveEmit #[]) == .ok #[.pdf])
-  t "args emit beats output name" ((parse ["a.tex", "--emit", "pdf,html", "-o", "out/"]).map
-    (·.effectiveEmit #[]) == .ok #[.pdf, .html])
   t "args document formats apply" ((parse ["a.tex"]).map (·.effectiveEmit #["html"]) ==
     .ok #[.html])
-  t "args flag beats document" ((parse ["a.tex", "--emit", "pdf"]).map
+  t "args output name beats document formats" ((parse ["a.tex", "-o", "out.pdf"]).map
     (·.effectiveEmit #["html"]) == .ok #[.pdf])
-  t "args document css applies" ((parse ["a.tex"]).map (·.effectiveCss (some "bulma")) ==
-    .ok .bulma)
-  t "args css flag beats document" ((parse ["a.tex", "--css", "none"]).map
-    (·.effectiveCss (some "bulma")) == .ok CssChoice.none)
+  t "args document css applies" (cssFor (some "bulma") == .bulma)
+  t "args unknown document css falls back to own" (cssFor (some "tailwind") == .own)
   t "args output dir keeps stem" (outPath (some "out/") false "doc.tex" .pdf == "out/doc.pdf")
   t "args output other backend beside source"
     (outPath (some "out.html") false "doc.tex" .pdf == "doc.pdf")

@@ -571,7 +571,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         return exitFor 0 failures.size warnings ui.cfg.werror
       let mut written : Array String := #[]
       let emit := ui.cfg.effectiveEmit doc.output.formats
-      let css := ui.cfg.effectiveCss doc.output.css
+      let css := cssFor doc.output.css
       let outIsDir ← match ui.cfg.output with
         | some o => (System.FilePath.mk o).isDir
         | none => pure false

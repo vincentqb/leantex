@@ -39,13 +39,6 @@ structure Config where
   quiet : Bool := false
   porcelain : Bool := false
   color : ColorMode := .auto
-  /-- Backends from an explicit `--emit`, which outranks the output name and
-  the document's `\output`; `none` when the flag was not given. The resolved
-  answer is `effectiveEmit`. -/
-  emit : Option (Array Emit) := none
-  /-- Stylesheet from an explicit `--css`; `none` when the flag was not
-  given. The resolved answer is `effectiveCss`. -/
-  css : Option CssChoice := none
   /-- `-o`: an output file (its extension picks the backend) or a directory. -/
   output : Option String := none
   watch : Bool := false
@@ -57,6 +50,9 @@ structure Config where
   accepted loss (`\allow`, `--best-effort`) is not a warning for this
   purpose: that is the point of accepting it. Notes never count. -/
   werror : Bool := false
+  /-- The one remaining flag that shapes the artifact — a recorded debt, not
+  a design: it dies when `\output` grows a key for the math renderer, and
+  the matching hypothesis in `artifact_flag_free` dies with it. -/
   mathBoundary : Option String := none
   /-- Extra font directories, added to the built-in locations. -/
   fontDirs : Array String := #[]
@@ -72,18 +68,6 @@ def emitOne : String → Option Emit
   | "html" => some .html
   | "md" => some .md
   | _ => none
-
-private def emitList (s : String) : Option (Array Emit) := do
-  let parts := (s.splitOn ",").filterMap fun w =>
-    let t := w.trimAscii.toString
-    if t.isEmpty then none else some t
-  if parts.isEmpty then none else
-    let mut out : Array Emit := #[]
-    for p in parts do
-      match emitOne p with
-      | some e => out := out.push e
-      | none => failure
-    some out
 
 def cssChoice : String → Option CssChoice
   | "own" => some .own
@@ -131,21 +115,9 @@ def parse (argv : List String) : Except String Config := do
           args := rest'
         | [] => throw "'--color' needs a mode: auto | always | never"
       | "--emit" =>
-        match rest with
-        | m :: rest' =>
-          let some es := emitList m
-            | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html, md"
-          cfg := { cfg with emit := some es }
-          args := rest'
-        | [] => throw "'--emit' needs a list: pdf, html, md"
+        throw "'--emit' is not a flag; the document declares what to build: \\output{ formats = pdf, html, md }"
       | "--css" =>
-        match rest with
-        | m :: rest' =>
-          let some c := cssChoice m
-            | throw s!"invalid --css '{m}'; expected own, bulma, or none"
-          cfg := { cfg with css := some c }
-          args := rest'
-        | [] => throw "'--css' needs a mode: own | bulma | none"
+        throw "'--css' is not a flag; the document declares its stylesheet: \\output{ css = own | bulma | none }"
       | "--math-boundary" =>
         match rest with
         | m :: rest' =>
@@ -169,14 +141,9 @@ def parse (argv : List String) : Except String Config := do
         if let some n := vCount a then
           cfg := { cfg with verbosity := min 3 (cfg.verbosity + n) }
         else if a.startsWith "--emit=" then
-          let m := (a.drop "--emit=".length).toString
-          let some es := emitList m
-            | throw s!"invalid --emit '{m}'; expected a comma-separated list of: pdf, html, md"
-          cfg := { cfg with emit := some es }
+          throw "'--emit' is not a flag; the document declares what to build: \\output{ formats = pdf, html, md }"
         else if a.startsWith "--css=" then
-          let m := (a.drop "--css=".length).toString
-          let some c := cssChoice m | throw s!"invalid --css '{m}'; expected own, bulma, or none"
-          cfg := { cfg with css := some c }
+          throw "'--css' is not a flag; the document declares its stylesheet: \\output{ css = own | bulma | none }"
         else if a.startsWith "--output=" then
           cfg := { cfg with output := some (a.drop "--output=".length).toString }
         else if a.startsWith "--font-dir=" then
@@ -236,23 +203,41 @@ def emitOfPath (o : String) : Option Emit :=
   else if o.endsWith ".md" then some .md
   else none
 
-/-- Backends to run: explicit `--emit` > the output name > the document's
+/-- Backends to run: the output name (`-o out.html`) > the document's
 `\output{ formats = ... }` > PDF. -/
 def Config.effectiveEmit (cfg : Config) (docFormats : Array String) : Array Emit :=
-  match cfg.emit with
-  | some es => es
-  | none =>
-    if let some e := cfg.output.bind emitOfPath then #[e]
-    else
-      let ds := docFormats.filterMap emitOne
-      if ds.isEmpty then #[.pdf] else ds
+  if let some e := cfg.output.bind emitOfPath then #[e]
+  else
+    let ds := docFormats.filterMap emitOne
+    if ds.isEmpty then #[.pdf] else ds
 
-/-- Stylesheet: explicit `--css` > the document's `\output{ css = ... }` >
-the default. -/
-def Config.effectiveCss (cfg : Config) (docCss : Option String) : CssChoice :=
-  match cfg.css with
-  | some c => c
-  | none => (docCss.bind cssChoice).getD .own
+/-- Stylesheet: the document's `\output{ css = ... }` or the default. Takes
+no `Config`, by design — see `artifact_flag_free`. -/
+def cssFor (docCss : Option String) : CssChoice :=
+  (docCss.bind cssChoice).getD .own
+
+/-- **The artifact is a function of the document and the font environment;
+flags are not arguments to it.** Two parsed configurations that agree on
+`-o` make the same backend decisions, whatever every other flag says.
+`-o` is exempted by hypothesis because the output NAME picks which
+backends run (`-o out.html`), never what any backend emits; `--font-dir`
+needs no hypothesis because it extends the font environment the invariant
+conditions on, and the planning functions cannot see it. `--math-boundary`
+is exempted as the one recorded remainder: it dies when the document grows
+an `\output` key for the math renderer, and its hypothesis dies with it.
+Stated over the driver's planning functions rather than `main`, which is
+IO: these are the only places a `Config` value meets a backend decision —
+`cssFor`, `Pdf.write`, `MarkdownDoc.emit`, and `HtmlDoc.emit` take no
+`Config` by type, and the pre-commit gate keeps `Config` reads in the
+driver on a declared allowlist. A future flag that shapes the artifact
+must be read here, and then this proof breaks — the invariant is a build
+error, not a convention. -/
+theorem artifact_flag_free (cfg cfg' : Config)
+    (ho : cfg.output = cfg'.output) (hm : cfg.mathBoundary = cfg'.mathBoundary)
+    (docFormats : Array String) :
+    (cfg.effectiveEmit docFormats, cfg.mathBoundary)
+      = (cfg'.effectiveEmit docFormats, cfg'.mathBoundary) := by
+  simp only [Config.effectiveEmit, ho, hm]
 
 /-- Where a backend writes. A directory keeps the source's stem; a file
 naming this backend's extension is used as-is; anything else (the other
@@ -292,8 +277,9 @@ examples:
   leantex doc.tex -o build/       write build/doc.pdf
   leantex doc.tex --watch         rebuild on every change
 
-a document can declare its own outputs — \\output{ formats = pdf, html } —
-so the command line stays bare; flags override the document.
+a document declares what to build — \\output{ formats = pdf, html } — so
+the command line stays bare: flags say where output lands and how the run
+reports, not what the artifact is.
 
 commands:
   build <file>            same as `leantex <file>`
@@ -311,8 +297,6 @@ flags:
   --werror                exit 1 when any warning was emitted; output is
                           still written, and accepted losses (\\allow,
                           --best-effort) and notes never count
-  --emit <list>           backends: pdf, html, md — several at once
-  --css <mode>            HTML stylesheet: own | bulma | none (default own)
   --math-boundary <tool>  attach a client-side math renderer to HTML output
   --font-dir <d>          also look for fonts here (repeatable)
   -q, --quiet             errors only
