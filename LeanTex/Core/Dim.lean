@@ -143,6 +143,10 @@ structure SymGlue where
   width : Length := {}
   stretch : Length := {}
   shrink : Length := {}
+  /-- First-order infinite stretch, TeX's `fil`: `\vspace{\fill}` and
+  `\vfill` declare glue whose share of a page's leftover is what places
+  the content. Finite components ride beside it as in TeX. -/
+  fil : Bool := false
   deriving Repr, BEq, Inhabited
 
 namespace SymGlue
@@ -150,24 +154,30 @@ namespace SymGlue
 def add (a b : SymGlue) : SymGlue :=
   { width := a.width.add b.width
     stretch := a.stretch.add b.stretch
-    shrink := a.shrink.add b.shrink }
+    shrink := a.shrink.add b.shrink
+    fil := a.fil || b.fil }
 
 /-- Componentwise, as `\glueexpr` subtracts glue (e-TeX manual, the
-`⟨expr⟩` grammar): the rubber components subtract with the widths. -/
+`⟨expr⟩` grammar): the rubber components subtract with the widths. An
+infinite stretch survives subtraction — TeX's `1fil - 1fil` is `0fil`,
+still first-order infinite, and a boolean cannot say finer. -/
 def sub (a b : SymGlue) : SymGlue :=
   { width := a.width.sub b.width
     stretch := a.stretch.sub b.stretch
-    shrink := a.shrink.sub b.shrink }
+    shrink := a.shrink.sub b.shrink
+    fil := a.fil || b.fil }
 
 def scale (g : SymGlue) (num : Int) (den : Nat) : SymGlue :=
   { width := g.width.scale num den
     stretch := g.stretch.scale num den
-    shrink := g.shrink.scale num den }
+    shrink := g.shrink.scale num den
+    fil := g.fil }
 
 def resolve (g : SymGlue) (fontSize xHeight : Sp) : Glue :=
   { width := g.width.resolve fontSize xHeight
     stretch := g.stretch.resolve fontSize xHeight
-    shrink := g.shrink.resolve fontSize xHeight }
+    shrink := g.shrink.resolve fontSize xHeight
+    fil := g.fil }
 
 end SymGlue
 

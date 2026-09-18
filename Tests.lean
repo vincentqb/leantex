@@ -1342,6 +1342,36 @@ full = w + 2bleed, gap = bleed - 3pt, half = 0.5 * (bleed + safe) }")
        d2.tokens.find? "cm" == some { width := .ofSp (Dim.pt 6) } &&
        d2.tokens.find? "ch" == some { width := .ofSp (Dim.pt 8) })
 
+/-- `\vspace{\fill}` and `\vfill`: TeX's first-order infinite glue, whose
+share of the page's leftover is what places the content. Asserted over
+`Layout.Out` — the claim is about where lines land, never about an IR
+dump. -/
+def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let linesOf (src : String) : Array Layout.LineOut :=
+    let (d, _) := Elab.run "t" src
+    (Layout.run geom oneFace none d).pages.flatMap (·.lines)
+  let doc (body : String) : String :=
+    s!"\\documentclass\{article}\\begin\{document}{body}\\end\{document}"
+  let top := linesOf (doc "hello")
+  let mid := linesOf (doc "\\vspace*{\\fill}\nhello\n\\vspace*{\\fill}")
+  let low := linesOf (doc "\\vspace*{\\fill}\nhello")
+  t "the fill sandwich centres its page"
+    (match top[0]?, mid[0]?, low[0]? with
+     | some a, some b, some c =>
+       -- strictly between top-flush and bottom-flush, and nearer neither
+       -- edge than a line of text: the two fils split the leftover.
+       a.y < b.y && b.y < c.y &&
+         (b.y - a.y - (c.y - b.y)).natAbs ≤ 1
+     | _, _, _ => false)
+  t "a leading fill alone pushes content to the bottom"
+    (match low[0]?, mid[0]? with
+     | some c, some b => c.y > b.y
+     | _, _ => false)
+  t "a trailing fill alone moves nothing"
+    ((linesOf (doc "hello\n\\vspace*{\\fill}")).map (·.y) == top.map (·.y))
+
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -7327,6 +7357,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
 
       lineChecks ref geom oneFace
       listChecks ref oneFace font
+      filChecks ref oneFace
       underlineChecks ref geom oneFace font
       linkSignalChecks ref geom oneFace
       inkGeometryChecks ref

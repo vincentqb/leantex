@@ -614,6 +614,11 @@ def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Opti
     (parseLength s).map fun l => Value.glue { width := l }
   else if let some (_, g) := tokens.find? (·.1 == s) then
     some (.glue g)
+  else if s == "fill" || s == "fil" then
+    -- LaTeX's \fill: zero width, first-order infinite stretch
+    -- (`0pt plus 1fill`, ltspace.dtx). A declared token of the same name
+    -- wins above, as any redeclaration does.
+    some (.glue { fil := true })
   else
     -- dimension: digits then a unit suffix
     let digits := s.toList.takeWhile fun c => c.isDigit || c == '.' || c == '-' || c == '+'

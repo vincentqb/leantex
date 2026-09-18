@@ -318,6 +318,43 @@ theorem VDist.center_is_halving (l : Sp) :
   · rfl
   · simp
 
+/-- The shift of a line with `k` of its page's `n` fil units above it:
+TeX's first-order infinite glue, as a share of the page's leftover.
+`\vspace{\fill}` above and below the content is k=0 for nothing and k=1
+of n=2 for every line — the centring sandwich; a leading fil alone pushes
+everything down by the whole leftover (bottom-flush), a trailing fil
+alone moves nothing. Content taller than the area (leftover ≤ 0) stays
+put, exactly as `VDist.aboveShare` guards. -/
+def filShare (leftover : Sp) (k n : Nat) : Sp :=
+  if leftover ≤ 0 then 0
+  else if n = 0 then 0
+  else leftover * k / n
+
+/-- The fil split loses and invents nothing: a line's shift never leaves
+`[0, leftover]` while its fil count stays within the page's, and a line
+below another (more fils above it) never moves less — content order is
+preserved. -/
+theorem filShare_sound (l : Sp) (k k' n : Nat) (hk : k ≤ k') (hk' : k' ≤ n) :
+    0 ≤ filShare l k n ∧ (0 ≤ l → filShare l k' n ≤ l) ∧
+    filShare l k n ≤ filShare l k' n := by
+  unfold filShare
+  by_cases hl : l ≤ 0
+  · simp [hl]
+  · by_cases hn : n = 0
+    · simp [hl, hn]
+    · have hnn : (0 : Int) < (n : Int) := by exact_mod_cast Nat.pos_of_ne_zero hn
+      have hl0 : (0 : Int) < l := Int.not_le.mp hl
+      simp only [hl, hn, ite_false]
+      refine ⟨?_, fun _ => ?_, ?_⟩
+      · exact Int.ediv_nonneg (Int.mul_nonneg (by omega) (Int.natCast_nonneg _)) (by omega)
+      · calc l * (k' : Int) / (n : Int)
+            ≤ l * (n : Int) / (n : Int) :=
+              Int.ediv_le_ediv hnn
+                (Int.mul_le_mul_of_nonneg_left (by exact_mod_cast hk') (by omega))
+          _ = l := Int.mul_ediv_cancel l (by omega)
+      · exact Int.ediv_le_ediv hnn
+          (Int.mul_le_mul_of_nonneg_left (by exact_mod_cast hk) (by omega))
+
 /-- "All leftover below" is the old top-flush behaviour: the article page
 and every other undeclared page keep their lines exactly where they were. -/
 theorem VDist.top_is_flush (l : Sp) : VDist.top.aboveShare l = 0 := by
@@ -1934,6 +1971,13 @@ private structure B where
   reset when it closes. `.top` (all leftover below) is the undeclared
   default; a standout frame or section page sets `.center`. -/
   vdist : VDist := .top
+  /-- Fil units seen on this page so far: each consumed vertical skip
+  carrying TeX's first-order infinite stretch counts one. When any exist,
+  they own the leftover (`filShare`) and the ratio distribution stands
+  aside. -/
+  pageFils : Nat := 0
+  /-- Per placed line, the fil units above it — parallel to `shrinkAbove`. -/
+  filsAbove : Array Nat := #[]
   /-- The chrome footer for pages closed from here on, from `.foot` ops. -/
   curFoot : Option (Array Ir.BandSlot) := none
   /-- Lines and fills already on the page when `.pin` arrived: page-top
@@ -1954,17 +1998,30 @@ private def B.finishPage (b : B) : B :=
       (s!"page {b.pages.size + 1} set {b.needed / 65536}pt short: its skips gave " ++
         s!"{b.needed * 100 / b.pageShrink}% of their {b.pageShrink / 65536}pt of shrink"))
     else b.diags
-  -- The leftover between the content's bottom and the bottom margin,
-  -- split by the page's declared ratio (`VDist`). Only what follows the
-  -- `.pin` mark moves: the frame title and its bar are page-top chrome,
-  -- and beamer distributes the body below the frametitle, never the
-  -- frametitle itself. The page's fills ride with their lines.
-  let delta := if lines.size > b.pinnedLines then
+  -- The leftover between the content's bottom and the bottom margin. Fil
+  -- glue owns it when any stands on the page: each line moves by its
+  -- share (`filShare`) — the \vspace{\fill} sandwich centres, a leading
+  -- \vfill bottom-flushes, exactly TeX's infinite-glue model. A trailing
+  -- pending fil (a \vfill nothing follows) joins the denominator. With no
+  -- fil, the page's declared ratio (`VDist`) splits it as before. Only
+  -- what follows the `.pin` mark moves; the page's fills ride together
+  -- with the shift of the last line, which is exact whenever the fil
+  -- glue brackets the content whole.
+  let pageFils := b.pageFils + (if b.skip.fil then 1 else 0)
+  let leftover := if lines.size > b.pinnedLines then
       let lastY := lines.foldl (fun m l => max m l.y) 0
-      b.vdist.aboveShare (b.geom.bodyBottom - (lastY + b.prevDepth))
+      b.geom.bodyBottom - (lastY + b.prevDepth)
     else 0
-  let lines := if delta == 0 then lines else
-    lines.mapIdx fun i l => if i < b.pinnedLines then l else { l with y := l.y + delta }
+  let (lines, delta) := if pageFils > 0 then
+      (lines.mapIdx fun i l =>
+        if i < b.pinnedLines then l
+        else { l with y := l.y + filShare leftover (b.filsAbove.getD i 0) pageFils },
+       filShare leftover (b.filsAbove.back?.getD 0) pageFils)
+    else
+      let d := b.vdist.aboveShare leftover
+      (if d == 0 then lines else
+        lines.mapIdx fun i l => if i < b.pinnedLines then l else { l with y := l.y + d },
+       d)
   let fills := if delta == 0 then b.cur.fills else
     b.cur.fills.mapIdx fun i f => if i < b.pinnedFills then f else { f with y := f.y + delta }
   let fills := match b.pageBg.orElse (fun _ => b.docBg) with
@@ -1974,18 +2031,28 @@ private def B.finishPage (b : B) : B :=
   { b with pages := b.pages.push { lines := lines, fills := fills, foot := b.curFoot },
            cur := {},
            shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
-           pageBg := none, vdist := .top, pinnedLines := 0, pinnedFills := 0,
+           pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
+           pinnedLines := 0, pinnedFills := 0,
            diags := diags }
 
 /-- A line that shares its baseline with the last one (underline rules)
-rides with it, including its share of the page's shrink. -/
+rides with it, including its share of the page's shrink and of its fil
+glue. -/
 private def B.pushSibling (b : B) (l : LineOut) : B :=
   { b with cur := { b.cur with lines := b.cur.lines.push l },
-           shrinkAbove := b.shrinkAbove.push (b.shrinkAbove.back?.getD 0) }
+           shrinkAbove := b.shrinkAbove.push (b.shrinkAbove.back?.getD 0)
+           filsAbove := b.filsAbove.push (b.filsAbove.back?.getD 0) }
 
 private def B.commit (b : B) (line : LineOut) (depth above overflow : Sp) : B :=
+  -- The consumed skip's fil counts here, page top included: an author's
+  -- \vspace*{\fill} above the first line is what the star means (the
+  -- space survives the break), and fil width is zero, so counting it
+  -- costs nothing when unused.
+  let fils := b.pageFils + (if b.skip.fil then 1 else 0)
   { b with cur := { b.cur with lines := b.cur.lines.push line }
            shrinkAbove := b.shrinkAbove.push above
+           pageFils := fils
+           filsAbove := b.filsAbove.push fils
            pageShrink := above
            needed := max b.needed overflow
            y := line.y
@@ -2232,8 +2299,14 @@ private def Acc.flushGap (a : Acc) : Acc :=
   { a with wantDefault := false, owed := #[] }
 
 /-- A page boundary. Whatever gap was owed dies with the old page, as TeX
-discards glue at the top of a new one. -/
+discards glue at the top of a new one — except fil: infinite glue standing
+before the break stretches on the page it ends (TeX discards only what
+follows the break point), and dropping it would turn a centring sandwich
+into a bottom-flush page. -/
 private def Acc.pageBreak (a : Acc) : Acc :=
+  let a := if a.owed.any (·.fil) then
+      { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
+    else a
   { a with ops := a.ops.push .brk, wantDefault := false, owed := #[] }
 
 private def Acc.pushOp (a : Acc) (op : Op) : Acc :=
@@ -3315,6 +3388,11 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
           acc := collectBlock acc pats fs
             (.frame title standout valign (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
     | other => acc := collectBlock acc pats fs (Ir.unwrapItemStep other) 0
+  -- Trailing fil glue stretches on the page it ends (a \vfill nothing
+  -- follows is how a page bottom-flushes its leftover), so it must reach
+  -- placement; trailing finite glue stays invisible and stays dropped.
+  if acc.owed.any (·.fil) then
+    acc := { acc with ops := acc.ops.push (.skip (acc.owed.foldl Glue.add {})) }
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
   -- so the tasks race on nothing; joining in document order below keeps the
   -- output independent of scheduling.
@@ -3381,7 +3459,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty then
         b := b.finishPage
       else
-        b := { b with pageBg := none, vdist := .top, pinnedLines := 0, pinnedFills := 0 }
+        b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
+                      pinnedLines := 0, pinnedFills := 0 }
     | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
     | .foot c => b := { b with curFoot := c }
     | .pin =>

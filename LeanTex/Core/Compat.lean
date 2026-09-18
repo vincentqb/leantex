@@ -705,6 +705,11 @@ where
     let native := s!"\\block[before = {lengthSrc (args.getD 0 #[])}]\{}"
     became "\\vspace" native pos
     return some (← synthAt native pos, k)
+  | "vfill" =>
+    -- \vfill is \vspace{\fill} (ltspace.dtx): fil glue between blocks.
+    let native := "\\block[before = fill]{}"
+    became "\\vfill" native pos
+    return some (← synthAt native pos, start)
   | "thepage" => return some (#[.ctrl "pagenumber" pos], start)
   | "ul" =>
     -- soul's plain underline; the native draws it from the font's metrics
