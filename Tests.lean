@@ -1371,6 +1371,17 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
      | _, _ => false)
   t "a trailing fill alone moves nothing"
     ((linesOf (doc "hello\n\\vspace*{\\fill}")).map (·.y) == top.map (·.y))
+  -- A minipage is one column of declared width: the column model reused,
+  -- not a parallel box model.
+  t "minipage is one column of its declared width"
+    ((elabStr (doc "\\begin{minipage}{0.5\\textwidth}x\\end{minipage}")).1.body ==
+      #[.columns #[(some 500, #[.para #[.text "x"]])]])
+  t "a bare textwidth minipage takes the whole measure"
+    ((elabStr (doc "\\begin{minipage}{\\textwidth}x\\end{minipage}")).1.body ==
+      #[.columns #[(some 1000, #[.para #[.text "x"]])]])
+  t "minipage alignment options are a note, never an error"
+    (let ds := (elabStr (doc "\\begin{minipage}[c][2cm][t]{\\textwidth}x\\end{minipage}")).2
+     ds.all (·.severity != .error) && ds.any (·.code == "N0102"))
 
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do

@@ -1349,7 +1349,8 @@ end
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "document", "frame", "columns", "figure",
-   "figure*", "table", "table*", "quote", "quotation", "ifbackend", "nav"]
+   "figure*", "table", "table*", "quote", "quotation", "ifbackend", "nav",
+   "minipage"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
@@ -1359,13 +1360,17 @@ def builtinEnvNames : List String :=
   reservedEnv
 
 /-- A column width as per mille of the text width: `0.48\textwidth`,
-`.5\linewidth`, or a bare factor. An absolute length is not modelled. -/
+`.5\linewidth`, a bare factor, or `\textwidth` alone — a factor of one, as
+TeX reads a coefficient-less internal dimen. An absolute length is not
+modelled. -/
 private def columnWidth (src : String) : Option Nat := Id.run do
   let mut s := src.trimAscii.toString
+  let mut stripped := false
   for suffix in ["\\textwidth", "\\linewidth", "\\columnwidth"] do
     if s.endsWith suffix then
       s := ((s.dropEnd suffix.length).trimAscii).toString
-  if s.isEmpty then return none
+      stripped := true
+  if s.isEmpty then return if stripped then some 1000 else none
   match Decl.parseDecimal s with
   | some (m, sc) =>
     if m ≥ 0 && sc > 0 then return some ((m * 1000 / sc).toNat) else return none
@@ -2222,6 +2227,42 @@ specs are not modelled")
             blocks := blocks.push (.list (n == "enumerate") elabItems)
           else if n == "center" then
             blocks := blocks.push (.center (← elabBlocks ctx body))
+          else if n == "minipage" then
+            -- A minipage is one column of declared width: the column model
+            -- reused whole, never a parallel box model. LaTeX's signature
+            -- is [pos][height][inner-pos]{width} (classes.dtx §minipage);
+            -- the optionals position the box against a text baseline, and
+            -- at block level there is no baseline, so they are noted and
+            -- ignored exactly as the columns options are. An absolute
+            -- width is the same loss a column has (W0314).
+            let mut k := 0
+            for _ in [0:3] do
+              match scanBracketArg body k pos with
+              | .took k' =>
+                warnOnce ctx "minipage:options" .N0102
+                  "'minipage' [pos] options are ignored: the box stands as a block, top-aligned"
+                  pos
+                k := k'
+              | .unclosed bpos =>
+                warnUnclosed ctx "'\\begin{minipage}'" bpos
+                break
+              | .content => break
+            let m := skipSpaces body k
+            let mut width : Option Nat := none
+            let mut m2 := m
+            if let some (.group wRaws _) := body[m]? then
+              m2 := m + 1
+              let src := rawSrc wRaws
+              width := columnWidth src
+              if width.isNone then
+                warnOnce ctx "env:minipage-width" .W0314
+                  s!"minipage width '{src}' is not a fraction of the text width; \
+the box takes the whole measure" pos
+                  (help := "write a factor like {0.5\\textwidth}")
+            else
+              diag ctx .E0304 "'\\begin{minipage}' needs a {width} group" pos
+            blocks := blocks.push
+              (.columns #[(width, ← elabBlocks ctx (body.extract m2 body.size))])
           else if n == "quote" || n == "quotation" then
             -- One node for both: they differ only in \listparindent
             -- (quotation indents each paragraph's first line), and the
