@@ -1269,6 +1269,31 @@ def unitChecks (ref : IO.Ref (List String)) : IO Unit := do
     (let (doc, ds) := elabStr "x \\vqb@bp y"
      ds.any (fun d => d.code == "W0301" && (d.message.splitOn "vqb@bp").length > 1) &&
        doc.body == #[.para #[.text "x y"]])
+  -- LaTeX's starred forms: the star means "no \par in the arguments"
+  -- (definers) or "survives a page break" (\vspace*) — neither modelled,
+  -- so the star is consumed with its command, never left as content.
+  t "newcommand* defines like newcommand"
+    ((elabStr "\\newcommand*{\\hi}{world}\\begin{document}\\hi\\end{document}").1.body
+      == #[.para #[.text "world"]])
+  t "renewcommand* redefines like renewcommand"
+    ((elabStr "\\newcommand{\\x}{a}\\renewcommand*{\\x}{b}\\begin{document}\\x\\end{document}").1.body
+      == #[.para #[.text "b"]])
+  t "DeclareRobustCommand* defines like newcommand"
+    ((elabStr "\\DeclareRobustCommand*{\\x}{a}\\begin{document}\\x\\end{document}").1.body
+      == #[.para #[.text "a"]])
+  t "vspace* becomes the same block as vspace"
+    ((elabStr "\\begin{document}a\\vspace*{4pt}\nb\\end{document}").1.body ==
+     (elabStr "\\begin{document}a\\vspace{4pt}\nb\\end{document}").1.body)
+  -- The recovery invariant: best-effort recovery never turns a warning
+  -- into an error. An unknown starred command in the preamble is one
+  -- W0301; its star and arguments go with it, never surviving as content
+  -- that E0313 then rejects.
+  t "an unknown starred command in the preamble stays a warning"
+    (let ds := (elabStr (pre "\\mystery*{a}{b}")).2
+     ds.any (·.code == "W0301") && ds.all (·.severity != .error))
+  t "an unknown starred command in the body keeps its argument text only"
+    ((elabStr "\\begin{document}x \\mystery*{y} z\\end{document}").1.body ==
+      #[.para #[.text "x y z"]])
 
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do

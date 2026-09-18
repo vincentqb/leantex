@@ -519,19 +519,32 @@ shares it. -/
 private def skipMalformedArgs (raws : Array Raw) (i : Nat) (anchor : Pos) : Nat :=
   malformedRun raws i anchor (groups := true)
 
-/-- Skip a `[...]` run and at most one group: argument recovery after a
-reserved (not yet implemented) or unknown command. Returns the next index
-and, when an unclosed `[` stopped the scan, its position. -/
-private def skipReservedArgs (raws : Array Raw) (i : Nat) (anchor : Pos) :
-    Nat × Option Pos := Id.run do
+/-- Skip an argument run: argument recovery after a reserved (not yet
+implemented) or unknown command. A starred form's `*`, a `[...]` options
+run, and up to `maxGroups` `{...}` groups are consumed with the command
+they belong to — recovery never turns a warning into an error, and a stray
+`*` or second group in the preamble is exactly how one skipped command
+used to become E0313. In the body `maxGroups` stays 1, so a scope group
+standing after a reserved command is still content; in the preamble there
+is no content, so the caller passes TeX's own argument limit of nine. The
+scan stops at anything else, so the author's next construct is never
+consumed. Returns the next index and, when an unclosed `[` stopped the
+scan, its position. -/
+private def skipReservedArgs (raws : Array Raw) (i : Nat) (anchor : Pos)
+    (maxGroups : Nat := 1) : Nat × Option Pos := Id.run do
   let mut j := i
-  match scanBracketArg raws i anchor with
-  | .took k => j := k
-  | .unclosed bpos => return (i, some bpos)
-  | .content => pure ()
-  let k := skipSpaces raws j
-  if let some (.group _ _) := raws[k]? then
-    return (k + 1, none)
+  if let some (.word "*" _) := raws[j]? then
+    j := j + 1
+  for _ in [0:maxGroups] do
+    match scanBracketArg raws j anchor with
+    | .took k => j := k
+    | .unclosed bpos => return (j, some bpos)
+    | .content => pure ()
+    let k := skipSpaces raws j
+    if let some (.group _ _) := raws[k]? then
+      j := k + 1
+    else
+      break
   return (j, none)
 
 -- Inline elaboration and argument binding are mutually recursive: a call
@@ -1296,6 +1309,9 @@ a side channel, never slide content" pos
             s!"unknown command '\\{name}'; its arguments were kept as text" pos
             (help := "\\define \\name(...) {body} declares it")
           let mut j := skipSpaces raws i
+          -- A starred form's `*` belongs to the command, not to the text.
+          if let some (.word "*" _) := raws[j]? then
+            j := skipSpaces raws (j + 1)
           let mut kept := 0
           for _ in [0:9] do
             match raws[j]? with
@@ -3399,7 +3415,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           -- arguments are skipped with them, never elaborated as stray text.
           warnOnce ctx ("ctrl:" ++ name) .W0301 s!"unknown command '\\{name}' in the preamble; skipped" pos
             (help := "\\define \\name(...) {body} declares it")
-          let (j, unclosed) := skipReservedArgs preamble i pos
+          let (j, unclosed) := skipReservedArgs preamble i pos (maxGroups := 9)
           match unclosed with
           | some bpos =>
             warnUnclosed ctx s!"'\\{name}'" bpos

@@ -214,6 +214,21 @@ private def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat
     | _ => break
   return (out, j)
 
+/-- The `*` of a starred LaTeX form, standing between the command and its
+arguments. In LaTeX the star on the definers (`\newcommand*` and siblings)
+makes the arguments "short" — `\par` is forbidden in them (LaTeX2e
+usrguide §"Defining commands"; `\def` vs `\long\def`) — and on `\vspace*`
+it makes the space survive a column or page break rather than being
+discarded there (LaTeX2e classes.dtx `\@vspace*`). The engine models
+neither distinction, so the star is ignorable — consumed, never content:
+left in the stream it lands where content may not stand and turns the
+construct's warning into E0313, a fifteen-diagnostic cascade from one
+character. -/
+private def skipStar (raws : Array Raw) (i : Nat) : Nat :=
+  match raws[i]? with
+  | some (.word "*" _) => i + 1
+  | _ => i
+
 /-! # Decidable TeX conditionals
 
 `\ifdefined\name` asks whether `\name` is defined, and the document's own
@@ -248,8 +263,10 @@ private def boundName : Raw → Option String
     | _ => none
   | _ => none
 
-private def isSpace : Raw → Bool
+/-- A definer's starred form separates it from the name it binds. -/
+private def isSpaceOrStar : Raw → Bool
   | .space => true
+  | .word "*" _ => true
   | _ => false
 
 /-- What a resolution says: which way it went, and what that keeps. -/
@@ -331,7 +348,7 @@ private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
     if stack.all id then
       if let .ctrl d _ := r then
         if definesNext.contains d then
-          if let some n := (rest.dropWhile isSpace).head?.bind boundName then
+          if let some n := (rest.dropWhile isSpaceOrStar).head?.bind boundName then
             recordDefined n
       condList raws (out.push (← condOne r)) stack rest (i + 1)
     else
@@ -628,8 +645,9 @@ where
       | none => return none
     else return none
   | "NewDocumentCommand" | "newcommand" | "providecommand"
-  | "DeclareDocumentCommand" | "RenewDocumentCommand" =>
+  | "DeclareDocumentCommand" | "RenewDocumentCommand" | "DeclareRobustCommand" =>
     let xparse := name.endsWith "DocumentCommand"
+    let start := skipStar raws start
     let (nameArgs, j) := takeGroups raws start 1
     let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
     let (spec, j) ← if xparse then
@@ -681,6 +699,7 @@ where
     became s!"\\color\{{n}}" s!"\\{n}" pos
     return some (#[.ctrl n pos], k)
   | "vspace" =>
+    let start := skipStar raws start
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let native := s!"\\block[before = {lengthSrc (args.getD 0 #[])}]\{}"
@@ -776,6 +795,7 @@ where
   | "renewcommand" =>
     -- \\renewcommand\\sectionlinesformat[4]{...} is the spelling KOMA documents;
     -- other renewals define a command like \\newcommand does.
+    let start := skipStar raws start
     let (nameArgs, j) := takeGroups raws start 1
     let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
     let (count, j) := takeOpt raws j
@@ -842,7 +862,7 @@ where
     -- `\defineenv{name}(a1: content, ...) {begin} {end}`. The two body
     -- groups stay in the stream and are announced as macro bodies, so `#k`
     -- becomes `\ak` in each and idioms inside them translate as usual.
-    let (args, j) := takeGroups raws start 1
+    let (args, j) := takeGroups raws (skipStar raws start) 1
     let envName := rawSrc (args.getD 0 #[])
     let (count, j) := takeOpt raws j
     let (dflt, j) := takeOpt raws j
