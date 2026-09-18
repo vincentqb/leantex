@@ -193,17 +193,6 @@ theorem titlepage_align_declared_engine :
       | none => True := by
   sorry
 
--- owed: heading_hierarchy
--- owner: LeanTex.Core.Layout
--- source: arch-design I3 (hierarchy from the scale, visible at every base size)
--- blocker: false as the code stands — `sectionSize` is three loose constants (pt 14 / pt 12 / fontSize), so at a 12 pt base the subsection equals its body and past a 14 pt base a section sets smaller than its body. Unblocked by arch-design R3: sectionSize via `Ir.sizeScale` lookups (Large/large/normalsize, article.cls's own mapping); then this follows from `sizeScale_monotone`.
--- goldens: yes — headings shift ~0.4 pt (Large is 14.4, the constant is 14)
-/-- Heading hierarchy: at every positive base size a section sets strictly
-larger than a subsection, and no heading sets smaller than its body. -/
-theorem heading_hierarchy (g : Geom) (hfs : 0 < g.fontSize) :
-    sectionSize g 1 > sectionSize g 2 ∧ sectionSize g 2 ≥ g.fontSize := by
-  sorry
-
 -- owed: take_args_consumes_forward
 -- owner: LeanTex.Core.Elab
 -- source: arch-provable I6; PLAN's phase-split design (the measure: definition-time expansion limit, then suffix length)

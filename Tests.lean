@@ -4678,7 +4678,8 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let out := Layout.run (Layout.Geom.ofPage dDoc.page) oneFace none dDoc
   t "one page per frame, one per section divider" (out.pages.size == 4)
   t "every slide leads with its title at the heading size"
-    (out.pages.all fun p => p.lines.any (·.size == Dim.pt 14))
+    (out.pages.all fun p =>
+      p.lines.any (·.size == Layout.sectionSize (Layout.Geom.ofPage dDoc.page) 1))
   let (html, _) := HtmlDoc.emit {} dDoc
   t "html gives each frame its own slide section"
     ((html.splitOn "<section class=\"slide\"").length == 4)
@@ -6801,7 +6802,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let (jhDoc, _) := Elab.run "t"
         "\\section{one two six ten oak elm fir ash}\n\nbody text"
       let headLines := (Layout.run narrow oneFace (some pats) jhDoc).pages.flatMap
-        (·.lines) |>.filter (·.size == Dim.pt 14)
+        (·.lines) |>.filter (·.size == Layout.sectionSize narrow 1)
       t "a wrapped heading is ragged, not justified"
         (headLines.size ≥ 2 && headLines.all (·.setWidth < narrow.textWidth))
       t "layout hyphen avoids overfull" (!hyOut.diags.any (·.code == "W0005"))
@@ -6820,7 +6821,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "layout visual source clean" visualDs.isEmpty
       let visualOut := Layout.run ({} : Layout.Geom) oneFace (some pats) visualDoc
       let hasSectionSize := visualOut.pages.any fun p =>
-        p.lines.any (·.size == Dim.pt 14)
+        p.lines.any (·.size == Layout.sectionSize ({} : Layout.Geom) 1)
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
           | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '•')

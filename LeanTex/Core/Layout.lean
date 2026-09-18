@@ -2142,10 +2142,37 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       justify := a.geom.justify
       markerSegs := markerSegs, rule := rule }) }
 
+/-- Heading display sizes from the type scale, never loose constants:
+article.cls sets `\section` in `\Large`, `\subsection` in `\large`, and
+`\subsubsection` in `\normalsize` (classes.dtx, §Sectioning), so the
+hierarchy holds at every base size — the old 14/12-point constants
+made a 12 pt subsection equal its body and a >14 pt body outgrow its own
+sections. -/
 def sectionSize (geom : Geom) : Nat → Sp
-  | 1 => pt 14
-  | 2 => pt 12
+  | 1 => geom.fontSize * ((Ir.sizeScale.lookup "Large").getD 1000) / 1000
+  | 2 => geom.fontSize * ((Ir.sizeScale.lookup "large").getD 1000) / 1000
   | _ => geom.fontSize
+
+private theorem heading_hierarchy_int (x : Int) (h : 1 * 65536 ≤ x) :
+    x * 1440 / 1000 > x * 1200 / 1000 ∧ x * 1200 / 1000 ≥ x := by
+  omega
+
+/-- Heading hierarchy (arch-design I3): at every base size of at least one
+point, a section sets strictly larger than a subsection, and no heading
+sets smaller than its body. The scale (`Ir.sizeScale`, size10.clo's own
+values) carries the ordering; the 1 pt floor is what strictness costs
+under integer division — below 9 sp (~0.00014 pt) the two levels round
+together, so the bound is the coarsest honest one. (The arithmetic lives
+in the `Int`-typed lemma above: `omega` reads `Int` syntactically and
+does not unfold the `Sp` abbreviation.) -/
+theorem heading_hierarchy (g : Geom)
+    (hfs : pt 1 ≤ g.fontSize) : -- 1 pt floor: what strictness costs under integer division (docstring)
+    sectionSize g 1 > sectionSize g 2 ∧ sectionSize g 2 ≥ g.fontSize := by
+  have e1 : sectionSize g 1 = g.fontSize * 1440 / 1000 := by rfl
+  have e2 : sectionSize g 2 = g.fontSize * 1200 / 1000 := by rfl
+  rw [e1, e2]
+  simp only [pt, spPerPt] at hfs
+  exact heading_hierarchy_int g.fontSize hfs
 
 /-- Display type: headings, frame titles, section-page and standout text.
 Display is not body text: it is never hyphenated (Butterick, Practical
