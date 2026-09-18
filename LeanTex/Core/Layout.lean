@@ -171,13 +171,14 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     justify := spec.justify.getD base.justify
     bleed := spec.bleed }
 
-/-- Baseline distance for a size: 6⁄5 of it, scaled by the page's `leading`
-factor (`\linespread`'s home). The 1.2 is the routine text setting — 10/12 of
-Bringhurst's "settings such as 9/11, 10/12, 11/13 and 12/15 are routine;
-longer measures need more lead than short ones" (Elements §2.2.1) — and the
-factor is where a document declares the extra lead a wide measure wants; the
-engine never raises it silently. -/
-def leadingFor (size : Sp) (factor : Nat := 1000) : Sp := size * 6 / 5 * factor / 1000
+/-- Baseline distance for a size: `Ir.leadingMilli` of it (6⁄5 — the ratio's
+source, Bringhurst §2.2.1's routine settings, and its one spelling live
+with the scale in Ir; the HTML stylesheet emits the same constant), scaled
+by the page's `leading` factor (`\linespread`'s home). The factor is where
+a document declares the extra lead a wide measure wants; the engine never
+raises it silently. -/
+def leadingFor (size : Sp) (factor : Nat := 1000) : Sp :=
+  size * (Ir.leadingMilli : Int) / 1000 * factor / 1000
 
 /-- The default vertical rhythm is one system, not three numbers: the peer
 gap (`parskip`, 6pt at the 10pt base) is half the base leading, so the
@@ -1161,8 +1162,15 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   let cols : List (Sp × Sp) := (List.range n).map fun k =>
     (colW[k]!, muAt size (kind.gapAfter k n : Int))
   let total := Math.colOffset cols n
-  let bl := size * 12 / 10
-  let lineskip := size / 10
+  -- The grid's baseline distance is the text leading, one source
+  -- (`leadingFor`): a maths grid is lines of maths, and its rhythm is the
+  -- page's. The old `size * 12 / 10` was the same 6/5 re-spelled.
+  let bl := leadingFor size
+  -- The least clearance when a row's ink outruns the leading: plain.tex's
+  -- `\lineskip` (1.0 pt) made size-relative — 1 pt at the 10 pt base. Its
+  -- own name: the page-level `lineskip` is a different, absolute quantity,
+  -- and one name for two values is how a future reader fuses them.
+  let gridSkip := size / 10
   let jot := match kind with
     | .array _ => 0
     | _ => size * 3 / 10
@@ -1175,7 +1183,7 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   for i in [0:cells.size] do
     if i > 0 then
       let d := max (bl + jot)
-        ((-(rowExtents[i-1]!.2)) + rowExtents[i]!.1 + lineskip)
+        ((-(rowExtents[i-1]!.2)) + rowExtents[i]!.1 + gridSkip)
       y := y - d
     ys := ys.push y
   let top := rowExtents[0]!.1

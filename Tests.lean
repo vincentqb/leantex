@@ -1460,8 +1460,6 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- LaTeX idioms translate to native declarations, each with a note that
   -- shows the shorter spelling. The document compiles as written.
-  let notesOf (src : String) : List String :=
-    ((elabStr src).2.filter (·.severity == .note)).toList.map (·.message)
   let pre (decls : String) : String :=
     "\\documentclass{article}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
   let (geoDoc, geoDs) := elabStr (pre "\\usepackage[letterpaper,vmargin=0.5in,hmargin=0.75in,headsep=1in]{geometry}")

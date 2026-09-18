@@ -432,15 +432,37 @@ def tokenVars (doc : Doc) : String :=
      | none => [])
   String.intercalate "\n" (palette ++ tokens ++ fonts)
 
+/-- A per-mille factor as CSS text: 1440 → `1.440`. -/
+private def milliFactor (k : Nat) : String :=
+  let pad (n : Nat) : String :=
+    let s := toString n
+    "".pushn '0' (3 - min 3 s.length) ++ s
+  s!"{k / 1000}.{pad (k % 1000)}"
+
+/-- One scale step as a CSS size: the same table the PDF sets from
+(`Ir.sizeScale`), so a heading or a standout is the size the scale says,
+never a re-spelled decimal. -/
+private def scaleSize (name : String) (unit : String) : String :=
+  milliFactor ((Ir.sizeScale.lookup name).getD 1000) ++ unit
+
+/-- Screen prose leading, per-mille. Screen body text wants more lead than
+the print ratio (`Ir.leadingMilli`, 6/5); Butterick's band for body text is
+120–145% (Practical Typography, "Line spacing"), and the stylesheet takes
+its top. The old 1.55 sat outside the band, undeclared. -/
+def bodyLeadingMilli : Nat := 1450
+
+/-- The screen leading stays inside Butterick's 120–145% band, and never
+under the engine's own print leading — the stylesheet's body text cannot
+drift out of the sourced range without failing the build. -/
+theorem body_leading_in_band :
+    Ir.leadingMilli ≤ bodyLeadingMilli ∧
+    1200 ≤ bodyLeadingMilli ∧ bodyLeadingMilli ≤ 1450 := by decide
+
 /-- Size rules generated from the IR's scale, so the two backends cannot drift
 apart on what `\Huge` means. `em` rather than `rem`: sizes nest. -/
 private def sizeRules : String :=
   String.join (Ir.sizeScale.map fun (name, k) =>
-    s!".size-{name} \{ font-size: {k / 1000}.{padLeft (k % 1000) 3}em; }\n")
-where
-  padLeft (n w : Nat) : String :=
-    let s := toString n
-    "".pushn '0' (w - min w s.length) ++ s
+    s!".size-{name} \{ font-size: {milliFactor k}em; }\n")
 
 /-- The base stylesheet. Small on purpose: a generated document should not
 ship a framework to use four of its rules. Dark mode is a variant of the same
@@ -488,21 +510,28 @@ def baseCss (doc : Doc) : String :=
   "  color: var(--ink);\n" ++
   "  font-family: var(--font-body);\n" ++
   "  font-size: 1.0625rem;\n" ++
-  "  line-height: 1.55;\n" ++
+  s!"  line-height: {milliFactor bodyLeadingMilli};\n" ++
   "  text-rendering: optimizeLegibility;\n" ++
   "  -webkit-font-smoothing: antialiased;\n" ++
   "}\n" ++
   "main { max-width: var(--measure); margin: 0 auto; }\n" ++
+  -- Headings from the IR's own scale — the sizes the PDF sets
+  -- (`Layout.sectionSize`, classes.dtx §Sectioning: the title at LARGE, a
+  -- section at Large, a subsection at large), so `heading_hierarchy`'s
+  -- ordering covers this backend for free; the line height is the
+  -- engine's one leading ratio. Hand-picked decimals here once drifted a
+  -- rounding step from the scale sixty lines above the rules generated
+  -- from it.
   "h1, h2, h3, h4 {\n" ++
   "  font-family: var(--font-sans);\n" ++
   "  font-weight: 600;\n" ++
-  "  line-height: 1.2;\n" ++
+  s!"  line-height: {milliFactor Ir.leadingMilli};\n" ++
   "  margin: 2.25rem 0 0.6rem;\n" ++
   "  text-wrap: balance;\n" ++
   "}\n" ++
-  "h1 { font-size: 1.9rem; margin-top: 0; }\n" ++
-  "h2 { font-size: 1.45rem; }\n" ++
-  "h3 { font-size: 1.2rem; }\n" ++
+  s!"h1 \{ font-size: {scaleSize "LARGE" "rem"}; margin-top: 0; }\n" ++
+  s!"h2 \{ font-size: {scaleSize "Large" "rem"}; }\n" ++
+  s!"h3 \{ font-size: {scaleSize "large" "rem"}; }\n" ++
   "p { margin: 0 0 1rem; }\n" ++
   "ul, ol { margin: 0 0 1rem; padding-left: 1.35rem; }\n" ++
   "li { margin: 0.25rem 0; }\n" ++
@@ -588,9 +617,11 @@ def baseCss (doc : Doc) : String :=
   "section.slide > header h2 { margin: 0 0 0.8rem; font-size: 1.35rem; }\n" ++
   -- A standout frame inverts: the palette's standout keys override, and
   -- without them the page's own fg/bg swap — the same rule as the PDF path.
+  -- Its size is the scale's own Large step (`\Large\bfseries`, the shipped
+  -- bundles' standout template), never a re-spelled decimal.
   "section.slide.standout { background: var(--standoutbg, var(--fg, #18181b));\n" ++
   "  color: var(--standoutfg, var(--bg, #fafaf9)); text-align: center;\n" ++
-  "  font-size: 1.44em; font-weight: 600;\n" ++
+  s!"  font-size: {scaleSize "Large" "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   sizeRules ++
   ".math { font-family: \"Latin Modern Math\", \"STIX Two Math\", math; }\n" ++

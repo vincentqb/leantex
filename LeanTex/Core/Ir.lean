@@ -442,6 +442,14 @@ inductive Style where
   | size (name : String)
   deriving Repr, BEq
 
+/-- The leading ratio, per-mille: baselines sit at 6⁄5 of the size — the
+routine text setting, 10/12 of Bringhurst's "settings such as 9/11, 10/12,
+11/13 and 12/15 are routine" (Elements §2.2.1). It lives in the IR because
+both backends read it: `Layout.leadingFor` applies it to every baseline
+distance the PDF sets (the math grid included), and the HTML stylesheet
+emits it as the heading line-height. -/
+def leadingMilli : Nat := 1200
+
 /-- The LaTeX 10pt size scale, per mille of the surrounding size. It lives in
 the IR because both backends read it: they must agree on what `\Huge` means.
 
