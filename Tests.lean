@@ -6561,6 +6561,34 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((darkBlock.splitOn s!"--accent: {HtmlDoc.cssColor Contrast.dark.accent}").length == 2)
   t "light accent comes from the proven constant"
     ((page.splitOn s!"--accent: {HtmlDoc.cssColor Contrast.light.accent}").length == 2)
+  -- A declared palette key is the document's value in BOTH schemes: the
+  -- custom-property block is emitted after the dark variant, so at the
+  -- shared :root specificity source order gives dark mode the theme's
+  -- --muted, not the scheme default (the layering audit's clobber 3: a
+  -- variant must never beat a higher layer). Judged over the typed head
+  -- tree the backend emits, never an IR dump.
+  let (deckHead, _, _) := HtmlDoc.emitTree {} (elabStr
+    ("\\documentclass{slides}\\theme{moloch}\\begin{document}" ++
+     "\\begin{frame}{T}x\\end{frame}\\end{document}")).1
+  let deckCss := deckHead.foldl (init := "") fun acc n => match n with
+    | Html.Node.style s => acc ++ s
+    | _ => acc
+  let themeMuted := match Theme.moloch.palette.find? "muted" with
+    | some c => s!"--muted: {HtmlDoc.cssColor c};"
+    | none => "no muted key"
+  let darkMuted := s!"--muted: {HtmlDoc.cssColor Contrast.dark.muted};"
+  t "the deck declares the theme muted once and the dark variant's once"
+    ((deckCss.splitOn themeMuted).length == 2 &&
+     (deckCss.splitOn darkMuted).length == 2)
+  t "the theme's custom properties come after the dark variant in the cascade"
+    (match (deckCss.splitOn darkMuted)[1]? with
+     | some after => (after.splitOn themeMuted).length == 2
+     | none => false)
+  t "an undeclared document emits no empty custom-property block"
+    (let (plainHead, _, _) := HtmlDoc.emitTree {} (elabStr "x").1
+     plainHead.all fun n => match n with
+       | Html.Node.style s => !((s.splitOn ":root {\n\n}").length > 1)
+       | _ => true)
 
   -- The pairing warning: a pale tint on the page fires W0315 with the
   -- ratio and threshold; declaring intent silences it; covered is exempt

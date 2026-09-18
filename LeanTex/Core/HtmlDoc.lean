@@ -808,7 +808,6 @@ def baseCss (doc : Doc) : String :=
   "    --font-body: Georgia, \"Times New Roman\", serif;\n" ++
   "    --font-sans: system-ui, -apple-system, \"Segoe UI\", sans-serif;\n" ++
   "    --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;\n" ++
-  tokenVars doc ++ "\n" ++
   "}\n" ++
   "@media (prefers-color-scheme: dark) {\n" ++
   "  :root {\n" ++
@@ -824,6 +823,16 @@ def baseCss (doc : Doc) : String :=
   s!"    --rule: {cssColor dk.rule};\n" ++
   "  }\n" ++
   "}\n" ++
+  -- The document's own declarations, AFTER the dark variant: a declared
+  -- palette key or token is the document's value in BOTH colour schemes,
+  -- so a themed deck's --muted in dark mode is the theme's, not the
+  -- scheme default's. The scheme blocks above are defaults for what the
+  -- document left undeclared; a media query adds no specificity, so at
+  -- the shared :root specificity source order is the whole cascade here
+  -- — the same equal-specificity, order-decides contract the declared
+  -- stylesheet link relies on below.
+  (let tv := tokenVars doc
+   if tv.isEmpty then "" else ":root {\n" ++ tv ++ "\n}\n") ++
   "*, *::before, *::after { box-sizing: border-box; }\n" ++
   "body {\n" ++
   "  margin: 0;\n" ++
