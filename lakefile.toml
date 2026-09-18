@@ -8,6 +8,13 @@ weak."linter.extra.dupNamespace" = true
 weak."linter.extra.unnecessarySeqFocus" = true
 weak."linter.extra.unreachableTactic" = true
 weak."linter.redundantVisibility" = true
+weak."linter.extra.unusedDecidableInType" = true
+weak."linter.indexVariables" = true
+weak."linter.listVariables" = true
+weak."linter.omit" = true
+weak."linter.tacticCheckInstances" = true
+weak."linter.unusedVariables.analyzeTactics" = true
+weak."linter.loopingSimpArgs" = true
 
 [[lean_lib]]
 name = "LeanTex"
