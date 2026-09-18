@@ -1501,14 +1501,16 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   -- object; the caption keeps its source-order side. The gaps are the
   -- same tokens the PDF path reads (`--floatsep`, `--captionsep`), with
   -- the rhythm defaults from `Ir.caption_gaps_rhythm` as fallbacks.
-  | .float kind capAbove body caption =>
+  | .float kind num capAbove body caption =>
     let capNode : Array Node :=
       if caption.isEmpty then #[]
-      else #[Html.elem "figcaption" (inlines cfg caption)]
+      else #[Html.elem "figcaption"
+        (inlines cfg (Ir.numberedCaption kind num caption))]
     let kids := blockNodesInto cfg.into #[] body.toList
     let cls := match kind with
       | .table => "float table-float"
       | .figure => "float"
+      | .sub => "float subfloat"
     Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode)
       #[("class", cls)]
 

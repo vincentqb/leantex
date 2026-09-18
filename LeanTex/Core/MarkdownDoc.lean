@@ -165,9 +165,11 @@ private def blockInto (summary ind acc : String) : Block → String
     | first :: rest =>
       acc ++ ind ++ line first ++ "\n" ++ ind ++ sep ++ "\n"
         ++ String.join (rest.map fun r => ind ++ line r ++ "\n") ++ "\n"
-  -- A float's caption is a paragraph beside its content, in source order.
-  | .float _ capAbove body caption =>
-    let cap := if caption.isEmpty then "" else ind ++ inlineText caption ++ "\n\n"
+  -- A float's caption is a paragraph beside its content, in source order,
+  -- with the number prefix every backend spells from the one site.
+  | .float kind num capAbove body caption =>
+    let cap := if caption.isEmpty then ""
+      else ind ++ inlineText (Ir.numberedCaption kind num caption) ++ "\n\n"
     if capAbove then blocksInto summary ind (acc ++ cap) body.toList
     else blocksInto summary ind acc body.toList ++ cap
 
@@ -341,11 +343,12 @@ private theorem blockInto_extends (summary ind acc : String) :
     split
     · exact append_nil acc
     · exact append_chain₈ _ _ _ _ _ _ _ _ _
-  | .float _ capAbove body caption => by
+  | .float kind num capAbove body caption => by
     simp only [blockInto]
     split
     · exact extends_comp ⟨_, rfl⟩ (blocksInto_extends summary ind
-        (acc ++ if caption.isEmpty then "" else ind ++ inlineText caption ++ "\n\n")
+        (acc ++ if caption.isEmpty then "" else
+          ind ++ inlineText (Ir.numberedCaption kind num caption) ++ "\n\n")
         body.toList)
     · exact extends_comp (blocksInto_extends summary ind acc body.toList) ⟨_, rfl⟩
 
@@ -574,7 +577,7 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .rule _ _ _, _, h => h
   | .picture _, _, h => h
   | .table _ _ _ _ _, _, h => h
-  | .float _ _ body _, out, h => headingLevelList_mem x body.toList out h
+  | .float _ _ _ body _, out, h => headingLevelList_mem x body.toList out h
 
 private theorem headingLevelItems_mem (x : Nat) :
     (items : List (Array Block)) → (out : Array Nat) → x ∈ out →

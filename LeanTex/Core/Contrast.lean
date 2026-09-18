@@ -342,7 +342,7 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   -- wraps it; a caption is page text beside its float's body.
   | .table _ _ _ rows _ =>
     rows.foldl (fun o row => row.foldl (fun o cell => usesInlines cx o cell.toList) o) acc
-  | .float _ _ body caption =>
+  | .float _ _ _ body caption =>
     usesBlocks cx (usesInlines cx acc caption.toList) body.toList
   -- A note is a side channel, never page text; verbatim carries no
   -- colour; a rule is decorative ink, not text, so the text-contrast

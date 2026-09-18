@@ -9,7 +9,7 @@ para
 center
   para
     image "rects.png" width 800/1000tw
-float figure
+float figure 1
   caption
     text "Three rectangles, fitted"
   para

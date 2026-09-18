@@ -7,7 +7,7 @@ section 1
   text "Formal tables"
 para
   text "A table between paragraphs takes booktabs’ shape: a heavier rule above and below, a lighter one under the head, padding that belongs to the rules, and never a vertical line."
-float table
+float table 1
   caption
     text "A booktabs table with "
     styled bold
@@ -44,7 +44,7 @@ float table
           text "beta"
       cell
         text "yes"
-float table caption-above
+float table 2 caption-above
   caption
     text "The caption above: the table convention."
   table l,c,r
@@ -73,7 +73,7 @@ float table caption-above
         text "e"
       cell
         text "f"
-float figure
+float figure 1
   caption
     text "A figure’s caption, bound below what it captions."
   para

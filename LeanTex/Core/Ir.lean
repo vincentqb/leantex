@@ -1094,12 +1094,15 @@ inductive TableRule where
   | gap (space : SymGlue)
   deriving Repr, BEq, Inhabited
 
-/-- What a float wraps: `{figure}` or `{table}`. They differ in name and
-(unmodelled) numbering; the caption and separation machinery is one. -/
+/-- What a float wraps: `{figure}` or `{table}`, or a `{subfigure}`/
+`{subtable}` box inside one (`sub`). The kinds differ in name and in which
+counter numbers them (`numberFloats`); the caption and separation
+machinery is one. -/
 inductive FloatKind where
   | figure
   | table
-  deriving Repr, BEq, Inhabited
+  | sub
+  deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- Pad each table row to `n` cells with empty cells, the door elaboration
 takes to the rectangularity `.table` declares. The same statement shape as
@@ -1281,8 +1284,14 @@ inductive Block where
   off from the text by `floatsep` with its caption bound `captionsep` from
   it (`caption_gaps_rhythm` holds the defaults to the rhythm). `capAbove`
   is source order: a `\caption` written before the content stands above
-  it, the convention for tables. An empty caption is a bare float. -/
-  | float (kind : FloatKind) (capAbove : Bool) (body : Array Block)
+  it, the convention for tables. An empty caption is a bare float. `num`
+  is the float's number among captioned floats of its kind — none until
+  `numberFloats` assigns it, and none forever for a captionless float:
+  LaTeX steps the counter in `\caption` (classes.dtx, `\caption` calls
+  `\refstepcounter`), so a float without one bears no number. A `.sub`
+  float's `num` is its letter index within its parent (subcaption:
+  `\thesubfigure` is `(\alph{subfigure})`). -/
+  | float (kind : FloatKind) (num : Option Nat) (capAbove : Bool) (body : Array Block)
       (caption : Array Inline)
   deriving Repr, BEq, Inhabited
 
@@ -1405,6 +1414,490 @@ theorem frameNumbers_last_is_count (body : Array Block)
 theorem frameNumbers_size (body : Array Block) :
     (frameNumbers body).size = body.size := by
   simp [frameNumbers, frameMask, numbersFrom_length]
+
+-- Float numbering. LaTeX steps a float's counter inside `\caption`
+-- (classes.dtx: `\caption` is `\refstepcounter` then `\@makecaption`), so
+-- a captionless float bears no number; and this engine's floats never
+-- float, so document order IS first-appearance order. `numberFloats` is
+-- the one assignment site: elaboration writes `none`, this pass fills the
+-- numbers, and both backends only replay what the node carries.
+
+/-- The counters `numberFloats` threads: captioned figures, captioned
+tables, and — reset at every float body, restored after it — captioned
+subfloats, so a letter is an index within its own parent. -/
+structure FloatCtr where
+  fig : Nat := 0
+  tab : Nat := 0
+  sub : Nat := 0
+  deriving Repr, BEq
+
+def FloatCtr.get : FloatCtr → FloatKind → Nat
+  | c, .figure => c.fig
+  | c, .table => c.tab
+  | c, .sub => c.sub
+
+def FloatCtr.bump : FloatCtr → FloatKind → FloatCtr
+  | c, .figure => { c with fig := c.fig + 1 }
+  | c, .table => { c with tab := c.tab + 1 }
+  | c, .sub => { c with sub := c.sub + 1 }
+
+mutual
+
+/-- The numbering walk: every captioned float takes the next number of its
+kind, in document order. A float's body letters its own subfloats from one
+(`sub` resets on entry and is restored after), while the figure and table
+counters thread straight through, so a nested float keeps document order.
+A note is a side channel that never ships a float, so it does not consume
+a number. -/
+def numberFloatList (c : FloatCtr) (out : Array Block) :
+    List Block → FloatCtr × Array Block
+  | [] => (c, out)
+  | b :: rest =>
+    let (c2, b2) := numberFloatOne c b
+    numberFloatList c2 (out.push b2) rest
+
+def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
+  | .para content => (c, .para content)
+  | .section l st title => (c, .section l st title)
+  | .list o items =>
+    let (c2, items2) := numberFloatItems c #[] items.toList
+    (c2, .list o items2)
+  | .center body =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    (c2, .center body2)
+  | .quote body =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    (c2, .quote body2)
+  | .role n body =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    (c2, .role n body2)
+  | .spaced g body =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    (c2, .spaced g body2)
+  | .columns cols =>
+    let (c2, cols2) := numberFloatCols c #[] cols.toList
+    (c2, .columns cols2)
+  | .step n l body =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    (c2, .step n l body2)
+  | .only targets body =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    (c2, .only targets body2)
+  | .nav spec body =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    (c2, .nav spec body2)
+  | .frame t s v body =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    (c2, .frame t s v body2)
+  | .note body => (c, .note body)
+  | .verbatim k s => (c, .verbatim k s)
+  | .logo content => (c, .logo content)
+  | .framefoot content => (c, .framefoot content)
+  | .setPalette p => (c, .setPalette p)
+  | .setTokens tk => (c, .setTokens tk)
+  | .pagebreak => (c, .pagebreak)
+  | .rule col nm th => (c, .rule col nm th)
+  | .picture p => (c, .picture p)
+  | .table cols pl pr rows rules => (c, .table cols pl pr rows rules)
+  | .float kind _ capAbove body caption =>
+    let cAfter := if caption.isEmpty then c else c.bump kind
+    let num := if caption.isEmpty then none else some (c.get kind + 1)
+    let (cBody, body2) := numberFloatList { cAfter with sub := 0 } #[] body.toList
+    (⟨cBody.fig, cBody.tab, cAfter.sub⟩, .float kind num capAbove body2 caption)
+
+def numberFloatItems (c : FloatCtr) (out : Array (Array Block)) :
+    List (Array Block) → FloatCtr × Array (Array Block)
+  | [] => (c, out)
+  | item :: rest =>
+    let (c2, item2) := numberFloatList c #[] item.toList
+    numberFloatItems c2 (out.push item2) rest
+
+def numberFloatCols (c : FloatCtr) (out : Array (Option Nat × Array Block)) :
+    List (Option Nat × Array Block) → FloatCtr × Array (Option Nat × Array Block)
+  | [] => (c, out)
+  | (w, body) :: rest =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    numberFloatCols c2 (out.push (w, body2)) rest
+
+end
+
+/-- Assign every float its number: the pass elaboration hands the finished
+body to, once, before any backend reads it. -/
+def numberFloats (xs : Array Block) : Array Block :=
+  (numberFloatList {} #[] xs.toList).2
+
+mutual
+
+/-- The numbers the walk assigned to captioned floats of kind `k`, in
+document order — the collector `numberFloats_exact` judges the walk by.
+For `.sub` it reads a body's own letters: it does not descend into a
+nested float's body, whose letters belong to that float. For `.figure`
+and `.table` it descends everywhere the walk threads its counters. -/
+def floatNumsList (k : FloatKind) (out : List Nat) : List Block → List Nat
+  | [] => out
+  | b :: rest => floatNumsList k (floatNumsOne k out b) rest
+
+def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
+  | .para _ => out
+  | .section _ _ _ => out
+  | .list _ items => floatNumsItems k out items.toList
+  | .center body => floatNumsList k out body.toList
+  | .quote body => floatNumsList k out body.toList
+  | .role _ body => floatNumsList k out body.toList
+  | .spaced _ body => floatNumsList k out body.toList
+  | .columns cols => floatNumsCols k out cols.toList
+  | .step _ _ body => floatNumsList k out body.toList
+  | .only _ body => floatNumsList k out body.toList
+  | .nav _ body => floatNumsList k out body.toList
+  | .frame _ _ _ body => floatNumsList k out body.toList
+  | .note _ => out
+  | .verbatim _ _ => out
+  | .logo _ => out
+  | .framefoot _ => out
+  | .setPalette _ => out
+  | .setTokens _ => out
+  | .pagebreak => out
+  | .rule _ _ _ => out
+  | .picture _ => out
+  | .table _ _ _ _ _ => out
+  | .float kind num _ body _ =>
+    let out := match num with
+      | some n => if kind = k then out ++ [n] else out
+      | none => out
+    if k = .sub then out else floatNumsList k out body.toList
+
+def floatNumsItems (k : FloatKind) (out : List Nat) :
+    List (Array Block) → List Nat
+  | [] => out
+  | item :: rest => floatNumsItems k (floatNumsList k out item.toList) rest
+
+def floatNumsCols (k : FloatKind) (out : List Nat) :
+    List (Option Nat × Array Block) → List Nat
+  | [] => out
+  | (_, body) :: rest => floatNumsCols k (floatNumsList k out body.toList) rest
+
+end
+
+private theorem floatNumsList_append (k : FloatKind) (out : List Nat)
+    (l1 l2 : List Block) :
+    floatNumsList k out (l1 ++ l2) = floatNumsList k (floatNumsList k out l1) l2 := by
+  induction l1 generalizing out with
+  | nil => simp [floatNumsList]
+  | cons b rest ih => simp [floatNumsList, ih]
+
+private theorem range'_glue (s m n : Nat) :
+    List.range' s m ++ List.range' (s + m) n = List.range' s (m + n) :=
+  List.range'_append_1 ..
+
+mutual
+
+/-- The numbering is exact: processing `bs` from counters `c` advances the
+`k` counter by some `n` and assigns exactly the numbers
+`c.get k + 1, …, c.get k + n` to the captioned `k`-floats, in document
+order. Instantiated at the top (`numberFloats_exact`) this is the fact
+`\ref` resolves against: a float's number is the index of its first
+appearance among captioned floats of its kind — floats never float here,
+so document order is appearance order. -/
+theorem numberFloatList_exact (k : FloatKind) (c : FloatCtr) (acc : Array Block)
+    (out : List Nat) (bs : List Block) :
+    ∃ n, ((numberFloatList c acc bs).1).get k = c.get k + n ∧
+      floatNumsList k out ((numberFloatList c acc bs).2).toList
+        = floatNumsList k out acc.toList ++ List.range' (c.get k + 1) n := by
+  match bs with
+  | [] => exact ⟨0, by simp [numberFloatList], by simp [numberFloatList]⟩
+  | b :: rest =>
+    obtain ⟨m, hcm, hnm⟩ :=
+      numberFloatOne_exact k c (floatNumsList k out acc.toList) b
+    obtain ⟨n, hcn, hnn⟩ := numberFloatList_exact k (numberFloatOne c b).1
+      (acc.push (numberFloatOne c b).2) out rest
+    refine ⟨m + n, ?_, ?_⟩
+    · show ((numberFloatList (numberFloatOne c b).1
+        (acc.push (numberFloatOne c b).2) rest).1).get k = _
+      rw [hcn, hcm, Nat.add_assoc]
+    · show floatNumsList k out ((numberFloatList (numberFloatOne c b).1
+        (acc.push (numberFloatOne c b).2) rest).2).toList = _
+      rw [hnn, Array.toList_push, floatNumsList_append]
+      simp only [floatNumsList]
+      rw [hnm, hcm, List.append_assoc,
+        show c.get k + m + 1 = (c.get k + 1) + m by omega, range'_glue]
+
+theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
+    (b : Block) :
+    ∃ n, ((numberFloatOne c b).1).get k = c.get k + n ∧
+      floatNumsOne k out (numberFloatOne c b).2
+        = out ++ List.range' (c.get k + 1) n := by
+  match b with
+  | .para _ | .section _ _ _ | .note _ | .verbatim _ _ | .logo _
+  | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ =>
+    exact ⟨0, by simp [numberFloatOne], by simp [numberFloatOne, floatNumsOne]⟩
+  | .list o items =>
+    obtain ⟨n, hc, hn⟩ := numberFloatItems_exact k c #[] out items.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsItems] using hn⟩
+  | .center body =>
+    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .quote body =>
+    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .role _ body =>
+    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .spaced _ body =>
+    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .columns cols =>
+    obtain ⟨n, hc, hn⟩ := numberFloatCols_exact k c #[] out cols.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsCols] using hn⟩
+  | .step _ _ body =>
+    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .only _ body =>
+    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .nav _ body =>
+    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .frame _ _ _ body =>
+    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .float kind _ capAbove body caption =>
+    by_cases hcap : caption.isEmpty
+    · -- No caption: no number, no bump; the body still numbers its own
+      -- figures and tables, and its letters are its own affair.
+      obtain ⟨n, hc, hn⟩ :=
+        numberFloatList_exact k { c with sub := 0 } #[] out body.toList
+      cases k with
+      | sub =>
+        refine ⟨0, ?_, ?_⟩
+        · simp [numberFloatOne, hcap, FloatCtr.get]
+        · simp [numberFloatOne, floatNumsOne, hcap]
+      | figure =>
+        refine ⟨n, ?_, ?_⟩
+        · simpa [numberFloatOne, hcap, FloatCtr.get] using hc
+        · simpa [numberFloatOne, floatNumsOne, floatNumsList, hcap,
+            FloatCtr.get] using hn
+      | table =>
+        refine ⟨n, ?_, ?_⟩
+        · simpa [numberFloatOne, hcap, FloatCtr.get] using hc
+        · simpa [numberFloatOne, floatNumsOne, floatNumsList, hcap,
+            FloatCtr.get] using hn
+    · cases k with
+      | sub =>
+        -- The collector reads only this float's own letter; the walk
+        -- restores the outer sub counter after the body.
+        cases kind with
+        | sub =>
+          refine ⟨1, ?_, ?_⟩
+          · simp [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump]
+          · simp [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              List.range'_succ]
+        | figure =>
+          refine ⟨0, ?_, ?_⟩
+          · simp [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump]
+          · simp [numberFloatOne, floatNumsOne, hcap]
+        | table =>
+          refine ⟨0, ?_, ?_⟩
+          · simp [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump]
+          · simp [numberFloatOne, floatNumsOne, hcap]
+      | figure =>
+        cases kind with
+        | figure =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .figure
+            { c.bump .figure with sub := 0 } #[] (out ++ [c.get .figure + 1])
+            body.toList
+          refine ⟨n + 1, ?_, ?_⟩
+          · have := hc
+            simp only [FloatCtr.get, FloatCtr.bump] at this ⊢
+            simp [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump, this]
+            omega
+          · have := hn
+            simp only [FloatCtr.get, FloatCtr.bump] at this
+            simp [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList, this, List.append_assoc]
+            rw [List.range'_succ]
+        | table =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .figure
+            { c.bump .table with sub := 0 } #[] out body.toList
+          refine ⟨n, ?_, ?_⟩
+          · simpa [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump] using hc
+          · simpa [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList] using hn
+        | sub =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .figure
+            { c.bump .sub with sub := 0 } #[] out body.toList
+          refine ⟨n, ?_, ?_⟩
+          · simpa [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump] using hc
+          · simpa [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList] using hn
+      | table =>
+        cases kind with
+        | table =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .table
+            { c.bump .table with sub := 0 } #[] (out ++ [c.get .table + 1])
+            body.toList
+          refine ⟨n + 1, ?_, ?_⟩
+          · have := hc
+            simp only [FloatCtr.get, FloatCtr.bump] at this ⊢
+            simp [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump, this]
+            omega
+          · have := hn
+            simp only [FloatCtr.get, FloatCtr.bump] at this
+            simp [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList, this, List.append_assoc]
+            rw [List.range'_succ]
+        | figure =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .table
+            { c.bump .figure with sub := 0 } #[] out body.toList
+          refine ⟨n, ?_, ?_⟩
+          · simpa [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump] using hc
+          · simpa [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList] using hn
+        | sub =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .table
+            { c.bump .sub with sub := 0 } #[] out body.toList
+          refine ⟨n, ?_, ?_⟩
+          · simpa [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump] using hc
+          · simpa [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList] using hn
+
+theorem numberFloatItems_exact (k : FloatKind) (c : FloatCtr)
+    (acc : Array (Array Block)) (out : List Nat) (items : List (Array Block)) :
+    ∃ n, ((numberFloatItems c acc items).1).get k = c.get k + n ∧
+      floatNumsItems k out ((numberFloatItems c acc items).2).toList
+        = floatNumsItems k out acc.toList ++ List.range' (c.get k + 1) n := by
+  match items with
+  | [] => exact ⟨0, by simp [numberFloatItems], by simp [numberFloatItems]⟩
+  | item :: rest =>
+    obtain ⟨m, hcm, hnm⟩ := numberFloatList_exact k c #[]
+      (floatNumsItems k out acc.toList) item.toList
+    obtain ⟨n, hcn, hnn⟩ := numberFloatItems_exact k
+      (numberFloatList c #[] item.toList).1
+      (acc.push (numberFloatList c #[] item.toList).2) out rest
+    refine ⟨m + n, ?_, ?_⟩
+    · show ((numberFloatItems (numberFloatList c #[] item.toList).1
+        (acc.push (numberFloatList c #[] item.toList).2) rest).1).get k = _
+      rw [hcn, hcm, Nat.add_assoc]
+    · show floatNumsItems k out ((numberFloatItems (numberFloatList c #[] item.toList).1
+        (acc.push (numberFloatList c #[] item.toList).2) rest).2).toList = _
+      rw [hnn, Array.toList_push]
+      have happ : ∀ (l1 : List (Array Block)) (o : List Nat) (x : Array Block),
+          floatNumsItems k o (l1 ++ [x])
+            = floatNumsList k (floatNumsItems k o l1) x.toList := by
+        intro l1 o x
+        induction l1 generalizing o with
+        | nil => simp [floatNumsItems]
+        | cons y rest ih => simp [floatNumsItems, ih]
+      rw [happ]
+      simp only [floatNumsList] at hnm
+      rw [hnm, hcm, List.append_assoc,
+        show c.get k + m + 1 = (c.get k + 1) + m by omega, range'_glue]
+
+theorem numberFloatCols_exact (k : FloatKind) (c : FloatCtr)
+    (acc : Array (Option Nat × Array Block)) (out : List Nat)
+    (cols : List (Option Nat × Array Block)) :
+    ∃ n, ((numberFloatCols c acc cols).1).get k = c.get k + n ∧
+      floatNumsCols k out ((numberFloatCols c acc cols).2).toList
+        = floatNumsCols k out acc.toList ++ List.range' (c.get k + 1) n := by
+  match cols with
+  | [] => exact ⟨0, by simp [numberFloatCols], by simp [numberFloatCols]⟩
+  | (w, body) :: rest =>
+    obtain ⟨m, hcm, hnm⟩ := numberFloatList_exact k c #[]
+      (floatNumsCols k out acc.toList) body.toList
+    obtain ⟨n, hcn, hnn⟩ := numberFloatCols_exact k
+      (numberFloatList c #[] body.toList).1
+      (acc.push (w, (numberFloatList c #[] body.toList).2)) out rest
+    refine ⟨m + n, ?_, ?_⟩
+    · show ((numberFloatCols (numberFloatList c #[] body.toList).1
+        (acc.push (w, (numberFloatList c #[] body.toList).2)) rest).1).get k = _
+      rw [hcn, hcm, Nat.add_assoc]
+    · show floatNumsCols k out ((numberFloatCols (numberFloatList c #[] body.toList).1
+        (acc.push (w, (numberFloatList c #[] body.toList).2)) rest).2).toList = _
+      rw [hnn, Array.toList_push]
+      have happ : ∀ (l1 : List (Option Nat × Array Block)) (o : List Nat)
+          (x : Option Nat × Array Block),
+          floatNumsCols k o (l1 ++ [x])
+            = floatNumsList k (floatNumsCols k o l1) x.2.toList := by
+        intro l1 o x
+        induction l1 generalizing o with
+        | nil => simp [floatNumsCols]
+        | cons y rest ih => simp [floatNumsCols, ih]
+      rw [happ]
+      simp only [floatNumsList] at hnm
+      rw [hnm, hcm, List.append_assoc,
+        show c.get k + m + 1 = (c.get k + 1) + m by omega, range'_glue]
+
+end
+
+/-- The numbering fact `\ref` resolves against, over the engine's own
+pass: the numbers `numberFloats` assigns to captioned floats of kind `k`,
+read in document order, are exactly `1, 2, …` up to the walk's own count —
+gapless, starting at one, in first-appearance order. -/
+theorem numberFloats_exact (k : FloatKind) (xs : Array Block) :
+    floatNumsList k [] (numberFloats xs).toList
+      = List.range' 1 (((numberFloatList {} #[] xs.toList).1).get k) := by
+  obtain ⟨n, hc, hn⟩ := numberFloatList_exact k {} #[] [] xs.toList
+  have h0 : (({} : FloatCtr)).get k = 0 := by cases k <;> rfl
+  rw [h0] at hc hn
+  simpa [numberFloats, floatNumsList, hc] using hn
+
+/-- A subfloat's letter is its index within its own parent: every float
+body enters the walk with the sub counter reset to zero (the `.float` arm
+of `numberFloatOne`), so the letters assigned inside it — read shallowly,
+a nested float's letters belonging to that float — are exactly `1, 2, …`
+(subcaption: `\thesubfigure` is `(\alph{subfigure})`, an index within the
+parent figure). -/
+theorem numberFloats_sub_letters (c : FloatCtr) (body : Array Block) :
+    floatNumsList .sub []
+        ((numberFloatList { c with sub := 0 } #[] body.toList).2).toList
+      = List.range' 1
+        (((numberFloatList { c with sub := 0 } #[] body.toList).1).get .sub) := by
+  obtain ⟨n, hc, hn⟩ :=
+    numberFloatList_exact .sub { c with sub := 0 } #[] [] body.toList
+  have h0 : (({ c with sub := 0 } : FloatCtr)).get .sub = 0 := rfl
+  rw [h0] at hc hn
+  simpa [floatNumsList, hc] using hn
+
+/-- A subfloat's letter: `\alph` (1 → a, …, 26 → z). LaTeX's `\alph`
+errors past 26; past it this engine sets the number itself — degraded,
+never silent, and a 27-subfigure float has larger problems. -/
+def subLetter (n : Nat) : String :=
+  if 1 ≤ n && n ≤ 26 then String.ofList [Char.ofNat (96 + n)] else s!"{n}"
+
+/-- The caption's number prefix, derived from the node — the one
+definition site both backends read, so the PDF and the HTML spell a
+float's number identically. Sourced: article's `\@makecaption` sets
+`\fnum@figure: text` with `\fnum@figure` = `\figurename~\thefigure`
+(classes.dtx §\@makecaption), and subcaption's `\thesubfigure` is
+`(\alph{subfigure})` followed by a space (subcaption.dtx, the default
+`labelformat=parens`, `labelsep=space`). A captionless float carries no
+number and no prefix. -/
+def captionPrefix (kind : FloatKind) (num : Option Nat) : Option String :=
+  num.map fun n =>
+    match kind with
+    | .figure => s!"Figure {n}: "
+    | .table => s!"Table {n}: "
+    | .sub => s!"({subLetter n}) "
+
+/-- A caption with its number prefix set in front: what a backend hands
+its text machinery. The prefix is furniture the backend adds, like a list
+marker — the IR's caption stays the declared text, so the census reads
+declarations, not renderings. -/
+def numberedCaption (kind : FloatKind) (num : Option Nat)
+    (caption : Array Inline) : Array Inline :=
+  match captionPrefix kind num with
+  | some p => (Inline.text p :: caption.toList).toArray
+  | none => caption
 
 /-- Verbatim content, line-split: the newline after `\begin{verbatim}` and
 the blank tail before `\end{verbatim}` delimit — every trailing blank line
@@ -2124,11 +2617,15 @@ def dumpBlock (ind : String) (b : Block) : String :=
     let ruleLines := String.join (rules.toList.map fun (i, r) =>
       s!"{ind}  rule {i} {dumpTableRule r}\n")
     dumpTableRows (ind ++ "  ") (s!"{ind}table {pads}\n" ++ ruleLines) rows.toList
-  | .float kind capAbove body caption =>
+  | .float kind num capAbove body caption =>
     let k := match kind with
       | .figure => "figure"
       | .table => "table"
-    s!"{ind}float {k}{if capAbove then " caption-above" else ""}\n" ++
+      | .sub => "sub"
+    let n := match num with
+      | some n => s!" {n}"
+      | none => ""
+    s!"{ind}float {k}{n}{if capAbove then " caption-above" else ""}\n" ++
     (if caption.isEmpty then ""
      else s!"{ind}  caption\n" ++ dumpInlines (ind ++ "    ") caption) ++
     dumpBlocks (ind ++ "  ") body
@@ -2301,7 +2798,7 @@ def maxStepBlock : Block → Nat
   -- A cell's content may step (an overlay reveal per row); the caption is
   -- furniture and does not multiply pages, as a frame title does not.
   | .table _ _ _ rows _ => maxStepTableRows rows.toList
-  | .float _ _ body _ => maxStepBlockList body.toList
+  | .float _ _ _ body _ => maxStepBlockList body.toList
 
 def maxStepTableRows : List (Array (Array Inline)) → Nat
   | [] => 1
@@ -2396,8 +2893,8 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
   -- weight; the caption covers and dims with its float.
   | .table cols pl pr rows rules =>
     .table cols pl pr (dimTableRows cover k pending #[] rows.toList) rules
-  | .float fk ca body caption =>
-    .float fk ca (dimBlockList cover k pending #[] body.toList)
+  | .float fk num ca body caption =>
+    .float fk num ca (dimBlockList cover k pending #[] body.toList)
       (if pending then
         if caption.isEmpty then caption
         else #[.colored cover.plain none (dimInlineList cover k true #[] caption.toList)]
@@ -2522,7 +3019,7 @@ def unwrapItemStep : Block → Block
   -- hide below either, so both nodes pass whole (float body walked: a
   -- listed figure body may hold a list).
   | .table cols pl pr rows rules => .table cols pl pr rows rules
-  | .float k ca body caption => .float k ca (unwrapItemStepList #[] body.toList) caption
+  | .float k n ca body caption => .float k n ca (unwrapItemStepList #[] body.toList) caption
 
 def unwrapItemStepItems (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
@@ -2604,7 +3101,7 @@ def blockTextOne (acc : String) : Block → String
   -- as "no cell silently vanished". The caption counts with its float,
   -- before the body, as a frame's title does.
   | .table _ _ _ rows _ => blockTextTableRows acc rows.toList
-  | .float _ _ body caption => blockTextList (acc ++ plainText caption) body.toList
+  | .float _ _ _ body caption => blockTextList (acc ++ plainText caption) body.toList
 
 def blockTextTableRows (acc : String) : List (Array (Array Inline)) → String
   | [] => acc
@@ -2661,7 +3158,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .picture _ => out
   -- Cells and captions hold inline content; no heading can stand in either.
   | .table _ _ _ _ _ => out
-  | .float _ _ body _ => headingLevelList out body.toList
+  | .float _ _ _ body _ => headingLevelList out body.toList
 
 def headingLevelItems (out : Array Nat) : List (Array Block) → Array Nat
   | [] => out
@@ -3000,7 +3497,7 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
     rw [dimBlock]
     simp [blockTextOne, dimTableRows_text cover k pending rows.toList #[] acc,
       blockTextTableRows]
-  | .float fk ca body caption =>
+  | .float fk num ca body caption =>
     rw [dimBlock]
     by_cases h : pending = true
     · by_cases hc : caption.isEmpty
@@ -3128,7 +3625,7 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
       blockTextList]
-  | .float k ca body caption =>
+  | .float k n ca body caption =>
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
       blockTextList]
@@ -3167,6 +3664,104 @@ theorem unwrapItemSteps_text : Conserves blocksText unwrapItemSteps := fun xs =>
   simp [blocksText, unwrapItemSteps, unwrapItemStepList_text xs.toList #[] "",
     blockTextList]
 
+-- Float numbering conserves the census: the pass writes the `num` field
+-- and nothing else, so no caption and no body content moves. Same
+-- accumulator-lemma-then-mutual-induction shape as the walks above.
+
+mutual
+
+theorem numberFloatList_text (c : FloatCtr) (acc : Array Block)
+    (bs : List Block) (s : String) :
+    blockTextList s ((numberFloatList c acc bs).2).toList
+      = blockTextList (blockTextList s acc.toList) bs := by
+  match bs with
+  | [] => simp [numberFloatList, blockTextList]
+  | b :: rest =>
+    show blockTextList s ((numberFloatList (numberFloatOne c b).1
+      (acc.push (numberFloatOne c b).2) rest).2).toList = _
+    rw [numberFloatList_text (numberFloatOne c b).1
+      (acc.push (numberFloatOne c b).2) rest s]
+    rw [Array.toList_push, blockTextList_chain]
+    simp [blockTextList, numberFloatOne_text c b]
+
+theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
+    blockTextOne s (numberFloatOne c b).2 = blockTextOne s b := by
+  match b with
+  | .para _ | .section _ _ _ | .note _ | .verbatim _ _ | .logo _
+  | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
+  | .list o items =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatItems_text c #[] items.toList, blockTextItems]
+  | .center body =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatList_text c #[] body.toList, blockTextList]
+  | .quote body =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatList_text c #[] body.toList, blockTextList]
+  | .role _ body =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatList_text c #[] body.toList, blockTextList]
+  | .spaced _ body =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatList_text c #[] body.toList, blockTextList]
+  | .columns cols =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatCols_text c #[] cols.toList, blockTextColumns]
+  | .step _ _ body =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatList_text c #[] body.toList, blockTextList]
+  | .only _ body =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatList_text c #[] body.toList, blockTextList]
+  | .nav _ body =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatList_text c #[] body.toList, blockTextList]
+  | .frame _ _ _ body =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatList_text c #[] body.toList, blockTextList]
+  | .float kind _ capAbove body caption =>
+    simp [numberFloatOne, blockTextOne, numberFloatList_text, blockTextList]
+
+theorem numberFloatItems_text (c : FloatCtr) (acc : Array (Array Block))
+    (items : List (Array Block)) (s : String) :
+    blockTextItems s ((numberFloatItems c acc items).2).toList
+      = blockTextItems (blockTextItems s acc.toList) items := by
+  match items with
+  | [] => simp [numberFloatItems, blockTextItems]
+  | item :: rest =>
+    show blockTextItems s ((numberFloatItems (numberFloatList c #[] item.toList).1
+      (acc.push (numberFloatList c #[] item.toList).2) rest).2).toList = _
+    rw [numberFloatItems_text (numberFloatList c #[] item.toList).1
+      (acc.push (numberFloatList c #[] item.toList).2) rest s]
+    rw [Array.toList_push, blockTextItems_chain]
+    simp [blockTextItems, numberFloatList_text c #[] item.toList, blockTextList]
+
+theorem numberFloatCols_text (c : FloatCtr)
+    (acc : Array (Option Nat × Array Block))
+    (cols : List (Option Nat × Array Block)) (s : String) :
+    blockTextColumns s ((numberFloatCols c acc cols).2).toList
+      = blockTextColumns (blockTextColumns s acc.toList) cols := by
+  match cols with
+  | [] => simp [numberFloatCols, blockTextColumns]
+  | (w, body) :: rest =>
+    show blockTextColumns s ((numberFloatCols (numberFloatList c #[] body.toList).1
+      (acc.push (w, (numberFloatList c #[] body.toList).2)) rest).2).toList = _
+    rw [numberFloatCols_text (numberFloatList c #[] body.toList).1
+      (acc.push (w, (numberFloatList c #[] body.toList).2)) rest s]
+    rw [Array.toList_push, blockTextColumns_chain]
+    simp [blockTextColumns, numberFloatList_text c #[] body.toList, blockTextList]
+
+end
+
+/-- Numbering assigns numbers and nothing else: the text census is fixed,
+so no caption and no content is touched by the pass — the prefix a backend
+sets in front of a caption (`numberedCaption`) is furniture the backend
+adds, like a list marker, never a rewrite of the document. -/
+theorem numberFloats_text : Conserves blocksText numberFloats := fun xs => by
+  simp [blocksText, numberFloats, numberFloatList_text {} #[] xs.toList "",
+    blockTextList]
+
 -- Backend conditionals: `keepFor` is one backend's view of the document,
 -- and `keepFor_covers` is what stops a conditional from becoming a silent
 -- delete. Structural recursion through `List`, as the walks above.
@@ -3184,7 +3779,7 @@ def keptBy (t : String) : Block → Bool
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
   | .frame _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
   | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak
-  | .table _ _ _ _ _ | .float _ _ _ _ => true
+  | .table _ _ _ _ _ | .float _ _ _ _ _ => true
 
 mutual
 
@@ -3219,7 +3814,7 @@ def keepForOne (t : String) : Block → Block
   -- Cells hold inlines: no conditional can nest in a table. A float's
   -- body is blocks, so the walk carries in, as through a frame.
   | .table c pl pr rows rules => .table c pl pr rows rules
-  | .float k ca body caption => .float k ca (keepForList t body.toList).toArray caption
+  | .float k n ca body caption => .float k n ca (keepForList t body.toList).toArray caption
 
 def keepForList (t : String) : List Block → List Block
   | [] => []
@@ -3285,7 +3880,7 @@ def textLeavesOne (acc : List String) : Block → List String
   -- all, which is what the conservation theorem needs to range over. The
   -- caption is a leaf beside its float's body, as a frame's title is.
   | .table _ _ _ rows _ => textLeavesTableRows acc rows.toList
-  | .float _ _ body caption => textLeavesList (plainText caption :: acc) body.toList
+  | .float _ _ _ body caption => textLeavesList (plainText caption :: acc) body.toList
 
 def textLeavesTableRows (acc : List String) :
     List (Array (Array Inline)) → List String
@@ -3340,7 +3935,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak => true
-  | .float _ _ body _ => orphanFreeList avail body.toList
+  | .float _ _ _ body _ => orphanFreeList avail body.toList
 
 def orphanFreeItems (avail : List String) : List (Array Block) → Bool
   | [] => true
@@ -3446,7 +4041,7 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .table c pl pr rows rules =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesTableRows_acc acc rows.toList
-  | .float k ca body caption =>
+  | .float k n ca body caption =>
     rw [textLeavesOne, textLeavesOne,
       textLeavesList_acc (plainText caption :: acc) body.toList,
       textLeavesList_acc [plainText caption] body.toList]
@@ -3562,7 +4157,7 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     -- kept whole by every backend: its own leaves survive untouched
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
-  | .float k ca body caption =>
+  | .float k n ca body caption =>
     intro s hs
     rw [textLeavesOne, textLeavesList_acc [plainText caption] body.toList,
       List.mem_append] at hs
@@ -3797,7 +4392,7 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   -- A cell may carry an inline image; a float's body is where
   -- `\includegraphics` usually stands, and a caption may hold one too.
   | .table _ _ _ rows _ => imageSrcsTableRows out rows.toList
-  | .float _ _ body caption =>
+  | .float _ _ _ body caption =>
     imageSrcsBlockList (imageSrcsInlines out caption) body.toList
 
 def imageSrcsTableRows (out : Array String) :

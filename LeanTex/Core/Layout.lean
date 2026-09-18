@@ -869,7 +869,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   -- Every cell's text, and a caption's, reaches the scalar census: the
   -- fallback scan must see a glyph before layout asks a face for it.
   | .table _ _ _ rows _ => scalarTextTableRows out rows.toList
-  | .float _ _ body caption =>
+  | .float _ _ _ body caption =>
     scalarTextList (textAndMath out caption) itemD enumD body.toList
 
 private def scalarTextTableRows (out : ScalarAcc) :
@@ -3157,12 +3157,15 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     collectPicture a pic indent false
   | .table cols padL padR rows rules =>
     collectTable a pats fs cols padL padR rows rules indent false
-  | .float _ capAbove body caption =>
+  | .float kind num capAbove body caption =>
     -- Set off from the text by `floatsep` on both sides, the caption bound
     -- `captionsep` from the content (`caption_gaps_rhythm` holds the
     -- defaults to the rhythm); the body centres, the figure convention the
     -- old center-wrapping gave. Both gaps are `\addvspace`-style: an
-    -- element's own space, never stacked onto a neighbour's.
+    -- element's own space, never stacked onto a neighbour's. The caption
+    -- sets with its number in front — `Ir.numberedCaption`, the one site
+    -- both backends spell a float's number from.
+    let caption := Ir.numberedCaption kind num caption
     let floatSep := a.resolve ((a.tokens.find? "floatsep").getD Ir.floatSepDefault)
     let capSep := a.resolve ((a.tokens.find? "captionsep").getD Ir.captionSepDefault)
     let a := a.addvspace floatSep

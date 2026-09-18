@@ -4686,7 +4686,7 @@ def censusTable :
     ("one page", c.size == 1),
     ("the sentence around the inline image ships",
       hasStr (censusText c) "sits in the line"),
-    ("the figure caption ships", hasStr (censusText c) "Three rectangles, fitted")]),
+    ("the figure caption ships with its number", hasStr (censusText c) "Figure 1: Three rectangles, fitted")]),
   ("webpage", fun _ c => [
     ("one page", c.size == 1),
     ("the name ships", hasStr (censusText c) "Doe"),
@@ -4730,11 +4730,11 @@ def censusTable :
       && hasStr (censusText c) "Meaning"),
     ("every body cell ships", hasStr (censusText c) "invented row"
       && hasStr (censusText c) "alpha" && hasStr (censusText c) "beta"),
-    ("both table captions ship",
-      hasStr (censusText c) "A booktabs table with declared spacing."
-        && hasStr (censusText c) "The caption above: the table convention."),
-    ("the figure caption ships",
-      hasStr (censusText c) "A figure’s caption, bound below what it captions."),
+    ("both table captions ship, each with its number in front",
+      hasStr (censusText c) "Table 1: A booktabs table with declared spacing."
+        && hasStr (censusText c) "Table 2: The caption above: the table convention."),
+    ("the figure caption ships, numbered on its own counter",
+      hasStr (censusText c) "Figure 1: A figure’s caption, bound below what it captions."),
     -- top + mid + bottom, then top + cmid + bottom: six drawn rules.
     ("the booktabs rules draw", ((c[0]?.map (·.rules)).getD 0) == 6),
     ("cells sit in their declared columns: the second column right of the first",
@@ -5790,12 +5790,36 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
       (·.code == "W0338"))
   t "a caption written above its table stands above"
     (match (elabStr (wrap "\\begin{table}\\caption{Above}\\begin{tabular}{l}a\\\\\\end{tabular}\\end{table}")).1.body with
-     | #[.float .table true _ cap] => Ir.plainText cap == "Above"
+     | #[.float .table _ true _ cap] => Ir.plainText cap == "Above"
      | _ => false)
   t "a caption written below its table stands below"
     (match (elabStr (wrap "\\begin{table}\\begin{tabular}{l}a\\\\\\end{tabular}\\caption{Below}\\end{table}")).1.body with
-     | #[.float .table false _ cap] => Ir.plainText cap == "Below"
+     | #[.float .table _ false _ cap] => Ir.plainText cap == "Below"
      | _ => false)
+  -- Numbering: each kind counts its own captioned floats in document
+  -- order (numberFloats_exact is the theorem; these witness the wiring
+  -- from elaboration through the assignment pass).
+  t "captioned floats number per kind in document order"
+    ((elabStr (wrap ("\\begin{figure}\\caption{f one}\\end{figure}\n" ++
+      "\\begin{table}\\caption{t one}\\begin{tabular}{l}a\\\\\\end{tabular}\\end{table}\n" ++
+      "\\begin{figure}\\caption{f two}\\end{figure}"))).1.body.toList.filterMap
+      (fun b => match b with
+        | .float k n _ _ _ => some (k, n)
+        | _ => none) ==
+      [(.figure, some 1), (.table, some 1), (.figure, some 2)])
+  t "a captionless float bears no number and steps no counter"
+    ((elabStr (wrap ("\\begin{figure}bare\\end{figure}\n" ++
+      "\\begin{figure}\\caption{first}\\end{figure}"))).1.body.toList.filterMap
+      (fun b => match b with
+        | .float _ n _ _ _ => some n
+        | _ => none) == [none, some 1])
+  -- The prefix is one definition site both backends read.
+  t "caption prefixes spell from the node"
+    (Ir.captionPrefix .figure (some 2) == some "Figure 2: " &&
+     Ir.captionPrefix .table (some 1) == some "Table 1: " &&
+     Ir.captionPrefix .sub (some 1) == some "(a) " &&
+     Ir.captionPrefix .sub (some 2) == some "(b) " &&
+     Ir.captionPrefix .figure none == none)
   -- The caption seam: nothing keeps a float and its caption on one page
   -- yet, so the break is reported (W0339, pending), never silent. The
   -- `\vspace` sweep parks the object at every position around the page
@@ -7939,7 +7963,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (figDiags.all (·.severity == .note) && figDiags.any (·.code == "N0102"))
   t "figure elaborates to a float carrying its caption"
     (match figDoc.body.toList with
-     | [.float .figure false inner cap] =>
+     | [.float .figure _ false inner cap] =>
        match inner.toList with
        | [.para xs] =>
          (xs.any fun x => match x with

@@ -2655,7 +2655,7 @@ has nowhere for a float to float" pos
             let mut inner ← elabBlocks ctx rest
             unless caption.isEmpty do
               inner := Ir.setAltBlocks (Ir.plainText caption) inner
-            blocks := blocks.push (.float kind capAbove inner caption)
+            blocks := blocks.push (.float kind none capAbove inner caption)
           else if n == "columns" then
             -- `[T]`-and-friends alignment options are ignored with a note:
             -- columns are top-aligned (PLAN, M5). A column's width is its
@@ -3898,7 +3898,11 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     -- declares any \page geometry keeps every value it named.
     page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
   ctx := { ctx with slides := docClass == "slides", styles := styles }
-  let blocks ← elabBlocks ctx body
+  -- Numbering is a property of the finished document, not of any one
+  -- elaboration site: `Ir.numberFloats` fills every captioned float's
+  -- number in document order (`numberFloats_exact` is the fact `\ref`
+  -- will resolve against), once, before any backend reads the body.
+  let blocks := Ir.numberFloats (← elabBlocks ctx body)
   -- Body declarations do NOT displace the document state: `doc.palette`
   -- and `doc.tokens` stay the preamble+theme state — epoch 0 — and each
   -- body declaration rides its own `.setPalette`/`.setTokens` block, so a
