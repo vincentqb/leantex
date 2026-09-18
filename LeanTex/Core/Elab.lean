@@ -285,7 +285,18 @@ def escapes : List (String × String) :=
   [("%", "%"), ("{", "{"), ("}", "}"), ("$", "$"), ("&", "&"), ("#", "#"),
    ("_", "_"), ("~", "~"), (" ", " "),
    -- Control-symbol spaces, TeX's spelling. Fixed widths, so they are text.
-   (",", "\u2009"), (":", "\u2005"), (";", "\u2004")]
+   (",", "\u2009"), (":", "\u2005"), (";", "\u2004"),
+   -- The named fixed spaces, TeXbook widths as Unicode's own space
+   -- characters (plain.tex: \quad is 1 em, \qquad 2, \enspace ½;
+   -- U+2003 EM SPACE, U+2002 EN SPACE). Rows here, not in
+   -- `Lex.textSymbols`: a space command swallows the source space after
+   -- it, as in TeX — its content already is the space.
+   ("quad", "\u2003"), ("qquad", "\u2003\u2003"), ("enspace", "\u2002"),
+   -- The logos set as their plain words (the kerned lowering is a
+   -- rendering nicety, the name is the content), and textcomp's symbol
+   -- commands beside their bare-symbol siblings in `Lex.textSymbols`.
+   ("LaTeX", "LaTeX"), ("TeX", "TeX"),
+   ("textdegree", "°"), ("texteuro", "€")]
 
 def blockOnly : List String :=
   ["section", "subsection", "subsubsection", "item", "documentclass", "define",

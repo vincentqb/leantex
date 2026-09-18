@@ -849,6 +849,16 @@ where
       say .N0102 "'\\pagebreak' demand levels are ignored: the break is taken" pos
     return some (#[.ctrl "pagebreak" pos], j)
   | "thepage" => return some (#[.ctrl "pagenumber" pos], start)
+  | "today" =>
+    -- A date is an input, and the artifact is a function of the document
+    -- and its fonts alone: core reads no clock, or two builds of one
+    -- source would disagree. Refused deliberately, naming what the author
+    -- can write, instead of falling through as a generic unknown command.
+    sayOnce "ctrl:today" .W0104
+      "'\\today' asks for the day the document is built; the engine reads no \
+clock, so nothing is inserted" pos
+      (help := "write the date as text where it should appear; \\allow{W0104} accepts the skip")
+    return some (#[], start)
   | "ul" =>
     -- soul's plain underline; the native draws it from the font's metrics
     -- and skips descenders, which is what \varul existed to fake.
