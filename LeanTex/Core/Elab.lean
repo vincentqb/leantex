@@ -364,9 +364,6 @@ private def spanRawsEnd (raws : Array Raw) (p : Raw → Bool) : Nat := Id.run do
     | none => break
   return b
 
-private def skipSpaces (raws : Array Raw) (i : Nat) : Nat :=
-  spanRaws raws i isSpace
-
 /-- The array between its edge runs of `p`. -/
 private def trimBy (raws : Array Raw) (p : Raw → Bool) : Array Raw :=
   raws.extract (spanRaws raws 0 p) (spanRawsEnd raws p)

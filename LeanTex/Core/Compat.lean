@@ -184,14 +184,6 @@ end
 private def synthAt (s : String) (pos : Pos) : M (Array Raw) := do
   return (← synth s).map (rebase pos)
 
-private def skipSpaces (raws : Array Raw) (i : Nat) : Nat := Id.run do
-  let mut j := i
-  for _ in [i:raws.size] do
-    match raws[j]? with
-    | some .space => j := j + 1
-    | _ => break
-  return j
-
 /-- One optional `[...]` argument, as source text. -/
 private def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat := Id.run do
   let j := skipSpaces raws i

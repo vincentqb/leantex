@@ -182,6 +182,17 @@ def inputEnvFile? (name : String) : Option String :=
   if name.startsWith "@input:" then some ((name.drop "@input:".length).toString)
   else none
 
+/-- The index past the leading run of `.space` raws at `i`: the one spaces
+scan over sibling raws, shared by every consumer of `Raw` — a caller never
+hand-rolls its own. -/
+def skipSpaces (raws : Array Raw) (i : Nat) : Nat := Id.run do
+  let mut j := i
+  for _ in [i:raws.size] do
+    if h : j < raws.size then
+      if raws[j] matches .space then j := j + 1 else break
+    else break
+  return j
+
 mutual
 
 def rawSrc (raws : Array Raw) : String :=
