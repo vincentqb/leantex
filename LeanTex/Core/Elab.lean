@@ -2610,7 +2610,13 @@ the box takes the whole measure" pos
             -- ignored with a note saying so. Its caption keeps its source
             -- side — before the content it stands above, the table
             -- convention — and becomes the alt text of the images it
-            -- captions; float numbering is not modelled yet (PLAN M8).
+            -- captions; `numberFloats` assigns the number afterwards.
+            -- A `{subfigure}`/`{subtable}` child (subcaption §2: a
+            -- minipage-shaped box with its own caption, lettered under the
+            -- parent's number) is a `.sub` float in a column of its
+            -- declared width; consecutive ones share one `.columns` row so
+            -- they stand side by side, and an `\hfill` between them is the
+            -- gutter the columns layout already distributes.
             let kind : Ir.FloatKind :=
               if n == "table" || n == "table*" then .table else .figure
             let mut k := 0
@@ -2625,6 +2631,8 @@ has nowhere for a float to float" pos
                 warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
                 break
               | .content => break
+            let mut innerBlocks : Array Block := #[]
+            let mut cols : Array (Option Nat × Array Block) := #[]
             let mut rest : Array Raw := #[]
             let mut caption : Array Inline := #[]
             let mut capAbove := false
@@ -2642,17 +2650,101 @@ has nowhere for a float to float" pos
                       diag ctx .W0311 s!"this '\\caption' replaces the {n}'s earlier caption"
                         (some cpos) (help := "the last one wins; remove the other '\\caption'")
                     caption ← elabInlines ctx t
-                    capAbove := rest.all isSpaceOrPar
+                    capAbove := innerBlocks.isEmpty && cols.isEmpty
+                      && rest.all isSpaceOrPar
                     j := j + 1
                   | _ => diag ctx .E0304 "'\\caption' needs a {text} group" cpos
                 | .ctrl "centering" _ =>
                   -- The float centres already; the declaration is satisfied.
                   j := j + 1
+                | .ctrl "hfill" _ =>
+                  -- Between two subfigures the fill is the gutter, which
+                  -- the columns layout distributes by itself; anywhere
+                  -- else it is ordinary content.
+                  if !cols.isEmpty && rest.all isSpaceOrPar then
+                    j := j + 1
+                  else
+                    rest := rest.push body[j]
+                    j := j + 1
+                | .env sn sbody spos =>
+                  if sn == "subfigure" || sn == "subtable" then
+                    if rest.any (!isSpaceOrPar ·) then
+                      unless cols.isEmpty do
+                        innerBlocks := innerBlocks.push (.columns cols)
+                        cols := #[]
+                      innerBlocks := innerBlocks ++ (← elabBlocks ctx rest)
+                    rest := #[]
+                    -- The minipage shape: `[pos]` baseline options are
+                    -- noted and ignored (the box stands top-aligned in its
+                    -- row), the `{width}` group is a fraction of the
+                    -- measure, exactly as a column's.
+                    let mut m := 0
+                    for _ in [0:3] do
+                      match scanBracketArg sbody m spos with
+                      | .took m' =>
+                        warnOnce ctx "subfigure:options" .N0102
+                          s!"'\{{sn}}' [pos] options are ignored: the box \
+stands top-aligned in its row" spos
+                        m := m'
+                      | .unclosed bpos =>
+                        warnUnclosed ctx s!"'\\begin\{{sn}}'" bpos
+                        break
+                      | .content => break
+                    m := skipSpaces sbody m
+                    let mut width : Option Nat := none
+                    if let some (.group wRaws _) := sbody[m]? then
+                      m := m + 1
+                      let src := rawSrc wRaws
+                      width := columnWidth src
+                      if width.isNone then
+                        warnOnce ctx "env:subfigure-width" .W0314
+                          s!"'\{{sn}}' width '{src}' is not a fraction of the \
+text width; the box shares the leftover" spos
+                          (help := "write a factor like {0.48\\textwidth}")
+                    else
+                      diag ctx .E0304 s!"'\\begin\{{sn}}' needs a \{width} group" spos
+                    let mut sRest : Array Raw := #[]
+                    let mut sCaption : Array Inline := #[]
+                    let mut sCapAbove := false
+                    let mut q := m
+                    for _ in [m:sbody.size] do
+                      if hq : q < sbody.size then
+                        match sbody[q] with
+                        | .ctrl "caption" cpos =>
+                          q := q + 1
+                          let (q2, _, _) ← skipOptArg ctx "caption" sbody q cpos
+                          q := skipSpaces sbody q2
+                          match sbody[q]? with
+                          | some (.group t _) =>
+                            unless sCaption.isEmpty do
+                              diag ctx .W0311
+                                s!"this '\\caption' replaces the {sn}'s earlier caption"
+                                (some cpos)
+                                (help := "the last one wins; remove the other '\\caption'")
+                            sCaption ← elabInlines ctx t
+                            sCapAbove := sRest.all isSpaceOrPar
+                            q := q + 1
+                          | _ => diag ctx .E0304 "'\\caption' needs a {text} group" cpos
+                        | .ctrl "centering" _ => q := q + 1
+                        | r' =>
+                          sRest := sRest.push r'
+                          q := q + 1
+                      else break
+                    let mut sInner ← elabBlocks ctx sRest
+                    unless sCaption.isEmpty do
+                      sInner := Ir.setAltBlocks (Ir.plainText sCaption) sInner
+                    cols := cols.push (width, #[.float .sub none sCapAbove sInner sCaption])
+                    j := j + 1
+                  else
+                    rest := rest.push body[j]
+                    j := j + 1
                 | r' =>
                   rest := rest.push r'
                   j := j + 1
               else break
-            let mut inner ← elabBlocks ctx rest
+            unless cols.isEmpty do
+              innerBlocks := innerBlocks.push (.columns cols)
+            let mut inner := innerBlocks ++ (← elabBlocks ctx rest)
             unless caption.isEmpty do
               inner := Ir.setAltBlocks (Ir.plainText caption) inner
             blocks := blocks.push (.float kind none capAbove inner caption)

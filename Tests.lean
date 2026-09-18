@@ -110,7 +110,7 @@ def goldenNames : List String :=
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav",
    "icons",
-   "diagram", "diagram-overflow", "tables", "tables-ragged",
+   "diagram", "diagram-overflow", "tables", "tables-ragged", "subfigures",
    "math-companion", "math-first"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
@@ -4748,6 +4748,20 @@ def censusTable :
       hasStr (censusText c) "alpha" && hasStr (censusText c) "gamma"
         && hasStr (censusText c) "delta" && hasStr (censusText c) "epsilon"),
     ("the rules draw", ((c[0]?.map (·.rules)).getD 0) == 2)]),
+  ("subfigures", fun _ c => [
+    ("one page", c.size == 1),
+    ("both panels ship their diagram labels",
+      hasStr (censusText c) "left box" && hasStr (censusText c) "right box"),
+    ("the lettered subcaptions ship",
+      hasStr (censusText c) "(a) The first invented panel."
+        && hasStr (censusText c) "(b) The second invented panel."),
+    ("the parent caption ships its figure number",
+      hasStr (censusText c) "Figure 1: Two invented panels side by side."),
+    ("the second figure keeps the document-order counter",
+      hasStr (censusText c) "Figure 2: The plain figure, numbered second."),
+    ("the panels stand side by side: the right label right of the left",
+      ((lineXOf c 0 "left box").bind fun xl => (lineXOf c 0 "right box").map
+        fun xr => decide (xl < xr)).getD false)]),
   ("math", fun _ c => [
     ("one page", c.size == 1),
     ("prose around the display ships",
@@ -5820,6 +5834,43 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      Ir.captionPrefix .sub (some 1) == some "(a) " &&
      Ir.captionPrefix .sub (some 2) == some "(b) " &&
      Ir.captionPrefix .figure none == none)
+  -- subcaption's subfigure: a minipage-shaped box with its own caption,
+  -- lettered under the parent's number (subcaption §2). Consecutive ones
+  -- share a `.columns` row; the `\hfill` between them is the gutter.
+  let subSrc := wrap ("\\begin{figure}\\centering\n" ++
+    "\\begin{subfigure}[t]{0.4\\textwidth}\\centering\nleft panel\n" ++
+    "\\caption{First sub}\\end{subfigure}\n\\hfill\n" ++
+    "\\begin{subfigure}[t]{0.4\\textwidth}\\centering\nright panel\n" ++
+    "\\caption{Second sub}\\end{subfigure}\n" ++
+    "\\caption{The parent}\\end{figure}")
+  t "subfigures elaborate to lettered sub floats in one columns row"
+    (match (elabStr subSrc).1.body with
+     | #[.float .figure (some 1) false inner cap] =>
+       Ir.plainText cap == "The parent" &&
+       (match inner with
+        | #[.columns #[(some w1, #[.float .sub (some 1) false _ c1]),
+                       (some w2, #[.float .sub (some 2) false _ c2])]] =>
+          w1 == 400 && w2 == 400 &&
+          Ir.plainText c1 == "First sub" && Ir.plainText c2 == "Second sub"
+        | _ => false)
+     | _ => false)
+  t "a subfigure outside a figure stays an unknown environment"
+    ((elabStr (wrap "\\begin{subfigure}{0.4\\textwidth}x\\caption{c}\\end{subfigure}")).2.any
+      (·.code == "W0302"))
+  t "subfigure letters reset per parent"
+    (match (elabStr (wrap ("\\begin{figure}\n" ++
+      "\\begin{subfigure}{0.9\\textwidth}a\\caption{one}\\end{subfigure}\n" ++
+      "\\caption{P1}\\end{figure}\n" ++
+      "\\begin{figure}\n" ++
+      "\\begin{subfigure}{0.9\\textwidth}b\\caption{two}\\end{subfigure}\n" ++
+      "\\caption{P2}\\end{figure}"))).1.body with
+     | #[.float .figure (some 1) false i1 _, .float .figure (some 2) false i2 _] =>
+       (match i1, i2 with
+        | #[.columns #[(_, #[.float .sub (some n1) _ _ _])]],
+          #[.columns #[(_, #[.float .sub (some n2) _ _ _])]] =>
+          n1 == 1 && n2 == 1
+        | _, _ => false)
+     | _ => false)
   -- The caption seam: nothing keeps a float and its caption on one page
   -- yet, so the break is reported (W0339, pending), never silent. The
   -- `\vspace` sweep parks the object at every position around the page
