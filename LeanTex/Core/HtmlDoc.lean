@@ -865,6 +865,10 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- and in print.
     Html.elem "aside" (blockNodesInto cfg #[] body.toList)
       #[("class", "note"), ("hidden", "hidden")]
+  | .pagebreak =>
+    -- A continuous medium has no page to break; the boundary leaves no
+    -- element behind.
+    Html.text ""
   | .spaced before body =>
     let style := s!"margin-top: {cssLength before.width}"
     Html.elem "div" (blockNodesInto cfg #[] body.toList)

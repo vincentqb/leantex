@@ -710,6 +710,18 @@ where
     let native := "\\block[before = fill]{}"
     became "\\vfill" native pos
     return some (← synthAt native pos, start)
+  | "newpage" | "clearpage" =>
+    -- One page model: with no floats to flush, \clearpage and \newpage are
+    -- the declared boundary \pagebreak names.
+    became s!"\\{name}" "\\pagebreak" pos
+    return some (#[.ctrl "pagebreak" pos], start)
+  | "pagebreak" =>
+    -- LaTeX's [0-4] demand level tunes a penalty this engine's breaker
+    -- does not weigh: every \pagebreak is taken whole.
+    let (opt, j) := takeOpt raws start
+    if opt.isSome then
+      say .N0102 "'\\pagebreak' demand levels are ignored: the break is taken" pos
+    return some (#[.ctrl "pagebreak" pos], j)
   | "thepage" => return some (#[.ctrl "pagenumber" pos], start)
   | "ul" =>
     -- soul's plain underline; the native draws it from the font's metrics

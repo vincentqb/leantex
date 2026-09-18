@@ -242,7 +242,7 @@ def escapes : List (String × String) :=
 
 def blockOnly : List String :=
   ["section", "subsection", "subsubsection", "item", "documentclass", "define",
-   "defineenv", "block", "framefoot"]
+   "defineenv", "block", "framefoot", "pagebreak"]
 
 /-- The overlay commands, dim-not-hide (PLAN M5). `\alt` is not here: it
 takes two groups and is handled beside them. -/
@@ -1387,7 +1387,7 @@ A body that ends its own paragraph (`...\par`, the LaTeX habit for a
 one-line entry) produces one, so it is a block too. -/
 def bodyIsBlockOne : Raw → Bool
   | .ctrl n _ =>
-    n == "block" || n == "par" || n == "framefoot"
+    n == "block" || n == "par" || n == "framefoot" || n == "pagebreak"
       || ["section", "subsection", "subsubsection"].contains n
   | .par _ => true
   | .verb _ _ => true
@@ -1630,6 +1630,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .ctrl "centering" _ => true
         | .ctrl "pause" _ => true
         | .ctrl "framefoot" _ => true
+        | .ctrl "pagebreak" _ => true
         -- Display math is its own centred block, as LaTeX sets a display:
         -- the paragraph splits around it. Inline `$...$` stays in its
         -- sentence.
@@ -1757,6 +1758,12 @@ a side channel, never slide content" npos
             blocks := blocks.push (.framefoot (← elabInlines ctx fbody))
           | _ =>
             diag ctx .E0304 "'\\framefoot' needs one group of inline content" fpos
+        | .ctrl "pagebreak" _ =>
+          -- The declared page boundary; adjacent boundaries never make a
+          -- blank page (the page builder closes only pages that hold
+          -- something).
+          i := i + 1
+          blocks := blocks.push .pagebreak
         | .ctrl "block" pos =>
           i := i + 1
           -- \block[before = <len>]{content}

@@ -121,6 +121,8 @@ private def blockInto (ind acc : String) : Block → String
   | .note _ => acc
   -- Frame-footer chrome is page furniture, as the running head is.
   | .framefoot _ => acc
+  -- A continuous medium has no page to break.
+  | .pagebreak => acc
   -- A logo is page furniture, scoped and replayed per page; a continuous
   -- text has no page corner to put it in.
   | .logo _ => acc

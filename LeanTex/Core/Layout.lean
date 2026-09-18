@@ -865,6 +865,8 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   | .verbatim _ s => { out with texts := out.texts.push s }
   -- A rule has no glyphs.
   | .rule _ _ _ => out
+  -- A page boundary ships no ink.
+  | .pagebreak => out
   -- A picture's labels are set as glyph runs: their scalars are asked of
   -- the body face like any other text.
   | .picture pic => { out with texts := out.texts ++ pic.labelTexts }
@@ -2915,6 +2917,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   | .note _ =>
     -- A speaker note is not handout content: no lines, no gap.
     a
+  | .pagebreak =>
+    -- The declared boundary: the builder closes only pages holding
+    -- something, so adjacent breaks never make a blank page.
+    a.pageBreak
   | .logo content =>
     -- A stateful declaration: the pages from here on carry this content at
     -- their corner. No lines, no gap; placement reads the spans.

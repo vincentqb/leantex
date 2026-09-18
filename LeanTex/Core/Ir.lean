@@ -858,6 +858,12 @@ inductive Block where
   content clears it (`\logo{}` after a frame is how a deck scopes a logo to
   one frame). The preamble form is `Doc.logo`, the initial state. -/
   | logo (content : Array Inline)
+  /-- `\pagebreak`/`\newpage`: a declared page boundary. The PDF opens a
+  fresh page (two adjacent boundaries never make a blank one — the builder
+  closes only pages that hold something); HTML and markdown are continuous
+  media with no page to break, so both keep nothing, and the node ships no
+  ink of its own. -/
+  | pagebreak
   /-- One slide. First-class and never flattened into article paragraphs:
   HTML makes it a `<section>` of the deck, the PDF handout gives it a page.
   An empty title is a bare frame. `standout` is beamer's `[standout]`: the
@@ -1689,6 +1695,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
     dumpBlocks (ind ++ "  ") body
   | .framefoot content =>
     s!"{ind}framefoot\n" ++ dumpInlines (ind ++ "  ") content
+  | .pagebreak => s!"{ind}pagebreak\n"
   | .rule color name thickness =>
     let nm := match name with
       | some n => s!" {n}"
@@ -1875,6 +1882,7 @@ def maxStepBlock : Block → Nat
   | .note _ => 1
   | .frame _ _ _ _ => 1
   | .framefoot _ => 1
+  | .pagebreak => 1
   | .logo _ => 1
   | .rule _ _ _ => 1
   -- A picture is concrete ink with no overlay structure inside it.
@@ -1950,6 +1958,7 @@ def shadeBlock (cover : Cover) : Block → Block
   | .note body => .note body
   | .frame t st v body => .frame t st v body
   | .framefoot content => .framefoot content
+  | .pagebreak => .pagebreak
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
   -- A covered picture is the same picture, quieter: each shape takes its
@@ -2045,6 +2054,7 @@ def dimBlock (cover : Cover) (k : Nat) : Block → Block
   | .note body => .note body
   | .frame t st v body => .frame t st v body
   | .framefoot content => .framefoot content
+  | .pagebreak => .pagebreak
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
   -- No overlay structure inside a picture: dimming happens where a `.step`
@@ -2145,6 +2155,7 @@ def unwrapItemStep : Block → Block
   | .verbatim c s => .verbatim c s
   | .note body => .note body
   | .framefoot content => .framefoot content
+  | .pagebreak => .pagebreak
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
   | .picture p => .picture p
@@ -2211,6 +2222,7 @@ def blockTextOne (acc : String) : Block → String
   | .logo content => acc ++ plainText content
   | .frame title _ _ body => blockTextList (acc ++ plainText title) body.toList
   | .framefoot content => acc ++ plainText content
+  | .pagebreak => acc
   -- A rule is decorative ink; it carries no text.
   | .rule _ _ _ => acc
   -- A picture's labels are diagram ink, not running text: they reach the
@@ -2269,6 +2281,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .note _ => out
   | .verbatim _ _ => out
   | .framefoot _ => out
+  | .pagebreak => out
   | .logo _ => out
   | .rule _ _ _ => out
   | .picture _ => out
@@ -2583,7 +2596,8 @@ theorem shadeBlock_text (cover : Cover) (b : Block) (acc : String) :
   -- A shaded picture recolours its shapes and keeps its labels: no census
   -- text either side.
   | .picture _ => rfl
-  | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ => rfl
+  | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _ | .rule _ _ _
+  | .pagebreak => rfl
   | .table cols pl pr rows rules =>
     rw [shadeBlock]
     simp [blockTextOne, shadeTableRows_text cover rows.toList #[] acc,
@@ -2754,7 +2768,7 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (b : Block) (acc : String) :
   -- its census — the declaration's own inline text — is untouched.
   | .logo _ => rfl
   | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
-  | .rule _ _ _ | .picture _ => rfl
+  | .rule _ _ _ | .picture _ | .pagebreak => rfl
   | .table cols pl pr rows rules =>
     rw [dimBlock]
     simp [blockTextOne, dimTableRows_text cover k rows.toList #[] acc,
@@ -2878,7 +2892,7 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
       blockTextList]
-  | .para _ | .section _ _ _ | .verbatim _ _ | .note _ | .framefoot _
+  | .para _ | .section _ _ _ | .verbatim _ _ | .note _ | .framefoot _ | .pagebreak
   | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
 
 theorem unwrapItemStepItems_text (items : List (Array Block))
@@ -2927,7 +2941,7 @@ def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
   | .para _ | .section _ _ _ | .list _ _ | .center _ | .quote _ | .spaced _ _
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
-  | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ | .nav _ _ | .picture _
+  | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak
   | .table _ _ _ _ _ | .float _ _ _ _ => true
 
 mutual
@@ -2954,6 +2968,7 @@ def keepForOne (t : String) : Block → Block
   | .verbatim c s => .verbatim c s
   | .logo c => .logo c
   | .framefoot c => .framefoot c
+  | .pagebreak => .pagebreak
   | .rule c n th => .rule c n th
   | .picture p => .picture p
   -- Cells hold inlines: no conditional can nest in a table. A float's
@@ -3001,6 +3016,7 @@ def textLeavesOne (acc : List String) : Block → List String
   | .verbatim _ s => s :: acc
   | .logo content => plainText content :: acc
   | .framefoot content => plainText content :: acc
+  | .pagebreak => acc
   | .list _ items => textLeavesItems acc items.toList
   | .center body => textLeavesList acc body.toList
   | .quote body => textLeavesList acc body.toList
@@ -3072,7 +3088,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .nav _ body => orphanFreeList avail body.toList
   | .frame _ _ _ body => orphanFreeList avail body.toList
   | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
-  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => true
+  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak => true
   | .float _ _ body _ => orphanFreeList avail body.toList
 
 def orphanFreeItems (avail : List String) : List (Array Block) → Bool
@@ -3136,6 +3152,7 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .verbatim c s => simp [textLeavesOne]
   | .logo c => simp [textLeavesOne]
   | .framefoot c => simp [textLeavesOne]
+  | .pagebreak => simp [textLeavesOne]
   | .rule c n th => simp [textLeavesOne]
   | .picture p => simp [textLeavesOne]
   | .list o items =>
@@ -3274,6 +3291,9 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     intro s hs
     simp [textLeavesOne] at hs
   | .picture p =>
+    intro s hs
+    simp [textLeavesOne] at hs
+  | .pagebreak =>
     intro s hs
     simp [textLeavesOne] at hs
   | .table c pl pr rows rules =>
@@ -3501,6 +3521,7 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .verbatim _ _ => out
   | .frame title _ _ body => imageSrcsBlockList (imageSrcsInlines out title) body.toList
   | .framefoot content => imageSrcsInlines out content
+  | .pagebreak => out
   | .rule _ _ _ => out
   | .picture _ => out
   -- A cell may carry an inline image; a float's body is where

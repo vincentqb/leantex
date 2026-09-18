@@ -1382,6 +1382,19 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   t "minipage alignment options are a note, never an error"
     (let ds := (elabStr (doc "\\begin{minipage}[c][2cm][t]{\\textwidth}x\\end{minipage}")).2
      ds.all (·.severity != .error) && ds.any (·.code == "N0102"))
+  -- \pagebreak: the declared boundary, asserted over the shipped pages.
+  let pagesOf (src : String) : Nat :=
+    let (d, _) := Elab.run "t" src
+    (Layout.run geom oneFace none d).pages.size
+  t "pagebreak opens a fresh page"
+    (pagesOf (doc "one\\pagebreak\ntwo") == 2)
+  t "newpage and clearpage are the same boundary"
+    (pagesOf (doc "one\\newpage\ntwo") == 2 &&
+     pagesOf (doc "one\\clearpage\ntwo") == 2)
+  t "adjacent pagebreaks never make a blank page"
+    (pagesOf (doc "one\\pagebreak\\pagebreak\ntwo") == 2)
+  t "a trailing pagebreak adds no empty page"
+    (pagesOf (doc "one\\pagebreak") == 1)
 
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do

@@ -277,7 +277,8 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
   -- the page, so judging them against the page surface would be judging
   -- the wrong pairing; the label-on-fill contract is still owed (recorded
   -- in the slice report).
-  | .note _ | .verbatim _ _ | .rule _ _ _ | .logo _ | .picture _ => out
+  | .note _ | .verbatim _ _ | .rule _ _ _ | .logo _ | .picture _
+  | .pagebreak => out
 
 private def usesItems (cx : UseCx) (out : Array Use) :
     List (Array Block) → Array Use
