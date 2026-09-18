@@ -3793,6 +3793,63 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let plainOut := Layout.run (Layout.Geom.ofPage plainDoc.page) oneFace none plainDoc
   t "unthemed pages carry no fills" (plainOut.pages.all (·.fills.isEmpty))
 
+/-- Recovery emits the author's content, never the source's syntax. An
+unknown command's leading `[...]` run is how the author addressed the
+command — a parameter, not content — so no character of it reaches the
+shipped page, while every `{...}` group survives, and no space the author
+never wrote is fabricated after the kept text. Judged over `Layout.Out`'s
+glyphs, never the IR dump: a bracketed number once shipped in front of a
+URL while the suite was green. This invariant is a test, not a theorem:
+it ranges over `elabInlines`, whose recursion the checker cannot yet see
+(one of the three sanctioned exceptions), so no proof can unfold it. -/
+def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let pageText (src : String) : String :=
+    let (d, _) := elabStr src
+    let lines := (Layout.run geom oneFace none d).pages.flatMap (·.lines)
+    String.join (lines.toList.map fun l =>
+      String.ofList (l.segs.toList.flatMap fun s =>
+        match s with
+        | .run _ _ _ _ glyphs _ _ _ => (glyphs.map (·.2)).toList
+        | .gap _ => [' ']
+        | _ => []))
+  let has (page part : String) : Bool := (page.splitOn part).length > 1
+  -- The user's own case: a bracketed number in front of a URL, and one in
+  -- front of an email address.
+  let url := pageText "\\textls[16]{placeholder}.example.org"
+  t "an unknown command's option run ships no character"
+    (!has url "[" && !has url "]" && !has url "16")
+  t "the kept group stays fused to what follows it"
+    (has url "placeholder.example.org")
+  let mail := pageText "\\textls[16]{someone}@example.org"
+  t "an option run before an email address ships nothing"
+    (!has mail "[" && has mail "someone@example.org")
+  t "the drop is visible, named by its own code"
+    ((warnCodes "\\textls[16]{placeholder}.example.org").contains "W0341")
+  -- Consecutive runs are one parameter train; both groups are content.
+  let par := pageText "\\parbox[c][2cm]{alpha}{beta}"
+  t "consecutive option runs all go with the command"
+    (!has par "[" && !has par "2cm" && has par "alpha beta")
+  -- An unclosed run is malformed content, not an option: kept and named.
+  let open_ := pageText "\\foo[16 oops"
+  t "an unclosed bracket run stays on the page"
+    (has open_ "[16 oops" &&
+     (warnCodes "\\foo[16 oops").contains "W0310" &&
+     !(warnCodes "\\foo[16 oops").contains "W0341")
+  -- A bracket on a later line is content, where LaTeX stops looking too.
+  let later := pageText "\\foo\n[note] stays"
+  t "a bracket run on the next line is content"
+    (has later "[note] stays" && !(warnCodes "\\foo\n[note] stays").contains "W0341")
+  -- No fabricated space: the give-back happens only when one was written.
+  t "no space is fabricated after a kept group"
+    (pageText "\\foo{a}.b" == "a.b")
+  t "a written space after a kept group survives"
+    (pageText "\\foo{a} b" == "a b")
+  -- The starred form's `*` still belongs to the command, options after it.
+  t "a starred unknown command drops its options too"
+    (let s := pageText "\\foo*[1]{x}"; s == "x")
+
 /-- Vertical distribution: beamer's frame options select the split, the
 default centres (beamer user guide §8.1), and a titled frame's page-top
 chrome never moves with the body. -/
@@ -4929,6 +4986,7 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
          "\\begin{tabular}{l}\nalpha \\\\\n\\end{tabular}\n" ++
          "\\caption{Below the table}\n\\end{table}"))
   | .W0340 => dvE (dvDoc "" "x\n\n\\page{ size = a5 }\n\ny")
+  | .W0341 => dvE "\\textls[16]{spaced}.example.org"
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
@@ -7484,6 +7542,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       spacingChecks ref geom oneFace font
       slideChecks ref oneFace
       tableChecks ref oneFace
+      recoveryChecks ref oneFace
       vdistChecks ref geom oneFace
       headBandChecks ref oneFace
       cardChecks ref oneFace pats

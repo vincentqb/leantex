@@ -529,9 +529,26 @@ shares it. -/
 private def skipMalformedArgs (raws : Array Raw) (i : Nat) (anchor : Pos) : Nat :=
   malformedRun raws i anchor (groups := true)
 
+/-- The index past consecutive `[...]` option runs, each accepted by
+`scanBracketArg`'s rule — opened on `anchor`'s line, closed. An option run
+is how the author addressed a command, never their content, so the callers
+(`skipReservedArgs`, and the unknown-command recovery) send it with the
+command rather than onto the page. A run that never closes stops the scan
+and its `[` position is returned: that run is malformed content, the
+caller's to keep and warn about. -/
+private def skipOptionRuns (raws : Array Raw) (i : Nat) (anchor : Pos) :
+    Nat × Option Pos := Id.run do
+  let mut j := i
+  for _ in [0:raws.size] do
+    match scanBracketArg raws j anchor with
+    | .took k => j := k
+    | .unclosed bpos => return (j, some bpos)
+    | .content => return (j, none)
+  return (j, none)
+
 /-- Skip an argument run: argument recovery after a reserved (not yet
-implemented) or unknown command. A starred form's `*`, a `[...]` options
-run, and up to `maxGroups` `{...}` groups are consumed with the command
+implemented) or unknown command. A starred form's `*`, the `[...]` option
+runs, and up to `maxGroups` `{...}` groups are consumed with the command
 they belong to — recovery never turns a warning into an error, and a stray
 `*` or second group in the preamble is exactly how one skipped command
 used to become E0313. In the body `maxGroups` stays 1, so a scope group
@@ -546,13 +563,13 @@ private def skipReservedArgs (raws : Array Raw) (i : Nat) (anchor : Pos)
   if let some (.word "*" _) := raws[j]? then
     j := j + 1
   for _ in [0:maxGroups] do
-    match scanBracketArg raws j anchor with
-    | .took k => j := k
-    | .unclosed bpos => return (j, some bpos)
-    | .content => pure ()
-    let k := skipSpaces raws j
-    if let some (.group _ _) := raws[k]? then
-      j := k + 1
+    let (k, unclosed) := skipOptionRuns raws j anchor
+    j := k
+    if let some bpos := unclosed then
+      return (j, some bpos)
+    let k2 := skipSpaces raws j
+    if let some (.group _ _) := raws[k2]? then
+      j := k2 + 1
     else
       break
   return (j, none)
@@ -1313,16 +1330,29 @@ a side channel, never slide content" pos
             (help := "it is a block-level command: use it between paragraphs, " ++
               "not inside inline content or a command body")
         else
-          -- Best effort: the arguments are content, and content is never
-          -- dropped for want of a command. Only the formatting is lost.
+          -- Best effort: the {...} arguments are content, and content is
+          -- never dropped for want of a command. Only the formatting is lost.
           warnOnce ctx ("ctrl:" ++ name) .W0301
-            s!"unknown command '\\{name}'; its arguments were kept as text" pos
+            s!"unknown command '\\{name}'; its \{...} arguments were kept as text" pos
             (help := "\\define \\name(...) {body} declares it")
           let mut j := skipSpaces raws i
           -- A starred form's `*` belongs to the command, not to the text.
           if let some (.word "*" _) := raws[j]? then
             j := skipSpaces raws (j + 1)
+          -- A leading [...] run is how the author addressed the command,
+          -- never their content: kept, it is ink nobody wrote ('[16]'
+          -- printed in front of a URL). It goes with the command, named.
+          let (jOpts, unclosed) := skipOptionRuns raws j pos
+          if jOpts > j then
+            let run := (Parse.rawSrc (raws.extract j jOpts)).trimAscii.toString
+            diag ctx .W0341
+              s!"'{run}' went with unknown command '\\{name}'; an option run is not content" pos
+              (help := "content, not options? start the '[' on the next line")
+          if let some bpos := unclosed then
+            warnUnclosed ctx s!"'\\{name}'" bpos
+          j := skipSpaces raws jOpts
           let mut kept := 0
+          let mut spaceAfter := false
           for _ in [0:9] do
             match raws[j]? with
             | some (.group body _) =>
@@ -1335,11 +1365,14 @@ a side channel, never slide content" pos
               sb := ""
               acc := acc ++ (← elabInlines ctx body)
               kept := kept + 1
-              j := skipSpaces raws (j + 1)
+              let after := j + 1
+              j := skipSpaces raws after
+              spaceAfter := j != after
             | _ => break
-          -- The control word swallowed the space after it; give one back so
-          -- the kept text does not fuse with what follows.
-          if kept > 0 && j < raws.size then
+          -- The control word swallowed a space after it; give back only one
+          -- that was really there — `\x{a} b` keeps its space, `\x{a}.b`
+          -- gains no ink the author never wrote.
+          if kept > 0 && spaceAfter && j < raws.size then
             sb := " "
           i := j
     else

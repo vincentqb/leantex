@@ -207,8 +207,8 @@ warning[W0201]: the measure holds about 98 characters per line, outside the read
 ── W0202 (degraded) heading sets more space below than above
 warning[W0202]: 'section' sets more space below the heading (10pt) than above it (2pt)
   help: a heading binds to the text it introduces: in \style{section}{...} keep 'after' at most 'before'
-── W0301 (degraded) unknown command; arguments kept as text
-warning[W0301]: unknown command '\mystery'; its arguments were kept as text
+── W0301 (degraded) unknown command; {...} arguments kept as text
+warning[W0301]: unknown command '\mystery'; its {...} arguments were kept as text
   help: \define \name(...) {body} declares it
 ── W0302 (degraded) unknown environment; body kept
 warning[W0302]: unknown environment '{banner}'; its body is kept
@@ -307,6 +307,9 @@ warning[W0339]: a page break separates a caption from the table or figure it bel
 ── W0340 (config) a declaration in the document body is ignored
 warning[W0340]: '\page' is a declaration; in the body it is ignored
   help: declare it in the preamble, before '\begin{document}'
+── W0341 (degraded) an unknown command's [...] options went with it, never onto the page
+warning[W0341]: '[16]' went with unknown command '\textls'; an option run is not content
+  help: content, not options? start the '[' on the next line
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added
