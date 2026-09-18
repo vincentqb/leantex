@@ -4385,6 +4385,39 @@ its declared layout" pos
     | none =>
       if docClass == .slides then
         page := { page with fontSize := Ir.slidesFontSize }
+  -- Class options and `\page` keys are one vocabulary: `*paper` (and
+  -- KOMA's `paper=`) names a size from the same `pageSizes` table
+  -- `\page{ size = ... }` reads, and `landscape` swaps the axes — the
+  -- reading the geometry package documents for exactly these options
+  -- (geometry manual §5.2, paper size options). A document that declared
+  -- its own geometry keeps it: the class option is a default, never a
+  -- lock (the same rule the slides stage takes). `twocolumn` and `draft`
+  -- ask for a page model and a proofing mode the engine does not have:
+  -- each is refused by name (W0356) — the silent drop was the defect
+  -- class here, an a4paper request quietly shipping on letter.
+  let classOpts := (classOptions.splitOn ",").map (·.trimAscii.toString)
+  if docClass == "article" then
+    let dflt : PageSpec := {}
+    if page.width == dflt.width && page.height == dflt.height then
+      let sized := classOpts.findSome? fun o =>
+        let o := if o.startsWith "paper=" then
+          (o.drop "paper=".length).toString ++ "paper" else o
+        if o.endsWith "paper" then
+          pageSizes.lookup ((o.dropEnd "paper".length).toString)
+        else none
+      if let some (w, h) := sized then
+        page := { page with width := w, height := h }
+      if classOpts.contains "landscape" then
+        page := { page with width := page.height, height := page.width }
+  for o in classOpts do
+    if o == "twocolumn" then
+      diag ctx .W0356
+        "class option 'twocolumn' asks for a two-column page; the text is set in one column"
+        none
+    else if o == "draft" then
+      diag ctx .W0356
+        "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
+        none
   -- Slides fill beamer's stage unless the document declared its own
   -- geometry: a handout on letter portrait is not best effort, it is wrong.
   if docClass == .slides then
