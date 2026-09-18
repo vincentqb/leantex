@@ -15,6 +15,9 @@ inductive Value where
   | ident (s : String)
   | block (src : String)
   | color (r g b : UInt8)
+  /-- A colour declared in CMYK, components in thousandths: the declared
+  model matters to print, so it survives parsing intact. -/
+  | cmyk (c m y k : Nat)
   /-- A glue expression, possibly font-relative or scaled from a token. -/
   | glue (g : SymGlue)
   deriving Repr, BEq
@@ -26,6 +29,7 @@ def Value.kindName : Value → String
   | .ident _ => "name"
   | .block _ => "block"
   | .color _ _ _ => "color"
+  | .cmyk _ _ _ _ => "color"
   | .glue _ => "length"
 
 structure Entry where
@@ -58,9 +62,9 @@ private def parseColor (s : String) : Option Value := do
 def isIdentChar (c : Char) : Bool :=
   c.isAlphanum || c == '_' || c == '.'
 
-/-- Split on commas that are not inside braces, brackets, or quotes. Public
-because a declaration whose entries may refer to earlier entries has to walk
-them one at a time. -/
+/-- Split on commas that are not inside braces, brackets, parentheses, or
+quotes. Public because a declaration whose entries may refer to earlier
+entries has to walk them one at a time. -/
 def splitEntries (s : String) : List String := Id.run do
   let mut out : List String := []
   let mut cur := ""
@@ -73,10 +77,10 @@ def splitEntries (s : String) : List String := Id.run do
     else if c == '"' then
       cur := cur.push c
       inStr := true
-    else if c == '{' || c == '[' then
+    else if c == '{' || c == '[' || c == '(' then
       depth := depth + 1
       cur := cur.push c
-    else if c == '}' || c == ']' then
+    else if c == '}' || c == ']' || c == ')' then
       depth := depth - 1
       cur := cur.push c
     else if c == ',' && depth == 0 then
@@ -595,12 +599,28 @@ def looksLikeExpr (s : String) : Bool := Id.run do
     i := i + 1
   return false
 
+/-- `cmyk(c, m, y, k)`: xcolor's cmyk model, four decimals in [0, 1],
+carried in thousandths. Print declares in CMYK because that is what a
+press mixes; the value survives as declared. -/
+private def parseCmyk (s : String) : Option Value := do
+  let inner := ((s.drop "cmyk(".length).toString.dropEnd 1).toString
+  let parts := (inner.splitOn ",").map (·.trimAscii.toString)
+  let vals ← parts.mapM fun p => do
+    let (m, sc) ← parseDecimal p
+    let v := m * 1000 / sc
+    if 0 ≤ v && v ≤ 1000 then some v.toNat else none
+  match vals with
+  | [c, m, y, k] => some (.cmyk c m y k)
+  | _ => none
+
 def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Option Value :=
   let s := raw.trimAscii.toString
   if s.startsWith "\"" && s.endsWith "\"" && s.length ≥ 2 then
     some (.str (String.ofList (s.toList.drop 1).dropLast))
   else if s.startsWith "#" then
     parseColor s
+  else if s.startsWith "cmyk(" && s.endsWith ")" then
+    parseCmyk s
   else if s.startsWith "{" && s.endsWith "}" && s.length ≥ 2 then
     -- Nested blocks stay opaque; the declaration decides whether it takes one.
     some (.block (String.ofList (s.toList.drop 1).dropLast |>.trimAscii.toString))

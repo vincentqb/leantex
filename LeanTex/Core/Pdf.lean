@@ -78,7 +78,7 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
   -- Fills paint first, in order: the page background, then any bars, then
   -- the text over them.
   for f in page.fills do
-    s := s ++ s!"q {f.color.pdfComponents} rg {f.x.toPtString} \
+    s := s ++ s!"q {f.color.pdfFill} {f.x.toPtString} \
 {(geom.pageH - f.y - f.h).toPtString} {f.w.toPtString} {f.h.toPtString} re f Q\n"
   s := s ++ "BT\n"
   let mut curFont : Int := -1
@@ -145,7 +145,7 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
             curFont := idx
             curSize := size
           if curColor != color then
-            s := s ++ s!"{color.pdfComponents} rg\n"
+            s := s ++ s!"{color.pdfFill}\n"
             curColor := color
         unless inArray do
           s := s.push '['
@@ -174,7 +174,7 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
       s := s ++ s!"\nq 0.62 0.62 0.66 RG 0.75 w {ix.toPtString} {iy.toPtString} \
 {iw.toPtString} {ih.toPtString} re S Q"
   for (rx, ry, rw, rh, color) in rules do
-    s := s ++ s!"\nq {color.pdfComponents} rg {rx.toPtString} {ry.toPtString} \
+    s := s ++ s!"\nq {color.pdfFill} {rx.toPtString} {ry.toPtString} \
 {rw.toPtString} {rh.toPtString} re f Q"
   return s
 

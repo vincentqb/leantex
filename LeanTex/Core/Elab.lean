@@ -1694,7 +1694,8 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
         let put (pal : Palette) (c : Color) : Palette :=
           pal.declare key c decorative
         match Decl.parseValue valueSrc with
-        | some (.color r g b) => pal := put pal ⟨r, g, b⟩
+        | some (.color r g b) => pal := put pal { r := r, g := g, b := b }
+        | some (.cmyk c m y k) => pal := put pal (Ir.Color.ofCmyk c m y k)
         | v? =>
           -- A name, an alias, or a mix: all read against what is declared
           -- so far, so two names that must never drift apart share a value.
@@ -2944,7 +2945,9 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
           st := { st with rule := some (c, name) }
         | none =>
           match Decl.parseValue valueSrc with
-          | some (.color r g b) => st := { st with rule := some (⟨r, g, b⟩, none) }
+          | some (.color r g b) => st := { st with rule := some ({ r := r, g := g, b := b }, none) }
+          | some (.cmyk c m y k) =>
+            st := { st with rule := some (Ir.Color.ofCmyk c m y k, none) }
           | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
       | "separator" =>
         match ctx.palette.resolve valueSrc with
@@ -2953,7 +2956,9 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
           st := { st with separator := some (c, name) }
         | none =>
           match Decl.parseValue valueSrc with
-          | some (.color r g b) => st := { st with separator := some (⟨r, g, b⟩, none) }
+          | some (.color r g b) => st := { st with separator := some ({ r := r, g := g, b := b }, none) }
+          | some (.cmyk c m y k) =>
+            st := { st with separator := some (Ir.Color.ofCmyk c m y k, none) }
           | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
       | "align" =>
         match valueSrc.trimAscii.toString with
@@ -2968,7 +2973,9 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
           st := { st with hover := some (c, name) }
         | none =>
           match Decl.parseValue valueSrc with
-          | some (.color r g b) => st := { st with hover := some (⟨r, g, b⟩, none) }
+          | some (.color r g b) => st := { st with hover := some ({ r := r, g := g, b := b }, none) }
+          | some (.cmyk c m y k) =>
+            st := { st with hover := some (Ir.Color.ofCmyk c m y k, none) }
           | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
       | "focus" =>
         match ctx.palette.resolve valueSrc with
@@ -2977,7 +2984,9 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
           st := { st with focus := some (c, name) }
         | none =>
           match Decl.parseValue valueSrc with
-          | some (.color r g b) => st := { st with focus := some (⟨r, g, b⟩, none) }
+          | some (.color r g b) => st := { st with focus := some ({ r := r, g := g, b := b }, none) }
+          | some (.cmyk c m y k) =>
+            st := { st with focus := some (Ir.Color.ofCmyk c m y k, none) }
           | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
       | "motion" =>
         -- A duration, in milliseconds: the one unit CSS transitions and

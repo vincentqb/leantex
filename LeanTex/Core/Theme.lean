@@ -41,19 +41,19 @@ one warm accent, a near-white page. Values map the moloch beamer theme's
 light preset onto the semantic keys, mixes evaluated (the original xcolor
 spelling rides in the comment beside each). -/
 def moloch : Theme :=
-  let fg : Color := ⟨0x23, 0x37, 0x3B⟩
+  let fg : Color := { r := 0x23, g := 0x37, b := 0x3B }
   let bg := Color.black.mix 2 Color.white                     -- black!2
   -- moloch's own alert is #EB811B, which reads at 2.61:1 on this page —
   -- under the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text. The same orange at
   -- 70% over black clears it at 4.94:1, so the lineage keeps its hue and
   -- the bundle keeps the engine's contract (Core/Contrast.lean).
-  let alert : Color := ⟨0xA5, 0x5A, 0x13⟩
+  let alert : Color := { r := 0xA5, g := 0x5A, b := 0x13 }
   let progressfg := alert
   let progressbg := (progressfg.mix 50 .black).mix 30 .white  -- progressfg!50!black!30
   { name := "moloch"
     palette := {
       entries := #[
-        ("fg", fg), ("bg", bg), ("alert", alert), ("example", ⟨0x00, 0x80, 0x80⟩),
+        ("fg", fg), ("bg", bg), ("alert", alert), ("example", { r := 0x00, g := 0x80, b := 0x80 }),
         -- The muted step: the theme's own ink mixed 70:30 into its page, the
         -- strongest quieting that still clears the 4.5:1 WCAG 2.2 SC 1.4.3
         -- asks of the small footer text (4.79:1 here; moloch_contract is the
@@ -104,13 +104,13 @@ def moloch : Theme :=
 title bar — frame titles set as plain bold headings because the bar key is
 simply absent. A third theme costs exactly one more table like this. -/
 def plain : Theme :=
-  let fg : Color := ⟨0x1B, 0x1B, 0x1F⟩
-  let bg : Color := ⟨0xFF, 0xFF, 0xFF⟩
+  let fg : Color := { r := 0x1B, g := 0x1B, b := 0x1F }
+  let bg : Color := { r := 0xFF, g := 0xFF, b := 0xFF }
   { name := "plain"
     palette := {
       entries := #[
-        ("fg", fg), ("bg", bg), ("alert", ⟨0xB3, 0x26, 0x1E⟩),
-        ("example", ⟨0x20, 0x5E, 0x3B⟩),
+        ("fg", fg), ("bg", bg), ("alert", { r := 0xB3, g := 0x26, b := 0x1E }),
+        ("example", { r := 0x20, g := 0x5E, b := 0x3B }),
         -- Same muted rule as moloch: ink 70:30 into the page (6.36:1 here).
         ("muted", fg.mix 70 bg),                              -- fg!70!bg
         ("progressfg", fg.mix 60 .white),                     -- fg!60

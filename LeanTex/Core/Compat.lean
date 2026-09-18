@@ -478,6 +478,9 @@ private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
 private def color (model value : String) (pos : Pos) : M (Option String) := do
   match model with
   | "HTML" => return some s!"#{value}"
+  | "cmyk" =>
+    -- The print model, kept as declared: PDF paints it in DeviceCMYK.
+    return some s!"cmyk({value})"
   | "rgb" | "RGB" =>
     let parts := (value.splitOn ",").filterMap fun p =>
       Decl.parseDecimal p.trimAscii.toString
@@ -491,7 +494,7 @@ private def color (model value : String) (pos : Pos) : M (Option String) := do
       return some s!"#{hex (ch r rs)}{hex (ch g gs)}{hex (ch b bs)}"
     | _ => return none
   | _ =>
-    say .W0102 s!"colour model '{model}' is not supported; use HTML or rgb" pos
+    say .W0102 s!"colour model '{model}' is not supported; use HTML, rgb, or cmyk" pos
     return none
 
 /-- KOMA's `\\sectionlinesformat` is a hook for drawing after a heading. The one

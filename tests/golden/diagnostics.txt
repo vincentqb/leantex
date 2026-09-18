@@ -168,7 +168,7 @@ warning[W0015]: equation numbers are not rendered yet; '{align}' sets unnumbered
 ── W0101 (config) geometry keys without a native equivalent dropped
 warning[W0101]: geometry keys without a native equivalent were dropped: headsep
 ── W0102 (degraded) unsupported colour model
-warning[W0102]: colour model 'cmyk' is not supported; use HTML or rgb
+warning[W0102]: colour model 'hsb' is not supported; use HTML, rgb, or cmyk
 ── W0103 (config) unsupported package skipped
 warning[W0103]: package 'pgfplots' is not supported; skipped
 ── W0104 (config) unsupported TeX construct skipped

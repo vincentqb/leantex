@@ -1415,6 +1415,26 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
     (let ds := (elabStr (doc "x\n\n\\page{ size = a5 }\n\ny")).2
      ds.any (·.code == "W0340") && ds.all (·.code != "W0301") &&
        ds.all (·.severity != .error))
+  -- CMYK: the print model survives as declared. The PDF paints DeviceCMYK
+  -- with the declared components (asserted over the written bytes); the
+  -- screen preview is the CSS Color 4 device-cmyk naive conversion, pinned
+  -- here so it cannot drift silently.
+  let (cdoc, cds) := elabStr
+    "\\documentclass{article}\\definecolor{ink}{cmyk}{0,.83,.76,.07}\
+\\begin{document}\\textcolor{ink}{x}\\end{document}"
+  t "a cmyk definecolor lands in the palette with its components"
+    (cds.all (·.severity != .error) && cds.all (·.code != "W0102") &&
+      cdoc.palette.find? "ink" == some (Ir.Color.ofCmyk 0 830 760 70))
+  t "the cmyk screen preview is the CSS device-cmyk conversion"
+    (Ir.Color.ofCmyk 0 830 760 70 ==
+      { r := 237, g := 40, b := 57, cmyk := some (0, 830, 760, 70) })
+  let cpdf := Pdf.write geom oneFace (Layout.run geom oneFace none cdoc).pages cdoc.info
+  t "the pdf paints a cmyk colour in DeviceCMYK, components as declared"
+    (bytesContain cpdf "0 0.83 0.76 0.07 k")
+  t "the html backend converts, explicitly, to the preview"
+    (((HtmlDoc.emit {} cdoc).1.splitOn
+        (HtmlDoc.cssColor (Ir.Color.ofCmyk 0 830 760 70))).length ≥ 2 &&
+      HtmlDoc.cssColor (Ir.Color.ofCmyk 0 830 760 70) == "#ed2839")
 
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -3047,16 +3067,16 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "opening\n\n\\pause\n\\hot{closing beat}\n\\end{frame}\n\\end{document}"
   let (cDoc, cDs) := elabStr colorSrc
   let cOut := Layout.run (Layout.Geom.ofPage cDoc.page) oneFace none cDoc
-  let hotCover := (Ir.Design.ofDoc cDoc).cover.of ⟨0xAA, 0, 0⟩
+  let hotCover := (Ir.Design.ofDoc cDoc).cover.of { r := 0xAA, g := 0, b := 0 }
   t "a pending step's explicit colours are covered as themselves, quieter"
     (cDs.isEmpty && cOut.pages.size == 2 &&
      (match cOut.pages[0]?, cOut.pages[1]? with
       | some p1, some p2 =>
-        !(runColors p1).contains ⟨0xAA, 0, 0⟩ &&
+        !(runColors p1).contains { r := 0xAA, g := 0, b := 0 } &&
         -- the covered run is the ink's own cover, not the plain grey
         (runColors p1).contains hotCover &&
         hotCover != (Ir.Design.ofDoc cDoc).cover.plain &&
-        (runColors p2).contains ⟨0xAA, 0, 0⟩
+        (runColors p2).contains { r := 0xAA, g := 0, b := 0 }
       | _, _ => false))
   let (vDoc, vDs) := elabStr
     (deck "opening\n\n\\pause\n\\begin{verbatim}\ncode line\n\\end{verbatim}")
@@ -3221,8 +3241,8 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let geom := Layout.Geom.ofPage soDoc.page
   let so := Layout.run geom oneFace none soDoc
   t "a stepped standout frame gets one page per step" (so.pages.size == 2)
-  let fg : Ir.Color := ⟨0x23, 0x37, 0x3B⟩
-  let bg : Ir.Color := ⟨0xFF, 0xFF, 0xFF⟩
+  let fg : Ir.Color := { r := 0x23, g := 0x37, b := 0x3B }
+  let bg : Ir.Color := { r := 0xFF, g := 0xFF, b := 0xFF }
   t "every step page of a standout frame stays inverted"
     (so.pages.all fun p => p.fills.any fun f =>
       f.x == 0 && f.y == 0 && f.w == geom.pageW && f.h == geom.pageH && f.color == fg)
@@ -3239,7 +3259,7 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "stepped deck source clean" pDs.isEmpty
   let pOut := Layout.run (Layout.Geom.ofPage pDoc.page) oneFace none pDoc
   t "step pages plus divider plus frame" (pOut.pages.size == 5)
-  let alert : Ir.Color := ⟨0xEB, 0x81, 0x1B⟩
+  let alert : Ir.Color := { r := 0xEB, g := 0x81, b := 0x1B }
   let mp : Dim.Sp := (Layout.Geom.ofPage pDoc.page).textWidth * 7875 / 10000
   t "the progress position belongs to the frame, not the step"
     (match pOut.pages[3]? with
@@ -3270,7 +3290,7 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
     (mDoc.chrome.footerLeft == some .sectionTitle &&
      mDoc.chrome.footerRight == some .frameNumber)
   t "moloch declares the muted step"
-    (mDoc.palette.find? "muted" == some ⟨0x64, 0x72, 0x74⟩)
+    (mDoc.palette.find? "muted" == some { r := 0x64, g := 0x72, b := 0x74 })
   t "plain declares the same footer"
     ((elabStr (deck "\\theme{plain}" frame)).1.chrome.hasFooter)
   t "an unthemed deck has no chrome"
@@ -3326,7 +3346,7 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- bundle contract the theorems hold.
   let weaker : Ir.Palette := { entries :=
     Theme.moloch.palette.entries.map fun (k, c) =>
-      if k == "muted" then (k, ⟨121, 133, 135⟩) else (k, c) }
+      if k == "muted" then (k, { r := 121, g := 133, b := 135 }) else (k, c) }
   t "the palette contract rejects a muted one step weaker"
     (!Contrast.paletteContract weaker)
 
@@ -3400,7 +3420,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (match out.pages[0]? with
      | some p => p.lines.any fun l => l.y == footY && l.size == footSize &&
          l.segs.any fun s => match s with
-           | .run _ c _ _ _ _ _ _ => c == (⟨0x64, 0x72, 0x74⟩ : Ir.Color)
+           | .run _ c _ _ _ _ _ _ => c == ({ r := 0x64, g := 0x72, b := 0x74 } : Ir.Color)
            | _ => false
      | none => false)
   -- Invariant (a) of the footer: body ink never reaches the footer's ink,
@@ -3505,8 +3525,8 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ((out.pages[2]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "S1")
   t "the progress bar shows 0 of 1 before any content frame"
     (match out.pages[1]? with
-     | some p => (p.fills.any fun f => f.color == (⟨0xCB, 0xC0, 0xB6⟩ : Ir.Color)) &&
-         !(p.fills.any fun f => f.color == (⟨0xA5, 0x5A, 0x13⟩ : Ir.Color))
+     | some p => (p.fills.any fun f => f.color == ({ r := 0xCB, g := 0xC0, b := 0xB6 } : Ir.Color)) &&
+         !(p.fills.any fun f => f.color == ({ r := 0xA5, g := 0x5A, b := 0x13 } : Ir.Color))
      | none => false)
   let (html, _) := HtmlDoc.emit {} doc
   t "html gives the title and standout frames no footer"
@@ -3560,14 +3580,14 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let mp : Dim.Sp := fGeom.textWidth * 7875 / 10000
   t "a section after every frame fills the bar exactly"
     (fOut.pages.any fun p => p.fills.any fun f =>
-      f.w == mp && f.color == (⟨0xA5, 0x5A, 0x13⟩ : Ir.Color))
+      f.w == mp && f.color == ({ r := 0xA5, g := 0x5A, b := 0x13 } : Ir.Color))
   let (zDoc, zDs) := elabStr (deck "\\theme{moloch}\\title{T}\\author{A}"
     ("\\maketitle\n\\section{S}\n\\begin{frame}[standout]\nQ\n\\end{frame}"))
   t "zero-count deck source clean" zDs.isEmpty
   t "a deck with no countable frame draws no progress bar"
     (zDoc.frameCount == 0 &&
      (Layout.run (Layout.Geom.ofPage zDoc.page) oneFace none zDoc).pages.all fun p =>
-       !(p.fills.any fun f => f.color == (⟨0xCB, 0xC0, 0xB6⟩ : Ir.Color)))
+       !(p.fills.any fun f => f.color == ({ r := 0xCB, g := 0xC0, b := 0xB6 } : Ir.Color)))
   t "html draws no progress bar with no countable frame"
     (((HtmlDoc.emit {} zDoc).1.splitOn "class=\"progress\"").length == 1)
   -- The fraction slot: moloch's numbering=fraction, reachable as
@@ -3689,8 +3709,8 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let geom := Layout.Geom.ofPage doc.page
   let out := Layout.run geom oneFace none doc
   t "furniture three pages: frame, divider, frame" (out.pages.size == 3)
-  let bg : Ir.Color := ⟨0xFA, 0xFA, 0xFA⟩
-  let fg : Ir.Color := ⟨0x23, 0x37, 0x3B⟩
+  let bg : Ir.Color := { r := 0xFA, g := 0xFA, b := 0xFA }
+  let fg : Ir.Color := { r := 0x23, g := 0x37, b := 0x3B }
   t "every page carries the background"
     (out.pages.all fun p => p.fills.any fun f =>
       f.x == 0 && f.y == 0 && f.w == geom.pageW && f.h == geom.pageH && f.color == bg)
@@ -3712,7 +3732,7 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
         | _ => false
      | none => false)
   let mp : Dim.Sp := geom.textWidth * 7875 / 10000
-  let alert : Ir.Color := ⟨0xEB, 0x81, 0x1B⟩
+  let alert : Ir.Color := { r := 0xEB, g := 0x81, b := 0x1B }
   t "section page draws the progress track in the mixed colour"
     (match out.pages[1]? with
      | some p => p.fills.any fun f =>
@@ -4806,7 +4826,7 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .W0014 => dvE "\\begin{align*}a &= b \\\\ c\\end{align*}"
   | .W0015 => dvE "\\begin{align}a &= b\\end{align}"
   | .W0101 => dvE (dvDoc "\\usepackage[headsep=1in]{geometry}\n" "x")
-  | .W0102 => dvE (dvDoc "\\definecolor{c}{cmyk}{0,0,0,1}\n" "x")
+  | .W0102 => dvE (dvDoc "\\definecolor{c}{hsb}{0.5,0.5,0.5}\n" "x")
   | .W0103 => dvE (dvDoc "\\usepackage{pgfplots}\n" "x")
   | .W0104 => dvE (dvDoc (String.intercalate "\n"
       ["\\directlua{tex.print('x')}", "\\def\\x{y}", "\\raggedright",
@@ -6156,7 +6176,7 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "palette covered still accepts a colour" (
     (elabStr ("\\documentclass{article}\\palette{covered = #808080}" ++
       "\\begin{document}x\\end{document}")).1.palette.find? "covered"
-      == some ⟨0x80, 0x80, 0x80⟩)
+      == some { r := 0x80, g := 0x80, b := 0x80 })
   t "palette wrong type" (errCodes ("\\documentclass{article}\\palette{a = 3pt}" ++
     "\\begin{document}x\\end{document}") == ["E0323"])
   t "palette cannot shadow builtin" (errCodes
@@ -6164,7 +6184,7 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
      "\\begin{document}x\\end{document}") == ["E0303"])
   t "color value parsed" (Decl.parseValue "#7C3AED" == some (.color 0x7C 0x3A 0xED))
   t "color rejects bad hex" (Decl.parseValue "#12345" == none)
-  t "color pdf components" ((Ir.Color.mk 255 0 128).pdfComponents == "1 0 0.502")
+  t "color pdf components" ((Ir.Color.mk 255 0 128 none).pdfComponents == "1 0 0.502")
   t "color black components" (Ir.Color.black.pdfComponents == "0 0 0")
 
 /-- xcolor's `!` mixing in the palette. Its own def: `main`'s elaboration
@@ -6215,8 +6235,9 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     let mut seed : Nat := 1
     for _ in [0:400] do
       seed := (seed * 1103515245 + 12345) % 2147483648
-      let c : Ir.Color := ⟨UInt8.ofNat (seed % 256), UInt8.ofNat ((seed / 256) % 256),
-        UInt8.ofNat ((seed / 65536) % 256)⟩
+      let c : Ir.Color := { r := UInt8.ofNat (seed % 256)
+                            g := UInt8.ofNat ((seed / 256) % 256)
+                            b := UInt8.ofNat ((seed / 65536) % 256) }
       let c1 := cov.of c
       let c2 := cov.of c1
       if Contrast.contrastMilli c1 Ir.Color.white > Contrast.contrastMilli c Ir.Color.white
@@ -6329,7 +6350,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- alert (#EB811B, 2.61:1 as body text) fails the contract.
   t "the contract rejects moloch's original alert"
     (let badEntries := (Theme.moloch.palette.entries.filter (·.1 != "alert")).push
-        ("alert", (⟨0xEB, 0x81, 0x1B⟩ : Ir.Color))
+        ("alert", ({ r := 0xEB, g := 0x81, b := 0x1B } : Ir.Color))
      !Contrast.paletteContract { entries := badEntries })
   -- Themed \alert is colour AND bold: colour alone would be the run's only
   -- signal (WCAG 2.2 SC 1.4.1); unthemed it stays the bold stand-in.
@@ -6351,14 +6372,14 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let pal : Ir.Palette := { entries := #[("base", ⟨0x40, 0x00, 0x80⟩)] }
-  t "mix toward white" (pal.resolve "base!50" == some ⟨0xA0, 0x80, 0xC0⟩)
-  t "mix with black" (pal.resolve "base!50!black" == some ⟨0x20, 0x00, 0x40⟩)
+  let pal : Ir.Palette := { entries := #[("base", { r := 0x40, g := 0x00, b := 0x80 })] }
+  t "mix toward white" (pal.resolve "base!50" == some { r := 0xA0, g := 0x80, b := 0xC0 })
+  t "mix with black" (pal.resolve "base!50!black" == some { r := 0x20, g := 0x00, b := 0x40 })
   t "mix chain folds left" (pal.resolve "base!50!black!30" ==
-    some (((⟨0x40, 0x00, 0x80⟩ : Ir.Color).mix 50 Ir.Color.black).mix 30 Ir.Color.white))
+    some ((({ r := 0x40, g := 0x00, b := 0x80 } : Ir.Color).mix 50 Ir.Color.black).mix 30 Ir.Color.white))
   t "mix black!2 is near-white"
-    (({} : Ir.Palette).resolve "black!2" == some ⟨250, 250, 250⟩)
-  t "mix plain name still resolves" (pal.resolve "base" == some ⟨0x40, 0x00, 0x80⟩)
+    (({} : Ir.Palette).resolve "black!2" == some { r := 250, g := 250, b := 250 })
+  t "mix plain name still resolves" (pal.resolve "base" == some { r := 0x40, g := 0x00, b := 0x80 })
   t "mix pct over 100 rejected" (pal.resolve "base!101" == none)
   t "mix unknown atom rejected" (pal.resolve "nope!50" == none)
   -- Declaration site: a mix value reads the entries declared so far.
@@ -6367,14 +6388,14 @@ def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}" ++ body ++ "\\end{document}")
   let (pDoc, pDs) := doc "x"
   t "palette mix entry clean" pDs.isEmpty
-  t "palette mix entry value" (pDoc.palette.find? "dim" == some ⟨0x80, 0x80, 0x80⟩)
-  t "palette black!2 entry" (pDoc.palette.find? "faint" == some ⟨250, 250, 250⟩)
+  t "palette mix entry value" (pDoc.palette.find? "dim" == some { r := 0x80, g := 0x80, b := 0x80 })
+  t "palette black!2 entry" (pDoc.palette.find? "faint" == some { r := 250, g := 250, b := 250 })
   -- Use site: \textcolor takes a mix, `fg`/`bg` naming the current semantic
   -- foreground and background. A computed colour carries no var name.
   let (uDoc, uDs) := doc "\\textcolor{fg!50!bg}{x}"
   t "textcolor mix resolves without W0304" (!uDs.any (·.code == "W0304"))
   t "textcolor mix colours the content" (uDoc.body == #[.para #[
-    .colored ⟨0x80, 0x80, 0x80⟩ none #[.text "x"]]])
+    .colored { r := 0x80, g := 0x80, b := 0x80 } none #[.text "x"]]])
   t "textcolor mix with unknown base still warns"
     (warnCodes ("\\documentclass{article}\\begin{document}" ++
       "\\textcolor{quiet!50}{x}\\end{document}") == ["W0304"])
@@ -6383,7 +6404,7 @@ def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\palette{ a = #111111 }\\palette{ a = #222222 }\n" ++
     "\\tokens{ s = 4pt }\\tokens{ s = 8pt }\n" ++
     "\\begin{document}x\\end{document}")
-  t "palette redeclare overrides" (oDoc.palette.find? "a" == some ⟨0x22, 0x22, 0x22⟩)
+  t "palette redeclare overrides" (oDoc.palette.find? "a" == some { r := 0x22, g := 0x22, b := 0x22 })
   t "tokens redeclare overrides"
     ((oDoc.tokens.find? "s").map (·.width) == some (Dim.Length.ofSp (Dim.pt 8)))
   t "palette redeclare keeps one entry"
@@ -6404,9 +6425,9 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
       "progressbg", "standoutfg", "standoutbg"].all
       fun k => (mDoc.palette.find? k).isSome)
   t "theme moloch resolves its own mixes"
-    (mDoc.palette.find? "bg" == some ⟨0xFA, 0xFA, 0xFA⟩ &&
-     mDoc.palette.find? "frametitlebg" == some ⟨0x23, 0x37, 0x3B⟩ &&
-     mDoc.palette.find? "progressbg" == some ⟨0xCB, 0xC0, 0xB6⟩)
+    (mDoc.palette.find? "bg" == some { r := 0xFA, g := 0xFA, b := 0xFA } &&
+     mDoc.palette.find? "frametitlebg" == some { r := 0x23, g := 0x37, b := 0x3B } &&
+     mDoc.palette.find? "progressbg" == some { r := 0xCB, g := 0xC0, b := 0xB6 })
   t "theme moloch declares the progress token"
     (((mDoc.tokens.find? "progressheight").map (·.width)) ==
       some (Dim.Length.ofSp (Dim.pt 1)))
@@ -6417,8 +6438,8 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (oDoc, _) := elabStr (deck "\\theme{moloch}\\palette{ alert = #C2185B }"
     "\\begin{frame}{T}\nx\n\\end{frame}")
   t "a document overrides the theme"
-    (oDoc.palette.find? "alert" == some ⟨0xC2, 0x18, 0x5B⟩ &&
-     oDoc.palette.find? "frametitlebg" == some ⟨0x23, 0x37, 0x3B⟩)
+    (oDoc.palette.find? "alert" == some { r := 0xC2, g := 0x18, b := 0x5B } &&
+     oDoc.palette.find? "frametitlebg" == some { r := 0x23, g := 0x37, b := 0x3B })
   -- The second bundle is a table of values, not new code: plainer keys,
   -- no title bar because the key is simply absent.
   let (pDoc, pDs) := elabStr (deck "\\theme{plain}" "\\begin{frame}{T}\nx\n\\end{frame}")
@@ -6440,7 +6461,7 @@ def themeChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match aDoc.body with
      | #[.frame _ _ _ body] => body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
-          | .colored c (some "alert") _ => c == ⟨0xA5, 0x5A, 0x13⟩
+          | .colored c (some "alert") _ => c == { r := 0xA5, g := 0x5A, b := 0x13 }
           | _ => false
         | _ => false
      | _ => false)
@@ -6480,18 +6501,18 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
     (bare.progressheight == { width := Dim.Length.ofSp (Dim.pt 1) })
   let themed := designOf "\\theme{moloch}"
   t "themed design carries the bundle's bar pair"
-    (themed.frametitle == some { fg := ⟨0xFA, 0xFA, 0xFA⟩, bg := ⟨0x23, 0x37, 0x3B⟩ })
+    (themed.frametitle == some { fg := { r := 0xFA, g := 0xFA, b := 0xFA }, bg := { r := 0x23, g := 0x37, b := 0x3B } })
   t "themed design carries the progress pair"
-    (themed.progress == some { fg := ⟨0xA5, 0x5A, 0x13⟩, bg := ⟨0xCB, 0xC0, 0xB6⟩ })
+    (themed.progress == some { fg := { r := 0xA5, g := 0x5A, b := 0x13 }, bg := { r := 0xCB, g := 0xC0, b := 0xB6 } })
   t "themed design reads the declared separator"
-    (themed.separator == ⟨0xA5, 0x5A, 0x13⟩)
+    (themed.separator == { r := 0xA5, g := 0x5A, b := 0x13 })
   t "themed design reads the declared muted step"
-    (themed.muted == ⟨0x64, 0x72, 0x74⟩)
+    (themed.muted == { r := 0x64, g := 0x72, b := 0x74 })
   -- A half-declared standout keeps the declared half and defaults the rest
   -- from the page's own colours — the fallback Layout applied per site.
   let half := designOf "\\palette{ standoutbg = #102030 }"
   t "half-declared standout defaults its fg from the page"
-    (half.standout == { fg := Ir.Color.white, bg := ⟨0x10, 0x20, 0x30⟩ })
+    (half.standout == { fg := Ir.Color.white, bg := { r := 0x10, g := 0x20, b := 0x30 } })
 
 /-- Every role a built-in bundle declares is read: either a backend consumes
 its resolved `Design` field (`Ir.Design.consumedRoles`) or documents use it

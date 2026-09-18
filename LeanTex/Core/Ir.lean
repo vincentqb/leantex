@@ -82,14 +82,45 @@ in Legge & Bigelow 2011. The class implies `text.xheight >=` this;
 `card_floor_within_scale` ties it to the size scale. -/
 def cardXHeightFloor : Sp := Dim.mm100 140
 
-/-- An sRGB colour. -/
+/-- An sRGB colour — and, when the document declared it in CMYK, the
+declared components ride along so the PDF can honour the declared model.
+`r g b` are always populated: they are the one screen-facing reading
+(HTML, contrast judgement, dimming), computed for a CMYK declaration by
+`ofCmyk`'s stated conversion. -/
 structure Color where
   r : UInt8
   g : UInt8
   b : UInt8
+  /-- Declared-model components in thousandths (0–1000 each) when the
+  colour was declared in CMYK; `none` for a colour declared in RGB. The
+  PDF backend emits these as `DeviceCMYK` verbatim (`cmyk_components_kept`)
+  — converting a print colour to RGB would silently change what a press
+  prints. -/
+  cmyk : Option (Nat × Nat × Nat × Nat) := none
   deriving Repr, BEq, Inhabited
 
 def Color.black : Color := { r := 0, g := 0, b := 0 }
+
+/-- The sRGB preview of a CMYK declaration, for the screen-facing readers
+only (HTML output, contrast checks): CSS Color 4's `device-cmyk` naive
+conversion, `red = 1 − min(1, cyan·(1−black) + black)` and its siblings —
+explicitly an un-colour-managed approximation, not a lossless mapping;
+the CSS spec itself calls naive conversion "a poor substitute" for a
+colour profile. The declared components stay in `cmyk`; only they reach
+the PDF. -/
+def Color.ofCmyk (c m y k : Nat) : Color :=
+  let ch (v : Nat) : UInt8 :=
+    UInt8.ofNat (255 * (1000 - min 1000 (v * (1000 - min 1000 k) / 1000 + k)) / 1000)
+  { r := ch c, g := ch m, b := ch y, cmyk := some (c, m, y, k) }
+
+/-- Thousandths as a PDF decimal: 830 ↦ "0.83". -/
+def Color.pdfMilli (v : Nat) : String :=
+  let v := min v 1000
+  if v == 0 then "0" else if v == 1000 then "1"
+  else
+    let frac := toString v
+    let frac := ("".pushn '0' (3 - frac.length)) ++ frac
+    "0." ++ (frac.dropEndWhile (· == '0')).toString
 
 /-- PDF wants components in 0–1; three decimals is finer than 8-bit input. -/
 def Color.pdfComponents (c : Color) : String :=
@@ -101,6 +132,26 @@ def Color.pdfComponents (c : Color) : String :=
       let frac := ("".pushn '0' (3 - frac.length)) ++ frac
       "0." ++ (frac.dropEndWhile (· == '0')).toString
   s!"{f c.r} {f c.g} {f c.b}"
+
+/-- The fill-colour operation for this colour: a CMYK declaration paints in
+`DeviceCMYK` with its own components (`k` sets fill colour in DeviceCMYK,
+ISO 32000-2 §8.6.8, Table 73; DeviceCMYK is §8.6.4.4), an RGB one in
+`DeviceRGB` (`rg`). One emission site per backend, so the declared model
+cannot be quietly re-interpreted anywhere else. -/
+def Color.pdfFill (c : Color) : String :=
+  match c.cmyk with
+  | some (cy, m, y, k) =>
+    s!"{pdfMilli cy} {pdfMilli m} {pdfMilli y} {pdfMilli k} k"
+  | none => s!"{c.pdfComponents} rg"
+
+/-- A colour declared in a model round-trips to that model in a backend
+that supports it: the components the document declared are the components
+the PDF paints with, exactly — never an RGB re-interpretation. -/
+theorem Color.cmyk_components_kept (c m y k : Nat) :
+    (Color.ofCmyk c m y k).cmyk = some (c, m, y, k) ∧
+    (Color.ofCmyk c m y k).pdfFill
+      = s!"{pdfMilli c} {pdfMilli m} {pdfMilli y} {pdfMilli k} k" := by
+  exact ⟨rfl, rfl⟩
 
 /-- Named lengths declared by `\tokens`, in declaration order so a later
 token may be defined in terms of an earlier one. -/
