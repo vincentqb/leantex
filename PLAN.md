@@ -87,6 +87,56 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-18 — the rhythm is declared where both backends read, and each
+backend proves it realizes it.
+
+- **The user's complaint, verified.** "Theorem spacing has not been
+  theorem-ized at a high enough level since it's not applied to html along
+  with pdf" — right, and sharper: `default_rhythm_multiples` and
+  `caption_gaps_rhythm` ranged over Ir tokens but were housed in Layout,
+  so HtmlDoc could only cite them in comments. A comment was carrying a
+  guarantee.
+- **Layer 1, declaration (Ir).** The unit is the governing context's body
+  leading (`Ir.leadingFor`, moved from Layout — moving a function to reach
+  a theorem, not the reverse), the quantum its half, the peer token
+  `Ir.parskipDefault`, and the multiples one table (`Ir.rhythmGapQuanta`:
+  peer 1, heading 2, caption 1, float 2; `rhythm_table_exact`). The Layout
+  spellings are deleted; artifacts byte-identical through the lift.
+- **Layer 2, realization, PDF.** Over the placement's own functions:
+  `flushGap_default_exact` (one `.skip` of the resolved parskip at an
+  undeclared boundary, never two emissions), `placeLine_gap_exact` (the
+  pending skip lands 1:1 above TeX's interline), `finishPage_shift_uniform`
+  (page close moves the unpinned block by one delta on a page with no
+  shrink spent and no fil, so gaps reach `Out` as placed). Rubber is the
+  named negotiation: shrink only against a break and reported (N0200),
+  stretch never.
+- **Layer 2, realization, HTML.** The theorem is about the gap the box
+  model realizes, which forces the encoding: one emitter per boundary —
+  the element below owns its gap as `margin-top` via zero-specificity
+  `:where(* + sel)` rules computed from the table (`quantaRem`; base size
+  1.0625rem → 1rem makes every value exact), all block-element margins
+  zero, so block collapse (max) and flex stacking (sum) agree
+  (`single_owner_gap_exact`) and a consumer flex container cannot double
+  a gap — the site port's 52px-for-32px defect is unrepresentable. One
+  bottom-owned boundary, stated: a heading's band below is the heading's
+  own (PDF's after-replaces-peer semantics; followers suppressed), so a
+  consumer owns a heading's whole band with one rule — measured necessary
+  against the port's audited h2 margin-bottom exception.
+- **Layer 3, agreement.** `backend_gaps_agree`: over every pair of table
+  rows, PDF sp and emitted milli-rem cross-multiply equal — the same
+  integer ratios in both artifacts. Moduli named, not hidden: preferred
+  values only (CSS has no glue; rubber is PDF-only and reported), and
+  per-context units (half the print leading vs half the screen leading —
+  the multiple is shared, the length is the context's).
+- **Slides.** `slidesVMargin` was the engine's own and 0.888pt off two
+  slides-context units; now derived (`2 * leadingFor slidesFontSize`),
+  goldens regenerated, the 62-page acceptance deck unchanged in pages and
+  diagnostics. Stated exceptions, kept with their sources: moloch-lineage
+  em furniture (the theme's dtx is its bundle's authority), half-em
+  furniture paddings (em-relative by design), booktabs ex seps (dtx).
+  `vmargin_on_rhythm` pins the article inch = 6 units so the coincidence
+  cannot drift silently.
+
 2026-09-18 — palette roles: a role is defined by the palette, and a use of
 it can never freeze.
 
