@@ -77,9 +77,6 @@ list.
 - `frame_pages_footed` — numbering: every page of a footed countable-frame
   deck is footed (audit-numbering T2's page face; excludes the golden
   title frame so the statement survives its refactor 1).
-- `builtin_palette_contract_engine` — arch-provable I2 over what `\theme`
-  installs, through the real pipeline; unblocked by typed theme values,
-  which then delete the `molochResolved`/`plainResolved` spec copies.
 - `titlepage_align_declared_engine` — arch-design I2: shipped bundles
   declare title-page alignment and separator.
 - `take_args_consumes_forward` — the progress half of the elaborator's

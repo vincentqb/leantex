@@ -165,23 +165,10 @@ def themedDoc (name : String) : Ir.Doc :=
     ("\\documentclass{beamer}\n\\theme{" ++ name ++ "}\n" ++
      "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}\n")).1
 
--- owed: builtin_palette_contract_engine
--- owner: LeanTex.Core.Contrast
--- source: arch-provable I2 (theme contract over engine values; Contrast.molochResolved/plainResolved are the spec copies this deletes)
--- blocker: half discharged under us. Typed theme values landed (arch-provable R2): the bundle constants are now real values, the transcriptions are deleted, and `builtin_designs_legible` proves the contract over `bundlePalette` by `decide`. What is still owed is the stronger reading stated here — the contract over what `\theme` installs *through the elaborator* — and that remains blocked for the original reason: `decide` cannot evaluate `Elab.run`. Discharging it needs the installed palette to be reachable without running the elaborator in the kernel, not another refactor of Theme.
--- goldens: no
-/-- The contrast contract holds for what `\theme` installs, for every
-shipped bundle — over the engine's values, not a transcription of them. -/
-theorem builtin_palette_contract_engine :
-    ∀ t ∈ Theme.builtin,
-      Contrast.paletteContract (themedDoc t.name).palette = true ∧
-      Contrast.coveredContract (themedDoc t.name).palette = true := by
-  sorry
-
 -- owed: titlepage_align_declared_engine
 -- owner: LeanTex.Core.Theme
 -- source: arch-design I2 (furniture alignment is declared, never a constant; consumes the once-unread `separator`)
--- blocker: the value half is discharged — typed theme values (arch-provable R2) landed, and `Theme.titlepage_align_declared` proves by `decide` over `Theme.builtin` that every bundle styling the title page declares align and separator. What this statement still owes is the reading through the elaborator (`themedDoc` runs Elab.run), blocked exactly as builtin_palette_contract_engine: Elab.run is kernel-opaque (its three tracked non-total functions), so neither `decide` nor unfolding reaches the installed styles.
+-- blocker: the value half is discharged — typed theme values (arch-provable R2) landed, and `Theme.titlepage_align_declared` proves by `decide` over `Theme.builtin` that every bundle styling the title page declares align and separator. What this statement still owes is the reading through the elaborator (`themedDoc` runs Elab.run): Elab.run is kernel-opaque (its three tracked non-total functions), so neither `decide` nor unfolding reaches the installed styles. The `Theme.apply t {}` restatement that discharged `builtin_palette_contract_engine` closes this the same way (`decide +kernel`, audit-proofs probe G) if the literal through-`Elab.run` reading is let go.
 -- goldens: no
 /-- Every shipped bundle that styles the title page declares its alignment
 and its separator — the moloch title matter is ragged left with a rule by

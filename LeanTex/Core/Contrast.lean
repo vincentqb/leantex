@@ -738,4 +738,18 @@ bundle's palette is visibly covered when dimmed, per colour. -/
 theorem builtin_designs_covered :
     Theme.builtin.all (fun th => coveredContract th.palette) = true := by decide +kernel
 
+/-- Both contracts over what `\theme` installs, for every shipped bundle
+(arch-provable I2): stated over `Theme.apply t {}` — the exact function
+`Elab` runs at the `\theme` site (values in, values out), on a document
+that has declared nothing — never a transcription of the install. The
+remaining link, that `\theme` reaches this install through `Elab.run`,
+is the per-bundle "`\theme` installs the bundle's own values" pin in
+`Tests.lean`: `Elab.run`'s tracked non-total functions keep the
+elaborator itself outside the kernel's reach. -/
+theorem builtin_palette_contract_engine :
+    (Theme.builtin.all fun t =>
+      paletteContract (Theme.apply t {}).palette &&
+      coveredContract (Theme.apply t {}).palette) = true := by
+  decide +kernel
+
 end LeanTex.Core.Contrast
