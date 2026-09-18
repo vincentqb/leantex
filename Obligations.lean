@@ -215,18 +215,6 @@ theorem unwrap_item_steps_text (xs : Array Ir.Block) :
     Ir.blocksText (Ir.unwrapItemSteps xs) = Ir.blocksText xs := by
   sorry
 
--- owed: ordered_marker_shows_order
--- owner: LeanTex.Core.ListMark
--- source: arch-faithful I4 (the census's marker-with-kind fact, as a theorem; `enumLabel_inj` already proves two indices never share a label — this adds that the marker content IS the label)
--- blocker: none — expected dischargeable by unfolding; stated so the census fact is owed as a theorem, not held only by fixture tests.
--- goldens: no
-/-- An ordered list's marker shows its order: the marker content of item
-`n` is exactly the level's numbering label. -/
-theorem ordered_marker_shows_order (level n : Nat) (covered : Char → Bool) :
-    Ir.plainText (ListMark.marker true level n covered)
-      = ListMark.enumLabel level n := by
-  sorry
-
 -- owed: take_args_consumes_forward
 -- owner: LeanTex.Core.Elab
 -- source: arch-provable I6; PLAN's phase-split design (the measure: definition-time expansion limit, then suffix length)

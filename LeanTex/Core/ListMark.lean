@@ -244,6 +244,14 @@ def marker (ordered : Bool) (level n : Nat) (covered : Char → Bool) :
     let s := String.ofList [itemMark level (covered (itemGlyph level).1)]
     if level = 2 then #[.styled .bold #[.text s]] else #[.text s]
 
+/-- An ordered list's marker shows its order: the marker content of item
+`n` is exactly the level's numbering label (classes.dtx's
+`\labelenumi`..`\labelenumiv`, the census's marker-kind fact as a theorem).
+`enumLabel_inj` adds that two indices never share it. -/
+theorem ordered_marker_shows_order (level n : Nat) (covered : Char → Bool) :
+    Ir.plainText (marker true level n covered) = enumLabel level n := by
+  simp [marker, Ir.plainText, Ir.plainTextList, Ir.plainTextOne]
+
 /-- The scalars a list at this level may ask a face for, so the driver's
 fallback scan covers default markers before layout begins. Enumerate labels
 are ASCII (letters, digits, the parentheses and dot); itemize needs the

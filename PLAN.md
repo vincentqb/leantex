@@ -84,8 +84,6 @@ list.
   loose constants); discharging it moves goldens ~0.4 pt.
 - `unwrap_item_steps_text` — the one public IR walk still missing its
   text-conservation theorem.
-- `ordered_marker_shows_order` — the census's marker-kind fact as a
-  theorem over `ListMark.marker`.
 - `take_args_consumes_forward` — the progress half of the elaborator's
   termination measure, stated against the phase split that discharges it.
 
