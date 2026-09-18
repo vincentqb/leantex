@@ -1085,6 +1085,10 @@ where
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    -- moloch is the maintained fork of metropolis (and `m` was that
+    -- theme's original name): a deck asking for either spelling gets the
+    -- bundle the engine ships, named in the note.
+    let tname := if tname == "metropolis" || tname == "m" then "moloch" else tname
     let native := s!"\\theme\{{tname}}"
     became "\\usetheme" native pos
     -- Only a theme the engine ships turns the themed mappings on: an
