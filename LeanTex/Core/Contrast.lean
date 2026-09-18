@@ -228,6 +228,12 @@ private def usesInline (cx : UseCx) (out : Array Use) : Inline → Array Use
   -- An image carries no text; its alt is read by a screen reader, not set
   -- in a colour.
   | .image _ _ _ => out
+  -- An icon is ink in the current colour: it holds the contrast contract
+  -- like a glyph of text, because it is one.
+  | .icon _ _ =>
+    match cx.cur with
+    | some (nm, c) => out.push { name := nm, color := c, large := cx.large }
+    | none => out
 
 private def usesBlocks (cx : UseCx) (out : Array Use) (xs : List Block) :
     Array Use :=

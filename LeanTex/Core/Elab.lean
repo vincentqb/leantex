@@ -8,6 +8,7 @@ import LeanTex.Core.Theme
 import LeanTex.Core.Compat
 import LeanTex.Core.Contrast
 import LeanTex.Core.Picture
+import LeanTex.Core.FaIcons
 
 namespace LeanTex.Core.Elab
 
@@ -1054,6 +1055,59 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             acc := acc.push (.image (argText ctx pathRaw) spec altText)
           | _ =>
             diag ctx .E0304 "'\\includegraphics' needs a {file} group" pos
+        else if name == "faIcon" then
+          -- fontawesome5's generic spelling: `\faIcon[style]{icon-name}`,
+          -- optionally starred for the `-alt` variant. The style argument
+          -- selects a Pro face there; here which file covers the scalar is
+          -- the per-scalar fallback chain's question, so a style is named
+          -- as an ignored option rather than dropped without a word. The
+          -- one extension: `label = ...` overrides the icon's default text
+          -- alternative, for a context where Font Awesome's own name is
+          -- not the right accessible name (`Return to top` on an arrow).
+          let mut j := skipSpaces raws i
+          let mut alt := false
+          if let some (.word "*" _) := raws[j]? then
+            alt := true
+            j := skipSpaces raws (j + 1)
+          let mut label : Option String := none
+          if let some (.sym '[' _) := raws[j]? then
+            let mut optSrc : Array Raw := #[]
+            let mut k := j + 1
+            for _ in [k:raws.size + 1] do
+              match raws[k]? with
+              | some (.sym ']' _) => k := k + 1; break
+              | some r' => optSrc := optSrc.push r'; k := k + 1
+              | none => break
+            j := skipSpaces raws k
+            for e in Decl.splitEntries (rawSrc optSrc) do
+              match Decl.splitEntry e with
+              | some ("label", v) => label := some v.trimAscii.toString
+              | _ =>
+                warnOnce ctx ("faopt:" ++ e) .W0110
+                  s!"'\\faIcon' option '{e.trimAscii.toString}' is not modelled; ignored" pos
+                  (help := "the face that renders an icon is whichever declared or installed face covers its scalar; 'label = ...' overrides the icon's text alternative")
+          match raws[j]? with
+          | some (.group nameRaw _) =>
+            i := j + 1
+            let iconName := (argText ctx nameRaw).trimAscii.toString
+              ++ (if alt then "-alt" else "")
+            match FaIcons.byName[iconName]? with
+            | some e =>
+              acc := flushText acc sb
+              sb := ""
+              acc := acc.push (.icon e.scalar (label.getD e.label))
+            | none =>
+              diag ctx .E0340 s!"unknown icon '{iconName}'; nothing is rendered" pos
+                (help := "icon names are Font Awesome 5 Free's, like 'arrow-up' or 'github'")
+          | _ =>
+            diag ctx .E0304 "'\\faIcon' needs an {icon-name} group" pos
+        else if let some e := FaIcons.byMacro[name]? then
+          -- The per-icon fontawesome5 command (`\faGithub`, `\faArrowUp`):
+          -- the package's own name-to-scalar mapping, carried as data
+          -- (`FaData`, generated from fontawesome5-mapping.def).
+          acc := flushText acc sb
+          sb := ""
+          acc := acc.push (.icon e.scalar e.label)
         else if name == "pagenumber" then
           acc := flushText acc sb
           sb := ""

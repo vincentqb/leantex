@@ -1,0 +1,12 @@
+Example Icons (ExampleIcons-Regular.ttf) is an invented icon face built
+for the leantex test corpus by scripts/gen-test-icons.py: five simple
+geometric shapes drawn in that script, no outlines taken from any existing
+font. The codepoints (U+F062, U+F08C, U+F09B, U+F0E0, U+F19D) follow the
+Font Awesome 5 Free assignments as published in the fontawesome5 LaTeX
+package's mapping table, so the fixtures can exercise the engine's
+fontawesome5 spellings hermetically.
+
+To the extent possible under law, the authors have dedicated this font to
+the public domain under CC0 1.0 Universal
+(https://creativecommons.org/publicdomain/zero/1.0/). It is distributed
+without any warranty.

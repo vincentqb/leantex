@@ -40,6 +40,12 @@ private def inlineInto (acc : String) : Inline → String
   -- the alt text rides as markdown's own image construct; the size
   -- request degrades like colour
   | .image src _ alt => acc ++ s!"![{alt}]({src})"
+  -- an icon's markdown spelling is its text alternative: prose keeps the
+  -- meaning, the glyph is a web/print rendering
+  | .icon _ label =>
+    -- bound first: the append is one-off, not a walk (the cost gate's shape)
+    let escaped := escapeText label
+    acc ++ escaped
   | .styled st body =>
     let inner := inlinesInto "" body.toList
     match st with

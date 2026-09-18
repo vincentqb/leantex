@@ -92,6 +92,9 @@ error[E0334]: this content is addressed to no backend; no output will carry it
 ── E0336 (dropped) {...} groups went with an unknown wrapper
 error[E0336]: 1 {...} group on the '\begin{banner}' line went with the unknown wrapper
   help: content, not an argument? put it after the '\begin' line
+── E0340 (dropped) unknown icon name; nothing is rendered
+error[E0340]: unknown icon 'no-such-icon'; nothing is rendered
+  help: icon names are Font Awesome 5 Free's, like 'arrow-up' or 'github'
 ── E0401 (dropped) no usable font found on the host
 error[E0401]: no usable font found
   help: install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT
@@ -192,7 +195,7 @@ warning[W0106]: expl3 code (\ExplSyntaxOn … \ExplSyntaxOff) is not supported; 
 ── W0108 (degraded) \centering is inert inside an argument
 warning[W0108]: '\centering' centres nothing inside an argument; content stays left-aligned
   help: move '\centering' to the start of the group or environment body
-── W0110 (degraded) unsupported \includegraphics option; ignored
+── W0110 (degraded) unsupported command option; ignored
 warning[W0110]: '\includegraphics' option 'angle=45' is not modelled; ignored
   help: modelled keys: width, height, scale, keepaspectratio, alt
 ── W0111 (config) \setkomafont on a non-styleable element ignored

@@ -435,6 +435,11 @@ private inductive Tk where
   /-- An elaborated formula, measured against the math face by
   `itemsOfInlines`: one unbreakable run of boxes and kerns. -/
   | formula (display : Bool) (style : TextStyle) (body : Math.MList)
+  /-- An icon: one scalar whose face is whichever the per-scalar fallback
+  chain covers it with — an icon face is chosen by coverage, so landing on
+  a fallback face is the declared path, not a degradation, and earns no
+  W0009. A scalar no face covers is the ordinary coverage loss (E0405). -/
+  | icon (style : TextStyle) (c : Char)
   deriving Repr
 
 private structure FlattenSt where
@@ -524,6 +529,7 @@ private def flattenOne (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
     (x : Inline) : FlattenSt :=
   match x with
   | .text s => pushText st sty s
+  | .icon c _ => { st with toks := st.toks.push (.icon sty c) }
   | .image src spec _ => { st with toks := st.toks.push (.img src spec) }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra) }
   | .fill => { st with toks := st.toks.push .fill }
@@ -738,6 +744,7 @@ private def mathScalarTextOne (acc : Array Char) : Ir.Inline → Array Char
   | .text _ => acc
   | .math _ _ => acc
   | .image _ _ _ => acc
+  | .icon _ _ => acc
   | .linebreak _ => acc
   | .fill => acc
   | .pageNumber => acc
@@ -753,11 +760,40 @@ private structure ScalarAcc where
   texts : Array String := #[]
   math : Array Char := #[]
 
-/-- The plain text of a run and, when it carries formulas, their math
-scalars: what keeps the per-scalar fallback one mechanism — a math scalar
-enters the same precompute a text scalar does. -/
+mutual
+
+/-- Icon scalars, gathered like math scalars: an icon's plain text is its
+text alternative, so its glyph would never enter the census through
+`plainText` — this walk is what routes it into the same per-scalar
+fallback precompute every other scalar uses. -/
+private def iconScalarTextList (acc : Array Char) : List Ir.Inline → Array Char
+  | [] => acc
+  | x :: rest => iconScalarTextList (iconScalarTextOne acc x) rest
+
+private def iconScalarTextOne (acc : Array Char) : Ir.Inline → Array Char
+  | .icon c _ => acc.push c
+  | .styled _ body => iconScalarTextList acc body.toList
+  | .colored _ _ body => iconScalarTextList acc body.toList
+  | .link _ body => iconScalarTextList acc body.toList
+  | .underline body => iconScalarTextList acc body.toList
+  | .step _ _ body => iconScalarTextList acc body.toList
+  | .text _ => acc
+  | .math _ _ => acc
+  | .formula _ _ _ => acc
+  | .image _ _ _ => acc
+  | .linebreak _ => acc
+  | .fill => acc
+  | .pageNumber => acc
+  | .pageCount => acc
+
+end
+
+/-- The plain text of a run and, when it carries formulas or icons, their
+scalars: what keeps the per-scalar fallback one mechanism — a math or icon
+scalar enters the same precompute a text scalar does. -/
 private def textAndMath (out : ScalarAcc) (xs : Array Ir.Inline) : ScalarAcc :=
-  { texts := out.texts.push (Ir.plainText xs)
+  { texts := (out.texts.push (Ir.plainText xs)).push
+      (String.ofList (iconScalarTextList #[] xs.toList).toList)
     math := mathScalarTextList out.math xs.toList }
 
 mutual
@@ -1450,6 +1486,24 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       substs := s
       cache := c'
       items := items ++ ws
+    | .icon sty c =>
+      -- The styled face first (an icon font declared as the body face is
+      -- legal), then the fallback chain; either hit is the icon's own face
+      -- by design. Only total absence is a loss (E0405, below).
+      let idx := fs.lookup sty.slot sty.bold sty.italic
+      let sz := size * sty.scale / 1000
+      let hit :=
+        match glyphOf sz (fs.get idx) c with
+        | some g => some (idx, g)
+        | none =>
+          fs.fallbackFor c |>.bind fun fb =>
+            (glyphOf sz (fs.get fb) c).map (fb, ·)
+      match hit with
+      | some (fb, g) =>
+        items := items.push (.box g.2.2 fb sty.color sty.link #[g] sz sty.underline 0)
+      | none =>
+        unless missing.contains (idx, c) do
+          missing := missing.push (idx, c)
     | .formula display sty body =>
       -- The flatten pass pushes a formula token only when a math face with
       -- constants is present.
@@ -3075,6 +3129,7 @@ def substPageOne (n total : Nat) : Inline → Inline
   -- neither can hold a page-number placeholder
   | .formula d src body => .formula d src body
   | .image src size alt => .image src size alt
+  | .icon s l => .icon s l
   | .fill => .fill
   | .linebreak e => .linebreak e
 
@@ -3110,7 +3165,7 @@ theorem substPageOne_id (n total : Nat) (x : Inline)
   | .step s last body =>
     rw [Ir.hasPhysicalPageOne] at h
     rw [substPageOne, substPageList_id n total body.toList h]
-  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .fill
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .fill
   | .linebreak _ => rw [substPageOne]
 
 theorem substPageList_id (n total : Nat) (xs : List Inline)

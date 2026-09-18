@@ -53,6 +53,7 @@ def goldenNames : List String :=
    "marker-styled", "marker-content",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav",
+   "icons",
    "diagram", "diagram-overflow", "tables", "tables-ragged",
    "math-companion", "math-first"]
 
@@ -1571,6 +1572,85 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((FontDb.resolveVariant shipped "Open Sans" (some "SourceSerifPro-Bold.otf")
       { bold := true }).map (fun r => (r.1.path, r.2)) ==
       some (testFonts ++ "/SourceSerifPro-Bold.otf", none))
+
+/-- Icons: the fontawesome5 spellings elaborate to `Inline.icon` — the
+package's own name-to-scalar table, a required text alternative — layout
+sets the glyph from whichever face the per-scalar chain covers it with,
+deliberately and without the W0009 substitution warning, and an icon no
+face covers is the ordinary coverage loss (E0405). HTML hides the glyph
+from assistive technology and names the icon on its wrapper (WCAG 2.2
+SC 1.1.1); the markdown twin renders the text alternative itself. -/
+def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let wrap (body : String) : String :=
+    "\\documentclass{article}\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let (doc, ds) := elabStr (wrap
+    "\\faGithub{} \\faIcon{arrow-up} \\faIcon[label = Return to top]{arrow-up} x")
+  t "icons source clean" ds.isEmpty
+  let icons : Array (Char × String) := match doc.body[0]? with
+    | some (Ir.Block.para xs) => xs.filterMap fun x => match x with
+      | Ir.Inline.icon c label => some (c, label)
+      | _ => none
+    | _ => #[]
+  t "the per-icon command carries the package's scalar and Font Awesome's label"
+    (icons[0]? == some ('\uF09B', "GitHub"))
+  t "the generic spelling resolves by icon name"
+    (icons[1]? == some ('\uF062', "arrow-up"))
+  t "label = overrides the default text alternative"
+    (icons[2]? == some ('\uF062', "Return to top"))
+  t "an unknown icon name is E0340, dropped"
+    (errCodes (wrap "\\faIcon{no-such-icon} x") == ["E0340"])
+  t "an unmodelled \\faIcon option is named W0110"
+    (warnCodes (wrap "\\faIcon[regular]{envelope} x") == ["W0110"])
+  -- HTML: the glyph is aria-hidden, the accessible name rides the wrapper.
+  let page := (HtmlDoc.emit {} doc).1
+  let has (n : String) : Bool := (page.splitOn n).length ≥ 2
+  t "html hides the glyph and names the icon"
+    (has ("<span class=\"icon\" role=\"img\" aria-label=\"GitHub\">" ++
+      "<span aria-hidden=\"true\">\uF09B</span></span>"))
+  t "html carries the overridden name"
+    (has "aria-label=\"Return to top\"")
+  -- Every icon has an accessible name: an empty aria-label is
+  -- unrepresentable upstream (the constructor requires a label), and the
+  -- rendered page witnesses it.
+  t "no icon renders with an empty accessible name" (!has "aria-label=\"\"")
+  -- The markdown twin renders the text alternative.
+  let md := MarkdownDoc.emit doc
+  t "markdown renders the text alternative, never the raw scalar"
+    ((md.splitOn "GitHub").length ≥ 2 && (md.splitOn "\uF09B").length == 1)
+  -- Layout: the icon sets from the covering face without a substitution
+  -- warning; no coverage is the ordinary E0405.
+  let load (name : String) : IO Font.Font := do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"icons: {name} unparsable: {e}")
+  let sans ← load "OpenSans-Regular.ttf"
+  let iconsFace ← load "ExampleIcons-Regular.ttf"
+  t "coverage premise: only the invented icon face has U+F09B"
+    ((sans.gid '\uF09B').isNone && (iconsFace.gid '\uF09B').isSome)
+  let allVariants (slot idx : Nat) : List ((Nat × Bool × Bool) × Nat) :=
+    [((slot, false, false), idx), ((slot, true, false), idx),
+     ((slot, false, true), idx), ((slot, true, true), idx)]
+  let bare : Font.FontSet := {
+    fonts := #[sans, iconsFace]
+    index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
+  let mapped : Font.FontSet := { bare with fallback := #[('\uF09B', 1)] }
+  let geom : Layout.Geom := {}
+  let (glyphDoc, _) := elabStr (wrap "\\faGithub{} beside words")
+  let out := Layout.run geom mapped none glyphDoc
+  let runs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
+  t "the icon glyph ships from the covering face"
+    (runs.any fun s => match s with
+      | .run 1 _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '\uF09B')
+      | _ => false)
+  t "a deliberate icon face is not a substitution warning"
+    (!out.diags.any (·.code == "W0009"))
+  let dropOut := Layout.run geom bare none glyphDoc
+  t "an uncovered icon is the ordinary coverage loss, naming the scalar"
+    ((dropOut.diags.filter (·.code == "E0405")).any
+      fun d => (d.message.splitOn "U+F09B").length ≥ 2)
+  -- The icon scalar enters the same fallback precompute text does.
+  t "docScalars carries the icon scalar" ((Layout.docScalars glyphDoc).contains '\uF09B')
 
 /-- Per-glyph fallback: a scalar the styled face lacks is set from the face
 the driver's map names, at the same size; the diagnostic is one line per
@@ -3853,6 +3933,13 @@ def censusTable :
       hasStr (censusText c) "This sentence is set only on the printed page."),
     ("the web-only nav never reaches the page",
       !hasStr (censusText c) "Back to top")]),
+  ("icons", fun _ c => [
+    ("one page", c.size == 1),
+    ("the contact words ship", hasStr (censusText c) "Email"),
+    ("the icon glyphs ship as ink",
+      hasStr (censusText c) "\uF09B" && hasStr (censusText c) "\uF0E0" &&
+      hasStr (censusText c) "\uF08C" && hasStr (censusText c) "\uF19D" &&
+      hasStr (censusText c) "\uF062")]),
   ("diagram", fun geom c => [
     ("one page", c.size == 1),
     ("the 4×4 grid ships its sixteen fills",
@@ -4011,6 +4098,30 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
               math := some oneFace.fonts.size }
           | .error _ => pure oneFace
         | none => pure oneFace
+    -- The driver's per-scalar precompute, mirrored for the Private Use
+    -- Area only: an icon glyph has no stand-in and no meaning outside its
+    -- face, so the census finds its face the way a build does (the scan
+    -- over the shipped corpus). Everything else keeps the deliberately
+    -- minimal census set — the stand-in degradations are themselves under
+    -- test (`listChecks`), and a broader map would silently upgrade them.
+    let uncovered := (Layout.docScalars doc).filter fun ch =>
+      0xE000 ≤ ch.toNat && ch.toNat ≤ 0xF8FF &&
+        fs.fonts.all fun f => (f.gid ch).isNone
+    let fs ← do
+      if uncovered.isEmpty then pure fs
+      else do
+        let mut fs := fs
+        for (ch, path) in ← FontDb.fallbackPicks shipped uncovered do
+          match Font.parse (← IO.FS.readBinFile path) with
+          | .ok f =>
+            let idx := match fs.fonts.zipIdx.find? (fun p => p.1.family == f.family) with
+              | some (_, i) => i
+              | none => fs.fonts.size
+            let fs' := if idx == fs.fonts.size then
+                { fs with fonts := fs.fonts.push f } else fs
+            fs := { fs' with fallback := fs'.fallback.push (ch, idx) }
+          | .error _ => pure ()
+        pure fs
     let out := Layout.run geom fs (some pats) doc
     let c := censusOf (coveredColorsOf doc) out
     for (label, ok) in facts geom c do
@@ -4374,6 +4485,7 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .E0333 => dvE (dvDoc "" ("\\begin{tikzpicture}\n" ++
       "\\fill (\\nope,0) rectangle (1,1);\n\\end{tikzpicture}"))
   | .E0336 => dvE (dvDoc "" "\\begin{banner}{Logo}\nx\n\\end{banner}")
+  | .E0340 => dvE "\\faIcon{no-such-icon}"
   | .E0334 => dvE (dvDoc "" ("\\begin{ifbackend}{html}\\begin{ifbackend}{pdf}\n" ++
       "orphaned\n\\end{ifbackend}\\end{ifbackend}"))
   | .E0401 => #[DriverDiag.noFont]
@@ -6152,7 +6264,7 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   -- Resolution runs on the shipped faces, never the host's.
   let faces ← FontDb.scanRoots [testFonts]
-  t "fontdb finds the eleven shipped faces" (faces.size == 11)
+  t "fontdb finds the twelve shipped faces" (faces.size == 12)
   t "fontdb finds source serif" ((FontDb.families faces).any (· == "Source Serif Pro"))
   defaultFontChecks ref
   shippedFontChecks ref faces
@@ -7422,6 +7534,7 @@ def main (args : List String) : IO UInt32 := do
   fontDiagChecks ref
   declaredFaceChecks ref
   fallbackChecks ref
+  iconChecks ref
   smartChecks ref
   linkHtmlChecks ref
   paletteChecks ref

@@ -1,0 +1,26 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Open Sans"
+meta title "Icon Field Guide"
+meta subject "An invented page of icons."
+para
+  text "A contact line: "
+  link "mailto:alex@example.org"
+    icon "" label "Envelope"
+    text " Email"
+  text " and "
+  link "https://example.org/code"
+    icon "" label "GitHub"
+    text " Code"
+  text " and "
+  link "https://example.org/net"
+    icon "" label "LinkedIn"
+  text " and a study link "
+  icon "" label "Graduation Cap"
+  text " in running text."
+para
+  link "#top"
+    icon "" label "Return to top"
+-- diagnostics
+(none)

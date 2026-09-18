@@ -482,6 +482,17 @@ inductive Inline where
   fulfilled as an `Image.Store` — and `alt` is the accessible text (a
   figure's caption), for the HTML backend. -/
   | image (src : String) (size : Image.SizeSpec) (alt : String)
+  /-- An icon (`\faGithub`, `\faIcon{arrow-up}` — the spellings the
+  fontawesome5 package defines): one glyph in an icon face, resolved like
+  any other scalar through the per-scalar fallback chain, so a document
+  that ships or installs the icon font renders it and one that does not
+  gets the coverage diagnostic naming the scalar. `label` is the required
+  text alternative (WCAG 2.2 SC 1.1.1): icon glyphs live in the Private
+  Use Area, which assistive technology cannot read, so an icon without a
+  text alternative is unrepresentable by construction. HTML hides the
+  glyph from AT and carries the label as the accessible name; the
+  markdown twin renders the label itself. -/
+  | icon (scalar : Char) (label : String)
   deriving Repr, BEq, Inhabited
 
 /-- How a frame distributes its leftover vertical space: beamer's frame
@@ -1276,6 +1287,7 @@ def fillOne (content : Array Inline) : Inline → Inline
   -- neither can hold the template's hole
   | .formula d src body => .formula d src body
   | .image src size alt => .image src size alt
+  | .icon s l => .icon s l
   | .fill => .fill
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
@@ -1380,6 +1392,8 @@ def plainTextOne (x : Inline) : String :=
   | .step _ _ body => plainTextList body.toList
   | .fill | .pageNumber | .pageCount => ""
   | .image _ _ _ => ""
+  -- an icon is worth its text alternative: what the markdown twin renders
+  | .icon _ label => label
   | .linebreak _ => " "
 
 end
@@ -1515,6 +1529,8 @@ def dumpInline (ind : String) (x : Inline) : String :=
       (if size.keepAspect then " keepaspect" else "") ++
       (if alt.isEmpty then "" else s!" alt {alt.quote}")
     s!"{ind}image {src.quote}{parts}\n"
+  | .icon c label =>
+    s!"{ind}icon {(String.ofList [c]).quote} label {label.quote}\n"
   | .linebreak extra =>
     if extra == ({} : SymGlue) then s!"{ind}linebreak\n"
     else s!"{ind}linebreak {dumpGlue extra}\n"
@@ -1843,7 +1859,7 @@ def maxStepInline : Inline → Nat
   | .link _ body => maxStepInlineList body.toList
   | .underline body => maxStepInlineList body.toList
   | .step n last body => max (max n (last.getD n)) (maxStepInlineList body.toList)
-  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .fill | .pageNumber | .pageCount | .linebreak _ => 1
 
 end
@@ -1937,6 +1953,7 @@ def shadeInline (cover : Cover) : Inline → Inline
   -- raster dims in the backends' hands, not in this walk
   | .formula d src body => .formula d src body
   | .image src size alt => .image src size alt
+  | .icon s l => .icon s l
   | .fill => .fill
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
@@ -2030,6 +2047,7 @@ def dimInline (cover : Cover) (k : Nat) : Inline → Inline
   -- dimming leaves formula and image nodes whole, as the shade does
   | .formula d src body => .formula d src body
   | .image src size alt => .image src size alt
+  | .icon s l => .icon s l
   | .fill => .fill
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
@@ -2277,6 +2295,7 @@ def hasPhysicalPageOne : Inline → Bool
   | .underline body => hasPhysicalPageList body.toList
   | .step _ _ body => hasPhysicalPageList body.toList
   | .text _ => false
+  | .icon _ _ => false
   | .math _ _ => false
   -- a formula's body is math atoms and an image carries no inline body:
   -- neither can hold a page-number placeholder
@@ -2428,7 +2447,8 @@ theorem shadeInline_text (cover : Cover) (x : Inline) :
     -- shading leaves a formula node whole (a pending formula dims in the
     -- backends' hands); its census is its source, untouched on both sides
     rfl
-  | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _ =>
+  | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _
+  | .icon _ _ =>
     rfl
 
 end
@@ -2600,7 +2620,8 @@ theorem dimInline_text (cover : Cover) (k : Nat) (x : Inline) :
     -- dimming leaves a formula node whole; its census is its source,
     -- untouched on both sides
     rfl
-  | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _ =>
+  | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _
+  | .icon _ _ =>
     rfl
 
 end

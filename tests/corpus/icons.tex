@@ -1,0 +1,19 @@
+% Icons through the fontawesome5 spellings: per-icon commands and the
+% generic \faIcon, inside links and in running text. The face is the
+% corpus's invented "Example Icons" (see fonts/LICENSE-ExampleIcons.txt),
+% found by the per-scalar fallback scan over the shipped fonts directory —
+% no icon font needs to be installed. Invented content throughout.
+\documentclass{article}
+\pdfmeta{ title = "Icon Field Guide", subject = "An invented page of icons." }
+\fonts{ dir = "fonts", body = "Open Sans" }
+\begin{document}
+
+A contact line:
+\href{mailto:alex@example.org}{\faEnvelope{} Email} and
+\href{https://example.org/code}{\faGithub{} Code} and
+\href{https://example.org/net}{\faIcon{linkedin}} and
+a study link \faIcon{graduation-cap} in running text.
+
+\href{#top}{\faIcon[label = Return to top]{arrow-up}}
+
+\end{document}

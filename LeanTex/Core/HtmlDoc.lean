@@ -156,6 +156,9 @@ private def markerTextInto (acc : String) : List Inline → Option String
   | .linebreak _ :: _ => none
   | .step _ _ _ :: _ => none
   | .image _ _ _ :: _ => none
+  -- a `content` string cannot carry the icon's accessible name, so an icon
+  -- marker is inexpressible here and diagnosed (W0331), never defaulted
+  | .icon _ _ :: _ => none
 
 mutual
 
@@ -183,6 +186,7 @@ def markerCssOne (decls : Array String) : Inline → Option MarkerCss
   | .linebreak _ => none
   | .step _ _ _ => none
   | .image _ _ _ => none
+  | .icon _ _ => none
 
 def markerCssList (decls : Array String) : List Inline → Option MarkerCss
   | [x] => markerCssOne decls x
@@ -229,7 +233,8 @@ theorem markerCssOne_text (decls : Array String) (x : Inline) (r : MarkerCss)
     rw [Ir.plainTextOne]
     exact markerCssList_text _ body.toList r h
   | .math _ _ | .formula _ _ _ | .link _ _ | .underline _ | .fill
-  | .pageNumber | .pageCount | .linebreak _ | .step _ _ _ | .image _ _ _ =>
+  | .pageNumber | .pageCount | .linebreak _ | .step _ _ _ | .image _ _ _
+  | .icon _ _ =>
     simp [markerCssOne] at h
 
 theorem markerCssList_text (decls : Array String) (xs : List Inline)
@@ -685,6 +690,16 @@ height: auto"
         (match last with
          | some u => #[("data-step-last", toString u)]
          | none => #[])))
+  | .icon c label =>
+    -- The glyph is a Private Use Area scalar assistive technology cannot
+    -- read, so it is hidden (`aria-hidden`) and the accessible name rides
+    -- the wrapper: `role="img"` names the composite and makes the glyph
+    -- span presentational (WCAG 2.2 SC 1.1.1; WAI-ARIA 1.2 §img — children
+    -- of an img role are presentational). The `icon` class is the styling
+    -- hook a stylesheet uses to name the icon face.
+    acc.push (Html.elem "span"
+      #[Html.elem "span" #[Html.text (String.ofList [c])] #[("aria-hidden", "true")]]
+      #[("class", "icon"), ("role", "img"), ("aria-label", label)])
   | .fill => acc.push (Html.elem "span" #[] #[("class", "fill")])
   -- Page furniture has no meaning in a continuous document.
   | .pageNumber => acc

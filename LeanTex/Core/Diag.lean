@@ -89,7 +89,7 @@ inductive DiagCode where
   | E0201 | E0202 | E0205
   | E0303 | E0304 | E0305 | E0306 | E0309 | E0310 | E0311 | E0312 | E0313
   | E0316 | E0320 | E0321 | E0322 | E0323 | E0324 | E0325 | E0326 | E0327
-  | E0328 | E0329 | E0330 | E0331 | E0332 | E0333 | E0334 | E0336
+  | E0328 | E0329 | E0330 | E0331 | E0332 | E0333 | E0334 | E0336 | E0340
   | E0401 | E0402 | E0403 | E0404 | E0405
   | E0501 | E0502
   | N0100 | N0102 | N0103 | N0114 | N0200
@@ -177,7 +177,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0105 => ("0105", .degraded, "overlay specification does not name a step")
   | .W0106 => ("0106", .config, "expl3 code skipped")
   | .W0108 => ("0108", .degraded, "\\centering is inert inside an argument")
-  | .W0110 => ("0110", .degraded, "unsupported \\includegraphics option; ignored")
+  | .W0110 => ("0110", .degraded, "unsupported command option; ignored")
   | .W0201 => ("0201", .degraded, "measure outside the readable band")
   | .W0202 => ("0202", .degraded, "heading sets more space below than above")
   | .W0301 => ("0301", .degraded, "unknown command; arguments kept as text")
@@ -191,6 +191,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0312 => ("0312", .degraded, "no {...} group after a command; skipped")
   | .E0333 => ("0333", .dropped, "picture expression unreadable or unresolvable; its shape is not drawn")
   | .E0336 => ("0336", .dropped, "{...} groups went with an unknown wrapper")
+  | .E0340 => ("0340", .dropped, "unknown icon name; nothing is rendered")
   | .W0314 => ("0314", .degraded, "column width is not a fraction of the text width")
   | .W0315 => ("0315", .degraded, "low-contrast colour pairing (WCAG 2.2)")
   | .W0316 => ("0316", .config, "unknown option in \\palette; block skipped")
@@ -245,7 +246,7 @@ def DiagCode.all : List DiagCode :=
   [.E0001, .E0002, .E0101, .E0102, .E0111, .E0112, .E0113, .E0201, .E0202, .E0205, .E0303, .E0304,
    .E0305, .E0306, .E0309, .E0310, .E0311, .E0312, .E0313, .E0316, .E0320,
    .E0321, .E0322, .E0323, .E0324, .E0325, .E0326, .E0327, .E0328, .E0329,
-   .E0330, .E0331, .E0332, .E0333, .E0334, .E0336, .E0401, .E0402, .E0403, .E0404,
+   .E0330, .E0331, .E0332, .E0333, .E0334, .E0336, .E0340, .E0401, .E0402, .E0403, .E0404,
    .E0405, .E0501, .E0502, .N0100,
    .N0016, .N0102, .N0103, .N0114, .N0200, .W0001, .W0003, .W0005, .W0006, .W0007, .W0008,
    .W0009, .W0010, .W0011, .W0012, .W0013, .W0014, .W0015, .W0101, .W0102,
