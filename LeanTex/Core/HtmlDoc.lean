@@ -540,9 +540,7 @@ the encoding exists to satisfy — with both sides declared it fails: max
 and sum diverge, which is the shipped 52px-for-32px defect. -/
 theorem single_owner_gap_exact (g : Int) (h : 0 ≤ g) :
     max 0 g = g ∧ 0 + g = g := by
-  constructor
-  · omega
-  · omega
+  omega
 
 /-- Every gap rule's kind is a declared row of the table, with a positive
 multiple — no boundary silently falls to zero through a missing lookup.

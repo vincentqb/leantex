@@ -98,24 +98,18 @@ reservation still suffices there. Bare `Int` binders because `omega` does
 not see through the `Sp` abbreviation. -/
 theorem band_reserves (m x l : Int) :
     m / 2 + x + l ≤ m + max 0 (x + l - m / 2) := by
-  simp only [Int.max_def]
-  split <;> omega
+  omega
 
 /-- `band_reserves` reflected through the page height: what
-`bodyBottom_clears_footer` reads. The `generalize` names the band an opaque
-atom shared by the goal and the keystone; the rest is linear. -/
+`bodyBottom_clears_footer` reads. -/
 private theorem band_reserves_below (pageH m x l : Int) :
     pageH - m - max 0 (x + l - m / 2) + x + l ≤ pageH - m / 2 := by
-  have key := band_reserves m x l
-  generalize max 0 (x + l - m / 2) = B at key ⊢
   omega
 
 /-- `band_reserves` with the ink extent split into ascent and descent: what
 `bodyTop_clears_head` reads. -/
 private theorem band_reserves_above (m x y l : Int) :
     m / 2 + x + y + l ≤ m + max 0 (x + y + l - m / 2) := by
-  have key := band_reserves m (x + y) l
-  generalize max 0 (x + y + l - m / 2) = B at key ⊢
   omega
 
 /-- The reservation is sufficient, for every geometry — negative margins
@@ -205,7 +199,6 @@ font's own — so two em is this engine's coverage choice, chosen generous
 against real faces (typical line metrics sit at 1.0–1.3 em; the shipped
 test faces are pinned under the bound in `Tests.lean`). -/
 theorem slides_lines_survive_bands (a d f : Sp)
-    (h0a : 0 ≤ a) (h0d : 0 ≤ d) (h0f : 0 ≤ f)
     (hh : a + d ≤ 2 * Ir.slidesFontSize) (hf : f ≤ 2 * Ir.slidesFontSize)
     (g : Geom)
     (hg : g.pageH = Ir.slidesStage169.2 ∨ g.pageH = Ir.slidesStage43.2)
@@ -224,7 +217,6 @@ theorem slides_lines_survive_bands (a d f : Sp)
   -- The key inequality over bare `Int` binders, as `bodyBottom_clears_footer`
   -- does it: `omega` does not see through the `Sp` abbreviation.
   have key : ∀ a d f hb fb H : Int,
-      0 ≤ a → 0 ≤ d → 0 ≤ f →
       a + d ≤ 2 * 720896 → f ≤ 2 * 720896 →
       (H = 16719420 ∨ H = 17834048) →
       hb = max 0 (a + d + 65536 - 1730150 / 2) →
@@ -232,9 +224,8 @@ theorem slides_lines_survive_bands (a d f : Sp)
       0 < H - 1730150 - fb - (1730150 + hb) ∧
       10 ≤ (H - 1730150 - fb - (1730150 + hb)) / 865075 ∧
       (H - 1730150 - fb - (1730150 + hb)) / 865075 ≤ 20 := by
-    intro a d f hb fb H h0a h0d h0f hh hf hH hhb hfb
-    simp only [Int.max_def] at hhb hfb
-    rcases hH with h | h <;> subst h <;> split at hhb <;> split at hfb <;> omega
+    intro a d f hb fb H hh hf hH hhb hfb
+    omega
   rw [hfs] at hh hf
   rw [h169] at hg
   rw [h43] at hg
@@ -242,7 +233,7 @@ theorem slides_lines_survive_bands (a d f : Sp)
   rw [hld]
   simp only [Geom.bodyBottom, Geom.bodyTop]
   rw [hv, hvm]
-  exact key a d f g.headBand g.footBand g.pageH h0a h0d h0f hh hf hg hhb hfb
+  exact key a d f g.headBand g.footBand g.pageH hh hf hg hhb hfb
 
 /-- How a page distributes its leftover vertical space: declared shares of
 the stretch above and below the content, the ratio form of beamer's

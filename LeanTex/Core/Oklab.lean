@@ -258,20 +258,7 @@ this hypothesis is the shipped case, not an idealisation. -/
 theorem labOf_achromatic (c : Color) (hg : c.g = c.r) (hb : c.b = c.r) :
     (labOf c).a = 0 ∧ (labOf c).b = 0 := by
   simp only [labOf, hg, hb]
-  have h1 : 10 * (2119034982 * channelLinear.getD c.r.toNat 0
-        + 6806995451 * channelLinear.getD c.r.toNat 0
-        + 1073969567 * channelLinear.getD c.r.toNat 0)
-      = 10 * (4122214708 * channelLinear.getD c.r.toNat 0
-        + 5363325363 * channelLinear.getD c.r.toNat 0
-        + 514459929 * channelLinear.getD c.r.toNat 0) := by omega
-  have h2 : 10 * (883024619 * channelLinear.getD c.r.toNat 0
-        + 2817188376 * channelLinear.getD c.r.toNat 0
-        + 6299787005 * channelLinear.getD c.r.toNat 0)
-      = 10 * (4122214708 * channelLinear.getD c.r.toNat 0
-        + 5363325363 * channelLinear.getD c.r.toNat 0
-        + 514459929 * channelLinear.getD c.r.toNat 0) := by omega
-  rw [h1, h2]
-  constructor <;> omega
+  grind
 
 /-- Covering preserves hue exactly when the surface is achromatic: the mix
 scales both chromatic coordinates by the same non-negative factor `f`, and
@@ -293,14 +280,7 @@ theorem chroma_scaled (f : Nat) (c bg : Color) (hg : bg.g = bg.r) (hb : bg.b = b
     chromaSq (labMix f (labOf c) (labOf bg)) = (f : Int) * f * chromaSq (labOf c) := by
   obtain ⟨h1, h2⟩ := hue_preserved f c bg hg hb
   simp only [chromaSq, h1, h2]
-  generalize (labOf c).a = a
-  generalize (labOf c).b = b
-  calc (f : Int) * a * ((f : Int) * a) + (f : Int) * b * ((f : Int) * b)
-      = (f : Int) * f * (a * a) + (f : Int) * f * (b * b) := by
-        rw [Int.mul_assoc, Int.mul_assoc, ← Int.mul_assoc a, Int.mul_comm a,
-          ← Int.mul_assoc b, Int.mul_comm b, Int.mul_assoc, Int.mul_assoc,
-          ← Int.mul_assoc (f : Int) (f : Int), ← Int.mul_assoc (f : Int) (f : Int)]
-    _ = (f : Int) * f * (a * a + b * b) := by rw [Int.mul_add]
+  grind
 
 private theorem mul_self_nonneg (a : Int) : 0 ≤ a * a := by
   rcases Int.le_total 0 a with h | h
