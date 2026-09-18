@@ -2105,6 +2105,23 @@ private def B.brokeTie (b : B) : B :=
         (help := "\\pagebreak before the float moves it whole to the next page")) }
   else b
 
+/-- `doc_geometry_uniform`, the honest whole-document statement for the
+preamble-only declarations (`\page` among the eight W0340 fences from the
+body): every page of a run is laid out under the one declared geometry,
+because the placement steps never write `geom` — the identity holds
+through page close, line commit, sibling rules, and the tie report, so a
+second geometry is unrepresentable on the way to `Out`. The body door for
+geometry does not exist, and this is the statement that keeps it that
+way: a step that started writing `geom` would fail here at build time. -/
+private theorem doc_geometry_uniform (b : B) (l line : LineOut)
+    (depth above overflow : Sp) :
+    b.finishPage.geom = b.geom ∧ (b.pushSibling l).geom = b.geom ∧
+      (b.commit line depth above overflow).geom = b.geom ∧
+      b.brokeTie.geom = b.geom := by
+  refine ⟨rfl, rfl, rfl, ?_⟩
+  unfold B.brokeTie
+  split <;> rfl
+
 /-- A line's vertical extent — (tallest run size, height above the
 baseline, depth below it) — measured seg by seg, each run in its own face:
 a sans title is as tall as the sans says, not as the body face would be at

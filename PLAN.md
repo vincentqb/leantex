@@ -87,6 +87,70 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-18 — scope: a setting's effect is confined to its declared extent,
+and the model is written down.
+
+- **The model (audit-scope, landed).** From-here-forward flow scope,
+  uniform, no brace revert — the engine's documented `\centering` choice,
+  and what `\logo`/`.framefoot` already implement. Before, scope was an
+  accident of read time: elaboration-time readers saw from-here-forward
+  while layout/emission-time readers saw last-write-wins whole-document
+  (`bodyPalette`/`bodyTokens` displacing `doc.palette`/`doc.tokens`), so
+  one `\palette{fg=…}` inside a `\block` recoloured the page retroactively
+  and the HTML `:root` diverged from the PDF's baked ink — both
+  machine-verified before the fix.
+- **The mechanism.** Body `\palette`/`\tokens` are IR blocks
+  (`.setPalette`/`.setTokens`) carrying the full state snapshot in flow
+  order; elaboration's flow state carries the snapshot past a nested
+  scope's close (one Nat generation guard per raw item), so
+  elaboration-time and replay-time readers see one scope.
+  `doc.palette`/`doc.tokens` are the preamble+theme state — epoch 0.
+  Layout replays the block in the accumulator (palette, tokens, the ink
+  derived from the palette in force; standout/frametitle restores
+  recompute rather than restore a saved copy); a stateful block is
+  gap-transparent. HTML redefines only the changed custom properties on
+  each following sibling's own style attribute — a wrapper div would break
+  the `* + *` adjacency the rhythm rules key on; `:root` carries epoch 0.
+- **The misplaced-declaration door.** A declCtrl/runningCtrl name met
+  where it cannot stand is ours, never W0301-unknown, and its arguments
+  never become page ink: W0346 (config) for a declaration inside inline
+  content, E0347 (dropped — the severity derives from the loss) for a body
+  or inline running head/foot, whose group is content.
+- **Retroactivity, per declaration.** palette/tokens — (a) forward, both
+  backends, both read times (was: (a) xor (b) depending on the reader);
+  logo/framefoot — (a) forward, unchanged; the preamble-only eight —
+  fenced (W0340/E0347), honestly whole-document. Deliberate epoch-0
+  remainders, stated not hidden: page background and the overlay cover
+  fraction (page-scoped attributes of the run), `themeCss` feature gating,
+  and chrome/running furniture and their contrast judgement.
+- **Theorems and evidence.** `Acc.setPalette_emits_nothing`/`setTokens…`
+  (proved, rfl): the arm touches no op, no owed glue, no gap flag — the
+  checkable core of confinement. The walk-prefix statement
+  (`setting_confined_to_suffix`) is blocked: unfolding `collectBlock`
+  needs equation lemmas whose generation exhausts `whnf` (the
+  `role_transparent_layout` blocker); its executable oracle in Tests
+  (scopeChecks) compares the page closed before a declaration with and
+  without it, both directions. `doc_geometry_uniform` (proved): the
+  placement steps never write `geom`, so a second geometry is
+  unrepresentable on the way to `Out`. Elaboration-side statements stay
+  blocked on `elabBlocks` being `partial` (sanctioned); the tests are the
+  evidence and say so.
+- **Contrast per epoch.** The uses walk threads the palette in force: each
+  use is judged on its epoch's effective page with its epoch's decorative
+  exemption (a plain redeclaration removes the exemption from where it
+  stands); each body epoch's effective pair is judged as epoch 0's
+  (W0315/W0330); W0345 extends per epoch — the walk records which epochs
+  ship a titled frame, standout, or pending content, and judges each
+  against the palette in force there. Epoch-0-only documents are
+  judgement-for-judgement unchanged.
+- **The named divergence.** HTML cannot carry a nested epoch past its
+  enclosing element's close (a custom property cannot reach an ancestor's
+  later siblings without a wrapper): a nested epoch is brace-bounded in
+  HTML and whole-flow in the PDF, pinned by test from both sides; the flow
+  state re-synchronizes at the next declaration (snapshots diff against
+  the walk's own state). Body-legal running head/foot (audit item 5)
+  remains a milestone, not this slice.
+
 2026-09-18 — settings compose: repeat semantics are decided by the key's
 type, and the four accidents that broke that rule are gone.
 
@@ -184,7 +248,6 @@ backend proves it realizes it.
   `vmargin_on_rhythm` pins the article inch = 6 units so the coincidence
   cannot drift silently.
 
-||||||| parent of 0e09921 (Record the compose decisions in the plan)
 2026-09-18 — palette roles: a role is defined by the palette, and a use of
 it can never freeze.
 
