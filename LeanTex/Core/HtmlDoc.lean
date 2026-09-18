@@ -279,6 +279,8 @@ private def markerTextInto (acc : String) : List Inline → Option String
   -- an anchor or a reference in a marker has no ::marker expression
   | .label _ :: _ => none
   | .ref _ _ _ _ :: _ => none
+  -- a citation resolves to links, which no ::marker can carry
+  | .cite _ _ :: _ => none
 
 mutual
 
@@ -312,6 +314,7 @@ def markerCssOne (decls : Array String) : Inline → Option MarkerCss
   | .icon _ _ => none
   | .label _ => none
   | .ref _ _ _ _ => none
+  | .cite _ _ => none
 
 def markerCssList (decls : Array String) : List Inline → Option MarkerCss
   | [x] => markerCssOne decls x
@@ -1172,6 +1175,10 @@ height: auto"
       #[Html.elem "span" #[Html.text (String.ofList [c])] #[("aria-hidden", "true")]]
       #[("class", "icon"), ("role", "img"), ("aria-label", label)])
   | .fill => acc.push (Html.elem "span" #[] #[("class", "fill")])
+  -- An unresolved citation shows its marks; resolution would have replaced
+  -- this node with the style's linked inlines, and the diagnostic that let
+  -- it through already named the gap.
+  | .cite _ keys => acc.push (Html.text (Ir.citeMarks keys))
   -- Page furniture has no meaning in a continuous document.
   | .pageNumber => acc
   | .pageCount => acc
@@ -1586,6 +1593,23 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       | .sub => "float subfloat"
     Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode)
       #[("class", cls)]
+  -- The reference list: one item per resolved entry, carrying the anchor
+  -- its citations link to. The key is author text from the `.bib` and
+  -- enters the id through the typed tree, so it passes the attribute
+  -- escaper by construction — no spelling of a key breaks out of the
+  -- attribute. The style's marker leads the item; an author-year list
+  -- marks nothing and the class carries that.
+  | .bibliography _ _ items =>
+    let itemEls := items.map fun item =>
+      let markerNode : Array Node := match item.marker with
+        | some m => #[Html.elem "span" #[Html.text s!"[{m}]"]
+            #[("class", "bib-marker")], Html.text " "]
+        | none => #[]
+      Html.elem "li" (markerNode ++ inlines cfg item.content)
+        #[("id", Ir.bibAnchor item.key)]
+    let marked := items.any (·.marker.isSome)
+    Html.elem "ul" itemEls
+      #[("class", if marked then "bibliography" else "bibliography unmarked")]
 
 /-- The accumulator threads through the sibling walk, as in
 `inlineNodesInto` — and so does the epoch: a `.setPalette`/`.setTokens`

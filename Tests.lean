@@ -261,6 +261,26 @@ def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (({ etAlAfter := some 2 } : Bib.NameFormat).renderList
       "Doe, Alex and Roe, Sam and Poe, Kim" == "Alex Doe et al.")
 
+/-- The IR carries citations and the reference list: census text, the
+one unresolved-mark site, and the request value the driver fulfils. -/
+def bibIrChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  t "bib-ir: an unresolved citation is worth one mark per key"
+    (Ir.plainText #[.cite false #["a", "b"]] == "?, ?")
+  let item : Ir.BibItem :=
+    { key := "k1"
+      marker := some "1"
+      content := #[.text "Alex Doe. A study. 2024."] }
+  t "bib-ir: every entry's text is census content"
+    (Ir.blockTextList "" [.bibliography "refs" (some "unsrtnat") #[item]] ==
+      "Alex Doe. A study. 2024.")
+  t "bib-ir: the bibliography names its source for the driver"
+    (Ir.bibRefs { body := #[.center #[.bibliography "refs" none #[]],
+      .bibliography "refs" none #[], .bibliography "other" none #[]] } ==
+      #["refs", "other"])
+  t "bib-ir: anchor naming has one site"
+    (Ir.bibAnchor "k1" == "ref-k1" && Bib.anchorOf "k1" == "#ref-k1")
+
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
@@ -324,6 +344,7 @@ def main (args : List String) : IO UInt32 := do
   mathChecks ref
   bibChecks ref
   bibStyleChecks ref
+  bibIrChecks ref
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then

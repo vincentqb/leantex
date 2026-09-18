@@ -76,6 +76,12 @@ private def inlineInto (acc : String) : Inline → String
     acc ++ " — "
   | .pageNumber => acc
   | .pageCount => acc
+  -- an unresolved citation is worth its marks; the diagnostic that let it
+  -- through already named the missing entry
+  | .cite _ keys =>
+    -- bound first: the append is one-off, not a walk (the cost gate's shape)
+    let marks := Ir.citeMarks keys
+    acc ++ marks
   | .linebreak _ => acc ++ "\\\n"
 
 private def inlinesInto (acc : String) : List Inline → String
@@ -89,6 +95,17 @@ Public because the placement theorems below quote it — the emitted title
 line is `# ` followed by exactly this. -/
 def inlineText (xs : Array Inline) : String :=
   inlinesInto "" xs.toList
+
+/-- The reference list's markdown spelling: one paragraph per entry, the
+style's marker leading it — thebibliography's shape in prose. -/
+private def bibItemsText (ind : String) (items : Array Ir.BibItem) : String := Id.run do
+  let mut out := ""
+  for item in items do
+    let mark := match item.marker with
+      | some m => s!"[{m}] "
+      | none => ""
+    out := out ++ ind ++ mark ++ inlineText item.content ++ "\n\n"
+  return out
 
 /-- The heading marker a section level takes: `#` marks the level-0
 document title, exactly as the HTML backend reserves `<h1>` for it, and
@@ -193,6 +210,9 @@ private def blockInto (summary ind acc : String) : Block → String
       else ind ++ inlineText (Ir.numberedCaption kind num caption) ++ "\n\n"
     if capAbove then blocksInto summary ind (acc ++ cap) body.toList
     else blocksInto summary ind acc body.toList ++ cap
+  | .bibliography _ _ items =>
+    let entries := bibItemsText ind items
+    acc ++ entries
 
 private def blocksInto (summary ind acc : String) : List Block → String
   | [] => acc
@@ -247,6 +267,10 @@ casing — since `\scshape` renders uniform small capitals, the source
 carries the reading form and the twin is correct as typed (the retired
 W0344 named the loss back when uniform required a lowercase workaround).
 The metadata renders as the llms.txt preamble — the title as the one `#`
+  | .bibliography _ _ items => scBibItems acc items.toList
+private def scBibItems (acc : Array String) : List Ir.BibItem → Array String
+  | item :: rest => scBibItems (scInlines acc item.content.toList) rest
+  | .cite _ _ => acc
 heading, the subject as the summary blockquote — and the summary's place
 is fixed by the convention, not by its source: immediately after the title
 line, wherever that line comes from. A body that carries its own level-0
@@ -349,6 +373,7 @@ private theorem blockInto_extends (summary ind acc : String) :
     extends_comp ⟨_, rfl⟩ (blocksInto_extends summary ind
       (acc ++ (ind ++ "## Abstract\n\n")) body.toList)
   | .spaced _ body => blocksInto_extends summary ind acc body.toList
+  | .bibliography _ _ items => ⟨bibItemsText ind items, rfl⟩
   | .role _ body => blocksInto_extends summary ind acc body.toList
   | .verbatim _ _ => by
     simp only [blockInto]
@@ -602,6 +627,7 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .frame _ _ _ body, out, h => headingLevelList_mem x body.toList out h
   | .note _, _, h => h
   | .verbatim _ _, _, h => h
+  | .bibliography _ _ _, _, h => h
   | .framefoot _, _, h => h
   | .setPalette _, _, h => h
   | .setTokens _, _, h => h

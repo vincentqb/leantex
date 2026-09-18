@@ -144,10 +144,13 @@ def citeAuthors (e : Entry) : String :=
   | none => e.key
 
 /-- The anchor an entry's reference-list item carries and its citations
-link to. The key is author text from the `.bib`; the typed HTML tree
-escapes it on the way into the attribute (`escapeAttr`), so no spelling of
-a key can break out of the `href`. -/
-def anchorOf (key : String) : String := "#ref-" ++ key
+link to: `Ir.bibAnchor`, the one naming site, `#`-prefixed for the href.
+The key is author text from the `.bib`; the typed HTML tree escapes it on
+the way into the attribute (`escapeAttr`), so no spelling of a key can
+break out of the `href`. -/
+def anchorOf (key : String) : String :=
+  let a := Ir.bibAnchor key
+  "#" ++ a
 
 /-- One resolved citation, ready to render: the entry with its 1-based
 position in the reference list. -/

@@ -563,6 +563,9 @@ private def flattenOne (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
   -- an anchor ships no ink; a resolved reference ships its number
   | .label _ => st
   | .ref _ _ text _ => pushText st sty text
+  -- An unresolved citation sets its marks as plain text: something stands
+  -- here, and the diagnostic that let it through has already said why.
+  | .cite _ keys => pushText st sty (Ir.citeMarks keys)
   | .icon c _ => { st with toks := st.toks.push (.icon sty c) }
   | .image src spec _ => { st with toks := st.toks.push (.img src spec) }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra) }
@@ -827,6 +830,7 @@ private def leafScalarsOne (icons math : Array Char) :
   | .fill => (icons, math)
   | .pageNumber => (icons, math)
   | .pageCount => (icons, math)
+  | .cite _ _ => acc
 
 end
 
@@ -838,6 +842,7 @@ private structure ScalarAcc where
   texts : Array String := #[]
   math : Array Char := #[]
 
+  | .cite _ _ => acc
 /-- The plain text of a run and, when it carries formulas or icons, their
 scalars: what keeps the per-scalar fallback one mechanism — a math or icon
 scalar enters the same precompute a text scalar does. -/
@@ -864,6 +869,10 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   -- of the bold face like the title's own text.
   | .section _ _ num title =>
     textAndMath { out with texts := out.texts.push (num.getD "") } title
+  -- Each entry's formatted content is shipped text: its scalars enter the
+  -- same fallback precompute a paragraph's do.
+  | .bibliography _ _ items =>
+    items.foldl (fun out item => textAndMath out item.content) out
   | .list ordered items =>
     -- The level's default marker rides along, so the fallback face is
     -- found before layout asks for the glyph. Per-kind depth, as LaTeX
@@ -3323,6 +3332,17 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let a := { a with ops := a.ops.push .colOpen }
     let a := collectColumns a pats fs cols.toList indent shareW gutter total
     { a with ops := a.ops.push .colClose }
+  | .bibliography _ _ items =>
+    -- The reference list: each resolved entry is one paragraph led by its
+    -- style's marker, separated by the paragraph gap — thebibliography's
+    -- hanging label set flat. An unfilled marker ships nothing; the
+    -- diagnostic that left it empty already said why.
+    items.foldl (init := a) fun a item =>
+      let content := match item.marker with
+        | some m => #[Ir.Inline.text s!"[{m}] "] ++ item.content
+        | none => item.content
+      let a := collectPara a pats fs content indent false a.geom.fontSize
+      a.wantGap
   | .spaced before body =>
     -- Declared space above the block, resolved against the body font: the
     -- gap in place of the default, added to any other declared glue — a
@@ -3677,6 +3697,8 @@ def substPageOne (n total : Nat) : Inline → Inline
   | .ref k p t tg => .ref k p t tg
   | .fill => .fill
   | .linebreak e => .linebreak e
+  -- a citation's keys are not content: no placeholder can hide in one
+  | .cite t keys => .cite t keys
 
 def substPageList (n total : Nat) : List Inline → List Inline
   | [] => []
@@ -3715,7 +3737,7 @@ theorem substPageOne_id (n total : Nat) (x : Inline)
     rw [substPageOne, substPageList_id n total body.toList h]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .fill
   | .label _ | .ref _ _ _ _
-  | .linebreak _ => rw [substPageOne]
+  | .linebreak _ | .cite _ _ => rw [substPageOne]
 
 theorem substPageList_id (n total : Nat) (xs : List Inline)
     (h : Ir.hasPhysicalPageList xs = false) :

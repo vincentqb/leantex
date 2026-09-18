@@ -298,6 +298,11 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
     match cx.cur with
     | some (nm, c) => acc.use cx nm c
     | none => acc
+  -- An unresolved citation's marks are ink in the current colour, as text.
+  | .cite _ _ =>
+    match cx.cur with
+    | some (nm, c) => acc.use cx nm c
+    | none => acc
 
 private def usesBlocks (cx : UseCx) (acc : UseAcc) (xs : List Block) :
     UseAcc :=
@@ -349,6 +354,9 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .table _ _ _ rows _ =>
     rows.foldl (fun o row => row.foldl (fun o cell => usesInlines cx o cell.toList) o) acc
   | .float _ _ _ body caption =>
+  -- Each entry's content is page text at the body size, like a cell's.
+  | .bibliography _ _ items =>
+    items.foldl (fun o item => usesInlines cx o item.content.toList) acc
     usesBlocks cx (usesInlines cx acc caption.toList) body.toList
   -- A note is a side channel, never page text; verbatim carries no
   -- colour; a rule is decorative ink, not text, so the text-contrast

@@ -915,7 +915,32 @@ inductive Inline where
   glyph from AT and carries the label as the accessible name; the
   markdown twin renders the label itself. -/
   | icon (scalar : Char) (label : String)
+  /-- A citation (`\cite`, natbib's `\citep`/`\citet`): the keys of one
+  citation group, as written. Elaboration emits it unresolved — the `.bib`
+  file is the driver's effect — and resolution (`Bib.apply`) *replaces* the
+  node with the bibliography style's own inlines: marks linked to their
+  entries, brackets or parentheses per the style, so no backend ever reads
+  a citation form. A node a backend still sees is one no bibliography
+  resolved; it renders `citeMark` per key, LaTeX's own spelling for an
+  undefined citation, and W0351 or the missing-file diagnostic has already
+  said why. `textual` marks `\citet`'s in-sentence form. -/
+  | cite (textual : Bool) (keys : Array String)
   deriving Repr, BEq, Inhabited
+
+/-- The anchor a reference-list entry carries in HTML and its citations
+link to (`#` prefixed): one naming site, read by the resolver's link
+construction and the backend's id emission, so the two cannot drift. -/
+def bibAnchor (key : String) : String := "ref-" ++ key
+
+/-- What an unresolved citation shows for each key: LaTeX's rendering for
+an undefined citation. The one definition site backends and census read. -/
+def citeMark : String := "?"
+
+/-- The text an unresolved citation is worth: one mark per key, comma
+separated — `\cite{a,b}` with no bibliography shows `?, ?`, one visible
+gap per promised entry. -/
+def citeMarks (keys : Array String) : String :=
+  String.intercalate ", " (keys.toList.map fun _ => citeMark)
 
 /-- How a frame distributes its leftover vertical space: beamer's frame
 options `[t]`/`[c]`/`[b]` on `\begin{frame}`. `center` is beamer's default
@@ -1221,6 +1246,17 @@ structure NavSpec where
   pin : Option Pin := none
   deriving Repr, BEq, Inhabited
 
+/-- One reference-list entry, resolved: its key (the HTML anchor and what
+`\cite` spells), the marker the style shows beside it (the position for a
+numeric style, nothing for author-year lists, which mark no entries), and
+its content formatted per the style. `Bib.apply` builds these; a backend
+only structures them. -/
+structure BibItem where
+  key : String
+  marker : Option String
+  content : Array Inline
+  deriving Repr, BEq, Inhabited
+
 inductive Block where
   | para (content : Array Inline)
   /-- A heading. `number` is the section's resolved number ("2", "2.1",
@@ -1372,6 +1408,15 @@ inductive Block where
   `\thesubfigure` is `(\alph{subfigure})`). -/
   | float (kind : FloatKind) (num : Option Nat) (capAbove : Bool) (body : Array Block)
       (caption : Array Inline)
+  /-- `\bibliography{src}`: the reference list, standing where the command
+  was written. Elaboration emits the marker with no items — the `.bib`
+  beside the document is the driver's effect (`bibRefs`, the `imageRefs`
+  shape) — and `Bib.apply` fills `items` with the cited entries in the
+  style's order. `style` is the declared `\bibliographystyle`, kept as
+  written so resolution can select the record (W0353 names an unknown one
+  and falls back). An unfilled marker ships nothing: the missing file was
+  already a diagnostic. -/
+  | bibliography (src : String) (style : Option String) (items : Array BibItem)
   deriving Repr, BEq, Inhabited
 
 /-- The frames the deck numbers: a `.frame` that is neither standout nor
@@ -2308,6 +2353,8 @@ def fillOne (content : Array Inline) : Inline → Inline
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
   | .linebreak e => .linebreak e
+  -- a citation carries no inline body: it cannot hold the template's hole
+  | .cite t ks => .cite t ks
 
 def fillList (content : Array Inline) : List Inline → List Inline
   | [] => []
@@ -2449,6 +2496,8 @@ def plainTextOne (x : Inline) : String :=
   -- an anchor ships no ink; a reference is worth what it resolved to
   | .label _ => ""
   | .ref _ _ text _ => text
+  -- a citation is worth the number it shows (or LaTeX's ? unresolved)
+  | .cite _ keys => citeMarks keys
   | .linebreak _ => " "
 
 end
@@ -2791,6 +2840,9 @@ def dumpInline (ind : String) (x : Inline) : String :=
     s!"{ind}image {src.quote}{parts}\n"
   | .icon c label =>
     s!"{ind}icon {(String.ofList [c]).quote} label {label.quote}\n"
+  | .cite textual keys =>
+    let form := if textual then "citet" else "cite"
+    s!"{ind}{form} {String.intercalate " " (keys.toList.map (·.quote))}\n"
   | .linebreak extra =>
     if extra == ({} : SymGlue) then s!"{ind}linebreak\n"
     else s!"{ind}linebreak {dumpGlue extra}\n"
@@ -2961,6 +3013,17 @@ def dumpBlock (ind : String) (b : Block) : String :=
     (if caption.isEmpty then ""
      else s!"{ind}  caption\n" ++ dumpInlines (ind ++ "    ") caption) ++
     dumpBlocks (ind ++ "  ") body
+  | .bibliography src style items =>
+    let st := match style with
+      | some s => s!" style {s.quote}"
+      | none => ""
+    s!"{ind}bibliography {src.quote}{st}\n" ++
+    String.join (items.toList.map fun item =>
+      let mark := match item.marker with
+        | some m => s!"[{m}] "
+        | none => ""
+      s!"{ind}  {mark}{item.key.quote}\n" ++
+        dumpInlines (ind ++ "    ") item.content)
 
 end
 
@@ -3133,6 +3196,8 @@ def maxStepBlock : Block → Nat
   -- furniture and does not multiply pages, as a frame title does not.
   | .table _ _ _ rows _ => maxStepTableRows rows.toList
   | .float _ _ _ body _ => maxStepBlockList body.toList
+  -- A reference list is furniture like a section title: no overlay inside.
+  | .bibliography _ _ _ => 1
 
 def maxStepTableRows : List (Array (Array Inline)) → Nat
   | [] => 1
@@ -3165,7 +3230,7 @@ def maxStepInline : Inline → Nat
   | .step n last body => max (max n (last.getD n)) (maxStepInlineList body.toList)
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
-  | .fill | .pageNumber | .pageCount | .linebreak _ => 1
+  | .fill | .pageNumber | .pageCount | .linebreak _ | .cite _ _ => 1
 
 end
 
@@ -3239,6 +3304,9 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
         if caption.isEmpty then caption
         else #[.colored cover.plain none (dimInlineList cover k true #[] caption.toList)]
        else dimInlineList cover k false #[] caption.toList)
+  -- A reference list is furniture, like a section title: the dim walk
+  -- keeps it whole (the `.section` decision, recorded in PLAN).
+  | .bibliography src style items => .bibliography src style items
 
 def dimTableRows (cover : Cover) (k : Nat) (pending : Bool)
     (out : Array (Array (Array Inline))) :
@@ -3305,6 +3373,9 @@ def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → Inline
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
   | .linebreak e => .linebreak e
+  -- a citation dims with its paragraph's cover, like bare text: no colour
+  -- of its own, so the walk leaves it whole
+  | .cite t keys => .cite t keys
 
 end
 
@@ -3364,6 +3435,8 @@ def unwrapItemStep : Block → Block
   -- listed figure body may hold a list).
   | .table cols pl pr rows rules => .table cols pl pr rows rules
   | .float k n ca body caption => .float k n ca (unwrapItemStepList #[] body.toList) caption
+  -- A reference list holds entries, never item paragraphs.
+  | .bibliography src style items => .bibliography src style items
 
 def unwrapItemStepItems (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
@@ -3451,6 +3524,12 @@ def blockTextOne (acc : String) : Block → String
   -- before the body, as a frame's title does.
   | .table _ _ _ rows _ => blockTextTableRows acc rows.toList
   | .float _ _ _ body caption => blockTextList (acc ++ plainText caption) body.toList
+  -- Every entry's text is census content, in list order.
+  | .bibliography _ _ items => blockTextBibItems acc items.toList
+
+def blockTextBibItems (acc : String) : List BibItem → String
+  | [] => acc
+  | item :: rest => blockTextBibItems (acc ++ plainText item.content) rest
 
 def blockTextTableRows (acc : String) : List (Array (Array Inline)) → String
   | [] => acc
@@ -3510,6 +3589,8 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   -- Cells and captions hold inline content; no heading can stand in either.
   | .table _ _ _ _ _ => out
   | .float _ _ _ body _ => headingLevelList out body.toList
+  -- The References heading is its own .section block; the list holds none.
+  | .bibliography _ _ _ => out
 
 def headingLevelItems (out : Array Nat) : List (Array Block) → Array Nat
   | [] => out
@@ -3594,6 +3675,8 @@ def hasPhysicalPageOne : Inline → Bool
   | .image _ _ _ => false
   | .fill => false
   | .linebreak _ => false
+  -- a citation shows its own number, never the page's
+  | .cite _ _ => false
 
 def hasPhysicalPageList : List Inline → Bool
   | [] => false
@@ -3750,7 +3833,7 @@ theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : Inline) :
     rfl
   | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _
   | .label _ | .ref _ _ _ _
-  | .icon _ _ =>
+  | .icon _ _ | .cite _ _ =>
     rfl
 
 end
@@ -3856,7 +3939,7 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
   | .logo _ => rfl
   | .verbatim _ _ | .section _ _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
   | .setPalette _ | .setTokens _
-  | .rule _ _ _ | .picture _ | .pagebreak => rfl
+  | .rule _ _ _ | .picture _ | .pagebreak | .bibliography _ _ _ => rfl
   | .table cols pl pr rows rules =>
     rw [dimBlock]
     simp [blockTextOne, dimTableRows_text cover k pending rows.toList #[] acc,
@@ -4000,7 +4083,8 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .note _ | .framefoot _
   | .pagebreak
   | .setPalette _ | .setTokens _
-  | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
+  | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _
+  | .bibliography _ _ _ => rfl
 
 theorem unwrapItemStepItems_text (items : List (Array Block))
     (out : Array (Array Block)) (acc : String) :
@@ -4153,6 +4237,7 @@ def keptBy (t : String) : Block → Bool
   | .frame _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
   | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak
   | .table _ _ _ _ _ | .float _ _ _ _ _ => true
+  | .table _ _ _ _ _ | .float _ _ _ _ | .bibliography _ _ _ => true
 
 mutual
 
@@ -4190,6 +4275,8 @@ def keepForOne (t : String) : Block → Block
   -- body is blocks, so the walk carries in, as through a frame.
   | .table c pl pr rows rules => .table c pl pr rows rules
   | .float k n ca body caption => .float k n ca (keepForList t body.toList).toArray caption
+  -- Entries hold inlines: no conditional can nest in a reference list.
+  | .bibliography src style items => .bibliography src style items
 
 def keepForList (t : String) : List Block → List Block
   | [] => []
@@ -4258,6 +4345,13 @@ def textLeavesOne (acc : List String) : Block → List String
   -- caption is a leaf beside its float's body, as a frame's title is.
   | .table _ _ _ rows _ => textLeavesTableRows acc rows.toList
   | .float _ _ _ body caption => textLeavesList (plainText caption :: acc) body.toList
+  -- Each entry is one leaf, as a cell is: it survives a backend's view
+  -- whole or not at all.
+  | .bibliography _ _ items => textLeavesBibItems acc items.toList
+
+def textLeavesBibItems (acc : List String) : List BibItem → List String
+  | [] => acc
+  | item :: rest => textLeavesBibItems (plainText item.content :: acc) rest
 
 def textLeavesTableRows (acc : List String) :
     List (Array (Array Inline)) → List String
@@ -4314,6 +4408,8 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak => true
   | .float _ _ _ body _ => orphanFreeList avail body.toList
+  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak
+  | .bibliography _ _ _ => true
 
 def orphanFreeItems (avail : List String) : List (Array Block) → Bool
   | [] => true
@@ -4427,6 +4523,19 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
     rw [textLeavesOne, textLeavesOne,
       textLeavesList_acc (plainText caption :: acc) body.toList,
       textLeavesList_acc [plainText caption] body.toList]
+    simp
+  | .bibliography src style items =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesBibItems_acc acc items.toList
+
+private theorem textLeavesBibItems_acc (acc : List String) (items : List BibItem) :
+    textLeavesBibItems acc items = textLeavesBibItems [] items ++ acc := by
+  match items with
+  | [] => simp [textLeavesBibItems]
+  | item :: rest =>
+    rw [textLeavesBibItems, textLeavesBibItems,
+      textLeavesBibItems_acc (plainText item.content :: acc) rest,
+      textLeavesBibItems_acc [plainText item.content] rest]
     simp
 
 private theorem textLeavesItems_acc (acc : List String) (items : List (Array Block)) :
@@ -4543,6 +4652,10 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
   | .float k n ca body caption =>
+  | .bibliography src style items =>
+    -- kept whole by every backend, as a table is
+    intro s hs
+    exact ⟨t0, h0, rfl, hs⟩
     intro s hs
     rw [textLeavesOne, textLeavesList_acc [plainText caption] body.toList,
       List.mem_append] at hs
@@ -4929,6 +5042,8 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .table _ _ _ rows _ => imageSrcsTableRows out rows.toList
   | .float _ _ _ body caption =>
     imageSrcsBlockList (imageSrcsInlines out caption) body.toList
+  -- An entry is formatted text and links; Bib.apply builds no image node.
+  | .bibliography _ _ _ => out
 
 def imageSrcsTableRows (out : Array String) :
     List (Array (Array Inline)) → Array String
@@ -4962,6 +5077,50 @@ def imageRefs (doc : Doc) : Array String := Id.run do
     if let some tpl := st.font then out := imageSrcsInlines out tpl
     if let some m := st.marker then out := imageSrcsInlines out m
   return out
+
+mutual
+
+/-- The `.bib` sources the document's `\bibliography` markers name, in
+document order, deduplicated: the request value the CLI driver fulfils by
+reading each file beside the document and handing its text to `Bib.apply`.
+Files are effects, so the core never opens one — `imageRefs`' shape. -/
+def bibSrcsList (out : Array String) : List Block → Array String
+  | [] => out
+  | b :: rest => bibSrcsList (bibSrcsOne out b) rest
+
+def bibSrcsOne (out : Array String) : Block → Array String
+  | .bibliography src _ _ => if out.contains src then out else out.push src
+  | .center body => bibSrcsList out body.toList
+  | .quote body => bibSrcsList out body.toList
+  | .role _ body => bibSrcsList out body.toList
+  | .spaced _ body => bibSrcsList out body.toList
+  | .step _ _ body => bibSrcsList out body.toList
+  | .only _ body => bibSrcsList out body.toList
+  | .nav _ body => bibSrcsList out body.toList
+  | .note body => bibSrcsList out body.toList
+  | .frame _ _ _ body => bibSrcsList out body.toList
+  | .float _ _ body _ => bibSrcsList out body.toList
+  | .list _ items => bibSrcsItems out items.toList
+  | .columns cols => bibSrcsCols out cols.toList
+  -- Inline content cannot carry a block marker; declarations and ink
+  -- carry none.
+  | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ | .picture _
+  | .table _ _ _ _ _ => out
+
+def bibSrcsItems (out : Array String) : List (Array Block) → Array String
+  | [] => out
+  | item :: rest => bibSrcsItems (bibSrcsList out item.toList) rest
+
+def bibSrcsCols (out : Array String) : List (Option Nat × Array Block) → Array String
+  | [] => out
+  | (_, body) :: rest => bibSrcsCols (bibSrcsList out body.toList) rest
+
+end
+
+/-- Every `.bib` source the document references: what the driver reads. -/
+def bibRefs (doc : Doc) : Array String :=
+  bibSrcsList #[] doc.body.toList
 
 mutual
 
