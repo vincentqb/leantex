@@ -371,6 +371,17 @@ an overlay step does not"))
     css := css ++ own ++ liCss ++ interCss
   return (css, diags)
 
+/-- The slide box's inner padding and corner geometry, one spelling each:
+the frame-title bar bleeds to the slide edge by negating exactly this
+padding, and its top corners round at the slide's radius less the border
+(the nested-corner rule: an inner radius concentric with an outer one is
+the outer less the gap). Four literals that must stay pairwise equal are
+one pair; a 1 px corner mismatch is unrepresentable. -/
+private def slidePadV : String := "1.4rem"
+private def slidePadH : String := "1.8rem"
+private def slideRadiusPx : Nat := 8
+private def slideBorderPx : Nat := 1
+
 /-- Furniture the semantic palette keys turn on — one shared rule set for
 every theme, so a theme stays a table of values. The conditions read the
 resolved `Design`, the same record the PDF path consumes; a rule fires only
@@ -384,8 +395,8 @@ def themeCss (doc : Doc) : String :=
   (if d.frametitle.isSome then
     "section.slide > header { background: var(--frametitlebg);\n" ++
     "  color: var(--frametitlefg, var(--bg, #fff));\n" ++
-    "  margin: -1.4rem -1.8rem 0.8rem; padding: 0.7rem 1.8rem;\n" ++
-    "  border-radius: 7px 7px 0 0; }\n" ++
+    s!"  margin: -{slidePadV} -{slidePadH} 0.8rem; padding: 0.7rem {slidePadH};\n" ++
+    s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
     "section.slide > header h2 { color: inherit; }\n" else "") ++
   (if d.progress.isSome then
     "section.section-page { text-align: center; padding: 2.5rem 0;\n" ++
@@ -612,8 +623,8 @@ def baseCss (doc : Doc) : String :=
   s!"  margin-bottom: var(--captionsep, {cssLength Ir.captionSepDefault.width}); }\n" ++
   -- Slides, as the linear handout: one bordered section per frame, printing
   -- one per page. The interactive controller is the rest of M5.
-  "section.slide { border: 1px solid var(--rule); border-radius: 8px;\n" ++
-  "  padding: 1.4rem 1.8rem; margin: 1.4rem 0; break-inside: avoid; }\n" ++
+  s!"section.slide \{ border: {slideBorderPx}px solid var(--rule); border-radius: {slideRadiusPx}px;\n" ++
+  s!"  padding: {slidePadV} {slidePadH}; margin: {slidePadV} 0; break-inside: avoid; }\n" ++
   "section.slide > header h2 { margin: 0 0 0.8rem; font-size: 1.35rem; }\n" ++
   -- A standout frame inverts: the palette's standout keys override, and
   -- without them the page's own fg/bg swap — the same rule as the PDF path.
