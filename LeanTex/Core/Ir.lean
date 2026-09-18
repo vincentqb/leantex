@@ -530,21 +530,48 @@ where
     let ws (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
     String.ofList (((cur.dropWhile ws).reverse).dropWhile ws)
 
+/-- xcolor's base colours, "always available" once the package loads
+(xcolor manual §4.1, Table 1) — and the engine accepts xcolor natively,
+so the names hold everywhere a colour expression resolves. Values are the
+manual's rgb definitions scaled to sRGB bytes, rounded half up. A declared
+palette entry of the same name wins, exactly as `\definecolor` overrides
+in xcolor (`Palette.resolve` asks `find?` first). -/
+def xcolorBase (s : String) : Option Color :=
+  match s with
+  | "black" => some Color.black
+  | "white" => some Color.white
+  | "red" => some { r := 255, g := 0, b := 0 }
+  | "green" => some { r := 0, g := 255, b := 0 }
+  | "blue" => some { r := 0, g := 0, b := 255 }
+  | "cyan" => some { r := 0, g := 255, b := 255 }
+  | "magenta" => some { r := 255, g := 0, b := 255 }
+  | "yellow" => some { r := 255, g := 255, b := 0 }
+  | "brown" => some { r := 191, g := 128, b := 64 }
+  | "lime" => some { r := 191, g := 255, b := 0 }
+  | "olive" => some { r := 128, g := 128, b := 0 }
+  | "orange" => some { r := 255, g := 128, b := 0 }
+  | "pink" => some { r := 255, g := 191, b := 191 }
+  | "purple" => some { r := 191, g := 0, b := 64 }
+  | "teal" => some { r := 0, g := 128, b := 128 }
+  | "violet" => some { r := 128, g := 0, b := 128 }
+  | "gray" => some { r := 128, g := 128, b := 128 }
+  | "darkgray" => some { r := 64, g := 64, b := 64 }
+  | "lightgray" => some { r := 191, g := 191, b := 191 }
+  | _ => none
+
 /-- A palette expression: a name, or xcolor's `!` mix folding left —
 `a!30!b` is 30% of `a` over `b`, and a trailing `a!30` mixes toward white,
-so `black!2` is a near-white. `black` and `white` are always available,
-and a declared entry of either name wins — xcolor's `\definecolor{black}`
-overrides too — so a name means one thing wherever it resolves: `find?`
-is the single reader of the entries, and every atom here goes through it
-first. Before that rule, a palette naming an entry `black` painted the
-declared colour where `find?` resolved and pure black where a mix or
-`\textcolor` did (`role_resolves_at_one_site` is the contract). -/
+so `black!2` is a near-white. xcolor's base colours are always available
+(`xcolorBase`), and a declared entry of any of their names wins —
+xcolor's `\definecolor{black}` overrides too — so a name means one thing
+wherever it resolves: `find?` is the single reader of the entries, and
+every atom here goes through it first. Before that rule, a palette naming
+an entry `black` painted the declared colour where `find?` resolved and
+pure black where a mix or `\textcolor` did
+(`role_resolves_at_one_site` is the contract). -/
 def Palette.resolve (p : Palette) (expr : String) : Option Color :=
   let atom (s : String) : Option Color :=
-    (p.find? s).orElse fun _ =>
-      if s == "black" then some Color.black
-      else if s == "white" then some Color.white
-      else none
+    (p.find? s).orElse fun _ => xcolorBase s
   let rec go (c : Color) : List String → Option Color
     | [] => some c
     | pctS :: rest =>

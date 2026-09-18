@@ -7313,6 +7313,19 @@ def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "mix plain name still resolves" (pal.resolve "base" == some { r := 0x40, g := 0x00, b := 0x80 })
   t "mix pct over 100 rejected" (pal.resolve "base!101" == none)
   t "mix unknown atom rejected" (pal.resolve "nope!50" == none)
+  -- xcolor's base colours are always available (xcolor manual §4.1,
+  -- Table 1): a document mixing 'gray!30' resolves without declaring
+  -- anything, and a declared entry of a base name still wins.
+  t "xcolor base names resolve undeclared"
+    (({} : Ir.Palette).resolve "gray" == some { r := 128, g := 128, b := 128 } &&
+     ({} : Ir.Palette).resolve "gray!30" ==
+       some (({ r := 128, g := 128, b := 128 } : Ir.Color).mix 30 Ir.Color.white) &&
+     ({} : Ir.Palette).resolve "teal!50!blue" ==
+       some (({ r := 0, g := 128, b := 128 } : Ir.Color).mix 50
+         { r := 0, g := 0, b := 255 }))
+  t "a declared entry wins over a base name"
+    (({ entries := #[("gray", { r := 1, g := 2, b := 3 })] } : Ir.Palette).resolve "gray"
+      == some { r := 1, g := 2, b := 3 })
   -- One resolving site: a declared entry wins over resolve's own black and
   -- white atoms, so a mix, \textcolor, and the role invocation cannot
   -- disagree about what a name means. Before the rule, a palette naming an
