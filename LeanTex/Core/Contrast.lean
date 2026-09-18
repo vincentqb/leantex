@@ -535,7 +535,7 @@ private def declaredUseDiags (doc : Doc) (walk : UseAcc) : Array Diag := Id.run 
   -- footer's muted text and the running head/foot are judged against
   -- epoch 0, whatever the body declared later.
   let mut acc := { walk with pal := doc.palette }
-  if doc.docClass == "slides" && doc.chrome.hasFooter && doc.foot.isNone then
+  if doc.docClass == .slides && doc.chrome.hasFooter && doc.foot.isNone then
     if let some muted := doc.palette.find? "muted" then
       acc := acc.use base (some "muted") muted
   for run in [doc.head, doc.foot] do

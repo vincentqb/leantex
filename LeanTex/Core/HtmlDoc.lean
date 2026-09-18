@@ -676,7 +676,7 @@ def themeCss (doc : Doc) : String :=
   -- one line (`min-height: 1lh`, CSS Values 4 §6.1.3: the element's own
   -- line-height); a colliding slot paints under or over by declared
   -- priority (`z-index` from `BandSlot.rank`, set per span), never moves.
-  (if doc.docClass == "slides" && doc.foot.isNone &&
+  (if doc.docClass == .slides && doc.foot.isNone &&
       (doc.chrome.hasFooter || doc.body.any fun b => match b with
         | .framefoot xs => !xs.isEmpty
         | _ => false) then
@@ -1949,7 +1949,7 @@ def emitTree (cfg : Config) (doc : Doc) :
                         tokens := doc.tokens }
   -- The themed section page: in a slides document with progress keys, a
   -- top-level section becomes its own deck section carrying the position.
-  let themedSections := doc.docClass == "slides" &&
+  let themedSections := doc.docClass == .slides &&
     (Design.ofDoc doc).progress.isSome
   -- The chrome footer: every frame section closes with the section in
   -- force and its own frame number, in the muted key at the scale's small
@@ -1958,9 +1958,9 @@ def emitTree (cfg : Config) (doc : Doc) :
   let hasFrameFoot := doc.body.any fun b => match b with
     | .framefoot xs => !xs.isEmpty
     | _ => false
-  let chromeFoot := doc.docClass == "slides" && doc.foot.isNone &&
+  let chromeFoot := doc.docClass == .slides && doc.foot.isNone &&
     (doc.chrome.hasFooter || hasFrameFoot)
-  let (inner, sectionDiags) := if doc.docClass == "article" then
+  let (inner, sectionDiags) := if doc.docClass == .article then
       sectionize cfg doc.body
     else if !themedSections && !chromeFoot then
       (blockNodesInto cfg #[] doc.body.toList, #[])

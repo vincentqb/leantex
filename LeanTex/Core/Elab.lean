@@ -3875,7 +3875,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     | none => (#[], raws, #[])
   let mut preamble := preamble
   let mut ctx : Ctx := { file := file }
-  let mut docClass := "article"
+  let mut docClass : Ir.DocClass := .article
   let mut classOptions := ""
   let mut page : PageSpec := {}
   let mut sawPage := false
@@ -3931,9 +3931,11 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
         match preamble[j]? with
         | some (.group nameRaws _) =>
           i := j + 1
-          docClass := (rawSrc nameRaws).trimAscii.toString
-          if docClass != "article" && docClass != "slides" && docClass != "card" then
-            diag ctx .E0309 s!"unknown document class '{docClass}'" pos
+          let named := (rawSrc nameRaws).trimAscii.toString
+          match Ir.DocClass.ofString? named with
+          | some c => docClass := c
+          | none =>
+            diag ctx .E0309 s!"unknown document class '{named}'" pos
               (help := "classes: article, slides, card")
         | _ =>
           diag ctx .E0304 "'\\documentclass' needs a {class}" pos
@@ -4216,9 +4218,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               -- (`footerSequenceDiags`).
               chromeDeclared := true
               -- Inert chrome would be a silent failure: only slides draw it.
-              if docClass != "slides" then
+              if docClass != .slides then
                 diag ctx .W0318
-                  s!"'\\chrome' is slides furniture; the {docClass} class never draws it"
+                  s!"'\\chrome' is slides furniture; the {docClass.name} class never draws it"
                   (some pos) (help := "\\runninghead / \\runningfoot are the page furniture")
             else
               let (entries, ds) := Decl.parseBlock ctx.file src pos name tokens.entries
@@ -4314,11 +4316,11 @@ its declared layout" pos
     match optSize with
     | some d => page := { page with fontSize := d }
     | none =>
-      if docClass == "slides" then
+      if docClass == .slides then
         page := { page with fontSize := Ir.slidesFontSize }
   -- Slides fill beamer's stage unless the document declared its own
   -- geometry: a handout on letter portrait is not best effort, it is wrong.
-  if docClass == "slides" then
+  if docClass == .slides then
     let dflt : PageSpec := {}
     if page.width == dflt.width && page.height == dflt.height then
       let ratio169 := (classOptions.splitOn ",").any
@@ -4339,7 +4341,7 @@ its declared layout" pos
   -- hyphenation and no running furniture:
   -- a card is one face of display text, not a page of a run — which is
   -- also why the prose measure band (W0201) does not apply to it.
-  else if docClass == "card" then
+  else if docClass == .card then
     let dflt : PageSpec := {}
     let opts := (classOptions.splitOn ",").map (·.trimAscii.toString)
     if page.width == dflt.width && page.height == dflt.height then
@@ -4371,8 +4373,8 @@ its declared layout" pos
     -- satisfy the measure band the engine checks (W0201). A document that
     -- declares any \page geometry keeps every value it named.
     page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
-  ctx := { ctx with slides := docClass == "slides"
-                    numberHeadings := docClass == "article", styles := styles }
+  ctx := { ctx with slides := docClass == .slides
+                    numberHeadings := docClass == .article, styles := styles }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's
   -- number in document order (`numberFloats_exact` is the fact `\ref`
@@ -4427,7 +4429,7 @@ its declared layout" pos
           s!"declared: {String.intercalate ", " (finalPalette.entries.toList.map (·.1))}")) }
   -- The logo may have been declared in either half; a card carries none.
   let mut logo := (← get).logo
-  if docClass == "card" && logo.isSome then
+  if docClass == .card && logo.isSome then
     diag ctx .W0317
       "a card carries no logo; the declaration is dropped" none
     logo := none
@@ -4437,7 +4439,7 @@ its declared layout" pos
   -- distance — an angular x-height of 0.2°, 1.4 mm at 40 cm (Legge &
   -- Bigelow 2011). Declaring an assertion of the same form is intent and
   -- silences the class default.
-  if docClass == "card" then
+  if docClass == .card then
     let faces : Int := max 1 (blocks.foldl (init := 0) fun n b =>
       match b with
       | .frame _ _ _ _ => n + 1

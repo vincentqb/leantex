@@ -132,7 +132,7 @@ titled countable frames ships one page per overlay step, `frameSteps` many
 in total, when no diagnostic reported a dropped glyph. -/
 theorem pages_count_frame_steps
     (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Ir.Doc) (hclass : doc.docClass = "slides")
+    (doc : Ir.Doc) (hclass : doc.docClass = .slides)
     (hframes : framedDeck doc)
     (hclean : dropped (Layout.run geom fs pats doc) = false) :
     (Layout.run geom fs pats doc).pages.size
@@ -149,7 +149,7 @@ theorem pages_count_frame_steps
 carries a chrome foot. -/
 theorem frame_pages_footed
     (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Ir.Doc) (hclass : doc.docClass = "slides")
+    (doc : Ir.Doc) (hclass : doc.docClass = .slides)
     (hfoot : doc.foot = none) (hchrome : doc.chrome.hasFooter = true)
     (hframes : framedDeck doc)
     (hclean : dropped (Layout.run geom fs pats doc) = false) :

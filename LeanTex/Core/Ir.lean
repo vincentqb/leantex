@@ -2308,8 +2308,38 @@ is what a marker is. -/
 def fillTemplate (template content : Array Inline) : Array Inline :=
   if template.isEmpty then content else (fillList content template.toList).toArray
 
+/-- The document's class, closed: `article`, `slides`, or `card`. A class an
+`ofString?` does not answer is E0309 at the one parse site and never enters
+the IR, so every class-dependent decision downstream is a total decision
+over this type — a misspelled class in engine code is a compile error, and
+a new class does not build until `name`, `ofString?`, and every exhaustive
+match over the type answer it. -/
+inductive DocClass where
+  | article
+  | slides
+  | card
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The class's one spelling — the `\documentclass` argument and the dump
+header alike. -/
+def DocClass.name : DocClass → String
+  | .article => "article"
+  | .slides => "slides"
+  | .card => "card"
+
+/-- The class a `\documentclass` argument names, if any: the inverse of
+`name`, and the one door a class enters the IR through. -/
+def DocClass.ofString? : String → Option DocClass
+  | "article" => some .article
+  | "slides" => some .slides
+  | "card" => some .card
+  | _ => none
+
+theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some c := by
+  cases c <;> rfl
+
 structure Doc where
-  docClass : String := "article"
+  docClass : DocClass := .article
   classOptions : String := ""
   page : PageSpec := {}
   fonts : FontSpec := {}
@@ -3391,7 +3421,7 @@ band holds; one that inherited them from a theme has not, and gets a warning
 naming both sequences. Warning, not error (the audit-strict severity
 policy): the content is present, its meaning is what degraded. -/
 def footerSequenceDiags (doc : Doc) : Array Diag := Id.run do
-  unless doc.docClass == "slides" && doc.foot.isNone && !doc.chromeDeclared do
+  unless doc.docClass == .slides && doc.foot.isNone && !doc.chromeDeclared do
     return #[]
   let frameSlot := (doc.chrome.footerLeft.map ChromeSlot.isFrameSequence).getD false
     || (doc.chrome.footerRight.map ChromeSlot.isFrameSequence).getD false
@@ -4887,7 +4917,7 @@ def dumpDiag (d : Diag) : String :=
 
 def dump (doc : Doc) (diags : Array Diag) : String :=
   let opts := if doc.classOptions == "" then "" else s!" [{doc.classOptions}]"
-  let head := s!"class {doc.docClass}{opts}\n"
+  let head := s!"class {doc.docClass.name}{opts}\n"
   let page :=
     s!"page {doc.page.width.toPtString}x{doc.page.height.toPtString} " ++
     s!"vmargin {doc.page.vmargin.toPtString} hmargin {doc.page.hmargin.toPtString}" ++
