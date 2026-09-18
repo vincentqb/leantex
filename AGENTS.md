@@ -116,7 +116,10 @@ in this repo; refer to the private reference corpus abstractly.
 - Theorems only where they pay (parser totality, elaboration termination and
   determinism, line-break optimality, dimension arithmetic, PDF xref, UTF-8).
   The language is designed terminating — a construct that breaks that property
-  needs a design discussion, not a fuel parameter.
+  needs a design discussion, not a fuel parameter. In a statement meant for
+  `omega`, spell binders and structure fields `Int`, not `Sp`: omega reads
+  the bare spelling only, and an `Sp`-typed hypothesis is silently invisible
+  to it.
 - A theorem the engine does not yet earn is stated anyway — in
   `Obligations/`, the staging queue: its own lake target, outside the
   default `lake build` and `lake test`, never imported by `LeanTex/` (the
