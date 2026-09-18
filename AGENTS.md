@@ -73,12 +73,20 @@ in this repo; refer to the private reference corpus abstractly.
   | a backend emission | the census assertion that it appeared (`censusTable`) |
   | a diagnostic code | a `DiagCode` constructor with its declared `Loss` — severity and the code letter derive from the loss, one code one meaning (compiler + `lake test`; the hook rejects a severity written outside Diag.lean) — a firing witness in `diagWitness` whose rendered form lands in the diagnostics golden, and a message that passes the voice lint: self-contained (no repo file, no milestone), an action or no help, one convention (Tests.lean; the hook rejects repo-internal references in strings) |
   | a design constant | a token, or the source written where it stands (hook, backend files) |
-  | a recursive IR walk | a `List` companion + accumulator (hook), and its conservation statement where it is one |
+  | a recursive IR walk | a `List` companion + accumulator (hook), and its census statement: a public Block/Inline walk ships a theorem named with a registered conservation suffix — `_text` (census equality, stated as a `Conserves` instance), `_covers`, `_id` — or the one-line refusal `-- conserves: none — <why>` beside the def (hook, whole tree) |
   | a palette role or token the engine reads | one resolving site, its contrast contract, a per-bundle check (arrives with `Design`; today Contrast.lean + bundle pins) |
   | a page-opening path | a declared vertical distribution, never a default (arrives with `vdist`; until then set `centerV` deliberately) |
   | a furniture element | a declared alignment, never a hard-coded `.center` (arrives with `align` on `ElementStyle`) |
   | an `AssertKind` | its judge in `Check.one` (exhaustive match) and a test that breaks it once |
   | a document class | sourced defaults, and its contract as implied assertions |
+
+- Theorem shape suffixes are a registry, not a habit: `_text` (census
+  equality; state it as a `Conserves` instance), `_covers`, `_id`, `_inj`,
+  `_rectangular`, `_exact`, `_monotone`, `_fixed_point`, `_contract`,
+  `_set_eq`. A new property instantiates a suffix, or the review says why
+  it is a new shape; the first three are what the hook's walk gate looks
+  for. A contract over shipped bundles quantifies over `Theme.builtin`,
+  never per bundle — adding a bundle is entering the contract.
 
 - Pure core: modules under `LeanTex/Core/` do no IO (`FontDb` is the one
   exception; the pre-commit hook rejects new IO in core). Files, fonts,

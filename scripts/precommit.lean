@@ -259,6 +259,38 @@ gated library must never depend on a statement whose proof is open. -/
 def importsObligations (l : String) : Bool :=
   ((stripLineComment l).trimAscii.toString).startsWith "import Obligations"
 
+/-- The registered conservation-shape suffixes: a public IR-to-IR walk's
+census statement is the walk's name plus one of these — census equality
+(`dimBlocks_text`), leaf coverage (`keepFor_covers`), or conditional
+identity (`substPage_id`). AGENTS.md § Conventions carries the
+reviewer-facing suffix registry; this list is its mechanical half. -/
+def conservesSuffixes : List String := ["_text", "_covers", "_id"]
+
+/-- A public IR-to-IR walk entry: a non-private `def`, signature on one
+line, taking and returning `Array Block` or `Array Inline` — the shape
+whose census fact the obligation table's walk row owes. Returns the def's
+name. A signature split across lines is not seen — the same line-scanner
+limitation as `ioInCore`, stated, not claimed away. -/
+def walkEntry (l : String) : Option String := Id.run do
+  let t := stripLineComment l
+  unless t.startsWith "def " do return none
+  let name := String.ofList (((t.drop 4).toString).toList.takeWhile isWordChar)
+  if name.isEmpty then return none
+  let parts := t.splitOn ") : "
+  if parts.length < 2 then return none
+  let ret0 := ((parts.getLast?.getD "").splitOn ":=").headD ""
+  let ret := (ret0.trimAscii).toString
+  unless ret == "Array Block" || ret == "Array Inline" do return none
+  -- an IR-to-IR walk consumes what it returns: a parameter carries the type
+  let params := String.intercalate ") : " parts.dropLast
+  unless containsSub params s!": {ret}" do return none
+  return some name
+
+/-- The escape a walk that genuinely conserves nothing writes beside its
+def: a comment line carrying `conserves: none` and the reason. -/
+def conservesNone (l : String) : Bool :=
+  containsSub l "conserves: none"
+
 /-- A backend reaching into the surface: an import, an `open`, or a
 qualified use of a surface module, comments aside. An alias
 (`abbrev P := LeanTex.Core.Parse` elsewhere) would not be seen — the same
@@ -445,6 +477,31 @@ def selftest : IO UInt32 := do
     ("import Obligations.Conservation", true),
     ("-- import Obligations would be rejected", false),
     ("import LeanTex.Core.Ir", false)]
+
+  expect "walkEntry" (fun l => (walkEntry l).isSome) [
+    -- the shapes the tree carries today: entries in, companions and
+    -- non-walks out
+    ("def dimBlocks (cover : Cover) (k : Nat) (xs : Array Block) : Array Block :=", true),
+    ("def unwrapItemSteps (xs : Array Block) : Array Block :=", true),
+    ("def keepFor (t : String) (xs : Array Block) : Array Block :=", true),
+    ("def substPage (n total : Nat) (xs : Array Inline) : Array Inline :=", true),
+    ("def fillTemplate (template content : Array Inline) : Array Inline :=", true),
+    -- a body on the definition line does not evade the scan
+    ("def sneakyWalk (xs : Array Block) : Array Block := xs", true),
+    -- a List companion is scaffolding, not the public entry
+    ("def unwrapItemStepList (out : Array Block) : List Block → Array Block", false),
+    -- a rendering makes its output from another type: not IR-to-IR
+    ("def bandInlines (b : Array BandSlot) : Array Inline :=", false),
+    -- a census returns a summary, not the IR
+    ("def blocksText (xs : Array Block) : String := blockTextList \"\" xs.toList", false),
+    ("private def raggedItems (items : Array Item) : Array Item :=", false),
+    ("  -- def fake (xs : Array Block) : Array Block, quoted in a comment", false)]
+
+  expect "conservesNone" conservesNone [
+    ("-- conserves: none — fills a hole; the output census is a mix", true),
+    ("  -- conserves: none — the walk edits only image alt text", true),
+    ("-- conserves everything", false),
+    ("def keepFor (t : String) (xs : Array Block) : Array Block :=", false)]
 
   expect "repoRefInString" repoRefInString [
     -- the shapes that shipped in real output (the diag-voice defects)
@@ -689,6 +746,39 @@ def main (args : List String) : IO UInt32 := do
   Keys share one flat store per module; spell the namespace where the call is —
   a literal (\"ctrl:x\") or a concatenation opening with one ((\"env:\" ++ name)) —
   so two constructs of one name cannot silence each other, and this check can see it."
+
+  -- The conservation gate — the obligation table's walk row, mechanical:
+  -- every public IR-to-IR walk in core (a def taking and returning
+  -- Array Block / Array Inline) ships its census statement, named by a
+  -- registered shape suffix (`_text` / `_covers` / `_id`, the Conserves
+  -- instances and census equalities), or writes
+  -- `-- conserves: none — <why>` beside the def. Whole tree, not the
+  -- diff: the walk and its theorem may land in different hunks, and the
+  -- next walk must not ship without one.
+  let mut coreFiles : Array String := #[]
+  for f in (← System.FilePath.walkDir "LeanTex") do
+    if f.toString.endsWith ".lean" then coreFiles := coreFiles.push f.toString
+  let mut allCore := ""
+  let mut walkSites : Array (String × Nat × String × Array String) := #[]
+  for f in coreFiles do
+    let txt ← IO.FS.readFile f
+    allCore := allCore ++ txt
+    let lines := (txt.splitOn "\n").toArray
+    for i in [0:lines.size] do
+      if let some name := walkEntry lines[i]! then
+        walkSites := walkSites.push (f, i, name, lines)
+  for (f, i, name, lines) in walkSites do
+    let hasThm := conservesSuffixes.any fun suf =>
+      containsSub allCore s!"theorem {name}{suf}"
+    let escaped := (List.range 13).any fun d =>
+      i ≥ d && conservesNone (lines[i - d]?.getD "")
+    unless hasThm || escaped do
+      say s!"pre-commit: the IR walk `{name}` ({f}:{i + 1}) has no conservation statement.
+  A public Block/Inline walk owes its census fact (AGENTS.md, obligation
+  table): a theorem named `{name}_text` (census equality — state it as a
+  `Conserves` instance), `{name}_covers`, or `{name}_id` — or, when the
+  walk genuinely conserves nothing, the one-line refusal
+  `-- conserves: none — <why>` beside the def."
 
   -- The owed-theorem ratchet: a commit that touches the staging area or
   -- PLAN.md must leave the debt recorded — one hole per owed record, every

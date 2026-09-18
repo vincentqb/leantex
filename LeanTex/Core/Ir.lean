@@ -1412,6 +1412,9 @@ end
 /-- Fill a font template's hole with content. The hole is the innermost empty
 body; a template with no hole (plain content) is returned unchanged, which
 is what a marker is. -/
+-- conserves: none — a splice, not a walk of one tree: the output census is
+-- the template's plus the content's, conservation of neither alone; the
+-- styled-heading and marker tests pin the behaviour.
 def fillTemplate (template content : Array Inline) : Array Inline :=
   if template.isEmpty then content else (fillList content template.toList).toArray
 
@@ -3433,6 +3436,10 @@ mutual
 
 /-- Give every image that has no `alt` yet this text: how a `figure`'s
 caption becomes the accessible name of the image it captions. -/
+-- conserves: none — the walk's one edit is an image's empty alt, which the
+-- text census does not read; a census fact here would guarantee arms the
+-- walk does not touch at the cost of another hand-written proof family
+-- (the images fixture pins the behaviour).
 def setAltInlines (alt : String) (xs : Array Inline) : Array Inline :=
   setAltInlineList alt #[] xs.toList
 
@@ -3453,6 +3460,7 @@ end
 
 mutual
 
+-- conserves: none — the block face of setAltInlines, same reason.
 def setAltBlocks (alt : String) (xs : Array Block) : Array Block :=
   setAltBlockList alt #[] xs.toList
 
