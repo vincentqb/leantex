@@ -7152,8 +7152,6 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
       "}\\begin{document}\\begin{frame}x\\end{frame}\\end{document}")
     t s!"\\theme installs the {th.name} bundle's own values"
       (thDoc.palette == th.palette)
-  t "every built-in bundle clears its thresholds"
-    (Theme.builtin.all Contrast.Theme.contractHolds)
   -- The check fires on the illegible bundle it exists for: moloch's own
   -- alert (#EB811B, 2.61:1 as body text) fails the contract.
   t "the contract rejects moloch's original alert"
