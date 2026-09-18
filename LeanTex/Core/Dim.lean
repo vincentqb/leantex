@@ -116,6 +116,11 @@ def ofSp (v : Sp) : Length := { sp := v }
 def add (a b : Length) : Length :=
   { sp := a.sp + b.sp, em := a.em + b.em, ex := a.ex + b.ex }
 
+/-- Componentwise difference, exact: subtraction in a fixed point is
+integer subtraction, no rounding anywhere. -/
+def sub (a b : Length) : Length :=
+  { sp := a.sp - b.sp, em := a.em - b.em, ex := a.ex - b.ex }
+
 /-- Scale by a rational `num/den`, keeping the fixed point exact. -/
 def scale (l : Length) (num : Int) (den : Nat) : Length :=
   { sp := l.sp * num / den, em := l.em * num / den, ex := l.ex * num / den }
@@ -141,6 +146,18 @@ structure SymGlue where
   deriving Repr, BEq, Inhabited
 
 namespace SymGlue
+
+def add (a b : SymGlue) : SymGlue :=
+  { width := a.width.add b.width
+    stretch := a.stretch.add b.stretch
+    shrink := a.shrink.add b.shrink }
+
+/-- Componentwise, as `\glueexpr` subtracts glue (e-TeX manual, the
+`⟨expr⟩` grammar): the rubber components subtract with the widths. -/
+def sub (a b : SymGlue) : SymGlue :=
+  { width := a.width.sub b.width
+    stretch := a.stretch.sub b.stretch
+    shrink := a.shrink.sub b.shrink }
 
 def scale (g : SymGlue) (num : Int) (den : Nat) : SymGlue :=
   { width := g.width.scale num den

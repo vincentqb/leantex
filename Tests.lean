@@ -1295,6 +1295,53 @@ def unitChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr "\\begin{document}x \\mystery*{y} z\\end{document}").1.body ==
       #[.para #[.text "x y z"]])
 
+/-- The length expression language: `\dimexpr`'s shape over declared
+tokens — sums, differences, coefficients, parentheses — with eager
+resolution, so absence is diagnosed and cycles are unrepresentable. -/
+def exprChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pre (decls : String) : String :=
+    "\\documentclass{article}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
+  -- The chain the brief's card writes: sum of tokens, difference, TeX's
+  -- coefficient form, and parentheses, all exact in sp.
+  let (doc, ds) := elabStr (pre
+    "\\tokens{ bleed = 9pt, safe = 9pt, w = 240pt, margin = bleed + safe, \
+full = w + 2bleed, gap = bleed - 3pt, half = 0.5 * (bleed + safe) }")
+  t "token arithmetic evaluates without errors" (ds.all (·.severity != .error))
+  t "a + b is exact in sp"
+    (doc.tokens.find? "margin" == some { width := .ofSp (Dim.pt 18) })
+  t "a + 2b reads TeX's coefficient form"
+    (doc.tokens.find? "full" == some { width := .ofSp (Dim.pt 258) })
+  t "a - b subtracts exactly"
+    (doc.tokens.find? "gap" == some { width := .ofSp (Dim.pt 6) })
+  t "parentheses group before scaling"
+    (doc.tokens.find? "half" == some { width := .ofSp (Dim.pt 9) })
+  -- Absent is diagnosed, never defaulted: the unknown name appears in the
+  -- message, and nothing resolves to zero.
+  t "an unknown token in an expression is named"
+    (let ds := (elabStr (pre "\\tokens{ a = b + 1pt }")).2
+     ds.any fun d => d.code == "E0321" && (d.message.splitOn "'b' is not a declared token").length > 1)
+  -- References resolve eagerly against what is declared so far, the
+  -- \setlength{\x}{2\x} rule — so a would-be cycle is a forward
+  -- reference, and a forward reference is diagnosed by name.
+  t "a token cycle is a diagnosed forward reference, not a hang"
+    (let ds := (elabStr (pre "\\tokens{ a = b + 1pt, b = a + 1pt }")).2
+     ds.any fun d => d.code == "E0321" && (d.message.splitOn "'b'").length > 1)
+  t "a self-reference reads the earlier value, as TeX's 2\\x does"
+    ((elabStr (pre "\\tokens{ a = 4pt, a = 2a }")).1.tokens.find? "a"
+      == some { width := .ofSp (Dim.pt 8) })
+  t "a bare number in an expression needs a unit"
+    (let ds := (elabStr (pre "\\tokens{ a = 3 + 2pt }")).2
+     ds.any (·.code == "E0321"))
+  t "expressions work through \\setlength's TeX spelling"
+    (let (d2, ds2) := elabStr (pre
+      "\\newlength{\\ca}\\setlength{\\ca}{4pt}\\newlength{\\cb}\
+\\setlength{\\cb}{2pt}\\newlength{\\cm}\\setlength{\\cm}{\\ca+\\cb}\
+\\newlength{\\ch}\\setlength{\\ch}{\\ca+2\\cb}")
+     ds2.all (·.severity != .error) &&
+       d2.tokens.find? "cm" == some { width := .ofSp (Dim.pt 6) } &&
+       d2.tokens.find? "ch" == some { width := .ofSp (Dim.pt 8) })
+
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -7678,6 +7725,7 @@ def main (args : List String) : IO UInt32 := do
   tokensChecks ref
   compatChecks ref
   unitChecks ref
+  exprChecks ref
   wrapperChecks ref
   centeringChecks ref
   fontDiagChecks ref

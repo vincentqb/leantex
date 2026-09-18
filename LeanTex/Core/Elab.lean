@@ -2693,8 +2693,15 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
           diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
             "a length (10pt, 1.5ex, 0.6 * other)" v pos) }
       | none =>
-        diag ctx .E0321 s!"cannot read length for '{key}': {valueSrc.quote}" pos
-          (help := "lengths look like 10pt, 1.5ex, 2em, or 0.6 * other-token")
+        -- The expression parser's own verdict names the defect: an
+        -- unknown token errors as itself, never resolving to zero.
+        let detail := if Decl.looksLikeExpr valueSrc then
+            match Decl.parseLengthExpr acc.entries valueSrc with
+            | .error e => s!": {e}"
+            | .ok _ => ""
+          else ""
+        diag ctx .E0321 s!"cannot read length for '{key}': {valueSrc.quote}{detail}" pos
+          (help := "lengths look like 10pt, 1.5ex, 2em, a + 2b, or 0.6 * other-token")
   return acc
 
 def styleKeys : List String :=

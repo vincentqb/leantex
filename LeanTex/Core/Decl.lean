@@ -188,6 +188,18 @@ theorem unitScale_true :
     unitScale "truedd" = unitScale "dd" ∧ unitScale "truecc" = unitScale "cc" := by
   decide
 
+/-- One term's length from its mantissa, scale, and unit name: the shared
+arithmetic under `parseLength` and the expression parser. -/
+private def lengthOfUnit (mantissa : Int) (scale : Nat) (unit : String) :
+    Option Length :=
+  if unit == "em" then
+    some { em := mantissa * 1000 / scale }
+  else if unit == "ex" then
+    some { ex := mantissa * 1000 / scale }
+  else
+    (unitScale unit).map fun (num, den) =>
+      Length.ofSp (mantissa * num / (scale * den : Nat))
+
 /-- A single length term: a number with an absolute or font-relative unit. -/
 def parseLength (s : String) : Option Length :=
   let s := s.trimAscii.toString
@@ -195,15 +207,7 @@ def parseLength (s : String) : Option Length :=
   let unit := (String.ofList (s.toList.drop digits.length)).trimAscii.toString
   match parseDecimal (String.ofList digits) with
   | none => none
-  | some (mantissa, scale) =>
-    if unit == "em" then
-      some { em := mantissa * 1000 / scale }
-    else if unit == "ex" then
-      some { ex := mantissa * 1000 / scale }
-    else
-      match unitScale unit with
-      | some (num, den) => some (Length.ofSp (mantissa * num / (scale * den : Nat)))
-      | none => none
+  | some (mantissa, scale) => lengthOfUnit mantissa scale unit
 
 /-- `<len> [plus <len>] [minus <len>]`, TeX's glue spelling. -/
 def parseGlue (s : String) : Option SymGlue := do
@@ -235,6 +239,362 @@ def parseScaled (tokens : Array (String × SymGlue)) (s : String) : Option Value
     some (.glue (g.scale mantissa scale))
   | _ => none
 
+/-! # Length expressions
+
+`\dimexpr`'s shape over declared tokens and literals: terms added and
+subtracted, a term scaled by a numeric factor, parentheses for grouping
+(e-TeX manual, the `⟨expr⟩` grammar: "an expression consists of one or
+more terms … to be added or subtracted; a term … consists of a factor …
+optionally multiplied and/or divided by numeric factors; a factor … is
+either a parenthesized subexpression or a quantity"). TeX's coefficient
+form rides along: `2\cardbleed` is a ⟨factor⟩ before an internal dimen
+(TeXbook ch. 24, ⟨dimen⟩ syntax), so `cardheight + 2 cardbleed` reads as
+`cardheight + 2 * cardbleed`. Division is not taken: e-TeX's division
+rounds to the nearest multiple (ties away from zero), this engine's
+fixed-point scaling floors, and offering a spelling whose rounding
+silently disagrees with its source is worse than not offering it until
+the rounding is settled. Scaling by a decimal keeps `Length.scale`'s
+existing floor semantics, which `0.6 * token` has always had.
+
+Token references resolve eagerly, against the values declared so far —
+the same rule `\tokens` and TeX's `\setlength{\x}{2\x}` follow — so a
+reference is one lookup into ground values, never a recursive walk: a
+cycle is unrepresentable, and a forward or unknown name is diagnosed by
+name (`eval_absent_named`), never defaulted to zero. -/
+
+/-- A length expression over literals and declared token names. -/
+inductive LenExpr where
+  | lit (l : Length)
+  | tok (name : String)
+  | scale (num : Int) (den : Nat) (e : LenExpr)
+  | add (a b : LenExpr)
+  | sub (a b : LenExpr)
+  deriving Repr, BEq
+
+namespace LenExpr
+
+/-- Whether an expression reads a token name: what its value may depend on. -/
+def reads : LenExpr → String → Bool
+  | .lit _, _ => false
+  | .tok m, n => m == n
+  | .scale _ _ e, n => e.reads n
+  | .add a b, n | .sub a b, n => a.reads n || b.reads n
+
+/-- Evaluate against a lookup of declared tokens. Structural recursion:
+the checker's acceptance is the termination proof, and an unknown name is
+an error carrying that name. The matches are explicit so the exactness
+proof below can follow them case by case. -/
+def eval (look : String → Option SymGlue) : LenExpr → Except String SymGlue
+  | .lit l => .ok { width := l }
+  | .tok n =>
+    match look n with
+    | some g => .ok g
+    | none => .error n
+  | .scale num den e =>
+    match eval look e with
+    | .ok g => .ok (g.scale num den)
+    | .error m => .error m
+  | .add a b =>
+    match eval look a, eval look b with
+    | .ok ga, .ok gb => .ok (ga.add gb)
+    | .error m, _ => .error m
+    | _, .error m => .error m
+  | .sub a b =>
+    match eval look a, eval look b with
+    | .ok ga, .ok gb => .ok (ga.sub gb)
+    | .error m, _ => .error m
+    | _, .error m => .error m
+
+/-- Resolution is deterministic and local: the answer depends only on what
+the expression's own names resolve to — one document, one answer, however
+the rest of the environment is stated or ordered. -/
+theorem eval_names_agree (l₁ l₂ : String → Option SymGlue) (e : LenExpr)
+    (h : ∀ n, e.reads n → l₁ n = l₂ n) : eval l₁ e = eval l₂ e := by
+  induction e with
+  | lit l => rfl
+  | tok n => simp [eval, h n (by simp [reads])]
+  | scale num den e ih =>
+    simp only [eval, ih (fun n hn => h n (by simpa [reads] using hn))]
+  | add a b iha ihb =>
+    simp only [eval,
+      iha (fun n hn => h n (by simp [reads, hn])),
+      ihb (fun n hn => h n (by simp [reads, hn]))]
+  | sub a b iha ihb =>
+    simp only [eval,
+      iha (fun n hn => h n (by simp [reads, hn])),
+      ihb (fun n hn => h n (by simp [reads, hn]))]
+
+/-- The same expression evaluated in ℤ, over any one fixed-point component
+(the sp part, the em part, …): the arithmetic the engine owes exactness
+to. Sums and differences are integer sums and differences; scaling is
+`· * num / den` with the floor `Length.scale` has always used — the one
+stated rounding (e-TeX's `\dimexpr` division rounds to nearest instead,
+which is why the expression language offers no division). -/
+def evalInt (look : String → Option Int) : LenExpr → (Length → Int) → Except String Int
+  | .lit l, part => .ok (part l)
+  | .tok n, _ =>
+    match look n with
+    | some v => .ok v
+    | none => .error n
+  | .scale num den e, part =>
+    match evalInt look e part with
+    | .ok v => .ok (v * num / den)
+    | .error m => .error m
+  | .add a b, part =>
+    match evalInt look a part, evalInt look b part with
+    | .ok va, .ok vb => .ok (va + vb)
+    | .error m, _ => .error m
+    | _, .error m => .error m
+  | .sub a b, part =>
+    match evalInt look a part, evalInt look b part with
+    | .ok va, .ok vb => .ok (va - vb)
+    | .error m, _ => .error m
+    | _, .error m => .error m
+
+/-- Arithmetic is exact in sp: the width's sp component of an evaluated
+expression is the same expression evaluated in ℤ over the sp components —
+no drift is introduced anywhere, and the only rounding is the stated floor
+in `scale`. (The same proof shape holds for every component; sp is the one
+print geometry rides on.) -/
+theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
+    (eval look e).map (fun g => g.width.sp)
+      = evalInt (fun n => (look n).map (fun g => g.width.sp)) e (fun l => l.sp) := by
+  induction e with
+  | lit l => rfl
+  | tok n => simp only [eval, evalInt]; cases look n <;> rfl
+  | scale num den e ih =>
+    simp only [eval, evalInt]
+    cases h : eval look e with
+    | error m => rw [h] at ih; simp [← ih, Except.map]
+    | ok g => rw [h] at ih; simp [← ih, Except.map, SymGlue.scale, Length.scale]
+  | add a b iha ihb =>
+    simp only [eval, evalInt]
+    cases ha : eval look a with
+    | error m => rw [ha] at iha; simp [← iha, Except.map]
+    | ok ga =>
+      rw [ha] at iha
+      cases hb : eval look b with
+      | error m => rw [hb] at ihb; simp [← iha, ← ihb, Except.map]
+      | ok gb =>
+        rw [hb] at ihb
+        simp [← iha, ← ihb, Except.map, SymGlue.add, Length.add]
+  | sub a b iha ihb =>
+    simp only [eval, evalInt]
+    cases ha : eval look a with
+    | error m => rw [ha] at iha; simp [← iha, Except.map]
+    | ok ga =>
+      rw [ha] at iha
+      cases hb : eval look b with
+      | error m => rw [hb] at ihb; simp [← iha, ← ihb, Except.map]
+      | ok gb =>
+        rw [hb] at ihb
+        simp [← iha, ← ihb, Except.map, SymGlue.sub, Length.sub]
+
+/-- Absent is diagnosed, never defaulted: an unknown token name in an
+expression errors *as that name* — it never resolves to zero. -/
+theorem eval_absent_named (look : String → Option SymGlue) (n : String)
+    (h : look n = none) : eval look (.tok n) = .error n := by
+  simp [eval, h]
+
+end LenExpr
+
+/-- The expression tokenizer's alphabet. -/
+private inductive ETok where
+  | num (mantissa : Int) (scale : Nat)
+  | ident (s : String)
+  | plus | minus | times | lparen | rparen
+  deriving Repr, BEq
+
+/-- Scan a length expression into tokens. Numbers are unsigned here — a
+sign is an operator, resolved by position. `none` when a character fits no
+token: the caller falls back to its own diagnostic. -/
+private def exprToks (s : String) : Option (Array ETok) := Id.run do
+  let cs : Array Char := s.toList.toArray
+  let mut out : Array ETok := #[]
+  let mut i := 0
+  for _ in [0:cs.size + 1] do
+    if h : i < cs.size then
+      let c := cs[i]
+      if c == ' ' || c == '\t' then
+        i := i + 1
+      else if c.isDigit || c == '.' then
+        let mut j := i
+        for _ in [i:cs.size] do
+          if h' : j < cs.size then
+            if cs[j].isDigit || cs[j] == '.' then j := j + 1 else break
+          else break
+        let some (m, sc) := parseDecimal (String.ofList (cs.extract i j).toList)
+          | return none
+        out := out.push (.num m sc)
+        i := j
+      else if c.isAlpha || c == '_' then
+        let mut j := i
+        for _ in [i:cs.size] do
+          if h' : j < cs.size then
+            if cs[j].isAlphanum || cs[j] == '_' then j := j + 1 else break
+          else break
+        out := out.push (.ident (String.ofList (cs.extract i j).toList))
+        i := j
+      else if c == '+' then out := out.push .plus; i := i + 1
+      else if c == '-' then out := out.push .minus; i := i + 1
+      else if c == '*' then out := out.push .times; i := i + 1
+      else if c == '(' then out := out.push .lparen; i := i + 1
+      else if c == ')' then out := out.push .rparen; i := i + 1
+      else return none
+  return some out
+
+/-- An operand mid-parse: a bare number, or a length expression. A number
+becomes a length only through a unit or a token it scales. -/
+private inductive EVal where
+  | scalar (mantissa : Int) (scale : Nat)
+  | len (e : LenExpr)
+
+private def applyBinOp (op : Char) (a b : EVal) : Except String EVal :=
+  match op, a, b with
+  | '+', .len x, .len y => .ok (.len (.add x y))
+  | '-', .len x, .len y => .ok (.len (.sub x y))
+  | '*', .scalar m s, .len e => .ok (.len (.scale m s e))
+  | '*', .len e, .scalar m s => .ok (.len (.scale m s e))
+  | '*', .scalar m s, .scalar m' s' => .ok (.scalar (m * m') (s * s'))
+  | '*', .len _, .len _ => .error "a length times a length has no meaning"
+  | _, _, _ => .error "a bare number in a length expression needs a unit"
+
+private def opPrec (op : Char) : Nat :=
+  if op == 'u' then 3 else if op == '*' then 2 else 1
+
+/-- Pop and apply one operator from the stack. -/
+private def popOne (vals : Array EVal) (op : Char) : Except String (Array EVal) := do
+  if op == 'u' then
+    match vals.back? with
+    | some (.scalar m s) => return vals.pop.push (.scalar (-m) s)
+    | some (.len e) => return vals.pop.push (.len (.scale (-1) 1 e))
+    | none => throw "malformed expression"
+  else
+    match vals.back?, vals.pop.back? with
+    | some b, some a => return (vals.pop.pop).push (← applyBinOp op a b)
+    | _, _ => throw "malformed expression"
+
+/-- Parse a token stream into an expression: shunting-yard with unary
+minus, the implicit coefficient (`2 cardbleed`), and units bound where
+their number stands (`1.5ex`, spaces allowed as in TeX's `2.5 \x`). Loops
+are bounded by the token count — termination by construction. -/
+private def exprParse (toks : Array ETok) : Except String LenExpr := do
+  let mut vals : Array EVal := #[]
+  let mut ops : Array Char := #[]
+  let mut prevOperand := false
+  for t in toks do
+    match t with
+    | .num m s =>
+      if prevOperand then throw "malformed expression"
+      vals := vals.push (.scalar m s)
+      prevOperand := true
+    | .ident n =>
+      match vals.back?, prevOperand with
+      | some (.scalar m s), true =>
+        -- The number before it binds: a unit makes a literal, a token
+        -- name a coefficient (TeXbook ch. 24's ⟨factor⟩⟨internal dimen⟩).
+        match lengthOfUnit m s n with
+        | some l => vals := vals.pop.push (.len (.lit l))
+        | none => vals := vals.pop.push (.len (.scale m s (.tok n)))
+      | _, true => throw "malformed expression"
+      | _, false =>
+        vals := vals.push (.len (.tok n))
+        prevOperand := true
+    | .plus | .minus =>
+      let isMinus := t == ETok.minus
+      if prevOperand then
+        let c := if isMinus then '-' else '+'
+        for _ in [0:ops.size + 1] do
+          match ops.back? with
+          | some top =>
+            if top != '(' && opPrec top ≥ opPrec c then
+              vals ← popOne vals top
+              ops := ops.pop
+            else break
+          | none => break
+        ops := ops.push c
+        prevOperand := false
+      else if isMinus then
+        -- Unary: highest precedence, applied to the next operand alone.
+        ops := ops.push 'u'
+      -- A unary plus says nothing; it is skipped.
+    | .times =>
+      unless prevOperand do throw "malformed expression"
+      for _ in [0:ops.size + 1] do
+        match ops.back? with
+        | some top =>
+          if top != '(' && opPrec top ≥ opPrec '*' then
+            vals ← popOne vals top
+            ops := ops.pop
+          else break
+        | none => break
+      ops := ops.push '*'
+      prevOperand := false
+    | .lparen =>
+      if prevOperand then throw "malformed expression"
+      ops := ops.push '('
+      prevOperand := false
+    | .rparen =>
+      unless prevOperand do throw "malformed expression"
+      let mut closed := false
+      for _ in [0:ops.size + 1] do
+        match ops.back? with
+        | some '(' =>
+          ops := ops.pop
+          closed := true
+          break
+        | some top =>
+          vals ← popOne vals top
+          ops := ops.pop
+        | none => break
+      unless closed do throw "unbalanced ')'"
+      prevOperand := true
+  unless prevOperand do throw "malformed expression"
+  for _ in [0:ops.size + 1] do
+    match ops.back? with
+    | some '(' => throw "unbalanced '('"
+    | some top =>
+      vals ← popOne vals top
+      ops := ops.pop
+    | none => break
+  match vals.back?, vals.size with
+  | some (.len e), 1 => return e
+  | some (.scalar _ _), 1 => throw "a bare number in a length expression needs a unit"
+  | _, _ => throw "malformed expression"
+
+/-- Read a length expression against the declared tokens: `a + b`,
+`a - b`, `2 b` and `0.5 * b`, parentheses, literals with units. The error
+is worth surfacing — an unknown token name errors as itself. -/
+def parseLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
+    Except String SymGlue := do
+  let some toks := exprToks s.trimAscii.toString
+    | throw "malformed expression"
+  let e ← exprParse toks
+  match e.eval (fun n => (tokens.find? (·.1 == n)).map (·.2)) with
+  | .ok g => return g
+  | .error n => throw s!"'{n}' is not a declared token"
+
+/-- Whether a string looks like a length expression rather than a single
+value: an operator or a parenthesis somewhere, or a coefficient directly
+against a name (`2cardbleed`). Routing, not validation — the parser has
+the final say. -/
+def looksLikeExpr (s : String) : Bool := Id.run do
+  let cs := s.toList
+  let mut prevDigit := false
+  let mut i := 0
+  for c in cs do
+    if c == '(' || c == ')' || c == '*' then return true
+    if (c == '+' || c == '-') && i > 0 then return true
+    if prevDigit && (c.isAlpha || c == '_') then
+      -- a digit running into letters is a unit or a coefficient; only the
+      -- coefficient names an expression
+      let rest := String.ofList (cs.drop i)
+      let unit := String.ofList (rest.toList.takeWhile fun c => c.isAlphanum || c == '_')
+      if (lengthOfUnit 1 1 unit).isNone then return true
+    prevDigit := c.isDigit
+    i := i + 1
+  return false
+
 def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Option Value :=
   let s := raw.trimAscii.toString
   if s.startsWith "\"" && s.endsWith "\"" && s.length ≥ 2 then
@@ -245,7 +605,9 @@ def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Opti
     -- Nested blocks stay opaque; the declaration decides whether it takes one.
     some (.block (String.ofList (s.toList.drop 1).dropLast |>.trimAscii.toString))
   else if (s.splitOn "*").length == 2 then
-    parseScaled tokens s
+    -- The factor may scale one name, or a whole subexpression.
+    parseScaled tokens s <|>
+      (if looksLikeExpr s then (parseLengthExpr tokens s).toOption.map .glue else none)
   else if (s.splitOn " plus ").length > 1 || (s.splitOn " minus ").length > 1 then
     (parseGlue s).map Value.glue
   else if s.endsWith "em" || s.endsWith "ex" then
@@ -260,9 +622,12 @@ def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Opti
     | some (mantissa, scale), some (num, den) =>
       some (.dim (mantissa * num / (scale * den : Nat)))
     | some (mantissa, 1), none =>
-      if unit.isEmpty then some (.int mantissa) else none
+      if unit.isEmpty then some (.int mantissa)
+      else if looksLikeExpr s then (parseLengthExpr tokens s).toOption.map .glue
+      else none
     | _, _ =>
-      if !s.isEmpty && s.toList.all isIdentChar then some (.ident s) else none
+      if looksLikeExpr s then (parseLengthExpr tokens s).toOption.map .glue
+      else if !s.isEmpty && s.toList.all isIdentChar then some (.ident s) else none
 
 /-- Parse a `key = value, ...` block. Reports malformed entries; the caller
 validates keys, so an unknown key is not an error here. -/
@@ -287,10 +652,16 @@ def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
         match parseValue valueSrc tokens with
         | some v => entries := entries.push ⟨key, v⟩
         | none =>
+          let detail := if looksLikeExpr valueSrc then
+              match parseLengthExpr tokens valueSrc with
+              | .error e => s!": {e}"
+              | .ok _ => ""
+            else ""
           diags := diags.push (Diag.of .E0321
-            s!"cannot read value for '{key}' in '\\{what}': {valueSrc.quote}"
+            s!"cannot read value for '{key}' in '\\{what}': {valueSrc.quote}{detail}"
             (some ⟨file, pos⟩) (help :=
-              "values are \"strings\", dimensions (10pt, 0.5in), numbers, names, or #RRGGBB colors"))
+              "values are \"strings\", dimensions (10pt, 0.5in), length expressions \
+(a + 2b), numbers, names, or #RRGGBB colors"))
     | [] => pure ()
   return (entries, diags)
 
