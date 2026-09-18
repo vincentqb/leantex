@@ -2102,15 +2102,46 @@ private def B.brokeTie (b : B) : B :=
         (help := "\\pagebreak before the float moves it whole to the next page")) }
   else b
 
-/-- Place one line. Its height and depth follow the tallest run on it, not
-the paragraph's nominal size: a line carrying `\Huge` needs room above its
-baseline and below it, or it collides with its neighbours.
+/-- A line's vertical extent — (tallest run size, height above the
+baseline, depth below it) — measured seg by seg, each run in its own face:
+a sans title is as tall as the sans says, not as the body face would be at
+that size. An image stands `h` above the baseline with no depth: it raises
+the line's height, never its nominal size, so the leading after it is
+decided by the text that follows, as TeX decides it. A math rule (a
+fraction bar) reaches from `raise` to `raise + thickness`: it can add
+height above the baseline or depth below it, never both. -/
+private def lineExtent (fs : FontSet) (b : B) (size : Sp) (segs : Array Seg) :
+    Sp × Sp × Sp :=
+  let nominal := if size == 0 then b.geom.fontSize else size
+  segs.foldl (fun (acc : Sp × Sp × Sp) s => match s with
+    | .run idx _ _ _ _ sz _ raise =>
+      let font := fs.get idx
+      let sz := if sz == 0 then nominal else sz
+      (max acc.1 sz,
+       max acc.2.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
+       max acc.2.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
+    | .image _ _ h => (acc.1, max acc.2.1 h, acc.2.2)
+    | .rule _ t r _ => (acc.1, max acc.2.1 (r + t), max acc.2.2 (-r))
+    | _ => acc) (nominal, b.capHeight * nominal / b.geom.fontSize,
+                 b.descent * nominal / b.geom.fontSize)
 
-The baseline distance is TeX's: the leading of the line being placed, unless
-the previous line's depth plus this line's height plus `lineskip` is more.
-So a Huge title is followed at the body's leading plus what the title hangs
-below its baseline, not at the Huge leading — the next line's size decides,
-as it does in TeX where `\baselineskip` is read when a line is appended.
+/-- TeX's interline rule, the one distance placement adds beyond the
+pending skip: the leading of the line being placed, unless the previous
+line's depth plus this line's height plus `lineskip` is more. -/
+private def interlineFor (leadFactor : Nat) (prevDepth tallest height : Sp) : Sp :=
+  max (leadingFor tallest leadFactor) (prevDepth + height + lineskip)
+
+/-- Place one line. Its height and depth follow the tallest run on it
+(`lineExtent`), not the paragraph's nominal size: a line carrying `\Huge`
+needs room above its baseline and below it, or it collides with its
+neighbours.
+
+The baseline distance is TeX's (`interlineFor`): the leading of the line
+being placed, unless the previous line's depth plus this line's height plus
+`lineskip` is more. So a Huge title is followed at the body's leading plus
+what the title hangs below its baseline, not at the Huge leading — the next
+line's size decides, as it does in TeX where `\baselineskip` is read when a
+line is appended.
 
 A page fills at natural glue until a line will not fit even with every skip
 above it fully shrunk; then the page closes (shrunk to fit if it overflowed)
@@ -2118,26 +2149,7 @@ and the line opens the next, its pending glue discarded as TeX discards glue
 at the top of a page. Glue is never stretched: the bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
     (w : Sp) : B :=
-  let nominal := if size == 0 then b.geom.fontSize else size
-  -- Each run measured in its own face: a sans title is as tall as the sans
-  -- says, not as the body face would be at that size.
-  let (tallest, height, depth) := segs.foldl (fun (acc : Sp × Sp × Sp) s => match s with
-    | .run idx _ _ _ _ sz _ raise =>
-      let font := fs.get idx
-      let sz := if sz == 0 then nominal else sz
-      (max acc.1 sz,
-       max acc.2.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
-       max acc.2.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
-    -- An image stands `h` above the baseline with no depth: it raises the
-    -- line's height, never its nominal size, so the leading after it is
-    -- decided by the text that follows, as TeX decides it.
-    | .image _ _ h => (acc.1, max acc.2.1 h, acc.2.2)
-    -- A math rule (a fraction bar) reaches from `raise` to
-    -- `raise + thickness`: it can add height above the baseline or depth
-    -- below it, never both.
-    | .rule _ t r _ => (acc.1, max acc.2.1 (r + t), max acc.2.2 (-r))
-    | _ => acc) (nominal, b.capHeight * nominal / b.geom.fontSize,
-                 b.descent * nominal / b.geom.fontSize)
+  let (tallest, height, depth) := lineExtent fs b size segs
   let bottom := b.geom.bodyBottom
   let mk (y : Sp) : LineOut := { x := x, y := y, size := size, segs := segs, setWidth := w }
   let firstY := b.geom.bodyTop + max b.ascent height
@@ -2145,7 +2157,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     b.commit (mk firstY) depth 0 0
   else
     let interline := if b.noInterline then height
-      else max (leadingFor tallest b.geom.leading) (b.prevDepth + height + lineskip)
+      else interlineFor b.geom.leading b.prevDepth tallest height
     let y := b.y + b.skip.width + interline
     let overflow := y + depth - bottom
     let above := b.pageShrink + b.skip.shrink
@@ -2154,6 +2166,68 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     else
       let b := b.brokeTie.finishPage
       b.commit (mk firstY) depth 0 0
+
+/-- The realization theorem's placement step: a line placed on the same
+page (the fit condition holds), under interline spacing (not flush under a
+table rule), lands exactly the pending skip's natural width plus the
+interline below the previous baseline. The declared gap reaches the page
+1:1 — no scaling, no second emission; `finishPage_shift_uniform` says page
+close keeps these deltas, so together they carry the declared gap into
+`Layout.Out`. Rubber is the one negotiation and it is never silent: a page
+that consumes shrink reports it (N0200, `finishPage`), and vertical glue is
+never stretched. At a default peer boundary the pending skip is the
+resolved parskip (`flushGap_default_exact`), so the realized baseline delta
+is the leading plus exactly one rhythm quantum
+(`Ir.default_rhythm_multiples`). -/
+private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w : Sp)
+    (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
+    (hni : b.noInterline = false)
+    (hfit : b.y + b.skip.width
+        + interlineFor b.geom.leading b.prevDepth (lineExtent fs b size segs).1
+            (lineExtent fs b size segs).2.1
+        + (lineExtent fs b size segs).2.2 - b.geom.bodyBottom
+        ≤ b.pageShrink + b.skip.shrink) :
+    (b.placeLine fs x size segs w).cur.lines.back?.map (·.y) =
+      some (b.y + b.skip.width
+        + interlineFor b.geom.leading b.prevDepth (lineExtent fs b size segs).1
+            (lineExtent fs b size segs).2.1) := by
+  rcases hle : lineExtent fs b size segs with ⟨t, ht, dp⟩
+  rw [hle] at hfit
+  unfold B.placeLine
+  rw [hle]
+  simp only [hcur, hfresh, hni, Bool.or_self, Bool.false_eq_true, ite_false,
+    hfit, ite_true, B.commit]
+  simp [Array.back?_push]
+
+/-- The other half of the PDF realization: what page close does to the gaps
+placement realized — nothing, on a page that shipped without consuming
+shrink and carries no fil glue. The page's vertical distribution (`VDist`)
+moves the unpinned block as one: a single delta `d` moves every unpinned
+line, so consecutive baseline deltas — the realized gaps — reach `Out`
+exactly as placed. A uniform translation rather than a per-gap equality
+because that is the exact statement: the gaps are the invariant; the
+block's position belongs to the declared distribution. The two excluded
+negotiations are declared, never silent: a consumed-shrink page reports
+itself (N0200, below), and fil glue exists only where the document asked
+for it. -/
+private theorem finishPage_shift_uniform (b : B)
+    (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
+    (hfil : b.pageFils = 0) (hsf : b.skip.fil = false) :
+    ∃ d, ∀ i, b.pinnedLines ≤ i →
+      (b.finishPage.pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
+        (b.cur.lines[i]?.map fun l => l.y + d) := by
+  have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
+    rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
+  unfold B.finishPage
+  simp only [hcond, hsf, hfil, Bool.false_eq_true, ite_false, Nat.add_zero,
+    Nat.lt_irrefl, Array.back?_push, Option.bind_some]
+  refine ⟨b.vdist.aboveShare (if b.cur.lines.size > b.pinnedLines then
+      b.geom.bodyBottom - (b.cur.lines.foldl (fun m l => max m l.y) 0 + b.prevDepth)
+    else 0), fun i hi => ?_⟩
+  split <;> split <;>
+    simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
+      Nat.not_lt.mpr hi]
 
 private def B.warnOverfull (b : B) : B :=
   { b with diags := b.diags.push (Diag.of .W0005 "overfull line; no feasible break") }
@@ -2327,6 +2401,23 @@ private def Acc.flushGap (a : Acc) : Acc :=
       (if a.wantDefault then { a with ops := a.ops.push (.skip a.parskip) } else a)
     else { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
   { a with wantDefault := false, owed := #[] }
+
+/-- The gap the walk pays at an undeclared peer boundary is the declared
+default and only it: one `.skip` of the page's parskip — the resolved
+`Ir.parskipDefault`, one rhythm quantum, unless the document declared its
+own — never two emissions on one boundary. With anything declared (`owed`
+non-empty) the default stands aside entirely. -/
+private theorem flushGap_default_exact (a : Acc) (howed : a.owed.isEmpty = true)
+    (hw : a.wantDefault = true) :
+    a.flushGap.ops = a.ops.push (.skip a.parskip) := by
+  simp [Acc.flushGap, howed, hw]
+
+/-- The heading's undeclared space above, as the block walk spells it
+(`parskip.add parskip`): exactly twice the peer gap — one full rhythm unit,
+two quanta, by `Ir.default_rhythm_multiples`. -/
+private theorem heading_default_before_exact (a : Acc) :
+    ((a.parskip).add (a.parskip)).width = 2 * a.parskip.width := by
+  simp [Glue.add, Int.two_mul]
 
 /-- A page boundary. Whatever gap was owed dies with the old page, as TeX
 discards glue at the top of a new one — except fil: infinite glue standing
