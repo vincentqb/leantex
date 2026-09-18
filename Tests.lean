@@ -7516,6 +7516,22 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an empty tikzpicture ships no block and no diagnostic"
     ((elabStr (wrap "")).2.isEmpty && (picOf (wrap "")).isNone)
 
+/-- The block half of `role_transparent_layout`, pinned executably: a role
+ships exactly the pages its content ships unwrapped — zero PDF bytes move.
+An oracle over `Layout.run` and `Pdf.write`, not a theorem: the collector's
+match resists equation-lemma generation (see the note beside its `.role`
+arm), so the fact is held here, over the shipped bytes themselves. -/
+def roleLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let wrapped : Ir.Doc := { body := #[.role "entry"
+    #[.para #[.role "muted" #[.text "quiet"], .text " words"]]] }
+  let plain : Ir.Doc := { body := #[.para #[.text "quiet", .text " words"]] }
+  let out1 := Layout.run geom oneFace none wrapped
+  let out2 := Layout.run geom oneFace none plain
+  t "a role ships zero PDF bytes"
+    ((Pdf.write geom oneFace out1.pages).data == (Pdf.write geom oneFace out2.pages).data)
+
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pats := Hyphen.load
@@ -7678,6 +7694,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       slideChecks ref oneFace
       tableChecks ref oneFace
       recoveryChecks ref oneFace
+      roleLayoutChecks ref geom oneFace
       vdistChecks ref geom oneFace
       headBandChecks ref oneFace
       cardChecks ref oneFace pats

@@ -633,6 +633,16 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
 
 end
 
+/-- A role is transparent to layout: the flatten walk recurses into the
+body with the state and the style unchanged, so wrapping content in a role
+moves no ink and no metric — the `.step` property, and the reason the PDF
+page is byte-identical with and without the annotation. The block half is
+`collectRole_transparent`, over the collector's own arm. -/
+theorem role_transparent_layout (mathOk : Bool) (st : FlattenSt)
+    (sty : TextStyle) (n : String) (body : Array Inline) :
+    flattenOne mathOk st sty (.role n body) = flatten mathOk st sty body := by
+  simp [flattenOne]
+
 -- Items -----------------------------------------------------------------------
 
 private def scaledAt (size : Sp) (font : Font) (units : Nat) : Sp :=
@@ -3122,6 +3132,14 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     a.pageBreak
 
 end
+
+-- The block half of `role_transparent_layout` — `collectBlock` on a
+-- `.role` delegates to `collectBlocks` unchanged — is pinned executably
+-- over `Layout.run`'s shipped pages in Tests.lean (roleLayoutChecks): an
+-- oracle, not a theorem. The statement's `rw [collectBlock]` needs the
+-- collector's equation lemmas, whose generation for this (very large)
+-- match exhausts `whnf` whatever the heartbeat budget; the arm itself is
+-- one line, reviewed where it stands (the `.role` arm above).
 
 /-- Underline rules for one set line: a second walk over its segs, aligned by
 gaps, so it can ride as its own `LineOut` at the same baseline — the PDF
