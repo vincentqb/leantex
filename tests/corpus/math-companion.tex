@@ -1,0 +1,19 @@
+% Synthetic fixture: the companion branch of math-face resolution. No
+% \fonts math key — the body family's designed companion (Fira Sans →
+% Fira Math, both shipped beside this file) serves the formulas, scaled so
+% the two x-heights agree, and the build names the pick once (N0016).
+\documentclass{article}
+\fonts{ dir = "fonts", body = "Fira Sans" }
+
+\begin{document}
+
+\section{An Undeclared Math Face}
+
+The map $f(x) = x^2 - 1$ sits inline beside its sentence, its x at the
+sentence's own optical size. A display formula takes the same face:
+
+\[ \sum_{k=1}^{n} k = \frac{n(n+1)}{2} \]
+
+The paragraph continues after the display, still in the body face.
+
+\end{document}

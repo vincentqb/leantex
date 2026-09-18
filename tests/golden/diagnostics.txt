@@ -157,6 +157,11 @@ warning[W0014]: '{align*}': row 2 has 1 cell(s) where 2 align; padded with empty
 ── W0015 (degraded) equation numbers not rendered yet; rows set unnumbered
 warning[W0015]: equation numbers are not rendered yet; '{align}' sets unnumbered
   help: '{align*}' spells the unnumbered form, which renders the same
+── N0016 (info) no math face declared; the engine picked one and says which
+note[N0016]: math is set in 'TeX Gyre Pagella Math', the designed companion of 'TeX Gyre Pagella'
+  help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
+note[N0016]: math is set in 'Fira Math', the first installed face with an OpenType MATH table
+  help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
 ── W0101 (config) geometry keys without a native equivalent dropped
 warning[W0101]: geometry keys without a native equivalent were dropped: headsep
 ── W0102 (degraded) unsupported colour model

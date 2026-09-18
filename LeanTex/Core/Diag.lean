@@ -95,6 +95,7 @@ inductive DiagCode where
   | N0100 | N0102 | N0103 | N0114 | N0200
   | W0001 | W0003 | W0005 | W0006 | W0007 | W0008 | W0009 | W0010
   | W0011 | W0012 | W0013 | W0014 | W0015
+  | N0016
   | W0101 | W0102 | W0103 | W0104 | W0105 | W0106 | W0108 | W0110 | W0111
   | W0201 | W0202
   | W0301 | W0302 | W0303 | W0304 | W0307 | W0309 | W0310 | W0311
@@ -169,6 +170,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0013 => ("0013", .config, "an \\allow'd code never fired")
   | .W0014 => ("0014", .degraded, "alignment row disagrees with its grid's columns; padded")
   | .W0015 => ("0015", .degraded, "equation numbers not rendered yet; rows set unnumbered")
+  | .N0016 => ("0016", .info, "no math face declared; the engine picked one and says which")
   | .W0102 => ("0102", .degraded, "unsupported colour model")
   | .W0103 => ("0103", .config, "unsupported package skipped")
   | .W0104 => ("0104", .config, "unsupported TeX construct skipped")
@@ -245,7 +247,7 @@ def DiagCode.all : List DiagCode :=
    .E0321, .E0322, .E0323, .E0324, .E0325, .E0326, .E0327, .E0328, .E0329,
    .E0330, .E0331, .E0332, .E0333, .E0334, .E0336, .E0401, .E0402, .E0403, .E0404,
    .E0405, .E0501, .E0502, .N0100,
-   .N0102, .N0103, .N0114, .N0200, .W0001, .W0003, .W0005, .W0006, .W0007, .W0008,
+   .N0016, .N0102, .N0103, .N0114, .N0200, .W0001, .W0003, .W0005, .W0006, .W0007, .W0008,
    .W0009, .W0010, .W0011, .W0012, .W0013, .W0014, .W0015, .W0101, .W0102,
    .W0103, .W0104, .W0105, .W0106, .W0108,
    .W0110, .W0111, .W0201, .W0202, .W0301, .W0302, .W0303, .W0304, .W0307,

@@ -1,0 +1,19 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+section 1
+  text "A Body With No Companion"
+para
+  text "A serif with no designed math companion still gets working formulas: the quadratic "
+  formula inline "x^2 + 2x + 1"
+    ord:𝑥^{ord:2} bin:+ ord:2 ord:𝑥 bin:+ ord:1
+  text " renders as glyphs, and so does the display"
+center
+  para
+    formula display "\\frac {a + b}{c}"
+      inner:frac{ord:𝑎 bin:+ ord:𝑏}{ord:𝑐}
+para
+  text "with its bar from the resolved face’s own constants."
+-- diagnostics
+(none)

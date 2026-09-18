@@ -50,6 +50,23 @@ def mathFaceNoTable (family path : String) : Diag :=
     (help := "\\fonts{ math = \"STIX Two Math\" } names a math face; \
 `leantex fonts` lists the installed families")
 
+/-- N0016: no math face was declared and the body family's designed
+companion is installed, so the engine set math in it. -/
+def mathFaceCompanion (mathFamily bodyFamily : String) : Diag :=
+  Diag.of .N0016
+    s!"math is set in '{mathFamily}', the designed companion of '{bodyFamily}'"
+    (help := "\\fonts{ math = \"...\" } chooses a face yourself; \
+`leantex fonts` lists the installed families")
+
+/-- N0016: no math face was declared and no companion is installed, so the
+engine set math in the first installed face with an OpenType MATH table. -/
+def mathFaceFirst (mathFamily : String) : Diag :=
+  Diag.of .N0016
+    s!"math is set in '{mathFamily}', the first installed face with an \
+OpenType MATH table"
+    (help := "\\fonts{ math = \"...\" } chooses a face yourself; \
+`leantex fonts` lists the installed families")
+
 /-- W0601: the image file exists but reading it failed. -/
 def imageUnreadable (src err : String) : Diag :=
   Diag.of .W0601 s!"cannot read image '{src}': {err}; a placeholder box holds its place"

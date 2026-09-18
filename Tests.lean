@@ -53,7 +53,8 @@ def goldenNames : List String :=
    "marker-styled", "marker-content",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav",
-   "diagram", "diagram-overflow", "tables", "tables-ragged"]
+   "diagram", "diagram-overflow", "tables", "tables-ragged",
+   "math-companion", "math-first"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -1648,6 +1649,40 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     (picks.contains ('₿', testFonts ++ "/SourceSerifPro-Regular.otf"))
   t "a scalar no face covers is absent from the picks"
     (!picks.any (·.1 == '𓀀'))
+  -- The undeclared-math resolution over the shipped faces, branch by
+  -- branch: a body with a sourced pairing row and its companion installed
+  -- gets the companion; one with no row gets the first MATH-table face
+  -- under the documented order; a scan with no MATH face at all gets none
+  -- (and layout degrades with W0003, pinned in mathChecks).
+  t "companion branch: Fira Sans finds Fira Math with its sourced row"
+    ((← FontDb.pickMathFace shipped "Fira Sans").map
+        (fun (f, r) => (f.family, (r.map (·.license)).getD "")) ==
+      some ("Fira Math", "SIL Open Font License"))
+  t "no-companion branch: the first MATH-table face serves, rowless"
+    ((← FontDb.pickMathFace shipped "Source Serif Pro").map
+        (fun (f, r) => (f.family, r.isNone)) == some ("Fira Math", true))
+  t "no MATH face anywhere: the pick is none"
+    ((← FontDb.pickMathFace
+        (shipped.filter fun f => !(f.path.endsWith "FiraMath-Regular.otf"))
+        "Fira Sans").isNone)
+  t "every pairing row names a face, a source, and a licence"
+    (FontDb.mathCompanions.all fun p =>
+      !p.body.isEmpty && !p.companion.isEmpty && !p.source.isEmpty && !p.license.isEmpty)
+  -- The order axioms pickCompanion_set_eq assumes — faceLt transitive,
+  -- asymmetric, total — hold over the shipped faces, and the pick really is
+  -- scan-order independent there: the theorem's hypotheses, witnessed.
+  t "faceLt is asymmetric over the shipped faces"
+    (shipped.all fun f => shipped.all fun g =>
+      !(FontDb.faceLt f g && FontDb.faceLt g f))
+  t "faceLt is total over the shipped faces"
+    (shipped.all fun f => shipped.all fun g =>
+      f.path == g.path || FontDb.faceLt f g || FontDb.faceLt g f)
+  t "faceLt is transitive over the shipped faces"
+    (shipped.all fun f => shipped.all fun g => shipped.all fun h =>
+      !(FontDb.faceLt f g && FontDb.faceLt g h) || FontDb.faceLt f h)
+  t "pickCompanion answers the same for the reversed scan"
+    ((FontDb.pickCompanion shipped.reverse "Fira Sans").map (·.2.path) ==
+      (FontDb.pickCompanion shipped "Fira Sans").map (·.2.path))
   -- Malformed and missing candidates stay total: no answer, never an abort.
   t "tableImage of a missing file is none"
     ((← FontDb.tableImage "/nonexistent/leantex-x.otf" (fun _ => true)).isNone)
@@ -2242,8 +2277,8 @@ def shippedFontChecks (ref : IO.Ref (List String)) (faces : Array FontDb.Face) :
   t "resolve by file name finds the bold beside it"
     ((FontDb.resolve faces "OpenSans-Regular.ttf" { bold := true }).map (·.1.path) ==
       some (testFonts ++ "/OpenSans-Bold.ttf"))
-  t "default over the shipped faces is the sans"
-    (FontDb.defaultFamily faces == some "Open Sans")
+  t "default over the shipped faces is the first sans in listing order"
+    (FontDb.defaultFamily faces == some "Fira Sans")
   let pre := "\\documentclass{article}"
   let post := "\\begin{document}x\\end{document}"
   let d1 := (elabStr (pre ++ "\\setmainfont[Path=fonts/]{SourceSerifPro-Regular.otf}" ++ post)).1.fonts
@@ -3869,6 +3904,17 @@ def censusTable :
     ("every fraction bar and overbar ships as a rule",
       ((c[0]?.map (·.rules)).getD 0) == 8),
     ("the out-of-scope accent keeps its source", hasStr (censusText c) "\\hat")]),
+  ("math-companion", fun _ c => [
+    ("one page", c.size == 1),
+    ("the inline formula ships italic math glyphs", hasStr (censusText c) "𝑥"),
+    ("the display sum ships as a glyph", hasStr (censusText c) "∑"),
+    ("the fraction bar ships as a rule", ((c[0]?.map (·.rules)).getD 0) == 1),
+    ("prose after the display ships",
+      hasStr (censusText c) "The paragraph continues after the display")]),
+  ("math-first", fun _ c => [
+    ("one page", c.size == 1),
+    ("the inline formula ships italic math glyphs", hasStr (censusText c) "𝑥"),
+    ("the display fraction bar ships as a rule", ((c[0]?.map (·.rules)).getD 0) == 1)]),
   ("quotes", fun geom c => [
     ("one page", c.size == 1),
     ("the quotation's text ships", hasStr (censusText c) "A short invented epigraph"),
@@ -3946,11 +3992,25 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     check ref s!"census covers {n}" (censusTable.any (·.1 == n))
   for (n, _) in censusTable do
     check ref s!"census row {n} names a golden fixture" (goldenNames.contains n)
+  -- A fixture that reaches math without declaring a face resolves it the
+  -- way the driver does (FontDb.pickMathFace over the shipped faces), so
+  -- the census exercises the same decision a build runs.
+  let shipped ← FontDb.scanRoots [testFonts]
   for (n, facts) in censusTable do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
     let (doc, _) := Elab.run s!"{n}.tex" src
     let geom := Layout.Geom.ofPage doc.page
-    let fs := if doc.fonts.math.isSome then mathSet else oneFace
+    let fs ← if doc.fonts.math.isSome then pure mathSet
+      else if (Layout.docMathScalars doc).isEmpty then pure oneFace
+      else do
+        match ← FontDb.pickMathFace shipped (doc.fonts.body.getD "") with
+        | some (face, _) =>
+          match Font.parse (← IO.FS.readBinFile face.path) with
+          | .ok f => pure { oneFace with
+              fonts := oneFace.fonts.push f
+              math := some oneFace.fonts.size }
+          | .error _ => pure oneFace
+        | none => pure oneFace
     let out := Layout.run geom fs (some pats) doc
     let c := censusOf (coveredColorsOf doc) out
     for (label, ok) in facts geom c do
@@ -4334,6 +4394,8 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
     dvE (dvDoc "\\newcommand{\\shiny}{y}\\ifdefined\\shiny\\relax\\fi\n" "x")
   | .N0200 => dvL one (dvDoc "\\page{ height = 115pt, margin = 20pt }\n"
       "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc")
+  | .N0016 => #[DriverDiag.mathFaceCompanion "TeX Gyre Pagella Math" "TeX Gyre Pagella",
+      DriverDiag.mathFaceFirst "Fira Math"]
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL one (dvDoc "" "$x^2$")
   | .W0005 => dvL one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"
@@ -6090,7 +6152,7 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   -- Resolution runs on the shipped faces, never the host's.
   let faces ← FontDb.scanRoots [testFonts]
-  t "fontdb finds the ten shipped faces" (faces.size == 10)
+  t "fontdb finds the eleven shipped faces" (faces.size == 11)
   t "fontdb finds source serif" ((FontDb.families faces).any (· == "Source Serif Pro"))
   defaultFontChecks ref
   shippedFontChecks ref faces

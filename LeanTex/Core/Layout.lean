@@ -745,23 +745,30 @@ private def mathScalarTextOne (acc : Array Char) : Ir.Inline → Array Char
 
 end
 
+/-- The census accumulator: the plain texts a document's faces will be
+asked for, and — separately — the scalars its formulas ask the math face
+for, so the driver can both cover them (one fallback precompute) and know
+whether the document reaches math at all. -/
+private structure ScalarAcc where
+  texts : Array String := #[]
+  math : Array Char := #[]
+
 /-- The plain text of a run and, when it carries formulas, their math
-scalars as one more census string: what keeps the per-scalar fallback one
-mechanism — a math scalar enters the same precompute a text scalar does. -/
-private def textAndMath (out : Array String) (xs : Array Ir.Inline) : Array String :=
-  let ms := mathScalarTextList #[] xs.toList
-  let out := out.push (Ir.plainText xs)
-  if ms.isEmpty then out else out.push (String.ofList ms.toList)
+scalars: what keeps the per-scalar fallback one mechanism — a math scalar
+enters the same precompute a text scalar does. -/
+private def textAndMath (out : ScalarAcc) (xs : Array Ir.Inline) : ScalarAcc :=
+  { texts := out.texts.push (Ir.plainText xs)
+    math := mathScalarTextList out.math xs.toList }
 
 mutual
 
-private def scalarTextList (out : Array String) (itemD enumD : Nat) :
-    List Block → Array String
+private def scalarTextList (out : ScalarAcc) (itemD enumD : Nat) :
+    List Block → ScalarAcc
   | [] => out
   | b :: rest => scalarTextList (scalarTextOne out itemD enumD b) itemD enumD rest
 
-private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
-    Block → Array String
+private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
+    Block → ScalarAcc
   | .para xs => textAndMath out xs
   | .section _ _ title => textAndMath out title
   | .list ordered items =>
@@ -770,7 +777,7 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
     -- counts it (`\@itemdepth`/`\@enumdepth`).
     let (itemD, enumD) := if ordered then (itemD, enumD + 1) else (itemD + 1, enumD)
     let level := min (if ordered then enumD else itemD) 4
-    scalarTextItems (out.push (ListMark.scalars ordered level)) itemD enumD items.toList
+    scalarTextItems { out with texts := out.texts.push (ListMark.scalars ordered level) } itemD enumD items.toList
   | .center body => scalarTextList out itemD enumD body.toList
   | .quote body => scalarTextList out itemD enumD body.toList
   | .spaced _ body => scalarTextList out itemD enumD body.toList
@@ -782,12 +789,12 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   -- for.
   | .note _ => out
   | .logo content => textAndMath out content
-  | .verbatim _ s => out.push s
+  | .verbatim _ s => { out with texts := out.texts.push s }
   -- A rule has no glyphs.
   | .rule _ _ _ => out
   -- A picture's labels are set as glyph runs: their scalars are asked of
   -- the body face like any other text.
-  | .picture pic => out ++ pic.labelTexts
+  | .picture pic => { out with texts := out.texts ++ pic.labelTexts }
   | .frame title _ _ body =>
     scalarTextList (textAndMath out title) itemD enumD body.toList
   -- A framefoot note is set on the page as footer text.
@@ -798,24 +805,24 @@ private def scalarTextOne (out : Array String) (itemD enumD : Nat) :
   | .float _ _ body caption =>
     scalarTextList (textAndMath out caption) itemD enumD body.toList
 
-private def scalarTextTableRows (out : Array String) :
-    List (Array (Array Inline)) → Array String
+private def scalarTextTableRows (out : ScalarAcc) :
+    List (Array (Array Inline)) → ScalarAcc
   | [] => out
   | row :: rest => scalarTextTableRows (scalarTextTableCells out row.toList) rest
 
-private def scalarTextTableCells (out : Array String) :
-    List (Array Inline) → Array String
+private def scalarTextTableCells (out : ScalarAcc) :
+    List (Array Inline) → ScalarAcc
   | [] => out
   | cell :: rest => scalarTextTableCells (textAndMath out cell) rest
 
-private def scalarTextCols (out : Array String) (itemD enumD : Nat) :
-    List (Option Nat × Array Block) → Array String
+private def scalarTextCols (out : ScalarAcc) (itemD enumD : Nat) :
+    List (Option Nat × Array Block) → ScalarAcc
   | [] => out
   | (_, body) :: rest =>
     scalarTextCols (scalarTextList out itemD enumD body.toList) itemD enumD rest
 
-private def scalarTextItems (out : Array String) (itemD enumD : Nat) :
-    List (Array Block) → Array String
+private def scalarTextItems (out : ScalarAcc) (itemD enumD : Nat) :
+    List (Array Block) → ScalarAcc
   | [] => out
   | bs :: rest =>
     scalarTextItems (scalarTextList out itemD enumD bs.toList) itemD enumD rest
@@ -831,17 +838,28 @@ kerns are excluded; they never look a glyph up. The driver checks these
 against the loaded faces to precompute `FontSet.fallback` before layout
 begins, which is what keeps layout pure: finding a covering face on disk is
 the driver's effect, and by layout time it has already happened. -/
-def docScalars (doc : Doc) : Array Char := Id.run do
-  let mut texts : Array String := scalarTextList #[] 0 0 doc.body.toList
+private def docScalarAcc (doc : Doc) : ScalarAcc := Id.run do
+  let mut acc : ScalarAcc := scalarTextList {} 0 0 doc.body.toList
   if let some h := doc.head then
-    texts := (textAndMath texts h).push "0123456789"
+    acc := textAndMath acc h |> fun a => { a with texts := a.texts.push "0123456789" }
   if let some f := doc.foot then
-    texts := (textAndMath texts f).push "0123456789"
+    acc := textAndMath acc f |> fun a => { a with texts := a.texts.push "0123456789" }
   for (_, st) in doc.styles.entries do
     if let some tpl := st.font then
-      texts := texts.push (Ir.plainText tpl)
+      acc := { acc with texts := acc.texts.push (Ir.plainText tpl) }
     if let some m := st.marker then
-      texts := texts.push (Ir.plainText m)
+      acc := { acc with texts := acc.texts.push (Ir.plainText m) }
+  return acc
+
+/-- The scalars the document's formulas ask the math face for: nonempty
+exactly when resolving a math face is worth the driver's while, and what
+the note that names an engine-picked face is gated on. -/
+def docMathScalars (doc : Doc) : Array Char :=
+  (docScalarAcc doc).math
+
+def docScalars (doc : Doc) : Array Char := Id.run do
+  let acc := docScalarAcc doc
+  let texts := acc.texts.push (String.ofList acc.math.toList)
   -- ASCII in a bitmap, the rest gathered and deduplicated after: a hash
   -- insert per character of the document costs ~15 ms on the 30-page bench,
   -- a bitmap update costs nothing. Two folds, so each accumulator threads

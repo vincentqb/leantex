@@ -1,0 +1,19 @@
+% Synthetic fixture: the no-companion branch of math-face resolution. No
+% \fonts math key and no designed companion for the body family — the
+% first installed face with an OpenType MATH table serves (under the
+% documented family-alphabetical order), named once (N0016).
+\documentclass{article}
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+
+\begin{document}
+
+\section{A Body With No Companion}
+
+A serif with no designed math companion still gets working formulas: the
+quadratic $x^2 + 2x + 1$ renders as glyphs, and so does the display
+
+\[ \frac{a + b}{c} \]
+
+with its bar from the resolved face's own constants.
+
+\end{document}

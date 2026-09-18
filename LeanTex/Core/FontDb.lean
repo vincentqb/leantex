@@ -513,6 +513,329 @@ def resolveVariant (faces : Array Face) (family : String) (declared : Option Str
       else (face, some s!"'{family}' has no {want} face; \
         '{face.family} {face.subfamily}' substitutes")
 
+/-- The documented candidate order every scan-derived pick shares
+(`fallbackPicks`, `pickCompanion`, `firstMathFace`): family name
+(normalised), upright before italic, weight nearest regular, then subfamily
+and path. One ordering rule, so a face picked from the scan is a function
+of what is installed, never of scan luck. -/
+def faceLt (a b : Face) : Bool :=
+  if norm a.family != norm b.family then norm a.family < norm b.family
+  else if a.italic != b.italic then !a.italic && b.italic
+  else
+    let da := max a.weight 400 - min a.weight 400
+    let db := max b.weight 400 - min b.weight 400
+    if da != db then da < db
+    else if a.subfamily != b.subfamily then a.subfamily < b.subfamily
+    else a.path < b.path
+
+/-- One fold step of `leastBy`: keep the lesser. -/
+private def leastStep (lt : Face → Face → Bool) (best : Option Face) (f : Face) :
+    Option Face :=
+  match best with
+  | none => some f
+  | some b => if lt f b then some f else some b
+
+/-- The least face under `lt`, by one fold. `leastBy_set_eq` is what it is
+shaped for: the answer is a function of the set of faces, so a pick over it
+cannot depend on scan order. -/
+def leastBy (lt : Face → Face → Bool) (xs : Array Face) : Option Face :=
+  xs.toList.foldl (leastStep lt) none
+
+private theorem foldl_least (lt : Face → Face → Bool)
+    (htrans : ∀ f g h, lt f g → lt g h → lt f h) :
+    ∀ (l : List Face) (m0 : Face),
+      (∀ f g, (f = m0 ∨ f ∈ l) → (g = m0 ∨ g ∈ l) → f = g ∨ lt f g ∨ lt g f) →
+      ∃ m, List.foldl (leastStep lt) (some m0) l = some m ∧
+        (m = m0 ∨ m ∈ l) ∧ ∀ f, (f = m0 ∨ f ∈ l) → f = m ∨ lt m f
+  | [], m0, _ => ⟨m0, rfl, .inl rfl, fun f hf => by
+      cases hf with
+      | inl h => exact .inl h
+      | inr h => cases h⟩
+  | x :: rest, m0, htotal => by
+    have lift : ∀ f, (f = x ∨ f ∈ rest) → (f = m0 ∨ f ∈ x :: rest) := fun f hf =>
+      .inr (by cases hf with
+        | inl h => exact h ▸ List.mem_cons_self
+        | inr h => exact List.mem_cons_of_mem _ h)
+    have liftM : ∀ f, (f = m0 ∨ f ∈ rest) → (f = m0 ∨ f ∈ x :: rest) := fun f hf =>
+      hf.imp id (List.mem_cons_of_mem _)
+    by_cases hx : lt x m0
+    · obtain ⟨m, heq, hmem, hleast⟩ :=
+        foldl_least lt htrans rest x
+          (fun f g hf hg => htotal f g (lift f hf) (lift g hg))
+      refine ⟨m, by simpa [leastStep, hx] using heq, lift m hmem, fun f hf => ?_⟩
+      by_cases hfm : f = m
+      · exact .inl hfm
+      right
+      cases hf with
+      | inl hfm0 =>
+        subst hfm0
+        cases hleast x (.inl rfl) with
+        | inl hxm => exact hxm ▸ hx
+        | inr hmx => exact htrans m x f hmx hx
+      | inr hfx =>
+        cases List.mem_cons.mp hfx with
+        | inl h =>
+          cases hleast f (.inl h) with
+          | inl h2 => exact absurd h2 hfm
+          | inr h2 => exact h2
+        | inr h =>
+          cases hleast f (.inr h) with
+          | inl h2 => exact absurd h2 hfm
+          | inr h2 => exact h2
+    · obtain ⟨m, heq, hmem, hleast⟩ :=
+        foldl_least lt htrans rest m0
+          (fun f g hf hg => htotal f g (liftM f hf) (liftM g hg))
+      refine ⟨m, by simpa [leastStep, hx] using heq, liftM m hmem, fun f hf => ?_⟩
+      by_cases hfm : f = m
+      · exact .inl hfm
+      right
+      cases hf with
+      | inl hfm0 =>
+        cases hleast f (.inl hfm0) with
+        | inl h2 => exact absurd h2 hfm
+        | inr h2 => exact h2
+      | inr hfx =>
+        cases List.mem_cons.mp hfx with
+        | inl hfx =>
+          subst hfx
+          cases htotal f m0 (.inr List.mem_cons_self) (.inl rfl) with
+          | inl hfm0 =>
+            cases hleast f (.inl hfm0) with
+            | inl h2 => exact absurd h2 hfm
+            | inr h2 => exact h2
+          | inr hor =>
+            cases hor with
+            | inl hlt => exact absurd hlt hx
+            | inr hgt =>
+              cases hleast m0 (.inl rfl) with
+              | inl hm0m => exact hm0m ▸ hgt
+              | inr hmm0 => exact htrans m m0 f hmm0 hgt
+        | inr hfr =>
+          cases hleast f (.inr hfr) with
+          | inl h2 => exact absurd h2 hfm
+          | inr h2 => exact h2
+
+private theorem leastBy_spec (lt : Face → Face → Bool)
+    (htrans : ∀ f g h, lt f g → lt g h → lt f h) (xs : Array Face)
+    (htotal : ∀ f g, f ∈ xs → g ∈ xs → f = g ∨ lt f g ∨ lt g f) :
+    (xs.toList = [] ∧ leastBy lt xs = none) ∨
+      ∃ m, leastBy lt xs = some m ∧ m ∈ xs ∧
+        ∀ f, f ∈ xs → f = m ∨ lt m f := by
+  unfold leastBy
+  match h : xs.toList with
+  | [] => exact .inl ⟨rfl, rfl⟩
+  | x :: rest =>
+    have hxs : ∀ f, (f = x ∨ f ∈ rest) → f ∈ xs := fun f hf => by
+      rw [← Array.mem_toList_iff, h]
+      cases hf with
+      | inl h2 => exact h2 ▸ List.mem_cons_self
+      | inr h2 => exact List.mem_cons_of_mem _ h2
+    obtain ⟨m, heq, hmem, hleast⟩ :=
+      foldl_least lt htrans rest x
+        (fun f g hf hg => htotal f g (hxs f hf) (hxs g hg))
+    refine .inr ⟨m, ?_, hxs m hmem, fun f hf => ?_⟩
+    · simpa [leastStep] using heq
+    · have : f = x ∨ f ∈ rest := by
+        have := (Array.mem_toList_iff).mpr hf
+        rw [h] at this
+        exact List.mem_cons.mp this
+      exact hleast f this
+
+/-- Which face `leastBy` denotes is a function of the SET of faces: two
+scans listing the same faces in any orders answer the same, provided the
+order is transitive, asymmetric, and total on those faces. This is the
+scan-order-independence core of `pickCompanion_set_eq`. -/
+theorem leastBy_set_eq (lt : Face → Face → Bool)
+    (htrans : ∀ f g h, lt f g → lt g h → lt f h)
+    (hasym : ∀ f g, lt f g → ¬ lt g f)
+    (a b : Array Face) (hmem : ∀ f, f ∈ a ↔ f ∈ b)
+    (htotal : ∀ f g, f ∈ a → g ∈ a → f = g ∨ lt f g ∨ lt g f) :
+    leastBy lt a = leastBy lt b := by
+  have htotalB : ∀ f g, f ∈ b → g ∈ b → f = g ∨ lt f g ∨ lt g f := fun f g hf hg =>
+    htotal f g ((hmem f).mpr hf) ((hmem g).mpr hg)
+  cases leastBy_spec lt htrans a htotal with
+  | inl ha =>
+    cases leastBy_spec lt htrans b htotalB with
+    | inl hb => rw [ha.2, hb.2]
+    | inr hb =>
+      obtain ⟨m, _, hmb, _⟩ := hb
+      have : m ∈ a.toList := Array.mem_toList_iff.mpr ((hmem m).mpr hmb)
+      rw [ha.1] at this
+      cases this
+  | inr ha =>
+    obtain ⟨ma, heqa, hma, hlea⟩ := ha
+    cases leastBy_spec lt htrans b htotalB with
+    | inl hb =>
+      have : ma ∈ b.toList := Array.mem_toList_iff.mpr ((hmem ma).mp hma)
+      rw [hb.1] at this
+      cases this
+    | inr hb =>
+      obtain ⟨mb, heqb, hmb, hleb⟩ := hb
+      rw [heqa, heqb]
+      by_cases hab : ma = mb
+      · rw [hab]
+      · cases hlea mb ((hmem mb).mpr hmb) with
+        | inl h2 => exact absurd h2.symm hab
+        | inr h2 =>
+          cases hleb ma ((hmem ma).mp hma) with
+          | inl h3 => exact absurd h3.symm (fun h => hab h.symm)
+          | inr h3 => exact absurd h2 (hasym mb ma h3)
+
+/-- One designed body↔math pairing, sourced: the body family a document
+declares, its designed math companion, where the pairing is documented, and
+the companion's licence (checked at the source). The engine ships none of
+these faces — a row costs nothing until the host already has the face. -/
+structure Pairing where
+  body : String
+  companion : String
+  source : String
+  license : String
+  deriving Repr, Inhabited
+
+/-- The designed math companions, as data: one row per body family name the
+scan may report, each row citing where the pairing is documented and the
+companion's licence. Rows whose licence could not be verified are omitted
+until sourced. Sources:
+- gust.org.pl/projects/e-foundry/tg-math — the TeX Gyre math companions of
+  Pagella (Palatino/URW Palladio), Termes (Times/Nimbus Roman), Bonum
+  (Bookman), Schola (Century Schoolbook), and DejaVu; GUST Font License.
+- gust.org.pl/projects/e-foundry/lm-math — Latin Modern Math, the companion
+  of Latin Modern (and Computer Modern's lineage); GUST Font License.
+- stixfonts.org — STIX Two Math beside STIX Two Text; SIL OFL.
+- ctan.org/pkg/libertinus — Libertinus Math beside Libertinus Serif; OFL.
+- ctan.org/pkg/garamond-math — "should be used together with EB Garamond";
+  OFL.
+- ctan.org/pkg/erewhon-math — "Utopia-based OpenType math font" beside
+  Erewhon; OFL.
+- ctan.org/pkg/firamath — Fira Math, the sans math face designed to match
+  Fira Sans; OFL. -/
+def mathCompanions : Array Pairing := #[
+  { body := "Palatino", companion := "TeX Gyre Pagella Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "Palatino Linotype", companion := "TeX Gyre Pagella Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "URW Palladio L", companion := "TeX Gyre Pagella Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "P052", companion := "TeX Gyre Pagella Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "TeX Gyre Pagella", companion := "TeX Gyre Pagella Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "Times", companion := "TeX Gyre Termes Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "Times New Roman", companion := "TeX Gyre Termes Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "Nimbus Roman", companion := "TeX Gyre Termes Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "Nimbus Roman No9 L", companion := "TeX Gyre Termes Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "Liberation Serif", companion := "TeX Gyre Termes Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "TeX Gyre Termes", companion := "TeX Gyre Termes Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "STIX Two Text", companion := "STIX Two Math"
+    source := "stixfonts.org", license := "SIL Open Font License" },
+  { body := "Bookman", companion := "TeX Gyre Bonum Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "URW Bookman", companion := "TeX Gyre Bonum Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "Bookman Old Style", companion := "TeX Gyre Bonum Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "TeX Gyre Bonum", companion := "TeX Gyre Bonum Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "Century Schoolbook", companion := "TeX Gyre Schola Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "Century Schoolbook L", companion := "TeX Gyre Schola Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "C059", companion := "TeX Gyre Schola Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "New Century Schoolbook", companion := "TeX Gyre Schola Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "TeX Gyre Schola", companion := "TeX Gyre Schola Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "DejaVu Serif", companion := "TeX Gyre DejaVu Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "DejaVu Sans", companion := "TeX Gyre DejaVu Math"
+    source := "gust.org.pl/projects/e-foundry/tg-math", license := "GUST Font License" },
+  { body := "Libertinus Serif", companion := "Libertinus Math"
+    source := "ctan.org/pkg/libertinus", license := "SIL Open Font License" },
+  { body := "EB Garamond", companion := "Garamond-Math"
+    source := "ctan.org/pkg/garamond-math", license := "SIL Open Font License" },
+  { body := "Utopia", companion := "Erewhon Math"
+    source := "ctan.org/pkg/erewhon-math", license := "SIL Open Font License" },
+  { body := "Erewhon", companion := "Erewhon Math"
+    source := "ctan.org/pkg/erewhon-math", license := "SIL Open Font License" },
+  { body := "Fira Sans", companion := "Fira Math"
+    source := "ctan.org/pkg/firamath", license := "SIL Open Font License" },
+  { body := "Latin Modern Roman", companion := "Latin Modern Math"
+    source := "gust.org.pl/projects/e-foundry/lm-math", license := "GUST Font License" },
+  { body := "CMU Serif", companion := "Latin Modern Math"
+    source := "gust.org.pl/projects/e-foundry/lm-math", license := "GUST Font License" }]
+
+/-- The designed math companion of `body` on this host: the sourced table
+row naming the family, resolved against the scan as the least face (under
+the one documented order) whose family is the row's companion. `none` when
+no row names the family or the host lacks the companion face. -/
+def pickCompanion (faces : Array Face) (body : String) : Option (Pairing × Face) := do
+  let row ← mathCompanions.find? fun p =>
+    normEq body ((norm p.body).toList.toArray)
+  let face ← leastBy faceLt (faces.filter fun f =>
+    normEq f.family ((norm row.companion).toList.toArray))
+  return (row, face)
+
+/-- Scan-order independence: the companion pick is a function of the set of
+installed faces — the row is data and the face is `leastBy`'s least member
+of the matching faces (the engine's one documented order, `faceLt`), so two
+scans listing the same faces in any orders pick the same companion. The
+order axioms are hypotheses because `faceLt` bottoms out in string
+comparison, whose order lemmas the library does not carry; the suite checks
+them over the shipped faces, and `fontcache-check` stays the end-to-end
+oracle. -/
+theorem pickCompanion_set_eq (a b : Array Face) (body : String)
+    (hmem : ∀ f, f ∈ a ↔ f ∈ b)
+    (htrans : ∀ f g h, faceLt f g → faceLt g h → faceLt f h)
+    (hasym : ∀ f g, faceLt f g → ¬ faceLt g f)
+    (htotal : ∀ f g, f ∈ a → g ∈ a → f = g ∨ faceLt f g ∨ faceLt g f) :
+    pickCompanion a body = pickCompanion b body := by
+  unfold pickCompanion
+  cases mathCompanions.find? fun p => normEq body ((norm p.body).toList.toArray) with
+  | none => rfl
+  | some row =>
+    have heq := leastBy_set_eq faceLt htrans hasym
+      (a.filter fun f => normEq f.family ((norm row.companion).toList.toArray))
+      (b.filter fun f => normEq f.family ((norm row.companion).toList.toArray))
+      (fun f => by
+        simp only [Array.mem_filter]
+        exact and_congr_left fun _ => hmem f)
+      (fun f g hf hg =>
+        htotal f g (Array.mem_filter.mp hf).1 (Array.mem_filter.mp hg).1)
+    show (leastBy faceLt (Array.filter (fun f => normEq f.family (norm row.companion).toList.toArray) a)).bind
+        (fun face => some (row, face)) =
+      (leastBy faceLt (Array.filter (fun f => normEq f.family (norm row.companion).toList.toArray) b)).bind
+        (fun face => some (row, face))
+    rw [heq]
+
+/-- The face serving a document that declares no math face and whose body
+family has no installed companion: the first installed face carrying an
+OpenType MATH table, under the same documented order (`faceLt`). Only table
+directories are read, and only until a MATH face answers; `none` when no
+installed face has one — the caller degrades to source text, as today. -/
+def firstMathFace (faces : Array Face) : IO (Option Face) := do
+  for f in faces.qsort faceLt do
+    if (← tableImage f.path (· == "MATH")).isSome then
+      return some f
+  return none
+
+/-- The math face for a document that declares none: the body family's
+designed companion when the host has it (with its table row), else the
+first installed MATH-table face, else `none`. One decision, shared by the
+driver and the test harness, so a fixture exercises the same resolution a
+build runs. -/
+def pickMathFace (faces : Array Face) (body : String) :
+    IO (Option (Face × Option Pairing)) := do
+  match pickCompanion faces body with
+  | some (row, face) => return some (face, some row)
+  | none => return (← firstMathFace faces).map ((·, none))
+
 /-- For each scalar no declared face covers, the scanned face that will set
 it. The order is documented, never scan luck: candidates are every scanned
 face sorted by family name (normalised), upright before italic, weight
@@ -521,16 +844,7 @@ the scalar wins. Only candidate cmaps are read, and only until every scalar
 is served; a scalar no face covers is absent from the result. -/
 def fallbackPicks (faces : Array Face) (needed : Array Char) :
     IO (Array (Char × String)) := do
-  let lt (a b : Face) : Bool :=
-    if norm a.family != norm b.family then norm a.family < norm b.family
-    else if a.italic != b.italic then !a.italic && b.italic
-    else
-      let da := max a.weight 400 - min a.weight 400
-      let db := max b.weight 400 - min b.weight 400
-      if da != db then da < db
-      else if a.subfamily != b.subfamily then a.subfamily < b.subfamily
-      else a.path < b.path
-  let sorted := faces.qsort lt
+  let sorted := faces.qsort faceLt
   let mut remaining := needed
   let mut out : Array (Char × String) := #[]
   for f in sorted do

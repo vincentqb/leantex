@@ -234,6 +234,17 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
   -- face without the table earns a diagnostic naming it and math is set as
   -- source text (PLAN, M6 design decision 1).
   let mut mathIdx : Option Nat := none
+  let loadFace (fonts : Array Font.Font) (paths : Array String) (path : String) :
+      IO (Option Nat × Array Font.Font × Array String × Option Diag) := do
+    match paths.findIdx? (· == path) with
+    | some i => return (some i, fonts, paths, none)
+    | none =>
+      let data ← IO.FS.readBinFile path
+      match Font.parse data with
+      | .error e =>
+        return (none, fonts, paths, some (DriverDiag.fontFileUnusable path e))
+      | .ok f =>
+        return (some fonts.size, fonts.push f, paths.push path, none)
   if let some family := spec.math then
     match FontDb.resolveVariant faces family none {} with
     | none =>
@@ -243,23 +254,38 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
         diags := diags.push (DriverDiag.familyMissing family
           (FontDb.nearest all family).toList all.size)
     | some (face, _) =>
-      let loaded ← match paths.findIdx? (· == face.path) with
-        | some i => pure (some i)
-        | none =>
-          let data ← IO.FS.readBinFile face.path
-          match Font.parse data with
-          | .error e =>
-            diags := diags.push (DriverDiag.fontFileUnusable face.path e)
-            pure none
-          | .ok f =>
-            fonts := fonts.push f
-            paths := paths.push face.path
-            pure (some (fonts.size - 1))
+      let (loaded, fonts', paths', diag?) ← loadFace fonts paths face.path
+      fonts := fonts'
+      paths := paths'
+      if let some d := diag? then
+        diags := diags.push d
       if let some i := loaded then
         if (fonts[i]!).math.isSome then
           mathIdx := some i
         else
           diags := diags.push (DriverDiag.mathFaceNoTable (fonts[i]!).family face.path)
+  else if !(Layout.docMathScalars doc).isEmpty then
+    -- The document has formulas and no declared math face: the body
+    -- family's designed companion when the host has it, else the first
+    -- installed MATH-table face — either way named once, so a face the
+    -- document did not choose is never silent (the `\fonts{ math = ... }`
+    -- override always wins, above).
+    let bodyFam := spec.body.getD ""
+    let choice : Option (FontDb.Face × Option String) ←
+      (← FontDb.pickMathFace faces bodyFam).mapM fun (face, row?) =>
+        pure (face, row?.map fun _ => bodyFam)
+    if let some (face, companionOf) := choice then
+      let (loaded, fonts', paths', diag?) ← loadFace fonts paths face.path
+      fonts := fonts'
+      paths := paths'
+      if let some d := diag? then
+        diags := diags.push d
+      if let some i := loaded then
+        if (fonts[i]!).math.isSome then
+          mathIdx := some i
+          diags := diags.push (match companionOf with
+            | some body => DriverDiag.mathFaceCompanion (fonts[i]!).family body
+            | none => DriverDiag.mathFaceFirst (fonts[i]!).family)
   if fonts.isEmpty then
     -- Every named family failed and `diags` carries the errors; the caller
     -- stops on them, but nothing downstream may ever see an empty set.
@@ -682,10 +708,41 @@ def main (argv : List String) : IO UInt32 := do
       hyphenate (← Ui.mk' cfg) words file
     | .fonts =>
       -- The answer to "what may \\fonts name here": one family per line on
-      -- stdout, so it pipes into grep.
+      -- stdout, so it pipes into grep. A family whose designed math
+      -- companion is installed says so on an indented line, with the
+      -- x-heights the optical match reads and the measured stems — stem
+      -- width is measurable but no authority publishes a mismatch
+      -- threshold, so it is reported here and never gates anything.
       let faces ← FontDb.scan (cfg.fontDirs.toList ++ (← texFontDirs))
-      for f in FontDb.families faces do
-        IO.println f
+      let load (path : String) : IO (Option Font.Font) := do
+        try
+          match Font.parse (← IO.FS.readBinFile path) with
+          | .ok f => pure (some f)
+          | .error _ => pure none
+        catch _ => pure none
+      for fam in FontDb.families faces do
+        IO.println fam
+        if let some (row, cFace) := FontDb.pickCompanion faces fam then
+          let metrics ← do
+            let bodyPath := (FontDb.resolve faces fam {}).map (·.1.path)
+            match ← bodyPath.mapM load, ← load cFace.path with
+            | some (some b), some c =>
+              let perMille (f : Font.Font) (v : Nat) : Nat := v * 1000 / f.unitsPerEm
+              let xh := s!"x-height {perMille b b.xHeightOptical} vs \
+{perMille c c.xHeightOptical}"
+              let stem (f : Font.Font) : Option Nat := do
+                let g ← f.gid 'l'
+                let src := Ink.Src.make f.data f.isCff f.numGlyphs
+                let y := (f.xHeightOptical : Int) / 2
+                let ivs ← src.inkAt g y y
+                let (a, e) ← ivs[0]?
+                pure (perMille f (e - a).toNat)
+              match stem b, stem c with
+              | some sb, some sc => pure s!" — {xh}, stem {sb} vs {sc} (per 1000 of each em)"
+              | _, _ => pure s!" — {xh} (per 1000 of each em)"
+            | _, _ => pure ""
+          IO.println s!"  math companion: {cFace.family} [{row.license}] \
+({row.source}){metrics}"
       return 0
     | .themes =>
       -- The answer to "what may \\theme name here": one bundle per line.
