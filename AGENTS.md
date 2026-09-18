@@ -149,7 +149,11 @@ in this repo; refer to the private reference corpus abstractly.
   needs a design discussion, not a fuel parameter. In a statement meant for
   `omega`, spell binders and structure fields `Int`, not `Sp`: omega reads
   the bare spelling only, and an `Sp`-typed hypothesis is silently invisible
-  to it.
+  to it. `omega` handles `Int.max`/`min` directly — no `Int.max_def` unfold,
+  no generalize-the-max; and a `decide` that needs `maxRecDepth` raised is
+  spelled `decide +kernel` instead. A case split whose branches read
+  identical may still be load-bearing for elaboration cost — judge dead
+  proof structure by deletion and rebuild, never by inspection.
 - A theorem the engine does not yet earn is stated anyway — in
   `Obligations/`, the staging queue: its own lake target, outside the
   default `lake build` and `lake test`, never imported by `LeanTex/` (the
