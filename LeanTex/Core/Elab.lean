@@ -193,7 +193,9 @@ def metaKeys : List String :=
 
 def fontKeys : List String := ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir"]
 
-/-- Named page sizes, in sp. -/
+/-- Named page sizes, in sp: the ISO 216 A-series at TeX's big-point
+rounding (A4 595 × 842 pt, A5 420 × 595 pt) and the ANSI/US office sizes
+(letter 8.5 × 11 in, legal 8.5 × 14 in = 612 × 792 / 612 × 1008 pt). -/
 def pageSizes : List (String × (Sp × Sp)) :=
   [("letter", (pt 612, pt 792)),
    ("legal", (pt 612, pt 1008)),
@@ -1597,7 +1599,9 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   if let some (c, nm) := tps.separator then
     unless inner.isEmpty && (part st.author).isNone && (part st.institute).isNone
         && (part st.date).isNone do
-      -- moloch's default titleseparator linewidth, when no token names one.
+      -- moloch's own default, `titleseparator linewidth=0.5pt`
+      -- (beamerinnerthememoloch.dtx, \moloch@inner@setdefaults), when no
+      -- token names one.
       let th := (ctx.tokens.find? "separatorheight").getD
         { width := Dim.Length.ofSp (Dim.pt 1 / 2) }
       inner := push inner none (.rule c nm th)
@@ -3632,7 +3636,10 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   -- not a guess: ISO/IEC 7810 ID-1 (85.60 × 53.98 mm, the credit-card size)
   -- unless the class option names the US (3.5 × 2 in) or Japanese
   -- (91 × 55 mm) trade size; margins are the print safe zone, inside which
-  -- a drifting trim cannot cut. No hyphenation and no running furniture:
+  -- a drifting trim cannot cut — no single specification names the zone,
+  -- and print-shop guidance asks 3-5 mm; the engine takes the conservative
+  -- end, 5 mm, and a document declares its own to override. No
+  -- hyphenation and no running furniture:
   -- a card is one face of display text, not a page of a run — which is
   -- also why the prose measure band (W0201) does not apply to it.
   else if docClass == "card" then

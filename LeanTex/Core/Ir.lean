@@ -16,6 +16,12 @@ def baseFontSize : Sp := Dim.pt 10
 structure PageSpec where
   width : Sp := pt 612
   height : Sp := pt 792
+  /-- The vertical inch is a stated choice, not a derivation: the
+  copy-fitting table that replaces the horizontal inch
+  (`articleTextBlock`) sets only the measure, and no authority the engine
+  follows names a vertical margin, so the letter-paper office convention
+  stands. The horizontal default is replaced by the elaborator for an
+  undeclared article page. -/
   vmargin : Sp := inch 1
   hmargin : Sp := inch 1
   /-- The body size, `\page{ fontsize = 11pt }` or the class option. The
@@ -1867,6 +1873,9 @@ def Design.ofDoc (doc : Doc) : Design :=
     standout := { fg := (pal.find? "standoutfg").getD bg
                   bg := (pal.find? "standoutbg").getD fg }
     separator := (pal.find? "separator").getD fg
+    -- The fallback is moloch's own default, `progressbar linewidth=1pt`
+    -- (beamerouterthememoloch.dtx, \moloch@outer@setdefaults); the layout
+    -- fallback and the bundles' token entries are the same value.
     progressheight := (doc.tokens.find? "progressheight").getD
       { width := Dim.Length.ofSp (Dim.pt 1) }
     styles := doc.styles }

@@ -20,6 +20,12 @@ structure Geom where
   /-- The gap between peer paragraphs. The default is the engine's own; a
   document declares its own through `\page{ parskip = ... }`. -/
   parskip : SymGlue := { width := Dim.Length.ofSp (pt 6) }
+  /-- Per-level list indent. The default is the engine's own choice — 1.5 em
+  at the 10 pt base, shallower than classes.dtx's 2.5/2.2/1.87 em stack,
+  which reads deep at this engine's narrower default measure; no external
+  authority settles it. A document owns the choice through
+  `\style{itemize}{ indent = ... }` (the declared override this default
+  yields to). -/
   listIndent : Sp := pt 15
   leading : Nat := 1000
   /-- Whether paragraphs may hyphenate; the class default resolved. Layout
@@ -49,7 +55,8 @@ def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
 
 /-- TeX's `\lineskip`: the least space between a line's depth and the next
 line's height when the leading cannot hold them apart. Also the least
-clearance between the body's ink and a footer's. -/
+clearance between the body's ink and a footer's. The value is TeX's own
+default (`\lineskip=1pt`, TeXbook p.78). -/
 def lineskip : Sp := pt 1
 
 /-- The lowest y a body line's ink may reach: the bottom margin, less the
@@ -411,6 +418,8 @@ inductive Item where
 
 def forcedCost : Int := -10000
 
+/-- plain TeX's `\hyphenpenalty=50` (TeXbook p.96): the cost of ending a
+line at a hyphen, against the badness scale the breaker shares with TeX. -/
 def hyphenPenalty : Int := 50
 
 inductive Seg where
@@ -768,6 +777,10 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
   items := flush items box boxW
   return (items, missing, substs, cache)
 
+/-- Interword glue: the face's space advance, stretching by half and
+shrinking by a third — the proportions of TeX's default space factor
+(TeXbook Ch. 12: interword glue is the font's space with stretch and
+shrink from its fontdimens, w/2 and w/3 in the plain fonts). -/
 private def interword (size : Sp) (font : Font) : Glue :=
   let w := scaledAt size font (font.advance ' ')
   { width := w, stretch := w / 2, shrink := w / 3 }
@@ -1171,6 +1184,9 @@ private def gridAssemble (e : MathEnv) (size raise : Sp) (kind : Math.GridKind)
   -- own name: the page-level `lineskip` is a different, absolute quantity,
   -- and one name for two values is how a future reader fuses them.
   let gridSkip := size / 10
+  -- LaTeX's `\jot` (latex.ltx: 3pt), the extra opening between display
+  -- alignment rows, size-relative — 3 pt at the 10 pt base. An `array` is
+  -- inline math's grid and takes none, as LaTeX's array does not.
   let jot := match kind with
     | .array _ => 0
     | _ => size * 3 / 10
@@ -2395,6 +2411,15 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       justify := a.geom.justify
       markerSegs := markerSegs, rule := rule }) }
 
+/-- The weight of a heading's declared rule: 0.06 em of the base — the
+0.6 pt the engine shipped at the 10 pt base where it was picked, now
+following the type. A rule's weight relates to the stroke weight of the
+text it cuts (Hochuli, Detail in Typography, on rules and type), as the
+booktabs weights already do em-relative; an absolute point value froze it
+against the document's declared size. One spelling — it was once written
+twice. -/
+private def headingRuleWeight (base : Sp) : Sp := base * 6 / 100
+
 /-- Heading display sizes from the type scale, never loose constants:
 article.cls sets `\section` in `\Large`, `\subsection` in `\large`, and
 `\subsubsection` in `\normalsize` (classes.dtx, §Sectioning), so the
@@ -2820,6 +2845,9 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       -- page with its own.
       let a := if a.footAllowed then { a with ops := a.ops.push (.foot none) } else a
       let a := { a with ops := a.ops.push (.pageStyle none VDist.center) }
+      -- The centred measure the title and the bar share: moloch's own
+      -- 0.7875 of the line width (beamerinnerthememoloch.dtx, section page
+      -- progressbar template: \begin{minipage}{0.7875\linewidth}).
       let mp : Sp := a.geom.textWidth * 7875 / 10000
       let indent : Sp := (a.geom.textWidth - mp) / 2
       let st := a.style "sectionpage"
@@ -2831,6 +2859,9 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
             (baseStyle := { bold := true })
       let fgC := (a.pal.find? "progressfg").getD a.fg
       let bgC := (a.pal.find? "progressbg").getD ((a.pal.find? "bg").getD Ir.Color.white)
+      -- The fallback is moloch's own default, `progressbar linewidth=1pt`
+      -- (beamerouterthememoloch.dtx, \moloch@outer@setdefaults) — the same
+      -- value the bundles declare through the token.
       let thick := ((a.tokens.find? "progressheight").map
         fun g => (a.resolve g).width).getD (pt 1)
       -- No clamp: every threaded position is a some of `Ir.frameNumbers`,
@@ -2860,11 +2891,13 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let a := match st.font with
       | some tpl =>
         collectDisplay a fs (Ir.fillTemplate tpl title) indent false a.geom.fontSize
-          (rule := st.rule.map fun (r : Ir.Color × Option String) => (pt 6 / 10, r.1))
+          (rule := st.rule.map fun (r : Ir.Color × Option String) =>
+            (headingRuleWeight a.geom.fontSize, r.1))
       | none =>
         collectDisplay a fs title indent false (sectionSize a.geom level)
           (baseStyle := { bold := true })
-          (rule := st.rule.map fun (r : Ir.Color × Option String) => (pt 6 / 10, r.1))
+          (rule := st.rule.map fun (r : Ir.Color × Option String) =>
+            (headingRuleWeight a.geom.fontSize, r.1))
     let a := match st.after with
       | some g => a.vskip (a.resolve g)
       | none => a
@@ -3187,7 +3220,9 @@ private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) 
     let mut segs := segs
     let mut w := w
     if first then
-      let sep := geom.fontSize * 2 / 5
+      -- The marker stands `\labelsep` left of the item: half an em,
+      -- LaTeX's own separation (classes.dtx: \setlength\labelsep{.5em}).
+      let sep := geom.fontSize / 2
       if let some (ms, mw) := j.markerSegs then
         segs := ms ++ #[Seg.gap sep] ++ segs
         x := x - mw - sep

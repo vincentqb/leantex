@@ -78,6 +78,8 @@ def moloch : Theme :=
     -- (beamerinnerthememoloch.dtx): 0.3em above the subtitle, 0.8em below
     -- the separator (its default linewidth is 0.5pt), 0.5em below the
     -- author, 1em below the institute.
+    -- progressheight is moloch's `progressbar linewidth=1pt` default
+    -- (beamerouterthememoloch.dtx, \moloch@outer@setdefaults).
     tokens := { entries := #[
       ("progressheight", pt1),
       ("separatorheight", { width := Length.ofSp (Dim.pt 1 / 2) }),  -- 0.5pt

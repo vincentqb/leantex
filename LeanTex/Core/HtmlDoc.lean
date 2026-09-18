@@ -477,7 +477,13 @@ private def sizeRules : String :=
 
 /-- The base stylesheet. Small on purpose: a generated document should not
 ship a framework to use four of its rules. Dark mode is a variant of the same
-token set, not an inversion hack. -/
+token set, not an inversion hack. The typography with an authority behind it
+is derived above (`Ir.sizeScale` for the headings and standout,
+`Ir.leadingMilli` and `bodyLeadingMilli` for the leadings); the remaining
+paddings, margins, radii and breakpoints are this stylesheet's own screen
+furniture — stated as the engine's choices, no external authority names
+them, and each is overridable by a reader stylesheet, which is the HTML
+backend's contract. -/
 def baseCss (doc : Doc) : String :=
   -- The two token sets are `Contrast.light`/`Contrast.dark`, not literals
   -- here: every pairing they create is proved legible over there
