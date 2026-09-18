@@ -135,6 +135,18 @@ def plain : Theme :=
 
 def builtin : List Theme := [moloch, plain]
 
+/-- A role resolves at one site: `Palette.find?` is the single reader of
+the entries, and `Palette.resolve` — the evaluator `\textcolor` and every
+declaration value go through — agrees with it on every entry name of every
+shipped bundle. `black` and `white` are `resolve`'s only own atoms and they
+yield to a declared entry of the same name, so the two spellings of a role
+use cannot diverge; a bundle declaring an entry named `black` would fail
+this contract's proof only if the yield rule broke. Adding a bundle is
+entering the contract. -/
+theorem role_resolves_at_one_site :
+    (builtin.all fun t => t.palette.entries.toList.all fun e =>
+      t.palette.resolve e.1 == t.palette.find? e.1) = true := by decide
+
 /-- Arch-design I2, the value half: every shipped bundle that styles the
 title page declares its alignment and its separator — moloch's title
 matter is ragged left with a rule by declaration

@@ -919,6 +919,16 @@ where
     sayOnce "ctrl:ifdefined" .W0104
       s!"TeX conditional ('\\{name}' … '\\fi') is not supported; skipped whole" pos
     return some (#[], k)
+  | "theme" =>
+    -- The native spelling turns the themed mappings on exactly as
+    -- `\usetheme` does. Without this the compat walk read a natively-themed
+    -- document as unthemed and rewrote `\alert` to bare `\textbf`: the
+    -- bundle declared an alert role no use could reach.
+    let (args, _) := takeGroups raws start 1
+    let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    if (Theme.find? tname).isSome then
+      modify fun st => { st with themed := true }
+    return none
   | "alert" =>
     -- Themed, alert is the theme's colour AND bold: colour alone would be
     -- the only signal distinguishing the run, which WCAG 2.2 SC 1.4.1

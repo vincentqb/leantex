@@ -290,16 +290,37 @@ def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
     UInt8.ofNat ((x.toNat * pct + y.toNat * (100 - pct) + 50) / 100)
   { r := ch a.r b.r, g := ch a.g b.g, b := ch a.b b.b }
 
+/-- The `!`-separated parts of a palette expression, each trimmed of ASCII
+whitespace: structural recursion the kernel evaluates, so a contract over
+`Palette.resolve` can close by `decide` — `String.splitOn`'s well-founded
+recursion blocks kernel reduction. Behaviour matches
+`(expr.splitOn "!").map (·.trimAscii.toString)` on every expression. -/
+private def bangParts (cur : List Char) : List Char → List String
+  | [] => [trimmed cur]
+  | c :: rest =>
+    if c == '!' then trimmed cur :: bangParts [] rest
+    else bangParts (c :: cur) rest
+where
+  /-- `cur` holds the segment reversed; trim both ends of the restored order. -/
+  trimmed (cur : List Char) : String :=
+    let ws (c : Char) : Bool := c == ' ' || c == '\t' || c == '\n' || c == '\r'
+    String.ofList (((cur.dropWhile ws).reverse).dropWhile ws)
+
 /-- A palette expression: a name, or xcolor's `!` mix folding left —
 `a!30!b` is 30% of `a` over `b`, and a trailing `a!30` mixes toward white,
-so `black!2` is a near-white. `black` and `white` are always available;
-every other atom resolves against this palette, so `fg!50!bg` names the
-document's current foreground and background. -/
+so `black!2` is a near-white. `black` and `white` are always available,
+and a declared entry of either name wins — xcolor's `\definecolor{black}`
+overrides too — so a name means one thing wherever it resolves: `find?`
+is the single reader of the entries, and every atom here goes through it
+first. Before that rule, a palette naming an entry `black` painted the
+declared colour where `find?` resolved and pure black where a mix or
+`\textcolor` did (`role_resolves_at_one_site` is the contract). -/
 def Palette.resolve (p : Palette) (expr : String) : Option Color :=
   let atom (s : String) : Option Color :=
-    if s == "black" then some Color.black
-    else if s == "white" then some Color.white
-    else p.find? s
+    (p.find? s).orElse fun _ =>
+      if s == "black" then some Color.black
+      else if s == "white" then some Color.white
+      else none
   let rec go (c : Color) : List String → Option Color
     | [] => some c
     | pctS :: rest =>
@@ -313,7 +334,7 @@ def Palette.resolve (p : Palette) (expr : String) : Option Color :=
             match atom name with
             | some b => go (c.mix pct b) rest'
             | none => none
-  match (expr.splitOn "!").map (·.trimAscii.toString) with
+  match bangParts [] expr.toList with
   | [] => none
   | first :: rest =>
     match atom first with

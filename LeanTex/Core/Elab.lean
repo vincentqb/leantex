@@ -267,6 +267,21 @@ def builtinNames : List String :=
   (declStyles.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl ++
   (Lex.textSymbols.map (·.1))
 
+/-- Every palette role is invocable: a role is *defined by the palette* —
+`\muted{Alex}` works with no `\newcommand`, because the palette arm of the
+inline elaborator resolves any entry name — so no role can exist without
+its command. The document door (`applyPalette`) already refuses a key that
+collides with a built-in (E0303) and validates its characters; a theme's
+bundle installs without that door, so the shipped bundles enter the
+contract here: every key lexes as one control word (`Lex.nameChar`) and
+collides with no registered built-in. Resolution *order* lives in
+`elabInlines`, whose sanctioned recursion is opaque to proof — that every key
+really reaches the palette arm is the paired executable check in
+Tests.lean (`roleInvocationChecks`), an oracle, not a theorem. -/
+theorem every_role_is_invocable :
+    (Theme.builtin.all fun t => t.palette.entries.toList.all fun e =>
+      e.1.toList.all Lex.nameChar && !builtinNames.contains e.1) = true := by decide
+
 private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) := Id.run do
   let mut k := ctx.limit
   for _ in [0:ctx.limit] do

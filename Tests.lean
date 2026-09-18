@@ -6486,6 +6486,17 @@ def mixChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "mix plain name still resolves" (pal.resolve "base" == some { r := 0x40, g := 0x00, b := 0x80 })
   t "mix pct over 100 rejected" (pal.resolve "base!101" == none)
   t "mix unknown atom rejected" (pal.resolve "nope!50" == none)
+  -- One resolving site: a declared entry wins over resolve's own black and
+  -- white atoms, so a mix, \textcolor, and the role invocation cannot
+  -- disagree about what a name means. Before the rule, a palette naming an
+  -- entry 'black' painted the declared colour where find? resolved and
+  -- pure black where resolve did — PDF ink and the HTML variable diverged.
+  let shadow : Ir.Palette := { entries := #[("black", { r := 0x33, g := 0x33, b := 0x33 })] }
+  t "a declared black wins over the built-in atom"
+    (shadow.resolve "black" == shadow.find? "black")
+  t "undeclared black and white stay available"
+    (({} : Ir.Palette).resolve "black" == some Ir.Color.black &&
+     ({} : Ir.Palette).resolve "white" == some Ir.Color.white)
   -- Declaration site: a mix value reads the entries declared so far.
   let doc (body : String) := elabStr ("\\documentclass{article}\n" ++
     "\\palette{ fg = #000000, bg = #ffffff, dim = bg!50!fg, faint = black!2 }\n" ++
@@ -6640,6 +6651,27 @@ def roleChecks (ref : IO.Ref (List String)) : IO Unit := do
           failures ref s!"theme '{th.name}' declares '{role}', which no code reads"
   check ref "pending roles are really unread"
     (pendingConsumer.all fun (r, _) => !Ir.Design.consumedRoles.contains r)
+
+/-- The executable half of `every_role_is_invocable` (Elab.lean): resolution
+order lives in `elabInlines`, whose sanctioned recursion no theorem can
+range over, so the fact that every shipped bundle's role really reaches the
+palette arm — nothing earlier in the chain intercepts the name — is pinned
+by elaborating an invocation of every key. An oracle, not a theorem:
+reorder resolution or shadow a role with a new engine arm and this fails
+naming the key. -/
+def roleInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  for th in Theme.builtin do
+    for (key, c) in th.palette.entries do
+      let (doc, _) := elabStr ("\\documentclass{article}\\theme{" ++ th.name ++
+        s!"}\\begin\{document}\\{key}\{x}\\end\{document}")
+      -- `\alert` is a compat idiom (colour and bold, W3C SC 1.4.1): the
+      -- role must reach the words, whatever wrapper the idiom adds.
+      t s!"role '{key}' of '{th.name}' is invocable"
+        (match doc.body with
+         | #[.para #[.colored c' (some n) inner]] =>
+           c' == c && n == key && Ir.plainText inner == "x"
+         | _ => false)
 
 def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -7950,6 +7982,7 @@ def main (args : List String) : IO UInt32 := do
   themeChecks ref
   designChecks ref
   roleChecks ref
+  roleInvocationChecks ref
   fontsDeclChecks ref
   fontSuiteChecks ref
   mathChecks ref
