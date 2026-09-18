@@ -3887,20 +3887,24 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
               size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
   for i in [0:out.size] do
     let mut lines := out[i]!.lines
-    -- Pages before `runningFrom` carry no running content: an opening page
-    -- reads as a title page, not as page one of a run. The gate is the
-    -- physical-page model's (`\runninghead[from = 2]`), so it governs only
-    -- the physical furniture — head, foot, logo. The chrome footer is
-    -- frame furniture on the frame model: whether a page carries it is
-    -- decided by its frame's number, and a physical declaration must not
-    -- silently gate it.
-    let running := doc.runningFrom ≤ i + 1
-    if running then
+    -- Pages before a declaration's own `from` carry none of it: an opening
+    -- page reads as a title page, not as page one of a run. Each gate is
+    -- the physical-page model's and each declaration's own
+    -- (`\runninghead[from = 2]` gates the head, never its sibling foot), so
+    -- it governs only the physical furniture — head, foot, and the logo,
+    -- which rides the running band and waits for the later of the two. The
+    -- chrome footer is frame furniture on the frame model: whether a page
+    -- carries it is decided by its frame's number, and a physical
+    -- declaration must not silently gate it.
+    let headOn := doc.headFrom ≤ i + 1
+    let footOn := doc.footFrom ≤ i + 1
+    if headOn then
       if let some content := doc.head then
         let (l?, ds, c) := runLine content (i + 1) headY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := #[l] ++ lines
+    if footOn then
       if let some content := doc.foot then
         let (l?, ds, c) := runLine content (i + 1) footY geom.fontSize {} cache
         diags := diags ++ ds
@@ -3937,7 +3941,7 @@ slot yields in place: shorten the content or drop a slot"))
     let logoContent := logoSpans.foldl
       (fun acc (span : Nat × Array Inline) => if span.1 ≤ i then some span.2 else acc)
       doc.logo
-    if running then
+    if headOn && footOn then
       if let some content := logoContent then
         unless content.isEmpty do
           let (l?, ds, c) := mkLogoLine content cache

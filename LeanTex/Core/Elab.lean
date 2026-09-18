@@ -3301,7 +3301,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut tokens : Tokens := {}
   let mut head : Option (Array Inline) := none
   let mut foot : Option (Array Inline) := none
-  let mut runningFrom : Nat := 1
+  let mut headFrom : Nat := 1
+  let mut footFrom : Nat := 1
   let mut styles : Styles := {}
   let mut chrome : Chrome := {}
   let mut chromeDeclared := false
@@ -3441,6 +3442,10 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           ctx := { ctx with file := f }
         else if runningCtrl.contains name then
           -- `[from = 2]` keeps the opening page clean, as a title page is.
+          -- The option is this declaration's own: it gates the head or foot
+          -- it rides on, never the sibling's, and a redeclaration without
+          -- it resets the gate — a replace is whole, options included.
+          let mut fromPage : Nat := 1
           let mut j := skipSpaces preamble i
           if let some (.sym '[' _) := preamble[j]? then
             let mut opt : Array Raw := #[]
@@ -3454,7 +3459,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               match Decl.splitEntry e with
               | some ("from", v) =>
                 match v.trimAscii.toString.toNat? with
-                | some n => runningFrom := n
+                | some n => fromPage := n
                 | none => diag ctx .E0321 s!"'from' needs a page number, got {v.quote}" pos
               | _ =>
                 diag ctx .E0320 s!"unknown option in \\{name}: {e.quote}" pos
@@ -3466,8 +3471,10 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             let content ← elabInlines ctx body
             if name == "runninghead" then
               head := some content
+              headFrom := fromPage
             else
               foot := some content
+              footFrom := fromPage
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs one group of inline content" pos
         else if name == "logo" then
@@ -3825,7 +3832,8 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
     head := head
     foot := foot
     logo := logo
-    runningFrom := runningFrom
+    headFrom := headFrom
+    footFrom := footFrom
     chrome := chrome
     chromeDeclared := chromeDeclared
     styles := styles

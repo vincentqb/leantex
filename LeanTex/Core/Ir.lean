@@ -1565,9 +1565,15 @@ structure Doc where
   placed at the lower-right corner of every page carrying running content,
   the way the head and foot are placed. -/
   logo : Option (Array Inline) := none
-  /-- First page that carries running content; `\thispagestyle{empty}` on the
-  opening page is `2`. -/
-  runningFrom : Nat := 1
+  /-- First page that carries the running head (`\runninghead[from = 2]`
+  keeps the opening page clean, as a title page is). The gate is the
+  declaration's own: each `\runninghead` sets it — to its `[from]`, or back
+  to 1 when the option is not given — and never its sibling's. -/
+  headFrom : Nat := 1
+  /-- First page that carries the running foot: `\runningfoot`'s own gate,
+  the mirror of `headFrom`. `\thispagestyle{empty}` on the opening page sets
+  both to `2` — fancyhdr's page style genuinely covers both. -/
+  footFrom : Nat := 1
   /-- Slide chrome: the themed default footer's slots. `foot` wins over it. -/
   chrome : Chrome := {}
   /-- Whether the document itself declared `\chrome` (not a theme installing

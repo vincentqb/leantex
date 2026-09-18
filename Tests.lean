@@ -567,10 +567,11 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "css ex keeps its unit" (HtmlDoc.cssLength { ex := 1500 } == "1.5ex")
   t "css whole em has no fraction" (HtmlDoc.cssLength { em := 2000 } == "2em")
   t "css mixed length sums" (HtmlDoc.cssLength { sp := Dim.pt 3, em := 500 } == "calc(3pt + 0.5em)")
-  -- \runninghead[from = 2]: the opening page carries no furniture.
+  -- \runninghead[from = 2]: the opening page carries no furniture, and the
+  -- gate is the head's own — the undeclared foot keeps its default.
   let (fromDoc, fromDs) := elabStr ("\\documentclass{article}\\runninghead[from = 2]{x}" ++
     "\\begin{document}y\\end{document}")
-  t "running from clean" (fromDs.isEmpty && fromDoc.runningFrom == 2)
+  t "running from clean" (fromDs.isEmpty && fromDoc.headFrom == 2 && fromDoc.footFrom == 1)
 
 /-- The HTML article layout is a faithful degradation of the PDF page: the
 measure, fill rows, link colour, and heading rules all follow the IR. Its own
@@ -1824,7 +1825,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat koma section rule" (((koma.1.styles.find? "section").bind (·.rule)).map (·.2) == some (some "ink"))
   t "compat enumitem list" (((koma.1.styles.find? "itemize").bind (·.gap)).map (·.width) == some { sp := Dim.pt 3 } &&
     ((koma.1.styles.find? "itemize").bind (·.marker)).isSome)
-  t "compat thispagestyle empty starts running content on page 2" (koma.1.runningFrom == 2)
+  t "compat thispagestyle empty starts running content on page 2" (koma.1.headFrom == 2)
   -- A \sectionlinesformat body that is not the rule idiom is a dropped
   -- loss and errors; an empty body asks for no decoration and is silent.
   t "compat unrecognised sectionlinesformat body is a dropped loss"
@@ -7589,6 +7590,45 @@ def roleLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "a role ships zero PDF bytes"
     ((Pdf.write geom oneFace out1.pages).data == (Pdf.write geom oneFace out2.pages).data)
 
+/-- Repeat semantics across the settings surface: a second declaration of
+the same setting composes predictably. This slice: `[from]` is each running
+declaration's own — `\runningfoot[from = 3]` must not move the head's
+start page, and a redeclaration resets its own gate rather than keeping a
+sticky option. -/
+def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let wrap (pre : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\\begin{document}\nx\n\\end{document}"
+  let deck (pre body : String) : String :=
+    "\\documentclass{slides}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++
+      "\n\\end{document}"
+
+  -- [from] is each running declaration's own, and a redeclare resets it.
+  let (rDoc, rDs) := elabStr
+    (wrap "\\runningfoot[from = 3]{An Invented Foot}\n\\runninghead{An Invented Head}\n")
+  t "running foot's from does not move the head's"
+    (rDs.isEmpty && rDoc.footFrom == 3 && rDoc.headFrom == 1)
+  let (r2Doc, _) := elabStr
+    (wrap "\\runninghead[from = 2]{An Invented Head}\n\\runninghead[from = 2]{An Invented Head}\n")
+  let (r3Doc, _) := elabStr
+    (wrap "\\runninghead[from = 2]{An Invented Head}\n\\runninghead{An Invented Head}\n")
+  t "a redeclared running head resets its own from"
+    (r2Doc.headFrom == 2 && r3Doc.headFrom == 1)
+  -- The page claim, judged on the shipped pages: the foot's gate leaves
+  -- the head standing on page 1.
+  let (gDoc, gDs) := elabStr (deck
+    "\\runninghead{An Invented Head}\\runningfoot[from = 2]{An Invented Foot}"
+    "\\begin{frame}{A}\na\n\\end{frame}\n\\begin{frame}{B}\nb\n\\end{frame}")
+  t "gated running deck source clean" gDs.isEmpty
+  let gGeom := Layout.Geom.ofPage gDoc.page
+  let gOut := Layout.run gGeom oneFace none gDoc
+  let gFont := oneFace.body
+  let headY := gGeom.vmargin / 2 + gFont.ascent * gGeom.fontSize / (gFont.unitsPerEm : Int)
+  let footY := gGeom.pageH - gGeom.vmargin / 2
+  t "the foot's own gate leaves the head on page 1"
+    ((gOut.pages.map fun p => p.lines.any (·.y == headY)) == #[true, true] &&
+     (gOut.pages.map fun p => p.lines.any (·.y == footY)) == #[false, true])
+
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pats := Hyphen.load
@@ -7772,6 +7812,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       footerBandChecks ref oneFace
       chromeFooterChecks ref oneFace
       numberingChecks ref oneFace
+      composeChecks ref oneFace
       frameFootChecks ref oneFace
       scannerChecks ref
       rhythmChecks ref oneFace
