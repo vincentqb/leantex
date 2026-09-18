@@ -304,6 +304,9 @@ warning[W0338]: the table is 211.2pt wider than the measure
 ── W0339 (pending) a page break separates a caption from its float; keep-together is not implemented
 warning[W0339]: a page break separates a caption from the table or figure it belongs to
   help: \pagebreak before the float moves it whole to the next page
+── W0340 (config) a declaration in the document body is ignored
+warning[W0340]: '\page' is a declaration; in the body it is ignored
+  help: declare it in the preamble, before '\begin{document}'
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

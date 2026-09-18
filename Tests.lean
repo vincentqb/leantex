@@ -1395,6 +1395,26 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
     (pagesOf (doc "one\\pagebreak\\pagebreak\ntwo") == 2)
   t "a trailing pagebreak adds no empty page"
     (pagesOf (doc "one\\pagebreak") == 1)
+  -- Native declarations in the body: \palette and \tokens apply where
+  -- they stand (LaTeX's \colorlet and \setlength are body-legal); the
+  -- preamble-only rest are named as misplaced declarations, never as
+  -- unknown commands.
+  t "a body palette colours what follows and reaches the document"
+    (let (d, ds) := elabStr (doc "\\palette{ accent2 = #7C3AED }\\textcolor{accent2}{x}")
+     ds.all (·.severity != .error) && ds.all (·.code != "W0304") &&
+       d.palette.find? "accent2" == some { r := 0x7C, g := 0x3A, b := 0xED })
+  t "a body colorlet aliases a preamble colour"
+    (let (d, _) := elabStr
+      "\\documentclass{article}\\definecolor{a}{HTML}{112233}\
+\\begin{document}\\colorlet{b}{a}x\\end{document}"
+     d.palette.find? "b" == some { r := 0x11, g := 0x22, b := 0x33 })
+  t "a body setlength declares its token"
+    ((elabStr (doc "\\setlength{\\x}{4pt}y")).1.tokens.find? "x"
+      == some { width := .ofSp (Dim.pt 4) })
+  t "a preamble-only declaration in the body is W0340, not unknown"
+    (let ds := (elabStr (doc "x\n\n\\page{ size = a5 }\n\ny")).2
+     ds.any (·.code == "W0340") && ds.all (·.code != "W0301") &&
+       ds.all (·.severity != .error))
 
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
@@ -4857,6 +4877,7 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
         (s!"top\n\n\\vspace\{{350 + 3 * k}pt}\n\n\\begin\{table}\n" ++
          "\\begin{tabular}{l}\nalpha \\\\\n\\end{tabular}\n" ++
          "\\caption{Below the table}\n\\end{table}"))
+  | .W0340 => dvE (dvDoc "" "x\n\n\\page{ size = a5 }\n\ny")
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"

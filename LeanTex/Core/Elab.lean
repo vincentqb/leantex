@@ -105,6 +105,14 @@ structure ESt where
   /-- beamer's `\logo`, a declaration legal in the preamble and the body
   alike; the last one wins, as in beamer. -/
   logo : Option (Array Inline) := none
+  /-- The palette after body declarations: `\palette` (usually a rewritten
+  `\colorlet`) is legal in the body as in LaTeX, applying to what follows;
+  the document palette both backends read is the last state, so a
+  body-declared colour resolves in HTML variables and contrast checks like
+  any other. `none` while the body declared nothing. -/
+  bodyPalette : Option Palette := none
+  /-- Body-declared tokens (`\setlength` mid-document), same door. -/
+  bodyTokens : Option Tokens := none
 
 abbrev EM := StateM ESt
 
@@ -1607,8 +1615,112 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   | #[.rule _ _ _] => return #[]
   | _ => return inner
 
+/-- `\tokens{...}`: named lengths. Entries are walked one at a time so a
+token may be defined by scaling an earlier one (`sep = 0.6 * rhythm`);
+parsing the block in one shot would leave those references unresolved. -/
+private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
+    EM Tokens := do
+  let mut acc : Tokens := toks
+  for entry in Decl.splitEntries src do
+    match Decl.splitEntry entry with
+    | none =>
+      diag ctx .E0320 s!"invalid entry in '\\tokens': {entry.quote}" pos
+        (help := "entries look like: name = length")
+    | some (key, valueSrc) =>
+      -- A redeclared token replaces the earlier entry, so a later
+      -- declaration overrides — a theme's defaults included. Entries
+      -- already derived from the old value keep it: references resolve
+      -- when the entry is read, in declaration order.
+      match Decl.parseValue valueSrc acc.entries with
+      | some (.glue g) => acc := acc.declare key g
+      | some (.dim d) => acc := acc.declare key { width := Dim.Length.ofSp d }
+      | some v =>
+        modify fun st => { st with
+          diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
+            "a length (10pt, 1.5ex, 0.6 * other)" v pos) }
+      | none =>
+        -- The expression parser's own verdict names the defect: an
+        -- unknown token errors as itself, never resolving to zero.
+        let detail := if Decl.looksLikeExpr valueSrc then
+            match Decl.parseLengthExpr acc.entries valueSrc with
+            | .error e => s!": {e}"
+            | .ok _ => ""
+          else ""
+        diag ctx .E0321 s!"cannot read length for '{key}': {valueSrc.quote}{detail}" pos
+          (help := "lengths look like 10pt, 1.5ex, 2em, a + 2b, or 0.6 * other-token")
+  return acc
+
+
+/-- `\palette{...}`: named colours. Every entry becomes usable both as
+`\textcolor{name}{...}` and as a bare `\name` declaration. Parses its own
+entries one at a time — a value may be a mix expression (`black!2`,
+`accent!50!black`) over the entries declared so far, which a generic
+pre-parse would reject. A redeclared name replaces the earlier entry: a
+later declaration overrides, which is what lets a document override a
+theme's defaults. -/
+private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
+    (pos : Pos) (decorative : Bool := false) : EM Palette := do
+  let mut pal := pal
+  for entry in Decl.splitEntries src do
+    match Decl.splitEntry entry with
+    | none =>
+      diag ctx .E0320 s!"invalid entry in '\\palette': {entry.quote}" pos
+        (help := "entries look like: name = #RRGGBB")
+    | some (key, valueSrc) =>
+      if !key.toList.all Decl.isIdentChar then
+        diag ctx .E0320 s!"invalid key in '\\palette': {entry.quote}" pos
+          (help := "entries look like: name = #RRGGBB")
+      else if builtinNames.contains key then
+        diag ctx .E0303 s!"palette name '{key}' collides with a built-in command" pos
+      else if key == "covered" && (valueSrc.endsWith "\\%" || valueSrc.endsWith "%") then
+        -- `covered = 38\%`: cover each colour to 38% of itself over the
+        -- page (beamer's \setbeamercovered{transparent=38}). TeX comments
+        -- make a bare % unwritable, so the escaped spelling is the
+        -- declared one; the raw source shows it as `\%`. A colour value
+        -- stays accepted below as the cover of uncoloured runs.
+        let digits := if valueSrc.endsWith "\\%" then (valueSrc.dropEnd 2).toString
+          else (valueSrc.dropEnd 1).toString
+        match (digits.trimAscii.toString).toNat? with
+        | some n =>
+          if 1 ≤ n && n ≤ 99 then
+            pal := { pal with coveredFraction := some n }
+          else
+            diag ctx .E0332 s!"covered fraction must be 1–99 percent, got '{valueSrc}'" pos
+              (help := "the fraction of each covered colour kept over the page; the default is 38\\%")
+        | none =>
+          diag ctx .E0321 s!"cannot read covered fraction: {valueSrc.quote}" pos
+            (help := "a percentage like: covered = 38\\%")
+      else
+        let put (pal : Palette) (c : Color) : Palette :=
+          pal.declare key c decorative
+        match Decl.parseValue valueSrc with
+        | some (.color r g b) => pal := put pal ⟨r, g, b⟩
+        | v? =>
+          -- A name, an alias, or a mix: all read against what is declared
+          -- so far, so two names that must never drift apart share a value.
+          match pal.resolve valueSrc with
+          | some c => pal := put pal c
+          | none =>
+            match v? with
+            | some (.ident other) =>
+              diag ctx .E0326 s!"'{other}' is not in the palette" pos
+                (help := s!"aliases read earlier entries: declare \\palette\{ {other} = #RRGGBB } first")
+            | some v =>
+              modify fun st => { st with
+                diags := st.diags.push (Decl.wrongType ctx.file "palette" key
+                  "a color like #7C3AED" v pos) }
+            | none =>
+              diag ctx .E0321 s!"cannot read colour for '{key}': {valueSrc.quote}" pos
+                (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
+  return pal
+
+
 /-- Elaborate raw items as a block sequence. -/
 partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
+  -- Shadowed mutable: a body declaration (`\palette`, `\tokens`) applies to
+  -- the content elaborated after it in this scope and inside it, the way
+  -- LaTeX's \colorlet and \setlength take effect where they stand.
+  let mut ctx := ctx
   let mut blocks : Array Block := #[]
   let mut cur : Array Raw := #[]
   let mut raws := raws
@@ -1641,6 +1753,8 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .ctrl "note" _ => cur.isEmpty
         | .ctrl n _ =>
           (sectionLevel n).isSome ||
+          -- A declaration between paragraphs stands at block level.
+          declCtrl.contains n ||
           -- A user command whose body produces blocks is itself a boundary.
           (match lookupUser ctx n with
            | some (_, cmd) => bodyIsBlock cmd.body
@@ -1758,6 +1872,52 @@ a side channel, never slide content" npos
             blocks := blocks.push (.framefoot (← elabInlines ctx fbody))
           | _ =>
             diag ctx .E0304 "'\\framefoot' needs one group of inline content" fpos
+        | .ctrl "palette" dpos =>
+          -- Legal in the body as in LaTeX (`\colorlet` rewrites to it):
+          -- the entries apply from here on, and the document palette both
+          -- backends and the contrast checks read carries them.
+          i := i + 1
+          let mut decorative := false
+          let mut skipBlock := false
+          let mut j := skipSpaces raws i
+          if let some (.sym '[' _) := raws[j]? then
+            let mut opt : Array Raw := #[]
+            let mut k := j + 1
+            for _ in [k:raws.size + 1] do
+              match raws[k]? with
+              | some (.sym ']' _) => k := k + 1; break
+              | some r' => opt := opt.push r'; k := k + 1
+              | none => break
+            for e in Decl.splitEntries (rawSrc opt) do
+              if e == "decorative" then
+                decorative := true
+              else
+                diag ctx .W0316 s!"unknown option in '\\palette': {e.quote}; block skipped" dpos
+                  (help := "options: decorative")
+                skipBlock := true
+            j := skipSpaces raws k
+          match raws[j]? with
+          | some (.group gbody _) =>
+            i := j + 1
+            unless skipBlock do
+              let pal ← applyPalette ctx ctx.palette (rawSrc gbody) dpos
+                (decorative := decorative)
+              ctx := { ctx with palette := pal }
+              modify fun st => { st with bodyPalette := some pal }
+          | _ =>
+            diag ctx .E0304 "'\\palette' needs a {...} block" dpos
+        | .ctrl "tokens" dpos =>
+          -- `\setlength` mid-document rewrites here; same door as above.
+          i := i + 1
+          let j := skipSpaces raws i
+          match raws[j]? with
+          | some (.group gbody _) =>
+            i := j + 1
+            let tk ← applyTokens ctx ctx.tokens (rawSrc gbody) dpos
+            ctx := { ctx with tokens := tk }
+            modify fun st => { st with bodyTokens := some tk }
+          | _ =>
+            diag ctx .E0304 "'\\tokens' needs a {...} block" dpos
         | .ctrl "pagebreak" _ =>
           -- The declared page boundary; adjacent boundaries never make a
           -- blank page (the page builder closes only pages that hold
@@ -1806,6 +1966,20 @@ a side channel, never slide content" npos
             diag ctx .E0304 "'\\block' needs a {body}" pos
         | .ctrl n pos =>
           i := i + 1
+          if declCtrl.contains n then
+            -- A native declaration met in the body is never "unknown": it
+            -- is ours, misplaced. `\palette` and `\tokens` have arms above;
+            -- the rest configure the whole document and are read only in
+            -- the preamble, so the declaration is skipped with its block,
+            -- named as what it is.
+            warnOnce ctx ("ctrl:" ++ n) .W0340
+              s!"'\\{n}' is a declaration; in the body it is ignored" pos
+              (help := "declare it in the preamble, before '\\begin{document}'")
+            let (j, unclosed) := skipReservedArgs raws i pos (maxGroups := 2)
+            if let some bpos := unclosed then
+              warnUnclosed ctx s!"'\\{n}'" bpos
+            i := j
+          else
           match lookupUser ctx n with
           | some (k, cmd) =>
             -- Block-producing user command: bind its arguments, then
@@ -2717,41 +2891,6 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
               (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic"]) pos) }
   return spec
 
-/-- `\tokens{...}`: named lengths. Entries are walked one at a time so a
-token may be defined by scaling an earlier one (`sep = 0.6 * rhythm`);
-parsing the block in one shot would leave those references unresolved. -/
-private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
-    EM Tokens := do
-  let mut acc : Tokens := toks
-  for entry in Decl.splitEntries src do
-    match Decl.splitEntry entry with
-    | none =>
-      diag ctx .E0320 s!"invalid entry in '\\tokens': {entry.quote}" pos
-        (help := "entries look like: name = length")
-    | some (key, valueSrc) =>
-      -- A redeclared token replaces the earlier entry, so a later
-      -- declaration overrides — a theme's defaults included. Entries
-      -- already derived from the old value keep it: references resolve
-      -- when the entry is read, in declaration order.
-      match Decl.parseValue valueSrc acc.entries with
-      | some (.glue g) => acc := acc.declare key g
-      | some (.dim d) => acc := acc.declare key { width := Dim.Length.ofSp d }
-      | some v =>
-        modify fun st => { st with
-          diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
-            "a length (10pt, 1.5ex, 0.6 * other)" v pos) }
-      | none =>
-        -- The expression parser's own verdict names the defect: an
-        -- unknown token errors as itself, never resolving to zero.
-        let detail := if Decl.looksLikeExpr valueSrc then
-            match Decl.parseLengthExpr acc.entries valueSrc with
-            | .error e => s!": {e}"
-            | .ok _ => ""
-          else ""
-        diag ctx .E0321 s!"cannot read length for '{key}': {valueSrc.quote}{detail}" pos
-          (help := "lengths look like 10pt, 1.5ex, 2em, a + 2b, or 0.6 * other-token")
-  return acc
-
 def styleKeys : List String :=
   ["font", "before", "after", "rule", "marker", "indent", "gap",
    "align", "separator", "hover", "focus", "motion"]
@@ -2855,69 +2994,6 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         modify fun st' => { st' with
           diags := st'.diags.push (Decl.unknownKey ctx.file "style" key styleKeys pos) }
   return styles.declare element st
-
-/-- `\palette{...}`: named colours. Every entry becomes usable both as
-`\textcolor{name}{...}` and as a bare `\name` declaration. Parses its own
-entries one at a time — a value may be a mix expression (`black!2`,
-`accent!50!black`) over the entries declared so far, which a generic
-pre-parse would reject. A redeclared name replaces the earlier entry: a
-later declaration overrides, which is what lets a document override a
-theme's defaults. -/
-private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
-    (pos : Pos) (decorative : Bool := false) : EM Palette := do
-  let mut pal := pal
-  for entry in Decl.splitEntries src do
-    match Decl.splitEntry entry with
-    | none =>
-      diag ctx .E0320 s!"invalid entry in '\\palette': {entry.quote}" pos
-        (help := "entries look like: name = #RRGGBB")
-    | some (key, valueSrc) =>
-      if !key.toList.all Decl.isIdentChar then
-        diag ctx .E0320 s!"invalid key in '\\palette': {entry.quote}" pos
-          (help := "entries look like: name = #RRGGBB")
-      else if builtinNames.contains key then
-        diag ctx .E0303 s!"palette name '{key}' collides with a built-in command" pos
-      else if key == "covered" && (valueSrc.endsWith "\\%" || valueSrc.endsWith "%") then
-        -- `covered = 38\%`: cover each colour to 38% of itself over the
-        -- page (beamer's \setbeamercovered{transparent=38}). TeX comments
-        -- make a bare % unwritable, so the escaped spelling is the
-        -- declared one; the raw source shows it as `\%`. A colour value
-        -- stays accepted below as the cover of uncoloured runs.
-        let digits := if valueSrc.endsWith "\\%" then (valueSrc.dropEnd 2).toString
-          else (valueSrc.dropEnd 1).toString
-        match (digits.trimAscii.toString).toNat? with
-        | some n =>
-          if 1 ≤ n && n ≤ 99 then
-            pal := { pal with coveredFraction := some n }
-          else
-            diag ctx .E0332 s!"covered fraction must be 1–99 percent, got '{valueSrc}'" pos
-              (help := "the fraction of each covered colour kept over the page; the default is 38\\%")
-        | none =>
-          diag ctx .E0321 s!"cannot read covered fraction: {valueSrc.quote}" pos
-            (help := "a percentage like: covered = 38\\%")
-      else
-        let put (pal : Palette) (c : Color) : Palette :=
-          pal.declare key c decorative
-        match Decl.parseValue valueSrc with
-        | some (.color r g b) => pal := put pal ⟨r, g, b⟩
-        | v? =>
-          -- A name, an alias, or a mix: all read against what is declared
-          -- so far, so two names that must never drift apart share a value.
-          match pal.resolve valueSrc with
-          | some c => pal := put pal c
-          | none =>
-            match v? with
-            | some (.ident other) =>
-              diag ctx .E0326 s!"'{other}' is not in the palette" pos
-                (help := s!"aliases read earlier entries: declare \\palette\{ {other} = #RRGGBB } first")
-            | some v =>
-              modify fun st => { st with
-                diags := st.diags.push (Decl.wrongType ctx.file "palette" key
-                  "a color like #7C3AED" v pos) }
-            | none =>
-              diag ctx .E0321 s!"cannot read colour for '{key}': {valueSrc.quote}" pos
-                (help := "colours are #RRGGBB, a palette name, or a mix like accent!50!black")
-  return pal
 
 /-- `\chrome{ footer = { left = \sectiontitle, right = \framenumber } }`:
 page furniture as declared data. A slot names a per-page datum the engine
@@ -3553,6 +3629,12 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
   ctx := { ctx with slides := docClass == "slides", styles := styles }
   let blocks ← elabBlocks ctx body
+  -- Body declarations reach the document both backends read: a colour
+  -- declared mid-document resolves in the HTML variables and is judged by
+  -- the contrast walk like any other.
+  let stBody ← get
+  palette := stBody.bodyPalette.getD palette
+  tokens := stBody.bodyTokens.getD tokens
   -- The logo may have been declared in either half; a card carries none.
   let mut logo := (← get).logo
   if docClass == "card" && logo.isSome then
