@@ -7652,6 +7652,17 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     ((gOut.pages.map fun p => p.lines.any (·.y == headY)) == #[true, true] &&
      (gOut.pages.map fun p => p.lines.any (·.y == footY)) == #[false, true])
 
+  -- Only geometry keys claim the page: a rhythm-only \page block keeps the
+  -- Bringhurst text-block margin; declared geometry keeps every value.
+  let (pDoc, _) := elabStr (wrap "\\page{ parskip = 12pt }\n")
+  let (bDoc, _) := elabStr (wrap "")
+  t "a rhythm-only page block keeps the Bringhurst margin"
+    (pDoc.page.hmargin == bDoc.page.hmargin &&
+     pDoc.page.hmargin == (pDoc.page.width - Ir.articleTextBlock) / 2)
+  let (hDoc, _) := elabStr (wrap "\\page{ hmargin = 1in }\n")
+  t "declared geometry keeps every value it named"
+    (hDoc.page.hmargin == Dim.inch 1)
+
   -- Compat: a repeated fancyhdr field is redefined (fancyhdr manual:
   -- \lhead redefines), never concatenated.
   let (kDoc, _) := elabStr (wrap "\\lhead{First}\n\\lhead{Second}\n")

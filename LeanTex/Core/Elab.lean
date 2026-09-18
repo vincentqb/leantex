@@ -191,6 +191,14 @@ def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin", "leading", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify"]
 
+/-- The `\page` keys that declare the page's physical extent. Exactly these
+claim the page as declared (`sawPage` in `elabDoc`), keeping every value
+named; a rhythm or policy key (`parskip`, `leading`, `fontsize`, `measure`,
+`hyphenate`, `justify`) speaks to the text and must not silently forfeit
+the Bringhurst text-block margin the undeclared page is owed. -/
+def pageGeometryKeys : List String :=
+  ["size", "width", "height", "margin", "vmargin", "hmargin", "bleed"]
+
 def metaKeys : List String :=
   ["title", "author", "subject", "keywords", "url", "image", "favicon"]
 
@@ -3638,7 +3646,11 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               modify fun st => { st with diags := st.diags ++ ds }
               if name == "page" then
                 page ← applyPage ctx page entries pos
-                sawPage := true
+                -- Only geometry keys claim the page: `\page{ parskip = ... }`
+                -- keeps the Bringhurst default margin standing (≈ the
+                -- `!sawPage` branch below).
+                if entries.any (pageGeometryKeys.contains ·.key) then
+                  sawPage := true
               else if name == "fonts" then
                 fonts ← applyFonts ctx fonts entries pos
               else
