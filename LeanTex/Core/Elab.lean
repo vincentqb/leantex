@@ -171,10 +171,52 @@ structure ESt where
 
 abbrev EM := StateM ESt
 
+/-- Build the diagnostic `diag` pushes, as a value: the one constructor
+both the monadic emitter and the pure preamble steps (`PEvent.say`) share,
+so a message exists in exactly one spelling. -/
+private def diagOf (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
+    (help : Option String := none) : Diag :=
+  Diag.of code msg (pos.map (⟨ctx.file, ·⟩)) help
+
 private def diag (ctx : Ctx) (code : DiagCode) (msg : String) (pos : Option Pos)
     (help : Option String := none) : EM Unit :=
-  modify fun st => { st with
-    diags := st.diags.push (Diag.of code msg (pos.map (⟨ctx.file, ·⟩)) help) }
+  modify fun st => { st with diags := st.diags.push (diagOf ctx code msg pos help) }
+
+/-- One reporting effect a preamble apply step asks for — effects as data,
+so the value half of a step is a pure function a theorem can range over.
+`.say` is a diagnostic; `.scalar` goes through the `seenScalars` store
+(W0343 when the same key returns with a different value); `.declared`
+marks a key document-declared (W0348's store). Every constructor writes
+only the reporting fields of `ESt` — the ones `ESt.sem` erases — which is
+the whole point: an apply step's effect on the compared state is nothing. -/
+inductive PEvent where
+  | say (d : Diag)
+  | scalar (decl key value : String) (pos : Pos)
+  | declared (decl key : String)
+
+/-- Apply one reporting event to the elaboration state, purely. -/
+private def applyEvent (ctx : Ctx) (st : ESt) : PEvent → ESt
+  | .say d => { st with diags := st.diags.push d }
+  | .scalar decl key value pos =>
+    let st := match st.seenScalars.find? (fun e => e.1 == decl && e.2.1 == key) with
+      | some prev =>
+        if prev.2.2 != value then
+          { st with diags := st.diags.push (diagOf ctx .W0343
+              s!"'{key}' in '\\{decl}' was already set to '{prev.2.2}'; this later value wins"
+              (some pos)
+              (help := s!"one value per key: keep the '{key} = ...' you mean")) }
+        else st
+      | none => st
+    { st with seenScalars :=
+      (st.seenScalars.filter fun e => !(e.1 == decl && e.2.1 == key)).push (decl, key, value) }
+  | .declared decl key =>
+    { st with declaredKeys :=
+      if st.declaredKeys.contains (decl, key) then st.declaredKeys
+      else st.declaredKeys.push (decl, key) }
+
+/-- Fulfil a step's reporting events, in order, as one state update. -/
+private def emitEvents (ctx : Ctx) (evs : Array PEvent) : EM Unit :=
+  modify fun st => evs.foldl (applyEvent ctx) st
 
 /-- A warning deduplicated by `key`: the same unsupported construct in forty
 frames is one problem, not forty. -/
@@ -2100,11 +2142,10 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   | _ => return inner
 
 /-- One keyed declaration accepted from the document, remembered for the
-`\theme` site: replacing it there is worth a word (W0348). -/
-private def noteDeclared (decl key : String) : EM Unit :=
-  modify fun st => { st with declaredKeys :=
-    if st.declaredKeys.contains (decl, key) then st.declaredKeys
-    else st.declaredKeys.push (decl, key) }
+`\theme` site: replacing it there is worth a word (W0348). The store logic
+is `applyEvent`'s `.declared` arm — one meaning, two doors. -/
+private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
+  modify fun st => applyEvent ctx st (.declared decl key)
 
 /-- `\tokens{...}`: named lengths. Entries are walked one at a time so a
 token may be defined by scaling an earlier one (`sep = 0.6 * rhythm`);
@@ -2125,10 +2166,10 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
       match Decl.parseValue valueSrc acc.entries with
       | some (.glue g) =>
         acc := acc.declare key g
-        noteDeclared "tokens" key
+        noteDeclared ctx "tokens" key
       | some (.dim d) =>
         acc := acc.declare key { width := Dim.Length.ofSp d }
-        noteDeclared "tokens" key
+        noteDeclared ctx "tokens" key
       | some v =>
         modify fun st => { st with
           diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
@@ -2179,7 +2220,7 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
         | some n =>
           if 1 ≤ n && n ≤ 99 then
             pal := { pal with coveredFraction := some n }
-            noteDeclared "palette" "covered"
+            noteDeclared ctx "palette" "covered"
           else
             diag ctx .E0332 s!"covered fraction must be 1–99 percent, got '{valueSrc}'" pos
               (help := "the fraction of each covered colour kept over the page; the default is 38\\%")
@@ -2188,7 +2229,7 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
             (help := "a percentage like: covered = 38\\%")
       else
         let put (pal : Palette) (c : Color) : EM Palette := do
-          noteDeclared "palette" key
+          noteDeclared ctx "palette" key
           return pal.declare key c decorative
         match Decl.parseValue valueSrc with
         | some (.color r g b) => pal := ← put pal { r := r, g := g, b := b }
@@ -3586,18 +3627,11 @@ same value stays silent: it changes nothing and is often synthesized
 (a class option beside its `\usepackage` spelling). Keyed-merge stores
 (tokens, palette, styles) never come through here: redeclare-to-override is
 their layering mechanism, not a conflict. -/
-private def noteScalar (ctx : Ctx) (decl key value : String) (pos : Pos) : EM Unit := do
-  if let some prev := (← get).seenScalars.find? (fun e => e.1 == decl && e.2.1 == key) then
-    if prev.2.2 != value then
-      diag ctx .W0343
-        s!"'{key}' in '\\{decl}' was already set to '{prev.2.2}'; this later value wins"
-        (some pos)
-        (help := s!"one value per key: keep the '{key} = ...' you mean")
-  modify fun st => { st with seenScalars :=
-    (st.seenScalars.filter fun e => !(e.1 == decl && e.2.1 == key)).push (decl, key, value) }
+private def noteScalar (ctx : Ctx) (decl key value : String) (pos : Pos) : EM Unit :=
+  modify fun st => applyEvent ctx st (.scalar decl key value pos)
 
 private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
-    (pos : Pos) : EM PageSpec := do
+    (pos : Pos) : PageSpec × Array PEvent := Id.run do
   -- A page dimension may be a declared token or an expression over them
   -- (`\geometry{paperheight=\bleedingheight}`), which parses as glue: it
   -- is a dimension when nothing font-relative or infinite rides in it —
@@ -3607,36 +3641,35 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | .glue g =>
       if g.width.em == 0 && g.width.ex == 0 && !g.fil then some g.width.sp else none
     | _ => none
+  let say (evs : Array PEvent) (code : DiagCode) (msg : String)
+      (help : Option String := none) : Array PEvent :=
+    evs.push (.say (diagOf ctx code msg (some pos) help))
   let mut spec := spec
+  let mut evs : Array PEvent := #[]
   for e in entries do
-    let before := (← get).diags.size
+    let before := evs.size
     match e.key, e.value with
     | "size", .ident name =>
       match pageSizes.lookup name.toLower with
       | some (w, h) => spec := { spec with width := w, height := h }
       | none =>
-        diag ctx .E0324 s!"unknown page size '{name}'" pos
+        evs := say evs .E0324 s!"unknown page size '{name}'"
           (help := s!"known sizes: {String.intercalate ", " (pageSizes.map (·.1))}")
     | "width", v =>
       if let some d := asDim v then spec := { spec with width := d }
-      else modify fun st => { st with
-        diags := st.diags.push (Decl.wrongType ctx.file "page" "width" "a dimension" v pos) }
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "width" "a dimension" v pos))
     | "height", v =>
       if let some d := asDim v then spec := { spec with height := d }
-      else modify fun st => { st with
-        diags := st.diags.push (Decl.wrongType ctx.file "page" "height" "a dimension" v pos) }
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "height" "a dimension" v pos))
     | "margin", v =>
       if let some d := asDim v then spec := { spec with vmargin := d, hmargin := d }
-      else modify fun st => { st with
-        diags := st.diags.push (Decl.wrongType ctx.file "page" "margin" "a dimension" v pos) }
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "margin" "a dimension" v pos))
     | "vmargin", v =>
       if let some d := asDim v then spec := { spec with vmargin := d }
-      else modify fun st => { st with
-        diags := st.diags.push (Decl.wrongType ctx.file "page" "vmargin" "a dimension" v pos) }
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "vmargin" "a dimension" v pos))
     | "hmargin", v =>
       if let some d := asDim v then spec := { spec with hmargin := d }
-      else modify fun st => { st with
-        diags := st.diags.push (Decl.wrongType ctx.file "page" "hmargin" "a dimension" v pos) }
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "hmargin" "a dimension" v pos))
     | "leading", .int n => spec := { spec with leading := n.toNat * 1000 }
     | "leading", .dim d =>
       -- A bare decimal like 1.04 reads as a dimension in points; the factor
@@ -3646,7 +3679,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       -- ...and one without a unit reaches here as a name.
       match Decl.parseDecimal f with
       | some (m, s) => spec := { spec with leading := (m * 1000 / s).toNat }
-      | none => diag ctx .E0323 s!"'leading' in '\\page' expects a factor like 1.04, got '{f}'" pos
+      | none => evs := say evs .E0323 s!"'leading' in '\\page' expects a factor like 1.04, got '{f}'"
     | "parskip", .glue g => spec := { spec with parskip := some g }
     | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
     | "fontsize", .dim d =>
@@ -3657,7 +3690,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       if d ≥ Dim.pt 1 then
         spec := { spec with fontSize := d }
       else
-        diag ctx .E0323 "'fontsize' in '\\page' expects a dimension of at least 1pt" pos
+        evs := say evs .E0323 "'fontsize' in '\\page' expects a dimension of at least 1pt"
     | "measure", .ident v =>
       -- `free`: the document takes responsibility for its line length, and
       -- the readable-band diagnostic (W0201) stays quiet.
@@ -3665,46 +3698,43 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "free" => spec := { spec with measureChecked := false }
       | "checked" => spec := { spec with measureChecked := true }
       | _ =>
-        diag ctx .E0323 s!"'measure' in '\\page' expects 'checked' or 'free', got '{v}'" pos
+        evs := say evs .E0323 s!"'measure' in '\\page' expects 'checked' or 'free', got '{v}'"
     | "bleed", .int 0 => spec := { spec with bleed := 0 }
     | "bleed", v =>
       if let some d := asDim v then spec := { spec with bleed := d }
-      else modify fun st => { st with
-        diags := st.diags.push (Decl.wrongType ctx.file "page" "bleed" "a dimension" v pos) }
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "bleed" "a dimension" v pos))
     | "hyphenate", .ident v =>
       match v with
       | "on" | "true" => spec := { spec with hyphenate := some true }
       | "off" | "false" => spec := { spec with hyphenate := some false }
       | _ =>
-        diag ctx .E0323 s!"'hyphenate' in '\\page' expects on or off, got '{v}'" pos
+        evs := say evs .E0323 s!"'hyphenate' in '\\page' expects on or off, got '{v}'"
     | "justify", .ident v =>
       match v with
       | "on" | "true" => spec := { spec with justify := some true }
       | "off" | "false" => spec := { spec with justify := some false }
       | _ =>
-        diag ctx .E0323 s!"'justify' in '\\page' expects on or off, got '{v}'" pos
+        evs := say evs .E0323 s!"'justify' in '\\page' expects on or off, got '{v}'"
     | key, v =>
       if key == "header" || key == "footer" then
         -- The feature exists, just not as a page key: running content is
         -- inline content, which a key/value block cannot carry.
         let cmd := if key == "header" then "\\runninghead" else "\\runningfoot"
-        diag ctx .E0327 s!"'{key}' is not a '\\page' key" pos
+        evs := say evs .E0327 s!"'{key}' is not a '\\page' key"
           (help := s!"{cmd}\{...} declares it; \\hfill pushes content to the right")
       else if pageKeys.contains key then
         let expected := if key == "size" then "a page size name"
           else if key == "measure" then "'checked' or 'free'"
           else if key == "hyphenate" || key == "justify" then "on or off"
           else "a dimension"
-        modify fun st => { st with
-          diags := st.diags.push (Decl.wrongType ctx.file "page" key expected v pos) }
+        evs := evs.push (.say (Decl.wrongType ctx.file "page" key expected v pos))
       else
-        modify fun st => { st with
-          diags := st.diags.push (Decl.unknownKey ctx.file "page" key pageKeys pos) }
-    -- Every failing arm above pushes a diagnostic, so a clean count means
+        evs := evs.push (.say (Decl.unknownKey ctx.file "page" key pageKeys pos))
+    -- Every failing arm above records a diagnostic, so a clean count means
     -- the entry applied: record it, and warn if it overwrote (W0343).
-    if (← get).diags.size == before then
-      noteScalar ctx "page" e.key (renderValue e.value) pos
-  return spec
+    if evs.size == before then
+      evs := evs.push (.scalar "page" e.key (renderValue e.value) pos)
+  return (spec, evs)
 
 private def fontSlot? (name : String) : Option Nat :=
   match name with
@@ -3732,10 +3762,11 @@ a LaTeX habit does not become an error. A dotted key names one variant's
 face (`body.bold = "X"`, fontspec's `BoldFont=`), which resolution honours
 over the family's own variant. -/
 private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry)
-    (pos : Pos) : EM FontSpec := do
+    (pos : Pos) : FontSpec × Array PEvent := Id.run do
   let mut spec := spec
+  let mut evs : Array PEvent := #[]
   for e in entries do
-    let before := (← get).diags.size
+    let before := evs.size
     match e.key, e.value with
     | "body", .str f => spec := { spec with body := some f }
     | "rm", .str f => spec := { spec with body := some f }
@@ -3751,27 +3782,24 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
       | some variant, .str f =>
         spec := spec.declareFace variant f
       | some _, _ =>
-        modify fun st => { st with
-          diags := st.diags.push (Decl.wrongType ctx.file "fonts" key "a quoted face name" v pos) }
+        evs := evs.push (.say (Decl.wrongType ctx.file "fonts" key "a quoted face name" v pos))
       | none, _ =>
         if fontKeys.contains key then
           let expected := if key == "dir" then "a quoted directory" else "a quoted family name"
-          modify fun st => { st with
-            diags := st.diags.push (Decl.wrongType ctx.file "fonts" key expected v pos) }
+          evs := evs.push (.say (Decl.wrongType ctx.file "fonts" key expected v pos))
         else
-          modify fun st => { st with
-            diags := st.diags.push (Decl.unknownKey ctx.file "fonts" key
-              (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic"]) pos) }
+          evs := evs.push (.say (Decl.unknownKey ctx.file "fonts" key
+            (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic"]) pos))
     -- A family slot is a scalar; `dir` is a list and a dotted face is
     -- fontspec's own replace idiom, so only the families report an
     -- overwrite. The aliases fold onto the slot they name: `rm` after
     -- `body` is the same setting twice.
-    if (← get).diags.size == before then
+    if evs.size == before then
       let aliases := [("rm", "body"), ("sf", "sans"), ("tt", "mono")]
       let canonical := (aliases.lookup e.key).getD e.key
       if ["body", "sans", "mono", "math"].contains canonical then
-        noteScalar ctx "fonts" canonical (renderValue e.value) pos
-  return spec
+        evs := evs.push (.scalar "fonts" canonical (renderValue e.value) pos)
+  return (spec, evs)
 
 def styleKeys : List String :=
   ["font", "before", "after", "rule", "marker", "indent", "gap",
@@ -3887,7 +3915,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
       | _ =>
         modify fun st' => { st' with
           diags := st'.diags.push (Decl.unknownKey ctx.file "style" key styleKeys pos) }
-  noteDeclared "style" element
+  noteDeclared ctx "style" element
   return styles.declare element st
 
 /-- `\chrome{ footer = { left = \sectiontitle, right = \framenumber } }`:
@@ -3898,13 +3926,18 @@ Redeclaring merges per slot onto the chrome already declared — across
 blocks exactly as within one, and onto a theme's default exactly as a
 `\palette` entry overrides the theme's — so a second block refines the slot
 it names and leaves its sibling standing. -/
-private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) : EM Chrome := do
+private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) :
+    Chrome × Array PEvent := Id.run do
   let mut chrome : Chrome := c0
+  let mut evs : Array PEvent := #[]
   let slotHelp := "slots are \\sectiontitle, \\framenumber, or \\framefraction"
+  let say (evs : Array PEvent) (code : DiagCode) (msg : String)
+      (help : Option String := none) : Array PEvent :=
+    evs.push (.say (diagOf ctx code msg (some pos) help))
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | none =>
-      diag ctx .E0320 s!"invalid entry in '\\chrome': {entry.quote}" pos
+      evs := say evs .E0320 s!"invalid entry in '\\chrome': {entry.quote}"
         (help := "entries look like: footer = { left = \\sectiontitle, right = \\framenumber }")
     | some (key, valueSrc) =>
       if key == "footer" then
@@ -3913,7 +3946,7 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) : E
           for slotEntry in Decl.splitEntries inner do
             match Decl.splitEntry slotEntry with
             | none =>
-              diag ctx .E0320 s!"invalid entry in '\\chrome' footer: {slotEntry.quote}" pos
+              evs := say evs .E0320 s!"invalid entry in '\\chrome' footer: {slotEntry.quote}"
                 (help := s!"entries look like: left = \\sectiontitle; {slotHelp}")
             | some (slotKey, slotVal) =>
               let v := slotVal.trimAscii.toString
@@ -3928,59 +3961,65 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) : E
                 | _ => none
               match datum with
               | none =>
-                diag ctx .E0321
-                  s!"cannot read the '\\chrome' footer slot '{slotKey}': {slotVal.quote}" pos
+                evs := say evs .E0321
+                  s!"cannot read the '\\chrome' footer slot '{slotKey}': {slotVal.quote}"
                   (help := slotHelp)
               | some d =>
                 match slotKey with
                 | "left" =>
-                  noteScalar ctx "chrome" "footer.left" s!"\\{d.label}" pos
-                  noteDeclared "chrome" "footer.left"
+                  evs := evs.push (.scalar "chrome" "footer.left" s!"\\{d.label}" pos)
+                  evs := evs.push (.declared "chrome" "footer.left")
                   chrome := { chrome with footerLeft := some d }
                 | "right" =>
-                  noteScalar ctx "chrome" "footer.right" s!"\\{d.label}" pos
-                  noteDeclared "chrome" "footer.right"
+                  evs := evs.push (.scalar "chrome" "footer.right" s!"\\{d.label}" pos)
+                  evs := evs.push (.declared "chrome" "footer.right")
                   chrome := { chrome with footerRight := some d }
                 | _ =>
-                  modify fun st => { st with diags := st.diags.push (Decl.unknownKey
-                    ctx.file "chrome footer" slotKey ["left", "right"] pos) }
+                  evs := evs.push (.say (Decl.unknownKey
+                    ctx.file "chrome footer" slotKey ["left", "right"] pos))
         | some v =>
-          modify fun st => { st with diags := st.diags.push (Decl.wrongType
+          evs := evs.push (.say (Decl.wrongType
             ctx.file "chrome" key
-            "a block like { left = \\sectiontitle, right = \\framenumber }" v pos) }
+            "a block like { left = \\sectiontitle, right = \\framenumber }" v pos))
         | none =>
-          diag ctx .E0321 s!"cannot read value for 'footer' in '\\chrome': {valueSrc.quote}" pos
+          evs := say evs .E0321 s!"cannot read value for 'footer' in '\\chrome': {valueSrc.quote}"
             (help := "footer = { left = \\sectiontitle, right = \\framenumber }")
       else
-        modify fun st => { st with diags := st.diags.push (Decl.unknownKey
-          ctx.file "chrome" key ["footer"] pos) }
-  return chrome
+        evs := evs.push (.say (Decl.unknownKey ctx.file "chrome" key ["footer"] pos))
+  return (chrome, evs)
 
 /-- `\output{...}`: what to build, so a document needs no CLI options.
 `formats` takes a bare comma list (`formats = pdf, html`), so entries are
 walked by hand: an entry without `=` continues the list. -/
 private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos) :
-    EM OutputSpec := do
+    OutputSpec × Array PEvent := Id.run do
   let mut o := o0
+  let mut evs : Array PEvent := #[]
   let mut inFormats := false
-  let addFormat (o : OutputSpec) (f : String) : EM OutputSpec := do
+  let say (evs : Array PEvent) (code : DiagCode) (msg : String)
+      (help : Option String := none) : Array PEvent :=
+    evs.push (.say (diagOf ctx code msg (some pos) help))
+  let addFormat (o : OutputSpec) (evs : Array PEvent) (f : String) :
+      OutputSpec × Array PEvent :=
     if ["pdf", "html", "md"].contains f then
-      return o.addFormat f
-    diag ctx .E0321 s!"'{f}' is not an output format" pos
-      (help := "formats: pdf, html, md")
-    return o
+      (o.addFormat f, evs)
+    else
+      (o, say evs .E0321 s!"'{f}' is not an output format"
+        (help := "formats: pdf, html, md"))
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
     | some ("formats", v) =>
       inFormats := true
-      o ← addFormat o v
+      let (o', evs') := addFormat o evs v
+      o := o'
+      evs := evs'
     | some ("css", v) =>
       inFormats := false
       if ["own", "bulma", "none"].contains v then
         o := { o with css := some v }
-        noteScalar ctx "output" "css" v pos
+        evs := evs.push (.scalar "output" "css" v pos)
       else
-        diag ctx .E0321 s!"'{v}' is not a stylesheet mode" pos
+        evs := say evs .E0321 s!"'{v}' is not a stylesheet mode"
           (help := "css: own, bulma, none")
     | some ("stylesheet", v) =>
       inFormats := false
@@ -3990,33 +4029,35 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
           String.ofList (v.toList.drop 1).dropLast
         else v
       o := { o with stylesheet := some v }
-      noteScalar ctx "output" "stylesheet" v pos
+      evs := evs.push (.scalar "output" "stylesheet" v pos)
     | some ("md", v) =>
       inFormats := false
       let v := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
           String.ofList (v.toList.drop 1).dropLast
         else v
       o := { o with md := some v }
-      noteScalar ctx "output" "md" v pos
+      evs := evs.push (.scalar "output" "md" v pos)
     | some (key, _) =>
       inFormats := false
-      modify fun st => { st with
-        diags := st.diags.push (Decl.unknownKey ctx.file "output" key
-          ["formats", "css", "stylesheet", "md"] pos) }
+      evs := evs.push (.say (Decl.unknownKey ctx.file "output" key
+        ["formats", "css", "stylesheet", "md"] pos))
     | none =>
       if inFormats then
-        o ← addFormat o entry
+        let (o', evs') := addFormat o evs entry
+        o := o'
+        evs := evs'
       else
-        diag ctx .E0320 s!"invalid entry in '\\output': {entry.quote}" pos
+        evs := say evs .E0320 s!"invalid entry in '\\output': {entry.quote}"
           (help := some "entries look like: formats = pdf, html")
-  return o
+  return (o, evs)
 
 /-- `\pdfmeta{...}`: PDF document information. -/
 private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
-    (pos : Pos) : EM Meta := do
+    (pos : Pos) : Meta × Array PEvent := Id.run do
   let mut m := m0
+  let mut evs : Array PEvent := #[]
   for e in entries do
-    let before := (← get).diags.size
+    let before := evs.size
     match e.key, e.value with
     | "title", .str s => m := { m with title := some s }
     | "author", .str s => m := { m with author := some s }
@@ -4027,14 +4068,12 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     | "favicon", .str s => m := { m with favicon := some s }
     | key, v =>
       if metaKeys.contains key then
-        modify fun st => { st with
-          diags := st.diags.push (Decl.wrongType ctx.file "pdfmeta" key "a string" v pos) }
+        evs := evs.push (.say (Decl.wrongType ctx.file "pdfmeta" key "a string" v pos))
       else
-        modify fun st => { st with
-          diags := st.diags.push (Decl.unknownKey ctx.file "pdfmeta" key metaKeys pos) }
-    if (← get).diags.size == before then
-      noteScalar ctx "pdfmeta" e.key (renderValue e.value) pos
-  return m
+        evs := evs.push (.say (Decl.unknownKey ctx.file "pdfmeta" key metaKeys pos))
+    if evs.size == before then
+      evs := evs.push (.scalar "pdfmeta" e.key (renderValue e.value) pos)
+  return (m, evs)
 
 private def cmpOp : String → Option CmpOp
   | "==" => some .eq
@@ -4048,26 +4087,27 @@ private def cmpOp : String → Option CmpOp
 
 /-- `\assert{ ... }`: a layout invariant, checked against the shipped page
 tree. Grammar is deliberately tiny: `pages <op> N`, or `fonts.all_embedded`. -/
-private def parseAssert (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Assertion) := do
+private def parseAssert (ctx : Ctx) (src : String) (pos : Pos) :
+    Option Assertion × Array PEvent :=
   let words := (src.splitOn " ").filterMap fun w =>
     let t := w.trimAscii.toString
     if t.isEmpty then none else some t
-  let fail (why : String) : EM (Option Assertion) := do
-    diag ctx .E0325 s!"cannot read assertion: {src.trimAscii.toString.quote}" pos
-      (help := some why)
-    return none
+  let fail (why : String) : Option Assertion × Array PEvent :=
+    (none, #[.say (diagOf ctx .E0325
+      s!"cannot read assertion: {src.trimAscii.toString.quote}" (some pos)
+      (help := some why))])
   match words with
   | ["fonts.all_embedded"] =>
-    return some { kind := .fontsAllEmbedded, span := some ⟨ctx.file, pos⟩ }
+    (some { kind := .fontsAllEmbedded, span := some ⟨ctx.file, pos⟩ }, #[])
   | ["text.in_area"] =>
-    return some { kind := .textInArea, span := some ⟨ctx.file, pos⟩ }
+    (some { kind := .textInArea, span := some ⟨ctx.file, pos⟩ }, #[])
   | ["text.xheight", ">=", v] =>
     match Decl.parseValue v with
-    | some (.dim d) => return some { kind := .minXHeight d, span := some ⟨ctx.file, pos⟩ }
+    | some (.dim d) => (some { kind := .minXHeight d, span := some ⟨ctx.file, pos⟩ }, #[])
     | _ => fail s!"'{v}' is not a dimension (like 1.4mm)"
   | ["pages", op, n] =>
     match cmpOp op, n.toInt? with
-    | some o, some v => return some { kind := .pages o v, span := some ⟨ctx.file, pos⟩ }
+    | some o, some v => (some { kind := .pages o v, span := some ⟨ctx.file, pos⟩ }, #[])
     | none, _ => fail s!"'{op}' is not a comparison (== != <= < >= >)"
     | _, none => fail s!"'{n}' is not a whole number"
   | _ => fail "supported forms: pages <op> N, fonts.all_embedded, text.in_area, text.xheight >= <len>"
@@ -4602,10 +4642,11 @@ private def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
   | .assert src pos =>
     match src with
     | some src =>
-      if let some a ← parseAssert s.ctx src pos then
-        return { s with asserts := s.asserts.push a }
-      else
-        return s
+      let (a?, evs) := parseAssert s.ctx src pos
+      emitEvents s.ctx evs
+      match a? with
+      | some a => return { s with asserts := s.asserts.push a }
+      | none => return s
     | none =>
       diag s.ctx .E0304 "'\\assert' needs a {...} block" pos
       return s
@@ -4614,7 +4655,8 @@ private def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | some src =>
       -- Parses its own entries: `formats` is a bare comma list, which
       -- a generic key/value pre-parse would break apart.
-      let o ← applyOutput s.ctx s.output src pos
+      let (o, evs) := applyOutput s.ctx s.output src pos
+      emitEvents s.ctx evs
       return { s with output := o }
     | none =>
       diag s.ctx .E0304 "'\\output' needs a {...} block" pos
@@ -4634,7 +4676,8 @@ private def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | some src =>
       -- Parses its own entries: slot values are `\sectiontitle`
       -- spellings a key/value pre-parse would reject.
-      let c ← applyChrome s.ctx s.chrome src pos
+      let (c, evs) := applyChrome s.ctx s.chrome src pos
+      emitEvents s.ctx evs
       -- Inert chrome would be a silent failure: only slides draw it.
       if !s.docClass.record.chrome then
         diag s.ctx .W0318
@@ -4652,7 +4695,8 @@ private def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | some src =>
       let (entries, ds) := Decl.parseBlock s.ctx.file src pos "page" s.tokens.entries
       modify fun st => { st with diags := st.diags ++ ds }
-      let p ← applyPage s.ctx s.page entries pos
+      let (p, evs) := applyPage s.ctx s.page entries pos
+      emitEvents s.ctx evs
       -- Only geometry keys claim the page: `\page{ parskip = ... }`
       -- keeps the Bringhurst default margin standing (≈ the
       -- `!sawPage` branch after the fold).
@@ -4668,7 +4712,8 @@ private def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | some src =>
       let (entries, ds) := Decl.parseBlock s.ctx.file src pos "fonts" s.tokens.entries
       modify fun st => { st with diags := st.diags ++ ds }
-      let f ← applyFonts s.ctx s.fonts entries pos
+      let (f, evs) := applyFonts s.ctx s.fonts entries pos
+      emitEvents s.ctx evs
       return { s with fonts := f }
     | none =>
       diag s.ctx .E0304 "'\\fonts' needs a {...} block" pos
@@ -4678,7 +4723,8 @@ private def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | some src =>
       let (entries, ds) := Decl.parseBlock s.ctx.file src pos "pdfmeta" s.tokens.entries
       modify fun st => { st with diags := st.diags ++ ds }
-      let m ← applyMeta s.ctx s.info entries pos
+      let (m, evs) := applyMeta s.ctx s.info entries pos
+      emitEvents s.ctx evs
       return { s with info := m }
     | none =>
       diag s.ctx .E0304 "'\\pdfmeta' needs a {...} block" pos
