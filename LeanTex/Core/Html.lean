@@ -312,10 +312,6 @@ matters. -/
 def render (n : Node) (indent : Nat) : String :=
   renderInto "" n indent
 
-/-- Render without surrounding whitespace, for content inside a line. -/
-def inlineRender (n : Node) : String :=
-  inlineRenderInto "" n
-
 /-- A complete document: doctype plus the root element. -/
 def document (lang : String) (head body : Array Node) : String :=
   "<!DOCTYPE html>\n" ++

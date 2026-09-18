@@ -84,8 +84,6 @@ def aaText : Nat := 4500
 def aaLargeText : Nat := 3000
 /-- SC 1.4.11 (AA), non-text UI information such as the focus indicator: 3:1. -/
 def aaNonText : Nat := 3000
-/-- SC 1.4.6 (AAA), normal text: 7:1. Not enforced; readable in reports. -/
-def aaaText : Nat := 7000
 
 /-- The colour pairings one variant of the engine's own stylesheet creates:
 text inks over the two backgrounds it paints, and the focus indicator. A
