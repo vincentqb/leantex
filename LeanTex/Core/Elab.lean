@@ -2814,10 +2814,14 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "parskip", .glue g => spec := { spec with parskip := some g }
     | "parskip", .dim d => spec := { spec with parskip := some { width := Dim.Length.ofSp d } }
     | "fontsize", .dim d =>
-      if d > 0 then
+      -- The floor is the theorem's (`Layout.heading_hierarchy`): at every
+      -- base of at least one point the heading hierarchy holds; below it
+      -- the integer size arithmetic rounds the levels together, so the
+      -- guard admits exactly what the guarantee covers.
+      if d ≥ Dim.pt 1 then
         spec := { spec with fontSize := d }
       else
-        diag ctx .E0323 "'fontsize' in '\\page' expects a positive dimension" pos
+        diag ctx .E0323 "'fontsize' in '\\page' expects a dimension of at least 1pt" pos
     | "measure", .ident v =>
       -- `free`: the document takes responsibility for its line length, and
       -- the readable-band diagnostic (W0201) stays quiet.

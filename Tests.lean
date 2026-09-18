@@ -6653,6 +6653,14 @@ def measureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     ((pageOf "\\documentclass[paper=letter, fontsize=12pt]{article}").fontSize == Dim.pt 12)
   t "\\page fontsize wins over the class option"
     ((pageOf "\\documentclass[10pt]{article}\\page{ fontsize = 14pt }").fontSize == Dim.pt 14)
+  -- The guard admits exactly what `Layout.heading_hierarchy` covers: its
+  -- 1 pt floor. A sub-point base was reachable and outside the theorem
+  -- before the guard aligned (the D2 gap: positive but below the floor).
+  t "a sub-point \\page fontsize is rejected and keeps the base"
+    (((elabStr ("\\documentclass{article}\\page{ fontsize = 0.4pt }" ++
+        "\\begin{document}x\\end{document}")).2.any (·.code == "E0323")) &&
+     (pageOf "\\documentclass{article}\\page{ fontsize = 0.4pt }").fontSize
+       == Ir.baseFontSize)
 
 /-- Vertical-rhythm diagnostics: a heading binds to the text it introduces,
 so declared space below it must not exceed the declared space above. -/

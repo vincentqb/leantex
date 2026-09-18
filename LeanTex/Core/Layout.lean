@@ -79,39 +79,60 @@ the body. -/
 def headBandFor (vmargin ascent descent : Sp) : Sp :=
   footBandFor vmargin (ascent + descent)
 
-/-- The reservation is sufficient, for every geometry: with the band from
+/-- The band arithmetic's one core inequality: a reservation of
+`max 0 (x + l - m/2)` on top of the margin `m` always holds the ink extent
+`x` plus the clearance `l` hanging from the half-margin line. Both band
+sufficiency theorems are this statement — the footer's reflected through the
+page height (`band_reserves_below`), the head's read directly — and it needs
+no sign hypothesis on the margin, so neither do they:
+`\page{ vmargin = -5mm }` parses and flows into `Geom.ofPage`, and the
+reservation still suffices there. Bare `Int` binders because `omega` does
+not see through the `Sp` abbreviation. -/
+theorem band_reserves (m x l : Int) :
+    m / 2 + x + l ≤ m + max 0 (x + l - m / 2) := by
+  simp only [Int.max_def]
+  split <;> omega
+
+/-- `band_reserves` reflected through the page height: what
+`bodyBottom_clears_footer` reads. The `generalize` names the band an opaque
+atom shared by the goal and the keystone; the rest is linear. -/
+private theorem band_reserves_below (pageH m x l : Int) :
+    pageH - m - max 0 (x + l - m / 2) + x + l ≤ pageH - m / 2 := by
+  have key := band_reserves m x l
+  generalize max 0 (x + l - m / 2) = B at key ⊢
+  omega
+
+/-- `band_reserves` with the ink extent split into ascent and descent: what
+`bodyTop_clears_head` reads. -/
+private theorem band_reserves_above (m x y l : Int) :
+    m / 2 + x + y + l ≤ m + max 0 (x + y + l - m / 2) := by
+  have key := band_reserves m (x + y) l
+  generalize max 0 (x + y + l - m / 2) = B at key ⊢
+  omega
+
+/-- The reservation is sufficient, for every geometry — negative margins
+included (`band_reserves` needs no sign hypothesis): with the band from
 `footBandFor`, body ink stops at least `lineskip` above the footer's ink top
 (`footY - ascent`, the baseline at half the bottom margin less what the
-footer reaches above it). The key inequality is proved over bare `Int`
-binders because `omega` does not see through the `Sp` abbreviation. -/
-theorem bodyBottom_clears_footer (g : Geom) (ascent : Sp) (hm : 0 ≤ g.vmargin)
+footer reaches above it). -/
+theorem bodyBottom_clears_footer (g : Geom) (ascent : Sp)
     (h : g.footBand = footBandFor g.vmargin ascent) :
     g.bodyBottom + ascent + lineskip ≤ g.pageH - g.vmargin / 2 := by
-  have key : ∀ pageH m a l : Int, 0 ≤ m →
-      pageH - m - max 0 (a + l - m / 2) + a + l ≤ pageH - m / 2 := by
-    intro pageH m a l hm
-    simp only [Int.max_def]
-    split <;> omega
   simp only [Geom.bodyBottom, footBandFor] at h ⊢
   rw [h]
-  exact key g.pageH g.vmargin ascent lineskip hm
+  exact band_reserves_below g.pageH g.vmargin ascent lineskip
 
 /-- The mirror of `bodyBottom_clears_footer`, for every geometry: with the
 band from `headBandFor`, body ink starts at least `lineskip` below the
 head's ink bottom — `headY + descent`, the baseline at half the top margin
-plus the head's ascent, plus what it hangs below. The same key inequality,
-reflected. -/
-theorem bodyTop_clears_head (g : Geom) (ascent descent : Sp) (hm : 0 ≤ g.vmargin)
+plus the head's ascent, plus what it hangs below. `band_reserves`, read
+directly. -/
+theorem bodyTop_clears_head (g : Geom) (ascent descent : Sp)
     (h : g.headBand = headBandFor g.vmargin ascent descent) :
     g.vmargin / 2 + ascent + descent + lineskip ≤ g.bodyTop := by
-  have key : ∀ m a d l : Int, 0 ≤ m →
-      m / 2 + a + d + l ≤ m + max 0 (a + d + l - m / 2) := by
-    intro m a d l hm
-    simp only [Int.max_def]
-    split <;> omega
   simp only [Geom.bodyTop, headBandFor, footBandFor] at h ⊢
   rw [h]
-  exact key g.vmargin ascent descent lineskip hm
+  exact band_reserves_above g.vmargin ascent descent lineskip
 
 /-- The height between the margins: what `0.3\textheight` sizes against. -/
 def Geom.textHeight (g : Geom) : Sp := g.pageH - 2 * g.vmargin
