@@ -115,6 +115,69 @@ reference documents are the documents' own content and stay; the four
 W0009 glyph fallbacks stay one-per-scalar pending the math-font slice,
 which may resolve that chain differently (coordinate before aggregating).
 
+2026-09-18 — the math face matches the body by default: the paired face,
+scaled so x-heights agree. The user's oldest annoyance — "the font never
+really matches the rest, and we need to do gymnastics to align the fonts" —
+is now the default behaviour, no knob. Design (from the math-font-match
+review, its rejected alternative recorded there): a document with a body
+face and a formula gets the body family's *designed math companion* when
+the host scan has one (`FontDb.mathCompanions`, sourced rows only — GUST
+e-foundry for the TeX Gyre and Latin Modern pairs, stixfonts.org, CTAN
+for Libertinus/Garamond-Math/Erewhon Math/Fira Math, licences checked,
+unverified rows omitted), else the first MATH-table face under the one
+documented order (`faceLt`, lifted out of `fallbackPicks`), and only a
+host with no MATH face at all degrades to source text with W0003 as
+before. `\fonts{ math = ... }` stays the override and always wins. The
+splice alternative — body letters inside formulas — was examined and
+rejected on the engine's own architecture: math letters are Mathematical
+Alphanumeric scalars text faces lack; italic correction, math kerning and
+top-accent attachment live only in the math face; the seam would move
+inside the formula (Greek beside Latin in one identifier role); and
+MathConstants are stated in the math font's own x-height and
+rule-thickness terms, so constants and glyphs are designed together.
+
+Either way the face is *rescaled so the math x-height equals the body's*
+— fontspec's `Scale=MatchLowercase` rule as one integer expression
+(`Math.mathSize`), the metric being the measured ink top of the face's
+own 'x' (`Font.xInkTop`, lazy; OS/2 sxHeight lies in some fonts), else
+sxHeight, else half the em — the existing metric order, clamped into
+(0, upem] (`Font.xHeightOptical`). Theorems, not taste: the scaled math
+x-height never exceeds the body's (`mathSize_matches`) and falls short
+by at most one sp (`body_xheight_le_mathSize_next`) — the tolerance is
+the division quantum of the sp arithmetic, nothing else. Measured on
+this host: TeX Gyre Pagella → Pagella Math is the identity (both 469
+per em, residual 0 sp — a designed pair matches by design); Source
+Serif Pro → Fira Math at a 10 pt body sets math at 9.01 pt (x-height
+345374 sp before, 311295 sp after against the body's 311296, residual
+1 sp), and the pixels show the formula's x at the sentence's optical
+size where it sat visibly larger before.
+
+One fallback mechanism, not two: the scalar census now walks formula
+bodies (the same traversal, `ScalarAcc`), so math scalars enter the
+driver's existing per-scalar precompute; a scalar the math face lacks
+sets from the precomputed face at the math size with W0009, and only a
+scalar no installed face covers stays E0405. Assembly paths — grown
+delimiters, radicals, display operators — never split across faces. The
+companion pick is scan-order independent as a theorem
+(`pickCompanion_set_eq` via `leastBy_set_eq`: the pick is a function of
+the set of installed faces; `faceLt`'s order axioms are hypotheses since
+it bottoms out in string comparison, and the suite checks them over the
+shipped faces). The engine picked a face the document did not name, so
+it says so once: N0016 (loss `info`), gated on the document actually
+reaching math (`Layout.docMathScalars`); `leantex fonts` reports each
+family's installed companion with the x-heights the match reads and the
+measured stems — stem width is measurable (`Ink`) but no authority
+publishes a mismatch threshold, so it is a report, never a gate.
+Fixtures per branch: `math-companion.tex` (Fira Sans → Fira Math, both
+shipped, OFL), `math-first.tex` (no row → first MATH face); the census
+resolves an undeclared math face exactly as the driver does. The suite
+passes with the host font directories tmpfs-emptied. Reference deck and
+résumé: diagnostic profiles unchanged (the deck's four W0009 mono
+substitutions resolve to the same face). Bench: 85/285–301/400–405 ms —
+paragraphs.tex sits ~8 ms above its recorded band because its two
+formulas now render (companion face parsed, math laid out) instead of
+degrading to source text; the mathless benches are in band.
+
 2026-09-17 — the caption seam is named before it is fixed: W0339
 (`pending`) fires when a page break lands exactly between a float's
 object and its caption — the table slice's largest honest gap, previously
@@ -207,7 +270,6 @@ string literals at the source level (`repoRefInString`). The rewrite that
 followed is mechanical fallout: milestones and `see PLAN.md` deleted from
 every message, helps that named no action dropped or given a spelling.
 
-||||||| base
 2026-09-17 — covered means the same colour, quieter. Covering used to
 erase a colour: `shadeInline` repainted every nested `.colored` run to
 the one palette `covered` constant, so a covered alert and a covered
