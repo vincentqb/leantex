@@ -215,7 +215,7 @@ theorem slides_lines_survive_bands (a d f : Sp)
     0 < g.bodyBottom - g.bodyTop ∧
     10 ≤ (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ∧
     (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ≤ 20 := by
-  have hvm : Ir.slidesVMargin = 1671942 := by decide
+  have hvm : Ir.slidesVMargin = 1730150 := by decide
   have hfs : Ir.slidesFontSize = 720896 := by decide
   have hld : leadingFor Ir.slidesFontSize = 865075 := by decide
   have h169 : Ir.slidesStage169.2 = 16719420 := by decide
@@ -227,11 +227,11 @@ theorem slides_lines_survive_bands (a d f : Sp)
       0 ≤ a → 0 ≤ d → 0 ≤ f →
       a + d ≤ 2 * 720896 → f ≤ 2 * 720896 →
       (H = 16719420 ∨ H = 17834048) →
-      hb = max 0 (a + d + 65536 - 1671942 / 2) →
-      fb = max 0 (f + 65536 - 1671942 / 2) →
-      0 < H - 1671942 - fb - (1671942 + hb) ∧
-      10 ≤ (H - 1671942 - fb - (1671942 + hb)) / 865075 ∧
-      (H - 1671942 - fb - (1671942 + hb)) / 865075 ≤ 20 := by
+      hb = max 0 (a + d + 65536 - 1730150 / 2) →
+      fb = max 0 (f + 65536 - 1730150 / 2) →
+      0 < H - 1730150 - fb - (1730150 + hb) ∧
+      10 ≤ (H - 1730150 - fb - (1730150 + hb)) / 865075 ∧
+      (H - 1730150 - fb - (1730150 + hb)) / 865075 ≤ 20 := by
     intro a d f hb fb H h0a h0d h0f hh hf hH hhb hfb
     simp only [Int.max_def] at hhb hfb
     rcases hH with h | h <;> subst h <;> split at hhb <;> split at hfb <;> omega

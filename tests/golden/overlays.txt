@@ -1,5 +1,5 @@
 class slides [aspectratio=169]
-page 453.543x255.118 vmargin 25.512 hmargin 28.346 fontsize 11
+page 453.543x255.118 vmargin 26.4 hmargin 28.346 fontsize 11
 frame
   title
     text "Reveal in order"

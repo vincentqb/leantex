@@ -109,14 +109,27 @@ right margins, which default to 1 cm"), and an 11 pt base — beamer's
 documented default font size, chosen so that "between 10 and 20 lines
 should fit on each slide" and it is "difficult to fit too much onto a
 slide" (beamer user guide §5.6.1, §18.2.1). The vertical margin is the
-engine's own: beamer spends that band on headline and footline templates
-the engine does not render. The lines-per-slide theorem in Layout is what
-holds these numbers together. -/
+engine's own — beamer spends that band on headline and footline templates
+the engine does not render — and, being the engine's own, it is derived,
+not chosen: two lines of the slides context's own rhythm (its earlier
+spelling, 9 mm, missed that by 0.888 pt — a free scalar for no reason).
+The lines-per-slide theorem in Layout is what holds these numbers
+together. -/
 def slidesStage43 : Sp × Sp := (Dim.mm 128, Dim.mm 96)
 def slidesStage169 : Sp × Sp := (Dim.mm 160, Dim.mm 90)
 def slidesHMargin : Sp := Dim.mm 10
-def slidesVMargin : Sp := Dim.mm 9
 def slidesFontSize : Sp := Dim.pt 11
+def slidesVMargin : Sp := 2 * leadingFor slidesFontSize
+
+/-- The article page's vertical inch, restated as rhythm: the letter-paper
+office convention (`PageSpec.vmargin`'s docstring) happens to be exactly
+six units of the base context's leading — 72 pt over 12 pt — so the
+default page's vertical frame is on the grid it did not know it was on.
+Held here so neither side drifts: an edit to the base leading or the
+margin that breaks the coincidence must say which convention it is
+keeping. -/
+theorem vmargin_on_rhythm :
+    ({} : PageSpec).vmargin = 6 * leadingFor baseFontSize := by decide
 
 /-- The card class's legibility floor: an angular x-height of 0.2° at the
 40 cm hand-held distance is 1.4 mm, the bound of the fluent-reading range
