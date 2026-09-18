@@ -5896,6 +5896,15 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
           n1 == 1 && n2 == 1
         | _, _ => false)
      | _ => false)
+  -- The typed-tree half of the rendered check: each subfigure is a
+  -- nested <figure> with its lettered <figcaption>, through the escaper
+  -- by construction.
+  let subHtml := (HtmlDoc.emit {} (elabStr subSrc).1).1
+  t "subfigures are nested figures with lettered figcaptions in HTML"
+    ((subHtml.splitOn "<figure class=\"float subfloat\">").length == 3 &&
+     (subHtml.splitOn "<figcaption>(a) First sub</figcaption>").length == 2 &&
+     (subHtml.splitOn "<figcaption>(b) Second sub</figcaption>").length == 2 &&
+     (subHtml.splitOn "<figcaption>Figure 1: The parent</figcaption>").length == 2)
   -- The caption seam: nothing keeps a float and its caption on one page
   -- yet, so the break is reported (W0339, pending), never silent. The
   -- `\vspace` sweep parks the object at every position around the page
