@@ -31,6 +31,10 @@ name = "Obligations"
 name = "leantex"
 root = "Main"
 
+[[lean_lib]]
+name = "TestsModules"
+globs = ["Tests.+"]
+
 [[lean_exe]]
 name = "Tests"
 root = "Tests"
