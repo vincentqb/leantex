@@ -4,6 +4,20 @@ namespace LeanTex.Core.Theme
 
 open LeanTex.Core.Ir LeanTex.Core.Dim
 
+/-- The four declaration surfaces a `\theme` installs onto: what the
+document has declared at the theme site, and what its later declarations
+keep overriding. Values in, values out — the install is `apply` below, a
+function of these alone. A `Theme` extends this record: a bundle is the
+same four surfaces plus a name. -/
+structure Decls where
+  palette : Palette := {}
+  tokens : Tokens := {}
+  styles : Styles := {}
+  /-- The slide footer's slots, declared data (`\chrome`), not colour: no
+  theorem ranges over it. -/
+  chrome : Chrome := {}
+  deriving Repr, BEq
+
 /-- A theme is data: palette, tokens, element styles, and chrome as the
 *values* the engine runs on, installed at the `\theme` site through the same
 replace-on-redeclare path a document's own declarations use. A document's
@@ -20,14 +34,8 @@ declaring `frametitlebg` turns the frame title into a colour bar,
 `progressfg`/`bg` draw the section-page progress bar (`progressheight`
 sizes it), `standoutfg`/`bg` invert a `[standout]` frame, and `muted`
 quiets secondary furniture — the chrome footer draws in it. -/
-structure Theme where
+structure Theme extends Decls where
   name : String
-  palette : Palette
-  tokens : Tokens
-  styles : Styles
-  /-- The slide footer's slots, declared data (`\chrome`), not colour: no
-  theorem ranges over it. -/
-  chrome : Chrome := {}
 
 /-- `{\large\bfseries}` (`{\Large\bfseries}` for `large := "Large"`) as the
 elaborator reads a `\style` font value: nested wrappers with an empty body
@@ -163,17 +171,6 @@ def find? (name : String) : Option Theme :=
   builtin.find? (·.name == name)
 
 def names : List String := builtin.map (·.name)
-
-/-- The four declaration surfaces a `\theme` installs onto: what the
-document has declared at the theme site, and what its later declarations
-keep overriding. Values in, values out — the install is `apply` below, a
-function of these alone. -/
-structure Decls where
-  palette : Palette := {}
-  tokens : Tokens := {}
-  styles : Styles := {}
-  chrome : Chrome := {}
-  deriving Repr, BEq
 
 /-- Key-wise onto the element's existing entry: the theme's key wins where
 both declare it (the positional last-writer rule every palette entry
