@@ -1494,22 +1494,28 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
               acc := acc ++ (← elabInlines ctx body)
           | _, _ =>
             diag ctx .E0304 "'\\textcolor' needs {name} and {content}" pos
-        else if let some c := ctx.palette.find? name then
+        else if let some c := ctx.palette.resolve name then
           -- With a group, that group is the argument: `\primary{Alex}` means
           -- colour Alex, which is what it looks like. Without one it is a
           -- declaration colouring the rest of the group, as `\bfseries` does.
+          -- `resolve`, not `find?`: the name may be the `!`-mix expression
+          -- `\color`'s rewrite carries whole, and the mix grammar lives in
+          -- one place (`Palette.resolve`). A computed mix is a value, not a
+          -- token: only a declared entry rides as the HTML var(--name), the
+          -- same rule `\textcolor` holds.
+          let cssName := if (ctx.palette.find? name).isSome then some name else none
           let j := skipSpaces raws i
           match raws[j]? with
           | some (.group body _) =>
             acc := flushText acc sb
             sb := ""
-            acc := acc.push (.colored c (some name) (← elabInlines ctx body))
+            acc := acc.push (.colored c cssName (← elabInlines ctx body))
             i := j + 1
           | _ =>
             let rest ← elabInlines ctx (raws.extract i raws.size)
             acc := flushText acc sb
             sb := ""
-            acc := acc.push (.colored c (some name) rest)
+            acc := acc.push (.colored c cssName rest)
             i := raws.size
         else if let some style := declStyles.lookup name then
           let declCtx := if style == Style.mono then { ctx with literalText := true } else ctx
