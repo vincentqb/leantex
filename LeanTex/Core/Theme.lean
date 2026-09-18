@@ -164,4 +164,65 @@ def find? (name : String) : Option Theme :=
 
 def names : List String := builtin.map (·.name)
 
+/-- The four declaration surfaces a `\theme` installs onto: what the
+document has declared at the theme site, and what its later declarations
+keep overriding. Values in, values out — the install is `apply` below, a
+function of these alone. -/
+structure Decls where
+  palette : Palette := {}
+  tokens : Tokens := {}
+  styles : Styles := {}
+  chrome : Chrome := {}
+  deriving Repr, BEq
+
+/-- Key-wise onto the element's existing entry: the theme's key wins where
+both declare it (the positional last-writer rule every palette entry
+follows), and the document's survives where the theme is silent — over
+every `Option` field of `ElementStyle`, the same merge a later `\style`
+block performs against the running entry. -/
+def styleMerge (top base : ElementStyle) : ElementStyle :=
+  { font := top.font <|> base.font
+    before := top.before <|> base.before
+    after := top.after <|> base.after
+    rule := top.rule <|> base.rule
+    marker := top.marker <|> base.marker
+    indent := top.indent <|> base.indent
+    gap := top.gap <|> base.gap
+    align := top.align <|> base.align
+    separator := top.separator <|> base.separator
+    hover := top.hover <|> base.hover
+    focus := top.focus <|> base.focus
+    motion := top.motion <|> base.motion }
+
+private def installPalette (p : Palette) : List (String × Color) → Palette
+  | [] => p
+  | e :: es => installPalette (p.declare e.1 e.2) es
+
+private def installTokens (t : Tokens) : List (String × Dim.SymGlue) → Tokens
+  | [] => t
+  | e :: es => installTokens (t.declare e.1 e.2) es
+
+private def installStyles (s : Styles) : List (String × ElementStyle) → Styles
+  | [] => s
+  | e :: es =>
+    installStyles (s.declare e.1 (styleMerge e.2 ((s.find? e.1).getD {}))) es
+
+/-- The `\theme` install as a value: the bundle's entries fold onto the
+document's declarations through the same replace-on-redeclare doors the
+document's own blocks use (`Palette.declare`, `Tokens.declare`,
+`Styles.declare`), the bundle's covered fraction rides with its palette
+(`<|>`: a document's earlier `covered = <n>\%` yields, its later one
+overrides), styles merge key-wise onto any entry already declared, and the
+bundle's chrome installs the whole band when it declares one. Values in,
+values out, no elaborator state — effects as data: `Elab` calls exactly
+this function at the `\theme` site, so a statement about layering ranges
+over the install the engine runs. -/
+def apply (th : Theme) (s : Decls) : Decls :=
+  let pal := installPalette s.palette th.palette.entries.toList
+  { palette := { pal with
+      coveredFraction := th.palette.coveredFraction <|> pal.coveredFraction }
+    tokens := installTokens s.tokens th.tokens.entries.toList
+    styles := installStyles s.styles th.styles.entries.toList
+    chrome := if th.chrome.hasFooter then th.chrome else s.chrome }
+
 end LeanTex.Core.Theme

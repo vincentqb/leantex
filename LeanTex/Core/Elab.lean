@@ -3652,42 +3652,18 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               -- A theme is a named bundle of typed values, installed here
               -- through the same replace-on-redeclare door the document's
               -- own declarations use. Everything after this site overrides:
-              -- the theme is a default, never a lock.
+              -- the theme is a default, never a lock. The install itself is
+              -- `Theme.apply` — values in, values out; this site only
+              -- threads the result back into the loop's state.
               let tname := src.trimAscii.toString
               match Theme.find? tname with
               | some th =>
-                let pal := th.palette.entries.foldl
-                  (fun p (kc : String × Ir.Color) => p.declare kc.1 kc.2) palette
-                -- The bundle's covered fraction rides with its palette,
-                -- through the same replace-on-redeclare door: a document's
-                -- own `covered = <n>\%` after this site overrides it.
-                let pal := { pal with
-                  coveredFraction := th.palette.coveredFraction <|> pal.coveredFraction }
-                palette := pal
-                ctx := { ctx with palette := pal }
-                let tk := th.tokens.entries.foldl
-                  (fun t (kg : String × Dim.SymGlue) => t.declare kg.1 kg.2) tokens
-                tokens := tk
-                ctx := { ctx with tokens := tk }
-                for (element, st) in th.styles.entries do
-                  -- Key-wise onto any entry the document already declared,
-                  -- exactly as a `\style` block edits keys of the existing
-                  -- entry.
-                  let cur := (styles.find? element).getD {}
-                  styles := styles.declare element { cur with
-                    font := st.font <|> cur.font
-                    before := st.before <|> cur.before
-                    after := st.after <|> cur.after
-                    rule := st.rule <|> cur.rule
-                    marker := st.marker <|> cur.marker
-                    indent := st.indent <|> cur.indent
-                    gap := st.gap <|> cur.gap
-                    align := st.align <|> cur.align
-                    separator := st.separator <|> cur.separator }
-                -- The bundle's chrome is typed data: installing it replaces,
-                -- exactly as a document's own `\chrome` redeclaration does.
-                if th.chrome.hasFooter then
-                  chrome := th.chrome
+                let s := Theme.apply th { palette, tokens, styles, chrome }
+                palette := s.palette
+                tokens := s.tokens
+                ctx := { ctx with palette := s.palette, tokens := s.tokens }
+                styles := s.styles
+                chrome := s.chrome
               | none =>
                 diag ctx .W0319 s!"unknown theme '{tname}'; the document is unthemed"
                   (some pos)
