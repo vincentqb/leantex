@@ -92,6 +92,18 @@ in this repo; refer to the private reference corpus abstractly.
   exception; the pre-commit hook rejects new IO in core). Files, fonts,
   anything external surfaces as request values the CLI driver fulfills
   (effects as data).
+- The artifact is a function of the document and the font environment;
+  flags are not arguments to it. What to build is the document's to declare
+  (`\output`); a flag says where output lands (`-o`), when (`--watch`), how
+  the run reports (`-q`/`-v`, `--porcelain`, `--color`), the run's exit and
+  acceptance policy (`--werror`, `--best-effort`), or extends the font
+  environment (`--font-dir`). The statement is the theorem
+  `artifact_flag_free` (Args.lean); the hook rejects a `Config` read in
+  Main.lean whose field is not on the declared allowlist
+  (`driverConfigReads` in scripts/precommit.lean) — the token a new flag
+  would start from on its way toward a backend. `--math-boundary` is the
+  one recorded remainder, carried as a named hypothesis in the theorem
+  until `\output` grows its key.
 - Backends consume the IR and nothing else. A backend never re-parses, and
   never reaches back into the surface AST — that is how md→PDF and tex→HTML
   stay free instead of becoming N×M special cases. The hook rejects a
