@@ -87,6 +87,34 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-18 — zero diagnostics has a definition, and `--werror` enforces
+it: **a document that declares its intent (an `\allow` for an accepted
+loss, a `\palette[decorative]` for a deliberate low contrast) and uses
+only supported constructs emits nothing; a document that does not is told
+exactly what to write.** Landed in this slice: `--werror` (exit 1 on any
+warning; output still written; the exit contract is one total function,
+`Cli.exitFor`, the driver and the test matrix both read), and acceptance
+now means silence — `\allow` and `--best-effort` downgrade to a note, so
+an accepted loss is neither an error nor a warning anywhere, `--werror`
+included, and the always-printed `accepted:` summary is what keeps
+acceptance visible. The reference deck's remaining items were each
+resolved to a state, never deleted: tikz and appendixnumberbeamer are
+native package loads (the loss, where one occurs, is named at the
+construct — W0334/E0333 at the picture, W0301 at `\appendix`);
+`\usefonttheme{professionalfonts}` and `\setbeameroption{hide notes}`
+ask for what the engine already does and agree silently;
+`\ifdefined` resolves from the document's own definitions (N0114 names
+the branch taken; any other `\if…` head keeps the skip-whole W0104);
+`\directlua` reads as a refusal with `\allow{W0104}` as the declared
+acceptance; `\def` stays mapped to `\define` in its help. W0315's
+decorative escape now also matches an anonymous colour by value, so the
+help's printed line is the line that silences it (it previously silenced
+nothing for a mixed colour — the test now derives the declaration from
+the fired help, so they cannot drift). W0315/W0338/W0005 on the
+reference documents are the documents' own content and stay; the four
+W0009 glyph fallbacks stay one-per-scalar pending the math-font slice,
+which may resolve that chain differently (coordinate before aggregating).
+
 2026-09-17 — the caption seam is named before it is fixed: W0339
 (`pending`) fires when a page break lands exactly between a float's
 object and its caption — the table slice's largest honest gap, previously
@@ -2281,7 +2309,8 @@ Zero-config by intent: good defaults, flags for the rest, nothing required.
   and help — rendered Rust-style for humans, structurally for porcelain.
   Same data both ways; never two sources of truth.
 - Color: auto on TTY, `NO_COLOR` respected, `--color always|never|auto`.
-- Exit codes are the API: 0 ok · 1 document errors · 2 assertions failed ·
+- Exit codes are the API: 0 ok · 1 document errors (and, under `--werror`,
+  any warning that was not accepted) · 2 assertions failed ·
   3 usage · 4 internal.
 - Surface additions for the second surface and backend, contract unchanged:
   input may be `.md` or `.tex`; `--emit pdf,html,reveal,md`; `--css
