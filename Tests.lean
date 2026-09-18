@@ -1242,6 +1242,34 @@ def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "centering in an argument still warns"
     (warnCodes "\\textbf{\\centering x}" == ["W0108"])
 
+/-- Units and control-name lexing: TeX's `true` units, the didot pair, and
+`@` as a name character. -/
+def unitChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pre (decls : String) : String :=
+    "\\documentclass{article}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
+  -- TeX's true units are unscaled-by-\mag spellings of their plain
+  -- counterparts (TeXbook ch. 10); with no magnification they are equal.
+  t "truein is in: a \\setlength in true units declares the token"
+    (let (doc, ds) := elabStr (pre "\\newlength{\\a}\\setlength{\\a}{1.75truein}\
+\\newlength{\\b}\\setlength{\\b}{1.75in}")
+     ds.all (·.severity != .error) &&
+       (doc.tokens.find? "a").isSome && doc.tokens.find? "a" == doc.tokens.find? "b")
+  t "truebp scales a decimal exactly like bp"
+    (Decl.parseLength "0.5truebp" == Decl.parseLength "0.5bp")
+  -- The didot and cicero keep TeX's own relation: 1 cc = 12 dd.
+  t "a cicero is twelve didots"
+    ((Decl.parseLength "1cc").isSome &&
+      Decl.parseLength "12dd" == Decl.parseLength "1cc")
+  -- `@` is a control-name character always: `\vqb@bp` is one (unknown)
+  -- name, never `\vqb` followed by stray text `@bp`.
+  t "@ in a control name lexes as one name"
+    (toks "\\vqb@bp" == [.ctrl "vqb@bp"])
+  t "an unknown @-name is one diagnostic naming it, with no stray text"
+    (let (doc, ds) := elabStr "x \\vqb@bp y"
+     ds.any (fun d => d.code == "W0301" && (d.message.splitOn "vqb@bp").length > 1) &&
+       doc.body == #[.para #[.text "x y"]])
+
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -7624,6 +7652,7 @@ def main (args : List String) : IO UInt32 := do
   declChecks ref
   tokensChecks ref
   compatChecks ref
+  unitChecks ref
   wrapperChecks ref
   centeringChecks ref
   fontDiagChecks ref

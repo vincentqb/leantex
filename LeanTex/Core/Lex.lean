@@ -30,6 +30,19 @@ def textSymbols : List (String × String) :=
    ("times", "×"), ("copyright", "©"), ("degree", "°"),
    ("nbsp", " "), ("thinspace", " ")]
 
+/-- `@` is a control-name character, always. TeX makes this a mode
+(`\makeatletter` sets `@` to catcode 11, `\makeatother` back to 12 —
+source2e `ltdefns.dtx`; catcodes, TeXbook ch. 7), because internal names
+like `\p@` must be writable in package code and unwritable in documents.
+This engine has no catcode reprogramming, so the mode collapses to its
+permissive half: `\vqb@bp` is one name wherever it stands. The alternative
+— honouring the mode — would re-lex `\vqb@bp` outside `\makeatletter` as
+`\vqb` then `@bp`, which is exactly the mis-lex the mode exists to cause,
+and no known document wants: a document using `@`-names writes
+`\makeatletter` first, and one that never uses them never notices. -/
+def nameChar (c : Char) : Bool :=
+  c.isAlpha || c == '@'
+
 /-- The special characters are fixed forever: no catcode reprogramming. -/
 def special (c : Char) : Bool :=
   c == '\\' || c == '{' || c == '}' || c == '$' || c == '%' ||
@@ -112,8 +125,8 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
       else if c == '\\' then
         if h' : i + 1 < cs.size then
           let c1 := cs[i + 1]
-          if c1.isAlpha then
-            let j := scanWhile cs (i + 1) Char.isAlpha
+          if nameChar c1 then
+            let j := scanWhile cs (i + 1) nameChar
             let name := strFrom cs (i + 1) j
             if name == "begin" && matchAt cs j verbatimOpen then
               -- verbatim is lexically blind: capture raw content in one token

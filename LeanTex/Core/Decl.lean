@@ -117,7 +117,7 @@ def parseDecimal (s : String) : Option (Int × Nat) := Id.run do
   return some (if neg then -(mantissa : Int) else mantissa, scale)
 
 /-- sp per unit, expressed as a fraction so conversions stay exact. -/
-private def unitScale : String → Option (Int × Nat)
+private def unitScaleBase : String → Option (Int × Nat)
   | "sp" => some (1, 1)
   | "pt" => some (spPerPt, 1)
   | "bp" => some (spPerPt, 1)
@@ -129,12 +129,42 @@ private def unitScale : String → Option (Int × Nat)
   -- so 96 px = 72 pt — the unit a web-facing length (a scroll distance)
   -- is naturally written in
   | "px" => some (72 * spPerPt, 96)
+  -- The didot point, TeX's continental unit: 1157 dd = 1238 TeX pt
+  -- (TeXbook ch. 10), and 7227 TeX pt = 100 in, so
+  -- dd = 1238·7200⁄(1157·7227) of this engine's 1⁄72-inch point —
+  -- unreduced, so the relation to `in` is literal in the theorem below.
+  | "dd" => some (8913600 * spPerPt, 8361639)
+  | "cc" => some (12 * 8913600 * spPerPt, 8361639)
   | _ => none
 
-/-- The unit table is one system, not seven constants: bp is the PDF point
+/-- A `true` unit is its plain counterpart, exactly. TeX's `truept`,
+`truein`, … mean "unscaled by magnification": "if you want an unmagnified
+unit, you can say `true`" and true dimensions stay constant whatever `\mag`
+is (TeXbook ch. 10). This engine has no magnification — every dimension is
+already true — so the prefix denotes the identity. Reading it as part of a
+unit *name* was the defect: `1.75truein` parsed as a name and E0323 said
+"expects a length … got a name". A unit added to the base table gets its
+`true` twin here, or `unitScale_true` below fails to extend. -/
+private def unitScale : String → Option (Int × Nat)
+  | "truesp" => unitScaleBase "sp"
+  | "truept" => unitScaleBase "pt"
+  | "truebp" => unitScaleBase "bp"
+  | "truein" => unitScaleBase "in"
+  | "truecm" => unitScaleBase "cm"
+  | "truemm" => unitScaleBase "mm"
+  | "truepc" => unitScaleBase "pc"
+  | "truepx" => unitScaleBase "px"
+  | "truedd" => unitScaleBase "dd"
+  | "truecc" => unitScaleBase "cc"
+  | u => unitScaleBase u
+
+/-- The unit table is one system, not ten constants: bp is the PDF point
 (leantex's pt), an inch is 72 of them, a pica 12, cm and mm follow from
-1 in = 2.54 cm exactly, and sp is the fixed point itself. A typo in any one
-entry breaks a relation here. -/
+1 in = 2.54 cm exactly, sp is the fixed point itself, the CSS pixel is
+1⁄96 inch, a cicero is 12 didots, and the didot keeps TeX's own ratio to
+the inch (1157 dd = 1238 TeX pt and 7227 TeX pt = 100 in, TeXbook ch. 10;
+the dd fraction is stored unreduced so its relation below is literal). A
+typo in any one entry breaks a relation here. -/
 theorem unitScale_consistent :
     unitScale "bp" = unitScale "pt" ∧
     unitScale "pt" = (unitScale "sp").map (fun u => (spPerPt * u.1, u.2)) ∧
@@ -142,8 +172,21 @@ theorem unitScale_consistent :
     unitScale "pc" = (unitScale "pt").map (fun u => (12 * u.1, u.2)) ∧
     unitScale "cm" = (unitScale "in").map (fun u => (100 * u.1, 254 * u.2)) ∧
     unitScale "mm" = (unitScale "cm").map (fun u => (u.1, 10 * u.2)) ∧
-    unitScale "px" = (unitScale "in").map (fun u => (u.1, 96 * u.2)) := by
-  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [unitScale, spPerPt]
+    unitScale "px" = (unitScale "in").map (fun u => (u.1, 96 * u.2)) ∧
+    unitScale "dd" = (unitScale "in").map (fun u => (123800 * u.1, 8361639 * u.2)) ∧
+    unitScale "cc" = (unitScale "dd").map (fun u => (12 * u.1, u.2)) := by
+  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [unitScale, unitScaleBase, spPerPt]
+
+/-- Every `true` unit denotes exactly its plain counterpart — stated over
+the whole table, so a unit added without this identity breaks the build,
+not a document. -/
+theorem unitScale_true :
+    unitScale "truesp" = unitScale "sp" ∧ unitScale "truept" = unitScale "pt" ∧
+    unitScale "truebp" = unitScale "bp" ∧ unitScale "truein" = unitScale "in" ∧
+    unitScale "truecm" = unitScale "cm" ∧ unitScale "truemm" = unitScale "mm" ∧
+    unitScale "truepc" = unitScale "pc" ∧ unitScale "truepx" = unitScale "px" ∧
+    unitScale "truedd" = unitScale "dd" ∧ unitScale "truecc" = unitScale "cc" := by
+  decide
 
 /-- A single length term: a number with an absolute or font-relative unit. -/
 def parseLength (s : String) : Option Length :=
