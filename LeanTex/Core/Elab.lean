@@ -3876,6 +3876,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut preamble := preamble
   let mut ctx : Ctx := { file := file }
   let mut docClass : Ir.DocClass := .article
+  let mut sawClass := false
   let mut classOptions := ""
   let mut page : PageSpec := {}
   let mut sawPage := false
@@ -3913,6 +3914,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
       | .par _ => i := i + 1
       | .ctrl "documentclass" pos =>
         i := i + 1
+        sawClass := true
         let mut j := skipSpaces preamble i
         if let some (.sym '[' _) := preamble[j]? then
           let mut opts : Array Raw := #[]
@@ -4302,6 +4304,16 @@ its declared layout" pos
           textDiagged := true
     else
       break
+  -- A classless .tex builds — the no-preamble pitch needs a bare document
+  -- to build, and the article default is a real, sourced page model — but
+  -- not silently: the class switches the page model, the furniture
+  -- legality, and the implied assertions, so a choice the engine made for
+  -- the author is named. LaTeX errors here out of implementation necessity
+  -- (no class, no \normalsize), not design. Markdown has no class concept:
+  -- the omission is that surface's grammar, never noted.
+  if !sawClass && file.endsWith ".tex" then
+    diag ctx .N0017 "no '\\documentclass'; the article page model is assumed" none
+      (help := "declare \\documentclass{article} (or slides, card) to choose it")
   -- The body size: `\page{ fontsize = ... }` wins, else the class option
   -- (`fontsize=11pt`, KOMA's spelling, or the standard classes' bare
   -- `11pt`), else the class default — beamer's documented 11pt for slides
