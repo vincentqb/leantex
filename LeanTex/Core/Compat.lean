@@ -84,10 +84,11 @@ its native spelling, where one exists). What must never happen is the
 arguments leaking into elaboration as stray content (that was an E0313
 cascade per construct). `\usetheme` is not here: it rewrites to `\theme`.
 Neither is `\setbeamertemplate`: `frame footer` has a native meaning
-(`\framefoot`) and its own arm; every other template skips there. -/
+(`\framefoot`) and its own arm; every other template skips there. And
+neither are `\usefonttheme` and `\setbeameroption`, whose own arms silence
+the one argument each that asks for what the engine already does. -/
 def beamerConfig : List (String × Nat) :=
-  [("usecolortheme", 1), ("usefonttheme", 1),
-   ("setbeameroption", 1),
+  [("usecolortheme", 1),
    ("addtobeamertemplate", 3),
    ("setbeamerfont", 2), ("setbeamercolor", 2),
    ("beamertemplatenavigationsymbolsempty", 0)]
@@ -799,6 +800,39 @@ where
       | _ => "\\block[before = 3pt plus 1pt minus 1pt]{}"
     became s!"\\{name}" native pos
     return some (← synthAt native pos, start)
+  | "usefonttheme" =>
+    -- beamer's `professionalfonts` theme turns beamer's font substitution
+    -- off and keeps the document's declared fonts — the only behaviour this
+    -- engine has, so the ask is agreement, not missing configuration.
+    -- Every other font theme would change fonts, and warns with the native
+    -- spelling.
+    let (_, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    if (rawSrc (args.getD 0 #[])).trimAscii.toString == "professionalfonts" then
+      became "\\usefonttheme{professionalfonts}"
+        "nothing: the engine always uses the declared fonts" pos
+    else
+      sayOnce "beamer:usefonttheme" .W0104
+        "'\\usefonttheme' is beamer configuration the engine does not have; skipped" pos
+        (help := beamerNative.lookup "usefonttheme")
+    return some (#[], k)
+  | "setbeameroption" =>
+    -- `hide notes` asks for notes kept out of the delivered pages, which
+    -- is what `\note` already is here: a side channel, absent from the PDF
+    -- and hidden in the HTML. Agreement, no warning. Everything else
+    -- (show notes, a second screen) asks for a rendering the engine does
+    -- not have.
+    let (_, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    if (rawSrc (args.getD 0 #[])).trimAscii.toString == "hide notes" then
+      became "\\setbeameroption{hide notes}"
+        "nothing: notes never enter the delivered pages" pos
+    else
+      sayOnce "beamer:setbeameroption" .W0104
+        "'\\setbeameroption' is beamer configuration the engine does not have; skipped" pos
+        (help := "a theme is a token bundle here: \\theme selects one, and \\palette \
+and \\tokens declare the design directly")
+    return some (#[], k)
   | "setbeamercovered" =>
     -- beamer's default covering is invisible and `transparent` makes it
     -- show dimmed; this engine's covering is dim-not-hide always (PLAN
