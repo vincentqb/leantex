@@ -7603,6 +7603,14 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "\\documentclass{slides}\n" ++ pre ++ "\n\\begin{document}\n" ++ body ++
       "\n\\end{document}"
 
+  -- A redeclared variant face replaces: fontspec's later BoldFont= wins,
+  -- and the store keeps one entry per variant (`faceFor_last_declared`).
+  let (fDoc, _) := elabStr
+    (wrap "\\fonts{ body.bold = \"First Face\" }\n\\fonts{ body.bold = \"Second Face\" }\n")
+  t "a redeclared variant face resolves to the second"
+    (fDoc.fonts.faceFor 0 true false == some "Second Face")
+  t "a redeclared variant face keeps one entry" (fDoc.fonts.faces.size == 1)
+
   -- [from] is each running declaration's own, and a redeclare resets it.
   let (rDoc, rDs) := elabStr
     (wrap "\\runningfoot[from = 3]{An Invented Foot}\n\\runninghead{An Invented Head}\n")

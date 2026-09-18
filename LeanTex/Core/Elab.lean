@@ -2979,7 +2979,7 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
     | key, v =>
       match fontVariantKey? key, v with
       | some variant, .str f =>
-        spec := { spec with faces := spec.faces.push (variant, f) }
+        spec := spec.declareFace variant f
       | some _, _ =>
         modify fun st => { st with
           diags := st.diags.push (Decl.wrongType ctx.file "fonts" key "a quoted face name" v pos) }

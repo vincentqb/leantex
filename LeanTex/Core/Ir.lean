@@ -465,9 +465,36 @@ structure FontSpec where
   faces : Array ((Nat × Bool × Bool) × String) := #[]
   deriving Repr, BEq, Inhabited
 
+/-- Replace-on-redeclare, the same door `Tokens.declare` and
+`Palette.declare` are: a later declaration of the same variant overrides,
+keeping one entry per `(slot, bold, italic)`. Sourced: fontspec (v2.9,
+§"Choosing additional fonts") — each `\setmainfont`/`BoldFont=` call
+*replaces* the family's setup for that shape; the last one given is the one
+used. -/
+def FontSpec.declareFace (s : FontSpec) (variant : Nat × Bool × Bool)
+    (face : String) : FontSpec :=
+  { s with faces := (s.faces.filter (·.1 != variant)).push (variant, face) }
+
 /-- The face the document declared for one slot variant, if any. -/
 def FontSpec.faceFor (s : FontSpec) (slot : Nat) (bold italic : Bool) : Option String :=
   (s.faces.find? (·.1 == (slot, bold, italic))).map (·.2)
+
+/-- The last-declared face is the one resolved (the fontspec rule above,
+mirroring `declare_overwrite` for tokens): redeclaring a variant is an
+override, never a silently first-wins accident. -/
+theorem FontSpec.faceFor_last_declared (s : FontSpec) (v : Nat × Bool × Bool)
+    (f : String) : (s.declareFace v f).faceFor v.1 v.2.1 v.2.2 = some f := by
+  have hnone : (s.faces.filter (·.1 != v)).find? (·.1 == (v.1, v.2.1, v.2.2)) = none := by
+    rw [Array.find?_eq_none]
+    intro x hx
+    have hne := (Array.mem_filter.mp hx).2
+    simp only [bne_iff_ne, ne_eq] at hne
+    simp only [beq_iff_eq]
+    intro hcontra
+    exact hne (by simpa using hcontra)
+  unfold declareFace faceFor
+  rw [Array.find?_push, hnone]
+  simp
 
 /-- What to build, as declared by `\output`: the document carries its own
 build intent, the way `\documentclass` already does. Names stay strings here
