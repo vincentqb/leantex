@@ -647,6 +647,55 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((HtmlDoc.emit {} ruledDoc).1.splitOn
       "h2 { display: flex; align-items: baseline;").length == 2)
 
+/-- The HTML rhythm realization, censused over emitted sheets: every default
+vertical gap is one emission — the below element's `margin-top`, computed
+from the declared table (`Ir.rhythmGapQuanta`) in the screen context's
+quanta — and the one `margin-bottom` in a whole emitted page is the
+caption-above float's internal seam, whose neighbour declares no top
+margin, so single ownership holds there too. A second margin-bottom would
+be a boundary with two emitters: the box-model defect
+`HtmlDoc.single_owner_gap_exact` exists to exclude (block flow collapses
+the pair, a flex column sums it — the site port shipped 52 px for a
+declared 32 px exactly that way). Its own function: `main`'s elaboration
+budget is spent. -/
+def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (plainDoc, plainDs) := elabStr
+    "\\documentclass{article}\\begin{document}a\n\nb\n\\end{document}"
+  let plainPage := (HtmlDoc.emit {} plainDoc).1
+  t "html rhythm fixture elaborates clean" plainDs.isEmpty
+  t "html base sheet has one gap owner per boundary"
+    ((plainPage.splitOn "margin-bottom").length == 2)
+  -- The longhand census above cannot see a shorthand (`margin: 0 0 1rem`
+  -- spells no "margin-bottom"), so the zero-ownership of each block
+  -- element is pinned by its whole rule. Verified load-bearing: putting a
+  -- bottom margin back on blockquote fails here.
+  t "html block elements own no vertical margins"
+    ((plainPage.splitOn "p { margin: 0; }").length == 2 &&
+     (plainPage.splitOn "ul, ol { margin: 0; padding-left: 1.35rem; }").length == 2 &&
+     (plainPage.splitOn "li { margin: 0; }").length == 2 &&
+     (plainPage.splitOn "blockquote { margin: 0; padding: 0 1.35rem; }").length == 2 &&
+     (plainPage.splitOn "figure.float { margin: 0 auto; }").length == 2)
+  t "html peer gap is one screen quantum, top-owned"
+    ((plainPage.splitOn "* + p { margin-top: 0.725rem; }").length == 2)
+  t "html heading gap is two screen quanta"
+    ((plainPage.splitOn "* + h2 { margin-top: 1.450rem; }").length == 2)
+  t "html float gap keeps its token over the rhythm default"
+    ((plainPage.splitOn
+      "* + figure.float { margin-top: var(--floatsep, 1.450rem); }").length == 2)
+  t "html float owns the boundary below it"
+    ((plainPage.splitOn
+      "figure.float + * { margin-top: var(--floatsep, 1.450rem); }").length == 2)
+  let (themedDoc, themedDs) := elabStr ("\\documentclass{beamer}\\usetheme{moloch}" ++
+    "\\begin{document}\\section{s}\\begin{frame}{t}x\\end{frame}\\end{document}")
+  let themedPage := (HtmlDoc.emit {} themedDoc).1
+  t "html themed fixture elaborates clean"
+    (themedDs.all fun d => d.severity == .note)
+  t "html progress height reads the token the PDF reads"
+    ((themedPage.splitOn "height: var(--progressheight, 1pt);").length == 2)
+  t "html themed sheet has one gap owner per boundary"
+    ((themedPage.splitOn "margin-bottom").length == 2)
+
 /-- Article sections become anchored containers: `<section id="slug">` wraps
 the heading and its content, ids stay unique under repeated titles, and an
 in-page `\href{#...}` has a real target. Invented titles throughout. -/
@@ -1797,6 +1846,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   styleChecks ref
   htmlLayoutChecks ref
+  htmlRhythmChecks ref
   classHookChecks ref
   anchorChecks ref
   markdownChecks ref

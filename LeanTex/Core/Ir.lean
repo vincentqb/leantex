@@ -318,6 +318,32 @@ theorem caption_gaps_rhythm :
     floatSepDefault.width.sp = leadingFor baseFontSize ∧
     captionSepDefault.width.sp < floatSepDefault.width.sp := by decide
 
+/-- The declared rhythm multiples, one table both backends realize from: at
+each kind of default block boundary, how many quanta the gap is. The PDF's
+tokens are held to it (`rhythm_table_exact`; the heading row is the block
+walk's `2 × parskip`), and the HTML base stylesheet computes its margins
+from it — a backend that re-spelled a multiple would be a backend no
+theorem covers. The quantum differs per context (the print leading against
+the screen leading), which is exactly the statement: a boundary's multiple
+is declared once; each backend realizes it in its own context's unit. -/
+def rhythmGapQuanta : List (String × Nat) :=
+  [("peer", 1), ("heading", 2), ("caption", 1), ("float", 2)]
+
+/-- The table and the tokens agree: each declared default gap is its row's
+multiple of the quantum, and the heading row is twice the peer row — the
+walk's `parskip.add parskip` spelled as a multiple. An edit that moves a
+token off its declared multiple, or drops a row a backend reads, fails the
+build here. -/
+theorem rhythm_table_exact :
+    ((rhythmGapQuanta.lookup "peer").getD 0 : Int) * rhythmQuantum baseFontSize
+      = parskipDefault.width.sp ∧
+    ((rhythmGapQuanta.lookup "caption").getD 0 : Int) * rhythmQuantum baseFontSize
+      = captionSepDefault.width.sp ∧
+    ((rhythmGapQuanta.lookup "float").getD 0 : Int) * rhythmQuantum baseFontSize
+      = floatSepDefault.width.sp ∧
+    (rhythmGapQuanta.lookup "heading").getD 0
+      = 2 * (rhythmGapQuanta.lookup "peer").getD 0 := by decide
+
 /-- Named colours declared by `\palette`. -/
 structure Palette where
   entries : Array (String × Color) := #[]

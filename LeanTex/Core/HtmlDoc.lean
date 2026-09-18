@@ -454,6 +454,93 @@ an overlay step does not"))
     css := css ++ own ++ liCss ++ interCss
   return (css, diags)
 
+/-- A per-mille factor as CSS text: 1440 → `1.440`. -/
+private def milliFactor (k : Nat) : String :=
+  let pad (n : Nat) : String :=
+    let s := toString n
+    "".pushn '0' (3 - min 3 s.length) ++ s
+  s!"{k / 1000}.{pad (k % 1000)}"
+
+/-- Screen prose leading, per-mille. Screen body text wants more lead than
+the print ratio (`Ir.leadingMilli`, 6/5); Butterick's band for body text is
+120–145% (Practical Typography, "Line spacing"), and the stylesheet takes
+its top. The old 1.55 sat outside the band, undeclared. -/
+def bodyLeadingMilli : Nat := 1450
+
+/-- The screen leading stays inside Butterick's 120–145% band, and never
+under the engine's own print leading — the stylesheet's body text cannot
+drift out of the sourced range without failing the build. -/
+theorem body_leading_in_band :
+    Ir.leadingMilli ≤ bodyLeadingMilli ∧
+    1200 ≤ bodyLeadingMilli ∧ bodyLeadingMilli ≤ 1450 := by decide
+
+/-- A vertical gap of `k` screen rhythm quanta, as a rem value. The screen
+context's rhythm unit is its own body leading — `bodyLeadingMilli` over the
+1 rem base — as the print context's is its (`Ir.leadingFor`); the quantum
+is the half-unit in both. A boundary's multiple is declared once
+(`Ir.rhythmGapQuanta`); each backend realizes it in its own context's
+unit. Computed, never re-spelled: 1450 milli halves exactly, so every
+emitted value is exact. -/
+def quantaRem (k : Nat) : String := milliFactor (k * bodyLeadingMilli / 2) ++ "rem"
+
+/-- A boundary kind's declared multiple, from the one table. -/
+private def gapK (kind : String) : Nat := (Ir.rhythmGapQuanta.lookup kind).getD 0
+
+/-- The base sheet's block boundaries: every block-level element the
+backend emits into flow, with the declared kind of gap it opens. Emitted
+as adjacent-sibling rules (`blockGapCss`): the element below owns the
+boundary as `margin-top`, every block element's own margins are zero, so a
+boundary has exactly one emitter. That encoding is what the realization
+demands: the theorem is about the gap the box model realizes, not the
+number in the sheet, and with one side of every boundary zero the block
+model (adjacent margins collapse to the larger) and the flex model
+(margins stack) realize the same declared value
+(`single_owner_gap_exact`) — turning a container flex cannot double a gap.
+The site port shipped a 52 px gap where 32 px was declared exactly that
+way: spacing declared on both sides of a boundary, summed by a flex
+column. A container `gap` would also be single-emission, but only where
+the container opts into flex or grid, and one `gap` cannot say that a
+heading opens more space than a paragraph; the sibling rule is
+context-independent and names the boundary. -/
+def blockGapKinds : List (String × String) :=
+  [("p", "peer"), ("ul", "peer"), ("ol", "peer"), ("pre", "peer"),
+   ("blockquote", "peer"), ("table.booktabs", "peer"),
+   ("h1", "heading"), ("h2", "heading"), ("h3", "heading"), ("h4", "heading")]
+
+/-- The realized gap equals the emitted gap, in both formatting contexts:
+at a boundary whose upper side declares no margin, collapsing (block flow
+takes the larger of the two adjacent margins) and stacking (a flex or grid
+container adds them) agree on the one declared value. This is the theorem
+the encoding exists to satisfy — with both sides declared it fails: max
+and sum diverge, which is the shipped 52px-for-32px defect. -/
+theorem single_owner_gap_exact (g : Int) (h : 0 ≤ g) :
+    max 0 g = g ∧ 0 + g = g := by
+  constructor
+  · omega
+  · omega
+
+/-- Every gap rule's kind is a declared row of the table, with a positive
+multiple — no boundary silently falls to zero through a missing lookup.
+The float's rules stand outside `blockGapKinds` (they carry the
+`--floatsep` token), so its row is its own conjunct. -/
+theorem blockGap_kinds_covers :
+    (blockGapKinds.all fun e => 0 < gapK e.2) = true ∧ 0 < gapK "float" ∧
+    0 < gapK "caption" := by decide
+
+/-- The gap rules, one adjacent-sibling rule per block element. The float's
+gaps keep their token (`--floatsep`, the same one the PDF path reads), and
+the float adds the one pair rule (`figure.float + *`): the gap below a
+float is the float's to declare, as the PDF walk's `addvspace` takes the
+larger of the float's gap and the next element's own — which the pair
+rule's higher specificity mirrors, its value winning the boundary while
+the neighbour's own margin stays zero, so single ownership holds there
+too. -/
+def blockGapCss : String :=
+  String.join (blockGapKinds.map fun (sel, kind) =>
+    s!"* + {sel} \{ margin-top: {quantaRem (gapK kind)}; }\n") ++
+  s!"* + figure.float \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n" ++
+  s!"figure.float + * \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n"
+
 /-- The slide box's inner padding and corner geometry, one spelling each:
 the frame-title bar bleeds to the slide edge by negating exactly this
 padding, and its top corners round at the slide's radius less the border
@@ -478,16 +565,23 @@ def themeCss (doc : Doc) : String :=
   (if d.frametitle.isSome then
     "section.slide > header { background: var(--frametitlebg);\n" ++
     "  color: var(--frametitlefg, var(--bg, #fff));\n" ++
-    s!"  margin: -{slidePadV} -{slidePadH} 0.8rem; padding: 0.7rem {slidePadH};\n" ++
+    -- The bar owns no space below: the frame body's first block pays its
+    -- own gap (`blockGapCss`), one emitter per boundary.
+    s!"  margin: -{slidePadV} -{slidePadH} 0; padding: {quantaRem 1} {slidePadH};\n" ++
     s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
     "section.slide > header h2 { color: inherit; }\n" else "") ++
   (if d.progress.isSome then
-    "section.section-page { text-align: center; padding: 2.5rem 0;\n" ++
+    s!"section.section-page \{ text-align: center; padding: {quantaRem 3} 0;\n" ++
     "  break-inside: avoid; }\n" ++
     "section.section-page h2 { display: inline-block; text-align: left;\n" ++
     "  min-width: 60%; margin: 0; }\n" ++
-    ".progress { background: var(--progressbg, var(--rule)); height: 3px;\n" ++
-    "  width: 60%; margin: 0.6rem auto 0; }\n" ++
+    -- The height reads the same token the PDF path reads
+    -- (`progressheight`), with the same fallback — moloch's own 1pt
+    -- (beamerouterthememoloch.dtx) — one resolving site per backend, one
+    -- declared value.
+    ".progress { background: var(--progressbg, var(--rule));\n" ++
+    "  height: var(--progressheight, 1pt);\n" ++
+    s!"  width: 60%; margin: {quantaRem 1} auto 0; }\n" ++
     ".progress > div { background: var(--progressfg); height: 100%; }\n" else "") ++
   -- The chrome footer: colour from the muted key, size from the shared
   -- scale (`size-small` on the element), positions fixed by the declared
@@ -501,7 +595,7 @@ def themeCss (doc : Doc) : String :=
         | .framefoot xs => !xs.isEmpty
         | _ => false) then
     "section.slide > footer.slide-foot { position: relative;\n" ++
-    "  min-height: 1lh; margin-top: 1.2rem; color: var(--muted); }\n" ++
+    s!"  min-height: 1lh; margin-top: {quantaRem 2}; color: var(--muted); }\n" ++
     "footer.slide-foot > .band-left { position: absolute; left: 0;\n" ++
     "  white-space: nowrap; }\n" ++
     "footer.slide-foot > .band-right { position: absolute; right: 0;\n" ++
@@ -605,31 +699,11 @@ def tokenVars (doc : Doc) : String :=
      | none => [])
   String.intercalate "\n" (palette ++ tokens ++ fonts)
 
-/-- A per-mille factor as CSS text: 1440 → `1.440`. -/
-private def milliFactor (k : Nat) : String :=
-  let pad (n : Nat) : String :=
-    let s := toString n
-    "".pushn '0' (3 - min 3 s.length) ++ s
-  s!"{k / 1000}.{pad (k % 1000)}"
-
 /-- One scale step as a CSS size: the same table the PDF sets from
 (`Ir.sizeScale`), so a heading or a standout is the size the scale says,
 never a re-spelled decimal. -/
 private def scaleSize (name : String) (unit : String) : String :=
   milliFactor ((Ir.sizeScale.lookup name).getD 1000) ++ unit
-
-/-- Screen prose leading, per-mille. Screen body text wants more lead than
-the print ratio (`Ir.leadingMilli`, 6/5); Butterick's band for body text is
-120–145% (Practical Typography, "Line spacing"), and the stylesheet takes
-its top. The old 1.55 sat outside the band, undeclared. -/
-def bodyLeadingMilli : Nat := 1450
-
-/-- The screen leading stays inside Butterick's 120–145% band, and never
-under the engine's own print leading — the stylesheet's body text cannot
-drift out of the sourced range without failing the build. -/
-theorem body_leading_in_band :
-    Ir.leadingMilli ≤ bodyLeadingMilli ∧
-    1200 ≤ bodyLeadingMilli ∧ bodyLeadingMilli ≤ 1450 := by decide
 
 /-- Size rules generated from the IR's scale, so the two backends cannot drift
 apart on what `\Huge` means. `em` rather than `rem`: sizes nest. -/
@@ -684,11 +758,15 @@ def baseCss (doc : Doc) : String :=
   "*, *::before, *::after { box-sizing: border-box; }\n" ++
   "body {\n" ++
   "  margin: 0;\n" ++
-  "  padding: 2.5rem 1.25rem 4rem;\n" ++
+  s!"  padding: {quantaRem 3} 1.25rem {quantaRem 6};\n" ++
   "  background: var(--surface);\n" ++
   "  color: var(--ink);\n" ++
   "  font-family: var(--font-body);\n" ++
-  "  font-size: 1.0625rem;\n" ++
+  -- 1rem: the reader's own declared size, the browser-consensus default.
+  -- It also makes the screen rhythm rational — the unit is exactly
+  -- `bodyLeadingMilli` milli-rem, so every gap `quantaRem` emits is an
+  -- exact decimal.
+  "  font-size: 1rem;\n" ++
   s!"  line-height: {milliFactor bodyLeadingMilli};\n" ++
   "  text-rendering: optimizeLegibility;\n" ++
   "  -webkit-font-smoothing: antialiased;\n" ++
@@ -700,20 +778,28 @@ def baseCss (doc : Doc) : String :=
   -- ordering covers this backend for free; the line height is the
   -- engine's one leading ratio. Hand-picked decimals here once drifted a
   -- rounding step from the scale sixty lines above the rules generated
-  -- from it.
+  -- from it. Margins are zero here and on every block element: a
+  -- boundary's gap has exactly one emitter (`blockGapCss`).
   "h1, h2, h3, h4 {\n" ++
   "  font-family: var(--font-sans);\n" ++
   "  font-weight: 600;\n" ++
   s!"  line-height: {milliFactor Ir.leadingMilli};\n" ++
-  "  margin: 2.25rem 0 0.6rem;\n" ++
+  "  margin: 0;\n" ++
   "  text-wrap: balance;\n" ++
   "}\n" ++
-  s!"h1 \{ font-size: {scaleSize "LARGE" "rem"}; margin-top: 0; }\n" ++
+  s!"h1 \{ font-size: {scaleSize "LARGE" "rem"}; }\n" ++
   s!"h2 \{ font-size: {scaleSize "Large" "rem"}; }\n" ++
   s!"h3 \{ font-size: {scaleSize "large" "rem"}; }\n" ++
-  "p { margin: 0 0 1rem; }\n" ++
-  "ul, ol { margin: 0 0 1rem; padding-left: 1.35rem; }\n" ++
-  "li { margin: 0.25rem 0; }\n" ++
+  "p { margin: 0; }\n" ++
+  "ul, ol { margin: 0; padding-left: 1.35rem; }\n" ++
+  -- No per-item gap, as the PDF declares none: a list is one block, and
+  -- its leading is its rhythm. A document declares its own through
+  -- `\style{itemize}{ gap = ... }`.
+  "li { margin: 0; }\n" ++
+  -- A quotation moves both edges in, as the PDF sets it (classes.dtx:
+  -- `\rightmargin\leftmargin`); the browser's own quote margins would be
+  -- a second, unowned vertical emission.
+  "blockquote { margin: 0; padding: 0 1.35rem; }\n" ++
   "li::marker { color: var(--muted); }\n" ++
   -- The class-default list marking, per nesting level, matching the PDF
   -- backend (classes.dtx: bullet, bold en-dash, centered asterisk, centered
@@ -739,11 +825,11 @@ def baseCss (doc : Doc) : String :=
   "    text-underline-offset: 0.15em; }\n" ++
   "a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\n" ++
   "code, pre { font-family: var(--font-mono); font-size: 0.925em; }\n" ++
-  "pre { background: var(--tint); padding: 0.9rem 1rem; overflow-x: auto;\n" ++
+  s!"pre \{ background: var(--tint); padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
   "      border-radius: 4px; }\n" ++
   ".centered { text-align: center; }\n" ++
   ".fill { flex: 1 1 auto; }\n" ++
-  ".spaced { margin-top: var(--sep, 1.4rem); }\n" ++
+  s!".spaced \{ margin-top: var(--sep, {slidePadV}); }\n" ++
   -- General rows keep the prior flex behavior. An exact pair switches to a
   -- grid that reserves the right max-content column before the left wraps.
   ".entry, .entry-row { display: flex; flex-wrap: wrap; column-gap: 0.4rem;\n" ++
@@ -780,20 +866,23 @@ def baseCss (doc : Doc) : String :=
   s!"tr.bt-pre > td \{ padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
   s!"td.bt-cmid \{ border-top: var(--cmidrulewidth, {cssLength Ir.cmidRuleWidth}) solid;\n" ++
   s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
-  -- Float and caption gaps: the same tokens the PDF path reads, defaults
-  -- held to the rhythm by `Ir.caption_gaps_rhythm`.
-  s!"figure.float \{ margin: var(--floatsep, {cssLength Ir.floatSepDefault.width}) auto; }\n" ++
+  -- Float and caption gaps: the same tokens the PDF path reads, the
+  -- defaults this context's own rhythm multiples of the declared rows
+  -- (`Ir.rhythmGapQuanta`; the boundary rules live in `blockGapCss`).
+  "figure.float { margin: 0 auto; }\n" ++
   "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
   "figure.float > img { display: block; margin: 0 auto; }\n" ++
-  s!"figure.float > figcaption \{ margin-top: var(--captionsep, {cssLength Ir.captionSepDefault.width});\n" ++
+  s!"figure.float > figcaption \{ margin-top: var(--captionsep, {quantaRem (gapK "caption")});\n" ++
   "  text-align: center; text-wrap: balance; }\n" ++
   s!"figure.float > figcaption:first-child \{ margin-top: 0;\n" ++
-  s!"  margin-bottom: var(--captionsep, {cssLength Ir.captionSepDefault.width}); }\n" ++
+  s!"  margin-bottom: var(--captionsep, {quantaRem (gapK "caption")}); }\n" ++
+  blockGapCss ++
   -- Slides, as the linear handout: one bordered section per frame, printing
   -- one per page. The interactive controller is the rest of M5.
   s!"section.slide \{ border: {slideBorderPx}px solid var(--rule); border-radius: {slideRadiusPx}px;\n" ++
-  s!"  padding: {slidePadV} {slidePadH}; margin: {slidePadV} 0; break-inside: avoid; }\n" ++
-  "section.slide > header h2 { margin: 0 0 0.8rem; font-size: 1.35rem; }\n" ++
+  s!"  padding: {slidePadV} {slidePadH}; margin: 0; break-inside: avoid; }\n" ++
+  s!"* + section.slide \{ margin-top: {slidePadV}; }\n" ++
+  s!"section.slide > header h2 \{ margin: 0; font-size: {scaleSize "Large" "rem"}; }\n" ++
   -- A standout frame inverts: the palette's standout keys override, and
   -- without them the page's own fg/bg swap — the same rule as the PDF path.
   -- Its size is the scale's own Large step (`\Large\bfseries`, the shipped
