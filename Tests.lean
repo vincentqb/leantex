@@ -848,6 +848,53 @@ def markdownChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "figure caption fills only an undeclared alt"
     (((HtmlDoc.emit {} figImg).1.splitOn "alt=\"Declared wins\"").length == 2)
 
+/-- The llms.txt preamble's placement invariant, over all four title
+sources: the summary stands immediately after the title line, wherever the
+title comes from — the metadata `#` line or the body's own level-0 heading
+(`\maketitle`) — and above the body only when nothing carries a title. The
+theorems in MarkdownDoc pin the two titled shapes; these pin all four
+end-to-end, plus the mid-document remainder ("never precedes"). Own
+function: `main`'s elaboration budget. -/
+def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- 1: metadata title only — the preamble carries both lines, in order.
+  let (metaOnly, ds1) := elabStr ("\\documentclass{article}" ++
+    "\\pdfmeta{ title = \"Meta Title\", subject = \"A meta summary.\" }" ++
+    "\\begin{document}Body text.\\end{document}")
+  t "metadata-only source is clean" ds1.isEmpty
+  t "metadata title: summary follows the title line"
+    ((MarkdownDoc.emit metaOnly) == "# Meta Title\n\n> A meta summary.\n\nBody text.\n")
+  -- 2: body heading only — the summary follows the body's own title line.
+  let bodyOnly : Ir.Doc := {
+    info := { subject := some "A body-titled summary." }
+    body := #[.section 0 false #[.text "Body Title"], .para #[.text "After."]] }
+  t "body title: summary follows the body's title line"
+    ((MarkdownDoc.emit bodyOnly) ==
+      "# Body Title\n\n> A body-titled summary.\n\nAfter.\n")
+  -- 3: both — the body's heading wins; one `#` line, one title, summary after it.
+  let (both, ds3) := elabStr ("\\documentclass{article}" ++
+    "\\pdfmeta{ subject = \"A shared summary.\" }\\title{Both Sources}" ++
+    "\\begin{document}\\maketitle Body text.\\end{document}")
+  t "both-sources source is clean" ds3.isEmpty
+  let bothMd := MarkdownDoc.emit both
+  t "both sources: the body's title line leads and the summary follows"
+    (bothMd.startsWith "# Both Sources\n\n> A shared summary.\n\n")
+  t "both sources: exactly one # line, the title stated once"
+    ((bothMd.splitOn "\n# ").length == 1 && (bothMd.splitOn "# Both Sources").length == 2)
+  -- 4: neither — nothing carries a title, so the summary opens the twin.
+  let neither : Ir.Doc := {
+    info := { subject := some "Only a summary." }
+    body := #[.para #[.text "x"]] }
+  t "no title anywhere: the summary opens the twin"
+    ((MarkdownDoc.emit neither) == "> Only a summary.\n\nx\n")
+  -- The remainder: a mid-document title (W0321 warns) still pulls the
+  -- summary to its own line — after the title, never above the body.
+  let mid : Ir.Doc := {
+    info := { subject := some "A late summary." }
+    body := #[.para #[.text "Lead."], .section 0 false #[.text "Late Title"]] }
+  t "a mid-document title carries the summary with it"
+    ((MarkdownDoc.emit mid) == "Lead.\n\n# Late Title\n\n> A late summary.\n")
+
 /-- The quotation node: `{quote}` and `{quotation}` elaborate to the one
 `Block.quote` (classes.dtx defines both as `\list{}{\rightmargin
 \leftmargin}`; they differ only in a paragraph indent the engine cannot
@@ -1858,6 +1905,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   classHookChecks ref
   anchorChecks ref
   markdownChecks ref
+  mdPreambleChecks ref
   backendChecks ref
   landmarkChecks ref
   pinChecks ref
@@ -4934,6 +4982,7 @@ def dvL (fonts : Font.FontSet) (src : String) : Array Diag :=
 def dvH (src : String) : Array Diag :=
   let (doc, ds) := elabStr src
   ds ++ (HtmlDoc.emit {} doc).2
+
 
 /-- One firing input per code. `one` maps every slot to one face;
 `mapped` adds a second face and a fallback map for the substitution codes.
