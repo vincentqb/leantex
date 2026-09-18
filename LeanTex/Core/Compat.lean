@@ -814,8 +814,12 @@ where
     return some (← synthAt native pos, k)
   | "directlua" =>
     let (_, k) := takeGroups raws start 1
+    -- A deliberate refusal, not a gap: Lua is another engine's extension
+    -- hook, and running it is off the table by design. The help names the
+    -- intent declaration that silences the warning.
     sayOnce "ctrl:directlua" .W0104
-      "'\\directlua' is Lua code for luatex; skipped" pos
+      "'\\directlua' is Lua code for luatex; the engine does not run Lua, so it is skipped" pos
+      (help := "\\allow{W0104} accepts the skip")
     return some (#[], k)
   | "def" | "edef" | "gdef" | "xdef" =>
     -- TeX's macro layer: consume through the body group, so the definition

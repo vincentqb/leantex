@@ -164,7 +164,8 @@ warning[W0102]: colour model 'cmyk' is not supported; use HTML or rgb
 ── W0103 (config) unsupported package skipped
 warning[W0103]: package 'pgfplots' is not supported; skipped
 ── W0104 (config) unsupported TeX construct skipped
-warning[W0104]: '\directlua' is Lua code for luatex; skipped
+warning[W0104]: '\directlua' is Lua code for luatex; the engine does not run Lua, so it is skipped
+  help: \allow{W0104} accepts the skip
 warning[W0104]: TeX '\def' is not supported; skipped
   help: \define \name(...) {body} declares typed commands
 warning[W0104]: '\raggedright' asks for unjustified setting; the document stays justified
