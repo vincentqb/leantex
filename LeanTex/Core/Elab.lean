@@ -658,28 +658,38 @@ private def warnUnclosed (ctx : Ctx) (after : String) (bpos : Pos) : EM Unit :=
     (help := "add the matching ']'")
 
 /-- The index of a command's `{...}` group past its optional argument, best
-effort. A well-formed `[...]` is skipped whole. An unclosed one warns; its
-run — the rest of the command's own line — is returned to the caller,
-because W0310 just called it content: a body position renders it, and only
-the preamble, where no content can live, drops it with the warning already
-pointing there. The group the author wrote is then found wherever the line
-break falls — this line, the next, or past a blank line — but never past
-another construct. Returns the candidate index, whether it recovered from
-an unclosed bracket (a recovered command with no group left is skipped with
-a warning by its caller, never a fatal error), and the malformed run. -/
-private def skipOptArg (ctx : Ctx) (name : String) (raws : Array Raw)
-    (start : Nat) (pos : Pos) : EM (Nat × Bool × Array Raw) := do
+effort — the pure extent half, so a scanner that owns no diagnostics can
+walk it too. A well-formed `[...]` is skipped whole. An unclosed one is
+returned as data (its position, for the caller that owns W0310); its
+run — the rest of the command's own line — is returned too, because W0310
+calls it content: a body position renders it, and only the preamble, where
+no content can live, drops it with the warning already pointing there. The
+group the author wrote is then found wherever the line break falls — this
+line, the next, or past a blank line — but never past another construct.
+Returns the candidate index, whether it recovered from an unclosed bracket
+(a recovered command with no group left is skipped with a warning by its
+caller, never a fatal error), the malformed run, and the unclosed `[`'s
+position. -/
+private def scanOptArg (raws : Array Raw) (start : Nat) (pos : Pos) :
+    Nat × Bool × Array Raw × Option Pos :=
   let j := skipSpaces raws start
   match scanBracketArg raws start pos with
-  | .took k => return (skipSpaces raws k, false, #[])
-  | .content => return (j, false, #[])
+  | .took k => (skipSpaces raws k, false, #[], none)
+  | .content => (j, false, #[], none)
   | .unclosed bpos =>
-    warnUnclosed ctx s!"'\\{name}'" bpos
     let e := malformedRun raws j pos (groups := false)
     let k := spanRaws raws e isSpaceOrPar
     if let some (.group _ _) := raws[k]? then
-      return (k, true, raws.extract j e)
-    return (e, true, raws.extract j e)
+      (k, true, raws.extract j e, some bpos)
+    else
+      (e, true, raws.extract j e, some bpos)
+
+private def skipOptArg (ctx : Ctx) (name : String) (raws : Array Raw)
+    (start : Nat) (pos : Pos) : EM (Nat × Bool × Array Raw) := do
+  let (j, recovered, junk, unclosed) := scanOptArg raws start pos
+  if let some bpos := unclosed then
+    warnUnclosed ctx s!"'\\{name}'" bpos
+  return (j, recovered, junk)
 
 /-- The body of an unknown environment without its arguments: leading `[...]`
 runs and `{...}` groups on the `\begin` line are the environment's own
@@ -4062,55 +4072,90 @@ private def parseAssert (ctx : Ctx) (src : String) (pos : Pos) : EM (Option Asse
     | _, none => fail s!"'{n}' is not a whole number"
   | _ => fail "supported forms: pages <op> N, fonts.all_embedded, text.in_area, text.xheight >= <len>"
 
-/-- Elaborate the whole document: split preamble and body around the
-`document` environment, process declarations, then the body. -/
-def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
-  let docIdx := raws.findIdx? fun r =>
-    match r with
-    | .env "document" _ _ => true
-    | _ => false
-  let (preamble, body, trailing) :=
-    match docIdx with
-    | some idx =>
-      let bodyRaws := match raws[idx]! with
-        | .env _ b _ => b
-        | _ => #[]
-      (raws.extract 0 idx, bodyRaws, raws.extract (idx + 1) raws.size)
-    | none => (#[], raws, #[])
-  let mut preamble := preamble
-  let mut ctx : Ctx := { file := file }
-  let mut docClass : Ir.DocClass := .article
-  let mut sawClass := false
-  let mut classOptions := ""
-  let mut page : PageSpec := {}
-  let mut sawPage := false
-  let mut fonts : FontSpec := {}
-  let mut palette : Palette := {}
-  let mut tokens : Tokens := {}
-  let mut head : Option (Array Inline) := none
-  let mut foot : Option (Array Inline) := none
-  let mut headFrom : Nat := 1
-  let mut footFrom : Nat := 1
-  let mut styles : Styles := {}
-  let mut chrome : Chrome := {}
-  let mut chromeDeclared := false
-  let mut info : Meta := {}
-  let mut output : OutputSpec := {}
-  let mut asserts : Array Assertion := #[]
-  let mut allow : Array String := #[]
-  let mut textDiagged := false
+/-- One scanned preamble declaration: the value `applyDecl` folds over and
+the commutation statement (T1) quantifies over. Scanning is segmentation
+only — payloads stay raw (token runs, block sources): content elaborates at
+apply time, where the context (user commands, palette, tokens) is the one
+the declaration stands after, because reference→referent order is real and
+stays sequential. Malformation facts met while finding extents (an unclosed
+`[`, a missing group) ride as data, so `applyDecl` owns every diagnostic
+and emits it in scan order. -/
+inductive PDecl where
+  | docclass (options : Option String) (cls : Option String) (pos : Pos)
+  | defineCmd (decl : Array Raw) (pos : Pos)
+  | defineEnv (name : Option (String × Pos)) (sig : String)
+      (beginB : Option (Array Raw)) (endB : Option (Array Raw)) (pos : Pos)
+  | fileMark (f : String)
+  | running (name : String) (opts : Option (Array Raw))
+      (body : Option (Array Raw)) (pos : Pos)
+  | logo (body : Option (Array Raw)) (pos : Pos)
+  | palette (opts : Option (Array Raw)) (body : Option String) (pos : Pos)
+  | style (args : Option (String × String)) (pos : Pos)
+  | allow (body : Option String) (pos : Pos)
+  | theme (src : Option String) (pos : Pos)
+  | assert (src : Option String) (pos : Pos)
+  | output (src : Option String) (pos : Pos)
+  | tokens (src : Option String) (pos : Pos)
+  | chrome (src : Option String) (pos : Pos)
+  | page (src : Option String) (pos : Pos)
+  | fonts (src : Option String) (pos : Pos)
+  | pdfmeta (src : Option String) (pos : Pos)
+  | captionsetup (unclosed : Option Pos) (body : Option String) (pos : Pos)
+  | titleDecl (name : String) (unclosed : Option Pos) (recovered : Bool)
+      (body : Option (Array Raw)) (pos : Pos)
+  | reserved (name : String) (code : DiagCode) (unclosed : Option Pos) (pos : Pos)
+  | unknownCmd (name : String) (unclosed : Option Pos) (pos : Pos)
+  | stray
+
+/-- The preamble fold's threaded state: exactly the loop-local values the
+imperative scanner carried, as a value `applyDecl` maps. `textDiagged` is
+the E0313 once-latch — reporting machinery, beside ESt's diags,
+`warnedUnknown`, `seenScalars`, and `declaredKeys`: the commutation
+statement's projection excludes these four and nothing else, because their
+only readers are diagnostic sites. -/
+structure PreState where
+  ctx : Ctx
+  docClass : Ir.DocClass := .article
+  sawClass : Bool := false
+  classOptions : String := ""
+  page : PageSpec := {}
+  sawPage : Bool := false
+  fonts : FontSpec := {}
+  palette : Palette := {}
+  tokens : Tokens := {}
+  head : Option (Array Inline) := none
+  foot : Option (Array Inline) := none
+  headFrom : Nat := 1
+  footFrom : Nat := 1
+  styles : Styles := {}
+  chrome : Chrome := {}
+  chromeDeclared : Bool := false
+  info : Meta := {}
+  output : OutputSpec := {}
+  asserts : Array Assertion := #[]
+  allow : Array String := #[]
+  textDiagged : Bool := false
+
+/-- Segment the preamble into declaration values. Pure and positional: the
+same argument extents the imperative loop walked (`skipSpaces`,
+`scanBracketArg`, group taking, `skipReservedArgs`), including its recovery
+quirks — a declaration whose group never materialises consumes only what
+the loop consumed, and the tokens it looked past rescan as their own units,
+exactly as they always did. `\input` wrappers splice open in place between
+file markers, so a value's diagnostics name the file that holds it. -/
+private def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
+  let mut preamble := pre
+  let mut curFile := file
+  let mut out : Array PDecl := #[]
   let mut i := 0
   repeat
     if h : i < preamble.size then
       let r := preamble[i]
-      -- An \input wrapper in the preamble splices open between file markers,
-      -- so its declarations process in place and its diagnostics name the
-      -- file that holds them.
       if let .env n wrapped pos := r then
         if let some f := Parse.inputEnvFile? n then
           preamble := preamble.extract 0 i ++
             #[Raw.ctrl (fileMarker f) pos] ++ wrapped ++
-            #[Raw.ctrl (fileMarker ctx.file) pos] ++
+            #[Raw.ctrl (fileMarker curFile) pos] ++
             preamble.extract (i + 1) preamble.size
           continue
       match r with
@@ -4118,8 +4163,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
       | .par _ => i := i + 1
       | .ctrl "documentclass" pos =>
         i := i + 1
-        sawClass := true
         let mut j := skipSpaces preamble i
+        let mut options : Option String := none
         if let some (.sym '[' _) := preamble[j]? then
           let mut opts : Array Raw := #[]
           j := j + 1
@@ -4132,32 +4177,34 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               opts := opts.push r'
               j := j + 1
             | none => break
-          classOptions := rawSrc opts
+          options := some (rawSrc opts)
           j := skipSpaces preamble j
         match preamble[j]? with
         | some (.group nameRaws _) =>
           i := j + 1
-          let named := (rawSrc nameRaws).trimAscii.toString
-          match Ir.DocClass.ofString? named with
-          | some c => docClass := c
-          | none =>
-            diag ctx .E0309 s!"unknown document class '{named}'" pos
-              (help := "classes: article, slides, card, resume, webpage")
+          out := out.push (.docclass options
+            (some ((rawSrc nameRaws).trimAscii.toString)) pos)
         | _ =>
-          diag ctx .E0304 "'\\documentclass' needs a {class}" pos
+          out := out.push (.docclass options none pos)
       | .ctrl "define" pos =>
         i := i + 1
-        let (cmd?, k) ← takeDefine ctx preamble i pos
-        i := k
-        if let some cmd := cmd? then
-          ctx := { ctx with
-            user := ctx.user.push cmd
-            limit := ctx.user.size + 1 }
+        let j := skipSpaces preamble i
+        match preamble[j]? with
+        | some (.ctrl _ _) =>
+          let mut k := j + 1
+          for _ in [k:preamble.size] do
+            match preamble[k]? with
+            | some (.group _ _) =>
+              k := k + 1
+              break
+            | some _ => k := k + 1
+            | none => break
+          out := out.push (.defineCmd (preamble.extract i k) pos)
+          i := k
+        | _ =>
+          out := out.push (.defineCmd (preamble.extract i (j + 1)) pos)
+          i := j + 1
       | .ctrl "defineenv" pos =>
-        -- `\defineenv{name}(sig) {begin} {end}`: the native spelling of
-        -- `\newenvironment`. The halves are stored raw and elaborate at
-        -- every `\begin{name}`, around its content, with the parameters
-        -- bound from the groups after the `\begin`.
         i := i + 1
         let j := skipSpaces preamble i
         match preamble[j]? with
@@ -4181,35 +4228,19 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             | some (.group e _) => some e
             | _ => none
           i := if endRaws.isSome then k2 + 1 else k
-          if builtinEnvNames.contains envName then
-            modify fun st => { st with diags := st.diags.push (Diag.of .W0303
-              s!"'\{{envName}}' is built in; this definition is ignored"
-              (some ⟨ctx.file, npos⟩)
-              (help := "the built-in already does this; \\define it under another name")) }
-          else
-            match beginRaws, endRaws with
-            | some b, some e =>
-              let params ← parseSig ctx (rawSrc sigRaws) pos
-              ctx := { ctx with
-                userEnvs := ctx.userEnvs.push
-                  ⟨envName, params, trimRaws b, trimRaws e, ctx.limit⟩
-                envLimit := ctx.userEnvs.size + 1 }
-            | _, _ =>
-              diag ctx .E0303 s!"'\\defineenv \{{envName}}' needs \{begin} and \{end}" pos
+          out := out.push (.defineEnv (some (envName, npos)) (rawSrc sigRaws)
+            beginRaws endRaws pos)
         | _ =>
-          diag ctx .E0303 "expected '\\defineenv {name}(...) {begin} {end}'" pos
+          out := out.push (.defineEnv none "" none none pos)
           i := j + 1
       | .ctrl name pos =>
         i := i + 1
         if let some f := fileMarkerFile? name then
-          ctx := { ctx with file := f }
+          curFile := f
+          out := out.push (.fileMark f)
         else if runningCtrl.contains name then
-          -- `[from = 2]` keeps the opening page clean, as a title page is.
-          -- The option is this declaration's own: it gates the head or foot
-          -- it rides on, never the sibling's, and a redeclaration without
-          -- it resets the gate — a replace is whole, options included.
-          let mut fromPage : Nat := 1
           let mut j := skipSpaces preamble i
+          let mut opts : Option (Array Raw) := none
           if let some (.sym '[' _) := preamble[j]? then
             let mut opt : Array Raw := #[]
             let mut k := j + 1
@@ -4218,64 +4249,25 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               | some (.sym ']' _) => k := k + 1; break
               | some r => opt := opt.push r; k := k + 1
               | none => break
-            for e in Decl.splitEntries (rawSrc opt) do
-              match Decl.splitEntry e with
-              | some ("from", v) =>
-                match v.trimAscii.toString.toNat? with
-                | some n => fromPage := n
-                | none => diag ctx .E0321 s!"'from' needs a page number, got {v.quote}" pos
-              | _ =>
-                diag ctx .E0320 s!"unknown option in \\{name}: {e.quote}" pos
-                  (help := "options: from = <page>")
+            opts := some opt
             j := skipSpaces preamble k
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
-            let content ← elabInlines ctx body
-            -- The whole declaration is one scalar: a second one replaces
-            -- the first, said aloud when their content differs (the same
-            -- store W0343's keyed sites use; a byte-identical repeat is
-            -- silent).
-            let raw := (rawSrc body).trimAscii.toString
-            let store := (← get).seenScalars
-            if let some prev := store.find? (fun e => e.1 == name && e.2.1 == "content") then
-              if prev.2.2 != raw then
-                diag ctx .W0343 s!"a second '\\{name}' replaces the first" (some pos)
-                  (help := s!"one '\\{name}' declares the line; delete the one you do not mean")
-            let store := (store.filter fun e => !(e.1 == name && e.2.1 == "content"))
-            let store := store.push (name, "content", raw)
-            modify fun st => { st with seenScalars := store }
-            if name == "runninghead" then
-              head := some content
-              headFrom := fromPage
-            else
-              foot := some content
-              footFrom := fromPage
+            out := out.push (.running name opts (some body) pos)
           | _ =>
-            diag ctx .E0304 s!"'\\{name}' needs one group of inline content" pos
+            out := out.push (.running name opts none pos)
         else if name == "logo" then
-          -- beamer's `\logo{...}`: one piece of inline content — normally an
-          -- image — placed at the lower-right corner of every page carrying
-          -- running content. The image inside is the same node
-          -- `\includegraphics` makes; only the placement is the deck's.
           let j := skipSpaces preamble i
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
-            let content ← elabInlines ctx body
-            modify fun st => { st with
-              logo := if content.isEmpty then none else some content }
+            out := out.push (.logo (some body) pos)
           | _ =>
-            diag ctx .E0304 "'\\logo' needs one group of inline content" pos
+            out := out.push (.logo none pos)
         else if name == "palette" then
-          -- `\palette[decorative]{...}`: the block's entries are declared
-          -- deliberately low-contrast and exempt from the pairing check. An
-          -- unrecognised option skips the block rather than applying it as
-          -- the base palette -- a variant block applied as base would
-          -- silently restyle the document.
           let mut j := skipSpaces preamble i
-          let mut decorative := false
-          let mut skipBlock := false
+          let mut opts : Option (Array Raw) := none
           if let some (.sym '[' _) := preamble[j]? then
             let mut opt : Array Raw := #[]
             let mut k := j + 1
@@ -4284,219 +4276,526 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               | some (.sym ']' _) => k := k + 1; break
               | some r => opt := opt.push r; k := k + 1
               | none => break
-            for e in Decl.splitEntries (rawSrc opt) do
-              if e == "decorative" then
-                decorative := true
-              else
-                diag ctx .W0316 s!"unknown option in '\\palette': {e.quote}; block skipped" pos
-                  (help := "options: decorative")
-                skipBlock := true
+            opts := some opt
             j := skipSpaces preamble k
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
-            unless skipBlock do
-              let pal ← applyPalette ctx palette (rawSrc body) pos (decorative := decorative)
-              palette := pal
-              ctx := { ctx with palette := pal }
+            out := out.push (.palette opts (some (rawSrc body)) pos)
           | _ =>
-            diag ctx .E0304 "'\\palette' needs a {...} block" pos
+            out := out.push (.palette opts none pos)
         else if name == "style" then
           let j := skipSpaces preamble i
           let j2 := skipSpaces preamble (j + 1)
           match preamble[j]?, preamble[j2]? with
           | some (.group elem _), some (.group body _) =>
             i := j2 + 1
-            styles ← applyStyle ctx styles (rawSrc elem) (rawSrc body) pos
+            out := out.push (.style (some (rawSrc elem, rawSrc body)) pos)
           | _, _ =>
-            diag ctx .E0304 "'\\style' needs {element} and a {...} block" pos
+            out := out.push (.style none pos)
         else if name == "allow" then
-          -- `\allow{W0307, E0502}`: the document accepts the named losses.
-          -- The teeth: an unknown code is an error (a typo must not grant a
-          -- silent blanket), an entry that never fires warns (Main), and
-          -- the acceptance always prints in the build summary.
           let j := skipSpaces preamble i
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
-            for entry in (rawSrc body).splitOn "," do
-              let code := entry.trimAscii.toString
-              if code.isEmpty then continue
-              match DiagCode.ofString? code with
-              | some c =>
-                unless allow.contains c.code do
-                  allow := allow.push c.code
-              | none =>
-                diag ctx .E0329 s!"'\\allow' names no diagnostic code '{code}'" pos
-                  (help := "codes look like 'E0333'; each names the one loss it accepts")
+            out := out.push (.allow (some (rawSrc body)) pos)
           | _ =>
-            diag ctx .E0304 "'\\allow' needs a {...} block of diagnostic codes" pos
+            out := out.push (.allow none pos)
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
-          match preamble[j]? with
-          | some (.group body _) =>
+          let src : Option String := match preamble[j]? with
+            | some (.group body _) => some (rawSrc body)
+            | _ => none
+          if src.isSome then
             i := j + 1
-            let src := rawSrc body
-            if name == "theme" then
-              -- A theme is a named bundle of typed values, installed here
-              -- through the same replace-on-redeclare door the document's
-              -- own declarations use. Everything after this site overrides:
-              -- the theme is a default, never a lock. The install itself is
-              -- `Theme.apply` — values in, values out; this site only
-              -- threads the result back into the loop's state.
-              let tname := src.trimAscii.toString
-              match Theme.find? tname with
-              | some th =>
-                -- The class gates whether furniture draws; the theme only
-                -- supplies its values. A bundle whose chrome or slides
-                -- furniture styles land under a class that never draws
-                -- them would be silently inert, so the install says so —
-                -- the document's own `\chrome` has its own name (W0318).
-                if !docClass.record.chrome then
-                  let inert := (if th.chrome.hasFooter then ["chrome"] else []) ++
-                    ["frametitle", "sectionpage", "standout"].filter
-                      (fun e => (th.styles.find? e).isSome)
-                  unless inert.isEmpty do
-                    diag ctx .W0355
-                      (s!"theme '{tname}' installs slides furniture " ++
-                        s!"({String.intercalate ", " inert}); " ++
-                        s!"the {docClass.name} class never draws it")
-                      (some pos)
-                      (help := "the palette and tokens apply either way; \
-\\documentclass{slides} draws the furniture")
-                let before : Theme.Decls := { palette, tokens, styles, chrome }
-                -- A theme replacing a key the document already declared is
-                -- almost certainly an ordering mistake, not an intent: the
-                -- positional rule says the theme wins, so say so (W0348).
-                -- Judged against what the DOCUMENT declared — a value
-                -- standing from an earlier bundle warns nothing.
-                for (kind, key) in Theme.replaces th before do
-                  if (← get).declaredKeys.contains (kind, key) then
-                    diag ctx .W0348
-                      s!"theme '{tname}' replaces the document's earlier '{key}' from '\\{kind}'"
-                      (some pos)
-                      (help := "overrides go after '\\theme': move the declaration below it")
-                -- The keys the bundle installs now stand from it, not from
-                -- the document, whatever they replaced.
-                let installed := Theme.declares th
-                modify fun st => { st with
-                  declaredKeys := st.declaredKeys.filter (fun e => !installed.contains e) }
-                let s := Theme.apply th before
-                palette := s.palette
-                tokens := s.tokens
-                ctx := { ctx with palette := s.palette, tokens := s.tokens }
-                styles := s.styles
-                chrome := s.chrome
-              | none =>
-                diag ctx .W0319 s!"unknown theme '{tname}'; the document is unthemed"
-                  (some pos)
-                  (help := s!"themes: {String.intercalate ", " Theme.names}")
-            else if name == "assert" then
-              if let some a ← parseAssert ctx src pos then
-                asserts := asserts.push a
-            else if name == "output" then
-              -- Parses its own entries: `formats` is a bare comma list, which
-              -- a generic key/value pre-parse would break apart.
-              output ← applyOutput ctx output src pos
-            else if name == "tokens" then
-              -- Parses its own entries one at a time; a generic pre-parse
-              -- would reject `0.6 * rhythm` before the reference resolves.
-              let tk ← applyTokens ctx tokens src pos
-              tokens := tk
-              ctx := { ctx with tokens := tk }
-            else if name == "chrome" then
-              -- Parses its own entries: slot values are `\sectiontitle`
-              -- spellings a key/value pre-parse would reject.
-              chrome ← applyChrome ctx chrome src pos
-              -- The author has named what the footer band holds: mixing
-              -- the frame and physical sequences there is now declared
-              -- (`footerSequenceDiags`).
-              chromeDeclared := true
-              -- Inert chrome would be a silent failure: only slides draw it.
-              if !docClass.record.chrome then
-                diag ctx .W0318
-                  s!"'\\chrome' is slides furniture; the {docClass.name} class never draws it"
-                  (some pos) (help := "\\runninghead / \\runningfoot are the page furniture")
-            else
-              let (entries, ds) := Decl.parseBlock ctx.file src pos name tokens.entries
-              modify fun st => { st with diags := st.diags ++ ds }
-              if name == "page" then
-                page ← applyPage ctx page entries pos
-                -- Only geometry keys claim the page: `\page{ parskip = ... }`
-                -- keeps the Bringhurst default margin standing (≈ the
-                -- `!sawPage` branch below).
-                if entries.any (pageGeometryKeys.contains ·.key) then
-                  sawPage := true
-              else if name == "fonts" then
-                fonts ← applyFonts ctx fonts entries pos
-              else
-                info ← applyMeta ctx info entries pos
-          | _ =>
-            diag ctx .E0304 s!"'\\{name}' needs a \{...} block" pos
+          match name with
+          | "theme" => out := out.push (.theme src pos)
+          | "assert" => out := out.push (.assert src pos)
+          | "output" => out := out.push (.output src pos)
+          | "tokens" => out := out.push (.tokens src pos)
+          | "chrome" => out := out.push (.chrome src pos)
+          | "page" => out := out.push (.page src pos)
+          | "fonts" => out := out.push (.fonts src pos)
+          | _ => out := out.push (.pdfmeta src pos)
         else if name == "captionsetup" then
-          -- The caption package's option interface (caption manual §2–4).
-          -- `position`/`tableposition`/`figureposition` declare which side
-          -- captions will stand on, so the package can put the skip
-          -- between caption and object (§2.2: the option does not move
-          -- the caption — placement stays source order there too). This
-          -- engine binds `captionsep` to the object side of a caption
-          -- wherever the source puts it, so those declarations already
-          -- hold. Every other key is named and ignored (W0354), one
-          -- warning per key. The `[float type]` scope changes nothing in
-          -- that judgment, so it is skipped.
           let mut j := i
+          let mut unclosed : Option Pos := none
           match scanBracketArg preamble j pos with
           | .took j' => j := j'
-          | .unclosed bpos => warnUnclosed ctx "'\\captionsetup'" bpos
+          | .unclosed bpos => unclosed := some bpos
           | .content => pure ()
           j := skipSpaces preamble j
           match preamble[j]? with
           | some (.group gbody _) =>
             i := j + 1
-            for entry in (rawSrc gbody).splitOn "," do
-              let key := ((entry.splitOn "=").headD "").trimAscii.toString
-              if key.isEmpty then continue
-              unless ["position", "tableposition", "figureposition"].contains key do
-                warnOnce ctx ("captionsetup:" ++ key) .W0354
-                  s!"'\\captionsetup' key '{key}' is not honoured; the caption keeps \
-its declared layout" pos
-                  (help := "\\tokens{ captionsep = ... } declares the caption gap")
+            out := out.push (.captionsetup unclosed (some (rawSrc gbody)) pos)
           | _ =>
-            diag ctx .E0304 "'\\captionsetup' needs a {key = value} block" pos
+            out := out.push (.captionsetup unclosed none pos)
         else if titleCtrls.contains name then
-          -- A declaration-only position: the malformed run is dropped with
-          -- W0310 already pointing at it — the preamble has no content.
-          let (j, _) ← takeTitleDecl ctx name preamble i pos
-          i := j
+          let (j, recovered, _, unclosed) := scanOptArg preamble i pos
+          match preamble[j]? with
+          | some (.group b _) =>
+            i := j + 1
+            out := out.push (.titleDecl name unclosed recovered (some b) pos)
+          | _ =>
+            out := out.push (.titleDecl name unclosed recovered none pos)
+            if recovered then
+              i := j
         else if let some code := reservedCtrl.lookup name then
-          warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
           let (j, unclosed) := skipReservedArgs preamble i pos
           match unclosed with
           | some bpos =>
-            -- The malformed arguments end with the command's line or at the
-            -- next construct on it: the author's next declaration is never
-            -- consumed here.
-            warnUnclosed ctx s!"'\\{name}'" bpos
+            out := out.push (.reserved name code (some bpos) pos)
             i := skipMalformedArgs preamble i pos
-          | none => i := j
+          | none =>
+            out := out.push (.reserved name code none pos)
+            i := j
         else
-          -- Unknown preamble commands are configuration, not content: their
-          -- arguments are skipped with them, never elaborated as stray text.
-          warnOnce ctx ("ctrl:" ++ name) .W0301 s!"unknown command '\\{name}' in the preamble; skipped" pos
-            (help := "\\define \\name(...) {body} declares it")
           let (j, unclosed) := skipReservedArgs preamble i pos (maxGroups := 9)
           match unclosed with
           | some bpos =>
-            warnUnclosed ctx s!"'\\{name}'" bpos
+            out := out.push (.unknownCmd name (some bpos) pos)
             i := skipMalformedArgs preamble i pos
-          | none => i := j
+          | none =>
+            out := out.push (.unknownCmd name none pos)
+            i := j
       | _ =>
         i := i + 1
-        unless textDiagged do
-          diag ctx .E0313 "only declarations may appear before '\\begin{document}'" none
-          textDiagged := true
+        out := out.push .stray
     else
       break
+  return out
+
+/-- Apply one declaration to the fold state: the imperative loop's arm
+bodies over a value, one arm per constructor, no wildcard. Every diagnostic
+the loop emitted is emitted here, in the same order — the scan owns extents
+only. The preamble IS `foldlM applyDecl` over `scanDecls`' values; the
+commutation statement ranges over exactly this function. -/
+private def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
+  match d with
+  | .docclass options cls pos =>
+    let s := { s with sawClass := true }
+    let s := match options with
+      | some o => { s with classOptions := o }
+      | none => s
+    match cls with
+    | some named =>
+      match Ir.DocClass.ofString? named with
+      | some c => return { s with docClass := c }
+      | none =>
+        diag s.ctx .E0309 s!"unknown document class '{named}'" pos
+          (help := "classes: article, slides, card, resume, webpage")
+        return s
+    | none =>
+      diag s.ctx .E0304 "'\\documentclass' needs a {class}" pos
+      return s
+  | .defineCmd decl pos =>
+    -- Through `takeDefine`, the one door the body arm uses too: the
+    -- validation (W0303, E0303, the signature grammar) cannot drift
+    -- between the two positions. The scan carried the declaration's own
+    -- token run; the extent is the scan's, so the returned index is not
+    -- read here.
+    let (cmd?, _) ← takeDefine s.ctx decl 0 pos
+    match cmd? with
+    | some cmd =>
+      return { s with ctx := { s.ctx with
+        user := s.ctx.user.push cmd
+        limit := s.ctx.user.size + 1 } }
+    | none => return s
+  | .defineEnv name sig beginB endB pos =>
+    match name with
+    | some (envName, npos) =>
+      if builtinEnvNames.contains envName then
+        modify fun st => { st with diags := st.diags.push (Diag.of .W0303
+          s!"'\{{envName}}' is built in; this definition is ignored"
+          (some ⟨s.ctx.file, npos⟩)
+          (help := "the built-in already does this; \\define it under another name")) }
+        return s
+      else
+        match beginB, endB with
+        | some b, some e =>
+          let params ← parseSig s.ctx sig pos
+          return { s with ctx := { s.ctx with
+            userEnvs := s.ctx.userEnvs.push
+              ⟨envName, params, trimRaws b, trimRaws e, s.ctx.limit⟩
+            envLimit := s.ctx.userEnvs.size + 1 } }
+        | _, _ =>
+          diag s.ctx .E0303 s!"'\\defineenv \{{envName}}' needs \{begin} and \{end}" pos
+          return s
+    | none =>
+      diag s.ctx .E0303 "expected '\\defineenv {name}(...) {begin} {end}'" pos
+      return s
+  | .fileMark f =>
+    return { s with ctx := { s.ctx with file := f } }
+  | .running name opts body pos =>
+    -- `[from = 2]` keeps the opening page clean, as a title page is.
+    -- The option is this declaration's own: it gates the head or foot
+    -- it rides on, never the sibling's, and a redeclaration without
+    -- it resets the gate — a replace is whole, options included.
+    let mut fromPage : Nat := 1
+    if let some opt := opts then
+      for e in Decl.splitEntries (rawSrc opt) do
+        match Decl.splitEntry e with
+        | some ("from", v) =>
+          match v.trimAscii.toString.toNat? with
+          | some n => fromPage := n
+          | none => diag s.ctx .E0321 s!"'from' needs a page number, got {v.quote}" pos
+        | _ =>
+          diag s.ctx .E0320 s!"unknown option in \\{name}: {e.quote}" pos
+            (help := "options: from = <page>")
+    match body with
+    | some b =>
+      let content ← elabInlines s.ctx b
+      -- The whole declaration is one scalar: a second one replaces
+      -- the first, said aloud when their content differs (the same
+      -- store W0343's keyed sites use; a byte-identical repeat is
+      -- silent).
+      let raw := (rawSrc b).trimAscii.toString
+      let store := (← get).seenScalars
+      if let some prev := store.find? (fun e => e.1 == name && e.2.1 == "content") then
+        if prev.2.2 != raw then
+          diag s.ctx .W0343 s!"a second '\\{name}' replaces the first" (some pos)
+            (help := s!"one '\\{name}' declares the line; delete the one you do not mean")
+      let store := (store.filter fun e => !(e.1 == name && e.2.1 == "content"))
+      let store := store.push (name, "content", raw)
+      modify fun st => { st with seenScalars := store }
+      if name == "runninghead" then
+        return { s with head := some content, headFrom := fromPage }
+      else
+        return { s with foot := some content, footFrom := fromPage }
+    | none =>
+      diag s.ctx .E0304 s!"'\\{name}' needs one group of inline content" pos
+      return s
+  | .logo body pos =>
+    -- beamer's `\logo{...}`: one piece of inline content — normally an
+    -- image — placed at the lower-right corner of every page carrying
+    -- running content. The image inside is the same node
+    -- `\includegraphics` makes; only the placement is the deck's.
+    match body with
+    | some b =>
+      let content ← elabInlines s.ctx b
+      modify fun st => { st with
+        logo := if content.isEmpty then none else some content }
+      return s
+    | none =>
+      diag s.ctx .E0304 "'\\logo' needs one group of inline content" pos
+      return s
+  | .palette opts body pos =>
+    -- `\palette[decorative]{...}`: the block's entries are declared
+    -- deliberately low-contrast and exempt from the pairing check. An
+    -- unrecognised option skips the block rather than applying it as
+    -- the base palette -- a variant block applied as base would
+    -- silently restyle the document.
+    let mut decorative := false
+    let mut skipBlock := false
+    if let some opt := opts then
+      for e in Decl.splitEntries (rawSrc opt) do
+        if e == "decorative" then
+          decorative := true
+        else
+          diag s.ctx .W0316 s!"unknown option in '\\palette': {e.quote}; block skipped" pos
+            (help := "options: decorative")
+          skipBlock := true
+    match body with
+    | some src =>
+      if skipBlock then
+        return s
+      else
+        let pal ← applyPalette s.ctx s.palette src pos (decorative := decorative)
+        return { s with palette := pal, ctx := { s.ctx with palette := pal } }
+    | none =>
+      diag s.ctx .E0304 "'\\palette' needs a {...} block" pos
+      return s
+  | .style args pos =>
+    match args with
+    | some (elem, body) =>
+      let styles ← applyStyle s.ctx s.styles elem body pos
+      return { s with styles := styles }
+    | none =>
+      diag s.ctx .E0304 "'\\style' needs {element} and a {...} block" pos
+      return s
+  | .allow body pos =>
+    -- `\allow{W0307, E0502}`: the document accepts the named losses.
+    -- The teeth: an unknown code is an error (a typo must not grant a
+    -- silent blanket), an entry that never fires warns (Main), and
+    -- the acceptance always prints in the build summary.
+    match body with
+    | some src =>
+      let mut allow := s.allow
+      for entry in src.splitOn "," do
+        let code := entry.trimAscii.toString
+        if code.isEmpty then continue
+        match DiagCode.ofString? code with
+        | some c =>
+          unless allow.contains c.code do
+            allow := allow.push c.code
+        | none =>
+          diag s.ctx .E0329 s!"'\\allow' names no diagnostic code '{code}'" pos
+            (help := "codes look like 'E0333'; each names the one loss it accepts")
+      return { s with allow := allow }
+    | none =>
+      diag s.ctx .E0304 "'\\allow' needs a {...} block of diagnostic codes" pos
+      return s
+  | .theme src pos =>
+    match src with
+    | some src =>
+      -- A theme is a named bundle of typed values, installed here
+      -- through the same replace-on-redeclare door the document's
+      -- own declarations use. Everything after this site overrides:
+      -- the theme is a default, never a lock. The install itself is
+      -- `Theme.apply` — values in, values out; this site only
+      -- threads the result back into the fold's state.
+      let tname := src.trimAscii.toString
+      match Theme.find? tname with
+      | some th =>
+        -- The class gates whether furniture draws; the theme only
+        -- supplies its values. A bundle whose chrome or slides
+        -- furniture styles land under a class that never draws
+        -- them would be silently inert, so the install says so —
+        -- the document's own `\chrome` has its own name (W0318).
+        if !s.docClass.record.chrome then
+          let inert := (if th.chrome.hasFooter then ["chrome"] else []) ++
+            ["frametitle", "sectionpage", "standout"].filter
+              (fun e => (th.styles.find? e).isSome)
+          unless inert.isEmpty do
+            diag s.ctx .W0355
+              (s!"theme '{tname}' installs slides furniture " ++
+                s!"({String.intercalate ", " inert}); " ++
+                s!"the {s.docClass.name} class never draws it")
+              (some pos)
+              (help := "the palette and tokens apply either way; \
+\\documentclass{slides} draws the furniture")
+        let before : Theme.Decls :=
+          { palette := s.palette, tokens := s.tokens
+            styles := s.styles, chrome := s.chrome }
+        -- A theme replacing a key the document already declared is
+        -- almost certainly an ordering mistake, not an intent: the
+        -- positional rule says the theme wins, so say so (W0348).
+        -- Judged against what the DOCUMENT declared — a value
+        -- standing from an earlier bundle warns nothing.
+        for (kind, key) in Theme.replaces th before do
+          if (← get).declaredKeys.contains (kind, key) then
+            diag s.ctx .W0348
+              s!"theme '{tname}' replaces the document's earlier '{key}' from '\\{kind}'"
+              (some pos)
+              (help := "overrides go after '\\theme': move the declaration below it")
+        -- The keys the bundle installs now stand from it, not from
+        -- the document, whatever they replaced.
+        let installed := Theme.declares th
+        modify fun st => { st with
+          declaredKeys := st.declaredKeys.filter (fun e => !installed.contains e) }
+        let ds := Theme.apply th before
+        return { s with
+          palette := ds.palette
+          tokens := ds.tokens
+          styles := ds.styles
+          chrome := ds.chrome
+          ctx := { s.ctx with palette := ds.palette, tokens := ds.tokens } }
+      | none =>
+        diag s.ctx .W0319 s!"unknown theme '{tname}'; the document is unthemed"
+          (some pos)
+          (help := s!"themes: {String.intercalate ", " Theme.names}")
+        return s
+    | none =>
+      diag s.ctx .E0304 "'\\theme' needs a {...} block" pos
+      return s
+  | .assert src pos =>
+    match src with
+    | some src =>
+      if let some a ← parseAssert s.ctx src pos then
+        return { s with asserts := s.asserts.push a }
+      else
+        return s
+    | none =>
+      diag s.ctx .E0304 "'\\assert' needs a {...} block" pos
+      return s
+  | .output src pos =>
+    match src with
+    | some src =>
+      -- Parses its own entries: `formats` is a bare comma list, which
+      -- a generic key/value pre-parse would break apart.
+      let o ← applyOutput s.ctx s.output src pos
+      return { s with output := o }
+    | none =>
+      diag s.ctx .E0304 "'\\output' needs a {...} block" pos
+      return s
+  | .tokens src pos =>
+    match src with
+    | some src =>
+      -- Parses its own entries one at a time; a generic pre-parse
+      -- would reject `0.6 * rhythm` before the reference resolves.
+      let tk ← applyTokens s.ctx s.tokens src pos
+      return { s with tokens := tk, ctx := { s.ctx with tokens := tk } }
+    | none =>
+      diag s.ctx .E0304 "'\\tokens' needs a {...} block" pos
+      return s
+  | .chrome src pos =>
+    match src with
+    | some src =>
+      -- Parses its own entries: slot values are `\sectiontitle`
+      -- spellings a key/value pre-parse would reject.
+      let c ← applyChrome s.ctx s.chrome src pos
+      -- Inert chrome would be a silent failure: only slides draw it.
+      if !s.docClass.record.chrome then
+        diag s.ctx .W0318
+          s!"'\\chrome' is slides furniture; the {s.docClass.name} class never draws it"
+          (some pos) (help := "\\runninghead / \\runningfoot are the page furniture")
+      -- The author has named what the footer band holds: mixing
+      -- the frame and physical sequences there is now declared
+      -- (`footerSequenceDiags`).
+      return { s with chrome := c, chromeDeclared := true }
+    | none =>
+      diag s.ctx .E0304 "'\\chrome' needs a {...} block" pos
+      return s
+  | .page src pos =>
+    match src with
+    | some src =>
+      let (entries, ds) := Decl.parseBlock s.ctx.file src pos "page" s.tokens.entries
+      modify fun st => { st with diags := st.diags ++ ds }
+      let p ← applyPage s.ctx s.page entries pos
+      -- Only geometry keys claim the page: `\page{ parskip = ... }`
+      -- keeps the Bringhurst default margin standing (≈ the
+      -- `!sawPage` branch after the fold).
+      if entries.any (pageGeometryKeys.contains ·.key) then
+        return { s with page := p, sawPage := true }
+      else
+        return { s with page := p }
+    | none =>
+      diag s.ctx .E0304 "'\\page' needs a {...} block" pos
+      return s
+  | .fonts src pos =>
+    match src with
+    | some src =>
+      let (entries, ds) := Decl.parseBlock s.ctx.file src pos "fonts" s.tokens.entries
+      modify fun st => { st with diags := st.diags ++ ds }
+      let f ← applyFonts s.ctx s.fonts entries pos
+      return { s with fonts := f }
+    | none =>
+      diag s.ctx .E0304 "'\\fonts' needs a {...} block" pos
+      return s
+  | .pdfmeta src pos =>
+    match src with
+    | some src =>
+      let (entries, ds) := Decl.parseBlock s.ctx.file src pos "pdfmeta" s.tokens.entries
+      modify fun st => { st with diags := st.diags ++ ds }
+      let m ← applyMeta s.ctx s.info entries pos
+      return { s with info := m }
+    | none =>
+      diag s.ctx .E0304 "'\\pdfmeta' needs a {...} block" pos
+      return s
+  | .captionsetup unclosed body pos =>
+    -- The caption package's option interface (caption manual §2–4).
+    -- `position`/`tableposition`/`figureposition` declare which side
+    -- captions will stand on, so the package can put the skip
+    -- between caption and object (§2.2: the option does not move
+    -- the caption — placement stays source order there too). This
+    -- engine binds `captionsep` to the object side of a caption
+    -- wherever the source puts it, so those declarations already
+    -- hold. Every other key is named and ignored (W0354), one
+    -- warning per key. The `[float type]` scope changes nothing in
+    -- that judgment, so it is skipped.
+    if let some bpos := unclosed then
+      warnUnclosed s.ctx "'\\captionsetup'" bpos
+    match body with
+    | some src =>
+      for entry in src.splitOn "," do
+        let key := ((entry.splitOn "=").headD "").trimAscii.toString
+        if key.isEmpty then continue
+        unless ["position", "tableposition", "figureposition"].contains key do
+          warnOnce s.ctx ("captionsetup:" ++ key) .W0354
+            s!"'\\captionsetup' key '{key}' is not honoured; the caption keeps \
+its declared layout" pos
+            (help := "\\tokens{ captionsep = ... } declares the caption gap")
+      return s
+    | none =>
+      diag s.ctx .E0304 "'\\captionsetup' needs a {key = value} block" pos
+      return s
+  | .titleDecl name unclosed recovered body pos =>
+    -- A declaration-only position: the malformed run is dropped with
+    -- W0310 already pointing at it — the preamble has no content.
+    if let some bpos := unclosed then
+      warnUnclosed s.ctx s!"'\\{name}'" bpos
+    match body with
+    | some b =>
+      let content ← elabInlines s.ctx b
+      modify fun st => match name with
+        | "title" => { st with title := some content }
+        | "subtitle" => { st with subtitle := some content }
+        | "author" => { st with author := some content }
+        | "institute" => { st with institute := some content }
+        | _ => { st with date := some content }
+      return s
+    | none =>
+      if recovered then
+        warnSkippedDecl s.ctx name pos
+        return s
+      else
+        diag s.ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
+        return s
+  | .reserved name code unclosed pos =>
+    warnOnce s.ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
+    if let some bpos := unclosed then
+      -- The malformed arguments end with the command's line or at the
+      -- next construct on it: the author's next declaration is never
+      -- consumed here.
+      warnUnclosed s.ctx s!"'\\{name}'" bpos
+    return s
+  | .unknownCmd name unclosed pos =>
+    -- Unknown preamble commands are configuration, not content: their
+    -- arguments are skipped with them, never elaborated as stray text.
+    warnOnce s.ctx ("ctrl:" ++ name) .W0301
+      s!"unknown command '\\{name}' in the preamble; skipped" pos
+      (help := "\\define \\name(...) {body} declares it")
+    if let some bpos := unclosed then
+      warnUnclosed s.ctx s!"'\\{name}'" bpos
+    return s
+  | .stray =>
+    if s.textDiagged then
+      return s
+    else
+      diag s.ctx .E0313 "only declarations may appear before '\\begin{document}'" none
+      return { s with textDiagged := true }
+
+/-- Elaborate the whole document: split preamble and body around the
+`document` environment, process declarations, then the body. -/
+def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
+  let docIdx := raws.findIdx? fun r =>
+    match r with
+    | .env "document" _ _ => true
+    | _ => false
+  let (preamble, body, trailing) :=
+    match docIdx with
+    | some idx =>
+      let bodyRaws := match raws[idx]! with
+        | .env _ b _ => b
+        | _ => #[]
+      (raws.extract 0 idx, bodyRaws, raws.extract (idx + 1) raws.size)
+    | none => (#[], raws, #[])
+  -- The preamble is a fold: `scanDecls` segments it into declaration
+  -- values, `applyDecl` applies each. The commutation statement (T1)
+  -- quantifies over exactly these values; everything after the fold is a
+  -- function of the fold's result.
+  let s ← (scanDecls file preamble).foldlM applyDecl { ctx := { file := file } }
+  let mut ctx := s.ctx
+  let docClass := s.docClass
+  let sawClass := s.sawClass
+  let classOptions := s.classOptions
+  let mut page := s.page
+  let sawPage := s.sawPage
+  let fonts := s.fonts
+  let palette := s.palette
+  let tokens := s.tokens
+  let mut head := s.head
+  let mut foot := s.foot
+  let headFrom := s.headFrom
+  let footFrom := s.footFrom
+  let styles := s.styles
+  let chrome := s.chrome
+  let chromeDeclared := s.chromeDeclared
+  let mut info := s.info
+  let mut output := s.output
+  let mut asserts := s.asserts
+  let allow := s.allow
   -- A classless .tex builds — the no-preamble pitch needs a bare document
   -- to build, and the article default is a real, sourced page model — but
   -- not silently: the class switches the page model, the furniture
