@@ -562,10 +562,15 @@ def parseTok (t : Tok) (st : PSt) : PSt :=
 end
 
 /-- Evaluation context: the document palette (colour names resolve against
-it) and the picture's `scale=`, per mille. -/
+it), the picture's `scale=`, per mille, the named option bundles its
+`name/.style={...}` options declared, and whether `transform shape` opted
+the nodes into the scale (pgf manual §25.4: transformations do not apply
+to nodes unless `transform shape` is given). -/
 structure Cx where
   pal : Ir.Palette
   scale : Int := 1000
+  styles : List (String × Array Tok) := []
+  transformShape : Bool := false
 
 /-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared
 scale. One multiplication, one rounding division. -/
@@ -731,15 +736,22 @@ private def textOf (env : List (String × Val)) (toks : List Tok) :
     | t => return .error (tokText t)
   return .ok s.trimAscii.toString
 
-/-- `\node[font=\small, text=colour] at (x,y) {text};` — a centred label.
-An option outside the subset loses only itself (named); a node without
-`at` or a readable body loses the node. -/
+/-- `\node[font=\small, text=colour] at (x,y) {text};` — a centred label,
+optionally named (`\node (u) at ...`; the name is parsed and dropped: only
+an edge could consume it, and edges are outside the subset). An option
+outside the subset loses only itself (named); a node without `at` or a
+readable body loses the node. An option naming a declared style bundle
+expands to the bundle's own options, so a loss inside a bundle is named by
+its real spelling, never by the bundle's. -/
 private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     (ev : Ev) : Ev := Id.run do
   let ts := toks.filter (· != .space)
   let mut i := 0
   let mut color := Ir.Color.black
-  let mut scale : Nat := 1000
+  -- `transform shape` opts the node into the picture's scale (pgf manual
+  -- §25.4); `font=` then sets its size relative to that.
+  let factor : Nat := if cx.transformShape && cx.scale > 0 then cx.scale.toNat else 1000
+  let mut scale : Nat := factor
   let mut ev := ev
   if ts[0]? == some (.sym '[') then
     let mut j := 1
@@ -752,11 +764,19 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
       else break
     unless ts[j]? == some (.sym ']') do
       return ev.diag (.E0333, "'\\node' options miss their ']'; the node is not drawn")
+    let mut opts : Array (Array Tok) := #[]
     for opt in splitTop inner ',' do
+      match opt.toList with
+      | [.ident n] =>
+        match cx.styles.lookup n with
+        | some bundle => opts := opts ++ splitTop bundle ','
+        | none => opts := opts.push opt
+      | _ => opts := opts.push opt
+    for opt in opts do
       match opt.toList with
       | .ident "font" :: .sym '=' :: .ctrl size :: [] =>
         match Ir.sizeScale.lookup size with
-        | some k => scale := k
+        | some k => scale := k * factor / 1000
         | none =>
           ev := ev.diag (.W0334, s!"node option 'font=\\{size}' is outside the \
 rendered picture subset; the option is dropped")
@@ -769,6 +789,18 @@ rendered picture subset; the option is dropped")
         ev := ev.diag (.W0334, s!"node option {tokText o} is outside the rendered \
 picture subset; the option is dropped")
     i := j + 1
+  -- A `(name)` before `at` names the node for edges to reference. It is
+  -- recognised only when `at` follows, so a coordinate standing where the
+  -- name would does not read as one.
+  if ts[i]? == some (.sym '(') then
+    let mut j := i + 1
+    for _ in [i+1:ts.size + 1] do
+      if h : j < ts.size then
+        if ts[j] == .sym ')' || ts[j] == .sym '(' then break
+        j := j + 1
+      else break
+    if ts[j]? == some (.sym ')') && ts[j+1]? == some (.ident "at") then
+      i := j + 1
   unless ts[i]? == some (.ident "at") do
     return ev.diag (.W0334, "a '\\node' without 'at (x, y)' is outside the rendered \
 picture subset; the node is not drawn")
@@ -940,6 +972,8 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let toks := ofRaws raws
   let mut scale : Int := 1000
+  let mut styles : List (String × Array Tok) := []
+  let mut transformShape := false
   let mut diags : Array PDiag := #[]
   let mut i := 0
   for _ in [0:toks.size] do
@@ -964,6 +998,23 @@ def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw) :
               diags := diags.push (.E0333, "'scale' must be positive; it is ignored")
             else scale := m
           | .error e => diags := diags.push (.E0333, s!"in 'scale=', {e}; it is ignored")
+        -- `transform shape`: nodes take the picture's scale (pgf manual
+        -- §25.4, "transformations do not apply to nodes" without it).
+        | [.ident "transform", .ident "shape"] => transformShape := true
+        -- `name/.style={...}`: a named option bundle. References to
+        -- earlier bundles expand at the definition, so use-site expansion
+        -- is one level and total whatever the nesting depth.
+        | .ident n :: .sym '/' :: .sym '.' :: .ident "style" :: .sym '=' :: .group g :: [] =>
+          let mut expanded : Array Tok := #[]
+          for part in splitTop (g.toArray.filter (· != .space)) ',' do
+            unless expanded.isEmpty do expanded := expanded.push (.sym ',')
+            match part.toList with
+            | [.ident m] =>
+              match styles.lookup m with
+              | some bundle => expanded := expanded ++ bundle
+              | none => expanded := expanded ++ part
+            | _ => expanded := expanded ++ part
+          styles := (n, expanded) :: styles
         | [] => pure ()
         | o :: _ =>
           diags := diags.push (.W0334, s!"picture option {tokText o} is outside the \
@@ -971,7 +1022,8 @@ rendered picture subset; the option is dropped")
     else
       diags := diags.push (.E0333, "the picture's options miss their ']'")
   let st := parseList (toks.toList.drop i) {}
-  let cx : Cx := { pal := pal, scale := scale }
+  let cx : Cx := { pal := pal, scale := scale
+                   styles := styles, transformShape := transformShape }
   let (_, ev) := evalList cx st.out.toList [] {}
   let all := diags ++ st.bad ++ ev.diags
   -- One message, once: the parse and eval sides dedupe among themselves;

@@ -6529,6 +6529,45 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     (errCodes
       "\\begin{tikzpicture}[scale=0]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}"
       == ["E0333"])
+  -- Named option bundles (`name/.style={...}`) expand where used, so a
+  -- loss inside a bundle is named by its real spelling, never the
+  -- bundle's; a bundle of subset options loses nothing.
+  t "elab picture style bundle of subset options absorbs silently"
+    ((elabStr ("\\begin{document}\\begin{tikzpicture}[lbl/.style={font=\\small, text=black}]\n" ++
+      "\\node[lbl] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
+  t "elab picture style bundle names its outside options, not itself"
+    (((elabStr ("\\begin{document}\\begin{tikzpicture}[b/.style={circle}]\n" ++
+      "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
+      (fun m => hasStr m "'circle'") &&
+     !((elabStr ("\\begin{document}\\begin{tikzpicture}[b/.style={circle}]\n" ++
+      "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
+      (fun m => hasStr m "'b'"))
+  t "elab picture style bundle referencing an earlier bundle expands"
+    ((elabStr ("\\begin{document}\\begin{tikzpicture}[a/.style={font=\\small}, b/.style={a}]\n" ++
+      "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
+  -- A `(name)` before `at` names the node for edges; the node draws.
+  t "elab picture named node draws without a diagnostic"
+    ((elabStr ("\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node (u) at (1,2) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty &&
+     (elabStr ("\\begin{document}\\begin{tikzpicture}\n" ++
+      "\\node (u) at (1,2) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes.size == 1
+        | _ => false))
+  -- `transform shape` opts the nodes into the picture's scale (pgf manual
+  -- §25.4); without it a node keeps its own size.
+  t "elab picture transform shape scales the node's label"
+    (((elabStr ("\\begin{document}\\begin{tikzpicture}[scale=0.5, transform shape]\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes == #[.label 0 0 "x" Ir.Color.black 500]
+        | _ => false)))
+  t "elab picture scale without transform shape leaves the label size alone"
+    (((elabStr ("\\begin{document}\\begin{tikzpicture}[scale=0.5]\n" ++
+      "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
+      (fun b => match b with
+        | .picture pic => pic.shapes == #[.label 0 0 "x" Ir.Color.black 1000]
+        | _ => false)))
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
   t "elab redefine builtin warns and keeps the built-in"
     (warnCodes "\\define \\textbf() {x}\n\\begin{document}y\\end{document}" == ["W0303"])
