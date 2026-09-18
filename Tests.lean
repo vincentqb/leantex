@@ -3600,6 +3600,49 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the palette contract rejects a muted one step weaker"
     (!Contrast.paletteContract weaker)
 
+/-- W0348: a theme replacing a key the document already declared is said,
+naming the theme and the key, and pointing past `\theme` — the positional
+last-writer rule, out loud (audit item 5). It fires only when the loser is
+the document's own declaration with a different value: a theme filling
+untouched keys, a document overriding after `\theme`, a same-value repeat,
+and a bundle replacing an earlier bundle's values all stay silent. -/
+def layerDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let deck (pre : String) : String :=
+    "\\documentclass[aspectratio=169]{slides}\n" ++ pre ++
+    "\n\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}"
+  let ds (pre : String) : Array Diag := (elabStr (deck pre)).2
+  t "a theme replacing a document-declared colour names both"
+    ((ds "\\palette{ alert = #112233 }\\theme{moloch}").any fun d =>
+      d.code == "W0348" && (d.message.splitOn "'alert'").length == 2 &&
+        (d.message.splitOn "moloch").length == 2)
+  t "the help points past theme"
+    ((ds "\\palette{ alert = #112233 }\\theme{moloch}").any fun d =>
+      d.code == "W0348" && ((d.help.getD "").splitOn "\\theme").length == 2)
+  t "a theme filling keys the document never declared is silent"
+    (!(ds "\\theme{moloch}").any (·.code == "W0348"))
+  t "an override after the theme is silent"
+    (!(ds "\\theme{moloch}\\palette{ alert = #112233 }").any (·.code == "W0348"))
+  t "a declaration the theme agrees with replaces nothing"
+    (!(ds "\\palette{ alert = #A55A13 }\\theme{moloch}").any (·.code == "W0348"))
+  t "a second theme replacing the first theme's values is silent"
+    (!(ds "\\theme{plain}\\theme{moloch}").any (·.code == "W0348"))
+  t "a replaced chrome slot is named as its slot"
+    ((ds "\\chrome{ footer = { left = \\framenumber } }\\theme{moloch}").any fun d =>
+      d.code == "W0348" && (d.message.splitOn "footer.left").length == 2)
+  t "a replaced covered fraction is named"
+    ((ds "\\palette{ covered = 50\\% }\\theme{moloch}").any fun d =>
+      d.code == "W0348" && (d.message.splitOn "'covered'").length == 2)
+  t "a replaced element style is named"
+    ((ds "\\style{frametitle}{ font = {\\small} }\\theme{moloch}").any fun d =>
+      d.code == "W0348" && (d.message.splitOn "frametitle").length == 2)
+  t "a replaced token is named"
+    ((ds "\\tokens{ progressheight = 3pt }\\theme{moloch}").any fun d =>
+      d.code == "W0348" && (d.message.splitOn "progressheight").length == 2)
+  t "an untouched element style beside a replaced one stays silent"
+    (((ds "\\style{section}{ before = 3pt }\\theme{moloch}").filter
+      (·.code == "W0348")).isEmpty)
+
 /-- The footer band is reserved, never overlaid: `Geom.bodyBottom` is the one
 place a footer's band comes out of the page, placement reads the bottom only
 from there, and `bodyBottom_clears_footer` is the arithmetic that the
@@ -5188,6 +5231,8 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .W0331 => dvH (dvDoc
       "\\style{itemize}{ marker = {\\includegraphics{rects.png}} }\n"
       "\\begin{itemize}\n\\item a\n\\end{itemize}")
+  | .W0348 => dvE (dvDeck "\\palette{ alert = #112233 }\n\\theme{moloch}\n"
+      "\\begin{frame}{T}\nx\n\\end{frame}")
   | .W0332 => dvE (dvDeck "\\theme{moloch}\n"
       "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}")
   | .W0333 => dvL one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
@@ -8081,6 +8126,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       themeFurnitureChecks ref oneFace
       themeReconcileChecks ref oneFace
       chromeDeclChecks ref
+      layerDiagChecks ref
       footerBandChecks ref oneFace
       chromeFooterChecks ref oneFace
       numberingChecks ref oneFace

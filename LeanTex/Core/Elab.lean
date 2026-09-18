@@ -122,6 +122,12 @@ structure ESt where
   and stays silent. Holds document declarations only: a theme install never
   writes here, so overriding a theme's default never warns. -/
   seenScalars : Array (String × String × String) := #[]
+  /-- Keyed entries the document itself has declared, `(decl, key)`: the
+  store behind W0348, which fires only when a `\theme` install replaces a
+  value standing from one of these. A theme install removes the keys it
+  declares — the standing value is then the bundle's — so `\theme` after
+  `\theme` never claims the document declared what a bundle did. -/
+  declaredKeys : Array (String × String) := #[]
 
 abbrev EM := StateM ESt
 
@@ -1694,6 +1700,13 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   | #[.rule _ _ _] => return #[]
   | _ => return inner
 
+/-- One keyed declaration accepted from the document, remembered for the
+`\theme` site: replacing it there is worth a word (W0348). -/
+private def noteDeclared (decl key : String) : EM Unit :=
+  modify fun st => { st with declaredKeys :=
+    if st.declaredKeys.contains (decl, key) then st.declaredKeys
+    else st.declaredKeys.push (decl, key) }
+
 /-- `\tokens{...}`: named lengths. Entries are walked one at a time so a
 token may be defined by scaling an earlier one (`sep = 0.6 * rhythm`);
 parsing the block in one shot would leave those references unresolved. -/
@@ -1711,8 +1724,12 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
       -- already derived from the old value keep it: references resolve
       -- when the entry is read, in declaration order.
       match Decl.parseValue valueSrc acc.entries with
-      | some (.glue g) => acc := acc.declare key g
-      | some (.dim d) => acc := acc.declare key { width := Dim.Length.ofSp d }
+      | some (.glue g) =>
+        acc := acc.declare key g
+        noteDeclared "tokens" key
+      | some (.dim d) =>
+        acc := acc.declare key { width := Dim.Length.ofSp d }
+        noteDeclared "tokens" key
       | some v =>
         modify fun st => { st with
           diags := st.diags.push (Decl.wrongType ctx.file "tokens" key
@@ -1763,6 +1780,7 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
         | some n =>
           if 1 ≤ n && n ≤ 99 then
             pal := { pal with coveredFraction := some n }
+            noteDeclared "palette" "covered"
           else
             diag ctx .E0332 s!"covered fraction must be 1–99 percent, got '{valueSrc}'" pos
               (help := "the fraction of each covered colour kept over the page; the default is 38\\%")
@@ -1770,16 +1788,17 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
           diag ctx .E0321 s!"cannot read covered fraction: {valueSrc.quote}" pos
             (help := "a percentage like: covered = 38\\%")
       else
-        let put (pal : Palette) (c : Color) : Palette :=
-          pal.declare key c decorative
+        let put (pal : Palette) (c : Color) : EM Palette := do
+          noteDeclared "palette" key
+          return pal.declare key c decorative
         match Decl.parseValue valueSrc with
-        | some (.color r g b) => pal := put pal { r := r, g := g, b := b }
-        | some (.cmyk c m y k) => pal := put pal (Ir.Color.ofCmyk c m y k)
+        | some (.color r g b) => pal := ← put pal { r := r, g := g, b := b }
+        | some (.cmyk c m y k) => pal := ← put pal (Ir.Color.ofCmyk c m y k)
         | v? =>
           -- A name, an alias, or a mix: all read against what is declared
           -- so far, so two names that must never drift apart share a value.
           match pal.resolve valueSrc with
-          | some c => pal := put pal c
+          | some c => pal := ← put pal c
           | none =>
             match v? with
             | some (.ident other) =>
@@ -3167,6 +3186,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
       | _ =>
         modify fun st' => { st' with
           diags := st'.diags.push (Decl.unknownKey ctx.file "style" key styleKeys pos) }
+  noteDeclared "style" element
   return styles.declare element st
 
 /-- `\chrome{ footer = { left = \sectiontitle, right = \framenumber } }`:
@@ -3214,9 +3234,11 @@ private def applyChrome (ctx : Ctx) (c0 : Chrome) (src : String) (pos : Pos) : E
                 match slotKey with
                 | "left" =>
                   noteScalar ctx "chrome" "footer.left" s!"\\{d.label}" pos
+                  noteDeclared "chrome" "footer.left"
                   chrome := { chrome with footerLeft := some d }
                 | "right" =>
                   noteScalar ctx "chrome" "footer.right" s!"\\{d.label}" pos
+                  noteDeclared "chrome" "footer.right"
                   chrome := { chrome with footerRight := some d }
                 | _ =>
                   modify fun st => { st with diags := st.diags.push (Decl.unknownKey
@@ -3658,7 +3680,24 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               let tname := src.trimAscii.toString
               match Theme.find? tname with
               | some th =>
-                let s := Theme.apply th { palette, tokens, styles, chrome }
+                let before : Theme.Decls := { palette, tokens, styles, chrome }
+                -- A theme replacing a key the document already declared is
+                -- almost certainly an ordering mistake, not an intent: the
+                -- positional rule says the theme wins, so say so (W0348).
+                -- Judged against what the DOCUMENT declared — a value
+                -- standing from an earlier bundle warns nothing.
+                for (kind, key) in Theme.replaces th before do
+                  if (← get).declaredKeys.contains (kind, key) then
+                    diag ctx .W0348
+                      s!"theme '{tname}' replaces the document's earlier '{key}' from '\\{kind}'"
+                      (some pos)
+                      (help := "overrides go after '\\theme': move the declaration below it")
+                -- The keys the bundle installs now stand from it, not from
+                -- the document, whatever they replaced.
+                let installed := Theme.declares th
+                modify fun st => { st with
+                  declaredKeys := st.declaredKeys.filter (fun e => !installed.contains e) }
+                let s := Theme.apply th before
                 palette := s.palette
                 tokens := s.tokens
                 ctx := { ctx with palette := s.palette, tokens := s.tokens }

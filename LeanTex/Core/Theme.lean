@@ -239,6 +239,60 @@ def apply (th : Theme) (s : Decls) : Decls :=
     styles := installStyles s.styles th.styles.entries.toList
     chrome := chromeApply th.chrome s.chrome }
 
+/-- Every `(declaration, key)` the bundle installs — `("palette", "alert")`,
+`("chrome", "footer.left")` — whatever stood there before: the keys whose
+standing value is the theme's after `apply`. -/
+def declares (th : Theme) : Array (String × String) := Id.run do
+  let mut out : Array (String × String) := #[]
+  for (k, _) in th.palette.entries do
+    out := out.push ("palette", k)
+  if th.palette.coveredFraction.isSome then
+    out := out.push ("palette", "covered")
+  for (k, _) in th.tokens.entries do
+    out := out.push ("tokens", k)
+  for (element, _) in th.styles.entries do
+    out := out.push ("style", element)
+  if th.chrome.footerLeft.isSome then
+    out := out.push ("chrome", "footer.left")
+  if th.chrome.footerRight.isSome then
+    out := out.push ("chrome", "footer.right")
+  return out
+
+/-- The `(declaration, key)` pairs `apply` would overwrite with a
+*different* value, computed against the same state `apply` consumes: the
+positional last-writer rule says the theme wins them, and W0348's site
+says so out loud when the loser was the document's own declaration. A key
+the theme re-declares at the standing value replaces nothing and is not
+listed. Install order: palette entries, `covered`, tokens, styles,
+chrome. -/
+def replaces (th : Theme) (s : Decls) : Array (String × String) := Id.run do
+  let mut out : Array (String × String) := #[]
+  for (k, c) in th.palette.entries do
+    if let some c0 := s.palette.find? k then
+      if c0 != c then
+        out := out.push ("palette", k)
+  if let some n := th.palette.coveredFraction then
+    if let some m := s.palette.coveredFraction then
+      if n != m then
+        out := out.push ("palette", "covered")
+  for (k, g) in th.tokens.entries do
+    if let some g0 := s.tokens.find? k then
+      if g0 != g then
+        out := out.push ("tokens", k)
+  for (element, st) in th.styles.entries do
+    if let some cur := s.styles.find? element then
+      if styleMerge st cur != cur then
+        out := out.push ("style", element)
+  if let some d := th.chrome.footerLeft then
+    if let some d0 := s.chrome.footerLeft then
+      if d0 != d then
+        out := out.push ("chrome", "footer.left")
+  if let some d := th.chrome.footerRight then
+    if let some d0 := s.chrome.footerRight then
+      if d0 != d then
+        out := out.push ("chrome", "footer.right")
+  return out
+
 /-! ## The layering contract over the install
 
 T1 (`Palette.declare_last_wins`, `Palette.declare_keeps_others` and the
