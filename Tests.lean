@@ -2143,6 +2143,64 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The icon scalar enters the same fallback precompute text does.
   t "docScalars carries the icon scalar" ((Layout.docScalars glyphDoc).contains '\uF09B')
 
+/-- The GSUB small-caps parse, measured over every shipped corpus face: which
+carry `smcp` and `c2sc`, and that the composed map is uniform — a capital and
+its lowercase land on the same small-cap glyph, which is what lets mixed-case
+source render at one height. The presence facts double as the coverage
+premises for the layout checks: real substitution is exercised on a face that
+has the features, synthesis on one that does not. -/
+def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let load (name : String) : IO Font.Font := do
+    match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"smallcaps: {name} unparsable: {e}")
+  let features (name : String) : IO (Bool × Bool × Bool) := do
+    let f ← load name
+    pure (f.hasSmcp, f.hasC2sc, !f.smallCaps.isEmpty)
+  -- Measured presence, per shipped face. The italic Source Serif faces ship
+  -- without small caps; that is the font's own choice, recorded here so a
+  -- change of shipped fixture is a visible test change.
+  t "source serif regular carries smcp+c2sc"
+    ((← features "SourceSerifPro-Regular.otf") == (true, true, true))
+  t "source serif bold carries smcp+c2sc"
+    ((← features "SourceSerifPro-Bold.otf") == (true, true, true))
+  t "fira sans carries smcp+c2sc"
+    ((← features "FiraSans-Regular.otf") == (true, true, true))
+  t "source serif italic carries neither feature"
+    ((← features "SourceSerifPro-RegularIt.otf") == (false, false, false))
+  t "source serif bold italic carries neither feature"
+    ((← features "SourceSerifPro-BoldIt.otf") == (false, false, false))
+  t "open sans carries neither feature"
+    ((← features "OpenSans-Regular.ttf") == (false, false, false))
+  t "source code pro carries neither feature"
+    ((← features "SourceCodePro-Regular.otf") == (false, false, false))
+  t "fira math carries neither feature"
+    ((← features "FiraMath-Regular.otf") == (false, false, false))
+  t "the icon face carries neither feature"
+    ((← features "ExampleIcons-Regular.ttf") == (false, false, false))
+  -- Uniformity of the composed map: for every letter, A and a substitute to
+  -- the same small-cap glyph, distinct from the full capital.
+  let serif ← load "SourceSerifPro-Regular.otf"
+  let fira ← load "FiraSans-Regular.otf"
+  let uniform (f : Font.Font) : Bool := Id.run do
+    for i in [0:26] do
+      let up := (f.gid (Char.ofNat ('A'.toNat + i))).getD 0
+      let low := (f.gid (Char.ofNat ('a'.toNat + i))).getD 0
+      unless f.smallCapGid up == f.smallCapGid low &&
+          f.smallCapGid up != up && f.smallCapGid low != low do
+        return false
+    return true
+  t "source serif maps both cases of every letter to one small-cap glyph"
+    (uniform serif)
+  t "fira sans maps both cases of every letter to one small-cap glyph"
+    (uniform fira)
+  -- A face without the features substitutes nothing: identity, so synthesis
+  -- is the layout's decision, never a half-applied map.
+  let sans ← load "OpenSans-Regular.ttf"
+  t "a face without the features maps every gid to itself"
+    ((sans.gid 'a').all fun g => sans.smallCapGid g == g)
+
 /-- Per-glyph fallback: a scalar the styled face lacks is set from the face
 the driver's map names, at the same size; the diagnostic is one line per
 family+glyph, naming both families; a scalar no face covers is still an
@@ -8744,6 +8802,7 @@ def main (args : List String) : IO UInt32 := do
   fontDiagChecks ref
   declaredFaceChecks ref
   fallbackChecks ref
+  smallCapsGsubChecks ref
   iconChecks ref
   smartChecks ref
   linkHtmlChecks ref

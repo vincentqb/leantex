@@ -134,6 +134,128 @@ private def parseVertVariants (b : ByteArray) : Array (Nat × Array (Nat × Int)
     out := out.push (covered[i]!, vs)
   return out
 
+/-- A 4-byte OpenType tag as a string, for script and feature records. -/
+private def tag4 (b : ByteArray) (off : Nat) : String :=
+  String.ofList ((b.extract off (off + 4)).toList.map fun v => Char.ofNat v.toNat)
+
+/-- The image of `g` under a sorted gid→gid substitution map: the mapped
+gid, or `g` itself when the map does not cover it. Binary search; the map
+is sorted by source gid. -/
+def substGid (map : Array (Nat × Nat)) (g : Nat) : Nat := Id.run do
+  let mut lo := 0
+  let mut hi := map.size
+  for _ in [0:32] do
+    if lo ≥ hi then
+      break
+    let mid := (lo + hi) / 2
+    match map[mid]? with
+    | none => break
+    | some (src, dst) =>
+      if g < src then
+        hi := mid
+      else if g > src then
+        lo := mid + 1
+      else
+        return dst
+  return g
+
+/-- The lookup indices one GSUB feature tag selects, resolved for `latn`
+falling back to `DFLT` and the default language system (OpenType spec,
+GSUB header → ScriptList → LangSys → FeatureList chain). Empty when the
+script, language system, or feature is absent; a script's non-default
+language systems are not read in this slice. -/
+private def gsubFeatureLookups (b : ByteArray) (scriptList featList : Nat)
+    (tag : String) : Array Nat := Id.run do
+  let nScripts := u16 b scriptList
+  let mut latn : Option Nat := none
+  let mut dflt : Option Nat := none
+  for i in [0:nScripts] do
+    let r := scriptList + 2 + 6 * i
+    let off := u16 b (r + 4)
+    if off != 0 then
+      if tag4 b r == "latn" then latn := some (scriptList + off)
+      else if tag4 b r == "DFLT" then dflt := some (scriptList + off)
+  let some script := latn <|> dflt | return #[]
+  let dls := u16 b script
+  if dls == 0 then return #[]
+  let ls := script + dls
+  let featCount := u16 b (ls + 4)
+  let nFeat := u16 b featList
+  let mut lookups : Array Nat := #[]
+  for k in [0:featCount] do
+    let fi := u16 b (ls + 6 + 2 * k)
+    if fi < nFeat then
+      let r := featList + 2 + 6 * fi
+      if tag4 b r == tag then
+        let fo := featList + u16 b (r + 4)
+        let n := u16 b (fo + 2)
+        for j in [0:n] do
+          lookups := lookups.push (u16 b (fo + 4 + 2 * j))
+  return lookups
+
+/-- One GSUB LookupType 1 (single substitution) lookup as a gid→gid map,
+subtable formats 1 (delta) and 2 (explicit list), sorted by source gid.
+Any other lookup type reads as empty: contextual, alternate, ligature,
+and extension lookups are outside this slice. -/
+private def singleSubMap (b : ByteArray) (lookupList lookupIdx : Nat) :
+    Array (Nat × Nat) := Id.run do
+  unless lookupIdx < u16 b lookupList do return #[]
+  let lo := lookupList + u16 b (lookupList + 2 + 2 * lookupIdx)
+  unless u16 b lo == 1 do return #[]
+  let nSub := u16 b (lo + 4)
+  let mut out : Array (Nat × Nat) := #[]
+  for s in [0:nSub] do
+    let so := lo + u16 b (lo + 6 + 2 * s)
+    let cov := parseCoverage b (so + u16 b (so + 2))
+    match u16 b so with
+    | 1 =>
+      let delta := u16 b (so + 4)
+      for g in cov do
+        out := out.push (g, (g + delta) % 0x10000)
+    | 2 =>
+      let n := u16 b (so + 4)
+      for (g, i) in cov.zipIdx do
+        if i < n then
+          out := out.push (g, u16 b (so + 6 + 2 * i))
+    | _ => pure ()
+  return out.qsort fun a c => a.1 < c.1
+
+/-- The small-caps substitution a face offers: whether GSUB carries `smcp`
+(lowercase to small capitals) and `c2sc` (capitals to small capitals) for
+`latn`/`DFLT`, and their composed gid→gid map. The map is built only when
+BOTH features are present — uniform small caps over mixed case needs both,
+and half a mechanism would set neighbouring words at two different
+small-cap shapes — by threading every covered gid through the features'
+lookups in LookupList order, the application order the spec prescribes.
+Sorted by source gid for `substGid`. -/
+private def parseGsubSmallCaps (b : ByteArray) : Bool × Bool × Array (Nat × Nat) := Id.run do
+  let some t := findTable b "GSUB" | return (false, false, #[])
+  unless fits b t && t.length ≥ 10 do return (false, false, #[])
+  let g := t.offset
+  let scriptList := g + u16 b (g + 4)
+  let featList := g + u16 b (g + 6)
+  let lookupList := g + u16 b (g + 8)
+  let smcpLookups := gsubFeatureLookups b scriptList featList "smcp"
+  let c2scLookups := gsubFeatureLookups b scriptList featList "c2sc"
+  let hasSmcp := !smcpLookups.isEmpty
+  let hasC2sc := !c2scLookups.isEmpty
+  unless hasSmcp && hasC2sc do return (hasSmcp, hasC2sc, #[])
+  let dedup (xs : Array Nat) : Array Nat :=
+    (xs.qsort (· < ·)).foldl
+      (fun acc i => if acc.back? == some i then acc else acc.push i) #[]
+  let lookups := dedup (smcpLookups ++ c2scLookups)
+  let maps := lookups.map (singleSubMap b lookupList)
+  let mut dom : Array Nat := #[]
+  for m in maps do
+    for (src, _) in m do
+      dom := dom.push src
+  let mut out : Array (Nat × Nat) := #[]
+  for gid in dedup dom do
+    let cur := maps.foldl (fun cur m => substGid m cur) gid
+    if cur != gid then
+      out := out.push (gid, cur)
+  return (hasSmcp, hasC2sc, out)
+
 /-- A parsed sfnt font: the metrics the layout engine needs, the char→glyph
 map, and the raw bytes for embedding. Pure data; loading the file is the
 driver's job. -/
@@ -192,6 +314,15 @@ structure Font where
   decode. Optical size matching prefers this over the declared `xHeight`
   because OS/2 sxHeight lies in some fonts; decoded once, on first use. -/
   xInkTop : Thunk (Option Int)
+  /-- GSUB carries `smcp` (lowercase to small capitals) for `latn`/`DFLT`.
+  Measured by `parseGsubSmallCaps`; `smallCaps` below is the usable product. -/
+  hasSmcp : Bool
+  /-- GSUB carries `c2sc` (capitals to small capitals) for `latn`/`DFLT`. -/
+  hasC2sc : Bool
+  /-- The composed `smcp`+`c2sc` gid→gid substitution, sorted by source gid.
+  Empty unless the face carries both features (see `parseGsubSmallCaps`);
+  empty means the layout synthesises small caps instead. -/
+  smallCaps : Array (Nat × Nat)
   deriving Inhabited
 
 private def parseCmap4 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × UInt32) := Id.run do
@@ -474,6 +605,7 @@ def parse (data : ByteArray) : Except String Font := do
     for g in [0:numGlyphs] do
       ext := ext.push (Thunk.mk fun _ => src.yExtentAt g)
     return ext
+  let sc := parseGsubSmallCaps data
   return {
     data := data
     isCff := isCff
@@ -502,11 +634,20 @@ def parse (data : ByteArray) : Except String Font := do
     inkExtent := inkExtent
     xInkTop := Thunk.mk fun _ =>
       (gidIn cmap 'x').bind fun g => (src.yExtentAt g).map (·.2)
+    hasSmcp := sc.1
+    hasC2sc := sc.2.1
+    smallCaps := sc.2.2
   }
 
 /-- Glyph id for a scalar, or `none` (missing glyph). -/
 def Font.gid (f : Font) (c : Char) : Option Nat :=
   gidIn f.cmap c
+
+/-- The small-caps form of glyph `g` under this face's `smcp`+`c2sc`
+substitutions, or `g` itself when the face maps it nowhere — a digit or a
+point of punctuation passes through unchanged. -/
+def Font.smallCapGid (f : Font) (g : Nat) : Nat :=
+  substGid f.smallCaps g
 
 /-- The char→glyph ranges of a font image alone, sorted, without parsing the
 rest of it: what the per-glyph fallback scan asks of a candidate face is only
