@@ -416,9 +416,10 @@ def Palette.declare (p : Palette) (key : String) (c : Color)
     (decorative : Bool := false) : Palette :=
   { p with
     entries := (p.entries.filter (·.1 != key)).push (key, c)
-    decorative := if decorative && !p.decorative.contains key then
-        p.decorative.push key
-      else p.decorative }
+    decorative := if decorative then
+        if p.decorative.contains key then p.decorative
+        else p.decorative.push key
+      else p.decorative.filter (· != key) }
 
 /-- Keyed last-wins for colours (T2), the same statement `\tokens` carries:
 the declared colour is the one resolved. -/
@@ -463,6 +464,23 @@ theorem Palette.declare_keeps_others (p : Palette) (k k' : String) (c : Color) (
 /-- A colour override never touches the covered fraction. -/
 theorem Palette.declare_keeps_covered (p : Palette) (k : String) (c : Color) (d : Bool) :
     (p.declare k c d).coveredFraction = p.coveredFraction := rfl
+
+/-- The decorative exemption rides with the declaration: a plain
+redeclaration removes its key from the exempt set, so re-declaring a
+colour without the opt-out restores the contrast check. The exemption is
+WCAG 2.2 SC 1.4.3's decoration exemption, and it excuses the declared
+value — a property of one declaration, never of the key forever: before
+this statement a stale exemption outlived the value it excused, and a
+redeclared colour shipped illegible in silence. -/
+theorem declare_decorative_rides (p : Palette) (k : String) (c : Color) :
+    (p.declare k c false).decorative.contains k = false := by
+  simp [Palette.declare]
+
+/-- The other direction: declaring decorative exempts the key. -/
+theorem declare_decorative_names (p : Palette) (k : String) (c : Color) :
+    (p.declare k c true).decorative.contains k = true := by
+  simp only [Palette.declare, ite_true]
+  by_cases h : k ∈ p.decorative <;> simp [h]
 
 def Color.white : Color := { r := 255, g := 255, b := 255 }
 

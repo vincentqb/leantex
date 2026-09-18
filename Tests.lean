@@ -6563,6 +6563,19 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!(warnCodes ("\\documentclass{article}" ++
       "\\palette[decorative]{ washed = #DDDDDD }" ++
       "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "W0315")
+  -- The decorative exemption is a property of the declaration, not of the
+  -- key: a plain redeclaration replaces the excused value, so it restores
+  -- the contrast check; only redeclaring with the opt-out keeps it.
+  t "a plain redeclaration drops the decorative exemption"
+    ((warnCodes ("\\documentclass{article}" ++
+      "\\palette[decorative]{ washed = #DDDDDD }" ++
+      "\\palette{ washed = #DDDDDD }" ++
+      "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "W0315")
+  t "a decorative redeclaration keeps the exemption"
+    (!(warnCodes ("\\documentclass{article}" ++
+      "\\palette{ washed = #DDDDDD }" ++
+      "\\palette[decorative]{ washed = #DDDDDD }" ++
+      "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "W0315")
   -- An anonymous use (a mixed colour) has no name, so the decorative
   -- escape matches it by value — the help's own printed line must be the
   -- line that silences the warning it rides on.
