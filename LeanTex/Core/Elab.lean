@@ -4171,6 +4171,23 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               let tname := src.trimAscii.toString
               match Theme.find? tname with
               | some th =>
+                -- The class gates whether furniture draws; the theme only
+                -- supplies its values. A bundle whose chrome or slides
+                -- furniture styles land under a class that never draws
+                -- them would be silently inert, so the install says so —
+                -- the document's own `\chrome` has its own name (W0318).
+                if docClass != .slides then
+                  let inert := (if th.chrome.hasFooter then ["chrome"] else []) ++
+                    ["frametitle", "sectionpage", "standout"].filter
+                      (fun e => (th.styles.find? e).isSome)
+                  unless inert.isEmpty do
+                    diag ctx .W0355
+                      (s!"theme '{tname}' installs slides furniture " ++
+                        s!"({String.intercalate ", " inert}); " ++
+                        s!"the {docClass.name} class never draws it")
+                      (some pos)
+                      (help := "the palette and tokens apply either way; \
+\\documentclass{slides} draws the furniture")
                 let before : Theme.Decls := { palette, tokens, styles, chrome }
                 -- A theme replacing a key the document already declared is
                 -- almost certainly an ordering mistake, not an intent: the
