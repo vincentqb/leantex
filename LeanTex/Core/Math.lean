@@ -221,6 +221,64 @@ theorem sizeFor_mono_rank (a b base : Int) (hb : 0 ≤ base) (s s' : MathStyle)
            | exact hscript
            | exact Int.le_trans hscript hbase)
 
+/-- The size the math face sets at beside a body set at `bodySize`, chosen
+so the two x-heights agree: fontspec's `Scale=MatchLowercase` rule — scale
+the incoming face so its lowercase height matches the current font's
+(fontspec manual, "Font selection" § Scale) — as one integer expression.
+`xhB`/`upemB` are the body face's x-height and units per em in font units,
+`xhM`/`upemM` the math face's; the ideal scale factor is
+`(xhB/upemB) · (upemM/xhM)` and the one honest slack is the division
+quantum, bounded by the agreement theorems below. -/
+def mathSize (bodySize xhB upemB xhM upemM : Nat) : Nat :=
+  bodySize * xhB * upemM / (upemB * xhM)
+
+theorem mathSize_le_body_xheight (bodySize xhB upemB xhM upemM : Nat) :
+    mathSize bodySize xhB upemB xhM upemM * xhM / upemM ≤
+      bodySize * xhB * upemM / (upemB * upemM) := by
+  unfold mathSize
+  rw [Nat.div_div_eq_div_mul (bodySize * xhB * upemM) upemB xhM |>.symm]
+  calc bodySize * xhB * upemM / upemB / xhM * xhM / upemM
+      ≤ bodySize * xhB * upemM / upemB / upemM :=
+        Nat.div_le_div_right (Nat.div_mul_le_self _ _)
+    _ = bodySize * xhB * upemM / (upemB * upemM) := Nat.div_div_eq_div_mul ..
+
+/-- One side of optical agreement: at `mathSize`, the math face's x-height
+never exceeds the body's — the match errs toward the body, never past it. -/
+theorem mathSize_matches (bodySize xhB upemB xhM upemM : Nat) (h : 0 < upemM) :
+    mathSize bodySize xhB upemB xhM upemM * xhM / upemM ≤ bodySize * xhB / upemB := by
+  have := mathSize_le_body_xheight bodySize xhB upemB xhM upemM
+  rwa [Nat.mul_div_mul_right _ _ h] at this
+
+/-- The other side: the undershoot is at most one quantum of the integer
+arithmetic — the body's x-height in sp exceeds the scaled math x-height by
+at most 1. The hypotheses hold for every parsed font: `upem` is normalized
+positive at parse and `Font.xHeightOptical` is clamped into `(0, upem]`.
+With `mathSize_matches`: after scaling, the two x-heights agree to within
+one sp — the exact-ratio reading of fontspec's `MatchLowercase`, quantized. -/
+theorem body_xheight_le_mathSize_next (bodySize xhB upemB xhM upemM : Nat)
+    (hB : 0 < upemB) (hM : 0 < xhM) (hle : xhM ≤ upemM) :
+    bodySize * xhB / upemB ≤ mathSize bodySize xhB upemB xhM upemM * xhM / upemM + 1 := by
+  have hupemM : 0 < upemM := Nat.lt_of_lt_of_le hM hle
+  generalize hq : mathSize bodySize xhB upemB xhM upemM = q
+  have h2 : bodySize * xhB * upemM < (q + 1) * (upemB * xhM) :=
+    (Nat.div_lt_iff_lt_mul (Nat.mul_pos hB hM)).mp (by simp [mathSize] at hq; omega)
+  have h1 : bodySize * xhB / upemB * upemB ≤ bodySize * xhB := Nat.div_mul_le_self _ _
+  have h3 : bodySize * xhB / upemB * upemB * upemM < (q + 1) * (upemB * xhM) :=
+    Nat.lt_of_le_of_lt (Nat.mul_le_mul_right upemM h1) h2
+  have h4 : bodySize * xhB / upemB * upemM * upemB < (q + 1) * xhM * upemB := by
+    have e1 : bodySize * xhB / upemB * upemM * upemB
+        = bodySize * xhB / upemB * upemB * upemM := by ac_rfl
+    have e2 : (q + 1) * xhM * upemB = (q + 1) * (upemB * xhM) := by ac_rfl
+    rw [e1, e2]; exact h3
+  have h5 : bodySize * xhB / upemB * upemM < (q + 1) * xhM :=
+    Nat.lt_of_mul_lt_mul_right h4
+  have h6 : bodySize * xhB / upemB * upemM ≤ q * xhM + upemM := by
+    have e : (q + 1) * xhM = q * xhM + xhM := Nat.succ_mul q xhM
+    omega
+  have h7 : bodySize * xhB / upemB ≤ (q * xhM + upemM) / upemM :=
+    (Nat.le_div_iff_mul_le hupemM).mpr h6
+  rwa [Nat.add_div_right _ hupemM] at h7
+
 /-- Inter-atom space: none, thin (3 mu), medium (4 mu), or thick (5 mu),
 where 18 mu is one em of the math font at the current style's size
 (TeXbook p. 168). Set at natural width — the rubber TeX gives `\medmuskip`

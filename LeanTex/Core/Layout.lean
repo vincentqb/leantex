@@ -1375,12 +1375,18 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       -- constants is present.
       match fs.mathFont? with
       | some (idx, font, consts) =>
+        -- The math face sets at the size that makes its x-height the
+        -- surrounding face's — fontspec's `Scale=MatchLowercase`, the rule
+        -- `Math.mathSize` states and its agreement theorems bound to the sp.
+        let around := fs.get (fs.lookup sty.slot sty.bold sty.italic)
+        let runSize := size * sty.scale / 1000
         let e : MathEnv := {
           idx, font, consts
           color := sty.color
           link := sty.link
           underline := sty.underline
-          base := size * sty.scale / 1000 }
+          base := (Math.mathSize runSize.toNat around.xHeightOptical
+            around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
         let (ms, m) := mathItems e display body missing
         missing := m
         items := items ++ ms

@@ -183,6 +183,11 @@ structure Font where
   falls back to nominal metrics. Memoized like `underlineInk`, so only
   glyphs math actually measures ever decode. -/
   inkExtent : Array (Thunk (Option (Int × Int)))
+  /-- Lazily: the measured ink top of this face's own 'x' in font units,
+  from its outline. `none` when the face has no 'x' or the outline does not
+  decode. Optical size matching prefers this over the declared `xHeight`
+  because OS/2 sxHeight lies in some fonts; decoded once, on first use. -/
+  xInkTop : Thunk (Option Int)
   deriving Inhabited
 
 private def parseCmap4 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × UInt32) := Id.run do
@@ -355,6 +360,24 @@ def underlineBand (upem pos thick : Int) : Int × Int :=
   let t := if 0 < thick && thick ≤ upem / 4 then thick else max 1 (upem / 20)
   (p, t)
 
+/-- Glyph id for a scalar in sorted cmap ranges, or `none`. Binary search. -/
+def gidIn (cmap : Array (UInt32 × UInt32 × UInt32)) (c : Char) : Option Nat := Id.run do
+  let x := UInt32.ofNat c.toNat
+  let mut lo := 0
+  let mut hi := cmap.size
+  for _ in [0:32] do
+    if lo >= hi then
+      break
+    let mid := (lo + hi) / 2
+    let (s, e, g) := cmap[mid]!
+    if x < s then
+      hi := mid
+    else if x > e then
+      lo := mid + 1
+    else
+      return some ((g + (x - s)).toNat % 0x10000)
+  return none
+
 def parse (data : ByteArray) : Except String Font := do
   if data.size < 12 then
     throw "not a font file"
@@ -467,25 +490,9 @@ def parse (data : ByteArray) : Except String Font := do
     math := parseMath data
     mathVariants := parseVertVariants data
     inkExtent := inkExtent
+    xInkTop := Thunk.mk fun _ =>
+      (gidIn cmap 'x').bind fun g => (src.yExtentAt g).map (·.2)
   }
-
-/-- Glyph id for a scalar in sorted cmap ranges, or `none`. Binary search. -/
-def gidIn (cmap : Array (UInt32 × UInt32 × UInt32)) (c : Char) : Option Nat := Id.run do
-  let x := UInt32.ofNat c.toNat
-  let mut lo := 0
-  let mut hi := cmap.size
-  for _ in [0:32] do
-    if lo >= hi then
-      break
-    let mid := (lo + hi) / 2
-    let (s, e, g) := cmap[mid]!
-    if x < s then
-      hi := mid
-    else if x > e then
-      lo := mid + 1
-    else
-      return some ((g + (x - s)).toNat % 0x10000)
-  return none
 
 /-- Glyph id for a scalar, or `none` (missing glyph). -/
 def Font.gid (f : Font) (c : Char) : Option Nat :=
@@ -518,6 +525,18 @@ its own outline. `none` for an undecodable outline or a gid past the table;
 the consumer falls back to nominal metrics. Memoized in the font. -/
 def Font.yExtent (f : Font) (g : Nat) : Option (Int × Int) :=
   (f.inkExtent[g]?).bind (·.get)
+
+/-- The x-height optical size matching trusts, in font units: the measured
+ink top of the face's own 'x' when its outline decodes — OS/2 sxHeight lies
+in some fonts — else the declared `xHeight` (sxHeight, half the em last: the
+engine's existing metric fallback order), clamped into `(0, upem]` so
+`Math.mathSize`'s agreement bounds hold for every font the parser accepts. -/
+def Font.xHeightOptical (f : Font) : Nat :=
+  let declared := f.xHeight.toNat
+  let measured := match f.xInkTop.get with
+    | some hi => if 0 < hi then hi.toNat else declared
+    | none => declared
+  (measured.min f.unitsPerEm).max 1
 
 /-- The vertical size variants of glyph `g` — `(glyph id, advance height)`
 in increasing size per the MATH spec — or empty when the face grows it no

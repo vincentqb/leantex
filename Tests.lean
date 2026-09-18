@@ -7070,12 +7070,26 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     math := some 1 }
   let geom : Layout.Geom := {}
   let base := geom.fontSize
+  -- The engine sets the math face at the size that matches its x-height to
+  -- the surrounding face's (`Math.mathSize`); every width below recomputes
+  -- at that size from the font's own tables.
+  let mbase : Dim.Sp := (Math.mathSize base.toNat serif.xHeightOptical
+    serif.unitsPerEm fira.xHeightOptical fira.unitsPerEm : Nat)
+  -- Optical agreement over the shipped pair, in sp: unscaled the two
+  -- x-heights disagree (the mismatch the scaling exists to remove); at
+  -- `mathSize` they agree to the division quantum — `mathSize_matches` and
+  -- `body_xheight_le_mathSize_next`, witnessed on real faces.
+  let bodyXh := (serif.xHeightOptical : Int) * base / serif.unitsPerEm
+  let mathXhAt (sz : Dim.Sp) := (fira.xHeightOptical : Int) * sz / fira.unitsPerEm
+  t "x-heights disagree before scaling" (mathXhAt base != bodyXh)
+  t "x-heights agree after scaling, within one sp"
+    (mathXhAt mbase ≤ bodyXh && bodyXh ≤ mathXhAt mbase + 1)
   let upem : Int := fira.unitsPerEm
   let adv (size : Dim.Sp) (c : Char) : Dim.Sp := (fira.advance c : Int) * size / upem
   let mu (size : Dim.Sp) (n : Int) : Dim.Sp := size * n / 18
   let konst (size : Dim.Sp) (v : Int) : Dim.Sp := v * size / upem
-  let scriptSize := base * 72 / 100
-  let ssSize := base * 58 / 100
+  let scriptSize := mbase * 72 / 100
+  let ssSize := mbase * 58 / 100
   let lineOf (src : String) : Layout.LineOut :=
     let (d, _) := Elab.run "t" src
     (((Layout.run geom mfs none d).pages.flatMap (·.lines))[0]?).getD default
@@ -7084,40 +7098,40 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- the spacing the table gives, in sp, recomputed from the font alone.
   t "box is a box: a+b is two medium spaces"
     (widthOf "$a+b$" ==
-      adv base '𝑎' + mu base 4 + adv base '+' + mu base 4 + adv base '𝑏')
+      adv mbase '𝑎' + mu mbase 4 + adv mbase '+' + mu mbase 4 + adv mbase '𝑏')
   t "leading minus is a sign, not an operation"
-    (widthOf "$-x$" == adv base '−' + adv base '𝑥')
+    (widthOf "$-x$" == adv mbase '−' + adv mbase '𝑥')
   t "relation earns thick space"
     (widthOf "$a=b$" ==
-      adv base '𝑎' + mu base 5 + adv base '=' + mu base 5 + adv base '𝑏')
+      adv mbase '𝑎' + mu mbase 5 + adv mbase '=' + mu mbase 5 + adv mbase '𝑏')
   t "superscript: script size, spaceAfterScript, shifted by the constant"
     (widthOf "$x^2$" ==
-      adv base '𝑥' + adv scriptSize '2' + konst base 41)
+      adv mbase '𝑥' + adv scriptSize '2' + konst mbase 41)
   let supRuns (src : String) : Array (Dim.Sp × Dim.Sp) :=
     (lineOf src).segs.filterMap fun s => match s with
       | .run _ _ _ _ glyphs sz _ raise =>
         if raise != 0 && !glyphs.isEmpty then some (sz, raise) else none
       | _ => none
   t "superscript raise is superscriptShiftUp at the base size"
-    (supRuns "$x^2$" == #[(scriptSize, konst base 400)])
+    (supRuns "$x^2$" == #[(scriptSize, konst mbase 400)])
   t "subscript drop is subscriptShiftDown"
-    (supRuns "$x_i$" == #[(scriptSize, -konst base 350)])
+    (supRuns "$x_i$" == #[(scriptSize, -konst mbase 350)])
   -- Nested scripts: scriptscript size, shifts accumulating, the inner one
   -- scaled at its own base (the script size), cramped nowhere here.
   t "nested superscript reaches scriptscript and stacks its shifts"
     (supRuns "$x^{y^z}$" ==
-      #[(scriptSize, konst base 400),
-        (ssSize, konst base 400 + konst scriptSize 400)])
+      #[(scriptSize, konst mbase 400),
+        (ssSize, konst mbase 400 + konst scriptSize 400)])
   -- Script styles suppress the conditional spacing: the + inside the
   -- superscript gets no medium space.
   t "no medium space inside a script"
     (widthOf "$x^{a+b}$" ==
-      adv base '𝑥' + adv scriptSize '𝑎' + adv scriptSize '+' +
-        adv scriptSize '𝑏' + konst base 41)
+      adv mbase '𝑥' + adv scriptSize '𝑎' + adv scriptSize '+' +
+        adv scriptSize '𝑏' + konst mbase 41)
   -- Both scripts stack at one position: the atom advances by the wider.
   t "sup and sub stack, advancing by the wider"
     (widthOf "$x^a_b$" ==
-      adv base '𝑥' + max (adv scriptSize '𝑎') (adv scriptSize '𝑏') + konst base 41)
+      adv mbase '𝑥' + max (adv scriptSize '𝑎') (adv scriptSize '𝑏') + konst mbase 41)
   -- Variables italic, digits and function names upright (ISO 80000-2 §7,
   -- TeXbook ch. 18): x maps to U+1D465, sin and 2 stay ASCII.
   let glyphChars (src : String) : Array Char :=
@@ -7128,7 +7142,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (glyphChars "$\\sin 2x$" == #['s', 'i', 'n', '2', '𝑥'])
   t "sin binds with a thin space"
     (widthOf "$\\sin x$" ==
-      adv base 's' + adv base 'i' + adv base 'n' + mu base 3 + adv base '𝑥')
+      adv mbase 's' + adv mbase 'i' + adv mbase 'n' + mu mbase 3 + adv mbase '𝑥')
   -- Nothing is silently dropped: a scalar the math face lacks warns,
   -- naming the face.
   let bDoc : Ir.Doc := { body := #[.para #[.formula false "₿"
@@ -7215,15 +7229,15 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- advance the wider part plus \nulldelimiterspace each side.
   t "frac advance is the wider part plus null delimiters"
     (widthOf "$\\frac12$" ==
-      2 * (base * 12 / 100) + max (adv scriptSize '1') (adv scriptSize '2'))
+      2 * (mbase * 12 / 100) + max (adv scriptSize '1') (adv scriptSize '2'))
   t "frac raises its numerator and drops its denominator"
     (match (glyphInfo "$\\frac12$").toList with
       | [('1', _, _, up, _), ('2', _, _, down, _)] => up > 0 && down < 0
       | _ => false)
   t "the fraction bar is fractionRuleThickness thick, as wide as the parts"
     (rules "$\\frac12$" ==
-      #[(max (adv scriptSize '1') (adv scriptSize '2'), konst base 76,
-         konst base 280 - konst base 76 / 2)])
+      #[(max (adv scriptSize '1') (adv scriptSize '2'), konst mbase 76,
+         konst mbase 280 - konst mbase 76 / 2)])
   -- The radical: the surd's ink top meets the overbar, radicand under it.
   t "sqrt draws surd and overbar over the radicand"
     ((glyphInfo "$\\sqrt{x}$").any (fun g => g.1 == '\u221A') &&
@@ -7268,23 +7282,23 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       let gs := glyphInfo "\\begin{align*}ab &= c \\\\ x &= yz\\end{align*}"
       let some (_, _, ax, _, _) := gs.find? (fun g => g.1 == '𝑎') | return false
       let some (_, _, xx, _, _) := gs.find? (fun g => g.1 == '𝑥') | return false
-      return xx - ax == (adv base '𝑎' + adv base '𝑏') - adv base '𝑥')
+      return xx - ax == (adv mbase '𝑎' + adv mbase '𝑏') - adv mbase '𝑥')
   t "gather centres its rows on one axis"
     (Id.run do
       let gs := glyphInfo "\\begin{gather*}aaaa \\\\ b\\end{gather*}"
       let some (_, _, ax, _, _) := gs.find? (fun g => g.1 == '𝑎') | return false
       let some (_, _, bx, _, ba) := gs.find? (fun g => g.1 == '𝑏') | return false
-      let w1 := 4 * adv base '𝑎'
+      let w1 := 4 * adv mbase '𝑎'
       return ((2 * bx + ba) - (2 * ax + w1)).natAbs ≤ 2)
   -- Primes and \text.
   t "a prime is a raised superscript prime"
-    ((glyphInfo "$x'$").any fun g => g.1 == '\u2032' && g.2.2.2.1 == konst base 400)
+    ((glyphInfo "$x'$").any fun g => g.1 == '\u2032' && g.2.2.2.1 == konst mbase 400)
   t "text inside math keeps its letters and spaces upright"
     (glyphChars "$\\text{if }x$" == #['i', 'f', ' ', '𝑥'] ||
       glyphChars "$\\text{if }x$" == #['i', 'f', '𝑥'])
   t "operatorname binds like a named function"
     (widthOf "$\\operatorname{foo} x$" ==
-      adv base 'f' + adv base 'o' + adv base 'o' + mu base 3 + adv base '𝑥')
+      adv mbase 'f' + adv mbase 'o' + adv mbase 'o' + mu mbase 3 + adv mbase '𝑥')
   t "setmathfont fills the math slot"
     ((Elab.run "t" ("\\documentclass{article}\\setmathfont{Fira Math}" ++
       "\\begin{document}x\\end{document}")).1.fonts.math == some "Fira Math")
