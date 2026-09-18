@@ -109,6 +109,8 @@ private def blockInto (ind acc : String) : Block → String
     let joined := String.intercalate ("\n" ++ ind ++ ">\n") (trimmed.splitOn "\n\n")
     acc ++ joined ++ "\n\n"
   | .spaced _ body => blocksInto ind acc body.toList
+  -- the role's class is a web styling hook; the twin keeps the content
+  | .role _ body => blocksInto ind acc body.toList
   | .verbatim _ s =>
     let lines := String.intercalate "\n" (verbatimLines s).toList
     acc ++ "```\n" ++ lines ++ "\n```\n\n"

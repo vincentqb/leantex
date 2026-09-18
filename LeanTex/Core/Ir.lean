@@ -904,6 +904,11 @@ inductive Block where
   | center (body : Array Block)
   /-- `\block[before = <len>]{...}`: content with declared space above. -/
   | spaced (before : SymGlue) (body : Array Block)
+  /-- The block half of `Inline.role`: a document-defined command whose
+  expansion is block content (`\entry{...}` producing whole paragraphs)
+  keeps its authored name the same way — `<div class="u-name">` in HTML,
+  a transparent group everywhere else. -/
+  | role (name : String) (body : Array Block)
   /-- `{quote}`/`{quotation}`: a quotation set off from the text by
   indenting both margins by the list indent — classes.dtx defines both as
   `\list{}{\rightmargin\leftmargin}`, so the right edge moves in exactly as
@@ -1760,6 +1765,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
     s!"{ind}list {kind}\n" ++ dumpItems (ind ++ "  ") items.toList
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
   | .quote body => s!"{ind}quote\n" ++ dumpBlocks (ind ++ "  ") body
+  | .role n body => s!"{ind}role {n}\n" ++ dumpBlocks (ind ++ "  ") body
   | .columns cols => s!"{ind}columns\n" ++ dumpColumns (ind ++ "  ") cols.toList
   | .step n last body =>
     s!"{ind}{dumpStepRange n last}\n" ++ dumpBlocks (ind ++ "  ") body
@@ -1980,6 +1986,7 @@ def maxStepBlock : Block → Nat
   | .list _ items => maxStepItems items.toList
   | .center body => maxStepBlockList body.toList
   | .quote body => maxStepBlockList body.toList
+  | .role _ body => maxStepBlockList body.toList
   | .spaced _ body => maxStepBlockList body.toList
   | .columns cols => maxStepColumns cols.toList
   | .step n last body => max (max n (last.getD n)) (maxStepBlockList body.toList)
@@ -2065,6 +2072,7 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
   | .list o items => .list o (dimItems cover k pending #[] items.toList)
   | .center body => .center (dimBlockList cover k pending #[] body.toList)
   | .quote body => .quote (dimBlockList cover k pending #[] body.toList)
+  | .role n body => .role n (dimBlockList cover k pending #[] body.toList)
   | .spaced g body => .spaced g (dimBlockList cover k pending #[] body.toList)
   | .columns cols => .columns (dimColumns cover k pending #[] cols.toList)
   -- The mode flip: a pending step's body covers, and inside a cover a
@@ -2194,6 +2202,7 @@ def unwrapItemStep : Block → Block
   | .list o items => .list o (unwrapItemStepItems #[] items.toList)
   | .center body => .center (unwrapItemStepList #[] body.toList)
   | .quote body => .quote (unwrapItemStepList #[] body.toList)
+  | .role n body => .role n (unwrapItemStepList #[] body.toList)
   | .spaced g body => .spaced g (unwrapItemStepList #[] body.toList)
   | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
   | .step n l body => .step n l (unwrapItemStepList #[] body.toList)
@@ -2267,6 +2276,7 @@ def blockTextOne (acc : String) : Block → String
   | .center body => blockTextList acc body.toList
   -- A quotation's text is real census content, exactly as a paragraph's.
   | .quote body => blockTextList acc body.toList
+  | .role _ body => blockTextList acc body.toList
   | .spaced _ body => blockTextList acc body.toList
   | .columns cols => blockTextColumns acc cols.toList
   | .step _ _ body => blockTextList acc body.toList
@@ -2330,6 +2340,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .list _ items => headingLevelItems out items.toList
   | .center body => headingLevelList out body.toList
   | .quote body => headingLevelList out body.toList
+  | .role _ body => headingLevelList out body.toList
   | .spaced _ body => headingLevelList out body.toList
   | .columns cols => headingLevelColumns out cols.toList
   | .step _ _ body => headingLevelList out body.toList
@@ -2651,6 +2662,9 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
   | .quote body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+  | .role n body =>
+    rw [dimBlock]
+    simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
   | .spaced g body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
@@ -2780,6 +2794,10 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
       blockTextList]
+  | .role n body =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
+      blockTextList]
   | .spaced g body =>
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
@@ -2854,7 +2872,8 @@ def backendNames : List String := ["pdf", "html", "md"]
 /-- Does backend `t` keep this block? Only a conditional can exclude one. -/
 def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
-  | .para _ | .section _ _ _ | .list _ _ | .center _ | .quote _ | .spaced _ _
+  | .para _ | .section _ _ _ | .list _ _ | .center _ | .quote _ | .role _ _
+  | .spaced _ _
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
   | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak
   | .table _ _ _ _ _ | .float _ _ _ _ => true
@@ -2873,6 +2892,7 @@ def keepForOne (t : String) : Block → Block
   | .list o items => .list o (keepForItems t items.toList).toArray
   | .center body => .center (keepForList t body.toList).toArray
   | .quote body => .quote (keepForList t body.toList).toArray
+  | .role n body => .role n (keepForList t body.toList).toArray
   | .spaced g body => .spaced g (keepForList t body.toList).toArray
   | .columns cols => .columns (keepForColumns t cols.toList).toArray
   | .step n l body => .step n l (keepForList t body.toList).toArray
@@ -2935,6 +2955,7 @@ def textLeavesOne (acc : List String) : Block → List String
   | .list _ items => textLeavesItems acc items.toList
   | .center body => textLeavesList acc body.toList
   | .quote body => textLeavesList acc body.toList
+  | .role _ body => textLeavesList acc body.toList
   | .spaced _ body => textLeavesList acc body.toList
   | .columns cols => textLeavesColumns acc cols.toList
   | .step _ _ body => textLeavesList acc body.toList
@@ -2996,6 +3017,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .list _ items => orphanFreeItems avail items.toList
   | .center body => orphanFreeList avail body.toList
   | .quote body => orphanFreeList avail body.toList
+  | .role _ body => orphanFreeList avail body.toList
   | .spaced _ body => orphanFreeList avail body.toList
   | .columns cols => orphanFreeColumns avail cols.toList
   | .step _ _ body => orphanFreeList avail body.toList
@@ -3077,6 +3099,9 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
   | .quote body =>
+    rw [textLeavesOne, textLeavesOne]
+    exact textLeavesList_acc acc body.toList
+  | .role n body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
   | .spaced g body =>
@@ -3239,6 +3264,11 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
     exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
   | .quote body =>
+    intro s hs
+    rw [textLeavesOne] at hs
+    obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
+    exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .role n body =>
     intro s hs
     rw [textLeavesOne] at hs
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
@@ -3426,6 +3456,7 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .list _ items => imageSrcsItems out items.toList
   | .center body => imageSrcsBlockList out body.toList
   | .quote body => imageSrcsBlockList out body.toList
+  | .role _ body => imageSrcsBlockList out body.toList
   | .spaced _ body => imageSrcsBlockList out body.toList
   | .columns cols => imageSrcsColumns out cols.toList
   | .step _ _ body => imageSrcsBlockList out body.toList

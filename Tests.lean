@@ -93,6 +93,12 @@ def classHookChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a palette role and an authored role share a page, each addressable"
     (hasSpan ("style", "color: var(--accent, #205e3b)") bothTree &&
      hasSpan ("class", "u-entry") bothTree)
+  -- The block half: a command whose expansion is block content keeps its
+  -- name on a flow container.
+  let (blockRoleDoc, _) := elabStr
+    (wrap "\\define \\entry(a: content) {\\a\\par}\n" "\\entry{First}\n\\entry{Second}")
+  t "a block-level role is an addressable div"
+    (((HtmlDoc.emit {} blockRoleDoc).1.splitOn "<div class=\"u-entry\">").length == 3)
 
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
@@ -1631,7 +1637,8 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (entry, _) := elabStr ("\\documentclass{article}\\define \\entry(a: content) {\\textbf{\\a}\\par}" ++
     "\\begin{document}\\entry{x}\\entry{y}\\end{document}")
   t "a body ending in par is a block" (entry.body ==
-    #[.para #[.styled .bold #[.text "x"]], .para #[.styled .bold #[.text "y"]]])
+    #[.role "entry" #[.para #[.styled .bold #[.text "x"]]],
+      .role "entry" #[.para #[.styled .bold #[.text "y"]]]])
   t "a trailing forced break is dropped" ((elabStr "a\\\\ \n\nb").1.body ==
     #[.para #[.text "a"], .para #[.text "b"]])
   -- The document's definitions win over every built-in it may redefine;
@@ -6184,7 +6191,9 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "block-producing macro clean" bmDs.isEmpty
   t "block-producing macro yields blocks" (bmDoc.body.size == 2 &&
     bmDoc.body.all fun b => match b with
-      | .spaced _ _ => true
+      | .role "entry" body => body.all fun inner => match inner with
+        | .spaced _ _ => true
+        | _ => false
       | _ => false)
   -- An inline-only macro must stay inline, or it would split the paragraph.
   let inlineMacro := "\\documentclass{article}\n" ++

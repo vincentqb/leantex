@@ -32,21 +32,22 @@ center
       text "alex@example.org · example.org · github.com/adoe"
 section* 1
   text "Experience"
-block before 1800/1000ex plus 720/1000ex minus 360/1000ex
-  para
-    styled bold
-      text "Example Corp"
-    text " | "
-    styled bold
-      text "Staff Engineer"
-    text " "
-    fill
-    color muted #71717A
-      text "2021–present"
-    linebreak
-    color muted #71717A
-      styled italic
-        text "Platform"
+role role
+  block before 1800/1000ex plus 720/1000ex minus 360/1000ex
+    para
+      styled bold
+        text "Example Corp"
+      text " | "
+      styled bold
+        text "Staff Engineer"
+      text " "
+      fill
+      color muted #71717A
+        text "2021–present"
+      linebreak
+      color muted #71717A
+        styled italic
+          text "Platform"
 list unordered
   item
     para
@@ -54,33 +55,35 @@ list unordered
   item
     para
       text "Deleted more code than was added, on purpose, twice."
-block before 1800/1000ex plus 720/1000ex minus 360/1000ex
-  para
-    styled bold
-      text "Widgets Ltd"
-    text " | "
-    styled bold
-      text "Engineer"
-    text " "
-    fill
-    color muted #71717A
-      text "2017–2021"
+role role
+  block before 1800/1000ex plus 720/1000ex minus 360/1000ex
+    para
+      styled bold
+        text "Widgets Ltd"
+      text " | "
+      styled bold
+        text "Engineer"
+      text " "
+      fill
+      color muted #71717A
+        text "2017–2021"
 list unordered
   item
     para
       text "Shipped widgets; measured them; shipped better widgets."
 section* 1
   text "Education"
-block before 1800/1000ex plus 720/1000ex minus 360/1000ex
-  para
-    styled bold
-      text "Example University"
-    text " | "
-    styled bold
-      text "PhD, Applied Mathematics"
-    text " "
-    fill
-    color muted #71717A
-      text "2013–2017"
+role role
+  block before 1800/1000ex plus 720/1000ex minus 360/1000ex
+    para
+      styled bold
+        text "Example University"
+      text " | "
+      styled bold
+        text "PhD, Applied Mathematics"
+      text " "
+      fill
+      color muted #71717A
+        text "2013–2017"
 -- diagnostics
 (none)

@@ -34,41 +34,44 @@ center
       text " alex@example.org · example.org"
 section* 1
   text "Experience"
-para
-  styled bold
-    text "Example Corp"
-  text " | "
-  styled bold
-    text "Staff Engineer"
-  text " "
-  fill
-  color muted #72727F
-    text "2021–present"
-para
-  color muted #72727F
-    styled italic
-      text "Platform"
+role role
+  para
+    styled bold
+      text "Example Corp"
+    text " | "
+    styled bold
+      text "Staff Engineer"
+    text " "
+    fill
+    color muted #72727F
+      text "2021–present"
+  para
+    color muted #72727F
+      styled italic
+        text "Platform"
 list unordered
   item
     para
       text "Made a slow thing 10% faster and proved it stayed correct."
 block before 1800/1000ex plus 800/1000ex minus 400/1000ex
-para
-  styled bold
-    text "Widgets Ltd"
-  text " | "
-  styled bold
-    text "Engineer"
-  text " "
-  fill
-  color muted #72727F
-    text "2017–2021"
+role role
+  para
+    styled bold
+      text "Widgets Ltd"
+    text " | "
+    styled bold
+      text "Engineer"
+    text " "
+    fill
+    color muted #72727F
+      text "2017–2021"
 section* 1
   text "Education"
-para
-  styled bold
-    text "PhD Applied Mathematics"
-  text ", Example University"
+role degree
+  para
+    styled bold
+      text "PhD Applied Mathematics"
+    text ", Example University"
 para
   underline
     text "Selected honours"

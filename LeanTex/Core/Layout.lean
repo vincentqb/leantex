@@ -893,6 +893,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     scalarTextItems { out with texts := out.texts.push (ListMark.scalars ordered level) } itemD enumD items.toList
   | .center body => scalarTextList out itemD enumD body.toList
   | .quote body => scalarTextList out itemD enumD body.toList
+  | .role _ body => scalarTextList out itemD enumD body.toList
   | .spaced _ body => scalarTextList out itemD enumD body.toList
   | .columns cols => scalarTextCols out itemD enumD cols.toList
   | .step _ _ body => scalarTextList out itemD enumD body.toList
@@ -2937,6 +2938,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     | none => a
   | .center body =>
     collectCentered a pats fs body.toList indent
+  -- A role is a name for the HTML class hook; the page it does not touch:
+  -- the body collects exactly as it would unwrapped (role_transparent_layout).
+  | .role _ body =>
+    collectBlocks a pats fs body indent
   | .quote body =>
     -- A quotation is set off by indenting both margins by the list indent:
     -- classes.dtx defines quote and quotation as `\list{}{\rightmargin

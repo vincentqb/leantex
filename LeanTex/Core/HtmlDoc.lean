@@ -1086,6 +1086,10 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem tag (listItemsInto cfg #[] items.toList)
   | .center body =>
     Html.elem "div" (blockNodesInto cfg #[] body.toList) #[("class", "centered")]
+  -- The block half of the class hook: the authored name as a class on a
+  -- generic flow container, through the typed tree and the escaper.
+  | .role n body =>
+    Html.elem "div" (blockNodesInto cfg #[] body.toList) #[("class", roleClass n)]
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>

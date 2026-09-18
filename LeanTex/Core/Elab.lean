@@ -2050,11 +2050,17 @@ a side channel, never slide content" npos
           | some (k, cmd) =>
             -- Block-producing user command: bind its arguments, then
             -- elaborate the body as blocks so `\block` inside a definition
-            -- works instead of reporting E0312.
+            -- works instead of reporting E0312. A parameterized command's
+            -- expansion wraps in its name, as at the inline splice: the
+            -- role survives at whichever level its content lives.
             let (bindings, j) ← takeArgs ctx cmd.params n raws i pos
             i := j
             let callCtx : Ctx := { ctx with limit := k, args := bindings }
-            blocks := blocks ++ (← elabBlocks callCtx cmd.body)
+            let expanded ← elabBlocks callCtx cmd.body
+            if cmd.params.isEmpty then
+              blocks := blocks ++ expanded
+            else
+              blocks := blocks.push (.role cmd.name expanded)
           | none =>
           if overlayCtrls.contains n || n == "alt" then
             -- Block-level overlay: the step wrapper survives at block

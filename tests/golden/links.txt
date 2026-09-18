@@ -36,21 +36,23 @@ para
     link "https://example.org/three"
       text "a bold link"
   text " works, and a link may wrap across a line break because its rectangle is emitted per line rather than per word."
-block before 1600/1000ex plus 400/1000ex
-  para
-    styled bold
-      text "Example Corp"
-    text "  |  Staff Engineer"
-    fill
-    color muted #71717A
-      text "2021–present"
-block before 1600/1000ex plus 400/1000ex
-  para
-    styled bold
-      text "Widgets Ltd"
-    text "  |  Engineer"
-    fill
-    color muted #71717A
-      text "2017–2021"
+role entry
+  block before 1600/1000ex plus 400/1000ex
+    para
+      styled bold
+        text "Example Corp"
+      text "  |  Staff Engineer"
+      fill
+      color muted #71717A
+        text "2021–present"
+role entry
+  block before 1600/1000ex plus 400/1000ex
+    para
+      styled bold
+        text "Widgets Ltd"
+      text "  |  Engineer"
+      fill
+      color muted #71717A
+        text "2017–2021"
 -- diagnostics
 (none)
