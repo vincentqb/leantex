@@ -327,6 +327,21 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
 def since (t0 : Nat) : IO Nat := do
   return (← IO.monoMsNow) - t0
 
+/-- Where the markdown twin is written: `outPath`, unless the document
+declared its served name (`\output{ md = "llms.txt" }`) — the declared
+name replaces the stem-derived one in the same directory, so the HTML
+head's alternate link and the file on disk cannot drift apart. An explicit
+`-o twin.md` file still wins: the command line outranks the document. -/
+def mdOutPath (output : Option String) (outputIsDir : Bool) (source : String)
+    (declared : Option String) : String :=
+  let base := outPath output outputIsDir source .md
+  match declared with
+  | some name =>
+    if (output.bind emitOfPath) == some Emit.md then base
+    else ((System.FilePath.mk base).parent.getD "." / name).toString
+  | none => base
+
+
 /-- The image request an elaborated document states (`Ir.imageRefs`),
 fulfilled: each path resolves against the document's own directory, like
 `\input`, and decodes in the pure core. A file that is missing or refuses
@@ -572,7 +587,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           -- The markdown twin, when one is being written beside the page,
           -- is linked from the head as the alternate representation.
           mdHref := if emit.contains .md then
-              (System.FilePath.mk (outPath ui.cfg.output outIsDir file .md)).fileName
+              (System.FilePath.mk (mdOutPath ui.cfg.output outIsDir file
+                doc.output.md)).fileName
             else none
         }
         let (html, hdiags) := HtmlDoc.emit hcfg doc
@@ -587,7 +603,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       if emit.contains .md then
         let t ← IO.monoMsNow
         let md := MarkdownDoc.emit doc
-        let mdPath := outPath ui.cfg.output outIsDir file .md
+        let mdPath := mdOutPath ui.cfg.output outIsDir file doc.output.md
         IO.FS.writeFile mdPath md
         written := written.push mdPath
         ui.phase "markdown" s!"{md.utf8ByteSize} bytes" (← since t)

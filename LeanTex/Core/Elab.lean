@@ -2940,11 +2940,17 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
           String.ofList (v.toList.drop 1).dropLast
         else v
       o := { o with stylesheet := some v }
+    | some ("md", v) =>
+      inFormats := false
+      let v := if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
+          String.ofList (v.toList.drop 1).dropLast
+        else v
+      o := { o with md := some v }
     | some (key, _) =>
       inFormats := false
       modify fun st => { st with
         diags := st.diags.push (Decl.unknownKey ctx.file "output" key
-          ["formats", "css", "stylesheet"] pos) }
+          ["formats", "css", "stylesheet", "md"] pos) }
     | none =>
       if inFormats then
         o ← addFormat o entry

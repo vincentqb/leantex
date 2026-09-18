@@ -299,6 +299,13 @@ structure OutputSpec where
   css mode (the link comes after the inline styles, so the named sheet wins
   ties). -/
   stylesheet : Option String := none
+  /-- The markdown twin's written file name (`md = "llms.txt"`): the twin
+  exists for the llms.txt convention (llmstxt.org), whose name is fixed,
+  and the HTML head's alternate link must name the file as served — a
+  build that renames the output after the fact breaks that link, so the
+  name is declared where the build intent lives. Undeclared, the twin
+  takes the source's stem. -/
+  md : Option String := none
   deriving Repr, BEq, Inhabited
 
 /-- Document metadata, as declared by `\pdfmeta` — the one record every

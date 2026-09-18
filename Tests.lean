@@ -977,6 +977,23 @@ def landmarkChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!ddiags.any fun d =>
       (d.message.splitOn "#TOP").length > 1 || (d.message.splitOn "'#'").length > 1)
 
+/-- The markdown twin's declared name: `\output{ md = "llms.txt" }` rides
+the one OutputSpec, so the driver writes the twin as served and the head's
+alternate link cannot drift from the file. -/
+def mdNameChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr ("\\documentclass{article}" ++
+    "\\output{ formats = html, md, md = \"llms.txt\" }" ++
+    "\\begin{document}x\\end{document}")
+  t "md name source clean" ds.isEmpty
+  t "the declared twin name is on the output spec" (doc.output.md == some "llms.txt")
+  let (page, _) := HtmlDoc.emit { mdHref := some "llms.txt" } doc
+  t "the head's alternate link names the served file"
+    (((page.splitOn "rel=\"alternate\" type=\"text/markdown\" href=\"llms.txt\"").length) ≥ 2)
+  t "an unknown output key is still named"
+    (errCodes ("\\documentclass{article}\\output{ pdfx = yes }" ++
+      "\\begin{document}x\\end{document}") == ["E0322"])
+
 /-- The pinned placement and the declared reveal: a labeled nav names its
 landmark instance (so it never counts toward W0325), a pin becomes
 `position: fixed` at the declared corner and offset — read by the HTML
@@ -1511,6 +1528,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   backendChecks ref
   landmarkChecks ref
   pinChecks ref
+  mdNameChecks ref
   interactionChecks ref
   motionSiteChecks ref
 
