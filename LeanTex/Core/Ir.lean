@@ -1551,7 +1551,9 @@ def ChromeSlot.render (s : ChromeSlot) (sectionTitle : Array Inline)
 /-- Page furniture a theme (or the document, via `\chrome`) declares: the
 slide footer's two slots. A document's own `\runningfoot` overrides the
 whole footer; a slot left undeclared is empty. Redeclaring `\chrome`
-replaces, as `\palette` and `\tokens` do, so a theme stays a default. -/
+merges per slot, and a theme's chrome installs through the same per-slot
+merge (`Theme.apply`) — a theme fills the slots the document left empty,
+and naming one slot never clears its sibling. -/
 structure Chrome where
   footerLeft : Option ChromeSlot := none
   footerRight : Option ChromeSlot := none

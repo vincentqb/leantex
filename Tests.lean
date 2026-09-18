@@ -3522,6 +3522,35 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a document's chrome refines the theme's footer per slot" (oDs.isEmpty &&
     oDoc.chrome.footerLeft == some .sectionTitle &&
     oDoc.chrome.footerRight == some .frameNumber)
+  -- The install direction of the same per-slot contract: a bundle fills
+  -- the slots it declares and only those (`Theme.apply`), never the band
+  -- wholesale. Both shipped bundles declare both slots, so the wholesale
+  -- clobber is only observable through a single-slot bundle — which is
+  -- exactly what makes this the load-bearing test: it fails under
+  -- `chrome := th.chrome`.
+  let leftOnly : Theme.Theme := { name := "left-only"
+                                  palette := {}
+                                  tokens := {}
+                                  styles := {}
+                                  chrome := { footerLeft := some .sectionTitle } }
+  t "a bundle's chrome fills only the slots it declares"
+    ((Theme.apply leftOnly { chrome := { footerRight := some .frameNumber } }).chrome ==
+      { footerLeft := some .sectionTitle, footerRight := some .frameNumber })
+  t "a bundle with no chrome keeps the document's band"
+    ((Theme.apply { name := "bare"
+                    palette := {}
+                    tokens := {}
+                    styles := {} }
+      { chrome := { footerLeft := some .frameFraction } }).chrome ==
+      { footerLeft := some .frameFraction })
+  -- The positional rule at the theme site: a theme declared after the
+  -- document's \chrome wins the slots it names, per slot, the same
+  -- last-writer rule every palette entry follows.
+  let (bDoc, _) := elabStr (deck
+    "\\chrome{ footer = { right = \\framefraction } }\\theme{moloch}" frame)
+  t "a theme after the document's chrome wins per slot"
+    (bDoc.chrome.footerLeft == some .sectionTitle &&
+     bDoc.chrome.footerRight == some .frameNumber)
   -- The sketch's spelling and the beamer lineage's name one datum.
   t "slidenumber and framenumber are one datum"
     ((elabStr (deck "\\chrome{ footer = { right = \\framenumber } }" frame)).1.chrome ==

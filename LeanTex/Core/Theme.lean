@@ -213,16 +213,19 @@ document's own blocks use (`Palette.declare`, `Tokens.declare`,
 `Styles.declare`), the bundle's covered fraction rides with its palette
 (`<|>`: a document's earlier `covered = <n>\%` yields, its later one
 overrides), styles merge key-wise onto any entry already declared, and the
-bundle's chrome installs the whole band when it declares one. Values in,
-values out, no elaborator state — effects as data: `Elab` calls exactly
-this function at the `\theme` site, so a statement about layering ranges
-over the install the engine runs. -/
+bundle's chrome merges per slot — a slot the bundle declares wins, as any
+later declaration does, and a slot it leaves silent keeps the document's,
+instead of the band replacing wholesale. Values in, values out, no
+elaborator state — effects as data: `Elab` calls exactly this function at
+the `\theme` site, so a statement about layering ranges over the install
+the engine runs. -/
 def apply (th : Theme) (s : Decls) : Decls :=
   let pal := installPalette s.palette th.palette.entries.toList
   { palette := { pal with
       coveredFraction := th.palette.coveredFraction <|> pal.coveredFraction }
     tokens := installTokens s.tokens th.tokens.entries.toList
     styles := installStyles s.styles th.styles.entries.toList
-    chrome := if th.chrome.hasFooter then th.chrome else s.chrome }
+    chrome := { footerLeft := th.chrome.footerLeft <|> s.chrome.footerLeft
+                footerRight := th.chrome.footerRight <|> s.chrome.footerRight } }
 
 end LeanTex.Core.Theme
