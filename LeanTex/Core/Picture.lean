@@ -973,7 +973,7 @@ rendered picture subset; the option is dropped")
   let st := parseList (toks.toList.drop i) {}
   let cx : Cx := { pal := pal, scale := scale }
   let (_, ev) := evalList cx st.out.toList [] {}
-  let all := st.bad ++ ev.diags
+  let all := diags ++ st.bad ++ ev.diags
   -- One message, once: the parse and eval sides dedupe among themselves;
   -- this joins them under the same rule.
   let mut seen : Array String := #[]

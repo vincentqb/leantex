@@ -6518,6 +6518,17 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- cannot render is named per construct instead of dropped whole.
   t "elab tikzpicture no longer earns the blanket W0307"
     (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0334"])
+  -- The boundary is named, never silent — for the option bracket too: a
+  -- picture option outside the subset is W0334, an unusable value inside
+  -- it E0333, exactly as the statement walk already has it.
+  t "elab picture option outside the subset is named"
+    (warnCodes
+      "\\begin{tikzpicture}[banana]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}"
+      == ["W0334"])
+  t "elab picture scale that cannot hold is named"
+    (errCodes
+      "\\begin{tikzpicture}[scale=0]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}"
+      == ["E0333"])
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
   t "elab redefine builtin warns and keeps the built-in"
     (warnCodes "\\define \\textbf() {x}\n\\begin{document}y\\end{document}" == ["W0303"])
