@@ -204,17 +204,6 @@ theorem heading_hierarchy (g : Geom) (hfs : 0 < g.fontSize) :
     sectionSize g 1 > sectionSize g 2 ∧ sectionSize g 2 ≥ g.fontSize := by
   sorry
 
--- owed: unwrap_item_steps_text
--- owner: LeanTex.Core.Ir
--- source: arch-faithful I1 (dim/shade conservation is proved in Ir.lean; this is the one remaining public IR-to-IR walk without its conservation theorem)
--- blocker: none structural — the same accumulator-lemma-then-mutual-induction pattern as `dimBlocks_text`; the chain lemmas (`plainTextList_append`, `blockTextList_chain`) are private to Ir.lean, so the proof lands there, not here.
--- goldens: no
-/-- Unwrapping item steps loses no text: the marker pre-pass flattens a
-leading `\item<2->` wrapper, it never drops the item's content. -/
-theorem unwrap_item_steps_text (xs : Array Ir.Block) :
-    Ir.blocksText (Ir.unwrapItemSteps xs) = Ir.blocksText xs := by
-  sorry
-
 -- owed: take_args_consumes_forward
 -- owner: LeanTex.Core.Elab
 -- source: arch-provable I6; PLAN's phase-split design (the measure: definition-time expansion limit, then suffix length)

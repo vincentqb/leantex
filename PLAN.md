@@ -82,8 +82,6 @@ list.
   declare title-page alignment and separator.
 - `heading_hierarchy` — arch-design I3: false today (`sectionSize` is
   loose constants); discharging it moves goldens ~0.4 pt.
-- `unwrap_item_steps_text` — the one public IR walk still missing its
-  text-conservation theorem.
 - `take_args_consumes_forward` — the progress half of the elaborator's
   termination measure, stated against the phase split that discharges it.
 

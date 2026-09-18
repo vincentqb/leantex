@@ -2037,6 +2037,14 @@ def dimInline (cover : Cover) (k : Nat) : Inline → Inline
 
 end
 
+/-- The item flatten itself: a leading `.step` wrapper opens into its item,
+the body standing where the wrapper stood. Named so its text conservation
+is one lemma, not a case buried inside the walk. -/
+def flattenLeadStep (item : Array Block) : Array Block :=
+  match item[0]? with
+  | some (Block.step _ _ body) => body ++ item.extract 1 item.size
+  | _ => item
+
 mutual
 
 /-- Inside a list item, a leading `.step` (an overlay `\item<2->`) is pure
@@ -2079,11 +2087,8 @@ def unwrapItemStepItems (out : Array (Array Block)) :
     List (Array Block) → Array (Array Block)
   | [] => out
   | item :: rest =>
-    let item := unwrapItemStepList #[] item.toList
-    let item := match item[0]? with
-      | some (Block.step _ _ body) => body ++ item.extract 1 item.size
-      | _ => item
-    unwrapItemStepItems (out.push item) rest
+    unwrapItemStepItems
+      (out.push (flattenLeadStep (unwrapItemStepList #[] item.toList))) rest
 
 def unwrapItemStepCols (out : Array (Option Nat × Array Block)) :
     List (Option Nat × Array Block) → Array (Option Nat × Array Block)
@@ -2717,6 +2722,121 @@ The union of what the steps show is therefore the whole content. -/
 theorem dimBlocks_text (cover : Cover) (k : Nat) (xs : Array Block) :
     blocksText (dimBlocks cover k xs) = blocksText xs := by
   simp [blocksText, dimBlocks, dimBlockList_text cover k xs.toList #[] "",
+    blockTextList]
+
+-- The item-step flatten: unwrapping loses no text. A leading `\item<2->`
+-- wrapper opens into its item, nothing recoloured, nothing reordered, so
+-- the block census is fixed. Same accumulator-lemma-then-mutual-induction
+-- shape as the shade and dim walks above.
+
+private theorem flattenLeadStep_text (item : Array Block) (acc : String) :
+    blockTextList acc (flattenLeadStep item).toList
+      = blockTextList acc item.toList := by
+  unfold flattenLeadStep
+  split
+  next n l body h =>
+    have h0 : item.toList[0]? = some (Block.step n l body) := by simpa using h
+    cases wl : item.toList with
+    | nil => simp [wl] at h0
+    | cons y rest =>
+      rw [wl] at h0
+      simp only [List.getElem?_cons_zero, Option.some.injEq] at h0
+      subst h0
+      have hlen : item.size - 1 = rest.length := by
+        have h1 := congrArg List.length wl
+        simp at h1
+        omega
+      simp [wl, hlen, blockTextList, blockTextList_chain, blockTextOne]
+  next => rfl
+
+mutual
+
+theorem unwrapItemStepList_text (xs : List Block) (out : Array Block)
+    (acc : String) :
+    blockTextList acc (unwrapItemStepList out xs).toList
+      = blockTextList (blockTextList acc out.toList) xs := by
+  match xs with
+  | [] => simp [unwrapItemStepList, blockTextList]
+  | b :: rest =>
+    rw [unwrapItemStepList, unwrapItemStepList_text rest]
+    simp [blockTextList, blockTextList_chain, unwrapItemStep_text b]
+
+theorem unwrapItemStep_text (b : Block) (acc : String) :
+    blockTextOne acc (unwrapItemStep b) = blockTextOne acc b := by
+  match b with
+  | .list o items =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepItems_text items.toList #[] acc,
+      blockTextItems]
+  | .center body =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
+      blockTextList]
+  | .quote body =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
+      blockTextList]
+  | .spaced g body =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
+      blockTextList]
+  | .columns cols =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepCols_text cols.toList #[] acc,
+      blockTextColumns]
+  | .step n l body =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
+      blockTextList]
+  | .only targets body =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
+      blockTextList]
+  | .nav body =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
+      blockTextList]
+  | .frame t s v body =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
+      blockTextList]
+  | .float k ca body caption =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
+      blockTextList]
+  | .para _ | .section _ _ _ | .verbatim _ _ | .note _ | .framefoot _
+  | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
+
+theorem unwrapItemStepItems_text (items : List (Array Block))
+    (out : Array (Array Block)) (acc : String) :
+    blockTextItems acc (unwrapItemStepItems out items).toList
+      = blockTextItems (blockTextItems acc out.toList) items := by
+  match items with
+  | [] => simp [unwrapItemStepItems, blockTextItems]
+  | item :: rest =>
+    rw [unwrapItemStepItems, unwrapItemStepItems_text rest]
+    simp [blockTextItems, blockTextItems_chain, flattenLeadStep_text,
+      unwrapItemStepList_text item.toList #[], blockTextList]
+
+theorem unwrapItemStepCols_text (cols : List (Option Nat × Array Block))
+    (out : Array (Option Nat × Array Block)) (acc : String) :
+    blockTextColumns acc (unwrapItemStepCols out cols).toList
+      = blockTextColumns (blockTextColumns acc out.toList) cols := by
+  match cols with
+  | [] => simp [unwrapItemStepCols, blockTextColumns]
+  | (w, body) :: rest =>
+    rw [unwrapItemStepCols, unwrapItemStepCols_text rest]
+    simp [blockTextColumns, blockTextColumns_chain,
+      unwrapItemStepList_text body.toList #[], blockTextList]
+
+end
+
+/-- Unwrapping item steps loses no text: the marker pre-pass flattens a
+leading `\item<2->` wrapper, it never drops the item's content. The last
+public IR-to-IR walk gains its conservation theorem (arch-faithful I1). -/
+theorem unwrapItemSteps_text (xs : Array Block) :
+    blocksText (unwrapItemSteps xs) = blocksText xs := by
+  simp [blocksText, unwrapItemSteps, unwrapItemStepList_text xs.toList #[] "",
     blockTextList]
 
 -- Backend conditionals: `keepFor` is one backend's view of the document,
