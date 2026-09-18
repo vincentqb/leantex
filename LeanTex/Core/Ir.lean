@@ -3168,8 +3168,8 @@ theorem unwrapItemSteps_text : Conserves blocksText unwrapItemSteps := fun xs =>
 -- delete. Structural recursion through `List`, as the walks above.
 
 /-- The backend names an `{ifbackend}` target may spell: one per emitter,
-exactly the values the CLI's `--emit` accepts (`Cli.Args.emitOne` mirrors
-this list, and each backend passes its own entry to `keepFor`). -/
+exactly the values `\output{ formats = ... }` accepts (`Cli.Args.emitOne`
+mirrors this list, and each backend passes its own entry to `keepFor`). -/
 def backendNames : List String := ["pdf", "html", "md"]
 
 /-- Does backend `t` keep this block? Only a conditional can exclude one. -/

@@ -241,7 +241,8 @@ theorem artifact_flag_free (cfg cfg' : Config)
 
 /-- Where a backend writes. A directory keeps the source's stem; a file
 naming this backend's extension is used as-is; anything else (the other
-backend's file, under `--emit pdf,html`) falls back beside the source. -/
+backend's file, when `\output` declares several formats) falls back
+beside the source. -/
 def outPath (output : Option String) (outputIsDir : Bool) (source : String)
     (e : Emit) : String :=
   let besideSource := (System.FilePath.mk source).withExtension e.ext |>.toString
