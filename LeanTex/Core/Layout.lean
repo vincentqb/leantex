@@ -535,6 +535,10 @@ private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
   | .mono => { sty with slot := 2 }
   | .sans => { sty with slot := 1 }
   | .smallcaps => { sty with smallcaps := true }
+  | .roman => { sty with slot := 0 }
+  | .medium => { sty with bold := false }
+  -- NFSS shapes are exclusive (fntguide §2.2): upright clears both.
+  | .upright => { sty with italic := false, smallcaps := false }
   | .normal => {}
   | .size n => match Ir.sizeScale.lookup n with
     | some k => { sty with scale := k }

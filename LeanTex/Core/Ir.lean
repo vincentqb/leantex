@@ -769,6 +769,16 @@ inductive Style where
   | emph
   | sans
   | normal
+  /-- The roman (serif) family: NFSS's `\rmfamily`/`\textrm`, the body slot.
+  Family selection only — series and shape stand. -/
+  | roman
+  /-- The medium series: `\mdseries`/`\textmd` turns bold off without
+  touching family or shape. -/
+  | medium
+  /-- The upright shape: `\upshape`/`\textup`. NFSS shapes are exclusive
+  (fntguide §2.2: upright, italic, slanted, small caps are one axis), so
+  selecting upright clears italic and small caps both. -/
+  | upright
   | size (name : String)
   deriving Repr, BEq
 
@@ -831,6 +841,9 @@ def Style.label : Style → String
   | .emph => "emph"
   | .sans => "sans"
   | .normal => "normal"
+  | .roman => "roman"
+  | .medium => "medium"
+  | .upright => "upright"
   | .size n => s!"size:{n}"
 
 inductive Inline where

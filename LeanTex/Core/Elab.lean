@@ -254,13 +254,30 @@ private def fileMarkerFile? (name : String) : Option String :=
   if name.startsWith "@file:" then some ((name.drop "@file:".length).toString)
   else none
 
+/-- The NFSS font axes, one row per axis value with its two spellings — the
+declaration (`{\bfseries …}`) and the one-argument text command
+(`\textbf{…}`) — as fntguide §2.2's table of font-change commands gives
+them (LaTeX2e font selection: family roman/sans/typewriter, series
+medium/bold, shape upright/italic/slanted/small-caps, plus the default and
+`\em`). `argStyles` and `declStyles` derive from this table, so the two
+spellings cannot disagree; they once did as two hand lists (`\scshape` in,
+`\textsc` out). The slanted shape sets italic: the engine's face model
+carries upright and italic variants, the substitution NFSS itself makes
+when a face has no slanted shape. -/
+def fontAxes : List (String × String × Style) :=
+  [("rmfamily", "textrm", .roman), ("sffamily", "textsf", .sans),
+   ("ttfamily", "texttt", .mono),
+   ("mdseries", "textmd", .medium), ("bfseries", "textbf", .bold),
+   ("upshape", "textup", .upright), ("itshape", "textit", .italic),
+   ("slshape", "textsl", .italic), ("scshape", "textsc", .smallcaps),
+   ("normalfont", "textnormal", .normal), ("em", "emph", .emph)]
+
 def argStyles : List (String × Style) :=
-  [("textbf", .bold), ("textit", .italic), ("texttt", .mono), ("emph", .emph)]
+  fontAxes.map fun (_, arg, s) => (arg, s)
 
 def declStyles : List (String × Style) :=
-  [("bfseries", .bold), ("itshape", .italic), ("ttfamily", .mono),
-   ("scshape", .smallcaps), ("sffamily", .sans), ("sans", .sans),
-   ("normalfont", .normal)] ++
+  (fontAxes.map fun (decl, _, s) => (decl, s)) ++
+  [("sans", .sans)] ++
   (["tiny", "scriptsize", "footnotesize", "small", "normalsize", "large",
     "Large", "LARGE", "huge", "Huge"].map fun n => (n, Style.size n))
 

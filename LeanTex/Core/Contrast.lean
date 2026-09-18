@@ -205,6 +205,7 @@ private def UseCx.large (cx : UseCx) : Bool :=
 
 private def UseCx.style (cx : UseCx) : Style → UseCx
   | .bold => { cx with bold := true }
+  | .medium => { cx with bold := false }
   | .normal => { cx with size := cx.base, bold := false }
   | .size n => match sizeScale.lookup n with
     | some k => { cx with size := cx.base * k / 1000 }

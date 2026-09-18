@@ -84,8 +84,8 @@ grep over this file — `("class", "…")` literals, the `rowClass`/`cls`
 builders, `styleClass`, and the `size-` names `styleClass` derives from
 `Ir.sizeScale`; `roleClass_engine_disjoint` is the reason the list exists. -/
 def engineClasses : List String :=
-  ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "section-number",
-   "equation", "eqnum",
+  ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up",
+   "section-number", "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
    "bt-light-above", "centered", "column", "columns", "content", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
@@ -242,6 +242,9 @@ private def markerStyleDecls : Style → Option (Array String)
   | .mono => some #["font-family: var(--font-mono);"]
   | .sans => some #["font-family: var(--font-sans);"]
   | .smallcaps => some #["font-variant-caps: all-small-caps;"]
+  | .roman => some #["font-family: var(--font-body);"]
+  | .medium => some #["font-weight: 400;"]
+  | .upright => some #["font-style: normal;", "font-variant-caps: normal;"]
   | .normal => some #[]
   | .size name => (Ir.sizeScale.lookup name).map fun k =>
       #[s!"font-size: {decMilli k}em;"]
@@ -948,6 +951,11 @@ def baseCss (doc : Doc) : String :=
   "  grid-template-columns: minmax(0, 1fr) max-content; }\n" ++
   ".entry-rows { display: flex; flex-direction: column; }\n" ++
   ".sans { font-family: var(--font-sans); }\n" ++
+  -- The other font-axis classes (fntguide §2.2 through `Ir.Style`): roman
+  -- family, medium series, upright shape — each resets exactly its axis.
+  ".rm { font-family: var(--font-body); }\n" ++
+  ".md { font-weight: 400; }\n" ++
+  ".up { font-style: normal; font-variant-caps: normal; }\n" ++
   ".ruled::after { content: \"\"; flex: 1; border-top: 1px solid var(--rule-color); }\n" ++
   -- Uniform small caps (CSS Fonts 4 §font-variant-caps: `all-small-caps`
   -- asks for c2sc + smcp), so mixed-case source sets at one height and the
@@ -1027,6 +1035,9 @@ private def styleClass : Style → String
   | .emph => "em"
   | .sans => "sans"
   | .normal => "normal"
+  | .roman => "rm"
+  | .medium => "md"
+  | .upright => "up"
   | .size n => "size-" ++ n
 
 mutual
