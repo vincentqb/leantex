@@ -79,7 +79,7 @@ def dropped (o : Out) : Bool :=
 -- owed: emission_conservation_paras
 -- owner: LeanTex.Core.Layout
 -- source: arch-provable I4 (the theorem whose absence let six user-visible defects ship); arch-faithful refactor 3
--- blocker: this is the weak public form. The strong form — #(renderable leaves of a block) = #(Op.para emitted by collectBlock) — is unstatable outside Layout.lean: `Acc`, `Op`, `collectBlock` are private, and `Acc` is one 14-field record (arch-provable R3 splits it). Proving even this form needs `itemsOfInlines` refactored into folds returning (items, dropped) with dropped fully reported (arch-faithful R3) and `B`'s writers narrowed to commit/pushSibling/finishPage.
+-- blocker: this is the weak public form. The strong form — #(renderable leaves of a block) = #(Op.para emitted by collectBlock) — is unstatable outside Layout.lean: `Acc`, `Op`, `collectBlock` are private, and `Acc` has grown to a 24-field record since this was written (arch-provable R3 splits it into reader/writer/state). Proving even this form needs `itemsOfInlines` refactored into folds returning (items, dropped) with dropped fully reported (arch-faithful R3) and `B`'s writers narrowed to commit/pushSibling/finishPage — then the collect-walk induction over roughly a dozen mutually threading collect* functions.
 -- goldens: no
 /-- Emission conservation, weak public form: a document of plain text
 paragraphs (no head, no foot, no hyphenation) ships exactly the ink it
@@ -95,7 +95,7 @@ theorem emission_conservation_paras
 -- owed: page_background_survives
 -- owner: LeanTex.Core.Layout
 -- source: arch-provable I5 (page conservation; the fill-vanishing bug — B.commit rebuilt the page with only its lines, PLAN 2026-09-16 themed entry — is its counterexample)
--- blocker: this is the weak observable form. The strong form — lines+fills committed to `B` equal lines+fills in `B.pages` after the final finishPage — is unstatable outside Layout.lean: `B` is private and 18+ fields wide, with `pageShrink` maintained half in placeLine and half in commit. Provable once `B`'s writers are the named trio.
+-- blocker: this is the weak observable form. The strong form — lines+fills committed to `B` equal lines+fills in `B.pages` after the final finishPage — is unstatable outside Layout.lean: `B` is private and has grown to 24 fields, with `pageShrink` maintained half in placeLine and half in commit (still true). Provable once `B`'s writers are the named trio.
 -- goldens: no
 /-- Every page of a document that declares a `bg` palette entry ships a
 full-page fill: what the walk attaches to a page survives to that page's
