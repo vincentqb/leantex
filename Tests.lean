@@ -977,6 +977,66 @@ def landmarkChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!ddiags.any fun d =>
       (d.message.splitOn "#TOP").length > 1 || (d.message.splitOn "'#'").length > 1)
 
+/-- The pinned placement and the declared reveal: a labeled nav names its
+landmark instance (so it never counts toward W0325), a pin becomes
+`position: fixed` at the declared corner and offset — read by the HTML
+backend alone, the PDF has no viewport — and a declared reveal ships the
+scroll-driven CSS (`@supports`, declarative where the platform has it) and
+the constant script fallback, judged over the emitted tree. Invented
+content. -/
+def pinChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let has (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+  let pinnedSrc := "\\documentclass{article}\\begin{document}" ++
+    "\\begin{nav}\\href{#one-head}{One}\\end{nav}" ++
+    "\\begin{nav}[label = Return to top, pin = bottom right, " ++
+    "offset = 1.5em, reveal = 300px]\\href{#top}{Up}\\end{nav}" ++
+    "\\section*{One Head}x\\end{document}"
+  let (doc, ds) := elabStr pinnedSrc
+  let (page, pds) := HtmlDoc.emit {} doc
+  t "pinned nav source and page are clean" (ds.isEmpty && pds.isEmpty)
+  t "a labeled nav names its landmark and never counts toward W0325"
+    (has page "<nav aria-label=\"Return to top\"" &&
+      !pds.any (·.code == "W0325"))
+  t "the pin is fixed positioning at the declared corner and offset"
+    (has page "position: fixed; bottom: 1.5em; right: 1.5em")
+  t "the declared reveal range rides as a custom property, in points"
+    (has page "--reveal-range: 225pt")
+  t "the reveal ships its declarative form and its script fallback"
+    (has page "@supports (animation-timeline: scroll())" &&
+      has page "@keyframes ltx-reveal" && has page "CSS.supports")
+  t "the script fallback is the engine constant, and it carries no '<'"
+    (HtmlDoc.revealScriptClean && has page "js-reveal")
+  -- No reveal declared: none of the machinery ships.
+  let (plain, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\begin{nav}\\href{#one-head}{One}\\end{nav}\\section*{One Head}x\\end{document}")
+  let (plainPage, _) := HtmlDoc.emit {} plain
+  t "no declared reveal, no reveal css and no script"
+    (!has plainPage "ltx-reveal" && !has plainPage "CSS.supports")
+  -- A reveal another backend owns ships nothing here: judged over the tree.
+  let (kept, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\begin{ifbackend}{pdf}\\begin{nav}[label = Up, pin = bottom right, " ++
+    "reveal = scroll]\\href{#one-head}{Up}\\end{nav}\\end{ifbackend}" ++
+    "\\section*{One Head}x\\end{document}")
+  let (keptPage, _) := HtmlDoc.emit {} kept
+  t "a reveal another backend owns ships nothing on this page"
+    (!has keptPage "ltx-reveal" && !has keptPage "CSS.supports")
+  -- The markdown twin keeps a pinned nav transparent, as any nav.
+  t "markdown keeps a pinned nav transparent" (has (MarkdownDoc.emit doc) "[Up](#top)")
+  -- Declaration mistakes are named, never silent.
+  t "offset or reveal without a pin is named as ignored"
+    (warnCodes ("\\documentclass{article}\\begin{document}" ++
+      "\\begin{nav}[reveal = scroll]\\href{#a-head}{A}\\end{nav}" ++
+      "\\section*{A Head}x\\end{document}") == ["W0110"])
+  t "a corner that is not two edge words is E0321"
+    (errCodes ("\\documentclass{article}\\begin{document}" ++
+      "\\begin{nav}[pin = sideways]\\href{#a-head}{A}\\end{nav}" ++
+      "\\section*{A Head}x\\end{document}") == ["E0321"])
+  t "an unknown nav key is E0322"
+    (errCodes ("\\documentclass{article}\\begin{document}" ++
+      "\\begin{nav}[sticky = yes]\\href{#a-head}{A}\\end{nav}" ++
+      "\\section*{A Head}x\\end{document}") == ["E0322"])
+
 /-- Interaction states are style keys, not a subsystem: `hover`/`focus`
 colour an element's links in that state, `motion` is the transition between
 them, and a declared motion cannot ship unguarded (`HtmlDoc.motionCss`;
@@ -1450,6 +1510,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   markdownChecks ref
   backendChecks ref
   landmarkChecks ref
+  pinChecks ref
   interactionChecks ref
   motionSiteChecks ref
 

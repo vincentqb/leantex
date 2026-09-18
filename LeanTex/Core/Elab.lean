@@ -2354,7 +2354,83 @@ the column shares the leftover" cpos
           else if n == "nav" then
             -- `{nav}`: the navigation landmark — a group of links, content
             -- rather than a widget; the links inside are ordinary `\href`s.
-            blocks := blocks.push (.nav (← elabBlocks ctx body))
+            -- The optional argument declares the instance's own facts:
+            -- `label` (its accessible name; ARIA Landmark Regions asks a
+            -- repeated landmark for a unique label), `pin` (a viewport
+            -- corner: two words, `bottom right`), `offset` (a length off
+            -- both pinned edges), and `reveal` (`scroll`, or the scroll
+            -- length after which the nav is fully revealed). `offset` and
+            -- `reveal` ride the pin: without one they are named as ignored.
+            let mut spec : Ir.NavSpec := {}
+            let mut rest := body
+            if let .took k := scanBracketArg body 0 pos then
+              let j0 := skipSpaces body 0
+              let inner := rawSrc (body.extract (j0 + 1) (k - 1))
+              rest := body.extract k body.size
+              let mut pinned : Option (Bool × Bool) := none
+              let mut offset : Option Dim.SymGlue := none
+              let mut reveal := false
+              let mut revealBy : Option Dim.SymGlue := none
+              for e in Decl.splitEntries inner do
+                match Decl.splitEntry e with
+                | some ("label", v) =>
+                  spec := { spec with label := some v }
+                | some ("pin", v) =>
+                  let words := ((v.split Char.isWhitespace).toList.map
+                    (·.toString)).filter (!·.isEmpty)
+                  let vEdge := words.find? (fun w => w == "top" || w == "bottom")
+                  let hEdge := words.find? (fun w => w == "left" || w == "right")
+                  match vEdge, hEdge with
+                  | some ve, some he =>
+                    if words.length == 2 then
+                      pinned := some (ve == "top", he == "left")
+                    else
+                      diag ctx .E0321
+                        s!"cannot read a corner for 'pin' in 'nav': {v.quote}" (some pos)
+                        (help := "a pin is a corner: two words, like \
+pin = bottom right")
+                  | _, _ =>
+                    diag ctx .E0321
+                      s!"cannot read a corner for 'pin' in 'nav': {v.quote}" pos
+                      (help := "a pin is a corner: two words, like \
+pin = bottom right")
+                | some ("offset", v) =>
+                  match Decl.parseGlue v with
+                  | some g => offset := some g
+                  | none =>
+                    diag ctx .E0321
+                      s!"cannot read a length for 'offset' in 'nav': {v.quote}" (some pos)
+                      (help := "lengths look like 1.5em or 12pt")
+                | some ("reveal", v) =>
+                  if v.trimAscii.toString == "scroll" then
+                    reveal := true
+                  else
+                    match Decl.parseGlue v with
+                    | some g => reveal := true; revealBy := some g
+                    | none =>
+                      diag ctx .E0321
+                        s!"cannot read 'reveal' in 'nav': {v.quote}" (some pos)
+                        (help := "reveal = scroll shows the nav after one \
+viewport of scrolling; a length (reveal = 300px) shows it after that much")
+                | some (key, _) =>
+                  let d := Decl.unknownKey ctx.file "nav" key
+                    ["label", "pin", "offset", "reveal"] pos
+                  modify fun st => { st with diags := st.diags.push d }
+                | none => pure ()
+              match pinned with
+              | some (top, left) =>
+                spec := { spec with pin := some {
+                  top, left
+                  offset := offset.getD {}
+                  reveal
+                  revealBy } }
+              | none =>
+                if offset.isSome || reveal then
+                  let msg := "'nav' options 'offset' and 'reveal' ride a pin; \
+ignored without one"
+                  warnOnce ctx "nav:unpinned" .W0110 msg pos
+                    (help := "declare the corner too: pin = bottom right")
+            blocks := blocks.push (.nav spec (← elabBlocks ctx rest))
           else if let some (k, env) := lookupUserEnv ctx n then
             -- A defined wrapper at block level: the halves and the content
             -- each contribute their blocks, in order. An inline half becomes

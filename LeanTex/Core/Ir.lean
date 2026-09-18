@@ -764,6 +764,38 @@ theorem padTableRows_rectangular (rows : Array (Array (Array Inline))) (n : Nat)
   simp [Array.size_append]
   omega
 
+/-- A pinned-to-the-viewport placement for a web element: CSS
+`position: fixed` with a declared corner and offset (CSS Positioned Layout
+Module Level 3 §3.3: a fixed-positioned box is attached to the viewport).
+A printed page has no viewport, so the PDF and the markdown twin ignore a
+pin by construction — their walks read the nav's body only (said once
+here, not per consumer). `reveal` keeps the element hidden until the page
+has scrolled past `revealBy` (undeclared: one viewport). The engine's
+reveal changes opacity and visibility only — a fade, not motion, so it
+needs no reduced-motion form (WCAG 2.2 SC 2.3.3 covers motion animation);
+a declared `motion` style key stays the way to animate it, with its guard.
+An undeclared offset is 0 — the exact corner — which is the identity, not
+a design constant; declare one to stand off the edge. -/
+structure Pin where
+  /-- `true` pins to the top edge, `false` to the bottom. -/
+  top : Bool
+  /-- `true` pins to the left edge, `false` to the right. -/
+  left : Bool
+  offset : SymGlue := {}
+  reveal : Bool := false
+  revealBy : Option SymGlue := none
+  deriving Repr, BEq, Inhabited
+
+/-- What a `{nav}` landmark declares about itself, beside its body.
+`label` names the landmark instance (`aria-label`): a landmark role used
+more than once on a page needs a unique label per instance (W3C ARIA
+Authoring Practices, Landmark Regions), and W0325 counts only unlabeled
+navs. `pin` is the pinned placement above. -/
+structure NavSpec where
+  label : Option String := none
+  pin : Option Pin := none
+  deriving Repr, BEq, Inhabited
+
 inductive Block where
   | para (content : Array Inline)
   | section (level : Nat) (starred : Bool) (title : Array Inline)
@@ -813,7 +845,7 @@ inductive Block where
   `navigation` landmark, W3C ARIA Authoring Practices, Landmark Regions);
   the PDF page and the markdown twin have no landmark to mark, so both keep
   the body as a transparent group. -/
-  | nav (body : Array Block)
+  | nav (spec : NavSpec) (body : Array Block)
   /-- beamer's `\logo`, met in the body: a stateful declaration — the pages
   from here on carry this content at their lower-right corner, and an empty
   content clears it (`\logo{}` after a frame is how a deck scopes a logo to
@@ -1614,7 +1646,21 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .note body => s!"{ind}note\n" ++ dumpBlocks (ind ++ "  ") body
   | .only targets body =>
     s!"{ind}only {String.intercalate "," targets.toList}\n" ++ dumpBlocks (ind ++ "  ") body
-  | .nav body => s!"{ind}nav\n" ++ dumpBlocks (ind ++ "  ") body
+  | .nav spec body =>
+    let label := match spec.label with
+      | some l => s!" label {l.quote}"
+      | none => ""
+    let pin := match spec.pin with
+      | some p =>
+        s!" pin {if p.top then "top" else "bottom"} \
+{if p.left then "left" else "right"} offset {dumpGlue p.offset}" ++
+        (if p.reveal then
+          match p.revealBy with
+          | some g => s!" reveal {dumpGlue g}"
+          | none => " reveal scroll"
+        else "")
+      | none => ""
+    s!"{ind}nav{label}{pin}\n" ++ dumpBlocks (ind ++ "  ") body
   | .logo content =>
     if content.isEmpty then s!"{ind}logo clear\n"
     else s!"{ind}logo\n" ++ dumpInlines (ind ++ "  ") content
@@ -1816,7 +1862,7 @@ def maxStepBlock : Block → Nat
   -- Conditional content steps like any other content: a backend that keeps
   -- it must give its overlays their pages. A nav's links may step too.
   | .only _ body => maxStepBlockList body.toList
-  | .nav body => maxStepBlockList body.toList
+  | .nav _ body => maxStepBlockList body.toList
   | .section _ _ _ => 1
   | .verbatim _ _ => 1
   | .note _ => 1
@@ -1891,7 +1937,7 @@ def shadeBlock (cover : Cover) : Block → Block
   | .columns cols => .columns (shadeColumns cover #[] cols.toList)
   | .step n last body => .step n last (shadeBlockList cover #[] body.toList)
   | .only targets body => .only targets (shadeBlockList cover #[] body.toList)
-  | .nav body => .nav (shadeBlockList cover #[] body.toList)
+  | .nav spec body => .nav spec (shadeBlockList cover #[] body.toList)
   | .verbatim _ s => .verbatim (some cover.plain) s
   | .section l st title => .section l st title
   | .note body => .note body
@@ -1986,7 +2032,7 @@ def dimBlock (cover : Cover) (k : Nat) : Block → Block
     if stepPending n last k then .step n last (shadeBlocks cover body)
     else .step n last (dimBlockList cover k #[] body.toList)
   | .only targets body => .only targets (dimBlockList cover k #[] body.toList)
-  | .nav body => .nav (dimBlockList cover k #[] body.toList)
+  | .nav spec body => .nav spec (dimBlockList cover k #[] body.toList)
   | .section l st title => .section l st title
   | .verbatim c s => .verbatim c s
   | .note body => .note body
@@ -2085,7 +2131,7 @@ def unwrapItemStep : Block → Block
   | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
   | .step n l body => .step n l (unwrapItemStepList #[] body.toList)
   | .only targets body => .only targets (unwrapItemStepList #[] body.toList)
-  | .nav body => .nav (unwrapItemStepList #[] body.toList)
+  | .nav spec body => .nav spec (unwrapItemStepList #[] body.toList)
   | .frame t s v body => .frame t s v (unwrapItemStepList #[] body.toList)
   | .para content => .para content
   | .section l st title => .section l st title
@@ -2152,7 +2198,7 @@ def blockTextOne (acc : String) : Block → String
   -- one backend is still content the document declares, so it counts here;
   -- `keepFor` is where a backend's own view drops it.
   | .only _ body => blockTextList acc body.toList
-  | .nav body => blockTextList acc body.toList
+  | .nav _ body => blockTextList acc body.toList
   | .note body => blockTextList acc body.toList
   | .verbatim _ s => acc ++ s
   | .logo content => acc ++ plainText content
@@ -2211,7 +2257,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .columns cols => headingLevelColumns out cols.toList
   | .step _ _ body => headingLevelList out body.toList
   | .only _ body => headingLevelList out body.toList
-  | .nav body => headingLevelList out body.toList
+  | .nav _ body => headingLevelList out body.toList
   | .frame _ _ _ body => headingLevelList out body.toList
   | .note _ => out
   | .verbatim _ _ => out
@@ -2520,7 +2566,7 @@ theorem shadeBlock_text (cover : Cover) (b : Block) (acc : String) :
   | .only targets body =>
     rw [shadeBlock]
     simp [blockTextOne, shadeBlockList_text cover body.toList #[] acc, blockTextList]
-  | .nav body =>
+  | .nav spec body =>
     rw [shadeBlock]
     simp [blockTextOne, shadeBlockList_text cover body.toList #[] acc, blockTextList]
   | .verbatim c s => rfl
@@ -2694,7 +2740,7 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (b : Block) (acc : String) :
   | .only targets body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k body.toList #[] acc, blockTextList]
-  | .nav body =>
+  | .nav spec body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k body.toList #[] acc, blockTextList]
   -- A logo declaration is page furniture: dimming never repaints it, so
@@ -2813,7 +2859,7 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
       blockTextList]
-  | .nav body =>
+  | .nav spec body =>
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
       blockTextList]
@@ -2874,7 +2920,7 @@ def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
   | .para _ | .section _ _ _ | .list _ _ | .center _ | .quote _ | .spaced _ _
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
-  | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ | .nav _ | .picture _
+  | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ | .nav _ _ | .picture _
   | .table _ _ _ _ _ | .float _ _ _ _ => true
 
 mutual
@@ -2887,7 +2933,7 @@ decision lives here and nowhere else, so no backend can improvise a
 different reading of the same target set. -/
 def keepForOne (t : String) : Block → Block
   | .only targets body => .only targets (keepForList t body.toList).toArray
-  | .nav body => .nav (keepForList t body.toList).toArray
+  | .nav spec body => .nav spec (keepForList t body.toList).toArray
   | .list o items => .list o (keepForItems t items.toList).toArray
   | .center body => .center (keepForList t body.toList).toArray
   | .quote body => .quote (keepForList t body.toList).toArray
@@ -2956,7 +3002,7 @@ def textLeavesOne (acc : List String) : Block → List String
   | .step _ _ body => textLeavesList acc body.toList
   | .note body => textLeavesList acc body.toList
   | .only _ body => textLeavesList acc body.toList
-  | .nav body => textLeavesList acc body.toList
+  | .nav _ body => textLeavesList acc body.toList
   | .frame title _ _ body => textLeavesList (plainText title :: acc) body.toList
   -- A rule is decorative ink; it carries no text (as `blockTextOne` reads it).
   | .rule _ _ _ => acc
@@ -3016,7 +3062,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .columns cols => orphanFreeColumns avail cols.toList
   | .step _ _ body => orphanFreeList avail body.toList
   | .note body => orphanFreeList avail body.toList
-  | .nav body => orphanFreeList avail body.toList
+  | .nav _ body => orphanFreeList avail body.toList
   | .frame _ _ _ body => orphanFreeList avail body.toList
   | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => true
@@ -3109,7 +3155,7 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .only targets body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
-  | .nav body =>
+  | .nav spec body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
   | .frame title st v body =>
@@ -3270,7 +3316,7 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     rw [textLeavesOne] at hs
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
     exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
-  | .nav body =>
+  | .nav spec body =>
     intro s hs
     rw [textLeavesOne] at hs
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
@@ -3442,7 +3488,7 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .columns cols => imageSrcsColumns out cols.toList
   | .step _ _ body => imageSrcsBlockList out body.toList
   | .only _ body => imageSrcsBlockList out body.toList
-  | .nav body => imageSrcsBlockList out body.toList
+  | .nav _ body => imageSrcsBlockList out body.toList
   | .note body => imageSrcsBlockList out body.toList
   | .logo content => imageSrcsInlines out content
   | .verbatim _ _ => out
@@ -3527,7 +3573,7 @@ def setAltBlock (alt : String) : Block → Block
   | .spaced g body => .spaced g (setAltBlockList alt #[] body.toList)
   | .step n l body => .step n l (setAltBlockList alt #[] body.toList)
   | .only targets body => .only targets (setAltBlockList alt #[] body.toList)
-  | .nav body => .nav (setAltBlockList alt #[] body.toList)
+  | .nav spec body => .nav spec (setAltBlockList alt #[] body.toList)
   -- A cell may hold the image a table's caption names. A nested float owns
   -- its caption and is left whole: the inner caption already applied.
   | .table c pl pr rows rules => .table c pl pr (setAltTableRows alt #[] rows.toList) rules

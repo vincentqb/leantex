@@ -26,4 +26,14 @@ This sentence is set only on the printed page.
 
 A second invented paragraph, also on every surface.
 
+% The pinned return-to-top control: a labeled landmark (so two navs are
+% distinguishable), fixed to the viewport corner, revealed by scroll where
+% the platform can, by the constant script fallback elsewhere, and simply
+% always visible with neither. Web-only: the printed page has no viewport.
+\begin{ifbackend}{html}
+\begin{nav}[label = Return to top, pin = bottom right, offset = 1.5em, reveal = 300px]
+\href{#top}{\faIcon[label = Return to top]{arrow-up}}
+\end{nav}
+\end{ifbackend}
+
 \end{document}

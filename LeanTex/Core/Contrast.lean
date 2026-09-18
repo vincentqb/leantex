@@ -255,7 +255,7 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
   -- pairing is wrong on the surface that shows it, so no target set
   -- exempts it. A nav's links are page text like any other.
   | .only _ body => usesBlocks cx out body.toList
-  | .nav body => usesBlocks cx out body.toList
+  | .nav _ body => usesBlocks cx out body.toList
   | .frame title _ _ body =>
     -- A frame title sets at `\large\bfseries`: 1.2 of the base, bold.
     let titleCx := { cx with size := cx.base * 1200 / 1000, bold := true }

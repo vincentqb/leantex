@@ -820,7 +820,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   | .columns cols => scalarTextCols out itemD enumD cols.toList
   | .step _ _ body => scalarTextList out itemD enumD body.toList
   | .only _ body => scalarTextList out itemD enumD body.toList
-  | .nav body => scalarTextList out itemD enumD body.toList
+  | .nav _ body => scalarTextList out itemD enumD body.toList
   -- A note is never set in either backend's pages; its glyphs are not asked
   -- for.
   | .note _ => out
@@ -2836,7 +2836,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- `run` already kept this node for the PDF (`Ir.keepFor "pdf"`), so by
     -- here it is pure grouping, exactly as a resolved step is.
     collectBlocks a pats fs body indent
-  | .nav body =>
+  | .nav _ body =>
     -- A landmark is an HTML notion; the page keeps the content, transparent.
     collectBlocks a pats fs body indent
   | .note _ =>

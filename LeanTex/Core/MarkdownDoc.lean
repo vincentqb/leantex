@@ -116,7 +116,7 @@ private def blockInto (ind acc : String) : Block → String
   -- it is a transparent group, as a resolved step is.
   | .only _ body => blocksInto ind acc body.toList
   -- Markdown has no landmark; the navigation's content is content.
-  | .nav body => blocksInto ind acc body.toList
+  | .nav _ body => blocksInto ind acc body.toList
   -- A speaker note is a side channel in every backend; text is no exception.
   | .note _ => acc
   -- Frame-footer chrome is page furniture, as the running head is.

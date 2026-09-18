@@ -104,6 +104,67 @@ theorem motionCss_guarded (sel : String) (ms : Nat) :
     ∃ rule, motionCss sel ms = rule ++ reducedMotionGuard sel :=
   ⟨_, rfl⟩
 
+/-- The declared reveal's CSS, shipped only when the emitted tree carries a
+`reveal-scroll` element. Where the platform has scroll-driven animations
+(CSS scroll-driven animations, `animation-timeline: scroll()`), the reveal
+is declarative: the element fades in over the first `--reveal-range` of
+scroll (its default is one viewport — the element appears as the first
+screenful scrolls away). Elsewhere `revealScript` toggles `is-revealed`,
+and the `js-reveal` gate on the root keeps the element visible when no
+mechanism runs at all: a permanently hidden control would be a breakage,
+not a degradation. The reveal is opacity and visibility only — a fade is
+not motion animation, so SC 2.3.3 is not engaged here; motion belongs to
+the declared `motion` style key, which carries its guard. -/
+def revealCss : String :=
+  "@keyframes ltx-reveal { from { opacity: 0; visibility: hidden } \
+to { opacity: 1; visibility: visible } }\n" ++
+  "@supports (animation-timeline: scroll()) { .reveal-scroll { \
+animation: ltx-reveal linear both; animation-timeline: scroll(); \
+animation-range: 0 var(--reveal-range, 100vh); } }\n" ++
+  ".js-reveal .reveal-scroll:not(.is-revealed) { opacity: 0; \
+visibility: hidden; }\n" ++
+  ".js-reveal .reveal-scroll { transition: opacity 200ms, \
+visibility 200ms; }\n"
+
+/-- The reveal's script fallback: release Firefox has no scroll-driven
+animations (MDN browser-compat-data: `animation-timeline` is Firefox
+"preview" only, Chrome 115+, Safari 26+, checked 2026-09-18), so the
+declared reveal needs script there. The boundary's guarantees: the payload
+is this engine constant — no document byte ever enters it
+(`revealScriptClean`, checked in Tests, keeps it below the raw-payload
+guard's radar, so it reaches the page verbatim) — it ships only when a document declares a
+reveal, and it exits immediately where the platform's declarative form
+exists, so no browser runs both mechanisms. -/
+def revealScript : String :=
+  "(function () {\n" ++
+  "  if (CSS.supports('animation-timeline: scroll()')) return;\n" ++
+  "  var els = document.querySelectorAll('.reveal-scroll');\n" ++
+  "  if (els.length === 0) return;\n" ++
+  "  document.documentElement.classList.add('js-reveal');\n" ++
+  "  function range(el) {\n" ++
+  "    var v = el.style.getPropertyValue('--reveal-range').trim();\n" ++
+  "    var n = parseFloat(v);\n" ++
+  "    if (n > 0 && v.endsWith('px')) return n;\n" ++
+  "    if (n > 0 && v.endsWith('pt')) return n * 96 / 72;\n" ++
+  "    return window.innerHeight;\n" ++
+  "  }\n" ++
+  "  function update() {\n" ++
+  "    els.forEach(function (el) {\n" ++
+  "      el.classList.toggle('is-revealed', window.scrollY > range(el));\n" ++
+  "    });\n" ++
+  "  }\n" ++
+  "  addEventListener('scroll', update, { passive: true });\n" ++
+  "  update();\n" ++
+  "})();"
+
+/-- The reveal payload carries no `<` at all: it cannot spell `</script`,
+so the raw-payload guard never rewrites it and the page receives exactly
+this constant (the argument `escapeJson_no_lt` makes as a theorem for
+data blocks; here kernel reduction of `String.contains` over the built
+constant does not close, so the executable form lives in Tests —
+`iconChecks`' sibling `revealChecks` runs it — a test, not a theorem). -/
+def revealScriptClean : Bool := !revealScript.contains '<'
+
 /-- A declared marker resolved to what a `::marker` rule can say: the text
 it shows, and the CSS declarations its wrappers translate to. CSS
 Pseudo-Elements 4 §4.1 lists the properties that apply to `::marker`: all
@@ -880,10 +941,32 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- of the page can see the provenance of single-surface content.
     Html.elem "div" (blockNodesInto cfg #[] body.toList)
       #[("data-backend", String.intercalate "," targets.toList)]
-  | .nav body =>
+  | .nav spec body =>
     -- The navigation landmark (ARIA's `navigation` role comes with the
-    -- element itself); `emit` diagnoses a second unlabeled one (W0325).
-    Html.elem "nav" (blockNodesInto cfg #[] body.toList)
+    -- element itself). A declared label names the instance (`aria-label`;
+    -- ARIA Authoring Practices, Landmark Regions) and `emit` counts only
+    -- unlabeled navs toward W0325. A declared pin becomes `position:
+    -- fixed` at the declared corner and offset (CSS Positioned Layout 3
+    -- §3.3); the reveal rides as the `reveal-scroll` class plus its range,
+    -- resolved by `revealCss`/`revealScript` at the page level.
+    let labelAttrs : Array (String × String) :=
+      match spec.label with
+      | some l => #[("aria-label", l)]
+      | none => #[]
+    let pinAttrs : Array (String × String) :=
+      match spec.pin with
+      | some pin =>
+        let v := if pin.top then "top" else "bottom"
+        let h := if pin.left then "left" else "right"
+        let off := cssLength pin.offset.width
+        let style := s!"position: fixed; {v}: {off}; {h}: {off}" ++
+          (match pin.revealBy with
+           | some g => s!"; --reveal-range: {cssLength g.width}"
+           | none => "")
+        (if pin.reveal then #[("class", "reveal-scroll")] else #[]).push
+          ("style", style)
+      | none => #[]
+    Html.elem "nav" (blockNodesInto cfg #[] body.toList) (labelAttrs ++ pinAttrs)
   | .logo _ =>
     -- Paged-media furniture; `blockNodesInto` skips it (and `emit` says
     -- so), so this arm only closes the match.
@@ -1019,7 +1102,13 @@ anchor on the way here, and only the tree knows what this page carries. -/
 private structure PageFacts where
   ids : Array String := #[]
   fragmentRefs : Array String := #[]
+  /-- Unlabeled `<nav>` landmarks: a labeled one is distinguishable, so
+  only these count toward W0325 (ARIA Landmark Regions). -/
   navs : Nat := 0
+  /-- Elements carrying the `reveal-scroll` class: the page-level reveal
+  CSS and script ship exactly when one is here — judged over the tree, so
+  a reveal a conditional dropped ships nothing. -/
+  reveals : Nat := 0
 
 mutual
 
@@ -1028,7 +1117,10 @@ private def pageFactsOne (acc : PageFacts) : Node → PageFacts
   | .style _ => acc
   | .script _ _ => acc
   | .elem tag attrs kids =>
-    let acc := if tag == "nav" then { acc with navs := acc.navs + 1 } else acc
+    let acc := if tag == "nav" && attrs.all (·.1 != "aria-label") then
+        { acc with navs := acc.navs + 1 } else acc
+    let acc := if attrs.any (fun kv => kv.1 == "class" && kv.2 == "reveal-scroll") then
+        { acc with reveals := acc.reveals + 1 } else acc
     let acc := attrs.foldl (init := acc) fun a kv =>
       if kv.1 == "id" then { a with ids := a.ids.push kv.2 }
       else if kv.1 == "href" && kv.2.startsWith "#" then
@@ -1420,10 +1512,16 @@ via \\chrome is the sequence both backends share"))
     -- Navigation role). The engine has no label mechanism yet, so a second
     -- unlabeled <nav> is indistinguishable to assistive technology.
     diags := diags.push (Diag.of .W0325
-      s!"{facts.navs} <nav> landmarks on one page are \
+      s!"{facts.navs} unlabeled <nav> landmarks on one page are \
 indistinguishable to assistive technology"
-      (help := some "keep one {nav}; repeated landmarks need unique labels \
-(ARIA Landmark Regions), not modelled yet"))
+      (help := some "repeated landmarks need unique labels (ARIA Landmark \
+Regions): give each one a name, \\begin{nav}[label = Site]"))
+  if facts.reveals > 0 then
+    -- Declared reveals resolve at the page level: the CSS (declarative
+    -- where the platform has scroll-driven animations) and the constant
+    -- script fallback ship exactly when the tree carries one.
+    head := head.push (Node.style revealCss)
+    body := body.push (Node.script #[] revealScript)
   -- Every navigation target exists: an in-page link resolves to an anchor
   -- this page emits, or it is named here rather than shipped broken. '#'
   -- and any-ASCII-case 'top' always resolve — the HTML spec's fragment

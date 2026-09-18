@@ -263,8 +263,8 @@ warning[W0322]: a second '\maketitle' is ignored; the title is typeset once
 warning[W0323]: unknown backend 'banana' in '\begin{ifbackend}'; ignored
   help: backends: pdf, html, md
 ── W0325 (degraded) more than one <nav> landmark on one page
-warning[W0325]: 2 <nav> landmarks on one page are indistinguishable to assistive technology
-  help: keep one {nav}; repeated landmarks need unique labels (ARIA Landmark Regions), not modelled yet
+warning[W0325]: 2 unlabeled <nav> landmarks on one page are indistinguishable to assistive technology
+  help: repeated landmarks need unique labels (ARIA Landmark Regions): give each one a name, \begin{nav}[label = Site]
 ── W0326 (degraded) in-page link with no target anchor on the page
 warning[W0326]: in-page link '#nowhere' has no target anchor on this page
   help: this page has no anchors: a level-1 \section title becomes one in the article class

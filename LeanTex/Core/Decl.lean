@@ -125,6 +125,10 @@ private def unitScale : String → Option (Int × Nat)
   | "cm" => some (7200 * spPerPt, 254)
   | "mm" => some (7200 * spPerPt, 2540)
   | "pc" => some (12 * spPerPt, 1)
+  -- the CSS pixel: 1px = 1/96 in exactly (CSS Values and Units 4 §6.2),
+  -- so 96 px = 72 pt — the unit a web-facing length (a scroll distance)
+  -- is naturally written in
+  | "px" => some (72 * spPerPt, 96)
   | _ => none
 
 /-- The unit table is one system, not seven constants: bp is the PDF point
@@ -137,8 +141,9 @@ theorem unitScale_consistent :
     unitScale "in" = (unitScale "pt").map (fun u => (72 * u.1, u.2)) ∧
     unitScale "pc" = (unitScale "pt").map (fun u => (12 * u.1, u.2)) ∧
     unitScale "cm" = (unitScale "in").map (fun u => (100 * u.1, 254 * u.2)) ∧
-    unitScale "mm" = (unitScale "cm").map (fun u => (u.1, 10 * u.2)) := by
-  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [unitScale, spPerPt]
+    unitScale "mm" = (unitScale "cm").map (fun u => (u.1, 10 * u.2)) ∧
+    unitScale "px" = (unitScale "in").map (fun u => (u.1, 96 * u.2)) := by
+  refine ⟨rfl, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;> simp [unitScale, spPerPt]
 
 /-- A single length term: a number with an absolute or font-relative unit. -/
 def parseLength (s : String) : Option Length :=
