@@ -666,10 +666,17 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html rhythm fixture elaborates clean" plainDs.isEmpty
   t "html base sheet has one gap owner per boundary"
     ((plainPage.splitOn "margin-bottom").length == 2)
-  -- The longhand census above cannot see a shorthand (`margin: 0 0 1rem`
-  -- spells no "margin-bottom"), so the zero-ownership of each block
-  -- element is pinned by its whole rule. Verified load-bearing: putting a
-  -- bottom margin back on blockquote fails here.
+  -- The one longhand margin-bottom is the caption-above float's seam; the
+  -- other deliberately bottom-owned boundary is the heading's band below
+  -- (PDF semantics; its follower's default top margin is suppressed),
+  -- spelled as shorthand and pinned below. The longhand census cannot see
+  -- a shorthand (`margin: 0 0 1rem` spells no "margin-bottom"), so the
+  -- ownership of each block element is pinned by its whole rule.
+  -- Verified load-bearing: putting a bottom margin back on blockquote
+  -- fails here.
+  t "html heading owns its band below, followers suppressed"
+    ((plainPage.splitOn "margin: 0 0 0.725rem;").length == 2 &&
+     (plainPage.splitOn ":where(h1, h2, h3, h4) + * { margin-top: 0; }").length == 2)
   t "html block elements own no vertical margins"
     ((plainPage.splitOn "p { margin: 0; }").length == 2 &&
      (plainPage.splitOn "ul, ol { margin: 0; padding-left: 1.35rem; }").length == 2 &&
@@ -677,15 +684,15 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
      (plainPage.splitOn "blockquote { margin: 0; padding: 0 1.35rem; }").length == 2 &&
      (plainPage.splitOn "figure.float { margin: 0 auto; }").length == 2)
   t "html peer gap is one screen quantum, top-owned"
-    ((plainPage.splitOn "* + p { margin-top: 0.725rem; }").length == 2)
+    ((plainPage.splitOn ":where(* + p) { margin-top: 0.725rem; }").length == 2)
   t "html heading gap is two screen quanta"
-    ((plainPage.splitOn "* + h2 { margin-top: 1.450rem; }").length == 2)
+    ((plainPage.splitOn ":where(* + h2) { margin-top: 1.450rem; }").length == 2)
   t "html float gap keeps its token over the rhythm default"
     ((plainPage.splitOn
-      "* + figure.float { margin-top: var(--floatsep, 1.450rem); }").length == 2)
+      ":where(* + figure.float) { margin-top: var(--floatsep, 1.450rem); }").length == 2)
   t "html float owns the boundary below it"
     ((plainPage.splitOn
-      "figure.float + * { margin-top: var(--floatsep, 1.450rem); }").length == 2)
+      ":where(figure.float + *) { margin-top: var(--floatsep, 1.450rem); }").length == 2)
   let (themedDoc, themedDs) := elabStr ("\\documentclass{beamer}\\usetheme{moloch}" ++
     "\\begin{document}\\section{s}\\begin{frame}{t}x\\end{frame}\\end{document}")
   let themedPage := (HtmlDoc.emit {} themedDoc).1

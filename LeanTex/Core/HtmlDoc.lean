@@ -501,7 +501,19 @@ way: spacing declared on both sides of a boundary, summed by a flex
 column. A container `gap` would also be single-emission, but only where
 the container opts into flex or grid, and one `gap` cannot say that a
 heading opens more space than a paragraph; the sibling rule is
-context-independent and names the boundary. -/
+context-independent and names the boundary.
+
+One boundary is bottom-owned, deliberately: the gap below a heading is the
+heading's own `margin-bottom` (one peer gap, in the base heading rule),
+and the default `margin-top` of whatever follows a heading is suppressed
+(`blockGapCss`'s last rule), so the emitter count stays one. This is the
+PDF's own semantics — a heading's band is the heading's to declare
+(`Acc.flushGap` pays owed glue instead of the default, never both) — and
+it lets a declared `\style{section}{ after = ... }` or a consumer sheet
+own a heading's whole band with one rule on the heading itself. The cost,
+stated: everything following a heading binds at that one peer gap — a
+float or a second heading directly under a heading realizes 1 quantum
+here where the PDF walk gives that element its own larger gap. -/
 def blockGapKinds : List (String × String) :=
   [("p", "peer"), ("ul", "peer"), ("ol", "peer"), ("pre", "peer"),
    ("blockquote", "peer"), ("table.booktabs", "peer"),
@@ -527,19 +539,28 @@ theorem blockGap_kinds_covers :
     (blockGapKinds.all fun e => 0 < gapK e.2) = true ∧ 0 < gapK "float" ∧
     0 < gapK "caption" := by decide
 
-/-- The gap rules, one adjacent-sibling rule per block element. The float's
-gaps keep their token (`--floatsep`, the same one the PDF path reads), and
-the float adds the one pair rule (`figure.float + *`): the gap below a
-float is the float's to declare, as the PDF walk's `addvspace` takes the
-larger of the float's gap and the next element's own — which the pair
-rule's higher specificity mirrors, its value winning the boundary while
-the neighbour's own margin stays zero, so single ownership holds there
-too. -/
+/-- The gap rules, one adjacent-sibling rule per block element, each inside
+`:where()`: the base sheet's defaults carry zero specificity, so any
+consumer rule — a declared `\style` (emitted on the bare element selector)
+or a reader stylesheet that owns a container's spacing with `gap` — wins
+without a specificity fight, which is the HTML backend's override
+contract. The float's gaps keep their token (`--floatsep`, the same one
+the PDF path reads), and the float adds the one pair rule
+(`figure.float + *`): the gap below a float is the float's to declare, as
+the PDF walk's `addvspace` takes the larger of the float's gap and the
+next element's own — the pair rule stands later in the sheet, its value
+winning the boundary while the neighbour's own margin stays zero, so
+single ownership holds there too. -/
 def blockGapCss : String :=
   String.join (blockGapKinds.map fun (sel, kind) =>
-    s!"* + {sel} \{ margin-top: {quantaRem (gapK kind)}; }\n") ++
-  s!"* + figure.float \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n" ++
-  s!"figure.float + * \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n"
+    s!":where(* + {sel}) \{ margin-top: {quantaRem (gapK kind)}; }\n") ++
+  s!":where(* + figure.float) \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n" ++
+  s!":where(figure.float + *) \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n" ++
+  -- The heading's band below is the heading's own (`blockGapKinds`): the
+  -- follower's default top margin is suppressed, standing last so it wins
+  -- every zero-specificity default above, and the heading rule's
+  -- margin-bottom is the boundary's one emitter.
+  ":where(h1, h2, h3, h4) + * { margin-top: 0; }\n"
 
 /-- The PDF backend's shipped default gap at a boundary kind: the values
 placement realizes 1:1 — the peer token (`flushGap_default_exact` pays it
@@ -832,7 +853,11 @@ def baseCss (doc : Doc) : String :=
   "  font-family: var(--font-sans);\n" ++
   "  font-weight: 600;\n" ++
   s!"  line-height: {milliFactor Ir.leadingMilli};\n" ++
-  "  margin: 0;\n" ++
+  -- The band below a heading is the heading's own, one peer gap: the PDF
+  -- semantics (a heading's declared `after` replaces the peer gap), and
+  -- the one bottom-owned boundary — its follower's default top margin is
+  -- suppressed in `blockGapCss`, so it still has exactly one emitter.
+  s!"  margin: 0 0 {quantaRem (gapK "peer")};\n" ++
   "  text-wrap: balance;\n" ++
   "}\n" ++
   s!"h1 \{ font-size: {scaleSize "LARGE" "rem"}; }\n" ++
