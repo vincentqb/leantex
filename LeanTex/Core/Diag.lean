@@ -92,7 +92,7 @@ inductive DiagCode where
   | E0328 | E0329 | E0330 | E0331 | E0332 | E0333 | E0334 | E0336
   | E0401 | E0402 | E0403 | E0404 | E0405
   | E0501 | E0502
-  | N0100 | N0102 | N0103 | N0200
+  | N0100 | N0102 | N0103 | N0114 | N0200
   | W0001 | W0003 | W0005 | W0006 | W0007 | W0008 | W0009 | W0010
   | W0011 | W0012 | W0013 | W0014 | W0015
   | W0101 | W0102 | W0103 | W0104 | W0105 | W0106 | W0108 | W0110 | W0111
@@ -152,6 +152,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0101 => ("0101", .config, "geometry keys without a native equivalent dropped")
   | .N0102 => ("0102", .info, "option ignored: it configures machinery the engine does not model")
   | .N0103 => ("0103", .info, "\\section short title unused: nothing consumes it yet")
+  | .N0114 => ("0114", .info, "TeX '\\ifdefined' resolved from the document's own definitions")
   | .W0111 => ("0111", .config, "\\setkomafont on a non-styleable element ignored")
   | .N0200 => ("0200", .info, "page set short: its skips gave their shrink")
   | .W0001 => ("0001", .config, "content after \\end{document} is ignored")
@@ -244,7 +245,7 @@ def DiagCode.all : List DiagCode :=
    .E0321, .E0322, .E0323, .E0324, .E0325, .E0326, .E0327, .E0328, .E0329,
    .E0330, .E0331, .E0332, .E0333, .E0334, .E0336, .E0401, .E0402, .E0403, .E0404,
    .E0405, .E0501, .E0502, .N0100,
-   .N0102, .N0103, .N0200, .W0001, .W0003, .W0005, .W0006, .W0007, .W0008,
+   .N0102, .N0103, .N0114, .N0200, .W0001, .W0003, .W0005, .W0006, .W0007, .W0008,
    .W0009, .W0010, .W0011, .W0012, .W0013, .W0014, .W0015, .W0101, .W0102,
    .W0103, .W0104, .W0105, .W0106, .W0108,
    .W0110, .W0111, .W0201, .W0202, .W0301, .W0302, .W0303, .W0304, .W0307,

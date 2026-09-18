@@ -1232,6 +1232,24 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat setbeameroption show notes keeps the honest warning"
     (warnCodes (themedPre "\\setbeameroption{show notes on second screen=right}")
       == ["W0104"])
+  -- `\ifdefined` is decidable from the document's own definitions, so it
+  -- resolves to its taken branch with a note — nothing nothing defines is
+  -- undefined, which is the honest answer for another engine's primitives
+  -- too. Any other `\if…` head (open-ended family, undecidable here)
+  -- invalidates the extent and the skip-whole warning stays.
+  t "compat ifdefined undefined keeps the else branch"
+    (let (doc, ds) := elabStr "\\ifdefined\\nope A\\else B\\fi"
+     doc.body == #[.para #[.text "B"]] && ds.any (·.code == "N0114") &&
+       ds.all (·.severity == .note))
+  t "compat ifdefined defined keeps the first branch"
+    ((elabStr "\\def\\yep{1}\\ifdefined\\yep A\\else B\\fi").1.body ==
+      #[.para #[.text "A"]])
+  t "compat ifdefined nested resolves inside the kept branch"
+    ((elabStr "\\ifdefined\\nope A\\else\\ifdefined\\nada B\\else C\\fi\\fi").1.body ==
+      #[.para #[.text "C"]])
+  t "compat a foreign conditional inside keeps the skip-whole warning"
+    (let ds := (elabStr "\\ifdefined\\a\\ifx\\b\\c\\fi\\fi x").2
+     ds.any (·.code == "W0104") && ds.all (·.code != "N0114"))
   t "compat definecolor rgb" ((elabStr (pre "\\definecolor{c}{rgb}{1,0,0.5}")).1.palette.find? "c" ==
     some { r := 255, g := 0, b := 127 })
   t "compat colorlet aliases"
@@ -1356,8 +1374,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat beamer warnings name the native spelling"
     ((elabStr (pre "\\setbeamercolor{normal text}{fg=black}")).2.any fun d =>
       d.code == "W0104" && ((d.help.getD "").splitOn "\\palette").length == 2)
-  t "compat tex conditional skipped whole, contents included"
-    (warnCodes (pre "\\ifdefined\\x\\usepackage{pgfpages}\\setbeameroption{notes}\\fi") ==
+  t "compat ifdefined resolves instead of skipping; untaken branch is silent"
+    (warnCodes (pre "\\ifdefined\\x\\usepackage{pgfpages}\\setbeameroption{notes}\\fi") == [])
+  t "compat undecidable tex conditional skipped whole, contents included"
+    (warnCodes (pre "\\ifx\\x\\y\\usepackage{pgfpages}\\setbeameroption{notes}\\fi") ==
       ["W0104"])
   t "compat def skipped through its body"
     (errCodes (pre "\\makeatletter\\def\\verbatim@font{\\footnotesize\\ttfamily}\\makeatother") == [])
@@ -4309,6 +4329,9 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .N0100 => dvE (dvDoc "\\usepackage[margin=1in]{geometry}\n" "x")
   | .N0102 => dvE (dvDeck "" "\\begin{frame}[fragile]{T}\nx\n\\end{frame}")
   | .N0103 => dvE (dvDoc "" "\\section[short]{A long title}\nx")
+  | .N0114 =>
+    dvE (dvDoc "\\ifdefined\\shiny\\sloppy\\else\\relax\\fi\n" "x") ++
+    dvE (dvDoc "\\newcommand{\\shiny}{y}\\ifdefined\\shiny\\relax\\fi\n" "x")
   | .N0200 => dvL one (dvDoc "\\page{ height = 115pt, margin = 20pt }\n"
       "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc")
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
@@ -4345,7 +4368,7 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .W0104 => dvE (dvDoc (String.intercalate "\n"
       ["\\directlua{tex.print('x')}", "\\def\\x{y}", "\\raggedright",
        "\\sloppy", "\\selectlanguage{german}", "\\pagestyle{scrheadings}",
-       "\\ifdefined\\x\\fi", "\\usecolortheme{dove}",
+       "\\ifx\\x\\y\\fi", "\\usecolortheme{dove}",
        "\\setbeamercovered{transparent}", "\\titlegraphic{}"] ++ "\n") "x")
   | .W0105 => dvE "\\uncover<zz>{x}"
   | .W0106 => dvE (dvDoc "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff\n" "x")

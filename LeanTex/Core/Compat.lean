@@ -124,6 +124,10 @@ private structure St where
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
+  /-- Control words the document has defined so far, recorded by the
+  conditional pass: what `\ifdefined` reads. Flat — TeX's group-local
+  scoping is not modelled here. -/
+  defined : Array String := #[]
 
 private abbrev M := StateM St
 
@@ -209,6 +213,150 @@ private def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat
     | some (r@(.ctrl _ _)) => out := out.push #[r]; j := k + 1
     | _ => break
   return (out, j)
+
+/-! # Decidable TeX conditionals
+
+`\ifdefined\name` asks whether `\name` is defined, and the document's own
+definitions make that decidable here: a name nothing in the document has
+bound is undefined — which is the honest answer for another engine's
+primitives too (`\directlua`, `\pdfoutput`: this engine is not that
+engine). The pass below resolves each such conditional to its taken
+branch, with a note naming the decision, before the idiom rewrite runs.
+TeX's `\if` family is open-ended and the rest of it (`\ifx`, `\ifcsname`,
+`\ifnum`, …) compares things the parse tree does not carry, so any other
+`\if…` head inside an extent makes it undecidable and the whole construct
+falls back to the skip-whole warning. -/
+
+/-- Definers that bind the control word standing after them, directly or
+as `{\name}`. Recording is flat — TeX's group-local scoping is not
+modelled — which only ever errs toward "defined", the reading that keeps
+a guarded branch. -/
+private def definesNext : List String :=
+  ["def", "edef", "gdef", "xdef", "let", "newcommand", "renewcommand",
+   "providecommand", "DeclareRobustCommand", "define", "defineenv"]
+
+private def recordDefined (n : String) : M Unit :=
+  modify fun st =>
+    if st.defined.contains n then st else { st with defined := st.defined.push n }
+
+/-- The control word a definer binds, read from the element after it. -/
+private def boundName : Raw → Option String
+  | .ctrl n _ => some n
+  | .group body _ =>
+    match body.toList with
+    | .ctrl n _ :: _ => some n
+    | _ => none
+  | _ => none
+
+private def isSpace : Raw → Bool
+  | .space => true
+  | _ => false
+
+/-- What a resolution says: which way it went, and what that keeps. -/
+private def condMsg (n : String) (defined : Bool) : String :=
+  if defined then
+    s!"'\\ifdefined\\{n}': '\\{n}' is defined, so the branch before '\\else' is kept"
+  else
+    s!"'\\ifdefined\\{n}': '\\{n}' is not defined, so only the '\\else' branch is kept"
+
+/-- Is the conditional heading `raws[i]` one the pass can resolve? True
+when a matching `\fi` closes it at this level and every conditional inside
+the extent is itself `\ifdefined` naming a control word. Any other `\if…`
+head is undecidable and would also desynchronise the `\else`/`\fi`
+matching, so it invalidates the whole extent. -/
+private def condExtent (raws : Array Raw) (i : Nat) : Bool := Id.run do
+  let mut depth := 0
+  let mut j := i
+  for _ in [i:raws.size] do
+    match raws[j]? with
+    | some (.ctrl "ifdefined" _) =>
+      let k := skipSpaces raws (j + 1)
+      match raws[k]? with
+      | some (.ctrl _ _) =>
+        depth := depth + 1
+        j := k + 1
+      | _ => return false
+    | some (.ctrl "fi" _) =>
+      if depth == 1 then return true
+      depth := depth - 1
+      j := j + 1
+    | some (.ctrl n _) =>
+      if n == "if" || (n.startsWith "if" && n.length > 2) then return false
+      j := j + 1
+    | some _ => j := j + 1
+    | none => return false
+  return false
+
+mutual
+
+/-- Resolve the decidable conditionals at one level. `stack` is the truth
+of every open `\ifdefined`, innermost first — an element is emitted only
+when all of them hold, `\else` flips the innermost, `\fi` closes it — and
+a bare `\else`/`\fi` with nothing open is not ours and passes through.
+The list drives the recursion; `raws` and `i` give the extent check its
+lookahead, exactly as `rewriteList` pairs them. -/
+private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
+    List Raw → Nat → M (Array Raw)
+  | [], _ => pure out
+  | .ctrl "ifdefined" pos :: .ctrl n np :: rest, i => do
+    if stack.isEmpty && !condExtent raws i then
+      -- Undecidable: leave the construct for the skip-whole warning.
+      condList raws ((out.push (.ctrl "ifdefined" pos)).push (.ctrl n np)) stack rest (i + 2)
+    else
+      let defined := (← get).defined.contains n
+      if stack.all id then
+        say .N0114 (condMsg n defined) pos
+      condList raws out (defined :: stack) rest (i + 2)
+  | .ctrl "ifdefined" pos :: .space :: .ctrl n np :: rest, i => do
+    if stack.isEmpty && !condExtent raws i then
+      condList raws (((out.push (.ctrl "ifdefined" pos)).push .space).push (.ctrl n np))
+        stack rest (i + 3)
+    else
+      let defined := (← get).defined.contains n
+      if stack.all id then
+        say .N0114 (condMsg n defined) pos
+      condList raws out (defined :: stack) rest (i + 3)
+  | .ctrl "ifdefined" pos :: rest, i =>
+    -- Nothing testable follows; pass the head through untouched.
+    condList raws (out.push (.ctrl "ifdefined" pos)) stack rest (i + 1)
+  | .ctrl "else" pos :: rest, i => do
+    match stack with
+    | [] => condList raws (out.push (.ctrl "else" pos)) [] rest (i + 1)
+    | top :: more => condList raws out ((!top) :: more) rest (i + 1)
+  | .ctrl "fi" pos :: rest, i => do
+    match stack with
+    | [] => condList raws (out.push (.ctrl "fi" pos)) [] rest (i + 1)
+    | _ :: more => condList raws out more rest (i + 1)
+  | r :: rest, i => do
+    if stack.all id then
+      if let .ctrl d _ := r then
+        if definesNext.contains d then
+          if let some n := (rest.dropWhile isSpace).head?.bind boundName then
+            recordDefined n
+      condList raws (out.push (← condOne r)) stack rest (i + 1)
+    else
+      condList raws out stack rest (i + 1)
+
+/-- Descend into a group or environment body; an `\input` wrapper switches
+the file its notes name, as `rewriteRaw` does. -/
+private def condOne : Raw → M Raw
+  | .group body p => do
+    return .group (← condList body #[] [] body.toList 0) p
+  | .math d body p => do
+    return .math d (← condList body #[] [] body.toList 0) p
+  | .env n body p => do
+    match Parse.inputEnvFile? n with
+    | some f =>
+      let saved := (← get).file
+      modify fun st => { st with file := f }
+      let body' ← condList body #[] [] body.toList 0
+      modify fun st => { st with file := saved }
+      return .env n body' p
+    | none =>
+      return .env n (← condList body #[] [] body.toList 0) p
+  | r => pure r
+
+end
 
 /-- A TeX length in the native spelling: `0.5\rhythm` is `0.5 * rhythm`,
 `\relax` vanishes. -/
@@ -981,6 +1129,7 @@ private def flushRunning : M (Array Raw) := do
 before `\begin{document}`, where a declaration belongs. -/
 def rewrite (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
   let go : M (Array Raw) := do
+    let raws ← condList raws #[] [] raws.toList 0
     let out ← rewriteList false raws #[] raws.toList 0 0
     let running ← flushRunning
     let running ← rewriteList false running #[] running.toList 0 0
