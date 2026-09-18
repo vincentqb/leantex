@@ -87,6 +87,65 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-18 — the generalize slice: the theorem atlas's collapses, the
+derive-not-tune derivations, two live defects closed, and a gate.
+
+- **Two defects, one class, closed.** The contrast judge had drifted from
+  the page it judges: `Contrast.headingCx` re-spelled the sectioning sizes
+  as absolute 14/12 pt while `Layout.sectionSize` sets them from the type
+  scale — at a 9 pt base the page sets a section at 12.96 pt (not WCAG
+  large-scale) while the judge tested a phantom 14 pt bold (which is), so
+  the judge passed text the page fails; verdicts agree at the 10 pt base,
+  which is why nobody saw it. `headingCx` now reads `sectionSize` itself
+  and `contrast_judges_what_layout_sets` pins the agreement — the drift
+  reintroduced fails the theorem at build time, and a 9 pt fixture test
+  beside it. And D1, the `icbrt_spec` class: `\page{ vmargin = -5mm }` was
+  reachable and outside both band theorems' `0 ≤ vmargin` hypothesis; the
+  shared key inequality is one hypothesis-free statement
+  (`band_reserves`), so factoring it deleted the hypothesis — a
+  strengthening for free. D2's gap closed from the guard side: E0323's
+  fontsize check now requires the 1 pt floor `heading_hierarchy` holds
+  above (below it the property genuinely fails; the statement stands).
+  No diagnostic for a negative margin: the geometry is well-defined ink
+  into the trim, a choice real designs make.
+- **One overlay walk.** `shadeBlocks` was exactly `dimBlocks`' everything-
+  pending mode, so the two walks are one algorithm with a `pending` flag
+  that flips at `.step`: nine defs and the nine-theorem shade conservation
+  family fold into the dim family, and a future `Ir` constructor owes one
+  arm and one census case here, not two. The conservation shape is named —
+  `Ir.Conserves census f := ∀ x, census (f x) = census x` — and the
+  top-level walk theorems restate as instances.
+- **Contracts quantify over the shipped list, finished.** The per-bundle
+  `moloch_/plain_{contract,covered,cover_monotone}` were `builtin`-
+  subsumed or one migration behind; `builtin_palettes_contract` and
+  `builtin_covers_monotone` complete the rule (net −4 statements), and a
+  third bundle now enters every contract by being added. The rule is an
+  AGENTS convention line.
+- **Derived, not tuned.** The HTML headings emit the scale's own
+  LARGE/Large/large (h2 was already a rounding step off), the standout
+  its Large step; both backends read one leading ratio (`Ir.leadingMilli`)
+  and the math grid's baseline is `leadingFor` itself; the PDF descriptor
+  states the parsed CapHeight and the post table's italicAngle (a host
+  face declaring −11° exposed the −12 guess as wrong by a degree); the
+  frame-title bar's negative margins and radius are computed from the
+  slide box's own padding and the nested-corner rule. The HTML body
+  leading moves 1.55 → 1.45: outside Butterick's 120–145 % band and
+  undeclared before, at its top and pinned by `body_leading_in_band` now.
+  The marker gap is `\labelsep` (classes.dtx, .5em; was an eye-picked
+  0.4 em). Read against the primary source, the audit's "worst number"
+  was moloch's own: 0.7875\linewidth is the section-page minipage width
+  in beamerinnerthememoloch.dtx, and the 1 pt progress bar and 0.5 pt
+  separator are its defaults — cited where they stand now, a reminder to
+  check the source against the code before trusting either.
+- **The gate.** The pre-commit hook scans the whole core tree for public
+  IR-to-IR walk entries (def taking and returning `Array Block`/`Array
+  Inline`); each must ship a theorem named with a registered conservation
+  suffix (`_text` as a `Conserves` instance, `_covers`, `_id`) or the
+  one-line refusal `-- conserves: none — <why>` beside the def. Proved
+  load-bearing by staging the violation; `fillTemplate` (a splice) and
+  the `setAlt` walks (an alt-only edit outside the census) are the escape
+  hatch's first honest users. The suffix registry lands in AGENTS.md.
+
 2026-09-18 — icons, the pinned control, and the declared reveal: the
 site-polish slice, three pieces the site port asked for.
 
