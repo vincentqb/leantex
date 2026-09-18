@@ -637,9 +637,9 @@ word otherwise. -/
 private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat)
     (color : Ir.Color) (link : Option String) (underline : Bool) (smallcaps : Bool)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
-    (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (List Nat)) :
+    (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat)) :
     Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
-      Std.HashMap String (List Nat) := Id.run do
+      Std.HashMap String (Array Nat) := Id.run do
   let mut missing := missing
   let mut substs := substs
   let mut cache := cache
@@ -666,7 +666,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
           else
             break
         let word := String.ofList run.toList
-        let mut breaks : List Nat := []
+        let mut breaks : Array Nat := #[]
         match pats with
         | some p =>
           match cache[word]? with
@@ -1505,9 +1505,9 @@ use for it, and putting it in `Item` would make every pattern carry a field
 only the page builder reads. -/
 private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
-    (cache : Std.HashMap String (List Nat)) (imgs : Image.Store := {})
+    (cache : Std.HashMap String (Array Nat)) (imgs : Image.Store := {})
     (textW : Sp := 0) (textH : Sp := 0) :
-    Array Item × Array Diag × Std.HashMap String (List Nat) ×
+    Array Item × Array Diag × Std.HashMap String (Array Nat) ×
       Std.HashMap Nat Sp := Id.run do
   let st := flatten (fs.mathFont?.isSome) {} baseStyle xs
   let mut items : Array Item := #[]
@@ -2365,7 +2365,7 @@ private structure Acc where
   wantDefault : Bool := false
   owed : Array Glue := #[]
   ops : Array Op := #[]
-  hyphCache : Std.HashMap String (List Nat) := {}
+  hyphCache : Std.HashMap String (Array Nat) := {}
   /-- The document's loaded images, from the driver: layout only measures
   and places them; the bytes ride to the backends. -/
   imgs : Image.Store := {}
@@ -3942,8 +3942,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- out once — a logo names no page number — and placed at the lower-right
   -- corner, its right edge on the margin, its box standing on the bottom
   -- margin line.
-  let mkLogoLine (content : Array Inline) (cache0 : Std.HashMap String (List Nat)) :
-      Option LineOut × Array Diag × Std.HashMap String (List Nat) :=
+  let mkLogoLine (content : Array Inline) (cache0 : Std.HashMap String (Array Nat)) :
+      Option LineOut × Array Diag × Std.HashMap String (Array Nat) :=
     let (items, ds, c, _) :=
       itemsOfInlines pats geom.fontSize xHeight fs {} content cache0 imgs
         geom.textWidth geom.textHeight

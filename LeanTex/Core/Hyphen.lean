@@ -9,7 +9,7 @@ open Std
 plus the exception dictionary. English hyphenmins: left 2, right 3. -/
 structure Patterns where
   map : HashMap String (Array Nat)
-  exceptions : HashMap String (List Nat)
+  exceptions : HashMap String (Array Nat)
   maxLen : Nat
   leftMin : Nat := 2
   rightMin : Nat := 3
@@ -25,12 +25,12 @@ private def parsePattern (p : String) : String × Array Nat := Id.run do
       vals := vals.push 0
   return (letters, vals)
 
-private def parseException (w : String) : String × List Nat := Id.run do
+private def parseException (w : String) : String × Array Nat := Id.run do
   let mut word := ""
-  let mut breaks : List Nat := []
+  let mut breaks : Array Nat := #[]
   for c in w.toList do
     if c == '-' then
-      breaks := breaks ++ [word.length]
+      breaks := breaks.push word.length
     else
       word := word.push c
   return (word, breaks)
@@ -43,7 +43,7 @@ def load : Patterns := Id.run do
       let (letters, vals) := parsePattern p
       map := map.insert letters vals
       maxLen := max maxLen letters.length
-  let mut exceptions : HashMap String (List Nat) := {}
+  let mut exceptions : HashMap String (Array Nat) := {}
   for w in HyphenData.exceptions.splitOn " " do
     if w != "" then
       let (word, breaks) := parseException w
@@ -52,11 +52,11 @@ def load : Patterns := Id.run do
 
 /-- Break positions (letters before the break) for a lowercase-folded word.
 Only positions respecting leftMin/rightMin are returned. -/
-def hyphenate (pats : Patterns) (word : String) : List Nat := Id.run do
+def hyphenate (pats : Patterns) (word : String) : Array Nat := Id.run do
   let lower := String.ofList (word.toList.map Char.toLower)
   let n := lower.length
   if n < pats.leftMin + pats.rightMin then
-    return []
+    return #[]
   if let some breaks := pats.exceptions[lower]? then
     return breaks.filter fun p => p ≥ pats.leftMin && p + pats.rightMin ≤ n
   let wrapped := ("." ++ lower ++ ".").toList.toArray
@@ -71,13 +71,13 @@ def hyphenate (pats : Patterns) (word : String) : List Nat := Id.run do
             let idx := start + k
             if weights[idx]! < vals[k]! then
               weights := weights.set! idx vals[k]!
-  let mut breaks : List Nat := []
+  let mut breaks : Array Nat := #[]
   -- wrapped gap i sits after wrapped[0..i); word position = i - 1
   for i in [2:l] do
     if weights[i]! % 2 == 1 then
       let p := i - 1
       if p ≥ pats.leftMin && p + pats.rightMin ≤ n then
-        breaks := breaks ++ [p]
+        breaks := breaks.push p
   return breaks
 
 end LeanTex.Core.Hyphen
