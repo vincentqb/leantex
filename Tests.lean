@@ -1435,6 +1435,25 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
     (((HtmlDoc.emit {} cdoc).1.splitOn
         (HtmlDoc.cssColor (Ir.Color.ofCmyk 0 830 760 70))).length ≥ 2 &&
       HtmlDoc.cssColor (Ir.Color.ofCmyk 0 830 760 70) == "#ed2839")
+  -- The print boxes follow from the declared bleed: pageBoxes_nest proves
+  -- TrimBox ⊆ BleedBox ⊆ MediaBox with the trim at the declared size;
+  -- this pins that the written page dictionary carries all three.
+  let (bdoc, bds) := elabStr
+    "\\documentclass{card}\\page{ bleed = 3mm }\\begin{document}x\\end{document}"
+  let bgeom := Layout.Geom.ofPage bdoc.page
+  let bpdf := Pdf.write bgeom oneFace (Layout.run bgeom oneFace none bdoc).pages bdoc.info
+  let (media, bleedBox, trim) := Pdf.pageBoxes bgeom.pageW bgeom.pageH bgeom.bleed
+  t "a declared bleed writes trim, bleed and art boxes as consequences"
+    (bds.all (·.severity != .error) &&
+     bytesContain bpdf s!"/TrimBox {trim.render}" &&
+     bytesContain bpdf s!"/BleedBox {bleedBox.render}" &&
+     bytesContain bpdf s!"/ArtBox {trim.render}" &&
+     bytesContain bpdf s!"/MediaBox {media.render}")
+  t "zero bleed writes no boxes: the defaults already say all boxes coincide"
+    (let (zdoc, _) := elabStr "\\documentclass{card}\\begin{document}x\\end{document}"
+     let zgeom := Layout.Geom.ofPage zdoc.page
+     let zpdf := Pdf.write zgeom oneFace (Layout.run zgeom oneFace none zdoc).pages zdoc.info
+     !bytesContain zpdf "/TrimBox" && !bytesContain zpdf "/BleedBox")
 
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do

@@ -8,6 +8,54 @@ open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font LeanTex.Core.Layout
 
 private def hexDigit (n : Nat) : Char := "0123456789ABCDEF".toList[n % 16]!
 
+/-- A rectangle in PDF user space: lower-left and upper-right corners.
+Fields are spelled `Int` (the same type `Sp` names) because `omega`
+reads the bare spelling only: the nesting proof below is the point of
+the type. -/
+structure Rect where
+  x0 : Int
+  y0 : Int
+  x1 : Int
+  y1 : Int
+  deriving Repr, BEq
+
+/-- Containment, the relation ISO 32000-2 expects between the page boxes. -/
+def Rect.within (inner outer : Rect) : Prop :=
+  outer.x0 ≤ inner.x0 ∧ outer.y0 ≤ inner.y0 ∧
+  inner.x1 ≤ outer.x1 ∧ inner.y1 ≤ outer.y1
+
+def Rect.render (r : Rect) : String :=
+  s!"[{Sp.toPtString r.x0} {Sp.toPtString r.y0} {Sp.toPtString r.x1} {Sp.toPtString r.y1}]"
+
+/-- The page boxes, as consequences of the declared trim size and bleed —
+never hand-rolled numbers. ISO 32000-2 §14.11.2 (Table 361) gives each its
+meaning: **TrimBox** is "the intended dimensions of the finished page
+after trimming" — the card at its trim size, offset by the bleed from the
+medium's corner; **BleedBox** is "the region to which the contents of the
+page shall be clipped when output in a production environment", trim plus
+the declared bleed on every side, which is exactly the whole medium here;
+**ArtBox** is "the extent of the page's meaningful content … as intended
+by the page's creator" — for a finished artefact like a card, the trim;
+**MediaBox** (§7.7.3.3) is "the boundaries of the physical medium",
+containing them all. -/
+def pageBoxes (pageW pageH bleed : Int) : Rect × Rect × Rect :=
+  (⟨0, 0, pageW + 2 * bleed, pageH + 2 * bleed⟩,
+   ⟨0, 0, pageW + 2 * bleed, pageH + 2 * bleed⟩,
+   ⟨bleed, bleed, pageW + bleed, pageH + bleed⟩)
+
+/-- The print guarantee a prepress proof checks: the boxes nest —
+TrimBox ⊆ BleedBox ⊆ MediaBox — and the trim is exactly the declared page
+size, whatever the bleed. The same shape as the `text.in_area` assertion:
+what the file tells the finishing knife matches what the document
+declared. -/
+theorem pageBoxes_nest (W H b : Int) (hb : 0 ≤ b) :
+    (pageBoxes W H b).2.2.within (pageBoxes W H b).2.1 ∧
+    (pageBoxes W H b).2.1.within (pageBoxes W H b).1 ∧
+    (pageBoxes W H b).2.2.x1 - (pageBoxes W H b).2.2.x0 = W ∧
+    (pageBoxes W H b).2.2.y1 - (pageBoxes W H b).2.2.y0 = H := by
+  dsimp only [pageBoxes, Rect.within]
+  omega
+
 private def hex4 (n : Nat) : String :=
   String.ofList [hexDigit (n / 4096), hexDigit (n / 256), hexDigit (n / 16), hexDigit n]
 
@@ -417,18 +465,22 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         s!"/A << /S /URI /URI ({pdfString url}) >> >>"
       " /Annots [" ++ String.intercalate " " entries ++ "]"
   let pageDict (i : Nat) :=
-    -- With bleed the medium is larger than the finished page and the trim
-    -- box records what the finishing knife should leave (ISO 32000-2,
-    -- 14.11.2: TrimBox is the intended dimensions of the finished page).
+    -- With bleed the medium is larger than the finished page, and the
+    -- boxes follow from the declared trim size and bleed (`pageBoxes`,
+    -- nesting proved by `pageBoxes_nest`) — the file itself tells
+    -- prepress where to cut, no hand-rolled \pdfvariable pageattr needed.
+    -- With zero bleed nothing is written: CropBox defaults to MediaBox
+    -- and BleedBox/TrimBox/ArtBox default to CropBox (ISO 32000-2
+    -- §14.11.2), so an empty dictionary already declares all boxes equal
+    -- — and the zero-bleed output stays byte-identical.
     let b := geom.bleed
-    let mediaW := geom.pageW + 2 * b
-    let mediaH := geom.pageH + 2 * b
-    let trim := if b == 0 then "" else
-      s!" /TrimBox [{b.toPtString} {b.toPtString} {(geom.pageW + b).toPtString} {(geom.pageH + b).toPtString}]"
+    let (media, bleedBox, trim) := pageBoxes geom.pageW geom.pageH b
+    let boxes := if b == 0 then "" else
+      s!" /TrimBox {trim.render} /BleedBox {bleedBox.render} /ArtBox {trim.render}"
     let xobj := if ni == 0 then "" else
       " /XObject << " ++ String.intercalate " "
         ((List.range ni).map fun n => s!"/Im{n + 1} {imgId n} 0 R") ++ " >>"
-    s!"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {mediaW.toPtString} {mediaH.toPtString}]{trim} /Resources << /Font << {fontResources} >>{xobj} >>{annots i} /Contents {contentId i} 0 R >>"
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox {media.render}{boxes} /Resources << /Font << {fontResources} >>{xobj} >>{annots i} /Contents {contentId i} 0 R >>"
   -- PDF 2.0 text strings are UTF-8, so declared metadata needs no escaping
   -- beyond the literal-string delimiters.
   let infoEntry (key : String) (v : Option String) : String :=
