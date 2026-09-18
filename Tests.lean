@@ -71,7 +71,7 @@ def classHookChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The census reads through the annotation (role_plaintext): the markdown
   -- twin renders the words, never the wrapper.
   t "the markdown twin reads through a role"
-    ((((MarkdownDoc.emit mutedDoc).splitOn "quiet words").length) == 2)
+    ((((MarkdownDoc.emit mutedDoc).1.splitOn "quiet words").length) == 2)
   -- Both halves on one page, judged on the typed tree: a palette role
   -- resolves to its var reference, an authored role to its class — a name
   -- the palette knows adapts, a name it does not becomes addressable, and
@@ -806,7 +806,7 @@ def markdownChecks (ref : IO.Ref (List String)) : IO Unit := do
     "Label \\hfill 2021\\par" ++
     "\\begin{itemize}\\item One thing\\item Another\\end{itemize}" ++
     "\\end{document}")
-  let md := MarkdownDoc.emit doc
+  let md := (MarkdownDoc.emit doc).1
   t "markdown source is clean" ds.isEmpty
   t "markdown metadata renders as the llms.txt preamble"
     (md.startsWith "# Alex Doe, PhD\n\n> An invented person.\n\n")
@@ -823,17 +823,17 @@ def markdownChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (bare, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "Just a body: https://example.org text.\\end{document}")
   t "markdown without metadata has no preamble"
-    ((MarkdownDoc.emit bare).startsWith "Just a body:")
+    ((MarkdownDoc.emit bare).1.startsWith "Just a body:")
   let (deck, _) := elabStr ("\\documentclass{slides}\\begin{document}" ++
     "\\begin{frame}{Opening}Visible.\\note{hidden aside}\\end{frame}\\end{document}")
-  let deckMd := MarkdownDoc.emit deck
+  let deckMd := (MarkdownDoc.emit deck).1
   t "markdown frames are sections, notes stay out"
     ((deckMd.splitOn "## Opening").length == 2 &&
      (deckMd.splitOn "hidden aside").length == 1)
   let (esc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "under\\_score and 2*3\\end{document}")
   t "markdown escapes what would read as markup"
-    (((MarkdownDoc.emit esc).splitOn "under\\_score and 2\\*3").length == 2)
+    (((MarkdownDoc.emit esc).1.splitOn "under\\_score and 2\\*3").length == 2)
   -- The declared text alternative (graphicx's alt key, LaTeX News 37)
   -- reaches both backends, and a caption does not overwrite it.
   let (img, imgDs) := elabStr ("\\documentclass{article}\\begin{document}" ++
@@ -841,7 +841,7 @@ def markdownChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\end{document}")
   t "image alt declares and reaches both backends" (imgDs.isEmpty &&
     (((HtmlDoc.emit {} img).1.splitOn "alt=\"An invented portrait\"").length == 2) &&
-    (((MarkdownDoc.emit img).splitOn "![An invented portrait](face.png)").length == 2))
+    (((MarkdownDoc.emit img).1.splitOn "![An invented portrait](face.png)").length == 2))
   let (figImg, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\begin{figure}\\includegraphics[alt={Declared wins}]{face.png}" ++
     "\\caption{A caption}\\end{figure}\\end{document}")
@@ -863,20 +863,20 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}Body text.\\end{document}")
   t "metadata-only source is clean" ds1.isEmpty
   t "metadata title: summary follows the title line"
-    ((MarkdownDoc.emit metaOnly) == "# Meta Title\n\n> A meta summary.\n\nBody text.\n")
+    ((MarkdownDoc.emit metaOnly).1 == "# Meta Title\n\n> A meta summary.\n\nBody text.\n")
   -- 2: body heading only — the summary follows the body's own title line.
   let bodyOnly : Ir.Doc := {
     info := { subject := some "A body-titled summary." }
     body := #[.section 0 false #[.text "Body Title"], .para #[.text "After."]] }
   t "body title: summary follows the body's title line"
-    ((MarkdownDoc.emit bodyOnly) ==
+    ((MarkdownDoc.emit bodyOnly).1 ==
       "# Body Title\n\n> A body-titled summary.\n\nAfter.\n")
   -- 3: both — the body's heading wins; one `#` line, one title, summary after it.
   let (both, ds3) := elabStr ("\\documentclass{article}" ++
     "\\pdfmeta{ subject = \"A shared summary.\" }\\title{Both Sources}" ++
     "\\begin{document}\\maketitle Body text.\\end{document}")
   t "both-sources source is clean" ds3.isEmpty
-  let bothMd := MarkdownDoc.emit both
+  let bothMd := (MarkdownDoc.emit both).1
   t "both sources: the body's title line leads and the summary follows"
     (bothMd.startsWith "# Both Sources\n\n> A shared summary.\n\n")
   t "both sources: exactly one # line, the title stated once"
@@ -886,14 +886,29 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
     info := { subject := some "Only a summary." }
     body := #[.para #[.text "x"]] }
   t "no title anywhere: the summary opens the twin"
-    ((MarkdownDoc.emit neither) == "> Only a summary.\n\nx\n")
+    ((MarkdownDoc.emit neither).1 == "> Only a summary.\n\nx\n")
   -- The remainder: a mid-document title (W0321 warns) still pulls the
   -- summary to its own line — after the title, never above the body.
   let mid : Ir.Doc := {
     info := { subject := some "A late summary." }
     body := #[.para #[.text "Lead."], .section 0 false #[.text "Late Title"]] }
   t "a mid-document title carries the summary with it"
-    ((MarkdownDoc.emit mid) == "Lead.\n\n# Late Title\n\n> A late summary.\n")
+    ((MarkdownDoc.emit mid).1 == "Lead.\n\n# Late Title\n\n> A late summary.\n")
+  -- W0344: a small-caps run survives into plain text as typed, and the
+  -- twin says so — once, naming the first run; a run that never reaches
+  -- the twin (a speaker note) is not a loss.
+  let (sc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "{\\scshape phd}\\end{document}")
+  t "markdown names the small-caps casing it cannot render"
+    (((MarkdownDoc.emit sc).2.map (·.code)) == #["W0344"] &&
+      ((MarkdownDoc.emit sc).2.any fun d => (d.message.splitOn "'phd'").length == 2))
+  let (plainDoc, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "no small caps here\\end{document}")
+  t "no small caps, no W0344" ((MarkdownDoc.emit plainDoc).2.isEmpty)
+  let (noteSc, _) := elabStr ("\\documentclass{slides}\\begin{document}" ++
+    "\\begin{frame}{T}x\\note{{\\scshape phd}}\\end{frame}\\end{document}")
+  t "small caps in a speaker note never reach the twin, so nothing is lost"
+    ((MarkdownDoc.emit noteSc).2.isEmpty)
 
 /-- The quotation node: `{quote}` and `{quotation}` elaborate to the one
 `Block.quote` (classes.dtx defines both as `\list{}{\rightmargin
@@ -917,7 +932,7 @@ def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- Markdown: `> ` marks the quoted line, and the separator between two
   -- quoted paragraphs keeps a bare `>` so the quotation stays one block
   -- (CommonMark §5.1: a block quote does not continue across a blank line).
-  let md := MarkdownDoc.emit doc
+  let md := (MarkdownDoc.emit doc).1
   t "markdown sets the quotation as > lines"
     ((md.splitOn "> One invented line.").length == 2)
   t "markdown keeps a two-paragraph quotation one block"
@@ -978,7 +993,7 @@ def titleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html sets the title as the one h1"
     ((page.splitOn "<h1>An Invented Title</h1>").length == 2 &&
       (page.splitOn "<h1").length == 2)
-  let md := MarkdownDoc.emit doc
+  let md := (MarkdownDoc.emit doc).1
   t "markdown opens with the title as the one # line"
     (md.startsWith "# An Invented Title\n\n" &&
       (md.splitOn "\n# ").length == 1)
@@ -1069,7 +1084,7 @@ def backendChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has page "Only the page carries this." && !has page "Print and twin")
   t "html marks conditional content with its target set"
     (has page "<div data-backend=\"html\">")
-  let md := MarkdownDoc.emit doc
+  let md := (MarkdownDoc.emit doc).1
   t "markdown emits only its own conditional content"
     (has md "Print and twin carry this." && !has md "Only the page")
   -- Diagnostics: an unknown backend name (W0323), and content no backend
@@ -1113,7 +1128,7 @@ def landmarkChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has page "<nav>" && has page "</nav>" && has page "<a href=\"#field-notes\""
       && has page "<section id=\"field-notes\">")
   t "markdown keeps a nav's content transparent"
-    (has (MarkdownDoc.emit doc) "[Notes](#field-notes)")
+    (has (MarkdownDoc.emit doc).1 "[Notes](#field-notes)")
   let (two, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\begin{nav}\\href{#a-head}{A}\\end{nav}\\begin{nav}\\href{#a-head}{B}\\end{nav}" ++
     "\\section*{A Head}x\\end{document}")
@@ -1203,7 +1218,7 @@ def pinChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a reveal another backend owns ships nothing on this page"
     (!has keptPage "ltx-reveal" && !has keptPage "CSS.supports")
   -- The markdown twin keeps a pinned nav transparent, as any nav.
-  t "markdown keeps a pinned nav transparent" (has (MarkdownDoc.emit doc) "[Up](#top)")
+  t "markdown keeps a pinned nav transparent" (has (MarkdownDoc.emit doc).1 "[Up](#top)")
   -- Declaration mistakes are named, never silent.
   t "offset or reveal without a pin is named as ignored"
     (warnCodes ("\\documentclass{article}\\begin{document}" ++
@@ -1303,7 +1318,7 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     ((mdPage.splitOn ("<link rel=\"alternate\" type=\"text/markdown\" " ++
         "href=\"profile.md\">")).length == 2 &&
      !has "rel=\"alternate\"")
-  let md := MarkdownDoc.emit doc
+  let md := (MarkdownDoc.emit doc).1
   let pdf := Pdf.write geom oneFace (Layout.run geom oneFace none doc).pages doc.info
   t "the one declared title reaches all three surfaces"
     (has "<title>Alex Doe, PhD</title>" &&
@@ -2075,7 +2090,7 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- rendered page witnesses it.
   t "no icon renders with an empty accessible name" (!has "aria-label=\"\"")
   -- The markdown twin renders the text alternative.
-  let md := MarkdownDoc.emit doc
+  let md := (MarkdownDoc.emit doc).1
   t "markdown renders the text alternative, never the raw scalar"
     ((md.splitOn "GitHub").length ≥ 2 && (md.splitOn "\uF09B").length == 1)
   -- Layout: the icon sets from the covering face without a substitution
@@ -4983,6 +4998,10 @@ def dvH (src : String) : Array Diag :=
   let (doc, ds) := elabStr src
   ds ++ (HtmlDoc.emit {} doc).2
 
+/-- Diagnostics after the markdown backend. -/
+def dvM (src : String) : Array Diag :=
+  let (doc, ds) := elabStr src
+  ds ++ (MarkdownDoc.emit doc).2
 
 /-- One firing input per code. `one` maps every slot to one face;
 `mapped` adds a second face and a fallback map for the substitution codes.
@@ -5162,6 +5181,9 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .W0343 =>
     dvE (dvDoc "\\page{ margin = 20pt }\n\\page{ margin = 30pt }\n" "x") ++
     dvE (dvDoc "\\runningfoot{one}\n\\runningfoot{two}\n" "x")
+  | .W0344 =>
+    dvM (dvDoc "" "{\\scshape phd}") ++
+    dvM (dvDoc "" "{\\scshape phd} and {\\scshape fellow of the example society}")
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"

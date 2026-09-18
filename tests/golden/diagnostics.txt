@@ -318,6 +318,11 @@ warning[W0343]: 'margin' in '\page' was already set to '20pt'; this later value 
   help: one value per key: keep the 'margin = ...' you mean
 warning[W0343]: a second '\runningfoot' replaces the first
   help: one '\runningfoot' declares the line; delete the one you do not mean
+── W0344 (degraded) small caps have no markdown spelling; their text is set as typed
+warning[W0344]: small caps have no markdown spelling; 'phd' is set as typed
+  help: markdown keeps the letters as typed: write the casing prose should read, or \allow{W0344} accepts the loss
+warning[W0344]: small caps have no markdown spelling; 'phd' and 1 more run are set as typed
+  help: markdown keeps the letters as typed: write the casing prose should read, or \allow{W0344} accepts the loss
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added
