@@ -5075,25 +5075,74 @@ def allowChecks (ref : IO.Ref (List String)) : IO Unit := do
     (errCodes (doc "\\allow{W9999}") == ["E0329"])
   t "allow dumps as a declaration"
     (((Ir.dump (elabStr (doc "\\allow{W0307}")).1 #[]).splitOn "allow W0307").length == 2)
-  -- The total function severity resolution is: an allowed dropped-loss
-  -- error becomes a warning; everything else keeps its derived severity.
+  -- The total function severity resolution is: an allowed error or warning
+  -- becomes a note — a declared document emits nothing at default
+  -- verbosity — and the acceptance summary is what keeps it visible.
   let e := Diag.of .E0501 "gone"
-  t "accept downgrades an allowed error to a warning, changing nothing else"
+  let w := Diag.of .W0338 "wide"
+  t "accept downgrades an allowed error to a note, changing nothing else"
     (let (d, acc) := Diag.accept #["E0501"] false e
-     acc && d.severity == .warning && d.code == e.code && d.message == e.message
+     acc && d.severity == .note && d.code == e.code && d.message == e.message
        && d.span == e.span && d.help == e.help)
+  t "accept downgrades an allowed warning to a note"
+    (let (d, acc) := Diag.accept #["W0338"] false w
+     acc && d.severity == .note && d.code == w.code)
   t "accept leaves an unallowed error alone"
     (Diag.accept #["W0307"] false e == (e, false))
-  t "best-effort accepts every error"
-    (let (d, acc) := Diag.accept #[] true e
-     acc && d.severity == .warning)
-  t "accept never touches a warning"
-    (Diag.accept #["W0338"] true (Diag.of .W0338 "t") == (Diag.of .W0338 "t", false))
+  t "accept leaves an unallowed warning alone"
+    (Diag.accept #["E0501"] false w == (w, false))
+  t "best-effort accepts every error and warning"
+    (let (de, accE) := Diag.accept #[] true e
+     let (dw, accW) := Diag.accept #[] true w
+     accE && de.severity == .note && accW && dw.severity == .note)
+  t "accept never touches a note"
+    (let n := Diag.of .N0100 "idiom"
+     Diag.accept #["N0100"] true n == (n, false))
   t "unfired names the stale entries only"
     (Diag.unfired #["W0307", "W0338"] #["W0338", "W0338"] == #["W0307"])
   t "accepted losses line prints codes with counts"
     (Render.humanAccepted false [("W0307", 2), ("E0502", 1)] ==
       "accepted: 3 losses (W0307 ×2, E0502)")
+
+/-- The `--werror` exit-code matrix, over the same functions the driver
+runs: diagnostics from a real elaboration are resolved against the
+document's own `\allow`, and `exitFor` reads the counts. The contract:
+errors are 1, failed assertions 2, and a warning is 1 only under the flag —
+where an accepted loss is not a warning, which is the whole point of
+accepting it. -/
+def werrorChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  t "args --werror parses" ((parse ["a.tex", "--werror"]).map (·.werror) == .ok true)
+  t "args werror defaults off" ((parse ["a.tex"]).map (·.werror) == .ok false)
+  let resolve (src : String) : Resolution :=
+    let (doc, ds) := elabStr src
+    Diag.resolveAll doc.allow false ds
+  let clean := resolve "\\begin{document}\nx\n\\end{document}"
+  let warned := resolve "\\sloppy\n\\begin{document}\nx\n\\end{document}"
+  let allowed := resolve "\\allow{W0104}\n\\sloppy\n\\begin{document}\nx\n\\end{document}"
+  t "matrix: clean document is 0 without the flag"
+    (exitFor clean.errors 0 clean.warnings false == 0)
+  t "matrix: clean document is 0 with the flag"
+    (clean.warnings == 0 && exitFor clean.errors 0 clean.warnings true == 0)
+  t "matrix: a warning is 0 without the flag"
+    (warned.warnings > 0 && exitFor warned.errors 0 warned.warnings false == 0)
+  t "matrix: a warning is 1 with the flag"
+    (exitFor warned.errors 0 warned.warnings true == 1)
+  t "matrix: an allowed loss is 0 without the flag"
+    (exitFor allowed.errors 0 allowed.warnings false == 0)
+  t "matrix: an allowed loss is 0 with the flag — acceptance composes"
+    (allowed.warnings == 0 && allowed.accepted == #["W0104"] &&
+      exitFor allowed.errors 0 allowed.warnings true == 0)
+  t "matrix: an error is 1 whatever the flag"
+    (exitFor 1 0 0 false == 1 && exitFor 1 0 0 true == 1)
+  t "matrix: a failed assertion is 2, warnings or not"
+    (exitFor 0 1 3 true == 2 && exitFor 0 1 0 false == 2)
+  t "werror verdict line names the count and the flag"
+    (Render.humanWerror false "a.tex" 3 17 == "✖ a.tex — 3 warnings (--werror) (17 ms)")
+  t "werror porcelain summary is not ok and counts warnings"
+    (Render.porcelainWerror "a.tex" 3 17 ==
+      "{\"event\":\"summary\",\"file\":\"a.tex\",\"ok\":false,\"errors\":0," ++
+      "\"warnings\":3,\"ms\":17}")
 
 def renderChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -7211,6 +7260,7 @@ def main (args : List String) : IO UInt32 := do
   pictureElabChecks ref
   diagVoiceChecks ref update
   allowChecks ref
+  werrorChecks ref
   declChecks ref
   tokensChecks ref
   compatChecks ref

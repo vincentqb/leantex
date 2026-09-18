@@ -60,10 +60,11 @@ inductive Loss where
 /-- The policy: a dropped loss is an error, everything else is a warning or a
 note. `pending` is a warning by design — the engine renders as much as it can
 and says what it could not, because a document is more useful than a refusal
-when the gap is one the project has committed to closing. `--werror` turns
-every warning fatal for a caller who wants the strict reading, and `\allow`
-in a document downgrades named dropped-loss codes to warnings (see
-`Diag.accept`). -/
+when the gap is one the project has committed to closing. `--werror` makes
+any remaining warning fail the exit code for a caller who wants the strict
+reading, and `\allow` in a document accepts named codes, downgrading them to
+notes (see `Diag.accept`) — an accepted loss is neither an error nor a
+warning. -/
 def Loss.severity : Loss → Severity
   | .dropped => .error
   | .pending => .warning
@@ -295,16 +296,43 @@ theorem Diag.of_code_letter (c : DiagCode) (message : String) (span : Option Spa
   c.code_letter
 
 /-- The escape hatch: `\allow{W0307, ...}` in a document's preamble accepts
-the named losses, downgrading those errors to warnings for that document
-alone; `--best-effort` (`allowAll`) accepts every loss — port mode. Rust's
-lint levels (allow/warn/deny per scope, deny wins in CI) are the tested
-prior art: acceptance is declared and scoped, never ambient — the build
-summary prints what was accepted. Returns the resolved diagnostic and
-whether it was accepted. -/
+the named losses for that document alone; `--best-effort` (`allowAll`)
+accepts every loss — port mode. Rust's lint levels (allow/warn/deny per
+scope, deny wins in CI) are the tested prior art: acceptance is declared
+and scoped, never ambient. An accepted diagnostic is downgraded to a note,
+so a document that declares its intent emits nothing at default verbosity
+— and the build summary always prints what was accepted, which is how
+acceptance stays visible rather than silent. An accepted loss is not a
+warning, so it never trips `--werror`: that is the point of accepting it.
+Returns the resolved diagnostic and whether it was accepted. -/
 def Diag.accept (allowed : Array String) (allowAll : Bool) (d : Diag) : Diag × Bool :=
-  if d.severity == .error && (allowAll || allowed.contains d.code) then
-    ({ d with severity := .warning }, true)
+  if d.severity != .note && (allowAll || allowed.contains d.code) then
+    ({ d with severity := .note }, true)
   else (d, false)
+
+/-- One phase's diagnostics resolved against the document's acceptance,
+with the counts the driver's exit contract reads: errors and warnings are
+counted after acceptance, so an accepted loss is neither. -/
+structure Resolution where
+  diags : Array Diag := #[]
+  fired : Array String := #[]
+  accepted : Array String := #[]
+  errors : Nat := 0
+  warnings : Nat := 0
+  deriving Repr, BEq
+
+def Diag.resolveAll (allowed : Array String) (allowAll : Bool)
+    (ds : Array Diag) : Resolution := Id.run do
+  let mut r : Resolution := {}
+  for d0 in ds do
+    let (d, acc) := Diag.accept allowed allowAll d0
+    r := { r with
+      diags := r.diags.push d
+      fired := r.fired.push d.code
+      accepted := if acc then r.accepted.push d.code else r.accepted
+      errors := r.errors + (if d.severity == .error then 1 else 0)
+      warnings := r.warnings + (if d.severity == .warning then 1 else 0) }
+  return r
 
 /-- The `\allow` entries no emitted diagnostic ever matched: each is stale
 acceptance the document no longer needs, and warning about it is one of the

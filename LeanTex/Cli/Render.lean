@@ -44,6 +44,12 @@ def humanAccepted (color : Bool) (counts : List (String × Nat)) : String :=
   let noun := if total == 1 then "loss" else "losses"
   s!"{sgr color "1;33" "accepted"}: {total} {noun} ({String.intercalate ", " parts})"
 
+/-- The `--werror` verdict, printed after the outputs (which were written:
+the flag changes the exit code, never the rendering). -/
+def humanWerror (color : Bool) (file : String) (warnings ms : Nat) : String :=
+  let noun := if warnings == 1 then "warning" else "warnings"
+  s!"{sgr color "1;31" "✖"} {file} — {warnings} {noun} (--werror) ({ms} ms)"
+
 private def jsonEscape (s : String) : String :=
   s.foldl (init := "") fun acc c =>
     match c with
@@ -95,5 +101,9 @@ def porcelainAccepted (counts : List (String × Nat)) : String :=
   let codes := counts.map fun (c, n) => obj [("code", jstr c), ("count", toString n)]
   obj [("event", jstr "accepted"), ("count", toString total),
     ("codes", "[" ++ String.intercalate "," codes ++ "]")]
+
+def porcelainWerror (file : String) (warnings ms : Nat) : String :=
+  obj [("event", jstr "summary"), ("file", jstr file), ("ok", "false"),
+    ("errors", "0"), ("warnings", toString warnings), ("ms", toString ms)]
 
 end LeanTex.Cli.Render

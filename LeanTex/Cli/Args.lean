@@ -52,6 +52,11 @@ structure Config where
   /-- `--best-effort`: accept every loss, as `\allow` of every code would —
   port mode for documents written against another engine. -/
   bestEffort : Bool := false
+  /-- `--werror`: exit 1 when any warning was emitted. Output is still
+  written — the flag changes the exit code, never the rendering — and an
+  accepted loss (`\allow`, `--best-effort`) is not a warning for this
+  purpose: that is the point of accepting it. Notes never count. -/
+  werror : Bool := false
   mathBoundary : Option String := none
   /-- Extra font directories, added to the built-in locations. -/
   fontDirs : Array String := #[]
@@ -109,6 +114,7 @@ def parse (argv : List String) : Except String Config := do
       | "--porcelain" => cfg := { cfg with porcelain := true }
       | "--watch" => cfg := { cfg with watch := true }
       | "--best-effort" => cfg := { cfg with bestEffort := true }
+      | "--werror" => cfg := { cfg with werror := true }
       | "-h" | "--help" => return { cfg with cmd := .help }
       | "--version" => return { cfg with cmd := .version }
       | "-o" | "--output" =>
@@ -264,6 +270,17 @@ def outPath (output : Option String) (outputIsDir : Bool) (source : String)
     else if emitOfPath o == some e then o
     else besideSource
 
+/-- The exit-code contract, one total function so the driver and the tests
+read the same answer: errors win, then failed assertions, then — only under
+`--werror` — warnings. An accepted loss was already downgraded to a note
+before it reached these counts, so `\allow` composes with `--werror` by
+construction. -/
+def exitFor (errors assertFailures warnings : Nat) (werror : Bool) : UInt32 :=
+  if errors > 0 then 1
+  else if assertFailures > 0 then 2
+  else if werror && warnings > 0 then 1
+  else 0
+
 def helpText : String :=
   "leantex — compile a .tex document to PDF or HTML, fast, with no setup
 
@@ -291,6 +308,9 @@ flags:
   --watch                 rebuild when the source changes (Ctrl-C stops)
   --best-effort           accept every loss (as \\allow of every code); the
                           summary prints what was accepted
+  --werror                exit 1 when any warning was emitted; output is
+                          still written, and accepted losses (\\allow,
+                          --best-effort) and notes never count
   --emit <list>           backends: pdf, html, md — several at once
   --css <mode>            HTML stylesheet: own | bulma | none (default own)
   --math-boundary <tool>  attach a client-side math renderer to HTML output
@@ -300,6 +320,6 @@ flags:
   --porcelain             JSONL events on stdout, for machines
   --color <m>             auto | always | never (NO_COLOR respected)
 
-exit codes: 0 ok · 1 document errors · 2 assertions failed · 3 usage · 4 internal"
+exit codes: 0 ok · 1 document errors (with --werror, warnings too) · 2 assertions failed · 3 usage · 4 internal"
 
 end LeanTex.Cli

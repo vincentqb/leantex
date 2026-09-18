@@ -26,21 +26,13 @@ def Ui.diag (ui : Ui) (d : Diag) : IO Unit := do
     ui.errStream.putStrLn (Render.human ui.color d)
 
 /-- One phase's diagnostics resolved against the document's acceptance
-(`\allow` and `--best-effort`) and printed. Returns the codes that fired,
-the codes whose errors were accepted, and the error count after
-acceptance. -/
+(`\allow` and `--best-effort`) and printed. -/
 def Ui.resolve (ui : Ui) (allowed : Array String) (allowAll : Bool)
-    (ds : Array Diag) : IO (Array String × Array String × Nat) := do
-  let mut fired : Array String := #[]
-  let mut accepted : Array String := #[]
-  let mut errors := 0
-  for d0 in ds do
-    let (d, acc) := Diag.accept allowed allowAll d0
-    fired := fired.push d.code
-    if acc then accepted := accepted.push d.code
-    if d.severity == .error then errors := errors + 1
+    (ds : Array Diag) : IO Resolution := do
+  let r := Diag.resolveAll allowed allowAll ds
+  for d in r.diags do
     ui.diag d
-  return (fired, accepted, errors)
+  return r
 
 /-- Codes with their multiplicities, first appearance first. -/
 def tally (xs : Array String) : List (String × Nat) := Id.run do
@@ -461,12 +453,14 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
     let allowAll := ui.cfg.bestEffort
     let mut fired : Array String := #[]
     let mut accepted : Array String := #[]
-    let (f0, a0, errors) ← ui.resolve doc.allow allowAll diags
-    fired := fired ++ f0
-    accepted := accepted ++ a0
-    if errors > 0 then
+    let mut warnings : Nat := 0
+    let r0 ← ui.resolve doc.allow allowAll diags
+    fired := fired ++ r0.fired
+    accepted := accepted ++ r0.accepted
+    warnings := warnings + r0.warnings
+    if r0.errors > 0 then
       ui.accepted accepted
-      ui.summary file errors (← since t0)
+      ui.summary file r0.errors (← since t0)
       return 1
     let t ← IO.monoMsNow
     match ← buildFontSet ui file doc with
@@ -477,20 +471,22 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       ui.summary file 1 (← since t0)
       return 1
     | .ok (fs, fontDiags, paths) =>
-      let (f1, a1, fontErrors) ← ui.resolve doc.allow allowAll fontDiags
-      fired := fired ++ f1
-      accepted := accepted ++ a1
-      if fontErrors > 0 then
+      let r1 ← ui.resolve doc.allow allowAll fontDiags
+      fired := fired ++ r1.fired
+      accepted := accepted ++ r1.accepted
+      warnings := warnings + r1.warnings
+      if r1.errors > 0 then
         ui.accepted accepted
-        ui.summary file fontErrors (← since t0)
+        ui.summary file r1.errors (← since t0)
         return 1
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.phase "font" s!"{names} ({paths})" (← since t)
       let t ← IO.monoMsNow
       let (imgs, imgDiags) ← loadImages file doc
-      let (f2, a2, imgErrors) ← ui.resolve doc.allow allowAll imgDiags
-      fired := fired ++ f2
-      accepted := accepted ++ a2
+      let r2 ← ui.resolve doc.allow allowAll imgDiags
+      fired := fired ++ r2.fired
+      accepted := accepted ++ r2.accepted
+      warnings := warnings + r2.warnings
       unless imgs.entries.isEmpty do
         ui.phase "images" s!"{imgs.entries.size} files" (← since t)
       let t ← IO.monoMsNow
@@ -499,16 +495,17 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let t ← IO.monoMsNow
       let geom := Layout.Geom.ofPage doc.page
       let out := Layout.run geom fs (some pats) doc imgs
-      let (f3, a3, layoutErrors) ← ui.resolve doc.allow allowAll out.diags
-      fired := fired ++ f3
-      accepted := accepted ++ a3
+      let r3 ← ui.resolve doc.allow allowAll out.diags
+      fired := fired ++ r3.fired
+      accepted := accepted ++ r3.accepted
+      warnings := warnings + r3.warnings
       ui.phase "layout" s!"{out.pages.size} pages" (← since t)
       -- An unaccepted error anywhere before the writers means no output: a
       -- failing document must not produce one (the assertion contract, held
       -- for every dropped loss).
-      if imgErrors + layoutErrors > 0 then
+      if r2.errors + r3.errors > 0 then
         ui.accepted accepted
-        ui.summary file (imgErrors + layoutErrors) (← since t0)
+        ui.summary file (r2.errors + r3.errors) (← since t0)
         return 1
       -- Assertions judge what shipped, so they run after layout and before
       -- the file is written: a failing document must not produce output.
@@ -526,7 +523,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           ui.diag d
         ui.accepted accepted
         ui.summary file failures.size (← since t0)
-        return 2
+        return exitFor 0 failures.size warnings ui.cfg.werror
       let mut written : Array String := #[]
       let emit := ui.cfg.effectiveEmit doc.output.formats
       let css := ui.cfg.effectiveCss doc.output.css
@@ -553,9 +550,10 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
             else none
         }
         let (html, hdiags) := HtmlDoc.emit hcfg doc
-        let (f4, a4, _) ← ui.resolve doc.allow allowAll hdiags
-        fired := fired ++ f4
-        accepted := accepted ++ a4
+        let r4 ← ui.resolve doc.allow allowAll hdiags
+        fired := fired ++ r4.fired
+        accepted := accepted ++ r4.accepted
+        warnings := warnings + r4.warnings
         let htmlPath := outPath ui.cfg.output outIsDir file .html
         IO.FS.writeFile htmlPath html
         written := written.push htmlPath
@@ -576,12 +574,22 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         ui.phase "pdf" s!"{pdf.size} bytes" (← since t)
       -- The hatch's other teeth: an `\allow` that never fired is stale
       -- acceptance and warns; what was accepted always prints.
-      for c in Diag.unfired doc.allow fired do
-        ui.diag (DriverDiag.allowUnfired c)
+      let r5 ← ui.resolve doc.allow allowAll
+        ((Diag.unfired doc.allow fired).map DriverDiag.allowUnfired)
+      accepted := accepted ++ r5.accepted
+      warnings := warnings + r5.warnings
       ui.accepted accepted
       let notes := diags.foldl (fun n d => if d.severity == .note then n + 1 else n) 0
       ui.done file (String.intercalate ", " written.toList) out.pages.size (← since t0) notes
-      return 0
+      -- `--werror`: the outputs above were written — the flag turns the
+      -- exit code, never the rendering — and the verdict line says why the
+      -- build failed anyway.
+      if ui.cfg.werror && warnings > 0 then
+        if ui.cfg.porcelain then
+          ui.outStream.putStrLn (Render.porcelainWerror file warnings (← since t0))
+        else if !ui.cfg.quiet then
+          ui.errStream.putStrLn (Render.humanWerror ui.color file warnings (← since t0))
+      return exitFor 0 0 warnings ui.cfg.werror
 
 def dump (ui : Ui) (file : String) : IO UInt32 := do
   match ← frontend ui file with
