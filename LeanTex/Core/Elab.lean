@@ -29,6 +29,9 @@ structure UserCmd where
   name : String
   params : Array Param
   body : Array Raw
+  /-- Where the definition stands, for the shadowing warning: the check
+  runs once the final palette is known, long after this site scrolls by. -/
+  span : Span
   deriving Repr, BEq
 
 /-- A document-defined environment (`\defineenv`, the native spelling of
@@ -3363,7 +3366,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
             | some b =>
               let params ← parseSig ctx (rawSrc sigRaws) pos
               ctx := { ctx with
-                user := ctx.user.push ⟨newName, params, trimRaws b⟩
+                user := ctx.user.push ⟨newName, params, trimRaws b, ⟨ctx.file, npos⟩⟩
                 limit := ctx.user.size + 1 }
             | none =>
               diag ctx .E0303 s!"'\\define \\{newName}' is missing its \{body}" pos
@@ -3730,6 +3733,23 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let stBody ← get
   palette := stBody.bodyPalette.getD palette
   tokens := stBody.bodyTokens.getD tokens
+  -- A definition that shadows a palette role replaces a value that adapts
+  -- with one that cannot: the palette no longer reaches those words (a
+  -- variant or a host page's override dies there), and the contrast judge —
+  -- which sees a role use only because it resolves through the palette —
+  -- goes blind to them. Shadowing a command is LaTeX-normal and stays
+  -- permitted; the warning names what this particular shadow costs. Judged
+  -- against the final palette, so declaration order cannot hide it.
+  let mut shadowSaid : Array String := #[]
+  for cmd in ctx.user do
+    if !shadowSaid.contains cmd.name && (palette.find? cmd.name).isSome then
+      shadowSaid := shadowSaid.push cmd.name
+      modify fun st => { st with diags := st.diags.push (Diag.of .W0342
+        (s!"'\\{cmd.name}' is also a palette role; this definition freezes it, " ++
+          "so the palette and the contrast check no longer reach it")
+        (some cmd.span)
+        (help := s!"drop the definition and '\\{cmd.name}' colours as declared; " ++
+          s!"declared: {String.intercalate ", " (palette.entries.toList.map (·.1))}")) }
   -- The logo may have been declared in either half; a card carries none.
   let mut logo := (← get).logo
   if docClass == "card" && logo.isSome then

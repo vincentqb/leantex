@@ -4987,6 +4987,8 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
          "\\caption{Below the table}\n\\end{table}"))
   | .W0340 => dvE (dvDoc "" "x\n\n\\page{ size = a5 }\n\ny")
   | .W0341 => dvE "\\textls[16]{spaced}.example.org"
+  | .W0342 => dvE (dvDoc "\\theme{plain}\n\\define \\muted(word: content) {\\word}\n"
+      "\\muted{x}")
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
@@ -6684,6 +6686,33 @@ def roleInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the page declares the token the use references"
     ((qPage.splitOn "--quiet: #123456;").length == 2)
 
+/-- W0341: a definition that shadows a palette role is named, with the cost
+in the reason — the palette (a variant, a host page's override) and the
+contrast judge no longer reach the words the definition styles. Judged
+against the final palette, so declaration order cannot hide it; shadowing
+any other command stays silent, as in LaTeX. -/
+def roleShadowChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let diags (pre : String) : Array Diag :=
+    (elabStr ("\\documentclass{article}\n" ++ pre ++
+      "\\begin{document}\nx\n\\end{document}")).2
+  let fires (ds : Array Diag) : Bool := ds.any fun d =>
+    d.code == "W0342" && d.severity == .warning &&
+      (d.message.splitOn "palette").length > 1
+  t "a definition shadowing a theme role is named"
+    (fires (diags "\\theme{plain}\n\\define \\muted(word: content) {\\word}\n"))
+  t "declaration order cannot hide the shadow"
+    (fires (diags "\\define \\muted(word: content) {\\word}\n\\palette{ muted = #607060 }\n"))
+  t "the newcommand spelling is the same shadow"
+    (fires (diags "\\palette{ muted = #607060 }\n\\newcommand{\\muted}[1]{\\textbf{#1}}\n"))
+  t "a zero-ary shadow is the same freeze"
+    (fires (diags "\\palette{ muted = #607060 }\n\\define \\muted {gray words}\n"))
+  t "a definition of an unshadowed name is silent"
+    (!fires (diags "\\theme{plain}\n\\define \\entry(word: content) {\\word}\n"))
+  t "the warning points at the define site"
+    (((diags "\\theme{plain}\n\\define \\muted(word: content) {\\word}\n").filterMap
+      (·.span)).any (·.pos.line == 3))
+
 def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- \fonts declarations and family resolution
@@ -7994,6 +8023,7 @@ def main (args : List String) : IO UInt32 := do
   designChecks ref
   roleChecks ref
   roleInvocationChecks ref
+  roleShadowChecks ref
   fontsDeclChecks ref
   fontSuiteChecks ref
   mathChecks ref

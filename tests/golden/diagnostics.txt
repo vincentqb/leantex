@@ -310,6 +310,9 @@ warning[W0340]: '\page' is a declaration; in the body it is ignored
 ── W0341 (degraded) an unknown command's [...] options went with it, never onto the page
 warning[W0341]: '[16]' went with unknown command '\textls'; an option run is not content
   help: content, not options? start the '[' on the next line
+── W0342 (degraded) a definition shadows a palette role; the role is frozen where it is used
+warning[W0342]: '\muted' is also a palette role; this definition freezes it, so the palette and the contrast check no longer reach it
+  help: drop the definition and '\muted' colours as declared; declared: fg, bg, alert, example, muted, progressfg, progressbg, separator, standoutfg, standoutbg
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added
