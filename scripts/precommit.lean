@@ -389,6 +389,40 @@ def repoRefInString (l : String) : Bool :=
   containsSub s "PLAN.md" || containsSub s "AGENTS.md" ||
     containsSub s "LeanTex/" || milestoneTok s
 
+/-- The Config fields the driver may read: the command, the diagnostic
+channel, the where/when of a run, the run's acceptance policy, the font
+environment — and `mathBoundary`, the one recorded artifact-shaping
+remainder (see `artifact_flag_free` in Args.lean). `effectiveEmit` is the
+planning function the theorem covers. A new entry lands here only after
+the question "can it change a byte of the artifact?" is answered no — a
+field that does shape the artifact is the theorem's counterexample, not a
+new list entry. -/
+def driverConfigReads : List String :=
+  ["cmd", "verbosity", "quiet", "porcelain", "color", "output", "watch",
+   "bestEffort", "werror", "fontDirs", "mathBoundary", "effectiveEmit"]
+
+/-- A `cfg.<name>` read whose name is not on `driverConfigReads`, comments
+and strings aside. This is how a new flag would reach a backend from the
+driver — the thread starts as exactly this token in `Main.build` — so the
+common leak is caught where it starts. Stated misses, line-scanner shaped:
+a read that never spells the dot (destructuring, a helper handed the whole
+`Config`), an alias (`let c := ui.cfg` then `c.newFlag`), and an
+allowlisted field newly routed into a backend call. -/
+def undeclaredConfigRead (l : String) : Bool := Id.run do
+  let t := stripLineComment (stripStrings l)
+  let parts := t.splitOn "cfg."
+  let mut pre := parts.headD ""
+  for p in parts.tail do
+    let boundary := match pre.toList.getLast? with
+      | none => true
+      | some c => !isWordChar c
+    if boundary then
+      let field := (p.takeWhile isWordChar).toString
+      if !field.isEmpty && !driverConfigReads.contains field then
+        return true
+    pre := pre ++ "cfg." ++ p
+  return false
+
 /-- Every case a gate predicate must catch and every legal spelling it must
 pass, run by `lean --run scripts/precommit.lean --selftest` from `lake test`.
 Positive cases are the shapes whose escape prompted a gate change; negative
@@ -597,6 +631,24 @@ def selftest : IO UInt32 := do
     ("  let sev := d.severity", false),
     ("    severity := c.loss.severity", true)]
 
+  expect "undeclaredConfigRead" undeclaredConfigRead [
+    -- the leak shape: a new Config field threaded from the driver toward a
+    -- backend starts as exactly this token
+    ("          mathRenderer := ui.cfg.mathRenderer", true),
+    ("        let hcfg := { css := ui.cfg.cssMode, imgs }", true),
+    ("  if cfg.newFlag then", true),
+    -- the declared reads of today's driver
+    ("      let emit := ui.cfg.effectiveEmit doc.output.formats", false),
+    ("          mathBoundary := ui.cfg.mathBoundary", false),
+    ("  if ui.cfg.porcelain then", false),
+    ("    let allowAll := ui.cfg.bestEffort", false),
+    ("  let faces ← FontDb.scan (cfg.fontDirs.toList ++ (← texFontDirs))", false),
+    -- comments, strings, and non-Config names stay legal
+    ("  -- ui.cfg.frobnicate would be rejected here", false),
+    ("  say s!\"a message naming cfg.frobnicate\"", false),
+    ("  let x := hcfg.mathBoundary", false),
+    ("  cfg : Config", false)]
+
   let failed := (← fails.get).reverse
   if failed.isEmpty then
     IO.println "precommit selftest: all passed"
@@ -737,6 +789,19 @@ def main (args : List String) : IO UInt32 := do
   there — 'see PLAN.md' shipped in real output (the diag-voice defect).
   Fix: say what happens and what to write instead; the voice lint in
   Tests.lean judges the registered text."
+    if file == "Main.lean" then
+      let bad := lines.filter undeclaredConfigRead
+      if !bad.isEmpty then
+        say s!"pre-commit: a Config read in {file} not on the driver's declared list:
+{String.intercalate "\n" bad.toList}
+  The artifact is a function of the document and the font environment;
+  flags are not arguments to it (AGENTS.md, Conventions). A new Config
+  field the driver reads is one question away from shaping the artifact,
+  so it lands on driverConfigReads (scripts/precommit.lean) only after
+  that question is answered no — and a flag that does shape the artifact
+  breaks the theorem artifact_flag_free instead of growing the list.
+  Fix: make it a document declaration (\\output) rather than a flag; a
+  flag about where/when/how-loudly goes on the list, deliberately."
     if file.startsWith "LeanTex/Core/" && file != "LeanTex/Core/FontDb.lean" then
       let bad := lines.filter ioInCore
       if !bad.isEmpty then
