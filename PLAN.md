@@ -146,6 +146,15 @@ site-polish slice, three pieces the site port asked for.
   (paragraphs/lorem/underline) vs 80/285/400 recorded above — within the
   run-to-run spread on a loaded host, so the icon gather walk and the
   tree-facts extension are free at these sizes.
+- Two findings the port surfaced, both fixed the same day: the markdown
+  twin's served name is declared (`\output{ md = "llms.txt" }` —
+  llmstxt.org fixes the name, and the head's alternate link must name the
+  file as served; the port's build script renamed it after the fact and
+  silently broke that link), and a face the document ships outranks the
+  host's in the fallback picks (`FontDb.fallbackPicksPreferring`; this
+  host's TeX Live FontAwesome.otf had displaced the port's shipped Font
+  Awesome 5 faces, so "a document that carries its fonts renders the same
+  on every host" was false exactly for fallback-resolved scalars).
 
 2026-09-18 — zero diagnostics has a definition, and `--werror` enforces
 it: **a document that declares its intent (an `\allow` for an accepted

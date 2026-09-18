@@ -55,7 +55,8 @@ macOS `.ttc` font collections are not yet readable and are skipped.
 
 `tests/corpus/*.tex` are ready-made examples, and every one that names a
 font ships it in `tests/corpus/fonts/` (Source Serif Pro, Source Code Pro,
-Open Sans — see the license files there), so they build on any machine:
+Open Sans, and an invented icon face — see the license files there), so
+they build on any machine:
 
 ```
 ./.lake/build/bin/leantex tests/corpus/resume.tex
@@ -66,6 +67,9 @@ machine's default sans. `images.tex` shows `\includegraphics` and `figure`:
 the synthetic PNG/JPEG fixtures beside it embed into the PDF and link from
 the HTML. `talk.tex` and `deck.tex` are slide decks: each
 frame is one `<section>` of the HTML deck and one page of the PDF handout.
+`icons.tex` shows the fontawesome5 spellings
+(`\faGithub`, `\faIcon{arrow-up}`): each icon is a glyph in whatever
+installed or shipped face covers it, with a required text alternative.
 `themed.tex` selects the built-in `moloch` theme (`leantex themes` in help:
 `\usetheme{moloch}` or `\theme{moloch}`; `plain` is the quieter bundle) and
 shows the frame-title bar, a section page with its progress bar, and a
