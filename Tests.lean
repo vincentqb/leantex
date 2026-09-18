@@ -3442,8 +3442,14 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let t := check ref
   let themed (body : String) : String :=
     "\\documentclass[aspectratio=169]{slides}\n" ++
-    "\\palette{ fg = #23373B, bg = #FFFFFF, alert = #EB811B,\n" ++
-    "  progressfg = alert, standoutfg = bg, standoutbg = fg }\n" ++
+    -- The corrected moloch-lineage values: the original #EB811B alert has
+    -- no cover that clears the 3:1 state change on this page (even white
+    -- sits at 2.6:1 against it), which is the finding that recoloured the
+    -- real bundle — the resolved-design judge (W0345) now holds a shipped
+    -- overlay deck to the same bar, so this fixture declares the corrected
+    -- alert and the bundle's own 31% fraction.
+    "\\palette{ fg = #23373B, bg = #FFFFFF, alert = #A55A13,\n" ++
+    "  progressfg = alert, standoutfg = bg, standoutbg = fg, covered = 31\\% }\n" ++
     "\\begin{document}\n" ++ body ++ "\n\\end{document}"
   -- A standout frame carrying steps: one page per step, every page still
   -- inverted, its text still in standoutfg.
@@ -3471,7 +3477,7 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "stepped deck source clean" pDs.isEmpty
   let pOut := Layout.run (Layout.Geom.ofPage pDoc.page) oneFace none pDoc
   t "step pages plus divider plus frame" (pOut.pages.size == 5)
-  let alert : Ir.Color := { r := 0xEB, g := 0x81, b := 0x1B }
+  let alert : Ir.Color := { r := 0xA5, g := 0x5A, b := 0x13 }
   let mp : Dim.Sp := (Layout.Geom.ofPage pDoc.page).textWidth * 7875 / 10000
   t "the progress position belongs to the frame, not the step"
     (match pOut.pages[3]? with
@@ -5184,6 +5190,13 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
   | .W0344 =>
     dvM (dvDoc "" "{\\scshape phd}") ++
     dvM (dvDoc "" "{\\scshape phd} and {\\scshape fellow of the example society}")
+  | .W0345 =>
+    dvE (dvDeck "\\theme{moloch}\n\\palette{ frametitlebg = #F2F2F0 }\n"
+      "\\begin{frame}{T}\nx\n\\end{frame}") ++
+    dvE (dvDeck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }\n"
+      "\\begin{frame}[standout]\nS\n\\end{frame}") ++
+    dvE (dvDeck "\\palette{ covered = #000000 }\n"
+      "\\begin{frame}{T}\n\\uncover<2>{x}\n\\end{frame}")
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
@@ -6595,6 +6608,40 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "covered is exempt by role"
     (!(warnCodes ("\\documentclass{article}\\palette{ covered = #DDDDDD }" ++
       "\\begin{document}\\textcolor{covered}{later}\\end{document}")).contains "W0315")
+  -- The resolved design's own pairs (W0345): the bundles are proved, so
+  -- only a document's override can land an illegible frame-title bar,
+  -- standout, or invisible covering — and it is judged only when the
+  -- element ships. p5's archetype: moloch + a near-white frametitlebg
+  -- shipped frame titles at 1.07:1 with zero diagnostics.
+  let deck (pre body : String) := "\\documentclass{slides}" ++ pre ++
+    "\\begin{document}" ++ body ++ "\\end{document}"
+  let titled := "\\begin{frame}{T}x\\end{frame}"
+  t "an overridden frame-title pair warns with its ratio"
+    ((elabStr (deck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" titled)).2.any
+      fun d => d.code == "W0345" && (d.message.splitOn "1.07:1").length == 2 &&
+        (d.message.splitOn "4.50:1").length == 2)
+  t "the untouched bundle's frame-title pair is silent"
+    (!(warnCodes (deck "\\theme{moloch}" titled)).contains "W0345")
+  t "an illegible frame-title pair without a titled frame is silent"
+    (!(warnCodes (deck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }"
+      "\\begin{frame}x\\end{frame}")).contains "W0345")
+  t "declared decorative intent silences the frame-title pair"
+    (!(warnCodes (deck ("\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" ++
+      "\\palette[decorative]{ frametitlefg = #FAFAF9 }") titled)).contains "W0345")
+  t "an overridden standout pair warns at the large-scale threshold"
+    ((elabStr (deck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
+      "\\begin{frame}[standout]S\\end{frame}")).2.any
+      fun d => d.code == "W0345" && (d.message.splitOn "3.00:1").length == 2)
+  t "an illegible standout pair without a standout frame is silent"
+    (!(warnCodes (deck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
+      titled)).contains "W0345")
+  t "a cover as loud as the ink warns when overlays ship"
+    ((warnCodes (deck "\\palette{ covered = #000000 }"
+      "\\begin{frame}{T}\\uncover<2>{x}\\end{frame}")).contains "W0345")
+  t "a cover as loud as the ink is silent with nothing to cover"
+    (!(warnCodes (deck "\\palette{ covered = #000000 }" titled)).contains "W0345")
+  t "the default covering never warns"
+    (!(warnCodes (deck "" "\\begin{frame}{T}\\uncover<2>{x}\\end{frame}")).contains "W0345")
   t "unknown palette option warns and skips the block"
     (warnCodes ("\\documentclass{article}\\palette[dark]{ a = #101010 }" ++
       "\\begin{document}x\\end{document}") == ["W0316"])

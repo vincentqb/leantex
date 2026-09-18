@@ -351,6 +351,80 @@ def effectivePairDiags (doc : Doc) : Array Diag :=
             "\\palette{ fg = ... }" ++ " beside bg"))]
     else #[]
 
+/-- The resolved design's own pairs, judged for the document that ships
+them — the pairs `Design.ofDoc` creates out of declared and defaulted keys
+together, which the per-use walk in `docDiags` cannot see because no body
+text is coloured with them: the frame-title bar (its template sets
+`\large\bfseries` — 12pt bold, under WCAG 2.2's large-scale sizes, so SC
+1.4.3's 4.5:1), the standout frame (`\Large\bfseries`, 14.4pt bold, WCAG
+large-scale, so 3:1), and the covering (SC 1.4.11's 3:1 between an active
+and an inactive state, and quieter-than-active — `coveredContract`'s own
+two bounds, judged from `Design.cover`, the one resolving site). Each is
+judged only when the element ships: a titled frame for the bar, a standout
+frame for the inversion, pending overlay content for the cover — a warning
+about furniture the document never draws would be noise. The shipped
+bundles are proved (`builtin_designs_legible`, `builtin_designs_covered`),
+so only a document's own override can fire this; the decorative escape is
+the same one the per-use walk honours, on the pair's ink key. -/
+def resolvedPairDiags (doc : Doc) : Array Diag := Id.run do
+  let d := Design.ofDoc doc
+  let dec (n : String) : Bool := doc.palette.decorative.contains n
+  let mut out : Array Diag := #[]
+  if doc.body.any (fun b => match b with
+      | .frame title _ _ _ => !title.isEmpty | _ => false) then
+    if let some p := d.frametitle then
+      let milli := contrastMilli p.fg p.bg
+      if milli < aaText && !dec "frametitlefg" then
+        out := out.push (Diag.of .W0345
+          (s!"the frame-title bar pairs {hexOf p.fg} on {hexOf p.bg} at " ++
+            s!"{ratioString milli}, below the {ratioString aaText} " ++
+            "WCAG 2.2 asks of text (SC 1.4.3)")
+          (help := some ("deliberate low contrast is declared, not defaulted: " ++
+            "\\palette[decorative]{ " ++ s!"frametitlefg = {hexOf p.fg} " ++ "}")))
+  if doc.body.any (fun b => match b with
+      | .frame _ standout _ _ => standout | _ => false) then
+    let milli := contrastMilli d.standout.fg d.standout.bg
+    if milli < aaLargeText && !dec "standoutfg" then
+      out := out.push (Diag.of .W0345
+        (s!"the standout frame pairs {hexOf d.standout.fg} on " ++
+          s!"{hexOf d.standout.bg} at {ratioString milli}, below the " ++
+          s!"{ratioString aaLargeText} WCAG 2.2 asks of large-scale text (SC 1.4.3)")
+        (help := some ("deliberate low contrast is declared, not defaulted: " ++
+          "\\palette[decorative]{ " ++ s!"standoutfg = {hexOf d.standout.fg} " ++ "}")))
+  let hasPending := doc.body.any fun b =>
+    maxStepBlock b ≥ 2 || (match b with
+      | .frame _ _ _ fb => maxStepBlocks fb ≥ 2 | _ => false)
+  if hasPending && !dec "covered" then
+    let cov := d.cover
+    let coverHelp := some ("a cover is a declaration too: lower " ++
+      "'covered = <n>%', or declare \\palette{ covered = ... } " ++
+      "quieter than the ink it stands for")
+    let judge (nm : String) (active covered : Color) : Array Diag :=
+      if contrastMilli covered d.bg ≥ contrastMilli active d.bg then
+        #[Diag.of .W0345
+          (s!"covering '{nm}' does not quiet it: the covered form " ++
+            "reads as loud on the page as the active one")
+          (help := coverHelp)]
+      else
+        let milli := contrastMilli active covered
+        if milli < aaNonText then
+          #[Diag.of .W0345
+            (s!"covered '{nm}' reads at {ratioString milli} against its " ++
+              s!"active form, below the {ratioString aaNonText} " ++
+              "WCAG 2.2 asks of a state change (SC 1.4.11)")
+            (help := coverHelp)]
+        else #[]
+    out := out ++ judge "fg" d.fg (cov.of d.fg)
+    -- A declared constant cover stands for the plain runs itself: judged
+    -- under the key that declared it (undeclared, the plain cover IS the
+    -- fg cover just judged).
+    if d.covered.isSome then
+      out := out ++ judge "covered" d.fg cov.plain
+    for role in ["alert", "example"] do
+      if let some c := doc.palette.find? role then
+        out := out ++ judge role c (cov.of c)
+  return out
+
 /-- The pairings a document's own colours create, judged: every colour the
 document puts on text is paired with the page by the engine, so each is
 checked against the page — the effective page (`effectivePair`), and the
@@ -364,9 +438,11 @@ under `\palette[decorative]{...}`: the warning names that spelling, so poor
 contrast is a choice a document states, never a silent default. -/
 def docDiags (doc : Doc) : Array Diag :=
   -- A one-off append, not a walk: the declared-use half is bound to a name
-  -- so the join reads as the two-part contract it is.
+  -- so the join reads as the two-part contract it is; the resolved-design
+  -- half judges the pairs no body use carries.
   let declared := declaredUseDiags doc
-  effectivePairDiags doc ++ declared
+  let resolved := resolvedPairDiags doc
+  effectivePairDiags doc ++ declared ++ resolved
 where
   declaredUseDiags (doc : Doc) : Array Diag := Id.run do
     let d := Design.ofDoc doc

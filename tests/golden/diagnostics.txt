@@ -323,6 +323,13 @@ warning[W0344]: small caps have no markdown spelling; 'phd' is set as typed
   help: markdown keeps the letters as typed: write the casing prose should read, or \allow{W0344} accepts the loss
 warning[W0344]: small caps have no markdown spelling; 'phd' and 1 more run are set as typed
   help: markdown keeps the letters as typed: write the casing prose should read, or \allow{W0344} accepts the loss
+── W0345 (degraded) a themed element's resolved colour pairing is illegible (WCAG 2.2)
+warning[W0345]: the frame-title bar pairs #FAFAFA on #F2F2F0 at 1.07:1, below the 4.50:1 WCAG 2.2 asks of text (SC 1.4.3)
+  help: deliberate low contrast is declared, not defaulted: \palette[decorative]{ frametitlefg = #FAFAFA }
+warning[W0345]: the standout frame pairs #DDDDDD on #FAFAFA at 1.30:1, below the 3.00:1 WCAG 2.2 asks of large-scale text (SC 1.4.3)
+  help: deliberate low contrast is declared, not defaulted: \palette[decorative]{ standoutfg = #DDDDDD }
+warning[W0345]: covering 'covered' does not quiet it: the covered form reads as loud on the page as the active one
+  help: a cover is a declaration too: lower 'covered = <n>%', or declare \palette{ covered = ... } quieter than the ink it stands for
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added
