@@ -338,6 +338,9 @@ error[E0347]: '\runningfoot' in the body is dropped with its content
 ── W0348 (config) a theme replaces a key the document already declared; the theme wins
 warning[W0348]: theme 'moloch' replaces the document's earlier 'alert' from '\palette'
   help: overrides go after '\theme': move the declaration below it
+── W0354 (config) a caption option the engine does not honour; named and ignored
+warning[W0354]: '\captionsetup' key 'skip' is not honoured; the caption keeps its declared layout
+  help: \tokens{ captionsep = ... } declares the caption gap
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

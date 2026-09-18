@@ -24,13 +24,18 @@ not a warning: nothing was lost at the `\usepackage` line — a construct one
 of these packages provides that the engine cannot render is named where it
 is used, never at the load (`tikzpicture` renders its subset and W0334 or
 E0333 names each shape outside it; `\appendix` is an unknown command and
-W0301 says so where it stands). -/
+W0301 says so where it stands, and so do `\nicefrac` and `\multirow` when
+a document actually uses them). `xurl` is `url` with better breaking;
+`amsfonts` is a subset of what `amssymb`/`unicode-math` already provide;
+`caption`/`subcaption` land on the caption path, their option interface
+judged at `\captionsetup` (honoured or W0354, never silent). -/
 def nativePackages : List String :=
   ["geometry", "hyperref", "xcolor", "color", "microtype", "enumitem", "babel",
-   "fontspec", "url", "scrlayer-scrpage", "inputenc", "fontenc", "lmodern",
-   "amsmath", "amssymb", "unicode-math", "parskip", "titlesec", "fancyhdr",
+   "fontspec", "url", "xurl", "scrlayer-scrpage", "inputenc", "fontenc", "lmodern",
+   "amsmath", "amssymb", "amsfonts", "unicode-math", "parskip", "titlesec", "fancyhdr",
    "textcomp", "csquotes", "polyglossia", "graphicx", "booktabs", "array",
    "calc", "etoolbox", "xparse", "kvoptions", "setspace", "soul", "tikz",
+   "caption", "subcaption", "nicefrac", "multirow",
    "appendixnumberbeamer"]
 
 /-- Classes that are an `article` with different defaults. -/
@@ -546,6 +551,14 @@ where
         -- indent; the half line is what changes the page.
         let native := "\\page{ parskip = 0.6em plus 2pt }"
         became "\\usepackage{parskip}" native pos
+        out := out ++ (← synthAt native pos)
+      else if (p == "caption" || p == "subcaption") && opt.isSome then
+        -- The package options are `\captionsetup` keys (caption manual
+        -- §1.3): route them to the one site that judges caption keys, so
+        -- `[tableposition=top]` is honoured or named exactly as the
+        -- command form is.
+        let native := s!"\\captionsetup\{{opt.getD ""}}"
+        became s!"\\usepackage[{opt.getD ""}]\{{p}}" native pos
         out := out ++ (← synthAt native pos)
       else if nativePackages.contains p then
         became s!"\\usepackage\{{p}}" "nothing: the engine does this itself" pos

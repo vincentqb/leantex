@@ -1659,6 +1659,29 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- never at the `\usepackage` line.
   t "compat tikz package is native; the loss lives at the picture"
     ((elabStr (pre "\\usepackage{tikz}")).2.all (·.severity == .note))
+  -- The paper packages: xurl is url with better breaking, amsfonts a
+  -- subset of amssymb/unicode-math, nicefrac and multirow name their
+  -- commands where a document uses them — nothing is lost at the load.
+  t "compat xurl, amsfonts, nicefrac, multirow, caption, subcaption are native"
+    ((elabStr (pre ("\\usepackage{xurl}\\usepackage{amsfonts}\\usepackage{nicefrac}" ++
+      "\\usepackage{multirow}\\usepackage{caption}\\usepackage{subcaption}"))).2.all
+      (·.severity == .note))
+  -- The caption package's option interface: a position declaration is
+  -- honoured by construction (the caption gap binds to the object side
+  -- wherever the source puts the caption — caption manual §2.2, the
+  -- option does not move the caption); any other key is named and
+  -- ignored, once per key, and never silently.
+  t "compat caption tableposition=top is honoured silently"
+    ((elabStr (pre "\\usepackage[tableposition=top]{caption}")).2.all
+      (·.severity == .note))
+  t "compat captionsetup position keys are honoured silently"
+    ((elabStr (pre "\\captionsetup{tableposition=top}")).2.all
+      (·.severity == .note))
+  t "compat captionsetup names an unhonoured key once"
+    (warnCodes (pre ("\\captionsetup[table]{skip=\\abovecaptionskip}\n" ++
+      "\\captionsetup[subtable]{skip=\\abovecaptionskip}")) == ["W0354"] &&
+     ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).2.map (·.message)).any
+      (fun m => (m.splitOn "'skip'").length == 2))
   t "compat appendixnumberbeamer is native; \\appendix warns where it stands"
     ((elabStr (pre "\\usepackage{appendixnumberbeamer}")).2.all (·.severity == .note) &&
      warnCodes ("\\documentclass{article}\n\\usepackage{appendixnumberbeamer}\n" ++
@@ -5586,6 +5609,8 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
       "\\begin{itemize}\n\\item a\n\\end{itemize}")
   | .W0348 => dvE (dvDeck "\\palette{ alert = #112233 }\n\\theme{moloch}\n"
       "\\begin{frame}{T}\nx\n\\end{frame}")
+  | .W0354 => dvE (dvDoc
+      "\\usepackage[tableposition=top]{caption}\n\\captionsetup[table]{skip=10pt}\n" "x")
   | .W0332 => dvE (dvDeck "\\theme{moloch}\n"
       "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}")
   | .W0333 => dvL one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"

@@ -3884,6 +3884,36 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                 info ← applyMeta ctx info entries pos
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs a \{...} block" pos
+        else if name == "captionsetup" then
+          -- The caption package's option interface (caption manual §2–4).
+          -- `position`/`tableposition`/`figureposition` declare which side
+          -- captions will stand on, so the package can put the skip
+          -- between caption and object (§2.2: the option does not move
+          -- the caption — placement stays source order there too). This
+          -- engine binds `captionsep` to the object side of a caption
+          -- wherever the source puts it, so those declarations already
+          -- hold. Every other key is named and ignored (W0354), one
+          -- warning per key. The `[float type]` scope changes nothing in
+          -- that judgment, so it is skipped.
+          let mut j := i
+          match scanBracketArg preamble j pos with
+          | .took j' => j := j'
+          | .unclosed bpos => warnUnclosed ctx "'\\captionsetup'" bpos
+          | .content => pure ()
+          j := skipSpaces preamble j
+          match preamble[j]? with
+          | some (.group gbody _) =>
+            i := j + 1
+            for entry in (rawSrc gbody).splitOn "," do
+              let key := ((entry.splitOn "=").headD "").trimAscii.toString
+              if key.isEmpty then continue
+              unless ["position", "tableposition", "figureposition"].contains key do
+                warnOnce ctx ("captionsetup:" ++ key) .W0354
+                  s!"'\\captionsetup' key '{key}' is not honoured; the caption keeps \
+its declared layout" pos
+                  (help := "\\tokens{ captionsep = ... } declares the caption gap")
+          | _ =>
+            diag ctx .E0304 "'\\captionsetup' needs a {key = value} block" pos
         else if titleCtrls.contains name then
           -- A declaration-only position: the malformed run is dropped with
           -- W0310 already pointing at it — the preamble has no content.

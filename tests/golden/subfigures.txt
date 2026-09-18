@@ -30,5 +30,5 @@ float figure 2
 para
   text "A closing paragraph after both figures."
 -- diagnostics
-warning[W0103] 7:1 package 'subcaption' is not supported; skipped
+note[N0100] 7:1 '\usepackage{subcaption}' → nothing: the engine does this itself
 note[N0102] 18:1 '{subfigure}' [pos] options are ignored: the box stands top-aligned in its row
