@@ -615,6 +615,9 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
       pushText st sty src
   | .styled s body => flatten mathOk st (applyStyle sty s) body
   | .colored c _ body => flatten mathOk st { sty with color := c } body
+  -- A role is a name, pure grouping: zero metric impact, no style change
+  -- (role_transparent_layout is the statement).
+  | .role _ body => flatten mathOk st sty body
   -- The underline is the link's affordance in both backends (the HTML
   -- anchor keeps the browser's): never colour alone, and never nothing
   -- (WCAG 2.2 SC 1.4.1, use of colour).
@@ -810,6 +813,7 @@ private def mathScalarTextOne (acc : Array Char) : Ir.Inline → Array Char
   | .formula _ _ body => Math.MList.scalarsList acc body
   | .styled _ body => mathScalarTextList acc body.toList
   | .colored _ _ body => mathScalarTextList acc body.toList
+  | .role _ body => mathScalarTextList acc body.toList
   | .link _ body => mathScalarTextList acc body.toList
   | .underline body => mathScalarTextList acc body.toList
   | .step _ _ body => mathScalarTextList acc body.toList
@@ -846,6 +850,7 @@ private def iconScalarTextOne (acc : Array Char) : Ir.Inline → Array Char
   | .icon c _ => acc.push c
   | .styled _ body => iconScalarTextList acc body.toList
   | .colored _ _ body => iconScalarTextList acc body.toList
+  | .role _ body => iconScalarTextList acc body.toList
   | .link _ body => iconScalarTextList acc body.toList
   | .underline body => iconScalarTextList acc body.toList
   | .step _ _ body => iconScalarTextList acc body.toList
@@ -3263,6 +3268,7 @@ def substPageOne (n total : Nat) : Inline → Inline
   | .pageCount => .text (toString total)
   | .styled st body => .styled st (substPageList n total body.toList).toArray
   | .colored c nm body => .colored c nm (substPageList n total body.toList).toArray
+  | .role nm body => .role nm (substPageList n total body.toList).toArray
   | .link u body => .link u (substPageList n total body.toList).toArray
   | .underline body => .underline (substPageList n total body.toList).toArray
   | .step s last body => .step s last (substPageList n total body.toList).toArray
@@ -3297,6 +3303,9 @@ theorem substPageOne_id (n total : Nat) (x : Inline)
     rw [Ir.hasPhysicalPageOne] at h
     rw [substPageOne, substPageList_id n total body.toList h]
   | .colored c nm body =>
+    rw [Ir.hasPhysicalPageOne] at h
+    rw [substPageOne, substPageList_id n total body.toList h]
+  | .role nm body =>
     rw [Ir.hasPhysicalPageOne] at h
     rw [substPageOne, substPageList_id n total body.toList h]
   | .link u body =>

@@ -46,7 +46,8 @@ frame
     "    (layout doc).pages.size"
   para
     step 2-2
-      text "Checked at build time."
+      role dim
+        text "Checked at build time."
 frame
   title
     text "Arithmetic"

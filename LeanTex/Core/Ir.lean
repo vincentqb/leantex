@@ -551,6 +551,14 @@ inductive Inline where
   /-- `name` is the palette entry this came from, when it had one, so the
   HTML backend can emit `var(--name)` and let a host page override it. -/
   | colored (color : Color) (name : Option String) (body : Array Inline)
+  /-- An authored role: the expansion of a document-defined command with at
+  least one parameter (`\muted{...}` under `\define \muted(word: content)`),
+  wrapped so the name survives into the artifact as an addressable
+  annotation — the class hook. A 0-ary definition is a spelling, not a
+  classifier of an argument, and is not wrapped. Layout and the PDF page
+  are transparent to it (`role_transparent_layout`): the annotation is
+  HTML's, until tagged PDF gives it a structure element to ride. -/
+  | role (name : String) (body : Array Inline)
   /-- `\href{url}{body}`: a hyperlink. Becomes an `<a>` in HTML and a Link
   annotation in PDF, so the URL rides the IR rather than a backend. -/
   | link (url : String) (body : Array Inline)
@@ -1406,6 +1414,8 @@ def fillOne (content : Array Inline) : Inline → Inline
     .styled st (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .colored c n body =>
     .colored c n (if body.isEmpty then content else (fillList content body.toList).toArray)
+  | .role n body =>
+    .role n (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .underline body =>
     .underline (if body.isEmpty then content else (fillList content body.toList).toArray)
   | .link u body =>
@@ -1521,6 +1531,7 @@ def plainTextOne (x : Inline) : String :=
   | .formula _ src _ => src
   | .styled _ body => plainTextList body.toList
   | .colored _ _ body => plainTextList body.toList
+  | .role _ body => plainTextList body.toList
   | .link _ body => plainTextList body.toList
   | .underline body => plainTextList body.toList
   | .step _ _ body => plainTextList body.toList
@@ -1531,6 +1542,11 @@ def plainTextOne (x : Inline) : String :=
   | .linebreak _ => " "
 
 end
+
+/-- A role is a name around content, never content: the census reads
+straight through it, so no annotation can add or hide a character. -/
+theorem role_plaintext (n : String) (body : Array Inline) :
+    plainTextOne (.role n body) = plainTextList body.toList := rfl
 
 /-- A step's range as the surface spells it: `step 2`, `step 2-3`, and
 `step 2-2` for `<2->`, `<2-3>`, and `<2>`. -/
@@ -1640,6 +1656,8 @@ def dumpInline (ind : String) (x : Inline) : String :=
       | some n => s!"{n} #{hex2 c.r}{hex2 c.g}{hex2 c.b}"
       | none => s!"#{hex2 c.r}{hex2 c.g}{hex2 c.b}"
     s!"{ind}color {tag}\n" ++ dumpInlines (ind ++ "  ") body
+  | .role n body =>
+    s!"{ind}role {n}\n" ++ dumpInlines (ind ++ "  ") body
   | .link url body =>
     s!"{ind}link {url.quote}\n" ++ dumpInlines (ind ++ "  ") body
   | .underline body =>
@@ -2009,6 +2027,7 @@ def maxStepInlineList : List Inline → Nat
 def maxStepInline : Inline → Nat
   | .styled _ body => maxStepInlineList body.toList
   | .colored _ _ body => maxStepInlineList body.toList
+  | .role _ body => maxStepInlineList body.toList
   | .link _ body => maxStepInlineList body.toList
   | .underline body => maxStepInlineList body.toList
   | .step n last body => max (max n (last.getD n)) (maxStepInlineList body.toList)
@@ -2120,6 +2139,8 @@ def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → Inline
   | .colored c nm body =>
     if pending then .colored (cover.of c) none (dimInlineList cover k true #[] body.toList)
     else .colored c nm (dimInlineList cover k false #[] body.toList)
+  -- a role is a name, not ink: the cover dims what is inside it
+  | .role n body => .role n (dimInlineList cover k pending #[] body.toList)
   | .link u body => .link u (dimInlineList cover k pending #[] body.toList)
   | .underline body => .underline (dimInlineList cover k pending #[] body.toList)
   -- The inline flip wraps: a covered paragraph's plain cover comes from its
@@ -2394,6 +2415,7 @@ def hasPhysicalPageOne : Inline → Bool
   | .pageCount => true
   | .styled _ body => hasPhysicalPageList body.toList
   | .colored _ _ body => hasPhysicalPageList body.toList
+  | .role _ body => hasPhysicalPageList body.toList
   | .link _ body => hasPhysicalPageList body.toList
   | .underline body => hasPhysicalPageList body.toList
   | .step _ _ body => hasPhysicalPageList body.toList
@@ -2536,6 +2558,9 @@ theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : Inline) :
     by_cases h : pending = true
     · simp [h, plainTextOne, dimInlineList_text cover k true body.toList #[], plainTextList]
     · simp [h, plainTextOne, dimInlineList_text cover k false body.toList #[], plainTextList]
+  | .role n body =>
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
   | .link u body =>
     rw [dimInline]
     simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]

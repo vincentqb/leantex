@@ -44,6 +44,56 @@ def errCodes (s : String) : List String :=
 def warnCodes (s : String) : List String :=
   ((elabStr s).2.filter (·.severity == .warning)).toList.map (·.code)
 
+/-- The class hook: a semantic distinction the author declares as a named
+wrapper survives into the artifact as an addressable annotation. Its absence
+was the audited defect — `HtmlDoc.emit ∘ elab` of `\muted{x}` and of `x`
+were byte-identical, so no stylesheet could address the author's own role. -/
+def classHookChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let wrap (pre body : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\\begin{document}\n" ++ body ++
+      "\n\\end{document}"
+  let (mutedDoc, mutedDs) :=
+    elabStr (wrap "\\define \\muted(word: content) {\\word}\n" "\\muted{quiet} words")
+  let (bareDoc, bareDs) := elabStr (wrap "" "quiet words")
+  t "role sources clean" (mutedDs.isEmpty && bareDs.isEmpty)
+  let mutedPage := (HtmlDoc.emit {} mutedDoc).1
+  t "an authored role is recoverable from the artifact"
+    (mutedPage != (HtmlDoc.emit {} bareDoc).1)
+  t "an authored role's class reaches the page"
+    ((mutedPage.splitOn "class=\"u-muted\"").length == 2)
+  -- Arity reads the definition: a 0-ary command is a spelling, not a role,
+  -- and splices transparently.
+  let (abbrevDoc, _) :=
+    elabStr (wrap "\\define \\brand {Example Corp}\n" "\\brand{} words")
+  t "a zero-ary command is a spelling, not a role"
+    (((HtmlDoc.emit {} abbrevDoc).1.splitOn "u-brand").length == 1)
+  -- The census reads through the annotation (role_plaintext): the markdown
+  -- twin renders the words, never the wrapper.
+  t "the markdown twin reads through a role"
+    ((((MarkdownDoc.emit mutedDoc).splitOn "quiet words").length) == 2)
+  -- Both halves on one page, judged on the typed tree: a palette role
+  -- resolves to its var reference, an authored role to its class — a name
+  -- the palette knows adapts, a name it does not becomes addressable, and
+  -- neither is silently lost.
+  let (bothDoc, bothDs) := elabStr (wrap
+    ("\\palette{ accent = #205E3B }\n\\define \\entry(word: content) {\\word}\n")
+    "\\accent{coloured} and \\entry{classed}")
+  t "both halves source clean" bothDs.isEmpty
+  let bothTree := HtmlDoc.blockNode {} bothDoc.body[0]!
+  let hasSpan (want : String × String) : Html.Node → Bool
+    | .elem _ attrs kids => attrs.contains want || kids.any fun k =>
+        match k with
+        | .elem _ attrs2 kids2 => attrs2.contains want || kids2.any fun k2 =>
+            match k2 with
+            | .elem _ attrs3 _ => attrs3.contains want
+            | _ => false
+        | _ => false
+    | _ => false
+  t "a palette role and an authored role share a page, each addressable"
+    (hasSpan ("style", "color: var(--accent, #205e3b)") bothTree &&
+     hasSpan ("class", "u-entry") bothTree)
+
 def goldenNames : List String :=
   ["paragraphs", "layout", "declared", "fonts", "palette", "tokens", "fill",
    "links", "resume", "talk", "deck", "themed", "latex-idioms", "wrapper",
@@ -1591,9 +1641,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\link{https://example.org}{here}\\end{document}")
   t "a defined link wins over the built-in"
     (ownDs.isEmpty && own.body ==
-      #[.para #[.link "https://example.org" #[.underline #[.text "here"]]]])
+      #[.para #[.role "link" #[.link "https://example.org" #[.underline #[.text "here"]]]]])
   t "a parameter inside a URL is the caller's text"
-    (own.body == #[.para #[.link "https://example.org" #[.underline #[.text "here"]]]])
+    (own.body == #[.para #[.role "link"
+      #[.link "https://example.org" #[.underline #[.text "here"]]]]])
   t "a reserved built-in cannot be redefined"
     ((warnCodes ("\\documentclass{article}\\define \\textbf(x: content) {\\emph{\\x}}" ++
       "\\begin{document}\\textbf{a}\\end{document}")) == ["W0303"])
@@ -1618,10 +1669,11 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\\role{A}[B] \\role{C}\\end{document}")
   t "compat xparse command clean" (ndcDs.all (·.severity == .note))
   t "compat xparse command expands with optional"
-    (ndc.body == #[.para #[.styled .bold #[.text "A"], .text " (B) ", .styled .bold #[.text "C"]]])
+    (ndc.body == #[.para #[.role "role" #[.styled .bold #[.text "A"], .text " (B)"],
+      .text " ", .role "role" #[.styled .bold #[.text "C"]]]])
   let (nc, _) := elabStr ("\\documentclass{article}\\newcommand{\\two}[2]{#1+#2}" ++
     "\\begin{document}\\two{a}{b}\\end{document}")
-  t "compat newcommand expands" (nc.body == #[.para #[.text "a+b"]])
+  t "compat newcommand expands" (nc.body == #[.para #[.role "two" #[.text "a+b"]]])
   -- Outside a macro body, # is a colour, not a parameter.
   t "compat hash outside a body is literal"
     ((elabStr (pre "\\palette{ p = #7C3AED }")).1.palette.find? "p" == some { r := 0x7C, g := 0x3A, b := 0xED })
@@ -1738,6 +1790,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
 
   styleChecks ref
   htmlLayoutChecks ref
+  classHookChecks ref
   anchorChecks ref
   markdownChecks ref
   backendChecks ref
@@ -5838,10 +5891,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{document}\n"
   let (doc7, d7) := elabStr (defRole ++ "\\role{Ada}[Compute]\n\\end{document}")
   t "elab define call optional given" (d7.isEmpty && doc7.body ==
-    #[.para #[.styled .bold #[.text "Ada"], .text " (Compute)"]])
+    #[.para #[.role "role" #[.styled .bold #[.text "Ada"], .text " (Compute)"]]])
   let (doc8, d8) := elabStr (defRole ++ "\\role{Ada}\n\\end{document}")
   t "elab define call optional omitted" (d8.isEmpty && doc8.body ==
-    #[.para #[.styled .bold #[.text "Ada"]]])
+    #[.para #[.role "role" #[.styled .bold #[.text "Ada"]]]])
   t "elab define text param rejects math" (errCodes (defRole ++ "\\role{$x$}\n\\end{document}") ==
     ["E0305"])
   t "elab self reference is unknown" (warnCodes
@@ -5901,7 +5954,8 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (degDoc, degDs) := elabStr
     "\\define \\degree(a: text) {\\textbf{\\a}}\n\\begin{document}\\degree{PhD}\\end{document}"
   t "elab user definition shadows a symbol"
-    (degDs.isEmpty && degDoc.body == #[.para #[.styled .bold #[.text "PhD"]]])
+    (degDs.isEmpty && degDoc.body ==
+      #[.para #[.role "degree" #[.styled .bold #[.text "PhD"]]]])
   t "elab trailing content warns" (((elabStr
     "\\begin{document}x\\end{document} y").2.map (·.code)) == #["W0001"])
 

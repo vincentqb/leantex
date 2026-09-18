@@ -42,6 +42,81 @@ private def hex2 (v : UInt8) : String :=
 
 def cssColor (c : Color) : String := "#" ++ hex2 c.r ++ hex2 c.g ++ hex2 c.b
 
+/-- The class an authored role wears in the artifact: verbatim after a
+fixed prefix, so the mapping is injective (`roleClass_inj`) and lands in a
+namespace no engine class enters (`roleClass_engine_disjoint`) and no
+framework convention plausibly claims (Bulma's `.title` vs `u-title`). A
+class, not a custom element: WHATWG HTML §3.2.6 places no constraint on
+class values and encourages nature-of-content names, while a custom
+element (§4.13.1) exists to define behaviour and would swap the `<span>`
+for an unknown element — the wrong tool for a styling hook. -/
+def roleClass (n : String) : String := "u-" ++ n
+
+theorem roleClass_toList (n : String) :
+    (roleClass n).toList = 'u' :: '-' :: n.toList := by
+  have h : "u-".toList = ['u', '-'] := by decide
+  simp [roleClass, String.toList_append, h]
+
+/-- Two authored names never share a class, so no collision diagnostic can
+fire and none is warranted — the theorem replaces it. -/
+theorem roleClass_inj (a b : String) (h : roleClass a = roleClass b) : a = b := by
+  have hl := congrArg String.toList h
+  rw [roleClass_toList, roleClass_toList] at hl
+  simp only [List.cons.injEq, true_and] at hl
+  exact String.ext hl
+
+/-- Every class value the engine itself puts on an element, as tokens (a
+multi-class value like `"slide standout"` is listed split). Maintained by
+grep over this file — `("class", "…")` literals, the `rowClass`/`cls`
+builders, `styleClass`, and the `size-` names `styleClass` derives from
+`Ir.sizeScale`; `roleClass_engine_disjoint` is the reason the list exists. -/
+def engineClasses : List String :=
+  ["b", "i", "mono", "sc", "em", "sans", "normal",
+   "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
+   "bt-light-above", "centered", "column", "columns", "content", "entry",
+   "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
+   "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
+   "reveal-scroll", "ruled", "section-page", "separator", "slide",
+   "slide-foot", "slides", "spaced", "standout", "step", "table-float"] ++
+  Ir.sizeScale.map (fun p => "size-" ++ p.1)
+
+private theorem engineClasses_no_u_prefix :
+    (engineClasses.all fun c => decide (c.toList.take 2 ≠ ['u', '-'])) = true := by
+  decide
+
+/-- The `u-` prefix makes role classes disjoint from every class the engine
+emits: an authored role can restyle itself without ever colliding with the
+engine's own hooks, and a stylesheet addressing `.u-…` addresses only
+authored roles. -/
+theorem roleClass_engine_disjoint (n c : String) (hc : c ∈ engineClasses) :
+    roleClass n ≠ c := by
+  intro h
+  have hall := List.all_eq_true.mp engineClasses_no_u_prefix c hc
+  simp only [decide_eq_true_eq] at hall
+  apply hall
+  rw [← h, roleClass_toList]
+  rfl
+
+/-- Over the command-name alphabet — the lexer admits only `isAlpha` and
+`'@'` into a control word, so no other character can reach `roleClass`
+from a document — the class is one HTML class token: no whitespace (HTML
+treats a class value as a space-separated set, so a space would split the
+class into two tokens, a break the escaper cannot see) and no quote (the
+attribute-breakout character `escapeAttr` kills). The alphabet is spelled
+inline because a backend never reaches into the lexer; Tests.lean pins the
+spelling to the lexer's own `nameChar` by `rfl`. -/
+theorem roleClass_single_token (n : String)
+    (hn : (n.toList.all fun c => c.isAlpha || c == '@') = true) :
+    ((roleClass n).toList.all fun c =>
+      !(c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '"' || c == '\'')) = true := by
+  rw [roleClass_toList]
+  simp only [List.all_cons, Bool.and_eq_true, List.all_eq_true] at hn ⊢
+  refine ⟨by decide, by decide, fun c hc => ?_⟩
+  have h := hn c hc
+  simp only [Bool.not_eq_true', Bool.or_eq_false_iff, beq_eq_false_iff_ne, ne_eq]
+  refine ⟨⟨⟨⟨⟨fun h' => ?_, fun h' => ?_⟩, fun h' => ?_⟩, fun h' => ?_⟩,
+    fun h' => ?_⟩, fun h' => ?_⟩ <;> (subst h'; exact absurd h (by decide))
+
 /-- Thousandths to a decimal, so `1.2em` round-trips as `1.2em`. It was once
 emitted as `120%`, which for padding is a fraction of the container and pushed
 every styled list off the page. -/
@@ -172,6 +247,7 @@ private def markerTextInto (acc : String) : List Inline → Option String
   | .formula _ _ _ :: _ => none
   | .styled _ _ :: _ => none
   | .colored _ _ _ :: _ => none
+  | .role _ _ :: _ => none
   | .link _ _ :: _ => none
   | .underline _ :: _ => none
   | .fill :: _ => none
@@ -200,6 +276,9 @@ def markerCssOne (decls : Array String) : Inline → Option MarkerCss
     | _ => none
   | .colored c name body =>
     markerCssList (decls.push (markerColorDecl c name)) body.toList
+  -- a role's class has no ::marker expression; the content passes through,
+  -- as it does on the PDF marker path
+  | .role _ body => markerCssList decls body.toList
   | .math _ _ => none
   | .formula _ _ _ => none
   | .link _ _ => none
@@ -253,6 +332,10 @@ theorem markerCssOne_text (decls : Array String) (x : Inline) (r : MarkerCss)
       exact markerCssList_text _ body.toList r h
     · exact absurd h (by simp)
   | .colored c name body =>
+    rw [markerCssOne] at h
+    rw [Ir.plainTextOne]
+    exact markerCssList_text _ body.toList r h
+  | .role n body =>
     rw [markerCssOne] at h
     rw [Ir.plainTextOne]
     exact markerCssList_text _ body.toList r h
@@ -818,6 +901,12 @@ height: auto"
     | .mono => acc.push (Html.elem "code" kids)
     | .normal => acc ++ kids
     | other => acc.push (Html.elem "span" kids #[("class", styleClass other)])
+  | .role n body =>
+    -- The class hook: the authored name survives as an addressable class,
+    -- through the typed tree and the attribute escaper by construction
+    -- (role_class_reaches_artifact).
+    acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
+      #[("class", roleClass n)])
   | .colored c name body =>
     -- A named colour becomes a custom-property reference with the literal as
     -- fallback, so the token really is the styling API: a host page can
@@ -887,6 +976,19 @@ theorem role_use_names_its_token (cfg : Config) (acc : Array Node)
     inlineNodeInto cfg acc (.colored c (some n) body) =
       acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
         #[("style", s!"color: var(--{n}, {cssColor c})")]) := by
+  simp [inlineNodeInto]
+
+/-- The class hook's emission half: an authored role reaches the artifact
+as an element carrying exactly `roleClass name`, children the emission of
+its body. The name enters attribute position only through the typed tree,
+so it passes `escapeAttr` by construction (`escapeAttr_no_quote` is what
+closes attribute breakout); `roleClass_single_token` is why the value is
+one class token. -/
+theorem role_class_reaches_artifact (cfg : Config) (acc : Array Node)
+    (n : String) (body : Array Inline) :
+    inlineNodeInto cfg acc (.role n body) =
+      acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
+        #[("class", roleClass n)]) := by
   simp [inlineNodeInto]
 
 /-- Does this paragraph use `\hfill`? If so it becomes a flex row, which is

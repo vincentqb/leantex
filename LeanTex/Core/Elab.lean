@@ -956,7 +956,17 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           let (bindings, j) ← takeArgs ctx cmd.params name raws i pos
           i := j
           let callCtx : Ctx := { ctx with limit := k, args := bindings }
-          acc := acc ++ (← elabInlines callCtx cmd.body)
+          let expanded ← elabInlines callCtx cmd.body
+          -- A parameterized command is a classifier of its argument — a
+          -- semantic role — and its name survives into the artifact as an
+          -- addressable annotation (Inline.role, the class hook). A 0-ary
+          -- command is a spelling and splices transparently: arity reads
+          -- the definition, not the use, so one name gets one treatment
+          -- document-wide, with no new syntax and no body inspection.
+          if cmd.params.isEmpty then
+            acc := acc ++ expanded
+          else
+            acc := acc.push (.role cmd.name expanded)
         else if name == "hfill" then
           acc := flushText acc sb
           sb := ""

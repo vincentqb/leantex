@@ -237,6 +237,8 @@ private def usesInline (cx : UseCx) (out : Array Use) : Inline → Array Use
     | none => out
   | .styled st body => usesInlines (cx.style st) out body.toList
   | .colored c nm body => usesInlines { cx with cur := some (nm, c) } out body.toList
+  -- a role names its content; the ink inside keeps the current colour
+  | .role _ body => usesInlines cx out body.toList
   | .link _ body => usesInlines cx out body.toList
   | .underline body => usesInlines cx out body.toList
   | .step _ _ body => usesInlines cx out body.toList
