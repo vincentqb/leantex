@@ -541,6 +541,54 @@ def blockGapCss : String :=
   s!"* + figure.float \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n" ++
   s!"figure.float + * \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n"
 
+/-- The PDF backend's shipped default gap at a boundary kind: the values
+placement realizes 1:1 — the peer token (`flushGap_default_exact` pays it
+at an undeclared boundary), twice it above a heading (the walk's
+`addvspace`, `heading_default_before_exact`), and the float and caption
+tokens the float path resolves. The dispatch is the tie between the
+table's row names and the engine's tokens; an unknown name is 0, which
+`backend_gaps_agree` cannot miss (a zero row agrees with no positive
+one). -/
+private def pdfGapSp : String → Dim.Sp
+  | "peer" => Ir.parskipDefault.width.sp
+  | "heading" => 2 * Ir.parskipDefault.width.sp
+  | "caption" => Ir.captionSepDefault.width.sp
+  | "float" => Ir.floatSepDefault.width.sp
+  | _ => 0
+
+/-- The screen backend's emitted default gap, in milli-rem: the number
+`quantaRem` prints for the kind's row. -/
+private def htmlGapMilliRem (kind : String) : Nat :=
+  gapK kind * bodyLeadingMilli / 2
+
+/-- The agreement layer, the user's ask: a document's vertical rhythm does
+not depend on which artifact is built. Both backends realize every default
+boundary from the same declared row (`Ir.rhythmGapQuanta`), each in its
+own context's quantum, so the shipped gaps stand in the same ratios row by
+row — cross-multiplied here over every pair of rows, PDF sp against
+emitted milli-rem, the values the artifacts actually carry. A backend that
+re-spelled one multiple fails this build. Two moduli, named rather than
+hidden:
+
+- **Preferred values only.** CSS has no glue: the HTML side realizes each
+  gap at exactly its preferred value, while the PDF may negotiate within
+  declared rubber — shrink spent only against a page break and always
+  reported (N0200), stretch never. Cross-backend equality is a statement
+  about preferred values; rubber is a PDF-only negotiation, and a document
+  that declares rubber is telling the PDF something HTML cannot honour.
+- **Per-context units.** The shared thing is the multiple, not the
+  length: the PDF's quantum is half its print leading
+  (`Ir.rhythmQuantum`), the screen's half its own body leading
+  (`bodyLeadingMilli`, the top of Butterick's band, over the 1 rem base).
+  Matching absolute lengths would put print leading on a screen or screen
+  leading on paper; the rhythm is per typographic context, and each
+  backend's context is its own. -/
+theorem backend_gaps_agree :
+    (Ir.rhythmGapQuanta.all fun e1 =>
+      Ir.rhythmGapQuanta.all fun e2 =>
+        pdfGapSp e1.1 * (htmlGapMilliRem e2.1 : Int)
+          == pdfGapSp e2.1 * (htmlGapMilliRem e1.1 : Int)) = true := by decide
+
 /-- The slide box's inner padding and corner geometry, one spelling each:
 the frame-title bar bleeds to the slide edge by negating exactly this
 padding, and its top corners round at the slide's radius less the border
