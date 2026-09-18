@@ -235,15 +235,12 @@ def cover (f : Nat) (bg : Color) : Color → Color :=
   let bgLab := labOf bg
   fun c => toColor (labMix f (labOf c) bgLab)
 
--- `decide` below evaluates the pipeline; the limit raised is depth, not trust.
-set_option maxRecDepth 8192
-
 -- The measured keystone case: 38% black over white, the byte value the
 -- float reference (CSS Color 4 sample code) also lands on. The kernel
 -- evaluates the whole pipeline — table, icbrt, both matrix stages, the
 -- nearest-entry inversion — inside `decide`.
 example : cover 38 Color.white Color.black == { r := 0x86, g := 0x86, b := 0x86 } := by
-  decide
+  decide +kernel
 
 /-- Chroma squared, `a² + b²`: chroma itself needs a square root the
 theorems below never need — scaling of the square by `f²` is scaling of

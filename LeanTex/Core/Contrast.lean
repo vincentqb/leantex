@@ -135,21 +135,17 @@ def dark : ThemeColors := {
   rule := { r := 0x3F, g := 0x3F, b := 0x46 }
 }
 
--- `decide` below walks the 256-entry table; that needs more elaborator
--- stack than the default allows. The limit raised is depth, not trust.
-set_option maxRecDepth 8192
-
 /-- No shipped light bundle regresses into an illegible pair. -/
-theorem light_contract : light.contractHolds = true := by decide
+theorem light_contract : light.contractHolds = true := by decide +kernel
 
 /-- The dark variant is held to the same contract, not assumed from the
 light one. -/
-theorem dark_contract : dark.contractHolds = true := by decide
+theorem dark_contract : dark.contractHolds = true := by decide +kernel
 
 /-- The PDF default — black ink on the unpainted (white) page — clears the
 AA text threshold; 21:1 is the definition's own maximum. -/
 theorem pdf_default_text : contrastMilli Color.black Color.white ≥ aaText := by
-  decide
+  decide +kernel
 
 -- The document-level check: the pairings a document's own colours create.
 
@@ -670,7 +666,7 @@ pairings, defaults applied — clears its WCAG 2.2 threshold. Moloch's alert
 is the corrected one: the lineage's own #EB811B read at 2.61:1 on this
 page, under SC 1.4.3. -/
 theorem builtin_palettes_contract :
-    Theme.builtin.all (fun th => paletteContract th.palette) = true := by decide
+    Theme.builtin.all (fun th => paletteContract th.palette) = true := by decide +kernel
 
 /-- Covered reads as covered on the design's own page, per colour — the
 contract ranges over the cover of every colour the bundle puts on text
@@ -718,14 +714,14 @@ def coverMonotone (pal : Palette) : Bool :=
 `coveredFractionDefault` — 38% of the ink over the page, mixed in Oklab
 (the Material disabled-state opacity, applied as the opacity it is). `{}`
 is not in `Theme.builtin`, so the default keeps its own statement. -/
-theorem default_covered : coveredContract {} = true := by decide
+theorem default_covered : coveredContract {} = true := by decide +kernel
 
-theorem default_cover_monotone : coverMonotone {} = true := by decide
+theorem default_cover_monotone : coverMonotone {} = true := by decide +kernel
 
 /-- Cover monotonicity, quantified over the shipped list: covering twice
 quiets further for every built-in bundle's text roles. -/
 theorem builtin_covers_monotone :
-    Theme.builtin.all (fun th => coverMonotone th.palette) = true := by decide
+    Theme.builtin.all (fun th => coverMonotone th.palette) = true := by decide +kernel
 
 /-- Quantified over the shipped list itself, so a third bundle enters the
 contract by being added, not by someone remembering a theorem: every
@@ -735,11 +731,11 @@ theorem builtin_designs_legible :
     Theme.builtin.all (fun th =>
       designContract (Design.ofDoc { palette := th.palette
                                      tokens := th.tokens
-                                     styles := th.styles })) = true := by decide
+                                     styles := th.styles })) = true := by decide +kernel
 
 /-- The covered contract, quantified the same way: every built-in
 bundle's palette is visibly covered when dimmed, per colour. -/
 theorem builtin_designs_covered :
-    Theme.builtin.all (fun th => coveredContract th.palette) = true := by decide
+    Theme.builtin.all (fun th => coveredContract th.palette) = true := by decide +kernel
 
 end LeanTex.Core.Contrast
