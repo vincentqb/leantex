@@ -87,6 +87,61 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-18 — palette roles: a role is defined by the palette, and a use of
+it can never freeze.
+
+- **The decision.** A role is defined by the palette; a command is
+  generated from a role, never the reverse. `\muted{x}` already worked with
+  no `\newcommand` (the elaborator's palette arm resolves any entry name),
+  but nothing stated it, so nothing protected it. The rejected framing — a
+  definition *modifies* the palette — would need the macro body as a signal
+  of intent, and a body is not one: `{#1}` and `\textcolor{gray}{#1}`
+  declare the same authorial role, so editing a body would silently re-bind
+  a design token document-wide. A palette entry is re-bound in one place
+  (`\palette{ muted = … }`) or it is not a token.
+- **Stated and protected.** `every_role_is_invocable` (bundle keys lex and
+  collide with no built-in; the document door already refuses both) with
+  the executable `roleInvocationChecks` oracle over the real resolution
+  order; `role_resolves_at_one_site` (`find?` is the single reader;
+  `resolve`'s black/white atoms now yield to a declared entry — before,
+  PDF ink and the HTML variable diverged on a palette naming `black`);
+  `role_use_is_palette_dependent` + `role_use_names_its_token` (a use
+  references `var(--r, …)` and the `:root` block follows the palette — the
+  contrapositive of frozen-at-authoring-time; scoped to the sRGB face,
+  since `cssColor` deliberately never reads the CMYK rider). The oracle
+  caught a live interception: the native `\theme` never set Compat's
+  `themed` flag, so `\alert` in a natively-themed deck lost the bundle's
+  alert role.
+- **The shadow is named (W0342, degraded).** `\newcommand{\muted}` over a
+  palette declaring `muted` replaces a role that adapts with a value that
+  cannot: the palette stops reaching those words, and the contrast judge —
+  which sees a role use only because it resolves through the palette —
+  goes blind to them; an unseen colour cannot fail a contrast check.
+  Judged against the final palette, so declaration order cannot hide it;
+  shadowing anything else stays silent, as in LaTeX.
+- **The class hook (the classhook audit, landed).** `Inline.role` /
+  `Block.role` wrap the expansion of a ≥1-parameter document-defined
+  command, so `HtmlDoc.emit` of `\muted{x}` and of `x` are no longer
+  byte-identical: `<span class="u-muted">` / `<div class="u-entry">`,
+  injective (`roleClass_inj`), disjoint from every engine class
+  (`roleClass_engine_disjoint` over the grep-maintained registry), one
+  class token over the command-name alphabet (`roleClass_single_token`),
+  census-transparent (`role_plaintext`, rfl), layout-transparent
+  (`role_transparent_layout`; the block collector's half is the
+  `roleLayoutChecks` PDF byte-identity oracle — its match resists equation
+  generation). The two halves compose: a name the palette knows resolves
+  as a role and adapts; a name it does not becomes an addressable class.
+- **Colour only, decided.** A palette entry stays `name → Color`: every
+  consumer today (contrast judge, `var(--name)` emission, PDF ink) reads
+  exactly a colour, a `RoleStyle` with one populated field is the
+  one-caller abstraction AGENTS forbids, and the class hook already lets a
+  stylesheet attach weight or a paired background to a role
+  (`.u-quiet { font-weight: 300 }`) with no engine change. What makes it
+  cheap later: one resolving site (`find?`), one IR carrier
+  (`.colored name`), one emission line (`paletteVar`) — a richer role
+  value touches three named places, each under a theorem that would fail
+  loudly.
+
 2026-09-18 — the generalize slice: the theorem atlas's collapses, the
 derive-not-tune derivations, two live defects closed, and a gate.
 
