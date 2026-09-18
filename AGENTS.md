@@ -35,6 +35,9 @@ in this repo; refer to the private reference corpus abstractly.
 - Deeper oracles, not in `lake test` (too slow / need TeX): run
   `scripts/kp-fuzz.lean` when touching line breaking,
   `scripts/hyphen-diff.lean` when touching hyphenation,
+  `scripts/compose-fuzz.lean` when touching the preamble apply sites in
+  Elab.lean (declaration commutation — T1's oracle until the theorem
+  closes),
   `scripts/oklab-roundtrip.lean` when touching `Core/Oklab.lean`
   (sRGB→Oklab→sRGB identity over all 2²⁴ inputs, ~30 min), and
   `scripts/fontcache-check.lean` when touching the font scan or its cache

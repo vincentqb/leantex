@@ -223,6 +223,41 @@ bundle go through the same door. -/
 def Tokens.declare (t : Tokens) (key : String) (g : SymGlue) : Tokens :=
   { entries := (t.entries.filter (·.1 != key)).push (key, g) }
 
+/-- The two halves of keyed last-wins, over the one keyed store both
+`Tokens.declare` and `Palette.declare` are built on: the declared value is
+the one read back, and a redeclaration collapses — declaring a key twice is
+declaring the later value once. -/
+private theorem declare_find_eq {α : Type} (xs : Array (String × α)) (k : String) (v : α) :
+    ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k) = some (k, v) := by
+  have hnone : (xs.filter (·.1 != k)).find? (·.1 == k) = none := by
+    rw [Array.find?_eq_none]
+    intro x hx
+    have hne := (Array.mem_filter.mp hx).2
+    simpa using hne
+  rw [Array.find?_push, hnone]
+  simp
+
+private theorem declare_collapse {α : Type} (xs : Array (String × α)) (k : String) (v : α) :
+    ((xs.filter (·.1 != k)).push (k, v)).filter (·.1 != k) = xs.filter (·.1 != k) := by
+  rw [Array.filter_push]
+  simp
+
+/-- Keyed last-wins, read side (T2): `\tokens{ k = v }` means `find? k` is
+`v`, whatever was declared before. -/
+theorem Tokens.declare_last_wins (t : Tokens) (k : String) (g : SymGlue) :
+    (t.declare k g).find? k = some g := by
+  unfold declare find?
+  rw [declare_find_eq]
+  rfl
+
+/-- Keyed last-wins, write side (T2): redeclaring a key overwrites — the
+earlier value leaves no residue, so same-key order is the only order two
+`\tokens` blocks carry. -/
+theorem Tokens.declare_overwrite (t : Tokens) (k : String) (g g' : SymGlue) :
+    (t.declare k g).declare k g' = t.declare k g' := by
+  unfold declare
+  rw [declare_collapse]
+
 -- Table rule weights and paddings: booktabs' documented defaults
 -- (booktabs.dtx v1.61803398, §"The code": `\heavyrulewidth=.08em
 -- \lightrulewidth=.05em \cmidrulewidth=.03em \belowrulesep=.65ex
@@ -385,6 +420,23 @@ def Palette.declare (p : Palette) (key : String) (c : Color)
         p.decorative.push key
       else p.decorative }
 
+/-- Keyed last-wins for colours (T2), the same statement `\tokens` carries:
+the declared colour is the one resolved. -/
+theorem Palette.declare_last_wins (p : Palette) (k : String) (c : Color) :
+    (p.declare k c).find? k = some c := by
+  unfold declare find?
+  rw [declare_find_eq]
+  rfl
+
+/-- Redeclaring a colour overwrites without residue (T2) — the door theme
+bundles and documents share, so "override the theme's entry" is exact, not
+approximate. -/
+theorem Palette.declare_overwrite (p : Palette) (k : String) (c c' : Color) :
+    (p.declare k c).declare k c' = p.declare k c' := by
+  unfold declare
+  rw [declare_collapse]
+  simp
+
 def Color.white : Color := { r := 255, g := 255, b := 255 }
 
 /-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`,
@@ -516,6 +568,31 @@ structure OutputSpec where
   takes the source's stem. -/
   md : Option String := none
   deriving Repr, BEq, Inhabited
+
+/-- One format onto the list, dedup by name: the pure half of
+`applyOutput`'s formats walk, extracted so the no-duplicates statement
+ranges over the function the engine runs. -/
+def OutputSpec.addFormat (o : OutputSpec) (f : String) : OutputSpec :=
+  { o with formats := if o.formats.contains f then o.formats else o.formats.push f }
+
+/-- A format list never grows a duplicate (T4): `formats = pdf, pdf` and a
+second `\output` block naming `pdf` again are one entry — the list-append
+half of the surface stays a set. -/
+theorem OutputSpec.addFormat_nodup (o : OutputSpec) (f : String)
+    (h : o.formats.toList.Nodup) : (o.addFormat f).formats.toList.Nodup := by
+  unfold addFormat
+  split
+  · exact h
+  · next hc =>
+    rw [Array.toList_push]
+    rw [List.nodup_append]
+    refine ⟨h, by simp, ?_⟩
+    intro x hx y hy hxy
+    rw [List.mem_singleton] at hy
+    apply hc
+    subst hy
+    subst hxy
+    simpa [Array.contains_iff_mem] using hx
 
 /-- Document metadata, as declared by `\pdfmeta` — the one record every
 surface derives from. The PDF reads title/author/subject/keywords into its
