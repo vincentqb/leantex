@@ -29,7 +29,7 @@ in this repo; refer to the private reference corpus abstractly.
   pre-commit hook (build with warnings-as-failures + convention checks).
   The harness is Lean throughout (`scripts/*.lean`, run via
   `lake env lean --run`); the one exception is this hook, where git executes
-  a file, so `scripts/hooks/pre-commit` stays a 3-line sh trampoline into
+  a file, so `scripts/hooks/pre-commit` stays a few-line sh trampoline into
   `scripts/precommit.lean`.
 - `lake exe Tests --update` — regenerate goldens after an intended IR change.
 - Deeper oracles, not in `lake test` (too slow / need TeX): run

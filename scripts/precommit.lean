@@ -67,6 +67,51 @@ def kwUnsafe : String := "uns" ++ "afe"
 copies that result at every element. -/
 def patAppend : String := "+" ++ "+"
 
+/-- Composed like the banned keywords: the selftest must hold lines that
+ARE markers, and this file's own staged diff may not carry one. (The rule
+below fires only at line start, so an indented literal could not trip it
+anyway — the composition keeps that true under any reformat.) -/
+def mkOurs : String := "<<<" ++ "<<<<"
+def mkTheirs : String := ">>>" ++ ">>>>"
+def mkBase : String := "|||" ++ "||||"
+
+/-- A merge-conflict marker line: exactly seven `<`, `>`, or `|` opening
+the line, then end-of-line or whitespace — the shape git writes
+(`<<<<<<< HEAD`, `||||||| base`, `>>>>>>> theirs`). Two deliberate
+non-matches, each avoiding a false positive: `=======` alone is a markdown
+setext rule and a Lean comment banner, and a wrongly resolved merge always
+carries a `<<<<<<<`/`>>>>>>>` sibling this rule does catch; an eighth
+marker char (`<<<<<<<<`, a decorative banner) also passes, since git
+writes exactly seven. -/
+def conflictMarker (l : String) : Bool :=
+  [mkOurs, mkTheirs, mkBase].any fun m =>
+    l.startsWith m &&
+      match ((l.drop 7).toString).toList.head? with
+      | none => true
+      | some c => c.isWhitespace
+
+/-- Added lines carrying a conflict marker, with file, new-file line
+number, and the line itself, from a unified=0 cached diff over every
+staged file — staged content, which is what the commit will contain, not
+the working tree. Binary files produce no `+` content lines and are
+skipped by construction. -/
+def conflictMarkers (diff : String) : Array (String × Nat × String) := Id.run do
+  let mut out : Array (String × Nat × String) := #[]
+  let mut file := ""
+  let mut line := 0
+  for l in diff.splitOn "\n" do
+    if l.startsWith "+++ " then
+      file := if l.startsWith "+++ b/" then (l.drop "+++ b/".length).toString else ""
+    else if l.startsWith "@@" then
+      -- @@ -a,b +c,d @@ — the next added line is new-file line c
+      let plus := ((l.splitOn "+").getD 1 "").takeWhile Char.isDigit
+      line := (plus.toString.toNat?).getD 0
+    else if l.startsWith "+" then
+      if !file.isEmpty && conflictMarker ((l.drop 1).toString) then
+        out := out.push (file, line, (l.drop 1).toString)
+      line := line + 1
+  return out
+
 def tokens (s : String) : List String :=
   (s.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty)
 
@@ -380,6 +425,27 @@ def selftest : IO UInt32 := do
     ("        chosen := chosen ++ [b]", false),
     ("  | x :: rest => #[x] ++ rest", false)]
 
+  expect "conflictMarker" conflictMarker [
+    -- the shapes git writes, all of which must fire
+    (mkOurs ++ " HEAD", true),
+    (mkTheirs ++ " theirs", true),
+    (mkBase ++ " merged common ancestors", true),
+    (mkOurs, true),
+    (mkBase, true),
+    -- near-misses that must pass: the setext rule / comment banner,
+    -- an eight-run decorative banner, a six-run, mid-line, indented
+    ("=======", false),
+    (mkOurs ++ "<", false),
+    ("<<<" ++ "<<<", false),
+    ("a " ++ mkTheirs, false),
+    ("  " ++ mkOurs ++ " HEAD", false),
+    (mkOurs ++ "quoted", false)]
+
+  -- the diff walker: staged content only, file and line attributed
+  let d := "+++ b/PLAN.md\n@@ -3,0 +4,3 @@\n+prose\n+" ++ mkOurs ++ " HEAD\n+more"
+  if conflictMarkers d != #[("PLAN.md", 5, mkOurs ++ " HEAD")] then
+    fails.modify ("conflictMarkers missed or misattributed the PLAN.md case" :: ·)
+
   expect "bannedWord" (bannedWord kwPartial) [
     -- a declaration must still fire, wherever it stands on the line
     ("+" ++ kwPartial ++ " def foo : Nat := 0", true),
@@ -545,13 +611,26 @@ def main (args : List String) : IO UInt32 := do
   let staged := ((← git #["diff", "--cached", "--name-only"]).splitOn "\n").filter (!·.isEmpty)
   if staged.isEmpty then
     return 0
-  if !staged.any relevant then
-    return 0
 
   let failed ← IO.mkRef false
   let say (msg : String) : IO Unit := do
     IO.eprintln msg
     failed.set true
+
+  -- Checked in every staged file whatever its extension — the two markers
+  -- that once landed were in PLAN.md prose — and before the relevance
+  -- gate, which would otherwise skip a prose-only commit.
+  let fullDiff ← git #["diff", "--cached", "--no-color", "--unified=0"]
+  let bad := conflictMarkers fullDiff
+  if !bad.isEmpty then
+    let hits := String.intercalate "\n" (bad.toList.map fun (f, n, l) => s!"  {f}:{n}: {l}")
+    say s!"pre-commit: merge-conflict marker in staged content:
+{hits}
+  Fix: resolve the conflict -- keep the side you mean, delete the marker
+  lines -- then re-stage the file."
+
+  if !staged.any relevant then
+    return (if ← failed.get then 1 else 0)
 
   if staged.contains "lean-toolchain" && staged.any (· != "lean-toolchain") then
     say "pre-commit: lean-toolchain changed together with other files.
