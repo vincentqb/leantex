@@ -7,7 +7,7 @@ token sep 1500/1000ex plus 375/1000ex minus 187/1000ex
 token bind 800/1000ex plus 200/1000ex minus 100/1000ex
 token slab 18pt
 assert pages == 1
-section 1
+section 1 number "1"
   text "Declared spacing"
 para
   text "Tokens are declared once and used by name, so no loose decimals appear where the spacing is applied. A token may scale an earlier one."

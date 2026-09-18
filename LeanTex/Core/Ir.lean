@@ -1197,7 +1197,15 @@ structure NavSpec where
 
 inductive Block where
   | para (content : Array Inline)
-  | section (level : Nat) (starred : Bool) (title : Array Inline)
+  /-- A heading. `number` is the section's resolved number ("2", "2.1",
+  "A.2" after `\appendix`), assigned at elaboration in flow order — article
+  numbers unstarred levels 1–3 (classes.dtx §Sectioning, secnumdepth 3);
+  slides and card documents, and every starred form, carry `none`. The
+  number rides beside the title, never inside it, so a backend renders it
+  as its own structural piece (classes.dtx's `\@seccntformat`: number then
+  `\quad`) and the HTML anchor still derives from the title text alone —
+  numbering a section must not move its anchor. -/
+  | section (level : Nat) (starred : Bool) (number : Option String) (title : Array Inline)
   | list (ordered : Bool) (items : Array (Array Block))
   | center (body : Array Block)
   /-- `\block[before = <len>]{...}`: content with declared space above. -/
@@ -1493,7 +1501,7 @@ def numberFloatList (c : FloatCtr) (out : Array Block) :
 
 def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .para content => (c, .para content)
-  | .section l st title => (c, .section l st title)
+  | .section l st num title => (c, .section l st num title)
   | .list o items =>
     let (c2, items2) := numberFloatItems c #[] items.toList
     (c2, .list o items2)
@@ -1577,7 +1585,7 @@ def floatNumsList (k : FloatKind) (out : List Nat) : List Block → List Nat
 
 def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .para _ => out
-  | .section _ _ _ => out
+  | .section _ _ _ _ => out
   | .list _ items => floatNumsItems k out items.toList
   | .center body => floatNumsList k out body.toList
   | .quote body => floatNumsList k out body.toList
@@ -1666,7 +1674,7 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
       floatNumsOne k out (numberFloatOne c b).2
         = out ++ List.range' (c.get k + 1) n := by
   match b with
-  | .para _ | .section _ _ _ | .note _ | .verbatim _ _ | .logo _
+  | .para _ | .section _ _ _ _ | .note _ | .verbatim _ _ | .logo _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ =>
     exact ⟨0, by simp [numberFloatOne], by simp [numberFloatOne, floatNumsOne]⟩
@@ -2577,9 +2585,12 @@ def dumpColumns (ind : String) (cols : List (Option Nat × Array Block)) : Strin
 def dumpBlock (ind : String) (b : Block) : String :=
   match b with
   | .para content => s!"{ind}para\n" ++ dumpInlines (ind ++ "  ") content
-  | .section level starred title =>
+  | .section level starred num title =>
     let star := if starred then "*" else ""
-    s!"{ind}section{star} {level}\n" ++ dumpInlines (ind ++ "  ") title
+    let n := match num with
+      | some n => s!" number {n.quote}"
+      | none => ""
+    s!"{ind}section{star} {level}{n}\n" ++ dumpInlines (ind ++ "  ") title
   | .list ordered items =>
     let kind := if ordered then "ordered" else "unordered"
     s!"{ind}list {kind}\n" ++ dumpItems (ind ++ "  ") items.toList
@@ -2828,7 +2839,7 @@ def maxStepBlock : Block → Nat
   -- it must give its overlays their pages. A nav's links may step too.
   | .only _ body => maxStepBlockList body.toList
   | .nav _ body => maxStepBlockList body.toList
-  | .section _ _ _ => 1
+  | .section _ _ _ _ => 1
   | .verbatim _ _ => 1
   | .note _ => 1
   | .frame _ _ _ _ => 1
@@ -2919,7 +2930,7 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
     .step n last (dimBlockList cover k (pending || stepPending n last k) #[] body.toList)
   | .only targets body => .only targets (dimBlockList cover k pending #[] body.toList)
   | .nav spec body => .nav spec (dimBlockList cover k pending #[] body.toList)
-  | .section l st title => .section l st title
+  | .section l st num title => .section l st num title
   | .verbatim c s => .verbatim (if pending then some cover.plain else c) s
   | .note body => .note body
   | .frame t st v body => .frame t st v body
@@ -3052,7 +3063,7 @@ def unwrapItemStep : Block → Block
   | .nav spec body => .nav spec (unwrapItemStepList #[] body.toList)
   | .frame t s v body => .frame t s v (unwrapItemStepList #[] body.toList)
   | .para content => .para content
-  | .section l st title => .section l st title
+  | .section l st num title => .section l st num title
   | .verbatim c s => .verbatim c s
   | .note body => .note body
   | .framefoot content => .framefoot content
@@ -3113,7 +3124,7 @@ def blockTextOne (acc : String) : Block → String
   | .para content =>
     let t := plainText content
     acc ++ t
-  | .section _ _ title =>
+  | .section _ _ _ title =>
     let t := plainText title
     acc ++ t
   | .list _ items => blockTextItems acc items.toList
@@ -3183,7 +3194,7 @@ def headingLevelList (out : Array Nat) : List Block → Array Nat
   | b :: rest => headingLevelList (headingLevelOne out b) rest
 
 def headingLevelOne (out : Array Nat) : Block → Array Nat
-  | .section level _ _ => out.push level
+  | .section level _ _ _ => out.push level
   | .para _ => out
   | .list _ items => headingLevelItems out items.toList
   | .center body => headingLevelList out body.toList
@@ -3542,7 +3553,7 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
   -- verbatim recolour and the picture recolour keep their text census by
   -- construction: neither constructor's census reads a colour.
   | .logo _ => rfl
-  | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
+  | .verbatim _ _ | .section _ _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
   | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .pagebreak => rfl
   | .table cols pl pr rows rules =>
@@ -3685,7 +3696,7 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
       blockTextList]
-  | .para _ | .section _ _ _ | .verbatim _ _ | .note _ | .framefoot _ | .pagebreak
+  | .para _ | .section _ _ _ _ | .verbatim _ _ | .note _ | .framefoot _ | .pagebreak
   | .setPalette _ | .setTokens _
   | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
 
@@ -3743,7 +3754,7 @@ theorem numberFloatList_text (c : FloatCtr) (acc : Array Block)
 theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
     blockTextOne s (numberFloatOne c b).2 = blockTextOne s b := by
   match b with
-  | .para _ | .section _ _ _ | .note _ | .verbatim _ _ | .logo _
+  | .para _ | .section _ _ _ _ | .note _ | .verbatim _ _ | .logo _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
   | .list o items =>
@@ -3833,7 +3844,7 @@ def backendNames : List String := ["pdf", "html", "md"]
 /-- Does backend `t` keep this block? Only a conditional can exclude one. -/
 def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
-  | .para _ | .section _ _ _ | .list _ _ | .center _ | .quote _ | .abstract _
+  | .para _ | .section _ _ _ _ | .list _ _ | .center _ | .quote _ | .abstract _
   | .role _ _
   | .spaced _ _
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
@@ -3863,7 +3874,7 @@ def keepForOne (t : String) : Block → Block
   | .note body => .note (keepForList t body.toList).toArray
   | .frame ti st v body => .frame ti st v (keepForList t body.toList).toArray
   | .para c => .para c
-  | .section l st title => .section l st title
+  | .section l st num title => .section l st num title
   | .verbatim c s => .verbatim c s
   | .logo c => .logo c
   | .framefoot c => .framefoot c
@@ -3913,7 +3924,7 @@ def textLeavesList (acc : List String) : List Block → List String
 
 def textLeavesOne (acc : List String) : Block → List String
   | .para content => plainText content :: acc
-  | .section _ _ title => plainText title :: acc
+  | .section _ _ _ title => plainText title :: acc
   | .verbatim _ s => s :: acc
   | .logo content => plainText content :: acc
   | .framefoot content => plainText content :: acc
@@ -3995,7 +4006,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .note body => orphanFreeList avail body.toList
   | .nav _ body => orphanFreeList avail body.toList
   | .frame _ _ _ body => orphanFreeList avail body.toList
-  | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .para _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak => true
   | .float _ _ _ body _ => orphanFreeList avail body.toList
@@ -4057,7 +4068,7 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
     textLeavesOne acc b = textLeavesOne [] b ++ acc := by
   match b with
   | .para c => simp [textLeavesOne]
-  | .section l st title => simp [textLeavesOne]
+  | .section l st num title => simp [textLeavesOne]
   | .verbatim c s => simp [textLeavesOne]
   | .logo c => simp [textLeavesOne]
   | .framefoot c => simp [textLeavesOne]
@@ -4192,7 +4203,7 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
   | .para c =>
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
-  | .section l st title =>
+  | .section l st num title =>
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
   | .verbatim c str =>
@@ -4440,7 +4451,7 @@ def imageSrcsBlockList (out : Array String) : List Block → Array String
 
 def imageSrcsBlock (out : Array String) : Block → Array String
   | .para content => imageSrcsInlines out content
-  | .section _ _ title => imageSrcsInlines out title
+  | .section _ _ _ title => imageSrcsInlines out title
   | .list _ items => imageSrcsItems out items.toList
   | .center body => imageSrcsBlockList out body.toList
   | .quote body => imageSrcsBlockList out body.toList

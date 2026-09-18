@@ -84,7 +84,7 @@ grep over this file — `("class", "…")` literals, the `rowClass`/`cls`
 builders, `styleClass`, and the `size-` names `styleClass` derives from
 `Ir.sizeScale`; `roleClass_engine_disjoint` is the reason the list exists. -/
 def engineClasses : List String :=
-  ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal",
+  ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "section-number",
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
    "bt-light-above", "centered", "column", "columns", "content", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
@@ -1294,7 +1294,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
           #[("class", "entry-rows")]
     else
       Html.elem "p" (inlines cfg content)
-  | .section level _ title =>
+  | .section level _ num title =>
     let element := match level with
       | 0 => "titlepage"
       | 1 => "section"
@@ -1305,7 +1305,15 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let title := match st.font with
       | some tpl => fillTemplate tpl title
       | none => title
-    Html.elem tag (inlines cfg title) (if st.rule.isSome then #[("class", "ruled")] else #[])
+    -- The number is a structural piece of the heading, never text glued
+    -- into the title: the anchor slug reads the title alone, and a
+    -- stylesheet can address the number (`pandoc` sets the same span).
+    let kids := inlines cfg title
+    let kids := match num with
+      | some n => #[Html.elem "span" #[Html.text n]
+          #[("class", "section-number")], Html.text "\u2003"] ++ kids
+      | none => kids
+    Html.elem tag kids (if st.rule.isSome then #[("class", "ruled")] else #[])
   | .list ordered items =>
     let tag := if ordered then "ol" else "ul"
     Html.elem tag (listItemsInto cfg.into #[] items.toList)
@@ -1749,7 +1757,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
     | .setTokens tk =>
       let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
       cfg := { cfg with tokens := tk, epochStyle := style }
-    | .section 1 _ title =>
+    | .section 1 _ _ title =>
       out := close out cur openId
       let text := Ir.plainText title
       let base := slug title
@@ -1977,7 +1985,7 @@ via \\chrome is the sequence both backends share"))
               | _, other => other
             else node
           acc := acc.push (withEpoch cfg.epochStyle node)
-        | .section 1 starred title =>
+        | .section 1 starred num title =>
           curSection := title
           if themedSections then
             -- No clamp, as on the PDF path: `done ≤ total` by theorem
@@ -1992,7 +2000,7 @@ via \\chrome is the sequence both backends share"))
               (Html.elem "section" kids #[("class", "section-page")]))
           else
             acc := acc.push (withEpoch cfg.epochStyle
-              (blockNode cfg (.section 1 starred title)))
+              (blockNode cfg (.section 1 starred num title)))
         | _ => acc := acc.push (withEpoch cfg.epochStyle (blockNode cfg b))
       return (acc, walkDiags)
   diags := diags ++ sectionDiags

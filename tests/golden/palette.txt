@@ -9,7 +9,7 @@ palette muted #71717A
 palette warn #B45309
 palette soft #D8C4FA decorative
 assert pages == 1
-section 1
+section 1 number "1"
   color primary #7C3AED
     text "A coloured heading"
 para

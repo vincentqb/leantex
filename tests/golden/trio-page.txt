@@ -12,11 +12,11 @@ meta title "Cardamom Press"
 meta author "Pat Placeholder"
 assert pages == 1
 assert fonts.all_embedded
-section 1
+section 1 number "1"
   text "Cardamom Press"
 para
   text "Cardamom Press is an invented letterpress studio that exists to give this corpus a subject. Its design is declared once — a palette, a rhythm, an element style — and this page, the deck beside it, and the card beside that all read the same declarations."
-section 1
+section 1 number "2"
   text "Practice"
 list unordered
   item

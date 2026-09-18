@@ -1,6 +1,6 @@
 class article
 page 612x792 vmargin 72 hmargin 150
-section 1
+section 1 number "1"
   text "Paired diagrams"
 para
   text "A paragraph before the figure, so its separation from the text is on the page."

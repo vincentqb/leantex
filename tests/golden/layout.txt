@@ -3,7 +3,7 @@ page 612x792 vmargin 72 hmargin 150
 center
   para
     text "A small document with deliberately ordinary content"
-section 1
+section 1 number "1"
   text "The first section"
 para
   text "Good defaults should make an unconfigured document readable. The measure, leading, margins, paragraph spacing, and line breaking should cooperate without a preamble full of corrections."
@@ -14,7 +14,7 @@ list unordered
   item
     para
       text "A longer point that wraps onto another line and therefore checks the hanging indent: all continuation text must align with the first word, not with the marker."
-section 2
+section 2 number "1.1"
   text "A smaller heading"
 para
   text "Extraordinary internationalization demonstrates automatic hyphenation while ordinary words remain easy to read."

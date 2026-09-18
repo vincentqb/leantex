@@ -9,19 +9,19 @@ center
     text "Alex Doe"
   para
     text "2026"
-section 1
+section 1 number "1"
   text "Habitats"
 para
   text "A paragraph under the first section."
-section 2
+section 2 number "1.1"
   text "Wetlands"
 para
   text "A paragraph under the subsection."
-section 3
+section 3 number "1.1.1"
   text "Reed Beds"
 para
   text "A paragraph under the deepest heading."
-section 1
+section 1 number "2"
   text "Migration"
 para
   text "A closing paragraph under a second top-level section."

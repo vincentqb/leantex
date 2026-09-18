@@ -3,7 +3,7 @@ page 612x792 vmargin 72 hmargin 150
 font dir "fonts"
 font body "Source Serif Pro"
 meta title "Formal Tables"
-section 1
+section 1 number "1"
   text "Formal tables"
 para
   text "A table between paragraphs takes booktabs’ shape: a heavier rule above and below, a lighter one under the head, padding that belongs to the rules, and never a vertical line."

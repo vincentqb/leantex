@@ -1,10 +1,10 @@
 class article
 page 612x792 vmargin 72 hmargin 150
-section 1
+section 1 number "1"
   text "Field Notes"
 para
   text "A paragraph under the section."
-section 3
+section 3 number "1.0.1"
   text "A Detail Too Deep"
 para
   text "The heading above skips the subsection level."

@@ -101,8 +101,13 @@ level-0 heading when the body carries the document title — the summary's
 place is after the title line, wherever that line comes from (`emit`). -/
 private def blockInto (summary ind acc : String) : Block → String
   | .para xs => acc ++ ind ++ inlineText xs ++ "\n\n"
-  | .section level _ title =>
-    let head := acc ++ ind ++ headingMarker level ++ " " ++ inlineText title ++ "\n\n"
+  | .section level _ num title =>
+    -- The heading line carries its resolved number the way the page does;
+    -- a level-0 heading (the document title) never has one.
+    let numTxt := match num with
+      | some n => n ++ " "
+      | none => ""
+    let head := acc ++ ind ++ headingMarker level ++ " " ++ numTxt ++ inlineText title ++ "\n\n"
     if level == 0 then head ++ summary
     else head
   | .list ordered items => itemsInto summary ind ordered 1 acc items.toList ++ "\n"
@@ -288,6 +293,10 @@ private theorem append_chain₆ (a b c d e f g : String) :
     ∃ r, a ++ b ++ c ++ d ++ e ++ f ++ g = a ++ r :=
   ⟨b ++ (c ++ (d ++ (e ++ (f ++ g)))), by simp [String.append_assoc]⟩
 
+private theorem append_chain₇ (a b c d e f g h : String) :
+    ∃ r, a ++ b ++ c ++ d ++ e ++ f ++ g ++ h = a ++ r :=
+  ⟨b ++ (c ++ (d ++ (e ++ (f ++ (g ++ h))))), by simp [String.append_assoc]⟩
+
 private theorem append_chain₈ (a b c d e f g h i : String) :
     ∃ r, a ++ b ++ c ++ d ++ e ++ f ++ g ++ h ++ i = a ++ r :=
   ⟨b ++ (c ++ (d ++ (e ++ (f ++ (g ++ (h ++ i)))))), by simp [String.append_assoc]⟩
@@ -312,11 +321,11 @@ private theorem blockInto_extends (summary ind acc : String) :
   | .para _ => by
     simp only [blockInto]
     exact append_chain₃ _ _ _ _
-  | .section _ _ _ => by
+  | .section _ _ _ _ => by
     simp only [blockInto]
     split
+    · exact append_chain₇ _ _ _ _ _ _ _ _
     · exact append_chain₆ _ _ _ _ _ _ _
-    · exact append_chain₅ _ _ _ _ _ _
   | .list _ items =>
     extends_comp (itemsInto_extends summary ind _ 1 acc items.toList) ⟨"\n", rfl⟩
   | .center body => blocksInto_extends summary ind acc body.toList
@@ -564,7 +573,7 @@ private theorem headingLevelList_mem (x : Nat) :
 
 private theorem headingLevelOne_mem (x : Nat) :
     (b : Block) → (out : Array Nat) → x ∈ out → x ∈ Ir.headingLevelOne out b
-  | .section _ _ _, _, h => Array.mem_push_of_mem _ h
+  | .section _ _ _ _, _, h => Array.mem_push_of_mem _ h
   | .para _, _, h => h
   | .list _ items, out, h => headingLevelItems_mem x items.toList out h
   | .center body, out, h => headingLevelList_mem x body.toList out h
@@ -634,7 +643,7 @@ summary follows the title, wherever the title came from. -/
 theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
     (ttl : Array Inline) (rest : List Block)
     (hs : doc.info.subject = some s)
-    (hbody : (Ir.keepFor "md" doc.body).toList = .section 0 st ttl :: rest)
+    (hbody : (Ir.keepFor "md" doc.body).toList = .section 0 st none ttl :: rest)
     (htn : ∀ c ∈ (inlineText ttl).toList, c ≠ '\n')
     (hsn : ∀ c ∈ s.toList, c ≠ '\n') :
     ∃ q, emit doc = "# " ++ inlineText ttl ++ "\n\n" ++ "> " ++ s ++ q := by

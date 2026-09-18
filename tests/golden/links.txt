@@ -22,7 +22,7 @@ runningfoot
       pagecount
 assert pages == 1
 assert fonts.all_embedded
-section 1
+section 1 number "1"
   text "Links"
 para
   text "A labelled link goes to "

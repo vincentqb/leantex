@@ -832,7 +832,10 @@ private def scalarTextList (out : ScalarAcc) (itemD enumD : Nat) :
 private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     Block → ScalarAcc
   | .para xs => textAndMath out xs
-  | .section _ _ title => textAndMath out title
+  -- A heading's number is set beside its title, so its digits are asked
+  -- of the bold face like the title's own text.
+  | .section _ _ num title =>
+    textAndMath { out with texts := out.texts.push (num.getD "") } title
   | .list ordered items =>
     -- The level's default marker rides along, so the fallback face is
     -- found before layout asks for the glyph. Per-kind depth, as LaTeX
@@ -2890,7 +2893,7 @@ private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : Font
       | .para content => collectPara a pats fs content indent true a.geom.fontSize
       -- The centred title block: the level-0 heading centres with the
       -- furniture around it, at the same LARGE bold the uncentred path sets.
-      | .section 0 _ title =>
+      | .section 0 _ _ title =>
         collectDisplay a fs title indent true
           (a.geom.fontSize * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000)
           (baseStyle := { bold := true })
@@ -2953,7 +2956,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
   match blk with
   | .para content =>
     collectPara a pats fs content indent false a.geom.fontSize
-  | .section level _ title =>
+  | .section level _ num title =>
     if level == 0 then
       -- The document title, a heading at level 0: display type at the
       -- scale's LARGE step in the bold face — classes.dtx's \@maketitle
@@ -3014,6 +3017,12 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let element := match level with
       | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
     let st := a.style element
+    -- The resolved number stands before the title with a \quad between
+    -- (classes.dtx \@seccntformat: `\csname the#1\endcsname\quad`),
+    -- carried as the em-quad kern so no face is asked for a glyph.
+    let title := match num with
+      | some n => #[Ir.Inline.text (n ++ "\u2003")] ++ title
+      | none => title
     -- Undeclared, a heading stands twice the default gap above its body.
     let a := a.addvspace ((st.before.map a.resolve).getD (a.parskip.add a.parskip))
     -- A declared font template wraps the title; without one, headings set in

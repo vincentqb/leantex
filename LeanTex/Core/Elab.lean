@@ -76,6 +76,10 @@ structure Ctx where
   stepBase : Nat := 0
   /-- The document class is `slides`: `\maketitle` makes a title frame. -/
   slides : Bool := false
+  /-- The class numbers its unstarred headings (article; classes.dtx
+  §Sectioning). Slides and card headings never number, so a deck renders
+  exactly as before. -/
+  numberHeadings : Bool := false
   /-- The effective backend target set of the enclosing `{ifbackend}`
   nesting: every backend at the top, intersected at each conditional on the
   way in, so a nested conditional that empties the set is diagnosed where
@@ -133,6 +137,14 @@ structure ESt where
   declares — the standing value is then the bundle's — so `\theme` after
   `\theme` never claims the document declared what a bundle did. -/
   declaredKeys : Array (String × String) := #[]
+  /-- The section counters in flow order, levels 1–3: elaboration is one
+  pass in document order, so stepping them here is exactly LaTeX's
+  \refstepcounter sequence. -/
+  secNums : Nat × Nat × Nat := (0, 0, 0)
+  /-- `\appendix` was declared: headings from here on letter (`A`, `B`, …)
+  and the section counter restarted — a from-here-forward flow state, the
+  `\logo`/body-`\palette` scope model, never a brace-scoped flag. -/
+  inAppendix : Bool := false
 
 abbrev EM := StateM ESt
 
@@ -1582,6 +1594,38 @@ private def sectionLevel : String → Option Nat
   | "subsubsection" => some 3
   | _ => none
 
+/-- One letter per appendix section, `\Alph`'s range: LaTeX errors past
+`Z` ("Counter too large"); this engine falls back to the arabic spelling
+rather than refusing the document. -/
+private def alphaNum (n : Nat) : String :=
+  if 1 ≤ n && n ≤ 26 then String.singleton (Char.ofNat (64 + n))
+  else toString n
+
+/-- The number an unstarred heading takes, stepped in flow order — or
+`none`, which is also the answer for every heading of a class that does
+not number. classes.dtx §Sectioning: `\thesection` is `\arabic{section}`
+(`\Alph` after `\appendix`), each deeper level prefixes its parent, a
+starred form neither numbers nor steps, and secnumdepth is 3, so
+`\paragraph` and below never number. Stepping a level zeroes the deeper
+ones, so `2.1` after a fresh `\section` is impossible by construction. -/
+private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
+    EM (Option String) := do
+  if starred || !ctx.numberHeadings || level == 0 || level > 3 then
+    return none
+  let st ← get
+  let (s1, s2, s3) := st.secNums
+  let nums := match level with
+    | 1 => (s1 + 1, 0, 0)
+    | 2 => (s1, s2 + 1, 0)
+    | _ => (s1, s2, s3 + 1)
+  modify fun st => { st with secNums := nums }
+  let (n1, n2, n3) := nums
+  let base := if st.inAppendix then alphaNum n1 else toString n1
+  return some (match level with
+    | 1 => base
+    | 2 => s!"{base}.{n2}"
+    | _ => s!"{base}.{n2}.{n3}")
+
 /-- A declaration standing in a group applies to the rest of the group:
 `\Huge`, `\bfseries`, `\centering`, a palette name used bare. -/
 private def isDeclaration (ctx : Ctx) : Raw → Bool
@@ -1726,7 +1770,7 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
     -- as the one <h1>, markdown as the one #), and layout gives it the
     -- scale's LARGE step in the bold face — classes.dtx's \@maketitle sets
     -- {\LARGE \@title \par}. Starred: a title is never numbered.
-    inner := push inner none (.section 0 true xs)
+    inner := push inner none (.section 0 true none xs)
   if let some xs := part st.subtitle then
     inner := push inner (ctx.tokens.find? "subtitlegap") (.para #[.styled (.size "large") xs])
   if let some (c, nm) := tps.separator then
@@ -1904,6 +1948,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .ctrl "pause" _ => true
         | .ctrl "framefoot" _ => true
         | .ctrl "pagebreak" _ => true
+        | .ctrl "appendix" _ => true
         -- Display math is its own centred block, as LaTeX sets a display:
         -- the paragraph splits around it. Inline `$...$` stays in its
         -- sentence.
@@ -1982,6 +2027,12 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
           i := raws.size
           unless inner.isEmpty do
             blocks := blocks.push (.center inner)
+        | .ctrl "appendix" _ =>
+          -- Not a heading: a declaration affecting every heading after it,
+          -- from here forward in flow order (the scope model body \palette
+          -- landed) — the counter restarts and level-1 numbers letter.
+          i := i + 1
+          modify fun st => { st with inAppendix := true, secNums := (0, 0, 0) }
         | .ctrl "pause" _ =>
           -- The rest of this scope reveals one step later. Numbering is
           -- cumulative through nesting: each pause raises the base its
@@ -2301,7 +2352,7 @@ specs are not modelled")
             match raws[j]? with
             | some (.group title _) =>
               i := j + 1
-              blocks := blocks.push (.section level starred (← elabInlines ctx title))
+              blocks := blocks.push (.section level starred (← sectionNumber ctx level starred) (← elabInlines ctx title))
             | _ =>
               if recovered then
                 warnSkippedDecl ctx n pos
@@ -4054,7 +4105,8 @@ its declared layout" pos
     -- satisfy the measure band the engine checks (W0201). A document that
     -- declares any \page geometry keeps every value it named.
     page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
-  ctx := { ctx with slides := docClass == "slides", styles := styles }
+  ctx := { ctx with slides := docClass == "slides"
+                    numberHeadings := docClass == "article", styles := styles }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's
   -- number in document order (`numberFloats_exact` is the fact `\ref`

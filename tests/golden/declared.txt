@@ -6,7 +6,7 @@ meta subject "Testing declarations"
 meta keywords "leantex, declarations, assertions"
 assert pages == 1
 assert fonts.all_embedded
-section 1
+section 1 number "1"
   text "Declared geometry"
 para
   text "This page is A5 with narrow margins, so the measure is much shorter than the letter-size default and the line breaker has less room to work with."

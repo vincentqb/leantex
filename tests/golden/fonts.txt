@@ -7,7 +7,7 @@ font mono "Source Code Pro"
 meta title "Faces"
 assert pages == 1
 assert fonts.all_embedded
-section 1
+section 1 number "1"
   text "Faces"
 para
   text "Body text is set in the serif family. "

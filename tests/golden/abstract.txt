@@ -10,7 +10,7 @@ center
 abstract
   para
     text "Entirely synthetic findings about placeholder methods, stated briefly so the titled block has a body to set off from the text around it."
-section 1
+section 1 number "1"
   text "Introduction"
 para
   text "Body text follows the abstract at the full measure."
