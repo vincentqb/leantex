@@ -219,111 +219,11 @@ private def tighten (s : String) : String :=
   let trimmed := String.ofList ((tightenGo 0 [] s.toList).dropWhile (· == '\n')).reverse
   if trimmed.isEmpty then trimmed else trimmed ++ "\n"
 
-mutual
-
-/-- The small-caps runs this backend will set as plain text: the styled
-text of every `.smallcaps` inline that ships through the twin, in document
-order. Walked exactly over what emits — a speaker note or frame footer
-never reaches the twin, so nothing is lost there. A casing chosen *for*
-small caps (`phd`, set uniform by the face) survives into plain text as a
-misreading, and the engine cannot restore the reading form — that is
-authorial knowledge — so the loss is named (`emit`), never silent. The
-accumulator threads through, as every walk here does. -/
-private def scBlocks (acc : Array String) : List Block → Array String
-  | [] => acc
-  | b :: rest => scBlocks (scBlock acc b) rest
-
-private def scBlock (acc : Array String) : Block → Array String
-  | .para xs => scInlines acc xs.toList
-  | .section _ _ title => scInlines acc title.toList
-  | .list _ items => scItems acc items.toList
-  | .center body => scBlocks acc body.toList
-  | .quote body => scBlocks acc body.toList
-  | .spaced _ body => scBlocks acc body.toList
-  | .role _ body => scBlocks acc body.toList
-  | .verbatim _ _ => acc
-  | .columns cols => scColumns acc cols.toList
-  | .step _ _ body => scBlocks acc body.toList
-  | .only _ body => scBlocks acc body.toList
-  | .nav _ body => scBlocks acc body.toList
-  | .note _ => acc
-  | .framefoot _ => acc
-  | .setPalette _ => acc
-  | .setTokens _ => acc
-  | .pagebreak => acc
-  | .logo _ => acc
-  | .rule _ _ _ => acc
-  | .picture _ => acc
-  | .frame title _ _ body => scBlocks (scInlines acc title.toList) body.toList
-  | .table _ _ _ rows _ => scRows acc rows.toList
-  | .float _ _ body caption => scBlocks (scInlines acc caption.toList) body.toList
-
-private def scItems (acc : Array String) : List (Array Block) → Array String
-  | [] => acc
-  | item :: rest => scItems (scBlocks acc item.toList) rest
-
-private def scColumns (acc : Array String) : List (Option Nat × Array Block) → Array String
-  | [] => acc
-  | (_, body) :: rest => scColumns (scBlocks acc body.toList) rest
-
-private def scRows (acc : Array String) : List (Array (Array Inline)) → Array String
-  | [] => acc
-  | row :: rest => scRows (scCells acc row.toList) rest
-
-private def scCells (acc : Array String) : List (Array Inline) → Array String
-  | [] => acc
-  | cell :: rest => scCells (scInlines acc cell.toList) rest
-
-private def scInlines (acc : Array String) : List Inline → Array String
-  | [] => acc
-  | x :: rest => scInlines (scInline acc x) rest
-
-private def scInline (acc : Array String) : Inline → Array String
-  | .styled st body =>
-    if st == .smallcaps then
-      let text := plainText body
-      if text.isEmpty then acc else acc.push text
-    else scInlines acc body.toList
-  | .colored _ _ body => scInlines acc body.toList
-  | .role _ body => scInlines acc body.toList
-  | .link _ body => scInlines acc body.toList
-  | .underline body => scInlines acc body.toList
-  | .step _ _ body => scInlines acc body.toList
-  | .text _ => acc
-  | .math _ _ => acc
-  | .formula _ _ _ => acc
-  | .image _ _ _ => acc
-  | .icon _ _ => acc
-  | .fill => acc
-  | .pageNumber => acc
-  | .pageCount => acc
-  | .linebreak _ => acc
-
-end
-
-/-- The one diagnostic this backend raises: small caps have no markdown
-spelling, so their text lands as typed — and a casing the author chose for
-uniform small capitals (`{\scshape phd}`) reads as a misspelling in plain
-text. Named once per document, quoting the first affected run. -/
-private def smallCapsDiag (body : Array Block) : Array Diag :=
-  let runs := scBlocks #[] body.toList
-  match runs[0]? with
-  | none => #[]
-  | some first =>
-    let short := if first.length > 24 then (first.take 23).toString ++ "…" else first
-    let msg := if runs.size == 1 then
-        "small caps have no markdown spelling; '" ++ short ++ "' is set as typed"
-      else
-        "small caps have no markdown spelling; '" ++ short ++ "' and " ++
-          toString (runs.size - 1) ++
-          (if runs.size == 2 then " more run are set as typed"
-           else " more runs are set as typed")
-    #[Diag.of .W0344 msg
-      (help := some "markdown keeps the letters as typed: write the casing \
-prose should read, or \\allow{W0344} accepts the loss")]
-
-/-- Emit the document, and the diagnostics this backend itself raises. The
-metadata renders as the llms.txt preamble — the title as the one `#`
+/-- Emit the document. Small caps land as their text with the authored
+casing — since `\scshape` renders uniform small capitals, the source
+carries the reading form and the twin is correct as typed (the retired
+W0344 named the loss back when uniform required a lowercase workaround).
+The metadata renders as the llms.txt preamble — the title as the one `#`
 heading, the subject as the summary blockquote — and the summary's place
 is fixed by the convention, not by its source: immediately after the title
 line, wherever that line comes from. A body that carries its own level-0
@@ -333,7 +233,7 @@ the walk sets the summary right after it. The placement theorems below pin
 both title sources (`emit_meta_title_first`, `emit_body_title_first`); the
 titleless remainder — summary first, nothing for it to follow — is pinned by
 test. -/
-def emit (doc : Doc) : String × Array Diag :=
+def emit (doc : Doc) : String :=
   -- The twin's view of the document: backend conditionals resolve here, at
   -- the backend's entry (`Ir.keepFor_covers` is why dropping cannot lose
   -- content).
@@ -346,8 +246,7 @@ def emit (doc : Doc) : String × Array Diag :=
     | some t => if bodyTitled then "" else "# " ++ t ++ "\n\n"
     | none => ""
   let preamble := title ++ (if bodyTitled then "" else summary)
-  (tighten (preamble ++ blocksInto summary "" "" doc.body.toList),
-    smallCapsDiag doc.body)
+  tighten (preamble ++ blocksInto summary "" "" doc.body.toList)
 
 /-! ## The placement theorems
 
@@ -705,7 +604,7 @@ theorem emit_meta_title_first (doc : Doc) (t s : String)
     (ht : doc.info.title = some t) (hs : doc.info.subject = some s)
     (hbody : ((Ir.headingLevels (Ir.keepFor "md" doc.body)).contains 0) = false)
     (htn : ∀ c ∈ t.toList, c ≠ '\n') (hsn : ∀ c ∈ s.toList, c ≠ '\n') :
-    ∃ q, (emit doc).1 = "# " ++ t ++ "\n\n" ++ "> " ++ s ++ q := by
+    ∃ q, emit doc = "# " ++ t ++ "\n\n" ++ "> " ++ s ++ q := by
   obtain ⟨q, hq⟩ := tighten_head t s
     (blocksInto ("> " ++ s ++ "\n\n") "" "" (Ir.keepFor "md" doc.body).toList)
     htn hsn
@@ -725,7 +624,7 @@ theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
     (hbody : (Ir.keepFor "md" doc.body).toList = .section 0 st ttl :: rest)
     (htn : ∀ c ∈ (inlineText ttl).toList, c ≠ '\n')
     (hsn : ∀ c ∈ s.toList, c ≠ '\n') :
-    ∃ q, (emit doc).1 = "# " ++ inlineText ttl ++ "\n\n" ++ "> " ++ s ++ q := by
+    ∃ q, emit doc = "# " ++ inlineText ttl ++ "\n\n" ++ "> " ++ s ++ q := by
   have h0 : (0 : Nat) ∈ Ir.headingLevels (Ir.keepFor "md" doc.body) := by
     show (0 : Nat) ∈ Ir.headingLevelList #[] (Ir.keepFor "md" doc.body).toList
     rw [hbody]

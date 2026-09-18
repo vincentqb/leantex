@@ -46,7 +46,9 @@ speaker notes as a side channel.
 are `partial` — three, not the two an earlier entry claimed; an audit found
 ten and seven were removed (2026-09-16 entry). The Knuth–Plass optimality
 theorem is held empirically by `scripts/kp-fuzz.lean`. Small caps are
-synthesised rather than drawn, math renders its first two slices (atoms,
+drawn from a face's own `smcp`+`c2sc` when it carries both and synthesised
+uniform otherwise (the 2026-09-18 entry), math renders its first two slices
+(atoms,
 spacing, scripts; then fractions, radicals, grown delimiters, big-operator
 limits, and alignment grids — the second 2026-09-17 M6 entry lists what
 still carries a named warning), and element styling
@@ -86,6 +88,48 @@ list.
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-18 — `\scshape` means uniform small caps, so the text can carry
+real casing.
+
+- **The decision.** `\scshape` renders every letter as a small capital —
+  CSS `all-small-caps`, OpenType `c2sc`+`smcp` — not the CSS/LaTeX
+  small-caps rule that keeps capitals full height. The argument: under the
+  old rule the source must lie about casing to get the canonical form
+  (`{\scshape phd}` for a uniform PhD — Bringhurst 3.2.2 sets mid-text
+  abbreviations in small caps, uniformly), and the lie survives into the
+  markdown twin as a misspelled credential (W0344 named it; now retired).
+  Under the new rule every style is reachable with true text: uniform is
+  the default, and caps-and-small-caps — a legitimate style the old rule
+  gave for free on mixed case — is still spelled `A{\scshape lex}`, the
+  compositor's own decomposition. The corpus evidence: every shipped
+  `\scshape` use is a running head or display name (`Alex Doe`, `A Linked
+  Document`, `Alex Doe, phd`), which under this rule set as even small
+  caps — the canonical running-head form — where before their capitals
+  stayed full height; no fixture relied on the mixed-case effect on
+  purpose, and `phd` (webpage.tex) was exactly the workaround this
+  retires. All-lowercase input renders as before, verified over
+  `Layout.Out`: the drawn gid+size sequence for `phd`, `PhD`, and `PHD`
+  is identical under both mechanisms, which is what "uniform" means as a
+  measured fact.
+- **The mechanisms.** PDF: the sfnt reader now parses GSUB single
+  substitution (LookupType 1, formats 1+2) for `smcp`+`c2sc`, resolved
+  for `latn`/`DFLT` default LangSys, composed in LookupList order; a face
+  carrying both features substitutes real small-cap glyphs at full size,
+  text kept as typed (so extraction and ToUnicode carry the author's
+  casing). Contextual/alternate/ligature/extension lookups, non-default
+  language systems, and lookupFlag filtering are not read — no corpus
+  face needs them for these two features. Fonts without both features are
+  the normal case and keep synthesis, now uniform: the whole word takes
+  its capital forms at `smallCapScale`, one size, replacing the old
+  case-split that kept capitals full height (the mixed-case trap). HTML:
+  `.sc` asks `font-variant-caps: all-small-caps` (CSS Fonts 4), the same
+  feature pair, so the backends agree by construction.
+- **Presence, measured** (`smallCapsGsubChecks`): Source Serif Pro
+  Regular/Bold and Fira Sans carry both features; Open Sans, Source Code
+  Pro, the Source Serif italics, Fira Math, and the icon face carry
+  neither — so both mechanisms are exercised by shipped fixtures on every
+  host.
 
 2026-09-18 — scope: a setting's effect is confined to its declared extent,
 and the model is written down.

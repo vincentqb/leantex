@@ -606,11 +606,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         ui.phase "html" s!"{html.utf8ByteSize} bytes" (← since t)
       if emit.contains .md then
         let t ← IO.monoMsNow
-        let (md, mdiags) := MarkdownDoc.emit doc
-        let rMd ← ui.resolve doc.allow allowAll mdiags
-        fired := fired ++ rMd.fired
-        accepted := accepted ++ rMd.accepted
-        warnings := warnings + rMd.warnings
+        let md := MarkdownDoc.emit doc
         let mdPath := mdOutPath ui.cfg.output outIsDir file doc.output.md
         IO.FS.writeFile mdPath md
         written := written.push mdPath
