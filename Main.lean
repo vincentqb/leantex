@@ -306,7 +306,11 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     | some i => fallback := fallback.push (c, i)
     | none => uncovered := uncovered.push c
   unless uncovered.isEmpty do
-    for (c, path) in ← FontDb.fallbackPicks faces uncovered do
+    -- The document's own directories outrank the host: a shipped face
+    -- answers first for every scalar it covers.
+    let inDocDir (path : String) : Bool :=
+      docDirs.any fun d => path.startsWith (d ++ "/") || path.startsWith d
+    for (c, path) in ← FontDb.fallbackPicksPreferring inDocDir faces uncovered do
       match paths.findIdx? (· == path) with
       | some i => fallback := fallback.push (c, i)
       | none =>

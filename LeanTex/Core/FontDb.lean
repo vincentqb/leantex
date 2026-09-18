@@ -863,6 +863,22 @@ def fallbackPicks (faces : Array Face) (needed : Array Char) :
     remaining := still
   return out
 
+/-- `fallbackPicks` with the document's own faces outranking the host's:
+a face under a `\fonts{ dir = ... }` the document ships answers first for
+every scalar it covers, and only what it leaves uncovered goes to the full
+scan. Without this a host face could displace a shipped one in the
+documented pick order — the site port's shipped icon faces lost to a TeX
+Live FontAwesome — and "a document that carries its fonts renders the
+same on every host" would be false exactly for fallback-resolved
+scalars. -/
+def fallbackPicksPreferring (preferred : String → Bool) (faces : Array Face)
+    (needed : Array Char) : IO (Array (Char × String)) := do
+  let docFaces := faces.filter (fun f => preferred f.path)
+  let first ← fallbackPicks docFaces needed
+  let got := first.map (·.1)
+  let rest := needed.filter (fun c => !got.contains c)
+  return first ++ (← fallbackPicks faces rest)
+
 /-- Installed families that resemble a name: sharing a word, or within an
 edit or two of it. `Nimbus Roman` finds `Nimbus Sans L` and `Nimbus Mono`;
 `Libertinus` finds every Libertinus face. At most eight, closest first. -/

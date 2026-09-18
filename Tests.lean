@@ -1851,6 +1851,18 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((← FontDb.tableImage corrupt.toString (· == "cmap")).isNone)
   IO.FS.removeFile corrupt
 
+  -- The document's own faces outrank the host's: the documented order
+  -- picks Fira Math for '∀' (asserted above), but a preference on the
+  -- Source Code Pro path — a document that ships that face — wins.
+  let prefPicks ← FontDb.fallbackPicksPreferring
+    (fun p => (p.splitOn "SourceCodePro").length ≥ 2) shipped #['∀']
+  t "a preferred (document-shipped) face answers first for what it covers"
+    (prefPicks.contains ('∀', testFonts ++ "/SourceCodePro-Regular.otf"))
+  t "what a preferred face leaves uncovered still reaches the full scan"
+    (((← FontDb.fallbackPicksPreferring
+        (fun p => (p.splitOn "SourceCodePro").length ≥ 2) shipped #['\uF09B']).find?
+      (·.1 == '\uF09B')).any (fun e => (e.2.splitOn "ExampleIcons").length ≥ 2))
+
 /-- The band projection over synthetic outlines: the invariant is that no
 ink inside the band escapes the reported intervals, whatever its shape —
 wholly inside the band, spanning it, or dipping into it at a curve
