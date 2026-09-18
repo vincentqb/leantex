@@ -104,6 +104,13 @@ in this repo; refer to the private reference corpus abstractly.
   would start from on its way toward a backend. `--math-boundary` is the
   one recorded remainder, carried as a named hypothesis in the theorem
   until `\output` grows its key.
+- Removing a CLI surface is a migration, not a deletion, and its callers are
+  not all in this repo: the site port's build script and every private
+  document's build recipe invoke the binary too. Grepping this tree returns
+  clean and proves nothing — `--emit` was deleted that way and broke the site
+  build on the next run. No hook can see those repos, so the check is manual
+  and belongs in the same commit: run every out-of-repo build that invokes
+  leantex before declaring the surface gone.
 - Backends consume the IR and nothing else. A backend never re-parses, and
   never reaches back into the surface AST — that is how md→PDF and tex→HTML
   stay free instead of becoming N×M special cases. The hook rejects a
