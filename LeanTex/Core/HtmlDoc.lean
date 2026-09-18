@@ -35,6 +35,19 @@ structure Config where
   (`rel=alternate`, HTML §4.6.6.1; `text/markdown`, RFC 7763) — the
   llms.txt convention's discoverable form. -/
   mdHref : Option String := none
+  /-- The palette in force at this point of the block walk — the epoch
+  state a body `\palette` snapshot is diffed against. Epoch 0 is the
+  document's preamble+theme palette (`emitTree` seeds it); each
+  `.setPalette` replaces it as the walk passes the block. -/
+  pal : Ir.Palette := {}
+  /-- The token state in force, same door (`.setTokens`). -/
+  tokens : Ir.Tokens := {}
+  /-- The accumulated custom-property redefinitions the siblings from here
+  on carry on their own style attribute. Properties on an element inherit
+  into it, so styling each following sibling realizes "from here on"
+  without a wrapper element — a wrapper would break the `* + *` sibling
+  adjacency the rhythm gap rules key on. -/
+  epochStyle : String := ""
 
 private def hex2 (v : UInt8) : String :=
   let d := "0123456789abcdef".toList
@@ -1226,6 +1239,42 @@ private def gridTracks (cols : Array (Option Nat × Array Block)) : String :=
       if f % 10 == 0 then s!"{f / 10}%" else s!"{f / 10}.{f % 10}%"
     | none => "1fr")
 
+/-- Children start their own sibling walk: the parent's accumulated epoch
+style already stands on an ancestor element and inherits into it, so it is
+never re-applied below. The epoch palette and tokens carry in for the
+diffs a nested declaration makes. -/
+def Config.into (cfg : Config) : Config := { cfg with epochStyle := "" }
+
+private def joinStyles (a b : String) : String :=
+  if a.isEmpty then b else if b.isEmpty then a else a ++ "; " ++ b
+
+/-- The custom-property redefinitions a body `\palette` makes, against the
+palette in force before it: exactly the changed entries, so an epoch
+declares what it changed and nothing else. -/
+def epochPaletteStyle (before after : Ir.Palette) : String :=
+  String.intercalate "; " ((after.entries.filter fun (n, c) =>
+    before.find? n != some c).toList.map fun (n, c) => s!"--{n}: {cssColor c}")
+
+/-- The redefinitions a body `\tokens` makes, same diff. -/
+def epochTokenStyle (before after : Ir.Tokens) : String :=
+  String.intercalate "; " ((after.entries.filter fun (n, g) =>
+    before.find? n != some g).toList.map fun (n, g) => s!"--{n}: {cssLength g.width}")
+
+/-- The epoch's redefinitions onto one emitted sibling node. The epoch
+comes first, so an element's own style declarations win (CSS style
+attribute: last declaration of a property applies). A text node carries no
+attributes and needs none. -/
+def withEpoch (style : String) : Node → Node
+  | .elem t attrs kids =>
+    if style.isEmpty then .elem t attrs kids
+    else if attrs.any (·.1 == "style") then
+      .elem t (attrs.map fun kv =>
+        if kv.1 == "style" then (kv.1, style ++ "; " ++ kv.2) else kv) kids
+    else .elem t (attrs.push ("style", style)) kids
+  | .text s => .text s
+  | .style css => .style css
+  | .script attrs code => .script attrs code
+
 mutual
 
 def blockNode (cfg : Config) (b : Block) : Node :=
@@ -1254,27 +1303,27 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem tag (inlines cfg title) (if st.rule.isSome then #[("class", "ruled")] else #[])
   | .list ordered items =>
     let tag := if ordered then "ol" else "ul"
-    Html.elem tag (listItemsInto cfg #[] items.toList)
+    Html.elem tag (listItemsInto cfg.into #[] items.toList)
   | .center body =>
-    Html.elem "div" (blockNodesInto cfg #[] body.toList) #[("class", "centered")]
+    Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "centered")]
   -- The block half of the class hook: the authored name as a class on a
   -- generic flow container, through the typed tree and the escaper.
   | .role n body =>
-    Html.elem "div" (blockNodesInto cfg #[] body.toList) #[("class", roleClass n)]
+    Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", roleClass n)]
   -- A quotation is HTML's own construct: `<blockquote>` carries the
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>
-    Html.elem "blockquote" (blockNodesInto cfg #[] body.toList)
+    Html.elem "blockquote" (blockNodesInto cfg.into #[] body.toList)
   | .columns cols =>
     -- Side-by-side columns as a grid: the declared fractions become
     -- percentage tracks, so the HTML column really is as wide as the PDF's.
-    Html.elem "div" (columnNodesInto cfg #[] cols.toList)
+    Html.elem "div" (columnNodesInto cfg.into #[] cols.toList)
       #[("class", "columns"),
         ("style", s!"display: grid; grid-template-columns: {gridTracks cols}; " ++
           "justify-content: space-between; column-gap: 0.75rem")]
   | .step n last body =>
     -- Every step visible (the no-JS handout); the range rides as data.
-    Html.elem "div" (blockNodesInto cfg #[] body.toList)
+    Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
       (#[("class", "step"), ("data-step", toString n)] ++
         (match last with
          | some u => #[("data-step-last", toString u)]
@@ -1282,7 +1331,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   | .note body =>
     -- Inert and hidden: available to a speaker view, invisible in the deck
     -- and in print.
-    Html.elem "aside" (blockNodesInto cfg #[] body.toList)
+    Html.elem "aside" (blockNodesInto cfg.into #[] body.toList)
       #[("class", "note"), ("hidden", "hidden")]
   | .pagebreak =>
     -- A continuous medium has no page to break; the boundary leaves no
@@ -1290,7 +1339,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     Html.text ""
   | .spaced before body =>
     let style := s!"margin-top: {cssLength before.width}"
-    Html.elem "div" (blockNodesInto cfg #[] body.toList)
+    Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
       #[("class", "spaced"), ("style", style)]
   | .verbatim covered s =>
     -- `<pre>` preserves the raw lines; the escaper makes the content inert.
@@ -1316,16 +1365,22 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let header := if title.isEmpty then #[]
       else #[Html.elem "header" #[Html.elem "h2" (inlines cfg title)]]
     let cls := if standout then "slide standout" else "slide"
-    Html.elem "section" (header ++ blockNodesInto cfg #[] body.toList) #[("class", cls)]
+    Html.elem "section" (header ++ blockNodesInto cfg.into #[] body.toList) #[("class", cls)]
   | .framefoot _ =>
     -- A state change for the deck walk in `emit`, not content: nothing to
     -- render where one stands alone.
+    Html.text ""
+  | .setPalette _ =>
+    -- A state change the sibling walks replay (`blockNodesInto`, the
+    -- article and deck walks): nothing to render where one stands alone.
+    Html.text ""
+  | .setTokens _ =>
     Html.text ""
   | .only targets body =>
     -- `emit` already kept this node for HTML (`Ir.keepFor "html"`): by here
     -- it is a transparent group. The target set rides as data, so a reader
     -- of the page can see the provenance of single-surface content.
-    Html.elem "div" (blockNodesInto cfg #[] body.toList)
+    Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
       #[("data-backend", String.intercalate "," targets.toList)]
   | .nav spec body =>
     -- The navigation landmark (ARIA's `navigation` role comes with the
@@ -1352,7 +1407,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
         (if pin.reveal then #[("class", "reveal-scroll")] else #[]).push
           ("style", style)
       | none => #[]
-    Html.elem "nav" (blockNodesInto cfg #[] body.toList) (labelAttrs ++ pinAttrs)
+    Html.elem "nav" (blockNodesInto cfg.into #[] body.toList) (labelAttrs ++ pinAttrs)
   | .logo _ =>
     -- Paged-media furniture; `blockNodesInto` skips it (and `emit` says
     -- so), so this arm only closes the match.
@@ -1445,18 +1500,30 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let capNode : Array Node :=
       if caption.isEmpty then #[]
       else #[Html.elem "figcaption" (inlines cfg caption)]
-    let kids := blockNodesInto cfg #[] body.toList
+    let kids := blockNodesInto cfg.into #[] body.toList
     let cls := match kind with
       | .table => "float table-float"
       | .figure => "float"
     Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode)
       #[("class", cls)]
 
-/-- The accumulator threads through the sibling walk, as in `inlineNodesInto`. -/
+/-- The accumulator threads through the sibling walk, as in
+`inlineNodesInto` — and so does the epoch: a `.setPalette`/`.setTokens`
+updates the state in force, and every following sibling carries the
+accumulated redefinitions on its style attribute (flow scope realized
+sibling-wise; past the enclosing element's close the properties no longer
+reach, the documented divergence from the PDF's whole-flow scope). -/
 private def blockNodesInto (cfg : Config) (acc : Array Node) : List Block → Array Node
   | [] => acc
   | .logo _ :: rest => blockNodesInto cfg acc rest
-  | b :: rest => blockNodesInto cfg (acc.push (blockNode cfg b)) rest
+  | .setPalette p :: rest =>
+    let style := joinStyles cfg.epochStyle (epochPaletteStyle cfg.pal p)
+    blockNodesInto { cfg with pal := p, epochStyle := style } acc rest
+  | .setTokens tk :: rest =>
+    let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
+    blockNodesInto { cfg with tokens := tk, epochStyle := style } acc rest
+  | b :: rest =>
+    blockNodesInto cfg (acc.push (withEpoch cfg.epochStyle (blockNode cfg b))) rest
 
 private def columnNodesInto (cfg : Config) (acc : Array Node) :
     List (Option Nat × Array Block) → Array Node
@@ -1476,7 +1543,14 @@ private def listItemsInto (cfg : Config) (acc : Array Node) : List (Array Block)
 def listItem (cfg : Config) : List Block → Array Node
   | [.para content] => inlines cfg content
   | [] => #[]
-  | b :: rest => blockNodesInto cfg #[blockNode cfg b] rest
+  | .setPalette p :: rest =>
+    let style := joinStyles cfg.epochStyle (epochPaletteStyle cfg.pal p)
+    listItem { cfg with pal := p, epochStyle := style } rest
+  | .setTokens tk :: rest =>
+    let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
+    listItem { cfg with tokens := tk, epochStyle := style } rest
+  | b :: rest =>
+    blockNodesInto cfg #[withEpoch cfg.epochStyle (blockNode cfg b)] rest
 
 end
 
@@ -1647,8 +1721,18 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
   -- Each assigned id with the plain text of the title that holds it.
   let mut taken : Array (String × String) := #[]
   let mut diags : Array Diag := #[]
+  -- The epoch state threads through the article's top level exactly as
+  -- through `blockNodesInto`: each node after a body declaration carries
+  -- the redefinitions, whichever section it closes into.
+  let mut cfg := cfg
   for b in blocks do
     match b with
+    | .setPalette p =>
+      let style := joinStyles cfg.epochStyle (epochPaletteStyle cfg.pal p)
+      cfg := { cfg with pal := p, epochStyle := style }
+    | .setTokens tk =>
+      let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
+      cfg := { cfg with tokens := tk, epochStyle := style }
     | .section 1 _ title =>
       out := close out cur openId
       let text := Ir.plainText title
@@ -1673,8 +1757,8 @@ anchor '{base}'; the second becomes '{id}'"
 retitle one section, or link to '#{id}'"))
       taken := taken.push (id, text)
       openId := some id
-      cur := #[blockNode cfg b]
-    | _ => cur := cur.push (blockNode cfg b)
+      cur := #[withEpoch cfg.epochStyle (blockNode cfg b)]
+    | _ => cur := cur.push (withEpoch cfg.epochStyle (blockNode cfg b))
   return (close out cur openId, diags)
 
 /-- Emit a document as its typed tree — head and body nodes — plus any
@@ -1796,7 +1880,9 @@ def emitTree (cfg : Config) (doc : Doc) :
   let bodyClass := match cfg.css with
     | .bulma => "content"
     | _ => ""
-  let cfg := { cfg with styles := doc.styles }
+  let cfg := { cfg with styles := doc.styles
+                        pal := doc.palette
+                        tokens := doc.tokens }
   -- The themed section page: in a slides document with progress keys, a
   -- top-level section becomes its own deck section carrying the position.
   let themedSections := doc.docClass == "slides" &&
@@ -1825,9 +1911,18 @@ def emitTree (cfg : Config) (doc : Doc) :
       let mut frameFoot : Option (Array Inline) := none
       let mut acc : Array Node := #[]
       let mut walkDiags : Array Diag := #[]
+      -- The epoch state threads through the deck's top level exactly as
+      -- through `blockNodesInto`.
+      let mut cfg := cfg
       for h : i in [0:doc.body.size] do
         let b := doc.body[i]
         match b with
+        | .setPalette p =>
+          let style := joinStyles cfg.epochStyle (epochPaletteStyle cfg.pal p)
+          cfg := { cfg with pal := p, epochStyle := style }
+        | .setTokens tk =>
+          let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
+          cfg := { cfg with tokens := tk, epochStyle := style }
         | .framefoot xs =>
           frameFoot := if xs.isEmpty then none else some xs
           -- A continuous page has no physical page number: the placeholder
@@ -1865,7 +1960,7 @@ via \\chrome is the sequence both backends share"))
                   #[("class", "slide-foot size-small")]))
               | _, other => other
             else node
-          acc := acc.push node
+          acc := acc.push (withEpoch cfg.epochStyle node)
         | .section 1 starred title =>
           curSection := title
           if themedSections then
@@ -1877,10 +1972,12 @@ via \\chrome is the sequence both backends share"))
               kids.push (Html.elem "div"
                 #[Html.elem "div" #[] #[("style", s!"width: {done * 100 / total}%")]]
                 #[("class", "progress")])
-            acc := acc.push (Html.elem "section" kids #[("class", "section-page")])
+            acc := acc.push (withEpoch cfg.epochStyle
+              (Html.elem "section" kids #[("class", "section-page")]))
           else
-            acc := acc.push (blockNode cfg (.section 1 starred title))
-        | _ => acc := acc.push (blockNode cfg b)
+            acc := acc.push (withEpoch cfg.epochStyle
+              (blockNode cfg (.section 1 starred title)))
+        | _ => acc := acc.push (withEpoch cfg.epochStyle (blockNode cfg b))
       return (acc, walkDiags)
   diags := diags ++ sectionDiags
   let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]

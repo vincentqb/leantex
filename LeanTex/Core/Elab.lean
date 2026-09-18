@@ -108,14 +108,19 @@ structure ESt where
   /-- beamer's `\logo`, a declaration legal in the preamble and the body
   alike; the last one wins, as in beamer. -/
   logo : Option (Array Inline) := none
-  /-- The palette after body declarations: `\palette` (usually a rewritten
-  `\colorlet`) is legal in the body as in LaTeX, applying to what follows;
-  the document palette both backends read is the last state, so a
-  body-declared colour resolves in HTML variables and contrast checks like
-  any other. `none` while the body declared nothing. -/
-  bodyPalette : Option Palette := none
+  /-- The palette in force in flow order — the last body `\palette` state,
+  written by the declaration arm and read back at the top of every
+  `elabBlocks` iteration, so a declaration inside a nested scope reaches
+  the content after that scope closes: flow scope, no brace revert (the
+  engine's `\centering` choice). `none` while the body declared nothing.
+  The document palette both backends read as epoch 0 stays the
+  preamble+theme state; the flow state rides the `.setPalette` blocks. -/
+  flowPalette : Option Palette := none
   /-- Body-declared tokens (`\setlength` mid-document), same door. -/
-  bodyTokens : Option Tokens := none
+  flowTokens : Option Tokens := none
+  /-- Bumped by each body declaration: the cheap guard that lets the block
+  loop skip re-reading the flow state per raw item. -/
+  flowGen : Nat := 0
   /-- Scalar settings the preamble has declared so far, `(decl, key) ↦` the
   value as written: the store behind W0343, which fires only when the same
   key returns with a *different* value — a same-value repeat is harmless
@@ -1837,14 +1842,24 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
 /-- Elaborate raw items as a block sequence. -/
 partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
   -- Shadowed mutable: a body declaration (`\palette`, `\tokens`) applies to
-  -- the content elaborated after it in this scope and inside it, the way
-  -- LaTeX's \colorlet and \setlength take effect where they stand.
+  -- the content elaborated after it in this scope and inside it — and, via
+  -- the flow state below, after a nested scope closes too: flow scope, no
+  -- brace revert.
   let mut ctx := ctx
   let mut blocks : Array Block := #[]
   let mut cur : Array Raw := #[]
   let mut raws := raws
   let mut i := 0
+  let mut gen := (← get).flowGen
   repeat
+    -- A body declaration anywhere earlier in flow order — this scope or a
+    -- nested one — reaches here: the state carries it, the generation
+    -- guard makes the common no-declaration path one Nat comparison.
+    let stFlow ← get
+    if stFlow.flowGen != gen then
+      gen := stFlow.flowGen
+      ctx := { ctx with palette := stFlow.flowPalette.getD ctx.palette
+                        tokens := stFlow.flowTokens.getD ctx.tokens }
     if h : i < raws.size then
       let r := raws[i]
       -- A scope group holding a paragraph end is spliced open first, so the
@@ -2022,7 +2037,12 @@ a side channel, never slide content" npos
               let pal ← applyPalette ctx ctx.palette (rawSrc gbody) dpos
                 (decorative := decorative)
               ctx := { ctx with palette := pal }
-              modify fun st => { st with bodyPalette := some pal }
+              -- The declaration rides the IR in flow order: both backends
+              -- replay it where it stands, and the flow state carries it
+              -- past this scope's close (no brace revert).
+              modify fun st => { st with flowPalette := some pal
+                                         flowGen := st.flowGen + 1 }
+              blocks := blocks.push (.setPalette pal)
           | _ =>
             diag ctx .E0304 "'\\palette' needs a {...} block" dpos
         | .ctrl "tokens" dpos =>
@@ -2034,7 +2054,9 @@ a side channel, never slide content" npos
             i := j + 1
             let tk ← applyTokens ctx ctx.tokens (rawSrc gbody) dpos
             ctx := { ctx with tokens := tk }
-            modify fun st => { st with bodyTokens := some tk }
+            modify fun st => { st with flowTokens := some tk
+                                       flowGen := st.flowGen + 1 }
+            blocks := blocks.push (.setTokens tk)
           | _ =>
             diag ctx .E0304 "'\\tokens' needs a {...} block" dpos
         | .ctrl "pagebreak" _ =>
@@ -3886,12 +3908,14 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
     page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
   ctx := { ctx with slides := docClass == "slides", styles := styles }
   let blocks ← elabBlocks ctx body
-  -- Body declarations reach the document both backends read: a colour
-  -- declared mid-document resolves in the HTML variables and is judged by
-  -- the contrast walk like any other.
+  -- Body declarations do NOT displace the document state: `doc.palette`
+  -- and `doc.tokens` stay the preamble+theme state — epoch 0 — and each
+  -- body declaration rides its own `.setPalette`/`.setTokens` block, so a
+  -- setting's effect is confined to the flow after it. The final flow
+  -- state exists only for the shadow judge below, which must see every
+  -- role the document ever declares.
   let stBody ← get
-  palette := stBody.bodyPalette.getD palette
-  tokens := stBody.bodyTokens.getD tokens
+  let finalPalette := stBody.flowPalette.getD palette
   -- A definition that shadows a palette role replaces a value that adapts
   -- with one that cannot: the palette no longer reaches those words (a
   -- variant or a host page's override dies there), and the contrast judge —
@@ -3901,14 +3925,14 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   -- against the final palette, so declaration order cannot hide it.
   let mut shadowSaid : Array String := #[]
   for cmd in ctx.user do
-    if !shadowSaid.contains cmd.name && (palette.find? cmd.name).isSome then
+    if !shadowSaid.contains cmd.name && (finalPalette.find? cmd.name).isSome then
       shadowSaid := shadowSaid.push cmd.name
       modify fun st => { st with diags := st.diags.push (Diag.of .W0342
         (s!"'\\{cmd.name}' is also a palette role; this definition freezes it, " ++
           "so the palette and the contrast check no longer reach it")
         (some cmd.span)
         (help := s!"drop the definition and '\\{cmd.name}' colours as declared; " ++
-          s!"declared: {String.intercalate ", " (palette.entries.toList.map (·.1))}")) }
+          s!"declared: {String.intercalate ", " (finalPalette.entries.toList.map (·.1))}")) }
   -- The logo may have been declared in either half; a card carries none.
   let mut logo := (← get).logo
   if docClass == "card" && logo.isSome then

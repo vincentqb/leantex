@@ -298,6 +298,9 @@ private def usesBlock (cx : UseCx) (out : Array Use) : Block → Array Use
   -- the wrong pairing; the label-on-fill contract is still owed (recorded
   -- in the slice report).
   | .note _ | .verbatim _ _ | .rule _ _ _ | .logo _ | .picture _
+  -- A body palette/tokens declaration carries no text; the per-epoch
+  -- judgement it induces is `docDiags`' own walk, not a use.
+  | .setPalette _ | .setTokens _
   | .pagebreak => out
 
 private def usesItems (cx : UseCx) (out : Array Use) :

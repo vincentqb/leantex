@@ -133,6 +133,9 @@ private def blockInto (summary ind acc : String) : Block → String
   | .note _ => acc
   -- Frame-footer chrome is page furniture, as the running head is.
   | .framefoot _ => acc
+  -- A stateful design declaration: the twin carries text, not styling.
+  | .setPalette _ => acc
+  | .setTokens _ => acc
   -- A continuous medium has no page to break.
   | .pagebreak => acc
   -- A logo is page furniture, scoped and replayed per page; a continuous
@@ -245,6 +248,8 @@ private def scBlock (acc : Array String) : Block → Array String
   | .nav _ body => scBlocks acc body.toList
   | .note _ => acc
   | .framefoot _ => acc
+  | .setPalette _ => acc
+  | .setTokens _ => acc
   | .pagebreak => acc
   | .logo _ => acc
   | .rule _ _ _ => acc
@@ -422,6 +427,8 @@ private theorem blockInto_extends (summary ind acc : String) :
   | .nav _ body => blocksInto_extends summary ind acc body.toList
   | .note _ => append_nil acc
   | .framefoot _ => append_nil acc
+  | .setPalette _ => append_nil acc
+  | .setTokens _ => append_nil acc
   | .pagebreak => append_nil acc
   | .logo _ => append_nil acc
   | .rule _ _ _ => append_nil acc
@@ -661,6 +668,8 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .note _, _, h => h
   | .verbatim _ _, _, h => h
   | .framefoot _, _, h => h
+  | .setPalette _, _, h => h
+  | .setTokens _, _, h => h
   | .pagebreak, _, h => h
   | .logo _, _, h => h
   | .rule _ _ _, _, h => h

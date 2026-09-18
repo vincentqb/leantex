@@ -1571,20 +1571,31 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   t "a trailing pagebreak adds no empty page"
     (pagesOf (doc "one\\pagebreak") == 1)
   -- Native declarations in the body: \palette and \tokens apply where
-  -- they stand (LaTeX's \colorlet and \setlength are body-legal); the
-  -- preamble-only rest are named as misplaced declarations, never as
-  -- unknown commands.
-  t "a body palette colours what follows and reaches the document"
+  -- they stand (LaTeX's \colorlet and \setlength are body-legal) and ride
+  -- the IR as .setPalette/.setTokens state blocks the backends replay in
+  -- flow order. The document palette stays the preamble+theme state —
+  -- epoch 0 — so a body declaration is confined to what follows it.
+  let lastSetPalette (d : Ir.Doc) : Option Ir.Palette :=
+    d.body.foldl (fun acc b => match b with
+      | .setPalette p => some p
+      | _ => acc) none
+  let lastSetTokens (d : Ir.Doc) : Option Ir.Tokens :=
+    d.body.foldl (fun acc b => match b with
+      | .setTokens tk => some tk
+      | _ => acc) none
+  t "a body palette colours what follows through its own state block"
     (let (d, ds) := elabStr (doc "\\palette{ accent2 = #7C3AED }\\textcolor{accent2}{x}")
      ds.all (·.severity != .error) && ds.all (·.code != "W0304") &&
-       d.palette.find? "accent2" == some { r := 0x7C, g := 0x3A, b := 0xED })
-  t "a body colorlet aliases a preamble colour"
+       (lastSetPalette d).bind (·.find? "accent2")
+         == some { r := 0x7C, g := 0x3A, b := 0xED } &&
+       d.palette.find? "accent2" == none)
+  t "a body colorlet aliases a preamble colour in the flow state"
     (let (d, _) := elabStr
       "\\documentclass{article}\\definecolor{a}{HTML}{112233}\
 \\begin{document}\\colorlet{b}{a}x\\end{document}"
-     d.palette.find? "b" == some { r := 0x11, g := 0x22, b := 0x33 })
-  t "a body setlength declares its token"
-    ((elabStr (doc "\\setlength{\\x}{4pt}y")).1.tokens.find? "x"
+     (lastSetPalette d).bind (·.find? "b") == some { r := 0x11, g := 0x22, b := 0x33 })
+  t "a body setlength declares its token in the flow state"
+    ((lastSetTokens (elabStr (doc "\\setlength{\\x}{4pt}y")).1).bind (·.find? "x")
       == some { width := .ofSp (Dim.pt 4) })
   t "a preamble-only declaration in the body is W0340, not unknown"
     (let ds := (elabStr (doc "x\n\n\\page{ size = a5 }\n\ny")).2
@@ -4819,50 +4830,6 @@ def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   t "band: and holds the right margin while yielding"
     (numBox secCollideC 2 == numBox emptyC 1)
 
-/-- Scope: a setting's effect is confined to its declared extent. First the
-misplaced-declaration door: a native declaration met where it cannot stand
-is ours — named as misplaced, never "unknown" — and its arguments never
-become page ink. The invariant whose absence allowed the defect: an
-argument that addresses the engine is not content, so no recovery path may
-keep it as text. Ink claims are asserted over `Layout.Out` (the census),
-never an IR dump. -/
-def scopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
-  let t := check ref
-  let geom : Layout.Geom := {}
-  let doc (body : String) : String :=
-    s!"\\documentclass\{article}\\begin\{document}\n{body}\n\\end\{document}"
-  let censusOfSrc (src : String) : Array CensusPage :=
-    let (d, _) := elabStr src
-    censusOf (coveredColorsOf d) (Layout.run geom oneFace none d)
-  -- t1: a body running head is a named drop, never body ink.
-  let headSrc := doc "\\runninghead{Chapter One}\n\nBody text stands alone."
-  let ds1 := (elabStr headSrc).2
-  t "a body runninghead is E0347, never unknown"
-    (ds1.any (·.code == "E0347") && ds1.all (·.code != "W0301"))
-  t "the dropped head text never ships as body ink"
-    (let c := censusOfSrc headSrc
-     !hasStr (censusText c) "Chapter One" && hasStr (censusText c) "Body text stands alone.")
-  t "a body runningfoot with [from] is the same door"
-    (let ds := (elabStr (doc "x\n\n\\runningfoot[from=2]{page \\pagenumber}\n\ny")).2
-     ds.any (·.code == "E0347") && ds.all (·.code != "W0301"))
-  -- t3: a declaration inside inline content is misplaced, never unknown —
-  -- and its key/value block never leaks into the sentence (the old path
-  -- kept `q = #112233` as text and E0311'd the `#`).
-  let inlSrc := doc "a {\\palette{ q = #112233 } b} c"
-  let dsi := (elabStr inlSrc).2
-  t "an inline palette is W0346, never unknown, and its block never errors"
-    (dsi.any (·.code == "W0346") && dsi.all (·.code != "W0301") &&
-      dsi.all (·.code != "E0311"))
-  t "the inline declaration's block never ships as ink"
-    (let c := censusOfSrc inlSrc
-     !hasStr (censusText c) "112233" && hasStr (censusText c) "b c")
-  t "an inline preamble-only declaration is W0346 too"
-    (let ds := (elabStr (doc "\\textbf{\\page{ size = a5 } x}")).2
-     ds.any (·.code == "W0346") && ds.all (·.code != "W0301"))
-  t "an inline runninghead drops content, an error like the body form"
-    (let ds := (elabStr (doc "\\textbf{\\runninghead{X} y}")).2
-     ds.any (·.code == "E0347") && ds.all (·.code != "W0301"))
-
 -- Cross-backend agreement -------------------------------------------------
 
 mutual
@@ -4933,6 +4900,190 @@ def pdfFoots (out : Layout.Out) : Array (String × String) := Id.run do
 their footer, and the HTML has one section per frame. -/
 def dedupConsecutive (xs : Array (String × String)) : Array (String × String) :=
   xs.foldl (fun acc p => if acc.back? == some p then acc else acc.push p) #[]
+
+mutual
+
+/-- Every element of an emitted tree with its subtree text and its own
+style attribute, for the epoch checks: which node carries a redefinition
+is a fact of the typed tree, never of a rendered string. -/
+def elemStylesOne (acc : Array (String × String)) : Html.Node → Array (String × String)
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem t attrs kids =>
+    let acc := acc.push (nodeTextOne "" (.elem t attrs kids),
+      (((attrs.find? (·.1 == "style")).map (·.2)).getD ""))
+    elemStylesList acc kids.toList
+
+def elemStylesList (acc : Array (String × String)) : List Html.Node → Array (String × String)
+  | [] => acc
+  | k :: rest => elemStylesList (elemStylesOne acc k) rest
+
+end
+
+/-- Scope: a setting's effect is confined to its declared extent. First the
+misplaced-declaration door: a native declaration met where it cannot stand
+is ours — named as misplaced, never "unknown" — and its arguments never
+become page ink. The invariant whose absence allowed the defect: an
+argument that addresses the engine is not content, so no recovery path may
+keep it as text. Ink claims are asserted over `Layout.Out` (the census),
+never an IR dump. -/
+def scopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := {}
+  let doc (body : String) : String :=
+    s!"\\documentclass\{article}\\begin\{document}\n{body}\n\\end\{document}"
+  let censusOfSrc (src : String) : Array CensusPage :=
+    let (d, _) := elabStr src
+    censusOf (coveredColorsOf d) (Layout.run geom oneFace none d)
+  -- t1: a body running head is a named drop, never body ink.
+  let headSrc := doc "\\runninghead{Chapter One}\n\nBody text stands alone."
+  let ds1 := (elabStr headSrc).2
+  t "a body runninghead is E0347, never unknown"
+    (ds1.any (·.code == "E0347") && ds1.all (·.code != "W0301"))
+  t "the dropped head text never ships as body ink"
+    (let c := censusOfSrc headSrc
+     !hasStr (censusText c) "Chapter One" && hasStr (censusText c) "Body text stands alone.")
+  t "a body runningfoot with [from] is the same door"
+    (let ds := (elabStr (doc "x\n\n\\runningfoot[from=2]{page \\pagenumber}\n\ny")).2
+     ds.any (·.code == "E0347") && ds.all (·.code != "W0301"))
+  -- t3: a declaration inside inline content is misplaced, never unknown —
+  -- and its key/value block never leaks into the sentence (the old path
+  -- kept `q = #112233` as text and E0311'd the `#`).
+  let inlSrc := doc "a {\\palette{ q = #112233 } b} c"
+  let dsi := (elabStr inlSrc).2
+  t "an inline palette is W0346, never unknown, and its block never errors"
+    (dsi.any (·.code == "W0346") && dsi.all (·.code != "W0301") &&
+      dsi.all (·.code != "E0311"))
+  t "the inline declaration's block never ships as ink"
+    (let c := censusOfSrc inlSrc
+     !hasStr (censusText c) "112233" && hasStr (censusText c) "b c")
+  t "an inline preamble-only declaration is W0346 too"
+    (let ds := (elabStr (doc "\\textbf{\\page{ size = a5 } x}")).2
+     ds.any (·.code == "W0346") && ds.all (·.code != "W0301"))
+  t "an inline runninghead drops content, an error like the body form"
+    (let ds := (elabStr (doc "\\textbf{\\runninghead{X} y}")).2
+     ds.any (·.code == "E0347") && ds.all (·.code != "W0301"))
+  -- t5: a body fg is confined to the flow after its declaration — the
+  -- motivating regression: through `bodyPalette` it once recoloured the
+  -- whole page retroactively, first paragraph included. Judged over the
+  -- shipped runs of `Layout.Out`, never an IR dump.
+  let runsOf (src : String) : Array (String × Ir.Color) :=
+    let (d, _) := elabStr src
+    let out := Layout.run geom oneFace none d
+    out.pages.flatMap fun p => p.lines.map fun l =>
+      (l.segs.foldl (fun s seg => match seg with
+        | .run _ _ _ _ glyphs _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
+        | .gap _ => s.push ' '
+        | _ => s) "",
+       (l.segs.findSome? fun seg => match seg with
+        | .run _ color _ _ _ _ _ _ => some color
+        | _ => none).getD Ir.Color.black)
+  let colorOf (runs : Array (String × Ir.Color)) (needle : String) : Option Ir.Color :=
+    (runs.find? fun (text, _) => hasStr text needle).map (·.2)
+  let red : Ir.Color := { r := 0xAA, g := 0x22, b := 0x22 }
+  let t5 := runsOf (doc
+    "Before text stands in the default ink.\n\n\
+\\block{\\palette{ fg = #AA2222 }\n\nInside text takes the declared ink.}\n\n\
+After text keeps it: flow scope, no brace revert.")
+  t "a body fg never reaches the content before its declaration"
+    (colorOf t5 "Before text" == some Ir.Color.black)
+  t "a body fg colours the content after it, inside the scope"
+    (colorOf t5 "Inside text" == some red)
+  t "a body fg flows past the closing brace (no brace revert)"
+    (colorOf t5 "After text" == some red)
+  -- t2: a named colour resolves against the palette in force where it is
+  -- used — the pre-declaration use ships the preamble value, the
+  -- post-declaration use the body value, in the PDF's shipped runs.
+  let pre : Ir.Color := { r := 0x11, g := 0x55, b := 0xCC }
+  let post : Ir.Color := { r := 0xCC, g := 0x11, b := 0x00 }
+  let t2src := "\\documentclass{article}\\palette{ accent = #1155CC }\
+\\begin{document}\n\\textcolor{accent}{Early ink} here.\n\n\
+\\palette{ accent = #CC1100 }\n\n\\textcolor{accent}{Late ink} there.\n\\end{document}"
+  let t2 := runsOf t2src
+  t "a pre-declaration named use ships the preamble value"
+    (colorOf t2 "Early ink" == some pre)
+  t "a post-declaration named use ships the body value"
+    (colorOf t2 "Late ink" == some post)
+  -- The typed HTML tree honours the same flow: `:root` carries epoch 0,
+  -- and each sibling after the declaration carries the redefinition on
+  -- its own style attribute (custom properties inherit into it).
+  let (d2, _) := elabStr t2src
+  let (head2, body2, _) := HtmlDoc.emitTree {} d2
+  let headCss := head2.foldl (fun s n => match n with
+    | .style css => s ++ css
+    | _ => s) ""
+  t "the html :root carries the epoch-0 palette value"
+    (hasStr headCss "--accent: #1155cc" && !hasStr headCss "--accent: #cc1100")
+  let styleAttrs (nodes : Array Html.Node) : Array (String × String) :=
+    -- (own text, style attribute) of each top-level element, in order
+    nodes.filterMap fun n => match n with
+      | .elem _ attrs _ =>
+        some (nodeTextOne "" n, ((attrs.find? (·.1 == "style")).map (·.2)).getD "")
+      | _ => none
+  let tops := body2.foldl (fun acc n => match n with
+    | .elem "main" _ kids => acc ++ kids
+    | _ => acc) #[]
+  let entries := styleAttrs tops
+  t "the html sibling before the declaration carries no epoch redefinition"
+    ((entries.find? fun (txt, _) => hasStr txt "Early ink").map
+      (fun (_, st) => !hasStr st "--accent") == some true)
+  t "the html sibling after the declaration redefines the property on itself"
+    ((entries.find? fun (txt, _) => hasStr txt "Late ink").map
+      (fun (_, st) => hasStr st "--accent: #cc1100") == some true)
+  -- The nested walk (`blockNodesInto`): an epoch inside a block reaches
+  -- its later siblings, and — the documented divergence from the PDF's
+  -- whole-flow scope — dies at the enclosing element's close, because a
+  -- custom property cannot reach an ancestor's later siblings without a
+  -- wrapper, and a wrapper would break the rhythm rules' `* + *` sibling
+  -- adjacency.
+  let (d5, _) := elabStr (doc
+    "\\block{First inside.\n\n\\palette{ accent = #CC1100 }\n\nSecond inside.}\n\n\
+Outside after.")
+  let (_, body5, _) := HtmlDoc.emitTree {} d5
+  let els5 := elemStylesList #[] body5.toList
+  t "a nested epoch redefines the property on its later siblings"
+    (els5.any fun (txt, st) => hasStr txt "Second inside" &&
+      !hasStr txt "First inside" && hasStr st "--accent: #cc1100")
+  t "a nested epoch never reaches the content before it"
+    (els5.all fun (txt, st) => !(hasStr txt "First inside" &&
+      !hasStr txt "Second inside" && hasStr st "--accent"))
+  t "html: a nested epoch ends at its enclosing element (the named divergence)"
+    (els5.all fun (txt, st) => !(hasStr txt "Outside after" && hasStr st "--accent"))
+  -- The deck walk threads the same epoch: a declaration between frames
+  -- reaches the sections after it.
+  let (dd, _) := elabStr ("\\documentclass{slides}\\palette{ accent = #1155CC }\
+\\begin{document}\n\\framefoot{note}\n\\begin{frame}{A}\none\n\\end{frame}\n\n\
+\\palette{ accent = #CC1100 }\n\n\\begin{frame}{B}\ntwo\n\\end{frame}\n\\end{document}")
+  let (_, bodyd, _) := HtmlDoc.emitTree {} dd
+  let elsd := elemStylesList #[] bodyd.toList
+  t "a deck epoch redefines the property on the frames after it"
+    (elsd.any fun (txt, st) => hasStr txt "two" && !hasStr txt "one" &&
+      hasStr st "--accent: #cc1100")
+  t "a deck epoch never reaches the frames before it"
+    (elsd.all fun (txt, st) => !(hasStr txt "one" && !hasStr txt "two" &&
+      hasStr st "--accent"))
+  -- The confinement oracle — `setting_confined_to_suffix`'s executable
+  -- form, over `Layout.run`'s shipped pages: the page closed before the
+  -- declaration is identical with and without it. The theorem itself is
+  -- blocked: unfolding `collectBlock` needs its equation lemmas, whose
+  -- generation for that match exhausts `whnf` (the
+  -- `role_transparent_layout` blocker); `Acc.setPalette_emits_nothing`
+  -- carries the provable core (the arm emits nothing).
+  let outOf (src : String) : Layout.Out :=
+    let (d, _) := elabStr src
+    Layout.run geom oneFace none d
+  let confWith := outOf (doc
+    "Page one text.\n\\pagebreak\n\\palette{ fg = #AA2222 }\n\nPage two text.")
+  let confWithout := outOf (doc "Page one text.\n\\pagebreak\n\nPage two text.")
+  t "the page closed before a declaration is identical without it (oracle)"
+    (match confWith.pages[0]?, confWithout.pages[0]? with
+     | some p1, some p2 => reprStr p1 == reprStr p2
+     | _, _ => false)
+  t "and the declaration changed the page after it (the oracle bites)"
+    (match confWith.pages[1]?, confWithout.pages[1]? with
+     | some p1, some p2 => reprStr p1 != reprStr p2
+     | _, _ => false)
 
 /-- The cross-backend agreement tier, over every golden fixture: a declared
 fact both backends render — a footer's slot contents and their sides, a

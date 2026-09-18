@@ -885,6 +885,9 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   | .rule _ _ _ => out
   -- A page boundary ships no ink.
   | .pagebreak => out
+  -- A stateful design declaration ships no glyphs.
+  | .setPalette _ => out
+  | .setTokens _ => out
   -- A picture's labels are set as glyph runs: their scalars are asked of
   -- the body face like any other text.
   | .picture pic => { out with texts := out.texts ++ pic.labelTexts }
@@ -2436,6 +2439,42 @@ private def Acc.pushOp (a : Acc) (op : Op) : Acc :=
 private def Acc.style (a : Acc) (element : String) : Ir.ElementStyle :=
   (a.styles.find? element).getD {}
 
+/-- The default ink a palette implies: its `fg` when declared, else black —
+`Design.ofDoc`'s own rule, applied here per epoch so the ink always follows
+the palette in force. -/
+private def fgOf (pal : Ir.Palette) : Ir.Color :=
+  (pal.find? "fg").getD Ir.Color.black
+
+/-- `.setPalette` on the accumulator: the palette in force and the default
+ink derived from it change; nothing else does. Named so its no-emission is
+a theorem, not a review note. -/
+private def Acc.setPalette (a : Acc) (p : Ir.Palette) : Acc :=
+  { a with pal := p, fg := fgOf p }
+
+/-- `.setTokens`, same door. -/
+private def Acc.setTokens (a : Acc) (tk : Ir.Tokens) : Acc :=
+  { a with tokens := tk }
+
+/-- The checkable core of "a setting's effect is confined to its declared
+extent", placement side: a stateful declaration emits nothing — the ops
+stream every page is placed from, the glue owed, and the pending-gap flag
+are untouched, so nothing placed before (or at) the block can differ from
+the document without it. The walk-prefix form over `collectBlock` itself
+is blocked by the collector's equation lemmas (the
+`role_transparent_layout` blocker); its executable oracle lives in
+Tests.lean (scopeChecks). -/
+private theorem Acc.setPalette_emits_nothing (a : Acc) (p : Ir.Palette) :
+    (a.setPalette p).ops = a.ops ∧ (a.setPalette p).owed = a.owed ∧
+      (a.setPalette p).wantDefault = a.wantDefault ∧
+      (a.setPalette p).diags = a.diags :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
+private theorem Acc.setTokens_emits_nothing (a : Acc) (tk : Ir.Tokens) :
+    (a.setTokens tk).ops = a.ops ∧ (a.setTokens tk).owed = a.owed ∧
+      (a.setTokens tk).wantDefault = a.wantDefault ∧
+      (a.setTokens tk).diags = a.diags :=
+  ⟨rfl, rfl, rfl, rfl⟩
+
 /-- The chrome footer a frame's pages carry: the one declared slot band
 (`Ir.Chrome.footBand` — fixed sides, resolved content, declared priorities)
 resolved to this frame's data. A frame the numbering skips carries no
@@ -2768,6 +2807,15 @@ the page")
   let a := a.flushGap
   { a with ops := a.ops.push (.picture (a.geom.hmargin + x) pic) }
 
+/-- Blocks that are pure state changes: they stand between siblings without
+being content — no line, no ink, no gap — so the walks neither pay a peer
+gap before them nor count them as a scope's first content. Without this, a
+declaration opening a scope would make the first paragraph pay a parskip
+nothing else asked for. -/
+private def statefulBlock : Block → Bool
+  | .setPalette _ | .setTokens _ => true
+  | _ => false
+
 mutual
 
 /-- Walk a block sequence, spacing peers by `parskip`. -/
@@ -2780,6 +2828,9 @@ private def collectBlockList (a : Acc) (pats : Option Hyphen.Patterns) (fs : Fon
   match blocks with
   | [] => a
   | blk :: rest =>
+    if statefulBlock blk then
+      collectBlockList (collectBlock a pats fs blk indent) pats fs rest indent first
+    else
     let a := if first then a else a.wantGap
     let a := collectBlock a pats fs blk indent
     collectBlockList a pats fs rest indent false
@@ -2790,6 +2841,9 @@ private def collectItem (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
   match item with
   | [] => a
   | blk :: rest =>
+    if statefulBlock blk then
+      collectItem (collectBlock a pats fs blk indent) pats fs rest indent first marker
+    else
     let a := if first then a else a.wantGap
     let a := match blk, first with
       | .para content, true =>
@@ -2848,7 +2902,8 @@ private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : Font
       | .table cols pl pr rows rules =>
         collectTable a pats fs cols pl pr rows rules indent true
       | _ => collectBlock a pats fs blk indent
-    collectCentered (if rest.isEmpty then a else a.wantGap) pats fs rest indent
+    collectCentered (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
+      pats fs rest indent
 
 /-- One column after another: each collects against its own measure at its
 own offset, a `colNext` marker between two so placement rewinds the
@@ -2890,7 +2945,8 @@ private def collectStandout (a : Acc) (pats : Option Hyphen.Patterns) (fs : Font
           collectDisplay a fs content indent true (a.geom.fontSize * 1440 / 1000)
             (baseStyle := { bold := true })
       | _ => collectBlock a pats fs blk indent
-    collectStandout (if rest.isEmpty then a else a.wantGap) pats fs rest indent
+    collectStandout (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
+      pats fs rest indent
 
 private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (blk : Block) (indent : Sp) : Acc :=
@@ -3081,6 +3137,19 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- Not a line, a state change: the note the following frames' footers
     -- carry. Empty clears back to the chrome default.
     { a with frameFoot := if content.isEmpty then none else some content }
+  | .setPalette p =>
+    -- A stateful declaration, like `.logo`: the palette in force from here
+    -- on, in flow order — the accumulator threads it past the enclosing
+    -- block's end (flow scope, no brace revert). The default ink follows
+    -- the palette it derives from. No line, no gap, no op: the node ships
+    -- no ink of its own (`Acc.setPalette_emits_nothing`).
+    a.setPalette p
+
+  | .setTokens tk =>
+    -- Same door for the token state: `tabcolsep`, `floatsep`,
+    -- `progressheight` and friends resolve against the tokens in force
+    -- where the element stands, not the document's final state.
+    a.setTokens tk
   | .rule color _ thickness =>
     -- The title page's separator: colour and thickness were declared
     -- (palette `separator`, token `separatorheight`); the measure is the
@@ -3147,9 +3216,11 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       let bg := (a.pal.find? "standoutbg").getD ((a.pal.find? "fg").getD Ir.Color.black)
       let fg := (a.pal.find? "standoutfg").getD ((a.pal.find? "bg").getD Ir.Color.white)
       let a := { a with ops := a.ops.push (.pageStyle (some bg) (VDist.of valign)) }
-      let saved := a.fg
       let a := collectStandout { a with fg := fg } pats fs body.toList indent
-      let a := { a with fg := saved }
+      -- Restore by recomputing from the palette in force: a `.setPalette`
+      -- inside the frame must reach what follows it (flow scope), so a
+      -- saved copy would restore a stale epoch's ink.
+      let a := { a with fg := fgOf a.pal }
       a.pageBreak
     else
     let a := { a with ops := a.ops.push (.pageStyle none (VDist.of valign)) }
@@ -3169,6 +3240,8 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
           | none =>
             collectDisplay a fs title 0 false (sectionSize a.geom 1)
               (baseStyle := { bold := true })
+        -- The title itself is inline content: no `.setPalette` can stand
+        -- in it, so the saved ink is the epoch's own.
         let a := { a with fg := saved
                           ops := a.ops.push (.titleBar barBg (a.geom.fontSize / 2)) }
         { a with wantDefault := true }
@@ -3533,8 +3606,10 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let mut firstBlk := true
   for h : i in [0:doc.body.size] do
     let blk := doc.body[i]
-    acc := if firstBlk then acc else acc.wantGap
-    firstBlk := false
+    -- A stateful declaration is not content: no gap before it, and the
+    -- scope's first real block stays first.
+    acc := if firstBlk || statefulBlock blk then acc else acc.wantGap
+    firstBlk := firstBlk && statefulBlock blk
     match blk with
     | .frame title standout valign body =>
       let num := nums[i]?.getD none

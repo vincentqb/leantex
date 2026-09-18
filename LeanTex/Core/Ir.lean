@@ -1219,6 +1219,18 @@ inductive Block where
   the frames from here on carry in the chrome footer's left slot, beside
   the frame number. Empty content clears it back to the chrome default. -/
   | framefoot (content : Array Inline)
+  /-- Body `\palette`: a stateful declaration in flow order, carrying the
+  full palette state in force from here on (preamble + theme + every body
+  declaration up to and including this one — elaboration merges, backends
+  only replay). Flow scope, no brace revert: the engine's `\centering`
+  choice, and what `\logo`/`.framefoot` already do. Layout swaps the
+  accumulator's palette (and the default ink derived from it) at the
+  block; HTML opens an epoch container redefining the changed custom
+  properties. The node ships no ink of its own. -/
+  | setPalette (pal : Palette)
+  /-- Body `\tokens` (`\setlength` mid-document): the token state in force
+  from here on, the same stateful door as `.setPalette`. -/
+  | setTokens (tokens : Tokens)
   /-- A full-measure horizontal rule: the title page's separator. `name` is
   the palette entry the colour came from, when it had one, as `.colored`;
   the thickness is symbolic so a token may state it in em. -/
@@ -2061,6 +2073,14 @@ def dumpBlock (ind : String) (b : Block) : String :=
     dumpBlocks (ind ++ "  ") body
   | .framefoot content =>
     s!"{ind}framefoot\n" ++ dumpInlines (ind ++ "  ") content
+  | .setPalette pal =>
+    s!"{ind}setPalette\n" ++
+    String.join (pal.entries.toList.map fun (n, c) =>
+      s!"{ind}  {n} = #{hex2 c.r}{hex2 c.g}{hex2 c.b}\n")
+  | .setTokens tk =>
+    s!"{ind}setTokens\n" ++
+    String.join (tk.entries.toList.map fun (n, g) =>
+      s!"{ind}  {n} = {dumpGlue g}\n")
   | .pagebreak => s!"{ind}pagebreak\n"
   | .rule color name thickness =>
     let nm := match name with
@@ -2252,6 +2272,8 @@ def maxStepBlock : Block → Nat
   | .note _ => 1
   | .frame _ _ _ _ => 1
   | .framefoot _ => 1
+  | .setPalette _ => 1
+  | .setTokens _ => 1
   | .pagebreak => 1
   | .logo _ => 1
   | .rule _ _ _ => 1
@@ -2340,6 +2362,10 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
   | .note body => .note body
   | .frame t st v body => .frame t st v body
   | .framefoot content => .framefoot content
+  -- A stateful declaration carries no ink: covering changes only colours
+  -- of content, never the state the declaration installs.
+  | .setPalette pal => .setPalette pal
+  | .setTokens tk => .setTokens tk
   | .pagebreak => .pagebreak
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
@@ -2467,6 +2493,8 @@ def unwrapItemStep : Block → Block
   | .verbatim c s => .verbatim c s
   | .note body => .note body
   | .framefoot content => .framefoot content
+  | .setPalette pal => .setPalette pal
+  | .setTokens tk => .setTokens tk
   | .pagebreak => .pagebreak
   | .logo content => .logo content
   | .rule c nm th => .rule c nm th
@@ -2543,6 +2571,9 @@ def blockTextOne (acc : String) : Block → String
   | .logo content => acc ++ plainText content
   | .frame title _ _ body => blockTextList (acc ++ plainText title) body.toList
   | .framefoot content => acc ++ plainText content
+  -- A stateful declaration ships no text of its own.
+  | .setPalette _ => acc
+  | .setTokens _ => acc
   | .pagebreak => acc
   -- A rule is decorative ink; it carries no text.
   | .rule _ _ _ => acc
@@ -2603,6 +2634,8 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .note _ => out
   | .verbatim _ _ => out
   | .framefoot _ => out
+  | .setPalette _ => out
+  | .setTokens _ => out
   | .pagebreak => out
   | .logo _ => out
   | .rule _ _ _ => out
@@ -2942,6 +2975,7 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
   -- construction: neither constructor's census reads a colour.
   | .logo _ => rfl
   | .verbatim _ _ | .section _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
+  | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .pagebreak => rfl
   | .table cols pl pr rows rules =>
     rw [dimBlock]
@@ -3080,6 +3114,7 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
       blockTextList]
   | .para _ | .section _ _ _ | .verbatim _ _ | .note _ | .framefoot _ | .pagebreak
+  | .setPalette _ | .setTokens _
   | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
 
 theorem unwrapItemStepItems_text (items : List (Array Block))
@@ -3128,7 +3163,8 @@ def keptBy (t : String) : Block → Bool
   | .para _ | .section _ _ _ | .list _ _ | .center _ | .quote _ | .role _ _
   | .spaced _ _
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
-  | .frame _ _ _ _ | .framefoot _ | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak
+  | .frame _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
+  | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak
   | .table _ _ _ _ _ | .float _ _ _ _ => true
 
 mutual
@@ -3156,6 +3192,8 @@ def keepForOne (t : String) : Block → Block
   | .verbatim c s => .verbatim c s
   | .logo c => .logo c
   | .framefoot c => .framefoot c
+  | .setPalette pal => .setPalette pal
+  | .setTokens tk => .setTokens tk
   | .pagebreak => .pagebreak
   | .rule c n th => .rule c n th
   | .picture p => .picture p
@@ -3204,6 +3242,9 @@ def textLeavesOne (acc : List String) : Block → List String
   | .verbatim _ s => s :: acc
   | .logo content => plainText content :: acc
   | .framefoot content => plainText content :: acc
+  -- A stateful declaration carries no text leaf.
+  | .setPalette _ => acc
+  | .setTokens _ => acc
   | .pagebreak => acc
   | .list _ items => textLeavesItems acc items.toList
   | .center body => textLeavesList acc body.toList
@@ -3278,6 +3319,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .nav _ body => orphanFreeList avail body.toList
   | .frame _ _ _ body => orphanFreeList avail body.toList
   | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak => true
   | .float _ _ body _ => orphanFreeList avail body.toList
 
@@ -3342,6 +3384,8 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .verbatim c s => simp [textLeavesOne]
   | .logo c => simp [textLeavesOne]
   | .framefoot c => simp [textLeavesOne]
+  | .setPalette pal => simp [textLeavesOne]
+  | .setTokens tk => simp [textLeavesOne]
   | .pagebreak => simp [textLeavesOne]
   | .rule c n th => simp [textLeavesOne]
   | .picture p => simp [textLeavesOne]
@@ -3480,6 +3524,12 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
   | .framefoot c =>
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
+  | .setPalette pal =>
+    intro s hs
+    simp [textLeavesOne] at hs
+  | .setTokens tk =>
+    intro s hs
+    simp [textLeavesOne] at hs
   | .rule c n th =>
     intro s hs
     simp [textLeavesOne] at hs
@@ -3720,6 +3770,8 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .verbatim _ _ => out
   | .frame title _ _ body => imageSrcsBlockList (imageSrcsInlines out title) body.toList
   | .framefoot content => imageSrcsInlines out content
+  | .setPalette _ => out
+  | .setTokens _ => out
   | .pagebreak => out
   | .rule _ _ _ => out
   | .picture _ => out
