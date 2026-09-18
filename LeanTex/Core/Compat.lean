@@ -500,9 +500,7 @@ private def color (model value : String) (pos : Pos) : M (Option String) := do
     | [(r, rs), (g, gs), (b, bs)] =>
       let mult := if model == "rgb" then 255 else 1
       let ch (m : Int) (s : Nat) : Nat := min 255 (m * mult / s).toNat
-      let hex (n : Nat) : String :=
-        let d := "0123456789ABCDEF".toList
-        String.ofList [d[n / 16]!, d[n % 16]!]
+      let hex (n : Nat) : String := Ir.Color.hexByte (UInt8.ofNat n)
       return some s!"#{hex (ch r rs)}{hex (ch g gs)}{hex (ch b bs)}"
     | _ => return none
   | _ =>

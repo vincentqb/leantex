@@ -156,6 +156,14 @@ structure Color where
 
 def Color.black : Color := { r := 0, g := 0, b := 0 }
 
+/-- One byte as two hex digits; `upper` picks the alphabet's case. The dump
+printers and diagnostics quote colours uppercase; CSS serializes lowercase
+(`HtmlDoc.cssColor`). One printer for every reader, so a byte cannot render
+two ways. -/
+def Color.hexByte (v : UInt8) (upper : Bool := true) : String :=
+  let d := (if upper then "0123456789ABCDEF" else "0123456789abcdef").toList
+  String.ofList [d.getD (v.toNat / 16) '0', d.getD (v.toNat % 16) '0']
+
 /-- The sRGB preview of a CMYK declaration, for the screen-facing readers
 only (HTML output, contrast checks): CSS Color 4's `device-cmyk` naive
 conversion, `red = 1 − min(1, cyan·(1−black) + black)` and its siblings —
@@ -1791,10 +1799,6 @@ def dumpGlue (g : SymGlue) : String :=
   let minus := if g.shrink == ({} : Length) then "" else s!" minus {part g.shrink}"
   base ++ plus ++ minus
 
-private def hex2 (v : UInt8) : String :=
-  let d := "0123456789ABCDEF".toList
-  String.ofList [d[v.toNat / 16]!, d[v.toNat % 16]!]
-
 -- Display-only printers. Structural recursion through `List`, so no `partial`.
 
 mutual
@@ -1938,8 +1942,8 @@ def dumpInline (ind : String) (x : Inline) : String :=
   | .styled st body => s!"{ind}styled {st.label}\n" ++ dumpInlines (ind ++ "  ") body
   | .colored c name body =>
     let tag := match name with
-      | some n => s!"{n} #{hex2 c.r}{hex2 c.g}{hex2 c.b}"
-      | none => s!"#{hex2 c.r}{hex2 c.g}{hex2 c.b}"
+      | some n => s!"{n} #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+      | none => s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
     s!"{ind}color {tag}\n" ++ dumpInlines (ind ++ "  ") body
   | .role n body =>
     s!"{ind}role {n}\n" ++ dumpInlines (ind ++ "  ") body
@@ -2091,7 +2095,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .setPalette pal =>
     s!"{ind}setPalette\n" ++
     String.join (pal.entries.toList.map fun (n, c) =>
-      s!"{ind}  {n} = #{hex2 c.r}{hex2 c.g}{hex2 c.b}\n")
+      s!"{ind}  {n} = #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}\n")
   | .setTokens tk =>
     s!"{ind}setTokens\n" ++
     String.join (tk.entries.toList.map fun (n, g) =>
@@ -2100,7 +2104,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .rule color name thickness =>
     let nm := match name with
       | some n => s!" {n}"
-      | none => s!" #{hex2 color.r}{hex2 color.g}{hex2 color.b}"
+      | none => s!" #{Color.hexByte color.r}{Color.hexByte color.g}{Color.hexByte color.b}"
     s!"{ind}rule{nm} {dumpGlue thickness}\n"
   | .picture pic =>
     -- Every evaluated shape, so a golden witnesses the whole elaboration:
@@ -2110,10 +2114,10 @@ def dumpBlock (ind : String) (b : Block) : String :=
       match s with
       | .rect x y w h c =>
         s!"{ind}  rect {x.toPtString} {y.toPtString} {w.toPtString} {h.toPtString} \
-#{hex2 c.r}{hex2 c.g}{hex2 c.b}\n"
+#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}\n"
       | .label x y t c sc =>
         s!"{ind}  label {x.toPtString} {y.toPtString} {t.quote} \
-#{hex2 c.r}{hex2 c.g}{hex2 c.b} {sc}\n")
+#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b} {sc}\n")
   | .table cols padL padR rows rules =>
     let spec := String.intercalate "," (cols.toList.map dumpColSpec)
     let pads := (if padL then "" else "@{}") ++ spec ++ (if padR then "" else "@{}")
@@ -3938,7 +3942,7 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
       fontLine s!"{slotName}.{variant}" (some f))
   let paletteLines := String.join (doc.palette.entries.toList.map fun (n, c) =>
     let mark := if doc.palette.decorative.contains n then " decorative" else ""
-    s!"palette {n} #{hex2 c.r}{hex2 c.g}{hex2 c.b}{mark}\n") ++
+    s!"palette {n} #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}{mark}\n") ++
     (match doc.palette.coveredFraction with
      | some f => s!"palette covered {f}%\n"
      | none => "")

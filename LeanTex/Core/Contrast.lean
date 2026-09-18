@@ -150,10 +150,7 @@ theorem pdf_default_text : contrastMilli Color.black Color.white ≥ aaText := b
 -- The document-level check: the pairings a document's own colours create.
 
 private def hexOf (c : Color) : String :=
-  let h (v : UInt8) : String :=
-    let d := "0123456789ABCDEF".toList
-    String.ofList [d.getD (v.toNat / 16) '0', d.getD (v.toNat % 16) '0']
-  s!"#{h c.r}{h c.g}{h c.b}"
+  s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
 
 /-- One coloured text occurrence: the name it was used under when it had
 one, the colour, whether it stood as large-scale text (≥ 18pt, or bold

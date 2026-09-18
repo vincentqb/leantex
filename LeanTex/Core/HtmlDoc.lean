@@ -49,11 +49,11 @@ structure Config where
   adjacency the rhythm gap rules key on. -/
   epochStyle : String := ""
 
-private def hex2 (v : UInt8) : String :=
-  let d := "0123456789abcdef".toList
-  String.ofList [d[v.toNat / 16]!, d[v.toNat % 16]!]
-
-def cssColor (c : Color) : String := "#" ++ hex2 c.r ++ hex2 c.g ++ hex2 c.b
+def cssColor (c : Color) : String :=
+  let r := Color.hexByte c.r false
+  let g := Color.hexByte c.g false
+  let b := Color.hexByte c.b false
+  "#" ++ r ++ g ++ b
 
 /-- The class an authored role wears in the artifact: verbatim after a
 fixed prefix, so the mapping is injective (`roleClass_inj`) and lands in a
@@ -694,12 +694,15 @@ def paletteVars (p : Ir.Palette) : List String :=
 
 private theorem hexDigit_inj :
     ∀ i < 16, ∀ j < 16,
-      "0123456789abcdef".toList[i]! = "0123456789abcdef".toList[j]! → i = j := by
+      "0123456789abcdef".toList.getD i '0' = "0123456789abcdef".toList.getD j '0' →
+        i = j := by
   decide
 
-private theorem hex2_inj (a b : UInt8) (h : hex2 a = hex2 b) : a = b := by
+private theorem hexByte_inj (a b : UInt8)
+    (h : Color.hexByte a false = Color.hexByte b false) : a = b := by
   have hl := congrArg String.toList h
-  simp only [hex2, String.toList_ofList, List.cons.injEq, and_true] at hl
+  simp only [Color.hexByte, Bool.false_eq_true, ite_false, String.toList_ofList,
+    List.cons.injEq, and_true] at hl
   have ha : a.toNat < 256 := a.toNat_lt
   have hb : b.toNat < 256 := b.toNat_lt
   have hdiv := hexDigit_inj (a.toNat / 16) (by omega) (b.toNat / 16) (by omega) hl.1
@@ -715,7 +718,8 @@ determined and not claimed: it is the PDF's declared-model channel
 theorem cssColor_inj (a b : Ir.Color) (h : cssColor a = cssColor b) :
     a.r = b.r ∧ a.g = b.g ∧ a.b = b.b := by
   have hl := congrArg String.toList h
-  simp only [cssColor, hex2, String.toList_append, String.toList_ofList,
+  simp only [cssColor, Color.hexByte, Bool.false_eq_true, ite_false,
+    String.toList_append, String.toList_ofList,
     List.cons_append, List.nil_append, List.append_assoc] at hl
   have hl6 := List.append_cancel_left hl
   simp only [List.cons.injEq, and_true] at hl6

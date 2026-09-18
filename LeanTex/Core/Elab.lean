@@ -2915,12 +2915,6 @@ private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := 
         (help := "expected name: type")
   return params
 
-/-- `\page{...}`: geometry. `size` names a standard page; `width`/`height`
-override it; `margin` sets both axes, `vmargin`/`hmargin` one each. -/
-private def hexByte (v : UInt8) : String :=
-  let d := "0123456789ABCDEF".toList
-  String.ofList [d[v.toNat / 16]!, d[v.toNat % 16]!]
-
 /-- A declared value as its author would rewrite it: what W0343 quotes back
 when a later declaration overwrites it. -/
 private def renderValue : Decl.Value → String
@@ -2929,7 +2923,7 @@ private def renderValue : Decl.Value → String
   | .int n => toString n
   | .ident s => s
   | .block src => "{" ++ src ++ "}"
-  | .color r g b => s!"#{hexByte r}{hexByte g}{hexByte b}"
+  | .color r g b => s!"#{Color.hexByte r}{Color.hexByte g}{Color.hexByte b}"
   | .cmyk c m y k => s!"cmyk({c}, {m}, {y}, {k})"
   | .glue g => Ir.dumpGlue g
 
