@@ -73,6 +73,18 @@ def configSkip : List (String × Nat × String × Option String) :=
   [("raggedright", 0,
     "'\\raggedright' asks for unjustified setting; the document stays justified",
     some "declare \\page{ justify = false }"),
+   -- The alignment declarations (every LaTeX environment is also a command
+   -- pair, so `\flushleft` is a legal spelling): a block alignment axis is
+   -- owed (the `align` obligation row); until it lands each names its loss.
+   ("flushleft", 0,
+    "'\\flushleft' asks for left-aligned unjustified setting; the declared justification stands",
+    some "declare \\page{ justify = false }"),
+   ("flushright", 0,
+    "'\\flushright' asks for right-aligned setting; content keeps its alignment",
+    none),
+   ("raggedleft", 0,
+    "'\\raggedleft' asks for right-aligned ragged setting; content keeps its alignment",
+    none),
    ("fontseries", 1,
     "'\\fontseries' selects a font series; the family's regular weight is used",
     none),

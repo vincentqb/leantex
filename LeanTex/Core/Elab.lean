@@ -2966,6 +2966,21 @@ padded with empty cells" pos
               inner := inner.push (.note (← elabBlocks { ctx with noteBody := true } nb))
             blocks := blocks.push (.frame title standout valign inner)
           else if n == "itemize" || n == "enumerate" then
+            -- enumitem's per-instance `[keys]` are consumed and named: the
+            -- engine styles lists per element, not per instance, and the
+            -- old path let the bracket land as content before the first
+            -- \item — a false E0310 error from a documented interface.
+            let mut bodyFrom := 0
+            match scanBracketArg body 0 pos with
+            | .took k' =>
+              warnOnce ctx ("env:" ++ n ++ ":opts") .N0102
+                s!"'\{{n}}' [options] are not modelled per instance; the declared list style stands"
+                pos
+              bodyFrom := k'
+            | .unclosed bpos =>
+              warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
+            | .content => pure ()
+            let body := body.extract bodyFrom body.size
             let mut items : Array (Array Raw) := #[]
             let mut steps : Array (Option (Nat × Option Nat)) := #[]
             -- `\pause` between items steps the rest of the LIST, not just
@@ -2977,6 +2992,7 @@ padded with empty cells" pos
             let mut curStep : Option (Nat × Option Nat) := none
             let mut curPauses := 0
             let mut awaitSpec := false
+            let mut inOpt := false
             let mut seen := false
             let mut strayDiagged := false
             for item in body do
@@ -2999,10 +3015,25 @@ padded with empty cells" pos
                 if seen then
                   curItem := curItem.push item
               | _ =>
+                -- Inside a consumed `\item[...]` override: dropped through
+                -- its closing bracket.
+                if inOpt then
+                  if let .sym ']' _ := item then
+                    inOpt := false
+                  continue
                 -- `\item<2->`: the spec directly after the item names the
                 -- step its content reveals at, dim-not-hide (PLAN M5).
+                -- `\item[marker]` is enumitem's per-item override: consumed
+                -- and named (W0110) — it used to land as the item's own
+                -- text, silently.
                 if seen && awaitSpec && !isSpace item then
-                  awaitSpec := false
+                  if let .sym '[' _ := item then
+                    warnOnce ctx "item:marker" .W0110
+                      "'\\item' [marker] override is not modelled; the level's marker stands" pos
+                      (help := "\\style{itemize}{ marker = {...} } declares a level's marker")
+                    inOpt := true
+                    awaitSpec := false
+                    continue
                   if let some w := specWord? item then
                     match overlayFrom w with
                     | some s => curStep := some s
@@ -3013,6 +3044,7 @@ content is shown on every step" pos
                         (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
 specs are not modelled")
                     continue
+                  awaitSpec := false
                 if seen then
                   curItem := curItem.push item
                 else if !isSpaceOrPar item && !strayDiagged then
