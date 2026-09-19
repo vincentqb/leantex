@@ -159,7 +159,12 @@ in this repo; refer to the private reference corpus abstractly.
 - Theorems only where they pay (parser totality, elaboration termination and
   determinism, line-break optimality, dimension arithmetic, PDF xref, UTF-8).
   The language is designed terminating — a construct that breaks that property
-  needs a design discussion, not a fuel parameter. In a statement meant for
+  needs a design discussion, not a fuel parameter. A guarantee stated in
+  prose is not a guarantee: termination, totality and determinism claims
+  in PLAN name the theorem that holds them, and a claim with no theorem
+  is written as owed — the 2026-09-19 nontermination bug lived twelve
+  hours behind a PLAN sentence with no checker (`bindCmd_monotone` is
+  the statement that would have failed the commit). In a statement meant for
   `omega`, spell binders and structure fields `Int`, not `Sp`: omega reads
   the bare spelling only, and an `Sp`-typed hypothesis is silently invisible
   to it. `omega` handles `Int.max`/`min` directly — no `Int.max_def` unfold,

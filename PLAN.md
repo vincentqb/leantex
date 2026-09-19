@@ -51,13 +51,13 @@ already taken for its one state-carried edge (the pendingNotes drain:
 under `ctx.noteBody` the frame arm does not drain — landed 2026-09-19 as
 E0359: the refusal's loss is `.dropped`, and the class letter derives
 from the loss, so the code allocated as W0359 renders E — and `noteFlag`
-joins the measure when it lands). A second measure-breaking edge has
-surfaced since the plan: a body-position `\define` met inside a command
-expansion resets `limit` past the expansion's own bound
-(`limit := ctx.user.size + 1`), which re-exposes the command being
-expanded — real nontermination, a four-line document loops — so the
-de-partial now waits on a design decision for that arm (departial3's
-report carries the options). The Knuth–Plass optimality
+joins the measure when it lands). The second measure-breaking edge — a
+body `\define` inside a command expansion once reset `limit` past the
+expansion's own bound and looped a four-line document — is closed: the
+arm binds at the visibility boundary (`bindCmd`), the invariant is the
+theorem `bindCmd_monotone`, and a wall-clock regression test holds the
+end-to-end guarantee until `elabBlocks` is total (the second 2026-09-19
+entry). The Knuth–Plass optimality
 theorem is held empirically by `scripts/kp-fuzz.lean`. Small caps are
 drawn from a face's own `smcp`+`c2sc` when it carries both and synthesised
 uniform otherwise (the 2026-09-18 entry), math renders its first two slices
@@ -101,6 +101,49 @@ list.
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-19 — a guarantee stated in prose is not a guarantee: the
+nontermination bug, and the theorem that now holds monotone visibility.
+
+- **The bug.** The body-position `\define` arm landed at 01:56 (cffb141)
+  set `limit := ctx.user.size + 1`: a definition made *inside* an
+  expansion became visible to the expansion that made it, so a command
+  whose body defines anything and then names itself looped forever — a
+  four-line document reproduced it (exit 124). For those twelve hours the
+  2026-09-15 entry's sentence "nontermination is still impossible by
+  design — a user command's body sees only definitions that precede it"
+  was false. Nobody caught it because the sentence is prose — a claim
+  with no checker — and `elabBlocks` is `partial`, so the compiler could
+  not see the measure break either. Every golden stayed green: goldens
+  witness elaboration of documents that terminate, not termination.
+- **The fix that landed first.** 14:14 (4cdfa0d, the venue-`.sty` slice)
+  rewrote the arm to bind at the visibility boundary: the new command
+  enters at `min limit user.size` and `limit` advances exactly past it,
+  so the walk sees one more command and never the suffix beyond — a
+  venue file's `\maketitle`, which renews a command and then names
+  itself, now resolves its self-name to the definition *before* it
+  instead of diverging. (departial3 had recommended refusing the
+  construct instead, code E0360 allocated; the boundary insertion
+  supersedes that — the construct is legal LaTeX and now terminates, so
+  there is nothing to refuse. E0360 stays unregistered.)
+- **The writedown the bug earned.** The design was right; what was
+  missing was the statement that would have made cffb141 fail to
+  compile. It now exists: both define sites go through one door
+  (`bindCmd`), and `bindCmd_monotone` (Elab.lean) states that a command
+  invisible before a bind — the one being expanded, at `j ≥ limit` — is
+  after it the same command, still invisible, at its shifted index.
+  Re-introducing cffb141's transform fails the build at that theorem
+  (verified once, then reverted). Until `elabBlocks` is total the
+  end-to-end guarantee is additionally held by a wall-clock regression
+  test (`terminationChecks`): the four-line document elaborates under a
+  30 s bound, and a regression fails loudly instead of hanging the
+  suite — the test that would have caught cffb141.
+- **The rule** (also in AGENTS.md § Conventions): termination, totality
+  and determinism claims in this plan name the theorem — or, until
+  `elabBlocks` is total, the named test — that holds them; a claim with
+  neither is written as owed under `Obligations/`. The 2026-09-15
+  paragraph stands as the counterexample: it was true when written,
+  silently false later, and nothing could notice.
 
 2026-09-19 — the preamble is a fold over declaration values, and T1's
 proved tier is a theorem.
