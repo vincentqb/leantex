@@ -85,6 +85,40 @@ def censusTable :
       !hasStr (censusText c) "venuetitlebox"),
     ("the runnable redefinition ships its own body",
       hasStr (censusText c) "The runnable body wins.")]),
+  ("titlebars", fun geom c =>
+    let bars := pageRuleSegs c 0
+    let titleY := (lineYOf c 0 "Bars Probe Title").getD 0
+    [("one page", c.size == 1),
+     ("the styled built-in ships the title", hasStr (censusText c) "Bars Probe Title"),
+     ("the author ships under it", hasStr (censusText c) "An Invented Author"),
+     ("the body text ships after the title block",
+       hasStr (censusText c) "Body text follows the styled built-in title."),
+     -- 3 pt and 2 pt are the fixture's own numbers: no engine default —
+     -- TeX's 0.4 pt \hrule, the 0.5 pt separator, the 0.06 em heading
+     -- rule, the booktabs weights — can produce them, so these bars come
+     -- from the refused body or the fact fails.
+     ("two bars ship at the body's declared weights",
+       bars.map (·.2) == #[Dim.pt 3, Dim.pt 2]),
+     ("the top bar stands above the title line, the bottom below",
+       (bars.map fun s => decide (s.1 < titleY)) == #[true, false]),
+     -- The declared skip reaches the page 1:1 (`placeLine_gap_exact`); the
+     -- band's width is the interline the placement adds beyond it, well
+     -- under three body sizes — while an unstyled default gap (a parskip
+     -- plus interline, under two) never reaches the band's floor.
+     ("the title stands its declared 0.5in below the top bar, within its interline",
+       (bars[0]?.map fun s => decide (Dim.inch 1 / 2 ≤ titleY - s.1 ∧
+         titleY - s.1 ≤ Dim.inch 1 / 2 + 3 * geom.fontSize)).getD false),
+     ("the bottom bar stands its declared 0.75in below the title, within its interline",
+       (bars[1]?.map fun s => decide (Dim.inch 3 / 4 ≤ s.1 - titleY ∧
+         s.1 - titleY ≤ Dim.inch 3 / 4 + 3 * geom.fontSize)).getD false),
+     ("the title is centred in the measure",
+       ((lineXOf c 0 "Bars Probe Title").map fun x =>
+         decide (x > geom.hmargin)).getD false),
+     -- \Large is the body's declaration; the engine's own default is the
+     -- scale's LARGE step, so a default-styled title fails this fact.
+     ("the title sets at the body's declared \\Large, not the LARGE default",
+       lineSizeOf c 0 "Bars Probe Title" ==
+         some (geom.fontSize * 1440 / 1000))]),
   ("fonts", fun _ c => [
     ("one page", c.size == 1),
     ("the heading ships", hasStr (censusText c) "Faces"),

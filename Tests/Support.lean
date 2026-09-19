@@ -75,7 +75,7 @@ def goldenNames : List String :=
    "diagram", "diagram-overflow", "diagram-refused", "diagram-scm",
    "tables", "tables-ragged", "subfigures",
    "math-companion", "math-first", "abstract", "crossref", "eqnum",
-   "redefine"]
+   "redefine", "titlebars"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -236,6 +236,12 @@ enforces today is coverage — no fixture enters the golden set witnessed by
 its IR dump alone. -/
 structure CensusLine where
   x : Dim.Sp
+  /-- The line's baseline, in layout coordinates (y grows downward): what a
+  fact about vertical order or a declared gap reads. -/
+  y : Dim.Sp
+  /-- The largest set size among the line's glyph runs (0 on a glyphless
+  line): what a fact about a declared display size reads. -/
+  size : Dim.Sp
   /-- The line's set width, so a fact can judge its right edge — where a
   footer's right slot must sit whatever the left slot holds. -/
   width : Dim.Sp
@@ -245,6 +251,10 @@ structure CensusPage where
   lines : Array CensusLine
   covered : String
   rules : Nat
+  /-- Every rule segment shipped on the page, in line order: its line's
+  baseline and its thickness — what the title-bar facts read (a bar at its
+  declared weight, above or below the title's line). -/
+  ruleSegs : Array (Dim.Sp × Dim.Sp) := #[]
   fills : Nat
   /-- Picture paths shipped on the page: node outlines and edges. -/
   paths : Nat
@@ -271,11 +281,14 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
     let mut lines : Array CensusLine := #[]
     let mut covered := ""
     let mut rules := 0
+    let mut ruleSegs : Array (Dim.Sp × Dim.Sp) := #[]
     for l in p.lines do
       let mut chars := ""
+      let mut runSize : Dim.Sp := 0
       for seg in l.segs do
         match seg with
-        | .run _ color _ _ glyphs _ _ _ =>
+        | .run _ color _ _ glyphs size _ _ =>
+          runSize := max runSize size
           if coveredColors.contains color then
             for (_, c) in glyphs do
               chars := chars.push c
@@ -287,14 +300,18 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
         | .gap _ =>
           chars := chars.push ' '
           covered := covered.push ' '
-        | .rule .. => rules := rules + 1
+        | .rule _ th _ _ =>
+          rules := rules + 1
+          ruleSegs := ruleSegs.push (l.y, th)
         -- an image is decorative ink to the text census, like a rule
         | .image .. => pure ()
-      lines := lines.push { x := l.x, width := l.setWidth, text := chars }
+      lines := lines.push { x := l.x, y := l.y, size := runSize
+                            width := l.setWidth, text := chars }
       covered := covered.push ' '
     pages := pages.push { lines := lines
                           covered := covered
                           rules := rules
+                          ruleSegs := ruleSegs
                           fills := p.fills.size
                           paths := p.paths.size }
   return pages
@@ -316,6 +333,20 @@ def pageAllRevealed (c : Array CensusPage) (i : Nat) : Bool :=
 /-- The x of the first shipped line on page `i` containing `needle`. -/
 def lineXOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
   (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map (·.x)
+
+/-- The baseline of the first shipped line on page `i` containing `needle`. -/
+def lineYOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
+  (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map (·.y)
+
+/-- The largest run size of the first shipped line on page `i` containing
+`needle`: what a declared display size sets. -/
+def lineSizeOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.Sp :=
+  (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map (·.size)
+
+/-- The rule segments shipped on page `i`, in line order: (baseline,
+thickness) pairs. -/
+def pageRuleSegs (c : Array CensusPage) (i : Nat) : Array (Dim.Sp × Dim.Sp) :=
+  (c[i]?.map (·.ruleSegs)).getD #[]
 
 /-- The right edge (x plus set width) of the first shipped line on page `i`
 containing `needle`: where a footer's right slot must end. -/
