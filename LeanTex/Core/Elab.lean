@@ -365,10 +365,24 @@ def builtinNames : List String :=
   (declStyles.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl ++
   (Lex.textSymbols.map (·.1))
 
+/-- Built-ins a definition may never touch, whatever its body: the names
+the walks' own shape depends on — grouping, definition machinery, block
+boundaries, the reserved characters' escapes, the engine's declarations —
+plus the underline family, whose refusal is the recorded divergence
+(`builtinNames`' comment). Redefining one would not change what renders
+(the dispatch reads these before any user definition), so refusing loudly
+(W0303) is the honest answer. Every other protected name is in
+`renderedBuiltins`, where rule (b) judges the body instead. -/
+def structuralNames : List String :=
+  ["begin", "end", "par", "define", "ifgiven", "documentclass",
+   "underline", "uline", "ul", "varul",
+   "item", "defineenv", "block", "framefoot", "pagebreak"] ++
+  (escapes.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl
+
 /-- Built-ins the engine renders that a document may nonetheless redefine,
 as LaTeX allows — the names the block and inline dispatch handles by
 literal arm only after `lookupUser` fails, so a registered definition
-shadows them. `takeDefine` gates a redefinition of one by rule (b): it
+shadows them. `gateRedef` gates a redefinition of one by rule (b): it
 wins only if its body, expanded once at the definition, is non-empty and
 loses nothing; a body the engine cannot run would otherwise silently erase
 the built-in's output (W0361), which is how a venue's `\renewcommand
@@ -378,8 +392,26 @@ def renderedBuiltins : List String :=
    "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
    "paragraph", "subparagraph", "href", "link", "url", "cite", "citep",
    "citet", "includegraphics", "faIcon", "pagenumber", "pagecount",
-   "bibliography", "bibliographystyle"] ++
-  titleCtrls ++ overlayCtrls ++ runningCtrl
+   "bibliography", "bibliographystyle", "textcolor",
+   "section", "subsection", "subsubsection"] ++
+  titleCtrls ++ overlayCtrls ++ runningCtrl ++ (argStyles.map (·.1)) ++
+  (declStyles.map (·.1)) ++ (Lex.textSymbols.map (·.1))
+
+/-- One verdict per name: no built-in is both unconditionally protected
+and rule-(b) gated — a name in both would fire W0303 at `takeDefine` and
+never reach the gate, making the registry's promise (a clean body wins) a
+lie for exactly that name. -/
+theorem structural_rendered_disjoint :
+    (structuralNames.all fun n => !renderedBuiltins.contains n) = true := by
+  decide +kernel
+
+/-- The ratchet: every name W0303 used to protect still has a verdict —
+unconditional refusal or the rule-(b) gate. Narrowing the structural core
+cannot silently strip a built-in of both protections. -/
+theorem builtin_verdict_total :
+    (builtinNames.all fun n =>
+      structuralNames.contains n || renderedBuiltins.contains n) = true := by
+  decide +kernel
 
 /-- Every palette role is invocable: a role is *defined by the palette* —
 `\muted{Alex}` works with no `\newcommand`, because the palette arm of the
@@ -3105,7 +3137,7 @@ private def takeDefine (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
         sigRaws := sigRaws.push r'
         k := k + 1
       | none => break
-    if builtinNames.contains newName && (Lex.textSymbols.lookup newName).isNone then
+    if structuralNames.contains newName then
       modify fun st => { st with diags := st.diags.push (Diag.of .W0303
         s!"'\\{newName}' is built in; this definition is ignored"
         (some ⟨ctx.file, npos⟩)

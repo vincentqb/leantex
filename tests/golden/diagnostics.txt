@@ -236,7 +236,7 @@ warning[W0301]: unknown command '\mystery'; its {...} arguments were kept as tex
 warning[W0302]: unknown environment '{banner}'; its body is kept
   help: \defineenv{name}(...) {begin} {end} declares one
 ── W0303 (config) built-in name cannot be redefined
-warning[W0303]: '\textbf' is built in; this definition is ignored
+warning[W0303]: '\underline' is built in; this definition is ignored
   help: the built-in already does this; \define it under another name
 ── W0304 (degraded) colour name not in the palette; content kept uncoloured
 warning[W0304]: 'nope' is not in the palette; content kept uncoloured

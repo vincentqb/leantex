@@ -178,7 +178,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0301 => dvE "\\mystery{x}"
   | .W0307 => dvE (dvDoc "" "\\begin{external}\nx\n\\end{external}")
   | .W0302 => dvE (dvDoc "" "\\begin{banner}\nx\n\\end{banner}")
-  | .W0303 => dvE (dvDoc "\\define \\textbf(a: content) {\\a}\n" "x")
+  | .W0303 => dvE (dvDoc "\\define \\underline(a: content) {\\a}\n" "x")
   | .W0304 => dvE "\\textcolor{nope}{x}"
   | .W0309 => dvE (dvDoc "" "\\maketitle")
   | .W0310 => dvE (dvDoc "" "\\section[oops\nnever closed")

@@ -500,9 +500,17 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a parameter inside a URL is the caller's text"
     (own.body == #[.para #[.role "link"
       #[.link "https://example.org" #[.underline #[.text "here"]]]]])
-  t "a reserved built-in cannot be redefined"
-    ((warnCodes ("\\documentclass{article}\\define \\textbf(x: content) {\\emph{\\x}}" ++
-      "\\begin{document}\\textbf{a}\\end{document}")) == ["W0303"])
+  t "a structural built-in cannot be redefined"
+    ((warnCodes ("\\documentclass{article}\\define \\underline(x: content) {\\emph{\\x}}" ++
+      "\\begin{document}\\underline{a}\\end{document}")) == ["W0303"])
+  -- The font commands are rendered built-ins: a runnable redefinition of
+  -- \textbf wins, as \renewcommand intends, and its role names the use.
+  let (bfDoc, bfDs) := elabStr ("\\documentclass{article}" ++
+    "\\define \\textbf(x: content) {\\emph{\\x}}" ++
+    "\\begin{document}\\textbf{a}\\end{document}")
+  t "a runnable redefinition of textbf wins"
+    (bfDs.isEmpty && bfDoc.body ==
+      #[.para #[.role "textbf" #[.styled .emph #[.text "a"]]]])
   -- Rule (b): a rendered built-in yields only to a redefinition the engine
   -- can run. The venue shape — a \maketitle body of kernel internals — is
   -- refused with W0361 naming the first losing construct, and the built-in
@@ -1560,8 +1568,8 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
         | .picture pic => pic.shapes == #[.label 0 0 "x" Ir.Color.black 1000]
         | _ => false)))
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
-  t "elab redefine builtin warns and keeps the built-in"
-    (warnCodes "\\define \\textbf() {x}\n\\begin{document}y\\end{document}" == ["W0303"])
+  t "elab redefine structural builtin warns and keeps the built-in"
+    (warnCodes "\\define \\pagebreak() {x}\n\\begin{document}y\\end{document}" == ["W0303"])
   -- ...except a text symbol, whose name a document may want for itself.
   let (degDoc, degDs) := elabStr
     "\\define \\degree(a: text) {\\textbf{\\a}}\n\\begin{document}\\degree{PhD}\\end{document}"
