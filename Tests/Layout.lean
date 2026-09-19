@@ -1434,6 +1434,13 @@ def pageNumberChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let (declOut, declGeom) := build (dvDoc "\\runningfoot{note \\pagenumber}" threeBody)
   t "a declared runningfoot owns the band: no doubled default"
     (footTexts declOut declGeom 1 == #["note2"])
+  -- The title page's `\thispagestyle{empty}`: this page only — page 1
+  -- carries no number and every later page keeps its own.
+  let (emptyOut, emptyGeom) := build (dvDoc "\\thispagestyle{empty}" threeBody)
+  t "thispagestyle empty on page 1 ships no number there"
+    (footTexts emptyOut emptyGeom 0 == #[])
+  t "and every page after the first keeps exactly its own number"
+    (footTexts emptyOut emptyGeom 1 == #["2"] && footTexts emptyOut emptyGeom 2 == #["3"])
 
 /-- The F5 correction, executably: a slot's box is a function of the
 declared layout and the geometry alone (`Layout.bandSlotX` — the other

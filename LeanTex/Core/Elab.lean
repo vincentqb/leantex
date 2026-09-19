@@ -5779,6 +5779,17 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     match body with
     | some b =>
       let content ← elabInlines s.ctx b
+      -- The gate-only spelling: `\runningfoot[from = 2]{}` moves the run's
+      -- start without declaring a line — `\thispagestyle{empty}`'s carrier
+      -- (its page-1 form: this-page-only and from-page-2 coincide when the
+      -- override is the opening page's). It only defers — a declaration's
+      -- own later `from` stands (max) — and it never touches content, so
+      -- it cannot clear a declared line or suppress the class default.
+      if content.isEmpty then
+        if name == "runninghead" then
+          return { s with headFrom := max s.headFrom fromPage }
+        else
+          return { s with footFrom := max s.footFrom fromPage }
       -- The whole declaration is one scalar: a second one replaces
       -- the first, said aloud when their content differs (the same
       -- store W0343's keyed sites use; a byte-identical repeat is

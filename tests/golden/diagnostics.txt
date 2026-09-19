@@ -203,8 +203,8 @@ warning[W0104]: '\raggedright' asks for unjustified setting; the document stays 
 warning[W0104]: '\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps its own and an overfull line warns by itself
 warning[W0104]: '\selectlanguage' would change the hyphenation language; patterns stay English
   help: hyphenation patterns are English-only; \page{ hyphenate = off } turns them off
-warning[W0104]: '\pagestyle{headings}' names page furniture the engine does not model; ignored
-  help: \runninghead / \runningfoot declare the page furniture
+warning[W0104]: '\pagestyle{headings}' names running furniture the engine does not model; ignored
+  help: plain, empty, and fancy are modelled; \runninghead / \runningfoot declare the furniture directly
 warning[W0104]: TeX conditional ('\ifx' … '\fi') is not supported; skipped whole
 warning[W0104]: '\usecolortheme' is beamer configuration the engine does not have; skipped
   help: \theme{name} selects a token bundle; \palette overrides its entries

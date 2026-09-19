@@ -1056,14 +1056,23 @@ text side is the float separation ('\\tokens{ floatsep = ... }')" pos
       -- old warning said "not modelled" about exactly what is modelled).
       became s!"\\pagestyle\{{v}}" "nothing: declared running fields apply by themselves" pos
       return some (#[], k)
+    | "plain" =>
+      -- article's own initial style (classes.dtx: article.cls sets
+      -- \pagestyle{plain}): the centred page number in the foot, which
+      -- \page{ numbers = on } spells natively — already the flow
+      -- default, and the explicit form takes control under a class
+      -- whose record declines it.
+      became "\\pagestyle{plain}" "\\page{ numbers = on }" pos
+      return some (← synthAt "\\page{ numbers = on }" pos, k)
     | "empty" =>
       modify fun st => { st with head := #[], foot := #[] }
-      became "\\pagestyle{empty}" "no running furniture, the state the engine starts from" pos
-      return some (#[], k)
+      became "\\pagestyle{empty}" "\\page{ numbers = off }, and no running fields" pos
+      return some (← synthAt "\\page{ numbers = off }" pos, k)
     | _ =>
       sayOnce "ctrl:pagestyle" .W0104
-        s!"'\\pagestyle\{{v}}' names page furniture the engine does not model; ignored" pos
-        (help := "\\runninghead / \\runningfoot declare the page furniture")
+        s!"'\\pagestyle\{{v}}' names running furniture the engine does not model; ignored" pos
+        (help := "plain, empty, and fancy are modelled; \\runninghead / \\runningfoot \
+declare the furniture directly")
       return some (#[], k)
   | "thispagestyle" =>
     -- Only the opening page can be meant from the preamble or the document's
@@ -1657,6 +1666,15 @@ private def flushRunning : M (Array Raw) := do
     let native := s!"\\runningfoot{opt}\{{line st.foot}}"
     became "\\ifoot / \\cfoot / \\ofoot" native st.runPos
     out := out ++ (← synthAt native st.runPos)
+  -- `\thispagestyle{empty}` with no gathered field of its own still owes
+  -- its gate: the opening page carries no furniture — the class-default
+  -- page number included — and the run starts at `runFrom`. The
+  -- empty-content spelling moves only the gate (`Elab`'s gate-only rule),
+  -- so it cannot clear a declared line or suppress the default elsewhere.
+  if st.runFrom > 1 && st.head.isEmpty then
+    out := out ++ (← synthAt s!"\\runninghead[from = {st.runFrom}]\{}" st.runPos)
+  if st.runFrom > 1 && st.foot.isEmpty then
+    out := out ++ (← synthAt s!"\\runningfoot[from = {st.runFrom}]\{}" st.runPos)
   return out
 
 /-- Rewrite a whole parsed document. The gathered running content lands just

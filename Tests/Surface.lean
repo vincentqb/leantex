@@ -463,6 +463,17 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre "\\fancyhead[L]{A}\\pagestyle{fancy}")).2.all (·.severity == .note))
   t "compat pagestyle empty clears the furniture"
     ((elabStr (pre "\\lhead{A}\\pagestyle{empty}")).1.head == none)
+  t "compat pagestyle plain declares the numbers on, natively"
+    (let (doc, ds) := elabStr (pre "\\pagestyle{plain}")
+     doc.page.numbers == some true && ds.all (·.severity == .note))
+  t "compat pagestyle empty declares the numbers off"
+    ((elabStr (pre "\\pagestyle{empty}")).1.page.numbers == some false)
+  t "compat thispagestyle empty gates the default number without a declared field"
+    (let (doc, ds) := elabStr (pre "\\thispagestyle{empty}")
+     doc.footFrom == 2 && doc.headFrom == 2 && doc.foot == none &&
+       ds.all (·.severity == .note))
+  t "the gate only defers: a declaration's own later from stands"
+    ((elabStr (pre "\\runningfoot[from = 3]{note}\\thispagestyle{empty}")).1.footFrom == 3)
   t "compat pagestyle headings keeps the honest warning"
     (warnCodes (pre "\\pagestyle{headings}") == ["W0104"])
   -- `\par` ends a paragraph inside a scope group, with the group's
