@@ -1369,6 +1369,19 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             acc := acc.push (.link url #[.text url])
           | _, _ =>
             diag ctx .E0304 s!"'\\{name}' needs a URL group, optionally followed by text" pos
+        else if name == "url" then
+          -- hyperref/url/xurl's one-argument sibling of `\href`: the URL is
+          -- its own text, set mono (url.sty's `\urlstyle{tt}` default).
+          let j := skipSpaces raws i
+          match raws[j]? with
+          | some (.group urlRaw _) =>
+            i := j + 1
+            let url := argText ctx urlRaw
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (.link url #[.styled .mono #[.text url]])
+          | _ =>
+            diag ctx .E0304 "'\\url' needs a {url} group" pos
         else if name == "includegraphics" then
           -- graphicx's command, native. The keys that size figures in real
           -- documents are modelled — width, height, scale, keepaspectratio —
