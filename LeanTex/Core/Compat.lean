@@ -1808,6 +1808,58 @@ def applyLocalSty (raws : Array Raw) (stys : Array (String × Array Raw)) :
     Array Raw × Array (String × Option String × Pos) :=
   applyStyList stys raws #[] #[] raws.toList 0 0
 
+private theorem spliceUse_empty (raws : Array Raw) (cn : String) (pos : Pos) (i : Nat) :
+    spliceUse #[] raws cn pos i = none := rfl
+
+mutual
+
+private theorem applyStyList_empty :
+    ∀ (raws out : Array Raw) (recs : Array (String × Option String × Pos))
+      (l : List Raw) (i : Nat),
+      applyStyList #[] raws out recs l i 0 = (out ++ l.toArray, recs)
+  | _, out, recs, [], _ => by
+    simp [applyStyList]
+  | raws, out, recs, r :: rest, i => by
+    cases r with
+    | ctrl cn pos =>
+      rw [applyStyList]
+      split
+      · rw [spliceUse_empty]
+        dsimp only
+        rw [applyStyList_empty raws _ recs rest (i + 1)]
+        simp
+      · rw [applyStyList_empty raws _ recs rest (i + 1)]
+        simp
+    | _ =>
+      rw [applyStyList, applyStyRaw_empty]
+      · dsimp only
+        rw [applyStyList_empty raws _ (recs ++ #[]) rest (i + 1)]
+        simp
+      all_goals simp
+
+private theorem applyStyRaw_empty : ∀ (r : Raw), applyStyRaw #[] r = (r, #[])
+  | .env n body p => by
+    rw [applyStyRaw]
+    split
+    · rw [applyStyList_empty]
+      simp
+    · rfl
+  | .word .. | .space | .par .. | .ctrl .. | .sym .. | .group .. | .math .. | .verb .. => rfl
+
+end
+
+/-- The splice with nothing to splice is the identity — no change to the
+tree, no record: the substitution statement's degenerate half, stated so
+the descending walk itself can never perturb a document, and the shape
+suffix registry's `_id`. The full substitution — each preamble-position
+`\\usepackage` of a read file replaced by that file's input wrapper — is
+`applyLocalSty`'s own definition; downstream, elaboration equality with a
+hand-spliced document is definitional because the preamble fold treats
+every input wrapper uniformly (`Elab.elabDoc`'s `@file:` markers). -/
+theorem applyLocalSty_id (raws : Array Raw) : applyLocalSty raws #[] = (raws, #[]) := by
+  rw [applyLocalSty, applyStyList_empty]
+  simp
+
 /-- What a spliced `.sty` yielded, counted after elaboration: a construct
 was honoured when its translation note (N0100) carries the file, and
 named when a warning does. -/

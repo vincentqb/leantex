@@ -5727,6 +5727,31 @@ theorem applyDecl_comm (s : PreState) (e : ESt) (d₁ d₂ : PDecl)
                   stepAssert, stepAllow, stepMissing]
                 all_goals rfl))
 
+/-- `sty_is_defaults`, the `\tokens` half (the sty-e2e audit's q2): a
+`.sty`-sourced value is a default — for a keyed store, a document
+declaration folding after the `.sty`'s wins, never the reverse. A
+corollary of keyed last-wins (`Tokens.declare_last_wins`) plus the splice
+preserving position: `Compat.applyLocalSty` inserts the file's text at
+the `\usepackage` itself, so the `.sty`'s declarations fold before every
+later document declaration — the premise this statement pins against a
+future splice change. Source: LaTeX's own semantics, where package code
+executes at `\usepackage` time (ltfiles.dtx `\@onefilewithoptions`) — so
+a document declaration written *before* the `\usepackage` is overridden
+by the `.sty`, exactly as in LaTeX. Layering (the audit's q3): a `.sty`
+is document-layer text at its splice position — after class defaults,
+before everything later in the preamble — not a new layer; `\theme`
+stays the visual layer and `Theme.apply`'s theorems are untouched. -/
+theorem sty_is_defaults_tokens (t : Tokens) (k : String) (sty doc : SymGlue) :
+    ((t.declare k sty).declare k doc).find? k = some doc :=
+  Tokens.declare_last_wins _ k doc
+
+/-- `sty_is_defaults`, the `\palette` half: the same corollary through the
+same one install door (`Palette.declare_last_wins`). -/
+theorem sty_is_defaults_palette (p : Palette) (k : String) (sty doc : Color)
+    (d d' : Bool) :
+    ((p.declare k sty d).declare k doc d').find? k = some doc :=
+  Palette.declare_last_wins _ k doc
+
 
 /-- Elaborate the whole document: split preamble and body around the
 `document` environment, process declarations, then the body. -/
