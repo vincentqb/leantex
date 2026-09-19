@@ -2287,3 +2287,81 @@ def terminationChecks (ref : IO.Ref (List String)) : IO Unit := do
   | .error e =>
     failures ref name
     IO.eprintln s!"FAIL {name}: {e}"
+
+/-- A source elaborated the way the driver builds a data document: lex,
+parse, expand the data vocabulary (`sources` are the fulfilled file
+reads; inline records need none), then elaborate — `Main.resolveData`'s
+pipeline with the effects already in hand. -/
+def elabData (sources : Array (String × String)) (src : String) :
+    Ir.Doc × Array Diag :=
+  let (toks, lexDs) := Lex.lex "t" src
+  let (raws, parseDs) := Parse.parse "t" toks
+  let (raws, dataDs) := Data.expandData "t" sources raws
+  Elab.runRaws "t" raws (lexDs ++ parseDs ++ dataDs)
+
+/-- Elaborated equality of a data document against the document with its
+data inlined by hand — `expandData_covers` run as an oracle over whole
+documents, blocks and inlines both, diagnostics included. -/
+def dataCovers (sources : Array (String × String)) (dataSrc handSrc : String) :
+    Bool :=
+  let (d1, ds1) := elabData sources dataSrc
+  let (d2, ds2) := elabStr handSrc
+  -- the claim is elaboration equality itself, not a page fact
+  Ir.dump d1 #[] == Ir.dump d2 #[] -- ir tier: hand-inlining equality is an elaboration claim
+    && ds1.map (·.code) == ds2.map (·.code)
+
+def dataChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let bib := "@job{a, role = {Alpha~\\emph{Role} 10\\%}, start = 2020}\n" ++
+    "@job{b, role = {Beta Role}, start = 2021, end = 2024, " ++
+    "achievements = {\\item One \\item Two}}"
+  let srcs := #[("records", bib)]
+  let pre := "\\data{ file = \"records\" }\n"
+  t "data: \\val splices the field's own TeX — \\emph, ~, \\% are content"
+    (dataCovers srcs
+      (pre ++ "\\begin{foreach}{j}{job}[; ]\\val{j.role}\\end{foreach}")
+      "Alpha~\\emph{Role} 10\\%; Beta Role")
+  t "data: \\ifdata branches on presence, else from [...]"
+    (dataCovers srcs
+      (pre ++ "\\begin{foreach}{j}{job}[ ]\\val{j.start}--\\ifdata{j.end}{\\val{j.end}}[present]\\end{foreach}")
+      "2020--present 2021--2024")
+  t "data: \\item inside a value is the list the document wraps"
+    (dataCovers srcs
+      (pre ++ "\\begin{foreach}{j}{job}\\ifdata{j.achievements}{\\begin{itemize}\\val{j.achievements}\\end{itemize}}\\end{foreach}")
+      "\\begin{itemize}\\item One \\item Two\\end{itemize}")
+  t "data: inline \\data{ @kind{...} } is the same grammar through the other door"
+    (dataCovers #[]
+      "\\data{ @link{g, url = {example.org}} }\\begin{foreach}{j}{link}\\val{j.url}\\end{foreach}"
+      "example.org")
+  t "data: an inner foreach variable shadows the outer, innermost first"
+    (dataCovers srcs
+      (pre ++ "\\data{ @link{g, url = {example.org}} }\n" ++
+        "\\begin{foreach}{j}{job}[; ]\\begin{foreach}{j}{link}\\val{j.url}\\end{foreach}\\end{foreach}")
+      "example.org; example.org")
+  let dataWarns (s : String) : Array Diag :=
+    (elabData srcs (pre ++ s)).2.filter (·.severity == .warning)
+  t "data: an absent field is W0364 naming the entry's own fields"
+    ((dataWarns "\\begin{foreach}{j}{job}\\val{j.end}\\end{foreach}").any fun d =>
+      d.code == "W0364" && hasStr d.message "job[1]" &&
+        hasStr d.message "role, start")
+  t "data: \\ifdata on the same absent field stays silent"
+    ((dataWarns "\\begin{foreach}{j}{job}\\ifdata{j.end}{x}\\end{foreach}").isEmpty)
+  t "data: an unbound variable is W0364"
+    ((dataWarns "\\val{k.role}").any fun d =>
+      d.code == "W0364" && hasStr d.message "'k' is not bound")
+  t "data: a kind with no records is W0364 naming what the data carries"
+    ((dataWarns "\\begin{foreach}{j}{trip}\\val{j.role}\\end{foreach}").any fun d =>
+      d.code == "W0364" && hasStr d.message "@job")
+  t "data: a forward reference is W0364 — data precedes use"
+    (((elabData #[] ("\\begin{foreach}{j}{job}\\val{j.role}\\end{foreach}" ++
+        "\\data{ @job{a, role = {X}} }")).2.filter (·.severity == .warning)).any fun d =>
+      d.code == "W0364" && hasStr d.message "no data records are declared")
+  t "data: a malformed inline entry is W0352 and the rest is kept"
+    (let (doc, ds) := elabData #[]
+      ("\\data{ @job{bad, role = ?} @job{ok, role = {Kept Role}} }" ++
+        "\\begin{foreach}{j}{job}\\val{j.role}\\end{foreach}")
+     ds.any (·.code == "W0352") &&
+       hasStr (Ir.dump doc #[]) "Kept Role") -- ir tier: what survives is an elaboration fact
+  let plain := (Parse.parse "t" (Lex.lex "t" "\\val{j.x} and \\begin{foreach}{j}{job}\\end{foreach}").1).1
+  t "data: no \\data, no vocabulary — the document passes through untouched"
+    (Data.expandData "t" #[] plain == (plain, #[]))

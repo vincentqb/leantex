@@ -45,6 +45,12 @@ def dvBib (bib : String) (cite : String) (style : Option String) : Array Diag :=
     { body := #[.para #[.cite false #[cite]],
         .bibliography "refs" style #[]] }).2
 
+/-- Diagnostics of the data-expansion pass over a source: the pass runs
+before elaboration and is pure over inline records, so the witness lexes
+and parses itself and needs no driver. -/
+def dvData (src : String) : Array Diag :=
+  (Data.expandData "t" #[] (Parse.parse "t" (Lex.lex "t" src).1).1).2
+
 /-- One firing input per code. `one` maps every slot to one face;
 `mapped` adds a second face and a fallback map for the substitution codes;
 `withMath` carries a math face with no fallback, for the codes only a
@@ -273,6 +279,13 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
     dvE (dvDoc "\\def\\pair#1.#2{#1 and #2}\n" "x")
   | .W0361 =>
     dvE (dvDoc "\\title{T}\\newcommand{\\maketitle}{\\venuetitlebox}\n" "\\maketitle")
+  | .W0364 =>
+    dvData ("\\data{ @job{a, role = {X}, start = 2020} " ++
+        "@job{b, role = {Y}, start = 2021, end = 2024} }\n" ++
+      "\\begin{foreach}{j}{job}\\val{j.end}\\end{foreach}") ++
+    dvData "\\data{ @job{a, role = {X}} }\\val{k.role}" ++
+    dvData "\\data{ @job{a, role = {X}} }\\begin{foreach}{j}{trip}\\val{j.role}\\end{foreach}"
+  | .E0365 => #[DriverDiag.dataMissing "records" "/documents/records.bib" none]
 
 /-! The message lint: every fired message and help is judged mechanically.
 Each check exists because the pasted real output violated it (the brief's

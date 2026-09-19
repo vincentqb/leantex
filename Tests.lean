@@ -101,6 +101,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   bibStyleChecks ref
   bibIrChecks ref
   bibApplyChecks ref
+  dataChecks ref
 
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"

@@ -103,6 +103,9 @@ error[E0347]: '\runningfoot' in the body is dropped with its content
 ── E0359 (dropped) a \note nested inside another note's frame is dropped
 error[E0359]: a '\note' inside this note's frame is dropped: one note cannot carry another
   help: move the inner '\note' out of the enclosing '\note', beside its frame
+── E0365 (dropped) \data file not found; its records are absent
+error[E0365]: '\data' file 'records' is not there; its records are absent
+  help: looked at: /documents/records.bib; \allow{E0365} accepts the loss
 ── E0401 (dropped) no usable font found on the host
 error[E0401]: no usable font found
   help: install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT
@@ -390,6 +393,12 @@ warning[W0361]: the redefinition of '\maketitle' uses '\venuetitlebox' (t:2), wh
 ── W0362 (degraded) picture entirely outside the rendered subset; a placeholder box marks its place
 warning[W0362]: no part of this picture is inside the rendered subset; a placeholder box marks its place
   help: the box holds the diagram's place; \allow{W0362} accepts the loss
+── W0364 (degraded) an unresolved data path; nothing renders in its place
+warning[W0364]: 'end' is absent in job[1]; its entries carry: role, start
+  help: '\ifdata{j.end}{…}' renders content only when the field is present
+warning[W0364]: 'k' is not bound here
+  help: '\begin{foreach}{k}{kind}' binds it over the '@kind' records
+warning[W0364]: no '@trip' records in the data; it carries: @job
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

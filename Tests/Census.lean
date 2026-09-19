@@ -108,6 +108,21 @@ def censusTable :
     ("one page", c.size == 1),
     ("the name ships", hasStr (censusText c) "Alex Doe"),
     ("the contact line ships", hasStr (censusText c) "alex@example.org")]),
+  ("resume-data", fun _ c => [
+    ("one page", c.size == 1),
+    ("the first record's company ships", hasStr (censusText c) "Example Corp"),
+    ("the record without an end ships the else branch",
+      hasStr (censusText c) "2021–present"),
+    ("a bounded record ships both years", hasStr (censusText c) "2017–2021"),
+    ("an achievements item ships with a marker",
+      hasStr (censusText c) "• Measured the widgets"),
+    ("the tie inside a value holds its words on one line",
+      (c[0]?.map fun p => p.lines.any fun l =>
+        hasStr l.text "widget" && hasStr l.text "pipeline,").getD false),
+    ("the records ship in file order",
+      ((censusText c).splitOn "Example Corp").length > 1 &&
+        hasStr (((censusText c).splitOn "Example Corp").getLast? |>.getD "")
+          "Widgets Ltd")]),
   ("talk", fun _ c => [
     ("a page per overlay step plus one per remaining frame", c.size == 6),
     ("the first step page dims the pending lines in place",

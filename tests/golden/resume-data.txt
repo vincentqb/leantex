@@ -1,0 +1,66 @@
+class resume
+page 612x792 vmargin 72 hmargin 150 parskip 0
+font dir "fonts"
+font body "Source Serif Pro"
+assert pages == 1
+assert text.in_area
+assert text.xheight >= 3.968pt
+center
+  para
+    styled bold
+      styled size:Huge
+        text "Alex Doe"
+    linebreak
+    text "alex@example.org"
+section* 1
+  text "Experience"
+para
+  styled bold
+    text "Example Corp"
+  text " | "
+  styled bold
+    text "Staff Engineer"
+  text " "
+  fill
+  text "2021–present"
+para
+  styled italic
+    text "Platform"
+list unordered
+  item
+    para
+      text "Shipped the widget pipeline, cutting build time 10%."
+  item
+    para
+      text "Deleted more code than was added, on purpose."
+para
+  styled bold
+    text "Widgets Ltd"
+  text " | "
+  styled bold
+    text "Engineer"
+  text " "
+  fill
+  text "2017–2021"
+list unordered
+  item
+    para
+      text "Measured the widgets; shipped better widgets."
+para
+  styled bold
+    text "Example University"
+  text " | "
+  styled bold
+    text "Research Assistant"
+  text " "
+  fill
+  text "2013–2017"
+list unordered
+  item
+    para
+      text "Proved a small thing "
+      styled emph
+        text "carefully"
+      text "."
+-- diagnostics
+(none)

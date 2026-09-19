@@ -70,7 +70,7 @@ def goldenNames : List String :=
    "marker-styled", "marker-content",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav",
-   "bibliography",
+   "bibliography", "resume-data",
    "icons",
    "diagram", "diagram-overflow", "diagram-refused", "diagram-scm",
    "tables", "tables-ragged", "subfigures",
@@ -163,13 +163,24 @@ def checkXref (pdf : ByteArray) : Except String Nat := do
       verified := verified + 1
   return verified
 
-/-- A fixture elaborated the way the driver builds it: elaboration, then
-the `.bib` effect fulfilled from the corpus directory — the same
-fulfilment `Main.resolveBibliography` performs, so a bibliography fixture
-exercises the pipeline the paper runs. Fixtures that request no `.bib`
-pass through untouched. -/
+/-- A fixture elaborated the way the driver builds it: the `\data` effect
+fulfilled from the corpus directory before elaboration (the expansion
+needs the records where `\begin{foreach}` stands), then elaboration, then
+the `.bib` bibliography effect — the same fulfilments `Main` performs, so
+a data or bibliography fixture exercises the pipeline the documents run.
+Fixtures that request neither pass through untouched. -/
 def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
-  let (doc, diags) := Elab.run s!"{n}.tex" src
+  let file := s!"{n}.tex"
+  let (toks, lexDiags) := Lex.lex file src
+  let (raws, parseDiags) := Parse.parse file toks
+  let mut dataSources : Array (String × String) := #[]
+  for (srcName, _) in Data.fileRefs raws do
+    let name := if srcName.endsWith ".bib" then srcName else srcName ++ ".bib"
+    let path := s!"tests/corpus/{name}"
+    if ← System.FilePath.pathExists path then
+      dataSources := dataSources.push (srcName, ← IO.FS.readFile path)
+  let (raws, dataDiags) := Data.expandData file dataSources raws
+  let (doc, diags) := Elab.runRaws file raws (lexDiags ++ parseDiags ++ dataDiags)
   let requested := Ir.bibRefs doc
   if requested.isEmpty then return (doc, diags)
   let mut sources : Array (String × String) := #[]

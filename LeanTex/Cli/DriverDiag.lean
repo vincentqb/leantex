@@ -93,6 +93,13 @@ def bibMissing (name looked : String) (span : Option Span) : Diag :=
   Diag.of .E0503 s!"'\\bibliography' file '{name}' is not there; the reference list is empty"
     span (help := s!"looked at: {looked}; \\allow\{E0503} accepts the loss")
 
+/-- E0365: a `.bib` file named by `\data` is not there; its records are
+absent, and every read of them stays unresolved. The `\input` shape
+(E0502), its own code: one code, one meaning. -/
+def dataMissing (name looked : String) (span : Option Span) : Diag :=
+  Diag.of .E0365 s!"'\\data' file '{name}' is not there; its records are absent"
+    span (help := s!"looked at: {looked}; \\allow\{E0365} accepts the loss")
+
 /-- E0501: the `\input` stack never emptied. -/
 def inputTooDeep : Diag :=
   Diag.of .E0501 "'\\input' nesting deeper than 8 files; is a file including itself?"

@@ -352,6 +352,30 @@ def resolveBibliography (file : String) (doc : Ir.Doc) :
   let (doc, applyDiags) := Bib.apply sources doc
   return (doc, diags ++ applyDiags)
 
+/-- The data request a parsed document states (`Data.fileRefs`), fulfilled
+before elaboration — the expansion needs the records where
+`\begin{foreach}` stands, so this is the `resolveBibliography` shape moved
+ahead of `Elab.runRaws`. Each named `.bib` resolves beside the document,
+like `\input`; a missing file is E0365 naming the path, and the reads that
+wanted its records say what stayed unresolved. -/
+def resolveData (file : String) (raws : Array Parse.Raw) :
+    IO (Array Parse.Raw × Array Diag) := do
+  unless Data.hasData raws do return (raws, #[])
+  let requested := Data.fileRefs raws
+  let dir := (System.FilePath.mk file).parent.getD "."
+  let mut sources : Array (String × String) := #[]
+  let mut diags : Array Diag := #[]
+  for (src, pos) in requested do
+    let name := if src.endsWith ".bib" then src else src ++ ".bib"
+    let path := if (System.FilePath.mk name).isAbsolute then System.FilePath.mk name
+      else dir / name
+    if ← path.pathExists then
+      sources := sources.push (src, ← IO.FS.readFile path)
+    else
+      diags := diags.push (DriverDiag.dataMissing src path.toString (some ⟨file, pos⟩))
+  let (raws, expandDiags) := Data.expandData file sources raws
+  return (raws, diags ++ expandDiags)
+
 def since (t0 : Nat) : IO Nat := do
   return (← IO.monoMsNow) - t0
 
@@ -445,8 +469,9 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := d
     ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
     let t ← IO.monoMsNow
     let (raws, inputDiags, spliced) ← Input.expandInputs file raws
+    let (raws, dataDiags) ← resolveData file raws
     let (doc, elabDiags) := Elab.runRaws file raws
-      (lexDiags ++ parseDiags ++ inputDiags)
+      (lexDiags ++ parseDiags ++ inputDiags ++ dataDiags)
     -- N0020 says a `.sty` was read and how much of it took; its counts
     -- are read off the elaborated diagnostics, so it is built after them.
     -- A record from inside an `\input` wrapper names that file, not the

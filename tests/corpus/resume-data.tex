@@ -1,0 +1,29 @@
+% The data slice's acceptance fixture: the experience section reads @job
+% records from resume-data.bib beside this file, in file order. Invented
+% person and invented data — nothing from any private document.
+\documentclass{resume}
+
+\fonts{
+  dir = "fonts",
+  body = "Source Serif Pro",
+}
+
+\data{ file = "resume-data.bib" }
+
+\begin{document}
+
+\begin{center}
+  {\bfseries\Huge Alex Doe}\\
+  alex@example.org
+\end{center}
+
+\section*{Experience}
+
+\begin{foreach}{j}{job}
+  \textbf{\val{j.company}}\,|\,\textbf{\val{j.role}}
+    \hfill \val{j.start}--\ifdata{j.end}{\val{j.end}}[present]
+  \ifdata{j.team}{\par \textit{\val{j.team}}}
+  \begin{itemize} \val{j.achievements} \end{itemize}
+\end{foreach}
+
+\end{document}
