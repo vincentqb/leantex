@@ -61,4 +61,13 @@ def main : IO UInt32 := do
       bench n s!"lualatex {base}" "lualatex"
         #["--interaction=batchmode", s!"--output-directory={workdir}", (workdir / base).toString]
       IO.FS.removeDirAll workdir
+  -- The theme/roles/chrome and recovery passes run only on a themed deck,
+  -- and the HTML backend was off the measured path entirely; leantex-only
+  -- (lualatex does not build the native theme declarations).
+  let outDir ← IO.FS.createTempDir
+  bench n "leantex  themed.tex" leantex
+    #["-q", "build", "tests/corpus/themed.tex", "-o", (outDir / "themed.pdf").toString]
+  bench n "leantex  themed.tex -o html" leantex
+    #["-q", "build", "tests/corpus/themed.tex", "-o", (outDir / "themed.html").toString]
+  IO.FS.removeDirAll outDir
   return 0
