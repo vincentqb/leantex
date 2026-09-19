@@ -306,6 +306,12 @@ def argTokenChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
+  -- TeX register arithmetic is one statement: the `by` and the value go
+  -- with the skipped command, never left behind as stray preamble
+  -- content (E0313 came from the bare word `by`).
+  let adv := dvDoc "\\advance \\footskip by \\ht\\strutbox\n" "x"
+  t "register arithmetic is skipped whole, named W0104"
+    (errCodes adv == [] && (warnCodes adv).contains "W0104")
   -- LaTeX idioms translate to native declarations, each with a note that
   -- shows the shorter spelling. The document compiles as written.
   let pre (decls : String) : String :=

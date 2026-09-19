@@ -1047,6 +1047,32 @@ text side is the float separation ('\\tokens{ floatsep = ... }')" pos
         return some (← synthAt native pos, k)
       | none => return none
     else return none
+  | "advance" | "multiply" | "divide" =>
+    -- TeX's register arithmetic (TeXbook ch. 24: ⟨advance⟩⟨numeric
+    -- variable⟩⟨by⟩⟨value⟩): the engine keeps no registers, so the whole
+    -- statement is named and skipped — the `by` and the value go with the
+    -- command, never left behind as stray content (a bare `by` in the
+    -- preamble was an E0313 cascade from one skipped name).
+    let j0 := skipSpaces raws start
+    match raws[j0]? with
+    | some (.ctrl _ _) =>
+      let j1 := skipSpaces raws (j0 + 1)
+      let j2 := match raws[j1]? with
+        | some (.word "by" _) => skipSpaces raws (j1 + 1)
+        | _ => j1
+      -- The value: one word (`2pt`), or a register chain of one or two
+      -- control words (`\ht\strutbox`).
+      let k := match raws[j2]? with
+        | some (.word _ _) => j2 + 1
+        | some (.ctrl _ _) =>
+          match raws[j2 + 1]? with
+          | some (.ctrl _ _) => j2 + 2
+          | _ => j2 + 1
+        | _ => j2
+      sayOnce ("ctrl:" ++ name) .W0104
+        s!"TeX register arithmetic ('\\{name}') is not supported; skipped" pos
+      return some (#[], k)
+    | _ => return none
   | "NewDocumentCommand" | "newcommand" | "providecommand" | "renewcommand"
   | "DeclareDocumentCommand" | "RenewDocumentCommand" | "DeclareRobustCommand" =>
     -- One arm for the whole definer family. LaTeX's documented triple
