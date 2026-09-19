@@ -4524,6 +4524,11 @@ its declared layout" pos
     | none =>
       if let some d := record.fontSize then
         page := { page with fontSize := d }
+  -- The class's paragraph separation, where the document declares none:
+  -- `\page{ parskip = ... }` and compat's injected declaration both win.
+  if page.parskip.isNone then
+    if let some g := record.parskip then
+      page := { page with parskip := some g }
   -- The geometry is the page model's, the kernel's own: a frame fills
   -- beamer's stage, a face is trimmed to a trade size, flow takes the
   -- text block. Option-keyed sizes (aspectratio, us/jis) live here with

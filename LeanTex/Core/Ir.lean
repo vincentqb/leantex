@@ -2404,6 +2404,13 @@ structure ClassRecord where
   /-- The class's body-size default, when it declares one (`slides`:
   beamer's documented 11 pt, user guide §18.2.1). -/
   fontSize : Option Sp := none
+  /-- The class's paragraph-separation default, when it declares one.
+  `resume` declares zero: the LaTeX résumé lineage (moderncv.cls keeps the
+  standard classes' zero `\parskip`) spaces entries by declared rhythm,
+  not by paragraph skips — the same value compat injects when a foreign
+  résumé class is rewritten, so the native spelling and the rewritten one
+  agree. -/
+  parskip : Option Dim.SymGlue := none
   /-- Headings number by default; `\section*` opts out either way.
   `article` numbers (classes.dtx `\@startsection` with counters); a résumé
   is scanned, not cross-referenced, so `resume` does not (moderncv.cls
@@ -2511,6 +2518,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
   | .resume =>
     { model := .flow
       measureBand := true
+      parskip := some {}
       pagesBound := some (.lit .eq 1)
       pagesHelp := "the resume class asserts content fits one page; \
 declare \\assert{ pages <= N } to take control"
