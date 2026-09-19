@@ -1933,6 +1933,11 @@ def isFlagged (items : Array Item) (k : Nat) : Bool :=
 
 def doubleHyphenDemerits : Int := 10000
 
+/-- Demerits added when the second-last line of a paragraph ends in a
+hyphen (TeXbook ch. 14, `\finalhyphendemerits`; the plain/LaTeX default
+5000): a hyphen carrying into the paragraph's last line reads worst. -/
+def finalHyphenDemerits : Int := 5000
+
 /-- Prefix sums over item width/stretch/shrink/fil/forced counts, one slot
 past the end, so `kp` measures any line by differencing. -/
 structure KpSums where
@@ -2008,7 +2013,9 @@ def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
               let m := measureAt a j
               let dbl := if p != n && isFlagged items p && isFlagged items j then
                 doubleHyphenDemerits else 0
-              let d := d0 + lineDemerits items m target j + dbl
+              let fin := if p != n && isFlagged items p && j == n - 1 then
+                finalHyphenDemerits else 0
+              let d := d0 + lineDemerits items m target j + dbl + fin
               match bestHere with
               | some (dBest, _) =>
                 if d < dBest then bestHere := some (d, p)
@@ -2059,6 +2066,47 @@ def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
         cur := p
       | none => break
     return breaks.reverse
+
+/-- TeX's `\pretolerance` (plain.tex sets 100): the badness bound the
+hyphenless first pass must meet, per line, for its breaks to stand. -/
+def pretolerance : Nat := 100
+
+/-- Two-pass breaking, TeX's own shape (TeXbook ch. 14: with a
+non-negative `\pretolerance` the paragraph is first broken without
+hyphenation, and the hyphenating pass runs only when that attempt fails):
+hyphenation points are sealed (a 10000 cost is never a legal break,
+`canBreakAt`), the optimal hyphenless breaks stand when every line's
+badness stays within `pretolerance` and nothing is overfull, and only a
+paragraph that fails gets the hyphenating pass. This is what keeps
+hyphens rare — a paragraph that sets cleanly without them never
+hyphenates, whatever small demerit gain a hyphen could buy. Explicit
+hyphens (unflagged pens) and forced breaks keep their pens. -/
+def kpTwoPass (items : Array Item) (target : Sp) : Array Nat := Id.run do
+  let sealable : Item → Bool := fun it => match it with
+    | .pen _ cost flagged _ _ _ => flagged && forcedCost < cost && cost < 10000
+    | .box .. | .glue .. | .img .. | .rule .. => false
+  if !items.any sealable then return kp items target
+  let plain := items.map fun it => match it with
+    | .pen w cost flagged f c g =>
+      if flagged && forcedCost < cost && cost < 10000 then .pen w 10000 flagged f c g
+      else .pen w cost flagged f c g
+    | .box .. | .glue .. | .img .. | .rule .. => it
+  let breaks := kp plain target
+  if breaks.isEmpty then return kp items target
+  let mut prev := plain.size
+  for j in breaks do
+    let a := lineStart plain (if prev == plain.size then 0 else prev + 1)
+    let m := measure plain a j
+    let delta := target - m.natural
+    let bad : Int :=
+      if delta == 0 then 0
+      else if delta > 0 then (if m.fil then 0 else badness delta m.stretch)
+      else if m.shrink < -delta then (pretolerance : Int) + 1
+      else badness delta m.shrink
+    if bad > (pretolerance : Int) then
+      return kp items target
+    prev := j
+  return breaks
 
 -- Line setting ----------------------------------------------------------------
 
@@ -4631,7 +4679,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .pin => .pin
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
     | .foot c => .foot c
-    | .para j => .para j (Task.spawn fun _ => kp j.items j.target)
+    | .para j => .para j (Task.spawn fun _ => kpTwoPass j.items j.target)
     | .colOpen => .colOpen
     | .colNext => .colNext
     | .colClose => .colClose

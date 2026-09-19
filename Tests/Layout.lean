@@ -45,6 +45,8 @@ def seqCost (items : Array Layout.Item) (target : Dim.Sp) (breaks : List Nat) :
     total := total + Layout.lineDemerits items m target b
     if prevFlagged && Layout.isFlagged items b then
       total := total + Layout.doubleHyphenDemerits
+    if prevFlagged && b == items.size - 1 then
+      total := total + Layout.finalHyphenDemerits
     prev := b
     prevFlagged := Layout.isFlagged items b
     first := false

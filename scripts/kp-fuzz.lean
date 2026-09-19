@@ -72,6 +72,8 @@ private def seqCost (items : Array Item) (target : Dim.Sp) (breaks : List Nat) :
     total := total + lineDemerits items m target b
     if prevFlagged && isFlagged items b then
       total := total + doubleHyphenDemerits
+    if prevFlagged && b == items.size - 1 then
+      total := total + finalHyphenDemerits
     prev := b
     prevFlagged := isFlagged items b
     first := false
