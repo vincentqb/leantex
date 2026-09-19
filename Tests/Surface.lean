@@ -535,6 +535,28 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\renewcommand{\\href}[2]{#2}" ++
       "\\begin{document}\\href{https://example.org}{kept}\\end{document}")).2.all
         (·.severity == .note))
+  -- The sectioning idiom (ltsect.dtx): a definer whose body is one
+  -- \@startsection call is a declarative rule over an existing heading,
+  -- read as \style — never a refused redefinition. A negative afterskip
+  -- is a run-in heading, not modelled: named and skipped.
+  let secRule := "\\documentclass{article}\\renewcommand{\\section}{" ++
+    "\\@startsection{section}{1}{\\z@}{-2.0ex \\@plus -0.5ex \\@minus -0.2ex}" ++
+    "{1.5ex \\@plus 0.3ex}{\\large\\bf\\raggedright}}" ++
+    "\\begin{document}\\section{A}\nx\\end{document}"
+  let (secDoc, secDs) := elabStr secRule
+  t "a \\@startsection renew is read as \\style, warning nothing"
+    (secDs.all (·.severity == .note) &&
+     ((secDoc.styles.find? "section").bind (·.after)).map (·.width) ==
+       some { ex := 1500 })
+  t "a negative beforeskip declares its magnitude"
+    (((secDoc.styles.find? "section").bind (·.before)).map (·.width) ==
+       some { ex := 2000 })
+  t "the style group's plain forms spell out; alignment is not font"
+    (((secDoc.styles.find? "section").bind (·.font)).isSome)
+  t "a negative afterskip is a run-in heading: named, skipped, built-in stands"
+    (warnCodes ("\\documentclass{article}\\renewcommand{\\paragraph}{" ++
+      "\\@startsection{paragraph}{4}{\\z@}{1.5ex}{-1em}{\\normalsize\\bf}}" ++
+      "\\begin{document}\\paragraph{P}\nx\\end{document}") == ["W0104"])
   -- LaTeX classes space paragraphs by indent: their parskip is zero unless
   -- KOMA's option or the parskip package says otherwise.
   t "compat koma class declares parskip zero"

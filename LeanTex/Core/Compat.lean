@@ -696,6 +696,53 @@ rule; \\allow{E0113} accepts the loss")
     else dropped
   | none => dropped
 
+/-- LaTeX's documented sectioning idiom (ltsect.dtx; clsguide, "Defining
+new sectioning commands"): a definer whose whole body is one
+`\@startsection{name}{level}{indent}{beforeskip}{afterskip}{style}` call
+is a declarative rule over an existing heading, not a definition — read
+as the engine's `\style`, exactly as `\RedeclareSectionCommand`'s keys
+are. A negative beforeskip means only "no indent after the heading"; the
+skip used is the whole glue negated (ltsect.dtx: `\@tempskipa
+-\@tempskipa`). A negative afterskip declares a run-in heading, which the
+engine does not model — named and skipped, the built-in heading stands.
+The style group keeps its declarations with TeX's two-letter plain forms
+spelled out (plain.tex: `\bf` for `\bfseries`); alignment declarations
+configure justification the heading model owns and are not font. -/
+private def startSection? (cmd : String) (body : Array Raw) (pos : Pos) :
+    M (Option (Array Raw)) := do
+  let some i := body.findIdx? (fun r => match r with | .space => false | _ => true)
+    | return none
+  match body[i]? with
+  | some (.ctrl "@startsection" _) =>
+    let (args, _) := takeGroups body (i + 1) 6
+    if h : args.size = 6 then
+      let element := (rawSrc args[0]).trimAscii.toString
+      let after := lengthSrc args[4]
+      if after.startsWith "-" then
+        sayOnce ("ctrl:runin:" ++ cmd) .W0104
+          s!"'\\{cmd}' would be a run-in heading (negative \\@startsection \
+afterskip), which is not modelled; the redefinition is skipped" pos
+        return some #[]
+      if element != cmd || !Ir.styleableElements.contains element then
+        return none
+      let before := lengthSrc args[3]
+      let before := if before.startsWith "-" then before.replace "-" "" else before
+      let aliases := [("bf", "bfseries"), ("it", "itshape"), ("sc", "scshape"),
+        ("sl", "slshape"), ("rm", "rmfamily"), ("sf", "sffamily"), ("tt", "ttfamily")]
+      let alignments := ["raggedright", "raggedleft", "centering"]
+      let fonts := args[5].filterMap fun r => match r with
+        | .ctrl n _ =>
+          if alignments.contains n then none
+          else some s!"\\{(aliases.lookup n).getD n}"
+        | _ => none
+      let font := if fonts.isEmpty then ""
+        else s!", font = \{{String.join fonts.toList}}"
+      let native := s!"\\style\{{element}}\{ before = {before}, after = {after}{font} }"
+      became s!"\\{cmd} = \\@startsection\{{element}}" native pos
+      return some (← synthAt native pos)
+    else return none
+  | _ => return none
+
 /-- Rewrite the control sequence `name` given what follows it. Returns the
 replacement and how many following elements it consumed, or `none` to leave
 the command alone. -/
@@ -915,6 +962,12 @@ text side is the float separation ('\\tokens{ floatsep = ... }')" pos
         let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (count - 1) 'm')
           else String.ofList (List.replicate count 'm')
         pure (signature spec, j)
+    -- The sectioning idiom: a body that is one \@startsection call is a
+    -- declarative rule over an existing heading, read as \style.
+    let js := skipSpaces raws j
+    if let some (.group sbody _) := raws[js]? then
+      if let some out ← startSection? cmd sbody pos then
+        return some (out, js + 1)
     if name == "providecommand" && (← get).bound.contains cmd then
       let (_, k) := takeGroups raws j 1
       became s!"\\providecommand\{\\{cmd}}"
