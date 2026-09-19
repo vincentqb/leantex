@@ -484,6 +484,46 @@ private def condOne : Raw → M Raw
 
 end
 
+mutual
+
+/-- `\\AtBeginDocument{...}` defers its body to `\\begin{document}`
+(ltfiles.dtx: the begindocument hook). This engine's preamble is
+declarations, and a declaration is document-scoped wherever it stands, so
+the body is read where it is written — the same bindings, no hook
+machinery — and whatever in it the engine refuses is named where it
+stands, exactly as if written unwrapped. -/
+private def unwrapBeginHookList (out : Array Raw) : List Raw → M (Array Raw)
+  | [] => pure out
+  | .ctrl "AtBeginDocument" pos :: .group body _ :: rest => do
+    became "\\AtBeginDocument{...}" "its body, read where it stands" pos
+    let out ← unwrapBeginHookList out body.toList
+    unwrapBeginHookList out rest
+  | .ctrl "AtBeginDocument" pos :: .space :: .group body _ :: rest => do
+    became "\\AtBeginDocument{...}" "its body, read where it stands" pos
+    let out ← unwrapBeginHookList out body.toList
+    unwrapBeginHookList out rest
+  | r :: rest => do
+    unwrapBeginHookList (out.push (← unwrapBeginHookOne r)) rest
+
+/-- Descend into a group or environment body; an `\\input` wrapper switches
+the file its note names, as `condOne` and `rewriteRaw` do. -/
+private def unwrapBeginHookOne : Raw → M Raw
+  | .group body p => do
+    return .group (← unwrapBeginHookList #[] body.toList) p
+  | .env n body p => do
+    match Parse.inputEnvFile? n with
+    | some f =>
+      let saved := (← get).file
+      modify fun st => { st with file := f }
+      let body' ← unwrapBeginHookList #[] body.toList
+      modify fun st => { st with file := saved }
+      return .env n body' p
+    | none =>
+      return .env n (← unwrapBeginHookList #[] body.toList) p
+  | r => pure r
+
+end
+
 /-- A TeX length in the native spelling: `0.5\rhythm` is `0.5 * rhythm`,
 `\relax` vanishes. -/
 private def lengthSrc (raws : Array Raw) : String := Id.run do
@@ -492,6 +532,21 @@ private def lengthSrc (raws : Array Raw) : String := Id.run do
   for r in raws do
     match r with
     | .ctrl "relax" _ => pure ()
+    | .ctrl "p@" _ =>
+      -- TeX's \p@ is 1pt and \z@ 0pt (plain.tex); a `.sty` spells its
+      -- lengths in them, and its rubber in \@plus/\@minus (ltdefns.dtx:
+      -- the sanitised glue keywords "plus" and "minus").
+      s := s ++ (if prevNumber then "pt" else "1pt")
+      prevNumber := false
+    | .ctrl "z@" _ =>
+      s := s ++ (if prevNumber then "pt" else "0pt")
+      prevNumber := false
+    | .ctrl "@plus" _ =>
+      s := s ++ " plus "
+      prevNumber := false
+    | .ctrl "@minus" _ =>
+      s := s ++ " minus "
+      prevNumber := false
     | .ctrl n _ =>
       s := s ++ (if prevNumber then " * " else "") ++ n
       prevNumber := false
@@ -541,8 +596,12 @@ private def signature (spec : String) : String := Id.run do
     s!"a{k + 1}{if c == 'o' then "?" else ""}: content"
   String.intercalate ", " params
 
-/-- `\usepackage[opts]{geometry}` → `\page{...}`. -/
-private def geometry (opts : String) (pos : Pos) : M (Array Raw) := do
+/-- `\usepackage[opts]{geometry}`, `\geometry{...}`, `\newgeometry{...}`
+→ `\page{...}`. `textwidth`/`textheight` pass through to the `\page` keys
+of the same names (geometry manual §5.2: they size the body; the engine
+centres it — geometry's own oneside `hmarginratio` 1:1). -/
+private def geometry (opts : String) (pos : Pos)
+    (spelling : String := "\\usepackage{geometry}") : M (Array Raw) := do
   let mut keys : Array String := #[]
   let mut dropped : Array String := #[]
   for e in Decl.splitEntries opts do
@@ -561,12 +620,13 @@ private def geometry (opts : String) (pos : Pos) : M (Array Raw) := do
       -- geometry's width/height size the text block, paperwidth/paperheight
       -- the page (geometry manual §5.2); \page speaks in page dimensions.
       let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
-      if ["margin", "vmargin", "hmargin", "width", "height"].contains k then
+      if ["margin", "vmargin", "hmargin", "width", "height",
+          "textwidth", "textheight"].contains k then
         keys := keys.push s!"{k} = {lengthOfTeX v}"
       else dropped := dropped.push k
     | [] => pure ()
   let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
-  became "\\usepackage{geometry}" native pos
+  became spelling native pos
   unless dropped.isEmpty do
     say .W0101 s!"geometry keys without a native equivalent were dropped: \
 {String.intercalate ", " dropped.toList}" pos
@@ -643,7 +703,10 @@ where
   rewriteCtrlAt (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
       M (Option (Array Raw × Nat)) := do
   match name with
-  | "usepackage" =>
+  | "usepackage" | "RequirePackage" =>
+    -- One dispatch for both spellings: `\RequirePackage` is `\usepackage`
+    -- for package writers (ltclass.dtx), and a local `.sty` spliced into
+    -- the preamble spells its loads that way.
     let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     if args.isEmpty then return none
@@ -667,7 +730,7 @@ where
         became s!"\\usepackage[{opt.getD ""}]\{{p}}" native pos
         out := out ++ (← synthAt native pos)
       else if nativePackages.contains p then
-        became s!"\\usepackage\{{p}}" "nothing: the engine does this itself" pos
+        became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
       else
         say .W0103 s!"package '{p}' is not supported; skipped" pos
     return some (out, k)
@@ -750,19 +813,50 @@ where
   | "colorlet" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
-      let native := s!"\\palette\{ {rawSrc args[0]} = {rawSrc args[1]} }"
+      -- xcolor's `.` names the current colour (xcolor manual §2.3, the
+      -- colour expression grammar); in the preamble that is the initial
+      -- colour, black.
+      let src := if (rawSrc args[1]).trimAscii.toString == "." then "#000000"
+        else rawSrc args[1]
+      let native := s!"\\palette\{ {rawSrc args[0]} = {src} }"
       became "\\colorlet" native pos
       return some (← synthAt native pos, k)
     else return none
-  | "geometry" =>
-    -- The command form: the same keys the package options carry.
+  | "geometry" | "newgeometry" =>
+    -- The command forms: the same keys the package options carry
+    -- (geometry manual §5: `\newgeometry` is `\geometry` restricted to
+    -- the layout keys). One door for every spelling, so a key is honoured
+    -- or named (W0101) identically wherever it was written.
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
-    return some (← geometry (rawSrc (args.getD 0 #[])) pos, k)
+    return some (← geometry (rawSrc (args.getD 0 #[])) pos s!"\\{name}", k)
+  | "newlength" =>
+    -- `\newlength{\x}` allocates a length register at 0pt (usrguide,
+    -- "Defining lengths"); the native store is a token, so a later
+    -- `\setlength{\x}` and references to `\x` in other lengths resolve.
+    let (args, k) := takeGroups raws start 1
+    let some n := ctrlName (args.getD 0 #[]) | return none
+    let native := s!"\\tokens\{ {n} = 0pt }"
+    became s!"\\newlength\{\\{n}}" native pos
+    return some (← synthAt native pos, k)
   | "setlength" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
       match ctrlName args[0] with
+      | some "abovecaptionskip" =>
+        -- The object-side caption gap (classes.dtx `\@makecaption`:
+        -- `\abovecaptionskip` stands between the object and its caption):
+        -- exactly the engine's `captionsep` token.
+        let native := s!"\\tokens\{ captionsep = {lengthSrc args[1]} }"
+        became "\\setlength{\\abovecaptionskip}" native pos
+        return some (← synthAt native pos, k)
+      | some "belowcaptionskip" =>
+        -- The caption's text side: in this engine that is the float
+        -- separation (`floatsep`), not a caption property; the LaTeX
+        -- default here is 0pt for the same reason.
+        say .N0102 "'\\belowcaptionskip' is not a knob here: the caption's \
+text side is the float separation ('\\tokens{ floatsep = ... }')" pos
+        return some (#[], k)
       | some "parskip" =>
         -- TeX's own paragraph glue is a page property here, not a token.
         let native := s!"\\page\{ parskip = {lengthSrc args[1]} }"
@@ -1494,6 +1588,8 @@ before `\begin{document}`, where a declaration belongs. -/
 def rewrite (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
   let go : M (Array Raw) := do
     let raws ← condList raws #[] [] raws.toList 0
+    -- After the conditionals: only live `\AtBeginDocument` bodies unwrap.
+    let raws ← unwrapBeginHookList #[] raws.toList
     let out ← rewriteList false raws #[] raws.toList 0 0
     let running ← flushRunning
     let running ← rewriteList false running #[] running.toList 0 0
@@ -1505,5 +1601,157 @@ def rewrite (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
       | none => out ++ running
   let (out, st) := go.run { file := file }
   (out, st.diags)
+
+/-! `\\usepackage{p}` where `p.sty` exists beside the document is LaTeX's
+own rule made literal (ltfiles.dtx `\\@onefilewithoptions`: find `p.sty` on
+the input path and read it): the file splices into the preamble as an
+`\\input` fragment, and every construct inside gets exactly the treatment
+it would get written in the document — honoured through an existing arm,
+or named where it stands with the `.sty`'s own positions (the input
+wrapper carries the file name). Reading the file is the driver's effect
+(`Main.expandLocalSty`); the splice and the option machinery are here,
+pure. Where the file does not exist, the CTAN dispatch (W0103) applies
+unchanged. -/
+
+/-- The package names a top-level `\\usepackage`/`\\RequirePackage` asks for
+that the engine does not know: the candidates a local `.sty` beside the
+document may answer. -/
+def localStyCandidates (raws : Array Raw) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut i := 0
+  for _ in [0:raws.size] do
+    if h : i < raws.size then
+      match raws[i] with
+      | .ctrl "usepackage" _ | .ctrl "RequirePackage" _ =>
+        let (_, j) := takeOpt raws (i + 1)
+        let (args, k) := takeGroups raws j 1
+        for p in (rawSrc (args.getD 0 #[])).splitOn "," do
+          let p := p.trimAscii.toString
+          unless p.isEmpty || nativePackages.contains p || out.contains p do
+            out := out.push p
+        i := max k (i + 1)
+      | _ => i := i + 1
+  return out
+
+/-- LaTeX's package option machinery, the minimum (ltclass.dtx):
+`\\DeclareOption{name}{body}` binds a body to an option name,
+`\\ExecuteOptions{list}` runs the named bodies (the defaults idiom), and
+`\\ProcessOptions` runs the bodies of the options the `\\usepackage`
+passed, in declaration order, after which the machinery is spent.
+`\\ProvidesPackage`/`\\NeedsTeXFormat` identify the file and produce
+nothing. A `\\DeclareOption*` (the catch-all) is dropped here and its
+absence named downstream only if an option needed it; option bodies are
+usually one flag-setter (`\\@xtrue`), which the conditional pass already
+resolves. -/
+def resolveStyOptions (passed : List String) (raws : Array Raw) : Array Raw := Id.run do
+  let mut out : Array Raw := #[]
+  let mut declared : Array (String × Array Raw) := #[]
+  let mut i := 0
+  for _ in [0:raws.size] do
+    if h : i < raws.size then
+      match raws[i] with
+      | .ctrl "DeclareOption" _ =>
+        let j := skipStar raws (i + 1)
+        let (args, k) := takeGroups raws j 2
+        if h2 : args.size = 2 then
+          declared := declared.push ((rawSrc args[0]).trimAscii.toString, args[1])
+        i := max k (i + 1)
+      | .ctrl "ExecuteOptions" _ =>
+        let (args, k) := takeGroups raws (i + 1) 1
+        for o in (rawSrc (args.getD 0 #[])).splitOn "," do
+          if let some (_, body) := declared.find? (·.1 == o.trimAscii.toString) then
+            out := out ++ body
+        i := max k (i + 1)
+      | .ctrl "ProcessOptions" _ =>
+        for (nm, body) in declared do
+          if passed.contains nm then
+            out := out ++ body
+        let j := skipSpaces raws (i + 1)
+        i := match raws[j]? with
+          | some (.ctrl "relax" _) => j + 1
+          | _ => i + 1
+      | .ctrl "ProvidesPackage" _ | .ctrl "NeedsTeXFormat" _ =>
+        let (_, k) := takeGroups raws (i + 1) 1
+        let (_, k2) := takeOpt raws k
+        i := max k2 (i + 1)
+      | r =>
+        out := out.push r
+        i := i + 1
+  return (out : Array Raw)
+
+/-- Splice the local style files the driver found: each `\\usepackage` of
+one becomes the file's own content, options resolved
+(`resolveStyOptions`), wrapped as that file's input fragment so every
+downstream diagnostic names the `.sty` and its line. The file's
+constructs are then honoured or named individually by the same passes a
+document goes through — no second rule set. Returns the splice records
+(file, position); the read itself is named once per file (N0020), built
+after elaboration (`styRead`), when the honoured/named counts exist. -/
+def applyLocalSty (raws : Array Raw)
+    (stys : Array (String × Array Raw)) : Array Raw × Array (String × Pos) := Id.run do
+  let mut out : Array Raw := #[]
+  let mut spliced : Array (String × Pos) := #[]
+  let mut i := 0
+  for _ in [0:raws.size] do
+    if h : i < raws.size then
+      match raws[i] with
+      | .ctrl cn pos =>
+        if cn == "usepackage" || cn == "RequirePackage" then
+          let (opt, j) := takeOpt raws (i + 1)
+          let (args, k) := takeGroups raws j 1
+          if args.isEmpty then
+            out := out.push raws[i]
+            i := i + 1
+          else
+            let pkgs := (rawSrc (args.getD 0 #[])).splitOn ","
+              |>.map (·.trimAscii.toString)
+            let passed := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+            let mut keep : Array String := #[]
+            let mut splice : Array Raw := #[]
+            for p in pkgs do
+              match stys.find? (·.1 == p) with
+              | some (_, sraws) =>
+                splice := splice.push
+                  (.env (Parse.inputEnv (p ++ ".sty")) (resolveStyOptions passed sraws) pos)
+                spliced := spliced.push (p ++ ".sty", pos)
+              | none => keep := keep.push p
+            if keep.size == pkgs.length then
+              for r in raws.extract i k do
+                out := out.push r
+            else
+              unless keep.isEmpty do
+                out := out.push (.ctrl cn pos)
+                for r in raws.extract (i + 1) j do
+                  out := out.push r
+                out := out.push
+                  (.group #[.word (String.intercalate "," keep.toList) pos] pos)
+              for r in splice do
+                out := out.push r
+            i := max k (i + 1)
+        else
+          out := out.push raws[i]
+          i := i + 1
+      | r =>
+        out := out.push r
+        i := i + 1
+  return (out, spliced)
+
+/-- What a spliced `.sty` yielded, counted after elaboration: a construct
+was honoured when its translation note (N0100) carries the file, and
+named when a warning does. -/
+def styCounts (sty : String) (diags : Array Diag) : Nat × Nat :=
+  let mine := diags.filter fun d => d.span.any (·.file == sty)
+  ((mine.filter (·.code == "N0100")).size,
+   (mine.filter (·.severity == .warning)).size)
+
+/-- The one N0020 construction — the note that says the file was looked
+at, and how much of it took. Built after elaboration, from the splice
+records `applyLocalSty` returns: the counts do not exist before it. -/
+def styRead (docFile sty : String) (pos : Pos) (diags : Array Diag) : Diag :=
+  let (honoured, named) := styCounts sty diags
+  Diag.of .N0020
+    (s!"'{sty}' beside the document is read as part of the preamble — " ++
+     s!"constructs honoured: {honoured}, named where they stand: {named}")
+    (some ⟨docFile, pos⟩)
 
 end LeanTex.Core.Compat

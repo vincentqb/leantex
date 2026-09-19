@@ -481,6 +481,31 @@ def expandInputs (file : String) (raws : Array Parse.Raw) :
     diags := diags.push DriverDiag.inputTooDeep
   return (raws, diags)
 
+/-- `\usepackage{p}` where `p.sty` exists beside the document is LaTeX's
+own rule (ltfiles.dtx `\@onefilewithoptions`: find `p.sty` on the input
+path and read it as TeX). Reading the file is this driver's effect, the
+same door `\input` uses; the splice and the option machinery are the pure
+core's (`Compat.applyLocalSty`), which wraps the file's text as its own
+input fragment so every diagnostic names the `.sty` and its line. Where
+no such file exists, the CTAN dispatch (W0103) applies unchanged. The
+style file's own lexer and parser diagnostics are dropped: the file is
+not the engine's to lint, and the splice carries its own positions. -/
+def expandLocalSty (file : String) (raws : Array Parse.Raw) :
+    IO (Array Parse.Raw × Array (String × Pos)) := do
+  let candidates := Compat.localStyCandidates raws
+  if candidates.isEmpty then return (raws, #[])
+  let dir := (System.FilePath.mk file).parent.getD "."
+  let mut stys : Array (String × Array Parse.Raw) := #[]
+  for name in candidates do
+    let path := dir / (name ++ ".sty")
+    if ← path.pathExists then
+      let text ← IO.FS.readFile path
+      let (toks, _) := Lex.lex (name ++ ".sty") text
+      let (sraws, _) := Parse.parse (name ++ ".sty") toks
+      stys := stys.push (name, sraws)
+  if stys.isEmpty then return (raws, #[])
+  return Compat.applyLocalSty raws stys
+
 /-- Read and decode the file, then run the front end, reporting phases.
 Returns the document, all diagnostics, and whether reading itself failed. -/
 def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := do
@@ -508,7 +533,13 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := d
     ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
     let t ← IO.monoMsNow
     let (raws, inputDiags) ← expandInputs file raws
-    let (doc, elabDiags) := Elab.runRaws file raws (lexDiags ++ parseDiags ++ inputDiags)
+    let (raws, spliced) ← expandLocalSty file raws
+    let (doc, elabDiags) := Elab.runRaws file raws
+      (lexDiags ++ parseDiags ++ inputDiags)
+    -- N0020 says a `.sty` was read and how much of it took; its counts
+    -- are read off the elaborated diagnostics, so it is built after them.
+    let elabDiags := elabDiags ++
+      spliced.map fun (sty, pos) => Compat.styRead file sty pos elabDiags
     ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
     let t ← IO.monoMsNow
     let (doc, bibDiags) ← resolveBibliography file doc

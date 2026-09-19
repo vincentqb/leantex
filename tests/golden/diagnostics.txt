@@ -53,7 +53,7 @@ error[E0320]: 'oops' in '\page' has no value
 error[E0321]: 'scale' needs a number, got "big"
 ── E0322 (dropped) unknown key in a declaration block
 error[E0322]: '\page' has no key 'zoom'
-  help: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify
+  help: known keys: size, width, height, margin, vmargin, hmargin, textwidth, textheight, leading, parskip, measure, fontsize, bleed, hyphenate, justify
 ── E0323 (dropped) declaration key value has the wrong type
 error[E0323]: 'vmargin' in '\page' expects a dimension, got a string
 ── E0324 (dropped) unknown page size name
@@ -143,6 +143,8 @@ note[N0018]: 'Fira Math' has no sans-serif 'A' (U+1D5A0); the plain letter stand
 ── N0019 (info) a backend conditional in content names a class or kernel decision made by hand
 note[N0019]: content addressed per backend encodes a per-medium decision by hand
   help: a construct carries its own medium answer (a nav, a note); prefer the construct or the class, and keep '\begin{ifbackend}' for the true remainder
+── N0020 (info) a local style file is read as part of the preamble
+note[N0020]: 'venueguide.sty' beside the document is read as part of the preamble — constructs honoured: 2, named where they stand: 2
 ── N0100 (info) LaTeX idiom translated to its native declaration
 note[N0100]: '\usepackage{geometry}' → \page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model

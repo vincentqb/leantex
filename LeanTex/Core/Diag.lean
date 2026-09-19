@@ -95,7 +95,7 @@ inductive DiagCode where
   | N0100 | N0102 | N0103 | N0114 | N0200
   | W0001 | W0003 | W0005 | W0006 | W0007 | W0008 | W0009 | W0010
   | W0011 | W0012 | W0013 | W0014 | W0015
-  | N0016 | N0018 | N0017 | N0019
+  | N0016 | N0018 | N0017 | N0019 | N0020
   | W0101 | W0102 | W0103 | W0104 | W0105 | W0106 | W0108 | W0110 | W0111
   | W0201 | W0202
   | W0301 | W0302 | W0303 | W0304 | W0307 | W0309 | W0310 | W0311
@@ -179,6 +179,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .N0018 => ("0018", .info, "math alphabet glyph missing everywhere; a stand-in letter sets, the styling difference named")
   | .N0017 => ("0017", .info, "no document class declared; the article page model is assumed")
   | .N0019 => ("0019", .info, "a backend conditional in content names a class or kernel decision made by hand")
+  | .N0020 => ("0020", .info, "a local style file is read as part of the preamble")
   | .W0102 => ("0102", .degraded, "unsupported colour model")
   | .W0103 => ("0103", .config, "unsupported package skipped")
   | .W0104 => ("0104", .config, "unsupported TeX construct skipped")

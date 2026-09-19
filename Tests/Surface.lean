@@ -272,6 +272,60 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).1.tokens.find? "captionsep"
         == some { width := { sp := Dim.pt 10 } } &&
      (elabStr (pre "\\captionsetup[table]{skip=10pt}")).2.all (·.severity == .note))
+  -- The geometry text-block spelling: `textwidth`/`textheight` size the
+  -- body (geometry manual §5.2) and the engine centres it, whichever of
+  -- the three spellings (package options, \geometry, \newgeometry)
+  -- carried the keys.
+  t "compat newgeometry textwidth/textheight centre the text block"
+    (let doc := (elabStr (pre "\\newgeometry{textwidth=396pt, textheight=576pt}")).1
+     doc.page.hmargin == Dim.pt 108 && doc.page.vmargin == Dim.pt 108)
+  -- A skipped package that is a local .sty beside the document is \input
+  -- of its text (ltfiles.dtx \@onefilewithoptions: \usepackage IS "find
+  -- p.sty on the input path and read it"): options resolve
+  -- (\DeclareOption/\ProcessOptions), \AtBeginDocument unwraps, \geometry
+  -- reaches \page, and what the engine refuses is named at the .sty's own
+  -- file — never W0103, which is for the package that is not there to read.
+  let parseRaws (file s : String) : Array Parse.Raw :=
+    (Parse.parse file (Lex.lex file s).1).1
+  let sty :=
+    "\\NeedsTeXFormat{LaTeX2e}\n\\ProvidesPackage{guide}[2026/01/01 venue guide]\n" ++
+    "\\newif\\if@final\\@finalfalse\n\\DeclareOption{final}{\\@finaltrue}\n" ++
+    "\\ProcessOptions\\relax\n" ++
+    "\\if@final\\RequirePackage{natbib}\\fi\n" ++
+    "\\AtBeginDocument{\n\\newgeometry{\ntextheight=576pt,\ntextwidth=396pt\n}\n}\n" ++
+    "\\setlength{\\abovecaptionskip}{7\\p@}\n" ++
+    "\\def\\x#1,#2\\relax{#1}\n"
+  let docRaws := parseRaws "t"
+    ("\\documentclass{article}\n\\usepackage[final]{guide}\n" ++
+     "\\begin{document}\nx\n\\end{document}")
+  let (raws2, spliced) := Compat.applyLocalSty docRaws #[("guide", parseRaws "guide.sty" sty)]
+  let (doc2, elabDs) := Elab.runRaws "t" raws2
+  t "a local .sty is \\input of its text: its \\geometry reaches \\page"
+    (doc2.page.hmargin == Dim.pt 108 && doc2.page.vmargin == Dim.pt 108 &&
+     doc2.tokens.find? "captionsep" == some { width := { sp := Dim.pt 7 } } &&
+     elabDs.all (·.code != "W0103"))
+  t "what of the .sty's text is refused is named at the .sty's own file"
+    ((elabDs.filter fun d => d.code == "W0357" &&
+        d.span.any (·.file == "guide.sty")).size == 1)
+  t "the read is named once, with the honoured and named counts"
+    (spliced.toList.map (·.1) == ["guide.sty"] &&
+     Compat.styCounts "guide.sty" elabDs == (4, 1))
+  t "a def-only local .sty is still read; its \\def is a definition — never W0103"
+    (let (raws3, spl3) := Compat.applyLocalSty docRaws
+      #[("guide", parseRaws "guide.sty" "\\def\\x#1{#1}\n")]
+     let ds3 := (Elab.runRaws "t" raws3).2
+     spl3.size == 1 && ds3.all (·.code != "W0103") &&
+     Compat.styCounts "guide.sty" ds3 == (1, 0))
+  -- Monotone expansion visibility: a definition inside an expanded body
+  -- binds at the visibility boundary and never re-exposes the command
+  -- being expanded to its own body. The venue-style \maketitle — it
+  -- renews \thefootnote and then names itself in \let — used to diverge
+  -- here; the self-name now resolves to the definition before it.
+  t "a body define never exposes the expanding command to its own body"
+    ((elabStr ("\\documentclass{article}\n" ++
+      "\\providecommand{\\mktitle}{}\n" ++
+      "\\renewcommand{\\mktitle}{\\renewcommand{\\theftn}{y}\\let\\mktitle\\relax t}\n" ++
+      "\\begin{document}\n\\mktitle\nx\n\\end{document}")).1.body.size > 0)
   t "compat appendixnumberbeamer is native; \\appendix is too"
     ((elabStr (pre "\\usepackage{appendixnumberbeamer}")).2.all (·.severity == .note) &&
      warnCodes ("\\documentclass{article}\n\\usepackage{appendixnumberbeamer}\n" ++

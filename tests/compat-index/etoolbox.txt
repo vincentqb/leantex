@@ -2,7 +2,7 @@
 # patching), §3.5 (boolean flags). TeX conditionals resolve from the
 # document's own definitions (N0114).
 body impl \ifdefined\nope a\else b\fi
-pre refuse:W0301 \AtBeginDocument{}
+pre impl \AtBeginDocument{}
 pre refuse:W0301 \AtEndPreamble{}
 pre refuse:W0301 \newrobustcmd{\zz}[1]{#1}
 pre refuse:W0301 \robustify{\emph}

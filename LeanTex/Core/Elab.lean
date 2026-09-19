@@ -245,7 +245,8 @@ a key/value block: running head and foot. -/
 def runningCtrl : List String := ["runninghead", "runningfoot"]
 
 def pageKeys : List String :=
-  ["size", "width", "height", "margin", "vmargin", "hmargin", "leading", "parskip",
+  ["size", "width", "height", "margin", "vmargin", "hmargin",
+   "textwidth", "textheight", "leading", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify"]
 
 /-- The `\page` keys that declare the page's physical extent. Exactly these
@@ -254,7 +255,8 @@ named; a rhythm or policy key (`parskip`, `leading`, `fontsize`, `measure`,
 `hyphenate`, `justify`) speaks to the text and must not silently forfeit
 the Bringhurst text-block margin the undeclared page is owed. -/
 def pageGeometryKeys : List String :=
-  ["size", "width", "height", "margin", "vmargin", "hmargin", "bleed"]
+  ["size", "width", "height", "margin", "vmargin", "hmargin",
+   "textwidth", "textheight", "bleed"]
 
 def metaKeys : List String :=
   ["title", "author", "subject", "keywords", "url", "image", "favicon"]
@@ -3286,9 +3288,17 @@ a side channel, never slide content" npos
           let (cmd?, k) ← takeDefine ctx raws i dpos
           i := k
           if let some cmd := cmd? then
+            -- The definition binds at the visibility boundary: the rest of
+            -- this walk sees exactly one more command, never the suffix
+            -- beyond `limit`. Monotone visibility is the expansion's whole
+            -- termination argument (`Ctx.limit`); raising `limit` to the
+            -- array's end here re-exposed a command being expanded to its
+            -- own body, and a venue file's `\maketitle` — which renews
+            -- `\thefootnote` and then names itself in `\let` — diverged.
+            let b := min ctx.limit ctx.user.size
             ctx := { ctx with
-              user := ctx.user.push cmd
-              limit := ctx.user.size + 1 }
+              user := (ctx.user.extract 0 b).push cmd ++ ctx.user.extract b ctx.user.size
+              limit := b + 1 }
         | .ctrl "bibliographystyle" dpos =>
           -- The declared style rides the state to the `\bibliography`
           -- marker; resolution reads it from the block (W0353 there names
@@ -4371,6 +4381,29 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "hmargin", v =>
       if let some d := asDim v then spec := { spec with hmargin := d }
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "hmargin" "a dimension" v pos))
+    -- The geometry manual's text-block spelling (§5.2: `textwidth`/
+    -- `textheight` size the body). The engine's page model has one margin
+    -- per axis, so the block centres — geometry's own oneside horizontal
+    -- default (`hmarginratio` 1:1); its 2:3 vertical ratio and an explicit
+    -- `top=` are not representable and stay named (W0101 at the compat
+    -- door). Resolved against the page dimension in force where the entry
+    -- stands, as geometry sizes the body against the current paper.
+    | "textwidth", v =>
+      if let some d := asDim v then
+        if 0 < d && d ≤ spec.width then
+          spec := { spec with hmargin := (spec.width - d) / 2 }
+        else
+          evs := say evs .E0323
+            "'textwidth' in '\\page' expects a dimension between zero and the page width"
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "textwidth" "a dimension" v pos))
+    | "textheight", v =>
+      if let some d := asDim v then
+        if 0 < d && d ≤ spec.height then
+          spec := { spec with vmargin := (spec.height - d) / 2 }
+        else
+          evs := say evs .E0323
+            "'textheight' in '\\page' expects a dimension between zero and the page height"
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "textheight" "a dimension" v pos))
     | "leading", .int n => spec := { spec with leading := n.toNat * 1000 }
     | "leading", .dim d =>
       -- A bare decimal like 1.04 reads as a dimension in points; the factor
@@ -5092,6 +5125,19 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
             out := out.push (.reserved name code none pos)
             i := j
         else
+          -- TeX's register assignment (`\widowpenalty=10000`,
+          -- `\parindent=\z@`) is one construct: the `=` and its value go
+          -- with the skipped name, never left behind as stray content.
+          let j0 := skipSpaces preamble i
+          match preamble[j0]? with
+          | some (.sym '=' _) =>
+            let j1 := skipSpaces preamble (j0 + 1)
+            match preamble[j1]? with
+            | some (.word _ _) | some (.ctrl _ _) => i := j1 + 1
+            | _ => i := j0 + 1
+          | some (.word w _) =>
+            if w.startsWith "=" then i := j0 + 1
+          | _ => pure ()
           let (j, unclosed) := skipReservedArgs preamble i pos (maxGroups := 9)
           match unclosed with
           | some bpos =>
@@ -5232,9 +5278,14 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     let (cmd?, _) ← takeDefine s.ctx decl 0 pos
     match cmd? with
     | some cmd =>
+      -- The same boundary insertion as the body walk's define arm: at
+      -- the preamble top level `limit` equals the array's size and this
+      -- is a plain push, but the spelling keeps visibility monotone
+      -- wherever the fold runs.
+      let b := min s.ctx.limit s.ctx.user.size
       return { s with ctx := { s.ctx with
-        user := s.ctx.user.push cmd
-        limit := s.ctx.user.size + 1 } }
+        user := (s.ctx.user.extract 0 b).push cmd ++ s.ctx.user.extract b s.ctx.user.size
+        limit := b + 1 } }
     | none => return s
   | .defineEnv name sig beginB endB pos =>
     match name with
