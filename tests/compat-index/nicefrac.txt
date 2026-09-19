@@ -1,0 +1,1 @@
+body refuse:W0301 \nicefrac{1}{2}

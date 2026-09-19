@@ -1,0 +1,2 @@
+# vertical spans against the formal-table stance: a design discussion, not an arm
+body refuse:W0301 \multirow{2}{*}{a}

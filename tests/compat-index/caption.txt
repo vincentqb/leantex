@@ -1,0 +1,2 @@
+body impl \begin{figure}\caption{x}\end{figure}
+pre refuse:W0354 \captionsetup{font=small}

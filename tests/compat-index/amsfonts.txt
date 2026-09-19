@@ -1,0 +1,3 @@
+# math alphabets degrade whole-formula today (W0012, named); the math slice owns the remap
+body refuse:W0012 $\mathbb{R}$
+body refuse:W0012 $\mathfrak{g}$

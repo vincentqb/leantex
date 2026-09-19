@@ -1,0 +1,1 @@
+body impl \begin{figure}\begin{subfigure}{0.5\textwidth}x\end{subfigure}\end{figure}
