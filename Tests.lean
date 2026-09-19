@@ -281,6 +281,71 @@ def bibIrChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "bib-ir: anchor naming has one site"
     (Ir.bibAnchor "k1" == "ref-k1" && Bib.anchorOf "k1" == "#ref-k1")
 
+/-- Resolution: first-citation order, numbering as sort position, the
+rewrite confined to citations and the reference list, and the three
+diagnostics. -/
+def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let bib := "@misc{a, author = {Doe, Alex}, title = {First}, year = 2024}\n" ++
+    "@misc{b, author = {Roe, Sam}, title = {Second}, year = 2020}\n" ++
+    "@misc{c, author = {Poe, Kim}, title = {Third}, year = 2022}"
+  let doc (style : Option String) : Ir.Doc :=
+    { body := #[
+        .para #[.text "x ", .cite false #["b"], .text " y ", .cite true #["a"]],
+        .para #[.cite false #["c", "b"]],
+        .bibliography "refs" style #[]] }
+  let run (style : Option String) := Bib.apply #[("refs", bib)] (doc style)
+  let (outU, dsU) := run (some "unsrtnat")
+  t "apply: no diagnostics on a clean resolution" dsU.isEmpty
+  let itemsOf (d : Ir.Doc) : Array Ir.BibItem :=
+    d.body.foldl (fun acc b => match b with
+      | .bibliography _ _ items => acc ++ items
+      | _ => acc) #[]
+  let paraText (d : Ir.Doc) (i : Nat) : String :=
+    match d.body[i]? with
+    | some (Ir.Block.para xs) => Ir.plainText xs
+    | _ => ""
+
+  t "apply: unsrtnat lists cited keys in first-citation order, each once"
+    ((itemsOf outU).map (·.key) == #["b", "a", "c"])
+  t "apply: numeric markers are the 1-based list positions"
+    ((itemsOf outU).map (·.marker) == #[some "1", some "2", some "3"])
+  t "apply: citation marks carry the entry's list position"
+    (paraText outU 0 == "x [1] y Doe [2]" && paraText outU 1 == "[3, 1]")
+  t "apply: entries format through the style"
+    ((itemsOf outU).map (fun i => Ir.plainText i.content) ==
+      #["Sam Roe. Second. 2020.", "Alex Doe. First. 2024.", "Kim Poe. Third. 2022."])
+  -- plainnat: the same document, the other record.
+  let (outP, dsP) := run (some "plainnat")
+  t "apply: plainnat sorts by author then year, marks nothing"
+    ((itemsOf outP).map (·.key) == #["a", "c", "b"] &&
+      (itemsOf outP).all (·.marker.isNone))
+  t "apply: plainnat cites author-year"
+    (paraText outP 0 == "x (Roe, 2020) y Doe (2024)")
+  t "apply: style independence — each entry's content identical across styles"
+    (dsP.isEmpty &&
+      (itemsOf outU).all fun i =>
+        ((itemsOf outP).find? (·.key == i.key)).map (fun j => Ir.plainText j.content)
+          == some (Ir.plainText i.content))
+  -- The three diagnostics, each with its contract.
+  let (outG, dsG) := Bib.apply #[("refs", bib)]
+    { body := #[.para #[.cite false #["ghost", "a"]],
+        .bibliography "refs" none #[]] }
+  t "apply: an unknown key warns W0351 and shows ? beside its neighbours"
+    ((dsG.map (·.code)) == #["W0351"] && paraText outG 0 == "[?, 1]")
+  let (outB, dsB) := Bib.apply #[("refs", "@misc{broken, year = ?}\n" ++ bib)]
+    { body := #[.para #[.cite false #["a"]], .bibliography "refs" none #[]] }
+  t "apply: a malformed entry warns W0352 at its .bib position, rest kept"
+    (dsB.map (·.code) == #["W0352"] &&
+      (dsB[0]?.bind (·.span)).map (·.file) == some "refs" &&
+      (itemsOf outB).map (·.key) == #["a"])
+  let (_, dsM) := run (some "mystery")
+  t "apply: an unknown style warns W0353 and falls back to the record"
+    (dsM.map (·.code) == #["W0353"])
+  t "apply: a document with no bibliography marker is untouched"
+    (Bib.apply #[("refs", bib)] { body := #[.para #[.cite false #["a"]]] } ==
+      ({ body := #[.para #[.cite false #["a"]]] }, #[]))
+
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
@@ -345,6 +410,7 @@ def main (args : List String) : IO UInt32 := do
   bibChecks ref
   bibStyleChecks ref
   bibIrChecks ref
+  bibApplyChecks ref
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then

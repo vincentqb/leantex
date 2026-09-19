@@ -1628,6 +1628,8 @@ def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .rule col nm th => (c, .rule col nm th)
   | .picture p => (c, .picture p)
   | .table cols pl pr rows rules => (c, .table cols pl pr rows rules)
+  -- A reference list is not a float: it consumes no number and holds none.
+  | .bibliography src style items => (c, .bibliography src style items)
   | .float kind _ capAbove body caption =>
     let cAfter := if caption.isEmpty then c else c.bump kind
     let num := if caption.isEmpty then none else some (c.get kind + 1)
@@ -1691,6 +1693,7 @@ def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .rule _ _ _ => out
   | .picture _ => out
   | .table _ _ _ _ _ => out
+  | .bibliography _ _ _ => out
   | .float kind num _ body _ =>
     let out := match num with
       | some n => if kind = k then out ++ [n] else out
@@ -1759,6 +1762,7 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
         = out ++ List.range' (c.get k + 1) n := by
   match b with
   | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ | .logo _
+  | .bibliography _ _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ =>
     exact ⟨0, by simp [numberFloatOne], by simp [numberFloatOne, floatNumsOne]⟩
@@ -4141,6 +4145,7 @@ theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
     blockTextOne s (numberFloatOne c b).2 = blockTextOne s b := by
   match b with
   | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ | .logo _
+  | .bibliography _ _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
   | .list o items =>
@@ -4236,8 +4241,7 @@ def keptBy (t : String) : Block → Bool
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
   | .frame _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
   | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak
-  | .table _ _ _ _ _ | .float _ _ _ _ _ => true
-  | .table _ _ _ _ _ | .float _ _ _ _ | .bibliography _ _ _ => true
+  | .table _ _ _ _ _ | .float _ _ _ _ _ | .bibliography _ _ _ => true
 
 mutual
 
@@ -4406,10 +4410,9 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .frame _ _ _ body => orphanFreeList avail body.toList
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _
-  | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak => true
-  | .float _ _ _ body _ => orphanFreeList avail body.toList
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak
   | .bibliography _ _ _ => true
+  | .float _ _ _ body _ => orphanFreeList avail body.toList
 
 def orphanFreeItems (avail : List String) : List (Array Block) → Bool
   | [] => true
@@ -4651,11 +4654,11 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     -- kept whole by every backend: its own leaves survive untouched
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
-  | .float k n ca body caption =>
   | .bibliography src style items =>
     -- kept whole by every backend, as a table is
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
+  | .float k n ca body caption =>
     intro s hs
     rw [textLeavesOne, textLeavesList_acc [plainText caption] body.toList,
       List.mem_append] at hs
@@ -5099,7 +5102,7 @@ def bibSrcsOne (out : Array String) : Block → Array String
   | .nav _ body => bibSrcsList out body.toList
   | .note body => bibSrcsList out body.toList
   | .frame _ _ _ body => bibSrcsList out body.toList
-  | .float _ _ body _ => bibSrcsList out body.toList
+  | .float _ _ _ body _ => bibSrcsList out body.toList
   | .list _ items => bibSrcsItems out items.toList
   | .columns cols => bibSrcsCols out cols.toList
   -- Inline content cannot carry a block marker; declarations and ink
@@ -5121,6 +5124,51 @@ end
 /-- Every `.bib` source the document references: what the driver reads. -/
 def bibRefs (doc : Doc) : Array String :=
   bibSrcsList #[] doc.body.toList
+
+mutual
+
+/-- The declared `\bibliographystyle` names, in document order: resolution
+takes the first — LaTeX keeps one bibliography style per document. The
+walk is `bibSrcs`', over the same markers. -/
+def bibStyleNamesList (out : Array String) : List Block → Array String
+  | [] => out
+  | b :: rest => bibStyleNamesList (bibStyleNamesOne out b) rest
+
+def bibStyleNamesOne (out : Array String) : Block → Array String
+  | .bibliography _ style _ =>
+    match style with
+    | some s => out.push s
+    | none => out
+  | .center body => bibStyleNamesList out body.toList
+  | .quote body => bibStyleNamesList out body.toList
+  | .role _ body => bibStyleNamesList out body.toList
+  | .spaced _ body => bibStyleNamesList out body.toList
+  | .step _ _ body => bibStyleNamesList out body.toList
+  | .only _ body => bibStyleNamesList out body.toList
+  | .nav _ body => bibStyleNamesList out body.toList
+  | .note body => bibStyleNamesList out body.toList
+  | .frame _ _ _ body => bibStyleNamesList out body.toList
+  | .float _ _ _ body _ => bibStyleNamesList out body.toList
+  | .list _ items => bibStyleNamesItems out items.toList
+  | .columns cols => bibStyleNamesCols out cols.toList
+  | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ | .picture _
+  | .table _ _ _ _ _ => out
+
+def bibStyleNamesItems (out : Array String) : List (Array Block) → Array String
+  | [] => out
+  | item :: rest => bibStyleNamesItems (bibStyleNamesList out item.toList) rest
+
+def bibStyleNamesCols (out : Array String) : List (Option Nat × Array Block) → Array String
+  | [] => out
+  | (_, body) :: rest => bibStyleNamesCols (bibStyleNamesList out body.toList) rest
+
+end
+
+/-- The document's declared bibliography style: the first
+`\bibliographystyle` in document order, `none` when nothing declared. -/
+def bibStyleName (doc : Doc) : Option String :=
+  (bibStyleNamesList #[] doc.body.toList)[0]?
 
 mutual
 

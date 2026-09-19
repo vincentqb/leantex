@@ -830,7 +830,7 @@ private def leafScalarsOne (icons math : Array Char) :
   | .fill => (icons, math)
   | .pageNumber => (icons, math)
   | .pageCount => (icons, math)
-  | .cite _ _ => acc
+  | .cite _ _ => (icons, math)
 
 end
 
@@ -842,7 +842,6 @@ private structure ScalarAcc where
   texts : Array String := #[]
   math : Array Char := #[]
 
-  | .cite _ _ => acc
 /-- The plain text of a run and, when it carries formulas or icons, their
 scalars: what keeps the per-scalar fallback one mechanism — a math or icon
 scalar enters the same precompute a text scalar does. -/

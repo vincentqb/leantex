@@ -104,6 +104,7 @@ inductive DiagCode where
   | W0329 | W0330 | W0331 | W0332 | W0333 | W0334 | W0335 | W0337 | W0338 | W0339
   | W0340 | W0341 | W0342 | W0343 | W0345 | W0346 | W0348 | W0354 | W0355
   | W0349 | W0350 | W0356 | W0357
+  | W0351 | W0352 | W0353
   | E0347
   | W0601 | W0602
   deriving Repr, BEq, DecidableEq
@@ -236,6 +237,9 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0350 => ("0350", .config, "a key is \\label'ed more than once; the first wins")
   | .W0356 => ("0356", .degraded, "document class option refused by name; the document renders without it")
   | .W0357 => ("0357", .config, "a definition is expansion-time TeX; refused by design")
+  | .W0351 => ("0351", .degraded, "a citation names no bibliography entry; its mark shows as ?")
+  | .W0352 => ("0352", .degraded, "a malformed .bib entry is skipped; the rest of the file is kept")
+  | .W0353 => ("0353", .degraded, "an unknown bibliography style; the reference list is set as unsrtnat")
   | .E0502 => ("0502", .dropped, "\\input file not found; skipped")
   | .W0601 => ("0601", .degraded, "image unreadable or not found; placeholder box placed")
   | .W0602 => ("0602", .degraded, "image format unusable; placeholder box placed")
@@ -275,7 +279,8 @@ def DiagCode.all : List DiagCode :=
    .W0318, .W0319, .W0320, .W0321, .W0322, .W0323, .W0325, .W0326,
    .W0327, .W0328, .W0329, .W0330, .W0331, .W0332, .W0333, .W0334, .W0335,
    .W0337, .W0338, .W0339, .W0340, .W0341, .W0342, .W0343, .W0345,
-   .W0346, .W0356, .E0347, .W0348, .W0354, .W0349, .W0350, .W0601, .W0602, .W0355, .W0357]
+   .W0346, .W0356, .E0347, .W0348, .W0354, .W0349, .W0350, .W0601, .W0602, .W0355, .W0357,
+   .W0351, .W0352, .W0353]
 
 theorem DiagCode.all_complete (c : DiagCode) : DiagCode.all.contains c := by
   cases c <;> rfl

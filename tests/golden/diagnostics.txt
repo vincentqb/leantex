@@ -347,6 +347,14 @@ error[E0347]: '\runningfoot' in the body is dropped with its content
 ── W0348 (config) a theme replaces a key the document already declared; the theme wins
 warning[W0348]: theme 'moloch' replaces the document's earlier 'alert' from '\palette'
   help: overrides go after '\theme': move the declaration below it
+── W0351 (degraded) a citation names no bibliography entry; its mark shows as ?
+warning[W0351]: citation 'ghost' has no entry in the bibliography; it shows as '?'
+  help: add an entry with key 'ghost' to the .bib file, or fix the spelling in \cite
+── W0352 (degraded) a malformed .bib entry is skipped; the rest of the file is kept
+warning[W0352]: malformed .bib entry: in 'broken': unreadable value for 'year'; the entry is skipped and the rest of 'refs' is kept
+── W0353 (degraded) an unknown bibliography style; the reference list is set as unsrtnat
+warning[W0353]: bibliography style 'mystery' is not one the engine knows; the reference list is set as 'unsrtnat'
+  help: styles known: unsrtnat, unsrt, plainnat, plain
 ── W0354 (config) a caption option the engine does not honour; named and ignored
 warning[W0354]: '\captionsetup' key 'skip' is not honoured; the caption keeps its declared layout
   help: \tokens{ captionsep = ... } declares the caption gap

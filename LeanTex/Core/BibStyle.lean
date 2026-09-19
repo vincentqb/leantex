@@ -387,4 +387,292 @@ def Style.named (name : String) : Option Style :=
   | "plain" => some .plain
   | _ => none
 
+/-! ## Resolution
+
+`apply` is the pure half of the `\bibliography` effect: the driver reads
+the named `.bib` file beside the document (`Ir.bibRefs` is the request) and
+hands its text here; everything after — parsing, ordering, numbering,
+formatting, the rewrite of every citation — is a function of the document
+and that text. -/
+
+/-- First-citation order: the keys the document cites, in order of first
+appearance, each once — the sequence citation-order lists are sorted by
+and numeric labels index into. -/
+def citedKeys (doc : Ir.Doc) : Array String :=
+  citedBlocks #[] doc.body.toList
+where
+  pushKeys (out : Array String) (keys : Array String) : Array String :=
+    keys.foldl (fun out k => if out.contains k then out else out.push k) out
+  citedInline (out : Array String) : Ir.Inline → Array String
+    | .cite _ keys => pushKeys out keys
+    | .styled _ body => citedInlines out body.toList
+    | .colored _ _ body => citedInlines out body.toList
+    | .role _ body => citedInlines out body.toList
+    | .link _ body => citedInlines out body.toList
+    | .underline body => citedInlines out body.toList
+    | .step _ _ body => citedInlines out body.toList
+    | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+    | .fill | .pageNumber | .pageCount | .linebreak _ => out
+  citedInlines (out : Array String) : List Ir.Inline → Array String
+    | [] => out
+    | x :: rest => citedInlines (citedInline out x) rest
+  citedBlock (out : Array String) : Ir.Block → Array String
+    | .para content => citedInlines out content.toList
+    | .section _ _ title => citedInlines out title.toList
+    | .list _ items => citedItems out items.toList
+    | .center body => citedBlocks out body.toList
+    | .quote body => citedBlocks out body.toList
+    | .role _ body => citedBlocks out body.toList
+    | .spaced _ body => citedBlocks out body.toList
+    | .columns cols => citedCols out cols.toList
+    | .step _ _ body => citedBlocks out body.toList
+    | .only _ body => citedBlocks out body.toList
+    | .nav _ body => citedBlocks out body.toList
+    | .note body => citedBlocks out body.toList
+    | .frame title _ _ body => citedBlocks (citedInlines out title.toList) body.toList
+    | .framefoot content => citedInlines out content.toList
+    | .float _ _ _ body caption => citedBlocks (citedInlines out caption.toList) body.toList
+    | .table _ _ _ rows _ => citedRows out rows.toList
+    | .logo content => citedInlines out content.toList
+    | .bibliography _ _ _ => out
+    | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
+    | .rule _ _ _ | .picture _ => out
+  citedBlocks (out : Array String) : List Ir.Block → Array String
+    | [] => out
+    | b :: rest => citedBlocks (citedBlock out b) rest
+  citedItems (out : Array String) : List (Array Ir.Block) → Array String
+    | [] => out
+    | item :: rest => citedItems (citedBlocks out item.toList) rest
+  citedCols (out : Array String) : List (Option Nat × Array Ir.Block) → Array String
+    | [] => out
+    | (_, body) :: rest => citedCols (citedBlocks out body.toList) rest
+  citedRows (out : Array String) : List (Array (Array Ir.Inline)) → Array String
+    | [] => out
+    | row :: rest => citedRows (row.foldl (fun out cell =>
+        citedInlines out cell.toList) out) rest
+
+/-- The comparison a sort order names, over entries carrying their
+first-citation position. Citation order compares the positions, which are
+distinct by construction; author-year compares the label names, then the
+year, then — the tiebreak totality forces — the key, so two entries by the
+same authors in the same year still have one order. -/
+def SortOrder.compare (so : SortOrder) (a b : Resolved) : Ordering :=
+  match so with
+  | .citation => Ord.compare a.position b.position
+  | .authorYear =>
+    (Ord.compare (citeAuthors a.entry).toLower (citeAuthors b.entry).toLower).then
+      ((Ord.compare (citeYear a.entry) (citeYear b.entry)).then
+        (Ord.compare a.key b.key))
+
+/-- Insertion sort by the order's comparison: stable, and small enough to
+prove things about — the list is the cited entries, dozens at most. -/
+def sortResolved (so : SortOrder) (xs : List Resolved) : List Resolved :=
+  match xs with
+  | [] => []
+  | x :: rest => insertResolved so x (sortResolved so rest)
+where
+  insertResolved (so : SortOrder) (x : Resolved) : List Resolved → List Resolved
+    | [] => [x]
+    | y :: rest =>
+      match so.compare x y with
+      | .gt => y :: insertResolved so x rest
+      | _ => x :: y :: rest
+
+/-- What one key renders as, everywhere it is cited: its entry at its
+1-based position in the reference list. -/
+def Resolver := String → Option Resolved
+
+/-- The reference list a style builds from the cited entries: sorted by
+the style's order, positions assigned by list index — so the numeric
+marker IS the sort position, the fact `\cite` marks rest on. -/
+def resolveEntries (style : Style) (cited : Array String)
+    (find : String → Option Entry) : Array Resolved :=
+  -- First-citation positions (1-based, in cited order) feed the sort;
+  -- the final position is the index in the sorted list.
+  let hits := cited.foldl (fun acc k =>
+    match find k with
+    | some e => acc.push { key := k, position := acc.size + 1, entry := e }
+    | none => acc) #[]
+  let sorted := sortResolved style.sort hits.toList
+  (sorted.toArray.mapIdx fun i r => { r with position := i + 1 })
+
+/-- The items a `\bibliography` block ships: each resolved entry formatted
+per the style, its marker the style's own (the position for numeric,
+nothing for author-year — those lists mark no entries). -/
+def bibItems (style : Style) (resolved : Array Resolved) : Array Ir.BibItem :=
+  resolved.map fun r =>
+    { key := r.key
+      marker := match style.cite with
+        | .numeric => some (toString r.position)
+        | .authorYear => none
+      content := renderEntry style.names (style.order r.entry.kind) r.entry }
+
+mutual
+
+/-- The citation rewrite: every `.cite` node becomes the style's inlines
+(`renderCite`), everything else passes through with its body walked. The
+one edit is the citation; `resolveInline_id` below is the machine-checked
+form of that sentence. -/
+-- conserves: none — resolution rewrites citation marks into the style's
+-- rendering; `resolveInline_id` states the walk's identity off citations.
+private def resolveInline (style : CiteStyle) (find : Resolver)
+    (out : Array Ir.Inline) : Ir.Inline → Array Ir.Inline
+  | .cite textual keys =>
+    let rendered := renderCite style textual (keys.map find)
+    out ++ rendered
+  | .styled st body => out.push (.styled st (resolveInlines style find #[] body.toList))
+  | .colored c nm body => out.push (.colored c nm (resolveInlines style find #[] body.toList))
+  | .role nm body => out.push (.role nm (resolveInlines style find #[] body.toList))
+  | .link u body => out.push (.link u (resolveInlines style find #[] body.toList))
+  | .underline body => out.push (.underline (resolveInlines style find #[] body.toList))
+  | .step n last body => out.push (.step n last (resolveInlines style find #[] body.toList))
+  | .text s => out.push (.text s)
+  | .math d src => out.push (.math d src)
+  | .formula d src body => out.push (.formula d src body)
+  | .image src size alt => out.push (.image src size alt)
+  | .icon c label => out.push (.icon c label)
+  | .fill => out.push .fill
+  | .pageNumber => out.push .pageNumber
+  | .pageCount => out.push .pageCount
+  | .linebreak e => out.push (.linebreak e)
+
+private def resolveInlines (style : CiteStyle) (find : Resolver)
+    (out : Array Ir.Inline) : List Ir.Inline → Array Ir.Inline
+  | [] => out
+  | x :: rest => resolveInlines style find (resolveInline style find out x) rest
+
+end
+
+private def resolveArr (style : CiteStyle) (find : Resolver)
+    (xs : Array Ir.Inline) : Array Ir.Inline :=
+  resolveInlines style find #[] xs.toList
+
+mutual
+
+/-- The block half of the rewrite: citations resolve wherever inline
+content stands, and each `\bibliography` marker takes the items the style
+built. -/
+-- conserves: none — resolution rewrites citation marks and fills the
+-- reference list; `resolveInline_id` carries the off-citation identity.
+private def resolveBlock (style : Style) (find : Resolver)
+    (items : Array Ir.BibItem) (out : Array Ir.Block) (b : Ir.Block) :
+    Array Ir.Block :=
+  match b with
+  | .bibliography src declared _ => out.push (.bibliography src declared items)
+  | .para content => out.push (.para (resolveArr style.cite find content))
+  | .section l st title => out.push (.section l st (resolveArr style.cite find title))
+  | .list ordered its => out.push (.list ordered (resolveItems style find items #[] its.toList))
+  | .center body => out.push (.center (resolveBlocks style find items #[] body.toList))
+  | .quote body => out.push (.quote (resolveBlocks style find items #[] body.toList))
+  | .role nm body => out.push (.role nm (resolveBlocks style find items #[] body.toList))
+  | .spaced g body => out.push (.spaced g (resolveBlocks style find items #[] body.toList))
+  | .columns cols => out.push (.columns (resolveCols style find items #[] cols.toList))
+  | .step n last body =>
+    out.push (.step n last (resolveBlocks style find items #[] body.toList))
+  | .only t body => out.push (.only t (resolveBlocks style find items #[] body.toList))
+  | .nav spec body => out.push (.nav spec (resolveBlocks style find items #[] body.toList))
+  | .note body => out.push (.note (resolveBlocks style find items #[] body.toList))
+  | .frame title standout va body =>
+    out.push (.frame (resolveArr style.cite find title) standout va
+      (resolveBlocks style find items #[] body.toList))
+  | .framefoot content => out.push (.framefoot (resolveArr style.cite find content))
+  | .float k n ca body caption =>
+    out.push (.float k n ca (resolveBlocks style find items #[] body.toList)
+      (resolveArr style.cite find caption))
+  | .table cols pl pr rows rules =>
+    out.push (.table cols pl pr
+      (rows.map fun row => row.map (resolveArr style.cite find)) rules)
+  | .logo content => out.push (.logo (resolveArr style.cite find content))
+  | .verbatim c s => out.push (.verbatim c s)
+  | .setPalette p => out.push (.setPalette p)
+  | .setTokens tk => out.push (.setTokens tk)
+  | .pagebreak => out.push .pagebreak
+  | .rule c nm th => out.push (.rule c nm th)
+  | .picture pic => out.push (.picture pic)
+termination_by structural b
+
+private def resolveBlocks (style : Style) (find : Resolver)
+    (items : Array Ir.BibItem) (out : Array Ir.Block) (bs : List Ir.Block) :
+    Array Ir.Block :=
+  match bs with
+  | [] => out
+  | b :: rest => resolveBlocks style find items (resolveBlock style find items out b) rest
+termination_by structural bs
+
+private def resolveItems (style : Style) (find : Resolver)
+    (items : Array Ir.BibItem) (out : Array (Array Ir.Block))
+    (its : List (Array Ir.Block)) : Array (Array Ir.Block) :=
+  match its with
+  | [] => out
+  | item :: rest =>
+    resolveItems style find items
+      (out.push (resolveBlocks style find items #[] item.toList)) rest
+termination_by structural its
+
+private def resolveCols (style : Style) (find : Resolver)
+    (items : Array Ir.BibItem) (out : Array (Option Nat × Array Ir.Block))
+    (cs : List (Option Nat × Array Ir.Block)) :
+    Array (Option Nat × Array Ir.Block) :=
+  match cs with
+  | [] => out
+  | (w, body) :: rest =>
+    resolveCols style find items
+      (out.push (w, resolveBlocks style find items #[] body.toList)) rest
+termination_by structural cs
+
+end
+
+/-- Resolve the document's citations and reference lists against its
+`.bib` sources — the pure half of the `\bibliography` effect. `sources`
+maps each requested name (`Ir.bibRefs`) to the file text the driver read;
+a name the driver could not read is simply absent, its diagnostic already
+fired. Emits W0352 for each malformed `.bib` entry (skipped, the rest
+kept), W0353 when the declared style is unknown (the fallback record
+formats the list and says so), and W0351 for each cited key no entry
+answers (its citation shows `?`, LaTeX's own rendering). A document with
+no `\bibliography` marker is returned untouched: there is nothing to
+resolve against, and the unresolved citations' marks say so on the page. -/
+def apply (sources : Array (String × String)) (doc : Ir.Doc) :
+    Ir.Doc × Array Diag := Id.run do
+  let requested := Ir.bibRefs doc
+  if requested.isEmpty then return (doc, #[])
+  let mut diags : Array Diag := #[]
+  let mut entries : Array Entry := #[]
+  for src in requested do
+    match sources.find? (·.1 == src) with
+    | none => pure ()  -- the driver's missing-file diagnostic already fired
+    | some (_, text) =>
+      let parsed := parse text
+      for (pos, msg) in parsed.errors do
+        diags := diags.push (Diag.of .W0352 s!"malformed .bib entry: {msg}; \
+          the entry is skipped and the rest of '{src}' is kept"
+          (some ⟨src, pos⟩))
+      for e in parsed.entries do
+        unless entries.any (·.key == e.key) do
+          entries := entries.push e
+  let style ← do
+    match Ir.bibStyleName doc with
+    | none => pure Style.unsrtnat
+    | some name =>
+      match Style.named name with
+      | some s => pure s
+      | none =>
+        diags := diags.push (Diag.of .W0353 s!"bibliography style '{name}' is not \
+          one the engine knows; the reference list is set as 'unsrtnat'"
+          (help := "styles known: unsrtnat, unsrt, plainnat, plain"))
+        pure Style.unsrtnat
+  let cited := citedKeys doc
+  let findEntry (k : String) : Option Entry := (entries.find? (·.key == k)).map id
+  for k in cited do
+    if (findEntry k).isNone then
+      diags := diags.push (Diag.of .W0351 s!"citation '{k}' has no entry in the \
+        bibliography; it shows as '?'"
+        (help := s!"add an entry with key '{k}' to the .bib file, or fix the \
+          spelling in \\cite"))
+  let resolved := resolveEntries style cited findEntry
+  let find : Resolver := fun k => resolved.find? (·.key == k)
+  let items := bibItems style resolved
+  let body := resolveBlocks style find items #[] doc.body.toList
+  return ({ doc with body }, diags)
+
 end LeanTex.Core.Bib

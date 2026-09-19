@@ -38,6 +38,13 @@ firing input per code — an exhaustive match, so a new `DiagCode`
 constructor does not build until it names the input that fires it, and the
 coverage check holds each witness to actually firing its code. -/
 
+/-- Diagnostics of resolving a hand-built document against `.bib` text:
+`Bib.apply` is pure, so the witness needs no driver. -/
+def dvBib (bib : String) (cite : String) (style : Option String) : Array Diag :=
+  (Bib.apply #[("refs", bib)]
+    { body := #[.para #[.cite false #[cite]],
+        .bibliography "refs" style #[]] }).2
+
 /-- One firing input per code. `one` maps every slot to one face;
 `mapped` adds a second face and a fallback map for the substitution codes;
 `withMath` carries a math face with no fallback, for the codes only a
@@ -197,6 +204,9 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0354 => dvE (dvDoc
       "\\usepackage[tableposition=top]{caption}\n\\captionsetup[table]{skip=10pt}\n" "x")
   | .W0355 => dvE (dvDoc "\\theme{moloch}\n" "x")
+  | .W0351 => dvBib "@misc{real, year = 2024}" "ghost" none
+  | .W0352 => dvBib "@misc{broken, year = ?}\n@misc{kept, year = 2024}" "kept" none
+  | .W0353 => dvBib "@misc{k, year = 2024}" "k" (some "mystery")
   | .W0332 => dvE (dvDeck "\\theme{moloch}\n"
       "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}")
   | .W0333 => dvL one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
