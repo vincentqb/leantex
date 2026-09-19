@@ -1088,6 +1088,7 @@ text side is the float separation ('\\tokens{ floatsep = ... }')" pos
         | _ => j2
       sayOnce ("ctrl:" ++ name) .W0104
         s!"TeX register arithmetic ('\\{name}') is not supported; skipped" pos
+        (demote := styInternal (← get).file name)
       return some (#[], k)
     | _ => return none
   | "NewDocumentCommand" | "newcommand" | "providecommand" | "renewcommand"
