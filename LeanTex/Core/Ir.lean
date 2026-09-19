@@ -2238,6 +2238,22 @@ structure ElementStyle where
   colour: the moloch title separator between the title block and the
   author block. -/
   separator : Option (Color × Option String) := none
+  /-- A full-measure rule above the element, this thick, in the ink colour:
+  the NeurIPS-lineage top title bar (`\@toptitlebar`, `\hrule height 4\p@`
+  above `\@title`). Read at the title block (`titleBars`); the four skips
+  below place it and its sibling exactly where the venue declares. -/
+  ruleAbove : Option SymGlue := none
+  /-- Space above `ruleAbove`: the venue's `\vskip` before its top bar. -/
+  ruleAboveSkip : Option SymGlue := none
+  /-- Space between `ruleAbove` and the element's first line. -/
+  ruleAboveGap : Option SymGlue := none
+  /-- A full-measure rule below the element, this thick: the bottom title
+  bar (`\@bottomtitlebar`, `\hrule height 1\p@`). -/
+  ruleBelow : Option SymGlue := none
+  /-- Space between the element's last line and `ruleBelow`. -/
+  ruleBelowGap : Option SymGlue := none
+  /-- Space below `ruleBelow`, before what follows (the author block). -/
+  ruleBelowSkip : Option SymGlue := none
   /-- Interaction states, read by the HTML backend only — a printed page
   has no hover or focus, so the PDF path ignores all three keys (said once
   here, not per consumer). `hover` and `focus` colour the element's links
@@ -3866,6 +3882,104 @@ def blockTextColumns (acc : String) : List (Option Nat × Array Block) → Strin
   | (_, body) :: rest => blockTextColumns (blockTextList acc body.toList) rest
 
 end
+
+theorem blockTextList_append (a b : List Block) (acc : String) :
+    blockTextList acc (a ++ b) = blockTextList (blockTextList acc a) b := by
+  induction a generalizing acc with
+  | nil => simp [blockTextList]
+  | cons x xs ih => simp [blockTextList, ih]
+
+/-- A declared vertical skip standing on its own, as `\vskip` does: glue
+the next placed line pays, no content. `none` declares nothing. -/
+private def gapBlock : Option Dim.SymGlue → Array Block
+  | some g => #[.spaced g #[]]
+  | none => #[]
+
+/-- A declared bar with the skips beside it; no declared weight, no ink. -/
+private def barSide (ink : Color × Option String)
+    (before after : Option Dim.SymGlue) : Option Dim.SymGlue → Array Block
+  | some w =>
+    let bar := (gapBlock before).push (.rule ink.1 ink.2 w)
+    let trail := gapBlock after
+    bar ++ trail
+  | none => #[]
+
+/-- One title bracketed by its declared bars, appended to the walk's
+accumulator: the furniture above, the heading itself — a sibling, never
+wrapped, so the centred walk still meets it — and the furniture below. -/
+private def titleStep (st : ElementStyle) (ink : Color × Option String)
+    (out : Array Block) (starred : Bool) (num : Option String)
+    (title : Array Inline) : Array Block :=
+  let above := barSide ink st.ruleAboveSkip st.ruleAboveGap st.ruleAbove
+  let below := barSide ink st.ruleBelowGap st.ruleBelowSkip st.ruleBelow
+  ((out ++ above).push (.section 0 starred num title)) ++ below
+
+/-- Bracket a title block's level-0 heading with its declared bars: a
+full-measure rule above and below at the declared weights, each standing at
+its declared skips — the NeurIPS-lineage title bars
+(`\@toptitlebar`/`\@bottomtitlebar` read as the declarations they are, or a
+document's own `\style{titlepage}{ rule-above = ... }`). Top level only,
+deliberately: the title is the block `Elab.titleBlocks` pushes at the top
+of the title block, and descending would let a nested heading take the
+venue's furniture. Bars and skips are siblings of the heading, never
+wrappers, so the centred walk still meets the heading itself; a gap is
+emitted only beside its own bar, and a trailing skip with nothing after it
+is no ink. The bars are decorative ink in the ink colour: `titleBars_text`
+is the census statement that styling changes no content. -/
+def titleBarsList (st : ElementStyle) (ink : Color × Option String)
+    (out : Array Block) (done : Bool) : List Block → Array Block
+  | [] => out
+  | b :: rest =>
+    match b, done with
+    | .section 0 starred num title, false =>
+      titleBarsList st ink (titleStep st ink out starred num title) true rest
+    | b, _ => titleBarsList st ink (out.push b) done rest
+
+def titleBars (st : ElementStyle) (ink : Color × Option String)
+    (blocks : Array Block) : Array Block :=
+  if st.ruleAbove.isNone && st.ruleBelow.isNone then blocks
+  else titleBarsList st ink #[] false blocks.toList
+
+private theorem blocksText_push (out : Array Block) (b : Block) :
+    blocksText (out.push b) = blockTextOne (blocksText out) b := by
+  simp [blocksText, Array.toList_push, blockTextList_append, blockTextList]
+
+private theorem blocksText_append_barSide (out : Array Block)
+    (ink : Color × Option String) (before after w : Option Dim.SymGlue) :
+    blocksText (out ++ barSide ink before after w) = blocksText out := by
+  cases w <;> cases before <;> cases after <;>
+    simp [barSide, gapBlock, blocksText, blockTextList_append, blockTextList,
+      blockTextOne]
+
+private theorem blocksText_titleStep (st : ElementStyle)
+    (ink : Color × Option String) (out : Array Block) (starred : Bool)
+    (num : Option String) (title : Array Inline) :
+    blocksText (titleStep st ink out starred num title) =
+      blocksText out ++ plainText title := by
+  simp only [titleStep]
+  rw [blocksText_append_barSide, blocksText_push, blocksText_append_barSide]
+  simp [blockTextOne]
+
+private theorem titleBarsList_text (st : ElementStyle) (ink : Color × Option String)
+    (out : Array Block) (done : Bool) (l : List Block) :
+    blocksText (titleBarsList st ink out done l) =
+      blockTextList (blocksText out) l := by
+  fun_induction titleBarsList st ink out done l <;>
+    simp_all only [blockTextList, blocksText_push, blocksText_titleStep,
+      blockTextOne]
+
+/-- Styling never changes content: the bars are decorative ink, so the
+title block's plain-text census under the styled built-in equals the
+unstyled built-in's — the conservation the user reads as "the venue's
+furniture added nothing and lost nothing". -/
+theorem titleBars_text (st : ElementStyle) (ink : Color × Option String) :
+    Conserves blocksText (titleBars st ink) := by
+  intro xs
+  unfold titleBars
+  split
+  · rfl
+  · rw [titleBarsList_text]
+    simp [blocksText, blockTextList]
 
 mutual
 

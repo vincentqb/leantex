@@ -2793,6 +2793,21 @@ private def itemsNaturalWidth (items : Array Item) : Sp :=
     | .img _ bw _ => w + bw
     | .rule bw .. => w + bw) 0
 
+/-- The one door the document title renders through, centred or not: a
+declared `titlepage` font template wraps it — the same template the HTML
+backend applies to its <h1>, so the two surfaces cannot diverge — and
+undeclared it takes display type at the scale's LARGE step in the bold
+face (classes.dtx's \@maketitle sets {\LARGE \@title \par}). -/
+private def collectTitle (a : Acc) (fs : FontSet) (title : Array Inline)
+    (indent : Sp) (center : Bool) : Acc :=
+  match (a.style "titlepage").font with
+  | some tpl =>
+    collectDisplay a fs (Ir.fillTemplate tpl title) indent center a.geom.fontSize
+  | none =>
+    collectDisplay a fs title indent center
+      (a.geom.fontSize * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000)
+      (baseStyle := { bold := true })
+
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
 fraction of the measure (or their widest cell), separated by `2·tabcolsep`
 (classes.dtx) with the outer pads under `@{}`'s control; each row places
@@ -3135,11 +3150,9 @@ private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : Font
     let a := match blk with
       | .para content => collectPara a pats fs content indent true a.geom.fontSize
       -- The centred title block: the level-0 heading centres with the
-      -- furniture around it, at the same LARGE bold the uncentred path sets.
-      | .section 0 _ _ title =>
-        collectDisplay a fs title indent true
-          (a.geom.fontSize * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000)
-          (baseStyle := { bold := true })
+      -- furniture around it, through the same title door as the uncentred
+      -- path.
+      | .section 0 _ _ title => collectTitle a fs title indent true
       -- A centred picture: its box centres in the measure, as the lines of
       -- a centred paragraph do.
       | .picture pic => collectPicture a pic indent true
@@ -3243,14 +3256,11 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
         markerSegs := none, rule := none }) }
   | .section level _ num title =>
     if level == 0 then
-      -- The document title, a heading at level 0: display type at the
-      -- scale's LARGE step in the bold face — classes.dtx's \@maketitle
-      -- sets {\LARGE \@title \par}. Never a divider: it stands inside the
+      -- The document title, a heading at level 0, through the one title
+      -- door (`collectTitle`). Never a divider: it stands inside the
       -- furniture \maketitle built (the title frame, the centred block),
       -- so it opens no page of its own even in slides.
-      collectDisplay a fs title indent false
-        (a.geom.fontSize * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000)
-        (baseStyle := { bold := true })
+      collectTitle a fs title indent false
     else
     -- The section in force, for the footer's \sectiontitle slot — and its
     -- anchor: a level-1 heading is addressable (`Ir.slug`, the id the HTML

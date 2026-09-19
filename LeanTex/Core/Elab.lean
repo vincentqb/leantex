@@ -109,6 +109,11 @@ structure ESt where
   keeping to that is what makes the level-0 heading unique by
   construction — a second call warns and produces nothing. -/
   titleDone : Bool := false
+  /-- The body of the last refused `\maketitle` redefinition (rule (b),
+  W0361): read once more at the preamble's end — when the internals it
+  names (`\@maketitle`, `\@toptitlebar`) are all defined — for the
+  declarative title styling it may carry (`applyRefusedTitleStyle`). -/
+  refusedTitleBody : Option (Array Raw) := none
   /-- Speaker-note bodies met inside inline content, where a block cannot
   stand, each with its `\note`'s position: the enclosing frame drains them
   to its end, so a mid-sentence `\note` neither splits its paragraph nor
@@ -3155,7 +3160,14 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
   -- A separator with nothing else declared is no title page at all.
   match inner with
   | #[.rule _ _ _] => return #[]
-  | _ => return inner
+  | _ =>
+    -- The declared title bars bracket the level-0 heading, in the ink
+    -- colour (`Design.ofDoc`'s own rule: the palette's `fg`, else black).
+    -- `titleBars_text` is the statement that they change no content.
+    let ink := match ctx.palette.find? "fg" with
+      | some c => (c, some "fg")
+      | none => (Ir.Color.black, none)
+    return Ir.titleBars tps ink inner
 
 /-- One keyed declaration accepted from the document, remembered for the
 `\theme` site: replacing it there is worth a word (W0348). The store logic
@@ -3369,12 +3381,225 @@ private def gateRedef (ctx : Ctx) (cmd : UserCmd)
   match checkDiags.find? lossy with
   | some d =>
     refuseRedef cmd (.refused d)
+    if cmd.name == "maketitle" then
+      modify fun st => { st with refusedTitleBody := some cmd.body }
     return none
   | none =>
     if nonEmpty then return some cmd
     else
       refuseRedef cmd .empty
+      if cmd.name == "maketitle" then
+        modify fun st => { st with refusedTitleBody := some cmd.body }
       return none
+
+-- Rule (b)'s third answer: a redefinition the engine cannot run may still
+-- *declare* the built-in's styling. The scan below reads a refused
+-- `\maketitle` body once — expanded through the user commands visible at
+-- the preamble's end — for the closed list of declarative title-styling
+-- constructs: rules (`\hrule height`), skips (`\vskip`), size and weight
+-- declarations, alignment, sitting around the built-in's own datum
+-- (`\@title`). Everything else in the body stays refused and counted.
+
+/-- One observed construct of a refused `\maketitle` body, in body order:
+`barInterpret` reads the sequence relative to the `\@title` event. -/
+private inductive BarEvent where
+  /-- A `\vskip` of this length; `\vskip -\parskip` emits nothing — under
+  the engine's gap model a declared gap already replaces the paragraph
+  skip, so the venue's cancellation is the identity. -/
+  | gap (g : Dim.SymGlue)
+  /-- A `\vskip` whose length the scan cannot read: the run it stands in
+  extracts no gap — an incomplete sum would place a bar where the venue
+  never asked. -/
+  | gapUnknown
+  /-- An `\hrule`; `none` when its declared height cannot be read, which
+  abandons that side's extraction entirely. -/
+  | bar (w : Option Dim.SymGlue)
+  /-- `\@title`, with the size, weight, and alignment declarations in
+  force where it stands. -/
+  | title (size : Option String) (bold : Bool) (align : Option String)
+  /-- Ink that is not the title — an environment, math, verbatim, a word:
+  what closes the bottom bar's trailing skip. -/
+  | content
+
+/-- The declarations in force at a point of the scanned body: threaded
+along each list, copied into groups and expansions so a scoped
+declaration does not escape. -/
+private structure BarSt where
+  size : Option String := none
+  bold : Bool := false
+  align : Option String := none
+
+private def barSkipSp : List Raw → List Raw
+  | [] => []
+  | .space :: rest => barSkipSp rest
+  | r :: rest => r :: rest
+
+/-- A length at the head of a raw run: a self-contained word (`0.25in`),
+or a number completed by `\p@` (`4\p@`, source2e's one-point register).
+`-\parskip` is the identity (`BarEvent.gap`'s docstring says why). -/
+private inductive BarLen where
+  | len (g : Dim.SymGlue)
+  | cancel
+  | unread
+
+private def barLength (l : List Raw) : BarLen :=
+  match barSkipSp l with
+  | .word "-" _ :: rest =>
+    match barSkipSp rest with
+    | .ctrl "parskip" _ :: _ => .cancel
+    | _ => .unread
+  | .word w _ :: rest =>
+    match Decl.parseValue w with
+    | some (.dim d) => .len { width := Dim.Length.ofSp d }
+    | some (.glue g) => .len g
+    | _ =>
+      match barSkipSp rest with
+      | .ctrl "p@" _ :: _ =>
+        match Decl.parseValue (w ++ "pt") with
+        | some (.dim d) => .len { width := Dim.Length.ofSp d }
+        | _ => .unread
+      | _ => .unread
+  | _ => .unread
+
+/-- `\hrule` and its declared height; a bare `\hrule` is TeX's default rule
+thickness, 0.4 pt (TeXbook ch. 21). `none` when a written height cannot be
+read. -/
+private def barRuleWeight (l : List Raw) : Option Dim.SymGlue :=
+  match barSkipSp l with
+  | .word "height" _ :: rest =>
+    match barLength rest with
+    | .len g => some g
+    | _ => none
+  | _ => some { width := Dim.Length.ofSp (Dim.pt 2 / 5) }
+
+/-- A word that is a construct's own operand, never ink: a readable length
+or number (`0.25in`, `4`), a sign, or one of the dimension keywords TeX
+spells beside `\hrule` and `\hbox`. -/
+private def barWordTransparent (w : String) : Bool :=
+  ["-", "height", "width", "depth", "to", "plus", "minus"].contains w ||
+    (match Decl.parseValue w with
+      | some (.dim _) | some (.glue _) | some (.int _) => true
+      | _ => false)
+
+private def sizeCtrlNames : List String := Ir.sizeScale.map (·.1)
+
+/-- The scan: one pass over the refused body, expanding the user commands
+visible below `bound` (the definition-order rule that terminates every
+expansion here), descending into groups with a copy of the declarations in
+force so a scoped declaration does not escape. Unrecognised commands are
+transparent — the refusal already counted them; this pass only collects
+what the closed list can honour. -/
+private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
+    (events : Array BarEvent) : List Raw → Array BarEvent
+  | [] => events
+  | .space :: rest => barScanList user bound st events rest
+  | .par _ :: rest => barScanList user bound st events rest
+  | .sym _ _ :: rest => barScanList user bound st events rest
+  | .word w _ :: rest =>
+    let events := if barWordTransparent w then events else events.push .content
+    barScanList user bound st events rest
+  | .verb _ _ :: rest => barScanList user bound st (events.push .content) rest
+  | .math _ _ _ :: rest => barScanList user bound st (events.push .content) rest
+  | .env _ _ _ :: rest => barScanList user bound st (events.push .content) rest
+  | .group body _ :: rest =>
+    let events := barScanList user bound st events body.toList
+    barScanList user bound st events rest
+  | .ctrl n _ :: rest =>
+    if n == "vskip" then
+      let events := match barLength rest with
+        | .len g => events.push (.gap g)
+        | .cancel => events
+        | .unread => events.push .gapUnknown
+      barScanList user bound st events rest
+    else if n == "hrule" then
+      barScanList user bound st (events.push (.bar (barRuleWeight rest))) rest
+    else if sizeCtrlNames.contains n then
+      barScanList user bound { st with size := some n } events rest
+    else if n == "bf" || n == "bfseries" then
+      barScanList user bound { st with bold := true } events rest
+    else if n == "centering" then
+      barScanList user bound { st with align := some "center" } events rest
+    else if n == "raggedright" then
+      barScanList user bound { st with align := some "left" } events rest
+    else if n == "@title" then
+      barScanList user bound st (events.push (.title st.size st.bold st.align)) rest
+    else if n == "@author" || n == "@date" then
+      barScanList user bound st (events.push .content) rest
+    else
+      match lookupUserIn user bound n with
+      | some (k, cmd) =>
+        if _h : k < bound then
+          let events := barScanList user k st events cmd.body.toList
+          barScanList user bound st events rest
+        else
+          barScanList user bound st events rest
+      | none =>
+        barScanList user bound st events rest
+termination_by l => (bound, sizeOf l)
+decreasing_by
+  all_goals simp_wf
+  all_goals try omega
+  all_goals
+    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+
+/-- The `\vskip`s between two events, summed; `none` when the run holds one
+the scan could not read — an incomplete sum would misplace a bar. -/
+private def barGapSum (events : Array BarEvent) (lo hi : Nat) :
+    Option Dim.SymGlue := Id.run do
+  let mut acc : Option Dim.SymGlue := none
+  for i in [lo:hi] do
+    if h : i < events.size then
+      match events[i] with
+      | .gap g => acc := some (match acc with | some a => a.add g | none => g)
+      | .gapUnknown => return none
+      | _ => pure ()
+  return acc
+
+/-- Read the event sequence relative to `\@title` into the style fragment
+the built-in can honour: the last bar before the title and the first after
+it, each placed by the skips beside it, plus the size, weight, and
+alignment the title stood under. A body with no `\@title` is not a title
+restyling — rule (b) stands alone and nothing is extracted. A bar whose
+weight cannot be read extracts nothing on its side. -/
+private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := Id.run do
+  let some t := events.findIdx? (· matches .title _ _ _) | return none
+  let mut st : Ir.ElementStyle := {}
+  if let some (.title size bold align) := events[t]? then
+    st := { st with
+      align := align
+      font := match size, bold with
+        | some s, true => some #[.styled (.size s) #[.styled .bold #[]]]
+        | some s, false => some #[.styled (.size s) #[]]
+        | none, true => some #[.styled .bold #[]]
+        | none, false => none }
+  let mut above : Option Nat := none
+  for i in [0:t] do
+    if h : i < events.size then
+      if events[i] matches .bar _ then above := some i
+  if let some i := above then
+    if h : i < events.size then
+      if let .bar (some w) := events[i] then
+        st := { st with
+          ruleAbove := some w
+          ruleAboveSkip := barGapSum events 0 i
+          ruleAboveGap := barGapSum events (i + 1) t }
+  let mut below : Option Nat := none
+  for i in [t + 1:events.size] do
+    if h : i < events.size then
+      if below.isNone && (events[i] matches .bar _) then below := some i
+  if let some j := below then
+    if h : j < events.size then
+      if let .bar (some w) := events[j] then
+        let stop := Id.run do
+          for k in [j + 1:events.size] do
+            if hk : k < events.size then
+              if events[k] matches .content then return k
+          return events.size
+        st := { st with
+          ruleBelow := some w
+          ruleBelowGap := barGapSum events (t + 1) j
+          ruleBelowSkip := barGapSum events (j + 1) stop }
+  return if st == ({} : Ir.ElementStyle) then none else some st
 
 /-- `\\define \\name(sig) {body}`, from the element after the `\\define`
 head: parses and validates the definition, returning the bound command and
@@ -3971,8 +4196,13 @@ specs are not modelled")
               let content := if tps.align == some "left" then inner else #[.center inner]
               blocks := blocks.push (.frame #[] false .golden content)
             else
+              -- The flow classes centre the title block, as `\@maketitle`
+              -- does — unless the `titlepage` style declares its matter
+              -- ragged left, the same declaration the slides branch reads.
               modify fun st => { st with titleDone := true }
-              blocks := blocks.push (.center inner)
+              let tps := (ctx.styles.find? "titlepage").getD {}
+              let content := if tps.align == some "left" then inner else #[.center inner]
+              blocks := blocks ++ content
           else
             let level := (sectionLevel n).getD 1
             let mut starred := false
@@ -5010,7 +5240,8 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
 
 def styleKeys : List String :=
   ["font", "before", "after", "rule", "marker", "indent", "gap",
-   "align", "separator", "hover", "focus", "motion"]
+   "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
+   "rule-below", "rule-below-gap", "rule-below-skip", "hover", "focus", "motion"]
 
 /-- `\style{element}{...}`: how an element kind looks. `font` and `marker`
 are inline content and elaborate as such; the rest are lengths and a palette
@@ -5058,6 +5289,12 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
       | "after" => st := { st with after := ← asLength }
       | "indent" => st := { st with indent := ← asLength }
       | "gap" => st := { st with gap := ← asLength }
+      | "rule-above" => st := { st with ruleAbove := ← asLength }
+      | "rule-above-skip" => st := { st with ruleAboveSkip := ← asLength }
+      | "rule-above-gap" => st := { st with ruleAboveGap := ← asLength }
+      | "rule-below" => st := { st with ruleBelow := ← asLength }
+      | "rule-below-gap" => st := { st with ruleBelowGap := ← asLength }
+      | "rule-below-skip" => st := { st with ruleBelowSkip := ← asLength }
       | "rule" =>
         match ctx.palette.resolve valueSrc with
         | some c =>
@@ -6238,6 +6475,37 @@ theorem sty_is_defaults_palette (p : Palette) (k : String) (sty doc : Color)
   Palette.declare_last_wins _ k doc
 
 
+/-- Rule (b)'s remainder, honoured: a `\renewcommand{\maketitle}` the gate
+refused may still *declare* the built-in's styling — rules, skips, size and
+weight, alignment — sitting around the built-in's own datum (`\@title`).
+Read here, at the preamble's end, and not at the gate: the venue defines
+the internals the body names (`\@maketitle`, `\@toptitlebar`) *after* the
+redefinition itself, so only now does the body's expansion reach them. The
+extracted keys merge *under* anything the document declared itself
+(`\style{titlepage}` wins, `Theme.styleMerge`), and the W0361 that refused
+the body gains the clause naming what survived. A redefinition that later
+won (the built-in will not render) extracts nothing; a body-walk
+redefinition keeps plain rule (b) — the venue's site is the preamble. -/
+private def applyRefusedTitleStyle (s : PreState) : EM PreState := do
+  let some body := (← get).refusedTitleBody | return s
+  if (lookupUser s.ctx "maketitle").isSome then return s
+  let events := barScanList s.ctx.user s.ctx.limit {} #[] body.toList
+  let some est := barInterpret events | return s
+  let merged := Theme.styleMerge ((s.styles.find? "titlepage").getD {}) est
+  modify fun st => Id.run do
+    let mut diags := st.diags
+    let mut i := diags.size
+    for _ in [0:st.diags.size] do
+      i := i - 1
+      if h : i < diags.size then
+        let d := diags[i]
+        if d.code == DiagCode.W0361.code && (d.message.splitOn "'\\maketitle'").length > 1 then
+          diags := diags.set i { d with
+            message := d.message ++ ", styled by the redefinition's rules and spacing" } h
+          break
+    return { st with diags := diags, refusedTitleBody := none }
+  return { s with styles := s.styles.declare "titlepage" merged }
+
 /-- Elaborate the whole document: split preamble and body around the
 `document` environment, process declarations, then the body. -/
 def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
@@ -6258,6 +6526,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   -- quantifies over exactly these values; everything after the fold is a
   -- function of the fold's result.
   let s ← (scanDecls file preamble).foldlM applyDecl { ctx := { file := file } }
+  -- What a refused `\maketitle` redefinition still declares, applied once
+  -- the fold has bound everything its body names.
+  let s ← applyRefusedTitleStyle s
   let mut ctx := s.ctx
   let docClass := s.docClass
   let sawClass := s.sawClass
