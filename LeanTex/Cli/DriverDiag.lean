@@ -1,4 +1,5 @@
 import LeanTex.Core.Diag
+import LeanTex.Core.FontDb
 
 /-! The driver's diagnostics, as pure builders: every message the CLI can
 emit for a file, font, or image the host failed to provide is constructed
@@ -42,6 +43,22 @@ def familyMissing (family : String) (near : List String) (installed : Nat) : Dia
 /-- E0404: a font file that exists but does not parse. -/
 def fontFileUnusable (path err : String) : Diag :=
   Diag.of .E0404 s!"cannot use '{path}': {err}"
+
+/-- W0366: a name asked for a weight the family does not ship; the nearest
+installed weight substitutes, both weights named. -/
+def weightSubstituted (asked : String) (requested : Nat) (face : FontDb.Face) : Diag :=
+  Diag.of .W0366
+    (s!"'{asked}' asks for weight {requested}, which is not installed; " ++
+      s!"'{face.family} {face.subfamily}' (weight {face.weight}) is the nearest")
+    (help := "install the named weight, or name the face to use \
+(\\fonts{ sans.upright = \"...\" } and siblings)")
+
+/-- The two substitution codes off one resolution result: a missing
+variant is W0006, a missing weight W0366 — the one door
+`FontDb.Substituted` is rendered through. -/
+def substituted : FontDb.Substituted → Diag
+  | .variant msg => Diag.of .W0006 msg
+  | .weight asked requested face => weightSubstituted asked requested face
 
 /-- W0011: the declared math face has no OpenType MATH table. -/
 def mathFaceNoTable (family path : String) : Diag :=

@@ -941,6 +941,10 @@ where
     for (opt, variant) in [("UprightFont", "upright"), ("BoldFont", "bold"),
         ("ItalicFont", "italic"), ("BoldItalicFont", "bolditalic")] do
       if let some f := feature opt then
+        -- fontspec's `*` stands for the family name (fontspec manual,
+        -- "Choosing additional fonts": "may be replaced by *"):
+        -- `UprightFont = *-Medium` under `{Inter}` names "Inter-Medium".
+        let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
         parts := parts.push s!"{slot}.{variant} = \"{f}\""
     let native := s!"\\fonts\{ {dirPart}{String.intercalate ", " parts.toList} }"
     became s!"\\{name}" native pos

@@ -150,7 +150,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
                                 weight := 400 }
     let ask (declared : Option String) : Array Diag :=
       match FontDb.resolveVariant #[face] "Demo Serif" declared { bold := true } with
-      | some (_, some msg) => #[Diag.of .W0006 msg]
+      | some (_, some sub) => #[DriverDiag.substituted sub]
       | _ => #[]
     ask none ++ ask (some "DemoSerif-Bold.otf")
   | .W0007 => dvH (dvDoc "\\runninghead{name}\n" "x")
@@ -286,6 +286,19 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
     dvData "\\data{ @job{a, role = {X}} }\\val{k.role}" ++
     dvData "\\data{ @job{a, role = {X}} }\\begin{foreach}{j}{trip}\\val{j.role}\\end{foreach}"
   | .E0365 => #[DriverDiag.dataMissing "records" "/documents/records.bib" none]
+  | .W0366 =>
+    let mk (sub : String) (w : Nat) : FontDb.Face :=
+      { path := s!"fonts/DemoSans-{sub}.otf", family := "Demo Sans"
+        subfamily := sub, bold := w ≥ 600, italic := false
+        fixedPitch := false, weight := w }
+    let faces := #[mk "Regular" 400, mk "Bold" 700]
+    let ask (family : String) (declared : Option String) : Array Diag :=
+      match FontDb.resolveVariant faces family declared {} with
+      | some (_, some sub) => #[DriverDiag.substituted sub]
+      | _ => #[]
+    -- The weighted family name and the declared weighted face, each with
+    -- no such weight installed: the nearest weight answers, named.
+    ask "Demo Sans Light" none ++ ask "Demo Sans" (some "Demo Sans Medium")
 
 /-! The message lint: every fired message and help is judged mechanically.
 Each check exists because the pasted real output violated it (the brief's

@@ -89,7 +89,13 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     == ["E0322"])
   t "fonts variant wrong type" (errCodes (pre ++ "\\fonts{ body.bold = 12 }" ++ post)
     == ["E0323"])
+  -- fontspec's `*` in a per-variant name stands for the family name.
+  let d4 := (elabStr (pre ++ "\\setsansfont[UprightFont=*-Medium]{Inter}" ++ post)).1.fonts
+  t "fontspec * expands to the family name" (d4.faceFor 1 false false == some "Inter-Medium")
   -- Resolution: the declared face wins over the family's own variant.
+  let subMsg : Option FontDb.Substituted → Option String
+    | some s => some (DriverDiag.substituted s).message
+    | none => none
   let light : FontDb.Face := { synthFace "Alpha Sans" "/x/as-l.otf" with
     subfamily := "Light", weight := 300 }
   let lightIt : FontDb.Face := { light with
@@ -97,29 +103,51 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
   let faces := #[synthFace "Alpha Sans", light, lightIt]
   t "declared bold face is honoured, no warning"
     ((FontDb.resolveVariant faces "Alpha Sans Light" (some "Alpha Sans") { bold := true }).map
-      (fun r => (r.1.subfamily, r.2)) == some ("Regular", none))
+      (fun r => (r.1.subfamily, subMsg r.2)) == some ("Regular", none))
   t "declared italic face is honoured"
     ((FontDb.resolveVariant faces "Alpha Sans" (some "Alpha Sans Light Italic")
-      { italic := true }).map (fun r => (r.1.subfamily, r.2)) == some ("Light Italic", none))
+      { italic := true }).map (fun r => (r.1.subfamily, subMsg r.2)) ==
+        some ("Light Italic", none))
   -- A declared face the host lacks: family fallback, message says so.
   t "declared face the host lacks degrades and says so"
     ((FontDb.resolveVariant faces "Alpha Sans Light" (some "Nope Sans") { bold := true }).map
-      (fun r => (r.1.subfamily, r.2)) == some ("Light", some
+      (fun r => (r.1.subfamily, subMsg r.2)) == some ("Light", some
         ("'Alpha Sans Light' declares 'Nope Sans' as its bold face, " ++
          "which is not installed; 'Alpha Sans Light' substitutes")))
   -- No declaration: the substitution message names the face actually used.
   t "substitution names the face actually used"
-    ((FontDb.resolveVariant faces "Alpha Sans Light" none { bold := true }).map (·.2) ==
+    ((FontDb.resolveVariant faces "Alpha Sans Light" none { bold := true }).map
+      (subMsg ·.2) ==
       some (some "'Alpha Sans Light' has no bold face; 'Alpha Sans Light' substitutes"))
   t "a satisfied variant carries no message"
-    ((FontDb.resolveVariant faces "Alpha Sans" none {}).map (·.2) == some none)
+    ((FontDb.resolveVariant faces "Alpha Sans" none {}).map (subMsg ·.2) == some none)
   t "a missing family is still the caller's E0403"
     ((FontDb.resolveVariant faces "Nope Sans" (some "Also Nope") { bold := true }).isNone)
+  -- A weighted name with no such weight installed: the nearest installed
+  -- weight substitutes and the message names both weights (W0366).
+  let beta700 : FontDb.Face := { synthFace "Beta Sans" "/x/bs-b.otf" with
+    subfamily := "Bold", bold := true, weight := 700 }
+  let betas := #[synthFace "Beta Sans" "/x/bs-r.otf", beta700]
+  t "a missing weight resolves to the nearest installed weight"
+    ((FontDb.resolveVariant betas "Beta Sans Light" none {}).map
+      (fun r => (r.1.subfamily, subMsg r.2)) == some ("Regular",
+        some ("'Beta Sans Light' asks for weight 300, which is not installed; " ++
+          "'Beta Sans Regular' (weight 400) is the nearest")))
+  t "a declared weighted face the host lacks takes the nearest weight"
+    ((FontDb.resolveVariant betas "Beta Sans" (some "Beta Sans Medium") {}).map
+      (fun r => (r.1.subfamily, subMsg r.2)) == some ("Regular",
+        some ("'Beta Sans Medium' asks for weight 500, which is not installed; " ++
+          "'Beta Sans Regular' (weight 400) is the nearest")))
+  let betaLight : FontDb.Face := { synthFace "Beta Sans" "/x/bs-l.otf" with
+    subfamily := "Light", weight := 300 }
+  t "an installed weight is served exactly and stays silent"
+    ((FontDb.resolveVariant (betas.push betaLight) "Beta Sans Light" none {}).map
+      (fun r => (r.1.subfamily, subMsg r.2)) == some ("Light", none))
   -- A declared file name denotes that exact scanned face.
   let shipped ← FontDb.scanRoots [testFonts]
   t "a declared file name denotes that exact face"
     ((FontDb.resolveVariant shipped "Open Sans" (some "SourceSerifPro-Bold.otf")
-      { bold := true }).map (fun r => (r.1.path, r.2)) ==
+      { bold := true }).map (fun r => (r.1.path, subMsg r.2)) ==
       some (testFonts ++ "/SourceSerifPro-Bold.otf", none))
 
 /-- Icons: the fontawesome5 spellings elaborate to `Inline.icon` — the

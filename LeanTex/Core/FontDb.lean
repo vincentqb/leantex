@@ -486,14 +486,66 @@ def resolveNamed (faces : Array Face) (name : String) : Option Face :=
   else
     (resolve faces name {}).map (·.1)
 
-/-- The face for one slot variant, and the W0006 message when the answer is
+/-- The OS/2 weight a trailing weight word in a face name asks for
+(OpenType spec, OS/2 `usWeightClass` table; the same words CSS
+`font-weight` names): "Fira Sans Light" requests the family's 300 face.
+Returns the family stem and the weight; `none` when the name carries no
+weight word, or nothing but one. Longer words match first, so
+"ExtraLight" is 200, never "Light"'s 300. -/
+def nameWeight (name : String) : Option (String × Nat) :=
+  let words : List (String × Nat) :=
+    [("extralight", 200), ("ultralight", 200), ("semibold", 600),
+     ("demibold", 600), ("extrabold", 800), ("ultrabold", 800),
+     ("hairline", 100), ("medium", 500), ("light", 300), ("black", 900),
+     ("heavy", 900), ("thin", 100), ("book", 400), ("demi", 600),
+     ("bold", 700)]
+  let low := name.toLower
+  words.findSome? fun (w, k) =>
+    if low.endsWith w && low.length > w.length then
+      let stem := (name.dropEnd w.length).toString.trimAscii.toString
+      let stem := if stem.endsWith "-" then
+          (stem.dropEnd 1).toString.trimAscii.toString
+        else stem
+      if stem.isEmpty then none else some (stem, k)
+    else none
+
+/-- Nearest-weight resolution for a name that denotes a weighted face of an
+installed family, when the exact face is missing: "Fira Sans Light" on a
+host with no Light picks Fira Sans's face nearest 300 and reports which
+weight substitutes — never silently a heavier face for a lighter request.
+A bold variant of the weighted name goes to the family's real bold
+(`targetWeight`): a face heavier than the author named is a substitution,
+and the caller says so exactly when the answer's weight differs from the
+ask. Returns the face and the weight that was asked. -/
+def resolveWeightName (faces : Array Face) (name : String) (v : Variant) :
+    Option (Face × Nat) :=
+  (nameWeight name).bind fun (fam, w) =>
+    let target := (norm fam).toList.toArray
+    let byFamily := faces.filter fun f => normEq f.family target
+    let want := if v.bold then targetWeight true else w
+    let matchingSlant := byFamily.filter fun f => f.italic == v.italic
+    let pool := if matchingSlant.isEmpty then byFamily else matchingSlant
+    (pickWeighted pool want).map fun face => (face, want)
+
+/-- What a resolution substituted, when it did. The driver renders each
+arm under its own code: a missing variant of a served family (W0006), or
+a missing weight with the nearest installed weight in its place (W0366) —
+the requested and substituted weights ride along so the diagnostic can
+name both numbers. -/
+inductive Substituted where
+  | variant (msg : String)
+  | weight (asked : String) (requested : Nat) (face : Face)
+
+/-- The face for one slot variant, and what substituted when the answer is
 not what the document asked for. A face the document declared (fontspec's
 `BoldFont=` and siblings) wins over the family's own variant and is met by
-definition; a declared face the host lacks degrades to the family's best,
-saying so. `none` only when the family itself has no face at all — the
-caller's E0403. -/
+definition; a declared face the host lacks degrades — through the nearest
+installed weight when the name asks for one ("Inter-Medium" with no Medium
+installed), else to the family's best variant — saying so either way.
+`none` only when the family itself has no face at all — the caller's
+E0403. -/
 def resolveVariant (faces : Array Face) (family : String) (declared : Option String)
-    (v : Variant) : Option (Face × Option String) :=
+    (v : Variant) : Option (Face × Option Substituted) :=
   let want :=
     if v.bold && v.italic then "bold italic"
     else if v.bold then "bold"
@@ -504,14 +556,27 @@ def resolveVariant (faces : Array Face) (family : String) (declared : Option Str
     match resolveNamed faces name with
     | some face => some (face, none)
     | none =>
-      (resolve faces family v).map fun (face, _) =>
-        (face, some s!"'{family}' declares '{name}' as its {want} face, \
-          which is not installed; '{face.family} {face.subfamily}' substitutes")
+      match resolveWeightName faces name v with
+      | some (face, req) =>
+        some (face, if face.weight == req then none
+          else some (.weight name req face))
+      | none =>
+        (resolve faces family v).map fun (face, _) =>
+          (face, some (.variant s!"'{family}' declares '{name}' as its {want} face, \
+            which is not installed; '{face.family} {face.subfamily}' substitutes"))
   | none =>
-    (resolve faces family v).map fun (face, satisfied) =>
-      if satisfied then (face, none)
-      else (face, some s!"'{family}' has no {want} face; \
-        '{face.family} {face.subfamily}' substitutes")
+    match resolve faces family v with
+    | some (face, satisfied) =>
+      if satisfied then some (face, none)
+      else some (face, some (.variant s!"'{family}' has no {want} face; \
+        '{face.family} {face.subfamily}' substitutes"))
+    | none =>
+      -- The family name itself carries a weight word ("Fira Sans Light"
+      -- with no such face installed): the base family answers at its
+      -- nearest weight rather than not at all.
+      (resolveWeightName faces family v).map fun (face, req) =>
+        (face, if face.weight == req then none
+          else some (.weight family req face))
 
 /-- The documented candidate order every scan-derived pick shares
 (`fallbackPicks`, `pickCompanion`, `firstMathFace`): family name

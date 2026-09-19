@@ -188,16 +188,23 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     [(0, spec.body), (1, spec.sans), (2, spec.mono)]
   -- A slot the document did not name falls back to the body family, and the
   -- body's declared per-variant faces come with it.
+  -- beamer sets a presentation in its sans family: the class's default
+  -- font theme is sans serif (beamer user guide §18, "the default font
+  -- theme uses sans serif fonts"), so in the slides class the default
+  -- text slot is the declared sans family, and its declared per-variant
+  -- faces come with it. The engine's three slots carry no separate serif
+  -- default for decks: \rmfamily follows the deck's face.
+  let slides := doc.docClass == Ir.DocClass.slides
   let resolveName (slot : Nat) : Option String :=
     match slot with
-    | 0 => spec.body
+    | 0 => if slides then spec.sans.orElse fun _ => spec.body else spec.body
     | 1 => spec.sans.orElse fun _ => spec.body
     | _ => spec.mono.orElse fun _ => spec.body
   let declaredFace (slot : Nat) (bold italic : Bool) : Option String :=
     let effective := match slot with
       | 1 => if spec.sans.isSome then 1 else 0
       | 2 => if spec.mono.isSome then 2 else 0
-      | _ => 0
+      | _ => if slides && spec.sans.isSome then 1 else 0
     spec.faceFor effective bold italic
   for (slot, _) in slots do
     let some family := resolveName slot | continue
@@ -213,11 +220,12 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
           let all := FontDb.families faces
           diags := diags.push (DriverDiag.familyMissing family
             (FontDb.nearest all family).toList all.size)
-      | some (face, warning) =>
-        if let some msg := warning then
+      | some (face, sub) =>
+        if let some s := sub then
+          let d := DriverDiag.substituted s
           -- Slots share families, so the same substitution surfaces repeatedly.
-          unless diags.any (·.message == msg) do
-            diags := diags.push (Diag.of .W0006 msg)
+          unless diags.any (·.message == d.message) do
+            diags := diags.push d
         match paths.findIdx? (· == face.path) with
         | some i => index := index.push ((slot, bold, italic), i)
         | none =>

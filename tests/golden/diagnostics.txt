@@ -399,6 +399,11 @@ warning[W0364]: 'end' is absent in job[1]; its entries carry: role, start
 warning[W0364]: 'k' is not bound here
   help: '\begin{foreach}{k}{kind}' binds it over the '@kind' records
 warning[W0364]: no '@trip' records in the data; it carries: @job
+── W0366 (degraded) a named font weight is not installed; the nearest installed weight substitutes
+warning[W0366]: 'Demo Sans Light' asks for weight 300, which is not installed; 'Demo Sans Regular' (weight 400) is the nearest
+  help: install the named weight, or name the face to use (\fonts{ sans.upright = "..." } and siblings)
+warning[W0366]: 'Demo Sans Medium' asks for weight 500, which is not installed; 'Demo Sans Regular' (weight 400) is the nearest
+  help: install the named weight, or name the face to use (\fonts{ sans.upright = "..." } and siblings)
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added
