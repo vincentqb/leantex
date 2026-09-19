@@ -1,0 +1,20 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+section 1 number "1"
+  text "A refused diagram"
+para
+  text "The picture below uses only constructs outside the rendered subset."
+picture 5 shapes
+  rect 0 0 72 0.75 #9E9EA8
+  rect 0 71.25 72 0.75 #9E9EA8
+  rect 0 0 0.75 72 #9E9EA8
+  rect 71.25 0 0.75 72 #9E9EA8
+  label 36 36 "W0362" #9E9EA8 1000
+para
+  text "Text resumes after the placeholder."
+-- diagnostics
+warning[W0334] 16:1 '\shade' is outside the rendered picture subset; not drawn | help: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro
+warning[W0334] 16:1 '\shadedraw' is outside the rendered picture subset; not drawn | help: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro
+warning[W0362] 16:1 no part of this picture is inside the rendered subset; a placeholder box marks its place | help: the box holds the diagram's place; \allow{W0362} accepts the loss

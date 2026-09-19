@@ -259,6 +259,8 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       "\\note{\\begin{frame}{Carried}\nspoken \\note{never carried} words\n\\end{frame}}")
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
+  | .W0362 => dvE (dvDoc "" ("\\begin{tikzpicture}\n" ++
+      "\\shade (0,0) rectangle (1,1);\n\\end{tikzpicture}"))
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
       "not a PNG or JPEG file"]
   | .W0349 => dvE "\\ref{nowhere}"

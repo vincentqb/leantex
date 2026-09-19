@@ -1036,5 +1036,22 @@ rendered picture subset; the option is dropped")
       out := out.push d
   return ({ shapes := ev.shapes }, out)
 
+/-- The stand-in for a picture whose every construct was refused: one
+outlined box carrying the diagnostic code, following the image precedent
+(an image that did not load renders as an outlined placeholder of its
+requested size; W0601). The size is the image default — 1 in square —
+because no honest extent is known, and the outline colour is the image
+placeholder's own grey, so the two failure modes read alike. -/
+def placeholder (code : String) : Ir.Pic.Picture :=
+  let side := Dim.inch 1     -- the image-request default when nothing loads
+  let th := Dim.pt 3 / 4     -- the image placeholder's 0.75 pt outline
+  let grey : Ir.Color := { r := 158, g := 158, b := 168 }  -- its 0.62 0.62 0.66 RG stroke
+  { shapes := #[
+      .rect 0 0 side th grey,
+      .rect 0 (side - th) side th grey,
+      .rect 0 0 th side grey,
+      .rect (side - th) 0 th side grey,
+      .label (side / 2) (side / 2) code grey 1000] }
+
 end LeanTex.Core.Picture
 

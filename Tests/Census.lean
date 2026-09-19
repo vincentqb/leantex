@@ -297,6 +297,14 @@ def censusTable :
     ("one page", c.size == 1),
     ("the band ships as a fill", (c[0]?.map (·.fills == 1)).getD false),
     ("its label ships", hasStr (censusText c) "wide band")]),
+  ("diagram-refused", fun _ c => [
+    ("one page", c.size == 1),
+    ("the placeholder outline ships as four fills",
+      (c[0]?.map (·.fills == 4)).getD false),
+    ("the diagnostic code ships inside the box", hasStr (censusText c) "W0362"),
+    ("the prose around the placeholder ships",
+      hasStr (censusText c) "constructs outside the rendered subset" &&
+        hasStr (censusText c) "Text resumes after the placeholder")]),
   ("tables", fun geom c => [
     ("one page", c.size == 1),
     ("the header row ships", hasStr (censusText c) "Construct"

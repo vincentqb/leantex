@@ -4734,6 +4734,16 @@ ignored without one"
 \\foreach, and \\pgfmath(truncate)setmacro")
             unless pic.shapes.isEmpty do
               blocks := blocks.push (.picture pic)
+            -- An all-refused picture still owes the reader its place: the
+            -- float around it would otherwise collapse to orphan captions.
+            -- A placeholder box marks it, as an unloadable image's does.
+            if pic.shapes.isEmpty && !pdiags.isEmpty then
+              warnOnce ctx "picture:placeholder" .W0362
+                "no part of this picture is inside the rendered subset; a \
+placeholder box marks its place" pos
+                (help := "the box holds the diagram's place; \\allow{W0362} \
+accepts the loss")
+              blocks := blocks.push (.picture (Picture.placeholder DiagCode.W0362.code))
           else if reservedEnv.contains n then
             warnOnce ctx ("env:" ++ n) .W0307
               s!"'\{{n}}' is not implemented yet; its content is not rendered" pos

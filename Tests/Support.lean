@@ -72,7 +72,8 @@ def goldenNames : List String :=
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav",
    "bibliography",
    "icons",
-   "diagram", "diagram-overflow", "tables", "tables-ragged", "subfigures",
+   "diagram", "diagram-overflow", "diagram-refused", "tables", "tables-ragged",
+   "subfigures",
    "math-companion", "math-first", "abstract", "crossref", "eqnum",
    "redefine"]
 

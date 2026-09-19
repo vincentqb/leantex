@@ -1525,9 +1525,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes "\\begin{external}x\\end{external}" == ["W0307"] &&
      (elabStr "\\begin{external}x\\end{external}").1.body == #[])
   -- The tikz subset narrowed W0307: a picture is elaborated, and what it
-  -- cannot render is named per construct instead of dropped whole.
+  -- cannot render is named per construct instead of dropped whole; an
+  -- all-refused picture adds the placeholder's W0362.
   t "elab tikzpicture no longer earns the blanket W0307"
-    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0334"])
+    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0334", "W0362"])
   -- The boundary is named, never silent — for the option bracket too: a
   -- picture option outside the subset is W0334, an unusable value inside
   -- it E0333, exactly as the statement walk already has it.
@@ -1800,7 +1801,7 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
       (picOf (wrap "\\node[draw] at (1,1) {x};")).map (·.shapes.size) == some 1)
   t "one construct looped forty times is one diagnostic, not forty"
     (warnCodes (wrap "\\foreach \\x in {1,...,40}{\\draw (\\x,0) circle (1);}") ==
-      ["W0334"])
+      ["W0334", "W0362"])
   t "an empty tikzpicture ships no block and no diagnostic"
     ((elabStr (wrap "")).2.isEmpty && (picOf (wrap "")).isNone)
 
