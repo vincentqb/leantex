@@ -3662,52 +3662,86 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
       x := x + w
   return out
 
-/-- Place one paragraph's lines from precomputed breakpoints. -/
-private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B := Id.run do
-  let mut b := { b with diags := b.diags ++ j.diags }
-  let geom := b.geom
+/-- The geometry of one paragraph line: its segs, x, set width, and
+whether the break was overfull. Pure in the builder — it reads only the
+page geometry — so the placement pipeline below is the only part of a
+paragraph line that touches pages. -/
+private def paraLineGeom (_fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
+    (prev brk : Nat) : Array Seg × Sp × Sp × Bool :=
   let width := j.target
-  let mut prev := 0
-  let mut first := true
-  for brk in breaks do
-    let a := if first then lineStart j.items 0 else lineStart j.items (prev + 1)
-    let (segs, w, overfull) := setLine j.items a brk width (!j.center && j.justify)
-    if overfull then
-      b := b.warnOverfull
-    let mut x := if j.center then geom.hmargin + j.indent + (width - w) / 2
-      else geom.hmargin + j.indent
-    let mut segs := segs
-    let mut w := w
+  let a := if first then lineStart j.items 0 else lineStart j.items (prev + 1)
+  let (segs0, w0, overfull) := setLine j.items a brk width (!j.center && j.justify)
+  let x0 := if j.center then b.geom.hmargin + j.indent + (width - w0) / 2
+    else b.geom.hmargin + j.indent
+  -- The marker stands `\labelsep` left of the item: half an em, LaTeX's
+  -- own separation (classes.dtx: \setlength\labelsep{.5em}).
+  let sep := b.geom.fontSize / 2
+  let (segs1, x1, w1) :=
     if first then
-      -- The marker stands `\labelsep` left of the item: half an em,
-      -- LaTeX's own separation (classes.dtx: \setlength\labelsep{.5em}).
-      let sep := geom.fontSize / 2
-      if let some (ms, mw) := j.markerSegs then
-        segs := ms ++ #[Seg.gap sep] ++ segs
-        x := x - mw - sep
-        w := w + mw + sep
-      if let some (thickness, color) := j.rule then
-        -- The rule fills what the heading left of its line, a word-space
-        -- away from the text, sitting at half the x-height like a dash.
+      match j.markerSegs with
+      | some (ms, mw) => (ms ++ #[Seg.gap sep] ++ segs0, x0 - mw - sep, w0 + mw + sep)
+      | none => (segs0, x0, w0)
+    else (segs0, x0, w0)
+  -- The rule fills what the heading left of its line, a word-space away
+  -- from the text, sitting at half the x-height like a dash.
+  let (segs2, w2) :=
+    if first then
+      match j.rule with
+      | some (thickness, color) =>
         let gap := j.size / 2
-        let ruleW := width - w - gap
+        let ruleW := width - w1 - gap
         if ruleW > 0 then
-          segs := segs ++ #[Seg.gap gap, Seg.rule ruleW thickness (b.xHeight / 2) color]
-          w := width
-    b := b.placeLine fs x j.size segs w
-    -- The line's underlines, as a sibling at the same baseline. Pushed after
-    -- `placeLine` so a page break has already decided where the text landed;
-    -- the rules land beside it, adding no vertical space.
-    let uSegs := underlineSegs fs j.size segs
-    unless uSegs.isEmpty do
-      if let some last := b.cur.lines.back? then
-        b := b.pushSibling
+          (segs1 ++ #[Seg.gap gap, Seg.rule ruleW thickness (b.xHeight / 2) color], width)
+        else (segs1, w1)
+      | none => (segs1, w1)
+    else (segs1, w1)
+  (segs2, x1, w2, overfull)
+
+/-- What follows a placed paragraph line: its underline siblings (pushed
+after `placeLine`, so a page break has already decided where the text
+landed; the rules land beside it, adding no vertical space) and the
+extra skip a break owes. Neither ships a page. -/
+private def placeParaTrailer (fs : FontSet) (j : ParaJob) (brk : Nat)
+    (segs : Array Seg) (b : B) : B :=
+  let uSegs := underlineSegs fs j.size segs
+  let b3 :=
+    if uSegs.isEmpty then b
+    else match b.cur.lines.back? with
+      | some last => b.pushSibling
           { x := last.x, y := last.y, size := last.size, segs := uSegs, setWidth := 0 }
-    if let some extra := j.extras[brk]? then
-      b := { b with skip := { b.skip with width := b.skip.width + extra } }
-    prev := brk
-    first := false
-  return b
+      | none => b
+  match j.extras[brk]? with
+  | some extra => { b3 with skip := { b3.skip with width := b3.skip.width + extra } }
+  | none => b3
+
+@[simp] private theorem placeParaTrailer_pages (fs : FontSet) (j : ParaJob)
+    (brk : Nat) (segs : Array Seg) (b : B) :
+    (placeParaTrailer fs j brk segs b).pages = b.pages := by
+  simp only [placeParaTrailer]
+  repeat' split
+  all_goals first | rfl | simp
+
+@[simp] private theorem placeParaTrailer_noBreak (fs : FontSet) (j : ParaJob)
+    (brk : Nat) (segs : Array Seg) (b : B) :
+    (placeParaTrailer fs j brk segs b).noBreak = b.noBreak := by
+  simp only [placeParaTrailer]
+  repeat' split
+  all_goals first | rfl | simp
+
+/-- One break of a paragraph placed: the fold step `placePara` runs over
+`breaks`. The threaded state is (builder, previous break, first line).
+A named step so `runFloat_whole` can state page preservation by fold
+induction — the pipeline's shape is the proof's. -/
+private def placeParaLine (fs : FontSet) (j : ParaJob)
+    (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
+  let b0 := st.1
+  let g := paraLineGeom fs j b0 st.2.2 st.2.1 brk
+  let b1 := if g.2.2.2 then b0.warnOverfull else b0
+  (placeParaTrailer fs j brk g.1 (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1), brk, false)
+
+private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
+  (breaks.foldl (placeParaLine fs j)
+    ({ b with diags := b.diags ++ j.diags }, 0, true)).1
 
 mutual
 
@@ -4055,6 +4089,212 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
 (\\page{ vmargin = ... })")) }
       else b2
     { st2 with b := { b2 with noBreak := false } }
+
+/-! ## `float_whole` — the theorem over the builder
+
+STEER3's statement: every glyph of a float's body and caption in `Out`
+shares a page index. The four census tests over `Layout.Out` are the
+realisation check; the theorems here are about `runFloat`, the function
+that ships the pages. Two facts per placement step carry the result: a
+step only ever *extends* the shipped pages (page close appends; nothing
+edits or removes a shipped page), and under `noBreak` — a float group
+replaying on its own page — a step that is not a page boundary ships
+nothing at all. Sourced as the behaviour is: LaTeX's float body is a box
+(`ltfloat.dtx`; TeXbook ch. 15's insertions), placed whole or deferred
+whole, never split. -/
+
+/-- The shipped pages only grow from `b` to `b'`: nothing edits or
+removes a page once it shipped. -/
+private def PagesExtend (b b' : B) : Prop := ∃ s, b'.pages = b.pages ++ s
+
+private theorem pagesExtend_refl (b : B) : PagesExtend b b :=
+  ⟨#[], by simp⟩
+
+private theorem pagesExtend_of_eq {b c : B} (h : c.pages = b.pages) :
+    PagesExtend b c := ⟨#[], by simp [h]⟩
+
+private theorem pagesExtend_trans {a b c : B} :
+    PagesExtend a b → PagesExtend b c → PagesExtend a c
+  | ⟨s1, h1⟩, ⟨s2, h2⟩ => ⟨s1 ++ s2, by rw [h2, h1, Array.append_assoc]⟩
+
+/-- Transport along "same shipped pages": page-preserving wrappers
+(diagnostics, `cur`, skips) around a page-extending step. -/
+private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
+    (he : PagesExtend b b') : PagesExtend b c :=
+  he.imp fun _ hs => h ▸ hs
+
+@[simp] private theorem commit_pages (b : B) (l : LineOut) (d a o : Sp) :
+    (b.commit l d a o).pages = b.pages := rfl
+@[simp] private theorem commit_noBreak (b : B) (l : LineOut) (d a o : Sp) :
+    (b.commit l d a o).noBreak = b.noBreak := rfl
+@[simp] private theorem warnOverfull_pages (b : B) :
+    b.warnOverfull.pages = b.pages := rfl
+@[simp] private theorem warnOverfull_noBreak (b : B) :
+    b.warnOverfull.noBreak = b.noBreak := rfl
+@[simp] private theorem pushSibling_pages (b : B) (l : LineOut) :
+    (b.pushSibling l).pages = b.pages := rfl
+@[simp] private theorem pushSibling_noBreak (b : B) (l : LineOut) :
+    (b.pushSibling l).noBreak = b.noBreak := rfl
+
+private theorem finishPage_extends (b : B) : PagesExtend b b.finishPage :=
+  ⟨#[_], rfl⟩
+
+private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w : Sp) : PagesExtend b (b.placeLine fs x size segs w) := by
+  simp only [B.placeLine]
+  repeat' split
+  all_goals first
+    | (refine pagesExtend_of_eq ?_; simp; done)
+    | (refine pagesExtend_trans (finishPage_extends b) (pagesExtend_of_eq ?_);
+       simp; done)
+
+/-- Under `noBreak` a placed line never closes a page and never clears
+the flag: the group's one legal position has already been decided. -/
+private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w : Sp) (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w).pages = b.pages := by
+  simp only [B.placeLine]
+  repeat' split
+  all_goals first
+    | (simp; done)
+    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+
+private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w : Sp) (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w).noBreak = true := by
+  simp only [B.placeLine]
+  repeat' split
+  all_goals first
+    | (simp [h]; done)
+    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+
+/-- `placeLine` from a pages-preserving wrapper of `b0` still only
+extends `b0`'s shipped pages. -/
+private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
+    (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w : Sp) :
+    PagesExtend b0 (b1.placeLine fs x size segs w) :=
+  pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
+
+private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
+    (st : B × Nat × Bool) (brk : Nat) :
+    PagesExtend st.1 (placeParaLine fs j st brk).1 := by
+  simp only [placeParaLine]
+  exact pagesExtend_congr (placeParaTrailer_pages ..)
+    (placeLine_extends' fs st.1 _ (by split <;> simp) ..)
+
+private theorem placeParaLine_noBreak (fs : FontSet) (j : ParaJob)
+    (st : B × Nat × Bool) (brk : Nat) (h : st.1.noBreak = true) :
+    (placeParaLine fs j st brk).1.pages = st.1.pages ∧
+    (placeParaLine fs j st brk).1.noBreak = true := by
+  simp only [placeParaLine]
+  constructor
+  · rw [placeParaTrailer_pages]
+    split <;> rw [placeLine_pages_noBreak] <;> simp [h]
+  · rw [placeParaTrailer_noBreak]
+    split <;> rw [placeLine_keeps_noBreak] <;> simp [h]
+
+private theorem placePara_extends (fs : FontSet) (b : B) (j : ParaJob)
+    (breaks : Array Nat) : PagesExtend b (placePara fs b j breaks) := by
+  unfold placePara
+  exact Array.foldl_induction
+    (motive := fun _ (acc : B × Nat × Bool) => PagesExtend b acc.1)
+    (pagesExtend_of_eq (by simp))
+    (fun _ acc hacc => pagesExtend_trans hacc (placeParaLine_extends ..))
+
+private theorem placePara_noBreak (fs : FontSet) (b : B) (j : ParaJob)
+    (breaks : Array Nat) (h : b.noBreak = true) :
+    (placePara fs b j breaks).pages = b.pages ∧
+    (placePara fs b j breaks).noBreak = true := by
+  unfold placePara
+  exact Array.foldl_induction
+    (motive := fun _ (acc : B × Nat × Bool) =>
+      acc.1.pages = b.pages ∧ acc.1.noBreak = true)
+    ⟨rfl, h⟩
+    (fun _ acc hacc =>
+      have step := placeParaLine_noBreak fs j acc _ hacc.2
+      ⟨step.1.trans hacc.1, step.2⟩)
+
+/-- Every placement step extends the shipped pages: nothing pops,
+reorders, or rewrites a page that already shipped. With the size check
+in `runFloat`, this is what makes "no page was closed" mean "the shipped
+pages are exactly what they were". -/
+private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (s : StagedOp) : PagesExtend st.b (stepStaged fs imgs st s).b := by
+  cases s <;> simp only [stepStaged, Id.run, Id, pure, bind] <;> repeat' split
+  all_goals first
+    | (refine pagesExtend_of_eq ?_; simp; done)
+    | exact placeLine_extends ..
+    | exact placePara_extends ..
+    | (refine pagesExtend_congr ?_ (finishPage_extends _); simp; done)
+    | (refine pagesExtend_congr ?_
+        (pagesExtend_trans (finishPage_extends _) (pagesExtend_of_eq ?_)) <;> simp <;> done)
+
+/-- Under `noBreak`, a step that is not a page boundary ships nothing
+and keeps the flag: the whole group lands on the page being built. -/
+private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (s : StagedOp) (h : st.b.noBreak = true) (hs : s ≠ .brk) :
+    (stepStaged fs imgs st s).b.pages = st.b.pages ∧
+    (stepStaged fs imgs st s).b.noBreak = true := by
+  cases s <;> simp only [stepStaged, Id.run, Id, pure, bind] <;> repeat' split
+  all_goals first
+    | exact absurd rfl hs
+    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+    | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ h, placeLine_keeps_noBreak _ _ _ _ _ _ h⟩
+    | exact placePara_noBreak _ _ _ _ h
+    | (refine ⟨?_, ?_⟩ <;> simp [h]; done)
+
+private theorem foldSteps_extends (fs : FontSet) (imgs : Image.Store)
+    (group : Array StagedOp) (st : StepSt) :
+    PagesExtend st.b (group.foldl (stepStaged fs imgs) st).b :=
+  Array.foldl_induction
+    (motive := fun _ (acc : StepSt) => PagesExtend st.b acc.b)
+    (pagesExtend_refl st.b)
+    (fun _ _acc hacc => pagesExtend_trans hacc (stepStaged_extends ..))
+
+private theorem foldSteps_noBreak (fs : FontSet) (imgs : Image.Store)
+    (group : Array StagedOp) (st : StepSt) (h : st.b.noBreak = true)
+    (hg : ∀ s ∈ group, s ≠ StagedOp.brk) :
+    (group.foldl (stepStaged fs imgs) st).b.pages = st.b.pages ∧
+    (group.foldl (stepStaged fs imgs) st).b.noBreak = true :=
+  Array.foldl_induction
+    (motive := fun _ (acc : StepSt) => acc.b.pages = st.b.pages ∧ acc.b.noBreak = true)
+    ⟨rfl, h⟩
+    (fun i acc hacc =>
+      have step := stepStaged_noBreak fs imgs acc group[i] hacc.2
+        (hg group[i] (Array.getElem_mem i.2))
+      ⟨step.1.trans hacc.1, step.2⟩)
+
+theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
+    (group : Array StagedOp) (hg : ∀ s ∈ group, s ≠ StagedOp.brk) :
+    (runFloat fs imgs st group).b.pages = st.b.pages ∨
+    (runFloat fs imgs st group).b.pages = st.b.finishPage.pages := by
+  simp only [runFloat]
+  split
+  · -- The group fit where it stood: no page closed, and a step only
+    -- extends, so the shipped pages are exactly the input's.
+    next hsize =>
+    left
+    obtain ⟨s, hs⟩ := foldSteps_extends fs imgs group st
+    have hlen : (group.foldl (stepStaged fs imgs) st).b.pages.size
+        = st.b.pages.size := by simpa using hsize
+    rw [hs] at hlen ⊢
+    simp only [Array.size_append] at hlen
+    have hz : s = #[] := by
+      rw [← Array.size_eq_zero_iff]; omega
+    simp [hz]
+  · -- Replay on a fresh page: the only page that can ship is the
+    -- pre-float flush; under `noBreak` the group closes nothing.
+    have hfold := foldSteps_noBreak fs imgs group
+      { st with b :=
+        { (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty then st.b
+           else st.b.finishPage) with noBreak := true } } rfl hg
+    split at hfold
+    · left
+      repeat' split
+      all_goals simp_all
+    · right
+      repeat' split
+      all_goals simp_all
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. -/
