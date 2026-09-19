@@ -5219,94 +5219,113 @@ def imageRefs (doc : Doc) : Array String := Id.run do
 
 mutual
 
-/-- The `.bib` sources the document's `\bibliography` markers name, in
-document order, deduplicated: the request value the CLI driver fulfils by
-reading each file beside the document and handing its text to `Bib.apply`.
-Files are effects, so the core never opens one — `imageRefs`' shape. -/
-def bibSrcsList (out : Array String) : List Block → Array String
-  | [] => out
-  | b :: rest => bibSrcsList (bibSrcsOne out b) rest
+/-- One leaf-parameterised fold hosts every collect walk over the tree:
+`fi` reads each inline node — applied to the node itself, never to
+children, so the recursion below stays explicit and the checker sees it.
+Document order, a node before its content. -/
+def foldInline (fi : α → Inline → α) (acc : α) (x : Inline) : α :=
+  match x with
+  | .styled _ body => foldInlineList fi (fi acc x) body.toList
+  | .colored _ _ body => foldInlineList fi (fi acc x) body.toList
+  | .role _ body => foldInlineList fi (fi acc x) body.toList
+  | .link _ body => foldInlineList fi (fi acc x) body.toList
+  | .underline body => foldInlineList fi (fi acc x) body.toList
+  | .step _ _ body => foldInlineList fi (fi acc x) body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _
+  | .fill | .pageNumber | .pageCount | .linebreak _ => fi acc x
 
-def bibSrcsOne (out : Array String) : Block → Array String
-  | .bibliography src _ _ => if out.contains src then out else out.push src
-  | .center body => bibSrcsList out body.toList
-  | .quote body => bibSrcsList out body.toList
-  | .role _ body => bibSrcsList out body.toList
-  | .spaced _ body => bibSrcsList out body.toList
-  | .step _ _ body => bibSrcsList out body.toList
-  | .only _ body => bibSrcsList out body.toList
-  | .nav _ body => bibSrcsList out body.toList
-  | .note body => bibSrcsList out body.toList
-  | .frame _ _ _ body => bibSrcsList out body.toList
-  | .float _ _ _ body _ => bibSrcsList out body.toList
-  | .abstract body => bibSrcsList out body.toList
-  | .list _ items => bibSrcsItems out items.toList
-  | .columns cols => bibSrcsCols out cols.toList
-  -- Inline content cannot carry a block marker; declarations and ink
-  -- carry none.
-  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
-  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ | .picture _
-  | .table _ _ _ _ _ => out
-
-def bibSrcsItems (out : Array String) : List (Array Block) → Array String
-  | [] => out
-  | item :: rest => bibSrcsItems (bibSrcsList out item.toList) rest
-
-def bibSrcsCols (out : Array String) : List (Option Nat × Array Block) → Array String
-  | [] => out
-  | (_, body) :: rest => bibSrcsCols (bibSrcsList out body.toList) rest
+def foldInlineList (fi : α → Inline → α) (acc : α) : List Inline → α
+  | [] => acc
+  | x :: rest => foldInlineList fi (foldInline fi acc x) rest
 
 end
 
-/-- Every `.bib` source the document references: what the driver reads. -/
-def bibRefs (doc : Doc) : Array String :=
-  bibSrcsList #[] doc.body.toList
+/-- `foldInline` over an inline tree, the collectors' entry. -/
+def foldInlines (fi : α → Inline → α) (acc : α) (xs : Array Inline) : α :=
+  foldInlineList fi acc xs.toList
+
+def foldTableCells (fi : α → Inline → α) (acc : α) : List (Array Inline) → α
+  | [] => acc
+  | cell :: rest => foldTableCells fi (foldInlineList fi acc cell.toList) rest
+
+def foldTableRows (fi : α → Inline → α) (acc : α) :
+    List (Array (Array Inline)) → α
+  | [] => acc
+  | row :: rest => foldTableRows fi (foldTableCells fi acc row.toList) rest
 
 mutual
 
-/-- The declared `\bibliographystyle` names, in document order: resolution
-takes the first — LaTeX keeps one bibliography style per document. The
-walk is `bibSrcs`', over the same markers. -/
-def bibStyleNamesList (out : Array String) : List Block → Array String
-  | [] => out
-  | b :: rest => bibStyleNamesList (bibStyleNamesOne out b) rest
+/-- The block face of the fold: `fb` reads each block, `fi` each inline —
+the node first, a frame's title and a float's caption before their bodies,
+as the collectors this fold hosts always read them. A `.bibliography`'s
+items are formatted renderings, not authored content, so the fold reads
+the marker itself and does not descend into them. -/
+def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) (b : Block) : α :=
+  match b with
+  | .para content => foldInlineList fi (fb acc b) content.toList
+  | .equation _ content => foldInlineList fi (fb acc b) content.toList
+  | .section _ _ _ title => foldInlineList fi (fb acc b) title.toList
+  | .list _ items => foldBlockItems fb fi (fb acc b) items.toList
+  | .center body => foldBlockList fb fi (fb acc b) body.toList
+  | .quote body => foldBlockList fb fi (fb acc b) body.toList
+  | .abstract body => foldBlockList fb fi (fb acc b) body.toList
+  | .role _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .spaced _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .columns cols => foldBlockCols fb fi (fb acc b) cols.toList
+  | .step _ _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .only _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .nav _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .note body => foldBlockList fb fi (fb acc b) body.toList
+  | .frame title _ _ body =>
+    foldBlockList fb fi (foldInlineList fi (fb acc b) title.toList) body.toList
+  | .framefoot content => foldInlineList fi (fb acc b) content.toList
+  | .float _ _ _ body caption =>
+    foldBlockList fb fi (foldInlineList fi (fb acc b) caption.toList) body.toList
+  | .table _ _ _ rows _ => foldTableRows fi (fb acc b) rows.toList
+  | .logo content => foldInlineList fi (fb acc b) content.toList
+  | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .rule _ _ _ | .picture _ | .bibliography _ _ _ => fb acc b
 
-def bibStyleNamesOne (out : Array String) : Block → Array String
-  | .bibliography _ style _ =>
-    match style with
-    | some s => out.push s
-    | none => out
-  | .center body => bibStyleNamesList out body.toList
-  | .quote body => bibStyleNamesList out body.toList
-  | .role _ body => bibStyleNamesList out body.toList
-  | .spaced _ body => bibStyleNamesList out body.toList
-  | .step _ _ body => bibStyleNamesList out body.toList
-  | .only _ body => bibStyleNamesList out body.toList
-  | .nav _ body => bibStyleNamesList out body.toList
-  | .note body => bibStyleNamesList out body.toList
-  | .frame _ _ _ body => bibStyleNamesList out body.toList
-  | .float _ _ _ body _ => bibStyleNamesList out body.toList
-  | .abstract body => bibStyleNamesList out body.toList
-  | .list _ items => bibStyleNamesItems out items.toList
-  | .columns cols => bibStyleNamesCols out cols.toList
-  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
-  | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ | .picture _
-  | .table _ _ _ _ _ => out
+def foldBlockList (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
+    List Block → α
+  | [] => acc
+  | b :: rest => foldBlockList fb fi (foldBlock fb fi acc b) rest
 
-def bibStyleNamesItems (out : Array String) : List (Array Block) → Array String
-  | [] => out
-  | item :: rest => bibStyleNamesItems (bibStyleNamesList out item.toList) rest
+def foldBlockItems (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
+    List (Array Block) → α
+  | [] => acc
+  | item :: rest => foldBlockItems fb fi (foldBlockList fb fi acc item.toList) rest
 
-def bibStyleNamesCols (out : Array String) : List (Option Nat × Array Block) → Array String
-  | [] => out
-  | (_, body) :: rest => bibStyleNamesCols (bibStyleNamesList out body.toList) rest
+def foldBlockCols (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
+    List (Option Nat × Array Block) → α
+  | [] => acc
+  | (_, body) :: rest => foldBlockCols fb fi (foldBlockList fb fi acc body.toList) rest
 
 end
 
+/-- `foldBlock` over a block tree: `bibRefs`, `bibStyleName`, and
+`BibStyle.citedKeys` are leaf projections of this one traversal. -/
+def foldBlocks (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (xs : Array Block) : α :=
+  foldBlockList fb fi acc xs.toList
+
+/-- Every `.bib` source the document's `\bibliography` markers name, in
+document order, deduplicated: the request value the CLI driver fulfils by
+reading each file beside the document and handing its text to `Bib.apply`.
+Files are effects, so the core never opens one — `imageRefs`' shape. -/
+def bibRefs (doc : Doc) : Array String :=
+  foldBlocks (fun out b => match b with
+    | .bibliography src _ _ => if out.contains src then out else out.push src
+    | _ => out) (fun out _ => out) #[] doc.body
+
 /-- The document's declared bibliography style: the first
-`\bibliographystyle` in document order, `none` when nothing declared. -/
+`\bibliographystyle` in document order, `none` when nothing declared —
+LaTeX keeps one bibliography style per document. -/
 def bibStyleName (doc : Doc) : Option String :=
-  (bibStyleNamesList #[] doc.body.toList)[0]?
+  (foldBlocks (fun out b => match b with
+    | .bibliography _ (some s) _ => out.push s
+    | _ => out) (fun out _ => out) #[] doc.body)[0]?
 
 mutual
 

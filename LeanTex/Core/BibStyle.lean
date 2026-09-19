@@ -397,62 +397,14 @@ and that text. -/
 
 /-- First-citation order: the keys the document cites, in order of first
 appearance, each once — the sequence citation-order lists are sorted by
-and numeric labels index into. -/
+and numeric labels index into. A leaf projection of `Ir.foldBlocks`, the
+one collect traversal. -/
 def citedKeys (doc : Ir.Doc) : Array String :=
-  citedBlocks #[] doc.body.toList
-where
-  pushKeys (out : Array String) (keys : Array String) : Array String :=
-    keys.foldl (fun out k => if out.contains k then out else out.push k) out
-  citedInline (out : Array String) : Ir.Inline → Array String
-    | .cite _ keys => pushKeys out keys
-    | .styled _ body => citedInlines out body.toList
-    | .colored _ _ body => citedInlines out body.toList
-    | .role _ body => citedInlines out body.toList
-    | .link _ body => citedInlines out body.toList
-    | .underline body => citedInlines out body.toList
-    | .step _ _ body => citedInlines out body.toList
-    | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
-    | .label _ | .ref _ _ _ _
-    | .fill | .pageNumber | .pageCount | .linebreak _ => out
-  citedInlines (out : Array String) : List Ir.Inline → Array String
-    | [] => out
-    | x :: rest => citedInlines (citedInline out x) rest
-  citedBlock (out : Array String) : Ir.Block → Array String
-    | .para content => citedInlines out content.toList
-    | .equation _ content => citedInlines out content.toList
-    | .section _ _ _ title => citedInlines out title.toList
-    | .abstract body => citedBlocks out body.toList
-    | .list _ items => citedItems out items.toList
-    | .center body => citedBlocks out body.toList
-    | .quote body => citedBlocks out body.toList
-    | .role _ body => citedBlocks out body.toList
-    | .spaced _ body => citedBlocks out body.toList
-    | .columns cols => citedCols out cols.toList
-    | .step _ _ body => citedBlocks out body.toList
-    | .only _ body => citedBlocks out body.toList
-    | .nav _ body => citedBlocks out body.toList
-    | .note body => citedBlocks out body.toList
-    | .frame title _ _ body => citedBlocks (citedInlines out title.toList) body.toList
-    | .framefoot content => citedInlines out content.toList
-    | .float _ _ _ body caption => citedBlocks (citedInlines out caption.toList) body.toList
-    | .table _ _ _ rows _ => citedRows out rows.toList
-    | .logo content => citedInlines out content.toList
-    | .bibliography _ _ _ => out
-    | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
-    | .rule _ _ _ | .picture _ => out
-  citedBlocks (out : Array String) : List Ir.Block → Array String
-    | [] => out
-    | b :: rest => citedBlocks (citedBlock out b) rest
-  citedItems (out : Array String) : List (Array Ir.Block) → Array String
-    | [] => out
-    | item :: rest => citedItems (citedBlocks out item.toList) rest
-  citedCols (out : Array String) : List (Option Nat × Array Ir.Block) → Array String
-    | [] => out
-    | (_, body) :: rest => citedCols (citedBlocks out body.toList) rest
-  citedRows (out : Array String) : List (Array (Array Ir.Inline)) → Array String
-    | [] => out
-    | row :: rest => citedRows (row.foldl (fun out cell =>
-        citedInlines out cell.toList) out) rest
+  Ir.foldBlocks (fun out _ => out)
+    (fun out x => match x with
+      | .cite _ keys =>
+        keys.foldl (fun out k => if out.contains k then out else out.push k) out
+      | _ => out) #[] doc.body
 
 /-- The comparison a sort order names, over entries carrying their
 first-citation position. Citation order compares the positions, which are
