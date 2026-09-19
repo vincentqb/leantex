@@ -29,7 +29,15 @@ and its font's ascent/descent at the run's size vertically; a rule's is the
 rectangle it fills. A font that declares no x-height is read at the
 conventional half of its size — the same ratio the legibility literature
 uses to convert between x-height and nominal size. The caller skips this
-walk when no assertion reads it. -/
+walk when no assertion reads it.
+
+Engine-placed running furniture (`LineOut.furniture`) is exempt from the
+area judgement: a running head stands in the margin by design — LaTeX's
+own page styles put it there — and the furniture pass places it inside
+its reserved band by construction (`headBandFor`, W0328's single-line
+rule), so judging it against the text-area margins would fail every page
+whose furniture works as declared. Its glyphs still feed the x-height
+floor: margin text must stay legible too. -/
 def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
     (fontsEmbedded : Bool) : Shipped := Id.run do
   let mut worst : Sp := 0
@@ -45,32 +53,34 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
         | .gap w => x := x + w
         | .image _ w h =>
           -- The image box is ink: its full rectangle must respect the area.
-          if geom.hmargin - x > worst then
-            worst := geom.hmargin - x
-            worstEdge := "left"
-          if x + w - right > worst then
-            worst := x + w - right
-            worstEdge := "right"
-          if geom.vmargin - (l.y - h) > worst then
-            worst := geom.vmargin - (l.y - h)
-            worstEdge := "top"
-          if l.y - bottom > worst then
-            worst := l.y - bottom
-            worstEdge := "bottom"
+          unless l.furniture do
+            if geom.hmargin - x > worst then
+              worst := geom.hmargin - x
+              worstEdge := "left"
+            if x + w - right > worst then
+              worst := x + w - right
+              worstEdge := "right"
+            if geom.vmargin - (l.y - h) > worst then
+              worst := geom.vmargin - (l.y - h)
+              worstEdge := "top"
+            if l.y - bottom > worst then
+              worst := l.y - bottom
+              worstEdge := "bottom"
           x := x + w
         | .rule w thickness raise _ =>
-          if geom.hmargin - x > worst then
-            worst := geom.hmargin - x
-            worstEdge := "left"
-          if x + w - right > worst then
-            worst := x + w - right
-            worstEdge := "right"
-          if geom.vmargin - (l.y - raise - thickness) > worst then
-            worst := geom.vmargin - (l.y - raise - thickness)
-            worstEdge := "top"
-          if l.y - raise - bottom > worst then
-            worst := l.y - raise - bottom
-            worstEdge := "bottom"
+          unless l.furniture do
+            if geom.hmargin - x > worst then
+              worst := geom.hmargin - x
+              worstEdge := "left"
+            if x + w - right > worst then
+              worst := x + w - right
+              worstEdge := "right"
+            if geom.vmargin - (l.y - raise - thickness) > worst then
+              worst := geom.vmargin - (l.y - raise - thickness)
+              worstEdge := "top"
+            if l.y - raise - bottom > worst then
+              worst := l.y - raise - bottom
+              worstEdge := "bottom"
           x := x + w
         | .run idx _ _ w glyphs size _ raise =>
           unless glyphs.isEmpty do
@@ -83,18 +93,19 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
             -- A raised run's ink is judged from its own baseline: a
             -- superscript rides above the line's.
             let base := l.y - raise
-            if geom.hmargin - x > worst then
-              worst := geom.hmargin - x
-              worstEdge := "left"
-            if x + w - right > worst then
-              worst := x + w - right
-              worstEdge := "right"
-            if geom.vmargin - (base - asc) > worst then
-              worst := geom.vmargin - (base - asc)
-              worstEdge := "top"
-            if base + desc - bottom > worst then
-              worst := base + desc - bottom
-              worstEdge := "bottom"
+            unless l.furniture do
+              if geom.hmargin - x > worst then
+                worst := geom.hmargin - x
+                worstEdge := "left"
+              if x + w - right > worst then
+                worst := x + w - right
+                worstEdge := "right"
+              if geom.vmargin - (base - asc) > worst then
+                worst := geom.vmargin - (base - asc)
+                worstEdge := "top"
+              if base + desc - bottom > worst then
+                worst := base + desc - bottom
+                worstEdge := "bottom"
             let xhUnits := if font.xHeight > 0 then font.xHeight else upem / 2
             let xh := xhUnits * sz / upem
             minX := some (match minX with

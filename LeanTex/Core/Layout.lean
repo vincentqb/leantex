@@ -403,6 +403,12 @@ structure LineOut where
   size : Sp
   segs : Array Seg
   setWidth : Sp
+  /-- Engine-placed running furniture — head, foot, chrome slots, the
+  logo — laid into its reserved margin band by the furniture pass. Marked
+  so a judge of the document's own ink (`Check.Shipped.ofOut`'s area
+  walk) can tell the band's ink from the flow's: furniture stands in the
+  margin by design, exactly where LaTeX's own page styles put it. -/
+  furniture : Bool := false
   deriving Repr, Inhabited
 
 /-- A filled rectangle behind a page's text: the page background, a frame
@@ -4245,13 +4251,13 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
         let (l?, ds, c) := runLine content (i + 1) headY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
-        if let some l := l? then lines := #[l] ++ lines
+        if let some l := l? then lines := #[{ l with furniture := true }] ++ lines
     if footOn then
       if let some content := doc.foot then
         let (l?, ds, c) := runLine content (i + 1) footY geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
-        if let some l := l? then lines := lines.push l
+        if let some l := l? then lines := lines.push { l with furniture := true }
     -- The chrome footer the page's frame gave it, slot by slot: the muted
     -- key at the scale's small step, both from declarations. Positions are
     -- fixed (`bandSlotX`); when two boxes collide the lower-rank slot
@@ -4265,7 +4271,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
           footSize { color := mutedC } cache
         diags := diags ++ ds
         cache := c
-        if let some l := l? then placed := placed.push (slot, l)
+        if let some l := l? then placed := placed.push (slot, { l with furniture := true })
       let slots := placed
       for hj : j in [0:slots.size] do
         for hk : k in [j+1:slots.size] do
@@ -4289,7 +4295,7 @@ slot yields in place: shorten the content or drop a slot"))
           let (l?, ds, c) := mkLogoLine content cache
           diags := diags ++ ds
           cache := c
-          if let some l := l? then lines := lines.push l
+          if let some l := l? then lines := lines.push { l with furniture := true }
     out := out.set! i { out[i]! with lines := lines }
   -- One report per problem: the same missing glyph or overfull shape in
   -- thirty code blocks is one thing to fix, not thirty lines of console.

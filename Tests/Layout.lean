@@ -2019,6 +2019,19 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       (d.message.splitOn "text.xheight").length == 2)
   t "a reasonable card passes its whole contract"
     ((judge (card "" "Pat Placeholder\\\\ {\\small pat@example.org}")).isEmpty)
+  -- Running furniture stands in the margin by design — LaTeX's own page
+  -- styles put it there — and the furniture pass reserves its band by
+  -- construction, so the area judge exempts the lines it marks: the ink
+  -- the document flows is still held to the frame (the card tests above),
+  -- and furniture glyphs still feed the legibility floor.
+  t "a running head does not fail text.in_area"
+    ((judge ("\\runninghead{Pat Placeholder \\hfill \\pagenumber}\n" ++
+      "\\assert{ text.in_area }\n" ++
+      "\\begin{document}\nbody text\n\\end{document}")).isEmpty)
+  t "furniture glyphs still feed the legibility floor"
+    ((judge ("\\runninghead{{\\tiny Pat}}\n\\assert{ text.xheight >= 1.5mm }\n" ++
+      "\\begin{document}\nbody\n\\end{document}")).any fun d =>
+      (d.message.splitOn "text.xheight").length == 2)
   -- The card's base size resolves through the same PageSpec path every
   -- class uses: declared \page{fontsize} first, then the class option,
   -- then the shared 10pt base — never a card-private constant.
