@@ -500,19 +500,16 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       check ref s!"census {n} outline: {label}" ok
 
 
-/-- Interim watch on the two float-numbering sites, until the single-source
-rework: elaboration *predicts* the number a `\label` inside a float binds
-to (its `figNum`/`tabNum` thread), while `Ir.numberFloats` *assigns* the
-node's number after elaboration, and nothing proves predictor and assigner
-agree. Over every golden fixture: a resolved reference to a key standing
-inside a captioned figure or table shows exactly the number the numbered
-node carries. Keys inside a nested subfloat are the nested float's own and
-subfigure letters have no predictor at all — their shipped form is the
-subfigures census row — so `.sub` stays outside this watch. The rework
-that builds the reference table from the numbered IR deletes the predictor
-and replaces this test with a theorem. This is predictor-vs-assigner
-agreement between two IR computations, not a page claim; the page-facing
-halves live in censusTable's crossref and subfigures rows. -/
+/-- The rendered half of `Ir.refs_agree_with_numbering`: the table's float
+rows are read off the numbered IR (`Ir.floatLabelRows` — one numbering,
+no predictor), and this check witnesses the wiring over every golden
+fixture: a resolved reference to a key standing inside a captioned figure
+or table shows exactly the number the numbered node carries. Keys inside
+a nested subfloat are the nested float's own — their shipped form is the
+subfigures census row — so `.sub` stays outside this watch. This is
+IR-level agreement between resolution and the numbered nodes, not a page
+claim; the page-facing halves live in censusTable's crossref and
+subfigures rows. -/
 def floatRefAgreementChecks (ref : IO.Ref (List String)) : IO Unit := do
   let labelsIn (body : Array Ir.Block) (caption : Array Ir.Inline) : Array String :=
     let fi := fun (out : Array String) (x : Ir.Inline) => match x with

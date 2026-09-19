@@ -326,6 +326,35 @@ def refChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
      (refShows agree "f:1").map (·.1) == some "1" &&
      (refShows agree "t:1").map (·.1) == some "1" &&
      (refShows agree "f:2").map (·.1) == some "2")
+  -- A subfigure's label resolves to the parent's number and its own letter
+  -- (subcaption manual §"Referencing subfigures": \ref shows "1a"); the
+  -- parent's label keeps the plain number. The binding is read off the
+  -- numbered IR (Ir.floatLabelRows) — elaboration predicts nothing.
+  let (sub, _) := art ("\\begin{figure}\n" ++
+    "\\begin{subfigure}{0.4\\textwidth}left\\caption{L}\\label{sf:l}\\end{subfigure}\n" ++
+    "\\begin{subfigure}{0.4\\textwidth}right\\caption{R}\\label{sf:r}\\end{subfigure}\n" ++
+    "\\caption{Parent}\\label{fig:p}\\end{figure}\n" ++
+    "See \\ref{sf:l}, \\ref{sf:r}, \\ref{fig:p}.")
+  t "a subfigure label resolves to the parent number and its letter"
+    ((refShows sub "sf:l").map (·.1) == some "1a" &&
+     (refShows sub "sf:r").map (·.1) == some "1b" &&
+     (refShows sub "fig:p").map (·.1) == some "1")
+  -- First wins across the merge: a duplicate key inside a float cannot
+  -- override the binding of its first declaration outside the float —
+  -- the collect reports every label, so the float duplicate is never a
+  -- key's first row.
+  let (dupf, dupfDs) := art ("\\section{A}\n\\section{B}\\label{k}\n" ++
+    "\\begin{figure}\\caption{C}\\label{k}\\end{figure}\nSee \\ref{k}.")
+  t "a float duplicate of an outside key warns and the first wins"
+    (dupfDs.any (·.code == "W0350") && refShows dupf "k" == some ("2", some "k"))
+  -- A numbered equation inside a float keeps the equation's binding: the
+  -- collect reports an equation's labels unbound, so the merge leaves the
+  -- number elaboration recorded.
+  let (eqf, _) := art ("\\begin{figure}\\caption{C}\n" ++
+    "\\begin{equation}\\label{eq:f} x = y \\end{equation}\\end{figure}\n" ++
+    "As \\eqref{eq:f}.")
+  t "an equation label inside a float keeps the equation's number"
+    ((refShows eqf "eq:f").map (·.1) == some "(1)")
   -- The anchor sanitiser: author text entering an id keeps no whitespace.
   t "an anchor keeps no whitespace and stays nonempty"
     (Ir.labelAnchor "a b\"c" == "a-b-c" && Ir.labelAnchor "" == "label")

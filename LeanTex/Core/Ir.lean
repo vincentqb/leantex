@@ -5603,6 +5603,149 @@ theorem resolveOneRef_missing (table : RefTable) (key : String) (paren : Bool)
     simp [h e hmem]
   rw [hfind]
 
+-- Float label rows. Elaboration cannot know a float's number — `numberFloats`
+-- assigns it once the whole body exists — so the table's float rows are read
+-- off the numbered IR by this collect, and no second numbering exists to
+-- disagree with (`refs_agree_with_numbering` is the statement a predictor
+-- could only hope for).
+
+/-- One label leaf into the rows, bound to the float binding in force. -/
+private def floatLabelPush (float : Option String)
+    (out : Array (String × Option String)) : Inline → Array (String × Option String)
+  | .label k => out.push (k, float)
+  | _ => out
+
+mutual
+
+/-- The float binding in force at every `.label` of the numbered IR, in
+document order. `float` is the enclosing captioned float's rendering —
+`none` outside every captioned float — and every label is reported, bound
+or not, so a key's first row is its first declaration and a later
+duplicate inside a float can never override it (`withFloatRows` reads only
+the first). A captioned float binds its number over its own extent, the
+caption included; a captionless one leaves the enclosing binding in
+force; a captioned subfloat binds its parent's number plus its letter
+(subcaption manual §"Referencing subfigures": `\ref` shows `1a`, the
+figure number then `\alph`); an equation's content and a section's title
+bind to numbers elaboration already recorded, so their labels report
+unbound here. The IR keeps a float body's labels but not their side of
+the caption, so a label anywhere under a captioned float binds to it —
+LaTeX documents `\label` before `\caption` as a user error (clsguide §"The
+label commands"); here it resolves to the number the author captioned. -/
+def floatLabelOne (float : Option String) (out : Array (String × Option String)) :
+    Block → Array (String × Option String)
+  | .para content => foldInlineList (floatLabelPush float) out content.toList
+  | .equation _ content => foldInlineList (floatLabelPush none) out content.toList
+  | .section _ _ _ title => foldInlineList (floatLabelPush none) out title.toList
+  | .list _ items => floatLabelItems float out items.toList
+  | .center body => floatLabelList float out body.toList
+  | .quote body => floatLabelList float out body.toList
+  | .abstract body => floatLabelList float out body.toList
+  | .role _ body => floatLabelList float out body.toList
+  | .spaced _ body => floatLabelList float out body.toList
+  | .columns cols => floatLabelCols float out cols.toList
+  | .step _ _ body => floatLabelList float out body.toList
+  | .only _ body => floatLabelList float out body.toList
+  | .nav _ body => floatLabelList float out body.toList
+  | .note body => floatLabelList float out body.toList
+  | .frame title _ _ body =>
+    floatLabelList float (foldInlineList (floatLabelPush float) out title.toList)
+      body.toList
+  | .framefoot content => foldInlineList (floatLabelPush float) out content.toList
+  | .float kind num _ body caption =>
+    let mine := match num with
+      | none => float
+      | some m =>
+        match kind with
+        | .sub => some (float.getD "" ++ subLetter m)
+        | _ => some (toString m)
+    floatLabelList mine (foldInlineList (floatLabelPush mine) out caption.toList)
+      body.toList
+  | .table _ _ _ rows _ => foldTableRows (floatLabelPush float) out rows.toList
+  | .logo content => foldInlineList (floatLabelPush float) out content.toList
+  | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .rule _ _ _ | .picture _ | .bibliography _ _ _ => out
+
+def floatLabelList (float : Option String) (out : Array (String × Option String)) :
+    List Block → Array (String × Option String)
+  | [] => out
+  | b :: rest => floatLabelList float (floatLabelOne float out b) rest
+
+def floatLabelItems (float : Option String) (out : Array (String × Option String)) :
+    List (Array Block) → Array (String × Option String)
+  | [] => out
+  | item :: rest => floatLabelItems float (floatLabelList float out item.toList) rest
+
+def floatLabelCols (float : Option String) (out : Array (String × Option String)) :
+    List (Option Nat × Array Block) → Array (String × Option String)
+  | [] => out
+  | (_, body) :: rest => floatLabelCols float (floatLabelList float out body.toList) rest
+
+end
+
+/-- `floatLabelOne` over the numbered body: every label with the float
+binding in force where it stands, the table's float half. -/
+def floatLabelRows (xs : Array Block) : RefTable :=
+  floatLabelList none #[] xs.toList
+
+/-- The label table with its float rows filled from the numbered IR: an
+entry whose key's first `.label` stands under a captioned float takes that
+float's number; every other entry keeps elaboration's binding (headings
+and equations number at elaboration; a key bound nowhere keeps `none` and
+W0349 names it). `rows` is `floatLabelRows` over the numbered body. -/
+def withFloatRows (labels rows : RefTable) : RefTable :=
+  labels.map fun e =>
+    match rows.find? (·.1 == e.1) with
+    | some (_, some n) => (e.1, some n)
+    | _ => e
+
+/-- The merge keeps keys and takes exactly the collect's binding: when the
+collect's first row for `key` carries a number and elaboration recorded
+the key at all, the merged table's answer for `key` is that number. -/
+theorem withFloatRows_finds (labels rows : RefTable) (key : String) (n : String)
+    (hrow : rows.find? (·.1 == key) = some (key, some n))
+    (hkey : (labels.find? (·.1 == key)).isSome) :
+    (withFloatRows labels rows).find? (·.1 == key) = some (key, some n) := by
+  unfold withFloatRows
+  obtain ⟨e, he⟩ := Option.isSome_iff_exists.mp hkey
+  have hekey : e.1 = key := by simpa using Array.find?_some he
+  rw [Array.find?_map]
+  have hp : ((fun x : String × Option String => x.1 == key) ∘ fun e =>
+      match rows.find? (·.1 == e.1) with
+      | some (_, some n) => (e.1, some n)
+      | _ => e) = fun e : String × Option String => e.1 == key := by
+    funext x
+    cases hx : rows.find? (·.1 == x.1) with
+    | none => simp [Function.comp, hx]
+    | some p =>
+      obtain ⟨pk, pv⟩ := p
+      cases pv <;> simp [Function.comp, hx]
+  rw [hp, he, Option.map_some]
+  rw [hekey, hrow]
+
+/-- Floats are numbered once, from the proved walk. `numberFloats` assigns
+every captioned float's number (`numberFloats_exact`: gapless, 1-based,
+document order), `floatLabelRows` reads those numbers off the numbered
+nodes where each `\label` stands, `withFloatRows` carries them into the
+table, and resolution shows precisely that entry: a resolved reference to
+a float shows exactly the number the float node carries, and targets the
+label's anchor. Before this pipeline, elaboration *predicted* the number
+and nothing related predictor to assigner; now there is no predictor, and
+the agreement is this theorem, stated over the engine's own functions. -/
+theorem refs_agree_with_numbering (labels : RefTable) (xs : Array Block)
+    (key : String) (n : String) (paren : Bool) (t : String) (a : Option String)
+    (hrow : (floatLabelRows (numberFloats xs)).find? (·.1 == key)
+      = some (key, some n))
+    (hkey : (labels.find? (·.1 == key)).isSome) :
+    resolveRefInline (withFloatRows labels (floatLabelRows (numberFloats xs)))
+        (.ref key paren t a)
+      = .ref key paren (if paren then "(" ++ n ++ ")" else n)
+        (some (labelAnchor key)) := by
+  have h := withFloatRows_finds labels _ key n hrow hkey
+  show resolveOneRef _ key paren = _
+  unfold resolveOneRef
+  rw [h]
+
 def dumpDiag (d : Diag) : String :=
   let where' := match d.span with
     | some sp => s!"{sp.pos.line}:{sp.pos.col}"

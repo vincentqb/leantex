@@ -149,17 +149,14 @@ structure ESt where
   and the section counter restarted — a from-here-forward flow state, the
   `\logo`/body-`\palette` scope model, never a brace-scoped flag. -/
   inAppendix : Bool := false
-  /-- The figure and table counters, stepped at each float's first
-  `\caption` in flow order, as LaTeX's `\refstepcounter` is. -/
-  figNum : Nat := 0
-  tabNum : Nat := 0
   /-- The equation counter, per document (amsmath's `\numberwithin` is not
   modelled; a document that declares it keeps the per-document numbers). -/
   eqNum : Nat := 0
   /-- The number of the nearest preceding numbered thing — what a `\label`
-  declared here binds to. A heading sets it for the flow after it; a
-  captioned float sets it for its own extent and restores the enclosing
-  value at its end, LaTeX's group scoping. -/
+  declared here binds to. A heading sets it for the flow after it. A
+  captioned float never writes here: its number exists only after
+  `Ir.numberFloats` runs on the finished body, so the labels under it are
+  bound from the numbered IR (`Ir.floatLabelRows`), never predicted. -/
   refTarget : Option String := none
   /-- The label table in flow order: each key with the number it bound to.
   The first declaration of a key wins (LaTeX's behaviour); a second is
@@ -3940,10 +3937,6 @@ has nowhere for a float to float" pos
             let mut rest : Array Raw := #[]
             let mut caption : Array Inline := #[]
             let mut capAbove := false
-            -- The float's number is scoped to its own extent: a \label
-            -- inside binds to it, one after the \end binds to whatever
-            -- enclosed the float (LaTeX's group scoping).
-            let savedTarget := (← get).refTarget
             let mut j := k
             for _ in [k:body.size] do
               if h' : j < body.size then
@@ -3957,18 +3950,6 @@ has nowhere for a float to float" pos
                     unless caption.isEmpty do
                       diag ctx .W0311 s!"this '\\caption' replaces the {n}'s earlier caption"
                         (some cpos) (help := "the last one wins; remove the other '\\caption'")
-                    if caption.isEmpty then
-                      -- The first \caption steps the float's counter, as
-                      -- LaTeX's \refstepcounter does; labels anywhere in
-                      -- the float bind to this number.
-                      let st ← get
-                      let num := if kind == Ir.FloatKind.table then st.tabNum + 1
-                        else st.figNum + 1
-                      modify fun st =>
-                        if kind == Ir.FloatKind.table then
-                          { st with tabNum := num, refTarget := some (toString num) }
-                        else
-                          { st with figNum := num, refTarget := some (toString num) }
                     caption ← elabInlines ctx t
                     capAbove := innerBlocks.isEmpty && cols.isEmpty
                       && rest.all isSpaceOrPar
@@ -4068,7 +4049,6 @@ text width; the box shares the leftover" spos
             unless caption.isEmpty do
               inner := Ir.setAltBlocks (Ir.plainText caption) inner
             blocks := blocks.push (.float kind none capAbove inner caption)
-            modify fun st => { st with refTarget := savedTarget }
           else if n == "columns" then
             -- `[T]`-and-friends alignment options are ignored with a note:
             -- columns are top-aligned (PLAN, M5). A column's width is its
@@ -5829,17 +5809,22 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   -- will resolve against), once, before any backend reads the body.
   let blocks := Ir.numberFloats (← elabBlocks ctx body)
   -- Cross-references resolve here, once, against the whole document's
-  -- labels: `Ir.resolveRefs` is a pure pass over the IR, so no backend
-  -- re-scans for labels and a forward reference costs nothing. The
+  -- labels: the float rows are read off the numbered IR it just produced
+  -- (`Ir.floatLabelRows`), so a label under a captioned float binds to the
+  -- number the node carries — one numbering, `Ir.refs_agree_with_numbering`
+  -- the statement — and `Ir.resolveRefs` is a pure pass over the IR, so no
+  -- backend re-scans for labels and a forward reference costs nothing. The
   -- diagnostics are judged from the recorded sites — a reference cannot be
   -- judged where it stands, because its label may follow it.
   let stRefs ← get
+  let table := if stRefs.labels.isEmpty then stRefs.labels
+    else Ir.withFloatRows stRefs.labels (Ir.floatLabelRows blocks)
   let blocks := if stRefs.refSites.isEmpty then blocks
-    else Ir.resolveRefs stRefs.labels blocks
+    else Ir.resolveRefs table blocks
   let mut warnedRefs : Array String := #[]
   for (key, rpos) in stRefs.refSites do
     unless warnedRefs.contains key do
-      match stRefs.labels.find? (·.1 == key) with
+      match table.find? (·.1 == key) with
       | some (_, some _) => pure ()
       | some (_, none) =>
         warnedRefs := warnedRefs.push key
