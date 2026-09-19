@@ -88,7 +88,7 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       (some 400, #[.para #[.text "right"]])]]])
   -- PDF: the columns' first lines share a baseline, and the second sits
   -- past the first one's measure — visibly two columns, by geometry.
-  let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+  let out := layoutOf oneFace doc
   t "pdf columns share a baseline side by side"
     (match (out.pages[0]?.map (·.lines)).getD #[] with
      | #[l, r] => l.y == r.y && r.x > l.x && r.x ≥ l.x + l.setWidth
@@ -99,7 +99,7 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "several words that cannot possibly fit one half measure line\n" ++
     "\\end{column}\\begin{column}{0.5\\textwidth}\nright\n\\end{column}\\end{columns}")
   let (wDoc, _) := elabStr wide
-  let wOut := Layout.run (Layout.Geom.ofPage wDoc.page) oneFace none wDoc
+  let wOut := layoutOf oneFace wDoc
   t "a column breaks lines at its own measure"
     (((wOut.pages[0]?.map (·.lines)).getD #[]).size > 2)
   -- HTML: a grid whose tracks carry the declared widths.
@@ -138,7 +138,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       .para #[.text "one"],
       .step 2 none #[.para #[.text "two"], .step 3 none #[.para #[.text "three"]]]]])
   -- PDF: one page per step; pending content dims, nothing moves.
-  let out := Layout.run (Layout.Geom.ofPage pDoc.page) oneFace none pDoc
+  let out := layoutOf oneFace pDoc
   t "pdf emits one page per step" (out.pages.size == 3)
   let coords (p : Layout.PageOut) : Array (Dim.Sp × Dim.Sp) :=
     p.lines.map fun l => (l.x, l.y)
@@ -173,7 +173,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       #[.frame #[] false .center #[.para #[.step 2 (some 3) #[.text "ranged"]]]])
   let (rDoc, rDs) := elabStr (deck169Frame ("\\begin{itemize}\n\\item<1> opening\n" ++
     "\\item<2-> second\n\\item<3-> third\n\\end{itemize}"))
-  let rOut := Layout.run (Layout.Geom.ofPage rDoc.page) oneFace none rDoc
+  let rOut := layoutOf oneFace rDoc
   t "content past its range end dims again" (rDs.isEmpty &&
     rOut.pages.size == 3 &&
     (match rOut.pages[0]?, rOut.pages[2]? with
@@ -200,7 +200,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "\\palette{ hot = #AA0000 }\n\\begin{document}\n\\begin{frame}\n" ++
     "opening\n\n\\pause\n\\hot{closing beat}\n\\end{frame}\n\\end{document}"
   let (cDoc, cDs) := elabStr colorSrc
-  let cOut := Layout.run (Layout.Geom.ofPage cDoc.page) oneFace none cDoc
+  let cOut := layoutOf oneFace cDoc
   let hotCover := (Ir.Design.ofDoc cDoc).cover.of { r := 0xAA, g := 0, b := 0 }
   t "a pending step's explicit colours are covered as themselves, quieter"
     (cDs.isEmpty && cOut.pages.size == 2 &&
@@ -214,7 +214,7 @@ def overlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
       | _, _ => false))
   let (vDoc, vDs) := elabStr
     (deck169Frame "opening\n\n\\pause\n\\begin{verbatim}\ncode line\n\\end{verbatim}")
-  let vOut := Layout.run (Layout.Geom.ofPage vDoc.page) oneFace none vDoc
+  let vOut := layoutOf oneFace vDoc
   t "pending verbatim dims like any other text"
     (vDs.isEmpty && vOut.pages.size == 2 &&
      (match vOut.pages[0]?, vOut.pages[1]? with
@@ -269,7 +269,7 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
         #[.para #[.text "first"]],
         #[.step 2 none #[.para #[.text "second"]]],
         #[.step 3 none #[.para #[.text "third"]]]]]])
-  let pOut := Layout.run (Layout.Geom.ofPage pDoc.page) oneFace none pDoc
+  let pOut := layoutOf oneFace pDoc
   t "a paused list gets one handout page per step" (pOut.pages.size == 3)
   -- \pause inside a column steps the column's remaining blocks.
   let (cDoc, cDs) := elabStr (deck169Frame
@@ -318,8 +318,8 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
       .note #[.para #[.text "Hidden speaker words."]]]])
   -- PDF: the note adds nothing — the page is the page without it.
   let (bare, _) := elabStr (deck169Frame "Visible words.")
-  let noted := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
-  let plain := Layout.run (Layout.Geom.ofPage bare.page) oneFace none bare
+  let noted := layoutOf oneFace doc
+  let plain := layoutOf oneFace bare
   t "pdf omits the note entirely"
     (noted.pages.map (·.lines.size) == plain.pages.map (·.lines.size))
   -- HTML: an inert hidden aside, available to a speaker view.
@@ -373,7 +373,7 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     ("\\begin{frame}[standout]\nOne.\n\n\\pause\nTwo.\n\\end{frame}"))
   t "stepped standout source clean" soDs.isEmpty
   let geom := Layout.Geom.ofPage soDoc.page
-  let so := Layout.run geom oneFace none soDoc
+  let so := layoutOf oneFace soDoc geom
   t "a stepped standout frame gets one page per step" (so.pages.size == 2)
   let fg : Ir.Color := { r := 0x23, g := 0x37, b := 0x3B }
   let bg : Ir.Color := { r := 0xFF, g := 0xFF, b := 0xFF }
@@ -391,7 +391,7 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     ("\\begin{frame}{Steps}\na\n\n\\pause\nb\n\n\\pause\nc\n\\end{frame}\n" ++
      "\\section{Mid}\n\\begin{frame}{After}\nd\n\\end{frame}"))
   t "stepped deck source clean" pDs.isEmpty
-  let pOut := Layout.run (Layout.Geom.ofPage pDoc.page) oneFace none pDoc
+  let pOut := layoutOf oneFace pDoc
   t "step pages plus divider plus frame" (pOut.pages.size == 5)
   let alert : Ir.Color := { r := 0xA5, g := 0x5A, b := 0x13 }
   let mp : Dim.Sp := (Layout.Geom.ofPage pDoc.page).textWidth * 7875 / 10000
@@ -404,8 +404,8 @@ def themeReconcileChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (nDoc, _) := elabStr (themed
     "\\begin{frame}[standout]\nShown.\n\\note{never printed}\n\\end{frame}")
   let (bDoc, _) := elabStr (themed "\\begin{frame}[standout]\nShown.\n\\end{frame}")
-  let nOut := Layout.run (Layout.Geom.ofPage nDoc.page) oneFace none nDoc
-  let bOut := Layout.run (Layout.Geom.ofPage bDoc.page) oneFace none bDoc
+  let nOut := layoutOf oneFace nDoc
+  let bOut := layoutOf oneFace bDoc
   t "a themed standout frame does not print its speaker note"
     (nOut.pages.map (·.lines.size) == bOut.pages.map (·.lines.size))
 
@@ -567,7 +567,7 @@ def footerBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let (doc, ds) := elabStr src
   t "band source clean" (ds.filter (·.severity == .error)).isEmpty
   let geom0 := Layout.Geom.ofPage doc.page
-  let out := Layout.run geom0 oneFace none doc
+  let out := layoutOf oneFace doc geom0
   let font := oneFace.body
   let ascent : Dim.Sp := font.ascent * geom0.fontSize / (font.unitsPerEm : Int)
   let descent : Dim.Sp := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
@@ -584,7 +584,7 @@ def footerBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   -- last body line reaches into the footer's band.
   let (bare, _) := elabStr ("\\page{ vmargin = 2pt }\n\\begin{document}\n" ++
     para ++ "\n\n" ++ para ++ "\n\\end{document}")
-  let bareOut := Layout.run (Layout.Geom.ofPage bare.page) oneFace none bare
+  let bareOut := layoutOf oneFace bare
   t "the fixture reaches the band it is about"
     (bareOut.pages.any fun p => p.lines.any fun l => l.y + descent > geom.bodyBottom)
 
@@ -602,7 +602,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let (doc, ds) := elabStr (deck169 "\\theme{moloch}" body)
   t "chrome deck source clean" ds.isEmpty
   let geom0 := Layout.Geom.ofPage doc.page
-  let out := Layout.run geom0 oneFace none doc
+  let out := layoutOf oneFace doc geom0
   t "chrome deck five pages" (out.pages.size == 5)
   t "frame pages carry a footer, furniture pages none"
     (out.pages.map (·.foot.isSome) == #[true, false, true, true, false])
@@ -629,7 +629,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let para := String.intercalate " " (List.replicate 120 "filler words run on")
   let (tallDoc, _) := elabStr (deck169 "\\theme{moloch}"
     ("\\begin{frame}{Tall}\n" ++ para ++ "\n\n" ++ para ++ "\n\\end{frame}"))
-  let tallOut := Layout.run geom0 oneFace none tallDoc
+  let tallOut := layoutOf oneFace tallDoc geom0
   t "a tall frame spills and every spill page keeps its footer"
     (tallOut.pages.size > 1 && tallOut.pages.all (·.foot.isSome))
   t "body ink never reaches the footer ink"
@@ -641,14 +641,14 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
         (Layout.Geom.ofPage tallDoc.page).bodyBottom)
   -- \runningfoot is the author's whole footer: chrome yields entirely.
   let (rDoc, _) := elabStr (deck169 "\\theme{moloch}\\runningfoot{own foot}" body)
-  let rOut := Layout.run (Layout.Geom.ofPage rDoc.page) oneFace none rDoc
+  let rOut := layoutOf oneFace rDoc
   t "runningfoot suppresses the chrome footer"
     (rOut.pages.all (·.foot.isNone))
   t "runningfoot itself is laid on every page"
     (rOut.pages.all fun p => p.lines.any (·.y == footY))
   -- No theme, no footer: the unthemed deck's output is untouched.
   let (uDoc, _) := elabStr (deck169 "" body)
-  let uOut := Layout.run (Layout.Geom.ofPage uDoc.page) oneFace none uDoc
+  let uOut := layoutOf oneFace uDoc
   t "an unthemed deck carries no footer at all"
     (uOut.pages.all fun p => p.foot.isNone && p.lines.all (·.y != footY))
   -- The HTML backend reads the same declarations: each non-standout frame
@@ -669,7 +669,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   -- \chrome without a theme: the declaration alone is enough.
   let (cDoc, cDs) := elabStr (deck169 "\\chrome{ footer = { right = \\framenumber } }"
     "\\begin{frame}{T}\nx\n\\end{frame}")
-  let cOut := Layout.run (Layout.Geom.ofPage cDoc.page) oneFace none cDoc
+  let cOut := layoutOf oneFace cDoc
   t "a bare chrome declaration draws its footer" (cDs.isEmpty &&
     ((cOut.pages[0]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "1"))
 
@@ -715,7 +715,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "the numbering skips title and standout and reaches its count"
     (doc.frameCount == 1 && doc.frameNumbers.toList.filterMap id == [1])
   let geom := Layout.Geom.ofPage doc.page
-  let out := Layout.run geom oneFace none doc
+  let out := layoutOf oneFace doc geom
   t "numbering deck four pages" (out.pages.size == 4)
   t "the title page and the standout carry no footer, the content frame does"
     (out.pages.map (·.foot.isSome) == #[false, false, true, false])
@@ -746,7 +746,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "two-sequences deck source clean" dDs.isEmpty
   t "two content frames count 1 and 2"
     (dDoc.frameCount == 2 && dDoc.frameNumbers.toList.filterMap id == [1, 2])
-  let dOut := Layout.run (Layout.Geom.ofPage dDoc.page) oneFace none dDoc
+  let dOut := layoutOf oneFace dDoc
   t "two-sequences deck six pages" (dOut.pages.size == 6)
   t "a stepped frame's pages share one footer"
     (dOut.pages[1]?.bind (·.foot) == dOut.pages[2]?.bind (·.foot))
@@ -763,7 +763,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
      "\\runningfoot{page \\pagenumber\\ of \\pagecount}")
     ("\\maketitle\n\\begin{frame}{One}\na\n\\end{frame}"))
   t "physical deck source clean" rDs.isEmpty
-  let rOut := Layout.run (Layout.Geom.ofPage rDoc.page) oneFace none rDoc
+  let rOut := layoutOf oneFace rDoc
   t "runningfoot suppresses chrome and the physical count is the page count"
     (rOut.pages.size == 2 && rOut.pages.all (·.foot.isNone) && rDoc.frameCount == 1)
   t "the physical sequence substitutes per page"
@@ -774,7 +774,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let (fDoc, _) := elabStr (deck169 "\\theme{moloch}\\title{T}\\author{A}"
     ("\\begin{frame}{One}\na\n\\end{frame}\n\\section{End}"))
   let fGeom := Layout.Geom.ofPage fDoc.page
-  let fOut := Layout.run fGeom oneFace none fDoc
+  let fOut := layoutOf oneFace fDoc fGeom
   let mp : Dim.Sp := fGeom.textWidth * 7875 / 10000
   t "a section after every frame fills the bar exactly"
     (fOut.pages.any fun p => p.fills.any fun f =>
@@ -784,7 +784,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   t "zero-count deck source clean" zDs.isEmpty
   t "a deck with no countable frame draws no progress bar"
     (zDoc.frameCount == 0 &&
-     (Layout.run (Layout.Geom.ofPage zDoc.page) oneFace none zDoc).pages.all fun p =>
+     (layoutOf oneFace zDoc).pages.all fun p =>
        !(p.fills.any fun f => f.color == ({ r := 0xCB, g := 0xC0, b := 0xB6 } : Ir.Color)))
   t "html draws no progress bar with no countable frame"
     (((HtmlDoc.emit {} zDoc).1.splitOn "class=\"progress\"").length == 1)
@@ -796,7 +796,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ("\\begin{frame}{A}\na\n\\end{frame}\n\\begin{frame}{B}\nb\n\\end{frame}"))
   t "framefraction parses to its slot" (cDs.isEmpty &&
     cDoc.chrome.footerRight == some .frameFraction)
-  let cOut := Layout.run (Layout.Geom.ofPage cDoc.page) oneFace none cDoc
+  let cOut := layoutOf oneFace cDoc
   t "the fraction footer reads n / N"
     (cOut.pages.map (fun p => (p.foot.map (fun f => Ir.plainText (Ir.bandInlines f))).getD "") ==
       #["1 / 2", "2 / 2"])
@@ -811,7 +811,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ("\\begin{frame}{A}\na\n\\end{frame}\n\\begin{frame}{B}\nb\n\\end{frame}"))
   t "gated deck source clean" gDs.isEmpty
   let gGeom := Layout.Geom.ofPage gDoc.page
-  let gOut := Layout.run gGeom oneFace none gDoc
+  let gOut := layoutOf oneFace gDoc gGeom
   let gFont := oneFace.body
   let headY := gGeom.vmargin / 2 + gFont.ascent * gGeom.fontSize / (gFont.unitsPerEm : Int)
   let footY := gGeom.pageH - gGeom.vmargin / 2
@@ -824,7 +824,7 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let longFoot := String.intercalate " " (List.replicate 40 "an overlong footer")
   let (wDoc, _) := elabStr (deck169 s!"\\runningfoot\{{longFoot}}"
     "\\begin{frame}{A}\na\n\\end{frame}")
-  let wOut := Layout.run (Layout.Geom.ofPage wDoc.page) oneFace none wDoc
+  let wOut := layoutOf oneFace wDoc
   t "a wrapping running line warns by name"
     (wOut.diags.any (·.code == "W0328"))
   t "a one-line running line does not warn"
@@ -850,7 +850,7 @@ def frameFootChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let (doc, ds) := elabStr (deck169 ("\\theme{moloch}" ++ wrapper) body)
   t "framefooter deck raises no W0104" (!ds.any (·.code == "W0104"))
   t "framefooter deck source clean" (ds.filter (·.severity == .error)).isEmpty
-  let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+  let out := layoutOf oneFace doc
   -- pages: section page, One, Two, Three
   t "framefooter deck four pages" (out.pages.size == 4)
   t "before the wrapper the default footer stands"
@@ -865,7 +865,7 @@ def frameFootChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ("\\setbeamertemplate{frame footer}{quiet note}\n" ++
      "\\begin{frame}{T}\nx\n\\end{frame}"))
   t "a bare frame footer template is clean" (!bDs.any (·.code == "W0104"))
-  let bOut := Layout.run (Layout.Geom.ofPage bDoc.page) oneFace none bDoc
+  let bOut := layoutOf oneFace bDoc
   t "the unthemed note still lands"
     ((bOut.pages[0]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "quiet note")
   -- Other templates drop their body; a body carrying content is a dropped
@@ -902,7 +902,7 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let (doc, ds) := elabStr src
   t "furniture source clean" ds.isEmpty
   let geom := Layout.Geom.ofPage doc.page
-  let out := Layout.run geom oneFace none doc
+  let out := layoutOf oneFace doc geom
   t "furniture three pages: frame, divider, frame" (out.pages.size == 3)
   let bg : Ir.Color := { r := 0xFA, g := 0xFA, b := 0xFA }
   let fg : Ir.Color := { r := 0x23, g := 0x37, b := 0x3B }
@@ -954,7 +954,7 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   -- Unthemed output is untouched: no keys, no fills, black text.
   let (plainDoc, _) := elabStr ("\\documentclass[aspectratio=169]{slides}\n" ++
     "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}")
-  let plainOut := Layout.run (Layout.Geom.ofPage plainDoc.page) oneFace none plainDoc
+  let plainOut := layoutOf oneFace plainDoc
   t "unthemed pages carry no fills" (plainOut.pages.all (·.fills.isEmpty))
 
 /-- Frames as first-class blocks: the elaboration shape, the title forms,
@@ -1014,7 +1014,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     "\\begin{frame}{B}\nb\n\\end{frame}\n\\section{S}\n\\begin{frame}{C}\nc\n\\end{frame}")
   let (dDoc, dDs) := elabStr threeFrames
   t "deck source clean" dDs.isEmpty
-  let out := Layout.run (Layout.Geom.ofPage dDoc.page) oneFace none dDoc
+  let out := layoutOf oneFace dDoc
   t "one page per frame, one per section divider" (out.pages.size == 4)
   t "every slide leads with its title at the heading size"
     (out.pages.all fun p =>
@@ -1077,7 +1077,7 @@ def slideChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let (sDoc, _) := elabStr (deck169Body ("\\begin{frame}{A}\na\n\\end{frame}\n" ++
     "\\begin{frame}[standout]\nQ\n\\end{frame}"))
   let sGeom := Layout.Geom.ofPage sDoc.page
-  let sOut := Layout.run sGeom oneFace none sDoc
+  let sOut := layoutOf oneFace sDoc sGeom
   t "standout page carries a full-page background fill"
     (match sOut.pages[1]? with
      | some p => p.fills.any fun f =>
@@ -1729,7 +1729,7 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
     "\\begin{frame}{A}\na\n\\end{frame}\n\\begin{frame}{B}\nb\n\\end{frame}")
   t "gated running deck source clean" gDs.isEmpty
   let gGeom := Layout.Geom.ofPage gDoc.page
-  let gOut := Layout.run gGeom oneFace none gDoc
+  let gOut := layoutOf oneFace gDoc gGeom
   let gFont := oneFace.body
   let headY := gGeom.vmargin / 2 + gFont.ascent * gGeom.fontSize / (gFont.unitsPerEm : Int)
   let footY := gGeom.pageH - gGeom.vmargin / 2

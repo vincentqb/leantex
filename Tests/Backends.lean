@@ -794,7 +794,7 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
         "href=\"profile.md\">")).length == 2 &&
      !has "rel=\"alternate\"")
   let md := (MarkdownDoc.emit doc)
-  let pdf := Pdf.write geom oneFace (Layout.run geom oneFace none doc).pages doc.info
+  let pdf := Pdf.write geom oneFace (layoutOf oneFace doc geom).pages doc.info
   t "the one declared title reaches all three surfaces"
     (has "<title>Alex Doe, PhD</title>" &&
      md.startsWith "# Alex Doe, PhD\n" &&
@@ -858,7 +858,7 @@ def pdfStreamChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     return (nums, emptyArrays)
   let wide : Layout.Geom := { pageW := Dim.pt 1200, hmargin := Dim.pt 20 }
   let (gapDoc, _) := Elab.run "t" "a\\hfill b\n\n\\underline{x}"
-  let gapText := asciiText (Pdf.write wide oneFace (Layout.run wide oneFace none gapDoc).pages)
+  let gapText := asciiText (Pdf.write wide oneFace (layoutOf oneFace gapDoc wide).pages)
   let (adjs, empties) := tjNumbers gapText
   t "pdf never writes a TJ adjustment past sixteen bits"
     (adjs.all fun n => n.natAbs ≤ 32767)
@@ -884,13 +884,13 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let (bigDoc, bigDs) := Elab.run "t"
     "plain {\\sffamily other face} and {\\Huge big} and {\\small little}"
   t "size scale source clean" bigDs.isEmpty
-  let bigPdf := Pdf.write geom twoFace (Layout.run geom twoFace none bigDoc).pages
+  let bigPdf := Pdf.write geom twoFace (layoutOf twoFace bigDoc geom).pages
   t "pdf references a second face" (bytesContain bigPdf "/F2 ")
   t "pdf sets Huge at 2.488x" (bytesContain bigPdf "24.88 Tf")
   t "pdf sets small at 0.9x" (bytesContain bigPdf "9 Tf")
   t "pdf keeps the body size" (bytesContain bigPdf "10 Tf")
   -- One face only: nothing unused is embedded, so no /F2 exists.
-  let plainPdf := Pdf.write geom oneFace (Layout.run geom oneFace none bigDoc).pages
+  let plainPdf := Pdf.write geom oneFace (layoutOf oneFace bigDoc geom).pages
   t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
   -- The descriptor states the parsed metrics (ISO 32000-2 §9.8.1:
   -- CapHeight is the cap height), never a stand-in: the fixture face
@@ -951,7 +951,7 @@ def agreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
     let (doc, docDs) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
-    let out := Layout.run geom oneFace (some pats) doc
+    let out := layoutOf oneFace doc geom (some pats)
     let (_, body, htmlDs) := HtmlDoc.emitTree {} doc
     let naming := (docDs ++ out.diags ++ htmlDs).any (namingCodes.contains ·.code)
     let pdf := dedupConsecutive (pdfFoots out)
@@ -1281,37 +1281,37 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
         for s in l.segs do
           if let .image idx w h := s then acc := acc.push (idx, w, h)
     return acc
-  let layoutOf (src : String) : Layout.Out :=
+  let layoutSrc (src : String) : Layout.Out :=
     let (doc, _) := Elab.run "t" src
-    Layout.run geom oneFace none doc store
+    layoutOf oneFace doc geom none store
 
   -- Intrinsic: no keys, the box is the file's physical size.
-  let outIntrinsic := layoutOf "\\includegraphics{rects.png}"
+  let outIntrinsic := layoutSrc "\\includegraphics{rects.png}"
   t "layout intrinsic size"
     (imageSegs outIntrinsic == #[(some 0, Dim.pt 64, Dim.pt 40)])
   -- `width = 0.8\textwidth`: the spelling every deck sizes a figure with.
-  let outTw := layoutOf "\\includegraphics[width=0.8\\textwidth]{rects.png}"
+  let outTw := layoutSrc "\\includegraphics[width=0.8\\textwidth]{rects.png}"
   let expectW := geom.textWidth * 800 / 1000
   t "layout width fraction of the measure"
     (imageSegs outTw == #[(some 0, expectW, expectW * Dim.pt 40 / Dim.pt 64)])
   -- Both dimensions declared win exactly.
-  let outBoth := layoutOf "\\includegraphics[width=32pt, height=40pt]{rects.png}"
+  let outBoth := layoutSrc "\\includegraphics[width=32pt, height=40pt]{rects.png}"
   t "layout declared size wins"
     (imageSegs outBoth == #[(some 0, Dim.pt 32, Dim.pt 40)])
   -- keepaspectratio fits inside the declared box: width binds (the image is
   -- wider than tall), the height follows the intrinsic ratio.
   let outKeep :=
-    layoutOf "\\includegraphics[width=32pt, height=32pt, keepaspectratio]{rects.jpg}"
+    layoutSrc "\\includegraphics[width=32pt, height=32pt, keepaspectratio]{rects.jpg}"
   t "layout keepaspect fits the box"
     (imageSegs outKeep == #[(some 1, Dim.pt 32, Dim.pt 32 * 40 / 64)])
   -- A source the store has no entry for is a placeholder box: the document
   -- still compiles, at the requested size.
-  let outMissing := layoutOf "\\includegraphics[width=50pt]{missing.png}"
+  let outMissing := layoutSrc "\\includegraphics[width=50pt]{missing.png}"
   t "layout missing image keeps requested width"
     (imageSegs outMissing == #[(none, Dim.pt 50, Dim.pt 50)] &&
      outMissing.pages.size == 1)
   t "layout missing image without a size is an inch square"
-    (imageSegs (layoutOf "\\includegraphics{missing.png}") ==
+    (imageSegs (layoutSrc "\\includegraphics{missing.png}") ==
       #[(none, Dim.inch 1, Dim.inch 1)])
 
   -- The figure environment: a float standing where written, the caption on
@@ -1332,13 +1332,13 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
        | _ => false
      | _ => false)
   t "figure image reaches the page"
-    ((imageSegs (Layout.run geom oneFace none figDoc store)).size == 1)
+    ((imageSegs (layoutOf oneFace figDoc geom none store)).size == 1)
   -- An image in a slide: the frame's page carries it.
   let (slideDoc, _) := Elab.run "t"
     "\\documentclass{slides}\\begin{document}\\begin{frame}{T}\\includegraphics{rects.png}\\end{frame}\\end{document}"
   let slideGeom := Layout.Geom.ofPage slideDoc.page
   t "slide image reaches the frame page"
-    ((imageSegs (Layout.run slideGeom oneFace none slideDoc store)).size == 1)
+    ((imageSegs (layoutOf oneFace slideDoc slideGeom none store)).size == 1)
   -- The deck logo: same image node, placed at the lower-right corner of
   -- every page, its right edge on the margin.
   let (logoDoc, logoDiags) := Elab.run "t"
@@ -1346,7 +1346,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
 \\begin{document}\\begin{frame}{A}x\\end{frame}\\begin{frame}{B}y\\end{frame}\\end{document}"
   t "logo declaration elaborates clean" (logoDiags.isEmpty)
   let logoGeom := Layout.Geom.ofPage logoDoc.page
-  let logoOut := Layout.run logoGeom oneFace none logoDoc store
+  let logoOut := layoutOf oneFace logoDoc logoGeom none store
   let logoW := Dim.pt 8 * Dim.pt 64 / Dim.pt 40
   t "logo placed on every page at the right margin"
     (logoOut.pages.size == 2 && logoOut.pages.all fun p =>
@@ -1361,7 +1361,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let (pdfDoc, _) := Elab.run "t"
     "\\includegraphics{rects.png} and \\includegraphics{rects.jpg} and \
 \\includegraphics{rects-alpha.png}"
-  let pdfOut := Layout.run geom oneFace none pdfDoc store
+  let pdfOut := layoutOf oneFace pdfDoc geom none store
   let pdf := Pdf.write geom oneFace pdfOut.pages {} store
   t "pdf embeds the png as flate with the predictor"
     (bytesContain pdf "/Subtype /Image" && bytesContain pdf "/FlateDecode" &&
@@ -1395,8 +1395,8 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | .ok inf => containsBytes pdf inf.data
      | .error _ => false)
   -- The placeholder: an outlined box, no image object, a valid file.
-  let missOut := Layout.run geom oneFace none
-    ((Elab.run "t" "\\includegraphics[width=50pt]{missing.png}").1) store
+  let missOut := layoutOf oneFace
+    ((Elab.run "t" "\\includegraphics[width=50pt]{missing.png}").1) geom none store
   let missPdf := Pdf.write geom oneFace missOut.pages {} store
   t "pdf placeholder draws an outline, embeds nothing"
     (bytesContain missPdf "re S" && !(bytesContain missPdf "/Subtype /Image"))
@@ -1444,8 +1444,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     "\\documentclass{slides}\\begin{document}\\logo{\\includegraphics[height=8pt]{rects.png}}\
 \\begin{frame}{A}x\\end{frame}\\logo{}\\begin{frame}{B}y\\end{frame}\\end{document}"
   t "logo declared in the body binds" (bodyLogoDiags.isEmpty && bodyLogoDoc.logo.isNone)
-  let blOut := Layout.run (Layout.Geom.ofPage bodyLogoDoc.page) oneFace none
-    bodyLogoDoc store
+  let blOut := layoutOf oneFace bodyLogoDoc (pats := none) (imgs := store)
   let pageHasImage (p : Layout.PageOut) : Bool :=
     p.lines.any fun l => l.segs.any fun s => match s with
       | .image .. => true

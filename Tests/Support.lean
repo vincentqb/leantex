@@ -482,6 +482,15 @@ def appliedCodes (stripped : String) : List String := Id.run do
       out := tok :: out
   return out
 
+/-- The layout spelling nearly every test claim uses: geometry from the
+document's own page, no hyphenation, no images — each overridable where a
+claim needs a narrower measure, patterns, or a store. -/
+def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
+    (geom : Layout.Geom := Layout.Geom.ofPage doc.page)
+    (pats : Option Hyphen.Patterns := none)
+    (imgs : Image.Store := {}) : Layout.Out :=
+  Layout.run geom fonts pats doc imgs
+
 /-- Elaboration diagnostics of a source. -/
 def dvE (src : String) : Array Diag := (elabStr src).2
 

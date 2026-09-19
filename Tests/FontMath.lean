@@ -190,7 +190,7 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mapped : Font.FontSet := { bare with fallback := #[('\uF09B', 1)] }
   let geom : Layout.Geom := {}
   let (glyphDoc, _) := elabStr (wrap "\\faGithub{} beside words")
-  let out := Layout.run geom mapped none glyphDoc
+  let out := layoutOf mapped glyphDoc geom
   let runs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   t "the icon glyph ships from the covering face"
     (runs.any fun s => match s with
@@ -198,7 +198,7 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => false)
   t "a deliberate icon face is not a substitution warning"
     (!out.diags.any (·.code == "W0009"))
-  let dropOut := Layout.run geom bare none glyphDoc
+  let dropOut := layoutOf bare glyphDoc geom
   t "an uncovered icon is the ordinary coverage loss, naming the scalar"
     ((dropOut.diags.filter (·.code == "E0405")).any
       fun d => (d.message.splitOn "U+F09B").length ≥ 2)
@@ -275,7 +275,7 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
     fonts := #[f]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
   let drawn (fs : Font.FontSet) (src : String) : Array (Array (Nat × Char) × Dim.Sp) :=
-    ((Layout.run geom fs none (Elab.run "t" src).1).pages.flatMap (·.lines)).flatMap
+    ((layoutOf fs (Elab.run "t" src).1 geom).pages.flatMap (·.lines)).flatMap
       (·.segs.filterMap fun s =>
         match s with
         | .run _ _ _ _ glyphs size _ _ => some (glyphs, size)
@@ -356,7 +356,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The mapped face sets the glyph, at the styled size, in its own run.
   let (faDoc, faDs) := Elab.run "t" "for all is ∀ set\n\nagain ∀ here"
   t "fallback source clean" faDs.isEmpty
-  let out := Layout.run geom mapped none faDoc
+  let out := layoutOf mapped faDoc geom
   let runs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   t "fallback sets the glyph from the mapped face"
     (runs.any fun s => match s with
@@ -368,17 +368,17 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a covered scalar raises no E0405" (!out.diags.any (·.code == "E0405"))
   -- No face covers it: dropped once per family+glyph, family named.
   let (dropDoc, _) := Elab.run "t" "lost ⟨ here\n\nand ⟨ there"
-  let dropOut := Layout.run geom mapped none dropDoc
+  let dropOut := layoutOf mapped dropDoc geom
   t "an uncovered scalar drops once, naming the family"
     ((dropOut.diags.filter (·.code == "E0405")).map (·.message) ==
       #["'Open Sans' has no glyph for '⟨' (U+27E8); dropped"])
   -- A document whose faces cover their text is untouched by the map.
   let (plainDoc, _) := Elab.run "t" "plain words only"
-  let noMap := Pdf.write geom bare (Layout.run geom bare none plainDoc).pages
+  let noMap := Pdf.write geom bare (layoutOf bare plainDoc geom).pages
   let withMap := Pdf.write geom
     { bare with fallback := #[('p', 1), ('a', 1), ('o', 1)] }
-    (Layout.run geom { bare with fallback := #[('p', 1), ('a', 1), ('o', 1)] }
-      none plainDoc).pages
+    (layoutOf { bare with fallback := #[('p', 1), ('a', 1), ('o', 1)] }
+      plainDoc geom).pages
   t "a covered document is byte-identical under any map" (noMap == withMap)
   -- The document's scalars: text and titles, uppercase for small caps,
   -- verbatim content, no whitespace and no fixed-space kerns.
@@ -648,7 +648,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
         vmargin := Dim.pt 10
         fontSize := Dim.pt 10
       }
-      let hyOut := Layout.run narrow oneFace (some pats) hyDoc
+      let hyOut := layoutOf oneFace hyDoc narrow (some pats)
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
           | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '-')
@@ -658,7 +658,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       -- word that hyphenates as body text must set unbroken as a heading,
       -- a frame title, and the document title, patterns loaded or not.
       let hyphens (doc : Ir.Doc) : Bool :=
-        (Layout.run narrow oneFace (some pats) doc).pages.any fun p =>
+        (layoutOf oneFace doc narrow (some pats)).pages.any fun p =>
           p.lines.any fun l => l.segs.any fun s => match s with
             | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '-')
             | .gap _ | .rule .. | .image .. => false
@@ -675,7 +675,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       -- "Justified text"; moloch's title templates are \raggedright).
       let (jhDoc, _) := Elab.run "t"
         "\\section{one two six ten oak elm fir ash}\n\nbody text"
-      let headLines := (Layout.run narrow oneFace (some pats) jhDoc).pages.flatMap
+      let headLines := (layoutOf oneFace jhDoc narrow (some pats)).pages.flatMap
         (·.lines) |>.filter (·.size == Layout.sectionSize narrow 1)
       t "a wrapped heading is ragged, not justified"
         (headLines.size ≥ 2 && headLines.all (·.setWidth < narrow.textWidth))
@@ -684,7 +684,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       -- the only signal of how much of the document overflowed.
       let (ofDoc, _) := Elab.run "t"
         "aaaaaaaaaaaaaaaaaaaaaaaaaa\n\nbbbbbbbbbbbbbbbbbbbbbbbbbb"
-      let ofOut := Layout.run narrow oneFace none ofDoc
+      let ofOut := layoutOf oneFace ofDoc narrow
       t "overfull warning carries the count"
         ((ofOut.diags.filter (·.code == "W0005")).size == 1 &&
          ofOut.diags.any (·.message == "2 overfull lines (no feasible break)"))
@@ -693,7 +693,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
         "\\begin{itemize}\\item A list item.\\end{itemize}"
       let (visualDoc, visualDs) := Elab.run "t" visualSrc
       t "layout visual source clean" visualDs.isEmpty
-      let visualOut := Layout.run ({} : Layout.Geom) oneFace (some pats) visualDoc
+      let visualOut := layoutOf oneFace visualDoc {} (some pats)
       let hasSectionSize := visualOut.pages.any fun p =>
         p.lines.any (·.size == Layout.sectionSize ({} : Layout.Geom) 1)
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
@@ -707,7 +707,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let (doc, eds) := Elab.run "t" "hello world, a small pdf self check"
       t "pdf source clean" eds.isEmpty
       let geom : Layout.Geom := {}
-      let out := Layout.run geom oneFace none doc
+      let out := layoutOf oneFace doc geom
       t "pdf one page" (out.pages.size == 1)
       let pdf := Pdf.write geom oneFace out.pages
       t "pdf header" (String.fromUTF8! (pdf.extract 0 8) == "%PDF-2.0")
@@ -824,7 +824,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let ssSize := mbase * 58 / 100
   let lineOf (src : String) : Layout.LineOut :=
     let (d, _) := Elab.run "t" src
-    (((Layout.run geom mfs none d).pages.flatMap (·.lines))[0]?).getD default
+    (((layoutOf mfs d geom).pages.flatMap (·.lines))[0]?).getD default
   let widthOf (src : String) : Dim.Sp := (lineOf src).setWidth
   -- A box is a box: the advance equals the sum of what it contains plus
   -- the spacing the table gives, in sp, recomputed from the font alone.
@@ -880,7 +880,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let bDoc : Ir.Doc := { body := #[.para #[.formula false "₿"
     (.cons (.atom .ord (.sym '₿') .nil .nil false) .nil)]] }
   t "a glyph the math face lacks warns E0405 naming it"
-    (((Layout.run geom mfs none bDoc).diags.filter (·.code == "E0405")).map (·.message)
+    (((layoutOf mfs bDoc geom).diags.filter (·.code == "E0405")).map (·.message)
       == #["'Fira Math' has no glyph for '₿' (U+20BF); dropped"])
   -- The chain, extended to math scalars: the census walk carries a
   -- formula's scalars to the driver's precompute, and a scalar the math
@@ -889,7 +889,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "docScalars carries a formula's math scalars"
     ((Layout.docScalars (Elab.run "t" "$x$").1).contains '𝑥')
   let cfs : Font.FontSet := { mfs with fallback := #[('₿', 0)] }
-  let cOut := Layout.run geom cfs none bDoc
+  let cOut := layoutOf cfs bDoc geom
   t "a math scalar the chain covers sets from the fallback face, named W0009"
     ((cOut.diags.filter (·.code == "E0405")).isEmpty &&
       (cOut.diags.filter (·.code == "W0009")).map (·.message) ==
@@ -900,7 +900,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- No math face: one W0003 for the document, formulas set as their source.
   let bare : Font.FontSet := { fonts := #[serif], index := allSlots }
   let (nd, _) := Elab.run "t" "$x^2$ and $y$"
-  let nOut := Layout.run geom bare none nd
+  let nOut := layoutOf bare nd geom
   t "no math face warns W0003 once" ((nOut.diags.filter (·.code == "W0003")).size == 1)
   t "no math face sets the source text"
     ((nOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
@@ -1033,19 +1033,19 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- alphabet's essence, the plain letter for the shape alphabets — and
   -- N0018 names the styling difference. Never dropped: E0405 stays for
   -- scalars with no stand-in.
-  let calOut := Layout.run geom mfs none (Elab.run "t" "$\\mathcal{L}$").1
+  let calOut := layoutOf mfs (Elab.run "t" "$\\mathcal{L}$").1 geom
   t "an uncovered calligraphic letter sets plain, named N0018"
     ((calOut.diags.filter (·.code == "E0405")).isEmpty &&
       (calOut.diags.filter (·.code == "N0018")).map (·.message) ==
         #["'Fira Math' has no calligraphic 'L' (U+2112); the plain letter stands in"] &&
       glyphChars "$\\mathcal{L}$" == #['L'])
   t "a covered alphabet stays silent"
-    ((Layout.run geom mfs none (Elab.run "t" "$\\mathbb{R}$").1).diags.all
+    ((layoutOf mfs (Elab.run "t" "$\\mathbb{R}$").1 geom).diags.all
       (·.code != "N0018"))
   let noBoldFira : Font.Font := { fira with
     cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D400 && 0x1D400 ≤ r.2.1.toNat) }
   let noBoldSet : Font.FontSet := { mfs with fonts := #[serif, noBoldFira] }
-  let bfOut := Layout.run geom noBoldSet none (Elab.run "t" "$\\mathbf{A}$").1
+  let bfOut := layoutOf noBoldSet (Elab.run "t" "$\\mathbf{A}$").1 geom
   t "a bold letter the math face lacks synthesizes from the text face"
     ((bfOut.diags.filter (·.code == "N0018")).map (·.message) ==
       #["'Fira Math' has no bold 'A' (U+1D400); set bold from 'Source Serif Pro'"] &&
@@ -1070,7 +1070,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let glyphInfo (src : String) : Array (Char × Nat × Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
     let (d, _) := Elab.run "t" src
     let mut out : Array (Char × Nat × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
-    for page in (Layout.run geom mfs none d).pages do
+    for page in (layoutOf mfs d geom).pages do
       for l in page.lines do
         let mut x := l.x
         for s in l.segs do
@@ -1089,7 +1089,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   let rules (src : String) : Array (Dim.Sp × Dim.Sp × Dim.Sp) := Id.run do
     let (d, _) := Elab.run "t" src
     let mut out : Array (Dim.Sp × Dim.Sp × Dim.Sp) := #[]
-    for page in (Layout.run geom mfs none d).pages do
+    for page in (layoutOf mfs d geom).pages do
       for l in page.lines do
         for s in l.segs do
           if let .rule w thickness raise _ := s then

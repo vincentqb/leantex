@@ -487,7 +487,7 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
             fs := { fs' with fallback := fs'.fallback.push (ch, idx) }
           | .error _ => pure ()
         pure fs
-    let out := Layout.run geom fs (some pats) doc
+    let out := layoutOf fs doc geom (some pats)
     let c := censusOf (coveredColorsOf doc) out
     for (label, ok) in facts geom c do
       check ref s!"census {n}: {label}" ok

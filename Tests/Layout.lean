@@ -86,7 +86,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let geom : Layout.Geom := {}
   let runOn (src : String) : Array Layout.LineOut × Array Diag :=
     let (d, _) := Elab.run "t" src
-    let out := Layout.run geom oneFace none d
+    let out := layoutOf oneFace d geom
     (out.pages.flatMap (·.lines), out.diags)
   let markerOf (l : Layout.LineOut) : String :=
     match l.segs[0]? with
@@ -193,13 +193,13 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   -- setting it.
   let widthOf (src : String) : Dim.Sp :=
     let (d, _) := Elab.run "t" src
-    (((Layout.run geom oneFace none d).pages.flatMap (·.lines))[0]?.map
+    (((layoutOf oneFace d geom).pages.flatMap (·.lines))[0]?.map
       (·.setWidth)).getD 0
   let plainW := widthOf "ab"
   let thinW := widthOf "a\\,b"
   t "thin space widens the line" (thinW == plainW + geom.fontSize / 6)
   t "thin space warns about nothing"
-    ((Layout.run geom oneFace none (Elab.run "t" "a\\,b").1).diags.isEmpty)
+    ((layoutOf oneFace (Elab.run "t" "a\\,b").1 geom).diags.isEmpty)
   t "no-break space is an unbreakable interword space"
     (widthOf "a\\nbsp b" > plainW)
   -- `~` is what LaTeX authors actually type for it.
@@ -213,7 +213,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   -- letter its capital form, the whole word at one reduced size — mixed
   -- case cannot come out at two heights. (`\scshape` used to do nothing at
   -- all; then it kept capitals full-size beside scaled lowercase.)
-  let scOut := Layout.run geom oneFace none (Elab.run "t" "\\scshape aB").1
+  let scOut := layoutOf oneFace (Elab.run "t" "\\scshape aB").1 geom
   let scRuns := (scOut.pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
     match s with
     | .run _ _ _ _ glyphs size _ _ => some (glyphs.map (·.2), size)
@@ -229,7 +229,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   -- what nobody setting a row of dates wants.
   let measureOf (src : String) : Array Dim.Sp :=
     let (d, _) := Elab.run "t" src
-    ((Layout.run geom oneFace none d).pages.flatMap (·.lines)).map (·.setWidth)
+    ((layoutOf oneFace d geom).pages.flatMap (·.lines)).map (·.setWidth)
   -- A paragraph ending in `\\` used to vanish whole: the break's own
   -- forced penalty and the paragraph terminator left an empty last line
   -- with no feasible predecessor, and the breaker returned no lines.
@@ -339,7 +339,7 @@ def refChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   -- line — the shipped pages with and without it are line-for-line equal.
   let run (body : String) : Nat :=
     let (doc, _) := art body
-    let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+    let out := layoutOf oneFace doc
     out.pages.foldl (fun n p => n + p.lines.size) 0
   t "a lone label line ships no blank line"
     (run "\\section{A}\\label{s:a}\nText after." == run "\\section{A}\nText after.")
@@ -387,7 +387,7 @@ def quoteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- quoted line starts one list indent past the left margin and its set
   -- width never reaches past the narrowed right edge.
   let geom : Layout.Geom := {}
-  let out := Layout.run geom oneFace none doc
+  let out := layoutOf oneFace doc geom
   let lines := out.pages.flatMap (·.lines)
   let quoted := lines.filter fun l => l.x == geom.hmargin + geom.listIndent
   t "pdf quotation indents from the left margin" (quoted.size ≥ 1)
@@ -427,7 +427,7 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   let geom : Layout.Geom := {}
   let linesOf (src : String) : Array Layout.LineOut :=
     let (d, _) := Elab.run "t" src
-    (Layout.run geom oneFace none d).pages.flatMap (·.lines)
+    (layoutOf oneFace d geom).pages.flatMap (·.lines)
   let doc (body : String) : String :=
     s!"\\documentclass\{article}\\begin\{document}{body}\\end\{document}"
   let top := linesOf (doc "hello")
@@ -461,7 +461,7 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   -- \pagebreak: the declared boundary, asserted over the shipped pages.
   let pagesOf (src : String) : Nat :=
     let (d, _) := Elab.run "t" src
-    (Layout.run geom oneFace none d).pages.size
+    (layoutOf oneFace d geom).pages.size
   t "pagebreak opens a fresh page"
     (pagesOf (doc "one\\pagebreak\ntwo") == 2)
   t "newpage and clearpage are the same boundary"
@@ -515,7 +515,7 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   t "the cmyk screen preview is the CSS device-cmyk conversion"
     (Ir.Color.ofCmyk 0 830 760 70 ==
       { r := 237, g := 40, b := 57, cmyk := some (0, 830, 760, 70) })
-  let cpdf := Pdf.write geom oneFace (Layout.run geom oneFace none cdoc).pages cdoc.info
+  let cpdf := Pdf.write geom oneFace (layoutOf oneFace cdoc geom).pages cdoc.info
   t "the pdf paints a cmyk colour in DeviceCMYK, components as declared"
     (bytesContain cpdf "0 0.83 0.76 0.07 k")
   t "the html backend converts, explicitly, to the preview"
@@ -528,7 +528,7 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   let (bdoc, bds) := elabStr
     "\\documentclass{card}\\page{ bleed = 3mm }\\begin{document}x\\end{document}"
   let bgeom := Layout.Geom.ofPage bdoc.page
-  let bpdf := Pdf.write bgeom oneFace (Layout.run bgeom oneFace none bdoc).pages bdoc.info
+  let bpdf := Pdf.write bgeom oneFace (layoutOf oneFace bdoc bgeom).pages bdoc.info
   let (media, bleedBox, trim) := Pdf.pageBoxes bgeom.pageW bgeom.pageH bgeom.bleed
   t "a declared bleed writes trim, bleed and art boxes as consequences"
     (bds.all (·.severity != .error) &&
@@ -539,7 +539,7 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   t "zero bleed writes no boxes: the defaults already say all boxes coincide"
     (let (zdoc, _) := elabStr "\\documentclass{card}\\begin{document}x\\end{document}"
      let zgeom := Layout.Geom.ofPage zdoc.page
-     let zpdf := Pdf.write zgeom oneFace (Layout.run zgeom oneFace none zdoc).pages zdoc.info
+     let zpdf := Pdf.write zgeom oneFace (layoutOf oneFace zdoc zgeom).pages zdoc.info
      !bytesContain zpdf "/TrimBox" && !bytesContain zpdf "/BleedBox")
 
 /-- The band projection over synthetic outlines: the invariant is that no
@@ -776,8 +776,8 @@ def linkSignalChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- affordance is the underline in both backends -- the HTML anchor keeps
   -- the browser's, and the PDF path draws one: before this, a PDF link had
   -- no visual signal at all, not even colour.
-  let out := Layout.run geom oneFace none
-    (Elab.run "t" "see \\href{https://example.org/}{the example} here").1
+  let out := layoutOf oneFace
+    (Elab.run "t" "see \\href{https://example.org/}{the example} here").1 geom
   let segs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   let linkRuns := segs.filterMap fun s => match s with
     | .run _ _ (some _) _ _ _ ul _ => some ul
@@ -836,7 +836,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (inkReads == 100000 && inkMs < 500)
   -- Layout: rule segs under the underlined run, split around actual ink.
   let outOf (fs : Font.FontSet) (src : String) : Layout.Out :=
-    Layout.run geom fs none (Elab.run "t" src).1
+    layoutOf fs (Elab.run "t" src).1 geom
   let rulesOf (fs : Font.FontSet) (src : String) : Array (Dim.Sp × Dim.Sp) :=
     ((outOf fs src).pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
       match s with
@@ -1081,10 +1081,10 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let t := check ref
   let ysOf (g : Layout.Geom) (src : String) : Array Dim.Sp :=
     -- Text lines only: an underline rule rides a sibling line at the same y.
-    ((Layout.run g oneFace none (Elab.run "t" src).1).pages.flatMap (·.lines)).filterMap fun l =>
+    ((layoutOf oneFace (Elab.run "t" src).1 g).pages.flatMap (·.lines)).filterMap fun l =>
       if l.segs.any (fun s => match s with | .run .. => true | _ => false) then some l.y else none
   let pagesOf (g : Layout.Geom) (src : String) : Nat :=
-    (Layout.run g oneFace none (Elab.run "t" src).1).pages.size
+    (layoutOf oneFace (Elab.run "t" src).1 g).pages.size
   let body := geom.fontSize
   let leading := Ir.leadingFor body geom.leading
   let scaled (sz : Dim.Sp) (units : Int) : Dim.Sp := units * sz / font.unitsPerEm
@@ -1150,11 +1150,11 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (ys.size == 3 && ys[0]! == firstY && ys[2]! < firstY + 2 * (leading + Dim.pt 20) &&
       ys[1]! - ys[0]! == leading + Dim.pt 20 - Dim.pt 5 && ys[2]! - ys[1]! == leading + Dim.pt 20 - Dim.pt 5)
   t "a shrunk page says so"
-    ((Layout.run tight oneFace none (Elab.run "t" three).1).diags.any (·.code == "N0200"))
+    ((layoutOf oneFace (Elab.run "t" three).1 tight).diags.any (·.code == "N0200"))
   let tooTight : Layout.Geom := { geom with pageH := natural - Dim.pt 20 + geom.vmargin }
   t "beyond its shrink the page breaks" (pagesOf tooTight three == 2)
   t "an unshrunk page says nothing"
-    (!(Layout.run geom oneFace none (Elab.run "t" three).1).diags.any (·.code == "N0200"))
+    (!(layoutOf oneFace (Elab.run "t" three).1 geom).diags.any (·.code == "N0200"))
 
 /-- Recovery emits the author's content, never the source's syntax. An
 unknown command's leading `[...]` run is how the author addressed the
@@ -1170,7 +1170,7 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let geom : Layout.Geom := {}
   let pageText (src : String) : String :=
     let (d, _) := elabStr src
-    let lines := (Layout.run geom oneFace none d).pages.flatMap (·.lines)
+    let lines := (layoutOf oneFace d geom).pages.flatMap (·.lines)
     String.join (lines.toList.map fun l =>
       String.ofList (l.segs.toList.flatMap fun s =>
         match s with
@@ -1220,7 +1220,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let linesOf (src : String) : Array Layout.LineOut :=
-    (Layout.run geom oneFace none (elabStr src).1).pages.flatMap (·.lines)
+    (layoutOf oneFace (elabStr src).1 geom).pages.flatMap (·.lines)
   let firstY (body : String) : Dim.Sp :=
     ((linesOf (deck169Body body))[0]?.map (·.y)).getD 0
   let yT := firstY "\\begin{frame}[t]\nhello\n\\end{frame}"
@@ -1263,7 +1263,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     let src := "\\documentclass[aspectratio=169]{slides}\n" ++
       "\\palette{frametitlebg = #23373B}\n\\begin{document}\n" ++
       "\\begin{frame}" ++ opt ++ "{Head}\nbody text\n\\end{frame}\n\\end{document}"
-    (((Layout.run geom oneFace none (elabStr src).1).pages.flatMap
+    (((layoutOf oneFace (elabStr src).1 geom).pages.flatMap
       (·.fills))[0]?.map (·.h)).getD 0
   t "the title bar keeps its height under centring" (barH "" == barH "[t]")
   -- The title frame: golden distribution, and the titlepage style decides
@@ -1312,7 +1312,7 @@ def headBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     "\\begin{document}Body text under a tight margin.\\end{document}"
   let (doc, _) := elabStr tight
   let geom := Layout.Geom.ofPage doc.page
-  let out := Layout.run geom oneFace none doc
+  let out := layoutOf oneFace doc geom
   let lines := (out.pages[0]?.map (·.lines)).getD #[]
   let font := oneFace.body
   let scale (u : Int) : Dim.Sp := u * geom.fontSize / (font.unitsPerEm : Int)
@@ -1332,7 +1332,7 @@ def headBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       "\\begin{document}Body text at the default margin.\\end{document}"
     let (doc, _) := elabStr src
     let geom := Layout.Geom.ofPage doc.page
-    let out := Layout.run geom oneFace none doc
+    let out := layoutOf oneFace doc geom
     let lines := (out.pages[0]?.map (·.lines)).getD #[]
     return (lines.filter fun l => l.y ≠ geom.vmargin / 2 + scale font.ascent)
       |>.foldl (fun acc l => match acc with
@@ -1368,7 +1368,7 @@ def bandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
   let run (left : String) : Layout.Out × Array CensusPage :=
     let (doc, _) := elabStr (deck169 "\\theme{moloch}\\title{T}\\author{A}"
       (s!"\\maketitle\n{left}{frame}"))
-    let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+    let out := layoutOf oneFace doc
     (out, censusOf (coveredColorsOf doc) out)
   -- The number's box on the frame's page: the line whose text is exactly
   -- the number, as (x, width).
@@ -1417,7 +1417,7 @@ def scopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     s!"\\documentclass\{article}\\begin\{document}\n{body}\n\\end\{document}"
   let censusOfSrc (src : String) : Array CensusPage :=
     let (d, _) := elabStr src
-    censusOf (coveredColorsOf d) (Layout.run geom oneFace none d)
+    censusOf (coveredColorsOf d) (layoutOf oneFace d geom)
   -- t1: a body running head is a named drop, never body ink.
   let headSrc := doc "\\runninghead{Chapter One}\n\nBody text stands alone."
   let ds1 := (elabStr headSrc).2
@@ -1452,7 +1452,7 @@ def scopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- shipped runs of `Layout.Out`, never an IR dump.
   let runsOf (src : String) : Array (String × Ir.Color) :=
     let (d, _) := elabStr src
-    let out := Layout.run geom oneFace none d
+    let out := layoutOf oneFace d geom
     out.pages.flatMap fun p => p.lines.map fun l =>
       (l.segs.foldl (fun s seg => match seg with
         | .run _ _ _ _ glyphs _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
@@ -1554,7 +1554,7 @@ Outside after.")
   -- carries the provable core (the arm emits nothing).
   let outOf (src : String) : Layout.Out :=
     let (d, _) := elabStr src
-    Layout.run geom oneFace none d
+    layoutOf oneFace d geom
   let confWith := outOf (doc
     "Page one text.\n\\pagebreak\n\\palette{ fg = #AA2222 }\n\nPage two text.")
   let confWithout := outOf (doc "Page one text.\n\\pagebreak\n\nPage two text.")
@@ -1610,7 +1610,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     "\\documentclass{article}\n\\begin{document}\n" ++ tab ++ "\n\\end{document}"
   let layoutDiags (src : String) : Array Diag :=
     let doc := (elabStr src).1
-    (Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc).diags
+    (layoutOf oneFace doc).diags
   t "a table wider than the measure is named, in points"
     ((layoutDiags (wrap "\\begin{tabular}{p{0.8\\linewidth}p{0.8\\linewidth}}a & b \\\\\\end{tabular}")).any
       (·.code == "W0338"))
@@ -1716,7 +1716,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- inside them. An executable check, not a theorem — the extents live in
   -- `collectTable`'s local arithmetic.
   let doc := (elabStr (wrap ("\\begin{tabular}{ll}\\toprule\na & b \\\\ \\cmidrule(lr){2-2}\nc & d \\\\ \\bottomrule\\end{tabular}"))).1
-  let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+  let out := layoutOf oneFace doc
   let ruleSegs : Array (Dim.Sp × Dim.Sp) := Id.run do
     let mut acc : Array (Dim.Sp × Dim.Sp) := #[]
     for p in out.pages do
@@ -1803,7 +1803,7 @@ def measureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let prose := String.intercalate " " (List.replicate 40 "typesetting is the arrangement of type")
   let diagsOf (pre : String) (body : String) (geom : Layout.Geom := {}) : Array Diag :=
     let src := pre ++ "\\begin{document}" ++ body ++ "\\end{document}"
-    (Layout.run geom oneFace none (Elab.run "t" src).1).diags
+    (layoutOf oneFace (Elab.run "t" src).1 geom).diags
   let w0201 (ds : Array Diag) : Array Diag := ds.filter (·.code == "W0201")
   -- The word-processor default this engine replaced: letter with 1in
   -- margins holds ~100 characters at 10pt, far outside 45–90.
@@ -1821,7 +1821,7 @@ def measureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let (cardProse, _) := Elab.run "t" ("\\documentclass{card}\\begin{document}" ++
     prose ++ "\\end{document}")
   t "cards are outside the rule's scope"
-    ((w0201 (Layout.run (Layout.Geom.ofPage cardProse.page) oneFace none cardProse).diags).isEmpty)
+    ((w0201 (layoutOf oneFace cardProse).diags).isEmpty)
   t "short text is not continuous reading"
     ((w0201 (diagsOf "\\documentclass{article}\\page{ hmargin = 1in }" "one line.")).isEmpty)
   let narrowGeom : Layout.Geom :=
@@ -1837,7 +1837,7 @@ def measureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "default article text block is 26 picas"
     (dfltDoc.page.width - 2 * dfltDoc.page.hmargin == Ir.articleTextBlock)
   t "default article measure is in band"
-    ((w0201 (Layout.run (Layout.Geom.ofPage dfltDoc.page) oneFace none dfltDoc).diags).isEmpty)
+    ((w0201 (layoutOf oneFace dfltDoc).diags).isEmpty)
   -- A document that declared any \page geometry keeps every value it named.
   let (declDoc, _) := Elab.run "t"
     "\\documentclass{article}\\page{ vmargin = 0.5in }\\begin{document}x\\end{document}"
@@ -1875,7 +1875,7 @@ def rhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   let layoutDiags (styleBlock : String) : Array Diag :=
     let src := "\\documentclass{article}\\tokens{ u = 4pt }" ++ styleBlock ++
       "\\begin{document}\\section{Head}Body\\end{document}"
-    (Layout.run ({} : Layout.Geom) oneFace none (Elab.run "t" src).1).diags
+    (layoutOf oneFace (Elab.run "t" src).1 {}).diags
   t "heading below-heavy spacing warns"
     ((layoutDiags "\\style{section}{ before = u, after = 2 * u }").any (·.code == "W0202"))
   t "heading above-heavy spacing is silent"
@@ -1921,7 +1921,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let prose := String.intercalate " " (List.replicate 20 "placeholder words")
   let judgeOverfull (pre : String) : Bool :=
     let doc := (elabStr (card "" prose pre)).1
-    let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+    let out := layoutOf oneFace doc
     out.diags.any (·.code == "W0005")
   t "ragged card prose breaks without overfull lines" (!judgeOverfull "")
   t "the same prose justified at card width cannot break"
@@ -1936,7 +1936,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- The gate lives in layout: the same narrow measure hyphenates as an
   -- article and must not as a card, whoever loaded the patterns.
   let hyphenRendered (doc : Ir.Doc) : Bool :=
-    let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace (some pats) doc
+    let out := layoutOf oneFace doc (pats := some pats)
     out.pages.any fun p => p.lines.any fun l =>
       l.segs.any fun s => match s with
         | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '-')
@@ -1957,14 +1957,14 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let (twoDoc, twoDs) := elabStr two
   t "card faces source clean" (!twoDs.any (·.severity == .error))
   t "two faces are two pages"
-    ((Layout.run (Layout.Geom.ofPage twoDoc.page) oneFace none twoDoc).pages.size == 2)
+    ((layoutOf oneFace twoDoc).pages.size == 2)
   -- Bleed grows the medium and records the trim box; without it the page
   -- dictionaries stay exactly as they were.
   let (bDoc, bDs) := elabStr (card "" "x" "\\page{ bleed = 3mm }\n")
   t "bleed declaration is clean" (!bDs.any (·.severity == .error))
   t "bleed reaches the page spec" (bDoc.page.bleed == Dim.mm 3)
   let bGeom := Layout.Geom.ofPage bDoc.page
-  let bOut := Layout.run bGeom oneFace none bDoc
+  let bOut := layoutOf oneFace bDoc bGeom
   let bPdf := Pdf.write bGeom oneFace bOut.pages
   t "bleed writes a TrimBox 3mm in from the medium corner"
     (bytesContain bPdf "/TrimBox [8.504 8.504 251.15 161.518]")
@@ -1976,7 +1976,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (bytesContain bPdf "1 0 0 1 22.677 ")
   let plainGeom := Layout.Geom.ofPage cDoc.page
   let plainPdf := Pdf.write plainGeom oneFace
-    (Layout.run plainGeom oneFace none cDoc).pages
+    (layoutOf oneFace cDoc plainGeom).pages
   t "no bleed, no TrimBox" (!bytesContain plainPdf "/TrimBox")
   -- What the class guarantees, stated as the assertions the engine already
   -- enforces. Declaring an assertion of the same form is intent and takes
@@ -2005,7 +2005,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let judge (src : String) : Array Diag :=
     let doc := (elabStr src).1
     let geom := Layout.Geom.ofPage doc.page
-    let out := Layout.run geom oneFace none doc
+    let out := layoutOf oneFace doc geom
     Check.all (Check.Shipped.ofOut geom oneFace out true) doc.asserts
   let lorem := String.intercalate " " (List.replicate 60 "placeholder words fill the face")
   t "an over-full card fails its faces assertion"
@@ -2065,7 +2065,7 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "picture bbox joins its shapes"
     (pic.bbox == ((0, 0), (Dim.pt 20, Dim.pt 10)))
   let run (body : Array Ir.Block) : Layout.Out :=
-    Layout.run geom oneFace none { body := body }
+    layoutOf oneFace { body := body } geom
   let out := run #[.picture pic]
   t "picture ships one page" (out.pages.size == 1)
   t "picture rect ships as one fill of its own size and colour"
@@ -2112,8 +2112,8 @@ def roleLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let wrapped : Ir.Doc := { body := #[.role "entry"
     #[.para #[.role "muted" #[.text "quiet"], .text " words"]]] }
   let plain : Ir.Doc := { body := #[.para #[.text "quiet", .text " words"]] }
-  let out1 := Layout.run geom oneFace none wrapped
-  let out2 := Layout.run geom oneFace none plain
+  let out1 := layoutOf oneFace wrapped geom
+  let out2 := layoutOf oneFace plain geom
   t "a role ships zero PDF bytes"
     ((Pdf.write geom oneFace out1.pages).data == (Pdf.write geom oneFace out2.pages).data)
   -- The styled path: a role's declared rhythm applies where the role
@@ -2121,7 +2121,7 @@ def roleLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- site — so the value lives once, upstream. Judged over `Layout.Out`.
   let linesOf (src : String) : Array (String × Dim.Sp) :=
     let (d, _) := elabStr src
-    (Layout.run geom oneFace none d).pages.flatMap fun p =>
+    (layoutOf oneFace d geom).pages.flatMap fun p =>
       p.lines.map fun l => (l.segs.foldl (fun s seg => match seg with
         | .run _ _ _ _ glyphs _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
         | .gap _ => s.push ' '
@@ -2160,7 +2160,7 @@ def navLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     "\\end{document}"
   let (doc, ds) := elabStr src
   t "nav layout source clean" (ds.all (·.severity == .note))
-  let out := Layout.run geom oneFace none doc
+  let out := layoutOf oneFace doc geom
   let ink := String.intercalate " " (out.pages.toList.map fun p =>
     String.intercalate " " (p.lines.toList.map fun l =>
       l.segs.foldl (fun s seg => match seg with
@@ -2191,7 +2191,7 @@ def navLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
      bytesContain pdf "/Title (Two)" && bytesContain pdf "/Dest [" &&
      bytesContain pdf "/S /URI /URI (https://example.org)")
   let (plainDoc, _) := elabStr "\\documentclass{article}\\begin{document}\nx\n\\end{document}"
-  let plainOut := Layout.run geom oneFace none plainDoc
+  let plainOut := layoutOf oneFace plainDoc geom
   t "no nav, no outline, nothing emitted"
     (plainOut.outline.isEmpty &&
       !bytesContain (Pdf.write geom oneFace plainOut.pages {} {} plainOut.outline)
