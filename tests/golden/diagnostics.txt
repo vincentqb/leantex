@@ -144,7 +144,7 @@ note[N0018]: 'Fira Math' has no sans-serif 'A' (U+1D5A0); the plain letter stand
 note[N0019]: content addressed per backend encodes a per-medium decision by hand
   help: a construct carries its own medium answer (a nav, a note); prefer the construct or the class, and keep '\begin{ifbackend}' for the true remainder
 ── N0020 (info) a local style file is read as part of the preamble
-note[N0020]: 'venueguide.sty' beside the document is read as part of the preamble — constructs honoured: 2, named where they stand: 2
+note[N0020]: 'venueguide.sty' beside the document is read into the preamble — honoured: 2, named: 1, TeX internals refused: 1
 ── N0100 (info) LaTeX idiom translated to its native declaration
 note[N0100]: '\usepackage{geometry}' → \page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model

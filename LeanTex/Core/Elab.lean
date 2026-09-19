@@ -221,12 +221,15 @@ private def emitEvents (ctx : Ctx) (evs : Array PEvent) : EM Unit :=
   modify fun st => evs.foldl (applyEvent ctx) st
 
 /-- A warning deduplicated by `key`: the same unsupported construct in forty
-frames is one problem, not forty. -/
+frames is one problem, not forty. `demote` delivers it as a note instead —
+the spliced-`.sty` TeX-internal refusal (`Compat.styInternal`), correct and
+unactionable per line, counted once by N0020 and listed under `-v`. -/
 private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String) (pos : Pos)
-    (help : Option String := none) : EM Unit := do
+    (help : Option String := none) (demote : Bool := false) : EM Unit := do
   unless (← get).warnedUnknown.contains key do
     modify fun st => { st with warnedUnknown := st.warnedUnknown.push key }
-    diag ctx code msg (some pos) help
+    let d := diagOf ctx code msg (some pos) help
+    modify fun st => { st with diags := st.diags.push (if demote then d.demote else d) }
 
 /-- Reserved control words, and the code each skip earns — W0307 (pending,
 a warning: a milestone owns the construct) when the skipped arguments carry
@@ -2606,6 +2609,7 @@ from where it stands"
     warnOnce ctx ("ctrl:" ++ name) .W0301
       s!"unknown command '\\{name}'; its \{...} arguments were kept as text" pos
       (help := "\\define \\name(...) {body} declares it")
+      (demote := Compat.styInternal ctx.file name)
     let j0 := skipSpaces raws (i + 1)
     have hj0 := skipSpaces_ge raws (i + 1)
     -- A starred form's `*` belongs to the command, not to the text.
@@ -6048,6 +6052,7 @@ its declared layout" pos
     warnOnce s.ctx ("ctrl:" ++ name) .W0301
       s!"unknown command '\\{name}' in the preamble; skipped" pos
       (help := "\\define \\name(...) {body} declares it")
+      (demote := Compat.styInternal s.ctx.file name)
     if let some bpos := unclosed then
       warnUnclosed s.ctx s!"'\\{name}'" bpos
     return s

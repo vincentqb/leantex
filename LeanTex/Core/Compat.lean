@@ -170,19 +170,103 @@ private structure St where
 
 private abbrev M := StateM St
 
-private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option String := none) :
-    M Unit :=
+/-- The TeX82 primitive control words — a closed, documented list (Knuth,
+The TeXbook, Appendix I marks each primitive in its index; canonically the
+`primitive` initialisations in tex.web). One half of the `texInternal`
+boundary; the `@`-name convention is the other. -/
+def texPrimitives : Array String := #[
+  "above", "abovedisplayshortskip", "abovedisplayskip", "abovewithdelims",
+  "accent", "adjdemerits", "advance", "afterassignment", "aftergroup",
+  "atop", "atopwithdelims", "badness", "baselineskip", "batchmode",
+  "begingroup", "belowdisplayshortskip", "belowdisplayskip", "binoppenalty",
+  "botmark", "box", "boxmaxdepth", "brokenpenalty", "catcode", "char",
+  "chardef", "cleaders", "closein", "closeout", "clubpenalty", "copy",
+  "count", "countdef", "cr", "crcr", "csname", "day", "deadcycles", "def",
+  "defaulthyphenchar", "defaultskewchar", "delcode", "delimiter",
+  "delimiterfactor", "delimitershortfall", "dimen", "dimendef",
+  "discretionary", "displayindent", "displaylimits", "displaystyle",
+  "displaywidowpenalty", "displaywidth", "divide", "doublehyphendemerits",
+  "dp", "dump", "edef", "else", "emergencystretch", "end", "endcsname",
+  "endgroup", "endinput", "endlinechar", "eqno", "errhelp", "errmessage",
+  "errorcontextlines", "errorstopmode", "escapechar", "everycr",
+  "everydisplay", "everyhbox", "everyjob", "everymath", "everypar",
+  "everyvbox", "exhyphenpenalty", "expandafter", "fam", "fi",
+  "finalhyphendemerits", "firstmark", "floatingpenalty", "font",
+  "fontdimen", "fontname", "futurelet", "gdef", "global", "globaldefs",
+  "halign", "hangafter", "hangindent", "hbadness", "hbox", "hfil", "hfill",
+  "hfilneg", "hfuzz", "hoffset", "holdinginserts", "hrule", "hsize",
+  "hskip", "hss", "ht", "hyphenation", "hyphenchar", "hyphenpenalty", "if",
+  "ifcase", "ifcat", "ifdim", "ifeof", "iffalse", "ifhbox", "ifhmode",
+  "ifinner", "ifmmode", "ifnum", "ifodd", "iftrue", "ifvbox", "ifvmode",
+  "ifvoid", "ifx", "ignorespaces", "immediate", "indent", "input",
+  "inputlineno", "insert", "insertpenalties", "interlinepenalty",
+  "jobname", "kern", "language", "lastbox", "lastkern", "lastpenalty",
+  "lastskip", "lccode", "leaders", "left", "lefthyphenmin", "leftskip",
+  "leqno", "let", "limits", "linepenalty", "lineskip", "lineskiplimit",
+  "long", "looseness", "lower", "lowercase", "mag", "mark", "mathaccent",
+  "mathbin", "mathchar", "mathchardef", "mathchoice", "mathclose",
+  "mathcode", "mathinner", "mathop", "mathopen", "mathord", "mathpunct",
+  "mathrel", "mathsurround", "maxdeadcycles", "maxdepth", "meaning",
+  "medmuskip", "message", "mkern", "month", "moveleft", "moveright",
+  "mskip", "multiply", "muskip", "muskipdef", "newlinechar", "noalign",
+  "noboundary", "noexpand", "noindent", "nolimits", "nonscript",
+  "nonstopmode", "nulldelimiterspace", "nullfont", "number", "omit",
+  "openin", "openout", "or", "outer", "output", "outputpenalty", "over",
+  "overfullrule", "overline", "overwithdelims", "pagedepth",
+  "pagefilllstretch", "pagefillstretch", "pagefilstretch", "pagegoal",
+  "pageshrink", "pagestretch", "pagetotal", "par", "parfillskip",
+  "parindent", "parshape", "parskip", "patterns", "pausing", "penalty",
+  "postdisplaypenalty", "predisplaypenalty", "predisplaysize",
+  "pretolerance", "prevdepth", "prevgraf", "radical", "raise", "read",
+  "relax", "relpenalty", "right", "righthyphenmin", "rightskip",
+  "romannumeral", "scriptfont", "scriptscriptfont", "scriptscriptstyle",
+  "scriptspace", "scriptstyle", "scrollmode", "setbox", "setlanguage",
+  "sfcode", "shipout", "show", "showbox", "showboxbreadth", "showboxdepth",
+  "showlists", "showthe", "skewchar", "skip", "skipdef", "spacefactor",
+  "spaceskip", "span", "special", "splitbotmark", "splitfirstmark",
+  "splitmaxdepth", "splittopskip", "string", "tabskip", "textfont",
+  "textstyle", "the", "thickmuskip", "thinmuskip", "time", "toks",
+  "toksdef", "tolerance", "topmark", "topskip", "tracingcommands",
+  "tracinglostchars", "tracingmacros", "tracingonline", "tracingoutput",
+  "tracingpages", "tracingparagraphs", "tracingrestores", "tracingstats",
+  "uccode", "uchyph", "underline", "unhbox", "unhcopy", "unkern",
+  "unpenalty", "unskip", "unvbox", "unvcopy", "uppercase", "vadjust",
+  "valign", "vbadness", "vbox", "vcenter", "vfil", "vfill", "vfilneg",
+  "vfuzz", "voffset", "vrule", "vsize", "vskip", "vsplit", "vss", "vtop",
+  "wd", "widowpenalty", "wlog", "xdef", "xleaders", "xspaceskip", "year"]
+
+/-- Is this control word a TeX internal — the boundary for the spliced-`.sty`
+demotion? The union of the `@`-names (LaTeX's internal-name convention:
+`\makeatletter` scopes them, ltdefns.dtx; `Lex.nameChar` already admits `@`)
+and the TeX82 primitives. A package or venue macro (`\NewEnviron`) is
+neither: the author might know it, so its refusal stays a per-line
+warning. -/
+def texInternal (name : String) : Bool :=
+  name.contains '@' || texPrimitives.contains name
+
+/-- A refusal of `name` at a site in `file` demotes exactly when the site is
+inside a spliced `.sty` — the only door a `.sty` span enters by is the
+splice (`\input` reads `.tex`) — and the name is a TeX internal. The author
+can act on a per-line warning in their own files; in a venue's style file
+they cannot, and N0020 already names that file once. -/
+def styInternal (file name : String) : Bool :=
+  file.endsWith ".sty" && texInternal name
+
+private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option String := none)
+    (demote : Bool := false) : M Unit :=
   modify fun st => { st with
-    diags := st.diags.push (Diag.of code msg (some ⟨st.file, pos⟩) help) }
+    diags := st.diags.push (
+      let d := Diag.of code msg (some ⟨st.file, pos⟩) help
+      if demote then d.demote else d) }
 
 /-- Keys are namespaced (`ctrl:`, `spec:`, `beamer:`), never bare names: the
 catch-all `beamer:` key set grows with `beamerConfig`, and a flat space would
 let a future entry claim a literal arm's key and silence it. -/
 private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
-    (help : Option String := none) : M Unit := do
+    (help : Option String := none) (demote : Bool := false) : M Unit := do
   unless (← get).warned.contains key do
     modify fun st => { st with warned := st.warned.push key }
-    say code msg pos help
+    say code msg pos help demote
 
 /-- Every translation is one note in the same shape, so `-v` reads as a list
 of things the document could say directly. -/
@@ -1332,20 +1416,22 @@ clock, so nothing is inserted" pos
         -- Consume through the body group, so the definition never leaks
         -- into the document as stray content.
         let k2 := if found then k + 1 else k
+        let demote := styInternal (← get).file name
         if expanding then
           sayOnce ("ctrl:" ++ name) .W0357
             s!"'\\{name}' defines by expanding at definition time; the engine has no \
 expansion step, so the definition is skipped" pos
-            (help := "\\define \\name(...) {body} declares typed commands")
+            (help := "\\define \\name(...) {body} declares typed commands") demote
         else
           sayOnce "ctrl:def-delimited" .W0357
             s!"'\\{name}' with a delimited parameter text is a TeX scanning program; \
 the definition is skipped" pos
-            (help := "\\define \\name(...) {body} declares typed commands")
+            (help := "\\define \\name(...) {body} declares typed commands") demote
         return some (#[], k2)
     | none =>
       sayOnce "ctrl:def" .W0357 s!"TeX '\\{name}' is not supported; skipped" pos
         (help := "\\define \\name(...) {body} declares typed commands")
+        (demote := styInternal (← get).file name)
       return some (#[], start)
   | "newenvironment" | "renewenvironment" =>
     -- `\newenvironment{name}[n][default]{begin}{end}` is the native
@@ -1932,21 +2018,28 @@ theorem applyLocalSty_id (raws : Array Raw) : applyLocalSty raws #[] = (raws, #[
   simp
 
 /-- What a spliced `.sty` yielded, counted after elaboration: a construct
-was honoured when its translation note (N0100) carries the file, and
-named when a warning does. -/
-def styCounts (sty : String) (diags : Array Diag) : Nat × Nat :=
+was honoured when its translation note (N0100) carries the file, named
+when a warning does, and a TeX internal refused when a demoted refusal
+does — a note that kept its W0301/W0357 code is the demotion's signature,
+and at this point in the run nothing else makes one (`\allow` acceptance
+resolves later, in the driver). -/
+def styCounts (sty : String) (diags : Array Diag) : Nat × Nat × Nat :=
   let mine := diags.filter fun d => d.span.any (·.file == sty)
   ((mine.filter (·.code == "N0100")).size,
-   (mine.filter (·.severity == .warning)).size)
+   (mine.filter (·.severity == .warning)).size,
+   (mine.filter fun d =>
+     d.severity == .note && (d.code == "W0301" || d.code == "W0357")).size)
 
 /-- The one N0020 construction — the note that says the file was looked
 at, and how much of it took. Built after elaboration, from the splice
-records `applyLocalSty` returns: the counts do not exist before it. -/
+records `applyLocalSty` returns: the counts do not exist before it. The
+spelling is compact — three counts and a long file name must fit the
+message-length lint. -/
 def styRead (docFile sty : String) (pos : Pos) (diags : Array Diag) : Diag :=
-  let (honoured, named) := styCounts sty diags
+  let (honoured, named, refused) := styCounts sty diags
   Diag.of .N0020
-    (s!"'{sty}' beside the document is read as part of the preamble — " ++
-     s!"constructs honoured: {honoured}, named where they stand: {named}")
+    (s!"'{sty}' beside the document is read into the preamble — " ++
+     s!"honoured: {honoured}, named: {named}, TeX internals refused: {refused}")
     (some ⟨docFile, pos⟩)
 
 end LeanTex.Core.Compat

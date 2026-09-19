@@ -319,15 +319,15 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "what of the .sty's text is refused is named at the .sty's own file"
     ((elabDs.filter fun d => d.code == "W0357" &&
         d.span.any (·.file == "guide.sty")).size == 1)
-  t "the read is named once, with the honoured and named counts"
+  t "the read is named once, with the honoured, named, and refused counts"
     (spliced.toList.map (·.1) == ["guide.sty"] &&
-     Compat.styCounts "guide.sty" elabDs == (4, 1))
+     Compat.styCounts "guide.sty" elabDs == (4, 0, 1))
   t "a def-only local .sty is still read; its \\def is a definition — never W0103"
     (let (raws3, spl3) := Compat.applyLocalSty docRaws
       #[("guide", parseRaws "guide.sty" "\\def\\x#1{#1}\n")]
      let ds3 := (Elab.runRaws "t" raws3).2
      spl3.size == 1 && ds3.all (·.code != "W0103") &&
-     Compat.styCounts "guide.sty" ds3 == (1, 0))
+     Compat.styCounts "guide.sty" ds3 == (1, 0, 0))
   -- Monotone expansion visibility: a definition inside an expanded body
   -- binds at the visibility boundary and never re-exposes the command
   -- being expanded to its own body. The venue-style \maketitle — it
@@ -2199,7 +2199,7 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
      splicedA.toList.map (·.1) == ["venuea.sty"])
   t "parity a: N0020 quotes the counts and names the file that asked"
     (dsA.any fun d => d.code == "N0020" &&
-      (d.message.splitOn "honoured: 1, named where they stand: 0").length == 2 &&
+      (d.message.splitOn "honoured: 1, named: 0, TeX internals refused: 0").length == 2 &&
       d.span.any (·.file.endsWith "inputpre-preamble.tex"))
   -- (b) was: W0103 at venueb.sty:1 — the diagnostic named the right file,
   -- but venueb2.sty beside the document was never read.
@@ -2208,8 +2208,8 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
     (dsB.all (·.code != "W0103") &&
      docB.page.hmargin == Dim.pt 108 && docB.page.vmargin == Dim.pt 108 &&
      splicedB.toList.map (·.1) == ["venueb.sty", "venueb2.sty"] &&
-     Compat.styCounts "venueb.sty" dsB == (1, 0) &&
-     Compat.styCounts "venueb2.sty" dsB == (1, 0))
+     Compat.styCounts "venueb.sty" dsB == (1, 0, 0) &&
+     Compat.styCounts "venueb2.sty" dsB == (1, 0, 0))
   t "parity b: the nested read's N0020 names the .sty that asked, not the document"
     (splicedB.toList.map (·.2.1) == [none, some "venueb.sty"] &&
      dsB.any fun d => d.code == "N0020" && d.span.any (·.file == "venueb.sty"))
@@ -2222,6 +2222,37 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, dsD, _) ← run "styloop"
   t "a .sty that RequirePackages itself hits the nesting bound, never loops"
     (dsD.any (·.code == "E0501"))
+  -- The spliced-.sty collapse: a TeX internal the engine refuses inside a
+  -- venue's style file is correct and unactionable per line, so W0301/W0357
+  -- demote to notes there (listed under -v) and N0020's third count carries
+  -- them. The boundary is @-names ∪ the TeX82 primitives; a venue macro is
+  -- neither and stays a per-line warning; the document's own files always
+  -- keep per-line warnings.
+  let (_, dsI, _) ← run "internals"
+  let refusedI := dsI.filter fun d =>
+    d.severity == .note && (d.code == "W0301" || d.code == "W0357")
+  t "sty collapse: internals refused inside a spliced .sty are notes, at .sty lines"
+    (refusedI.size == 4 && refusedI.all (fun d => d.span.any (·.file == "venuei.sty")) &&
+     (refusedI.filter (·.code == "W0357")).size == 1)
+  t "sty collapse: a venue macro the engine cannot run stays a per-line warning"
+    (dsI.any fun d => d.code == "W0301" && d.severity == .warning &&
+      (d.message.splitOn "VenueSetup").length == 2)
+  t "sty collapse: N0020 quotes all three counts"
+    (dsI.any fun d => d.code == "N0020" &&
+      (d.message.splitOn "TeX internals refused: 4").length == 2 &&
+      Compat.styCounts "venuei.sty" dsI == (0, 1, 4))
+  t "sty collapse: the same internals in the document's own preamble stay warnings"
+    (let ds := (Elab.run "doc.tex"
+      "\\begingroup\n\\v@final\n\\begin{document}\nx\n\\end{document}").2
+     (ds.filter fun d => d.code == "W0301" && d.severity == .warning).size == 2 &&
+     ds.all fun d => !(d.code == "W0301" && d.severity == .note))
+  t "sty collapse boundary: @-names and TeX82 primitives, nothing else"
+    (Compat.texInternal "z@" && Compat.texInternal "@plus" &&
+     Compat.texInternal "begingroup" && Compat.texInternal "widowpenalty" &&
+     !Compat.texInternal "NewEnviron" && !Compat.texInternal "thanks" &&
+     !Compat.texInternal "bf" &&
+     Compat.styInternal "venue.sty" "begingroup" &&
+     !Compat.styInternal "main.tex" "begingroup")
 
 /-- Elaboration terminates — checked under a wall clock, because the
 guarantee once lived only as prose and broke silently: the body-`\define`

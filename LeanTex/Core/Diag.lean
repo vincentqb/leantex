@@ -344,6 +344,16 @@ def Diag.accept (allowed : Array String) (allowAll : Bool) (d : Diag) : Diag × 
     ({ d with severity := .note }, true)
   else (d, false)
 
+/-- The spliced-`.sty` demotion: a TeX internal the engine correctly
+refuses inside a style file the author did not write is per-line correct
+and per-line unactionable — "'\\z@' is unknown" helps nobody holding only
+their own document. The diagnostic keeps its code and message but is
+delivered as a note (listed under `-v`), and N0020's "TeX internals
+refused" count carries it at default verbosity. The severity write lives
+here beside `Diag.accept`, the other policy door: severity is a function
+of policy declared in this module, never of a call site. -/
+def Diag.demote (d : Diag) : Diag := { d with severity := .note }
+
 /-- One phase's diagnostics resolved against the document's acceptance,
 with the counts the driver's exit contract reads: errors and warnings are
 counted after acceptance, so an accepted loss is neither. -/
