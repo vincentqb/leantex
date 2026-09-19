@@ -745,7 +745,12 @@ private def geometry (opts : String) (pos : Pos)
       -- geometry's width/height size the text block, paperwidth/paperheight
       -- the page (geometry manual §5.2); \page speaks in page dimensions.
       let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
-      if ["margin", "vmargin", "hmargin", "width", "height",
+      -- A `\dimexpr` is TeX arithmetic `lengthOfTeX` cannot carry: mapping
+      -- it would synthesize an unreadable `\page` value and turn a named
+      -- drop into an error. It stays a drop, named.
+      if v.startsWith "\\dimexpr" then
+        dropped := dropped.push k
+      else if ["margin", "vmargin", "hmargin", "width", "height",
           "textwidth", "textheight", "headsep", "footskip"].contains k then
         keys := keys.push s!"{k} = {lengthOfTeX v}"
       else if k == "headheight" then

@@ -345,6 +345,13 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat geometry drops an unequal pair named"
     ((elabStr (pre "\\usepackage[top=1in,bottom=0.5in]{geometry}")).2.any fun d =>
       d.code == "W0101" && hasStr d.message "top" && hasStr d.message "bottom")
+  -- A \dimexpr value is TeX arithmetic the mapping cannot carry: a named
+  -- drop, never a synthesized unreadable \page value (E0321).
+  let dimexprDs := (elabStr
+    (pre "\\usepackage[footskip=\\dimexpr 0.25in + \\ht\\strutbox\\relax]{geometry}")).2
+  t "compat geometry drops a dimexpr value named, not as an error"
+    ((dimexprDs.any fun d => d.code == "W0101" && hasStr d.message "footskip") &&
+      dimexprDs.all (·.severity != .error))
   -- Dropped geometry keys change the page: a config loss, a warning, never
   -- a note buried behind -v.
   t "compat geometry names what it dropped as a warning"
