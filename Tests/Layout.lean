@@ -1786,6 +1786,45 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
       samePage tallDoc ["firstrow", "lastrow", "Below the table"])
   t "a fitting float is not named tall"
     (!(layoutDiags (tieDoc 12)).any (·.code == "W0358"))
+  -- The caption gap has a side: `captionsep` on the object side,
+  -- `floatsep` on the text side, whichever side the caption stands
+  -- (classes.dtx: `\abovecaptionskip` 10pt between object and caption,
+  -- `\belowcaptionskip` 0pt — the text side is the float separation the
+  -- text already has; the caption package's `tableposition=top` swaps
+  -- the pair for a caption above — the sourcing note at
+  -- `Ir.captionSepDefault`). Judged over `Layout.Out` baselines: both
+  -- text-side deltas agree, the object side sits exactly one half-unit
+  -- (floatsep − captionsep, 6pt at the 10pt base) tighter, and the
+  -- float's total extent is caption-position-independent — the realized
+  -- form of `floatPlan_gaps_conserved`.
+  let figDoc (above : Bool) (decl : String := "") : String :=
+    "\\documentclass{article}\n" ++ decl ++ "\\begin{document}\nbefore words\n\n" ++
+    (if above then
+      "\\begin{figure}\n\\caption{Caption words}\nBody line\n\\end{figure}"
+     else
+      "\\begin{figure}\nBody line\n\\caption{Caption words}\n\\end{figure}") ++
+    "\n\nafter words\n\\end{document}"
+  let deltas (src : String) : Option (Int × Int × Int) :=
+    match (layoutOut src).pages[0]? with
+    | some p =>
+      match p.lines.map (·.y) with
+      | #[y0, y1, y2, y3] => some (y1 - y0, y2 - y1, y3 - y2)
+      | _ => none
+    | none => none
+  t "the caption gap is object-side: text sides agree, object side ½u tighter"
+    (match deltas (figDoc false), deltas (figDoc true) with
+     | some (b1, b2, b3), some (a1, a2, a3) =>
+       b1 == b3 && b1 - b2 == Dim.pt 6 &&
+       a1 == a3 && a1 - a2 == Dim.pt 6
+     | _, _ => false)
+  t "a captioned float's extent is caption-position-independent"
+    (match deltas (figDoc false), deltas (figDoc true) with
+     | some (b1, b2, b3), some (a1, a2, a3) => b1 + b2 + b3 == a1 + a2 + a3
+     | _, _ => false)
+  t "captionsetup skip=12pt raises the object side to the text side's 12pt"
+    (match deltas (figDoc false "\\captionsetup{skip=12pt}\n") with
+     | some (d1, d2, _) => d1 == d2
+     | _ => false)
   -- Rules span exactly their columns, judged on the page: the full rules
   -- share one left edge and one width; the trimmed \cmidrule lies strictly
   -- inside them. An executable check, not a theorem — the extents live in

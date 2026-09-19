@@ -2959,6 +2959,53 @@ the page")
   let a := a.flushGap
   { a with ops := a.ops.push (.picture (a.geom.hmargin + x) pic) }
 
+/-- What a captioned float stacks, top to bottom. Position decides where
+the caption and the object stand, never which gaps are paid — that is the
+conservation `floatPlan_gaps_conserved` states. -/
+private inductive FloatSlot where
+  | gap (g : Glue)
+  | caption
+  | object
+
+/-- The float's vertical plan, in physical top-to-bottom order: a
+text-side gap (`floatsep`), the caption and its object in source order
+with the object-side gap (`captionsep`) between them, a text-side gap.
+The gap is on the float side of the caption whichever side the caption
+stands — LaTeX's `\abovecaptionskip`/`\belowcaptionskip` shape with the
+caption package's `tableposition=top` swap (the sourcing note at
+`Ir.captionSepDefault`). A bare float pays no caption gap. The float arm
+folds over this plan, so the theorems below range over what runs. -/
+private def floatPlan (capAbove hasCaption : Bool) (floatSep capSep : Glue) :
+    List FloatSlot :=
+  if !hasCaption then [.gap floatSep, .object, .gap floatSep]
+  else if capAbove then
+    [.gap floatSep, .caption, .gap capSep, .object, .gap floatSep]
+  else
+    [.gap floatSep, .object, .gap capSep, .caption, .gap floatSep]
+
+/-- The gaps a plan pays, in order. -/
+private def FloatSlot.gaps (plan : List FloatSlot) : List Glue :=
+  plan.filterMap fun s => match s with
+    | .gap g => some g
+    | _ => none
+
+/-- Caption-position conservation: a captioned float pays exactly the gap
+sequence text-side, object-side, text-side whichever side its caption
+stands — `capAbove` reorders the caption and the object, never the gaps.
+So the total vertical space a captioned float consumes is
+`floatsep + body + captionsep + caption + floatsep` regardless of caption
+position: "above" and "below" are indistinguishable in rhythm terms. -/
+private theorem floatPlan_gaps_conserved (capAbove : Bool) (floatSep capSep : Glue) :
+    FloatSlot.gaps (floatPlan capAbove true floatSep capSep)
+      = [floatSep, capSep, floatSep] := by
+  cases capAbove <;> rfl
+
+/-- A bare float pays the text-side gaps and nothing else. -/
+private theorem floatPlan_bare_gaps (capAbove : Bool) (floatSep capSep : Glue) :
+    FloatSlot.gaps (floatPlan capAbove false floatSep capSep)
+      = [floatSep, floatSep] := by
+  cases capAbove <;> rfl
+
 /-- Blocks that are pure state changes: they stand between siblings without
 being content — no line, no ink, no gap — so the walks neither pay a peer
 gap before them nor count them as a scope's first content. Without this, a
@@ -3426,7 +3473,6 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let caption := Ir.numberedCaption kind num caption
     let floatSep := a.resolve ((a.tokens.find? "floatsep").getD Ir.floatSepDefault)
     let capSep := a.resolve ((a.tokens.find? "captionsep").getD Ir.captionSepDefault)
-    let a := a.addvspace floatSep
     let a := a.pushOp .floatOpen
     -- classes.dtx `\@makecaption`: a caption that fits one line centres; a
     -- longer one sets as an ordinary paragraph.
@@ -3438,16 +3484,12 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       let a := { a with hyphCache := cache }
       let fits := itemsNaturalWidth items ≤ (a.measure.getD a.geom.textWidth) - indent
       collectPara a pats fs caption indent fits a.geom.fontSize
-    let a := if capAbove then
-      let a := setCaption a
-      let a := if caption.isEmpty then a else a.addvspace capSep
-      collectCentered a pats fs body.toList indent
-    else
-      let a := collectCentered a pats fs body.toList indent
-      let a := if caption.isEmpty then a else a.addvspace capSep
-      setCaption a
-    let a := a.pushOp .floatClose
-    a.addvspace floatSep
+    let a := (floatPlan capAbove (!caption.isEmpty) floatSep capSep).foldl
+      (fun a slot => match slot with
+        | .gap g => a.addvspace g
+        | .caption => setCaption a
+        | .object => collectCentered a pats fs body.toList indent) a
+    a.pushOp .floatClose
   | .frame title standout valign body =>
     -- A frame is a page boundary, not an article paragraph. Content past
     -- the page bottom spills to a continuation page — best effort, never

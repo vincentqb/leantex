@@ -266,8 +266,12 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat captionsetup names an unhonoured key once"
     (warnCodes (pre ("\\captionsetup[table]{skip=\\abovecaptionskip}\n" ++
       "\\captionsetup[subtable]{skip=\\abovecaptionskip}")) == ["W0354"] &&
-     ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).2.map (·.message)).any
-      (fun m => (m.splitOn "'skip'").length == 2))
+     ((elabStr (pre "\\captionsetup[table]{labelfont=bf}")).2.map (·.message)).any
+      (fun m => (m.splitOn "'labelfont'").length == 2))
+  t "compat captionsetup skip declares the caption gap"
+    ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).1.tokens.find? "captionsep"
+        == some { width := { sp := Dim.pt 10 } } &&
+     (elabStr (pre "\\captionsetup[table]{skip=10pt}")).2.all (·.severity == .note))
   t "compat appendixnumberbeamer is native; \\appendix is too"
     ((elabStr (pre "\\usepackage{appendixnumberbeamer}")).2.all (·.severity == .note) &&
      warnCodes ("\\documentclass{article}\n\\usepackage{appendixnumberbeamer}\n" ++

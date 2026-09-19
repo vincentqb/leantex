@@ -205,7 +205,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0348 => dvE (dvDeck "\\palette{ alert = #112233 }\n\\theme{moloch}\n"
       "\\begin{frame}{T}\nx\n\\end{frame}")
   | .W0354 => dvE (dvDoc
-      "\\usepackage[tableposition=top]{caption}\n\\captionsetup[table]{skip=10pt}\n" "x")
+      "\\usepackage[tableposition=top]{caption}\n\\captionsetup[table]{labelfont=bf}\n" "x")
   | .W0355 => dvE (dvDoc "\\theme{moloch}\n" "x")
   | .W0351 => dvBib "@misc{real, year = 2024}" "ghost" none
   | .W0352 => dvBib "@misc{broken, year = ?}\n@misc{kept, year = 2024}" "kept" none

@@ -352,20 +352,29 @@ rules" the package exists to add. -/
 theorem rule_seps_ordered : 0 < aboveRuleSep.ex ∧ aboveRuleSep.ex < belowRuleSep.ex := by
   decide
 
--- Float and caption separation. LaTeX's own defaults order the three gaps
--- — `\abovecaptionskip` 10pt between object and caption, `\intextsep` 12pt
--- between an in-text float and the text (classes.dtx, 10pt option) — the
--- caption binds tighter to its object than the float to its page. The
--- engine keeps that ordering and quantizes both to the vertical rhythm
--- (Bringhurst §2.2.2, `default_rhythm_multiples` below): the caption gap
--- is the half-unit (6pt at the 10pt base, replacing the 10pt that is a
--- multiple of nothing here — the drift the rhythm rule exists to stop),
--- the float gap one full unit (12pt, exactly LaTeX's `\intextsep`). No
--- authority fixes the caption gap's absolute value; the half-unit is the
--- smallest rhythm multiple that keeps LaTeX's ordering.
+-- Float and caption separation. LaTeX's rule has a side to it, not just
+-- an ordering: `\caption` pays `\abovecaptionskip` (10pt, classes.dtx
+-- 10pt option) between the float's object and its caption, and
+-- `\belowcaptionskip` (0pt) on the caption's far side — the text side is
+-- the float separation the text already has (`\intextsep`, 12pt). For a
+-- caption above its table the caption package's `tableposition=top`
+-- swaps the pair (caption manual §2.2; venue classes do it by hand), so
+-- the caption gap stays on the OBJECT side whichever side the caption
+-- stands. A symmetric gap would double-count one side and starve the
+-- other. The engine keeps that shape — `captionsep` is the object-side
+-- gap, `floatsep` both text-side gaps (`Layout.floatPlan`) — and
+-- quantizes both to the vertical rhythm (Bringhurst §2.2.2,
+-- `default_rhythm_multiples` below): the caption gap is the half-unit
+-- (6pt at the 10pt base, the rhythm-aligned stand-in for LaTeX's 10pt,
+-- which is a multiple of nothing here), the float gap one full unit
+-- (12pt, exactly `\intextsep`). No authority fixes the caption gap's
+-- absolute value; the half-unit is the smallest rhythm multiple that
+-- keeps LaTeX's ordering.
 
-/-- Gap between a float's content and its caption. Overridable as
-`\tokens{ captionsep = ... }`. -/
+/-- Gap between a float's object and its caption — the object side only;
+the caption's text side is `floatSepDefault` (the sourcing note above).
+Overridable as `\tokens{ captionsep = ... }` or the caption package's
+`skip=` key. -/
 def captionSepDefault : SymGlue := { width := { sp := Dim.pt 6 } }
 /-- Gap between a float and the text around it. Overridable as
 `\tokens{ floatsep = ... }`. -/
@@ -386,14 +395,17 @@ theorem default_rhythm_multiples :
     2 * parskipDefault.width.sp = leadingFor baseFontSize ∧
     0 < parskipDefault.width.sp := by decide
 
-/-- Caption and float gaps sit on the same rhythm: the caption gap is the
-half-unit (one `parskip`), the float gap the full unit (two, which is also
-exactly LaTeX's `\intextsep` 12pt, classes.dtx 10pt option), and the
-caption binds tighter to its object than the float to its page — the
-ordering LaTeX's own `\abovecaptionskip` 10pt < `\intextsep` 12pt states
-(classes.dtx). A default edit that breaks the quantization or the ordering
-fails the build; this is the user-visible "spacing around tables and
-figures" contract, stated over the values the engine ships. -/
+/-- Caption and float gaps sit on the same rhythm: the caption gap — the
+object-side gap, the sourcing note above `captionSepDefault` — is the
+half-unit (one `parskip`), the float gap — both text-side gaps — the full
+unit (two, which is also exactly LaTeX's `\intextsep` 12pt, classes.dtx
+10pt option), and the caption binds tighter to its object than the float
+to its page — the ordering LaTeX's own `\abovecaptionskip` 10pt <
+`\intextsep` 12pt states (classes.dtx). Which physical side each value
+lands on is `Layout.floatPlan`'s statement; this one holds the values. A
+default edit that breaks the quantization or the ordering fails the
+build; this is the user-visible "spacing around tables and figures"
+contract, stated over the values the engine ships. -/
 theorem caption_gaps_rhythm :
     captionSepDefault.width.sp = rhythmQuantum baseFontSize ∧
     floatSepDefault.width.sp = 2 * rhythmQuantum baseFontSize ∧

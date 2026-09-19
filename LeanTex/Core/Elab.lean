@@ -5444,17 +5444,35 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     -- the caption — placement stays source order there too). This
     -- engine binds `captionsep` to the object side of a caption
     -- wherever the source puts it, so those declarations already
-    -- hold. Every other key is named and ignored (W0354), one
+    -- hold. `skip` is that gap's own value (caption manual §2.2:
+    -- `skip=` sets `\abovecaptionskip`, the object-side skip), so a
+    -- literal length declares the `captionsep` token. Every other
+    -- key — and a `skip` whose value is a TeX length register the
+    -- engine does not resolve — is named and ignored (W0354), one
     -- warning per key. The `[float type]` scope changes nothing in
     -- that judgment, so it is skipped.
     if let some bpos := unclosed then
       warnUnclosed s.ctx "'\\captionsetup'" bpos
     match body with
     | some src =>
+      let mut s := s
       for entry in src.splitOn "," do
-        let key := ((entry.splitOn "=").headD "").trimAscii.toString
+        let parts := entry.splitOn "="
+        let key := (parts.headD "").trimAscii.toString
         if key.isEmpty then continue
-        unless ["position", "tableposition", "figureposition"].contains key do
+        let honouredSkip ← do
+          if key == "skip" then
+            let value := (String.intercalate "=" (parts.drop 1)).trimAscii.toString
+            match Decl.parseGlue value with
+            | some g =>
+              let tokens := s.tokens.declare "captionsep" g
+              s := { s with tokens := tokens, ctx := { s.ctx with tokens := tokens } }
+              noteDeclared s.ctx "tokens" "captionsep"
+              pure true
+            | none => pure false
+          else pure false
+        unless honouredSkip ||
+            ["position", "tableposition", "figureposition"].contains key do
           warnOnce s.ctx ("captionsetup:" ++ key) .W0354
             s!"'\\captionsetup' key '{key}' is not honoured; the caption keeps \
 its declared layout" pos
