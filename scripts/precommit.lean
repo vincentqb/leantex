@@ -333,6 +333,54 @@ the six-visual-defects shape (AGENTS.md, Conventions). -/
 def irDumpUnmarked (l : String) : Bool :=
   containsSub (stripLineComment (stripStrings l)) "Ir.dump" && !containsSub l irTierMark
 
+/-- Handed by impl-proofs: a heartbeat raise is a proof smell, not a budget
+knob — the tree holds zero. Composed self-diff-safe, like the keywords. -/
+def kwMaxHeartbeats : String := "maxHeart" ++ "beats"
+
+def heartbeatRaise (l : String) : Bool :=
+  containsSub (stripLineComment (stripStrings l)) kwMaxHeartbeats
+
+/-- Handed by impl-shapes: a catch-all arm that ships its scrutinee or an
+accumulator through unchanged (`| _ => out`, `| other => other`) — in an IR
+walk that is the next constructor silently falling through. A `none`/`nil`
+pattern is a constructor match, not a catch-all; an answer (`false`,
+`none`) or a control keyword (`break`) as RHS is a decision, not a
+pass-through. -/
+def wildcardThrough (l : String) : Bool :=
+  let answers := ["false", "true", "none", "nil", "break", "continue", "return"]
+  match armParts l with
+  | some ([p], [r]) =>
+    (p == "_" || (isVarToken p && p != "none" && p != "nil")) &&
+      isVarToken r && !answers.contains r
+  | _ => false
+
+/-- `]!` sites in a file, strings and comments aside — the panic-on-miss
+index COMMON bans adding to reach green. -/
+def bangCount (ls : Array String) : Nat := Id.run do
+  let mut n := 0
+  for l in ls do
+    n := n + ((stripLineComment (stripStrings l)).splitOn "]!").length - 1
+  return n
+
+/-- The frozen `]!` counts per file (whole LeanTex/ tree, 2026-09-18). A
+commit may lower a file's count — and then lowers its row — never raise
+it. Regenerate after removing sites: `bangCount` over the file. -/
+def bangBaseline : List (String × Nat) := [
+  ("LeanTex/Cli/Render.lean", 2),
+  ("LeanTex/Core/Compat.lean", 2),
+  ("LeanTex/Core/Elab.lean", 3),
+  ("LeanTex/Core/Flate.lean", 2),
+  ("LeanTex/Core/Font.lean", 3),
+  ("LeanTex/Core/FontDb.lean", 11),
+  ("LeanTex/Core/HtmlDoc.lean", 4),
+  ("LeanTex/Core/Hyphen.lean", 4),
+  ("LeanTex/Core/Ir.lean", 2),
+  ("LeanTex/Core/Layout.lean", 41),
+  ("LeanTex/Core/Lex.lean", 2),
+  ("LeanTex/Core/MathParse.lean", 1),
+  ("LeanTex/Core/Pdf.lean", 10),
+  ("LeanTex/Core/Utf8.lean", 4)]
+
 /-- The line's string-literal contents, concatenated — `stripStrings`'
 complement, with its stated line-scanner limitations. What the engine says
 to a user lives in string literals; this is the text the self-containment
@@ -542,7 +590,15 @@ def gates : List Gate := [
     help := s!"  A claim about what a page shows never comes from an IR dump — six visual
   defects once passed a fully green suite that way (AGENTS.md, Conventions).
   Fix: assert over Layout.Out or the typed HTML tree; an IR-tier fact that
-  is not a page claim says so on the line: `{irTierMark} <why>`." }]
+  is not a page claim says so on the line: `{irTierMark} <why>`." },
+  { applies := fun f => f.startsWith "LeanTex/" && f.endsWith ".lean"
+    flag := heartbeatRaise
+    what := fun f => s!"a {kwMaxHeartbeats} raise in {f}"
+    help := s!"  The tree holds zero heartbeat raises; a proof that needs one is telling
+  you the definition's shape is wrong (the MarkdownDoc emit_body_title_first
+  case), not that the budget is small.
+  Fix: reshape the proof or the definition; if neither closes, state it in
+  Obligations and report the blocker." }]
 
 /-- Every case a gate predicate must catch and every legal spelling it must
 pass, run by `lean --run scripts/precommit.lean --selftest` from `lake test`.
@@ -677,6 +733,35 @@ def selftest : IO UInt32 := do
     ("    let out := Ir.dump doc diags " ++ irTierMark ++ " goldens witness elaboration", false),
     ("  -- Ir.dump is rejected in tests without a tier", false),
     ("  t \"a message naming Ir.dump stays data\" true", false)]
+
+  expect "heartbeatRaise" heartbeatRaise [
+    -- the raise shapes, standalone and scoped
+    ("set_option " ++ kwMaxHeartbeats ++ " 400000", true),
+    ("  set_option " ++ kwMaxHeartbeats ++ " 1000000 in", true),
+    -- a comment, a string, and the other budget option stay legal
+    ("-- " ++ kwMaxHeartbeats ++ ": zero sites in the tree", false),
+    ("  say s!\"raise " ++ kwMaxHeartbeats ++ "\"", false),
+    ("set_option maxRecDepth 8192", false)]
+
+  expect "wildcardThrough" wildcardThrough [
+    -- the frozen pass-through shapes, all of which must fire
+    ("  | _ => out", true),
+    ("  | other => other", true),
+    ("  | x => x", true),
+    -- constructor matches, predicate answers, and multi-token arms stay legal
+    ("  | none => acc", false),
+    ("  | nil => simp [textLeavesTableCells]", false),
+    ("  | _ => false", false),
+    ("  | _ => none", false),
+    ("  | _ => break", false),
+    ("  | .text s => s", false),
+    ("  | other => cur := cur.push other", false),
+    ("  | _ => 1", false)]
+
+  -- bangCount: strings and comments are data, code is counted
+  if bangCount #["let x := xs[i]!", "-- xs[i]! in a comment",
+      "say \"xs[i]! quoted\"", "ys[j]! + zs[k]!"] != 3 then
+    fails.modify ("bangCount miscounted the mixed sample" :: ·)
 
   expect "identityArm" identityArm [
     -- the wildcard drops the walk audit found, all of which must fire
@@ -934,11 +1019,13 @@ def main (args : List String) : IO UInt32 := do
   for f in (← System.FilePath.walkDir "LeanTex") do
     if f.toString.endsWith ".lean" then coreFiles := coreFiles.push f.toString
   let mut allCore := ""
+  let mut coreTexts : Array (String × Array String) := #[]
   let mut walkSites : Array (String × Nat × String × Array String) := #[]
   for f in coreFiles do
     let txt ← IO.FS.readFile f
     allCore := allCore ++ txt
     let lines := (txt.splitOn "\n").toArray
+    coreTexts := coreTexts.push (f, lines)
     for i in [0:lines.size] do
       if let some name := walkEntry lines[i]! then
         walkSites := walkSites.push (f, i, name, lines)
@@ -954,6 +1041,44 @@ def main (args : List String) : IO UInt32 := do
   `Conserves` instance), `{name}_covers`, or `{name}_id` — or, when the
   walk genuinely conserves nothing, the one-line refusal
   `-- conserves: none — <why>` beside the def."
+
+  -- The arm gate (handed by impl-shapes), whole tree over LeanTex/Core:
+  -- a pass-through catch-all in a def whose one-line signature takes IR is
+  -- the next constructor silently falling through. The frozen holes are
+  -- allowlisted by def name; shrink the list as they close.
+  let armAllow : List String :=
+    ["imageSrcsInline", "setAltInline", "setAltBlock", "flattenLeadStep"]
+  for (f, lines) in coreTexts do
+    if f.startsWith "LeanTex/Core/" then
+      let mut cur := ""
+      let mut curWalk := false
+      for i in [0:lines.size] do
+        let l := lines[i]!
+        let t := stripLineComment l
+        if t.startsWith "def " || t.startsWith "private def " then
+          let rest := (if t.startsWith "private def " then t.drop 12 else t.drop 4).toString
+          cur := (rest.takeWhile (fun c => isWordChar c || c == '.')).toString
+          curWalk := hasWord t "Inline" || hasWord t "Block"
+        if curWalk && wildcardThrough l && !armAllow.contains cur then
+          say s!"pre-commit: wildcard arm in the IR walk `{cur}` ({f}:{i + 1}):
+  {l.trimAscii}
+  Spell every constructor, or the next Ir constructor silently falls
+  through (AGENTS.md, obligation table: an Ir constructor owes an explicit
+  arm in every walk); the allowlisted frozen sites live in precommit.lean."
+
+  -- The ]! ratchet (handed by impl-shapes), whole tree: per-file counts
+  -- against the frozen baseline — a commit may lower a count, never raise
+  -- it. ]! aborts the process; COMMON bans adding it to reach green.
+  for (f, lines) in coreTexts do
+    let n := bangCount lines
+    let base := ((bangBaseline.find? (·.1 == f)).map (·.2)).getD 0
+    if n > base then
+      say s!"pre-commit: new ]! index in {f}: {n} sites, baseline {base}.
+  ]! aborts the whole run on a miss — one font in a TeX Live tree once took
+  the run down with it.
+  Fix: use `for h :` bounds, getD, or a proof-carrying index; the per-file
+  count may only fall (lower its bangBaseline row in scripts/precommit.lean
+  when you remove sites)."
 
   -- The owed-theorem ratchet: a commit that touches the staging area or
   -- PLAN.md must leave the debt recorded — one hole per owed record, every
