@@ -248,6 +248,37 @@ def headingNumberChecks (ref : IO.Ref (List String)) : IO Unit := do
       [some "1", some "A", some "A.1", some "B"])
   let deck := (elabStr ("\\documentclass{slides}\\begin{document}\\section{Only}\\begin{frame}x\\end{frame}\\end{document}")).1
   t "slides sections never number" (nums deck == [none])
+  -- \the<counter> is the counter's printed format (classes.dtx
+  -- §Sectioning), so its \renewcommand restyles heading numbers from
+  -- where it stands instead of binding a macro (which also fired E0312
+  -- for every renew standing inline).
+  t "a renew of \\thesubsection is the heading-number format"
+    (nums (art "\\renewcommand*{\\thesubsection}{FAQ \\arabic{subsection}.}\\section{A}\\subsection{B}\\subsection{C}") ==
+      [some "1", some "FAQ 1.", some "FAQ 2."])
+  t "a format may reference the parent level's own format"
+    (nums (art "\\renewcommand{\\thesubsection}{\\thesection-\\alph{subsection}}\\section{A}\\subsection{B}") ==
+      [some "1", some "1-a"])
+  let pre := (elabStr ("\\documentclass{article}\\renewcommand{\\thesection}{S\\arabic{section}}\\begin{document}\n\\section{A}\n\\end{document}")).1
+  t "a preamble renew of \\thesection numbers the first heading"
+    (nums pre == [some "S1"])
+  let viaMacro := "\\documentclass{article}\\newcommand{\\fmt}{\\renewcommand{\\thesubsection}{Q\\arabic{subsection}}}\\begin{document}\n\\section{A}\\subsection{B}\n\\fmt\n\\subsection{C}\n\\end{document}"
+  t "a renew inside a macro body applies from the call site, without E0312"
+    (errCodes viaMacro == [] &&
+      nums (elabStr viaMacro).1 == [some "1", some "1.1", some "Q2"])
+  -- The label hack every FAQ-styled document writes: retarget the label
+  -- to the bare counter while the headings keep their prefixed format.
+  let faq := "\\documentclass{article}" ++
+    "\\newcommand{\\qlabel}[1]{\\renewcommand{\\thesubsection}{\\arabic{subsection}}" ++
+    "\\addtocounter{subsection}{-1}\\refstepcounter{subsection}\\label{#1}" ++
+    "\\renewcommand{\\thesubsection}{FAQ \\arabic{subsection}.}}" ++
+    "\\begin{document}\n\\renewcommand{\\thesubsection}{FAQ \\arabic{subsection}.}" ++
+    "\\section{Q}\\subsection{A}\\qlabel{q:one_two}\n\\subsection{B}\nSee \\ref{q:one_two}.\n\\end{document}"
+  t "refstepcounter retargets a label under the format in force"
+    (errCodes faq == [] && !(warnCodes faq).contains "W0349" &&
+      nums (elabStr faq).1 == [some "1", some "FAQ 1.", some "FAQ 2."])
+  t "a counter the engine does not model is named and its arguments consumed"
+    ((warnCodes (dvDoc "" "x\\setcounter{tocdepth}{2}y")).contains "W0104" &&
+      (errCodes (dvDoc "" "x\\setcounter{tocdepth}{2}y")) == [])
   let (doc, _) := elabStr ("\\documentclass{article}\\begin{document}\\section{Introduction}\nBody.\n\\end{document}")
   t "a number never moves the section anchor"
     ((((HtmlDoc.emit {} doc).1).splitOn "<section id=\"introduction\">").length == 2)

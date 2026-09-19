@@ -2,6 +2,7 @@ import LeanTex.Core.Lex
 import LeanTex.Core.Parse
 import LeanTex.Core.MathParse
 import LeanTex.Core.Ir
+import LeanTex.Core.ListMark
 import LeanTex.Core.Dim
 import LeanTex.Core.Decl
 import LeanTex.Core.Theme
@@ -97,6 +98,29 @@ structure Ctx where
   it stands (E0334) — the same walk `Ir.orphanFree` performs. -/
   backendTargets : List String := Ir.backendNames
 
+/-- The numeral spellings a counter format may use, LaTeX's own set
+(clsguide §Counters: `\arabic`, `\alph`, `\Alph`, `\roman`, `\Roman`);
+rendering reuses the `ListMark` encoders, so a format's digits and the
+list markers' cannot drift. -/
+inductive SecNumStyle where
+  | arabic
+  | alph
+  | uAlph
+  | roman
+  | uRoman
+  deriving Repr, BEq
+
+/-- One piece of a heading-number format — what `\renewcommand
+{\thesubsection}{FAQ \arabic{subsection}.}` declares (classes.dtx
+§Sectioning: `\the<counter>` is the counter's printed format, not a
+macro): literal text, a numeral over a section counter, or another
+level's own format (`\thesection` inside a subsection format). -/
+inductive SecPart where
+  | lit (s : String)
+  | num (style : SecNumStyle) (level : Nat)
+  | the (level : Nat)
+  deriving Repr, BEq
+
 structure ESt where
   diags : Array Diag := #[]
   /-- Warn-once keys already fired: a macro used forty times is one problem,
@@ -162,6 +186,11 @@ structure ESt where
   pass in document order, so stepping them here is exactly LaTeX's
   \refstepcounter sequence. -/
   secNums : Nat × Nat × Nat := (0, 0, 0)
+  /-- Declared heading-number formats, one per level, last wins — the
+  flow-order state a `\renewcommand{\the<counter>}{...}` writes wherever
+  it stands, as LaTeX's redefinition applies from its own position. Empty
+  for a level means the class default (classes.dtx §Sectioning). -/
+  secFmts : Array (Nat × Array SecPart) := #[]
   /-- `\appendix` was declared: headings from here on letter (`A`, `B`, …)
   and the section counter restarted — a from-here-forward flow state, the
   `\logo`/body-`\palette` scope model, never a brace-scoped flag. -/
@@ -408,6 +437,7 @@ def renderedBuiltins : List String :=
    "paragraph", "subparagraph", "href", "link", "url", "cite", "citep",
    "citet", "includegraphics", "faIcon", "pagenumber", "pagecount",
    "bibliography", "bibliographystyle", "textcolor",
+   "refstepcounter", "stepcounter", "addtocounter", "setcounter",
    "section", "subsection", "subsubsection"] ++
   titleCtrls ++ overlayCtrls ++ runningCtrl ++ (argStyles.map (·.1)) ++
   (declStyles.map (·.1)) ++ (Lex.textSymbols.map (·.1))
@@ -561,7 +591,7 @@ Pure and forward: it only slices `rest`, never expands. -/
 private def bindMathArgs (params : Array Param) (rest : Array Raw) :
     Array (String × Array Raw) × Array Raw := Id.run do
   let mut bindings : Array (String × Array Raw) := #[]
-  let mut i := 0
+  let mut i : Nat := 0
   for p in params do
     if p.optional then
       let j := skipSpaces rest i
@@ -905,7 +935,7 @@ about (its run is kept as content), and how many groups went with the
 wrapper, for the caller to name what W0302's "body is kept" does not cover. -/
 private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
     Nat × Option Pos × Nat := Id.run do
-  let mut i := 0
+  let mut i : Nat := 0
   let mut dropped := 0
   for _ in [0:body.size] do
     match scanBracketArg body i beginPos with
@@ -1290,7 +1320,7 @@ private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
   let mut out : Array Raw := #[]
   let mut keys : Array String := #[]
   let mut nonum := false
-  let mut i := 0
+  let mut i : Nat := 0
   repeat
     if h : i < body.size then
       match body[i] with
@@ -1361,7 +1391,7 @@ private def parseColSpec (spec : Array Raw) :
   let mut padL := true
   let mut padR := true
   let mut warns : Array (String × String × String) := #[]
-  let mut i := 0
+  let mut i : Nat := 0
   for _ in [0:spec.size] do
     if h : i < spec.size then
       match spec[i] with
@@ -1659,6 +1689,204 @@ macro "knot_dec" : tactic =>
          simp only [Array.toList_extract, Array.append_assoc] at *
          assumption)))
 
+/-- The numbered heading levels, by counter name: `\section` is 1. -/
+private def sectionLevel : String → Option Nat
+  | "section" => some 1
+  | "subsection" => some 2
+  | "subsubsection" => some 3
+  | _ => none
+
+/-- `\thesection`/`\thesubsection`/`\thesubsubsection` to its level. -/
+private def theCounterLevel? (n : String) : Option Nat :=
+  if n.startsWith "the" then sectionLevel (n.drop 3).toString else none
+
+private def secStyleOf? : String → Option SecNumStyle
+  | "arabic" => some .arabic
+  | "alph" => some .alph
+  | "Alph" => some .uAlph
+  | "roman" => some .roman
+  | "Roman" => some .uRoman
+  | _ => none
+
+private def secStyleRender (style : SecNumStyle) (n : Nat) : String :=
+  match style with
+  | .arabic => ListMark.arabicN n
+  | .alph => ListMark.alphN n
+  | .uAlph => ListMark.AlphN n
+  | .roman => ListMark.romanN n
+  | .uRoman => (ListMark.romanN n).toUpper
+
+private def counterAt (nums : Nat × Nat × Nat) (level : Nat) : Nat :=
+  match level with
+  | 1 => nums.1
+  | 2 => nums.2.1
+  | _ => nums.2.2
+
+/-- The class default number (classes.dtx §Sectioning): `\thesection` is
+`\arabic{section}` (`\Alph` after `\appendix`), each deeper level prefixes
+its parent. -/
+private def defaultSecNum (nums : Nat × Nat × Nat) (inApp : Bool)
+    (level : Nat) : String :=
+  let (n1, n2, n3) := nums
+  let base := if inApp then ListMark.AlphN n1 else ListMark.arabicN n1
+  match level with
+  | 1 => base
+  | 2 => s!"{base}.{n2}"
+  | _ => s!"{base}.{n2}.{n3}"
+
+mutual
+/-- Render one level's heading number: the declared format when one
+stands (`ESt.secFmts`, last declaration wins), the class default
+otherwise. `fuel` bounds `\the<counter>` references between formats —
+a self-referential chain cannot outrun it — and an exhausted budget
+falls back to the counter's bare arabic value. -/
+private def renderSecLevel (fmts : Array (Nat × Array SecPart))
+    (nums : Nat × Nat × Nat) (inApp : Bool) (fuel level : Nat) : String :=
+  match fuel with
+  | 0 => ListMark.arabicN (counterAt nums level)
+  | fuel + 1 =>
+    match fmts.findRev? (·.1 == level) with
+    | some (_, parts) => renderSecParts fmts nums inApp fuel parts.toList ""
+    | none => defaultSecNum nums inApp level
+termination_by (fuel, 0)
+
+private def renderSecParts (fmts : Array (Nat × Array SecPart))
+    (nums : Nat × Nat × Nat) (inApp : Bool) (fuel : Nat) :
+    List SecPart → String → String
+  | [], acc => acc
+  | p :: rest, acc =>
+    let piece := match p with
+      | .lit s => s
+      | .num style lvl => secStyleRender style (counterAt nums lvl)
+      | .the lvl => renderSecLevel fmts nums inApp fuel lvl
+    renderSecParts fmts nums inApp fuel rest (acc ++ piece)
+termination_by parts _ => (fuel, parts.length + 1)
+end
+
+/-- The `\the<counter>` render budget: the three section levels can chain
+at most through each other once each. -/
+private def secFmtFuel : Nat := 3
+
+/-- Read a definition body as a heading-number format: literal words and
+spaces, a numeral command over a section counter (`\arabic{subsection}`),
+or another level's format (`\thesection`). Any other token means the
+definition is not a format and stays an ordinary macro (`none`). -/
+private def secFmtOfBody (body : Array Raw) : Option (Array SecPart) := Id.run do
+  let mut parts : Array SecPart := #[]
+  let mut i : Nat := 0
+  for _ in [0:body.size + 1] do
+    match body[i]? with
+    | none => break
+    | some (.word s _) =>
+      parts := parts.push (.lit s)
+      i := i + 1
+    | some .space =>
+      parts := parts.push (.lit " ")
+      i := i + 1
+    | some (.ctrl n _) =>
+      if let some lvl := theCounterLevel? n then
+        parts := parts.push (.the lvl)
+        i := i + 1
+      else if let some style := secStyleOf? n then
+        match body[i + 1]? with
+        | some (.group g _) =>
+          match g.toList.filter (fun r => match r with | .space => false | _ => true) with
+          | [.word cn _] =>
+            match sectionLevel cn with
+            | some lvl =>
+              parts := parts.push (.num style lvl)
+              i := i + 2
+            | none => return none
+          | _ => return none
+        | _ => return none
+      else return none
+    | some _ => return none
+  return some parts
+
+/-- A definition that is a heading-number format: parameterless, named
+`\the<section counter>`, its body readable as a format. classes.dtx
+§Sectioning: `\the<counter>` is the counter's printed format, so
+`\renewcommand{\thesubsection}{FAQ \arabic{subsection}.}` — which the
+definer rewrite spells `\define \thesubsection() {...}` — restyles the
+heading numbers; binding it as a macro instead left every such document
+with dead `\arabic` text and E0312 where the renew stood inline. -/
+private def secFmtDefine? (cmd : UserCmd) : Option (Nat × Array SecPart) :=
+  if !cmd.params.isEmpty then none
+  else (theCounterLevel? cmd.name).bind fun lvl =>
+    (secFmtOfBody cmd.body).map ((lvl, ·))
+
+/-- Declare one level's heading-number format from where it stands: flow
+scope, the `\logo`/body-`\palette` model, never a brace revert. -/
+private def applySecFmt (lvl : Nat) (parts : Array SecPart) : EM Unit :=
+  modify fun st =>
+    { st with secFmts := (st.secFmts.filter (·.1 != lvl)).push (lvl, parts) }
+
+/-- The counter-command names (ltcounts.dtx), one gate for the
+block-shape judgement and the block walk's arm. -/
+private def counterCtrl (n : String) : Bool :=
+  n == "refstepcounter" || n == "stepcounter"
+    || n == "addtocounter" || n == "setcounter"
+
+/-- LaTeX's counter commands over the section counters (ltcounts.dtx):
+`\stepcounter` steps and zeroes the levels below, `\refstepcounter` also
+makes the counter the current `\ref` target (`\@currentlabel` is
+`\p@counter\thecounter`, so the format in force renders it), and
+`\addtocounter`/`\setcounter` change the value alone. Values are flow
+Nats; a negative result clamps to zero. -/
+private def applyCounter (name : String) (lvl : Nat) (n : Int) : EM Unit := do
+  let st ← get
+  let (s1, s2, s3) := st.secNums
+  let cur : Int := Int.ofNat (counterAt st.secNums lvl)
+  let v : Int := match name with
+    | "setcounter" => n
+    | "addtocounter" => cur + n
+    | _ => cur + 1
+  let v := v.toNat
+  let step := name == "stepcounter" || name == "refstepcounter"
+  let nums := match lvl with
+    | 1 => if step then (v, 0, 0) else (v, s2, s3)
+    | 2 => if step then (s1, v, 0) else (s1, v, s3)
+    | _ => (s1, s2, v)
+  modify fun st => { st with secNums := nums }
+  if name == "refstepcounter" then
+    let num := renderSecLevel st.secFmts nums st.inAppendix secFmtFuel lvl
+    modify fun st => { st with refTarget := some num }
+
+/-- One counter command with its arguments starting at `i` (just past
+the control word): scan, apply over the section counters, name any
+other counter (W0104) with its arguments consumed — configuration,
+never content. Out of the block knot so the fixpoint never unfolds
+it; the returned index carries the progress fact the knot's measure
+reads. -/
+private def counterArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (n : String) (pos : Pos) : EM { j : Nat // i ≤ j } := do
+  let j := skipSpaces raws i
+  have hjge : i ≤ j := skipSpaces_ge raws i
+  match raws[j]? with
+  | some (.group ctrRaw _) =>
+    let ctr := (rawSrc ctrRaw).trimAscii.toString
+    let ⟨(amt, j2), hj2⟩ : { t : Option Int × Nat // j + 1 ≤ t.2 } ←
+      if n == "addtocounter" || n == "setcounter" then
+        let ja := skipSpaces raws (j + 1)
+        have hja : j + 1 ≤ ja := skipSpaces_ge raws (j + 1)
+        match raws[ja]? with
+        | some (.group nRaw _) =>
+          pure ⟨((rawSrc nRaw).trimAscii.toString.toInt?, ja + 1), by omega⟩
+        | _ => pure ⟨(none, j + 1), Nat.le_refl _⟩
+      else
+        pure ⟨(some 1, j + 1), Nat.le_refl _⟩
+    match sectionLevel ctr, amt with
+    | some lvl, some v => applyCounter n lvl v
+    | some _, none =>
+      diag ctx .E0304 s!"'\\{n}' needs an integer \{value} group" pos
+    | none, _ =>
+      warnOnce ctx ("ctrl:" ++ n ++ ":" ++ ctr) .W0104
+        s!"counter '{ctr}' is not modelled; '\\{n}' changes nothing" pos
+    return ⟨j2, by omega⟩
+  | _ =>
+    diag ctx .E0304 s!"'\\{n}' needs a \{counter} group" pos
+    return ⟨i, Nat.le_refl _⟩
+
 -- The well-founded translation whnf-reduces through the knot's body when it
 -- assembles the fixpoint and its equations; the string machinery in the
 -- arms is data to that process, never proof material, and unfolding it is
@@ -1668,6 +1896,9 @@ seal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
 seal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 seal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 seal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
+
+seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
+seal theCounterLevel? sectionLevel String.toInt? String.toNat?
 
 mutual
 
@@ -2662,6 +2893,8 @@ end
 
 unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
 unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
+unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
+unseal theCounterLevel? sectionLevel String.toInt? String.toNat?
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
 
@@ -2733,6 +2966,10 @@ def bodyIsBlockOne : Raw → Bool
   | .ctrl n _ =>
     n == "block" || n == "par" || n == "framefoot" || n == "pagebreak"
       || n == "bibliography" || n == "bibliographystyle"
+      -- A definition or a counter command makes the body
+      -- declaration-shaped: it must expand through the block walk,
+      -- where the define door and the counter arm stand.
+      || n == "define" || counterCtrl n
       || ["section", "subsection", "subsubsection"].contains n
   | .par _ => true
   | .verb _ _ => true
@@ -2778,25 +3015,14 @@ private def overlayTakesBlocks (raws : Array Raw) (i : Nat) (curEmpty : Bool)
         | _ => false))
   | _ => curEmpty && !twoGroups
 
-private def sectionLevel : String → Option Nat
-  | "section" => some 1
-  | "subsection" => some 2
-  | "subsubsection" => some 3
-  | _ => none
-
-/-- One letter per appendix section, `\Alph`'s range: LaTeX errors past
-`Z` ("Counter too large"); this engine falls back to the arabic spelling
-rather than refusing the document. -/
-private def alphaNum (n : Nat) : String :=
-  if 1 ≤ n && n ≤ 26 then String.singleton (Char.ofNat (64 + n))
-  else toString n
-
 /-- The number an unstarred heading takes, stepped in flow order — or
 `none`, which is also the answer for every heading of a class that does
 not number. classes.dtx §Sectioning: `\thesection` is `\arabic{section}`
 (`\Alph` after `\appendix`), each deeper level prefixes its parent, a
 starred form neither numbers nor steps, and secnumdepth is 3, so
-`\paragraph` and below never number. Stepping a level zeroes the deeper
+`\paragraph` and below never number. A document's own
+`\renewcommand{\the<counter>}{...}` format (`ESt.secFmts`) renders
+instead where one stands. Stepping a level zeroes the deeper
 ones, so `2.1` after a fresh `\section` is impossible by construction. -/
 private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     EM (Option String) := do
@@ -2808,12 +3034,7 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     | 1 => (s1 + 1, 0, 0)
     | 2 => (s1, s2 + 1, 0)
     | _ => (s1, s2, s3 + 1)
-  let (n1, n2, n3) := nums
-  let base := if st.inAppendix then alphaNum n1 else toString n1
-  let num := match level with
-    | 1 => base
-    | 2 => s!"{base}.{n2}"
-    | _ => s!"{base}.{n2}.{n3}"
+  let num := renderSecLevel st.secFmts nums st.inAppendix secFmtFuel level
   -- The heading is the numbered thing in force from here on: a \label in
   -- the flow after it binds to this number.
   modify fun st => { st with secNums := nums, refTarget := some num }
@@ -4898,6 +5119,8 @@ seal titleBlocks Picture.elabPicture MathParse.parseMath
 seal Decl.parseBlock Decl.parseLength Decl.parseGlue skipOptArg takeTitleDecl
 seal sectionNumber columnWidth cmidRange trimRawEdges
 seal recordLabel refuseRedef dropEnvArgs skipReservedArgs takeDefine
+seal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
+seal theCounterLevel? String.toInt? String.toNat?
 seal Ir.padTableRows Ir.setAltBlocks Ir.plainText
 seal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 seal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
@@ -6076,6 +6299,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           || (n != "note" &&
             ((sectionLevel n).isSome
               || declCtrl.contains n || runningCtrl.contains n || n == "define"
+              || counterCtrl n
               || (match lookupUser ctx' n with
                   | some (_, cmd) => bodyIsBlock cmd.body
                   | none =>
@@ -6320,7 +6544,8 @@ a side channel, never slide content" cpos
         -- A definition in the body, legal as in LaTeX (`\newcommand`
         -- rewrites here): it binds through the shared door the preamble
         -- uses and applies to the rest of this walk. Inline positions
-        -- (inside a paragraph or an argument) keep the E0312 refusal.
+        -- (inside a paragraph or an argument) keep the E0312 refusal,
+        -- except the heading-number format, legal anywhere.
         let ⟨(cmd?, k), hdef⟩ ← takeDefine ctx' raws (i + 1) cpos
         have hk : i + 1 ≤ k := hdef.1
         have hks : sliceWeight raws k ≤ sliceWeight raws (i + 1) :=
@@ -6329,29 +6554,42 @@ a side channel, never slide content" cpos
           slicePars_le raws hk
         match hcm : cmd? with
         | some cmd =>
-          have h2 : rawWeightList cmd.body.toList + sliceWeight raws k + 2
-              ≤ sliceWeight raws (i + 1) := (hdef.2 cmd hcm).1
-          have h3 : rawParsList cmd.body.toList + slicePars raws k
-              ≤ slicePars raws (i + 1) := (hdef.2 cmd hcm).2
-          let keep ← gateRedefB ctx' cmd
-          if keep then
-            -- The definition binds at the visibility boundary
-            -- (`bindCmd`): the rest of this walk sees exactly one more
-            -- command, never the suffix beyond `limit`. Monotone
-            -- visibility is the expansion's whole termination argument
-            -- (`Ctx.limit`, `bindCmd_monotone`); raising `limit` to the
-            -- array's end here re-exposed a command being expanded to its
-            -- own body, and a venue file's `\maketitle` — which renews
-            -- `\thefootnote` and then names itself in `\let` — diverged.
-            have hbp := bindCmd_visPars ctx' cmd
-            have hbw := bindCmd_visWeight ctx' cmd
-            have hbe : (bindCmd ctx' cmd).envLimit = ctx'.envLimit
-                ∧ noteFlag (bindCmd ctx' cmd) = noteFlag ctx' := ⟨rfl, rfl⟩
-            elabBlocksGo (bindCmd ctx' cmd) raws k blocks #[] gen'
-          else
+          if let some (lvl, parts) := secFmtDefine? cmd then
+            -- Not a macro: a heading-number format declaration
+            -- (`secFmtDefine?`), applied from where it stands.
+            applySecFmt lvl parts
             elabBlocksGo ctx' raws k blocks #[] gen'
+          else
+            have h2 : rawWeightList cmd.body.toList + sliceWeight raws k + 2
+                ≤ sliceWeight raws (i + 1) := (hdef.2 cmd hcm).1
+            have h3 : rawParsList cmd.body.toList + slicePars raws k
+                ≤ slicePars raws (i + 1) := (hdef.2 cmd hcm).2
+            let keep ← gateRedefB ctx' cmd
+            if keep then
+              -- The definition binds at the visibility boundary
+              -- (`bindCmd`): the rest of this walk sees exactly one more
+              -- command, never the suffix beyond `limit`. Monotone
+              -- visibility is the expansion's whole termination argument
+              -- (`Ctx.limit`, `bindCmd_monotone`); raising `limit` to the
+              -- array's end here re-exposed a command being expanded to its
+              -- own body, and a venue file's `\maketitle` — which renews
+              -- `\thefootnote` and then names itself in `\let` — diverged.
+              have hbp := bindCmd_visPars ctx' cmd
+              have hbw := bindCmd_visWeight ctx' cmd
+              have hbe : (bindCmd ctx' cmd).envLimit = ctx'.envLimit
+                  ∧ noteFlag (bindCmd ctx' cmd) = noteFlag ctx' := ⟨rfl, rfl⟩
+              elabBlocksGo (bindCmd ctx' cmd) raws k blocks #[] gen'
+            else
+              elabBlocksGo ctx' raws k blocks #[] gen'
         | none =>
           elabBlocksGo ctx' raws k blocks #[] gen'
+      else if counterCtrl n then
+        let ⟨j2, hj2⟩ ← counterArm ctx' raws (i + 1) n cpos
+        have ht1 : sliceWeight raws j2 < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        have ht2 : slicePars raws j2 ≤ slicePars raws i :=
+          slicePars_le raws (by omega)
+        elabBlocksGo ctx' raws j2 blocks #[] gen'
       else if n == "bibliographystyle" then
         -- The declared style rides the state to the `\bibliography`
         -- marker; resolution reads it from the block (W0353 there names
@@ -6518,6 +6756,8 @@ unseal titleBlocks Picture.elabPicture MathParse.parseMath
 unseal Decl.parseBlock Decl.parseLength Decl.parseGlue skipOptArg takeTitleDecl
 unseal sectionNumber columnWidth cmidRange trimRawEdges
 unseal recordLabel refuseRedef dropEnvArgs skipReservedArgs takeDefine
+unseal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
+unseal theCounterLevel? String.toInt? String.toNat?
 unseal Ir.padTableRows Ir.setAltBlocks Ir.plainText
 unseal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 unseal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
@@ -7154,7 +7394,7 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
   let mut preamble := pre
   let mut curFile := file
   let mut out : Array PDecl := #[]
-  let mut i := 0
+  let mut i : Nat := 0
   repeat
     if h : i < preamble.size then
       let r := preamble[i]
@@ -7509,6 +7749,12 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     -- token run; the extent is the scan's, so the returned index is not
     -- read here.
     let ⟨(cmd?, _), _⟩ ← takeDefine s.ctx decl 0 pos
+    if let some cmd := cmd? then
+      if let some (lvl, parts) := secFmtDefine? cmd then
+        -- Not a macro: a heading-number format declaration, the same
+        -- interception as the body walk's define arm.
+        applySecFmt lvl parts
+        return s
     let cmd? ← match cmd? with
       | some cmd => do
         if (← gateRedefB s.ctx cmd) then pure (some cmd) else pure none
