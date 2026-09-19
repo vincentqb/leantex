@@ -47,7 +47,17 @@ def censusTable :
     ("the abstract body is set off the margin",
       (lineXOf c 0 "Entirely synthetic findings").any fun x => decide (x > geom.hmargin)),
     ("the following body returns to the margin",
-      lineXOf c 0 "Body text follows the abstract" == some geom.hmargin)]),
+      lineXOf c 0 "Body text follows the abstract" == some geom.hmargin),
+    -- The abstract heading follows the styled section heading
+    -- (`Ir.abstract_heading_follows_section`): same font on the shipped
+    -- page — \large is 1.2x, no engine default (the small-bold abstract
+    -- line, the body size) reaches it.
+    ("the abstract heading ships in the styled section's font",
+      lineSizeOf c 0 "Abstract" == some (geom.fontSize * 1200 / 1000) &&
+      lineSizeOf c 0 "Abstract" == lineSizeOf c 0 "Introduction"),
+    ("the abstract heading centres in the measure",
+      ((lineXOf c 0 "Abstract").map fun x =>
+        decide (x > geom.hmargin)).getD false)]),
   ("paragraphs", fun _ c => [
     ("one page", c.size == 1),
     ("the opening sentence ships", hasStr (censusText c) "Typesetting is the arrangement of type"),

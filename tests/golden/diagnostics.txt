@@ -70,7 +70,7 @@ error[E0327]: 'header' is not a '\page' key
   help: \runninghead{...} declares it; \hfill pushes content to the right
 ── E0328 (dropped) not a styleable element
 error[E0328]: 'banana' is not a styleable element or a '\define'd name
-  help: elements: section, subsection, subsubsection, itemize, enumerate, itemize2, itemize3, itemize4, enumerate2, enumerate3, enumerate4, frametitle, sectionpage, standout, titlepage, nav
+  help: elements: section, subsection, subsubsection, abstract, itemize, enumerate, frametitle, sectionpage, standout, titlepage, nav; a list level styles as itemize2..4 / enumerate2..4
 ── E0329 (dropped) unknown diagnostic code in \allow
 error[E0329]: '\allow' names no diagnostic code 'W9999'
   help: codes look like 'E0333'; each names the one loss it accepts

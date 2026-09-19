@@ -2317,7 +2317,7 @@ furniture (their `font` is read; `titlepage` also reads `align` and
 `\define` stands): the role's rhythm rides `before`/`after` on the page,
 and the whole style addresses the `u-<name>` class hook in HTML. -/
 def styleableElements : List String :=
-  ["section", "subsection", "subsubsection", "itemize", "enumerate",
+  ["section", "subsection", "subsubsection", "abstract", "itemize", "enumerate",
    "itemize2", "itemize3", "itemize4", "enumerate2", "enumerate3", "enumerate4",
    "frametitle", "sectionpage", "standout", "titlepage", "nav"]
 
@@ -2333,6 +2333,32 @@ as `Palette.declare`/`Tokens.declare`. A `\style` block edits keys of the
 element's existing entry first; what is declared here is the whole record. -/
 def Styles.declare (s : Styles) (element : String) (st : ElementStyle) : Styles :=
   { entries := (s.entries.filter (·.1 != element)).push (element, st) }
+
+/-- The abstract heading's style is the section heading's, centred: a
+reference, not a copy, so a venue or theme that restyles sections carries
+the abstract heading with it — the class's own relation (the NeurIPS
+lineage sets both headings `\large\bf`, differing only in alignment:
+section `\raggedright`, Abstract centred; article.cls sets both in the
+bold face). An explicit `\style{abstract}` key wins per key;
+`abstract_heading_follows_section` is the equation. Undeclared on both
+sides, `font` is `none` and each backend keeps its class-sourced default. -/
+def abstractHeadingStyle (styles : Styles) : ElementStyle :=
+  let sec := (styles.find? "section").getD {}
+  let own := (styles.find? "abstract").getD {}
+  { own with
+    font := own.font <|> sec.font
+    align := own.align <|> some "center" }
+
+/-- With no explicit `\style{abstract}`, the abstract heading's font equals
+the section heading's, and it centres — by construction of the derivation,
+which is what keeps the two headings from drifting when a venue or theme
+restyles sections. -/
+theorem abstract_heading_follows_section (styles : Styles)
+    (h : styles.find? "abstract" = none) :
+    (abstractHeadingStyle styles).font =
+      ((styles.find? "section").getD {}).font ∧
+    (abstractHeadingStyle styles).align = some "center" := by
+  simp [abstractHeadingStyle, h]
 
 /-- What a chrome footer slot shows, resolved per page by the backends: the
 title of the current top-level section, or the index of the page's own frame

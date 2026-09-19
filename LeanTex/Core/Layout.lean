@@ -3415,12 +3415,21 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- article.cls §abstract: `\small`, a centred `{\bfseries\abstractname}`
     -- heading, then the body on quotation margins. The heading word is
     -- class furniture, generated here exactly as the HTML backend
-    -- generates its <h2>; the body takes the scale's own \small, the
-    -- quotation margins are the quote arm's, and the outer state is
-    -- restored the way a quote restores its measure.
+    -- generates its <h2>, and its style is the section heading's, centred
+    -- (`Ir.abstractHeadingStyle`) — restyle sections and the abstract
+    -- follows; undeclared, the class's own small bold line. The body takes
+    -- the scale's own \small, the quotation margins are the quote arm's,
+    -- and the outer state is restored the way a quote restores its measure.
     let small := a.geom.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
-    let a := collectDisplay a fs #[.text "Abstract"] indent true small
-      (baseStyle := { bold := true })
+    let hst := Ir.abstractHeadingStyle a.styles
+    let hcenter := hst.align != some "left"
+    let a := match hst.font with
+      | some tpl =>
+        collectDisplay a fs (Ir.fillTemplate tpl #[.text "Abstract"]) indent
+          hcenter a.geom.fontSize
+      | none =>
+        collectDisplay a fs #[.text "Abstract"] indent hcenter small
+          (baseStyle := { bold := true })
     let a := a.wantGap
     let saved := a.measure
     let savedSize := a.geom.fontSize

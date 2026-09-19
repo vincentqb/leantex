@@ -186,14 +186,44 @@ def abstractChecks (ref : IO.Ref (List String)) : IO Unit := do
      | some (Ir.Block.abstract body) => !body.isEmpty
      | _ => false)
   let page := (HtmlDoc.emit {} doc).1
-  t "HTML sets the abstract as a classed section with a heading"
+  t "HTML sets the abstract as a classed section with a centred heading"
     ((page.splitOn "class=\"abstract\"").length == 2 &&
-     (page.splitOn "<h2>").length == 2 &&
+     (page.splitOn "<h2 style=\"text-align: center\">").length == 2 &&
      (page.splitOn "Abstract").length == 2)
   let md := MarkdownDoc.emit doc
   t "the markdown twin carries the heading and the body"
     ((md.splitOn "## Abstract").length == 2 &&
      (md.splitOn "Invented summary text.").length == 2)
+  -- The heading follows the section heading: a reference, not a copy
+  -- (`Ir.abstract_heading_follows_section` is the equation; these are its
+  -- runtime instances), so a venue or theme that restyles sections
+  -- carries the abstract heading with it.
+  let (sDoc, _) := elabStr ("\\documentclass{article}" ++
+    "\\style{section}{ font = {\\large\\bfseries} }" ++
+    "\\begin{document}\\begin{abstract}Words.\\end{abstract}\\end{document}")
+  t "the abstract heading derives the styled section's font, centred"
+    ((Ir.abstractHeadingStyle sDoc.styles).font ==
+      ((sDoc.styles.find? "section").bind (·.font)) &&
+     (Ir.abstractHeadingStyle sDoc.styles).align == some "center")
+  t "an explicit style abstract key wins over the derivation"
+    ((Ir.abstractHeadingStyle (sDoc.styles.declare "abstract"
+        { align := some "left" })).align == some "left")
+  -- The venue's \renewenvironment{abstract}: refused (W0303, the
+  -- protection code for a built-in environment), its declarative
+  -- appearance read — \large\bf and \centerline land as the heading's
+  -- style, in W0361's voice; \begin{quote} is the built-in's own shape
+  -- and the \vskips the engine's rhythm, both stay refused.
+  let (vDoc, vDs) := elabStr ("\\documentclass{article}" ++
+    "\\renewenvironment{abstract}{\\vskip 0.075in\\centerline{\\large\\bf Abstract}" ++
+    "\\vspace{0.5ex}\\begin{quote}}{\\par\\end{quote}\\vskip 1ex}" ++
+    "\\begin{document}\\begin{abstract}Words.\\end{abstract}\\end{document}")
+  t "a refused abstract redefinition says the built-in stands styled"
+    (vDs.any fun d => d.code == "W0303" &&
+      (d.message.splitOn "styling the built-in").length > 1)
+  t "the refused redefinition's large bold centreline lands on the heading"
+    ((Ir.abstractHeadingStyle vDoc.styles).font ==
+      some #[.styled (.size "large") #[.styled .bold #[]]] &&
+     (Ir.abstractHeadingStyle vDoc.styles).align == some "center")
 
 /-- Heading numbers: article numbers unstarred levels 1–3 in flow order
 (classes.dtx §Sectioning), `\appendix` letters from A and restarts the

@@ -3737,6 +3737,42 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
+/-- The declarative appearance a refused built-in *environment*
+redefinition still declares — the abstract's
+`\centerline{\large\bf Abstract}`: sizes and weights anywhere in the
+begin body (the heading's font), `\centerline`/`\centering` (its
+alignment). `\begin{quote}` is the built-in's own shape and the `\vskip`s
+are the engine's rhythm: both stay refused. Groups are looked through with
+the state threaded — the closed list wants any declaration in the body. -/
+private def envStyleScanList (st : BarSt) : List Raw → BarSt
+  | [] => st
+  | .group body _ :: rest => envStyleScanList (envStyleScanList st body.toList) rest
+  | .ctrl n _ :: rest =>
+    if sizeCtrlNames.contains n then envStyleScanList { st with size := some n } rest
+    else if n == "bf" || n == "bfseries" then
+      envStyleScanList { st with bold := true } rest
+    else if n == "centerline" || n == "centering" then
+      envStyleScanList { st with align := some "center" } rest
+    else envStyleScanList st rest
+  | _ :: rest => envStyleScanList st rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals try omega
+  all_goals
+    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+
+/-- `envStyleScanList`'s verdict as the style fragment the built-in can
+honour, `barInterpret`'s font shape. -/
+private def envStyleInterpret (sc : BarSt) : Option Ir.ElementStyle :=
+  let font : Option (Array Ir.Inline) := match sc.size, sc.bold with
+    | some s, true => some #[.styled (.size s) #[.styled .bold #[]]]
+    | some s, false => some #[.styled (.size s) #[]]
+    | none, true => some #[.styled .bold #[]]
+    | none, false => none
+  if font.isNone && sc.align.isNone then none
+  else some { font := font, align := sc.align }
+
 /-- The scan: one pass over the refused body, expanding the user commands
 visible below `bound` (the definition-order rule that terminates every
 expansion here), descending into groups with a copy of the declarations in
@@ -6659,8 +6695,14 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
   -- format are declared once, upstream, instead of leaking into every use
   -- site. Positional, like every declaration: the `\define` stands first.
   unless styleableElements.contains element || ctx.user.any (·.name == element) do
+    -- The per-level list spellings are elided from the help (a family, not
+    -- eleven names) to keep it inside the message-length lint.
+    let named := styleableElements.filter fun e =>
+      !(e.startsWith "itemize" && e != "itemize") &&
+        !(e.startsWith "enumerate" && e != "enumerate")
     diag ctx .E0328 s!"'{element}' is not a styleable element or a '\\define'd name" pos
-      (help := s!"elements: {String.intercalate ", " styleableElements}")
+      (help := s!"elements: {String.intercalate ", " named}; \
+a list level styles as itemize2..4 / enumerate2..4")
     return styles
   let mut st : ElementStyle := (styles.find? element).getD {}
   for entry in Decl.splitEntries src do
@@ -7409,11 +7451,26 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     match name with
     | some (envName, npos) =>
       if builtinEnvNames.contains envName then
+        -- Rule (b)'s remainder for environments: the abstract's refused
+        -- redefinition may still declare the built-in's appearance —
+        -- `\large\bf` and `\centerline` are read as `\style{abstract}`
+        -- keys, merged under anything the document declared itself, and
+        -- the W0303 gains W0361's clause naming what survived.
+        let est := if envName == "abstract" then
+            beginB.bind fun b => envStyleInterpret (envStyleScanList {} b.toList)
+          else none
         modify fun st => { st with diags := st.diags.push (Diag.of .W0303
-          s!"'\{{envName}}' is built in; this definition is ignored"
+          (if est.isSome then
+            s!"'\{{envName}}' is built in; this definition is ignored, its declarations styling the built-in"
+          else
+            s!"'\{{envName}}' is built in; this definition is ignored")
           (some ⟨s.ctx.file, npos⟩)
           (help := "the built-in already does this; \\define it under another name")) }
-        return s
+        match est with
+        | some est =>
+          let merged := Theme.styleMerge ((s.styles.find? "abstract").getD {}) est
+          return { s with styles := s.styles.declare "abstract" merged }
+        | none => return s
       else
         match beginB, endB with
         | some b, some e =>

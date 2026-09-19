@@ -1434,8 +1434,12 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   -- class furniture (article.cls's \abstractname), generated here as the
   -- PDF generates its centred bold line.
   | .abstract body =>
+    -- The heading is an <h2>, so a declared `\style{section}` reaches it
+    -- through the h2 selector — the abstract follows the section heading
+    -- by construction (`Ir.abstract_heading_follows_section`); centred, as
+    -- the class centres it (article.cls §abstract).
     Html.elem "section"
-      (#[Html.elem "h2" #[Html.text "Abstract"]] ++
+      (#[Html.elem "h2" #[Html.text "Abstract"] #[("style", "text-align: center")]] ++
         blockNodesInto cfg.into #[] body.toList)
       #[("class", "abstract")]
   | .columns cols =>
