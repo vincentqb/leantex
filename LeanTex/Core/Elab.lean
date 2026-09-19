@@ -2561,7 +2561,7 @@ a side channel, never slide content" npos
             i := j + 1
             let src := (rawSrc body).trimAscii.toString
             let style := (← get).bibStyle
-            blocks := blocks.push (.section 1 true #[.text "References"])
+            blocks := blocks.push (.section 1 true none #[.text "References"])
             blocks := blocks.push (.bibliography src style #[])
           | _ =>
             diag ctx .E0304 "'\\bibliography' needs a {file} group" dpos

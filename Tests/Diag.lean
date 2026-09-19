@@ -108,6 +108,8 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .E0405 => dvL mapped "lost \u27e8 here"
   | .E0501 => #[DriverDiag.inputTooDeep]
   | .E0502 => #[DriverDiag.inputMissing "chapter1.tex" none]
+  | .E0503 => #[DriverDiag.bibMissing "references"
+      "/doc/references.bib" none]
   | .N0100 => dvE (dvDoc "\\usepackage[margin=1in]{geometry}\n" "x")
   | .N0102 => dvE (dvDeck "" "\\begin{frame}[fragile]{T}\nx\n\\end{frame}")
   | .N0103 => dvE (dvDoc "" "\\section[short]{A long title}\nx")

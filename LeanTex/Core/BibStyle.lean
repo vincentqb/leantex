@@ -412,13 +412,16 @@ where
     | .underline body => citedInlines out body.toList
     | .step _ _ body => citedInlines out body.toList
     | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+    | .label _ | .ref _ _ _ _
     | .fill | .pageNumber | .pageCount | .linebreak _ => out
   citedInlines (out : Array String) : List Ir.Inline → Array String
     | [] => out
     | x :: rest => citedInlines (citedInline out x) rest
   citedBlock (out : Array String) : Ir.Block → Array String
     | .para content => citedInlines out content.toList
-    | .section _ _ title => citedInlines out title.toList
+    | .equation _ content => citedInlines out content.toList
+    | .section _ _ _ title => citedInlines out title.toList
+    | .abstract body => citedBlocks out body.toList
     | .list _ items => citedItems out items.toList
     | .center body => citedBlocks out body.toList
     | .quote body => citedBlocks out body.toList
@@ -657,6 +660,8 @@ private def resolveInline (style : CiteStyle) (find : Resolver)
   | .formula d src body => out.push (.formula d src body)
   | .image src size alt => out.push (.image src size alt)
   | .icon c label => out.push (.icon c label)
+  | .label k => out.push (.label k)
+  | .ref k paren text anchor => out.push (.ref k paren text anchor)
   | .fill => out.push .fill
   | .pageNumber => out.push .pageNumber
   | .pageCount => out.push .pageCount
@@ -685,6 +690,7 @@ def citeFreeOne : Ir.Inline → Bool
   | .underline body => citeFreeList body.toList
   | .step _ _ body => citeFreeList body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _
   | .fill | .pageNumber | .pageCount | .linebreak _ => true
 
 def citeFreeList : List Ir.Inline → Bool
@@ -710,6 +716,7 @@ where
     | .styled _ body | .colored _ _ body | .role _ body | .link _ body
     | .underline body | .step _ _ body => simp [resolveInline]
     | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+    | .label _ | .ref _ _ _ _
     | .fill | .pageNumber | .pageCount | .linebreak _ => simp [resolveInline]
 
 mutual
@@ -742,6 +749,7 @@ theorem resolveInline_id (style : CiteStyle) (find : Resolver)
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id style find body.toList h]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _
   | .fill | .pageNumber | .pageCount | .linebreak _ => rw [resolveInline]
 
 theorem resolveInlines_id (style : CiteStyle) (find : Resolver)
@@ -770,7 +778,9 @@ private def resolveBlock (style : Style) (find : Resolver)
   match b with
   | .bibliography src declared _ => out.push (.bibliography src declared items)
   | .para content => out.push (.para (resolveArr style.cite find content))
-  | .section l st title => out.push (.section l st (resolveArr style.cite find title))
+  | .equation n content => out.push (.equation n (resolveArr style.cite find content))
+  | .section l st num title => out.push (.section l st num (resolveArr style.cite find title))
+  | .abstract body => out.push (.abstract (resolveBlocks style find items #[] body.toList))
   | .list ordered its => out.push (.list ordered (resolveItems style find items #[] its.toList))
   | .center body => out.push (.center (resolveBlocks style find items #[] body.toList))
   | .quote body => out.push (.quote (resolveBlocks style find items #[] body.toList))

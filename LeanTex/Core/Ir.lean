@@ -2654,6 +2654,13 @@ def navLinkOne (out : Array (String × String)) : Block → Array (String × Str
   | .frame title _ _ body => navLinkList (navLinkInlineList out title.toList) body.toList
   | .table _ _ _ rows _ => navLinkRows out rows.toList
   | .float _ _ _ body caption => navLinkInlineList (navLinkList out body.toList) caption.toList
+  -- a resolved entry's content carries its URL and anchor links
+  | .bibliography _ _ items => navLinkBibItems out items.toList
+
+def navLinkBibItems (out : Array (String × String)) :
+    List BibItem → Array (String × String)
+  | [] => out
+  | item :: rest => navLinkBibItems (navLinkInlineList out item.content.toList) rest
 
 def navLinkRows (out : Array (String × String)) :
     List (Array (Array Inline)) → Array (String × String)
@@ -2689,7 +2696,7 @@ def navLinkInline (out : Array (String × String)) : Inline → Array (String ×
   | .underline body => navLinkInlineList out body.toList
   | .step _ _ body => navLinkInlineList out body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
-  | .label _ | .ref _ _ _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _
   | .fill | .pageNumber | .pageCount | .linebreak _ => out
 
 end
@@ -4866,7 +4873,7 @@ def onlyFreeOne : Block → Bool
   | .float _ _ _ body _ => onlyFreeList body.toList
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _
-  | .table _ _ _ _ _ | .pagebreak => true
+  | .table _ _ _ _ _ | .pagebreak | .bibliography _ _ _ => true
 
 def onlyFreeItems : List (Array Block) → Bool
   | [] => true
@@ -4911,6 +4918,7 @@ theorem keepForOne_id (t : String) (b : Block)
   | .rule c n th => rfl
   | .picture p => rfl
   | .table c pl pr rows rules => rfl
+  | .bibliography src style items => rfl
   | .list o items =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForItems_id t items.toList h]
@@ -5103,11 +5111,12 @@ def bibSrcsOne (out : Array String) : Block → Array String
   | .note body => bibSrcsList out body.toList
   | .frame _ _ _ body => bibSrcsList out body.toList
   | .float _ _ _ body _ => bibSrcsList out body.toList
+  | .abstract body => bibSrcsList out body.toList
   | .list _ items => bibSrcsItems out items.toList
   | .columns cols => bibSrcsCols out cols.toList
   -- Inline content cannot carry a block marker; declarations and ink
   -- carry none.
-  | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ | .picture _
   | .table _ _ _ _ _ => out
 
@@ -5149,9 +5158,10 @@ def bibStyleNamesOne (out : Array String) : Block → Array String
   | .note body => bibStyleNamesList out body.toList
   | .frame _ _ _ body => bibStyleNamesList out body.toList
   | .float _ _ _ body _ => bibStyleNamesList out body.toList
+  | .abstract body => bibStyleNamesList out body.toList
   | .list _ items => bibStyleNamesItems out items.toList
   | .columns cols => bibStyleNamesCols out cols.toList
-  | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _ | .pagebreak | .rule _ _ _ | .picture _
   | .table _ _ _ _ _ => out
 
@@ -5340,6 +5350,7 @@ def resolveRefInline (table : RefTable) : Inline → Inline
   | .image src size alt => .image src size alt
   | .icon s l => .icon s l
   | .label k => .label k
+  | .cite tx keys => .cite tx keys
   | .fill => .fill
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
@@ -5380,6 +5391,9 @@ def resolveRefBlock (table : RefTable) : Block → Block
       (resolveRefInlines table caption)
   | .table c pl pr rows rules =>
     .table c pl pr (resolveRefTableRows table #[] rows.toList) rules
+  | .bibliography src style items =>
+    .bibliography src style (items.map fun i =>
+      { i with content := resolveRefInlines table i.content })
   | .verbatim c s => .verbatim c s
   | .framefoot c => .framefoot c
   | .setPalette pal => .setPalette pal
