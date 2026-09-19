@@ -2335,6 +2335,9 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (h : i < raws.size)
     (_hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
     EM (Array Inline) := do
+  -- `\color{n}`'s marker: inline it reads exactly as the bare name.
+  let name := if name.startsWith "@ink:" then (name.drop "@ink:".length).toString
+    else name
   if let some c := ctx.palette.resolve name then
 
     -- With a group, that group is the argument: `\primary{Alex}` means
@@ -2814,6 +2817,39 @@ private def isDeclaration (ctx : Ctx) : Raw → Bool
   | .ctrl n _ =>
     n == "centering" || (declStyles.lookup n).isSome || (ctx.palette.find? n).isSome
   | _ => false
+
+/-- The flow palette `\color{n}`'s block form declares: `fg` set to the
+resolved colour — the palette's one resolving site, mixes included —
+or `none` when the name resolves to nothing. Outside the block-walk knot
+so the arm stays one match. -/
+private def inkFlowPalette (ctx : Ctx) (marker : String) : Option Ir.Palette :=
+  (ctx.palette.resolve ((marker.drop "@ink:".length).toString)).map fun c =>
+    ctx.palette.declare "fg" c
+
+/-- The W0304 the inline colour arm speaks, for the block form. -/
+private def warnInkUnknown (ctx : Ctx) (marker : String) (pos : Pos) : EM Unit := do
+  let key := (marker.drop "@ink:".length).toString
+  warnOnce ctx ("palette:" ++ key) .W0304
+    s!"'{key}' is not in the palette; content kept uncoloured" pos
+    (help := if ctx.palette.entries.isEmpty then
+        "declare colours with \\palette{ name = #RRGGBB }"
+      else s!"declared: {String.intercalate ", "
+        (ctx.palette.entries.toList.map (·.1))}")
+
+/-- The block form's whole effect but the recursion: declare the flow ink
+(the palette with `fg` resolved) and bump the flow state, or warn. One
+function outside the block-walk knot, so the arm inside costs the knot's
+elaboration one call and one recursion. -/
+private def inkFlowDecl (ctx : Ctx) (marker : String) (pos : Pos) :
+    EM (Option Ir.Palette) := do
+  match inkFlowPalette ctx marker with
+  | some pal =>
+    modify fun st => { st with flowPalette := some pal
+                               flowGen := st.flowGen + 1 }
+    return some pal
+  | none =>
+    warnInkUnknown ctx marker pos
+    return none
 
 private def isParRaw : Raw → Bool
   | .par _ => true
@@ -6025,6 +6061,10 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           || n == "framefoot" || n == "pagebreak" || n == "appendix"
           || n == "bibliography" || n == "bibliographystyle"
           || (n == "note" && cur.isEmpty)
+          -- `\color{n}`'s block form: a flow ink declaration (the arm
+          -- below). Mid-paragraph the marker keeps the inline reading —
+          -- splitting the paragraph there would move text.
+          || (cur.isEmpty && n.startsWith "@ink:")
           || (n != "note" &&
             ((sectionLevel n).isSome
               || declCtrl.contains n || runningCtrl.contains n || n == "define"
@@ -6170,6 +6210,29 @@ a side channel, never slide content" cpos
         | _ =>
           diag ctx' .E0304 "'\\framefoot' needs one group of inline content" cpos
           elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else if n.startsWith "@ink:" then
+        -- xcolor's `\color{n}` at block level colours to the end of the
+        -- enclosing group (xcolor manual §2.6.4), and at the flow's top
+        -- level that is the rest of the document — the default ink
+        -- itself. It routes through the palette's one resolving site:
+        -- the flow palette's `fg` is declared (`inkFlowDecl`), so the
+        -- resolved design, both backends, and the contrast judge all see
+        -- the declared body colour instead of a silently defaulted pure
+        -- black. (In a nested body the flow scope is the same
+        -- approximation `\palette` makes: no brace revert.) A bare
+        -- palette name keeps its documented reading — rest of the group —
+        -- and never reaches here.
+        let pal? ← inkFlowDecl ctx' n cpos
+        let ⟨palCtx, hm⟩ : MCtx ctx' ←
+          pure ⟨{ ctx' with palette := pal?.getD ctx'.palette }, rfl, rfl, rfl, rfl⟩
+        have ht1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        have ht2 : slicePars raws (i + 1) ≤ slicePars raws i :=
+          slicePars_le raws (by omega)
+        elabBlocksGo palCtx raws (i + 1)
+          (match pal? with
+            | some pal => blocks.push (.setPalette pal)
+            | none => blocks) #[] ((← get).flowGen)
       else if n == "palette" then
         -- Legal in the body as in LaTeX (`\colorlet` rewrites to it):
         -- the entries apply from here on, and the document palette both

@@ -2463,3 +2463,24 @@ def titleBreakChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "the break balances: no one-word last line"
     (((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.text "Functions").map
       fun l => hasStr l.text "Zeta").getD false)
+
+/-- xcolor's `\color{n}` at the flow's top level is the document's ink:
+the declared body colour routes through the palette's one resolving site
+(`fg`) and reaches every uncoloured shipped run — never silently pure
+black. The regression this pins: a near-black body declared this way
+shipped as #000000. -/
+def bodyColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let (d, _) := elabStr ("\\palette{ charcoal = #18181B }\n\\begin{document}\n" ++
+    "\\color{charcoal}\nBody words here.\n\\end{document}")
+  let out := layoutOf oneFace d
+  let charcoal : Ir.Color := { r := 0x18, g := 0x18, b := 0x1B }
+  t "the declared body colour reaches the shipped runs"
+    ((out.pages.flatMap (·.lines)).any fun l => l.segs.any fun s => match s with
+      | .run _ c _ _ glyphs _ _ _ => c == charcoal && !glyphs.isEmpty
+      | _ => false)
+  t "no body run stayed silently pure black"
+    ((bodyLines out).all fun l => l.segs.all fun s => match s with
+      | .run _ c _ _ glyphs _ _ _ => glyphs.isEmpty || c != Ir.Color.black
+      | _ => true)

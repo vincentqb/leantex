@@ -1261,12 +1261,15 @@ declare the furniture directly")
       return some (#[.word o pos, g, .word c pos], k + 1)
     | _ => return none
   | "color" =>
-    -- `\color{n}` colours to the end of the group, which is what a bare
-    -- palette name does.
+    -- `\color{n}` colours to the end of the group (xcolor manual §2.6.4).
+    -- The marker keeps the spelling distinct from a bare palette name:
+    -- inline it declares like one, but at the flow's top level it is the
+    -- document's ink, and only the explicit \color form may claim that.
+    -- `@` never lexes into a control word, so no document can forge it.
     let (args, k) := takeGroups raws start 1
     let n := rawSrc (args.getD 0 #[])
     became s!"\\color\{{n}}" s!"\\{n}" pos
-    return some (#[.ctrl n pos], k)
+    return some (#[.ctrl ("@ink:" ++ n) pos], k)
   | "vspace" =>
     let start := skipStar raws start
     let (_, j) := takeOpt raws start

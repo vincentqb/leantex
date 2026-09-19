@@ -18,8 +18,12 @@ runninghead
       pagenumber
 meta title "Alex Doe"
 meta author "Alex Doe"
-para
-  color primary #0F766E
+setPalette
+  primary = #0F766E
+  muted = #72727F
+  rulecolor = #99F6E4
+  bulletcolor = #72727F
+  fg = #0F766E
 center
   para
     styled sans
