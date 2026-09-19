@@ -393,6 +393,33 @@ def captionSepDefault : SymGlue := { width := { sp := Dim.pt 6 } }
 `\tokens{ floatsep = ... }`. -/
 def floatSepDefault : SymGlue := { width := { sp := Dim.pt 12 } }
 
+/-- The heading's default spaces, their own tokens rather than the
+parskip's doubles: article.cls pairs a zero `\parskip` with 3.5ex above /
+2.3ex below a `\section` (classes.dtx `\@startsection`), so a class that
+zeroes the peer gap must not silently zero the heading's. The
+rhythm-aligned stand-ins are one full unit above and the half-unit below
+(the heading and peer rows of `rhythmGapQuanta`), the same ordering. A
+document with a larger declared parskip keeps the walk's 2-quanta growth
+(the walk takes the larger); a declared `\style{section}{ before/after }`
+overrides entirely. -/
+def headingBeforeDefault : SymGlue := { width := { sp := Dim.pt 12 } }
+/-- The heading's default space below: the half-unit. See
+`headingBeforeDefault`. -/
+def headingAfterDefault : SymGlue := { width := { sp := Dim.pt 6 } }
+
+/-- A heading binds to the text it introduces: its default space above is
+at least — here exactly twice — its space below (Hochuli, Detail in
+Typography, on section openings: more space above the heading than below
+it; article.cls's 3.5ex/2.3ex is the same ordering at 1.52), both on the
+rhythm, and neither zero. W0202 is the declared-values half of the same
+rule; this is the defaults' half, and an edit that inverts them fails the
+build here. -/
+theorem heading_space_above_ge_below :
+    headingAfterDefault.width.sp ≤ headingBeforeDefault.width.sp ∧
+    headingBeforeDefault.width.sp = 2 * rhythmQuantum baseFontSize ∧
+    headingAfterDefault.width.sp = rhythmQuantum baseFontSize ∧
+    0 < headingAfterDefault.width.sp := by decide
+
 /-- The default vertical rhythm is one system, not three numbers: the peer
 gap (`parskipDefault`, 6pt at the 10pt base) is the rhythm quantum — half
 the base leading — so the heading's default space above, `2 × parskip` in
@@ -474,6 +501,8 @@ theorem rhythm_table_exact :
       = captionSepDefault.width.sp ∧
     ((rhythmGapQuanta.lookup "float").getD 0 : Int) * rhythmQuantum baseFontSize
       = floatSepDefault.width.sp ∧
+    ((rhythmGapQuanta.lookup "heading").getD 0 : Int) * rhythmQuantum baseFontSize
+      = headingBeforeDefault.width.sp ∧
     (rhythmGapQuanta.lookup "heading").getD 0
       = 2 * (rhythmGapQuanta.lookup "peer").getD 0 := by decide
 

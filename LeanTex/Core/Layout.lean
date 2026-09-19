@@ -2678,9 +2678,11 @@ private theorem flushGap_default_exact (a : Acc) (howed : a.owed.isEmpty = true)
     a.flushGap.ops = a.ops.push (.skip a.parskip) := by
   simp [Acc.flushGap, howed, hw]
 
-/-- The heading's undeclared space above, as the block walk spells it
-(`parskip.add parskip`): exactly twice the peer gap — one full rhythm unit,
-two quanta, by `Ir.default_rhythm_multiples`. -/
+/-- The parskip-growth arm of the heading's undeclared space above
+(`parskip.add parskip`, taken when the declared parskip exceeds the
+heading token's half): exactly twice the peer gap — one full rhythm unit,
+two quanta, by `Ir.default_rhythm_multiples`; the token arm is
+`Ir.heading_space_above_ge_below`'s. -/
 private theorem heading_default_before_exact (a : Acc) :
     ((a.parskip).add (a.parskip)).width = 2 * a.parskip.width := by
   simp [Glue.add, Int.two_mul]
@@ -3388,8 +3390,15 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let title := match num with
       | some n => #[Ir.Inline.text (n ++ "\u2003")] ++ title
       | none => title
-    -- Undeclared, a heading stands twice the default gap above its body.
-    let a := a.addvspace ((st.before.map a.resolve).getD (a.parskip.add a.parskip))
+    -- Undeclared, a heading stands one full rhythm unit above its body
+    -- and half below (`Ir.heading_space_above_ge_below` holds the shape:
+    -- more above than below) — its own tokens, so a class that zeroes
+    -- \parskip keeps its heading space; a document with a larger parskip
+    -- keeps the walk's 2-quanta growth.
+    let hb := a.resolve Ir.headingBeforeDefault
+    let two := a.parskip.add a.parskip
+    let a := a.addvspace ((st.before.map a.resolve).getD
+      (if two.width > hb.width then two else hb))
     -- A declared font template wraps the title; without one, headings set in
     -- the bold face of the body family at the level's size.
     let a := match st.font with
@@ -3402,9 +3411,9 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
           (baseStyle := { bold := true })
           (rule := st.rule.map fun (r : Ir.Color × Option String) =>
             (headingRuleWeight a.geom.fontSize, r.1))
-    let a := match st.after with
-      | some g => a.vskip (a.resolve g)
-      | none => a
+    let ha := a.resolve Ir.headingAfterDefault
+    let a := a.vskip ((st.after.map a.resolve).getD
+      (if a.parskip.width > ha.width then a.parskip else ha))
     if a.slides then a.pageBreak else a
   | .list ordered items =>
     -- Depth is per list kind, as LaTeX counts it. The class defines four

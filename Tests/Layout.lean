@@ -2395,3 +2395,31 @@ def navLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (!hasStr md "](#one-head)" && !hasStr md "](#top)" &&
       hasStr md "One Head" && hasStr md "second body")
 
+
+/-- A LaTeX class zeroes `\parskip`; its headings keep their own rhythm
+(`Ir.heading_space_above_ge_below`): more space above than below, neither
+zero. The regression this pins: heading defaults derived from the peer gap
+collapsed to nothing under a class-declared `parskip = 0pt`, and the
+heading hugged the paragraph above it. -/
+def headingRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let (d, _) := elabStr ("\\documentclass{scrartcl}\n\\begin{document}\n" ++
+    "Opening line.\n\n\\section*{Alpha}\n\nClosing line.\n\\end{document}")
+  t "premise: the class declared a zero parskip"
+    ((d.page.parskip.map (·.width.sp)) == some 0)
+  let out := layoutOf oneFace d
+  let c := censusOf #[] out
+  let yOf (s : String) : Option Dim.Sp := lineYOf c 0 s
+  match yOf "Opening", yOf "Alpha", yOf "Closing" with
+  | some yo, some yh, some yc =>
+    let leading := Ir.leadingFor (Layout.Geom.ofPage d.page).fontSize
+    -- Two interlines plus the two default tokens (a unit above, a half
+    -- below), within a point of slack: without the tokens the same page
+    -- carries interlines alone, ~12pt less.
+    t "the heading's own rhythm stands: a full unit above plus a half below"
+      (yc - yo ≥ 2 * leading + Ir.headingBeforeDefault.width.sp
+        + Ir.headingAfterDefault.width.sp - Dim.pt 1)
+    t "more space above the heading than below it"
+      (yh - yo > yc - yh)
+  | _, _, _ => failures ref "heading rhythm: probe lines missing from the page"
