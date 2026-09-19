@@ -457,11 +457,10 @@ def undeclaredConfigRead (l : String) : Bool := Id.run do
     pre := pre ++ "cfg." ++ p
   return false
 
-/-- Only Elab.takeArgs/elabInlines/elabBlocks may be partial (tracked in
-PLAN.md); their definition lines are the whole allowance. -/
+/-- Only Elab.elabBlocks may be partial (tracked in PLAN.md); its
+definition line is the whole allowance. -/
 def partialAllowed (l : String) : Bool :=
-  containsSub l s!"{kwPartial} def takeArgs" || containsSub l s!"{kwPartial} def elabInlines"
-    || containsSub l s!"{kwPartial} def elabBlocks"
+  containsSub l s!"{kwPartial} def elabBlocks"
 
 /-- The string-comparison spelling that compiles against the `DocClass`
 inductive and bypasses exhaustiveness: `docClass.name == "…"` re-creates
@@ -512,7 +511,7 @@ def gates : List Gate := [
   { applies := fun _ => true
     flag := fun l => bannedWord kwPartial l && !partialAllowed l
     what := fun f => s!"new '{kwPartial}' in staged changes to {f}"
-    help := s!"  Only Elab.takeArgs/elabInlines/elabBlocks may be {kwPartial} (tracked in PLAN.md).
+    help := s!"  Only Elab.elabBlocks may be {kwPartial} (tracked in PLAN.md).
   Fix: make the recursion structural (see AGENTS.md, Conventions)." },
   { applies := (!obligationsFile ·)
     flag := bannedWord kwSorry

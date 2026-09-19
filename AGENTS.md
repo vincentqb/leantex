@@ -185,8 +185,10 @@ in this repo; refer to the private reference corpus abstractly.
   lambda the checker cannot see, and a list matched against a literal pattern
   with a catch-all variable loses the tail — write the `List` companion
   instead. Index loops bounded by `[0:xs.size + 1]` are total without it.
-  `Elab.takeArgs`/`elabInlines`/`elabBlocks` are the three known exceptions,
-  tracked in PLAN; the pre-commit hook rejects any new one.
+  `Elab.elabBlocks` is the one known exception, tracked in PLAN; the
+  pre-commit hook rejects any new one. `takeArgs` and `elabInlines` now
+  terminate by a proved lexicographic measure (envLimit, limit, slice
+  weight) — the shape to copy for the last de-partial.
 - A claim is open until machine-checked. An executable oracle
   (`scripts/kp-fuzz.lean`) is evidence, not a theorem — say which one you have.
 - Comments: nearly none. Names and tests carry the what; a comment only for a

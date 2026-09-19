@@ -42,9 +42,14 @@ frame furniture landed 2026-09-17: defined wrappers, `\centering`,
 columns, dim-not-hide overlays with the PDF page-per-step handout, and
 speaker notes as a side channel.
 
-**Open, tracked, not hidden.** `Elab.takeArgs`/`elabInlines`/`elabBlocks`
-are `partial` — three, not the two an earlier entry claimed; an audit found
-ten and seven were removed (2026-09-16 entry). The Knuth–Plass optimality
+**Open, tracked, not hidden.** `Elab.elabBlocks` is `partial` — the last
+one: an audit found ten, seven were removed (2026-09-16 entry), and the
+`takeArgs`/`elabInlines` knot now terminates by a proved lexicographic
+measure (envLimit, then limit, then the weight of the remaining slice;
+2026-09-19). `elabBlocks` still owes the same treatment plus a decision
+already taken for its one state-carried edge (the pendingNotes drain:
+under `ctx.noteBody` the frame arm will not drain, W0359 names the
+refused note, and `noteFlag` joins the measure). The Knuth–Plass optimality
 theorem is held empirically by `scripts/kp-fuzz.lean`. Small caps are
 drawn from a face's own `smcp`+`c2sc` when it carries both and synthesised
 uniform otherwise (the 2026-09-18 entry), math renders its first two slices

@@ -1162,9 +1162,10 @@ command — a parameter, not content — so no character of it reaches the
 shipped page, while every `{...}` group survives, and no space the author
 never wrote is fabricated after the kept text. Judged over `Layout.Out`'s
 glyphs, never the IR dump: a bracketed number once shipped in front of a
-URL while the suite was green. This invariant is a test, not a theorem:
-it ranges over `elabInlines`, whose recursion the checker cannot yet see
-(one of the three sanctioned exceptions), so no proof can unfold it. -/
+URL while the suite was green. `elabInlines` terminates provably now, so
+the elaborator half ("no character of an option run reaches the
+elaborated inlines", over the W0341 arm) is statable as a theorem at
+last; until that proof lands, this stays its shipped-page witness. -/
 def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := {}
