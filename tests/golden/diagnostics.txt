@@ -123,11 +123,6 @@ note[N0016]: math is set in 'TeX Gyre Pagella Math', the designed companion of '
   help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
 note[N0016]: math is set in 'Fira Math', the first installed face with an OpenType MATH table
   help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
-── N0018 (info) math alphabet glyph missing everywhere; a stand-in letter sets, the styling difference named
-note[N0018]: 'Fira Math' has no calligraphic 'L' (U+2112); the plain letter stands in
-  help: declare a math face that carries it: \fonts{ math = ... }
-note[N0018]: 'Fira Math' has no sans-serif 'A' (U+1D5A0); the plain letter stands in
-  help: declare a math face that carries it: \fonts{ math = ... }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
 note[N0102]: frame option 'fragile' is not modelled; ignored
 ── N0103 (info) \section short title unused: nothing consumes it yet
@@ -152,6 +147,14 @@ warning[W0007]: running head/foot is paged-media furniture; omitted from HTML
   help: body content reaches both backends: move the masthead there
 ── W0008 (config) \fonts dir is not a directory
 warning[W0008]: '\fonts' dir 'fonts' is not a directory (/documents/fonts); looking elsewhere
+── N0018 (info) math alphabet glyph missing everywhere; a stand-in letter sets, the styling difference named
+note[N0018]: 'Fira Math' has no calligraphic 'L' (U+2112); the plain letter stands in
+  help: declare a math face that carries it: \fonts{ math = ... }
+note[N0018]: 'Fira Math' has no sans-serif 'A' (U+1D5A0); the plain letter stands in
+  help: declare a math face that carries it: \fonts{ math = ... }
+── N0017 (info) no document class declared; the article page model is assumed
+note[N0017]: no '\documentclass'; the article page model is assumed
+  help: declare \documentclass{article} (or slides, card) to choose it
 ── W0009 (degraded) no glyph in the declared face; set from a fallback face
 warning[W0009]: 'Open Sans' has no glyph for '∀' (U+2200); set from 'Source Code Pro'
 ── W0010 (degraded) lists nest four levels; deeper levels reuse the fourth marker
