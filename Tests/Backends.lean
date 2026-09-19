@@ -896,12 +896,16 @@ def rawPayloadChecks (ref : IO.Ref (List String)) : IO Unit := do
 `--selftest` mode: a gate that does not catch the shape it commemorates
 grants false confidence. -/
 def precommitChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let out ← IO.Process.output
-    { cmd := "lean", args := #["--run", "scripts/precommit.lean", "--selftest"] }
-  check ref s!"precommit selftest:\n{out.stderr}" (out.exitCode == 0)
-  let owed ← IO.Process.output
-    { cmd := "lean", args := #["--run", "scripts/owed.lean", "--selftest"] }
-  check ref s!"owed selftest:\n{owed.stderr}" (owed.exitCode == 0)
+  let build ← IO.Process.output
+    { cmd := "lake", args := #["build", "precommit", "owed", "-q"] }
+  check ref s!"gate scripts build:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
+  if build.exitCode == 0 then
+    let out ← IO.Process.output
+      { cmd := ".lake/build/bin/precommit", args := #["--selftest"] }
+    check ref s!"precommit selftest:\n{out.stderr}" (out.exitCode == 0)
+    let owed ← IO.Process.output
+      { cmd := ".lake/build/bin/owed", args := #["--selftest"] }
+    check ref s!"owed selftest:\n{owed.stderr}" (owed.exitCode == 0)
 
 /-- The cross-backend agreement tier, over every golden fixture: a declared
 fact both backends render — a footer's slot contents and their sides, a

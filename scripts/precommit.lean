@@ -5,47 +5,14 @@ scripts/hooks/pre-commit, a 3-line sh trampoline that runs this after a cheap
 staged-file filter; install with: git config core.hooksPath scripts/hooks
 -/
 
+import scripts.Gate
+
 def git (args : Array String) : IO String := do
   let out ← IO.Process.output { cmd := "git", args }
   if out.exitCode != 0 then
     IO.eprintln s!"pre-commit: git {String.intercalate " " args.toList} failed:\n{out.stderr}"
     IO.Process.exit 1
   return out.stdout
-
-def isWordChar (c : Char) : Bool := c.isAlphanum || c == '_'
-
-/-- Does `line` contain `word` delimited by non-word characters — the
-`(^|[^[:alnum:]_])word([^[:alnum:]_]|$)` grep the shell hook used. -/
-def hasWord (line word : String) : Bool :=
-  (line.split (fun c => !isWordChar c)).any (·.toString == word)
-
-def containsSub (line pat : String) : Bool :=
-  (line.splitOn pat).length > 1
-
-/-- The line with its string-literal content removed: a banned keyword is a
-code token, and a string mentioning one — the math tables' command-name
-entry for TeX's derivative symbol was the escape — is data, not a
-declaration. Escapes are honoured. Two stated line-scanner limitations,
-like `ioInCore`'s: a literal left open by a multi-line string strips to the
-line's end, and a char literal holding a double quote reads as opening one. -/
-def stripStrings (l : String) : String := Id.run do
-  let mut out := ""
-  let mut inStr := false
-  let mut esc := false
-  for c in l.toList do
-    if inStr then
-      if esc then esc := false
-      else if c == '\\' then esc := true
-      else if c == '"' then inStr := false
-    else if c == '"' then
-      inStr := true
-    else
-      out := out.push c
-  return out
-
-/-- A banned keyword as a code token: word-delimited, string content aside. -/
-def bannedWord (kw l : String) : Bool :=
-  hasWord (stripStrings l) kw
 
 def relevant (f : String) : Bool :=
   f.endsWith ".lean" || f == "lakefile.toml" || f == "lakefile.lean"
@@ -60,7 +27,6 @@ def obligationsFile (f : String) : Bool :=
 them as word-delimited tokens — the gate scans every .lean file, itself
 included. -/
 def kwPartial : String := "par" ++ "tial"
-def kwSorry : String := "sor" ++ "ry"
 def kwUnsafe : String := "uns" ++ "afe"
 
 /-- Composed for the same reason: prepending to a recursive call's result
@@ -212,14 +178,6 @@ def backendFiles : List String :=
   ["LeanTex/Core/Layout.lean", "LeanTex/Core/Pdf.lean",
    "LeanTex/Core/Html.lean", "LeanTex/Core/HtmlDoc.lean"]
 
-/-- The line with any `--` comment stripped: a line comment, or a doc/block
-comment's opening line. Blind spots, accepted rather than parsed around
-(a line scanner has no comment state): a continuation line inside a block
-comment still looks like code, and a string literal containing `--`
-truncates the code after it. -/
-def stripLineComment (l : String) : String :=
-  (l.splitOn "--").headD l
-
 /-- `IO` named outside a comment. A string literal naming IO still matches,
 and a block comment's continuation line naming IO still matches — both
 stated blind spots of the line scanner, not claims the gate makes. -/
@@ -298,11 +256,6 @@ def wildcardNumeral (l : String) : Bool :=
   | some ([p], [r]) =>
     (p == "_" || isVarToken p) && !r.isEmpty && r.toList.all Char.isDigit
   | _ => false
-
-/-- An import of the owed-theorem staging area: legal only inside it. The
-gated library must never depend on a statement whose proof is open. -/
-def importsObligations (l : String) : Bool :=
-  ((stripLineComment l).trimAscii.toString).startsWith "import Obligations"
 
 /-- The registered conservation-shape suffixes: a public IR-to-IR walk's
 census statement is the walk's name plus one of these — census equality
@@ -456,6 +409,141 @@ def undeclaredConfigRead (l : String) : Bool := Id.run do
     pre := pre ++ "cfg." ++ p
   return false
 
+/-- Only Elab.takeArgs/elabInlines/elabBlocks may be partial (tracked in
+PLAN.md); their definition lines are the whole allowance. -/
+def partialAllowed (l : String) : Bool :=
+  containsSub l s!"{kwPartial} def takeArgs" || containsSub l s!"{kwPartial} def elabInlines"
+    || containsSub l s!"{kwPartial} def elabBlocks"
+
+/-- One staged-diff check: which files it reads, the line predicate, the
+headline naming the file, and the fix paragraph. The stanzas `main` used
+to spell one by one differed only in these four fields. -/
+structure Gate where
+  applies : String → Bool
+  flag : String → Bool
+  what : String → String
+  help : String
+
+def gates : List Gate := [
+  { applies := fun _ => true
+    flag := fun l => bannedWord kwPartial l && !partialAllowed l
+    what := fun f => s!"new '{kwPartial}' in staged changes to {f}"
+    help := s!"  Only Elab.takeArgs/elabInlines/elabBlocks may be {kwPartial} (tracked in PLAN.md).
+  Fix: make the recursion structural (see AGENTS.md, Conventions)." },
+  { applies := (!obligationsFile ·)
+    flag := bannedWord kwSorry
+    what := fun f => s!"'{kwSorry}' in staged changes outside Obligations/, in {f}"
+    help := "  Fix: finish the proof -- a broken theorem is a broken build -- or, for a
+  statement the engine does not yet earn, stage it as a recorded obligation
+  under Obligations/ (see scripts/owed.lean; the ratchet applies)." },
+  { applies := fun _ => true
+    flag := bannedWord kwUnsafe
+    what := fun f => s!"'{kwUnsafe}' in staged changes to {f}"
+    help := s!"  Fix: stay in the safe fragment; {kwUnsafe} code voids the certification story." },
+  { applies := fun _ => true
+    flag := quadraticPrepend
+    what := fun f => s!"'{patAppend} walk rest' (prepend to a recursive call's result) in {f}"
+    help := "  Prepending to a recursive call's result copies it at every element -- it
+  turned a 4 ms pass into 1157 ms, three times in one day (PLAN 2026-09-16).
+  Fix: thread an Array accumulator through the walk (see Compat.rewriteList);
+  a one-off prepend outside a recursion can bind the call to a name first." },
+  { applies := fun _ => true
+    flag := ctorDefault
+    what := fun f => s!"inductive constructor field with a default value, in {f}"
+    help := "  Defaults on constructor fields let patterns under-specify silently: `.run
+  a b c` once matched only the default, with the whole suite green (PLAN
+  2026-09-15).
+  Fix: spell the field at every constructor site; defaults belong on structures." },
+  { applies := (!obligationsFile ·)
+    flag := importsObligations
+    what := fun f => s!"import of Obligations outside the staging area, in {f}"
+    help := "  Obligations is the owed-theorem staging area: statements with open proofs.
+  The gated library must never depend on it (scripts/owed.lean also checks
+  the whole tree).
+  Fix: prove the statement and move it into its owner module first." },
+  { applies := fun f => f.endsWith ".lean" && f != "LeanTex/Core/Diag.lean"
+    flag := severityAssign
+    what := fun f => s!"a severity written outside Diag.lean, in {f}"
+    help := "  Severity is a function of the code's declared Loss — a free severity is how
+  \"content silently gone\" shipped as a warning fourteen times (PLAN, the
+  severity policy).
+  Fix: emit through Diag.of with a DiagCode; if the code's loss category is
+  wrong, change it in DiagCode.spec." },
+  { applies := fun f => f.startsWith "LeanTex/" || f == "Main.lean"
+    flag := repoRefInString
+    what := fun f => s!"a repo-internal reference in a string the user can see, in {f}"
+    help := "  A diagnostic is read by someone holding only their own document: PLAN.md,
+  AGENTS.md, a LeanTex/ path, and milestone names (M6, M8) mean nothing
+  there — 'see PLAN.md' shipped in real output (the diag-voice defect).
+  Fix: say what happens and what to write instead; the voice lint in
+  Tests.lean judges the registered text." },
+  { applies := (· == "Main.lean")
+    flag := undeclaredConfigRead
+    what := fun f => s!"a Config read in {f} not on the driver's declared list"
+    help := "  The artifact is a function of the document and the font environment;
+  flags are not arguments to it (AGENTS.md, Conventions). A new Config
+  field the driver reads is one question away from shaping the artifact,
+  so it lands on driverConfigReads (scripts/precommit.lean) only after
+  that question is answered no — and a flag that does shape the artifact
+  breaks the theorem artifact_flag_free instead of growing the list.
+  Fix: make it a document declaration (\\output) rather than a flag; a
+  flag about where/when/how-loudly goes on the list, deliberately." },
+  { applies := fun f => f.startsWith "LeanTex/Core/" && f != "LeanTex/Core/FontDb.lean"
+    flag := ioInCore
+    what := fun f => s!"IO in {f}"
+    help := "  Modules under LeanTex/Core/ do no IO (FontDb is the one exception): files
+  and fonts surface as request values the CLI driver fulfills.
+  Fix: return a request value and fulfill it in Main.lean." },
+  { applies := (·.startsWith "LeanTex/Core/")
+    flag := identityArm
+    what := fun f => s!"identity catch-all arm (`| x => x`) in {f}"
+    help := "  A rewrite walk with a wildcard ships a new IR constructor through
+  untouched -- the shape of the covered-content defect (PLAN 2026-09-17).
+  Fix: spell every constructor; the compiler then makes the next
+  constructor a build error at every walk (AGENTS.md, obligation table)." },
+  { applies := (· == "LeanTex/Core/Ir.lean")
+    flag := wildcardNumeral
+    what := fun f => s!"wildcard arm answering a numeral (`| _ => 1`) in {f}"
+    help := "  A measure walk with a numeric default silently miscounts a new IR
+  constructor -- a step inside a section title got no handout page this
+  way (PLAN 2026-09-17).
+  Fix: spell every constructor and say what each one measures." },
+  { applies := (backendFiles.contains ·)
+    flag := surfaceReach
+    what := fun f => s!"a backend reaches into the surface, in {f}"
+    help := "  Backends consume the IR and nothing else; a backend that re-parses is how
+  md→PDF and tex→HTML decay into N×M special cases (AGENTS.md, Conventions).
+  Fix: put what the backend needs on the IR." },
+  { applies := (backendFiles.contains ·)
+    flag := dimLiteral
+    what := fun f => s!"bare dimension literal in {f}"
+    help := "  A design value in a backend is a token, or carries its source where it
+  stands (AGENTS.md, obligation table): a loose `pt 14` is how a heading
+  scale drifts from the type scale, invisibly.
+  Fix: read a token/style/palette entry, or put the source in a `--`
+  comment on the same line (the diff scanner cannot see the line above)." },
+  { applies := fun f => backendFiles.contains f && f != "LeanTex/Core/Html.lean"
+    flag := tagStringEmit
+    what := fun f => s!"HTML built from tag strings, in {f}"
+    help := "  HTML is a typed tree with a certified escaper; a concatenated tag skips
+  the escaper by construction (AGENTS.md, Conventions). Html.lean's own
+  renderer is the one sanctioned site.
+  Fix: build the node with the typed constructors; the renderer emits it." },
+  { applies := fun f => f == "Tests.lean" || f.startsWith "Tests/"
+    flag := fontScanInTest
+    what := fun f => s!"FontDb.scan in {f}"
+    help := "  Tests scan only the shipped corpus fonts — FontDb.scanRoots [testFonts]
+  (AGENTS.md, Conventions); a host scan makes the suite depend on what
+  this machine has installed.
+  Fix: ship the font in tests/corpus/fonts/ and scan through testFonts." },
+  { applies := fun f => f == "Tests.lean" || f.startsWith "Tests/"
+    flag := irDumpUnmarked
+    what := fun f => s!"Ir.dump in {f} without its stated tier"
+    help := s!"  A claim about what a page shows never comes from an IR dump — six visual
+  defects once passed a fully green suite that way (AGENTS.md, Conventions).
+  Fix: assert over Layout.Out or the typed HTML tree; an IR-tier fact that
+  is not a page claim says so on the line: `{irTierMark} <why>`." }]
+
 /-- Every case a gate predicate must catch and every legal spelling it must
 pass, run by `lean --run scripts/precommit.lean --selftest` from `lake test`.
 Positive cases are the shapes whose escape prompted a gate change; negative
@@ -520,6 +608,9 @@ def selftest : IO UInt32 := do
     -- the escape that prompted the stripper: a command-name table entry
     ("+   (\"" ++ kwPartial ++ "\", .ord, '𝜕'),", false),
     ("+    say s!\"a message naming " ++ kwPartial ++ " in prose\"", false),
+    -- comments are data too: the shared stripper ended the divergence where
+    -- the hook fired on a comment the owed ratchet ignored
+    ("+  -- a comment naming " ++ kwPartial ++ " does not count", false),
     -- word-delimiting still holds
     ("+  let " ++ kwPartial ++ "Sums := 3", false)]
 
@@ -776,164 +867,15 @@ def main (args : List String) : IO UInt32 := do
   Fix: revert the golden files, or regenerate with: lake exe Tests --update"
 
   let diff ← git #["diff", "--cached", "--no-color", "--unified=0", "--", "*.lean"]
-  let added := (diff.splitOn "\n").filter fun l =>
-    l.startsWith "+" && !l.startsWith "+++"
+  for (file, lns) in addedByFile diff do
+    for g in gates do
+      if g.applies file then
+        let bad := lns.filter g.flag
+        if !bad.isEmpty then
+          say s!"pre-commit: {g.what file}:
+{String.intercalate "\n" bad.toList}
+{g.help}"
 
-  let partialAllowed (l : String) : Bool :=
-    containsSub l s!"{kwPartial} def takeArgs" || containsSub l s!"{kwPartial} def elabInlines"
-      || containsSub l s!"{kwPartial} def elabBlocks"
-  let bad := added.filter fun l => bannedWord kwPartial l && !partialAllowed l
-  if !bad.isEmpty then
-    say s!"pre-commit: new '{kwPartial}' in staged .lean changes:
-{String.intercalate "\n" bad}
-  Only Elab.takeArgs/elabInlines/elabBlocks may be {kwPartial} (tracked in PLAN.md).
-  Fix: make the recursion structural (see AGENTS.md, Conventions)."
-
-  let bad := ((addedByFile diff).filter (fun p => !obligationsFile p.1)).flatMap (·.2)
-    |>.filter (bannedWord kwSorry)
-  if !bad.isEmpty then
-    say s!"pre-commit: '{kwSorry}' in staged .lean changes outside Obligations/:
-{String.intercalate "\n" bad.toList}
-  Fix: finish the proof -- a broken theorem is a broken build -- or, for a
-  statement the engine does not yet earn, stage it as a recorded obligation
-  under Obligations/ (see scripts/owed.lean; the ratchet applies)."
-
-  let bad := added.filter (bannedWord kwUnsafe)
-  if !bad.isEmpty then
-    say s!"pre-commit: '{kwUnsafe}' in staged .lean changes:
-{String.intercalate "\n" bad}
-  Fix: stay in the safe fragment; {kwUnsafe} code voids the certification story."
-
-  let bad := added.filter quadraticPrepend
-  if !bad.isEmpty then
-    say s!"pre-commit: '{patAppend} walk rest' (prepend to a recursive call's result) in staged .lean changes:
-{String.intercalate "\n" bad}
-  Prepending to a recursive call's result copies it at every element -- it
-  turned a 4 ms pass into 1157 ms, three times in one day (PLAN 2026-09-16).
-  Fix: thread an Array accumulator through the walk (see Compat.rewriteList);
-  a one-off prepend outside a recursion can bind the call to a name first."
-
-  let bad := added.filter ctorDefault
-  if !bad.isEmpty then
-    say s!"pre-commit: inductive constructor field with a default value:
-{String.intercalate "\n" bad}
-  Defaults on constructor fields let patterns under-specify silently: `.run
-  a b c` once matched only the default, with the whole suite green (PLAN
-  2026-09-15).
-  Fix: spell the field at every constructor site; defaults belong on structures."
-
-  for (file, lines) in addedByFile diff do
-    if !obligationsFile file then
-      let bad := lines.filter importsObligations
-      if !bad.isEmpty then
-        say s!"pre-commit: import of Obligations outside the staging area, in {file}:
-{String.intercalate "\n" bad.toList}
-  Obligations is the owed-theorem staging area: statements with open proofs.
-  The gated library must never depend on it (scripts/owed.lean also checks
-  the whole tree).
-  Fix: prove the statement and move it into its owner module first."
-    if file.endsWith ".lean" && file != "LeanTex/Core/Diag.lean" then
-      let bad := lines.filter severityAssign
-      if !bad.isEmpty then
-        say s!"pre-commit: a severity written outside Diag.lean, in {file}:
-{String.intercalate "\n" bad.toList}
-  Severity is a function of the code's declared Loss — a free severity is how
-  \"content silently gone\" shipped as a warning fourteen times (PLAN, the
-  severity policy).
-  Fix: emit through Diag.of with a DiagCode; if the code's loss category is
-  wrong, change it in DiagCode.spec."
-    if file.startsWith "LeanTex/" || file == "Main.lean" then
-      let bad := lines.filter repoRefInString
-      if !bad.isEmpty then
-        say s!"pre-commit: a repo-internal reference in a string the user can see, in {file}:
-{String.intercalate "\n" bad.toList}
-  A diagnostic is read by someone holding only their own document: PLAN.md,
-  AGENTS.md, a LeanTex/ path, and milestone names (M6, M8) mean nothing
-  there — 'see PLAN.md' shipped in real output (the diag-voice defect).
-  Fix: say what happens and what to write instead; the voice lint in
-  Tests.lean judges the registered text."
-    if file == "Main.lean" then
-      let bad := lines.filter undeclaredConfigRead
-      if !bad.isEmpty then
-        say s!"pre-commit: a Config read in {file} not on the driver's declared list:
-{String.intercalate "\n" bad.toList}
-  The artifact is a function of the document and the font environment;
-  flags are not arguments to it (AGENTS.md, Conventions). A new Config
-  field the driver reads is one question away from shaping the artifact,
-  so it lands on driverConfigReads (scripts/precommit.lean) only after
-  that question is answered no — and a flag that does shape the artifact
-  breaks the theorem artifact_flag_free instead of growing the list.
-  Fix: make it a document declaration (\\output) rather than a flag; a
-  flag about where/when/how-loudly goes on the list, deliberately."
-    if file.startsWith "LeanTex/Core/" && file != "LeanTex/Core/FontDb.lean" then
-      let bad := lines.filter ioInCore
-      if !bad.isEmpty then
-        say s!"pre-commit: IO in {file}:
-{String.intercalate "\n" bad.toList}
-  Modules under LeanTex/Core/ do no IO (FontDb is the one exception): files
-  and fonts surface as request values the CLI driver fulfills.
-  Fix: return a request value and fulfill it in Main.lean."
-    if file.startsWith "LeanTex/Core/" then
-      let bad := lines.filter identityArm
-      if !bad.isEmpty then
-        say s!"pre-commit: identity catch-all arm (`| x => x`) in {file}:
-{String.intercalate "\n" bad.toList}
-  A rewrite walk with a wildcard ships a new IR constructor through
-  untouched -- the shape of the covered-content defect (PLAN 2026-09-17).
-  Fix: spell every constructor; the compiler then makes the next
-  constructor a build error at every walk (AGENTS.md, obligation table)."
-    if file == "LeanTex/Core/Ir.lean" then
-      let bad := lines.filter wildcardNumeral
-      if !bad.isEmpty then
-        say s!"pre-commit: wildcard arm answering a numeral (`| _ => 1`) in {file}:
-{String.intercalate "\n" bad.toList}
-  A measure walk with a numeric default silently miscounts a new IR
-  constructor -- a step inside a section title got no handout page this
-  way (PLAN 2026-09-17).
-  Fix: spell every constructor and say what each one measures."
-    if backendFiles.contains file then
-      let bad := lines.filter surfaceReach
-      if !bad.isEmpty then
-        say s!"pre-commit: a backend reaches into the surface, in {file}:
-{String.intercalate "\n" bad.toList}
-  Backends consume the IR and nothing else; a backend that re-parses is how
-  md→PDF and tex→HTML decay into N×M special cases (AGENTS.md, Conventions).
-  Fix: put what the backend needs on the IR."
-      let bad := lines.filter dimLiteral
-      if !bad.isEmpty then
-        say s!"pre-commit: bare dimension literal in {file}:
-{String.intercalate "\n" bad.toList}
-  A design value in a backend is a token, or carries its source where it
-  stands (AGENTS.md, obligation table): a loose `pt 14` is how a heading
-  scale drifts from the type scale, invisibly.
-  Fix: read a token/style/palette entry, or put the source in a `--`
-  comment on the same line (the diff scanner cannot see the line above)."
-    if backendFiles.contains file && file != "LeanTex/Core/Html.lean" then
-      let bad := lines.filter tagStringEmit
-      if !bad.isEmpty then
-        say s!"pre-commit: HTML built from tag strings, in {file}:
-{String.intercalate "\n" bad.toList}
-  HTML is a typed tree with a certified escaper; a concatenated tag skips
-  the escaper by construction (AGENTS.md, Conventions). Html.lean's own
-  renderer is the one sanctioned site.
-  Fix: build the node with the typed constructors; the renderer emits it."
-    if file == "Tests.lean" || file.startsWith "Tests/" then
-      let bad := lines.filter fontScanInTest
-      if !bad.isEmpty then
-        say s!"pre-commit: FontDb.scan in {file}:
-{String.intercalate "\n" bad.toList}
-  Tests scan only the shipped corpus fonts — FontDb.scanRoots [testFonts]
-  (AGENTS.md, Conventions); a host scan makes the suite depend on what
-  this machine has installed.
-  Fix: ship the font in tests/corpus/fonts/ and scan through testFonts."
-      let bad := lines.filter irDumpUnmarked
-      if !bad.isEmpty then
-        say s!"pre-commit: Ir.dump in {file} without its stated tier:
-{String.intercalate "\n" bad.toList}
-  A claim about what a page shows never comes from an IR dump — six visual
-  defects once passed a fully green suite that way (AGENTS.md, Conventions).
-  Fix: assert over Layout.Out or the typed HTML tree; an IR-tier fact that
-  is not a page claim says so on the line: `{irTierMark} <why>`."
 
   -- Warn-once keys are namespaced: a flat key space let an environment and a
   -- command of one name silence each other once (W0301/W0302), and a growing
@@ -1018,9 +960,19 @@ def main (args : List String) : IO UInt32 := do
   -- record registered in PLAN, no import of Obligations from the gated
   -- library. The check reads the whole tree, not the diff, so the count
   -- cannot drift through an edit the diff scanner does not see.
+  let mut env : Array (String × Option String) := #[]
+  let clang := "/home/linuxbrew/.linuxbrew/bin/clang"
+  if (← IO.getEnv "LEAN_CC").isNone && (← System.FilePath.pathExists clang) then
+    let prefixOut ← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }
+    let pre := prefixOut.stdout.trimAscii.toString
+    env := #[("LEAN_CC", some clang), ("LIBRARY_PATH", some s!"{pre}/lib:{pre}/lib/lean")]
+
   if staged.any (fun f => obligationsFile f || f == "PLAN.md") then
-    let owed ← IO.Process.output
-      { cmd := "lean", args := #["--run", "scripts/owed.lean", "--check"] }
+    let owedBuild ← IO.Process.output
+      { cmd := "lake", args := #["build", "owed", "-q"], env }
+    let owed ← if owedBuild.exitCode == 0 then
+        IO.Process.output { cmd := ".lake/build/bin/owed", args := #["--check"] }
+      else pure owedBuild
     if owed.exitCode != 0 then
       say s!"pre-commit: the owed-theorem ratchet failed:
 {owed.stderr}  Fix: register the obligation in PLAN.md ('Owed obligations'), or finish
@@ -1029,15 +981,8 @@ def main (args : List String) : IO UInt32 := do
   if ← failed.get then
     return 1
 
-  let mut env : Array (String × Option String) := #[]
-  let clang := "/home/linuxbrew/.linuxbrew/bin/clang"
-  if (← IO.getEnv "LEAN_CC").isNone && (← System.FilePath.pathExists clang) then
-    let prefixOut ← IO.Process.output { cmd := "lean", args := #["--print-prefix"] }
-    let pre := prefixOut.stdout.trimAscii.toString
-    env := #[("LEAN_CC", some clang), ("LIBRARY_PATH", some s!"{pre}/lib:{pre}/lib/lean")]
-
   let build ← IO.Process.output
-    { cmd := "lake", args := #["build", "--wfail", "-q", "leantex", "precommit"], env }
+    { cmd := "lake", args := #["build", "--wfail", "-q", "leantex", "precommit", "owed"], env }
   if build.exitCode != 0 then
     IO.eprintln "pre-commit: lake build --wfail failed (linter warnings fail too):"
     IO.eprint build.stdout

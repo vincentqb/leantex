@@ -40,9 +40,18 @@ name = "Tests"
 root = "Tests"
 moreLeancArgs = ["-O0"]
 
-# The pre-commit gate, compiled: the sh trampoline execs this binary when it
-# is newer than the script (interpreting the 1,000-line script cost ~1.9 s of
-# a 2.1 s hook); the gate's own build step refreshes it.
+# The gate scripts, compiled: the sh trampoline execs the precommit binary
+# when it is newer than the scripts (interpreting the 1,000-line script cost
+# ~1.9 s of a 2.1 s hook); the gate's own build step refreshes both. GateLib
+# carries the helpers the two scripts share.
+[[lean_lib]]
+name = "GateLib"
+globs = ["scripts.Gate"]
+
 [[lean_exe]]
 name = "precommit"
 root = "scripts.precommit"
+
+[[lean_exe]]
+name = "owed"
+root = "scripts.owed"

@@ -23,27 +23,12 @@ strips `--` comments but has no block-comment state — keep the keyword out
 of block comments in staged files.
 -/
 
-def isWordChar (c : Char) : Bool := c.isAlphanum || c == '_'
+import scripts.Gate
 
-def hasWord (line word : String) : Bool :=
-  (line.split (fun c => !isWordChar c)).any (·.toString == word)
-
-def containsSub (line pat : String) : Bool :=
-  (line.splitOn pat).length > 1
-
-def stripLineComment (l : String) : String :=
-  (l.splitOn "--").headD l
-
-/-- Composed so this file's own staged diff never contains the banned word
-as a delimited token, exactly as precommit.lean composes it. -/
-def kwHole : String := "sor" ++ "ry"
-
-/-- A line that leaves a proof open, comments aside. -/
-def holeLine (l : String) : Bool := hasWord (stripLineComment l) kwHole
-
-/-- An import of the staging area: legal only inside it. -/
-def importsObligations (l : String) : Bool :=
-  ((stripLineComment l).trimAscii.toString).startsWith "import Obligations"
+/-- A line that leaves a proof open, comments and strings aside — the shared
+`bannedWord`, so the hook's keyword gate and this hole counter can never
+disagree about what counts. -/
+def holeLine (l : String) : Bool := bannedWord kwSorry l
 
 /-- The value of `-- <key>: <value>` when the line is one. -/
 def fieldOf (l key : String) : Option String :=
@@ -124,10 +109,13 @@ def selftest : IO UInt32 := do
         fails.modify (s!"{name} {if want then "missed" else "fired on"}: {line}" :: ·)
 
   expect "holeLine" holeLine [
-    ("  " ++ kwHole, true),
-    ("theorem t : True := by " ++ kwHole, true),
-    ("-- a comment naming " ++ kwHole ++ " does not count", false),
-    ("  " ++ kwHole ++ "ing is a different word", false)]
+    ("  " ++ kwSorry, true),
+    ("theorem t : True := by " ++ kwSorry, true),
+    ("-- a comment naming " ++ kwSorry ++ " does not count", false),
+    -- the shared stripper: a string naming the keyword is data here exactly
+    -- as it is in the hook's banned-word gate
+    ("  let s := \"a string naming " ++ kwSorry ++ "\"", false),
+    ("  " ++ kwSorry ++ "ing is a different word", false)]
 
   expect "importsObligations" importsObligations [
     ("import Obligations", true),
@@ -147,7 +135,7 @@ def selftest : IO UInt32 := do
   -- End to end: a well-formed record with its hole, an unrecorded hole,
   -- and an incomplete record.
   let good := "-- owed: t_one\n-- owner: M\n-- source: S\n-- blocker: B\n" ++
-    "-- goldens: no\ntheorem t_one : True := by " ++ kwHole ++ "\n"
+    "-- goldens: no\ntheorem t_one : True := by " ++ kwSorry ++ "\n"
   let (obs, holes, errs) := parseFile "F.lean" good
   if !(obs.size == 1 && holes == 1 && errs.isEmpty) then
     fails.modify ("parseFile: well-formed record misparsed" :: ·)
@@ -155,12 +143,12 @@ def selftest : IO UInt32 := do
     fails.modify ("ratchet: fired on a recorded, registered hole" :: ·)
   if (ratchetErrors obs holes "registry without the name").isEmpty then
     fails.modify ("ratchet: missed an unregistered obligation" :: ·)
-  let bare := "theorem t_two : True := by " ++ kwHole ++ "\n"
+  let bare := "theorem t_two : True := by " ++ kwSorry ++ "\n"
   let (obs2, holes2, _) := parseFile "F.lean" bare
   if (ratchetErrors obs2 holes2 "").isEmpty then
     fails.modify ("ratchet: missed a hole with no owed record" :: ·)
   let incomplete := "-- owed: t_three\n-- owner: M\ntheorem t_three : True := by " ++
-    kwHole ++ "\n"
+    kwSorry ++ "\n"
   let (_, _, errs3) := parseFile "F.lean" incomplete
   if errs3.isEmpty then
     fails.modify ("parseFile: missed an incomplete owed record" :: ·)
