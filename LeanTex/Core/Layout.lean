@@ -427,9 +427,23 @@ structure PageOut where
   foot : Option (Array Ir.BandSlot) := none
   deriving Repr, Inhabited
 
+/-- One entry of the PDF document outline (ISO 32000-2 §12.3.3): a link of
+an unpinned navigation landmark. An in-document target that resolved
+carries the 0-based index of the page holding its section heading; an
+external target carries its URL; a target that resolved to neither is a
+bare entry (legal: an outline item need carry no destination). -/
+structure OutlineEntry where
+  title : String
+  page : Option Nat := none
+  url : Option String := none
+  deriving Repr, BEq, Inhabited
+
 structure Out where
   pages : Array PageOut
   diags : Array Diag
+  /-- The document outline: one entry per unpinned-nav link, in document
+  order; empty when the document declares no unpinned nav. -/
+  outline : Array OutlineEntry := #[]
 
 -- Flattening: inlines → word/space/break tokens ------------------------------
 
@@ -2114,6 +2128,12 @@ private structure B where
   chrome (the frame title and its bar) the distribution never moves. -/
   pinnedLines : Nat := 0
   pinnedFills : Nat := 0
+  /-- Anchors owed to the next committed line: `commit` records each with
+  the index of the page that line lands on. -/
+  pendingAnchors : Array String := #[]
+  /-- Each resolved anchor with its 0-based page index, first declaration
+  first — the table the outline's in-document targets resolve against. -/
+  anchors : Array (String × Nat) := #[]
   diags : Array Diag := #[]
 
 /-- Close the current page. A page that overflowed at natural size within
@@ -2180,6 +2200,8 @@ private def B.commit (b : B) (line : LineOut) (depth above overflow : Sp) : B :=
   -- costs nothing when unused.
   let fils := b.pageFils + (if b.skip.fil then 1 else 0)
   { b with cur := { b.cur with lines := b.cur.lines.push line }
+           anchors := b.anchors ++ b.pendingAnchors.map ((·, b.pages.size))
+           pendingAnchors := #[]
            shrinkAbove := b.shrinkAbove.push above
            pageFils := fils
            filsAbove := b.filsAbove.push fils
@@ -2423,6 +2445,10 @@ private inductive Op where
   consumes it at the next line: a page break landing exactly here is
   reported (W0339, pending), never silent. -/
   | tie
+  /-- An in-document anchor (a level-1 section heading's slug) stands
+  here: the builder attaches it to the page the next committed line lands
+  on, which is where the outline's destinations resolve. -/
+  | anchor (slug : String)
 
 /-- The block walk owes a gap before the next line rather than emitting one
 as it goes, because what the gap is depends on everything declared between
@@ -2488,6 +2514,9 @@ private structure Acc where
   /-- The document's loaded images, from the driver: layout only measures
   and places them; the bytes ride to the backends. -/
   imgs : Image.Store := {}
+  /-- Links of the unpinned navigation landmarks met so far, in document
+  order, as (text, target): the entries the document outline resolves. -/
+  navEntries : Array (String × String) := #[]
 
 /-- A declared length with its rubber: `1.8ex plus 0.8ex minus 0.4ex` keeps
 all three parts, so a page can take up the slack the author allowed. -/
@@ -3120,8 +3149,14 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
         (a.geom.fontSize * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000)
         (baseStyle := { bold := true })
     else
-    -- The section in force, for the footer's \sectiontitle slot.
-    let a := if level == 1 then { a with curSection := title } else a
+    -- The section in force, for the footer's \sectiontitle slot — and its
+    -- anchor: a level-1 heading is addressable (`Ir.slug`, the id the HTML
+    -- page assigns), so the outline's in-document targets can resolve to
+    -- the page the heading lands on.
+    let a := if level == 1 then
+        { a with curSection := title
+                 ops := a.ops.push (.anchor (Ir.slug title)) }
+      else a
     if a.slides && level == 1 && (a.pal.find? "progressfg").isSome then
       -- The themed section page: its own page, vertically centred, the
       -- title ragged-left in a centred measure with the deck position
@@ -3297,9 +3332,15 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- `run` already kept this node for the PDF (`Ir.keepFor "pdf"`), so by
     -- here it is pure grouping, exactly as a resolved step is.
     collectBlocks a pats fs body indent
-  | .nav _ body =>
-    -- A landmark is an HTML notion; the page keeps the content, transparent.
-    collectBlocks a pats fs body indent
+  | .nav spec body =>
+    -- A nav is furniture, and each medium has its own answer. The paged
+    -- surface renders an unpinned nav as the document outline — print's
+    -- own navigation (ISO 32000-2 §12.3.3): its links become entries and
+    -- its body ships no ink. A pinned nav is viewport furniture with no
+    -- page analogue, dropped exactly as `.note` is not handout content.
+    -- HTML keeps the `<nav>` landmark element.
+    if spec.pin.isSome then a
+    else { a with navEntries := a.navEntries ++ Ir.navLinks body }
   | .note _ =>
     -- A speaker note is not handout content: no lines, no gap.
     a
@@ -3716,6 +3757,7 @@ private inductive StagedOp where
   | setLogo (content : Array Ir.Inline)
   | picture (x : Sp) (pic : Ir.Pic.Picture)
   | tie
+  | anchor (slug : String)
 
 /-- Placement state saved at a `colOpen`, restored per column: where the
 columns start, and the lowest bottom any column reached so far. -/
@@ -3847,6 +3889,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .setLogo c => .setLogo c
     | .picture x pic => .picture x pic
     | .tie => .tie
+    | .anchor sl => .anchor sl
   let b0 : B := {
     geom := geom
     ascent := scale font.ascent
@@ -3884,6 +3927,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       logoSpans := logoSpans.push (b.pages.size, c)
     | .skip g => b := { b with skip := b.skip.add g }
     | .tie => b := { b with tie := true }
+    | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
     | .brk =>
       -- A boundary closes a page only when the page holds something: two
       -- adjacent frames share one boundary, not an empty page. A style set
@@ -4238,6 +4282,15 @@ slot yields in place: shorten the content or drop a slot"))
           { d with message := s!"{overfull} overfull lines (no feasible break)" }
       else
         unique := unique.push d
-  { pages := out, diags := unique }
+  -- The document outline, resolved: an in-document target (`#anchor`)
+  -- resolves against the level-1 heading anchors the builder recorded —
+  -- the first declaration wins, exactly the section an in-page `#anchor`
+  -- link reaches — and any other target rides as its URL.
+  let outline := acc.navEntries.map fun (title, target) =>
+    if target.startsWith "#" then
+      { title := title
+        page := (b.anchors.find? (·.1 == (target.drop 1).toString)).map (·.2) }
+    else ({ title := title, url := some target } : OutlineEntry)
+  { pages := out, diags := unique, outline := outline }
 
 end LeanTex.Core.Layout

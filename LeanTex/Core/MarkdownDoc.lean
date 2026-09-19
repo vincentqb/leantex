@@ -145,8 +145,11 @@ private def blockInto (summary ind acc : String) : Block → String
   -- `emit` already kept this node for markdown (`Ir.keepFor "md"`): by here
   -- it is a transparent group, as a resolved step is.
   | .only _ body => blocksInto summary ind acc body.toList
-  -- Markdown has no landmark; the navigation's content is content.
-  | .nav _ body => blocksInto summary ind acc body.toList
+  -- A nav is furniture, not content: the twin drops it — a menu printed
+  -- as `[One](#one)` body text was the leak that forced backend wrappers.
+  -- The HTML page keeps the landmark; the paged surface renders the
+  -- unpinned form as the PDF outline.
+  | .nav _ _ => acc
   -- A speaker note is a side channel in every backend; text is no exception.
   | .note _ => acc
   -- Frame-footer chrome is page furniture, as the running head is.
@@ -353,7 +356,7 @@ private theorem blockInto_extends (summary ind acc : String) :
   | .columns cols => columnsInto_extends summary ind acc cols.toList
   | .step _ _ body => blocksInto_extends summary ind acc body.toList
   | .only _ body => blocksInto_extends summary ind acc body.toList
-  | .nav _ body => blocksInto_extends summary ind acc body.toList
+  | .nav _ _ => append_nil acc
   | .note _ => append_nil acc
   | .framefoot _ => append_nil acc
   | .setPalette _ => append_nil acc

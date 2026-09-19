@@ -2445,6 +2445,189 @@ straight through it, so no annotation can add or hide a character. -/
 theorem role_plaintext (n : String) (body : Array Inline) :
     plainTextOne (.role n body) = plainTextList body.toList := rfl
 
+/-- Unicode `White_Space` (PropList.txt, maintained under UAX #44): the
+closed set 0009–000D, 0020, 0085, 00A0, 1680, 2000–200A, 2028, 2029, 202F,
+205F, 3000. HTML forbids only ASCII whitespace in an id (§3.2.6), a subset
+of this set; treating every White_Space character as a separator also keeps
+the thin spaces the engine itself emits for `\,`/`\:`/`\;` out of anchors. -/
+def isWhiteSpaceUni (c : Char) : Bool :=
+  let n := c.toNat
+  (0x09 ≤ n && n ≤ 0x0D) || n == 0x20 || n == 0x85 || n == 0xA0 ||
+  n == 0x1680 || (0x2000 ≤ n && n ≤ 0x200A) || n == 0x2028 || n == 0x2029 ||
+  n == 0x202F || n == 0x205F || n == 0x3000
+
+/-- One character of an anchor: ASCII letters and digits lowercased, every
+other non-ASCII scalar kept (`none` marks a separator). HTML §3.2.6 places
+no restriction on an id beyond non-emptiness and the absence of ASCII
+whitespace, and the WHATWG URL fragment percent-encode set (§1.3) excludes
+non-ASCII — U+00A0–U+10FFFD are URL code points (§4.3) — so `Café`'s é
+belongs in its anchor rather than degrading to a hyphen. The keep-check
+runs on the already-lowered character, which is what makes
+`slugCharKeep_not_whitespace` a case split over its own guards. -/
+def slugCharKeep (k : Char) : Option Char :=
+  if isWhiteSpaceUni k then none
+  else if k.isAlpha || k.isDigit then some k
+  else if 0x80 ≤ k.toNat then some k
+  else none
+
+def slugChar (c : Char) : Option Char :=
+  slugCharKeep (if c.isAlpha || c.isDigit then c.toLower else c)
+
+/-- The slug walk: separators collapse to one hyphen, emitted only between
+kept characters, so no leading or trailing hyphen can exist by construction. -/
+def slugGo (acc : Array Char) (sep : Bool) : List Char → Array Char
+  | [] => acc
+  | c :: rest =>
+    match slugChar c with
+    | some k =>
+      if sep && !acc.isEmpty then slugGo ((acc.push '-').push k) false rest
+      else slugGo (acc.push k) false rest
+    | none => slugGo acc true rest
+
+/-- An anchor id from a title's own text. Every static site generator derives
+ids this way, so an in-page `\href{#experience}` has a target by construction
+rather than by a label the author must remember to declare. Non-emptiness —
+the other half of HTML §3.2.6's requirement — is `sectionize`'s job: an
+all-separator title takes the id `section`. Not done, stated rather than
+hidden: Unicode normalisation (UAX #15 NFC) — a composed and a decomposed
+`é` make two different anchors; PLAN carries the debt. -/
+def slug (title : Array Inline) : String :=
+  String.ofList (slugGo #[] false (plainText title).toList).toList
+
+theorem slugCharKeep_not_whitespace (k k' : Char) (h : slugCharKeep k = some k') :
+    isWhiteSpaceUni k' = false := by
+  unfold slugCharKeep at h
+  split at h
+  · exact absurd h (by simp)
+  · next hws =>
+    have hws' : isWhiteSpaceUni k = false := by simpa using hws
+    split at h
+    · cases h; exact hws'
+    · split at h
+      · cases h; exact hws'
+      · exact absurd h (by simp)
+
+theorem slugChar_not_whitespace (c k : Char) (h : slugChar c = some k) :
+    isWhiteSpaceUni k = false :=
+  slugCharKeep_not_whitespace _ _ h
+
+theorem slugGo_no_whitespace (l : List Char) (acc : Array Char) (sep : Bool)
+    (hacc : ∀ c ∈ acc.toList, isWhiteSpaceUni c = false) :
+    ∀ c ∈ (slugGo acc sep l).toList, isWhiteSpaceUni c = false := by
+  induction l generalizing acc sep with
+  | nil => simpa [slugGo] using hacc
+  | cons c rest ih =>
+    simp only [slugGo]
+    split
+    · next k hk =>
+      have hkw := slugChar_not_whitespace c k hk
+      split
+      · apply ih
+        intro d hd
+        simp only [Array.toList_push, List.mem_append, List.mem_singleton] at hd
+        rcases hd with (hd | hd) | hd
+        · exact hacc d hd
+        · subst hd; decide
+        · subst hd; exact hkw
+      · apply ih
+        intro d hd
+        simp only [Array.toList_push, List.mem_append, List.mem_singleton] at hd
+        rcases hd with hd | hd
+        · exact hacc d hd
+        · subst hd; exact hkw
+    · exact ih acc true hacc
+
+/-- The addressability half of HTML §3.2.6's id contract, proved in the
+stronger Unicode form: no character of a slug is `White_Space`, so in
+particular none is ASCII whitespace ("The value must not contain any ASCII
+whitespace"). Non-emptiness is discharged at the one use site. -/
+theorem slug_no_whitespace (title : Array Inline) :
+    ∀ c ∈ (slug title).toList, isWhiteSpaceUni c = false := by
+  intro c hc
+  simp only [slug, String.toList_ofList] at hc
+  exact slugGo_no_whitespace _ _ _ (by simp) c hc
+
+-- Navigation links: what a paged surface renders an unpinned nav as — the
+-- document outline. Structural recursion through `List`, as the walks above.
+
+mutual
+
+/-- Every link of a navigation landmark's body, in document order, as
+(text, target). -/
+-- conserves: none — a projection of the links alone: a nav is furniture on
+-- the paged surface, and only its links are navigation; what its body must
+-- NOT ship there is pinned by the webnav census and the nav layout tests.
+def navLinkList (out : Array (String × String)) : List Block → Array (String × String)
+  | [] => out
+  | b :: rest => navLinkList (navLinkOne out b) rest
+
+def navLinkOne (out : Array (String × String)) : Block → Array (String × String)
+  | .para content => navLinkInlineList out content.toList
+  | .section _ _ title => navLinkInlineList out title.toList
+  | .verbatim _ _ => out
+  | .logo _ => out
+  | .framefoot _ => out
+  | .setPalette _ => out
+  | .setTokens _ => out
+  | .pagebreak => out
+  | .rule _ _ _ => out
+  | .picture _ => out
+  | .list _ items => navLinkItems out items.toList
+  | .center body => navLinkList out body.toList
+  | .quote body => navLinkList out body.toList
+  | .role _ body => navLinkList out body.toList
+  | .spaced _ body => navLinkList out body.toList
+  | .columns cols => navLinkColumns out cols.toList
+  | .step _ _ body => navLinkList out body.toList
+  -- a speaker note is a side channel in every backend; never navigation
+  | .note _ => out
+  | .only _ body => navLinkList out body.toList
+  | .nav _ body => navLinkList out body.toList
+  | .frame title _ _ body => navLinkList (navLinkInlineList out title.toList) body.toList
+  | .table _ _ _ rows _ => navLinkRows out rows.toList
+  | .float _ _ body caption => navLinkInlineList (navLinkList out body.toList) caption.toList
+
+def navLinkRows (out : Array (String × String)) :
+    List (Array (Array Inline)) → Array (String × String)
+  | [] => out
+  | row :: rest => navLinkRows (navLinkCells out row.toList) rest
+
+def navLinkCells (out : Array (String × String)) :
+    List (Array Inline) → Array (String × String)
+  | [] => out
+  | cell :: rest => navLinkCells (navLinkInlineList out cell.toList) rest
+
+def navLinkItems (out : Array (String × String)) :
+    List (Array Block) → Array (String × String)
+  | [] => out
+  | item :: rest => navLinkItems (navLinkList out item.toList) rest
+
+def navLinkColumns (out : Array (String × String)) :
+    List (Option Nat × Array Block) → Array (String × String)
+  | [] => out
+  | (_, body) :: rest => navLinkColumns (navLinkList out body.toList) rest
+
+def navLinkInlineList (out : Array (String × String)) :
+    List Inline → Array (String × String)
+  | [] => out
+  | x :: rest => navLinkInlineList (navLinkInline out x) rest
+
+def navLinkInline (out : Array (String × String)) : Inline → Array (String × String)
+  -- the link whole: its text is the entry's title (a link cannot nest)
+  | .link url body => out.push (plainTextList body.toList, url)
+  | .styled _ body => navLinkInlineList out body.toList
+  | .colored _ _ body => navLinkInlineList out body.toList
+  | .role _ body => navLinkInlineList out body.toList
+  | .underline body => navLinkInlineList out body.toList
+  | .step _ _ body => navLinkInlineList out body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .fill | .pageNumber | .pageCount | .linebreak _ => out
+
+end
+
+def navLinks (body : Array Block) : Array (String × String) :=
+  navLinkList #[] body.toList
+
 /-- A step's range as the surface spells it: `step 2`, `step 2-3`, and
 `step 2-2` for `<2->`, `<2-3>`, and `<2>`. -/
 def dumpStepRange (n : Nat) (last : Option Nat) : String :=

@@ -3,17 +3,16 @@ page 612x792 vmargin 72 hmargin 150
 palette cobalt #1D4ED8
 meta title "Field Notes"
 meta subject "An invented page with a navigation landmark."
-only html
-  nav
-    para
-      link "#first-light"
-        text "First Light"
-      text " "
-      link "#gathered-notes"
-        text "Gathered Notes"
-      text " "
-      link "#top"
-        text "Back to top"
+nav
+  para
+    link "#first-light"
+      text "First Light"
+    text " "
+    link "#gathered-notes"
+      text "Gathered Notes"
+    text " "
+    link "#top"
+      text "Back to top"
 section* 1
   text "First Light"
 para
@@ -25,10 +24,9 @@ section* 1
   text "Gathered Notes"
 para
   text "A second invented paragraph, also on every surface."
-only html
-  nav label "Return to top" pin bottom right offset 1500/1000em reveal 225pt
-    para
-      link "#top"
-        icon "" label "Return to top"
+nav label "Return to top" pin bottom right offset 1500/1000em reveal 225pt
+  para
+    link "#top"
+      icon "" label "Return to top"
 -- diagnostics
 (none)

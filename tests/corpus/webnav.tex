@@ -1,18 +1,18 @@
-% A page with a navigation landmark, declared interaction states, and
-% backend-conditional content: the nav (with its hover/focus/motion) is
-% web-only, one sentence is print-only, and everything else ships on every
-% surface. Invented content throughout.
+% A page with navigation landmarks, declared interaction states, and one
+% backend-conditional sentence. The navs stand bare: each medium has its own
+% answer — HTML keeps the <nav> landmarks, the PDF renders the unpinned menu
+% as its document outline and drops the pinned control (viewport furniture),
+% and the markdown twin drops both. One sentence is print-only, the honest
+% ifbackend remainder. Invented content throughout.
 \documentclass{article}
 \pdfmeta{ title = "Field Notes", subject = "An invented page with a navigation landmark." }
 \palette{ cobalt = #1D4ED8 }
 \style{nav}{ hover = cobalt, focus = cobalt, motion = 150ms }
 \begin{document}
 
-\begin{ifbackend}{html}
 \begin{nav}
 \href{#first-light}{First Light} \href{#gathered-notes}{Gathered Notes} \href{#top}{Back to top}
 \end{nav}
-\end{ifbackend}
 
 \section*{First Light}
 
@@ -28,12 +28,10 @@ A second invented paragraph, also on every surface.
 
 % The pinned return-to-top control: a labeled landmark (so two navs are
 % distinguishable), fixed to the viewport corner, revealed by scroll where
-% the platform can, by the constant script fallback elsewhere, and simply
-% always visible with neither. Web-only: the printed page has no viewport.
-\begin{ifbackend}{html}
+% the platform can, and simply always visible with neither. Viewport
+% furniture: the printed page has no viewport and ships nothing for it.
 \begin{nav}[label = Return to top, pin = bottom right, offset = 1.5em, reveal = 300px]
 \href{#top}{\faIcon[label = Return to top]{arrow-up}}
 \end{nav}
-\end{ifbackend}
 
 \end{document}

@@ -361,7 +361,8 @@ embedded, with its own ToUnicode), image XObjects for every image actually
 placed, and the document information the source declared (Info dictionary
 plus XMP). -/
 def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
-    (info : Ir.Meta := {}) (imgs : Image.Store := {}) : ByteArray := Id.run do
+    (info : Ir.Meta := {}) (imgs : Image.Store := {})
+    (outline : Array OutlineEntry := #[]) : ByteArray := Id.run do
   let np := pages.size
   -- Only faces that actually contribute glyphs are embedded; a declared but
   -- unused face would otherwise cost a megabyte of font file.
@@ -426,14 +427,22 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let pageId (i : Nat) := pageBase + 2 * i
   let contentId (i : Nat) := pageBase + 2 * i + 1
   let infoId := pageBase + 2 * np
-  let xmpId := infoId + 1
+  -- The document outline (ISO 32000-2 §12.3.3), when the layout carried
+  -- one: a root plus one item per entry, flat, in document order. With no
+  -- entries nothing is emitted and every object id below is unchanged —
+  -- an outline-free document stays byte-identical.
+  let nOut := outline.size
+  let outlineRootId := infoId + 1
+  let outlineItemId (k : Nat) := infoId + 2 + k
+  let xmpId := if nOut == 0 then infoId + 1 else infoId + 2 + nOut
   let objStmId := xmpId + 1
   let xrefId := objStmId + 1
   let size := xrefId + 1
 
   -- compressed (non-stream) objects, serialized bare
   let kids := String.intercalate " " ((List.range np).map fun i => s!"{pageId i} 0 R")
-  let catalog := s!"<< /Type /Catalog /Pages 2 0 R /Metadata {xmpId} 0 R >>"
+  let outlinesRef := if nOut == 0 then "" else s!" /Outlines {outlineRootId} 0 R"
+  let catalog := s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R >>"
   let pagesObj := s!"<< /Type /Pages /Kids [{kids}] /Count {np} >>"
   let fontResources := String.intercalate " "
     ((List.range nf).map fun k => s!"/F{k + 1} {type0Id k} 0 R")
@@ -503,8 +512,26 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     infoEntry "Subject" info.subject ++ infoEntry "Keywords" info.keywords ++
     s!" /Producer (leantex) >>"
 
+  -- Outline items: /Title and /Parent always; a resolved in-document
+  -- target is a /Dest to its page (/XYZ null null null keeps the reader's
+  -- view), an external target a URI action, and a target that resolved to
+  -- neither is a bare item — an outline item need carry no destination.
+  let outlineObjs : List (Nat × String) :=
+    if nOut == 0 then [] else
+      (outlineRootId,
+        s!"<< /Type /Outlines /First {outlineItemId 0} 0 R /Last {outlineItemId (nOut - 1)} 0 R /Count {nOut} >>") ::
+      (List.range nOut).map fun k =>
+        let e := outline[k]!
+        let prev := if k == 0 then "" else s!" /Prev {outlineItemId (k - 1)} 0 R"
+        let next := if k + 1 == nOut then "" else s!" /Next {outlineItemId (k + 1)} 0 R"
+        let target := match e.page, e.url with
+          | some p, _ => s!" /Dest [{pageId p} 0 R /XYZ null null null]"
+          | none, some u => s!" /A << /S /URI /URI ({pdfString u}) >>"
+          | none, none => ""
+        (outlineItemId k,
+          s!"<< /Title ({pdfString e.title}) /Parent {outlineRootId} 0 R{prev}{next}{target} >>")
   let compressed : List (Nat × String) :=
-    [(1, catalog), (2, pagesObj)] ++ fontObjs ++ [(infoId, infoDict)] ++
+    [(1, catalog), (2, pagesObj)] ++ fontObjs ++ [(infoId, infoDict)] ++ outlineObjs ++
     (List.range np).map fun i => (pageId i, pageDict i)
 
   -- object stream payload

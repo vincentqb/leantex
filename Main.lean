@@ -613,7 +613,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         ui.phase "markdown" s!"{md.utf8ByteSize} bytes" (← since t)
       if emit.contains .pdf then
         let t ← IO.monoMsNow
-        let pdf := Pdf.write geom fs out.pages doc.info imgs
+        let pdf := Pdf.write geom fs out.pages doc.info imgs out.outline
         let pdfPath := outPath ui.cfg.output outIsDir file .pdf
         IO.FS.writeBinFile pdfPath pdf
         written := written.push pdfPath
