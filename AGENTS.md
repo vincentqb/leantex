@@ -83,6 +83,18 @@ in this repo; refer to the private reference corpus abstractly.
   | an `AssertKind` | its judge in `Check.one` (exhaustive match) and a test that breaks it once |
   | a document class | sourced defaults, and its contract as implied assertions |
 
+- The **kernel** owns the page models (flow / frame / face — three today,
+  `report`'s chapter-page a candidate fourth). A **document class** is a
+  named bundle *over* a page model: defaults, furniture semantics, implied
+  assertions, metadata contract. `resume`, `webpage`, `poster` are classes
+  in this sense — as `article`, `slides`, `card` already are. `\theme`
+  stays the *visual* layer only (palette, tokens, styles), orthogonal to
+  class, as LaTeX's packages are orthogonal to its classes. The guard is
+  the record shape (`Ir.ClassRecord`): a class is a *record*, not a module
+  with its own layout code — if a proposed class needs layout code rather
+  than values, assertions and furniture flags, it is asking for a new page
+  model and goes to the kernel discussion instead.
+
 - Theorem shape suffixes are a registry, not a habit: `_text` (census
   equality; state it as a `Conserves` instance), `_covers`, `_id`, `_inj`,
   `_rectangular`, `_exact`, `_monotone`, `_fixed_point`, `_contract`,
