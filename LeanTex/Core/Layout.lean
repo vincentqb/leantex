@@ -2188,6 +2188,14 @@ private structure B where
   chrome (the frame title and its bar) the distribution never moves. -/
   pinnedLines : Nat := 0
   pinnedFills : Nat := 0
+  /-- The frame's page-top chrome, snapshotted at `.pin`: the title lines
+  and bar fills with the baseline and depth content resumes below —
+  repeated on every continuation page the frame spills onto (`spillPage`),
+  as beamer repeats the frametitle on every page of a broken frame
+  (`allowframebreaks`, user guide §8.1: the title is per-frame furniture,
+  not first-page content). Cleared at the deliberate frame boundary
+  (`.brk`), so only mid-frame overflow repeats it. -/
+  chrome : Option (Array LineOut × Array Fill × Sp × Sp) := none
   /-- Anchors owed to the next committed line: `commit` records each with
   the index of the page that line lands on. -/
   pendingAnchors : Array String := #[]
@@ -2259,6 +2267,41 @@ private def B.finishPage (b : B) : B :=
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
            pinnedLines := 0, pinnedFills := 0,
            diags := diags }
+
+/-- Reopen the frame's page-top chrome on a fresh page: the pinned title
+lines and bar fills repeat, and content resumes below the chrome's own
+baseline and depth. The repeated lines never move (they are the new
+page's pin) and carry no shrink or fil share. -/
+private def B.reopenChrome (b : B) : B :=
+  match b.chrome with
+  | some (lines, fills, y0, d0) =>
+    { b with cur := { lines := lines, fills := fills }
+             pinnedLines := lines.size
+             pinnedFills := fills.size
+             shrinkAbove := .replicate lines.size 0
+             filsAbove := .replicate lines.size 0
+             y := y0
+             prevDepth := d0 }
+  | none => b
+
+/-- Close an overfull page mid-frame and repeat the frame's chrome on the
+next. Where no chrome is set — an article page, a plain or standout
+frame — this is exactly `finishPage`. -/
+private def B.spillPage (b : B) : B :=
+  b.finishPage.reopenChrome
+
+@[simp] private theorem reopenChrome_pages (b : B) :
+    b.reopenChrome.pages = b.pages := by
+  unfold B.reopenChrome
+  split <;> rfl
+
+/-- A spill ships exactly the page `finishPage` ships: the chrome reopen
+only seeds the next page's `cur`, so every pages-extension fact about
+`finishPage` transports. -/
+@[simp] private theorem spillPage_pages (b : B) :
+    b.spillPage.pages = b.finishPage.pages := by
+  unfold B.spillPage
+  simp
 
 /-- A line that shares its baseline with the last one (underline rules)
 rides with it, including its share of the page's shrink and of its fil
@@ -2369,8 +2412,16 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     if overflow ≤ above ∨ b.noBreak then
       b.commit (mk y) depth above (min overflow above)
     else
-      let b := b.finishPage
-      b.commit (mk firstY) depth 0 0
+      let b := b.spillPage
+      if b.cur.lines.isEmpty then
+        b.commit (mk firstY) depth 0 0
+      else
+        -- Below the reopened frame chrome: interline from the chrome's
+        -- own baseline; the pending glue died with the break, as TeX
+        -- discards glue at the top of a page.
+        b.commit
+          (mk (b.y + interlineFor b.geom.leading b.prevDepth tallest height))
+          depth 0 0
 
 /-- The realization theorem's placement step: a line placed on the same
 page (the fit condition holds), under interline spacing (not flush under a
@@ -3987,14 +4038,15 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- for a page that never got content dies with the boundary. Fills
     -- are content too: a picture of fills alone is a page.
     if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty then
-      b := b.finishPage
+      b := { b.finishPage with chrome := none }
     else
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
-                    pinnedLines := 0, pinnedFills := 0 }
+                    pinnedLines := 0, pinnedFills := 0, chrome := none }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
   | .foot c => b := { b with curFoot := c }
   | .pin =>
-    b := { b with pinnedLines := b.cur.lines.size, pinnedFills := b.cur.fills.size }
+    b := { b with pinnedLines := b.cur.lines.size, pinnedFills := b.cur.fills.size
+                  chrome := some (b.cur.lines, b.cur.fills, b.y, b.prevDepth) }
   | .colOpen =>
     colSaves := colSaves.push {
       y := b.y, prevDepth := b.prevDepth, skip := b.skip
@@ -4048,8 +4100,11 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       if overflow ≤ above ∨ b.noBreak then
         b := { b.commit (mk y) 0 above (min overflow above) with noInterline := true }
       else
-        b := b.finishPage
-        b := { b.commit (mk (b.geom.vmargin + th)) 0 0 0 with noInterline := true }
+        b := b.spillPage
+        if b.cur.lines.isEmpty then
+          b := { b.commit (mk (b.geom.vmargin + th)) 0 0 0 with noInterline := true }
+        else
+          b := { b.commit (mk (b.y + b.prevDepth + th)) 0 0 0 with noInterline := true }
   | .progress num den fg bg thick x w =>
     -- Half a line under the last baseline: the track, then the elapsed
     -- share over it. The bar joins the page's depth so following content
@@ -4089,7 +4144,9 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
         yTop := y
         overflow := min overflow above
       else
-        b := b.finishPage
+        b := b.spillPage
+        if !b.cur.lines.isEmpty then
+          yTop := b.y + b.prevDepth + lineskip
         overflow := 0
         above := 0
     -- One transform for everything the picture ships: `Pic.Place` is the

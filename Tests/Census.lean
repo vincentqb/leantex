@@ -196,14 +196,27 @@ def censusTable :
     ("the standout frame fills its background", (c[7]?.map (·.fills == 1)).getD false),
     ("the standout content ships", pageHas c 7 "Questions?")]),
   ("themed", fun _ c => [
-    ("pages", c.size == 6),
+    ("pages", c.size == 8),
     ("the section page carries its progress-bar fills", (c[1]?.map fun p => decide (p.fills ≥ 2)).getD false),
     ("the frame-title bar fills", (c[2]?.map fun p => decide (p.fills ≥ 1)).getD false),
     ("the covered step dims the alert and example beats in place",
       pageCovered c 3 "alert beat" && pageCovered c 3 "teal example beat"),
     ("the covered beats still ship", pageHas c 3 "alert beat"),
     ("the second step reveals them", pageAllRevealed c 4),
-    ("the standout frame fills its background", (c[5]?.map fun p => decide (p.fills ≥ 1)).getD false)]),
+    -- The census form of "every frame page carries its title bar unless
+    -- plain/standout": the tall frame spills, and its continuation page
+    -- repeats the title line and the bar fill (page bg + bar ≥ 2 fills),
+    -- exactly as beamer keeps the frametitle on every page of a frame.
+    ("the tall frame spills onto a continuation page",
+      pageHas c 5 "Overflow beat one" && pageHas c 6 "eighteen"),
+    ("every page of the frame carries its title",
+      pageHas c 5 "A frame that continues" && pageHas c 6 "A frame that continues"),
+    ("the continuation page repeats the title bar",
+      (c[6]?.map fun p => decide (p.fills ≥ 2)).getD false),
+    ("the continuation body sets below the repeated title, never over it",
+      ((lineYOf c 6 "A frame that continues").bind fun ty =>
+        (lineYOf c 6 "eighteen").map fun by' => decide (by' > ty)).getD false),
+    ("the standout frame fills its background", (c[7]?.map fun p => decide (p.fills ≥ 1)).getD false)]),
   ("latex-idioms", fun _ c => [
     ("one page", c.size == 1),
     ("the running head ships", hasStr (censusText c) "Alex Doe"),
