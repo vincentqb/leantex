@@ -1858,6 +1858,11 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
         | _ => false).getD false)
   t "an edge naming no node is E0333"
     (errCodes (wrap "\\draw (a) -- (0,0);") == ["E0333"])
+  t "draw= on an edge sets the stroke colour"
+    ((picOf (wrap "\\draw[draw=grid] (0,0) -- (1,0);")).map (fun p =>
+      p.shapes.any fun s => match s with
+        | .edge _ st _ => st.color == { r := 42, g := 111, b := 78 }
+        | _ => false) == some true)
   t "a waypoint coordinate chains segments"
     ((picOf (wrap "\\draw (0,0) -- (1,1) -- (2,0);")).map (fun p =>
       p.shapes.any fun s => match s with

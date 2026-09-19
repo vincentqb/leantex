@@ -1318,6 +1318,12 @@ private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
       | [.ident "dashed"] => dash := .dashed
       | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
       | [.sym '-', .sym '>'] | [.sym '-', .ident "latex"] => arrow := true
+      -- `draw=<colour>` and a bare colour both set the stroke, as in pgf
+      | .ident "draw" :: .sym '=' :: rest =>
+        match evalColor cx env rest.toArray with
+        | .ok c => color := c
+        | .error e =>
+          ev := ev.diag (.E0333, s!"in '\\draw', {e}; the colour is dropped")
       | [] => pure ()
       | o :: rest =>
         -- A remaining option is a colour spelling, or names itself.
