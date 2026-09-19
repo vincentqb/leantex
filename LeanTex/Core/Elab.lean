@@ -4133,7 +4133,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           | some c => docClass := c
           | none =>
             diag ctx .E0309 s!"unknown document class '{named}'" pos
-              (help := "classes: article, slides, card")
+              (help := "classes: article, slides, card, resume, webpage")
         | _ =>
           diag ctx .E0304 "'\\documentclass' needs a {class}" pos
       | .ctrl "define" pos =>
@@ -4343,7 +4343,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
                 -- furniture styles land under a class that never draws
                 -- them would be silently inert, so the install says so —
                 -- the document's own `\chrome` has its own name (W0318).
-                if docClass != .slides then
+                if !docClass.record.chrome then
                   let inert := (if th.chrome.hasFooter then ["chrome"] else []) ++
                     ["frametitle", "sectionpage", "standout"].filter
                       (fun e => (th.styles.find? e).isSome)
@@ -4404,7 +4404,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
               -- (`footerSequenceDiags`).
               chromeDeclared := true
               -- Inert chrome would be a silent failure: only slides draw it.
-              if docClass != .slides then
+              if !docClass.record.chrome then
                 diag ctx .W0318
                   s!"'\\chrome' is slides furniture; the {docClass.name} class never draws it"
                   (some pos) (help := "\\runninghead / \\runningfoot are the page furniture")
@@ -4497,11 +4497,12 @@ its declared layout" pos
   -- the omission is that surface's grammar, never noted.
   if !sawClass && file.endsWith ".tex" then
     diag ctx .N0017 "no '\\documentclass'; the article page model is assumed" none
-      (help := "declare \\documentclass{article} (or slides, card) to choose it")
+      (help := "declare \\documentclass{article} (or slides, card, resume, webpage) to choose it")
+  let record := docClass.record
   -- The body size: `\page{ fontsize = ... }` wins, else the class option
   -- (`fontsize=11pt`, KOMA's spelling, or the standard classes' bare
-  -- `11pt`), else the class default — beamer's documented 11pt for slides
-  -- (user guide §18.2.1), the engine's 10pt base otherwise.
+  -- `11pt`), else the class record's default — beamer's documented 11pt
+  -- for slides (user guide §18.2.1), the engine's 10pt base otherwise.
   if page.fontSize == ({} : PageSpec).fontSize then
     let optSize := (classOptions.splitOn ",").findSome? fun o =>
       let o := o.trimAscii.toString
@@ -4512,8 +4513,12 @@ its declared layout" pos
     match optSize with
     | some d => page := { page with fontSize := d }
     | none =>
-      if docClass == .slides then
-        page := { page with fontSize := Ir.slidesFontSize }
+      if let some d := record.fontSize then
+        page := { page with fontSize := d }
+  -- The geometry is the page model's, the kernel's own: a frame fills
+  -- beamer's stage, a face is trimmed to a trade size, flow takes the
+  -- text block. Option-keyed sizes (aspectratio, us/jis) live here with
+  -- the model, not on the class record — they are the model's stages.
   -- Class options and `\page` keys are one vocabulary: `*paper` (and
   -- KOMA's `paper=`) names a size from the same `pageSizes` table
   -- `\page{ size = ... }` reads, and `landscape` swaps the axes — the
@@ -4525,7 +4530,7 @@ its declared layout" pos
   -- each is refused by name (W0356) — the silent drop was the defect
   -- class here, an a4paper request quietly shipping on letter.
   let classOpts := (classOptions.splitOn ",").map (·.trimAscii.toString)
-  if docClass == .article then
+  if record.model == .flow then
     let dflt : PageSpec := {}
     if page.width == dflt.width && page.height == dflt.height then
       let sized := classOpts.findSome? fun o =>
@@ -4549,7 +4554,7 @@ its declared layout" pos
         none
   -- Slides fill beamer's stage unless the document declared its own
   -- geometry: a handout on letter portrait is not best effort, it is wrong.
-  if docClass == .slides then
+  if record.model == .frame then
     let dflt : PageSpec := {}
     if page.width == dflt.width && page.height == dflt.height then
       let ratio169 := (classOptions.splitOn ",").any
@@ -4570,7 +4575,7 @@ its declared layout" pos
   -- hyphenation and no running furniture:
   -- a card is one face of display text, not a page of a run — which is
   -- also why the prose measure band (W0201) does not apply to it.
-  else if docClass == .card then
+  else if record.model == .face then
     let dflt : PageSpec := {}
     let opts := (classOptions.splitOn ",").map (·.trimAscii.toString)
     if page.width == dflt.width && page.height == dflt.height then
@@ -4591,19 +4596,30 @@ its declared layout" pos
     -- left choosing between overfull answers.
     if page.justify.isNone then
       page := { page with justify := some false }
-    if head.isSome || foot.isSome then
-      diag ctx .W0317
-        "a card carries no running head or foot; the declaration is dropped" none
-      head := none
-      foot := none
   else if !sawPage then
     -- An undeclared letter page takes Bringhurst's text block for a 10pt
     -- text face, 26 picas, not the word-processor inch: the default must
     -- satisfy the measure band the engine checks (W0201). A document that
     -- declares any \page geometry keeps every value it named.
     page := { page with hmargin := (page.width - Ir.articleTextBlock) / 2 }
-  ctx := { ctx with slides := docClass == .slides
-                    numberHeadings := docClass == .article, styles := styles }
+  -- Furniture legality is the class record's, not the geometry's: a class
+  -- that carries no running furniture drops the declaration and says so.
+  if !record.runningFurniture && (head.isSome || foot.isSome) then
+    diag ctx .W0317
+      "a card carries no running head or foot; the declaration is dropped" none
+    head := none
+    foot := none
+  -- Build intent the class carries, when the document's `\output` names
+  -- none: the class declares what to build the way `\documentclass`
+  -- already declares the page model. A document's own `formats = ...`
+  -- replaces it whole — opting into the print twin is one declared line.
+  if output.formats.isEmpty then
+    for f in record.formats do
+      output := output.addFormat f
+  if output.md.isNone then
+    output := { output with md := record.mdName }
+  ctx := { ctx with slides := record.model == .frame
+                    numberHeadings := record.numberHeadings, styles := styles }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's
   -- number in document order (`numberFloats_exact` is the fact `\ref`
@@ -4658,36 +4674,36 @@ its declared layout" pos
           s!"declared: {String.intercalate ", " (finalPalette.entries.toList.map (·.1))}")) }
   -- The logo may have been declared in either half; a card carries none.
   let mut logo := (← get).logo
-  if docClass == .card && logo.isSome then
+  if !record.runningFurniture && logo.isSome then
     diag ctx .W0317
       "a card carries no logo; the declaration is dropped" none
     logo := none
-  -- What a card guarantees, stated as the assertions the engine already
-  -- enforces: content fits its faces, ink respects the safe margin, and
-  -- the smallest type clears the fluent-reading floor at hand-held
-  -- distance — an angular x-height of 0.2°, 1.4 mm at 40 cm (Legge &
-  -- Bigelow 2011). Declaring an assertion of the same form is intent and
-  -- silences the class default.
-  if docClass == .card then
-    let faces : Int := max 1 (blocks.foldl (init := 0) fun n b =>
-      match b with
-      | .frame _ _ _ _ => n + 1
-      | _ => n)
+  -- The class's implied contract, stated as the assertions the engine
+  -- already enforces against the shipped pages (the card's: content fits
+  -- its faces, ink respects the safe margin, the smallest type clears the
+  -- fluent-reading floor; the resume's: the same frame over one page).
+  -- Declaring an assertion of the same form is intent and silences the
+  -- class default; the help beside each value is the record's own.
+  if let some pb := record.pagesBound then
     unless asserts.any (fun a => match a.kind with | .pages _ _ => true | _ => false) do
-      asserts := asserts.push {
-        kind := .pages .le faces
-        help := some s!"the card class asserts content fits its {faces} face(s); \
+      match pb with
+      | .faces =>
+        let faces : Int := max 1 (blocks.foldl (init := 0) fun n b =>
+          match b with
+          | .frame _ _ _ _ => n + 1
+          | _ => n)
+        asserts := asserts.push {
+          kind := .pages .le faces
+          help := some s!"the {docClass.name} class asserts content fits its {faces} face(s); \
 declare \\assert\{ pages <= N } to take control" }
+      | .lit op n =>
+        asserts := asserts.push { kind := .pages op n, help := some record.pagesHelp }
+  if let some h := record.inkInArea then
     unless asserts.any (·.kind == .textInArea) do
-      asserts := asserts.push {
-        kind := .textInArea
-        help := some "the margins are the print safe zone: ink past them risks \
-the trim; declare \\assert{ text.in_area } to take control" }
+      asserts := asserts.push { kind := .textInArea, help := some h }
+  if let some (floor, h) := record.xHeightFloor then
     unless asserts.any (fun a => match a.kind with | .minXHeight _ => true | _ => false) do
-      asserts := asserts.push {
-        kind := .minXHeight Ir.cardXHeightFloor
-        help := some "1.4mm x-height is the fluent-reading floor at hand-held \
-distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control" }
+      asserts := asserts.push { kind := .minXHeight floor, help := some h }
   if trailing.any (!isSpaceOrPar ·) then
     diag ctx .W0001 "content after '\\end{document}' is ignored" none
   -- PDF metadata falls back to the title declarations: a deck that says

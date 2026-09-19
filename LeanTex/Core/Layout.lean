@@ -3816,7 +3816,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- \runningfoot overrides it, and only on slides: chrome is deck
   -- furniture. `\framefoot` wraps frames, so the scan is over top-level
   -- blocks, where elaboration puts it.
-  let footAllowed := doc.docClass == .slides && doc.foot.isNone
+  let footAllowed := doc.docClass.record.chrome && doc.foot.isNone
   let hasFrameFoot := doc.body.any fun blk => match blk with
     | .framefoot xs => !xs.isEmpty
     | _ => false
@@ -3849,7 +3849,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let design := Ir.Design.ofDoc doc
   let cover := design.cover
   let acc0 : Acc := { geom := geom, xHeight := xHeight, styles := doc.styles
-                      slides := doc.docClass == .slides
+                      slides := doc.docClass.record.model == .frame
                       pal := doc.palette
                       tokens := doc.tokens
                       frameCount := doc.frameCount
@@ -4124,7 +4124,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- L₄₅ = 1.415α + 23.03 pt). Slides are display text, not continuous
   -- reading, and are out of the rule's own scope; `\page{ measure = free }`
   -- declares the document takes responsibility.
-  if doc.docClass == .article && doc.page.measureChecked
+  if doc.docClass.record.measureBand && doc.page.measureChecked
       && prose ≥ 4 then
     let alphabet := (List.range 26).foldl (fun acc k =>
       acc + scaledAt geom.fontSize font (font.advance (Char.ofNat ('a'.toNat + k)))) 0

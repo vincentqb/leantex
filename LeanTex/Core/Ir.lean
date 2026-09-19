@@ -2375,16 +2375,87 @@ is what a marker is. -/
 def fillTemplate (template content : Array Inline) : Array Inline :=
   if template.isEmpty then content else (fillList content template.toList).toArray
 
-/-- The document's class, closed: `article`, `slides`, or `card`. A class an
-`ofString?` does not answer is E0309 at the one parse site and never enters
-the IR, so every class-dependent decision downstream is a total decision
-over this type — a misspelled class in engine code is a compile error, and
-a new class does not build until `name`, `ofString?`, and every exhaustive
-match over the type answer it. -/
+/-- The kernel's page models: how content maps onto the surfaces the paged
+backends draw. Three today; `report`'s chapter-opens-a-page is the one
+candidate fourth. HTML is continuous scroll whatever the model —
+scroll-vs-page is per medium, the model per document. -/
+inductive PageModel where
+  /-- Content flows into a sequence of pages (`article`'s model). -/
+  | flow
+  /-- A frame is a page boundary; overlays produce steps (`slides`). -/
+  | frame
+  /-- Fixed faces, no flow: trim sizes and a print safe zone (`card`). -/
+  | face
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The page-count bound a class implies, when it implies one: a literal
+(`resume`: fits one page) or the document's own declared faces (`card`). -/
+inductive PagesBound where
+  | lit (op : CmpOp) (n : Int)
+  | faces
+  deriving Repr, BEq
+
+/-- A document class is a record over one of the kernel's page models:
+defaults, furniture flags, implied assertions, build intent — values only,
+no code. A class that needs layout code rather than fields here is asking
+for a new page model and that is a kernel discussion, not a class. -/
+structure ClassRecord where
+  model : PageModel
+  /-- The class's body-size default, when it declares one (`slides`:
+  beamer's documented 11 pt, user guide §18.2.1). -/
+  fontSize : Option Sp := none
+  /-- Headings number by default; `\section*` opts out either way.
+  `article` numbers (classes.dtx `\@startsection` with counters); a résumé
+  is scanned, not cross-referenced, so `resume` does not (moderncv.cls
+  sets its sections unnumbered), and `webpage` follows the web, whose
+  headings carry no numbering convention. -/
+  numberHeadings : Bool := false
+  /-- The measure is judged against the readable band (W0201): continuous
+  prose classes only — slides are display text, a card one face of it. -/
+  measureBand : Bool := false
+  /-- Running head, foot and logo are legal furniture (a card carries
+  none: one face of display text, not a page of a run). -/
+  runningFurniture : Bool := true
+  /-- The chrome band and the slides furniture styles draw. -/
+  chrome : Bool := false
+  /-- Implied contract, checked against the shipped pages exactly as a
+  declared `\assert` is; a document declaring an assertion of the same
+  form is intent and takes control. The help beside each value is the
+  failure guidance E0330 prints. -/
+  pagesBound : Option PagesBound := none
+  /-- Failure guidance for a `.lit` pages bound (`.faces` builds its own:
+  it names the counted faces). -/
+  pagesHelp : String := ""
+  /-- `textInArea` implied, with its failure guidance. -/
+  inkInArea : Option String := none
+  /-- `minXHeight` implied: the floor and its failure guidance. -/
+  xHeightFloor : Option (Sp × String) := none
+  /-- Build intent when the document's `\output` names no formats. -/
+  formats : Array String := #[]
+  /-- The markdown twin's default file name, when the class has one
+  (`webpage`: `llms.txt`, the llmstxt.org convention the twin exists
+  for). A document's own `md = "..."` overrides. -/
+  mdName : Option String := none
+  deriving Repr, BEq
+
+/-- The document's class, closed: `article`, `slides`, `card`, `resume`,
+or `webpage`. A class an `ofString?` does not answer is E0309 at the one
+parse site and never enters the IR, so every class-dependent decision
+downstream is a total decision over this type — a misspelled class in
+engine code is a compile error, and a new class does not build until
+`name`, `ofString?`, `record`, and every exhaustive match over the type
+answer it. -/
 inductive DocClass where
   | article
   | slides
   | card
+  /-- Structurally an article — the flow model — with the résumé genre's
+  contract implied: fits one page, ink inside the margins, nothing below
+  the legibility floor. -/
+  | resume
+  /-- Structurally an article; HTML-primary, the PDF the print
+  stylesheet's analogue. Declares its own build intent (html + md). -/
+  | webpage
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The class's one spelling — the `\documentclass` argument and the dump
@@ -2393,6 +2464,8 @@ def DocClass.name : DocClass → String
   | .article => "article"
   | .slides => "slides"
   | .card => "card"
+  | .resume => "resume"
+  | .webpage => "webpage"
 
 /-- The class a `\documentclass` argument names, if any: the inverse of
 `name`, and the one door a class enters the IR through. -/
@@ -2400,10 +2473,57 @@ def DocClass.ofString? : String → Option DocClass
   | "article" => some .article
   | "slides" => some .slides
   | "card" => some .card
+  | "resume" => some .resume
+  | "webpage" => some .webpage
   | _ => none
 
 theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some c := by
   cases c <;> rfl
+
+/-- Each class as its record — one shape for all five, so a new class is
+one constructor and one row here, and anything a row cannot say is a page
+model question. Sources: slides' 11 pt is beamer's (user guide §18.2.1);
+the card's floor is the fluent-reading angular x-height at hand-held
+distance, 1.4 mm at 40 cm (Legge & Bigelow 2011), and `resume` shares it —
+a résumé is read at the same distance; `resume`'s one-page bound is the
+genre's own contract (the reason one asks for a résumé and not a CV);
+`webpage`'s build intent is html plus the markdown twin, the llms.txt
+convention (llmstxt.org), with the print twin opt-in — the class carries
+what to build the way `\documentclass` already carries the page model. -/
+def DocClass.record : DocClass → ClassRecord
+  | .article =>
+    { model := .flow
+      numberHeadings := true
+      measureBand := true }
+  | .slides =>
+    { model := .frame
+      fontSize := some slidesFontSize
+      chrome := true }
+  | .card =>
+    { model := .face
+      runningFurniture := false
+      pagesBound := some .faces
+      inkInArea := some "the margins are the print safe zone: ink past them risks \
+the trim; declare \\assert{ text.in_area } to take control"
+      xHeightFloor := some (cardXHeightFloor,
+        "1.4mm x-height is the fluent-reading floor at hand-held \
+distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control") }
+  | .resume =>
+    { model := .flow
+      measureBand := true
+      pagesBound := some (.lit .eq 1)
+      pagesHelp := "the resume class asserts content fits one page; \
+declare \\assert{ pages <= N } to take control"
+      inkInArea := some "the margins frame what every printer keeps: ink past \
+them risks the clip; declare \\assert{ text.in_area } to take control"
+      xHeightFloor := some (cardXHeightFloor,
+        "1.4mm x-height is the fluent-reading floor at hand-held \
+distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control") }
+  | .webpage =>
+    { model := .flow
+      measureBand := true
+      formats := #["html", "md"]
+      mdName := some "llms.txt" }
 
 structure Doc where
   docClass : DocClass := .article
@@ -3717,7 +3837,7 @@ band holds; one that inherited them from a theme has not, and gets a warning
 naming both sequences. Warning, not error (the audit-strict severity
 policy): the content is present, its meaning is what degraded. -/
 def footerSequenceDiags (doc : Doc) : Array Diag := Id.run do
-  unless doc.docClass == .slides && doc.foot.isNone && !doc.chromeDeclared do
+  unless doc.docClass.record.chrome && doc.foot.isNone && !doc.chromeDeclared do
     return #[]
   let frameSlot := (doc.chrome.footerLeft.map ChromeSlot.isFrameSequence).getD false
     || (doc.chrome.footerRight.map ChromeSlot.isFrameSequence).getD false

@@ -40,8 +40,13 @@ def nativePackages : List String :=
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=
-  ["scrartcl", "scrreprt", "scrbook", "report", "book", "memoir", "letter",
-   "moderncv", "res"]
+  ["scrartcl", "scrreprt", "scrbook", "report", "book", "memoir", "letter"]
+
+/-- Résumé classes: the same flow model with the résumé genre's contract —
+`moderncv` and `res` map onto the native `resume` class, as `beamer` maps
+onto `slides`. -/
+def resumeClasses : List String :=
+  ["moderncv", "res"]
 
 /-- Commands that configure TeX's own machinery and change nothing this
 engine models — the test every entry must pass to earn silence; a construct
@@ -670,7 +675,8 @@ where
     let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     let cls := rawSrc (args.getD 0 #[])
-    if articleClasses.contains cls then
+    if articleClasses.contains cls || resumeClasses.contains cls then
+      let native0 := if resumeClasses.contains cls then "resume" else "article"
       let o := match opt with | some o => s!"[{o}]" | none => ""
       -- A LaTeX class separates paragraphs by indent, not by a skip: its
       -- `\parskip` is zero unless the KOMA `parskip=` option asks for half a
@@ -685,7 +691,7 @@ where
           else some "0.6em plus 0.12em"
         | ["parskip"] => some "1.2em plus 0.24em"
         | _ => none
-      let native := s!"\\documentclass{o}\{article}\\page\{ parskip = {komaSkip.getD "0pt"} }"
+      let native := s!"\\documentclass{o}\{{native0}}\\page\{ parskip = {komaSkip.getD "0pt"} }"
       became s!"\\documentclass\{{cls}}" native pos
       return some (← synthAt native pos, k)
     else if cls == "beamer" then

@@ -369,6 +369,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       some "A. Doe")
   t "compat scrartcl is article"
     ((elabStr "\\documentclass{scrartcl}\\begin{document}x\\end{document}").1.docClass == .article)
+  t "compat moderncv is resume"
+    ((elabStr "\\documentclass{moderncv}\\begin{document}x\\end{document}").1.docClass == .resume)
+  t "compat res is resume"
+    ((elabStr "\\documentclass{res}\\begin{document}x\\end{document}").1.docClass == .resume)
   t "compat linespread is leading"
     ((elabStr (pre "\\linespread{1.04}")).1.page.leading == 1040)
   t "compat heads become one running head"
@@ -1266,6 +1270,42 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       (·.code != "W0355"))
   t "the theme install is never the document's own chrome door"
     ((elabStr (dvDoc "\\theme{moloch}\n" "x")).2.all (·.code != "W0318"))
+  -- The genre classes: records over the flow model. Each implies its
+  -- contract as assertions the shipped pages are judged against, and a
+  -- document declaring an assertion of the same form takes control.
+  let clsDoc (cls extra body : String) : Ir.Doc :=
+    (elabStr s!"\\documentclass\{{cls}}\n{extra}\\begin\{document}\n{body}\n\\end\{document}").1
+  let resumeDoc := clsDoc "resume" "" "x"
+  t "resume class enters the IR" (resumeDoc.docClass == .resume)
+  t "resume implies its contract: one page, ink in area, the x-height floor"
+    (resumeDoc.asserts.any (·.kind == .pages .eq 1) &&
+     resumeDoc.asserts.any (·.kind == .textInArea) &&
+     resumeDoc.asserts.any (·.kind == .minXHeight Ir.cardXHeightFloor))
+  t "every implied assertion says which contract fired"
+    (resumeDoc.asserts.all (·.help.isSome))
+  t "a declared pages assertion takes control of the implied one"
+    (let d := clsDoc "resume" "\\assert{ pages <= 2 }\n" "x"
+     (d.asserts.filter fun a => match a.kind with
+       | .pages _ _ => true | _ => false).size == 1 &&
+     d.asserts.any (·.kind == .pages .le 2))
+  let webDoc := clsDoc "webpage" "" "x"
+  t "webpage class enters the IR" (webDoc.docClass == .webpage)
+  t "webpage carries its build intent: html and the markdown twin"
+    (webDoc.output.formats == #["html", "md"] && webDoc.output.md == some "llms.txt")
+  t "webpage implies no shipped-page contract" (webDoc.asserts.isEmpty)
+  t "a declared formats list replaces the class's whole"
+    ((clsDoc "webpage" "\\output{ formats = pdf }\n" "x").output.formats == #["pdf"])
+  t "a declared twin name wins over the class default"
+    ((clsDoc "webpage" "\\output{ md = \"notes.txt\" }\n" "x").output.md == some "notes.txt")
+  -- Heading numbering is the class record's default: article numbers
+  -- (classes.dtx counters), a résumé is scanned and a web page follows
+  -- the web's unnumbered convention; \section* opts out either way.
+  let secNum (doc : Ir.Doc) : Option String :=
+    (doc.body.findSome? fun b => match b with
+      | .section _ _ n _ => some n | _ => none).getD none
+  t "article numbers a section" (secNum (clsDoc "article" "" "\\section{A}\nx") == some "1")
+  t "resume sections stand unnumbered" (secNum (clsDoc "resume" "" "\\section{A}\nx") == none)
+  t "webpage sections stand unnumbered" (secNum (clsDoc "webpage" "" "\\section{A}\nx") == none)
   let (doc9, d9) := elabStr
     "\\output{ formats = pdf, html, css = bulma }\n\\begin{document}x\\end{document}"
   t "elab output declaration" (d9.isEmpty && doc9.output.formats == #["pdf", "html"] &&

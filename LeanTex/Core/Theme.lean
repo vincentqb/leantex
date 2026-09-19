@@ -12,9 +12,11 @@ same four surfaces plus a name.
 
 `theme_fixes_no_page`, by construction: a class fixes the page model and
 nothing a theme may override. This structure is `apply`'s whole domain and
-codomain, and it carries no page and no class, so a bundle *cannot* reach
-the geometry — the compiler enforces the rule at the type, the same way
-`DocClass` closes the class set. Keep it that way: a bundle wanting
+codomain, and it carries no page, no class, and no assertion, so a bundle
+*cannot* reach the geometry or the class's implied contract
+(`Ir.DocClass.record`) — the compiler enforces the rule at the type, the
+same way `DocClass` closes the class set; `theme_layer_contract` is the
+checkable half over the shipped bundles. Keep it that way: a bundle wanting
 geometry is a genre or class question, never a theme field (the
 value-vs-consumer layering rule; audit-layer's `Theme.apply`/W0348 fixed
 the value-vs-value face, and W0355 names the consumer face at install). -/
@@ -298,6 +300,19 @@ def replaces (th : Theme) (s : Decls) : Array (String × String) := Id.run do
       if d0 != d then
         out := out.push ("chrome", "footer.right")
   return out
+
+/-- The class layer under the theme layer: a class fixes the page model
+and its implied contract, and a theme may override neither. The type
+carries most of it — `Ir.DocClass.record` reads the class alone, and
+`apply`'s whole domain and codomain is `Decls`, which has no class, page,
+or assertion field, so applying any theme leaves the class's page model
+and assertions unchanged by construction. The checkable residue is this
+contract: every key a shipped bundle installs lives on one of the four
+visual surfaces. Quantified over `builtin` — adding a bundle is entering
+the contract. -/
+theorem theme_layer_contract :
+    (builtin.all fun t => (declares t).toList.all fun e =>
+      ["palette", "tokens", "style", "chrome"].contains e.1) = true := by decide
 
 /-! ## The layering contract over the install
 

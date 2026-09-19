@@ -33,7 +33,7 @@ error[E0305]: parameter 'who' of '\role' expects text
 error[E0306]: unknown parameter '\b'
 ── E0309 (dropped) unknown document class
 error[E0309]: unknown document class 'poster'
-  help: classes: article, slides, card
+  help: classes: article, slides, card, resume, webpage
 ── E0310 (dropped) content before the first \item in a list
 error[E0310]: content before the first '\item'
 ── E0311 (dropped) reserved character in text
@@ -157,7 +157,7 @@ note[N0018]: 'Fira Math' has no sans-serif 'A' (U+1D5A0); the plain letter stand
   help: declare a math face that carries it: \fonts{ math = ... }
 ── N0017 (info) no document class declared; the article page model is assumed
 note[N0017]: no '\documentclass'; the article page model is assumed
-  help: declare \documentclass{article} (or slides, card) to choose it
+  help: declare \documentclass{article} (or slides, card, resume, webpage) to choose it
 ── W0009 (degraded) no glyph in the declared face; set from a fallback face
 warning[W0009]: 'Open Sans' has no glyph for '∀' (U+2200); set from 'Source Code Pro'
 ── W0010 (degraded) lists nest four levels; deeper levels reuse the fourth marker
