@@ -7131,6 +7131,9 @@ structure PreState where
   asserts : Array Assertion := #[]
   allow : Array String := #[]
   textDiagged : Bool := false
+  /-- The document wrote `\theme{...}` — any spelling, known or not: the
+  author's choice stands and the class default steps aside. -/
+  sawTheme : Bool := false
 
 /-- Segment the preamble into declaration values. Pure and positional: the
 same argument extents the imperative loop walked (`skipSpaces`,
@@ -7654,13 +7657,18 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
   | .theme src pos =>
     match src with
     | some src =>
-      -- A theme is a named bundle of typed values, installed here
+      let s := { s with sawTheme := true }      -- A theme is a named bundle of typed values, installed here
       -- through the same replace-on-redeclare door the document's
       -- own declarations use. Everything after this site overrides:
       -- the theme is a default, never a lock. The install itself is
       -- `Theme.apply` — values in, values out; this site only
       -- threads the result back into the fold's state.
       let tname := src.trimAscii.toString
+      -- beamer's own `\usetheme{default}` is the base look: no bundle
+      -- installs, and the class default (the slides `daylight` install)
+      -- steps aside — the author chose bareness by name.
+      if tname == "default" then
+        return s
       match Theme.find? tname with
       | some th =>
         -- The class gates whether furniture draws; the theme only
@@ -8064,14 +8072,28 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let mut page := s.page
   let sawPage := s.sawPage
   let fonts := s.fonts
-  let palette := s.palette
-  let tokens := s.tokens
+  -- A deck that declares no theme takes the default bundle, installed
+  -- *under* the document (`Theme.applyUnder`: the document's own
+  -- declarations win): a presentation always paints its pages, so the
+  -- slides class defaults to `daylight`. Every other class keeps the
+  -- unpainted defaults — a default bundle on print classes paints every
+  -- page edge to edge (measured at a 99.9% pixel change on a one-page
+  -- résumé). A `\theme` of any spelling is the author's choice and
+  -- stands, unknown names included (W0319 already spoke).
+  let defaultBundle := s.docClass == Ir.DocClass.slides && !s.sawTheme
+  let themedDs : Theme.Decls :=
+    let own : Theme.Decls := { palette := s.palette, tokens := s.tokens
+                               styles := s.styles, chrome := s.chrome }
+    if defaultBundle then Theme.applyUnder Theme.daylight own else own
+  let palette := themedDs.palette
+  let tokens := themedDs.tokens
+  let styles := themedDs.styles
+  let chrome := themedDs.chrome
+  ctx := { ctx with palette := palette, tokens := tokens, styles := styles }
   let mut head := s.head
   let mut foot := s.foot
   let headFrom := s.headFrom
   let footFrom := s.footFrom
-  let styles := s.styles
-  let chrome := s.chrome
   let chromeDeclared := s.chromeDeclared
   let mut info := s.info
   let mut output := s.output

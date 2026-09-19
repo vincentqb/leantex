@@ -73,8 +73,11 @@ installed or shipped face covers it, with a required text alternative.
 `themed.tex` selects the built-in `moloch` theme (`leantex themes` in help:
 `\usetheme{moloch}` or `\theme{moloch}`; `plain` is the quieter bundle) and
 shows the frame-title bar, a section page with its progress bar, and a
-standout frame. `theme-modern.tex` sketches the rest of the M5b bundle
-(dark variant, chrome) and does not build yet.
+standout frame. A deck that declares no theme gets the `daylight` bundle —
+warm paper, one azure accent, no title bar (`daylight.tex` shows it);
+`\theme{default}` opts back to the bare look, as beamer's own
+`\usetheme{default}` does. `theme-modern.tex` sketches the rest of the M5b
+bundle (dark variant, chrome) and does not build yet.
 
 Builds and runs on Linux and macOS. On the Amazon Linux 2 host the engine is
 developed on, the `LEAN_CC`/`LIBRARY_PATH` exports in AGENTS.md work around an

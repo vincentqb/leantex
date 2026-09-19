@@ -217,6 +217,18 @@ def censusTable :
       ((lineYOf c 6 "A frame that continues").bind fun ty =>
         (lineYOf c 6 "eighteen").map fun by' => decide (by' > ty)).getD false),
     ("the standout frame fills its background", (c[7]?.map fun p => decide (p.fills ≥ 1)).getD false)]),
+  ("daylight", fun _ c => [
+    ("pages", c.size == 4),
+    -- The default bundle declares a page colour: every page paints.
+    ("every page paints the warm paper", c.all fun p => decide (p.fills ≥ 1)),
+    -- Variant A: no frame-title bar — the frame page carries the page
+    -- fill and nothing else behind its title.
+    ("the frame page carries no title bar", (c[2]?.map (·.fills == 1)).getD false),
+    ("the frame title ships as a plain heading", pageHas c 2 "A default bundle"),
+    ("the section page draws its progress track",
+      (c[1]?.map fun p => decide (p.fills ≥ 2)).getD false),
+    ("the standout page fills its azure room", (c[3]?.map fun p => decide (p.fills ≥ 1)).getD false),
+    ("the accent beats ship", pageHas c 2 "azure emphasis" && pageHas c 2 "green example")]),
   ("latex-idioms", fun _ c => [
     ("one page", c.size == 1),
     ("the running head ships", hasStr (censusText c) "Alex Doe"),

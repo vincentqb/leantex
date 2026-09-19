@@ -132,7 +132,8 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (marks[0]! != marks[1]! && marks[1]! != marks[2]! && marks[2]! != marks[3]!)
   -- A stepped item keeps its marker: two items, two handout pages, a
   -- marker on every item line of both (this is the deck's page-3 bug).
-  let (stepLines, _) := runOn ("\\documentclass{beamer}\n\\begin{document}\n" ++
+  let (stepLines, _) := runOn ("\\documentclass{beamer}\n\\usetheme{default}\n" ++
+    "\\begin{document}\n" ++
     "\\begin{frame}\\begin{itemize}\\item<1-> alpha\\item<2-> beta" ++
     "\\end{itemize}\\end{frame}\n\\end{document}")
   t "stepped items keep their markers on every page"

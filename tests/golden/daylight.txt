@@ -1,0 +1,50 @@
+class slides [aspectratio=169]
+page 453.543x255.118 vmargin 26.4 hmargin 28.346 fontsize 11
+font dir "fonts"
+font body "Open Sans"
+palette fg #292524
+palette bg #FDFCF9
+palette alert #0B66C2
+palette example #0F7A52
+palette muted #696664
+palette progressfg #0B66C2
+palette progressbg #CDDEEE
+palette separator #0B66C2
+palette standoutfg #FDFCF9
+palette standoutbg #0B66C2
+palette covered 38%
+token progressheight 1pt
+token separatorheight 0.5pt
+token subtitlegap 300/1000em
+token separatorgap 800/1000em
+token authorgap 500/1000em
+token institutegap 1000/1000em
+chrome footer left sectiontitle right framenumber
+meta title "A Daylight Deck"
+meta author "Pat Placeholder"
+frame golden
+  section* 0
+    text "A Daylight Deck"
+  rule separator 0.5pt
+  block before 800/1000em
+    para
+      text "Pat Placeholder"
+section 1
+  text "Warm paper"
+frame
+  title
+    text "A default bundle"
+  para
+    text "The page is warm paper and the ink warm near-black. An "
+    styled bold
+      text "azure emphasis"
+    text " and a "
+    color example #0F7A52
+      text "green example"
+    text "."
+frame standout
+  para
+    text "Azure room."
+-- diagnostics
+note[N0100] 4:1 '\documentclass{beamer}' → \documentclass[aspectratio=169]{slides}
+note[N0100] 22:6 '\alert' → \textbf

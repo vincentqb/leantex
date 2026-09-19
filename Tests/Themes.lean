@@ -438,8 +438,10 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
     (mDoc.palette.find? "muted" == some { r := 0x64, g := 0x72, b := 0x74 })
   t "plain declares the same footer"
     ((elabStr (deck169 "\\theme{plain}" frame)).1.chrome.hasFooter)
-  t "an unthemed deck has no chrome"
-    (!(elabStr (deck169 "" frame)).1.chrome.hasFooter)
+  t "a deck opted out by name has no chrome"
+    (!(elabStr (deck169 "\\theme{default}" frame)).1.chrome.hasFooter)
+  t "a themeless deck takes the daylight footer"
+    ((elabStr (deck169 "" frame)).1.chrome.hasFooter)
   -- A later \chrome refines the theme's footer per slot, as \palette
   -- entries override per name and keep their siblings: the theme is a
   -- default, never a lock — and never an all-or-nothing one. Clearing the
@@ -508,7 +510,7 @@ def chromeDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!(elabStr (deck169 "\\theme{moloch}\\chrome{ footer = { right = \\framenumber } }"
       mixedBody)).2.any (·.code == "W0332"))
   t "no frame slot, no mixing"
-    (!(elabStr (deck169 "" mixedBody)).2.any (·.code == "W0332"))
+    (!(elabStr (deck169 "\\theme{default}" mixedBody)).2.any (·.code == "W0332"))
   t "a physical-free framefoot mixes nothing"
     (!(elabStr (deck169 "\\theme{moloch}"
       "\\framefoot{note}\n\\begin{frame}{T}\nx\n\\end{frame}")).2.any
@@ -660,8 +662,9 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (rOut.pages.all (·.foot.isNone))
   t "runningfoot itself is laid on every page"
     (rOut.pages.all fun p => p.lines.any (·.y == footY))
-  -- No theme, no footer: the unthemed deck's output is untouched.
-  let (uDoc, _) := elabStr (deck169 "" body)
+  -- Bareness by name: `\theme{default}` opts out of the daylight
+  -- default, and the deck's output carries no footer.
+  let (uDoc, _) := elabStr (deck169 "\\theme{default}" body)
   let uOut := layoutOf oneFace uDoc
   t "an unthemed deck carries no footer at all"
     (uOut.pages.all fun p => p.foot.isNone && p.lines.all (·.y != footY))
@@ -875,7 +878,7 @@ def frameFootChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
     ((out.pages[3]?.bind (·.foot)).map (fun f => Ir.plainText (Ir.bandInlines f)) == some "Topic3")
   -- The bare template call, no wrapper, no theme: the note alone is a
   -- footer — an unthemed deck's framefooter is not silently dropped.
-  let (bDoc, bDs) := elabStr (deck169 ""
+  let (bDoc, bDs) := elabStr (deck169 "\\theme{default}"
     ("\\setbeamertemplate{frame footer}{quiet note}\n" ++
      "\\begin{frame}{T}\nx\n\\end{frame}"))
   t "a bare frame footer template is clean" (!bDs.any (·.code == "W0104"))
@@ -965,8 +968,9 @@ def themeFurnitureChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   t "html section page carries its position"
     ((html.splitOn "class=\"section-page\"").length == 2 &&
      (html.splitOn "width: 50%").length == 2)
-  -- Unthemed output is untouched: no keys, no fills, black text.
+  -- Output opted out by name is untouched: no keys, no fills, black text.
   let (plainDoc, _) := elabStr ("\\documentclass[aspectratio=169]{slides}\n" ++
+    "\\theme{default}\n" ++
     "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}")
   let plainOut := layoutOf oneFace plainDoc
   t "unthemed pages carry no fills" (plainOut.pages.all (·.fills.isEmpty))
@@ -1577,7 +1581,9 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
   let designOf (pre : String) : Ir.Design :=
     Ir.Design.ofDoc (elabStr ("\\documentclass{slides}" ++ pre ++
       "\\begin{document}\\begin{frame}x\\end{frame}\\end{document}")).1
-  let bare := designOf ""
+  -- Bareness is a choice by name now that a deck defaults to `daylight`:
+  -- beamer's own `\usetheme{default}` spelling, `\theme{default}` here.
+  let bare := designOf "\\theme{default}"
   t "bare design inks black on white, undeclared"
     (bare.fg == Ir.Color.black && bare.bg == Ir.Color.white &&
      !bare.fgDeclared && !bare.bgDeclared)
@@ -1604,9 +1610,21 @@ def designChecks (ref : IO.Ref (List String)) : IO Unit := do
     (themed.muted == { r := 0x64, g := 0x72, b := 0x74 })
   -- A half-declared standout keeps the declared half and defaults the rest
   -- from the page's own colours — the fallback Layout applied per site.
-  let half := designOf "\\palette{ standoutbg = #102030 }"
+  let half := designOf "\\theme{default}\\palette{ standoutbg = #102030 }"
   t "half-declared standout defaults its fg from the page"
     (half.standout == { fg := Ir.Color.white, bg := { r := 0x10, g := 0x20, b := 0x30 } })
+  -- A deck that declares nothing takes the daylight bundle, under the
+  -- document: warm paper, warm ink, no title bar, an azure progress pair.
+  let dflt := designOf ""
+  t "a themeless deck resolves to the daylight bundle"
+    (dflt.fg == { r := 0x29, g := 0x25, b := 0x24 } &&
+     dflt.bg == { r := 0xFD, g := 0xFC, b := 0xF9 } &&
+     dflt.frametitle.isNone &&
+     (dflt.progress.map (·.fg)) == some { r := 0x0B, g := 0x66, b := 0xC2 })
+  t "the document's own declaration wins over the default bundle"
+    ((designOf "\\palette{ bg = #FFFFFF }").bg == Ir.Color.white)
+  t "a named theme still wins outright"
+    ((designOf "\\theme{moloch}").bg == Ir.Color.black.mix 2 Ir.Color.white)
 
 /-- Every role a built-in bundle declares is read: either a backend consumes
 its resolved `Design` field (`Ir.Design.consumedRoles`) or documents use it

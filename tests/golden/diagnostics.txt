@@ -274,7 +274,7 @@ warning[W0318]: '\chrome' is slides furniture; the article class never draws it
   help: \runninghead / \runningfoot are the page furniture
 ── W0319 (degraded) unknown theme; the document is unthemed
 warning[W0319]: unknown theme 'banana'; the document is unthemed
-  help: themes: moloch, plain
+  help: themes: moloch, plain, daylight
 ── W0320 (degraded) heading levels skip a step (HTML §4.3.11, WCAG G141)
 warning[W0320]: heading levels skip a step: '\section' is followed by '\subsubsection'
   help: descend one level at a time — here \subsection (HTML §4.3.11, WCAG G141); a screen reader reads the gap as a broken outline

@@ -393,7 +393,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- unset and warns instead of forwarding the number. Unthemed, so the
   -- only possible source of a fraction is the rejected declaration.
   let barePre (decls : String) : String :=
-    "\\documentclass{beamer}\n" ++ decls ++
+    "\\documentclass{beamer}\n\\usetheme{default}\n" ++ decls ++
     "\n\\begin{document}\\begin{frame}x\\end{frame}\\end{document}"
   t "compat setbeamercovered transparent=100 never reaches the fraction"
     ((elabStr (barePre "\\setbeamercovered{transparent=100}")).1.palette.coveredFraction

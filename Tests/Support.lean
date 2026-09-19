@@ -55,8 +55,8 @@ def deck169 (pre body : String) : String :=
     "\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
 
 def deck169Body (body : String) : String :=
-  "\\documentclass[aspectratio=169]{slides}\n\\begin{document}\n" ++ body ++
-    "\n\\end{document}"
+  "\\documentclass[aspectratio=169]{slides}\n\\theme{default}\n" ++
+    "\\begin{document}\n" ++ body ++ "\n\\end{document}"
 
 def deck169Frame (body : String) : String :=
   deck169Body ("\\begin{frame}\n" ++ body ++ "\n\\end{frame}")
@@ -75,7 +75,7 @@ def goldenNames : List String :=
    "diagram", "diagram-overflow", "diagram-refused", "diagram-scm",
    "tables", "tables-ragged", "subfigures",
    "math-companion", "math-first", "abstract", "crossref", "eqnum",
-   "redefine", "titlebars"]
+   "redefine", "titlebars", "daylight"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.

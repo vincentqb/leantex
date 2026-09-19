@@ -152,7 +152,54 @@ def plain : Theme :=
     chrome := { footerLeft := some .sectionTitle
                 footerRight := some .frameNumber } }
 
-def builtin : List Theme := [moloch, plain]
+/-- A bright, warm default for decks: warm paper, warm near-black ink, one
+azure accent — quiet chrome, no title bar (the bar key is deliberately
+absent: hierarchy rides size and weight). Sources per value: the page and
+ink are the warm-neutral family practice (Tailwind's `stone`; Material's
+own on-surface is never pure black), the accent is a link-blue azure at
+5.54:1 on this page, `example` is GOV.UK's `success` green verbatim, and
+`muted` is the same 70:30 ink-into-page rule both other bundles use.
+`covered` keeps the engine's Material 38% default — every text role here
+clears the 3:1 state change at it (`Contrast.builtin_designs_covered`
+re-decides on entry). The slides class installs this bundle when a deck
+declares no theme; `moloch` stays by name. -/
+def daylight : Theme :=
+  let fg : Color := { r := 0x29, g := 0x25, b := 0x24 }     -- stone-800
+  let bg : Color := { r := 0xFD, g := 0xFC, b := 0xF9 }     -- warm near-white
+  let accent : Color := { r := 0x0B, g := 0x66, b := 0xC2 } -- azure, 5.54:1 on bg
+  { name := "daylight"
+    palette := {
+      entries := #[
+        ("fg", fg), ("bg", bg), ("alert", accent),
+        ("example", { r := 0x0F, g := 0x7A, b := 0x52 }),   -- GOV.UK success
+        ("muted", fg.mix 70 bg),                            -- fg!70!bg, 5.55:1
+        ("progressfg", accent),
+        ("progressbg", accent.mix 20 bg),                   -- accent!20!bg
+        ("separator", accent),
+        ("standoutfg", bg), ("standoutbg", accent)]
+      coveredFraction := some 38 }
+    -- The furniture weights are moloch's dtx-sourced tokens (a 1pt
+    -- progress bar, a 0.5pt hairline separator) and the title-page gaps
+    -- its em values: the lineage's rhythm, not this bundle's own knob.
+    tokens := { entries := #[
+      ("progressheight", pt1),
+      ("separatorheight", { width := Length.ofSp (Dim.pt 1 / 2) }),
+      ("subtitlegap", { width := { em := 300 } }),
+      ("separatorgap", { width := { em := 800 } }),
+      ("authorgap", { width := { em := 500 } }),
+      ("institutegap", { width := { em := 1000 } })] }
+    styles := { entries := #[
+      -- No frametitle bar: the title sets as a plain bold heading in the
+      -- ink (the absent `frametitlebg` key is the declaration).
+      ("frametitle", boldFont "large"),
+      ("sectionpage", boldFont "Large"),
+      ("standout", boldFont "Large"),
+      ("titlepage", { align := some "left"
+                      separator := some (accent, some "separator") })] }
+    chrome := { footerLeft := some .sectionTitle
+                footerRight := some .frameNumber } }
+
+def builtin : List Theme := [moloch, plain, daylight]
 
 /-- A role resolves at one site: `Palette.find?` is the single reader of
 the entries, and `Palette.resolve` — the evaluator `\textcolor` and every
@@ -254,6 +301,21 @@ def apply (th : Theme) (s : Decls) : Decls :=
     tokens := installTokens s.tokens th.tokens.entries.toList
     styles := installStyles s.styles th.styles.entries.toList
     chrome := chromeApply th.chrome s.chrome }
+
+/-- A class-default bundle installs *under* the document: the document's
+own declarations win per key — `apply` with the priorities mirrored,
+because the author never wrote this bundle and a default must not replace
+a declaration. `\theme{...}` keeps `apply`'s positional rule; only the
+class-default site calls this. -/
+def applyUnder (th : Theme) (s : Decls) : Decls :=
+  { palette :=
+      let pal := installPalette th.palette s.palette.entries.toList
+      { pal with
+        coveredFraction := s.palette.coveredFraction <|> th.palette.coveredFraction
+        decorative := s.palette.decorative ++ th.palette.decorative }
+    tokens := installTokens th.tokens s.tokens.entries.toList
+    styles := installStyles th.styles s.styles.entries.toList
+    chrome := chromeApply s.chrome th.chrome }
 
 /-- Every `(declaration, key)` the bundle installs — `("palette", "alert")`,
 `("chrome", "footer.left")` — whatever stood there before: the keys whose
