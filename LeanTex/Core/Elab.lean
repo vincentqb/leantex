@@ -1319,158 +1319,445 @@ private def trimRawEdges (raws : Array Raw) : Array Raw := Id.run do
     if isSpaceOrPar r then k := k + 1 else break
   return rs.extract k rs.size
 
+-- Small pure helpers whose progress the knot's termination proof reads.
+
+private theorem getElem?_lt {raws : Array Raw} {j : Nat} {r : Raw}
+    (h : raws[j]? = some r) : j < raws.size := by
+  cases Array.getElem?_eq_some_iff.mp h with
+  | intro hj _ => exact hj
+
+private theorem sliceWeight_le (raws : Array Raw) {i j : Nat} (hij : i ≤ j) :
+    sliceWeight raws j ≤ sliceWeight raws i := by
+  unfold sliceWeight
+  rw [show raws.toList.drop j = (raws.toList.drop i).drop (j - i) by
+    rw [List.drop_drop]; congr 1; omega]
+  exact rawWeightList_drop_le _ _
+
+private theorem extract_slice_le (raws : Array Raw) (a b : Nat) :
+    rawWeightList (raws.extract a b).toList ≤ sliceWeight raws a := by
+  rw [Array.toList_extract]
+  exact rawWeightList_take_le _ _
+
+private theorem extract_lt_slice {raws : Array Raw} {i a : Nat} (b : Nat)
+    (h : i < raws.size) (ha : i < a) :
+    rawWeightList (raws.extract a b).toList < sliceWeight raws i :=
+  Nat.lt_of_le_of_lt (extract_slice_le raws a b) (sliceWeight_lt raws h ha)
+
+private theorem body_lt_slice' {raws : Array Raw} {i : Nat} (h : i < raws.size)
+    {body : Array Raw} (hb : rawWeightList body.toList < rawWeight raws[i]) :
+    rawWeightList body.toList < sliceWeight raws i := by
+  have h1 := sliceWeight_here raws h
+  omega
+
+private theorem body_lt_slice {raws : Array Raw} {j : Nat} {r : Raw}
+    (hj : raws[j]? = some r) {body : Array Raw}
+    (hb : rawWeightList body.toList < rawWeight r) {i : Nat} (hij : i ≤ j) :
+    rawWeightList body.toList < sliceWeight raws i :=
+  Nat.lt_of_lt_of_le hb (elem_weight_le hj hij)
+
+/-- The index past a starred form's `*`: a star belongs to the command,
+not to the text. -/
+private def skipStar (raws : Array Raw) (j : Nat) : Nat :=
+  match raws[j]? with
+  | some (.word "*" _) => skipSpaces raws (j + 1)
+  | _ => j
+
+private theorem skipStar_ge (raws : Array Raw) (j : Nat) : j ≤ skipStar raws j := by
+  unfold skipStar
+  split
+  · have := skipSpaces_ge raws (j + 1); omega
+  · omega
+
+/-- The index past a consumed `[short]` title and the spaces after it —
+`.took`'s continuation, one pure function so its progress is a fact. -/
+private def skipShortTitle (raws : Array Raw) (j : Nat) (pos : Pos) : Nat :=
+  match scanBracketArg raws j pos with
+  | .took k => skipSpaces raws k
+  | _ => j
+
+private theorem skipShortTitle_ge (raws : Array Raw) (j : Nat) (pos : Pos) :
+    j ≤ skipShortTitle raws j pos := by
+  unfold skipShortTitle
+  split
+  next k hk =>
+    have h1 := scanBracketArg_took_lt hk
+    have h2 := skipSpaces_ge raws k
+    omega
+  next => omega
+
+/-- The content of one adjacent `[...]` run — `\includegraphics` and
+`\faIcon`'s option scan. An unclosed run consumes to the end, as the
+collectors always have. -/
+private def bracketRunSrc (raws : Array Raw) (j : Nat) : Option (Array Raw) :=
+  match raws[j]? with
+  | some (.sym '[' _) =>
+    match closeBracketFrom raws (j + 1) with
+    | some c => some (raws.extract (j + 1) c)
+    | none => some (raws.extract (j + 1) raws.size)
+  | _ => none
+
+/-- The index past that run and the spaces after it, one pure function so
+its progress is a fact. -/
+private def skipBracketRun (raws : Array Raw) (j : Nat) : Nat :=
+  match raws[j]? with
+  | some (.sym '[' _) =>
+    match closeBracketFrom raws (j + 1) with
+    | some c => skipSpaces raws (c + 1)
+    | none => skipSpaces raws raws.size
+  | _ => j
+
+private theorem skipBracketRun_ge (raws : Array Raw) (j : Nat) :
+    j ≤ skipBracketRun raws j := by
+  unfold skipBracketRun
+  split
+  next bpos hb =>
+    split
+    next c hc =>
+      have h1 := closeBracketFrom_ge hc
+      have h2 := skipSpaces_ge raws (c + 1)
+      omega
+    next =>
+      have h1 := getElem?_lt hb
+      have h2 := skipSpaces_ge raws raws.size
+      omega
+  next => omega
+
+/-- Applied to a level's own text only; nested bodies were processed by
+their own call, with their own literal-text setting. -/
+private def mapSmartText (x : Inline) : Inline :=
+  if let .text t := x then .text (smartPunct t) else x
+
+/-- `\\[len]`'s declared extra space, read from the bracket's source. -/
+private def readBreakLen (ctx : Ctx) (src : String) (pos : Pos) : EM SymGlue := do
+  match Decl.parseValue src ctx.tokens.entries with
+  | some (.glue g) => pure g
+  | some (.dim d) => pure { width := Dim.Length.ofSp d }
+  | _ =>
+    diag ctx .E0331 s!"cannot read a length from '{src}'" pos
+      (help := "lengths look like 10pt or 1.5ex, or name a token")
+    pure {}
+
+/-- `\\includegraphics`' option run: the modelled keys — width, height,
+scale, keepaspectratio, alt — and a name for everything else. -/
+private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
+    (pos : Pos) : EM (Image.SizeSpec × String) := do
+  let mut spec : Image.SizeSpec := {}
+  let mut altText := ""
+  if let some src := optSrc then
+    for e in Decl.splitEntries (rawSrc src) do
+      match Decl.splitEntry e with
+      | some ("width", v) =>
+        match imageLen v with
+        | some l => spec := { spec with width := some l }
+        | none =>
+          diag ctx .E0331 s!"cannot read a length from '{v}'" pos
+            (help := "image sizes look like 3cm or 0.8\\textwidth")
+      | some ("height", v) | some ("totalheight", v) =>
+        -- totalheight is height plus depth, and an image has no
+        -- depth, so the two keys coincide here.
+        match imageLen v with
+        | some l => spec := { spec with height := some l }
+        | none =>
+          diag ctx .E0331 s!"cannot read a length from '{v}'" pos
+            (help := "image sizes look like 3cm or 0.3\\textheight")
+      | some ("scale", v) =>
+        match Decl.parseDecimal v with
+        | some (m, sc) => spec := { spec with scaleNum := m, scaleDen := sc }
+        | none => diag ctx .E0321 s!"'scale' needs a number, got {v.quote}" pos
+      | some ("alt", v) =>
+        -- graphicx's own alt key (LaTeX News 37, 2023): the text
+        -- alternative WCAG 2.2 SC 1.1.1 requires, declared where the
+        -- image is. Braced or quoted spellings both read as text.
+        let v := if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
+            String.ofList (v.toList.drop 1).dropLast
+          else if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
+            String.ofList (v.toList.drop 1).dropLast
+          else v
+        altText := v.trimAscii.toString
+      | _ =>
+        if e.trimAscii.toString == "keepaspectratio" then
+          spec := { spec with keepAspect := true }
+        else
+          warnOnce ctx ("imgopt:" ++ e) .W0110
+            s!"'\\includegraphics' option '{e}' is not modelled; ignored" pos
+            (help := "modelled keys: width, height, scale, keepaspectratio, alt")
+  return (spec, altText)
+
+/-- `\\faIcon`'s option run: only `label = ...` is modelled, overriding the
+icon's default text alternative. -/
+private def readIconLabel (ctx : Ctx) (labelSrc : Option (Array Raw))
+    (pos : Pos) : EM (Option String) := do
+  let mut label : Option String := none
+  if let some optSrc := labelSrc then
+    for e in Decl.splitEntries (rawSrc optSrc) do
+      match Decl.splitEntry e with
+      | some ("label", v) => label := some v.trimAscii.toString
+      | _ =>
+        warnOnce ctx ("faopt:" ++ e) .W0110
+          s!"'\\faIcon' option '{e.trimAscii.toString}' is not modelled; ignored" pos
+          (help := "the face that renders an icon is whichever declared or installed face covers its scalar; 'label = ...' overrides the icon's text alternative")
+  return label
+
+/-- Discharges the knot's termination goals: navigate the lexicographic
+tuple to the strictly-decreasing component; the strict fact is a `have`
+standing beside each recursive call. -/
+macro "knot_dec" : tactic =>
+  `(tactic| (
+    simp_wf
+    <;> first
+      | (apply Prod.Lex.right; apply Prod.Lex.right; apply Prod.Lex.left
+         assumption)
+      | (apply Prod.Lex.right; apply Prod.Lex.right; apply Prod.Lex.right
+         first | assumption | omega)
+      | (apply Prod.Lex.right; apply Prod.Lex.left; assumption)
+      | (apply Prod.Lex.left; assumption)
+      | (apply Prod.Lex.right; apply Prod.Lex.right; apply Prod.Lex.left
+         simp only [Array.toList_extract, Array.append_assoc] at *
+         assumption)))
+
+-- The well-founded translation whnf-reduces through the knot's body when it
+-- assembles the fixpoint and its equations; the string machinery in the
+-- arms is data to that process, never proof material, and unfolding it is
+-- what blew the elaboration budget (measured: String.Slice.skipPrefixWhile
+-- alone at 184k reductions). Sealed for the knot, unsealed right after.
+seal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
+seal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
+seal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
+seal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
+
 mutual
 
-/-- Bind declared parameters from the call site — a user command's, or a
-user environment's from the groups after its `\begin`. Returns the bindings
-and the index just past the consumed arguments. Shared by inline and block
-expansion so both bind identically. -/
-partial def takeArgs (ctx : Ctx) (params : Array Param) (name : String)
-    (raws : Array Raw) (start : Nat) (pos : Pos) :
-    EM (Array (String × Option (Array Inline)) × Nat) := do
-  let mut bindings : Array (String × Option (Array Inline)) := #[]
-  let mut i := start
-  for p in params do
+/-- One parameter binding at a time — `takeArgs`' recursion spelled so the
+measure can read it: each parameter either consumes tokens (the slice from
+the scan position lightens strictly) or binds nothing (the parameter index
+advances). The final index returns with its progress fact, which is what
+lets a caller's own termination argument continue from it. -/
+def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
+    (raws : Array Raw) (start : Nat) (pos : Pos)
+    (bindings : Array (String × Option (Array Inline))) :
+    EM (Array (String × Option (Array Inline)) × { j : Nat // start ≤ j }) := do
+  if hk : k < params.size then
+    let p := params[k]
     if p.optional then
-      let j := skipSpaces raws i
-      match raws[j]? with
+      let j := skipSpaces raws start
+      have hjge := skipSpaces_ge raws start
+      match hj : raws[j]? with
       | some (.sym '[' _) =>
-        let mut body : Array Raw := #[]
-        let mut k' := j + 1
-        let mut closed := false
-        for _ in [j:raws.size] do
-          match raws[k']? with
-          | some (.sym ']' _) =>
-            closed := true
-            k' := k' + 1
-            break
-          | some r' =>
-            body := body.push r'
-            k' := k' + 1
-          | none => break
-        unless closed do
+        have hjlt := getElem?_lt hj
+        match hc : closeBracketFrom raws (j + 1) with
+        | some c =>
+          have hcge := closeBracketFrom_ge hc
+          have hw : rawWeightList (raws.extract (j + 1) c).toList
+              < sliceWeight raws start :=
+            extract_lt_slice c (by omega) (by omega)
+          let v ← elabInlines ctx (raws.extract (j + 1) c)
+          if p.type == .text && !allText v then
+            diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
+          have hadv : sliceWeight raws (c + 1) < sliceWeight raws start :=
+            sliceWeight_lt raws (by omega) (by omega)
+          let (bs, ⟨j2, hj2⟩) ← takeArgsFrom ctx params (k + 1) name raws (c + 1)
+            pos (bindings.push (p.name, some v))
+          return (bs, ⟨j2, by omega⟩)
+        | none =>
           diag ctx .E0316 s!"unclosed optional argument for '\\{name}'" pos
-        i := k'
-        let v ← elabInlines ctx body
-        if p.type == .text && !allText v then
-          diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
-        bindings := bindings.push (p.name, some v)
+          have hw : rawWeightList (raws.extract (j + 1) raws.size).toList
+              < sliceWeight raws start :=
+            extract_lt_slice raws.size (by omega) (by omega)
+          let v ← elabInlines ctx (raws.extract (j + 1) raws.size)
+          if p.type == .text && !allText v then
+            diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
+          have hadv : sliceWeight raws raws.size < sliceWeight raws start :=
+            sliceWeight_lt raws (by omega) (by omega)
+          let (bs, ⟨j2, hj2⟩) ← takeArgsFrom ctx params (k + 1) name raws raws.size
+            pos (bindings.push (p.name, some v))
+          return (bs, ⟨j2, by omega⟩)
       | _ =>
-        bindings := bindings.push (p.name, none)
+        takeArgsFrom ctx params (k + 1) name raws start pos
+          (bindings.push (p.name, none))
     else
-      let j := skipSpaces raws i
-      match raws[j]? with
+      let j := skipSpaces raws start
+      have hjge := skipSpaces_ge raws start
+      match hj : raws[j]? with
       | some (.group body _) =>
-        i := j + 1
+        have hjlt := getElem?_lt hj
+        have hw : rawWeightList body.toList < sliceWeight raws start :=
+          body_lt_slice hj (by simp only [rawWeight]; omega) hjge
         let v ← elabInlines ctx body
         if p.type == .text && !allText v then
           diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
-        bindings := bindings.push (p.name, some v)
+        have hadv : sliceWeight raws (j + 1) < sliceWeight raws start :=
+          sliceWeight_lt raws (by omega) (by omega)
+        let (bs, ⟨j2, hj2⟩) ← takeArgsFrom ctx params (k + 1) name raws (j + 1)
+          pos (bindings.push (p.name, some v))
+        return (bs, ⟨j2, by omega⟩)
       | some (.word s _) =>
-        i := j + 1
-        bindings := bindings.push (p.name, some #[.text s])
+        have hjlt := getElem?_lt hj
+        have hadv : sliceWeight raws (j + 1) < sliceWeight raws start :=
+          sliceWeight_lt raws (by omega) (by omega)
+        let (bs, ⟨j2, hj2⟩) ← takeArgsFrom ctx params (k + 1) name raws (j + 1)
+          pos (bindings.push (p.name, some #[.text s]))
+        return (bs, ⟨j2, by omega⟩)
       | _ =>
         diag ctx .E0304 s!"missing argument '{p.name}' for '\\{name}'" pos
-        bindings := bindings.push (p.name, some #[])
-  return (bindings, i)
+        takeArgsFrom ctx params (k + 1) name raws start pos
+          (bindings.push (p.name, some #[]))
+  else
+    return (bindings, ⟨start, Nat.le_refl start⟩)
+termination_by (ctx.envLimit, ctx.limit, sliceWeight raws start, 5 + (params.size - k))
+decreasing_by all_goals knot_dec
+
+/-- An unknown command's argument groups: up to nine `{...}` groups (TeX's
+own argument limit) are kept as content, a space standing in where the
+consumed separators were. Returns the accumulator and pending text, the
+index past the run with its progress fact, how many groups were kept, and
+whether whitespace followed the last one. -/
+def elabUnknownArgs (ctx : Ctx) (raws : Array Raw) (j : Nat) (count : Nat)
+    (acc : Array Inline) (sb : String) (spaceAfter : Bool) :
+    EM (Array Inline × String × { j' : Nat // j ≤ j' } × Nat × Bool) := do
+  if 9 ≤ count then
+    return (acc, sb, ⟨j, Nat.le_refl j⟩, count, spaceAfter)
+  else
+    match hj : raws[j]? with
+    | some (.group body _) =>
+      have hjlt := getElem?_lt hj
+      let acc := flushText acc sb
+      -- Whatever separated the arguments visually is gone with the
+      -- command, so a space stands in; without one, `{a}{b}` runs
+      -- together as `ab`.
+      let acc := flushText acc (if count > 0 then " " else "")
+      have hw : rawWeightList body.toList < sliceWeight raws j :=
+        body_lt_slice hj (by simp only [rawWeight]; omega) (Nat.le_refl j)
+      let inner ← elabInlines ctx body
+      let j2 := skipSpaces raws (j + 1)
+      have hj2ge := skipSpaces_ge raws (j + 1)
+      have hadv : sliceWeight raws j2 < sliceWeight raws j :=
+        sliceWeight_lt raws hjlt (by omega)
+      let (acc', sb', ⟨j', hj'⟩, kept, sp) ←
+        elabUnknownArgs ctx raws j2 (count + 1) (acc ++ inner) "" (j2 != j + 1)
+      return (acc', sb', ⟨j', by omega⟩, kept, sp)
+    | _ => return (acc, sb, ⟨j, Nat.le_refl j⟩, count, spaceAfter)
+termination_by (ctx.envLimit, ctx.limit, sliceWeight raws j, 0)
+decreasing_by all_goals knot_dec
 
 /-- Elaborate raw items as inline content. -/
-partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
-  let mut raws := raws
-  let mut acc : Array Inline := #[]
-  let mut sb : String := ""
-  let mut i := 0
-  repeat
-    if h : i < raws.size then
-      let r := raws[i]
-      match r with
-      | .word s _ =>
-        sb := sb ++ s
-        i := i + 1
-      | .space | .par _ =>
-        -- Whitespace is one separator however many tokens a splice put side
-        -- by side (a run was a single token at the lexer), and a paragraph
-        -- never opens with one: a leading space glue would indent the line.
-        if needsSep acc sb then sb := sb.push ' '
-        i := i + 1
-      | .sym '[' _ =>
-        sb := sb.push '['
-        i := i + 1
-      | .sym ']' _ =>
-        sb := sb.push ']'
-        i := i + 1
-      | .sym '~' _ =>
-        -- Every LaTeX author means a non-breaking space by `~`, and reserving
-        -- it buys nothing: there is no catcode machinery here to reserve it for.
-        sb := sb.push '\u00a0'
-        i := i + 1
-      | .sym c pos =>
-        if ctx.noteBody then
-          -- A note is absorbed, as beamer absorbs it: its reserved
-          -- characters are the speaker's literal text.
-          sb := sb.push c
-        else
-          diag ctx .E0311 s!"reserved character '{c}'" pos (help := s!"escape it as '\\{c}'")
-        i := i + 1
-      | .math d body mpos =>
-        acc := flushText acc sb
-        sb := ""
-        acc := acc.push (← elabMathInline ctx d body mpos)
-        i := i + 1
-      | .group body _ =>
-        acc := flushText acc sb
-        sb := ""
-        acc := acc ++ (← elabInlines ctx body)
-        i := i + 1
-      | .env name body pos =>
-        if let some f := Parse.inputEnvFile? name then
-          i := i + 1
-          acc := flushText acc sb
-          sb := ""
-          acc := acc ++ (← elabInlines { ctx with file := f } body)
-        else if let some numbered := displayMathEnvs.lookup name then
-          i := i + 1
-          acc := flushText acc sb
-          sb := ""
-          -- A display in an inline position (a caption, an item label) has
-          -- no block to hang a number on: it sets unnumbered, named.
-          let (cleaned, keys, _) ← stripMathMeta ctx body
-          for key in keys do
-            recordLabel ctx key (← get).refTarget pos
-            acc := acc.push (.label key)
-          if numbered then
-            warnOnce ctx "math:eqnum" .W0015
-              s!"equation numbers are not rendered here; '\{{name}}' sets unnumbered" pos
-              (help := s!"'\{{name}}*' spells the unnumbered form, which renders the same")
-          acc := acc.push (← elabMathInline ctx true cleaned pos)
-        else if let some (kind, numbered) := alignEnvs.lookup name then
-          i := i + 1
-          acc := flushText acc sb
-          sb := ""
-          let (cleaned, keys, _) ← stripMathMeta ctx body
-          for key in keys do
-            recordLabel ctx key none pos
-            acc := acc.push (.label key)
-          acc := acc.push (← elabMathEnv ctx name kind numbered cleaned pos)
-        else if let some (k, env) := lookupUserEnv ctx name then
+def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
+  let out ← elabInlinesFrom ctx raws 0 #[] ""
+  return if ctx.literalText then out else out.map mapSmartText
+termination_by (ctx.envLimit, ctx.limit, rawWeightList raws.toList, 4)
+decreasing_by all_goals knot_dec
+
+/-- The inline elaboration spine: one raw at `i` per step, the text
+accumulator and pending string threading through as arguments. The measure
+is lexicographic — user environments, then user commands, then the weight
+of the slice from `i` — so every step either consumes tokens, descends
+into a strictly lighter body, or expands under a strictly smaller
+visibility limit. -/
+def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (acc : Array Inline) (sb : String) : EM (Array Inline) := do
+  if h : i < raws.size then
+    have hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i :=
+      sliceWeight_lt raws h (Nat.lt_succ_self i)
+    match hr : raws[i] with
+    | .word s _ =>
+      elabInlinesFrom ctx raws (i + 1) acc (sb ++ s)
+    | .space =>
+      -- Whitespace is one separator however many tokens a splice put side
+      -- by side (a run was a single token at the lexer), and a paragraph
+      -- never opens with one: a leading space glue would indent the line.
+      elabInlinesFrom ctx raws (i + 1) acc
+        (if needsSep acc sb then sb.push ' ' else sb)
+    | .par _ =>
+      elabInlinesFrom ctx raws (i + 1) acc
+        (if needsSep acc sb then sb.push ' ' else sb)
+    | .sym '[' _ =>
+      elabInlinesFrom ctx raws (i + 1) acc (sb.push '[')
+    | .sym ']' _ =>
+      elabInlinesFrom ctx raws (i + 1) acc (sb.push ']')
+    | .sym '~' _ =>
+      -- Every LaTeX author means a non-breaking space by `~`, and reserving
+      -- it buys nothing: there is no catcode machinery here to reserve it for.
+      elabInlinesFrom ctx raws (i + 1) acc (sb.push '\u00a0')
+    | .sym c pos =>
+      if ctx.noteBody then
+        -- A note is absorbed, as beamer absorbs it: its reserved
+        -- characters are the speaker's literal text.
+        elabInlinesFrom ctx raws (i + 1) acc (sb.push c)
+      else
+        diag ctx .E0311 s!"reserved character '{c}'" pos (help := s!"escape it as '\\{c}'")
+        elabInlinesFrom ctx raws (i + 1) acc sb
+    | .math d body mpos =>
+      let acc := flushText acc sb
+      let x ← elabMathInline ctx d body mpos
+      elabInlinesFrom ctx raws (i + 1) (acc.push x) ""
+    | .group body _ =>
+      have hw : rawWeightList body.toList < sliceWeight raws i :=
+        body_lt_slice' h (by rw [hr]; simp only [rawWeight]; omega)
+      let acc := flushText acc sb
+      let inner ← elabInlines ctx body
+      elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
+    | .env name body pos =>
+      have hw : rawWeightList body.toList < sliceWeight raws i :=
+        body_lt_slice' h (by rw [hr]; simp only [rawWeight]; omega)
+      if let some f := Parse.inputEnvFile? name then
+        let acc := flushText acc sb
+        let inner ← elabInlines { ctx with file := f } body
+        elabInlinesFrom ctx raws (i + 1) (acc ++ inner) ""
+      else if let some numbered := displayMathEnvs.lookup name then
+        let acc := flushText acc sb
+        -- A display in an inline position (a caption, an item label) has
+        -- no block to hang a number on: it sets unnumbered, named.
+        let (cleaned, keys, _) ← stripMathMeta ctx body
+        let mut acc := acc
+        for key in keys do
+          recordLabel ctx key (← get).refTarget pos
+          acc := acc.push (.label key)
+        if numbered then
+          warnOnce ctx "math:eqnum" .W0015
+            s!"equation numbers are not rendered here; '\{{name}}' sets unnumbered" pos
+            (help := s!"'\{{name}}*' spells the unnumbered form, which renders the same")
+        let x ← elabMathInline ctx true cleaned pos
+        elabInlinesFrom ctx raws (i + 1) (acc.push x) ""
+      else if let some (kind, numbered) := alignEnvs.lookup name then
+        let acc := flushText acc sb
+        let (cleaned, keys, _) ← stripMathMeta ctx body
+        let mut acc := acc
+        for key in keys do
+          recordLabel ctx key none pos
+          acc := acc.push (.label key)
+        let x ← elabMathEnv ctx name kind numbered cleaned pos
+        elabInlinesFrom ctx raws (i + 1) (acc.push x) ""
+      else
+        match he : lookupUserEnv ctx name with
+        | some (k, env) =>
           -- A defined wrapper: its parameters bind from the groups after
           -- `\begin{name}`, its halves elaborate around the content. The
           -- halves see the commands and environments defined before the
           -- wrapper (never itself), the content sees the caller's.
-          i := i + 1
-          acc := flushText acc sb
-          sb := ""
-          let (bindings, j) ← takeArgs ctx env.params name body 0 pos
+          have hklt : k < ctx.envLimit := lookupUserEnv_lt he
+          have hb0 : sliceWeight body 0 < sliceWeight raws i := by
+            have h0 : sliceWeight body 0 = rawWeightList body.toList := by
+              simp [sliceWeight]
+            omega
+          let acc := flushText acc sb
+          let (bindings, ⟨j, hj⟩) ← takeArgsFrom ctx env.params 0 name body 0 pos #[]
           let envCtx : Ctx := { ctx with
             limit := env.cmdLimit, envLimit := k, args := bindings }
-          acc := acc ++ (← elabInlines envCtx env.beginBody)
-          acc := acc ++ (← elabInlines ctx (body.extract j body.size))
-          acc := acc ++ (← elabInlines envCtx env.endBody)
-        else
+          have hw2 : rawWeightList (body.extract j body.size).toList
+              < sliceWeight raws i := by
+            have h1 := extract_slice_le body j body.size
+            have h2 := sliceWeight_le body (Nat.zero_le j)
+            have h0 : sliceWeight body 0 = rawWeightList body.toList := by
+              simp [sliceWeight]
+            omega
+          let a1 ← elabInlines envCtx env.beginBody
+          let a2 ← elabInlines ctx (body.extract j body.size)
+          let a3 ← elabInlines envCtx env.endBody
+          elabInlinesFrom ctx raws (i + 1) (acc ++ a1 ++ a2 ++ a3) ""
+        | none =>
         if reservedEnv.contains name then
-          i := i + 1
           warnOnce ctx ("env:" ++ name) .W0307
             s!"'\{{name}}' is not implemented yet; its content is not rendered" pos
+          elabInlinesFrom ctx raws (i + 1) acc sb
         else
           warnOnce ctx ("env:" ++ name) .W0302 s!"unknown environment '\{{name}}'; its body is kept" pos
             (help := "\\defineenv{name}(...) {begin} {end} declares one")
@@ -1481,36 +1768,42 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           -- neighbours by the whitespace arm, never dropped (gluing
           -- `before` to `inner`) and never doubled.
           let (keptFrom, unclosed, dropped) := dropEnvArgs body pos
-          let kept := body.extract keptFrom body.size
           if let some bpos := unclosed then
             warnUnclosed ctx s!"'\\begin\{{name}}'" bpos
           warnDroppedArgs ctx name dropped pos
-          raws := raws.extract 0 i ++ kept ++ raws.extract (i + 1) raws.size
-      | .verb s _ =>
-        -- Verbatim inside inline content: kept as mono text, spaces held as
-        -- no-break spaces, lines separated by forced breaks.
-        acc := flushText acc sb
-        sb := ""
-        acc := acc.push (.styled .mono (Ir.verbatimInlines s))
-        i := i + 1
-      | .ctrl name pos =>
-        i := i + 1
-        -- The document's own names come first: a parameter, then a defined
-        -- command. Built-ins the document cannot redefine are exactly
-        -- `builtinNames`, refused with W0303 at the definition; every other
-        -- built-in yields to a definition, silently, as in LaTeX. Order here
-        -- is the whole mechanism — a built-in tested earlier would shadow
-        -- the definition without a word.
-        if let some (_, binding) := ctx.args.find? (·.1 == name) then
-          acc := flushText acc sb
-          sb := ""
-          if let some inlines := binding then
-            acc := acc ++ inlines
-        else if let some (k, cmd) := lookupUser ctx name then
-          acc := flushText acc sb
-          sb := ""
-          let (bindings, j) ← takeArgs ctx cmd.params name raws i pos
-          i := j
+          have hspl : sliceWeight (raws.extract 0 i ++ body.extract keptFrom body.size
+              ++ raws.extract (i + 1) raws.size) i < sliceWeight raws i :=
+            sliceWeight_splice h hr keptFrom
+          elabInlinesFrom ctx (raws.extract 0 i ++ body.extract keptFrom body.size
+            ++ raws.extract (i + 1) raws.size) i acc sb
+    | .verb s _ =>
+      -- Verbatim inside inline content: kept as mono text, spaces held as
+      -- no-break spaces, lines separated by forced breaks.
+      let acc := flushText acc sb
+      elabInlinesFrom ctx raws (i + 1)
+        (acc.push (.styled .mono (Ir.verbatimInlines s))) ""
+    | .ctrl name pos =>
+      -- The document's own names come first: a parameter, then a defined
+      -- command. Built-ins the document cannot redefine are exactly
+      -- `builtinNames`, refused with W0303 at the definition; every other
+      -- built-in yields to a definition, silently, as in LaTeX. Order here
+      -- is the whole mechanism — a built-in tested earlier would shadow
+      -- the definition without a word.
+      if let some (_, binding) := ctx.args.find? (·.1 == name) then
+        let acc := flushText acc sb
+        match binding with
+        | some inlines =>
+          let acc := acc ++ inlines
+          elabInlinesFrom ctx raws (i + 1) acc ""
+        | none =>
+          elabInlinesFrom ctx raws (i + 1) acc ""
+      else
+        match hu : lookupUser ctx name with
+        | some (k, cmd) =>
+          have hklt : k < ctx.limit := lookupUser_lt hu
+          have hto : sliceWeight raws (i + 1) < sliceWeight raws i := hadv1
+          let acc := flushText acc sb
+          let (bindings, ⟨j, hj⟩) ← takeArgsFrom ctx cmd.params 0 name raws (i + 1) pos #[]
           let callCtx : Ctx := { ctx with limit := k, args := bindings }
           let expanded ← elabInlines callCtx cmd.body
           -- A parameterized command is a classifier of its argument — a
@@ -1519,125 +1812,158 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           -- command is a spelling and splices transparently: arity reads
           -- the definition, not the use, so one name gets one treatment
           -- document-wide, with no new syntax and no body inspection.
-          if cmd.params.isEmpty then
-            acc := acc ++ expanded
-          else
-            acc := acc.push (.role cmd.name expanded)
-        else if name == "hfill" then
-          acc := flushText acc sb
-          sb := ""
-          acc := acc.push .fill
+          let acc := if cmd.params.isEmpty then acc ++ expanded
+            else acc.push (.role cmd.name expanded)
+          have hadv : sliceWeight raws j < sliceWeight raws i :=
+            Nat.lt_of_le_of_lt (sliceWeight_le raws hj) hadv1
+          elabInlinesFrom ctx raws j acc ""
+        | none =>
+        if name == "hfill" then
+          let acc := flushText acc sb
+          elabInlinesFrom ctx raws (i + 1) (acc.push .fill) ""
         else if name == "ensuremath" then
           -- `\ensuremath` enters math from text (amsldoc: the argument is
           -- typeset in math mode wherever the command lands); inside math
           -- the parser treats it as transparent.
-          let j := skipSpaces raws i
-          match raws[j]? with
+          let j := skipSpaces raws (i + 1)
+          have hjge := skipSpaces_ge raws (i + 1)
+          match hj : raws[j]? with
           | some (.group body _) =>
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (← elabMathInline ctx false body pos)
-            i := j + 1
+            have hjlt := getElem?_lt hj
+            let acc := flushText acc sb
+            let x ← elabMathInline ctx false body pos
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1) (acc.push x) ""
           | _ =>
             diag ctx .E0304 "missing argument 'body' for '\\ensuremath'" pos
+            elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "\\" || name == "par" then
           -- `\\[len]` adds space after the break. The bracket must be
           -- adjacent: LaTeX skips spaces here and so swallows the `[` of a
-          -- line that legitimately starts with one.
-          let mut extra : SymGlue := {}
+          -- line that legitimately starts with one. Whitespace after a
+          -- break is the source's line ending, not content; keeping it
+          -- would open the next line with a stray space.
           if name == "\\" then
-            if let some (.sym '[' _) := raws[i]? then
-              let mut optSrc : Array Raw := #[]
-              let mut k := i + 1
-              for _ in [k:raws.size + 1] do
-                match raws[k]? with
-                | some (.sym ']' _) =>
-                  k := k + 1
-                  break
-                | some r' =>
-                  optSrc := optSrc.push r'
-                  k := k + 1
-                | none => break
-              i := k
-              let src := rawSrc optSrc
-              match Decl.parseValue src ctx.tokens.entries with
-              | some (.glue g) => extra := g
-              | some (.dim d) => extra := { width := Dim.Length.ofSp d }
-              | _ =>
-                diag ctx .E0331 s!"cannot read a length from '{src}'" pos
-                  (help := "lengths look like 10pt or 1.5ex, or name a token")
-          acc := flushText acc sb
-          sb := ""
-          acc := acc.push (.linebreak extra)
-          -- Whitespace after a break is the source's line ending, not content;
-          -- keeping it would open the next line with a stray space.
-          for _ in [i:raws.size] do
-            if let some .space := raws[i]? then i := i + 1 else break
+            match hb : raws[i + 1]? with
+            | some (.sym '[' _) =>
+              match hc : closeBracketFrom raws (i + 2) with
+              | some c =>
+                have hcge := closeBracketFrom_ge hc
+                let extra ← readBreakLen ctx (rawSrc (raws.extract (i + 2) c)) pos
+                let acc := (flushText acc sb).push (.linebreak extra)
+                let j := skipSpaces raws (c + 1)
+                have hjge := skipSpaces_ge raws (c + 1)
+                have hadv : sliceWeight raws j < sliceWeight raws i :=
+                  sliceWeight_lt raws h (by omega)
+                elabInlinesFrom ctx raws j acc ""
+              | none =>
+                let extra ← readBreakLen ctx (rawSrc (raws.extract (i + 2) raws.size)) pos
+                let acc := (flushText acc sb).push (.linebreak extra)
+                have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
+                  sliceWeight_lt raws h h
+                elabInlinesFrom ctx raws raws.size acc ""
+            | _ =>
+              let acc := (flushText acc sb).push (.linebreak {})
+              let j := skipSpaces raws (i + 1)
+              have hjge := skipSpaces_ge raws (i + 1)
+              have hadv : sliceWeight raws j < sliceWeight raws i :=
+                sliceWeight_lt raws h (by omega)
+              elabInlinesFrom ctx raws j acc ""
+          else
+            let acc := (flushText acc sb).push (.linebreak {})
+            let j := skipSpaces raws (i + 1)
+            have hjge := skipSpaces_ge raws (i + 1)
+            have hadv : sliceWeight raws j < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws j acc ""
         else if let some lit := escapes.lookup name then
-          sb := sb ++ lit
+          elabInlinesFrom ctx raws (i + 1) acc (sb ++ lit)
         else if (Lex.textSymbols.lookup name).isSome then
           -- A document may define a symbol's name for itself; its definition
           -- wins, so the symbol only fires when nothing shadows it.
-          sb := sb ++ (Lex.textSymbols.lookup name).getD ""
+          elabInlinesFrom ctx raws (i + 1) acc
+            (sb ++ (Lex.textSymbols.lookup name).getD "")
         else if let some style := argStyles.lookup name then
-          let argCtx := if style == Style.mono then { ctx with literalText := true } else ctx
-          let j := skipSpaces raws i
-          match raws[j]? with
+          let argCtx := { ctx with
+            literalText := style == Style.mono || ctx.literalText }
+          let j := skipSpaces raws (i + 1)
+          have hjge := skipSpaces_ge raws (i + 1)
+          match hj : raws[j]? with
           | some (.group body _) =>
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.styled style (← elabInlines argCtx body))
-            i := j + 1
+            have hjlt := getElem?_lt hj
+            have hw : rawWeightList body.toList < sliceWeight raws i :=
+              body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
+            let acc := flushText acc sb
+            let inner ← elabInlines argCtx body
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1) (acc.push (.styled style inner)) ""
           | some (.word s _) =>
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.styled style #[.text s])
-            i := j + 1
+            have hjlt := getElem?_lt hj
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1)
+              ((flushText acc sb).push (.styled style #[.text s])) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
+            elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "underline" || name == "uline" then
           -- Drawn, not a face change, so not a Style: one group, like \textbf.
-          let j := skipSpaces raws i
-          match raws[j]? with
+          let j := skipSpaces raws (i + 1)
+          have hjge := skipSpaces_ge raws (i + 1)
+          match hj : raws[j]? with
           | some (.group body _) =>
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.underline (← elabInlines ctx body))
-            i := j + 1
+            have hjlt := getElem?_lt hj
+            have hw : rawWeightList body.toList < sliceWeight raws i :=
+              body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
+            let acc := flushText acc sb
+            let inner ← elabInlines ctx body
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1) (acc.push (.underline inner)) ""
           | some (.word s _) =>
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.underline #[.text s])
-            i := j + 1
+            have hjlt := getElem?_lt hj
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1)
+              ((flushText acc sb).push (.underline #[.text s])) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
+            elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "label" then
-          let j := skipSpaces raws i
-          match raws[j]? with
+          let j := skipSpaces raws (i + 1)
+          have hjge := skipSpaces_ge raws (i + 1)
+          match hj : raws[j]? with
           | some (.group keyRaw _) =>
-            i := j + 1
+            have hjlt := getElem?_lt hj
             let key := argText ctx keyRaw
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.label key)
+            let acc := (flushText acc sb).push (.label key)
             recordLabel ctx key (← get).refTarget pos
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1) acc ""
           | _ =>
             diag ctx .E0304 s!"'\\label' needs a \{key} group" pos
+            elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "ref" || name == "eqref" then
-          let j := skipSpaces raws i
-          match raws[j]? with
+          let j := skipSpaces raws (i + 1)
+          have hjge := skipSpaces_ge raws (i + 1)
+          match hj : raws[j]? with
           | some (.group keyRaw _) =>
-            i := j + 1
+            have hjlt := getElem?_lt hj
             let key := argText ctx keyRaw
-            acc := flushText acc sb
-            sb := ""
             -- Unresolved until the whole document's labels are known:
             -- `resolveRefs` fills the number at the end of elaboration, so
             -- a forward reference costs no second pass over the source.
-            acc := acc.push (.ref key (name == "eqref") "??" none)
+            let acc := (flushText acc sb).push (.ref key (name == "eqref") "??" none)
             modify fun st => { st with refSites := st.refSites.push (key, pos) }
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1) acc ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs a \{key} group" pos
+            elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "paragraph" || name == "subparagraph" then
           -- The level-4 and level-5 headings are run-in in article
           -- (clsguide §2.2; classes.dtx defines both with a negative
@@ -1646,60 +1972,79 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           -- never display type, so `heading_hierarchy`'s display levels
           -- are untouched and no new level joins that statement. Both are
           -- below article's secnumdepth of 3, so neither numbers.
-          let mut j := skipSpaces raws i
-          if let some (.word "*" _) := raws[j]? then
-            j := skipSpaces raws (j + 1)
-          if let .took k := scanBracketArg raws j pos then
+          let j0 := skipSpaces raws (i + 1)
+          have hj0 := skipSpaces_ge raws (i + 1)
+          let j1 := skipStar raws j0
+          have hj1 := skipStar_ge raws j0
+          if scanBracketArg raws j1 pos matches .took _ then
             warnOnce ctx "section:short" .N0103
               s!"'\\{name}[short]' short title is unused: nothing consumes it yet" pos
-            j := skipSpaces raws k
-          match raws[j]? with
+          let j := skipShortTitle raws j1 pos
+          have hjst := skipShortTitle_ge raws j1 pos
+          match hj : raws[j]? with
           | some (.group body _) =>
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.styled .bold (← elabInlines ctx body))
+            have hjlt := getElem?_lt hj
+            have hw : rawWeightList body.toList < sliceWeight raws i :=
+              body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
+            let acc := flushText acc sb
+            let inner ← elabInlines ctx body
+            let acc := acc.push (.styled .bold inner)
             -- The run-in gap: classes.dtx's 1 em, as the em quad U+2003
             -- (a fixed-width space, kerned in layout like the \, family).
-            sb := "\u2003"
-            i := j + 1
             -- Whitespace after the title collapses into the quad: the gap
             -- is the declared em, not the em plus the source's newline.
-            for _ in [i:raws.size] do
-              if let some .space := raws[i]? then i := i + 1 else break
+            let j2 := skipSpaces raws (j + 1)
+            have hj2 := skipSpaces_ge raws (j + 1)
+            have hadv : sliceWeight raws j2 < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws j2 acc "\u2003"
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs a \{title}" pos
+            elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "href" || name == "link" then
-          let j := skipSpaces raws i
+          let j := skipSpaces raws (i + 1)
+          have hjge := skipSpaces_ge raws (i + 1)
           let j2 := skipSpaces raws (j + 1)
-          match raws[j]?, raws[j2]? with
+          have hj2ge := skipSpaces_ge raws (j + 1)
+          match hj : raws[j]?, hj2 : raws[j2]? with
           | some (.group urlRaw _), some (.group body _) =>
-            i := j2 + 1
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.link (argText ctx urlRaw) (← elabInlines ctx body))
+            have hj2lt := getElem?_lt hj2
+            have hw : rawWeightList body.toList < sliceWeight raws i :=
+              body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
+            let acc := flushText acc sb
+            let inner ← elabInlines ctx body
+            have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j2 + 1)
+              (acc.push (.link (argText ctx urlRaw) inner)) ""
           | some (.group urlRaw _), _ =>
             -- One argument: the URL is also the text, which is the common case
             -- for a bare link and saves writing it twice.
-            i := j + 1
+            have hjlt := getElem?_lt hj
             let url := argText ctx urlRaw
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.link url #[.text url])
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1)
+              ((flushText acc sb).push (.link url #[.text url])) ""
           | _, _ =>
             diag ctx .E0304 s!"'\\{name}' needs a URL group, optionally followed by text" pos
+            elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "url" then
           -- hyperref/url/xurl's one-argument sibling of `\href`: the URL is
           -- its own text, set mono (url.sty's `\urlstyle{tt}` default).
-          let j := skipSpaces raws i
-          match raws[j]? with
+          let j := skipSpaces raws (i + 1)
+          have hjge := skipSpaces_ge raws (i + 1)
+          match hj : raws[j]? with
           | some (.group urlRaw _) =>
-            i := j + 1
+            have hjlt := getElem?_lt hj
             let url := argText ctx urlRaw
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.link url #[.styled .mono #[.text url]])
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1)
+              ((flushText acc sb).push (.link url #[.styled .mono #[.text url]])) ""
           | _ =>
             diag ctx .E0304 "'\\url' needs a {url} group" pos
+            elabInlinesFrom ctx raws (i + 1) acc sb
         else if name == "cite" || name == "citep" || name == "citet" then
           -- natbib's citation commands (natbib manual §2.3): one node per
           -- citation group, keys as written — the brackets or parentheses
@@ -1708,398 +2053,478 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           -- The pre/post note options (`\citep[see][p. 5]{k}`) are not
           -- modelled; a `[` here stays literal text, named in the slice
           -- report rather than silently eaten.
-          let j := skipSpaces raws i
-          match raws[j]? with
+          let j := skipSpaces raws (i + 1)
+          have hjge := skipSpaces_ge raws (i + 1)
+          match hj : raws[j]? with
           | some (.group keysRaw _) =>
-            i := j + 1
+            have hjlt := getElem?_lt hj
             let keys := (((argText ctx keysRaw).splitOn ",").map
               (·.trimAscii.toString)).filter (!·.isEmpty)
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.cite (name == "citet") keys.toArray)
+            have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+              sliceWeight_lt raws h (by omega)
+            elabInlinesFrom ctx raws (j + 1)
+              ((flushText acc sb).push (.cite (name == "citet") keys.toArray)) ""
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs a \{keys} group" pos
-        else if name == "includegraphics" then
-          -- graphicx's command, native. The keys that size figures in real
-          -- documents are modelled — width, height, scale, keepaspectratio —
-          -- and anything else (rotation included) is named and skipped: a
-          -- silently dropped key would misplace the figure without a word.
-          let mut spec : Image.SizeSpec := {}
-          let mut altText := ""
-          let mut j := skipSpaces raws i
-          if let some (.sym '[' _) := raws[j]? then
-            let mut optSrc : Array Raw := #[]
-            let mut k := j + 1
-            for _ in [k:raws.size + 1] do
-              match raws[k]? with
-              | some (.sym ']' _) => k := k + 1; break
-              | some r' => optSrc := optSrc.push r'; k := k + 1
-              | none => break
-            j := skipSpaces raws k
-            for e in Decl.splitEntries (rawSrc optSrc) do
-              match Decl.splitEntry e with
-              | some ("width", v) =>
-                match imageLen v with
-                | some l => spec := { spec with width := some l }
-                | none =>
-                  diag ctx .E0331 s!"cannot read a length from '{v}'" pos
-                    (help := "image sizes look like 3cm or 0.8\\textwidth")
-              | some ("height", v) | some ("totalheight", v) =>
-                -- totalheight is height plus depth, and an image has no
-                -- depth, so the two keys coincide here.
-                match imageLen v with
-                | some l => spec := { spec with height := some l }
-                | none =>
-                  diag ctx .E0331 s!"cannot read a length from '{v}'" pos
-                    (help := "image sizes look like 3cm or 0.3\\textheight")
-              | some ("scale", v) =>
-                match Decl.parseDecimal v with
-                | some (m, sc) => spec := { spec with scaleNum := m, scaleDen := sc }
-                | none => diag ctx .E0321 s!"'scale' needs a number, got {v.quote}" pos
-              | some ("alt", v) =>
-                -- graphicx's own alt key (LaTeX News 37, 2023): the text
-                -- alternative WCAG 2.2 SC 1.1.1 requires, declared where the
-                -- image is. Braced or quoted spellings both read as text.
-                let v := if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
-                    String.ofList (v.toList.drop 1).dropLast
-                  else if v.startsWith "\"" && v.endsWith "\"" && v.length ≥ 2 then
-                    String.ofList (v.toList.drop 1).dropLast
-                  else v
-                altText := v.trimAscii.toString
-              | _ =>
-                if e.trimAscii.toString == "keepaspectratio" then
-                  spec := { spec with keepAspect := true }
-                else
-                  warnOnce ctx ("imgopt:" ++ e) .W0110
-                    s!"'\\includegraphics' option '{e}' is not modelled; ignored" pos
-                    (help := "modelled keys: width, height, scale, keepaspectratio, alt")
-          match raws[j]? with
-          | some (.group pathRaw _) =>
-            i := j + 1
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.image (argText ctx pathRaw) spec altText)
-          | _ =>
-            diag ctx .E0304 "'\\includegraphics' needs a {file} group" pos
-        else if name == "faIcon" then
-          -- fontawesome5's generic spelling: `\faIcon[style]{icon-name}`,
-          -- optionally starred for the `-alt` variant. The style argument
-          -- selects a Pro face there; here which file covers the scalar is
-          -- the per-scalar fallback chain's question, so a style is named
-          -- as an ignored option rather than dropped without a word. The
-          -- one extension: `label = ...` overrides the icon's default text
-          -- alternative, for a context where Font Awesome's own name is
-          -- not the right accessible name (`Return to top` on an arrow).
-          let mut j := skipSpaces raws i
-          let mut alt := false
-          if let some (.word "*" _) := raws[j]? then
-            alt := true
-            j := skipSpaces raws (j + 1)
-          let mut label : Option String := none
-          if let some (.sym '[' _) := raws[j]? then
-            let mut optSrc : Array Raw := #[]
-            let mut k := j + 1
-            for _ in [k:raws.size + 1] do
-              match raws[k]? with
-              | some (.sym ']' _) => k := k + 1; break
-              | some r' => optSrc := optSrc.push r'; k := k + 1
-              | none => break
-            j := skipSpaces raws k
-            for e in Decl.splitEntries (rawSrc optSrc) do
-              match Decl.splitEntry e with
-              | some ("label", v) => label := some v.trimAscii.toString
-              | _ =>
-                warnOnce ctx ("faopt:" ++ e) .W0110
-                  s!"'\\faIcon' option '{e.trimAscii.toString}' is not modelled; ignored" pos
-                  (help := "the face that renders an icon is whichever declared or installed face covers its scalar; 'label = ...' overrides the icon's text alternative")
-          match raws[j]? with
-          | some (.group nameRaw _) =>
-            i := j + 1
-            let iconName := (argText ctx nameRaw).trimAscii.toString
-              ++ (if alt then "-alt" else "")
-            match FaIcons.byName[iconName]? with
-            | some e =>
-              acc := flushText acc sb
-              sb := ""
-              acc := acc.push (.icon e.scalar (label.getD e.label))
-            | none =>
-              diag ctx .E0340 s!"unknown icon '{iconName}'; nothing is rendered" pos
-                (help := "icon names are Font Awesome 5 Free's, like 'arrow-up' or 'github'")
-          | _ =>
-            diag ctx .E0304 "'\\faIcon' needs an {icon-name} group" pos
-        else if let some e := FaIcons.byMacro[name]? then
-          -- The per-icon fontawesome5 command (`\faGithub`, `\faArrowUp`):
-          -- the package's own name-to-scalar mapping, carried as data
-          -- (`FaData`, generated from fontawesome5-mapping.def).
-          acc := flushText acc sb
-          sb := ""
-          acc := acc.push (.icon e.scalar e.label)
-        else if name == "pagenumber" then
-          acc := flushText acc sb
-          sb := ""
-          acc := acc.push .pageNumber
-        else if name == "pagecount" then
-          acc := flushText acc sb
-          sb := ""
-          acc := acc.push .pageCount
-        else if name == "textcolor" then
-          let j := skipSpaces raws i
-          let j2 := skipSpaces raws (j + 1)
-          match raws[j]?, raws[j2]? with
-          | some (.group cname _), some (.group body _) =>
-            i := j2 + 1
-            let key := argText ctx cname
-            match ctx.palette.resolve key with
-            | some c =>
-              acc := flushText acc sb
-              sb := ""
-              -- A mix expression is a computed value, not a token: only a
-              -- plain palette name rides along for the HTML var(--name).
-              let cssName := if (ctx.palette.find? key).isSome then some key else none
-              acc := acc.push (.colored c cssName (← elabInlines ctx body))
-            | none =>
-              -- The colour is unresolvable; the content is not. Keeping it
-              -- uncoloured is the best-effort contract: a wrong colour beats
-              -- a missing word.
-              warnOnce ctx ("palette:" ++ key) .W0304
-                s!"'{key}' is not in the palette; content kept uncoloured" pos
-                (help := if ctx.palette.entries.isEmpty then
-                    "declare colours with \\palette{ name = #RRGGBB }"
-                  else s!"declared: {String.intercalate ", "
-                    (ctx.palette.entries.toList.map (·.1))}")
-              acc := flushText acc sb
-              sb := ""
-              acc := acc ++ (← elabInlines ctx body)
-          | _, _ =>
-            diag ctx .E0304 "'\\textcolor' needs {name} and {content}" pos
-        else if let some c := ctx.palette.resolve name then
-          -- With a group, that group is the argument: `\primary{Alex}` means
-          -- colour Alex, which is what it looks like. Without one it is a
-          -- declaration colouring the rest of the group, as `\bfseries` does.
-          -- `resolve`, not `find?`: the name may be the `!`-mix expression
-          -- `\color`'s rewrite carries whole, and the mix grammar lives in
-          -- one place (`Palette.resolve`). A computed mix is a value, not a
-          -- token: only a declared entry rides as the HTML var(--name), the
-          -- same rule `\textcolor` holds.
-          let cssName := if (ctx.palette.find? name).isSome then some name else none
-          let j := skipSpaces raws i
-          match raws[j]? with
-          | some (.group body _) =>
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.colored c cssName (← elabInlines ctx body))
-            i := j + 1
-          | _ =>
-            let rest ← elabInlines ctx (raws.extract i raws.size)
-            acc := flushText acc sb
-            sb := ""
-            acc := acc.push (.colored c cssName rest)
-            i := raws.size
-        else if let some style := declStyles.lookup name then
-          let declCtx := if style == Style.mono then { ctx with literalText := true } else ctx
-          let rest ← elabInlines declCtx (raws.extract i raws.size)
-          acc := flushText acc sb
-          sb := ""
-          acc := acc.push (.styled style rest)
-          i := raws.size
-        else if name == "ifgiven" then
-          let j := skipSpaces raws i
-          let j2 := skipSpaces raws (j + 1)
-          match raws[j]?, raws[j2]? with
-          | some (.group cond _), some (.group tmpl _) =>
-            i := j2 + 1
-            let refs := cond.filter (!isSpace ·)
-            match refs.toList with
-            | [.ctrl pname _] =>
-              match ctx.args.find? (·.1 == pname) with
-              | some (_, some _) => acc := acc ++ (← elabInlines ctx tmpl)
-              | some (_, none) => pure ()
-              | none => diag ctx .E0306 s!"unknown parameter '\\{pname}'" pos
-            | _ =>
-              diag ctx .E0306 "expected a parameter reference like {\\team}" pos
-          | _, _ =>
-            diag ctx .E0304 "'\\ifgiven' needs {\\param} and {content}" pos
-        else if overlayCtrls.contains name then
-          -- Overlay commands, dim-not-hide (PLAN M5): the content wraps in
-          -- a step and dims before its turn — \only included, one overlay
-          -- semantics for both backends. Without a group the spec declares:
-          -- the rest of this inline scope steps. A spec the model cannot
-          -- number keeps the honest W0105 and the content stays shown.
-          let j := skipSpaces raws i
-          match raws[j]?.bind specWord? with
-          | some w =>
-            match overlayFrom w with
-            | some (n, last) =>
-              let j2 := skipSpaces raws (j + 1)
-              match raws[j2]? with
-              | some (.group gbody _) =>
-                acc := flushText acc sb
-                sb := ""
-                acc := acc.push (.step n last (← elabInlines ctx gbody))
-                i := j2 + 1
-              | _ =>
-                acc := flushText acc sb
-                sb := ""
-                acc := acc.push (.step n last (← elabInlines ctx (raws.extract (j + 1) raws.size)))
-                i := raws.size
-            | none =>
-              warnOnce ctx "spec:overlay" .W0105
-                s!"overlay specification '{w}' does not name a step; its content is \
-shown on every step" pos
-                (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
-specs are not modelled")
-              i := j + 1
-          | none => pure ()
-        else if name == "alt" then
-          -- `\alt<spec>{active}{otherwise}`: under dim-not-hide both
-          -- alternatives are on the page — the active one crisp within its
-          -- spec, the other before it — so alternation reads as emphasis
-          -- moving, and nothing reflows. The complement of a mid-deck range
-          -- is not one range, so the otherwise side stays dimmed past it.
-          let j := skipSpaces raws i
-          let (spec, j2) := match raws[j]?.bind specWord? with
-            | some w => (overlayFrom w, skipSpaces raws (j + 1))
-            | none => (none, j)
-          let j3 := skipSpaces raws (j2 + 1)
-          match raws[j2]?, raws[j3]? with
-          | some (.group ga _), some (.group gb _) =>
-            i := j3 + 1
-            acc := flushText acc sb
-            sb := ""
-            match spec with
-            | some (n, last) =>
-              acc := acc.push (.step n last (← elabInlines ctx ga))
-              acc := acc.push (.step 1 (some (n - 1)) (← elabInlines ctx gb))
-            | none =>
-              warnOnce ctx "spec:overlay" .W0105
-                "'\\alt' without a numbered specification shows both \
-alternatives on every step" pos
-                (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
-specs are not modelled")
-              acc := acc ++ (← elabInlines ctx ga)
-              acc := acc ++ (← elabInlines ctx gb)
-          | _, _ =>
-            diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
-        else if name == "pause" then
-          -- Reachable only inside an argument or definition body; between
-          -- blocks the boundary rule steps the rest of the scope.
-          warnOnce ctx "spec:pause-inline" .W0105
-            "'\\pause' inside an argument cannot step; its content is shown" pos
-        else if name == "note" then
-          -- A speaker note met mid-sentence: no block can stand here, so
-          -- the body is stashed for the enclosing frame to drain — the
-          -- paragraph flows on unbroken and the note never leaks into it.
-          if let .took _ := scanBracketArg raws i pos then
-            warnOnce ctx "note:options" .N0102
-              "'\\note' placement and overlay options are ignored: the note is \
-a side channel, never slide content" pos
-          let (⟨j, _⟩, _, _) ← skipOptArg ctx "note" raws i pos
-          i := j
-          let js := skipSpaces raws i
-          if (raws[js]?.bind specWord?).isSome then
-            warnOnce ctx "note:options" .N0102
-              "'\\note' placement and overlay options are ignored: the note is \
-a side channel, never slide content" pos
-            i := js + 1
-          let j2 := skipSpaces raws i
-          if let some (.group nbody _) := raws[j2]? then
-            i := j2 + 1
-            modify fun st => { st with pendingNotes := st.pendingNotes.push nbody }
-        else if name == "centering" then
-          -- Between blocks the declaration centres the rest of its scope;
-          -- here, inside inline content, there is no block to centre.
-          warnOnce ctx "ctrl:centering" .W0108
-            "'\\centering' centres nothing inside an argument; content stays left-aligned" pos
-            (help := "move '\\centering' to the start of the group or environment body")
-        else if let some code := reservedCtrl.lookup name then
-          warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
-          let (j, unclosed) := skipReservedArgs raws i pos
-          if let some bpos := unclosed then
-            warnUnclosed ctx s!"'\\{name}'" bpos
-          i := j
-        else if declCtrl.contains name || runningCtrl.contains name then
-          -- A native declaration met inside inline content is ours,
-          -- misplaced — never "unknown": its arguments address the engine,
-          -- not the sentence, so they go with the declaration. A running
-          -- declaration carries content, so skipping it is a drop (E0347);
-          -- the key/value rest is configuration (W0346).
-          if runningCtrl.contains name then
-            diag ctx .E0347 s!"'\\{name}' in the body is dropped with its content" pos
-              (help := "declare it in the preamble, before '\\begin{document}'")
-          else
-            warnOnce ctx ("ctrl:" ++ name) .W0346
-              s!"'\\{name}' is a declaration; inside inline content it is ignored" pos
-              (help := if name == "palette" || name == "tokens" then
-                  s!"write '\\{name}' between paragraphs, after a blank line; there it applies \
-from where it stands"
-                else "declare it in the preamble, before '\\begin{document}'")
-          let (j, unclosed) := skipReservedArgs raws i pos (maxGroups := 2)
-          if let some bpos := unclosed then
-            warnUnclosed ctx s!"'\\{name}'" bpos
-          i := j
-        else if blockOnly.contains name then
-          diag ctx .E0312 s!"'\\{name}' is not allowed here" pos
-            (help := "it is a block-level command: use it between paragraphs, " ++
-              "not inside inline content or a command body")
+            elabInlinesFrom ctx raws (i + 1) acc sb
         else
-          -- Best effort: the {...} arguments are content, and content is
-          -- never dropped for want of a command. Only the formatting is lost.
-          warnOnce ctx ("ctrl:" ++ name) .W0301
-            s!"unknown command '\\{name}'; its \{...} arguments were kept as text" pos
-            (help := "\\define \\name(...) {body} declares it")
-          let mut j := skipSpaces raws i
-          -- A starred form's `*` belongs to the command, not to the text.
-          if let some (.word "*" _) := raws[j]? then
-            j := skipSpaces raws (j + 1)
-          -- A leading [...] run is how the author addressed the command,
-          -- never their content: kept, it is ink nobody wrote ('[16]'
-          -- printed in front of a URL). It goes with the command, named.
-          let (jOpts, unclosed) := skipOptionRuns raws j pos
-          if jOpts > j then
-            let run := (Parse.rawSrc (raws.extract j jOpts)).trimAscii.toString
-            diag ctx .W0341
-              s!"'{run}' went with unknown command '\\{name}'; an option run is not content" pos
-              (help := "content, not options? start the '[' on the next line")
-          if let some bpos := unclosed then
-            warnUnclosed ctx s!"'\\{name}'" bpos
-          j := skipSpaces raws jOpts
-          let mut kept := 0
-          let mut spaceAfter := false
-          for _ in [0:9] do
-            match raws[j]? with
-            | some (.group body _) =>
-              acc := flushText acc sb
-              -- Whatever separated the arguments visually is gone with the
-              -- command, so a space stands in; without one, `{a}{b}` runs
-              -- together as `ab`.
-              sb := if kept > 0 then " " else ""
-              acc := flushText acc sb
-              sb := ""
-              acc := acc ++ (← elabInlines ctx body)
-              kept := kept + 1
-              let after := j + 1
-              j := skipSpaces raws after
-              spaceAfter := j != after
-            | _ => break
-          -- The control word swallowed a space after it; give back only one
-          -- that was really there — `\x{a} b` keeps its space, `\x{a}.b`
-          -- gains no ink the author never wrote.
-          if kept > 0 && spaceAfter && j < raws.size then
-            sb := " "
-          i := j
+          elabInlinesCtrl ctx raws i acc sb name pos h hadv1
+  else
+    return mergeText (flushText acc sb)
+termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 3)
+decreasing_by all_goals knot_dec
+
+/-- The rest of the control-word chain — graphics, icons, colour, overlay,
+recovery — split from `elabInlinesFrom` only so each half stays within the
+elaborator's budget for one definition. Same measure, same step shape. -/
+def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (acc : Array Inline) (sb : String) (name : String) (pos : Pos)
+    (h : i < raws.size)
+    (_hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
+    EM (Array Inline) := do
+  if name == "includegraphics" then
+    -- graphicx's command, native. The keys that size figures in real
+    -- documents are modelled — width, height, scale, keepaspectratio —
+    -- and anything else (rotation included) is named and skipped: a
+    -- silently dropped key would misplace the figure without a word.
+    let j0 := skipSpaces raws (i + 1)
+    have hj0 := skipSpaces_ge raws (i + 1)
+    let optSrc := bracketRunSrc raws j0
+    let j := skipBracketRun raws j0
+    have hjb := skipBracketRun_ge raws j0
+    let (spec, altText) ← readImageOpts ctx optSrc pos
+    match hj : raws[j]? with
+    | some (.group pathRaw _) =>
+      have hjlt := getElem?_lt hj
+      have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+        sliceWeight_lt raws h (by omega)
+      elabInlinesFrom ctx raws (j + 1)
+        ((flushText acc sb).push (.image (argText ctx pathRaw) spec altText)) ""
+    | _ =>
+      diag ctx .E0304 "'\\includegraphics' needs a {file} group" pos
+      elabInlinesFrom ctx raws (i + 1) acc sb
+  else if name == "faIcon" then
+    -- fontawesome5's generic spelling: `\faIcon[style]{icon-name}`,
+    -- optionally starred for the `-alt` variant. The style argument
+    -- selects a Pro face there; here which file covers the scalar is
+    -- the per-scalar fallback chain's question, so a style is named
+    -- as an ignored option rather than dropped without a word. The
+    -- one extension: `label = ...` overrides the icon's default text
+    -- alternative, for a context where Font Awesome's own name is
+    -- not the right accessible name (`Return to top` on an arrow).
+    let j0 := skipSpaces raws (i + 1)
+    have hj0 := skipSpaces_ge raws (i + 1)
+    let alt := raws[j0]? matches some (.word "*" _)
+    let j1 := skipStar raws j0
+    have hj1 := skipStar_ge raws j0
+    let labelSrc := bracketRunSrc raws j1
+    let j := skipBracketRun raws j1
+    have hjb := skipBracketRun_ge raws j1
+    let label ← readIconLabel ctx labelSrc pos
+    match hg : raws[j]? with
+    | some (.group nameRaw _) =>
+      have hjlt := getElem?_lt hg
+      let iconName := (argText ctx nameRaw).trimAscii.toString
+        ++ (if alt then "-alt" else "")
+      have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+        sliceWeight_lt raws h (by omega)
+      match FaIcons.byName[iconName]? with
+      | some e =>
+        elabInlinesFrom ctx raws (j + 1)
+          ((flushText acc sb).push (.icon e.scalar (label.getD e.label))) ""
+      | none =>
+        diag ctx .E0340 s!"unknown icon '{iconName}'; nothing is rendered" pos
+          (help := "icon names are Font Awesome 5 Free's, like 'arrow-up' or 'github'")
+        elabInlinesFrom ctx raws (j + 1) (flushText acc sb) ""
+    | _ =>
+      diag ctx .E0304 "'\\faIcon' needs an {icon-name} group" pos
+      elabInlinesFrom ctx raws (i + 1) acc sb
+  else if let some e := FaIcons.byMacro[name]? then
+    -- The per-icon fontawesome5 command (`\faGithub`, `\faArrowUp`):
+    -- the package's own name-to-scalar mapping, carried as data
+    -- (`FaData`, generated from fontawesome5-mapping.def).
+    elabInlinesFrom ctx raws (i + 1)
+      ((flushText acc sb).push (.icon e.scalar e.label)) ""
+  else if name == "pagenumber" then
+    elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push .pageNumber) ""
+  else if name == "pagecount" then
+    elabInlinesFrom ctx raws (i + 1) ((flushText acc sb).push .pageCount) ""
+  else if name == "textcolor" then
+    let j := skipSpaces raws (i + 1)
+    have hjge := skipSpaces_ge raws (i + 1)
+    let j2 := skipSpaces raws (j + 1)
+    have hj2ge := skipSpaces_ge raws (j + 1)
+    match hj : raws[j]?, hj2 : raws[j2]? with
+    | some (.group cname _), some (.group body _) =>
+      have hj2lt := getElem?_lt hj2
+      have hw : rawWeightList body.toList < sliceWeight raws i :=
+        body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
+      have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
+        sliceWeight_lt raws h (by omega)
+      let key := argText ctx cname
+      match ctx.palette.resolve key with
+      | some c =>
+        -- A mix expression is a computed value, not a token: only a
+        -- plain palette name rides along for the HTML var(--name).
+        let cssName := if (ctx.palette.find? key).isSome then some key else none
+        let acc := flushText acc sb
+        let inner ← elabInlines ctx body
+        elabInlinesFrom ctx raws (j2 + 1) (acc.push (.colored c cssName inner)) ""
+      | none =>
+        -- The colour is unresolvable; the content is not. Keeping it
+        -- uncoloured is the best-effort contract: a wrong colour beats
+        -- a missing word.
+        warnOnce ctx ("palette:" ++ key) .W0304
+          s!"'{key}' is not in the palette; content kept uncoloured" pos
+          (help := if ctx.palette.entries.isEmpty then
+              "declare colours with \\palette{ name = #RRGGBB }"
+            else s!"declared: {String.intercalate ", "
+              (ctx.palette.entries.toList.map (·.1))}")
+        let acc := flushText acc sb
+        let inner ← elabInlines ctx body
+        elabInlinesFrom ctx raws (j2 + 1) (acc ++ inner) ""
+    | _, _ =>
+      diag ctx .E0304 "'\\textcolor' needs {name} and {content}" pos
+      elabInlinesFrom ctx raws (i + 1) acc sb
+  else
+    elabInlinesCtrl2 ctx raws i acc sb name pos h _hadv1
+termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 2)
+decreasing_by all_goals knot_dec
+
+/-- The chain's tail: colour declarations, overlays, notes, and the
+recovery arms. Same measure, same step shape. -/
+def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (acc : Array Inline) (sb : String) (name : String) (pos : Pos)
+    (h : i < raws.size)
+    (_hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
+    EM (Array Inline) := do
+  if let some c := ctx.palette.resolve name then
+
+    -- With a group, that group is the argument: `\primary{Alex}` means
+    -- colour Alex, which is what it looks like. Without one it is a
+    -- declaration colouring the rest of the group, as `\bfseries` does.
+    -- `resolve`, not `find?`: the name may be the `!`-mix expression
+    -- `\color`'s rewrite carries whole, and the mix grammar lives in
+    -- one place (`Palette.resolve`). A computed mix is a value, not a
+    -- token: only a declared entry rides as the HTML var(--name), the
+    -- same rule `\textcolor` holds.
+    let cssName := if (ctx.palette.find? name).isSome then some name else none
+    let j := skipSpaces raws (i + 1)
+    have hjge := skipSpaces_ge raws (i + 1)
+    match hj : raws[j]? with
+    | some (.group body _) =>
+      have hjlt := getElem?_lt hj
+      have hw : rawWeightList body.toList < sliceWeight raws i :=
+        body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
+      let acc := flushText acc sb
+      let inner ← elabInlines ctx body
+      have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+        sliceWeight_lt raws h (by omega)
+      elabInlinesFrom ctx raws (j + 1) (acc.push (.colored c cssName inner)) ""
+    | _ =>
+      have hw : rawWeightList (raws.extract (i + 1) raws.size).toList
+          < sliceWeight raws i :=
+        extract_lt_slice raws.size h (Nat.lt_succ_self i)
+      let rest ← elabInlines ctx (raws.extract (i + 1) raws.size)
+      let acc := (flushText acc sb).push (.colored c cssName rest)
+      have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
+        sliceWeight_lt raws h h
+      elabInlinesFrom ctx raws raws.size acc ""
+  else if let some style := declStyles.lookup name then
+    let declCtx := { ctx with
+      literalText := style == Style.mono || ctx.literalText }
+    have hw : rawWeightList (raws.extract (i + 1) raws.size).toList
+        < sliceWeight raws i :=
+      extract_lt_slice raws.size h (Nat.lt_succ_self i)
+    let rest ← elabInlines declCtx (raws.extract (i + 1) raws.size)
+    let acc := (flushText acc sb).push (.styled style rest)
+    have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
+      sliceWeight_lt raws h h
+    elabInlinesFrom ctx raws raws.size acc ""
+  else if name == "ifgiven" then
+    let j := skipSpaces raws (i + 1)
+    have hjge := skipSpaces_ge raws (i + 1)
+    let j2 := skipSpaces raws (j + 1)
+    have hj2ge := skipSpaces_ge raws (j + 1)
+    match hj : raws[j]?, hj2 : raws[j2]? with
+    | some (.group cond _), some (.group tmpl _) =>
+      have hj2lt := getElem?_lt hj2
+      have hw : rawWeightList tmpl.toList < sliceWeight raws i :=
+        body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
+      have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
+        sliceWeight_lt raws h (by omega)
+      let refs := cond.filter (!isSpace ·)
+      match refs.toList with
+      | [.ctrl pname _] =>
+        match ctx.args.find? (·.1 == pname) with
+        | some (_, some _) =>
+          let inner ← elabInlines ctx tmpl
+          elabInlinesFrom ctx raws (j2 + 1) (acc ++ inner) sb
+        | some (_, none) =>
+          elabInlinesFrom ctx raws (j2 + 1) acc sb
+        | none =>
+          diag ctx .E0306 s!"unknown parameter '\\{pname}'" pos
+          elabInlinesFrom ctx raws (j2 + 1) acc sb
+      | _ =>
+        diag ctx .E0306 "expected a parameter reference like {\\team}" pos
+        elabInlinesFrom ctx raws (j2 + 1) acc sb
+    | _, _ =>
+      diag ctx .E0304 "'\\ifgiven' needs {\\param} and {content}" pos
+      elabInlinesFrom ctx raws (i + 1) acc sb
+  else if overlayCtrls.contains name then
+    -- Overlay commands, dim-not-hide (PLAN M5): the content wraps in
+    -- a step and dims before its turn — \only included, one overlay
+    -- semantics for both backends. Without a group the spec declares:
+    -- the rest of this inline scope steps. A spec the model cannot
+    -- number keeps the honest W0105 and the content stays shown.
+    let j := skipSpaces raws (i + 1)
+    have hjge := skipSpaces_ge raws (i + 1)
+    match raws[j]?.bind specWord? with
+    | some w =>
+      match overlayFrom w with
+      | some (n, last) =>
+        let j2 := skipSpaces raws (j + 1)
+        have hj2ge := skipSpaces_ge raws (j + 1)
+        match hj2 : raws[j2]? with
+        | some (.group gbody _) =>
+          have hj2lt := getElem?_lt hj2
+          have hw : rawWeightList gbody.toList < sliceWeight raws i :=
+            body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
+          let acc := flushText acc sb
+          let inner ← elabInlines ctx gbody
+          have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
+            sliceWeight_lt raws h (by omega)
+          elabInlinesFrom ctx raws (j2 + 1) (acc.push (.step n last inner)) ""
+        | _ =>
+          have hw : rawWeightList (raws.extract (j + 1) raws.size).toList
+              < sliceWeight raws i :=
+            extract_lt_slice raws.size h (by omega)
+          let acc := flushText acc sb
+          let inner ← elabInlines ctx (raws.extract (j + 1) raws.size)
+          have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
+            sliceWeight_lt raws h h
+          elabInlinesFrom ctx raws raws.size (acc.push (.step n last inner)) ""
+      | none =>
+        warnOnce ctx "spec:overlay" .W0105
+          s!"overlay specification '{w}' does not name a step; its content is \
+shown on every step" pos
+          (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
+specs are not modelled")
+        have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        elabInlinesFrom ctx raws (j + 1) acc sb
+    | none =>
+      elabInlinesFrom ctx raws (i + 1) acc sb
+  else if name == "alt" then
+    -- `\alt<spec>{active}{otherwise}`: under dim-not-hide both
+    -- alternatives are on the page — the active one crisp within its
+    -- spec, the other before it — so alternation reads as emphasis
+    -- moving, and nothing reflows. The complement of a mid-deck range
+    -- is not one range, so the otherwise side stays dimmed past it.
+    let j := skipSpaces raws (i + 1)
+    have hjge := skipSpaces_ge raws (i + 1)
+    match raws[j]?.bind specWord? with
+    | some w =>
+      let spec := overlayFrom w
+      let j2 := skipSpaces raws (j + 1)
+      have hj2ge := skipSpaces_ge raws (j + 1)
+      let j3 := skipSpaces raws (j2 + 1)
+      have hj3ge := skipSpaces_ge raws (j2 + 1)
+      match hj2 : raws[j2]?, hj3 : raws[j3]? with
+      | some (.group ga _), some (.group gb _) =>
+        have hj3lt := getElem?_lt hj3
+        have hwa : rawWeightList ga.toList < sliceWeight raws i :=
+          body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
+        have hwb : rawWeightList gb.toList < sliceWeight raws i :=
+          body_lt_slice hj3 (by simp only [rawWeight]; omega) (by omega)
+        have hadv : sliceWeight raws (j3 + 1) < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        let acc := flushText acc sb
+        match spec with
+        | some (n, last) =>
+          let ia ← elabInlines ctx ga
+          let ib ← elabInlines ctx gb
+          elabInlinesFrom ctx raws (j3 + 1)
+            ((acc.push (.step n last ia)).push (.step 1 (some (n - 1)) ib)) ""
+        | none =>
+          warnOnce ctx "spec:overlay" .W0105
+            "'\\alt' without a numbered specification shows both \
+alternatives on every step" pos
+            (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
+specs are not modelled")
+          let ia ← elabInlines ctx ga
+          let ib ← elabInlines ctx gb
+          elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia ++ ib) ""
+      | _, _ =>
+        diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
+        elabInlinesFrom ctx raws (i + 1) acc sb
+    | none =>
+      let j3 := skipSpaces raws (j + 1)
+      have hj3ge := skipSpaces_ge raws (j + 1)
+      match hj2 : raws[j]?, hj3 : raws[j3]? with
+      | some (.group ga _), some (.group gb _) =>
+        have hj3lt := getElem?_lt hj3
+        have hwa : rawWeightList ga.toList < sliceWeight raws i :=
+          body_lt_slice hj2 (by simp only [rawWeight]; omega) (by omega)
+        have hwb : rawWeightList gb.toList < sliceWeight raws i :=
+          body_lt_slice hj3 (by simp only [rawWeight]; omega) (by omega)
+        have hadv : sliceWeight raws (j3 + 1) < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        let acc := flushText acc sb
+        warnOnce ctx "spec:overlay" .W0105
+          "'\\alt' without a numbered specification shows both \
+alternatives on every step" pos
+          (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
+specs are not modelled")
+        let ia ← elabInlines ctx ga
+        let ib ← elabInlines ctx gb
+        elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia ++ ib) ""
+      | _, _ =>
+        diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
+        elabInlinesFrom ctx raws (i + 1) acc sb
+  else if name == "pause" then
+    -- Reachable only inside an argument or definition body; between
+    -- blocks the boundary rule steps the rest of the scope.
+    warnOnce ctx "spec:pause-inline" .W0105
+      "'\\pause' inside an argument cannot step; its content is shown" pos
+    elabInlinesFrom ctx raws (i + 1) acc sb
+  else if name == "note" then
+    -- A speaker note met mid-sentence: no block can stand here, so
+    -- the body is stashed for the enclosing frame to drain — the
+    -- paragraph flows on unbroken and the note never leaks into it.
+    if scanBracketArg raws (i + 1) pos matches .took _ then
+      warnOnce ctx "note:options" .N0102
+        "'\\note' placement and overlay options are ignored: the note is \
+a side channel, never slide content" pos
+    let (⟨j, hjge⟩, _, _) ← skipOptArg ctx "note" raws (i + 1) pos
+    let js := skipSpaces raws j
+    have hjsge := skipSpaces_ge raws j
+    if (raws[js]?.bind specWord?).isSome then
+      warnOnce ctx "note:options" .N0102
+        "'\\note' placement and overlay options are ignored: the note is \
+a side channel, never slide content" pos
+      let j2 := skipSpaces raws (js + 1)
+      have hj2ge := skipSpaces_ge raws (js + 1)
+      match hn : raws[j2]? with
+      | some (.group nbody _) =>
+        modify fun st => { st with pendingNotes := st.pendingNotes.push nbody }
+        have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        elabInlinesFrom ctx raws (j2 + 1) acc sb
+      | _ =>
+        have hadv : sliceWeight raws (js + 1) < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        elabInlinesFrom ctx raws (js + 1) acc sb
     else
-      break
-  let out := mergeText (flushText acc sb)
-  return if ctx.literalText then out else out.map mapText
-where
-  /-- Applied to this level's own text only; nested bodies were processed by
-  their own call, with their own literal-text setting. -/
-  mapText (x : Inline) : Inline :=
-    match x with
-    | .text t => .text (smartPunct t)
-    | other => other
+      match hn : raws[js]? with
+      | some (.group nbody _) =>
+        modify fun st => { st with pendingNotes := st.pendingNotes.push nbody }
+        have hadv : sliceWeight raws (js + 1) < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        elabInlinesFrom ctx raws (js + 1) acc sb
+      | _ =>
+        have hadv : sliceWeight raws j < sliceWeight raws i :=
+          sliceWeight_lt raws h (by omega)
+        elabInlinesFrom ctx raws j acc sb
+  else if name == "centering" then
+
+    -- Between blocks the declaration centres the rest of its scope;
+    -- here, inside inline content, there is no block to centre.
+    warnOnce ctx "ctrl:centering" .W0108
+      "'\\centering' centres nothing inside an argument; content stays left-aligned" pos
+      (help := "move '\\centering' to the start of the group or environment body")
+    elabInlinesFrom ctx raws (i + 1) acc sb
+  else if let some code := reservedCtrl.lookup name then
+    warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
+    let jr := skipReservedArgs raws (i + 1) pos
+    if let some bpos := jr.2 then
+      warnUnclosed ctx s!"'\\{name}'" bpos
+    have hge : i + 1 ≤ jr.1 := skipReservedArgs_ge raws (i + 1) pos 1
+    have hadv : sliceWeight raws jr.1 < sliceWeight raws i :=
+      sliceWeight_lt raws h (by omega)
+    elabInlinesFrom ctx raws jr.1 acc sb
+  else if declCtrl.contains name || runningCtrl.contains name then
+    -- A native declaration met inside inline content is ours,
+    -- misplaced — never "unknown": its arguments address the engine,
+    -- not the sentence, so they go with the declaration. A running
+    -- declaration carries content, so skipping it is a drop (E0347);
+    -- the key/value rest is configuration (W0346).
+    if runningCtrl.contains name then
+      diag ctx .E0347 s!"'\\{name}' in the body is dropped with its content" pos
+        (help := "declare it in the preamble, before '\\begin{document}'")
+    else
+      warnOnce ctx ("ctrl:" ++ name) .W0346
+        s!"'\\{name}' is a declaration; inside inline content it is ignored" pos
+        (help := if name == "palette" || name == "tokens" then
+            s!"write '\\{name}' between paragraphs, after a blank line; there it applies \
+from where it stands"
+          else "declare it in the preamble, before '\\begin{document}'")
+    let jr := skipReservedArgs raws (i + 1) pos (maxGroups := 2)
+    if let some bpos := jr.2 then
+      warnUnclosed ctx s!"'\\{name}'" bpos
+    have hge : i + 1 ≤ jr.1 := skipReservedArgs_ge raws (i + 1) pos 2
+    have hadv : sliceWeight raws jr.1 < sliceWeight raws i :=
+      sliceWeight_lt raws h (by omega)
+    elabInlinesFrom ctx raws jr.1 acc sb
+  else if blockOnly.contains name then
+    diag ctx .E0312 s!"'\\{name}' is not allowed here" pos
+      (help := "it is a block-level command: use it between paragraphs, " ++
+        "not inside inline content or a command body")
+    elabInlinesFrom ctx raws (i + 1) acc sb
+  else
+    -- Best effort: the {...} arguments are content, and content is
+    -- never dropped for want of a command. Only the formatting is lost.
+    warnOnce ctx ("ctrl:" ++ name) .W0301
+      s!"unknown command '\\{name}'; its \{...} arguments were kept as text" pos
+      (help := "\\define \\name(...) {body} declares it")
+    let j0 := skipSpaces raws (i + 1)
+    have hj0 := skipSpaces_ge raws (i + 1)
+    -- A starred form's `*` belongs to the command, not to the text.
+    let j1 := skipStar raws j0
+    have hj1 := skipStar_ge raws j0
+    -- A leading [...] run is how the author addressed the command,
+    -- never their content: kept, it is ink nobody wrote ('[16]'
+    -- printed in front of a URL). It goes with the command, named.
+    let jr := skipOptionRuns raws j1 pos
+    have hjr : j1 ≤ jr.1 := skipOptionRuns_ge raws j1 pos
+    if jr.1 > j1 then
+      let run := (Parse.rawSrc (raws.extract j1 jr.1)).trimAscii.toString
+      diag ctx .W0341
+        s!"'{run}' went with unknown command '\\{name}'; an option run is not content" pos
+        (help := "content, not options? start the '[' on the next line")
+    if let some bpos := jr.2 then
+      warnUnclosed ctx s!"'\\{name}'" bpos
+    let j2 := skipSpaces raws jr.1
+    have hj2 := skipSpaces_ge raws jr.1
+    have hcall : sliceWeight raws j2 < sliceWeight raws i :=
+      sliceWeight_lt raws h (by omega)
+    let (acc2, sb2, ⟨j3, hj3⟩, kept, sp) ← elabUnknownArgs ctx raws j2 0 acc sb false
+    -- The control word swallowed a space after it; give back only one
+    -- that was really there — `\x{a} b` keeps its space, `\x{a}.b`
+    -- gains no ink the author never wrote.
+    let sbF := if kept > 0 && sp && j3 < raws.size then " " else sb2
+    have hadv : sliceWeight raws j3 < sliceWeight raws i :=
+      sliceWeight_lt raws h (by omega)
+    elabInlinesFrom ctx raws j3 acc2 sbF
+termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 0)
+decreasing_by all_goals knot_dec
 
 end
+
+unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
+unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
+unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
+unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
+
+/-- Bind declared parameters from the call site — a user command's, or a
+user environment's from the groups after its `\begin`. Returns the bindings
+and the index just past the consumed arguments. Shared by inline and block
+expansion so both bind identically. -/
+def takeArgs (ctx : Ctx) (params : Array Param) (name : String)
+    (raws : Array Raw) (start : Nat) (pos : Pos) :
+    EM (Array (String × Option (Array Inline)) × Nat) := do
+  let (bs, ⟨j, _⟩) ← takeArgsFrom ctx params 0 name raws start pos #[]
+  return (bs, j)
 
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String :=
