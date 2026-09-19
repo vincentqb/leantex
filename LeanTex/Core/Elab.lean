@@ -4467,7 +4467,7 @@ its declared layout" pos
   -- each is refused by name (W0356) — the silent drop was the defect
   -- class here, an a4paper request quietly shipping on letter.
   let classOpts := (classOptions.splitOn ",").map (·.trimAscii.toString)
-  if docClass == "article" then
+  if docClass == .article then
     let dflt : PageSpec := {}
     if page.width == dflt.width && page.height == dflt.height then
       let sized := classOpts.findSome? fun o =>

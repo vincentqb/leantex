@@ -339,11 +339,6 @@ warning[W0346]: '\page' is a declaration; inside inline content it is ignored
 ── W0356 (degraded) document class option refused by name; the document renders without it
 warning[W0356]: class option 'twocolumn' asks for a two-column page; the text is set in one column
 warning[W0356]: class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full
-── W0357 (config) a definition is expansion-time TeX; refused by design
-warning[W0357]: '\edef' defines by expanding at definition time; the engine has no expansion step, so the definition is skipped
-  help: \define \name(...) {body} declares typed commands
-warning[W0357]: '\def' with a delimited parameter text is a TeX scanning program; the definition is skipped
-  help: \define \name(...) {body} declares typed commands
 ── E0347 (dropped) a running head or foot declared in the body is dropped with its content
 error[E0347]: '\runninghead' in the body is dropped with its content
   help: declare it in the preamble, before '\begin{document}'
@@ -355,9 +350,6 @@ warning[W0348]: theme 'moloch' replaces the document's earlier 'alert' from '\pa
 ── W0354 (config) a caption option the engine does not honour; named and ignored
 warning[W0354]: '\captionsetup' key 'skip' is not honoured; the caption keeps its declared layout
   help: \tokens{ captionsep = ... } declares the caption gap
-── W0355 (config) a theme's slides furniture cannot draw under the class in force
-warning[W0355]: theme 'moloch' installs slides furniture (chrome, frametitle, sectionpage, standout); the article class never draws it
-  help: the palette and tokens apply either way; \documentclass{slides} draws the furniture
 ── W0349 (degraded) reference to a key no \label numbers; set as '??'
 warning[W0349]: no \label{nowhere} in the document; set as '??'
   help: declare \label{nowhere} after the numbered thing it names
@@ -371,3 +363,11 @@ warning[W0601]: cannot read image 'figures/plot.png': permission denied (error c
 ── W0602 (degraded) image format unusable; placeholder box placed
 warning[W0602]: cannot use image 'figures/plot.gif': not a PNG or JPEG file; a placeholder box holds its place
   help: PNG and JPEG embed natively: re-export the image as one
+── W0355 (config) a theme's slides furniture cannot draw under the class in force
+warning[W0355]: theme 'moloch' installs slides furniture (chrome, frametitle, sectionpage, standout); the article class never draws it
+  help: the palette and tokens apply either way; \documentclass{slides} draws the furniture
+── W0357 (config) a definition is expansion-time TeX; refused by design
+warning[W0357]: '\edef' defines by expanding at definition time; the engine has no expansion step, so the definition is skipped
+  help: \define \name(...) {body} declares typed commands
+warning[W0357]: '\def' with a delimited parameter text is a TeX scanning program; the definition is skipped
+  help: \define \name(...) {body} declares typed commands
