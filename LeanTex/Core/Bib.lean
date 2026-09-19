@@ -635,11 +635,6 @@ def andJoin (ns : List String) : String :=
     else if init.length == 1 then s!"{joinSp init} and {last}"
     else s!"{String.intercalate ", " init}, and {last}"
 
-/-- The names of an author value as the reference list prints them. -/
-def fullNames (v : String) : String :=
-  andJoin ((splitNames v).toList.map fun s =>
-    if s == "others" then "others" else text (parseName s).full)
-
 /-- The label names `\citet` prints (plainnat.bst FUNCTION
 {format.lab.names}): one author's last name; two joined with ` and `;
 more, or an elided list, take `et al.`. -/

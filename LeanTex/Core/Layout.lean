@@ -465,7 +465,7 @@ structure TextStyle where
   compounding, as in LaTeX: `\large\Large` is Large, not the product. -/
   scale : Nat := 1000
   /-- Set as small caps. Applies to the word, not the face: see
-  `smallCapRuns`. -/
+  `smallCapSynth`. -/
   smallcaps : Bool := false
   /-- Under a drawn underline; the run carries it into the set line. -/
   underline : Bool := false
