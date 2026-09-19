@@ -272,6 +272,9 @@ private def markerTextInto (acc : String) : List Inline → Option String
   -- a `content` string cannot carry the icon's accessible name, so an icon
   -- marker is inexpressible here and diagnosed (W0331), never defaulted
   | .icon _ _ :: _ => none
+  -- an anchor or a reference in a marker has no ::marker expression
+  | .label _ :: _ => none
+  | .ref _ _ _ _ :: _ => none
 
 mutual
 
@@ -303,6 +306,8 @@ def markerCssOne (decls : Array String) : Inline → Option MarkerCss
   | .step _ _ _ => none
   | .image _ _ _ => none
   | .icon _ _ => none
+  | .label _ => none
+  | .ref _ _ _ _ => none
 
 def markerCssList (decls : Array String) : List Inline → Option MarkerCss
   | [x] => markerCssOne decls x
@@ -354,7 +359,7 @@ theorem markerCssOne_text (decls : Array String) (x : Inline) (r : MarkerCss)
     exact markerCssList_text _ body.toList r h
   | .math _ _ | .formula _ _ _ | .link _ _ | .underline _ | .fill
   | .pageNumber | .pageCount | .linebreak _ | .step _ _ _ | .image _ _ _
-  | .icon _ _ =>
+  | .icon _ _ | .label _ | .ref _ _ _ _ =>
     simp [markerCssOne] at h
 
 theorem markerCssList_text (decls : Array String) (xs : List Inline)
@@ -1107,6 +1112,21 @@ height: auto"
   | .link url body =>
     acc.push (Html.elem "a" (inlineNodesInto cfg #[] body.toList)
       #[("href", url), ("style", "color: inherit")])
+  -- The anchor a cross-reference lands on: an empty span carrying the
+  -- label's id, through the typed tree and the attribute escaper (the key
+  -- is author text entering an attribute; `Ir.labelAnchor_single_token`
+  -- holds its shape).
+  | .label key =>
+    acc.push (Html.elem "span" #[] #[("id", Ir.labelAnchor key)])
+  -- A resolved reference is an in-page link showing its number; an
+  -- unresolved one shows LaTeX's own '??', already diagnosed by name
+  -- (W0349), with nothing to link to.
+  | .ref _ _ text target =>
+    match target with
+    | some a =>
+      acc.push (Html.elem "a" #[Html.text text]
+        #[("href", "#" ++ a), ("style", "color: inherit")])
+    | none => acc.push (Html.text text)
   | .underline body =>
     -- skip-ink is the browser's native form of the PDF path's invariant: the
     -- rule breaks where a descender crosses it.
@@ -1285,6 +1305,12 @@ mutual
 def blockNode (cfg : Config) (b : Block) : Node :=
   match b with
   | .para content =>
+    -- A paragraph holding only label anchors is not prose: its anchors
+    -- ship as an inline span, never a <p> whose rhythm margin would open
+    -- a blank line.
+    if !content.isEmpty && content.all (fun x => x matches .label _) then
+      Html.elem "span" (inlines cfg content)
+    else
     if hasFill content then
       let rows := splitAtBreaks content
       if rows.size == 1 then

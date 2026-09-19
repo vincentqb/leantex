@@ -145,6 +145,22 @@ structure ESt where
   and the section counter restarted — a from-here-forward flow state, the
   `\logo`/body-`\palette` scope model, never a brace-scoped flag. -/
   inAppendix : Bool := false
+  /-- The figure and table counters, stepped at each float's first
+  `\caption` in flow order, as LaTeX's `\refstepcounter` is. -/
+  figNum : Nat := 0
+  tabNum : Nat := 0
+  /-- The number of the nearest preceding numbered thing — what a `\label`
+  declared here binds to. A heading sets it for the flow after it; a
+  captioned float sets it for its own extent and restores the enclosing
+  value at its end, LaTeX's group scoping. -/
+  refTarget : Option String := none
+  /-- The label table in flow order: each key with the number it bound to.
+  The first declaration of a key wins (LaTeX's behaviour); a second is
+  W0350 at its own position. -/
+  labels : Array (String × Option String) := #[]
+  /-- Every `\ref`/`\eqref` site, for W0349 once the whole table is known:
+  a reference may point forward, so it cannot be judged where it stands. -/
+  refSites : Array (String × Pos) := #[]
 
 abbrev EM := StateM ESt
 
@@ -205,7 +221,7 @@ a warning: a milestone owns the construct) when the skipped arguments carry
 content, W0329 (config) when only layout or selection is lost. -/
 def reservedCtrl : List (String × DiagCode) :=
   [("vspace", .W0329), ("noindent", .W0329),
-   ("fontfallback", .W0329), ("figure", .W0307)]
+   ("fontfallback", .W0329), ("figure", .W0307), ("pageref", .W0307)]
 
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 def declCtrl : List String :=
@@ -1076,6 +1092,38 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             i := j + 1
           | _ =>
             diag ctx .E0304 s!"'\\{name}' needs an argument" pos
+        else if name == "label" then
+          let j := skipSpaces raws i
+          match raws[j]? with
+          | some (.group keyRaw _) =>
+            i := j + 1
+            let key := argText ctx keyRaw
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (.label key)
+            let st ← get
+            if st.labels.any (·.1 == key) then
+              diag ctx .W0350 s!"'{key}' is already a \\label'ed key; the first wins" (some pos)
+                (help := s!"one \\label\{{key}} per key: give this one its own name")
+            else
+              modify fun st => { st with labels := st.labels.push (key, st.refTarget) }
+          | _ =>
+            diag ctx .E0304 s!"'\\label' needs a \{key} group" pos
+        else if name == "ref" || name == "eqref" then
+          let j := skipSpaces raws i
+          match raws[j]? with
+          | some (.group keyRaw _) =>
+            i := j + 1
+            let key := argText ctx keyRaw
+            acc := flushText acc sb
+            sb := ""
+            -- Unresolved until the whole document's labels are known:
+            -- `resolveRefs` fills the number at the end of elaboration, so
+            -- a forward reference costs no second pass over the source.
+            acc := acc.push (.ref key (name == "eqref") "??" none)
+            modify fun st => { st with refSites := st.refSites.push (key, pos) }
+          | _ =>
+            diag ctx .E0304 s!"'\\{name}' needs a \{key} group" pos
         else if name == "paragraph" || name == "subparagraph" then
           -- The level-4 and level-5 headings are run-in in article
           -- (clsguide §2.2; classes.dtx defines both with a negative
@@ -1618,13 +1666,16 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     | 1 => (s1 + 1, 0, 0)
     | 2 => (s1, s2 + 1, 0)
     | _ => (s1, s2, s3 + 1)
-  modify fun st => { st with secNums := nums }
   let (n1, n2, n3) := nums
   let base := if st.inAppendix then alphaNum n1 else toString n1
-  return some (match level with
+  let num := match level with
     | 1 => base
     | 2 => s!"{base}.{n2}"
-    | _ => s!"{base}.{n2}.{n3}")
+    | _ => s!"{base}.{n2}.{n3}"
+  -- The heading is the numbered thing in force from here on: a \label in
+  -- the flow after it binds to this number.
+  modify fun st => { st with secNums := nums, refTarget := some num }
+  return some num
 
 /-- A declaration standing in a group applies to the rest of the group:
 `\Huge`, `\bfseries`, `\centering`, a palette name used bare. -/
@@ -1692,14 +1743,17 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
     return none
   let mut inlines ← elabInlines ctx cur
   -- A spliced body can leave a leading space no raw-level skip saw; a
-  -- paragraph never opens with a space glue.
-  if let some (Inline.text s) := inlines[0]? then
+  -- paragraph never opens with a space glue. Leading label anchors ship
+  -- no ink, so the paragraph's first text is judged past them.
+  let firstText := (inlines.toList.findIdx? fun x =>
+    !(x matches Inline.label _)).getD 0
+  if let some (Inline.text s) := inlines[firstText]? then
     if s.startsWith " " then
       let t := String.ofList (s.toList.dropWhile (· == ' '))
       if t.isEmpty then
-        inlines := inlines.extract 1 inlines.size
+        inlines := inlines.extract 0 firstText ++ inlines.extract (firstText + 1) inlines.size
       else
-        inlines := inlines.modify 0 fun _ => .text t
+        inlines := inlines.modify firstText fun _ => .text t
   -- A forced break at the very end says what the paragraph end already
   -- says; kept, it is an empty line in the PDF and an empty row in HTML.
   repeat
@@ -2722,6 +2776,10 @@ has nowhere for a float to float" pos
             let mut rest : Array Raw := #[]
             let mut caption : Array Inline := #[]
             let mut capAbove := false
+            -- The float's number is scoped to its own extent: a \label
+            -- inside binds to it, one after the \end binds to whatever
+            -- enclosed the float (LaTeX's group scoping).
+            let savedTarget := (← get).refTarget
             let mut j := k
             for _ in [k:body.size] do
               if h' : j < body.size then
@@ -2735,6 +2793,18 @@ has nowhere for a float to float" pos
                     unless caption.isEmpty do
                       diag ctx .W0311 s!"this '\\caption' replaces the {n}'s earlier caption"
                         (some cpos) (help := "the last one wins; remove the other '\\caption'")
+                    if caption.isEmpty then
+                      -- The first \caption steps the float's counter, as
+                      -- LaTeX's \refstepcounter does; labels anywhere in
+                      -- the float bind to this number.
+                      let st ← get
+                      let num := if kind == Ir.FloatKind.table then st.tabNum + 1
+                        else st.figNum + 1
+                      modify fun st =>
+                        if kind == Ir.FloatKind.table then
+                          { st with tabNum := num, refTarget := some (toString num) }
+                        else
+                          { st with figNum := num, refTarget := some (toString num) }
                     caption ← elabInlines ctx t
                     capAbove := innerBlocks.isEmpty && cols.isEmpty
                       && rest.all isSpaceOrPar
@@ -2834,6 +2904,7 @@ text width; the box shares the leftover" spos
             unless caption.isEmpty do
               inner := Ir.setAltBlocks (Ir.plainText caption) inner
             blocks := blocks.push (.float kind none capAbove inner caption)
+            modify fun st => { st with refTarget := savedTarget }
           else if n == "columns" then
             -- `[T]`-and-friends alignment options are ignored with a note:
             -- columns are top-aligned (PLAN, M5). A column's width is its
@@ -4112,6 +4183,28 @@ its declared layout" pos
   -- number in document order (`numberFloats_exact` is the fact `\ref`
   -- will resolve against), once, before any backend reads the body.
   let blocks := Ir.numberFloats (← elabBlocks ctx body)
+  -- Cross-references resolve here, once, against the whole document's
+  -- labels: `Ir.resolveRefs` is a pure pass over the IR, so no backend
+  -- re-scans for labels and a forward reference costs nothing. The
+  -- diagnostics are judged from the recorded sites — a reference cannot be
+  -- judged where it stands, because its label may follow it.
+  let stRefs ← get
+  let blocks := if stRefs.refSites.isEmpty then blocks
+    else Ir.resolveRefs stRefs.labels blocks
+  let mut warnedRefs : Array String := #[]
+  for (key, rpos) in stRefs.refSites do
+    unless warnedRefs.contains key do
+      match stRefs.labels.find? (·.1 == key) with
+      | some (_, some _) => pure ()
+      | some (_, none) =>
+        warnedRefs := warnedRefs.push key
+        diag ctx .W0349 s!"'{key}' is \\label'ed where nothing is numbered; set as '??'"
+          (some rpos)
+          (help := "move the \\label after a numbered heading, a captioned float, or into an equation")
+      | none =>
+        warnedRefs := warnedRefs.push key
+        diag ctx .W0349 s!"no \\label\{{key}} in the document; set as '??'" (some rpos)
+          (help := s!"declare \\label\{{key}} after the numbered thing it names")
   -- Body declarations do NOT displace the document state: `doc.palette`
   -- and `doc.tokens` stay the preamble+theme state — epoch 0 — and each
   -- body declaration rides its own `.setPalette`/`.setTokens` block, so a

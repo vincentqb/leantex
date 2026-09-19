@@ -542,6 +542,9 @@ private def flattenOne (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
     (x : Inline) : FlattenSt :=
   match x with
   | .text s => pushText st sty s
+  -- an anchor ships no ink; a resolved reference ships its number
+  | .label _ => st
+  | .ref _ _ text _ => pushText st sty text
   | .icon c _ => { st with toks := st.toks.push (.icon sty c) }
   | .image src spec _ => { st with toks := st.toks.push (.img src spec) }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra) }
@@ -789,6 +792,10 @@ private def leafScalarsOne (icons math : Array Char) :
     Ir.Inline → Array Char × Array Char
   | .formula _ _ body => (icons, Math.MList.scalarsList math body)
   | .icon c _ => (icons.push c, math)
+  -- an anchor ships no glyphs; a reference's number is plain text, which
+  -- `textAndMath` already carries through `plainText`
+  | .label _ => (icons, math)
+  | .ref _ _ _ _ => (icons, math)
   | .styled _ body => leafScalarsList icons math body.toList
   | .colored _ _ body => leafScalarsList icons math body.toList
   | .role _ body => leafScalarsList icons math body.toList
@@ -2955,7 +2962,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     (blk : Block) (indent : Sp) : Acc :=
   match blk with
   | .para content =>
-    collectPara a pats fs content indent false a.geom.fontSize
+    -- A paragraph holding only label anchors ships no ink: no line and no
+    -- gap, or a \label on its own source line would open a blank line.
+    if !content.isEmpty && content.all (fun x => x matches .label _) then a
+    else collectPara a pats fs content indent false a.geom.fontSize
   | .section level _ num title =>
     if level == 0 then
       -- The document title, a heading at level 0: display type at the
@@ -3463,6 +3473,8 @@ def substPageOne (n total : Nat) : Inline → Inline
   | .formula d src body => .formula d src body
   | .image src size alt => .image src size alt
   | .icon s l => .icon s l
+  | .label k => .label k
+  | .ref k p t tg => .ref k p t tg
   | .fill => .fill
   | .linebreak e => .linebreak e
 
@@ -3502,6 +3514,7 @@ theorem substPageOne_id (n total : Nat) (x : Inline)
     rw [Ir.hasPhysicalPageOne] at h
     rw [substPageOne, substPageList_id n total body.toList h]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .fill
+  | .label _ | .ref _ _ _ _
   | .linebreak _ => rw [substPageOne]
 
 theorem substPageList_id (n total : Nat) (xs : List Inline)

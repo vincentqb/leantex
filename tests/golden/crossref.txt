@@ -1,0 +1,27 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section 1 number "1"
+  text "Alpha"
+para
+  label "sec:alpha"
+  text "Opening text for the first numbered heading."
+section 1 number "2"
+  text "Beta"
+para
+  label "sec:beta"
+  text "Section "
+  ref "sec:alpha" shows "1" -> #sec:alpha
+  text " opened; this one is "
+  eqref "sec:beta" shows "(2)" -> #sec:beta
+  text ". A key nothing declares stays honest: see "
+  ref "sec:gamma" shows "??"
+  text "."
+section 1 number "A"
+  text "Extras"
+para
+  label "sec:extras"
+  text "Appendix "
+  ref "sec:extras" shows "A" -> #sec:extras
+  text " letters itself."
+-- diagnostics
+warning[W0349] 10:42 no \label{sec:gamma} in the document; set as '??' | help: declare \label{sec:gamma} after the numbered thing it names

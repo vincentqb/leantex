@@ -341,6 +341,12 @@ warning[W0348]: theme 'moloch' replaces the document's earlier 'alert' from '\pa
 ── W0354 (config) a caption option the engine does not honour; named and ignored
 warning[W0354]: '\captionsetup' key 'skip' is not honoured; the caption keeps its declared layout
   help: \tokens{ captionsep = ... } declares the caption gap
+── W0349 (degraded) reference to a key no \label numbers; set as '??'
+warning[W0349]: no \label{nowhere} in the document; set as '??'
+  help: declare \label{nowhere} after the numbered thing it names
+── W0350 (config) a key is \label'ed more than once; the first wins
+warning[W0350]: 'twice' is already a \label'ed key; the first wins
+  help: one \label{twice} per key: give this one its own name
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

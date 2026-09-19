@@ -46,6 +46,11 @@ private def inlineInto (acc : String) : Inline → String
     -- bound first: the append is one-off, not a walk (the cost gate's shape)
     let escaped := escapeText label
     acc ++ escaped
+  -- an anchor has no prose; a reference is worth what it resolved to
+  | .label _ => acc
+  | .ref _ _ text _ =>
+    let escaped := escapeText text
+    acc ++ escaped
   | .styled st body =>
     let inner := inlinesInto "" body.toList
     match st with

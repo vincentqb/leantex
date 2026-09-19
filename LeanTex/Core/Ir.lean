@@ -857,6 +857,19 @@ inductive Inline where
   /-- `\href{url}{body}`: a hyperlink. Becomes an `<a>` in HTML and a Link
   annotation in PDF, so the URL rides the IR rather than a backend. -/
   | link (url : String) (body : Array Inline)
+  /-- `\label{key}`: the anchor a cross-reference lands on. Elaboration
+  binds it to the nearest preceding numbered thing in flow order (a
+  heading, a captioned float, a numbered equation) and records the binding
+  in the label table; the node itself ships no ink — HTML emits an empty
+  anchor element whose id is `labelAnchor key`, every other consumer passes
+  it through. -/
+  | label (key : String)
+  /-- `\ref{key}` / `\eqref{key}`: a cross-reference. Elaboration emits it
+  unresolved — `text = "??"`, LaTeX's own spelling, `target = none` — and
+  `resolveRefs` fills the number and the anchor once the whole document's
+  labels are known, so backends only render: PDF sets `text`, HTML links it
+  to `target`. `paren` is `\eqref`'s parentheses, applied at resolution. -/
+  | ref (key : String) (paren : Bool) (text : String) (target : Option String)
   /-- `\underline{...}`: a drawn decoration, not a face change, so it is not a
   `Style`. Both backends interrupt the rule where a descender crosses it. -/
   | underline (body : Array Inline)
@@ -2260,6 +2273,8 @@ def fillOne (content : Array Inline) : Inline → Inline
   | .formula d src body => .formula d src body
   | .image src size alt => .image src size alt
   | .icon s l => .icon s l
+  | .label k => .label k
+  | .ref k p t tg => .ref k p t tg
   | .fill => .fill
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
@@ -2372,6 +2387,9 @@ def plainTextOne (x : Inline) : String :=
   | .image _ _ _ => ""
   -- an icon is worth its text alternative: what the markdown twin renders
   | .icon _ label => label
+  -- an anchor ships no ink; a reference is worth what it resolved to
+  | .label _ => ""
+  | .ref _ _ text _ => text
   | .linebreak _ => " "
 
 end
@@ -2498,6 +2516,13 @@ def dumpInline (ind : String) (x : Inline) : String :=
   | .step n last body =>
     s!"{ind}{dumpStepRange n last}\n" ++ dumpInlines (ind ++ "  ") body
   | .fill => s!"{ind}fill\n"
+  | .label key => s!"{ind}label {key.quote}\n"
+  | .ref key paren text target =>
+    let form := if paren then "eqref" else "ref"
+    let tgt := match target with
+      | some a => s!" -> #{a}"
+      | none => ""
+    s!"{ind}{form} {key.quote} shows {text.quote}{tgt}\n"
   | .pageNumber => s!"{ind}pagenumber\n"
   | .pageCount => s!"{ind}pagecount\n"
   | .image src size alt =>
@@ -2886,6 +2911,7 @@ def maxStepInline : Inline → Nat
   | .underline body => maxStepInlineList body.toList
   | .step n last body => max (max n (last.getD n)) (maxStepInlineList body.toList)
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _
   | .fill | .pageNumber | .pageCount | .linebreak _ => 1
 
 end
@@ -3016,6 +3042,8 @@ def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → Inline
   | .formula d src body => .formula d src body
   | .image src size alt => .image src size alt
   | .icon s l => .icon s l
+  | .label k => .label k
+  | .ref k p t tg => .ref k p t tg
   | .fill => .fill
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
@@ -3292,6 +3320,8 @@ def hasPhysicalPageOne : Inline → Bool
   | .link _ body => hasPhysicalPageList body.toList
   | .underline body => hasPhysicalPageList body.toList
   | .step _ _ body => hasPhysicalPageList body.toList
+  | .label _ => false
+  | .ref _ _ _ _ => false
   | .text _ => false
   | .icon _ _ => false
   | .math _ _ => false
@@ -3456,6 +3486,7 @@ theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : Inline) :
     -- backends' hands); its census is its source, untouched on both sides
     rfl
   | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _
+  | .label _ | .ref _ _ _ _
   | .icon _ _ =>
     rfl
 
@@ -4572,6 +4603,230 @@ def setAltTableCells (alt : String) (out : Array (Array Inline)) :
   | cell :: rest => setAltTableCells alt (out.push (setAltInlines alt cell)) rest
 
 end
+
+/-- One character of a label's anchor: word characters and the punctuation
+label keys conventionally carry (`fig:scm`, `eq.1`, `a-b`, `x_y`) survive
+verbatim; anything else — whitespace included — folds to a hyphen. -/
+def labelAnchorChar (c : Char) : Char :=
+  if c.isAlpha || c.isDigit || c == ':' || c == '.' || c == '-' || c == '_' then c
+  else '-'
+
+/-- The id a `\label` key takes in the HTML page and a resolved reference
+targets: the key sanitised character-wise — one resolving site for both
+ends, so a link and its anchor cannot disagree. An empty key still yields
+an id, HTML §3.2.6's non-emptiness. Two distinct keys can fold to one
+anchor only when they differ in folded characters, which the key
+conventions above never use. -/
+def labelAnchor (key : String) : String :=
+  match key.toList.map labelAnchorChar with
+  | [] => "label"
+  | l => String.ofList l
+
+/-- The sanitiser never lets a character through that the kept set refuses:
+whatever the key spelled, the anchor's characters are word characters, the
+kept punctuation, or the fold hyphen — never `bad`. -/
+theorem labelAnchorChar_not (c bad : Char)
+    (hbad : (bad.isAlpha || bad.isDigit || bad == ':' || bad == '.' ||
+      bad == '-' || bad == '_') = false) :
+    labelAnchorChar c ≠ bad := by
+  unfold labelAnchorChar
+  split
+  · next h =>
+    intro heq
+    subst heq
+    rw [h] at hbad
+    cases hbad
+  · intro heq
+    rw [← heq] at hbad
+    simp at hbad
+
+/-- The label key is author text entering an `id` attribute and an `href`,
+so it owes the same statement `roleClass_single_token` makes for authored
+class names: no character of an anchor is ASCII whitespace (HTML §3.2.6's
+id contract) or a quote (the attribute-breakout characters `escapeAttr`
+kills). Here the statement needs no alphabet hypothesis — the sanitiser is
+total over whatever the document spelled. -/
+theorem labelAnchor_single_token (key : String) :
+    ((labelAnchor key).toList.all fun c =>
+      !(c == ' ' || c == '\t' || c == '\n' || c == '\r' ||
+        c == '"' || c == '\'')) = true := by
+  unfold labelAnchor
+  split
+  · decide
+  · simp only [String.toList_ofList, List.all_eq_true, List.mem_map]
+    rintro c ⟨a, _, rfl⟩
+    have h1 := labelAnchorChar_not a ' ' (by decide)
+    have h2 := labelAnchorChar_not a '\t' (by decide)
+    have h3 := labelAnchorChar_not a '\n' (by decide)
+    have h4 := labelAnchorChar_not a '\r' (by decide)
+    have h5 := labelAnchorChar_not a '"' (by decide)
+    have h6 := labelAnchorChar_not a '\'' (by decide)
+    simp [h1, h2, h3, h4, h5, h6]
+
+/-- The label table resolution spends: each key with the number its
+`\label` bound to in flow order (`none`: the label stood where nothing
+numbers). Elaboration builds it — the first declaration of a key wins,
+W0350 names the rest — and `resolveRefs` is the single pass over the IR
+that resolves every reference against it, so no backend re-scans for
+labels. -/
+abbrev RefTable := Array (String × Option String)
+
+/-- One reference against the table. A key bound to a number takes exactly
+that number — parenthesised for `\eqref` — and the label's anchor; a key
+the table cannot number keeps LaTeX's own `??` and no target (the
+elaborator has already named it, W0349). -/
+def resolveOneRef (table : RefTable) (key : String) (paren : Bool) : Inline :=
+  match table.find? (·.1 == key) with
+  | some (_, some n) =>
+    .ref key paren (if paren then "(" ++ n ++ ")" else n) (some (labelAnchor key))
+  | _ => .ref key paren "??" none
+
+mutual
+
+/-- Resolution over inline content: every `.ref` is rewritten from the
+table, everything else keeps its shape and is walked for the references
+inside it. -/
+-- conserves: none — resolution rewrites a ref's placeholder text to its
+-- number, which is the pass's whole point; `resolveOneRef_exact` is its
+-- statement.
+def resolveRefInlines (table : RefTable) (xs : Array Inline) : Array Inline :=
+  resolveRefInlineList table #[] xs.toList
+
+def resolveRefInlineList (table : RefTable) (out : Array Inline) :
+    List Inline → Array Inline
+  | [] => out
+  | x :: rest => resolveRefInlineList table (out.push (resolveRefInline table x)) rest
+
+def resolveRefInline (table : RefTable) : Inline → Inline
+  | .ref key paren _ _ => resolveOneRef table key paren
+  | .styled st body => .styled st (resolveRefInlineList table #[] body.toList)
+  | .colored c n body => .colored c n (resolveRefInlineList table #[] body.toList)
+  | .role n body => .role n (resolveRefInlineList table #[] body.toList)
+  | .link u body => .link u (resolveRefInlineList table #[] body.toList)
+  | .underline body => .underline (resolveRefInlineList table #[] body.toList)
+  | .step n l body => .step n l (resolveRefInlineList table #[] body.toList)
+  | .text s => .text s
+  | .math d src => .math d src
+  | .formula d src body => .formula d src body
+  | .image src size alt => .image src size alt
+  | .icon s l => .icon s l
+  | .label k => .label k
+  | .fill => .fill
+  | .pageNumber => .pageNumber
+  | .pageCount => .pageCount
+  | .linebreak e => .linebreak e
+
+end
+
+mutual
+
+-- conserves: none — the block face of resolveRefInlines, same reason.
+def resolveRefs (table : RefTable) (xs : Array Block) : Array Block :=
+  resolveRefBlockList table #[] xs.toList
+
+def resolveRefBlockList (table : RefTable) (out : Array Block) :
+    List Block → Array Block
+  | [] => out
+  | b :: rest => resolveRefBlockList table (out.push (resolveRefBlock table b)) rest
+
+def resolveRefBlock (table : RefTable) : Block → Block
+  | .para content => .para (resolveRefInlines table content)
+  | .section l st n title => .section l st n (resolveRefInlines table title)
+  | .list ordered items => .list ordered (resolveRefItems table #[] items.toList)
+  | .center body => .center (resolveRefBlockList table #[] body.toList)
+  | .quote body => .quote (resolveRefBlockList table #[] body.toList)
+  | .abstract body => .abstract (resolveRefBlockList table #[] body.toList)
+  | .spaced g body => .spaced g (resolveRefBlockList table #[] body.toList)
+  | .role n body => .role n (resolveRefBlockList table #[] body.toList)
+  | .columns cols => .columns (resolveRefColumns table #[] cols.toList)
+  | .step n l body => .step n l (resolveRefBlockList table #[] body.toList)
+  | .only targets body => .only targets (resolveRefBlockList table #[] body.toList)
+  | .nav spec body => .nav spec (resolveRefBlockList table #[] body.toList)
+  | .note body => .note (resolveRefBlockList table #[] body.toList)
+  | .frame title st v body =>
+    .frame (resolveRefInlines table title) st v (resolveRefBlockList table #[] body.toList)
+  | .float k num ca body caption =>
+    .float k num ca (resolveRefBlockList table #[] body.toList)
+      (resolveRefInlines table caption)
+  | .table c pl pr rows rules =>
+    .table c pl pr (resolveRefTableRows table #[] rows.toList) rules
+  | .verbatim c s => .verbatim c s
+  | .framefoot c => .framefoot c
+  | .setPalette pal => .setPalette pal
+  | .setTokens tk => .setTokens tk
+  | .pagebreak => .pagebreak
+  | .logo c => .logo c
+  | .rule c n th => .rule c n th
+  | .picture pic => .picture pic
+
+def resolveRefItems (table : RefTable) (out : Array (Array Block)) :
+    List (Array Block) → Array (Array Block)
+  | [] => out
+  | item :: rest =>
+    resolveRefItems table (out.push (resolveRefBlockList table #[] item.toList)) rest
+
+def resolveRefColumns (table : RefTable) (out : Array (Option Nat × Array Block)) :
+    List (Option Nat × Array Block) → Array (Option Nat × Array Block)
+  | [] => out
+  | (w, body) :: rest =>
+    resolveRefColumns table (out.push (w, resolveRefBlockList table #[] body.toList)) rest
+
+def resolveRefTableRows (table : RefTable) (out : Array (Array (Array Inline))) :
+    List (Array (Array Inline)) → Array (Array (Array Inline))
+  | [] => out
+  | row :: rest =>
+    resolveRefTableRows table (out.push (resolveRefTableCells table #[] row.toList)) rest
+
+def resolveRefTableCells (table : RefTable) (out : Array (Array Inline)) :
+    List (Array Inline) → Array (Array Inline)
+  | [] => out
+  | cell :: rest =>
+    resolveRefTableCells table (out.push (resolveRefInlines table cell)) rest
+
+end
+
+/-- References resolve to what they name: when the table binds `key` to
+number `n` — elaboration binds a key declared exactly once to the numbered
+node in force where its `\label` stood — the resolved reference shows
+exactly `n` (parenthesised for `\eqref`) and targets exactly that label's
+anchor. The `\ref` and the `\label` cannot disagree, because both read
+this one entry. -/
+theorem resolveOneRef_exact (table : RefTable) (key : String) (paren : Bool)
+    (n : String) (h : ∃ e ∈ table, e.1 = key ∧ e.2 = some n)
+    (huniq : ∀ e ∈ table, e.1 = key → e.2 = some n) :
+    resolveOneRef table key paren =
+      .ref key paren (if paren then "(" ++ n ++ ")" else n)
+        (some (labelAnchor key)) := by
+  unfold resolveOneRef
+  obtain ⟨e, hmem, hkey, hval⟩ := h
+  have hfind : ∃ f, table.find? (·.1 == key) = some f := by
+    have : (table.find? (·.1 == key)).isSome := by
+      rw [Array.find?_isSome]
+      exact ⟨e, hmem, by simp [hkey]⟩
+    exact Option.isSome_iff_exists.mp this
+  obtain ⟨f, hf⟩ := hfind
+  have hfmem := Array.mem_of_find?_eq_some hf
+  have hfkey : f.1 = key := by
+    have := Array.find?_some hf
+    simpa using this
+  have hfval : f.2 = some n := huniq f hfmem hfkey
+  obtain ⟨fk, fv⟩ := f
+  simp only at hfval
+  subst hfval
+  rw [hf]
+
+/-- An unreferencable key resolves to LaTeX's own `??`, never silently to
+a number: the reader sees that something stands unresolved, and W0349 has
+already named the key. -/
+theorem resolveOneRef_missing (table : RefTable) (key : String) (paren : Bool)
+    (h : ∀ e ∈ table, e.1 ≠ key) :
+    resolveOneRef table key paren = .ref key paren "??" none := by
+  unfold resolveOneRef
+  have hfind : table.find? (·.1 == key) = none := by
+    rw [Array.find?_eq_none]
+    intro e hmem
+    simp [h e hmem]
+  rw [hfind]
 
 def dumpDiag (d : Diag) : String :=
   let where' := match d.span with

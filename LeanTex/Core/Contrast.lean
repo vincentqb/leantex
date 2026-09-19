@@ -273,10 +273,13 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
         acc.use cx nm c
       else acc
     | none => acc
-  | .math _ _ | .formula _ _ _ | .pageNumber | .pageCount =>
+  -- a resolved reference is ink in the current colour, like a number
+  | .math _ _ | .formula _ _ _ | .pageNumber | .pageCount | .ref _ _ _ _ =>
     match cx.cur with
     | some (nm, c) => acc.use cx nm c
     | none => acc
+  -- an anchor ships no ink
+  | .label _ => acc
   | .styled st body => usesInlines (cx.style st) acc body.toList
   | .colored c nm body => usesInlines { cx with cur := some (nm, c) } acc body.toList
   -- a role names its content; the ink inside keeps the current colour
