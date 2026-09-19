@@ -165,7 +165,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0013 => #[DriverDiag.allowUnfired "E0333"]
   | .W0014 => dvE "\\begin{align*}a &= b \\\\ c\\end{align*}"
   | .W0015 => dvE "\\begin{align}a &= b\\end{align}"
-  | .W0101 => dvE (dvDoc "\\usepackage[headsep=1in]{geometry}\n" "x")
+  | .W0101 => dvE (dvDoc "\\usepackage[voffset=1in]{geometry}\n" "x")
   | .W0102 => dvE (dvDoc "\\definecolor{c}{hsb}{0.5,0.5,0.5}\n" "x")
   | .W0103 => dvE (dvDoc "\\usepackage{pgfplots}\n" "x")
   | .W0104 => dvE (dvDoc (String.intercalate "\n"

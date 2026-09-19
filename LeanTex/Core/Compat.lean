@@ -716,7 +716,14 @@ private def signature (spec : String) : String := Id.run do
 /-- `\usepackage[opts]{geometry}`, `\geometry{...}`, `\newgeometry{...}`
 → `\page{...}`. `textwidth`/`textheight` pass through to the `\page` keys
 of the same names (geometry manual §5.2: they size the body; the engine
-centres it — geometry's own oneside `hmarginratio` 1:1). -/
+centres it — geometry's own oneside `hmarginratio` 1:1). `headsep` and
+`footskip` pass through too, carrying their LaTeX baseline semantics to
+the one correction site (`Layout.furnGapOfSep`); `headheight` is satisfied
+by construction — the head's band reserves its line's whole ink
+(`Layout.bodyTop_clears_head`), which is what a declared `headheight`
+exists to guarantee. The one-sided margins `top`/`bottom` and
+`left`/`right` map when the pair agrees (the engine's page model has one
+margin per axis) and are dropped named when it does not. -/
 private def geometry (opts : String) (pos : Pos)
     (spelling : String := "\\usepackage{geometry}") : M (Array Raw) := do
   let mut keys : Array String := #[]
@@ -739,10 +746,12 @@ private def geometry (opts : String) (pos : Pos)
       -- the page (geometry manual §5.2); \page speaks in page dimensions.
       let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
       if ["margin", "vmargin", "hmargin", "width", "height",
-          "textwidth", "textheight"].contains k then
+          "textwidth", "textheight", "headsep", "footskip"].contains k then
         keys := keys.push s!"{k} = {lengthOfTeX v}"
+      else if k == "headheight" then
+        pure ()
       else if ["top", "bottom", "left", "right"].contains k then
-        sides := sides.push (k, v)
+        sides := sides.push (k, lengthOfTeX v)
       else dropped := dropped.push k
     | [] => pure ()
   -- geometry's per-side margins, folded pairwise: an equal pair is the
@@ -754,7 +763,7 @@ private def geometry (opts : String) (pos : Pos)
   for (a, b, key) in [("top", "bottom", "vmargin"), ("left", "right", "hmargin")] do
     match side a, side b with
     | some va, some vb =>
-      if va == vb then keys := keys.push s!"{key} = {lengthOfTeX va}"
+      if va == vb then keys := keys.push s!"{key} = {va}"
       else dropped := dropped ++ #[a, b]
     | some _, none => dropped := dropped.push a
     | none, some _ => dropped := dropped.push b

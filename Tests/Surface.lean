@@ -330,11 +330,26 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (geoDoc, geoDs) := elabStr (pre "\\usepackage[letterpaper,vmargin=0.5in,hmargin=0.75in,headsep=1in]{geometry}")
   t "compat geometry becomes page" (geoDs.all (·.severity != .error) &&
     geoDoc.page.vmargin == Dim.inch 1 / 2 && geoDoc.page.hmargin == Dim.inch 3 / 4)
+  t "compat geometry carries headsep to the page keys"
+    (geoDoc.page.headsep == some (Dim.inch 1) &&
+      geoDs.all (·.code != "W0101"))
+  -- The one-sided margins map as a pair or are dropped named; footskip
+  -- rides through; headheight is satisfied by construction (the head's
+  -- band reserves its line's whole ink) and goes quietly.
+  let (pairDoc, pairDs) := elabStr
+    (pre "\\usepackage[top=0.5in,bottom=0.5in,left=0.5in,right=0.5in,footskip=0.2in,headheight=12pt]{geometry}")
+  t "compat geometry pairs equal one-sided margins"
+    (pairDoc.page.vmargin == Dim.inch 1 / 2 && pairDoc.page.hmargin == Dim.inch 1 / 2 &&
+     pairDoc.page.footskip == some (Dim.inch 1 / 5) &&
+     pairDs.all (·.code != "W0101"))
+  t "compat geometry drops an unequal pair named"
+    ((elabStr (pre "\\usepackage[top=1in,bottom=0.5in]{geometry}")).2.any fun d =>
+      d.code == "W0101" && hasStr d.message "top" && hasStr d.message "bottom")
   -- Dropped geometry keys change the page: a config loss, a warning, never
   -- a note buried behind -v.
   t "compat geometry names what it dropped as a warning"
-    ((elabStr (pre "\\usepackage[headsep=1in]{geometry}")).2.any fun d =>
-      d.code == "W0101" && d.severity == .warning && d.message.endsWith "headsep")
+    ((elabStr (pre "\\usepackage[voffset=1in]{geometry}")).2.any fun d =>
+      d.code == "W0101" && d.severity == .warning && d.message.endsWith "voffset")
   t "compat known package is a note, unknown a warning"
     ((elabStr (pre "\\usepackage{hyperref}")).2.all (·.severity == .note) &&
      warnCodes (pre "\\usepackage{pgfplots}") == ["W0103"])
