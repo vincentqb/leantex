@@ -53,7 +53,7 @@ error[E0320]: 'oops' in '\page' has no value
 error[E0321]: 'scale' needs a number, got "big"
 ── E0322 (dropped) unknown key in a declaration block
 error[E0322]: '\page' has no key 'zoom'
-  help: known keys: size, width, height, margin, vmargin, hmargin, textwidth, textheight, leading, parskip, measure, fontsize, bleed, hyphenate, justify
+  help: known keys: size, width, height, margin, vmargin, hmargin, textwidth, textheight, leading, parskip, measure, fontsize, bleed, hyphenate, justify, numbers
 ── E0323 (dropped) declaration key value has the wrong type
 error[E0323]: 'vmargin' in '\page' expects a dimension, got a string
 ── E0324 (dropped) unknown page size name
@@ -155,7 +155,7 @@ note[N0103]: '\section[short]' short title is unused: nothing consumes it yet
 note[N0114]: '\ifdefined\shiny': '\shiny' is not defined, so only the '\else' branch is kept
 note[N0114]: '\ifdefined\shiny': '\shiny' is defined, so the branch before '\else' is kept
 ── N0200 (info) page set short: its skips gave their shrink
-note[N0200]: page 1 set 2pt short: its skips gave 16% of their 16pt of shrink
+note[N0200]: page 1 set 4pt short: its skips gave 26% of their 16pt of shrink
 ── W0001 (config) content after \end{document} is ignored
 warning[W0001]: content after '\end{document}' is ignored
 ── W0003 (degraded) no math face available; math set as plain text

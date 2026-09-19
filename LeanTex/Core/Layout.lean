@@ -961,6 +961,11 @@ private def docScalarAcc (doc : Doc) : ScalarAcc := Id.run do
     acc := textAndMath acc h |> fun a => { a with texts := a.texts.push "0123456789" }
   if let some f := doc.foot then
     acc := textAndMath acc f |> fun a => { a with texts := a.texts.push "0123456789" }
+  else if doc.pageNumbersOn then
+    -- The class-default plain foot ships digits nobody declared: the
+    -- precompute must cover them exactly as it covers a declared
+    -- `\pagenumber`'s.
+    acc := { acc with texts := acc.texts.push "0123456789" }
   for (_, st) in doc.styles.entries do
     if let some tpl := st.font then
       acc := { acc with texts := acc.texts.push (Ir.plainText tpl) }
@@ -4320,6 +4325,14 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .framefoot xs => !xs.isEmpty
     | _ => false
   let chromeActive := footAllowed && (doc.chrome.hasFooter || hasFrameFoot)
+  -- The flow default article carries: plain's centred page number in the
+  -- foot (`ClassRecord.pageNumbers`; article.cls initialises
+  -- `\pagestyle{plain}`, classes.dtx), unless a `\runningfoot` already
+  -- owns the band or the document declared `numbers = off`. The number
+  -- rides the same furniture emitter every declared foot does — `runLine`
+  -- over `substPage` — so it is one more content in an existing path,
+  -- never a second footer model.
+  let plainFoot := doc.foot.isNone && doc.pageNumbersOn
   -- The footer's size is a step of the scale and its colour a palette key,
   -- never a literal: the theme declares both.
   let footSize := geom.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
@@ -4327,7 +4340,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- can land in it (`bodyBottom_clears_footer` is the sufficiency proof).
   -- With the default margins the half margin holds the foot line whole and
   -- the band is zero: an undeclared page is unchanged.
-  let geom := if doc.foot.isSome then
+  let geom := if doc.foot.isSome || plainFoot then
       { geom with footBand := footBandFor geom.vmargin (scale font.ascent) }
     else if chromeActive then
       { geom with footBand :=
@@ -4612,6 +4625,16 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     if footOn then
       if let some content := doc.foot then
         let (l?, ds, c) := runLine content (i + 1) footY geom.fontSize {} cache
+        diags := diags ++ ds
+        cache := c
+        if let some l := l? then lines := lines.push { l with furniture := true }
+      else if plainFoot then
+        -- plain's foot, by content: the page number between two fills is
+        -- the engine's spelling of `\hfil\thepage\hfil` (ltpage.dtx,
+        -- `\ps@plain`), centred by the same setter every declared foot
+        -- runs through.
+        let (l?, ds, c) := runLine #[.fill, .pageNumber, .fill] (i + 1) footY
+          geom.fontSize {} cache
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := lines.push { l with furniture := true }

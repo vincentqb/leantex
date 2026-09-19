@@ -247,7 +247,7 @@ def runningCtrl : List String := ["runninghead", "runningfoot"]
 def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin",
    "textwidth", "textheight", "leading", "parskip",
-   "measure", "fontsize", "bleed", "hyphenate", "justify"]
+   "measure", "fontsize", "bleed", "hyphenate", "justify", "numbers"]
 
 /-- The `\page` keys that declare the page's physical extent. Exactly these
 claim the page as declared (`sawPage` in `elabDoc`), keeping every value
@@ -4891,6 +4891,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "off" | "false" => spec := { spec with justify := some false }
       | _ =>
         evs := say evs .E0323 s!"'justify' in '\\page' expects on or off, got '{v}'"
+    | "numbers", .ident v =>
+      match v with
+      | "on" | "true" => spec := { spec with numbers := some true }
+      | "off" | "false" => spec := { spec with numbers := some false }
+      | _ =>
+        evs := say evs .E0323 s!"'numbers' in '\\page' expects on or off, got '{v}'"
     | key, v =>
       if key == "header" || key == "footer" then
         -- The feature exists, just not as a page key: running content is
@@ -4901,7 +4907,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       else if pageKeys.contains key then
         let expected := if key == "size" then "a page size name"
           else if key == "measure" then "'checked' or 'free'"
-          else if key == "hyphenate" || key == "justify" then "on or off"
+          else if key == "hyphenate" || key == "justify" || key == "numbers" then "on or off"
           else "a dimension"
         evs := evs.push (.say (Decl.wrongType ctx.file "page" key expected v pos))
       else

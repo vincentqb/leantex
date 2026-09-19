@@ -857,7 +857,10 @@ def pdfStreamChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
               cur := ""
     return (nums, emptyArrays)
   let wide : Layout.Geom := { pageW := Dim.pt 1200, hmargin := Dim.pt 20 }
-  let (gapDoc, _) := Elab.run "t" "a\\hfill b\n\n\\underline{x}"
+  -- numbers off: the claim is about the body's pen movement, and the plain
+  -- page number would add its own Tm.
+  let (gapDoc0, _) := Elab.run "t" "a\\hfill b\n\n\\underline{x}"
+  let gapDoc := { gapDoc0 with page := { gapDoc0.page with numbers := some false } }
   let gapText := asciiText (Pdf.write wide oneFace (layoutOf oneFace gapDoc wide).pages)
   let (adjs, empties) := tjNumbers gapText
   t "pdf never writes a TJ adjustment past sixteen bits"

@@ -275,7 +275,7 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
     fonts := #[f]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
   let drawn (fs : Font.FontSet) (src : String) : Array (Array (Nat × Char) × Dim.Sp) :=
-    ((layoutOf fs (Elab.run "t" src).1 geom).pages.flatMap (·.lines)).flatMap
+    (bodyLines (layoutOf fs (Elab.run "t" src).1 geom)).flatMap
       (·.segs.filterMap fun s =>
         match s with
         | .run _ _ _ _ glyphs size _ _ => some (glyphs, size)
@@ -1071,7 +1071,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (d, _) := Elab.run "t" src
     let mut out : Array (Char × Nat × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
     for page in (layoutOf mfs d geom).pages do
-      for l in page.lines do
+      for l in page.lines.filter (!·.furniture) do
         let mut x := l.x
         for s in l.segs do
           match s with
@@ -1090,7 +1090,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (d, _) := Elab.run "t" src
     let mut out : Array (Dim.Sp × Dim.Sp × Dim.Sp) := #[]
     for page in (layoutOf mfs d geom).pages do
-      for l in page.lines do
+      for l in page.lines.filter (!·.furniture) do
         for s in l.segs do
           if let .rule w thickness raise _ := s then
             out := out.push (w, thickness, raise)

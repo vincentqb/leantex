@@ -87,7 +87,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let runOn (src : String) : Array Layout.LineOut × Array Diag :=
     let (d, _) := Elab.run "t" src
     let out := layoutOf oneFace d geom
-    (out.pages.flatMap (·.lines), out.diags)
+    (bodyLines out, out.diags)
   let markerOf (l : Layout.LineOut) : String :=
     match l.segs[0]? with
     | some (Layout.Seg.run _ _ _ _ glyphs _ _ _) => String.ofList (glyphs.toList.map (·.2))
@@ -214,7 +214,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   -- case cannot come out at two heights. (`\scshape` used to do nothing at
   -- all; then it kept capitals full-size beside scaled lowercase.)
   let scOut := layoutOf oneFace (Elab.run "t" "\\scshape aB").1 geom
-  let scRuns := (scOut.pages.flatMap (·.lines)).flatMap (·.segs.filterMap fun s =>
+  let scRuns := (bodyLines scOut).flatMap (·.segs.filterMap fun s =>
     match s with
     | .run _ _ _ _ glyphs size _ _ => some (glyphs.map (·.2), size)
     | _ => none)
@@ -229,7 +229,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   -- what nobody setting a row of dates wants.
   let measureOf (src : String) : Array Dim.Sp :=
     let (d, _) := Elab.run "t" src
-    ((layoutOf oneFace d geom).pages.flatMap (·.lines)).map (·.setWidth)
+    (bodyLines (layoutOf oneFace d geom)).map (·.setWidth)
   -- A paragraph ending in `\\` used to vanish whole: the break's own
   -- forced penalty and the paragraph terminator left an empty last line
   -- with no feasible predecessor, and the breaker returned no lines.
@@ -905,7 +905,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
      genRules > genWidth / 2 && genRules < genWidth)
   -- The rules ride their own line at the text line's baseline, so the PDF
   -- writer's x-tracking stays linear and link rectangles see no extra runs.
-  let abLines := ((outOf oneFace "\\underline{ab}").pages.flatMap (·.lines))
+  let abLines := bodyLines (outOf oneFace "\\underline{ab}")
   t "underline rules ride a second line at the same y"
     (abLines.size == 2 && abLines[0]!.y == abLines[1]!.y &&
      abLines[1]!.segs.all fun s => match s with
@@ -1111,7 +1111,8 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let ysOf (g : Layout.Geom) (src : String) : Array Dim.Sp :=
     -- Text lines only: an underline rule rides a sibling line at the same y.
     ((layoutOf oneFace (Elab.run "t" src).1 g).pages.flatMap (·.lines)).filterMap fun l =>
-      if l.segs.any (fun s => match s with | .run .. => true | _ => false) then some l.y else none
+      if !l.furniture &&
+          l.segs.any (fun s => match s with | .run .. => true | _ => false) then some l.y else none
   let pagesOf (g : Layout.Geom) (src : String) : Nat :=
     (layoutOf oneFace (Elab.run "t" src).1 g).pages.size
   let body := geom.fontSize
@@ -1200,7 +1201,7 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let geom : Layout.Geom := {}
   let pageText (src : String) : String :=
     let (d, _) := elabStr src
-    let lines := (layoutOf oneFace d geom).pages.flatMap (·.lines)
+    let lines := bodyLines (layoutOf oneFace d geom)
     String.join (lines.toList.map fun l =>
       String.ofList (l.segs.toList.flatMap fun s =>
         match s with
@@ -1380,6 +1381,59 @@ def headBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       t s!"{name} line ink stays under two em"
         (f.ascent + (-f.descent) ≤ 2 * (f.unitsPerEm : Int))
     | .error e => failures ref s!"headBand font parse {name}: {e}"
+
+/-- `plain_numbers_every_page`, as census facts over `Layout.Out`: under
+the flow model's default page style — `plain`, the one article.cls
+initialises (classes.dtx; ltpage.dtx `\ps@plain` centres `\thepage` in the
+foot) — every page carries exactly one number glyph run in the footer
+band, equal to its index; a page before `footFrom` (the title page under
+`\thispagestyle{empty}`) carries none; `numbers = off` and the `resume`
+record carry none anywhere; a declared `\runningfoot` owns the band and
+the default never doubles it. -/
+def pageNumberChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let build (src : String) : Layout.Out × Layout.Geom :=
+    let (doc, _) := elabStr src
+    let geom := Layout.Geom.ofPage doc.page
+    (layoutOf oneFace doc geom, geom)
+  -- The footer band's runs on page i: furniture lines at the foot
+  -- baseline, each read back as its glyph text.
+  let footTexts (out : Layout.Out) (geom : Layout.Geom) (i : Nat) : Array String :=
+    ((out.pages[i]?.map (·.lines)).getD #[]).filterMap fun l =>
+      if l.furniture && l.y == geom.pageH - geom.vmargin / 2 then
+        some (String.ofList (l.segs.toList.flatMap fun s =>
+          match s with
+          | .run _ _ _ _ glyphs _ _ _ => (glyphs.map (·.2)).toList
+          | _ => []))
+      else none
+  let threeBody := "One.\\pagebreak Two.\\pagebreak Three."
+  let (out, geom) := build (dvDoc "" threeBody)
+  t "plain numbers every page: three pages ship" (out.pages.size == 3)
+  for i in [0:3] do
+    t s!"plain numbers every page: page {i + 1} ships exactly its own number"
+      (footTexts out geom i == #[toString (i + 1)])
+  -- Centred: the number's run starts left of centre and ends right of it
+  -- (the fil pair splits the slack, as pad_center does).
+  t "plain numbers every page: the number is centred on the measure"
+    (((out.pages[0]?.map (·.lines)).getD #[]).any fun l =>
+      l.furniture && l.segs.any fun s =>
+        match s with
+        | .gap w => w > (geom.textWidth - Dim.pt 20) / 2
+        | _ => false)
+  let (offOut, offGeom) := build (dvDoc "\\page{ numbers = off }" threeBody)
+  t "numbers = off ships no number on any page"
+    ((List.range 3).all fun i => footTexts offOut offGeom i == #[])
+  let (resumeOut, resumeGeom) := build
+    ("\\documentclass{resume}\\begin{document}Alex Placeholder\\end{document}")
+  t "a resume page carries no default number"
+    (footTexts resumeOut resumeGeom 0 == #[])
+  let (onOut, onGeom) := build
+    ("\\documentclass{resume}\\page{ numbers = on }\\begin{document}x\\end{document}")
+  t "numbers = on takes control of the resume's default"
+    (footTexts onOut onGeom 0 == #["1"])
+  let (declOut, declGeom) := build (dvDoc "\\runningfoot{note \\pagenumber}" threeBody)
+  t "a declared runningfoot owns the band: no doubled default"
+    (footTexts declOut declGeom 1 == #["note2"])
 
 /-- The F5 correction, executably: a slot's box is a function of the
 declared layout and the geometry alone (`Layout.bandSlotX` — the other
@@ -1807,7 +1861,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let deltas (src : String) : Option (Int × Int × Int) :=
     match (layoutOut src).pages[0]? with
     | some p =>
-      match p.lines.map (·.y) with
+      match (p.lines.filter (!·.furniture)).map (·.y) with
       | #[y0, y1, y2, y3] => some (y1 - y0, y2 - y1, y3 - y2)
       | _ => none
     | none => none
@@ -2188,7 +2242,7 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       f.w == Dim.pt 20 && f.h == Dim.pt 10 && f.color == red).getD false)
   t "picture label ships its glyphs centred on the anchor"
     ((out.pages[0]?.map fun p =>
-      match p.lines.toList with
+      match (p.lines.filter (!·.furniture)).toList with
       | [l] =>
         (match l.segs.toList with
          | [Layout.Seg.run _ _ _ _ glyphs _ _ _] =>

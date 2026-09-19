@@ -90,6 +90,11 @@ structure PageSpec where
   the stretch justification needs, and forcing it gives the breaker only
   overfull answers. -/
   justify : Option Bool := none
+  /-- Whether pages carry the physical page number, centred in the foot;
+  `none` takes the class default (`ClassRecord.pageNumbers`). This is
+  LaTeX's `plain` page style, spelled natively: `\page{ numbers = on }`
+  is `\pagestyle{plain}`, `off` is `\pagestyle{empty}`'s number half. -/
+  numbers : Option Bool := none
   deriving Repr, BEq, Inhabited
 
 /-- The text block of an undeclared letter page: 26 picas (312 pt).
@@ -2435,6 +2440,16 @@ structure ClassRecord where
   /-- Running head, foot and logo are legal furniture (a card carries
   none: one face of display text, not a page of a run). -/
   runningFurniture : Bool := true
+  /-- Pages carry the physical page number, centred in the foot, unless
+  the document declares otherwise: LaTeX's `plain` page style — the
+  kernel's `\ps@plain` sets the foot to `\hfil\thepage\hfil` (ltpage.dtx)
+  and article.cls initialises `\pagestyle{plain}` (classes.dtx §Initial
+  values) — so an article's pages number themselves. `resume` does not:
+  the class already asserts one page, and a number on a known-single page
+  navigates nothing. `webpage` is HTML-primary and its print twin follows
+  the web, which numbers no pages; `slides` numbers frames through the
+  chrome (the deliberately separate sequence); a card is not a run. -/
+  pageNumbers : Bool := false
   /-- The chrome band and the slides furniture styles draw. -/
   chrome : Bool := false
   /-- Implied contract, checked against the shipped pages exactly as a
@@ -2513,7 +2528,8 @@ def DocClass.record : DocClass → ClassRecord
   | .article =>
     { model := .flow
       numberHeadings := true
-      measureBand := true }
+      measureBand := true
+      pageNumbers := true }
   | .slides =>
     { model := .frame
       fontSize := some slidesFontSize
@@ -2594,6 +2610,13 @@ def Doc.frameNumbers (doc : Doc) : Array (Option Nat) :=
 /-- The numbering's denominator for the document. -/
 def Doc.frameCount (doc : Doc) : Nat :=
   Ir.frameCount doc.body
+
+/-- Whether this document's pages carry the plain page number: the
+document's own `\page{ numbers = ... }` wins; an undeclared document takes
+its class record's default (`ClassRecord.pageNumbers`). One resolving site,
+read by layout's furniture pass and the driver's glyph precompute alike. -/
+def Doc.pageNumbersOn (doc : Doc) : Bool :=
+  doc.page.numbers.getD doc.docClass.record.pageNumbers
 
 /-- Render a symbolic glue the way it was declared, so goldens show intent
 rather than a resolved number. -/

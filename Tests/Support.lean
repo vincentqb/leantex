@@ -492,6 +492,13 @@ def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
     (imgs : Image.Store := {}) : Layout.Out :=
   Layout.run geom fonts pats doc imgs
 
+/-- The document's own flow lines, shipped: every line except engine-placed
+furniture (`LineOut.furniture` — running content, the plain page number).
+What a claim about the body's setting means; a furniture claim reads the
+flag this filters out. -/
+def bodyLines (out : Layout.Out) : Array Layout.LineOut :=
+  out.pages.flatMap (·.lines.filter (!·.furniture))
+
 /-- Elaboration diagnostics of a source. -/
 def dvE (src : String) : Array Diag := (elabStr src).2
 
