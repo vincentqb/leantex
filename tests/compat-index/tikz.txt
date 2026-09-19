@@ -1,0 +1,1 @@
+body impl \begin{tikzpicture}\fill (0,0) rectangle (1,1);\end{tikzpicture}

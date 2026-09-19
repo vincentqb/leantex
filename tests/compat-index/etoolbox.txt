@@ -1,0 +1,2 @@
+body impl \ifdefined\nope a\else b\fi
+pre refuse:W0301 \AtBeginDocument{}

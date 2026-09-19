@@ -1,0 +1,2 @@
+# its one command is owned by the cross-reference slice; the refusal is tracked here
+body refuse:W0301 \appendix

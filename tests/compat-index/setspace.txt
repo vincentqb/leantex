@@ -1,0 +1,4 @@
+pre impl \setstretch{1.2}
+pre impl \onehalfspacing
+pre impl \doublespacing
+pre impl \singlespacing

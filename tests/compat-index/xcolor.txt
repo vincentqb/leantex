@@ -1,0 +1,7 @@
+pre impl \definecolor{c}{HTML}{112233}
+pre impl \colorlet{d}{black}
+body impl \textcolor{black}{x}
+body impl {\color{black} x}
+body impl {\color{black!50!white} x}
+pre refuse:W0301 \pagecolor{black}
+body refuse:W0301 \rowcolors{1}{black}{white}

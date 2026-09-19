@@ -1,0 +1,5 @@
+pre impl \fancyhead[L]{x}
+pre impl \fancyfoot[C]{x}
+pre impl \fancyhf{}
+pre impl \lhead{x}
+pre impl \pagestyle{fancy}

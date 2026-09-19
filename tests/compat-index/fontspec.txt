@@ -1,0 +1,4 @@
+pre impl \setmainfont{Example Serif}
+pre impl \setsansfont{Example Sans}
+pre impl \setmonofont{Example Mono}
+pre impl \babelfont{rm}{Example Serif}

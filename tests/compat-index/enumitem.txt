@@ -1,0 +1,2 @@
+pre impl \setlist{itemsep=2pt}
+body impl \begin{itemize}[leftmargin=2em]\item a\end{itemize}

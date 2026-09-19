@@ -1,0 +1,2 @@
+# the load is subsumed by the breaker's own tolerances; the setup command is not read
+pre refuse:W0301 \microtypesetup{protrusion=true}

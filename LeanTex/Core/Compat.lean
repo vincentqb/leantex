@@ -910,6 +910,40 @@ where
     let native := s!"\\page\{ leading = {rawSrc (args.getD 0 #[])} }"
     became "\\linespread" native pos
     return some (← synthAt native pos, k)
+  | "setstretch" =>
+    -- setspace's parameterised form is \linespread by another name
+    -- (setspace.sty: both set \baselinestretch).
+    let (args, k) := takeGroups raws start 1
+    if args.isEmpty then return none
+    let native := s!"\\page\{ leading = {rawSrc (args.getD 0 #[])} }"
+    became "\\setstretch" native pos
+    return some (← synthAt native pos, k)
+  | "singlespacing" | "onehalfspacing" | "doublespacing" =>
+    -- setspace's named stretches, at the values its source sets for the
+    -- 10pt base size the engine defaults to (setspace.sty:
+    -- \onehalfspacing = \setstretch{1.25}, \doublespacing =
+    -- \setstretch{1.667} under \@ptsize 0).
+    let v := match name with
+      | "singlespacing" => "1"
+      | "onehalfspacing" => "1.25"
+      | _ => "1.667"
+    let native := s!"\\page\{ leading = {v} }"
+    became s!"\\{name}" native pos
+    return some (← synthAt native pos, start)
+  | "enquote" =>
+    -- csquotes' quoting command: typographic quotes around the content,
+    -- single for the starred form (csquotes manual §3.1). Nesting-aware
+    -- inner quotes are not modelled: a nested \enquote repeats its own
+    -- pair.
+    let j := skipStar raws start
+    let starred := j != start
+    let k := skipSpaces raws j
+    match raws[k]? with
+    | some (g@(.group _ _)) =>
+      let (o, c) := if starred then ("‘", "’") else ("“", "”")
+      became "\\enquote" s!"{o}...{c}" pos
+      return some (#[.word o pos, g, .word c pos], k + 1)
+    | _ => return none
   | "color" =>
     -- `\color{n}` colours to the end of the group, which is what a bare
     -- palette name does.

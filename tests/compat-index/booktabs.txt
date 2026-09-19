@@ -1,0 +1,1 @@
+body impl \begin{tabular}{ll}\toprule a & b \\ \midrule c & d \\ \bottomrule\end{tabular}

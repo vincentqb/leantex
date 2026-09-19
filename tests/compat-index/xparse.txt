@@ -1,0 +1,1 @@
+pre impl \NewDocumentCommand{\zz}{m}{#1}

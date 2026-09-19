@@ -1,0 +1,3 @@
+body impl \includegraphics[width=0.5\textwidth]{x.png}
+pre refuse:W0301 \graphicspath{{figs/}}
+body refuse:W0301 \rotatebox{90}{x}

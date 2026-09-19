@@ -1,0 +1,2 @@
+# geometry manual §5: the user-facing surface is the options and \geometry
+pre impl \geometry{margin=1in}

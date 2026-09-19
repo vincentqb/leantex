@@ -1,0 +1,2 @@
+pre impl \definecolor{c}{rgb}{1,0,0}
+body impl \textcolor{black}{x}

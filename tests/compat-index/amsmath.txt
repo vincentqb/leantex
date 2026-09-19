@@ -1,0 +1,3 @@
+body impl $\frac{1}{2}$
+body impl $\sqrt{2}$
+body impl \begin{align*}x &= y\end{align*}

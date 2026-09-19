@@ -1,0 +1,3 @@
+# the engine styles headings through \style; titlesec's own interface is not read yet
+pre refuse:W0301 \titleformat{\section}{\bfseries}{}{0pt}{}
+pre refuse:W0301 \titlespacing{\section}{0pt}{2ex}{1ex}

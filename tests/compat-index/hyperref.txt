@@ -1,0 +1,5 @@
+body impl \href{https://example.org}{x}
+body impl \url{https://example.org}
+pre impl \hypersetup{pdftitle=T}
+body refuse:W0301 \autoref{sec}
+body refuse:W0301 \nameref{sec}
