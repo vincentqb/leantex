@@ -1268,6 +1268,35 @@ private def Anchor.towardDir (a : Anchor) (deg : Int) : Sp × Sp :=
   let c := a.center
   a.toward (c.1 + cosDeg deg, c.2 + sinDeg deg)
 
+/-- A `to[out=α, in=β]` control point: `dist` along the declared angle
+`deg` from the endpoint — the To-Path library's rule (pgf manual, "To
+Paths": control points sit on the departure and arrival tangents). The
+angle reads the milli sine table, one rounding division per axis. -/
+private def curveControl (px py dist deg : Int) : Int × Int :=
+  (px + dist * cosDeg deg / 1000, py + dist * sinDeg deg / 1000)
+
+/-- The curve leaves and arrives along its declared angles: a cubic
+Bézier's endpoint tangents are its control offsets — `B′(0) = 3(c₁ − p)`
+and `B′(1) = 3(q − c₂)`, the derivative of the ISO 32000-2 §8.5.2.2
+(PDF `c`) / SVG `C` cubic — and the offset `curveControl` builds is
+`dist·(cos deg, sin deg)` in milli, each axis rounded once (within one
+thousandth of `dist`, under the sine table's own stated precision).
+One statement covers both ends: `evalDraw` builds `c₂` from the arrival
+point by the same function, the in-angle pointing back along the
+arrival tangent as pgf's `in=` does. The endpoints themselves anchor on
+node borders through `Anchor.towardDir`, which is `rectBorder_exact` /
+`circleBorder_step` — reused, not restated. Rounding-bound shape, as
+`circleBorder_step` (said at review). -/
+private theorem curveControl_tangent (px py dist deg : Int) :
+    1000 * ((curveControl px py dist deg).1 - px) ≤ dist * cosDeg deg ∧
+    dist * cosDeg deg < 1000 * ((curveControl px py dist deg).1 - px) + 1000 ∧
+    1000 * ((curveControl px py dist deg).2 - py) ≤ dist * sinDeg deg ∧
+    dist * sinDeg deg < 1000 * ((curveControl px py dist deg).2 - py) + 1000 := by
+  simp only [curveControl]
+  generalize dist * cosDeg deg = d
+  generalize dist * sinDeg deg = e
+  omega
+
 /-- One path operation between two endpoints: pgf manual §14.13 (to
 paths) — `--` and a bare `to` are the straight line, `to[out=α, in=β]`
 the cubic whose control points sit 0.3915·‖d‖ along the departure and
@@ -1531,8 +1560,8 @@ edge is not drawn")
         let ddy := p2.2 - p1.2
         -- control distance 0.3915·‖d‖: the To-Path library's factor
         let dist := isqrt (ddx * ddx + ddy * ddy) * 3915 / 10000
-        let c1 := (p1.1 + dist * cosDeg oA / 1000, p1.2 + dist * sinDeg oA / 1000)
-        let c2 := (p2.1 + dist * cosDeg iA / 1000, p2.2 + dist * sinDeg iA / 1000)
+        let c1 := curveControl p1.1 p1.2 dist oA
+        let c2 := curveControl p2.1 p2.2 dist iA
         segs := segs.push (.cubic p1.1 p1.2 c1.1 c1.2 c2.1 c2.2 p2.1 p2.2)
         if last && arrow then
           -- the tip rides the arrival tangent; the curve keeps its
