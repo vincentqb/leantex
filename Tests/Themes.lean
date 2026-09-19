@@ -1312,35 +1312,33 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- standout, or invisible covering — and it is judged only when the
   -- element ships. p5's archetype: moloch + a near-white frametitlebg
   -- shipped frame titles at 1.07:1 with zero diagnostics.
-  let deck (pre body : String) := "\\documentclass{slides}" ++ pre ++
-    "\\begin{document}" ++ body ++ "\\end{document}"
   let titled := "\\begin{frame}{T}x\\end{frame}"
   t "an overridden frame-title pair warns with its ratio"
-    ((elabStr (deck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" titled)).2.any
+    ((elabStr (dvDeck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" titled)).2.any
       fun d => d.code == "W0345" && (d.message.splitOn "1.07:1").length == 2 &&
         (d.message.splitOn "4.50:1").length == 2)
   t "the untouched bundle's frame-title pair is silent"
-    (!(warnCodes (deck "\\theme{moloch}" titled)).contains "W0345")
+    (!(warnCodes (dvDeck "\\theme{moloch}" titled)).contains "W0345")
   t "an illegible frame-title pair without a titled frame is silent"
-    (!(warnCodes (deck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }"
+    (!(warnCodes (dvDeck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }"
       "\\begin{frame}x\\end{frame}")).contains "W0345")
   t "declared decorative intent silences the frame-title pair"
-    (!(warnCodes (deck ("\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" ++
+    (!(warnCodes (dvDeck ("\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" ++
       "\\palette[decorative]{ frametitlefg = #FAFAF9 }") titled)).contains "W0345")
   t "an overridden standout pair warns at the large-scale threshold"
-    ((elabStr (deck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
+    ((elabStr (dvDeck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
       "\\begin{frame}[standout]S\\end{frame}")).2.any
       fun d => d.code == "W0345" && (d.message.splitOn "3.00:1").length == 2)
   t "an illegible standout pair without a standout frame is silent"
-    (!(warnCodes (deck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
+    (!(warnCodes (dvDeck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
       titled)).contains "W0345")
   t "a cover as loud as the ink warns when overlays ship"
-    ((warnCodes (deck "\\palette{ covered = #000000 }"
+    ((warnCodes (dvDeck "\\palette{ covered = #000000 }"
       "\\begin{frame}{T}\\uncover<2>{x}\\end{frame}")).contains "W0345")
   t "a cover as loud as the ink is silent with nothing to cover"
-    (!(warnCodes (deck "\\palette{ covered = #000000 }" titled)).contains "W0345")
+    (!(warnCodes (dvDeck "\\palette{ covered = #000000 }" titled)).contains "W0345")
   t "the default covering never warns"
-    (!(warnCodes (deck "" "\\begin{frame}{T}\\uncover<2>{x}\\end{frame}")).contains "W0345")
+    (!(warnCodes (dvDeck "" "\\begin{frame}{T}\\uncover<2>{x}\\end{frame}")).contains "W0345")
   t "unknown palette option warns and skips the block"
     (warnCodes ("\\documentclass{article}\\palette[dark]{ a = #101010 }" ++
       "\\begin{document}x\\end{document}") == ["W0316"])

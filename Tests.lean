@@ -86,6 +86,20 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   measureChecks ref oneFace
   imageChecks ref oneFace
 
+/-- The surface-and-math suite: the dispatcher for the compat, class,
+bibliography, and math elaboration blocks, so an added block lands here and
+`main`'s spent elaboration budget stays flat — the regrowth the two suite
+dispatchers above exist to prevent. -/
+def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  compatIndexChecks ref
+  compatConservationChecks ref
+  classOptionChecks ref
+  mathChecks ref
+  bibChecks ref
+  bibStyleChecks ref
+  bibIrChecks ref
+  bibApplyChecks ref
+
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
@@ -121,9 +135,7 @@ def main (args : List String) : IO UInt32 := do
   declChecks ref
   tokensChecks ref
   compatChecks ref
-  compatIndexChecks ref
-  compatConservationChecks ref
-  classOptionChecks ref
+  surfaceSuiteChecks ref
   backendSuiteChecks ref
   unitChecks ref
   exprChecks ref
@@ -147,11 +159,6 @@ def main (args : List String) : IO UInt32 := do
   fontsDeclChecks ref
   fontSuiteChecks ref
   layoutSuiteChecks ref
-  mathChecks ref
-  bibChecks ref
-  bibStyleChecks ref
-  bibIrChecks ref
-  bibApplyChecks ref
 
   let failed := (← ref.get).reverse
   if failed.isEmpty then
