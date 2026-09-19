@@ -4183,7 +4183,7 @@ quirks — a declaration whose group never materialises consumes only what
 the loop consumed, and the tokens it looked past rescan as their own units,
 exactly as they always did. `\input` wrappers splice open in place between
 file markers, so a value's diagnostics name the file that holds it. -/
-private def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
+def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
   let mut preamble := pre
   let mut curFile := file
   let mut out : Array PDecl := #[]
@@ -4406,12 +4406,105 @@ private def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run 
       break
   return out
 
+/-- `\allow{W0307, E0502}`: the document accepts the named losses. The
+teeth: an unknown code is an error (a typo must not grant a silent
+blanket), an entry that never fires warns (Main), and the acceptance always
+prints in the build summary. -/
+private def applyAllow (ctx : Ctx) (allow : Array String) (src : String) (pos : Pos) :
+    Array String × Array PEvent := Id.run do
+  let mut allow := allow
+  let mut evs : Array PEvent := #[]
+  for entry in src.splitOn "," do
+    let code := entry.trimAscii.toString
+    if code.isEmpty then continue
+    match DiagCode.ofString? code with
+    | some c =>
+      unless allow.contains c.code do
+        allow := allow.push c.code
+    | none =>
+      evs := evs.push (.say (diagOf ctx .E0329
+        s!"'\\allow' names no diagnostic code '{code}'" (some pos)
+        (help := "codes look like 'E0333'; each names the one loss it accepts")))
+  return (allow, evs)
+
+/-- One keyed apply step, finished: fulfil its reporting events and return
+its value. Every keyed `applyDecl` arm is `stepDone` of a pure step — the
+shape T1's proof reads, one run lemma for all seven heads. -/
+private def stepDone (ctx : Ctx) (r : PreState × Array PEvent) : EM PreState := do
+  emitEvents ctx r.2
+  return r.1
+
+private def stepPage (s : PreState) (src : String) (pos : Pos) :
+    PreState × Array PEvent :=
+  let pb := Decl.parseBlock s.ctx.file src pos "page" s.tokens.entries
+  let pe := applyPage s.ctx s.page pb.1 pos
+  -- Only geometry keys claim the page: `\page{ parskip = ... }` keeps the
+  -- Bringhurst default margin standing (≈ the `!sawPage` branch after the
+  -- fold).
+  ({ s with
+      page := pe.1
+      sawPage := pb.1.any (pageGeometryKeys.contains ·.key) || s.sawPage },
+   pb.2.map .say ++ pe.2)
+
+private def stepFonts (s : PreState) (src : String) (pos : Pos) :
+    PreState × Array PEvent :=
+  let pb := Decl.parseBlock s.ctx.file src pos "fonts" s.tokens.entries
+  let fe := applyFonts s.ctx s.fonts pb.1 pos
+  ({ s with fonts := fe.1 }, pb.2.map .say ++ fe.2)
+
+private def stepPdfmeta (s : PreState) (src : String) (pos : Pos) :
+    PreState × Array PEvent :=
+  let pb := Decl.parseBlock s.ctx.file src pos "pdfmeta" s.tokens.entries
+  let me := applyMeta s.ctx s.info pb.1 pos
+  ({ s with info := me.1 }, pb.2.map .say ++ me.2)
+
+/-- Parses its own entries: `formats` is a bare comma list, which a generic
+key/value pre-parse would break apart. -/
+private def stepOutput (s : PreState) (src : String) (pos : Pos) :
+    PreState × Array PEvent :=
+  let oe := applyOutput s.ctx s.output src pos
+  ({ s with output := oe.1 }, oe.2)
+
+/-- Parses its own entries: slot values are `\sectiontitle` spellings a
+key/value pre-parse would reject. Inert chrome would be a silent failure —
+only slides draw it — so the step also says W0318 off the slides class;
+declaring the block names what the footer band holds (`chromeDeclared`,
+read by `footerSequenceDiags`). -/
+private def stepChrome (s : PreState) (src : String) (pos : Pos) :
+    PreState × Array PEvent :=
+  let ce := applyChrome s.ctx s.chrome src pos
+  ({ s with chrome := ce.1, chromeDeclared := true },
+   ce.2 ++ (if !s.docClass.record.chrome then
+     #[.say (diagOf s.ctx .W0318
+       s!"'\\chrome' is slides furniture; the {s.docClass.name} class never draws it"
+       (some pos) (help := "\\runninghead / \\runningfoot are the page furniture"))]
+   else #[]))
+
+private def stepAssert (s : PreState) (src : String) (pos : Pos) :
+    PreState × Array PEvent :=
+  let pa := parseAssert s.ctx src pos
+  ({ s with asserts :=
+      match pa.1 with
+      | some a => s.asserts.push a
+      | none => s.asserts },
+   pa.2)
+
+private def stepAllow (s : PreState) (src : String) (pos : Pos) :
+    PreState × Array PEvent :=
+  let ae := applyAllow s.ctx s.allow src pos
+  ({ s with allow := ae.1 }, ae.2)
+
+/-- The E0304 a keyed head without its `{...}` block earns, as a step. -/
+private def stepMissing (s : PreState) (name : String) (what : String) (pos : Pos) :
+    PreState × Array PEvent :=
+  (s, #[.say (diagOf s.ctx .E0304 s!"'\\{name}' needs {what}" (some pos))])
+
 /-- Apply one declaration to the fold state: the imperative loop's arm
 bodies over a value, one arm per constructor, no wildcard. Every diagnostic
 the loop emitted is emitted here, in the same order — the scan owns extents
 only. The preamble IS `foldlM applyDecl` over `scanDecls`' values; the
 commutation statement ranges over exactly this function. -/
-private def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
+def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
   match d with
   | .docclass options cls pos =>
     let s := { s with sawClass := true }
@@ -4554,28 +4647,9 @@ private def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | none =>
       diag s.ctx .E0304 "'\\style' needs {element} and a {...} block" pos
       return s
-  | .allow body pos =>
-    -- `\allow{W0307, E0502}`: the document accepts the named losses.
-    -- The teeth: an unknown code is an error (a typo must not grant a
-    -- silent blanket), an entry that never fires warns (Main), and
-    -- the acceptance always prints in the build summary.
-    match body with
-    | some src =>
-      let mut allow := s.allow
-      for entry in src.splitOn "," do
-        let code := entry.trimAscii.toString
-        if code.isEmpty then continue
-        match DiagCode.ofString? code with
-        | some c =>
-          unless allow.contains c.code do
-            allow := allow.push c.code
-        | none =>
-          diag s.ctx .E0329 s!"'\\allow' names no diagnostic code '{code}'" pos
-            (help := "codes look like 'E0333'; each names the one loss it accepts")
-      return { s with allow := allow }
-    | none =>
-      diag s.ctx .E0304 "'\\allow' needs a {...} block of diagnostic codes" pos
-      return s
+  | .allow (some src) pos => stepDone s.ctx (stepAllow s src pos)
+  | .allow none pos =>
+    stepDone s.ctx (stepMissing s "allow" "a {...} block of diagnostic codes" pos)
   | .theme src pos =>
     match src with
     | some src =>
@@ -4639,28 +4713,10 @@ private def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | none =>
       diag s.ctx .E0304 "'\\theme' needs a {...} block" pos
       return s
-  | .assert src pos =>
-    match src with
-    | some src =>
-      let (a?, evs) := parseAssert s.ctx src pos
-      emitEvents s.ctx evs
-      match a? with
-      | some a => return { s with asserts := s.asserts.push a }
-      | none => return s
-    | none =>
-      diag s.ctx .E0304 "'\\assert' needs a {...} block" pos
-      return s
-  | .output src pos =>
-    match src with
-    | some src =>
-      -- Parses its own entries: `formats` is a bare comma list, which
-      -- a generic key/value pre-parse would break apart.
-      let (o, evs) := applyOutput s.ctx s.output src pos
-      emitEvents s.ctx evs
-      return { s with output := o }
-    | none =>
-      diag s.ctx .E0304 "'\\output' needs a {...} block" pos
-      return s
+  | .assert (some src) pos => stepDone s.ctx (stepAssert s src pos)
+  | .assert none pos => stepDone s.ctx (stepMissing s "assert" "a {...} block" pos)
+  | .output (some src) pos => stepDone s.ctx (stepOutput s src pos)
+  | .output none pos => stepDone s.ctx (stepMissing s "output" "a {...} block" pos)
   | .tokens src pos =>
     match src with
     | some src =>
@@ -4671,64 +4727,14 @@ private def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | none =>
       diag s.ctx .E0304 "'\\tokens' needs a {...} block" pos
       return s
-  | .chrome src pos =>
-    match src with
-    | some src =>
-      -- Parses its own entries: slot values are `\sectiontitle`
-      -- spellings a key/value pre-parse would reject.
-      let (c, evs) := applyChrome s.ctx s.chrome src pos
-      emitEvents s.ctx evs
-      -- Inert chrome would be a silent failure: only slides draw it.
-      if !s.docClass.record.chrome then
-        diag s.ctx .W0318
-          s!"'\\chrome' is slides furniture; the {s.docClass.name} class never draws it"
-          (some pos) (help := "\\runninghead / \\runningfoot are the page furniture")
-      -- The author has named what the footer band holds: mixing
-      -- the frame and physical sequences there is now declared
-      -- (`footerSequenceDiags`).
-      return { s with chrome := c, chromeDeclared := true }
-    | none =>
-      diag s.ctx .E0304 "'\\chrome' needs a {...} block" pos
-      return s
-  | .page src pos =>
-    match src with
-    | some src =>
-      let (entries, ds) := Decl.parseBlock s.ctx.file src pos "page" s.tokens.entries
-      modify fun st => { st with diags := st.diags ++ ds }
-      let (p, evs) := applyPage s.ctx s.page entries pos
-      emitEvents s.ctx evs
-      -- Only geometry keys claim the page: `\page{ parskip = ... }`
-      -- keeps the Bringhurst default margin standing (≈ the
-      -- `!sawPage` branch after the fold).
-      if entries.any (pageGeometryKeys.contains ·.key) then
-        return { s with page := p, sawPage := true }
-      else
-        return { s with page := p }
-    | none =>
-      diag s.ctx .E0304 "'\\page' needs a {...} block" pos
-      return s
-  | .fonts src pos =>
-    match src with
-    | some src =>
-      let (entries, ds) := Decl.parseBlock s.ctx.file src pos "fonts" s.tokens.entries
-      modify fun st => { st with diags := st.diags ++ ds }
-      let (f, evs) := applyFonts s.ctx s.fonts entries pos
-      emitEvents s.ctx evs
-      return { s with fonts := f }
-    | none =>
-      diag s.ctx .E0304 "'\\fonts' needs a {...} block" pos
-      return s
-  | .pdfmeta src pos =>
-    match src with
-    | some src =>
-      let (entries, ds) := Decl.parseBlock s.ctx.file src pos "pdfmeta" s.tokens.entries
-      modify fun st => { st with diags := st.diags ++ ds }
-      let (m, evs) := applyMeta s.ctx s.info entries pos
-      emitEvents s.ctx evs
-      return { s with info := m }
-    | none =>
-      diag s.ctx .E0304 "'\\pdfmeta' needs a {...} block" pos
-      return s
+  | .chrome (some src) pos => stepDone s.ctx (stepChrome s src pos)
+  | .chrome none pos => stepDone s.ctx (stepMissing s "chrome" "a {...} block" pos)
+  | .page (some src) pos => stepDone s.ctx (stepPage s src pos)
+  | .page none pos => stepDone s.ctx (stepMissing s "page" "a {...} block" pos)
+  | .fonts (some src) pos => stepDone s.ctx (stepFonts s src pos)
+  | .fonts none pos => stepDone s.ctx (stepMissing s "fonts" "a {...} block" pos)
+  | .pdfmeta (some src) pos => stepDone s.ctx (stepPdfmeta s src pos)
+  | .pdfmeta none pos => stepDone s.ctx (stepMissing s "pdfmeta" "a {...} block" pos)
   | .captionsetup unclosed body pos =>
     -- The caption package's option interface (caption manual §2–4).
     -- `position`/`tableposition`/`figureposition` declare which side
@@ -4801,6 +4807,156 @@ its declared layout" pos
     else
       diag s.ctx .E0313 "only declarations may appear before '\\begin{document}'" none
       return { s with textDiagged := true }
+
+/-- The elaboration state with the reporting machinery erased: the
+projection T1's commutation compares. What it deliberately ignores — and
+nothing else — is the four stores whose only readers are diagnostic sites:
+the emitted diagnostics themselves (a swap legitimately reorders emission;
+the diagnostic-code multiset stays under `scripts/compose-fuzz.lean`'s
+watch), the warn-once memo (read only by `warnOnce`), the W0343 scalar
+store (read only by `applyEvent`'s `.scalar` arm), and the W0348
+declared-key store (read only by the `\theme` site). Everything a backend
+or the body elaboration reads survives the projection. -/
+def ESt.sem (e : ESt) : ESt :=
+  { e with diags := #[], warnedUnknown := #[], seenScalars := #[], declaredKeys := #[] }
+
+/-- The fold state with its one piece of reporting machinery erased, the
+E0313 once-latch. -/
+def PreState.sem (s : PreState) : PreState := { s with textDiagged := false }
+
+/-- The heads in T1's proved tier: the keyed block declarations whose whole
+apply step is a pure value plus reporting events. -/
+def PDecl.keyedHead? : PDecl → Option String
+  | .page _ _ => some "page"
+  | .pdfmeta _ _ => some "pdfmeta"
+  | .fonts _ _ => some "fonts"
+  | .output _ _ => some "output"
+  | .chrome _ _ => some "chrome"
+  | .assert _ _ => some "assert"
+  | .allow _ _ => some "allow"
+  | _ => none
+
+/-- T1's independence condition, proved tier: two keyed declarations with
+different heads. The named exceptions stay outside by construction —
+`\define`/`\defineenv`/`\tokens`/`\palette`/`\style` (reference→referent
+order is essential), `\theme` (positional by design), `\documentclass`
+(W0318 reads the class declared so far), same-head pairs (same-key
+last-wins is the one essential order), and the inline-content heads
+(running head/foot, logo, the title declarations), whose apply elaborates
+content through `elabInlines` — one of the three tracked exemptions from
+the termination checker, opaque to the kernel, which no theorem can range
+over — so those heads stay with the oracle. -/
+def PDecl.Independent (d₁ d₂ : PDecl) : Prop :=
+  match d₁.keyedHead?, d₂.keyedHead? with
+  | some h₁, some h₂ => h₁ ≠ h₂
+  | _, _ => False
+
+private theorem EM.run_bind (m : EM α) (f : α → EM β) (e : ESt) :
+    (m >>= f).run e = (f (m.run e).1).run (m.run e).2 := rfl
+
+private theorem applyEvent_sem (ctx : Ctx) (st : ESt) (ev : PEvent) :
+    (applyEvent ctx st ev).sem = st.sem := by
+  cases ev with
+  | say d => rfl
+  | scalar decl key value pos =>
+    simp only [applyEvent, ESt.sem]
+    repeat' split
+    all_goals rfl
+  | declared decl key =>
+    simp only [applyEvent, ESt.sem]
+    repeat' split
+    all_goals rfl
+
+private theorem foldEvents_sem (ctx : Ctx) (l : List PEvent) (st : ESt) :
+    (l.foldl (applyEvent ctx) st).sem = st.sem := by
+  induction l generalizing st with
+  | nil => rfl
+  | cons ev l ih =>
+    simp only [List.foldl_cons]
+    exact (ih (applyEvent ctx st ev)).trans (applyEvent_sem ctx st ev)
+
+private theorem foldArr_sem (ctx : Ctx) (evs : Array PEvent) (e : ESt) :
+    (evs.foldl (applyEvent ctx) e).sem = e.sem := by
+  rw [← Array.foldl_toList]
+  exact foldEvents_sem ctx evs.toList e
+
+private theorem EM.run_stepDone_fst (ctx : Ctx) (r : PreState × Array PEvent) (e : ESt) :
+    ((stepDone ctx r).run e).1 = r.1 := rfl
+
+private theorem EM.run_stepDone_snd (ctx : Ctx) (r : PreState × Array PEvent) (e : ESt) :
+    ((stepDone ctx r).run e).2 = r.2.foldl (applyEvent ctx) e := rfl
+
+private theorem applyDecl_page_some (s : PreState) (src : String) (pos : Pos) :
+    applyDecl s (.page (some src) pos) = stepDone s.ctx (stepPage s src pos) := rfl
+private theorem applyDecl_page_none (s : PreState) (pos : Pos) :
+    applyDecl s (.page none pos)
+      = stepDone s.ctx (stepMissing s "page" "a {...} block" pos) := rfl
+private theorem applyDecl_fonts_some (s : PreState) (src : String) (pos : Pos) :
+    applyDecl s (.fonts (some src) pos) = stepDone s.ctx (stepFonts s src pos) := rfl
+private theorem applyDecl_fonts_none (s : PreState) (pos : Pos) :
+    applyDecl s (.fonts none pos)
+      = stepDone s.ctx (stepMissing s "fonts" "a {...} block" pos) := rfl
+private theorem applyDecl_pdfmeta_some (s : PreState) (src : String) (pos : Pos) :
+    applyDecl s (.pdfmeta (some src) pos) = stepDone s.ctx (stepPdfmeta s src pos) := rfl
+private theorem applyDecl_pdfmeta_none (s : PreState) (pos : Pos) :
+    applyDecl s (.pdfmeta none pos)
+      = stepDone s.ctx (stepMissing s "pdfmeta" "a {...} block" pos) := rfl
+private theorem applyDecl_output_some (s : PreState) (src : String) (pos : Pos) :
+    applyDecl s (.output (some src) pos) = stepDone s.ctx (stepOutput s src pos) := rfl
+private theorem applyDecl_output_none (s : PreState) (pos : Pos) :
+    applyDecl s (.output none pos)
+      = stepDone s.ctx (stepMissing s "output" "a {...} block" pos) := rfl
+private theorem applyDecl_chrome_some (s : PreState) (src : String) (pos : Pos) :
+    applyDecl s (.chrome (some src) pos) = stepDone s.ctx (stepChrome s src pos) := rfl
+private theorem applyDecl_chrome_none (s : PreState) (pos : Pos) :
+    applyDecl s (.chrome none pos)
+      = stepDone s.ctx (stepMissing s "chrome" "a {...} block" pos) := rfl
+private theorem applyDecl_assert_some (s : PreState) (src : String) (pos : Pos) :
+    applyDecl s (.assert (some src) pos) = stepDone s.ctx (stepAssert s src pos) := rfl
+private theorem applyDecl_assert_none (s : PreState) (pos : Pos) :
+    applyDecl s (.assert none pos)
+      = stepDone s.ctx (stepMissing s "assert" "a {...} block" pos) := rfl
+private theorem applyDecl_allow_some (s : PreState) (src : String) (pos : Pos) :
+    applyDecl s (.allow (some src) pos) = stepDone s.ctx (stepAllow s src pos) := rfl
+private theorem applyDecl_allow_none (s : PreState) (pos : Pos) :
+    applyDecl s (.allow none pos)
+      = stepDone s.ctx (stepMissing s "allow" "a {...} block of diagnostic codes" pos) := rfl
+
+set_option maxHeartbeats 1000000 in
+/-- T1 over `applyDecl`, the proved tier (audit-compose; the statement the
+2026-09-18 PLAN entry records as unstatable before this fold existed):
+independent adjacent preamble declarations commute up to reporting — the
+fold state agrees under `PreState.sem`, and the elaboration state comes
+back reporting-equal to where it started (`ESt.sem`), in both orders. The
+oracle `scripts/compose-fuzz.lean` keeps watching what this tier does not
+reach: the inline-content heads, same-head field-disjoint swaps, and the
+diagnostic-code multiset. A commutation is a new theorem shape beside the
+registered suffixes; `_comm` names it. -/
+theorem applyDecl_comm (s : PreState) (e : ESt) (d₁ d₂ : PDecl)
+    (h : PDecl.Independent d₁ d₂) :
+    (((applyDecl s d₁ >>= fun s' => applyDecl s' d₂).run e).1.sem
+      = ((applyDecl s d₂ >>= fun s' => applyDecl s' d₁).run e).1.sem)
+    ∧ (((applyDecl s d₁ >>= fun s' => applyDecl s' d₂).run e).2.sem = e.sem)
+    ∧ (((applyDecl s d₂ >>= fun s' => applyDecl s' d₁).run e).2.sem = e.sem) := by
+  cases d₁ <;> cases d₂ <;>
+    first
+    | exact h.elim
+    | exact absurd rfl h
+    | (rename_i src₁ pos₁ src₂ pos₂
+       rcases src₁ with _ | src₁ <;> rcases src₂ with _ | src₂ <;>
+         refine ⟨?_, ?_, ?_⟩ <;>
+           simp only [applyDecl_page_some, applyDecl_page_none, applyDecl_fonts_some,
+             applyDecl_fonts_none, applyDecl_pdfmeta_some, applyDecl_pdfmeta_none,
+             applyDecl_output_some, applyDecl_output_none, applyDecl_chrome_some,
+             applyDecl_chrome_none, applyDecl_assert_some, applyDecl_assert_none,
+             applyDecl_allow_some, applyDecl_allow_none,
+             EM.run_bind, EM.run_stepDone_fst, EM.run_stepDone_snd] <;>
+           first
+             | simp only [foldArr_sem]
+             | (dsimp only [stepPage, stepFonts, stepPdfmeta, stepOutput, stepChrome,
+                  stepAssert, stepAllow, stepMissing]
+                all_goals rfl))
+
 
 /-- Elaborate the whole document: split preamble and body around the
 `document` environment, process declarations, then the body. -/
