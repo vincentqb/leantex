@@ -657,6 +657,60 @@ def pickVariant (target : Int) : List (Nat × Int) → Option (Nat × Int)
   | [v] => some v
   | v :: rest@(_ :: _) => if target ≤ v.2 then some v else pickVariant target rest
 
+/-- The variant a horizontal accent stretches to: the widest in the ladder
+not exceeding `target` — an accent may not overhang its base, the reverse
+of a delimiter's "at least as tall" — else the first, the narrowest the
+font offers. Same increasing-size order as `pickVariant`. -/
+def pickWidest (target : Int) : List (Nat × Int) → Option (Nat × Int)
+  | [] => none
+  | [v] => some v
+  | v :: rest@(w :: _) =>
+    if w.2 ≤ target then pickWidest target rest else some v
+
+/-- A stretched accent never overhangs: when the ladder's first variant
+fits the target at all, the picked one fits too — with the spec's
+increasing order it is the widest that does. -/
+theorem pickWidest_covers (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
+    (hp : pickWidest target vs = some v) (hw : ∀ w ∈ vs.take 1, w.2 ≤ target) :
+    v.2 ≤ target := by
+  induction vs with
+  | nil => simp [pickWidest] at hp
+  | cons x rest ih =>
+    cases rest with
+    | nil =>
+      simp only [pickWidest, Option.some.injEq] at hp
+      exact hp ▸ hw x (by simp)
+    | cons y t =>
+      simp only [pickWidest] at hp
+      split at hp
+      next hy =>
+        exact ih hp fun w hwm => by
+          simp only [List.take, List.mem_singleton] at hwm
+          exact hwm ▸ hy
+      next =>
+        cases hp
+        exact hw _ (by simp [List.take])
+
+/-- What is stretched to is a variant the font really has. -/
+theorem pickWidest_mem (target : Int) (vs : List (Nat × Int)) (v : Nat × Int)
+    (hp : pickWidest target vs = some v) : v ∈ vs := by
+  induction vs with
+  | nil => simp [pickWidest] at hp
+  | cons x rest ih =>
+    cases rest with
+    | nil =>
+      simp only [pickWidest, Option.some.injEq] at hp
+      subst hp
+      exact List.mem_singleton_self ..
+    | cons y t =>
+      simp only [pickWidest] at hp
+      split at hp
+      next =>
+        exact List.mem_cons_of_mem x (ih hp)
+      next =>
+        cases hp
+        exact List.mem_cons_self ..
+
 /-- A grown delimiter covers its content whenever the font can: if any
 variant reaches the target, the picked one does. With the spec's
 increasing-size order this is the smallest sufficient variant; without it,
@@ -729,6 +783,13 @@ inductive MNucleus where
   /-- An alignment: `align`/`gather`/`array` rows, rectangular by the time
   layout sees them (`MRows.pad`; a ragged source row was diagnosed). -/
   | grid (kind : GridKind) (rows : MRows)
+  /-- A math accent over its base: `mark` is the combining scalar
+  (unicode-math's table — `\hat` is U+0302), `stretch` whether it grows
+  through the face's horizontal variants to the base's width (`\widehat`).
+  The U+0305 combining overline is the one mark layout draws as a rule
+  from the overbar constants instead of a glyph (TeXbook Appendix G rule
+  9): `\overline`'s stretch is then exact at any width. -/
+  | accent (mark : Char) (stretch : Bool) (body : MList)
   deriving Repr, BEq
 
 /-- One item of a math list: an atom with its class, nucleus, scripts, and
@@ -908,6 +969,11 @@ def MNucleus.scalars (acc : Array Char) : MNucleus → Array Char
       | some c => acc.push c
       | none => acc
     MList.scalarsList acc body
+  | .accent mark _ body =>
+    -- U+0305 draws as a rule, never asked of the face; every other mark is
+    -- a glyph the coverage check must see.
+    let acc := if mark == '\u0305' then acc else acc.push mark
+    MList.scalarsList acc body
   | .grid _ rows => MRows.scalarsRows acc rows
 
 def MList.scalarsList (acc : Array Char) : MList → Array Char
@@ -948,6 +1014,7 @@ def MathAlphabet.remapNucleus (a : MathAlphabet) : MNucleus → MNucleus
   | .frac num den => .frac (a.remapList num) (a.remapList den)
   | .rad deg body => .rad (a.remapList deg) (a.remapList body)
   | .delim l r body => .delim l r (a.remapList body)
+  | .accent mark stretch body => .accent mark stretch (a.remapList body)
   | .grid kind rows => .grid kind (a.remapRows rows)
 
 def MathAlphabet.remapRow (a : MathAlphabet) : MRow → MRow

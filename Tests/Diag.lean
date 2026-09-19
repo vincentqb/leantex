@@ -133,7 +133,7 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
       ((List.range 5).map fun _ => "\\begin{itemize}\\item x\n") ++
       String.join ((List.range 5).map fun _ => "\\end{itemize}\n")))
   | .W0011 => #[DriverDiag.mathFaceNoTable "Demo Serif" "fonts/DemoSerif-Regular.otf"]
-  | .W0012 => dvE "$\\hat{x}$"
+  | .W0012 => dvE "$\\overset{?}{=}$"
   | .W0013 => #[DriverDiag.allowUnfired "E0333"]
   | .W0014 => dvE "\\begin{align*}a &= b \\\\ c\\end{align*}"
   | .W0015 => dvE "\\begin{align}a &= b\\end{align}"

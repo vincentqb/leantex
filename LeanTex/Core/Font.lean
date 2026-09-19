@@ -16,6 +16,11 @@ of the base and scale with the base's size. -/
 structure MathConsts where
   scales : Math.ScriptScales
   axisHeight : Int
+  /-- "Height of the bottom of a math accent above the baseline" — the
+  height an accent glyph is designed to sit at; a taller base pushes the
+  accent up by the difference (MATH spec, MathConstants; TeXbook Appendix
+  G rule 12's χ). -/
+  accentBaseHeight : Int
   subscriptShiftDown : Int
   superscriptShiftUp : Int
   superscriptShiftUpCramped : Int
@@ -36,6 +41,12 @@ structure MathConsts where
   fractionRuleThickness : Int
   fractionDenominatorGapMin : Int
   fractionDenomDisplayStyleGapMin : Int
+  /-- The overbar constants position `\overline`'s rule (MATH spec,
+  MathConstants; TeXbook Appendix G rule 9 is the same construction over
+  `default_rule_thickness`). -/
+  overbarVerticalGap : Int
+  overbarRuleThickness : Int
+  overbarExtraAscender : Int
   radicalVerticalGap : Int
   radicalDisplayStyleVerticalGap : Int
   radicalRuleThickness : Int
@@ -62,6 +73,7 @@ private def parseMath (b : ByteArray) : Option MathConsts := do
   return {
     scales := Math.ScriptScales.clamp (value 0) (value 2)
     axisHeight := value 12
+    accentBaseHeight := value 16
     subscriptShiftDown := value 24
     superscriptShiftUp := value 36
     superscriptShiftUpCramped := value 40
@@ -80,6 +92,9 @@ private def parseMath (b : ByteArray) : Option MathConsts := do
     fractionRuleThickness := value 144
     fractionDenominatorGapMin := value 148
     fractionDenomDisplayStyleGapMin := value 152
+    overbarVerticalGap := value 164
+    overbarRuleThickness := value 168
+    overbarExtraAscender := value 172
     radicalVerticalGap := value 188
     radicalDisplayStyleVerticalGap := value 192
     radicalRuleThickness := value 196
@@ -110,28 +125,60 @@ private def parseCoverage (b : ByteArray) (off : Nat) : Array Nat := Id.run do
   | _ => pure ()
   return out
 
-/-- The vertical glyph variants of a `MATH` table's MathVariants
+/-- The glyph variants of a `MATH` table's MathVariants
 (learn.microsoft.com/typography/opentype/spec/math): per base glyph, its
-size variants as `(glyph id, advance height in design units)`, "in order of
-increasing size" per the spec — what grows a delimiter, a radical, or a
-display operator over its content. Glyph assemblies (building past the
-largest variant from parts) are not read in this slice; the largest variant
-is the ceiling, recorded in PLAN. Empty when the face has none. -/
-private def parseVertVariants (b : ByteArray) : Array (Nat × Array (Nat × Int)) := Id.run do
+size variants as `(glyph id, advance measurement in design units)`, "in
+order of increasing size" per the spec — height for the vertical list
+(what grows a delimiter, a radical, or a display operator over its
+content), width for the horizontal one (what stretches `\widehat` over
+its base). Glyph assemblies (building past the largest variant from
+parts) are not read in this slice; the largest variant is the ceiling,
+recorded in PLAN. Empty when the face has none. -/
+private def parseVariants (horiz : Bool) (b : ByteArray) :
+    Array (Nat × Array (Nat × Int)) := Id.run do
   let some t := findTable b "MATH" | return #[]
   unless fits b t && t.length ≥ 10 do return #[]
   let mv := t.offset + u16 b (t.offset + 8)
   unless mv + 10 ≤ b.size do return #[]
-  let covered := parseCoverage b (mv + u16 b (mv + 2))
+  let covOff := u16 b (mv + (if horiz then 4 else 2))
+  unless covOff > 0 do return #[]
+  let covered := parseCoverage b (mv + covOff)
   let vertCount := u16 b (mv + 6)
+  let count := if horiz then u16 b (mv + 8) else vertCount
+  let base := if horiz then mv + 10 + 2 * vertCount else mv + 10
   let mut out : Array (Nat × Array (Nat × Int)) := #[]
-  for i in [0:min vertCount covered.size] do
-    let cons := mv + u16 b (mv + 10 + 2 * i)
+  for i in [0:min count covered.size] do
+    let some cov := covered[i]? | break
+    let cons := mv + u16 b (base + 2 * i)
     let n := u16 b (cons + 2)
     let mut vs : Array (Nat × Int) := #[]
     for k in [0:n] do
       vs := vs.push (u16 b (cons + 4 + 4 * k), (u16 b (cons + 6 + 4 * k) : Int))
-    out := out.push (covered[i]!, vs)
+    out := out.push (cov, vs)
+  return out
+
+/-- The MathTopAccentAttachment table of a `MATH` table's MathGlyphInfo
+(MATH spec §6.3, "MathTopAccentAttachment"): per covered glyph, the
+horizontal position for attaching a top accent, in design units from the
+glyph origin. Empty when the face carries none; a glyph outside the
+coverage takes half its advance, the spec's own default. -/
+private def parseTopAccent (b : ByteArray) : Array (Nat × Int) := Id.run do
+  let some t := findTable b "MATH" | return #[]
+  unless fits b t && t.length ≥ 10 do return #[]
+  let giOff := u16 b (t.offset + 6)
+  unless giOff > 0 do return #[]
+  let gi := t.offset + giOff
+  unless gi + 8 ≤ b.size do return #[]
+  let taOff := u16 b (gi + 2)
+  unless taOff > 0 do return #[]
+  let ta := gi + taOff
+  unless ta + 4 ≤ b.size do return #[]
+  let covered := parseCoverage b (ta + u16 b ta)
+  let count := u16 b (ta + 2)
+  let mut out : Array (Nat × Int) := #[]
+  for i in [0:min count covered.size] do
+    let some cov := covered[i]? | break
+    out := out.push (cov, i16 b (ta + 4 + 4 * i))
   return out
 
 /-- A 4-byte OpenType tag as a string, for script and feature records. -/
@@ -303,6 +350,13 @@ structure Font where
   variants that grow a delimiter, radical, or display operator. Empty when
   the face carries none. -/
   mathVariants : Array (Nat × Array (Nat × Int))
+  /-- The MATH table's horizontal glyph variants: what stretches a wide
+  accent (`\widehat`) over its base. Empty when the face carries none. -/
+  mathHorizVariants : Array (Nat × Array (Nat × Int))
+  /-- The MATH table's top-accent attachment positions, per covered glyph,
+  in design units from the glyph origin. A glyph outside the coverage
+  attaches at half its advance, the spec's own default. -/
+  mathTopAccent : Array (Nat × Int)
   /-- Per-gid, lazily: the glyph's vertical ink extent `(minY, maxY)` in
   font units, from its own outline — control-point hull, so the true ink is
   inside it. `none` where the outline could not be decoded; the consumer
@@ -630,7 +684,9 @@ def parse (data : ByteArray) : Except String Font := do
     italicAngle := italicAngle
     underlineInk := underlineInk
     math := parseMath data
-    mathVariants := parseVertVariants data
+    mathVariants := parseVariants false data
+    mathHorizVariants := parseVariants true data
+    mathTopAccent := parseTopAccent data
     inkExtent := inkExtent
     xInkTop := Thunk.mk fun _ =>
       (gidIn cmap 'x').bind fun g => (src.yExtentAt g).map (·.2)
@@ -696,6 +752,48 @@ def Font.vertVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
   match f.mathVariants.find? (·.1 == g) with
   | some (_, vs) => vs
   | none => #[]
+
+/-- The horizontal size variants of glyph `g` — `(glyph id, advance
+width)` in increasing size — or empty when the face stretches it no
+further. -/
+def Font.horizVariants (f : Font) (g : Nat) : Array (Nat × Int) :=
+  match f.mathHorizVariants.find? (·.1 == g) with
+  | some (_, vs) => vs
+  | none => #[]
+
+/-- Where a top accent attaches on glyph `g`, in design units from the
+origin, clamped into the glyph's advance: the MATH table's value where the
+coverage carries one, else half the advance — the spec's own default for
+uncovered glyphs. The clamp is what `Math.accentAttach_covers` quantifies
+over: the spec declares no bound on the value, and placement must stay
+within the advance for every font, not only well-behaved ones. -/
+def Font.topAccentX (f : Font) (g : Nat) : Int :=
+  let w : Int := f.widths[g]?.getD 0
+  match f.mathTopAccent.find? (·.1 == g) with
+  | some (_, x) => min (max x 0) w
+  | none => w / 2
+
+/-- Accent placement stays within the base glyph's advance: the attachment
+point — where the accent's own reference lands — lies in `[0, advance]`
+for every glyph of every parsed font. The MATH spec declares no bound on
+the table's value, so the bound is imposed at the read (`topAccentX`
+clamps), the same sanitize-then-prove shape as `ScriptScales.clamp`. -/
+theorem Font.topAccentX_covers (f : Font) (g : Nat) :
+    0 ≤ f.topAccentX g ∧ f.topAccentX g ≤ (f.widths[g]?.getD 0 : Int) := by
+  unfold Font.topAccentX
+  have hw : (0 : Int) ≤ (f.widths[g]?.getD 0 : Int) := Int.natCast_nonneg _
+  cases f.mathTopAccent.find? (·.1 == g) with
+  | none => simp only []; omega
+  | some p => simp only []; omega
+
+/-- The accent mark's own attachment x, unclamped: a combining mark may
+carry zero advance and attach inside or left of its ink, which the
+base-side clamp would destroy; half the advance where the coverage says
+nothing, the spec's default. -/
+def Font.markAttachX (f : Font) (g : Nat) : Int :=
+  match f.mathTopAccent.find? (·.1 == g) with
+  | some (_, x) => x
+  | none => (f.widths[g]?.getD 0 : Int) / 2
 
 /-- This face's normalized underline band: `(position, thickness)` in font
 units. See `underlineBand`. -/

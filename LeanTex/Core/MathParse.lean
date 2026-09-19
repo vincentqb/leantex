@@ -192,6 +192,17 @@ def alphaCtrl : List (String × Math.MathAlphabet) :=
    ("mathbf", .bf), ("bm", .bfit), ("boldsymbol", .bfit),
    ("mathit", .it), ("mathsf", .sf), ("mathtt", .tt), ("mathrm", .rm)]
 
+/-- The math accent commands: the combining mark set over the base
+(unicode-math's accent table — `\hat` is U+0302), and whether it
+stretches to the base's width through the face's horizontal variants.
+`\overline` maps to U+0305, the mark layout draws as a rule from the
+overbar constants (TeXbook Appendix G rule 9), so its stretch is exact. -/
+def accentCtrl : List (String × Char × Bool) :=
+  [("hat", '\u0302', false), ("widehat", '\u0302', true),
+   ("tilde", '\u0303', false), ("bar", '\u0304', false),
+   ("dot", '\u0307', false), ("ddot", '\u0308', false),
+   ("vec", '\u20D7', false), ("overline", '\u0305', true)]
+
 /-- Delimiters `\left`/`\right` accept: the char actually set, or `none`
 for the empty `.`. Names looked up in `ctrlAtom` too, so `\left\langle`
 works. -/
@@ -343,6 +354,8 @@ private inductive Dest where
   /-- A math alphabet's argument: its letters remap
   (`Math.MathAlphabet.apply`) when the argument closes. -/
   | alpha (a : Math.MathAlphabet)
+  /-- A math accent's base: the mark sets over it when it closes. -/
+  | accentBody (mark : Char) (stretch : Bool)
   | leftRight (l : Option Char)
   | grid (kind : GridKind) (rows : Array (Array MList)) (cells : Array MList)
 
@@ -399,6 +412,9 @@ private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList)
       rest := more
     | .alpha a :: more =>
       arg := .cons (.atom .ord (.list (a.remapList arg)) .nil .nil false) .nil
+      rest := more
+    | .accentBody mark stretch :: more =>
+      arg := .cons (.atom .ord (.accent mark stretch arg) .nil .nil false) .nil
       rest := more
     | .leftRight _ :: _ => throw "'\\left' without its '\\right'"
     | .grid _ _ _ :: _ => throw "an unbalanced group"
@@ -686,6 +702,11 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
       match alphaCtrl.lookup n with
       | some a =>
         pending := .alpha a :: pending
+        i := i + 1
+      | none =>
+      match accentCtrl.lookup n with
+      | some (mark, stretch) =>
+        pending := .accentBody mark stretch :: pending
         i := i + 1
       | none =>
       match ctrlSpace.lookup n with

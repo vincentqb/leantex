@@ -63,9 +63,19 @@ center
     formula display "M = \\left [ \\begin{array}{cc} 1 & x \\\\  x' & \\frac {1}{2}\\end{array} \\right ]"
       ord:𝑀 rel:= inner:left[{ord:array:cc[(|ord:1|ord:𝑥)(|ord:𝑥^{ord:′}|inner:frac{ord:1}{ord:2})]}right]
 para
-  text "What this slice does not model keeps its source and a warning that names it: "
-  math inline "\\hat {x} + 1"
-  text " stays text."
+  text "Accents place by the face’s attachment points: "
+  formula inline "\\hat {x} + \\bar {y} + \\vec {v} + \\tilde {a} + \\dot {p} + \\ddot {q}"
+    ord:acc:770{ord:𝑥} bin:+ ord:acc:772{ord:𝑦} bin:+ ord:acc:8407{ord:𝑣} bin:+ ord:acc:771{ord:𝑎} bin:+ ord:acc:775{ord:𝑝} bin:+ ord:acc:776{ord:𝑞}
+  text ", a taller base lifts its mark in "
+  formula inline "\\hat {H}"
+    ord:acc:770{ord:𝐻}
+  text ", and "
+  formula inline "\\overline {x + y}"
+    ord:acc*:773{ord:𝑥 bin:+ ord:𝑦}
+  text " draws its rule."
+para
+  math inline "\\overset {?}{=}"
+  text " stays text: what this slice does not model keeps its source and a warning that names it."
 para
   text "An alphabet remaps its letters through the Mathematical Alphanumeric block, Letterlike holes included: "
   formula inline "\\mathbb {R}^{d}"
@@ -91,4 +101,4 @@ center
     formula display "e^{i\\pi} + 1 = 0"
       ord:𝑒^{ord:𝑖 ord:𝜋} bin:+ ord:1 rel:= ord:0
 -- diagnostics
-warning[W0012] 47:5 math with \hat is not rendered yet; the formula is set as source text
+warning[W0012] 50:1 math with \overset is not rendered yet; the formula is set as source text

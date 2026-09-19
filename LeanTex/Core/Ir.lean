@@ -2450,6 +2450,11 @@ def dumpMathNucleus (acc : String) (n : Math.MNucleus) : String :=
       | some c => String.ofList [c]
       | none => "."
     (dumpMathList (acc ++ s!"left{name l}\{") body) ++ s!"}right{name r}"
+  | .accent mark stretch body =>
+    -- The combining mark by scalar value: pushed bare it would combine
+    -- with the golden's own text.
+    let tag := if stretch then "acc*" else "acc"
+    (dumpMathList (acc ++ s!"{tag}:{mark.toNat}\{") body).push '}'
   | .grid kind rows =>
     let tag := match kind with
       | .align => "align"

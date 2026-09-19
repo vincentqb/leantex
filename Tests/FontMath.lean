@@ -741,6 +741,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "fira math constants" (fira.math == some {
     scales := { script := 72, scriptscript := 58 }
     axisHeight := 280
+    accentBaseHeight := 527
     subscriptShiftDown := 350
     superscriptShiftUp := 400
     superscriptShiftUpCramped := 270
@@ -759,6 +760,9 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     fractionRuleThickness := 76
     fractionDenominatorGapMin := 80
     fractionDenomDisplayStyleGapMin := 200
+    overbarVerticalGap := 150
+    overbarRuleThickness := 66
+    overbarExtraAscender := 50
     radicalVerticalGap := 96
     radicalDisplayStyleVerticalGap := 142
     radicalRuleThickness := 76
@@ -917,13 +921,47 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Elab.run "t" "\\begin{equation*}x\\end{equation*}").1.body ==
       #[.center #[.para #[.formula true "x" (.cons (.atom .ord (.sym '𝑥') .nil .nil false) .nil)]]])
   -- What still is not modelled keeps its source and its name.
-  t "an accent keeps its source and warns by name"
-    (warnCodes "$\\hat{x}$" == ["W0012"] &&
-      ((Elab.run "t" "$\\hat{x}$").1.body.any fun b => match b with
+  t "an out-of-scope construct keeps its source and warns by name"
+    (warnCodes "$\\overset{?}{=}$" == ["W0012"] &&
+      ((Elab.run "t" "$\\overset{?}{=}$").1.body.any fun b => match b with
         | .para xs => xs.any fun x => match x with
           | .math false _ => true
           | _ => false
         | _ => false))
+  -- Accents: TeXbook Appendix G rule 12 over MathTopAccentAttachment,
+  -- pinned in sp over Layout's own output.
+  let runXOf (src : String) (pick : Array (Nat × Char) → Bool) : Option Dim.Sp := Id.run do
+    let l := lineOf src
+    let mut x : Dim.Sp := 0
+    for s in l.segs do
+      match s with
+      | .run _ _ _ w glyphs _ _ _ =>
+        if pick glyphs then return some x
+        x := x + w
+      | .gap w => x := x + w
+      | .rule w _ _ _ => x := x + w
+      | .image _ w _ => x := x + w
+    return none
+  let hatG := (fira.gid '\u0302').getD 0
+  t "an accent adds no width: hat x advances as x alone"
+    (warnCodes "$\\hat{x}$" == [] && widthOf "$\\hat{x}$" == adv mbase '𝑥')
+  t "the mark's attachment point lands on the base's"
+    (runXOf "$\\hat{x}$" (fun gs => gs.any (·.2 == '\u0302')) ==
+      some (konst mbase (fira.topAccentX ((fira.gid '𝑥').getD 0))
+        - konst mbase (fira.markAttachX hatG)))
+  t "a base at accentBaseHeight leaves the mark unlifted"
+    (supRuns "$\\hat{x}$" == #[])
+  t "a taller base lifts the mark by its ink's excess over accentBaseHeight"
+    (supRuns "$\\hat{H}$" ==
+      #[(mbase, (((fira.gid '𝐻').bind fira.yExtent).map (·.2)).getD 0 * mbase
+        / upem - konst mbase 527)])
+  t "overline draws its rule and no glyph mark"
+    (warnCodes "$\\overline{x+y}$" == [] &&
+      ((lineOf "$\\overline{x+y}$").segs.filter fun s => match s with
+        | .rule _ _ _ _ => true
+        | _ => false).size == 1)
+  t "an accented atom still takes its script"
+    (warnCodes "$\\hat{x}^2$" == [] && warnCodes "$e^{\\hat{H}}$" == [])
   -- Math alphabets: one remap per letter (Math.MathAlphabet.apply), the
   -- Letterlike holes individually — \mathbb{R} is ℝ, never tofu at
   -- U+1D549 — and the classes projection untouched

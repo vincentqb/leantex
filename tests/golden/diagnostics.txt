@@ -156,7 +156,7 @@ warning[W0010]: lists nest four levels; level 5 reuses the fourth's marker
 warning[W0011]: 'Demo Serif' (fonts/DemoSerif-Regular.otf) has no OpenType MATH table; math is set as plain text
   help: \fonts{ math = "STIX Two Math" } names a math face; `leantex fonts` lists the installed families
 ── W0012 (degraded) math construct not rendered yet; set as source text
-warning[W0012]: math with \hat is not rendered yet; the formula is set as source text
+warning[W0012]: math with \overset is not rendered yet; the formula is set as source text
 ── W0013 (config) an \allow'd code never fired
 warning[W0013]: '\allow' lists E0333, which never fired
   help: the document no longer needs it; drop the entry from \allow

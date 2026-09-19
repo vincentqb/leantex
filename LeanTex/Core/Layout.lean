@@ -1285,6 +1285,66 @@ private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
       ++ struts e (raise + ruleTop + extraAsc) (min (raise + bBot) (surdRaise + vBot))
     (items, missing0)
 
+/-- Assemble a laid accent (TeXbook Appendix G rule 12 over the MATH
+constants): the mark placed so its own attachment x (MathTopAccentAttachment,
+unclamped — `Font.markAttachX`) lands on the base's (`Font.topAccentX`,
+clamped into the advance, half the advance where the face lacks the point;
+half the assembled width when the base is more than one glyph), and raised
+by the base ink's excess over `accentBaseHeight` — rule 12's `h − min(h, χ)`.
+A stretching mark takes the widest horizontal variant that does not overhang
+the base (`Math.pickWidest`); the U+0305 mark is `\overline`, drawn as a
+rule from the overbar constants — exact at any width, the stated fallback
+needing no variant. A mark glyph the face lacks is recorded missing (the
+E0405 path); the base still renders. -/
+private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
+    (stretch : Bool) (bItems : Array Item) (missing0 : Array (Nat × Char)) :
+    Array Item × Array (Nat × Char) := Id.run do
+  let (bTop, bBot) := mathItemsExtent e.font bItems
+  let baseW := mathItemsWidth bItems
+  let raisedBody := raiseItems raise bItems
+  if mark == '\u0305' then
+    let θ := e.constAt size e.consts.overbarRuleThickness
+    let ψ := e.constAt size e.consts.overbarVerticalGap
+    let extraAsc := e.constAt size e.consts.overbarExtraAscender
+    let ruleBot := bTop + ψ
+    let items := (raisedBody.push (mathKern e size (-baseW))).push
+        (Item.rule baseW θ (raise + ruleBot) e.color)
+      ++ struts e (raise + ruleBot + θ + extraAsc) (raise + bBot)
+    return (items, missing0)
+  match glyphOf size e.font mark with
+  | none =>
+    let missing := if missing0.contains (e.idx, mark) then missing0
+      else missing0.push (e.idx, mark)
+    return (raisedBody ++ struts e (raise + bTop) (raise + bBot), missing)
+  | some (g, _, _) =>
+    -- The base's attachment point: its one glyph's, when the base is one
+    -- glyph of the math face; else the assembled width's centre.
+    let baseTA :=
+      match bItems.filter (fun it => match it with
+        | .box _ _ _ _ glyphs _ _ _ => !glyphs.isEmpty
+        | _ => false) with
+      | #[.box _ fi _ _ #[(bg, _, _)] bsize _ _] =>
+        if fi == e.idx then e.constAt bsize (e.font.topAccentX bg) else baseW / 2
+      | _ => baseW / 2
+    let gv :=
+      if stretch then
+        let ladder := (e.font.horizVariants g).toList
+        let targetDu := baseW * (e.font.unitsPerEm : Int) / size
+        ((Math.pickWidest targetDu (if ladder.isEmpty then [(g, 0)] else ladder)).getD
+          (g, 0)).1
+      else g
+    let wAcc := scaledAt size e.font (e.font.widths[gv]?.getD 0)
+    let shift := baseTA - e.constAt size (e.font.markAttachX gv)
+    let accRaise := raise +
+      max 0 (bTop - e.constAt size e.consts.accentBaseHeight)
+    let (mTop, mBot) := e.glyphExtent size gv
+    let items := ((raisedBody.push (mathKern e size (-baseW + shift))).push
+        (Item.box wAcc e.idx e.color e.link #[(gv, mark, wAcc)] size e.underline accRaise)
+      |>.push (mathKern e size (baseW - shift - wAcc)))
+      ++ struts e (max (raise + bTop) (accRaise + mTop))
+        (min (raise + bBot) (accRaise + mBot))
+    return (items, missing0)
+
 mutual
 
 /-- Lay one math list: spacing between adjacent atoms from the degraded
@@ -1479,6 +1539,14 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     let (bItems, m1) := layMathTail e st 0
       (Math.degrade body.classes) none (#[], acc.2) body
     let (items, missing) := delimAssemble e (e.sizeAt st) raise l r bItems m1
+    (acc.1 ++ items, missing)
+  | .accent mark stretch body =>
+    -- The base sets in the cramped current style (TeXbook Appendix G
+    -- rule 12), which keeps its size: cramping preserves rank.
+    let (bItems, m1) := layMathTail e st.cramp 0
+      (Math.degrade body.classes) none (#[], acc.2) body
+    let (items, missing) := accentAssemble e (e.sizeAt st) raise mark stretch
+      bItems m1
     (acc.1 ++ items, missing)
   | .grid kind rows =>
     let cellSt : Math.MathStyle := match kind with
