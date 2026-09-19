@@ -507,6 +507,132 @@ def bibItems (style : Style) (resolved : Array Resolved) : Array Ir.BibItem :=
         | .authorYear => none
       content := renderEntry style.names (style.order r.entry.kind) r.entry }
 
+/-! ### The theorems the four-axis shape earns
+
+Each axis being a pure function is what makes these statable; a
+transcribed `.bst` has none of them. -/
+
+/-- Numbering is the sort position: in a numeric style, the marker of the
+reference list's `i`-th entry is its 1-based index in the sorted list —
+the fact every `\cite` mark rests on, `positions_exact` below being the
+half that says the positions the marks look up are those same indices.
+The same statement shape — a label is the index of first appearance in a
+sequence — is what `paper-crossref` owes floats; if its lemma lands, the
+shared form belongs beside `Ir.frameNumbers`' fold. -/
+theorem bibItems_marker_exact (style : Style) (resolved : Array Resolved)
+    (h : style.cite = .numeric) (i : Nat) (hi : i < resolved.size) :
+    (bibItems style resolved)[i]?.bind (·.marker) =
+      some (toString (resolved[i].position)) := by
+  simp [bibItems, Array.getElem?_map, Array.getElem?_eq_getElem hi, h]
+
+/-- The positions `resolveEntries` hands the marks are the 1-based indices
+of the sorted list: position `i + 1` at index `i`, whatever the sort
+order did. Together with `bibItems_marker_exact`, the numeric marker at
+index `i` is `i + 1`. -/
+theorem positions_exact (style : Style) (cited : Array String)
+    (find : String → Option Entry) (i : Nat)
+    (hi : i < (resolveEntries style cited find).size) :
+    (resolveEntries style cited find)[i].position = i + 1 := by
+  simp [resolveEntries] at hi ⊢
+
+/-- Insertion keeps every element: what goes in comes out, nothing else.
+The membership half of "the emitted list is a permutation of the cited
+set". -/
+theorem insertResolved_mem (so : SortOrder) (x : Resolved) (ys : List Resolved)
+    (z : Resolved) :
+    z ∈ sortResolved.insertResolved so x ys ↔ (z = x ∨ z ∈ ys) := by
+  induction ys with
+  | nil => simp [sortResolved.insertResolved]
+  | cons y rest ih =>
+    rw [sortResolved.insertResolved]
+    split
+    · simp only [List.mem_cons, ih, or_left_comm]
+    · simp only [List.mem_cons]
+
+/-- The sorted list holds exactly the input's elements. -/
+theorem sortResolved_mem (so : SortOrder) (xs : List Resolved) (z : Resolved) :
+    z ∈ sortResolved so xs ↔ z ∈ xs := by
+  induction xs with
+  | nil => simp [sortResolved]
+  | cons x rest ih =>
+    rw [sortResolved, insertResolved_mem, ih, List.mem_cons]
+
+/-- The sorted list is exactly as long as the input: with `sortResolved_mem`
+this is the counting half of the permutation claim. -/
+theorem sortResolved_length (so : SortOrder) (xs : List Resolved) :
+    (sortResolved so xs).length = xs.length := by
+  induction xs with
+  | nil => rfl
+  | cons x rest ih =>
+    rw [sortResolved, insertResolved_length, ih, List.length_cons]
+where
+  insertResolved_length (so : SortOrder) (x : Resolved) (ys : List Resolved) :
+      (sortResolved.insertResolved so x ys).length = ys.length + 1 := by
+    induction ys with
+    | nil => rfl
+    | cons y rest ih =>
+      rw [sortResolved.insertResolved]
+      split
+      · simp [ih]
+      · rfl
+
+/-- The comparison is total in the order-theoretic sense: two entries
+always compare, one way or the other — `gt` one way implies not-`gt` the
+other for citation order, whose comparison is over the distinct
+first-citation positions. Author-year's chained string comparison owes the
+same statement; it is the recorded remainder of this slice. -/
+theorem compare_citation_asymm (a b : Resolved)
+    (h : SortOrder.citation.compare a b = .gt) :
+    SortOrder.citation.compare b a ≠ .gt := by
+  simp [SortOrder.compare, Nat.compare_eq_gt] at h ⊢
+  omega
+
+/-- The sorted list is sorted: no element compares `gt` against a later
+one, for citation order. (`Pairwise` over the comparison; author-year is
+the recorded remainder beside `compare_citation_asymm`.) -/
+theorem sortResolved_sorted_citation (xs : List Resolved) :
+    (sortResolved .citation xs).Pairwise
+      (fun a b => SortOrder.citation.compare a b ≠ .gt) := by
+  induction xs with
+  | nil => exact .nil
+  | cons x rest ih => exact insert_sorted x (sortResolved .citation rest) ih
+where
+  le_of_not_gt (a b : Resolved) (h : SortOrder.citation.compare a b ≠ .gt) :
+      a.position ≤ b.position := by
+    simp [SortOrder.compare, Nat.compare_eq_gt] at h
+    omega
+  not_gt_of_le (a b : Resolved) (h : a.position ≤ b.position) :
+      SortOrder.citation.compare a b ≠ .gt := by
+    simp [SortOrder.compare, Nat.compare_eq_gt]
+    omega
+  insert_sorted (x : Resolved) (ys : List Resolved)
+      (hs : ys.Pairwise (fun a b => SortOrder.citation.compare a b ≠ .gt)) :
+      (sortResolved.insertResolved .citation x ys).Pairwise
+        (fun a b => SortOrder.citation.compare a b ≠ .gt) := by
+    induction ys with
+    | nil => exact .cons (by simp) .nil
+    | cons y rest ih =>
+      rw [sortResolved.insertResolved]
+      rcases hs with - | ⟨hy, hrest⟩
+      split
+      · rename_i hgt
+        refine .cons ?_ (ih hrest)
+        intro z hz
+        rw [insertResolved_mem] at hz
+        rcases hz with rfl | hz
+        · exact not_gt_of_le y z (Nat.le_of_lt (by
+            have := compare_citation_asymm z y hgt
+            simp [SortOrder.compare, Nat.compare_eq_gt] at hgt
+            omega))
+        · exact hy z hz
+      · rename_i hng
+        refine .cons ?_ (.cons hy hrest)
+        intro z hz
+        rcases List.mem_cons.mp hz with rfl | hz
+        · exact hng
+        · exact not_gt_of_le x z (Nat.le_trans
+            (le_of_not_gt x y hng) (le_of_not_gt y z (hy z hz)))
+
 mutual
 
 /-- The citation rewrite: every `.cite` node becomes the style's inlines
@@ -546,6 +672,90 @@ end
 private def resolveArr (style : CiteStyle) (find : Resolver)
     (xs : Array Ir.Inline) : Array Ir.Inline :=
   resolveInlines style find #[] xs.toList
+
+mutual
+
+/-- Inline content carrying no citation, anywhere in its tree. -/
+def citeFreeOne : Ir.Inline → Bool
+  | .cite _ _ => false
+  | .styled _ body => citeFreeList body.toList
+  | .colored _ _ body => citeFreeList body.toList
+  | .role _ body => citeFreeList body.toList
+  | .link _ body => citeFreeList body.toList
+  | .underline body => citeFreeList body.toList
+  | .step _ _ body => citeFreeList body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .fill | .pageNumber | .pageCount | .linebreak _ => true
+
+def citeFreeList : List Ir.Inline → Bool
+  | [] => true
+  | x :: rest => citeFreeOne x && citeFreeList rest
+
+end
+
+private theorem resolveInlines_acc (style : CiteStyle) (find : Resolver)
+    (out : Array Ir.Inline) (xs : List Ir.Inline) :
+    resolveInlines style find out xs = out ++ resolveInlines style find #[] xs := by
+  induction xs generalizing out with
+  | nil => simp [resolveInlines]
+  | cons x rest ih =>
+    rw [resolveInlines, resolveInlines, ih (resolveInline style find out x),
+      ih (resolveInline style find #[] x), resolveInline_acc, ← Array.append_assoc]
+where
+  resolveInline_acc (style : CiteStyle) (find : Resolver)
+      (out : Array Ir.Inline) (x : Ir.Inline) :
+      resolveInline style find out x = out ++ resolveInline style find #[] x := by
+    match x with
+    | .cite t keys => simp [resolveInline]
+    | .styled _ body | .colored _ _ body | .role _ body | .link _ body
+    | .underline body | .step _ _ body => simp [resolveInline]
+    | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+    | .fill | .pageNumber | .pageCount | .linebreak _ => simp [resolveInline]
+
+mutual
+
+/-- Style independence, the walk half: resolution is the identity on
+content carrying no citation — whatever the style and whatever the
+bibliography, only citations and the reference list change. The
+citation-side analogue of `artifact_flag_free`: two styles can differ
+only where a `.cite` stood or a `\bibliography` marker fills. -/
+theorem resolveInline_id (style : CiteStyle) (find : Resolver)
+    (out : Array Ir.Inline) (x : Ir.Inline) (h : citeFreeOne x = true) :
+    resolveInline style find out x = out.push x := by
+  match x with
+  | .styled st body =>
+    rw [citeFreeOne] at h
+    rw [resolveInline, resolveInlines_id style find body.toList h]
+  | .colored c nm body =>
+    rw [citeFreeOne] at h
+    rw [resolveInline, resolveInlines_id style find body.toList h]
+  | .role nm body =>
+    rw [citeFreeOne] at h
+    rw [resolveInline, resolveInlines_id style find body.toList h]
+  | .link u body =>
+    rw [citeFreeOne] at h
+    rw [resolveInline, resolveInlines_id style find body.toList h]
+  | .underline body =>
+    rw [citeFreeOne] at h
+    rw [resolveInline, resolveInlines_id style find body.toList h]
+  | .step n last body =>
+    rw [citeFreeOne] at h
+    rw [resolveInline, resolveInlines_id style find body.toList h]
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .fill | .pageNumber | .pageCount | .linebreak _ => rw [resolveInline]
+
+theorem resolveInlines_id (style : CiteStyle) (find : Resolver)
+    (xs : List Ir.Inline) (h : citeFreeList xs = true) :
+    resolveInlines style find #[] xs = xs.toArray := by
+  match xs with
+  | [] => rw [resolveInlines]
+  | x :: rest =>
+    rw [citeFreeList, Bool.and_eq_true] at h
+    rw [resolveInlines, resolveInline_id style find #[] x h.1,
+      resolveInlines_acc, resolveInlines_id style find rest h.2]
+    simp
+
+end
 
 mutual
 

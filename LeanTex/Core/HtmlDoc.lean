@@ -1229,6 +1229,20 @@ theorem role_class_reaches_artifact (cfg : Config) (acc : Array Node)
         #[("class", roleClass n)]) := by
   simp [inlineNodeInto]
 
+/-- A link's URL enters the artifact only as the `href` attribute of the
+typed tree — never spliced into markup — so it passes `escapeAttr` by
+construction (`escapeAttr_no_quote`). This is what makes `.bib` field
+text safe in citations and reference entries: a citation's resolved mark
+is a `.link` to `Bib.anchorOf key`, and an entry's URL and DOI fields
+become `.link` nodes, so a `"` or `<` a pasted `.bib` value carries can
+never break out of the attribute or open a tag. -/
+theorem link_url_enters_attribute_position (cfg : Config) (acc : Array Node)
+    (url : String) (body : Array Inline) :
+    inlineNodeInto cfg acc (.link url body) =
+      acc.push (Html.elem "a" (inlineNodesInto cfg #[] body.toList)
+        #[("href", url), ("style", "color: inherit")]) := by
+  simp [inlineNodeInto]
+
 /-- Does this paragraph use `\hfill`? If so it becomes a flex row, which is
 the CSS equivalent of the stretch it asked for. -/
 private def hasFill (xs : Array Inline) : Bool :=
@@ -1328,6 +1342,26 @@ def withEpoch (style : String) : Node → Node
   | .text s => .text s
   | .style css => .style css
   | .script attrs code => .script attrs code
+
+/-- One reference-list entry: the style's marker, the formatted content,
+and the anchor its citations link to. -/
+private def bibItemNode (cfg : Config) (item : Ir.BibItem) : Node :=
+  let markerNode : Array Node := match item.marker with
+    | some m => #[Html.elem "span" #[Html.text s!"[{m}]"]
+        #[("class", "bib-marker")], Html.text " "]
+    | none => #[]
+  Html.elem "li" (markerNode ++ inlines cfg item.content)
+    #[("id", Ir.bibAnchor item.key)]
+
+/-- An entry's key enters the artifact only as the `id` attribute of the
+typed tree — the anchor `Bib.anchorOf` links to — so it passes
+`escapeAttr` by construction (`escapeAttr_no_quote`): a `.bib` key is
+author text, and no spelling of one can break out of the attribute. -/
+private theorem bibItemNode_key_enters_attribute_position (cfg : Config)
+    (item : Ir.BibItem) :
+    ∃ kids, bibItemNode cfg item =
+      Html.elem "li" kids #[("id", Ir.bibAnchor item.key)] :=
+  ⟨_, rfl⟩
 
 mutual
 
@@ -1600,15 +1634,8 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   -- attribute. The style's marker leads the item; an author-year list
   -- marks nothing and the class carries that.
   | .bibliography _ _ items =>
-    let itemEls := items.map fun item =>
-      let markerNode : Array Node := match item.marker with
-        | some m => #[Html.elem "span" #[Html.text s!"[{m}]"]
-            #[("class", "bib-marker")], Html.text " "]
-        | none => #[]
-      Html.elem "li" (markerNode ++ inlines cfg item.content)
-        #[("id", Ir.bibAnchor item.key)]
     let marked := items.any (·.marker.isSome)
-    Html.elem "ul" itemEls
+    Html.elem "ul" (items.map (bibItemNode cfg))
       #[("class", if marked then "bibliography" else "bibliography unmarked")]
 
 /-- The accumulator threads through the sibling walk, as in
