@@ -1036,6 +1036,22 @@ structure Tip where
   y3 : Sp
   deriving Repr, BEq, Inhabited
 
+/-- Where a label stands relative to its point: TikZ's default anchors
+the node's centre there; the placement options put the named side of the
+label against the point (pgf manual §17.5.2 — `right` is `anchor=west`,
+the label standing right of the point, and so around). -/
+inductive LabelAlign where
+  | center
+  /-- `right`: the label's west edge on the point. -/
+  | west
+  /-- `left`. -/
+  | east
+  /-- `above`: the label's south edge on the point. -/
+  | south
+  /-- `below`. -/
+  | north
+  deriving Repr, BEq, Inhabited
+
 /-- The dump spelling of a shape's paint, for the IR goldens. -/
 def paintDump (st : Option Stroke) (fl : Option Color) : String :=
   let stS := match st with
@@ -1064,6 +1080,7 @@ inductive Shape where
   content, so a node's `{$X$}` renders through the math layer exactly as
   it would in a paragraph. -/
   | label (x y : Sp) (content : Array Inline) (color : Color) (scale : Nat)
+      (align : LabelAlign)
   /-- A node's circular outline: centre and radius, stroked and/or
   filled. The radius is the declared minimum's half — pgf manual
   §"Shapes" has extent = max(minimum, text + 2·inner sep) per axis, and
@@ -1084,7 +1101,7 @@ inductive Shape where
 under an overlay cover. -/
 def Shape.recolor (f : Color → Color) : Shape → Shape
   | .rect x y w h c => .rect x y w h (f c)
-  | .label x y t c sc => .label x y t (f c) sc
+  | .label x y t c sc al => .label x y t (f c) sc al
   | .circle x y r st fl =>
     .circle x y r (st.map fun s => { s with color := f s.color }) (fl.map f)
   | .frame x y w h st fl =>
@@ -1104,7 +1121,7 @@ picture's box bounds every fill entirely and every label at its anchor
 (`box_in_bbox`); the ink of a label can stand a little proud of it. -/
 def Shape.box : Shape → Box
   | .rect x y w h _ => ((min x (x + w), min y (y + h)), (max x (x + w), max y (y + h)))
-  | .label x y _ _ _ => ((x, y), (x, y))
+  | .label x y _ _ _ _ => ((x, y), (x, y))
   | .circle x y r _ _ =>
     ((min (x - r) (x + r), min (y - r) (y + r)),
      (max (x - r) (x + r), max (y - r) (y + r)))
@@ -1130,7 +1147,7 @@ def Picture.recolor (p : Picture) (f : Color → Color) : Picture :=
 glyph — text or math — a picture can ask a face for is here. -/
 def Picture.labelContents (p : Picture) : Array (Array Inline) :=
   p.shapes.filterMap fun s => match s with
-    | .label _ _ content _ _ => some content
+    | .label _ _ content _ _ _ => some content
     | .rect _ _ _ _ _ => none
     | .circle _ _ _ _ _ => none
     | .frame _ _ _ _ _ _ => none
@@ -3272,9 +3289,15 @@ def dumpBlock (ind : String) (b : Block) : String :=
       | .rect x y w h c =>
         s!"{ind}  rect {x.toPtString} {y.toPtString} {w.toPtString} {h.toPtString} \
 #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}\n"
-      | .label x y content c sc =>
+      | .label x y content c sc al =>
+        let alS := match al with
+          | .center => ""
+          | .west => " west"
+          | .east => " east"
+          | .south => " south"
+          | .north => " north"
         s!"{ind}  label {x.toPtString} {y.toPtString} \
-#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b} {sc}\n" ++
+#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b} {sc}{alS}\n" ++
         dumpInlines (ind ++ "    ") content
       | .circle x y r st fl =>
         s!"{ind}  circle {x.toPtString} {y.toPtString} {r.toPtString}\

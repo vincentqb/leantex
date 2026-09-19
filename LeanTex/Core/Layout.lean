@@ -4102,7 +4102,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
           let (a3, b3) := pt (t.x3, t.y3)
           paths := paths.push { path := .tri a1 b1 a2 b2 a3 b3
                                 fill := some st.color }
-      | .label lx ly content color scale =>
+      | .label lx ly content color scale align =>
         let size := b.geom.fontSize * (scale : Int) / 1000
         let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}
           #[.colored color none content] {} imgs b.geom.textWidth b.geom.textHeight
@@ -4120,7 +4120,19 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                max acc.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
             | _ => acc) (0, 0)
           let (cx, cy) := place.toPage (lx, ly)
-          lines := lines.push { x := cx - w / 2, y := cy + (hgt - dep) / 2,
+          -- The anchor decides which point of the label's box sits on
+          -- (cx, cy): the centre by default, an edge under a placement
+          -- option (pgf §17.5.2).
+          let x := match align with
+            | .center => cx - w / 2
+            | .west => cx
+            | .east => cx - w
+            | .south | .north => cx - w / 2
+          let y := match align with
+            | .center | .west | .east => cy + (hgt - dep) / 2
+            | .south => cy - dep
+            | .north => cy + hgt
+          lines := lines.push { x := x, y := y,
                                 size := size, segs := segs, setWidth := w }
           -- Label lines ride with the picture: they share the shrink
           -- above it, so a page set short moves the diagram as one.

@@ -1563,7 +1563,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
           ("width", (max rw (-rw)).toPtString),
           ("height", (max rh (-rh)).toPtString),
           ("fill", cssColor color)]
-      | .label lx ly content color scale =>
+      | .label lx ly content color scale align =>
         -- The label's inline content inside SVG's <text>: plain text as
         -- character data, math as an italic <tspan> of its source — the
         -- same source-text math this backend ships in prose (native
@@ -1575,13 +1575,21 @@ def blockNode (cfg : Config) (b : Block) : Node :=
           | .formula _ src _ =>
             Html.elem "tspan" #[Html.text src] #[("font-style", "italic")]
           | inl => Html.text (Ir.plainTextOne inl)
+        let anchor := match align with
+          | .center | .south | .north => "middle"
+          | .west => "start"
+          | .east => "end"
+        let baseline := match align with
+          | .center | .west | .east => "central"
+          | .south => "text-after-edge"
+          | .north => "hanging"
         Html.elem "text" nodes #[
           ("x", (lx - px0).toPtString),
           ("y", (py1 - ly).toPtString),
           ("fill", cssColor color),
           ("font-size", (Ir.baseFontSize * (scale : Int) / 1000).toPtString),
-          ("text-anchor", "middle"),
-          ("dominant-baseline", "central")]
+          ("text-anchor", anchor),
+          ("dominant-baseline", baseline)]
       | .circle sx sy r st fl =>
         Html.elem "circle" #[] (#[
           ("cx", (sx - px0).toPtString),

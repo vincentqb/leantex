@@ -1190,7 +1190,7 @@ here); its outline is not drawn")
               ev := ev.diag (.W0334, "a drawn node without 'minimum width' and \
 'minimum height' (or 'minimum size') is outside the rendered picture subset \
 (the body's own extent is not measured here); its outline is not drawn")
-        let shape := Ir.Pic.Shape.label sx sy content color scale
+        let shape := Ir.Pic.Shape.label sx sy content color scale .center
         return { ev with shapes := ev.shapes.push shape }
       | .error e, _, _ | _, .error e, _ =>
         return ev.diag (.E0333, s!"in '\\node', {e}; the node is not drawn")
@@ -1370,7 +1370,7 @@ is not drawn")
         return .error (.E0333, s!"in '\\draw', no node is named '{nm}'; the edge \
 is not drawn")
   let mut pts : Array Anchor := #[]
-  let mut ops : Array (DrawOp × Option (Array Ir.Inline × Ir.Color × Nat)) := #[]
+  let mut ops : Array (DrawOp × Option (Array Ir.Inline × Ir.Color × Nat × Ir.Pic.LabelAlign)) := #[]
   match readAnchor i with
   | .error d => return ev.diag d
   | .ok (a, i2) =>
@@ -1427,11 +1427,12 @@ outside the rendered picture subset; it is drawn as a straight line")
 outside the rendered picture subset; the edge is not drawn")
       -- an in-path `node[...] {...}`: an edge label at the segment's
       -- midpoint; a placement option (`right`, …) loses only itself
-      let mut mid : Option (Array Ir.Inline × Ir.Color × Nat) := none
+      let mut mid : Option (Array Ir.Inline × Ir.Color × Nat × Ir.Pic.LabelAlign) := none
       if ts[i]? == some (.ident "node") then
         i := i + 1
         let mut mcolor := Ir.Color.black
         let mut mscale : Nat := factor
+        let mut malign := Ir.Pic.LabelAlign.center
         if ts[i]? == some (.sym '[') then
           let mut j := i + 1
           let mut inner : Array Tok := #[]
@@ -1459,6 +1460,12 @@ the rendered picture subset; the option is dropped")
               | .error e =>
                 ev := ev.diag (.E0333, s!"in an edge node, {e}; the colour is \
 dropped")
+            -- placement: pgf §17.5.2 — `right` is anchor=west, the label
+            -- standing right of the point, and so around
+            | [.ident "right"] => malign := .west
+            | [.ident "left"] => malign := .east
+            | [.ident "above"] => malign := .south
+            | [.ident "below"] => malign := .north
             | [] => pure ()
             | o :: _ =>
               ev := ev.diag (.W0334, s!"edge node option {tokText o} is outside \
@@ -1468,7 +1475,7 @@ the rendered picture subset; the option is dropped")
           match contentOf cx env body with
           | .ok (content, mdiags) =>
             ev := mdiags.foldl Ev.diag ev
-            mid := some (content, mcolor, mscale)
+            mid := some (content, mcolor, mscale, malign)
             i := i + 1
           | .error e =>
             return ev.diag (.W0334, s!"{e} in an edge label is outside the \
@@ -1508,9 +1515,9 @@ edge is not drawn")
           | none => segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
         else
           segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
-        if let some (content, mc, msc) := mid then
+        if let some (content, mc, msc, mal) := mid then
           labels := labels.push (.label ((p1.1 + p2.1) / 2) ((p1.2 + p2.2) / 2)
-            content mc msc)
+            content mc msc mal)
       | .curve oA iA =>
         let p1 := a.towardDir oA
         let p2 := c.towardDir iA
@@ -1525,11 +1532,11 @@ edge is not drawn")
           -- the tip rides the arrival tangent; the curve keeps its
           -- endpoint and the filled tip covers its last reach
           tip := (tipAt p2.1 p2.2 (p2.1 - c2.1) (p2.2 - c2.2) stroke.width).map (·.1)
-        if let some (content, mc, msc) := mid then
+        if let some (content, mc, msc, mal) := mid then
           -- B(½) = (p1 + 3c1 + 3c2 + p2)/8, the Bézier midpoint
           labels := labels.push (.label
             ((p1.1 + 3 * c1.1 + 3 * c2.1 + p2.1) / 8)
-            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) content mc msc)
+            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) content mc msc mal)
     | _, _, _ => pure ()
   let withEdge := ev.shapes.push (.edge segs stroke tip)
   return { ev with shapes := withEdge ++ labels }
@@ -1764,7 +1771,7 @@ def placeholder (code : String) : Ir.Pic.Picture :=
       .rect 0 (side - th) side th grey,
       .rect 0 0 th side grey,
       .rect (side - th) 0 th side grey,
-      .label (side / 2) (side / 2) #[.text code] grey 1000] }
+      .label (side / 2) (side / 2) #[.text code] grey 1000 .center] }
 
 end LeanTex.Core.Picture
 

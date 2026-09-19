@@ -2236,7 +2236,7 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   let red : Ir.Color := { r := 200, g := 40, b := 40 }
   let pic : Ir.Pic.Picture := { shapes := #[
     .rect 0 0 (Dim.pt 20) (Dim.pt 10) red,
-    .label (Dim.pt 10) (Dim.pt 5) #[.text "7"] Ir.Color.black 800] }
+    .label (Dim.pt 10) (Dim.pt 5) #[.text "7"] Ir.Color.black 800 .center] }
   t "picture bbox joins its shapes"
     (pic.bbox == ((0, 0), (Dim.pt 20, Dim.pt 10)))
   let run (body : Array Ir.Block) : Layout.Out :=

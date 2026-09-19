@@ -1572,13 +1572,13 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((elabStr ("\\begin{document}\\begin{tikzpicture}[scale=0.5, transform shape]\n" ++
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
-        | .picture pic => pic.shapes == #[.label 0 0 #[.text "x"] Ir.Color.black 500]
+        | .picture pic => pic.shapes == #[.label 0 0 #[.text "x"] Ir.Color.black 500 .center]
         | _ => false)))
   t "elab picture scale without transform shape leaves the label size alone"
     (((elabStr ("\\begin{document}\\begin{tikzpicture}[scale=0.5]\n" ++
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
-        | .picture pic => pic.shapes == #[.label 0 0 #[.text "x"] Ir.Color.black 1000]
+        | .picture pic => pic.shapes == #[.label 0 0 #[.text "x"] Ir.Color.black 1000 .center]
         | _ => false)))
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
   t "elab redefine structural builtin warns and keeps the built-in"
@@ -1756,8 +1756,8 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
       (·.shapes.size) == some 3)
   t "the pair form binds both variables"
     ((picOf (wrap "\\foreach \\k/\\lbl in {1/aa,2/bb}{\\node at (\\k,0) {\\lbl};}")).map
-      (·.shapes) == some #[.label cm 0 #[.text "aa"] Ir.Color.black 1000,
-                           .label (2 * cm) 0 #[.text "bb"] Ir.Color.black 1000])
+      (·.shapes) == some #[.label cm 0 #[.text "aa"] Ir.Color.black 1000 .center,
+                           .label (2 * cm) 0 #[.text "bb"] Ir.Color.black 1000 .center])
   t "truncatemacro floors to a whole unit"
     ((picOf (wrap "\\pgfmathtruncatemacro{\\k}{7/2}\\fill (0,0) rectangle (\\k,1);")).map
       (·.shapes) == some #[.rect 0 0 (3 * cm) cm Ir.Color.black])
@@ -1765,8 +1765,8 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((picOf (wrap "\\foreach \\k in {1,2}{\
 \\pgfmathsetmacro{\\c}{ifthenelse(\\k<2,\"black\",\"white\")}\
 \\node[text=\\c] at (\\k,0) {x};}")).map
-      (·.shapes) == some #[.label cm 0 #[.text "x"] Ir.Color.black 1000,
-                           .label (2 * cm) 0 #[.text "x"] Ir.Color.white 1000])
+      (·.shapes) == some #[.label cm 0 #[.text "x"] Ir.Color.black 1000 .center,
+                           .label (2 * cm) 0 #[.text "x"] Ir.Color.white 1000 .center])
   t "max and * evaluate inside a coordinate"
     ((picOf (wrap "\\fill (0,0) rectangle (max(1,2)*2, 1);")).map (·.shapes) ==
       some #[.rect 0 0 (4 * cm) cm Ir.Color.black])
@@ -1808,7 +1808,7 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((picOf (wrap "\\node[circle, draw, minimum size=8mm, inner sep=1pt] at (0,0) {x};")).map
       (·.shapes) == some #[
         .circle 0 0 (8000 * Dim.mm 10 / 10000 / 2) (some ({} : Ir.Pic.Stroke)) none,
-        .label 0 0 #[.text "x"] Ir.Color.black 1000])
+        .label 0 0 #[.text "x"] Ir.Color.black 1000 .center])
   t "a filled rectangle node ships its frame centred on the anchor"
     ((picOf (wrap "\\node[rectangle, draw=grid, fill=white, thick, dashed, \
 minimum width=10mm, minimum height=6mm] at (1,1) {x};")).map (·.shapes) ==
@@ -1819,7 +1819,7 @@ minimum width=10mm, minimum height=6mm] at (1,1) {x};")).map (·.shapes) ==
           (some { color := { r := 42, g := 111, b := 78 }
                   width := Ir.Pic.thickWidth, dash := .dashed })
           (some Ir.Color.white),
-        .label cm cm #[.text "x"] Ir.Color.black 1000]))
+        .label cm cm #[.text "x"] Ir.Color.black 1000 .center]))
   t "a drawn node without a minimum names the loss and keeps its label"
     (warnCodes (wrap "\\node[circle, draw] at (0,0) {x};") == ["W0334"] &&
       (picOf (wrap "\\node[circle, draw] at (0,0) {x};")).map (·.shapes.size) == some 1)
@@ -1834,7 +1834,7 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
   t "a math node body elaborates as a formula"
     (((picOf (wrap "\\node at (0,0) {$x$};")).map fun p =>
       p.shapes.any fun s => match s with
-        | .label _ _ content _ _ => content.any fun inl => match inl with
+        | .label _ _ content _ _ _ => content.any fun inl => match inl with
           | .formula false "x" _ => true
           | _ => false
         | _ => false).getD false)
@@ -1887,7 +1887,12 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
   t "a mid-path node labels the segment at its midpoint"
     ((picOf (wrap "\\draw (0,0) -- node {mid} (2,0);")).map (fun p =>
       p.shapes.any fun s => match s with
-        | .label x y content _ _ => x == cm && y == 0 && content == #[.text "mid"]
+        | .label x y content _ _ _ => x == cm && y == 0 && content == #[.text "mid"]
+        | _ => false) == some true)
+  t "an edge label's placement option anchors the named side on the point"
+    ((picOf (wrap "\\draw (0,0) -- node[right] {m} (2,0);")).map (fun p =>
+      p.shapes.any fun s => match s with
+        | .label _ _ _ _ _ al => al == .west
         | _ => false) == some true)
   t "a chained to path keeps every waypoint segment"
     ((picOf (wrap "\\draw (0,0) to[out=90,in=180] (1,1) to[out=0,in=180] (2,0);")).map
