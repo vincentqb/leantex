@@ -2585,7 +2585,7 @@ def navLinkOne (out : Array (String × String)) : Block → Array (String × Str
   | .nav _ body => navLinkList out body.toList
   | .frame title _ _ body => navLinkList (navLinkInlineList out title.toList) body.toList
   | .table _ _ _ rows _ => navLinkRows out rows.toList
-  | .float _ _ body caption => navLinkInlineList (navLinkList out body.toList) caption.toList
+  | .float _ _ _ body caption => navLinkInlineList (navLinkList out body.toList) caption.toList
 
 def navLinkRows (out : Array (String × String)) :
     List (Array (Array Inline)) → Array (String × String)
@@ -4730,7 +4730,7 @@ def onlyFreeOne : Block → Bool
   | .note body => onlyFreeList body.toList
   | .nav _ body => onlyFreeList body.toList
   | .frame _ _ _ body => onlyFreeList body.toList
-  | .float _ _ body _ => onlyFreeList body.toList
+  | .float _ _ _ body _ => onlyFreeList body.toList
   | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _
   | .table _ _ _ _ _ | .pagebreak => true
@@ -4807,7 +4807,7 @@ theorem keepForOne_id (t : String) (b : Block)
   | .frame ti st v body =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
-  | .float k ca body caption =>
+  | .float k n ca body caption =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
 
