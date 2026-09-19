@@ -51,6 +51,10 @@ def main : IO UInt32 := do
     { cmd := "lake", args := #["env", "lean", "--run", "scripts/gen-lorem.lean"] }
   if genLorem.exitCode != 0 then
     die s!"gen-lorem failed:\n{genLorem.stderr}"
+  let genPaper ← IO.Process.output
+    { cmd := "lake", args := #["env", "lean", "--run", "scripts/gen-paper.lean"] }
+  if genPaper.exitCode != 0 then
+    die s!"gen-paper failed:\n{genPaper.stderr}"
   let haveLualatex ← hasCmd "lualatex"
   for doc in ["tests/corpus/paragraphs.tex", "bench/lorem.tex", "bench/underline.tex"] do
     let base := (doc.splitOn "/").getLastD doc
@@ -69,5 +73,15 @@ def main : IO UInt32 := do
     #["-q", "build", "tests/corpus/themed.tex", "-o", (outDir / "themed.pdf").toString]
   bench n "leantex  themed.tex -o html" leantex
     #["-q", "build", "tests/corpus/themed.tex", "-o", (outDir / "themed.html").toString]
+  -- The paper-shaped fixture: sections, numbered equations with \eqref,
+  -- floats with captions, natbib citations resolved from refs.bib in the
+  -- same run — the one-run resolution that is the engine's headline claim.
+  -- leantex-only, and that asymmetry is the honest story: a comparable
+  -- lualatex figure needs lualatex+bibtex+lualatex twice (or latexmk),
+  -- which this single-command runner deliberately does not spell.
+  bench n "leantex  paper.tex" leantex
+    #["-q", "build", "bench/paper.tex", "-o", (outDir / "paper.pdf").toString]
+  bench n "leantex  paper.tex -o html" leantex
+    #["-q", "build", "bench/paper.tex", "-o", (outDir / "paper.html").toString]
   IO.FS.removeDirAll outDir
   return 0
