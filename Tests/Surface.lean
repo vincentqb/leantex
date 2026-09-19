@@ -475,6 +475,18 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr "\\documentclass{res}\\begin{document}x\\end{document}").1.docClass == .resume)
   t "compat linespread is leading"
     ((elabStr (pre "\\linespread{1.04}")).1.page.leading == 1040)
+  -- A class's \renewcommand\normalsize opening with \@setfontsize: the
+  -- body size and its leading, honoured as the page's own — 10/10.95
+  -- (\@xpt/\@xipt) lands the baselines at 10.95pt over the engine's 6/5
+  -- base, so the factor is 10.95/12 = 0.9125, carried at milli precision.
+  t "compat @setfontsize normalsize sets size and leading"
+    (let d := (elabStr (pre
+      "\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize\\@xpt\\@xipt}")).1
+     d.page.fontSize == Dim.pt 10 && d.page.leading == 913)
+  t "compat @setfontsize literal leading"
+    ((elabStr (pre
+      "\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize{12}{14.5}}")).1.page.leading
+      == 1007)
   t "compat heads become one running head"
     ((elabStr (pre "\\ihead{L}\\ohead{\\thepage}")).1.head.map (·.any (· == .pageNumber)) == some true)
   -- fancyhdr's primary interface: [places] cross L/C/R with E/O; the slots

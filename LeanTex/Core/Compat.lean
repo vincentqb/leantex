@@ -344,6 +344,35 @@ private def skipStar (raws : Array Raw) (i : Nat) : Nat :=
   | some (.word "*" _) => i + 1
   | _ => i
 
+/-- The kernel's point-size macros at the values size10.clo–size12.clo and
+ltplain give them, in milli-points: `\@xpt` is 10 pt, `\@xipt` 10.95 —
+what `\@setfontsize` is called with. -/
+private def ptMacros : List (String × Nat) :=
+  [("@vpt", 5000), ("@vipt", 6000), ("@viipt", 7000), ("@viiipt", 8000),
+   ("@ixpt", 9000), ("@xpt", 10000), ("@xipt", 10950), ("@xiipt", 12000),
+   ("@xivpt", 14400), ("@xviipt", 17280), ("@xxpt", 20740), ("@xxvpt", 24880)]
+
+/-- One `\@setfontsize` argument in milli-points: a kernel size macro, or
+a literal number (`{14}`, `{10.95}`). -/
+private def ptMacroArg (r : Array Raw) : Option Nat :=
+  match r.toList with
+  | [.ctrl n _] => ptMacros.lookup n
+  | _ =>
+    (Decl.parseDecimal (rawSrc r).trimAscii.toString).bind fun (m, s) =>
+      if m ≥ 0 && s > 0 then some (m.toNat * 1000 / s) else none
+
+/-- A milli value as its shortest decimal spelling: 10000 is "10",
+10950 "10.95", 913 "0.913". -/
+private def milliStr (m : Nat) : String :=
+  let i := m / 1000
+  let f := m % 1000
+  if f == 0 then toString i else
+  let digits := ((toString (1000 + f)).drop 1).toString
+  let digits := if digits.endsWith "00" then (digits.dropEnd 2).toString
+    else if digits.endsWith "0" then (digits.dropEnd 1).toString
+    else digits
+  s!"{i}.{digits}"
+
 /-! # Decidable TeX conditionals
 
 `\ifdefined\name` asks whether `\name` is defined, and the document's own
@@ -1056,6 +1085,28 @@ text side is the float separation ('\\tokens{ floatsep = ... }')" pos
     if let some (.group sbody _) := raws[js]? then
       if let some out ← startSection? cmd sbody pos then
         return some (out, js + 1)
+    -- The size idiom: a venue class's `\renewcommand\normalsize` whose
+    -- body opens with `\@setfontsize\normalsize<size><leading>` (fntguide
+    -- §"\@setfontsize"; size10.clo is where `\@xpt`/`\@xipt` get their
+    -- values) declares the document's body size and leading. Both are the
+    -- page's to carry: the leading lands as the factor over the engine's
+    -- 6/5 base (`Ir.leadingMilli`), so a spliced .sty's 10/10.95 sets
+    -- baselines at 10.95pt and the rhythm unit follows. The body's
+    -- trailing display-skip internals are TeX the engine does not run;
+    -- the translation note names what was taken.
+    if !xparse && cmd == "normalsize" then
+      if let some (.group sbody _) := raws[js]? then
+        let b := skipSpaces sbody 0
+        if let some (.ctrl "@setfontsize" _) := sbody[b]? then
+          let (fsArgs, _) := takeGroups sbody (b + 1) 3
+          if h : fsArgs.size ≥ 3 then
+            if let (some sz, some ld) := (ptMacroArg fsArgs[1], ptMacroArg fsArgs[2]) then
+              if sz > 0 && ld > 0 then
+                let factor := (ld * 1000000 + sz * 600) / (sz * 1200)
+                let native := s!"\\page\{ fontsize = {milliStr sz}pt, \
+leading = {milliStr factor} }"
+                became "\\renewcommand{\\normalsize}" native pos
+                return some (← synthAt native pos, js + 1)
     if name == "providecommand" && (← get).bound.contains cmd then
       let (_, k) := takeGroups raws j 1
       became s!"\\providecommand\{\\{cmd}}"
