@@ -55,6 +55,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   tableChecks ref oneFace
   recoveryChecks ref oneFace
   roleLayoutChecks ref geom oneFace
+  navLayoutChecks ref geom oneFace
   vdistChecks ref geom oneFace
   headBandChecks ref oneFace
   cardChecks ref oneFace pats

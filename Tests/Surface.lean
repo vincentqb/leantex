@@ -368,7 +368,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre "\\hypersetup{pdfauthor={A. Doe},pdftitle=T,colorlinks=false}")).1.info.author ==
       some "A. Doe")
   t "compat scrartcl is article"
-    ((elabStr "\\documentclass{scrartcl}\\begin{document}x\\end{document}").1.docClass == "article")
+    ((elabStr "\\documentclass{scrartcl}\\begin{document}x\\end{document}").1.docClass == .article)
   t "compat linespread is leading"
     ((elabStr (pre "\\linespread{1.04}")).1.page.leading == 1040)
   t "compat heads become one running head"
@@ -468,9 +468,12 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- arguments into elaboration as stray content (that was an E0313 per
   -- construct, an error cascade from a preamble the body never needed).
   -- \usetheme is no longer skipped: it rewrites to \theme (M5b).
-  let beamerPre := pre ("\\usetheme{moloch}\\usefonttheme{professionalfonts}" ++
+  -- The deck class, where beamer configuration belongs: under article the
+  -- install would now (rightly) add W0355 for the bundle's inert furniture.
+  let beamerPre := "\\documentclass{slides}\n" ++
+    ("\\usetheme{moloch}\\usefonttheme{professionalfonts}" ++
     "\\setbeamercovered{transparent}\\addtobeamertemplate{block begin}{}{\\smallskip}" ++
-    "\\setbeameroption{hide notes}")
+    "\\setbeameroption{hide notes}") ++ "\n\\begin{document}x\\end{document}"
   t "compat beamer config skipped without errors" (errCodes beamerPre == [])
   -- \setbeamercovered{transparent}, \usefonttheme{professionalfonts}, and
   -- \setbeameroption{hide notes} no longer count: each agrees with what
@@ -1003,7 +1006,35 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "elab itemize" (d5.isEmpty && doc5.body ==
     #[.list false #[#[.para #[.text "a"]], #[.para #[.text "b"]]]])
   let (doc6, d6) := elabStr "\\documentclass[x=1]{article}\n\\begin{document}\nhi\n\\end{document}"
-  t "elab documentclass" (d6.isEmpty && doc6.docClass == "article" && doc6.classOptions == "x=1")
+  t "elab documentclass" (d6.isEmpty && doc6.docClass == .article && doc6.classOptions == "x=1")
+  -- The assumed class is named on the .tex surface, exactly once, and only
+  -- when no \documentclass stands: a declared class (even an unknown one —
+  -- E0309 owns that) and the markdown surface stay silent.
+  let dcl (f s : String) : Array Diag := (Elab.run f s).2
+  t "a classless .tex notes the assumed article page model"
+    (((dcl "doc.tex" "x").filter (·.code == "N0017")).size == 1)
+  t "a declared class is never noted"
+    ((dcl "doc.tex" "\\documentclass{slides}\n\\begin{document}\nx\n\\end{document}").all
+      (·.code != "N0017"))
+  t "an unknown class is E0309's, not the classless note's"
+    ((dcl "doc.tex" "\\documentclass{poster}\n\\begin{document}\nx\n\\end{document}").all
+      (·.code != "N0017"))
+  t "a classless .md is the surface's grammar, never noted"
+    ((dcl "doc.md" "x").all (·.code != "N0017"))
+  -- The theme install names inert slides furniture: the class gates whether
+  -- furniture draws, the theme supplies its values, and a bundle whose
+  -- chrome and furniture styles land under article would otherwise be
+  -- silently inert. One code one meaning: the document's own \chrome under
+  -- article stays W0318 alone.
+  t "a theme's slides furniture under article is named at the install"
+    ((elabStr (dvDoc "\\theme{moloch}\n" "x")).2.any fun d =>
+      d.code == "W0355" && (d.message.splitOn "chrome").length > 1 &&
+        (d.message.splitOn "frametitle").length > 1)
+  t "the same theme under slides installs drawing furniture, silently"
+    ((elabStr (dvDeck "\\theme{moloch}\n" "\\begin{frame}{T}\nx\n\\end{frame}")).2.all
+      (·.code != "W0355"))
+  t "the theme install is never the document's own chrome door"
+    ((elabStr (dvDoc "\\theme{moloch}\n" "x")).2.all (·.code != "W0318"))
   let (doc9, d9) := elabStr
     "\\output{ formats = pdf, html, css = bulma }\n\\begin{document}x\\end{document}"
   t "elab output declaration" (d9.isEmpty && doc9.output.formats == #["pdf", "html"] &&

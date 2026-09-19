@@ -112,6 +112,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .N0016 => #[DriverDiag.mathFaceCompanion "TeX Gyre Pagella Math" "TeX Gyre Pagella",
       DriverDiag.mathFaceFirst "Fira Math"]
   | .N0018 => dvL withMath "$\\mathcal{L} + \\mathsf{A}$"
+  | .N0017 => (Elab.run "doc.tex" "A classless page, assumed article.").2
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL one (dvDoc "" "$x^2$")
   | .W0005 => dvL one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"
@@ -195,6 +196,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       "\\begin{frame}{T}\nx\n\\end{frame}")
   | .W0354 => dvE (dvDoc
       "\\usepackage[tableposition=top]{caption}\n\\captionsetup[table]{skip=10pt}\n" "x")
+  | .W0355 => dvE (dvDoc "\\theme{moloch}\n" "x")
   | .W0332 => dvE (dvDeck "\\theme{moloch}\n"
       "\\framefoot{p. \\pagenumber}\n\\begin{frame}{T}\nx\n\\end{frame}")
   | .W0333 => dvL one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"

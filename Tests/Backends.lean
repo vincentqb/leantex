@@ -122,6 +122,23 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
     (HtmlDoc.cssString "a\"b\\c" == "a\\\"b\\\\c")
   t "style unknown element" (errCodes ("\\documentclass{article}\\style{footer}{ before = 1pt }" ++
     "\\begin{document}x\\end{document}") == ["E0328"])
+  -- A defined role is styleable: its rhythm and format are declared once,
+  -- upstream, and the style addresses the class hook the role already
+  -- ships (`u-<name>`) — the door a framework-shaped stylesheet uses too.
+  let roleStyled := elabStr ("\\documentclass{article}" ++
+    "\\define \\entry(a: content) {\\a\\par}" ++
+    "\\style{entry}{ before = 2em }" ++
+    "\\begin{document}\\entry{x}\\end{document}")
+  t "style admits a defined role" (roleStyled.2.all (·.code != "E0328") &&
+    ((roleStyled.1.styles.find? "entry").bind (·.before)).map (·.width) ==
+      some { em := 2000 })
+  t "style before the define is refused, positionally"
+    (errCodes ("\\documentclass{article}\\style{entry}{ before = 2em }" ++
+      "\\define \\entry(a: content) {\\a\\par}" ++
+      "\\begin{document}\\entry{x}\\end{document}") == ["E0328"])
+  let (rolePage, _) := HtmlDoc.emit {} roleStyled.1
+  t "html role style lands on the class hook"
+    ((rolePage.splitOn ".u-entry { margin-top: 2em; }").length == 2)
   t "style unknown key" (errCodes ("\\documentclass{article}\\style{section}{ colour = 1pt }" ++
     "\\begin{document}x\\end{document}") == ["E0322"])
   t "fillTemplate fills the innermost hole"
@@ -573,8 +590,9 @@ def landmarkChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "nav emits the landmark element around its links"
     (has page "<nav>" && has page "</nav>" && has page "<a href=\"#field-notes\""
       && has page "<section id=\"field-notes\">")
-  t "markdown keeps a nav's content transparent"
-    (has (MarkdownDoc.emit doc) "[Notes](#field-notes)")
+  t "markdown drops a nav: furniture, never twin content"
+    (let md := MarkdownDoc.emit doc
+     !has md "[Notes](#field-notes)" && has md "Field Notes" && has md "Body text.")
   let (two, _) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\begin{nav}\\href{#a-head}{A}\\end{nav}\\begin{nav}\\href{#a-head}{B}\\end{nav}" ++
     "\\section*{A Head}x\\end{document}")
@@ -663,8 +681,8 @@ def pinChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (keptPage, _) := HtmlDoc.emit {} kept
   t "a reveal another backend owns ships nothing on this page"
     (!has keptPage "ltx-reveal" && !has keptPage "CSS.supports")
-  -- The markdown twin keeps a pinned nav transparent, as any nav.
-  t "markdown keeps a pinned nav transparent" (has (MarkdownDoc.emit doc) "[Up](#top)")
+  -- The markdown twin drops a pinned nav whole, as any nav: furniture.
+  t "markdown drops a pinned nav" (!has (MarkdownDoc.emit doc) "[Up](#top)")
   -- Declaration mistakes are named, never silent.
   t "offset or reveal without a pin is named as ignored"
     (warnCodes ("\\documentclass{article}\\begin{document}" ++

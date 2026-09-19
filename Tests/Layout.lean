@@ -2086,11 +2086,13 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   t "a fitting picture does not warn W0335"
     (!out.diags.any (·.code == "W0335"))
 
-/-- The block half of `role_transparent_layout`, pinned executably: a role
-ships exactly the pages its content ships unwrapped — zero PDF bytes move.
-An oracle over `Layout.run` and `Pdf.write`, not a theorem: the collector's
-match resists equation-lemma generation (see the note beside its `.role`
-arm), so the fact is held here, over the shipped bytes themselves. -/
+/-- The block half of `role_transparent_layout`, pinned executably: an
+*unstyled* role ships exactly the pages its content ships unwrapped — zero
+PDF bytes move. (A `\style{<role>}` gives the role declared rhythm; that
+styled path is under test in styleChecks, not here.) An oracle over
+`Layout.run` and `Pdf.write`, not a theorem: the collector's match resists
+equation-lemma generation (see the note beside its `.role` arm), so the
+fact is held here, over the shipped bytes themselves. -/
 def roleLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
@@ -2101,4 +2103,93 @@ def roleLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let out2 := Layout.run geom oneFace none plain
   t "a role ships zero PDF bytes"
     ((Pdf.write geom oneFace out1.pages).data == (Pdf.write geom oneFace out2.pages).data)
+  -- The styled path: a role's declared rhythm applies where the role
+  -- stands — the same shipped positions as spelling the space at the use
+  -- site — so the value lives once, upstream. Judged over `Layout.Out`.
+  let linesOf (src : String) : Array (String × Dim.Sp) :=
+    let (d, _) := elabStr src
+    (Layout.run geom oneFace none d).pages.flatMap fun p =>
+      p.lines.map fun l => (l.segs.foldl (fun s seg => match seg with
+        | .run _ _ _ _ glyphs _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
+        | .gap _ => s.push ' '
+        | _ => s) "", l.y)
+  let doc (pre body : String) : String :=
+    s!"\\documentclass\{article}\\define \\entry(a: content) \{\\a\\par}{pre}" ++
+    s!"\\begin\{document}\nlead\n\n{body}\n\\end\{document}"
+  let styled := linesOf (doc "\\style{entry}{ before = 24pt }" "\\entry{follow}")
+  let spelled := linesOf (doc "" "\\block[before = 24pt]{follow\\par}")
+  let bare := linesOf (doc "" "\\entry{follow}")
+  t "a styled role's rhythm matches the space spelled at the use site"
+    (styled == spelled)
+  t "and moves the role's first line where the unstyled role's stood higher"
+    (match styled.find? (·.1 == "follow"), bare.find? (·.1 == "follow") with
+     | some (_, ys), some (_, yb) => decide (ys > yb)
+     | _, _ => false)
+
+/-- Nav medium semantics, judged over `Layout.Out` and the shipped PDF
+bytes — never an IR dump. A nav is furniture, and each medium has its own
+answer: the paged surface renders an unpinned nav as the document outline
+(ISO 32000-2 §12.3.3), a pinned nav (viewport furniture) as nothing, and
+the markdown twin drops both — exactly as `.note` is not handout content.
+Unwrapped, a menu once printed its links as body text in the PDF and as
+`[One](#one)` lines in the twin: the leak that forced backend wrappers
+around every navigation landmark. Invented content. -/
+def navLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src :=
+    "\\documentclass{article}\\begin{document}\n" ++
+    "\\begin{nav}\\href{#one-head}{One} \\href{#two-head}{Two} " ++
+    "\\href{https://example.org}{Out} \\href{#nowhere}{Lost}\\end{nav}\n\n" ++
+    "\\section*{One Head}\nfirst body\n\n\\pagebreak\n\n" ++
+    "\\section*{Two Head}\nsecond body\n\n" ++
+    "\\begin{nav}[label = Up, pin = bottom right]\\href{#top}{Up}\\end{nav}\n" ++
+    "\\end{document}"
+  let (doc, ds) := elabStr src
+  t "nav layout source clean" (ds.all (·.severity == .note))
+  let out := Layout.run geom oneFace none doc
+  let ink := String.intercalate " " (out.pages.toList.map fun p =>
+    String.intercalate " " (p.lines.toList.map fun l =>
+      l.segs.foldl (fun s seg => match seg with
+        | .run _ _ _ _ glyphs _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
+        | _ => s.push ' ') ""))
+  t "an unwrapped menu nav ships no body ink"
+    (!hasStr ink "One Two" && !hasStr ink "Out" && !hasStr ink "Lost")
+  t "a pinned nav ships no body ink either" (!hasStr ink "Up")
+  t "the content around the navs still ships"
+    (hasStr ink "first body" && hasStr ink "second body")
+  t "the outline holds one entry per menu link, in order"
+    (out.outline.map (·.title) == #["One", "Two", "Out", "Lost"])
+  t "in-document targets resolve to the pages their headings land on"
+    ((out.outline.find? (·.title == "One")).map (·.page) == some (some 0) &&
+     (out.outline.find? (·.title == "Two")).map (·.page) == some (some 1))
+  t "an external target rides as its URL"
+    ((out.outline.find? (·.title == "Out")).map (·.url) ==
+      some (some "https://example.org"))
+  t "an unresolved target is a bare entry"
+    ((out.outline.find? (·.title == "Lost")).map (fun e => e.page.isNone && e.url.isNone) ==
+      some true)
+  -- The emission itself, on the shipped bytes: the outline objects and the
+  -- catalog's reference; a document with no nav ships neither, so an
+  -- outline-free file is unchanged.
+  let pdf := Pdf.write geom oneFace out.pages {} {} out.outline
+  t "the PDF carries the outline"
+    (bytesContain pdf "/Outlines" && bytesContain pdf "/Title (One)" &&
+     bytesContain pdf "/Title (Two)" && bytesContain pdf "/Dest [" &&
+     bytesContain pdf "/S /URI /URI (https://example.org)")
+  let (plainDoc, _) := elabStr "\\documentclass{article}\\begin{document}\nx\n\\end{document}"
+  let plainOut := Layout.run geom oneFace none plainDoc
+  t "no nav, no outline, nothing emitted"
+    (plainOut.outline.isEmpty &&
+      !bytesContain (Pdf.write geom oneFace plainOut.pages {} {} plainOut.outline)
+        "/Outlines")
+  t "the xref survives the outline objects"
+    (match checkXref (Pdf.write geom oneFace out.pages {} {} out.outline) with
+     | .ok n => n > 0
+     | .error _ => false)
+  -- The markdown twin: both navs drop whole; the sections stay.
+  let md := MarkdownDoc.emit doc
+  t "the twin drops both navs and keeps the sections"
+    (!hasStr md "](#one-head)" && !hasStr md "](#top)" &&
+      hasStr md "One Head" && hasStr md "second body")
 

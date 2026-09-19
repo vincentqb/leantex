@@ -237,7 +237,7 @@ def censusTable :
     ("the shared content ships", hasStr (censusText c) "appears on every surface"),
     ("the print-only conditional ships on the page",
       hasStr (censusText c) "This sentence is set only on the printed page."),
-    ("the web-only nav never reaches the page",
+    ("the unwrapped menu nav ships no body ink",
       !hasStr (censusText c) "Back to top")]),
   ("icons", fun _ c => [
     ("one page", c.size == 1),
@@ -391,6 +391,22 @@ def censusTable :
     ("the front ships the name", pageHas c 0 "Pat Placeholder"),
     ("the back ships the contact", pageHas c 1 "press@example.org")])]
 
+/-- The outline tier of the census: the PDF document outline is backend
+emission (an unpinned nav's paged rendering, ISO 32000-2 §12.3.3), so a
+fixture whose layout carries one owes the assertion that it appeared —
+the same obligation every emission carries. `censusChecks` holds every
+fixture with a non-empty outline to a row here. -/
+def censusOutlineTable :
+    List (String × (Array Layout.OutlineEntry → List (String × Bool))) := [
+  ("webnav", fun o => [
+    ("one entry per menu link, in order",
+      o.map (·.title) == #["First Light", "Gathered Notes", "Back to top"]),
+    ("the section targets resolve to the page their headings land on",
+      (o.filter (·.title != "Back to top")).all (·.page == some 0)),
+    ("the #top target stands bare: no heading anchors it",
+      (o.find? (·.title == "Back to top")).map
+        (fun e => e.page.isNone && e.url.isNone) == some true)])]
+
 /-- The census tier: every golden fixture also appears in `censusTable`,
 and each row's facts hold on the pages the engine actually ships. A
 fixture that declares a math face renders its census with the shipped
@@ -455,4 +471,11 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let c := censusOf (coveredColorsOf doc) out
     for (label, ok) in facts geom c do
       check ref s!"census {n}: {label}" ok
+    -- The outline tier: emission owes its appearance, so a fixture whose
+    -- layout ships an outline must assert it, and the asserted facts hold.
+    if !out.outline.isEmpty then
+      check ref s!"census {n}: a shipped outline has its outline row"
+        ((censusOutlineTable.lookup n).isSome)
+    for (label, ok) in ((censusOutlineTable.lookup n).map (· out.outline)).getD [] do
+      check ref s!"census {n} outline: {label}" ok
 
