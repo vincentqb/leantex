@@ -1,4 +1,4 @@
-class article [paper=letter, fontsize=10pt]
+class resume [paper=letter, fontsize=10pt]
 page 612x792 vmargin 36 hmargin 54
 font dir "fonts"
 font body "Source Serif Pro"
@@ -17,8 +17,10 @@ runninghead
       pagenumber
 meta title "Alex Doe — Resume"
 meta author "Alex Doe"
-assert pages == 1
 assert fonts.all_embedded
+assert pages == 1
+assert text.in_area
+assert text.xheight >= 3.968pt
 center
   para
     styled sans

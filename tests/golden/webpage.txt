@@ -1,4 +1,4 @@
-class article
+class webpage
 page 612x792 vmargin 72 hmargin 150
 palette accent #B22222
 palette muted #71717A

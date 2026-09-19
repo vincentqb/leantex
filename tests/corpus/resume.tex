@@ -5,7 +5,7 @@
 % M3 target: everything a one-page designed document needs — fonts, design
 % tokens, palette, typed commands, layout assertions, PDF metadata.
 
-\documentclass[paper=letter, fontsize=10pt]{article}
+\documentclass[paper=letter, fontsize=10pt]{resume}
 
 \fonts{
   dir = "fonts",
@@ -40,7 +40,9 @@
 }
 
 % Layout invariants: violation fails the build. This replaces log-grepping.
-\assert{ pages == 1 }
+% The one-page bound, the ink-in-area frame, and the x-height floor are the
+% resume class's own contract now; what stays declared is what the class
+% does not imply.
 \assert{ fonts.all_embedded }
 
 % Typed command: named, typed parameters; optional marked with ?.

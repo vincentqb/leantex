@@ -1,9 +1,9 @@
 % A one-page web profile: the shape of a personal site, invented person and
-% invented text throughout. Exercises what a page needs beyond a paper —
-% declared outputs with a named stylesheet, the markdown twin from the same
-% source, section anchors, and in-page navigation.
+% invented text throughout. Exercises the webpage class — the build intent
+% (html + the llms.txt twin) and the unnumbered headings are the class's own —
+% plus a named stylesheet, section anchors, and in-page navigation.
 
-\documentclass{article}
+\documentclass{webpage}
 
 \pdfmeta{
   author  = "Alex Doe",
@@ -15,7 +15,6 @@
 }
 
 \output{
-  formats = html, md,
   css = own,
   stylesheet = "webpage.css",
 }
