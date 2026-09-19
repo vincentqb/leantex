@@ -14,14 +14,16 @@ float figure 1
           text "The first invented panel."
         picture 2 shapes
           rect 0 0 56.693 28.346 #CCCCCC
-          label 28.346 14.173 "left box" #000000 1000
+          label 28.346 14.173 #000000 1000
+            text "left box"
     column 480/1000
       float sub 2
         caption
           text "The second invented panel."
         picture 2 shapes
           rect 0 0 56.693 28.346 #999999
-          label 28.346 14.173 "right box" #000000 1000
+          label 28.346 14.173 #000000 1000
+            text "right box"
 float figure 2
   caption
     text "The plain figure, numbered second."

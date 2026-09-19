@@ -909,9 +909,9 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   -- A stateful design declaration ships no glyphs.
   | .setPalette _ => out
   | .setTokens _ => out
-  -- A picture's labels are set as glyph runs: their scalars are asked of
-  -- the body face like any other text.
-  | .picture pic => { out with texts := out.texts ++ pic.labelTexts }
+  -- A picture's labels are set as inline runs: their text and math
+  -- scalars are asked of the faces like any other content.
+  | .picture pic => pic.labelContents.foldl textAndMath out
   | .frame title _ _ body =>
     scalarTextList (textAndMath out title) itemD enumD body.toList
   -- A framefoot note is set on the page as footer text.
@@ -4031,10 +4031,10 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
         let (fx, fy) := place.toPage (min rx (rx + rw), max ry (ry + rh))
         fills := fills.push { x := fx, y := fy,
                               w := max rw (-rw), h := max rh (-rh), color := color }
-      | .label lx ly text color scale =>
+      | .label lx ly content color scale =>
         let size := b.geom.fontSize * (scale : Int) / 1000
         let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}
-          #[.colored color none #[.text text]] {} imgs b.geom.textWidth b.geom.textHeight
+          #[.colored color none content] {} imgs b.geom.textWidth b.geom.textHeight
         let breaks := kp items b.geom.textWidth
         if let some brk := breaks[0]? then
           let (segs, w, _) := setLine items (lineStart items 0) brk b.geom.textWidth false

@@ -1548,8 +1548,19 @@ def blockNode (cfg : Config) (b : Block) : Node :=
           ("width", (max rw (-rw)).toPtString),
           ("height", (max rh (-rh)).toPtString),
           ("fill", cssColor color)]
-      | .label lx ly text color scale =>
-        Html.elem "text" #[Html.text text] #[
+      | .label lx ly content color scale =>
+        -- The label's inline content inside SVG's <text>: plain text as
+        -- character data, math as an italic <tspan> of its source — the
+        -- same source-text math this backend ships in prose (native
+        -- MathML is what M6 still owes there too), every string through
+        -- the escaper by construction.
+        let nodes := content.map fun inl =>
+          match inl with
+          | .math _ src => Html.elem "tspan" #[Html.text src] #[("font-style", "italic")]
+          | .formula _ src _ =>
+            Html.elem "tspan" #[Html.text src] #[("font-style", "italic")]
+          | inl => Html.text (Ir.plainTextOne inl)
+        Html.elem "text" nodes #[
           ("x", (lx - px0).toPtString),
           ("y", (py1 - ly).toPtString),
           ("fill", cssColor color),

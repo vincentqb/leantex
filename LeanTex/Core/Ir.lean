@@ -983,8 +983,10 @@ inductive Shape where
   /-- A filled rectangle: `(x, y)` one corner, `(x + w, y + h)` the other. -/
   | rect (x y w h : Sp) (color : Color)
   /-- A text label whose box is centred on `(x, y)` — TikZ's default node
-  anchor — at `scale` per mille of the body size. -/
-  | label (x y : Sp) (text : String) (color : Color) (scale : Nat)
+  anchor — at `scale` per mille of the body size. The body is inline
+  content, so a node's `{$X$}` renders through the math layer exactly as
+  it would in a paragraph. -/
+  | label (x y : Sp) (content : Array Inline) (color : Color) (scale : Nat)
   deriving Repr, BEq, Inhabited
 
 /-- Repaint a shape, keeping its geometry and text: how a picture dims
@@ -1011,11 +1013,11 @@ structure Picture where
 def Picture.recolor (p : Picture) (f : Color → Color) : Picture :=
   { shapes := p.shapes.map (·.recolor f) }
 
-/-- The texts a picture's labels set, for the font-scalar walk: every glyph
-a picture can ask a face for is here. -/
-def Picture.labelTexts (p : Picture) : Array String :=
+/-- The inline content each label sets, for the font-scalar walk: every
+glyph — text or math — a picture can ask a face for is here. -/
+def Picture.labelContents (p : Picture) : Array (Array Inline) :=
   p.shapes.filterMap fun s => match s with
-    | .label _ _ t _ _ => some t
+    | .label _ _ content _ _ => some content
     | .rect _ _ _ _ _ => none
 
 /-- `a` is inside `b`, componentwise. -/
@@ -3158,9 +3160,10 @@ def dumpBlock (ind : String) (b : Block) : String :=
       | .rect x y w h c =>
         s!"{ind}  rect {x.toPtString} {y.toPtString} {w.toPtString} {h.toPtString} \
 #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}\n"
-      | .label x y t c sc =>
-        s!"{ind}  label {x.toPtString} {y.toPtString} {t.quote} \
-#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b} {sc}\n")
+      | .label x y content c sc =>
+        s!"{ind}  label {x.toPtString} {y.toPtString} \
+#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b} {sc}\n" ++
+        dumpInlines (ind ++ "    ") content)
   | .table cols padL padR rows rules =>
     let spec := String.intercalate "," (cols.toList.map dumpColSpec)
     let pads := (if padL then "" else "@{}") ++ spec ++ (if padR then "" else "@{}")

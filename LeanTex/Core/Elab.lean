@@ -4726,8 +4726,19 @@ ignored without one"
             -- expressions reduced, colours resolved against the palette —
             -- and everything the subset cannot render is a named loss
             -- beside the shapes that did (W0334 outside the subset, E0333
-            -- unreadable inside it), never one blanket W0307.
-            let (pic, pdiags) := Picture.elabPicture ctx.palette body
+            -- unreadable inside it), never one blanket W0307. Node-body
+            -- math elaborates through the same parser a paragraph's does;
+            -- a formula the parser cannot model degrades to source text,
+            -- named (W0012), as it would in a paragraph.
+            let mathOf (d : Bool) (raws : Array Parse.Raw) :
+                Ir.Inline × Array Picture.PDiag :=
+              let expanded := expandMathList ctx.user ctx.limit #[] raws.toList
+              match MathParse.parseMath expanded with
+              | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
+              | .error what => (.math d (Parse.rawSrc raws),
+                  #[(.W0012, s!"math with {what} is not rendered yet; the \
+formula is set as source text")])
+            let (pic, pdiags) := Picture.elabPicture ctx.palette body mathOf
             for (code, msg) in pdiags do
               warnOnce ctx ("picture:" ++ msg) code msg pos
                 (help := "the rendered subset is \\fill...rectangle, \\node at, \

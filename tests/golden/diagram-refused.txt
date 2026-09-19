@@ -11,7 +11,8 @@ picture 5 shapes
   rect 0 71.25 72 0.75 #9E9EA8
   rect 0 0 0.75 72 #9E9EA8
   rect 71.25 0 0.75 72 #9E9EA8
-  label 36 36 "W0362" #9E9EA8 1000
+  label 36 36 #9E9EA8 1000
+    text "W0362"
 para
   text "Text resumes after the placeholder."
 -- diagnostics

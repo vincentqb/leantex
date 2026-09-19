@@ -1571,13 +1571,13 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((elabStr ("\\begin{document}\\begin{tikzpicture}[scale=0.5, transform shape]\n" ++
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
-        | .picture pic => pic.shapes == #[.label 0 0 "x" Ir.Color.black 500]
+        | .picture pic => pic.shapes == #[.label 0 0 #[.text "x"] Ir.Color.black 500]
         | _ => false)))
   t "elab picture scale without transform shape leaves the label size alone"
     (((elabStr ("\\begin{document}\\begin{tikzpicture}[scale=0.5]\n" ++
       "\\node at (0,0) {x};\\end{tikzpicture}\\end{document}")).1.body.any
       (fun b => match b with
-        | .picture pic => pic.shapes == #[.label 0 0 "x" Ir.Color.black 1000]
+        | .picture pic => pic.shapes == #[.label 0 0 #[.text "x"] Ir.Color.black 1000]
         | _ => false)))
   t "elab reserved char" (errCodes "a & b" == ["E0311"])
   t "elab redefine structural builtin warns and keeps the built-in"
@@ -1755,8 +1755,8 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
       (·.shapes.size) == some 3)
   t "the pair form binds both variables"
     ((picOf (wrap "\\foreach \\k/\\lbl in {1/aa,2/bb}{\\node at (\\k,0) {\\lbl};}")).map
-      (·.shapes) == some #[.label cm 0 "aa" Ir.Color.black 1000,
-                           .label (2 * cm) 0 "bb" Ir.Color.black 1000])
+      (·.shapes) == some #[.label cm 0 #[.text "aa"] Ir.Color.black 1000,
+                           .label (2 * cm) 0 #[.text "bb"] Ir.Color.black 1000])
   t "truncatemacro floors to a whole unit"
     ((picOf (wrap "\\pgfmathtruncatemacro{\\k}{7/2}\\fill (0,0) rectangle (\\k,1);")).map
       (·.shapes) == some #[.rect 0 0 (3 * cm) cm Ir.Color.black])
@@ -1764,8 +1764,8 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((picOf (wrap "\\foreach \\k in {1,2}{\
 \\pgfmathsetmacro{\\c}{ifthenelse(\\k<2,\"black\",\"white\")}\
 \\node[text=\\c] at (\\k,0) {x};}")).map
-      (·.shapes) == some #[.label cm 0 "x" Ir.Color.black 1000,
-                           .label (2 * cm) 0 "x" Ir.Color.white 1000])
+      (·.shapes) == some #[.label cm 0 #[.text "x"] Ir.Color.black 1000,
+                           .label (2 * cm) 0 #[.text "x"] Ir.Color.white 1000])
   t "max and * evaluate inside a coordinate"
     ((picOf (wrap "\\fill (0,0) rectangle (max(1,2)*2, 1);")).map (·.shapes) ==
       some #[.rect 0 0 (4 * cm) cm Ir.Color.black])

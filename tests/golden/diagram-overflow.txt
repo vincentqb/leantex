@@ -5,6 +5,7 @@ font body "Source Serif Pro"
 palette band #3A5A8C
 picture 2 shapes
   rect 0 0 850.394 85.039 #B0BDD1
-  label 425.197 42.52 "wide band" #000000 1000
+  label 425.197 42.52 #000000 1000
+    text "wide band"
 -- diagnostics
 (none)

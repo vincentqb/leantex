@@ -26,10 +26,14 @@ center
     rect 51.024 17.008 15.307 15.307 #3B7B5C
     rect 51.024 34.016 15.307 15.307 #3B7B5C
     rect 51.024 51.024 15.307 15.307 #3B7B5C
-    label 7.654 7.654 "aa" #14141A 900
-    label 24.661 24.661 "bb" #14141A 900
-    label 41.669 41.669 "cc" #FFFFFF 900
-    label 58.677 58.677 "dd" #FFFFFF 900
+    label 7.654 7.654 #14141A 900
+      text "aa"
+    label 24.661 24.661 #14141A 900
+      text "bb"
+    label 41.669 41.669 #FFFFFF 900
+      text "cc"
+    label 58.677 58.677 #FFFFFF 900
+      text "dd"
 para
   text "After the diagram stands another, so the flow resumes."
 -- diagnostics

@@ -49,7 +49,11 @@ inductive Tok where
   | sym (c : Char)
   | space
   | group (body : List Tok)
-  /-- Source the subset cannot even tokenise into itself (math, a nested
+  /-- A math span (`$X$` in a node body): carried whole and elaborated by
+  the hook the elaborator provides (`Cx.math`) — the picture walk owns no
+  math parser. -/
+  | math (display : Bool) (body : List Parse.Raw)
+  /-- Source the subset cannot even tokenise into itself (a nested
   environment, verbatim): named so the diagnostic can say what stood
   here. -/
   | other (what : String)
@@ -111,7 +115,7 @@ def ofRawOne (acc : Array Tok) : Parse.Raw → Array Tok
   | .ctrl n _ => acc.push (.ctrl n)
   | .sym c _ => acc.push (.sym c)
   | .group body _ => acc.push (.group (ofRawList #[] body.toList).toList)
-  | .math _ _ _ => acc.push (.other "math")
+  | .math d body _ => acc.push (.math d body.toList)
   | .env n _ _ => acc.push (.other s!"environment '{n}'")
   | .verb _ _ => acc.push (.other "verbatim")
 
@@ -155,6 +159,7 @@ private def tokText : Tok → String
   | .sym c => s!"'{c}'"
   | .space => "a space"
   | .group _ => "'{...}'"
+  | .math _ _ => "math"
   | .other what => what
 
 /-- One RPN element of a parsed expression. -/
@@ -291,6 +296,7 @@ def evalExpr (env : List (String × Val)) (toks : Array Tok) : Except String Val
         expectOperand := true
       | .sym c => return .error s!"'{c}' in an expression"
       | .group _ => return .error "'{...}' in an expression"
+      | .math _ _ => return .error "math in an expression"
       | .other what => return .error s!"{what} in an expression"
   let (o2, p2) := flushTo out ops 1
   out := o2
@@ -474,6 +480,7 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .ctrl name => { (st.outside s!"'\\{name}'") with mode := .skip }
     | .sym ';' | .space => st
     | .other what => { (st.outside what) with mode := .skip }
+    | .math _ _ => { (st.outside "math") with mode := .skip }
     | .ident s => { (st.outside s!"'{s}'") with mode := .skip }
     | .num _ => { (st.outside "a bare number") with mode := .skip }
     | .sym c => { (st.outside s!"'{c}'") with mode := .skip }
@@ -571,6 +578,11 @@ structure Cx where
   scale : Int := 1000
   styles : List (String × Array Tok) := []
   transformShape : Bool := false
+  /-- How a math span in a node body elaborates: provided by the
+  elaborator, so `{$X$}` renders through the same math layer a
+  paragraph's does — the picture walk owns no math parser. The result is
+  the inline plus any losses the elaboration names. -/
+  math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag
 
 /-- Picture milli-units to sp: one TikZ unit is 1 cm, times the declared
 scale. One multiplication, one rounding division. -/
@@ -718,10 +730,14 @@ rendered picture subset; the shape is not drawn")
   return .ok (.rect (min x1 x2) (min y1 y2) (max x1 x2 - min x1 x2)
     (max y1 y2 - min y1 y2) color)
 
-/-- A node body's text: words, numbers, and bound macros; anything else is
-outside the subset and names itself. -/
-private def textOf (env : List (String × Val)) (toks : List Tok) :
-    Except String String := Id.run do
+/-- A node body's content: words, numbers, and bound macros become text,
+a math span elaborates through `Cx.math`; anything else is outside the
+subset and names itself. Leading and trailing space trims, as the braces'
+inner space does in TeX. -/
+private def contentOf (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
+    Except String (Array Ir.Inline × Array PDiag) := Id.run do
+  let mut out : Array Ir.Inline := #[]
+  let mut diags : Array PDiag := #[]
   let mut s := ""
   for t in toks do
     match t with
@@ -733,8 +749,26 @@ private def textOf (env : List (String × Val)) (toks : List Tok) :
       match env.lookup n with
       | some v => s := s ++ v.text
       | none => return .error s!"unknown macro '\\{n}'"
+    | .math d body =>
+      unless s.isEmpty do
+        out := out.push (.text s)
+        s := ""
+      let (inl, ds) := cx.math d body.toArray
+      out := out.push inl
+      diags := diags ++ ds
     | t => return .error (tokText t)
-  return .ok s.trimAscii.toString
+  unless s.isEmpty do
+    out := out.push (.text s)
+  let trimL (s : String) : String := String.ofList (s.toList.dropWhile (· == ' '))
+  let trimR (s : String) : String :=
+    String.ofList ((s.toList.reverse.dropWhile (· == ' ')).reverse)
+  let n := out.size
+  out := out.mapIdx fun i inl =>
+    if let .text f := inl then
+      .text (if i + 1 == n then trimR (if i == 0 then trimL f else f)
+             else if i == 0 then trimL f else f)
+    else inl
+  return .ok (out.filter (· != .text ""), diags)
 
 /-- `\node[font=\small, text=colour] at (x,y) {text};` — a centred label,
 optionally named (`\node (u) at ...`; the name is parsed and dropped: only
@@ -810,12 +844,13 @@ picture subset; the node is not drawn")
   | .ok ((xs, ys), i2) =>
     match ts[i2]? with
     | some (.group body) =>
-      match evalNum env xs, evalNum env ys, textOf env body with
-      | .ok xm, .ok ym, .ok text =>
+      match evalNum env xs, evalNum env ys, contentOf cx env body with
+      | .ok xm, .ok ym, .ok (content, mdiags) =>
         if h : i2 + 1 < ts.size then
           return ev.diag (.W0334, s!"'\\node' continues with {tokText ts[i2+1]}, \
 outside the rendered picture subset; the node is not drawn")
-        let shape := Ir.Pic.Shape.label (cx.toSp xm) (cx.toSp ym) text color scale
+        ev := mdiags.foldl Ev.diag ev
+        let shape := Ir.Pic.Shape.label (cx.toSp xm) (cx.toSp ym) content color scale
         return { ev with shapes := ev.shapes.push shape }
       | .error e, _, _ | _, .error e, _ =>
         return ev.diag (.E0333, s!"in '\\node', {e}; the node is not drawn")
@@ -968,7 +1003,9 @@ end
 /-- Elaborate one `tikzpicture` body: the leading `[scale=...]` option
 block, the statements, then the unrolled evaluation. Everything the
 subset cannot render is a named diagnostic beside the shapes that did. -/
-def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw) :
+def elabPicture (pal : Ir.Palette) (raws : Array Parse.Raw)
+    (math : Bool → Array Parse.Raw → Ir.Inline × Array PDiag :=
+      fun d rs => (.math d (Parse.rawSrc rs), #[])) :
     Ir.Pic.Picture × Array PDiag := Id.run do
   let toks := ofRaws raws
   let mut scale : Int := 1000
@@ -1023,7 +1060,8 @@ rendered picture subset; the option is dropped")
       diags := diags.push (.E0333, "the picture's options miss their ']'")
   let st := parseList (toks.toList.drop i) {}
   let cx : Cx := { pal := pal, scale := scale
-                   styles := styles, transformShape := transformShape }
+                   styles := styles, transformShape := transformShape
+                   math := math }
   let (_, ev) := evalList cx st.out.toList [] {}
   let all := diags ++ st.bad ++ ev.diags
   -- One message, once: the parse and eval sides dedupe among themselves;
@@ -1051,7 +1089,7 @@ def placeholder (code : String) : Ir.Pic.Picture :=
       .rect 0 (side - th) side th grey,
       .rect 0 0 th side grey,
       .rect (side - th) 0 th side grey,
-      .label (side / 2) (side / 2) code grey 1000] }
+      .label (side / 2) (side / 2) #[.text code] grey 1000] }
 
 end LeanTex.Core.Picture
 
