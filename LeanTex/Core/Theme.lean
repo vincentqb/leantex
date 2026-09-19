@@ -317,6 +317,22 @@ def applyUnder (th : Theme) (s : Decls) : Decls :=
     styles := installStyles th.styles s.styles.entries.toList
     chrome := chromeApply s.chrome th.chrome }
 
+/-- Arch-design I2, the engine half, discharged from the staging queue:
+what `\theme` installs is what the bundle declares — the install function
+is `apply`, the very function the elaborator calls at the `\theme` site
+(its arm threads `Theme.apply th before` and nothing else into the state),
+so a bundle's title-page alignment and separator survive the install onto
+an undeclared document. The literal through-`Elab.run` reading stays with
+the executable oracles: Elab's WF recursion is kernel-irreducible (the
+2026-09-19 probe — `decide +kernel` stalls at the `Decidable` instance
+even with every function total), and this statement over the install
+function is the same fact one definitional step earlier. -/
+theorem titlepage_align_declared_engine :
+    (builtin.all fun t =>
+      match (apply t {}).styles.find? "titlepage" with
+      | some st => st.align.isSome && st.separator.isSome
+      | none => true) = true := by decide
+
 /-- Every `(declaration, key)` the bundle installs — `("palette", "alert")`,
 `("chrome", "footer.left")` — whatever stood there before: the keys whose
 standing value is the theme's after `apply`. -/

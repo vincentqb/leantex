@@ -637,6 +637,17 @@ def gates : List Gate := [
   Fix: reshape the proof or the definition; if neither closes, state it in
   Obligations and report the blocker." }]
 
+/-- The top-level `def` name a test-file line binds, for the Support-rule
+gate: only unindented `def`/`private def`, so a nested helper or a prose
+mention never counts. -/
+def topLevelDefName (l : String) : Option String :=
+  let t := stripLineComment l
+  if t.startsWith "def " || t.startsWith "private def " then
+    let rest := (if t.startsWith "private def " then t.drop 12 else t.drop 4).toString
+    let n := (rest.takeWhile isWordChar).toString
+    if n.isEmpty then none else some n
+  else none
+
 /-- Every case a gate predicate must catch and every legal spelling it must
 pass, run by `lean --run scripts/precommit.lean --selftest` from `lake test`.
 Positive cases are the shapes whose escape prompted a gate change; negative
@@ -648,6 +659,15 @@ def selftest : IO UInt32 := do
     for (line, want) in cases do
       if p line != want then
         fails.modify (s!"{name} {if want then "missed" else "fired on"}: {line}" :: ·)
+
+  expect "topLevelDefName" (fun l => (topLevelDefName l).isSome) [
+    -- the Support-rule gate: only a top-level def counts
+    ("def deckBuilder (body : String) : String := body", true),
+    ("private def helper2 : IO Unit := pure ()", true),
+    ("  def nested := 1", false),
+    ("-- def commented := 1", false),
+    ("definition prose speaking of def forms", false),
+    ("theorem def_named_thing : True := trivial", false)]
 
   expect "quadraticPrepend" quadraticPrepend [
     -- the walks this tree has produced, all of which must fire
@@ -1149,6 +1169,28 @@ def main (args : List String) : IO UInt32 := do
   Fix: use `for h :` bounds, getD, or a proof-carrying index; the per-file
   count may only fall (lower its bangBaseline row in scripts/precommit.lean
   when you remove sites)."
+
+  -- The Support rule, mechanical (AGENTS.md, Conventions: a test helper
+  -- used by two check blocks moves to Tests/Support.lean the moment the
+  -- second caller appears): a top-level def name spelled in two test
+  -- files is that second caller arriving. Fifteen copies of one deck
+  -- builder once grew exactly this way.
+  let mut testFiles : Array String := #["Tests.lean"]
+  for f in (← System.FilePath.walkDir "Tests") do
+    if f.toString.endsWith ".lean" then testFiles := testFiles.push f.toString
+  let mut defSites : Array (String × String) := #[]
+  for f in testFiles do
+    let txt ← IO.FS.readFile f
+    for l in txt.splitOn "\n" do
+      if let some name := topLevelDefName l then
+        defSites := defSites.push (name, f)
+  for (name, f) in defSites do
+    for (name2, f2) in defSites do
+      if name == name2 && f < f2 then
+        say s!"pre-commit: test helper `{name}` is defined in both {f} and {f2}.
+  A helper used by two check blocks moves to Tests/Support.lean the moment
+  the second caller appears (AGENTS.md, Conventions).
+  Fix: keep one `{name}` in Tests/Support.lean and delete the copies."
 
   -- The owed-theorem ratchet: a commit that touches the staging area or
   -- PLAN.md must leave the debt recorded — one hole per owed record, every

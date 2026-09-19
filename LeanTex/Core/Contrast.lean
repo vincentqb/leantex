@@ -141,8 +141,10 @@ light one. -/
 theorem dark_contract : dark.contractHolds = true := by decide +kernel
 
 /-- The PDF default — black ink on the unpainted (white) page — clears the
-AA text threshold; 21:1 is the definition's own maximum. -/
-theorem pdf_default_text : contrastMilli Color.black Color.white ≥ aaText := by
+AA text threshold; 21:1 is the definition's own maximum. (Named `_aa`,
+not `_text`: `_text` is the registered census-conservation suffix, and a
+registry is only a registry if a suffix has one meaning.) -/
+theorem pdf_default_aa : contrastMilli Color.black Color.white ≥ aaText := by
   decide +kernel
 
 -- The document-level check: the pairings a document's own colours create.

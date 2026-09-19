@@ -165,21 +165,6 @@ def themedDoc (name : String) : Ir.Doc :=
     ("\\documentclass{beamer}\n\\theme{" ++ name ++ "}\n" ++
      "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}\n")).1
 
--- owed: titlepage_align_declared_engine
--- owner: LeanTex.Core.Theme
--- source: arch-design I2 (furniture alignment is declared, never a constant; consumes the once-unread `separator`)
--- blocker: the value half is discharged — typed theme values (arch-provable R2) landed, and `Theme.titlepage_align_declared` proves by `decide` over `Theme.builtin` that every bundle styling the title page declares align and separator. What this statement still owes is the reading through the elaborator (`themedDoc` runs Elab.run): Elab.run is kernel-opaque (its three tracked non-total functions), so neither `decide` nor unfolding reaches the installed styles. The `Theme.apply t {}` restatement that discharged `builtin_palette_contract_engine` closes this the same way (`decide +kernel`, audit-proofs probe G) if the literal through-`Elab.run` reading is let go.
--- goldens: no
-/-- Every shipped bundle that styles the title page declares its alignment
-and its separator — the moloch title matter is ragged left with a rule by
-declaration, not by a backend constant. -/
-theorem titlepage_align_declared_engine :
-    ∀ t ∈ Theme.builtin,
-      match (themedDoc t.name).styles.find? "titlepage" with
-      | some st => st.align.isSome ∧ st.separator.isSome
-      | none => True := by
-  sorry
-
 -- owed: elab_inlines_option_run_dropped
 -- owner: LeanTex.Core.Elab
 -- source: recover-content (Tests/Layout.lean recoveryChecks, the test that wanted to be this theorem); the de-partial slices, whose point was making it statable

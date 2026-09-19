@@ -91,8 +91,6 @@ list.
 - `frame_pages_footed` — numbering: every page of a footed countable-frame
   deck is footed (audit-numbering T2's page face; excludes the golden
   title frame so the statement survives its refactor 1).
-- `titlepage_align_declared_engine` — arch-design I2: shipped bundles
-  declare title-page alignment and separator.
 - `elab_inlines_option_run_dropped` — the W0341 arm's content claim as a
   commutation: elaboration with and without an unknown command's option
   run agree, whatever the run's text. Statable since the inline knot
@@ -102,6 +100,33 @@ list.
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-19 — the taste slice lands what four advisors agreed on: decks
+default to `daylight`, and six reader-visible defects close.
+
+- `daylight` is a built-in bundle (warm paper, warm ink, one azure
+  accent, no title bar) and the slides-class default when no theme is
+  declared, installed *under* the document (`Theme.applyUnder`: a
+  default never replaces a declaration). Print classes keep unpainted
+  defaults — a bundle there paints every page edge to edge (99.9% pixel
+  change measured on a one-page résumé). `\theme{default}` opts a deck
+  back to the bare look, beamer's own spelling.
+- The slides class sets its text in the declared sans family (beamer
+  user guide §18: the default font theme is sans serif); named font
+  weights resolve to the nearest installed weight with W0366, never a
+  silent Bold-for-Light; a frame's title chrome repeats on every
+  continuation page; a spliced class's `\@setfontsize` leading is
+  honoured; headings carry their own rhythm tokens
+  (`heading_space_above_ge_below`); display lines balance (a title
+  never strands a word); paragraphs break in TeX's two passes with
+  `\finalhyphendemerits`; contrast is judged per (ink, ground) pair;
+  `\color` at block level declares the flow ink; non-ASCII PDF text
+  strings are UTF-16BE with the BOM (ISO 32000-2 §7.9.2.2).
+- `titlepage_align_declared_engine` discharged from the staging queue:
+  restated over `Theme.apply t {}` — the function the `\theme` site
+  calls — and proved by `decide`; the through-`Elab.run` reading stays
+  with the executable oracles (WF recursion is kernel-irreducible, the
+  2026-09-19 probe).
 
 2026-09-19 — the last `partial` is off: `elabBlocks` terminates by a
 proved measure, and the plan's termination claim has its checker.

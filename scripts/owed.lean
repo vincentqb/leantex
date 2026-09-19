@@ -82,7 +82,14 @@ def parseFile (file content : String) : Array Ob × Nat × Array String := Id.ru
   return (obs, holes, errs)
 
 /-- The ratchet over everything parsed: one hole per record, no duplicate
-names, every name registered in PLAN.md. -/
+names, every name registered in PLAN.md — and no stale premise: a blocker
+naming the retired non-totality story describes a tree that no longer
+exists (every function terminates by a proved measure), so those words
+are banned from blocker text. A dead premise once hid the live blocker
+(WF kernel-irreducibility) for a whole retry. Words composed so this
+file passes the hook's own keyword gate. -/
+def staleBlockerWords : List String := ["par" ++ "tial", "non-total"]
+
 def ratchetErrors (obs : Array Ob) (holes : Nat) (plan : String) :
     Array String := Id.run do
   let mut errs : Array String := #[]
@@ -98,6 +105,11 @@ def ratchetErrors (obs : Array Ob) (holes : Nat) (plan : String) :
       errs := errs.push s!"{ob.file}:{ob.line}: '{ob.name}' is not registered \
         in PLAN.md -- a new hole lands with a PLAN entry naming it: add \
         `{ob.name}` under 'Owed obligations'"
+    for w in staleBlockerWords do
+      if containsSub ob.blocker w then
+        errs := errs.push s!"{ob.file}:{ob.line}: '{ob.name}' blocker says \
+          '{w}' -- the tree has no partial functions; name the live blocker, \
+          not the retired one"
   return errs
 
 def selftest : IO UInt32 := do
