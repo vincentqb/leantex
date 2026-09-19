@@ -180,4 +180,22 @@ theorem titlepage_align_declared_engine :
       | none => True := by
   sorry
 
+-- owed: elab_inlines_option_run_dropped
+-- owner: LeanTex.Core.Elab
+-- source: recover-content (Tests/Layout.lean recoveryChecks, the test that wanted to be this theorem); the de-partial slices, whose point was making it statable
+-- blocker: statable now (elabInlines is total) but not provable by evaluation: simp through the knot's WF equations exhausts the 200000-heartbeat budget even on a fully ground two-element instance (whnf timeout; diagnostics: Parse.Raw.casesOn at 38k unfoldings), and raising maxHeartbeats is hook-banned. Needs either a staged per-arm rewrite script over the eq lemmas, or the inline spine restated as a small-step function whose one-step equations are cheap.
+-- goldens: no
+/-- The W0341 arm's content claim, as a commutation: an unknown command's
+leading `[...]` option run is not content, so elaboration with the run and
+with the run deleted return the same inlines — no character of the run
+reaches the elaborated output, whatever the run's text. The shipped-page
+witness is `recoveryChecks` in Tests/Layout.lean. -/
+theorem elab_inlines_option_run_dropped (w kept : String) (st : Elab.ESt) :
+    ((Elab.elabInlines { file := "d" }
+        #[.ctrl "zzz" ⟨1, 1⟩, .sym '[' ⟨1, 5⟩, .word w ⟨1, 6⟩, .sym ']' ⟨1, 7⟩,
+          .group #[.word kept ⟨1, 9⟩] ⟨1, 8⟩]).run st).1
+    = ((Elab.elabInlines { file := "d" }
+        #[.ctrl "zzz" ⟨1, 1⟩, .group #[.word kept ⟨1, 9⟩] ⟨1, 8⟩]).run st).1 := by
+  sorry
+
 end Obligations

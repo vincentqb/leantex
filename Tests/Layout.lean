@@ -1192,9 +1192,9 @@ shipped page, while every `{...}` group survives, and no space the author
 never wrote is fabricated after the kept text. Judged over `Layout.Out`'s
 glyphs, never the IR dump: a bracketed number once shipped in front of a
 URL while the suite was green. `elabInlines` terminates provably now, so
-the elaborator half ("no character of an option run reaches the
-elaborated inlines", over the W0341 arm) is statable as a theorem at
-last; until that proof lands, this stays its shipped-page witness. -/
+the elaborator half is stated at last — `elab_inlines_option_run_dropped`,
+staged under Obligations with its proof open on the elaboration budget;
+until that proof lands, this stays its shipped-page witness. -/
 def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := {}

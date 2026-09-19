@@ -84,6 +84,11 @@ list.
   title frame so the statement survives its refactor 1).
 - `titlepage_align_declared_engine` — arch-design I2: shipped bundles
   declare title-page alignment and separator.
+- `elab_inlines_option_run_dropped` — the W0341 arm's content claim as a
+  commutation: elaboration with and without an unknown command's option
+  run agree, whatever the run's text. Statable since the inline knot
+  became total; blocked on the proof's elaboration budget, not the
+  statement.
 
 ### Log
 
