@@ -1638,9 +1638,24 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let t := check ref
   let wrap (tab : String) : String :=
     "\\documentclass{article}\n\\begin{document}\n" ++ tab ++ "\n\\end{document}"
-  let layoutDiags (src : String) : Array Diag :=
+  let layoutOut (src : String) : Layout.Out :=
     let doc := (elabStr src).1
-    (layoutOf oneFace doc).diags
+    layoutOf oneFace doc
+  let layoutDiags (src : String) : Array Diag := (layoutOut src).diags
+  -- Each page's shipped text, for page-membership claims: a "these land
+  -- together" assertion is judged over `Layout.Out`, never the IR dump.
+  let pageTexts (out : Layout.Out) : Array String :=
+    out.pages.map fun p => String.join (p.lines.toList.map fun l =>
+      String.join (l.segs.toList.map fun s => match s with
+        | .run _ _ _ _ glyphs _ _ _ => String.ofList (glyphs.toList.map (·.2))
+        | _ => " "))
+  let samePage (src : String) (marks : List String) : Bool :=
+    let texts := pageTexts (layoutOut src)
+    let pageOf (m : String) : Option Nat :=
+      texts.findIdx? fun t => (t.splitOn m).length > 1
+    match marks.map pageOf with
+    | [] => true
+    | p :: rest => p.isSome && rest.all (· == p)
   t "a table wider than the measure is named, in points"
     ((layoutDiags (wrap "\\begin{tabular}{p{0.8\\linewidth}p{0.8\\linewidth}}a & b \\\\\\end{tabular}")).any
       (·.code == "W0338"))
@@ -1725,22 +1740,52 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      (subHtml.splitOn "<figcaption>(a) First sub</figcaption>").length == 2 &&
      (subHtml.splitOn "<figcaption>(b) Second sub</figcaption>").length == 2 &&
      (subHtml.splitOn "<figcaption>Figure 1: The parent</figcaption>").length == 2)
-  -- The caption seam: nothing keeps a float and its caption on one page
-  -- yet, so the break is reported (W0339, pending), never silent. The
-  -- `\vspace` sweep parks the object at every position around the page
-  -- bottom in 3pt steps: the seam-break window is about one leading tall,
-  -- so some step lands the object on the page with the caption past it,
-  -- whatever the face's metrics — and a small vspace leaves room for both.
+  -- A float is unbreakable: LaTeX's float model places the whole box or
+  -- defers it, never splits one (ltfloat.dtx; the float body is Knuth's
+  -- `\vbox`). The `\vspace` sweep parks the object at every position
+  -- around the page bottom in 3pt steps, so some step lands the seam
+  -- exactly there whatever the face's metrics — and at every step the
+  -- caption and its object ship on one page, judged over `Layout.Out`.
   let tieDoc (pts : Nat) : String :=
     "\\documentclass{article}\n\\page{ size = a5 }\n\\begin{document}\n" ++
     s!"top\n\n\\vspace\{{pts}pt}\n\n\\begin\{table}\n" ++
     "\\begin{tabular}{l}\nalpha \\\\\n\\end{tabular}\n" ++
     "\\caption{Below the table}\n\\end{table}\n\\end{document}"
-  t "a page break through the caption seam is named"
-    ((List.range 50).any fun k =>
-      (layoutDiags (tieDoc (350 + 3 * k))).any (·.code == "W0339"))
-  t "a float that fits keeps its caption silently"
-    (!(layoutDiags (tieDoc 12)).any (·.code == "W0339"))
+  t "a float ships whole at every seam position"
+    ((List.range 50).all fun k =>
+      samePage (tieDoc (350 + 3 * k)) ["alpha", "Below the table"])
+  t "a float that fits mid-page stays on its page"
+    ((pageTexts (layoutOut (tieDoc 12))).size == 1 &&
+      samePage (tieDoc 12) ["top", "alpha", "Below the table"])
+  -- The table that shipped one cell per page: a six-row booktabs table
+  -- with inline math in its first column, standing where little of the
+  -- page is left. Every cell of every row lands on one page with the
+  -- caption, at every seam position.
+  let mathTable (pts : Nat) : String :=
+    "\\documentclass{article}\n\\page{ size = a5 }\n\\begin{document}\n" ++
+    s!"top\n\n\\vspace\{{pts}pt}\n\n\\begin\{table}\n\\centering\n" ++
+    "\\caption{Six rows}\n\\begin{tabular}{lrr}\n\\toprule\n" ++
+    "kind & alpha & beta \\\\\n\\midrule\n" ++
+    "$T_\\mathrm{aa}$ & 13 & 2 \\\\\n$T_\\mathrm{bb}$ & 16 & 3 \\\\\n" ++
+    "$T_\\mathrm{cc}$ & 1 & 1 \\\\\nrowd & 30 & 6 \\\\\n" ++
+    "rowe & 365 & 165 \\\\\nrowf & 999 & 111 \\\\\n" ++
+    "\\bottomrule\n\\end{tabular}\n\\end{table}\n\\end{document}"
+  t "a six-row table with math cells ships whole at every seam position"
+    ((List.range 40).all fun k =>
+      samePage (mathTable (280 + 6 * k)) ["Six rows", "kind", "rowd", "rowf"])
+  -- A float taller than the text block still ships whole: placed alone on
+  -- its own page, the overrun named (W0358), never split.
+  let tallDoc :=
+    "\\documentclass{article}\n\\page{ size = a5 }\n\\begin{document}\ntop\n\n" ++
+    "\\begin{table}\n\\begin{tabular}{l}\nfirstrow \\\\\n" ++
+    String.join (List.replicate 58 "middle \\\\\n") ++
+    "lastrow \\\\\n\\end{tabular}\n\\caption{Below the table}\n\\end{table}\n" ++
+    "\\end{document}"
+  t "a float taller than the text block is placed alone, whole, and named"
+    ((layoutDiags tallDoc).any (·.code == "W0358") &&
+      samePage tallDoc ["firstrow", "lastrow", "Below the table"])
+  t "a fitting float is not named tall"
+    (!(layoutDiags (tieDoc 12)).any (·.code == "W0358"))
   -- Rules span exactly their columns, judged on the page: the full rules
   -- share one left edge and one width; the trimmed \cmidrule lies strictly
   -- inside them. An executable check, not a theorem — the extents live in

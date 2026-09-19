@@ -222,15 +222,10 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0337 => dvE (dvDoc "" "\\begin{tabular}{ll}\na & b & c \\\\\nd \\\\\n\\end{tabular}")
   | .W0338 => dvL one (dvDoc "" ("\\begin{tabular}{p{0.8\\linewidth}p{0.8\\linewidth}}\n" ++
       "a & b \\\\\n\\end{tabular}"))
-  | .W0339 =>
-    -- The seam-break window is about one leading tall wherever the page
-    -- bottom falls, so a 3pt `\vspace` sweep crosses it whatever the
-    -- face's metrics say; the golden dedups the one rendered form.
-    (List.range 50).foldl (init := #[]) fun acc k =>
-      acc ++ dvL one (dvDoc "\\page{ size = a5 }\n"
-        (s!"top\n\n\\vspace\{{350 + 3 * k}pt}\n\n\\begin\{table}\n" ++
-         "\\begin{tabular}{l}\nalpha \\\\\n\\end{tabular}\n" ++
-         "\\caption{Below the table}\n\\end{table}"))
+  | .W0358 => dvL one (dvDoc "\\page{ size = a5 }\n"
+      ("\\begin{table}\n\\begin{tabular}{l}\n" ++
+       String.join (List.replicate 60 "alpha \\\\\n") ++
+       "\\end{tabular}\n\\caption{Below the table}\n\\end{table}"))
   | .W0340 => dvE (dvDoc "" "x\n\n\\page{ size = a5 }\n\ny")
   | .W0341 => dvE "\\textls[16]{spaced}.example.org"
   | .W0342 => dvE (dvDoc "\\theme{plain}\n\\define \\muted(word: content) {\\word}\n"

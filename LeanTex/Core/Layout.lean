@@ -2119,10 +2119,12 @@ private structure B where
   TeX marks `\prevdepth` ignored after an `\hrule` so the box after a rule
   takes exactly the explicit glue. booktabs' rule padding depends on it. -/
   noInterline : Bool := false
-  /-- A `tie` op stands between the last placed line and the next one: a
-  float's caption and its object. Consumed by the next placement; a page
-  break landing on it is reported (W0339), never silent. -/
-  tie : Bool := false
+  /-- A float group is being replayed on the page that holds it whole
+  (`runFloat`): a line that would not fit commits anyway instead of
+  breaking, because the group's one legal position has already been
+  decided — the page bottom may be honestly overrun (W0358), never a
+  silent split. -/
+  noBreak : Bool := false
   /-- Background of the page being built, from `.pageStyle`; reset when it
   closes. -/
   pageBg : Option Ir.Color := none
@@ -2228,36 +2230,22 @@ private def B.commit (b : B) (line : LineOut) (depth above overflow : Sp) : B :=
            y := line.y
            freshStart := false
            noInterline := false
-           tie := false
            prevDepth := depth
            skip := {} }
-
-/-- The tie's report: the seam the break landed on, named. The float is
-still best-effort — the caption opens the next page — and the pending code
-says the keep-together is owed. -/
-private def B.brokeTie (b : B) : B :=
-  if b.tie then
-    { b with diags := b.diags.push (Diag.of .W0339
-        "a page break separates a caption from the table or figure it belongs to"
-        (help := "\\pagebreak before the float moves it whole to the next page")) }
-  else b
 
 /-- `doc_geometry_uniform`, the honest whole-document statement for the
 preamble-only declarations (`\page` among the eight W0340 fences from the
 body): every page of a run is laid out under the one declared geometry,
 because the placement steps never write `geom` — the identity holds
-through page close, line commit, sibling rules, and the tie report, so a
-second geometry is unrepresentable on the way to `Out`. The body door for
-geometry does not exist, and this is the statement that keeps it that
-way: a step that started writing `geom` would fail here at build time. -/
+through page close, line commit, and sibling rules, so a second geometry
+is unrepresentable on the way to `Out`. The body door for geometry does
+not exist, and this is the statement that keeps it that way: a step that
+started writing `geom` would fail here at build time. -/
 private theorem doc_geometry_uniform (b : B) (l line : LineOut)
     (depth above overflow : Sp) :
     b.finishPage.geom = b.geom ∧ (b.pushSibling l).geom = b.geom ∧
-      (b.commit line depth above overflow).geom = b.geom ∧
-      b.brokeTie.geom = b.geom := by
-  refine ⟨rfl, rfl, rfl, ?_⟩
-  unfold B.brokeTie
-  split <;> rfl
+      (b.commit line depth above overflow).geom = b.geom :=
+  ⟨rfl, rfl, rfl⟩
 
 /-- A line's vertical extent — (tallest run size, height above the
 baseline, depth below it) — measured seg by seg, each run in its own face:
@@ -2318,10 +2306,10 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     let y := b.y + b.skip.width + interline
     let overflow := y + depth - bottom
     let above := b.pageShrink + b.skip.shrink
-    if overflow ≤ above then
-      b.commit (mk y) depth above overflow
+    if overflow ≤ above ∨ b.noBreak then
+      b.commit (mk y) depth above (min overflow above)
     else
-      let b := b.brokeTie.finishPage
+      let b := b.finishPage
       b.commit (mk firstY) depth 0 0
 
 /-- The realization theorem's placement step: a line placed on the same
@@ -2354,7 +2342,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine
   rw [hle]
   simp only [hcur, hfresh, hni, Bool.or_self, Bool.false_eq_true, ite_false,
-    hfit, ite_true, B.commit]
+    hfit, true_or, ite_true, B.commit]
   simp [Array.back?_push]
 
 /-- The other half of the PDF realization: what page close does to the gaps
@@ -2458,11 +2446,14 @@ private inductive Op where
   label lines through one `Pic.Place` transform, fitted vertically the way
   a line of the picture's height is. -/
   | picture (x : Sp) (pic : Ir.Pic.Picture)
-  /-- The seam between a float's object and its caption: the two belong
-  together on one page, and the engine has no keep-together yet. Placement
-  consumes it at the next line: a page break landing exactly here is
-  reported (W0339, pending), never silent. -/
-  | tie
+  /-- A float's extent: everything between `floatOpen` and its matching
+  `floatClose` — caption, gap, and object — is one unbreakable box, as
+  LaTeX floats are (a float is a `\vbox`: placed whole or deferred, never
+  split). Placement fits the group where it stands, else moves it whole
+  to the next page; a group taller than the text block is placed alone
+  and overruns, reported (W0358), never split. -/
+  | floatOpen
+  | floatClose
   /-- An in-document anchor (a level-1 section heading's slug) stands
   here: the builder attaches it to the page the next committed line lands
   on, which is where the outline's destinations resolve. -/
@@ -3424,16 +3415,19 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     collectTable a pats fs cols padL padR rows rules indent false
   | .float kind num capAbove body caption =>
     -- Set off from the text by `floatsep` on both sides, the caption bound
-    -- `captionsep` from the content (`caption_gaps_rhythm` holds the
-    -- defaults to the rhythm); the body centres, the figure convention the
-    -- old center-wrapping gave. Both gaps are `\addvspace`-style: an
-    -- element's own space, never stacked onto a neighbour's. The caption
-    -- sets with its number in front — `Ir.numberedCaption`, the one site
-    -- both backends spell a float's number from.
+    -- `captionsep` from the content on its object side (the sourced side
+    -- rule lives at `Ir.caption_gaps_rhythm`); the body centres, the
+    -- figure convention the old center-wrapping gave. Both gaps are
+    -- `\addvspace`-style: an element's own space, never stacked onto a
+    -- neighbour's. The caption sets with its number in front —
+    -- `Ir.numberedCaption`, the one site both backends spell a float's
+    -- number from. Everything between `floatOpen` and `floatClose` ships
+    -- on one page (`runFloat`): a float is unbreakable, as LaTeX's are.
     let caption := Ir.numberedCaption kind num caption
     let floatSep := a.resolve ((a.tokens.find? "floatsep").getD Ir.floatSepDefault)
     let capSep := a.resolve ((a.tokens.find? "captionsep").getD Ir.captionSepDefault)
     let a := a.addvspace floatSep
+    let a := a.pushOp .floatOpen
     -- classes.dtx `\@makecaption`: a caption that fits one line centres; a
     -- longer one sets as an ordinary paragraph.
     let setCaption (a : Acc) : Acc :=
@@ -3446,14 +3440,13 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       collectPara a pats fs caption indent fits a.geom.fontSize
     let a := if capAbove then
       let a := setCaption a
-      let a := if caption.isEmpty then a else
-        a.addvspace capSep |>.pushOp .tie
+      let a := if caption.isEmpty then a else a.addvspace capSep
       collectCentered a pats fs body.toList indent
     else
       let a := collectCentered a pats fs body.toList indent
-      let a := if caption.isEmpty then a else
-        a.addvspace capSep |>.pushOp .tie
+      let a := if caption.isEmpty then a else a.addvspace capSep
       setCaption a
+    let a := a.pushOp .floatClose
     a.addvspace floatSep
   | .frame title standout valign body =>
     -- A frame is a page boundary, not an article paragraph. Content past
@@ -3787,7 +3780,8 @@ private inductive StagedOp where
   | colClose
   | setLogo (content : Array Ir.Inline)
   | picture (x : Sp) (pic : Ir.Pic.Picture)
-  | tie
+  | floatOpen
+  | floatClose
   | anchor (slug : String)
 
 /-- Placement state saved at a `colOpen`, restored per column: where the
@@ -3802,6 +3796,223 @@ private structure ColSave where
   flush : Bool
   bottomY : Sp
   bottomDepth : Sp
+
+/-- The placement walk's whole state: the page builder, the column-save
+stack, the logo spans keyed to page indexes, and the running prose-line
+count the measure band reads. One structure so a float group can be
+replayed whole (`runFloat`) through the same step every other op takes. -/
+private structure StepSt where
+  b : B
+  colSaves : Array ColSave := #[]
+  logoSpans : Array (Nat × Array Ir.Inline) := #[]
+  prose : Nat := 0
+
+/-- Place one staged op. `floatOpen`/`floatClose` are inert here: the
+driver loop consumes the outermost pair (`runFloat`), and an inner pair —
+a subfigure inside its parent — is already kept whole by the enclosing
+group. -/
+private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
+    (s : StagedOp) : StepSt := Id.run do
+  let mut b := st.b
+  let mut colSaves := st.colSaves
+  let mut logoSpans := st.logoSpans
+  let mut prose := st.prose
+  match s with
+  | .floatOpen | .floatClose => pure ()
+  | .setLogo c =>
+    -- The page being built (index `pages.size`) and everything after
+    -- carry this content; a later span overrides.
+    logoSpans := logoSpans.push (b.pages.size, c)
+  | .skip g => b := { b with skip := b.skip.add g }
+  | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
+  | .brk =>
+    -- A boundary closes a page only when the page holds something: two
+    -- adjacent frames share one boundary, not an empty page. A style set
+    -- for a page that never got content dies with the boundary. Fills
+    -- are content too: a picture of fills alone is a page.
+    if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty then
+      b := b.finishPage
+    else
+      b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
+                    pinnedLines := 0, pinnedFills := 0 }
+  | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
+  | .foot c => b := { b with curFoot := c }
+  | .pin =>
+    b := { b with pinnedLines := b.cur.lines.size, pinnedFills := b.cur.fills.size }
+  | .colOpen =>
+    colSaves := colSaves.push {
+      y := b.y, prevDepth := b.prevDepth, skip := b.skip
+      fresh := b.cur.lines.isEmpty || b.freshStart
+      flush := b.noInterline
+      bottomY := b.y, bottomDepth := b.prevDepth }
+  | .colNext =>
+    if let some save := colSaves.back? then
+      let save := if b.y > save.bottomY
+        then { save with bottomY := b.y, bottomDepth := b.prevDepth }
+        else save
+      colSaves := colSaves.pop.push save
+      b := { b with y := save.y, prevDepth := save.prevDepth, skip := save.skip
+                    freshStart := save.fresh, noInterline := save.flush }
+  | .colClose =>
+    if let some save := colSaves.back? then
+      colSaves := colSaves.pop
+      let (bottomY, bottomDepth) := if b.y > save.bottomY
+        then (b.y, b.prevDepth) else (save.bottomY, save.bottomDepth)
+      b := { b with y := bottomY, prevDepth := bottomDepth, skip := {}
+                    freshStart := false, noInterline := false }
+  | .titleBar color pad =>
+    -- The bar sits behind the line just placed: full page width, page
+    -- top to `pad` below the line's depth.
+    b := match b.cur.lines.back? with
+      | some l =>
+        let fill : Fill := { x := 0, y := 0, w := b.geom.pageW,
+                             h := l.y + b.prevDepth + pad, color := color }
+        { b with cur := { b.cur with fills := b.cur.fills.push fill } }
+      | none => b
+  | .hrule color th =>
+    -- A line whose only seg is the rule: the full line machinery decides
+    -- its place, so skips, page breaks, and the vertical distribution
+    -- treat it as they treat text.
+    b := b.placeLine fs b.geom.hmargin 0 #[.rule b.geom.textWidth th 0 color]
+      b.geom.textWidth
+  | .tableRule th x w segs =>
+    -- Exactly the pending sep below the previous ink, never a text
+    -- leading: the rule's padding is booktabs' declared seps and nothing
+    -- else. The seg's ink stands `th` above its baseline, so the
+    -- baseline is the band's bottom; `commit` then owes zero depth, and
+    -- `noInterline` makes the next line stack flush, as TeX ignores
+    -- `\prevdepth` after an `\hrule`.
+    let mk (y : Sp) : LineOut := { x := x, y := y, size := 0, segs := segs, setWidth := w }
+    if b.cur.lines.isEmpty || b.freshStart then
+      b := { b.commit (mk (b.geom.vmargin + th)) 0 0 0 with noInterline := true }
+    else
+      let y := b.y + b.prevDepth + b.skip.width + th
+      let overflow := y - b.geom.bodyBottom
+      let above := b.pageShrink + b.skip.shrink
+      if overflow ≤ above ∨ b.noBreak then
+        b := { b.commit (mk y) 0 above (min overflow above) with noInterline := true }
+      else
+        b := b.finishPage
+        b := { b.commit (mk (b.geom.vmargin + th)) 0 0 0 with noInterline := true }
+  | .progress num den fg bg thick x w =>
+    -- Half a line under the last baseline: the track, then the elapsed
+    -- share over it. The bar joins the page's depth so following content
+    -- spaces below it.
+    let gap := b.geom.fontSize / 2
+    let y := b.y + b.prevDepth + gap
+    let fills := b.cur.fills.push { x := x, y := y, w := w, h := thick, color := bg }
+    let fills := if num == 0 then fills else
+      fills.push { x := x, y := y, w := w * (num : Int) / (den : Int), h := thick,
+                   color := fg }
+    b := { b with cur := { b.cur with fills := fills },
+                  prevDepth := b.prevDepth + gap + thick }
+  | .para j t =>
+    let breaks := t.get
+    -- A plain full-measure text paragraph is the continuous reading the
+    -- measure band is about; headings, items, code, and columns are not.
+    if j.target == b.geom.textWidth && !j.center && j.size == b.geom.fontSize &&
+        j.markerSegs.isNone && j.rule.isNone then
+      prose := max prose breaks.size
+    b := placePara fs b j breaks
+  | .picture x pic =>
+    -- Fit the picture's box the way `placeLine` fits a line of height
+    -- `h` and no depth: at the top of a fresh page, else below the last
+    -- line's depth, breaking to a new page when even the shrink above
+    -- cannot absorb the overflow.
+    let ((px0, py0), (_px1, py1)) := pic.bbox
+    let h := py1 - py0
+    let bottom := b.geom.bodyBottom
+    let mut yTop := b.geom.vmargin
+    let mut above : Sp := 0
+    let mut overflow : Sp := 0
+    if !(b.cur.lines.isEmpty || b.freshStart) then
+      let y := b.y + b.prevDepth + b.skip.width + lineskip
+      overflow := y + h - bottom
+      above := b.pageShrink + b.skip.shrink
+      if overflow ≤ above ∨ b.noBreak then
+        yTop := y
+        overflow := min overflow above
+      else
+        b := b.finishPage
+        overflow := 0
+        above := 0
+    -- One transform for everything the picture ships: `Pic.Place` is the
+    -- affine map the invertibility and containment theorems range over.
+    let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
+    let mut fills := b.cur.fills
+    let mut lines := b.cur.lines
+    let mut shrinks := b.shrinkAbove
+    for shape in pic.shapes do
+      match shape with
+      | .rect rx ry rw rh color =>
+        -- The fill's top-left corner is the rect's (min x, max y) corner
+        -- through the transform; a negative extent keeps its sorted box.
+        let (fx, fy) := place.toPage (min rx (rx + rw), max ry (ry + rh))
+        fills := fills.push { x := fx, y := fy,
+                              w := max rw (-rw), h := max rh (-rh), color := color }
+      | .label lx ly text color scale =>
+        let size := b.geom.fontSize * (scale : Int) / 1000
+        let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}
+          #[.colored color none #[.text text]] {} imgs b.geom.textWidth b.geom.textHeight
+        let breaks := kp items b.geom.textWidth
+        if let some brk := breaks[0]? then
+          let (segs, w, _) := setLine items (lineStart items 0) brk b.geom.textWidth false
+          -- The node's box centres on its anchor, as TikZ anchors a node:
+          -- the baseline sits below the centre by half the ink height
+          -- less half the depth.
+          let (hgt, dep) := segs.foldl (fun (acc : Sp × Sp) seg => match seg with
+            | .run idx _ _ _ _ sz _ raise =>
+              let font := fs.get idx
+              let sz := if sz == 0 then size else sz
+              (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
+               max acc.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
+            | _ => acc) (0, 0)
+          let (cx, cy) := place.toPage (lx, ly)
+          lines := lines.push { x := cx - w / 2, y := cy + (hgt - dep) / 2,
+                                size := size, segs := segs, setWidth := w }
+          -- Label lines ride with the picture: they share the shrink
+          -- above it, so a page set short moves the diagram as one.
+          shrinks := shrinks.push above
+    b := { b with
+      cur := { b.cur with fills := fills, lines := lines }
+      shrinkAbove := shrinks
+      pageShrink := above
+      needed := max b.needed overflow
+      y := yTop + h
+      prevDepth := 0
+      skip := {}
+      freshStart := false }
+  return { b := b, colSaves := colSaves, logoSpans := logoSpans, prose := prose }
+
+/-- Place a float group whole: a float is unbreakable, as LaTeX's floats
+are (a float body is a `\vbox` — placed on one page or deferred, never
+split across two). The group is tried where it stands; if placing it
+broke a page, the try is discarded and the whole group replays on a
+fresh page under `noBreak`, so no line of it can split off. A group
+taller than the text block itself still ships whole — placed alone, its
+overrun named (W0358), never split. -/
+private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
+    (group : Array StagedOp) : StepSt :=
+  let attempt := group.foldl (stepStaged fs imgs) st
+  if attempt.b.pages.size == st.b.pages.size then attempt
+  else
+    -- The float and the page bottom met: close the page and give the
+    -- group the next one whole. The glue pending before the float dies
+    -- with the boundary, as TeX discards glue at the top of a page.
+    let b := if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty then st.b
+      else st.b.finishPage
+    let st2 := group.foldl (stepStaged fs imgs)
+      { st with b := { b with noBreak := true } }
+    let b2 := st2.b
+    let overrun := b2.y + b2.prevDepth - b2.geom.bodyBottom
+    let b2 := if overrun > b2.pageShrink then
+        { b2 with diags := b2.diags.push (Diag.of .W0358
+          (s!"a figure or table is {(overrun - b2.pageShrink).toPtString}pt taller " ++
+            "than the text block; it overruns its page")
+          (help := "shrink the float's content, or raise the text height \
+(\\page{ vmargin = ... })")) }
+      else b2
+    { st2 with b := { b2 with noBreak := false } }
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. -/
@@ -3919,7 +4130,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .colClose => .colClose
     | .setLogo c => .setLogo c
     | .picture x pic => .picture x pic
-    | .tie => .tie
+    | .floatOpen => .floatOpen
+    | .floatClose => .floatClose
     | .anchor sl => .anchor sl
   let b0 : B := {
     geom := geom
@@ -3950,172 +4162,35 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
               s!"\\style\{{element}}\{...} keep 'after' at most 'before'")) }
   let mut colSaves : Array ColSave := #[]
   let mut logoSpans : Array (Nat × Array Inline) := #[]
-  for s in staged do
-    match s with
-    | .setLogo c =>
-      -- The page being built (index `pages.size`) and everything after
-      -- carry this content; a later span overrides.
-      logoSpans := logoSpans.push (b.pages.size, c)
-    | .skip g => b := { b with skip := b.skip.add g }
-    | .tie => b := { b with tie := true }
-    | .anchor sl => b := { b with pendingAnchors := b.pendingAnchors.push sl }
-    | .brk =>
-      -- A boundary closes a page only when the page holds something: two
-      -- adjacent frames share one boundary, not an empty page. A style set
-      -- for a page that never got content dies with the boundary. Fills
-      -- are content too: a picture of fills alone is a page.
-      if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty then
-        b := b.finishPage
-      else
-        b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
-                      pinnedLines := 0, pinnedFills := 0 }
-    | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
-    | .foot c => b := { b with curFoot := c }
-    | .pin =>
-      b := { b with pinnedLines := b.cur.lines.size, pinnedFills := b.cur.fills.size }
-    | .colOpen =>
-      colSaves := colSaves.push {
-        y := b.y, prevDepth := b.prevDepth, skip := b.skip
-        fresh := b.cur.lines.isEmpty || b.freshStart
-        flush := b.noInterline
-        bottomY := b.y, bottomDepth := b.prevDepth }
-    | .colNext =>
-      if let some save := colSaves.back? then
-        let save := if b.y > save.bottomY
-          then { save with bottomY := b.y, bottomDepth := b.prevDepth }
-          else save
-        colSaves := colSaves.pop.push save
-        b := { b with y := save.y, prevDepth := save.prevDepth, skip := save.skip
-                      freshStart := save.fresh, noInterline := save.flush }
-    | .colClose =>
-      if let some save := colSaves.back? then
-        colSaves := colSaves.pop
-        let (bottomY, bottomDepth) := if b.y > save.bottomY
-          then (b.y, b.prevDepth) else (save.bottomY, save.bottomDepth)
-        b := { b with y := bottomY, prevDepth := bottomDepth, skip := {}
-                      freshStart := false, noInterline := false }
-    | .titleBar color pad =>
-      -- The bar sits behind the line just placed: full page width, page
-      -- top to `pad` below the line's depth.
-      b := match b.cur.lines.back? with
-        | some l =>
-          let fill : Fill := { x := 0, y := 0, w := b.geom.pageW,
-                               h := l.y + b.prevDepth + pad, color := color }
-          { b with cur := { b.cur with fills := b.cur.fills.push fill } }
-        | none => b
-    | .hrule color th =>
-      -- A line whose only seg is the rule: the full line machinery decides
-      -- its place, so skips, page breaks, and the vertical distribution
-      -- treat it as they treat text.
-      b := b.placeLine fs b.geom.hmargin 0 #[.rule b.geom.textWidth th 0 color]
-        b.geom.textWidth
-    | .tableRule th x w segs =>
-      -- Exactly the pending sep below the previous ink, never a text
-      -- leading: the rule's padding is booktabs' declared seps and nothing
-      -- else. The seg's ink stands `th` above its baseline, so the
-      -- baseline is the band's bottom; `commit` then owes zero depth, and
-      -- `noInterline` makes the next line stack flush, as TeX ignores
-      -- `\prevdepth` after an `\hrule`.
-      let mk (y : Sp) : LineOut := { x := x, y := y, size := 0, segs := segs, setWidth := w }
-      if b.cur.lines.isEmpty || b.freshStart then
-        b := { b.commit (mk (b.geom.vmargin + th)) 0 0 0 with noInterline := true }
-      else
-        let y := b.y + b.prevDepth + b.skip.width + th
-        let overflow := y - b.geom.bodyBottom
-        let above := b.pageShrink + b.skip.shrink
-        if overflow ≤ above then
-          b := { b.commit (mk y) 0 above overflow with noInterline := true }
-        else
-          b := b.brokeTie.finishPage
-          b := { b.commit (mk (b.geom.vmargin + th)) 0 0 0 with noInterline := true }
-    | .progress num den fg bg thick x w =>
-      -- Half a line under the last baseline: the track, then the elapsed
-      -- share over it. The bar joins the page's depth so following content
-      -- spaces below it.
-      let gap := b.geom.fontSize / 2
-      let y := b.y + b.prevDepth + gap
-      let fills := b.cur.fills.push { x := x, y := y, w := w, h := thick, color := bg }
-      let fills := if num == 0 then fills else
-        fills.push { x := x, y := y, w := w * (num : Int) / (den : Int), h := thick,
-                     color := fg }
-      b := { b with cur := { b.cur with fills := fills },
-                    prevDepth := b.prevDepth + gap + thick }
-    | .para j t =>
-      let breaks := t.get
-      -- A plain full-measure text paragraph is the continuous reading the
-      -- measure band is about; headings, items, code, and columns are not.
-      if j.target == geom.textWidth && !j.center && j.size == geom.fontSize &&
-          j.markerSegs.isNone && j.rule.isNone then
-        prose := max prose breaks.size
-      b := placePara fs b j breaks
-    | .picture x pic =>
-      -- Fit the picture's box the way `placeLine` fits a line of height
-      -- `h` and no depth: at the top of a fresh page, else below the last
-      -- line's depth, breaking to a new page when even the shrink above
-      -- cannot absorb the overflow.
-      let ((px0, py0), (px1, py1)) := pic.bbox
-      let h := py1 - py0
-      let bottom := b.geom.bodyBottom
-      let mut yTop := b.geom.vmargin
-      let mut above : Sp := 0
-      let mut overflow : Sp := 0
-      if !(b.cur.lines.isEmpty || b.freshStart) then
-        let y := b.y + b.prevDepth + b.skip.width + lineskip
-        overflow := y + h - bottom
-        above := b.pageShrink + b.skip.shrink
-        if overflow ≤ above then
-          yTop := y
-        else
-          b := b.brokeTie.finishPage
-          overflow := 0
-          above := 0
-      -- One transform for everything the picture ships: `Pic.Place` is the
-      -- affine map the invertibility and containment theorems range over.
-      let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
-      let mut fills := b.cur.fills
-      let mut lines := b.cur.lines
-      let mut shrinks := b.shrinkAbove
-      for shape in pic.shapes do
-        match shape with
-        | .rect rx ry rw rh color =>
-          -- The fill's top-left corner is the rect's (min x, max y) corner
-          -- through the transform; a negative extent keeps its sorted box.
-          let (fx, fy) := place.toPage (min rx (rx + rw), max ry (ry + rh))
-          fills := fills.push { x := fx, y := fy,
-                                w := max rw (-rw), h := max rh (-rh), color := color }
-        | .label lx ly text color scale =>
-          let size := b.geom.fontSize * (scale : Int) / 1000
-          let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}
-            #[.colored color none #[.text text]] {} imgs b.geom.textWidth b.geom.textHeight
-          let breaks := kp items b.geom.textWidth
-          if let some brk := breaks[0]? then
-            let (segs, w, _) := setLine items (lineStart items 0) brk b.geom.textWidth false
-            -- The node's box centres on its anchor, as TikZ anchors a node:
-            -- the baseline sits below the centre by half the ink height
-            -- less half the depth.
-            let (hgt, dep) := segs.foldl (fun (acc : Sp × Sp) seg => match seg with
-              | .run idx _ _ _ _ sz _ raise =>
-                let font := fs.get idx
-                let sz := if sz == 0 then size else sz
-                (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
-                 max acc.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
-              | _ => acc) (0, 0)
-            let (cx, cy) := place.toPage (lx, ly)
-            lines := lines.push { x := cx - w / 2, y := cy + (hgt - dep) / 2,
-                                  size := size, segs := segs, setWidth := w }
-            -- Label lines ride with the picture: they share the shrink
-            -- above it, so a page set short moves the diagram as one.
-            shrinks := shrinks.push above
-      b := { b with
-        cur := { b.cur with fills := fills, lines := lines }
-        shrinkAbove := shrinks
-        pageShrink := above
-        needed := max b.needed overflow
-        y := yTop + h
-        prevDepth := 0
-        skip := {}
-        freshStart := false
-        tie := false }
+  -- Placement, one op at a time (`stepStaged`) — except a float's ops,
+  -- which travel as one unbreakable group between `floatOpen` and its
+  -- matching close (`runFloat`).
+  let mut st : StepSt := { b := b }
+  let mut si := 0
+  for _ in [0:staged.size] do
+    if h : si < staged.size then
+      match staged[si] with
+      | .floatOpen =>
+        let mut j := si + 1
+        let mut depth : Nat := 1
+        for _ in [si+1:staged.size] do
+          if depth > 0 then
+            if h2 : j < staged.size then
+              match staged[j] with
+              | .floatOpen => depth := depth + 1
+              | .floatClose => depth := depth - 1
+              | _ => pure ()
+              if depth > 0 then
+                j := j + 1
+        st := runFloat fs imgs st (staged.extract (si + 1) j)
+        si := j + 1
+      | s =>
+        st := stepStaged fs imgs st s
+        si := si + 1
+  b := st.b
+  colSaves := st.colSaves
+  logoSpans := st.logoSpans
+  prose := st.prose
   -- The trailing boundary of a final frame has already closed its page; a
   -- document is never given an empty page for it.
   if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty || b.pages.isEmpty then

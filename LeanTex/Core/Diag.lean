@@ -101,7 +101,7 @@ inductive DiagCode where
   | W0301 | W0302 | W0303 | W0304 | W0307 | W0309 | W0310 | W0311
   | W0312 | W0314 | W0315 | W0316 | W0317 | W0318 | W0319
   | W0320 | W0321 | W0322 | W0323 | W0325 | W0326 | W0327 | W0328
-  | W0329 | W0330 | W0331 | W0332 | W0333 | W0334 | W0335 | W0337 | W0338 | W0339
+  | W0329 | W0330 | W0331 | W0332 | W0333 | W0334 | W0335 | W0337 | W0338 | W0358
   | W0340 | W0341 | W0342 | W0343 | W0345 | W0346 | W0348 | W0354 | W0355
   | W0349 | W0350 | W0356 | W0357
   | W0351 | W0352 | W0353
@@ -224,7 +224,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0335 => ("0335", .degraded, "picture larger than the text area; it may overrun the page")
   | .W0337 => ("0337", .degraded, "table row disagrees with its column spec; padded to the grid")
   | .W0338 => ("0338", .degraded, "table is wider than the measure")
-  | .W0339 => ("0339", .pending, "a page break separates a caption from its float; keep-together is not implemented")
+  | .W0358 => ("0358", .degraded, "a float taller than the text block overruns its page")
   | .W0340 => ("0340", .config, "a declaration in the document body is ignored")
   | .W0341 => ("0341", .degraded, "an unknown command's [...] options went with it, never onto the page")
   | .W0342 => ("0342", .degraded, "a definition shadows a palette role; the role is frozen where it is used")
