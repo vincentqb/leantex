@@ -269,6 +269,8 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0357 =>
     dvE (dvDoc "\\edef\\x{y}\n" "x") ++
     dvE (dvDoc "\\def\\pair#1.#2{#1 and #2}\n" "x")
+  | .W0361 =>
+    dvE (dvDoc "\\title{T}\\newcommand{\\maketitle}{\\venuetitlebox}\n" "\\maketitle")
 
 /-! The message lint: every fired message and help is judged mechanically.
 Each check exists because the pasted real output violated it (the brief's

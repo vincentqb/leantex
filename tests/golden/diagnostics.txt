@@ -385,6 +385,8 @@ warning[W0357]: '\def' with a delimited parameter text is a TeX scanning program
 ── W0358 (degraded) a float taller than the text block overruns its page
 warning[W0358]: a figure or table is 288.618pt taller than the text block; it overruns its page
   help: shrink the float's content, or raise the text height (\page{ vmargin = ... })
+── W0361 (config) a built-in is not replaced by a redefinition the engine cannot run
+warning[W0361]: the redefinition of '\maketitle' uses '\venuetitlebox' (t:2), which the engine cannot run; the built-in stands
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

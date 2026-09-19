@@ -365,6 +365,22 @@ def builtinNames : List String :=
   (declStyles.map (·.1)) ++ (reservedCtrl.map (·.1)) ++ declCtrl ++
   (Lex.textSymbols.map (·.1))
 
+/-- Built-ins the engine renders that a document may nonetheless redefine,
+as LaTeX allows — the names the block and inline dispatch handles by
+literal arm only after `lookupUser` fails, so a registered definition
+shadows them. `takeDefine` gates a redefinition of one by rule (b): it
+wins only if its body, expanded once at the definition, is non-empty and
+loses nothing; a body the engine cannot run would otherwise silently erase
+the built-in's output (W0361), which is how a venue's `\renewcommand
+{\maketitle}` of kernel internals erased a paper's title. -/
+def renderedBuiltins : List String :=
+  ["maketitle", "titlepage", "logo", "appendix", "note", "pause",
+   "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
+   "paragraph", "subparagraph", "href", "link", "url", "cite", "citep",
+   "citet", "includegraphics", "faIcon", "pagenumber", "pagecount",
+   "bibliography", "bibliographystyle"] ++
+  titleCtrls ++ overlayCtrls ++ runningCtrl
+
 /-- Every palette role is invocable: a role is *defined by the palette* —
 `\muted{Alex}` works with no `\newcommand`, because the palette arm of the
 inline elaborator resolves any entry name — so no role can exist without
@@ -3001,6 +3017,71 @@ private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := 
   return params
 
 
+/-- Rule (b)'s three answers for a redefinition of a rendered built-in. -/
+private inductive RedefVerdict where
+  | wins
+  | empty
+  | refused (d : Diag)
+
+/-- The W0361 a refused redefinition earns: the built-in stands, and the
+message names why the body cannot run — its first losing construct and
+that construct's site, or the empty expansion. -/
+private def refuseRedef (cmd : UserCmd) (verdict : RedefVerdict) : EM Unit := do
+  let msg := match verdict with
+    | .refused d =>
+      let construct := match d.message.splitOn "'" with
+        | _ :: q :: _ => s!"'{q}'"
+        | _ => "a construct"
+      let site := match d.span with
+        | some sp => s!" ({sp.file}:{sp.pos.line})"
+        | none => ""
+      s!"the redefinition of '\\{cmd.name}' uses {construct}{site}, which the \
+engine cannot run; the built-in stands"
+    | _ => s!"the redefinition of '\\{cmd.name}' renders nothing; the built-in stands"
+  modify fun st => { st with diags := st.diags.push (Diag.of .W0361 msg (some cmd.span)) }
+
+/-- Rule (b), judged once at the definition — the gate both registration
+doors (the preamble fold and the body walk) run on a parsed definition
+before pushing it into `ctx.user`. A redefinition of a rendered built-in
+wins only if its body elaborates: the body is expanded here under the
+definition's own visibility — `ctx.limit` is exactly the prefix a call
+site will see — with each parameter bound to a probe word, so a body that
+only echoes its argument is non-empty. A block-shaped body is judged by
+the caller's block elaborator (`elabBody`), the same walk its use would
+take. The expansion's diagnostics are inspected and discarded: the verdict
+is recorded at the definition, never doubled at a use. A loss in {dropped,
+pending, degraded} means the body renders less than the built-in it
+shadows; config and info losses are harmless and do not refuse. -/
+private def gateRedef (ctx : Ctx) (cmd : UserCmd)
+    (elabBody : Ctx → Array Raw → EM (Array Block)) : EM (Option UserCmd) := do
+  if !renderedBuiltins.contains cmd.name then return some cmd
+  let saved ← get
+  set { saved with diags := #[], warnedUnknown := #[] }
+  let checkCtx := { ctx with
+    args := cmd.params.map fun p => (p.name, some #[Inline.text "x"]) }
+  let nonEmpty ←
+    if bodyIsBlock cmd.body then do
+      let bs ← elabBody checkCtx cmd.body
+      pure !bs.isEmpty
+    else do
+      let xs ← elabInlines checkCtx cmd.body
+      pure !xs.isEmpty
+  let checkDiags := (← get).diags
+  set saved
+  let lossy (d : Diag) : Bool :=
+    match DiagCode.ofString? d.code with
+    | some c => c.loss == .dropped || c.loss == .pending || c.loss == .degraded
+    | none => false
+  match checkDiags.find? lossy with
+  | some d =>
+    refuseRedef cmd (.refused d)
+    return none
+  | none =>
+    if nonEmpty then return some cmd
+    else
+      refuseRedef cmd .empty
+      return none
+
 /-- `\\define \\name(sig) {body}`, from the element after the `\\define`
 head: parses and validates the definition, returning the bound command and
 the index after its body. One door for the preamble walk and the body arm,
@@ -3287,6 +3368,9 @@ a side channel, never slide content" npos
           i := i + 1
           let (cmd?, k) ← takeDefine ctx raws i dpos
           i := k
+          let cmd? ← match cmd? with
+            | some cmd => gateRedef ctx cmd (fun c b => elabBlocks c b)
+            | none => pure none
           if let some cmd := cmd? then
             -- The definition binds at the visibility boundary: the rest of
             -- this walk sees exactly one more command, never the suffix
@@ -5276,6 +5360,9 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     -- token run; the extent is the scan's, so the returned index is not
     -- read here.
     let (cmd?, _) ← takeDefine s.ctx decl 0 pos
+    let cmd? ← match cmd? with
+      | some cmd => gateRedef s.ctx cmd elabBlocks
+      | none => pure none
     match cmd? with
     | some cmd =>
       -- The same boundary insertion as the body walk's define arm: at

@@ -74,6 +74,15 @@ def censusTable :
   ("declared", fun _ c => [
     ("one page, as the fixture asserts", c.size == 1),
     ("the heading ships", hasStr (censusText c) "Declared geometry")]),
+  ("redefine", fun _ c => [
+    ("one page", c.size == 1),
+    ("the refused redefinition leaves the built-in title shipping",
+      hasStr (censusText c) "Fallback Title Probe"),
+    ("the author ships under it", hasStr (censusText c) "An Invented Author"),
+    ("the refused body's internals never ship as text",
+      !hasStr (censusText c) "venuetitlebox"),
+    ("the runnable redefinition ships its own body",
+      hasStr (censusText c) "The runnable body wins.")]),
   ("fonts", fun _ c => [
     ("one page", c.size == 1),
     ("the heading ships", hasStr (censusText c) "Faces"),

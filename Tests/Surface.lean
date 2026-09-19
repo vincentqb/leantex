@@ -503,6 +503,38 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a reserved built-in cannot be redefined"
     ((warnCodes ("\\documentclass{article}\\define \\textbf(x: content) {\\emph{\\x}}" ++
       "\\begin{document}\\textbf{a}\\end{document}")) == ["W0303"])
+  -- Rule (b): a rendered built-in yields only to a redefinition the engine
+  -- can run. The venue shape — a \maketitle body of kernel internals — is
+  -- refused with W0361 naming the first losing construct, and the built-in
+  -- still sets the title heading. A runnable body wins, as in LaTeX; an
+  -- empty body (`\providecommand{\maketitle}{}`) would erase the title as
+  -- silently as an unrunnable one, so it is refused too.
+  let venue := "\\documentclass{article}\\title{Kept Probe}" ++
+    "\\renewcommand{\\maketitle}{\\begingroup\\venuetitlebox\\endgroup}" ++
+    "\\begin{document}\\maketitle Body.\\end{document}"
+  t "a maketitle redefinition the engine cannot run is refused, named"
+    (warnCodes venue == ["W0361"])
+  t "the built-in maketitle stands: the title is still the level-0 heading"
+    (Ir.headingLevels (elabStr venue).1.body == #[0])
+  let winner := "\\documentclass{article}" ++
+    "\\renewcommand{\\maketitle}{\\textbf{T-wins}}" ++
+    "\\begin{document}\\maketitle\\end{document}"
+  t "a maketitle redefinition the engine can run wins"
+    ((elabStr winner).2.all (·.severity == .note) &&
+     (elabStr winner).1.body == #[.para #[.styled .bold #[.text "T-wins"]]])
+  let emptied := "\\documentclass{article}\\title{Kept Probe}" ++
+    "\\providecommand{\\maketitle}{}" ++
+    "\\begin{document}\\maketitle Body.\\end{document}"
+  t "an empty maketitle redefinition renders nothing and is refused"
+    (warnCodes emptied == ["W0361"] &&
+     Ir.headingLevels (elabStr emptied).1.body == #[0])
+  -- A body that only echoes its parameter is not "empty": the probe
+  -- binding sees the echo, so LaTeX's identity-renew idiom wins.
+  t "an argument-echoing redefinition of a rendered built-in wins"
+    ((elabStr ("\\documentclass{article}" ++
+      "\\renewcommand{\\href}[2]{#2}" ++
+      "\\begin{document}\\href{https://example.org}{kept}\\end{document}")).2.all
+        (·.severity == .note))
   -- LaTeX classes space paragraphs by indent: their parskip is zero unless
   -- KOMA's option or the parskip package says otherwise.
   t "compat koma class declares parskip zero"

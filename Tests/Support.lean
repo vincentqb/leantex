@@ -73,7 +73,8 @@ def goldenNames : List String :=
    "bibliography",
    "icons",
    "diagram", "diagram-overflow", "tables", "tables-ragged", "subfigures",
-   "math-companion", "math-first", "abstract", "crossref", "eqnum"]
+   "math-companion", "math-first", "abstract", "crossref", "eqnum",
+   "redefine"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.

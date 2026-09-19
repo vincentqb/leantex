@@ -1,0 +1,18 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+meta title "Fallback Title Probe"
+meta author "An Invented Author"
+center
+  section* 0
+    text "Fallback Title Probe"
+  para
+    text "An Invented Author"
+para
+  text "Body text follows the standing built-in title."
+para
+  styled bold
+    text "The runnable body wins."
+-- diagnostics
+note[N0100] 8:1 '\renewcommand{\maketitle}' → \define \maketitle() {...}
+note[N0100] 9:1 '\renewcommand{\titlepage}' → \define \titlepage() {...}
+warning[W0361] 8:1 the redefinition of '\maketitle' uses '\begingroup' (redefine.tex:8), which the engine cannot run; the built-in stands

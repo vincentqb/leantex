@@ -108,6 +108,7 @@ inductive DiagCode where
   | E0347
   | W0601 | W0602
   | E0359
+  | W0361
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -248,6 +249,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0601 => ("0601", .degraded, "image unreadable or not found; placeholder box placed")
   | .W0602 => ("0602", .degraded, "image format unusable; placeholder box placed")
   | .E0359 => ("0359", .dropped, "a \\note nested inside another note's frame is dropped")
+  | .W0361 => ("0361", .config, "a built-in is not replaced by a redefinition the engine cannot run")
 
 def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
@@ -272,7 +274,7 @@ theorem DiagCode.code_letter (c : DiagCode) :
 `all_complete` makes an undercount a build failure; `all_nodup` an
 overcount (`ofNat` clamps out of range, so an overcount duplicates the
 last constructor). -/
-def DiagCode.count : Nat := 132
+def DiagCode.count : Nat := 133
 
 /-- Every code, for the registry checks in Tests.lean — derived from the
 type through the `ofNat` that `deriving DecidableEq` synthesises, never

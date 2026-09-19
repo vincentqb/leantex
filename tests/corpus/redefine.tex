@@ -1,0 +1,16 @@
+% A redefinition the engine cannot run does not replace a built-in it can
+% (rule (b), W0361): the venue-shaped \maketitle body of kernel internals
+% is refused and the built-in still sets the title, while the runnable
+% \titlepage body wins, as LaTeX intends.
+\documentclass{article}
+\title{Fallback Title Probe}
+\author{An Invented Author}
+\renewcommand{\maketitle}{\begingroup\venuetitlebox\venuenotice\endgroup}
+\renewcommand{\titlepage}{\textbf{The runnable body wins.}}
+\begin{document}
+\maketitle
+
+Body text follows the standing built-in title.
+
+\titlepage
+\end{document}
