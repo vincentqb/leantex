@@ -72,8 +72,8 @@ def goldenNames : List String :=
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav",
    "bibliography",
    "icons",
-   "diagram", "diagram-overflow", "diagram-refused", "tables", "tables-ragged",
-   "subfigures",
+   "diagram", "diagram-overflow", "diagram-refused", "diagram-scm",
+   "tables", "tables-ragged", "subfigures",
    "math-companion", "math-first", "abstract", "crossref", "eqnum",
    "redefine"]
 
@@ -235,6 +235,8 @@ structure CensusPage where
   covered : String
   rules : Nat
   fills : Nat
+  /-- Picture paths shipped on the page: node outlines and edges. -/
+  paths : Nat
 
 def CensusPage.text (p : CensusPage) : String :=
   String.intercalate " " (p.lines.toList.map (·.text))
@@ -282,7 +284,8 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
     pages := pages.push { lines := lines
                           covered := covered
                           rules := rules
-                          fills := p.fills.size }
+                          fills := p.fills.size
+                          paths := p.paths.size }
   return pages
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1

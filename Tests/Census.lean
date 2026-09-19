@@ -305,6 +305,13 @@ def censusTable :
     ("the prose around the placeholder ships",
       hasStr (censusText c) "constructs outside the rendered subset" &&
         hasStr (censusText c) "Text resumes after the placeholder")]),
+  ("diagram-scm", fun _ c => [
+    ("one page", c.size == 1),
+    ("the three node outlines ship as page paths",
+      (c[0]?.map (·.paths == 3)).getD false),
+    ("the text node body ships", hasStr (censusText c) "out"),
+    ("every node ships a glyph line",
+      (c[0]?.map fun p => decide (p.lines.size ≥ 3)).getD false)]),
   ("tables", fun geom c => [
     ("one page", c.size == 1),
     ("the header row ships", hasStr (censusText c) "Construct"

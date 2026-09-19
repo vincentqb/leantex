@@ -770,13 +770,28 @@ private def contentOf (cx : Cx) (env : List (String × Val)) (toks : List Tok) :
     else inl
   return .ok (out.filter (· != .text ""), diags)
 
-/-- `\node[font=\small, text=colour] at (x,y) {text};` — a centred label,
-optionally named (`\node (u) at ...`; the name is parsed and dropped: only
-an edge could consume it, and edges are outside the subset). An option
-outside the subset loses only itself (named); a node without `at` or a
-readable body loses the node. An option naming a declared style bundle
-expands to the bundle's own options, so a loss inside a bundle is named by
-its real spelling, never by the bundle's. -/
+/-- A dimension literal in a node option (`8mm`, `2pt`), in sp. Only the
+physical units: a font-relative unit (`em`, `ex`) needs the node's face,
+which is layout's question, so it stays outside the subset by name. -/
+private def readDim (toks : List Tok) : Except String Sp :=
+  match toks with
+  | [.num m, .ident u] =>
+    match u with
+    | "mm" => .ok (m * Dim.mm 10 / 10000)
+    | "cm" => .ok (m * Dim.mm 10 / 1000)
+    | "pt" => .ok (m * Dim.pt 1 / 1000)
+    | "in" => .ok (m * Dim.inch 1 / 1000)
+    | u => .error s!"the unit '{u}' is outside the rendered picture subset"
+  | _ => .error "a length like '8mm' is needed"
+
+/-- `\node[circle, draw, minimum size=8mm] at (x,y) {$X$};` — a centred
+label, its optional outline, optionally named (`\node (u) at ...`; the
+name is parsed and dropped: only an edge could consume it, and edges are
+outside the subset). An option outside the subset loses only itself
+(named); a node without `at` or a readable body loses the node. An option
+naming a declared style bundle expands to the bundle's own options, so a
+loss inside a bundle is named by its real spelling, never by the
+bundle's. -/
 private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     (ev : Ev) : Ev := Id.run do
   let ts := toks.filter (· != .space)
@@ -787,6 +802,16 @@ private def evalNode (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
   let factor : Nat := if cx.transformShape && cx.scale > 0 then cx.scale.toNat else 1000
   let mut scale : Nat := factor
   let mut ev := ev
+  -- The node's outline, gathered from its options: shape kind (pgf's
+  -- default node shape is a rectangle), whether it draws and/or fills,
+  -- how it strokes, and the declared minimum extents.
+  let mut isCircle := false
+  let mut draw : Option (Option Ir.Color) := none
+  let mut fillCol : Option Ir.Color := none
+  let mut dash : Ir.Pic.Dash := .solid
+  let mut thick := false
+  let mut minW : Sp := 0
+  let mut minH : Sp := 0
   if ts[0]? == some (.sym '[') then
     let mut j := 1
     let mut inner : Array Tok := #[]
@@ -818,6 +843,39 @@ rendered picture subset; the option is dropped")
         match evalColor cx env rest.toArray with
         | .ok c => color := c
         | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
+      | [.ident "circle"] => isCircle := true
+      | [.ident "rectangle"] => isCircle := false
+      | [.ident "draw"] => draw := some none
+      | .ident "draw" :: .sym '=' :: rest =>
+        match evalColor cx env rest.toArray with
+        | .ok c => draw := some (some c)
+        | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
+      | .ident "fill" :: .sym '=' :: rest =>
+        match evalColor cx env rest.toArray with
+        | .ok c => fillCol := some c
+        | .error e => ev := ev.diag (.E0333, s!"in '\\node', {e}; the colour is dropped")
+      | [.ident "dashed"] => dash := .dashed
+      | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
+      | [.ident "thick"] => thick := true
+      | .ident "minimum" :: .ident "size" :: .sym '=' :: rest =>
+        match readDim rest with
+        | .ok d => minW := max minW d; minH := max minH d
+        | .error e => ev := ev.diag (.W0334, s!"in 'minimum size', {e}; the option \
+is dropped")
+      | .ident "minimum" :: .ident "width" :: .sym '=' :: rest =>
+        match readDim rest with
+        | .ok d => minW := max minW d
+        | .error e => ev := ev.diag (.W0334, s!"in 'minimum width', {e}; the option \
+is dropped")
+      | .ident "minimum" :: .ident "height" :: .sym '=' :: rest =>
+        match readDim rest with
+        | .ok d => minH := max minH d
+        | .error e => ev := ev.diag (.W0334, s!"in 'minimum height', {e}; the option \
+is dropped")
+      -- `inner sep` is inert under minimum-only sizing: the outline is the
+      -- declared minimum (see the emission note below), which already
+      -- dominates the body plus its sep in the class this subset renders.
+      | .ident "inner" :: .ident "sep" :: .sym '=' :: _ => pure ()
       | [] => pure ()
       | o :: _ =>
         ev := ev.diag (.W0334, s!"node option {tokText o} is outside the rendered \
@@ -850,7 +908,43 @@ picture subset; the node is not drawn")
           return ev.diag (.W0334, s!"'\\node' continues with {tokText ts[i2+1]}, \
 outside the rendered picture subset; the node is not drawn")
         ev := mdiags.foldl Ev.diag ev
-        let shape := Ir.Pic.Shape.label (cx.toSp xm) (cx.toSp ym) content color scale
+        let sx := cx.toSp xm
+        let sy := cx.toSp ym
+        -- The node's outline, before its label so the fill paints under
+        -- the text. Extent is the declared minimum: pgf manual §"Shapes"
+        -- has extent = max(minimum, text extent + 2·inner sep) per axis,
+        -- and the minimum is the whole answer when it dominates the
+        -- body — the case this subset renders; a body wider than its
+        -- declared minimum stands proud of the border. pgf draws a
+        -- node's path only when `draw` or `fill` asks it to. Minimums
+        -- scale with the picture only under `transform shape` (§25.4);
+        -- the line width is graphic state and never scales.
+        if draw.isSome || fillCol.isSome then
+          let dimF (d : Sp) : Sp :=
+            if cx.transformShape then d * cx.scale / 1000 else d
+          let stroke : Option Ir.Pic.Stroke := draw.map fun c =>
+            { color := c.getD Ir.Color.black
+              width := if thick then Ir.Pic.thickWidth else Ir.Pic.thinWidth
+              dash := dash }
+          if isCircle then
+            let r := dimF (max minW minH) / 2
+            if r > 0 then
+              ev := { ev with shapes := ev.shapes.push (.circle sx sy r stroke fillCol) }
+            else
+              ev := ev.diag (.W0334, "a drawn 'circle' without a 'minimum size' \
+is outside the rendered picture subset (the body's own extent is not measured \
+here); its outline is not drawn")
+          else
+            let w := dimF minW
+            let h := dimF minH
+            if w > 0 && h > 0 then
+              let fr := Ir.Pic.Shape.frame (sx - w / 2) (sy - h / 2) w h stroke fillCol
+              ev := { ev with shapes := ev.shapes.push fr }
+            else
+              ev := ev.diag (.W0334, "a drawn node without 'minimum width' and \
+'minimum height' (or 'minimum size') is outside the rendered picture subset \
+(the body's own extent is not measured here); its outline is not drawn")
+        let shape := Ir.Pic.Shape.label sx sy content color scale
         return { ev with shapes := ev.shapes.push shape }
       | .error e, _, _ | _, .error e, _ =>
         return ev.diag (.E0333, s!"in '\\node', {e}; the node is not drawn")

@@ -1547,10 +1547,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr ("\\begin{document}\\begin{tikzpicture}[lbl/.style={font=\\small, text=black}]\n" ++
       "\\node[lbl] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
   t "elab picture style bundle names its outside options, not itself"
-    (((elabStr ("\\begin{document}\\begin{tikzpicture}[b/.style={circle}]\n" ++
+    (((elabStr ("\\begin{document}\\begin{tikzpicture}[b/.style={ellipse}]\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
-      (fun m => hasStr m "'circle'") &&
-     !((elabStr ("\\begin{document}\\begin{tikzpicture}[b/.style={circle}]\n" ++
+      (fun m => hasStr m "'ellipse'") &&
+     !((elabStr ("\\begin{document}\\begin{tikzpicture}[b/.style={ellipse}]\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
       (fun m => hasStr m "'b'"))
   t "elab picture style bundle referencing an earlier bundle expands"
@@ -1797,8 +1797,46 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an unknown macro is E0333"
     (errCodes (wrap "\\fill (\\nope,0) rectangle (1,1);") == ["E0333"])
   t "an unsupported node option loses only the option"
-    (warnCodes (wrap "\\node[draw] at (1,1) {x};") == ["W0334"] &&
-      (picOf (wrap "\\node[draw] at (1,1) {x};")).map (·.shapes.size) == some 1)
+    (warnCodes (wrap "\\node[ellipse] at (1,1) {x};") == ["W0334"] &&
+      (picOf (wrap "\\node[ellipse] at (1,1) {x};")).map (·.shapes.size) == some 1)
+  -- Node outlines: circle/rectangle with draw/fill and a declared minimum
+  -- (pgf manual §"Shapes": extent = max(minimum, text + 2·inner sep);
+  -- the minimum is the whole answer when it dominates the body, the case
+  -- the subset renders).
+  t "a drawn circle node ships its outline at half the minimum size"
+    ((picOf (wrap "\\node[circle, draw, minimum size=8mm, inner sep=1pt] at (0,0) {x};")).map
+      (·.shapes) == some #[
+        .circle 0 0 (8000 * Dim.mm 10 / 10000 / 2) (some ({} : Ir.Pic.Stroke)) none,
+        .label 0 0 #[.text "x"] Ir.Color.black 1000])
+  t "a filled rectangle node ships its frame centred on the anchor"
+    ((picOf (wrap "\\node[rectangle, draw=grid, fill=white, thick, dashed, \
+minimum width=10mm, minimum height=6mm] at (1,1) {x};")).map (·.shapes) ==
+      (let w := 10000 * Dim.mm 10 / 10000
+       let h := 6000 * Dim.mm 10 / 10000
+       some #[
+        .frame (cm - w / 2) (cm - h / 2) w h
+          (some { color := { r := 42, g := 111, b := 78 }
+                  width := Ir.Pic.thickWidth, dash := .dashed })
+          (some Ir.Color.white),
+        .label cm cm #[.text "x"] Ir.Color.black 1000]))
+  t "a drawn node without a minimum names the loss and keeps its label"
+    (warnCodes (wrap "\\node[circle, draw] at (0,0) {x};") == ["W0334"] &&
+      (picOf (wrap "\\node[circle, draw] at (0,0) {x};")).map (·.shapes.size) == some 1)
+  t "a shape option without draw or fill draws nothing and warns nothing"
+    ((elabStr (wrap "\\node[circle, minimum size=8mm] at (0,0) {x};")).2.isEmpty &&
+      (picOf (wrap "\\node[circle, minimum size=8mm] at (0,0) {x};")).map
+        (·.shapes.size) == some 1)
+  t "transform shape scales the node's minimum with the picture"
+    ((picOf (wrap "[scale=0.5, transform shape]\\node[circle, draw, \
+minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
+      some (some (.circle 0 0 (8000 * Dim.mm 10 / 10000 / 2 / 2) (some ({} : Ir.Pic.Stroke)) none)))
+  t "a math node body elaborates as a formula"
+    (((picOf (wrap "\\node at (0,0) {$x$};")).map fun p =>
+      p.shapes.any fun s => match s with
+        | .label _ _ content _ _ => content.any fun inl => match inl with
+          | .formula false "x" _ => true
+          | _ => false
+        | _ => false).getD false)
   t "one construct looped forty times is one diagnostic, not forty"
     (warnCodes (wrap "\\foreach \\x in {1,...,40}{\\draw (\\x,0) circle (1);}") ==
       ["W0334", "W0362"])

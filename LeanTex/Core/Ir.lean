@@ -212,6 +212,14 @@ def Color.pdfFill (c : Color) : String :=
     s!"{pdfMilli cy} {pdfMilli m} {pdfMilli y} {pdfMilli k} k"
   | none => s!"{c.pdfComponents} rg"
 
+/-- The stroke-colour twin of `pdfFill`: the same declared components
+through the stroking operators (`K`/`RG`, ISO 32000-2 §8.6.8, Table 74). -/
+def Color.pdfStroke (c : Color) : String :=
+  match c.cmyk with
+  | some (cy, m, y, k) =>
+    s!"{pdfMilli cy} {pdfMilli m} {pdfMilli y} {pdfMilli k} K"
+  | none => s!"{c.pdfComponents} RG"
+
 /-- A colour declared in a model round-trips to that model in a backend
 that supports it: the components the document declared are the components
 the PDF paints with, exactly — never an RGB re-interpretation. -/
@@ -974,6 +982,43 @@ inductive VAlign where
 
 namespace Pic
 
+/-- The two line widths the subset strokes: pgf manual §15.3.1 — `thin`,
+0.4 pt, is every path's default, `thick` is 0.8 pt. Widths are graphic
+state, not geometry: `scale=` never touches them, as in pgf. -/
+def thinWidth : Sp := Dim.pt 2 / 5
+def thickWidth : Sp := Dim.pt 4 / 5
+
+/-- A dash pattern by name; the backends emit the sourced rhythms — pgf
+manual §15.3.2: `dashed` is on 3 pt off 3 pt, `dotted` on the line width
+off 1 pt (the `densely dotted` rhythm; the subset keeps one dotted form). -/
+inductive Dash where
+  | solid
+  | dashed
+  | dotted
+  deriving Repr, BEq, Inhabited
+
+/-- How a border or an edge strokes: colour, width, dash. -/
+structure Stroke where
+  color : Color := Color.black
+  width : Sp := thinWidth
+  dash : Dash := .solid
+  deriving Repr, BEq, Inhabited
+
+/-- The dump spelling of a shape's paint, for the IR goldens. -/
+def paintDump (st : Option Stroke) (fl : Option Color) : String :=
+  let stS := match st with
+    | some k =>
+      let d := match k.dash with
+        | .solid => ""
+        | .dashed => " dashed"
+        | .dotted => " dotted"
+      s!" stroke #{Color.hexByte k.color.r}{Color.hexByte k.color.g}\
+{Color.hexByte k.color.b} {k.width.toPtString}{d}"
+    | none => ""
+  match fl with
+  | some c => stS ++ s!" fill #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+  | none => stS
+
 /-- One shape of an elaborated picture, in picture coordinates: sp with y
 growing upward, as TikZ has it. The elaborator evaluates everything before
 the IR — loops unrolled, expressions reduced, colours resolved, `scale=`
@@ -987,6 +1032,16 @@ inductive Shape where
   content, so a node's `{$X$}` renders through the math layer exactly as
   it would in a paragraph. -/
   | label (x y : Sp) (content : Array Inline) (color : Color) (scale : Nat)
+  /-- A node's circular outline: centre and radius, stroked and/or
+  filled. The radius is the declared minimum's half — pgf manual
+  §"Shapes" has extent = max(minimum, text + 2·inner sep) per axis, and
+  the minimum is the whole answer when it dominates the body, the case
+  this subset renders; a larger body stands proud of its border. -/
+  | circle (x y r : Sp) (stroke : Option Stroke) (fill : Option Color)
+  /-- A node's rectangular outline: `(x, y)` the min corner, `w × h` the
+  extents (non-negative by construction), sized like `circle` from the
+  declared minimums. -/
+  | frame (x y w h : Sp) (stroke : Option Stroke) (fill : Option Color)
   deriving Repr, BEq, Inhabited
 
 /-- Repaint a shape, keeping its geometry and text: how a picture dims
@@ -994,6 +1049,10 @@ under an overlay cover. -/
 def Shape.recolor (f : Color → Color) : Shape → Shape
   | .rect x y w h c => .rect x y w h (f c)
   | .label x y t c sc => .label x y t (f c) sc
+  | .circle x y r st fl =>
+    .circle x y r (st.map fun s => { s with color := f s.color }) (fl.map f)
+  | .frame x y w h st fl =>
+    .frame x y w h (st.map fun s => { s with color := f s.color }) (fl.map f)
 
 /-- A box in picture coordinates: min corner, then max corner. -/
 abbrev Box := (Sp × Sp) × (Sp × Sp)
@@ -1005,6 +1064,11 @@ picture's box bounds every fill entirely and every label at its anchor
 def Shape.box : Shape → Box
   | .rect x y w h _ => ((min x (x + w), min y (y + h)), (max x (x + w), max y (y + h)))
   | .label x y _ _ _ => ((x, y), (x, y))
+  | .circle x y r _ _ =>
+    ((min (x - r) (x + r), min (y - r) (y + r)),
+     (max (x - r) (x + r), max (y - r) (y + r)))
+  | .frame x y w h _ _ =>
+    ((min x (x + w), min y (y + h)), (max x (x + w), max y (y + h)))
 
 structure Picture where
   shapes : Array Shape := #[]
@@ -1019,6 +1083,8 @@ def Picture.labelContents (p : Picture) : Array (Array Inline) :=
   p.shapes.filterMap fun s => match s with
     | .label _ _ content _ _ => some content
     | .rect _ _ _ _ _ => none
+    | .circle _ _ _ _ _ => none
+    | .frame _ _ _ _ _ _ => none
 
 /-- `a` is inside `b`, componentwise. -/
 def Box.le (a b : Box) : Prop :=
@@ -3163,7 +3229,13 @@ def dumpBlock (ind : String) (b : Block) : String :=
       | .label x y content c sc =>
         s!"{ind}  label {x.toPtString} {y.toPtString} \
 #{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b} {sc}\n" ++
-        dumpInlines (ind ++ "    ") content)
+        dumpInlines (ind ++ "    ") content
+      | .circle x y r st fl =>
+        s!"{ind}  circle {x.toPtString} {y.toPtString} {r.toPtString}\
+{Pic.paintDump st fl}\n"
+      | .frame x y w h st fl =>
+        s!"{ind}  frame {x.toPtString} {y.toPtString} {w.toPtString} \
+{h.toPtString}{Pic.paintDump st fl}\n")
   | .table cols padL padR rows rules =>
     let spec := String.intercalate "," (cols.toList.map dumpColSpec)
     let pads := (if padL then "" else "@{}") ++ spec ++ (if padR then "" else "@{}")

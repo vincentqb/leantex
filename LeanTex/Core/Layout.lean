@@ -423,9 +423,32 @@ structure Fill where
   color : Ir.Color
   deriving Repr, Inhabited
 
+/-- A path on the page, in layout coordinates (y down): what a picture's
+node outlines — and, as the subset grows, its edges — become. The
+placement transform is affine (translate + y flip), so a circle stays a
+circle and an axis-aligned rectangle a rectangle; the PDF writer turns
+the circle into its Bézier arcs, SVG keeps it native. -/
+inductive PagePath where
+  /-- A circle: centre and radius. -/
+  | circle (cx cy r : Sp)
+  /-- An axis-aligned rectangle: top-left corner and non-negative extents. -/
+  | rect (x y w h : Sp)
+  deriving Repr, Inhabited
+
+/-- A placed path with its declared paint: stroke and/or fill, exactly as
+the picture shape carried them. -/
+structure PathOut where
+  path : PagePath
+  stroke : Option Ir.Pic.Stroke := none
+  fill : Option Ir.Color := none
+  deriving Repr, Inhabited
+
 structure PageOut where
   lines : Array LineOut := #[]
   fills : Array Fill := #[]
+  /-- Picture paths, painted after the fills and before the text, so a
+  node's own fill sits under its label. -/
+  paths : Array PathOut := #[]
   /-- The chrome footer this page carries, resolved at collection time (the
   frame's own number, the section in force): the band of slots the final
   pass lays into the margin once the page count is known. `none` on section
@@ -2203,7 +2226,15 @@ private def B.finishPage (b : B) : B :=
     | some c => #[({ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
                      color := c } : Fill)] ++ fills
     | none => fills
-  { b with pages := b.pages.push { lines := lines, fills := fills, foot := b.curFoot },
+  -- Picture paths ride with the fills: the same vertical-distribution
+  -- shift, no pinning (chrome never draws one).
+  let paths := if delta == 0 then b.cur.paths else
+    b.cur.paths.map fun p =>
+      { p with path := match p.path with
+          | .circle cx cy r => .circle cx (cy + delta) r
+          | .rect x y w h => .rect x (y + delta) w h }
+  { b with pages := b.pages.push { lines := lines, fills := fills, paths := paths,
+                                   foot := b.curFoot },
            cur := {},
            shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
@@ -4022,6 +4053,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
     let mut fills := b.cur.fills
     let mut lines := b.cur.lines
+    let mut paths := b.cur.paths
     let mut shrinks := b.shrinkAbove
     for shape in pic.shapes do
       match shape with
@@ -4031,6 +4063,14 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
         let (fx, fy) := place.toPage (min rx (rx + rw), max ry (ry + rh))
         fills := fills.push { x := fx, y := fy,
                               w := max rw (-rw), h := max rh (-rh), color := color }
+      | .circle sx sy r st fl =>
+        let (pcx, pcy) := place.toPage (sx, sy)
+        paths := paths.push { path := .circle pcx pcy (max r (-r))
+                              stroke := st, fill := fl }
+      | .frame fx fy fw fh st fl =>
+        let (qx, qy) := place.toPage (min fx (fx + fw), max fy (fy + fh))
+        paths := paths.push { path := .rect qx qy (max fw (-fw)) (max fh (-fh))
+                              stroke := st, fill := fl }
       | .label lx ly content color scale =>
         let size := b.geom.fontSize * (scale : Int) / 1000
         let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}
@@ -4055,7 +4095,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
           -- above it, so a page set short moves the diagram as one.
           shrinks := shrinks.push above
     b := { b with
-      cur := { b.cur with fills := fills, lines := lines }
+      cur := { b.cur with fills := fills, lines := lines, paths := paths }
       shrinkAbove := shrinks
       pageShrink := above
       needed := max b.needed overflow

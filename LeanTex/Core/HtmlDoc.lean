@@ -1540,6 +1540,21 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let w := px1 - px0
     let h := py1 - py0
     let kids := pic.shapes.map fun shape =>
+      -- The paint attributes of a stroked/filled shape: fill (or none —
+      -- SVG's default is black, not TikZ's), then stroke colour, width,
+      -- and pgf's dash rhythms (§15.3.2: dashed on 3pt off 3pt, dotted
+      -- on the line width off 1pt).
+      let paint := fun (st : Option Ir.Pic.Stroke) (fl : Option Ir.Color) =>
+        let fillA := #[("fill", (fl.map cssColor).getD "none")]
+        match st with
+        | none => fillA
+        | some k =>
+          let dashA : Array (String × String) := match k.dash with
+            | .solid => #[]
+            | .dashed => #[("stroke-dasharray", "3 3")]
+            | .dotted => #[("stroke-dasharray", s!"{k.width.toPtString} 1")]
+          fillA ++ #[("stroke", cssColor k.color),
+            ("stroke-width", k.width.toPtString)] ++ dashA
       match shape with
       | .rect rx ry rw rh color =>
         Html.elem "rect" #[] #[
@@ -1567,6 +1582,17 @@ def blockNode (cfg : Config) (b : Block) : Node :=
           ("font-size", (Ir.baseFontSize * (scale : Int) / 1000).toPtString),
           ("text-anchor", "middle"),
           ("dominant-baseline", "central")]
+      | .circle sx sy r st fl =>
+        Html.elem "circle" #[] (#[
+          ("cx", (sx - px0).toPtString),
+          ("cy", (py1 - sy).toPtString),
+          ("r", (max r (-r)).toPtString)] ++ paint st fl)
+      | .frame fx fy fw fh st fl =>
+        Html.elem "rect" #[] (#[
+          ("x", (min fx (fx + fw) - px0).toPtString),
+          ("y", (py1 - max fy (fy + fh)).toPtString),
+          ("width", (max fw (-fw)).toPtString),
+          ("height", (max fh (-fh)).toPtString)] ++ paint st fl)
     Html.elem "svg" kids #[
       ("viewBox", s!"0 0 {w.toPtString} {h.toPtString}"),
       ("width", s!"{w.toPtString}pt"),

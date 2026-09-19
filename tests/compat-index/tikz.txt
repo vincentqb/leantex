@@ -1,9 +1,16 @@
 # source: TikZ/PGF manual part I tutorials and §12 (\tikz, tikzpicture),
-# §12.4.2 (\tikzset), §12.2.1 (\usetikzlibrary). tikzpicture renders its
-# subset; a path construct outside it is W0334 where it stands.
+# §12.4.2 (\tikzset), §12.2.1 (\usetikzlibrary), §17 (nodes; §17.2.2
+# minimum size, §17.2.3 draw/fill on the node's shape), §15.3.1-2 (line
+# width and dash patterns). tikzpicture renders its subset; a path
+# construct outside it is W0334 where it stands.
 body impl \begin{tikzpicture}\fill (0,0) rectangle (1,1);\end{tikzpicture}
 body refuse:W0334 \begin{tikzpicture}\draw (0,0) -- (1,1);\end{tikzpicture}
 body impl \begin{tikzpicture}\node at (0,0) {x};\end{tikzpicture}
+body impl \begin{tikzpicture}\node at (0,0) {$x$};\end{tikzpicture}
+body impl \begin{tikzpicture}\node[circle, draw, minimum size=8mm, inner sep=1pt] at (0,0) {x};\end{tikzpicture}
+body impl \begin{tikzpicture}\node[rectangle, draw=blue, fill=yellow!15, minimum width=10mm, minimum height=7mm] at (0,0) {x};\end{tikzpicture}
+body impl \begin{tikzpicture}\node[circle, draw, dashed, thick, minimum size=8mm] at (0,0) {x};\end{tikzpicture}
+body refuse:W0334 \begin{tikzpicture}\node[ellipse, draw, minimum size=8mm] at (0,0) {x};\end{tikzpicture}
 body refuse:W0301 \tikz{\fill (0,0) rectangle (1,1);}
 pre refuse:W0301 \tikzset{zz/.style={}}
 pre refuse:W0301 \usetikzlibrary{arrows}

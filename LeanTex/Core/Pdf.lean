@@ -128,6 +128,44 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
   for f in page.fills do
     s := s ++ s!"q {f.color.pdfFill} {f.x.toPtString} \
 {(geom.pageH - f.y - f.h).toPtString} {f.w.toPtString} {f.h.toPtString} re f Q\n"
+  -- Picture paths — node outlines, later edges — paint after the fills
+  -- and before the text, so a node's own fill sits under its label. The
+  -- painting operators are ISO 32000-2 §8.5.3 (S stroke, f fill, B fill
+  -- then stroke); dash patterns §8.4.3.6 with pgf's rhythms (§15.3.2:
+  -- dashed on 3pt off 3pt, dotted on the line width off 1pt).
+  for p in page.paths do
+    let mut g := "q "
+    if let some fl := p.fill then
+      g := g ++ s!"{fl.pdfFill} "
+    if let some st := p.stroke then
+      let dashOp := match st.dash with
+        | .solid => ""
+        | .dashed => "[3 3] 0 d "
+        | .dotted => s!"[{st.width.toPtString} 1] 0 d "
+      g := g ++ s!"{st.color.pdfStroke} {st.width.toPtString} w " ++ dashOp
+    match p.path with
+    | .circle cx cy r =>
+      -- Four cubic Bézier arcs, the standard k = 4(√2−1)/3 ≈ 0.5523
+      -- magic-number circle approximation; c is §8.5.2.2.
+      let x := geom.bleed + cx
+      let y := geom.bleed + geom.pageH - cy
+      let k := r * 5523 / 10000
+      let pt := Sp.toPtString
+      g := g ++ s!"{pt (x + r)} {pt y} m " ++
+        s!"{pt (x + r)} {pt (y + k)} {pt (x + k)} {pt (y + r)} {pt x} {pt (y + r)} c " ++
+        s!"{pt (x - k)} {pt (y + r)} {pt (x - r)} {pt (y + k)} {pt (x - r)} {pt y} c " ++
+        s!"{pt (x - r)} {pt (y - k)} {pt (x - k)} {pt (y - r)} {pt x} {pt (y - r)} c " ++
+        s!"{pt (x + k)} {pt (y - r)} {pt (x + r)} {pt (y - k)} {pt (x + r)} {pt y} c h "
+    | .rect rx ry rw rh =>
+      let x := geom.bleed + rx
+      let y := geom.bleed + geom.pageH - ry - rh
+      g := g ++ s!"{x.toPtString} {y.toPtString} {rw.toPtString} {rh.toPtString} re "
+    let paint := match p.stroke, p.fill with
+      | some _, some _ => "B"
+      | some _, none => "S"
+      | none, some _ => "f"
+      | none, none => "n"
+    s := s ++ g ++ paint ++ " Q\n"
   s := s ++ "BT\n"
   let mut curFont : Int := -1
   let mut curSize : Sp := -1

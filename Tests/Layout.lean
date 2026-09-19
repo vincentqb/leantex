@@ -2261,6 +2261,18 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
   let bare := run #[.picture { shapes := #[.rect 0 0 (Dim.pt 5) (Dim.pt 5) red] }]
   t "a picture of fills alone still ships its page"
     ((bare.pages[0]?.map fun p => p.fills.size == 1).getD false)
+  -- An outlined node ships as a page path through the same transform:
+  -- the centre maps like any picture point, the paint rides unchanged.
+  let circled : Ir.Pic.Picture := { shapes := #[
+    .circle (Dim.pt 10) (Dim.pt 5) (Dim.pt 5) (some ({} : Ir.Pic.Stroke)) (some red)] }
+  let outC := run #[.picture circled]
+  t "an outlined circle ships as one page path with its paint"
+    ((outC.pages[0]?.bind fun p => p.paths[0]?.map fun pa =>
+      (match pa.path with
+       | .circle cx cy r =>
+         cx == geom.hmargin + Dim.pt 5 && cy == geom.vmargin + Dim.pt 5 && r == Dim.pt 5
+       | .rect _ _ _ _ => false) &&
+      pa.stroke == some ({} : Ir.Pic.Stroke) && pa.fill == some red).getD false)
   -- `{center}` centres the box, as it centres a paragraph's lines.
   let centered := run #[.center #[.picture pic]]
   t "a centred picture centres its box"
