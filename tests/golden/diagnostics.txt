@@ -95,6 +95,11 @@ error[E0336]: 1 {...} group on the '\begin{banner}' line went with the unknown w
 ── E0340 (dropped) unknown icon name; nothing is rendered
 error[E0340]: unknown icon 'no-such-icon'; nothing is rendered
   help: icon names are Font Awesome 5 Free's, like 'arrow-up' or 'github'
+── E0347 (dropped) a running head or foot declared in the body is dropped with its content
+error[E0347]: '\runninghead' in the body is dropped with its content
+  help: declare it in the preamble, before '\begin{document}'
+error[E0347]: '\runningfoot' in the body is dropped with its content
+  help: declare it in the preamble, before '\begin{document}'
 ── E0401 (dropped) no usable font found on the host
 error[E0401]: no usable font found
   help: install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT
@@ -119,6 +124,22 @@ error[E0502]: '\input' file 'chapter1.tex' is not there; its content is absent
 ── E0503 (dropped) \bibliography file not found; the reference list is empty
 error[E0503]: '\bibliography' file 'references' is not there; the reference list is empty
   help: looked at: /doc/references.bib; \allow{E0503} accepts the loss
+── N0016 (info) no math face declared; the engine picked one and says which
+note[N0016]: math is set in 'TeX Gyre Pagella Math', the designed companion of 'TeX Gyre Pagella'
+  help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
+note[N0016]: math is set in 'Fira Math', the first installed face with an OpenType MATH table
+  help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
+── N0017 (info) no document class declared; the article page model is assumed
+note[N0017]: no '\documentclass'; the article page model is assumed
+  help: declare \documentclass{article} (or slides, card, resume, webpage) to choose it
+── N0018 (info) math alphabet glyph missing everywhere; a stand-in letter sets, the styling difference named
+note[N0018]: 'Fira Math' has no calligraphic 'L' (U+2112); the plain letter stands in
+  help: declare a math face that carries it: \fonts{ math = ... }
+note[N0018]: 'Fira Math' has no sans-serif 'A' (U+1D5A0); the plain letter stands in
+  help: declare a math face that carries it: \fonts{ math = ... }
+── N0019 (info) a backend conditional in content names a class or kernel decision made by hand
+note[N0019]: content addressed per backend encodes a per-medium decision by hand
+  help: a construct carries its own medium answer (a nav, a note); prefer the construct or the class, and keep '\begin{ifbackend}' for the true remainder
 ── N0100 (info) LaTeX idiom translated to its native declaration
 note[N0100]: '\usepackage{geometry}' → \page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
@@ -163,22 +184,6 @@ warning[W0014]: '{align*}': row 2 has 1 cell(s) where 2 align; padded with empty
 ── W0015 (degraded) equation numbers not rendered yet; rows set unnumbered
 warning[W0015]: equation numbers are not rendered yet; '{align}' sets unnumbered
   help: '{align*}' spells the unnumbered form, which renders the same
-── N0016 (info) no math face declared; the engine picked one and says which
-note[N0016]: math is set in 'TeX Gyre Pagella Math', the designed companion of 'TeX Gyre Pagella'
-  help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
-note[N0016]: math is set in 'Fira Math', the first installed face with an OpenType MATH table
-  help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
-── N0018 (info) math alphabet glyph missing everywhere; a stand-in letter sets, the styling difference named
-note[N0018]: 'Fira Math' has no calligraphic 'L' (U+2112); the plain letter stands in
-  help: declare a math face that carries it: \fonts{ math = ... }
-note[N0018]: 'Fira Math' has no sans-serif 'A' (U+1D5A0); the plain letter stands in
-  help: declare a math face that carries it: \fonts{ math = ... }
-── N0017 (info) no document class declared; the article page model is assumed
-note[N0017]: no '\documentclass'; the article page model is assumed
-  help: declare \documentclass{article} (or slides, card, resume, webpage) to choose it
-── N0019 (info) a backend conditional in content names a class or kernel decision made by hand
-note[N0019]: content addressed per backend encodes a per-medium decision by hand
-  help: a construct carries its own medium answer (a nav, a note); prefer the construct or the class, and keep '\begin{ifbackend}' for the true remainder
 ── W0101 (config) geometry keys without a native equivalent dropped
 warning[W0101]: geometry keys without a native equivalent were dropped: headsep
 ── W0102 (degraded) unsupported colour model
@@ -345,26 +350,12 @@ warning[W0346]: '\page' is a declaration; inside inline content it is ignored
 ── W0348 (config) a theme replaces a key the document already declared; the theme wins
 warning[W0348]: theme 'moloch' replaces the document's earlier 'alert' from '\palette'
   help: overrides go after '\theme': move the declaration below it
-── W0354 (config) a caption option the engine does not honour; named and ignored
-warning[W0354]: '\captionsetup' key 'skip' is not honoured; the caption keeps its declared layout
-  help: \tokens{ captionsep = ... } declares the caption gap
-── W0355 (config) a theme's slides furniture cannot draw under the class in force
-warning[W0355]: theme 'moloch' installs slides furniture (chrome, frametitle, sectionpage, standout); the article class never draws it
-  help: the palette and tokens apply either way; \documentclass{slides} draws the furniture
 ── W0349 (degraded) reference to a key no \label numbers; set as '??'
 warning[W0349]: no \label{nowhere} in the document; set as '??'
   help: declare \label{nowhere} after the numbered thing it names
 ── W0350 (config) a key is \label'ed more than once; the first wins
 warning[W0350]: 'twice' is already a \label'ed key; the first wins
   help: one \label{twice} per key: give this one its own name
-── W0356 (degraded) document class option refused by name; the document renders without it
-warning[W0356]: class option 'twocolumn' asks for a two-column page; the text is set in one column
-warning[W0356]: class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full
-── W0357 (config) a definition is expansion-time TeX; refused by design
-warning[W0357]: '\edef' defines by expanding at definition time; the engine has no expansion step, so the definition is skipped
-  help: \define \name(...) {body} declares typed commands
-warning[W0357]: '\def' with a delimited parameter text is a TeX scanning program; the definition is skipped
-  help: \define \name(...) {body} declares typed commands
 ── W0351 (degraded) a citation names no bibliography entry; its mark shows as ?
 warning[W0351]: citation 'ghost' has no entry in the bibliography; it shows as '?'
   help: add an entry with key 'ghost' to the .bib file, or fix the spelling in \cite
@@ -373,11 +364,20 @@ warning[W0352]: malformed .bib entry: in 'broken': unreadable value for 'year'; 
 ── W0353 (degraded) an unknown bibliography style; the reference list is set as unsrtnat
 warning[W0353]: bibliography style 'mystery' is not one the engine knows; the reference list is set as 'unsrtnat'
   help: styles known: unsrtnat, unsrt, plainnat, plain
-── E0347 (dropped) a running head or foot declared in the body is dropped with its content
-error[E0347]: '\runninghead' in the body is dropped with its content
-  help: declare it in the preamble, before '\begin{document}'
-error[E0347]: '\runningfoot' in the body is dropped with its content
-  help: declare it in the preamble, before '\begin{document}'
+── W0354 (config) a caption option the engine does not honour; named and ignored
+warning[W0354]: '\captionsetup' key 'skip' is not honoured; the caption keeps its declared layout
+  help: \tokens{ captionsep = ... } declares the caption gap
+── W0355 (config) a theme's slides furniture cannot draw under the class in force
+warning[W0355]: theme 'moloch' installs slides furniture (chrome, frametitle, sectionpage, standout); the article class never draws it
+  help: the palette and tokens apply either way; \documentclass{slides} draws the furniture
+── W0356 (degraded) document class option refused by name; the document renders without it
+warning[W0356]: class option 'twocolumn' asks for a two-column page; the text is set in one column
+warning[W0356]: class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full
+── W0357 (config) a definition is expansion-time TeX; refused by design
+warning[W0357]: '\edef' defines by expanding at definition time; the engine has no expansion step, so the definition is skipped
+  help: \define \name(...) {body} declares typed commands
+warning[W0357]: '\def' with a delimited parameter text is a TeX scanning program; the definition is skipped
+  help: \define \name(...) {body} declares typed commands
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

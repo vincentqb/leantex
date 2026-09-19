@@ -358,10 +358,30 @@ def dvLint (fail : String → IO Unit) (d : Diag) : IO Unit := do
     unless h.length ≤ dvHelpMax do
       fail s!"{d.code} help: {h.length} chars, over {dvHelpMax}: {h}"
 
+/-- A rendered diagnostics dump as code-keyed blocks, split on `── ` line
+starts — the compare and the update both go through this one parse, so the
+two cannot disagree about where a block begins. -/
+def diagBlocksOf (s : String) : Array (String × String) := Id.run do
+  let mut out : Array (String × String) := #[]
+  let mut key := ""
+  let mut cur := ""
+  for line in s.splitOn "\n" do
+    if line.startsWith "── " then
+      if !key.isEmpty then out := out.push (key, cur)
+      key := (((line.drop "── ".length).toString).splitOn " ").headD ""
+      cur := line ++ "\n"
+    else if !key.isEmpty && !line.isEmpty then
+      cur := cur ++ line ++ "\n"
+  if !key.isEmpty then out := out.push (key, cur)
+  return out
+
 /-- The voice golden and its coverage: every registered code fires from its
 witness, and every fired form renders into tests/golden/diagnostics.txt —
 the one place the whole voice is reviewable in a diff. Spans are dropped:
-the witnesses' line numbers are noise. -/
+the witnesses' line numbers are noise. The file is one block per code,
+sorted by code on emission, so an added code is a one-block insertion at
+its sorted position and two additions to different codes never touch the
+same lines; the compare is per block, so a mismatch names its code. -/
 def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
   let load (name : String) : IO (Option Font.Font) := do
     match Font.parse (← IO.FS.readBinFile (testFonts ++ "/" ++ name)) with
@@ -393,7 +413,7 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
     | .degraded => "degraded"
     | .config => "config"
     | .info => "info"
-  let mut out := ""
+  let mut blocks : Array (String × String) := #[]
   for c in DiagCode.all do
     let fired := (diagWitness one mapped withMath c).filter (·.code == c.code)
     check ref s!"diag voice {c.code}: the witness fires it" (!fired.isEmpty)
@@ -402,14 +422,17 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
       failures ref s!"diag voice {c.code} meaning: repo-internal reference: {c.meaning}"
     unless dvTerminalOk c.meaning do
       failures ref s!"diag voice {c.code} meaning: terminal punctuation: {c.meaning}"
-    out := out ++ s!"── {c.code} ({lossLabel c.loss}) {c.meaning}\n"
+    let mut block := s!"── {c.code} ({lossLabel c.loss}) {c.meaning}\n"
     let mut seen : Array String := #[]
     for d in fired do
       dvLint (fun m => failures ref s!"diag voice {m}") d
       let r := Render.human false { d with span := none }
       unless seen.contains r do
         seen := seen.push r
-        out := out ++ r ++ "\n"
+        block := block ++ r ++ "\n"
+    blocks := blocks.push (c.code, block)
+  let sorted := blocks.qsort (fun a b => a.1 < b.1)
+  let out := sorted.foldl (fun acc b => acc ++ b.2) ""
   let path := "tests/golden/diagnostics.txt"
   if update then
     IO.FS.writeFile path out
@@ -419,9 +442,28 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
     match golden with
     | none => failures ref s!"diag voice: missing {path} (run: lake exe Tests --update)"
     | some g =>
-      unless g == out do
-        failures ref s!"diag voice: golden mismatch, {firstDiff g out} \
+      let gBlocks := diagBlocksOf g
+      let mut gKeys : Array String := #[]
+      for (k, _) in gBlocks do
+        if gKeys.contains k then
+          failures ref s!"diag voice: duplicate golden block {k} (a mis-merge; run: lake exe Tests --update)"
+        gKeys := gKeys.push k
+      for (k, b) in diagBlocksOf out do
+        match gBlocks.find? (·.1 == k) with
+        | none =>
+          failures ref s!"diag voice: golden lacks a block for {k} (run: lake exe Tests --update)"
+        | some (_, gb) =>
+          unless gb == b do
+            failures ref s!"diag voice {k}: block mismatch, {firstDiff gb b} \
 (if intended, run: lake exe Tests --update)"
+      for (k, _) in gBlocks do
+        unless sorted.any (·.1 == k) do
+          failures ref s!"diag voice: stale golden block {k}, no longer registered \
+(run: lake exe Tests --update)"
+      unless g == out do
+        if gBlocks.qsort (fun a b => a.1 < b.1) == diagBlocksOf out then
+          failures ref s!"diag voice: golden differs only in block order or spacing \
+(run: lake exe Tests --update)"
 
 /-- The `\allow` escape hatch: declared acceptance of named losses, with its
 three teeth — an unknown code is an error, a never-fired entry warns
