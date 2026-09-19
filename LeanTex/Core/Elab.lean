@@ -3281,12 +3281,12 @@ Returns the index just past the consumed arguments, and the malformed run
 of an unclosed optional argument for the caller to keep where content can
 live. -/
 private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
-    (start : Nat) (pos : Pos) : EM (Nat × Array Raw) := do
+    (start : Nat) (pos : Pos) : EM ({ j : Nat // start ≤ j } × Array Raw) := do
   -- `\title[short]{long}`: the short form feeds furniture we do not render.
   -- Past an unclosed `[`, the group the author wrote is still there —
   -- wherever the line break falls — and best effort takes it as the
   -- argument rather than failing the build.
-  let (⟨j, _⟩, recovered, junk) ← skipOptArg ctx name raws start pos
+  let (⟨j, hj⟩, recovered, junk) ← skipOptArg ctx name raws start pos
   match raws[j]? with
   | some (.group body _) =>
     let content ← elabInlines ctx body
@@ -3296,13 +3296,13 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
       | "author" => { st with author := some content }
       | "institute" => { st with institute := some content }
       | _ => { st with date := some content }
-    return (j + 1, junk)
+    return (⟨j + 1, by omega⟩, junk)
   | _ =>
     if recovered then
       warnSkippedDecl ctx name pos
-      return (j, junk)
+      return (⟨j, hj⟩, junk)
     diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
-    return (start, #[])
+    return (⟨start, Nat.le_refl start⟩, #[])
 
 /-- The title content `\maketitle` sets, from what was declared, per the
 `titlepage` style. A declared `separator` becomes a full-measure rule
@@ -3552,6 +3552,12 @@ private theorem slicePars_end (raws : Array Raw) {j : Nat}
   rw [List.drop_eq_nil_of_le (by simpa using h)]
   rfl
 
+private theorem sliceWeight_zero (a : Array Raw) :
+    sliceWeight a 0 = rawWeightList a.toList := rfl
+
+private theorem slicePars_zero (a : Array Raw) :
+    slicePars a 0 = nestedParsList a.toList := rfl
+
 /-- Trimming a body's whitespace edges never adds weight or pars. -/
 private theorem trimRaws_weight_le (raws : Array Raw) :
     rawWeightList (trimRaws raws).toList ≤ rawWeightList raws.toList := by
@@ -3591,52 +3597,6 @@ private def defineBody? (raws : Array Raw) (k : Nat) :
       | none => Option.none
   else none
 termination_by raws.size - k
-
-/-- Rule (b), judged once at the definition — the gate both registration
-doors (the preamble fold and the body walk) run on a parsed definition
-before pushing it into `ctx.user`. A redefinition of a rendered built-in
-wins only if its body elaborates: the body is expanded here under the
-definition's own visibility — `ctx.limit` is exactly the prefix a call
-site will see — with each parameter bound to a probe word, so a body that
-only echoes its argument is non-empty. A block-shaped body is judged by
-the caller's block elaborator (`elabBody`), the same walk its use would
-take. The expansion's diagnostics are inspected and discarded: the verdict
-is recorded at the definition, never doubled at a use. A loss in {dropped,
-pending, degraded} means the body renders less than the built-in it
-shadows; config and info losses are harmless and do not refuse. -/
-private def gateRedef (ctx : Ctx) (cmd : UserCmd)
-    (elabBody : Ctx → Array Raw → EM (Array Block)) : EM (Option UserCmd) := do
-  if !renderedBuiltins.contains cmd.name then return some cmd
-  let saved ← get
-  set { saved with diags := #[], warnedUnknown := #[] }
-  let checkCtx := { ctx with
-    args := cmd.params.map fun p => (p.name, some #[Inline.text "x"]) }
-  let nonEmpty ←
-    if bodyIsBlock cmd.body then do
-      let bs ← elabBody checkCtx cmd.body
-      pure !bs.isEmpty
-    else do
-      let xs ← elabInlines checkCtx cmd.body
-      pure !xs.isEmpty
-  let checkDiags := (← get).diags
-  set saved
-  let lossy (d : Diag) : Bool :=
-    match DiagCode.ofString? d.code with
-    | some c => c.loss == .dropped || c.loss == .pending || c.loss == .degraded
-    | none => false
-  match checkDiags.find? lossy with
-  | some d =>
-    refuseRedef cmd (.refused d)
-    if cmd.name == "maketitle" then
-      modify fun st => { st with refusedTitleBody := some cmd.body }
-    return none
-  | none =>
-    if nonEmpty then return some cmd
-    else
-      refuseRedef cmd .empty
-      if cmd.name == "maketitle" then
-        modify fun st => { st with refusedTitleBody := some cmd.body }
-      return none
 
 -- Rule (b)'s third answer: a redefinition the engine cannot run may still
 -- *declare* the built-in's styling. The scan below reads a refused
@@ -4031,7 +3991,9 @@ outside a note body, the drain runs at `1`, and the note-body walk it
 opens runs at `0`. Inside a note body the drain is refused (E0359), so
 the flag never needs to rise. -/
 private def noteFlag (ctx : Ctx) : Nat :=
-  if ctx.noteBody then 0 else 2
+  match ctx.noteBody with
+  | true => 0
+  | false => 2
 
 
 /-- One lexicographic fall in the block knot's six-component measure,
@@ -4063,7 +4025,7 @@ macro "blocks_dec" : tactic =>
     simp_wf
     <;> (first
       | omega
-      | (apply lex6_of; simp only [noteFlag]; try simp; omega))))
+      | (apply lex6_of; omega))))
 
 private theorem rawWeightList_push (a : Array Raw) (r : Raw) :
     rawWeightList (a.push r).toList = rawWeightList a.toList + rawWeight r := by
@@ -4405,255 +4367,1791 @@ specs are not modelled")
         show itemsP items.toList ≤ pbound by omega⟩
 termination_by body.size - j
 
-/-- Elaborate raw items as a block sequence. -/
-partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
-  -- Shadowed mutable: a body declaration (`\palette`, `\tokens`) applies to
-  -- the content elaborated after it in this scope and inside it — and, via
-  -- the flow state below, after a nested scope closes too: flow scope, no
-  -- brace revert.
-  let mut ctx := ctx
-  let mut blocks : Array Block := #[]
-  let mut cur : Array Raw := #[]
-  let mut raws := raws
-  let mut i := 0
-  let mut gen := (← get).flowGen
-  repeat
-    -- A body declaration anywhere earlier in flow order — this scope or a
-    -- nested one — reaches here: the state carries it, the generation
-    -- guard makes the common no-declaration path one Nat comparison.
-    let stFlow ← get
-    if stFlow.flowGen != gen then
-      gen := stFlow.flowGen
-      ctx := { ctx with palette := stFlow.flowPalette.getD ctx.palette
-                        tokens := stFlow.flowTokens.getD ctx.tokens }
-    if h : i < raws.size then
-      let r := raws[i]
-      -- A scope group holding a paragraph end is spliced open first, so the
-      -- `\par` inside it is the boundary it is everywhere else.
-      if let .group body pos := r then
-        if body.any isParRaw && !isArgument cur then
-          raws := raws.extract 0 i ++ splitAtPars ctx body pos ++ raws.extract (i + 1) raws.size
-          continue
-      let isBoundary : Bool :=
-        match r with
-        | .par _ => true
-        | .ctrl "par" _ => true
-        | .ctrl "block" _ => true
-        | .ctrl "centering" _ => true
-        | .ctrl "pause" _ => true
-        | .ctrl "framefoot" _ => true
-        | .ctrl "pagebreak" _ => true
-        | .ctrl "appendix" _ => true
-        | .ctrl "bibliography" _ => true
-        | .ctrl "bibliographystyle" _ => true
-        -- Display math is its own centred block, as LaTeX sets a display:
-        -- the paragraph splits around it. Inline `$...$` stays in its
-        -- sentence.
-        | .math display _ _ => display
-        -- A note opening a paragraph is its own block; one met mid-sentence
-        -- flows on inline, where it stashes for the enclosing frame instead
-        -- of splitting the paragraph.
-        | .ctrl "note" _ => cur.isEmpty
-        | .ctrl n _ =>
-          (sectionLevel n).isSome ||
-          -- A declaration between paragraphs stands at block level.
-          declCtrl.contains n || runningCtrl.contains n || n == "define" ||
-          -- A user command whose body produces blocks is itself a boundary.
-          (match lookupUser ctx n with
-           | some (_, cmd) => bodyIsBlock cmd.body
-           | none =>
-             ((overlayCtrls.contains n || n == "alt") &&
-               overlayTakesBlocks raws i cur.isEmpty (n == "alt")) ||
-             titleCtrls.contains n || n == "maketitle" || n == "titlepage"
-               || n == "logo")
-        | .group body _ =>
-          -- A scope group carrying a `\centering` declaration is a block
-          -- scope: the declaration needs blocks to centre, and the group's
-          -- edge is exactly how far it reaches. An argument group is the
-          -- command's, as in the par splice above.
-          body.any isCenteringRaw && !isArgument cur
-        | .env n body _ =>
-          -- The synthetic \input wrapper is provenance, not structure: an
-          -- inline fragment splices into the paragraph that includes it,
-          -- and only a file holding block content breaks one. An unknown
-          -- environment is judged the same way — its wrapper is unknowable,
-          -- so its body's shape decides, and an inline body stays in its
-          -- sentence.
-          if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
-          else
-            blockEnvs.contains n || isMathEnv n
-              || n == "tabular" || n == "tabular*"
-              || reservedEnv.contains n
-              || (match lookupUserEnv ctx n with
-                  | some (_, env) =>
-                    -- A defined wrapper is judged by everything it will
-                    -- produce: either half being block-shaped makes the
-                    -- whole a block, as the content does.
-                    bodyIsBlock env.beginBody || bodyIsBlock env.endBody
-                  | none => false)
-              || bodyIsBlock body
-        | .verb _ _ => true
-        | _ => false
-      if !isBoundary then
-        unless cur.isEmpty && isSpaceOrPar r do
-          cur := cur.push r
-        i := i + 1
+/-- The block spine's per-iteration flow refresh: a body declaration
+anywhere earlier in flow order — this scope or a nested one — reaches the
+walk through the state; the generation guard makes the common
+no-declaration path one Nat comparison. Named so the refresh provably
+leaves every measure component alone (`flowCtx_measure`). -/
+private def flowCtx (ctx : Ctx) (st : ESt) (gen : Nat) : Ctx :=
+  if st.flowGen != gen then
+    { ctx with palette := st.flowPalette.getD ctx.palette
+               tokens := st.flowTokens.getD ctx.tokens }
+  else ctx
+
+private theorem flowCtx_measure (ctx : Ctx) (st : ESt) (gen : Nat) :
+    (flowCtx ctx st gen).envLimit = ctx.envLimit
+      ∧ noteFlag (flowCtx ctx st gen) = noteFlag ctx
+      ∧ visParsGo (flowCtx ctx st gen).user (flowCtx ctx st gen).limit
+        = visParsGo ctx.user ctx.limit
+      ∧ visWeightGo (flowCtx ctx st gen).user (flowCtx ctx st gen).limit
+        = visWeightGo ctx.user ctx.limit := by
+  unfold flowCtx
+  split <;> exact ⟨rfl, rfl, rfl, rfl⟩
+
+/-- A context sharing `ctx`'s measure components, the fact carried beside
+it: what a knot edge needs to know about a context that changed only
+fields the measure never reads. -/
+private def MCtx (ctx : Ctx) := { c : Ctx // c.envLimit = ctx.envLimit
+  ∧ noteFlag c = noteFlag ctx
+  ∧ visParsGo c.user c.limit = visParsGo ctx.user ctx.limit
+  ∧ visWeightGo c.user c.limit = visWeightGo ctx.user ctx.limit }
+
+/-- The `{tabular}` arm, whole: no recursion into the block walk, so it
+lives outside the knot to keep the pack small. -/
+private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
+    (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
+  let mut blocks := blocks
+  -- A formal table, booktabs-shaped by construction: the column
+  -- spec drives `.table`'s columns, `&`/`\\` split cells and
+  -- rows, and the rule commands become typed rules at their
+  -- index. Elaboration delivers the rectangularity the layout
+  -- trusts: a short row is padded, a long one widens the grid,
+  -- warning either way (W0337).
+  let mut k := skipSpaces body 0
+  if n == "tabular*" then
+    if let some (.group _ _) := body[k]? then
+      warnOnce ctx "tabular:starwidth" .N0102
+        "'tabular*' total width is ignored: columns take their \
+  declared widths" pos
+      k := skipSpaces body (k + 1)
+  if let .took k' := scanBracketArg body k pos then
+    warnOnce ctx "tabular:valign" .N0102
+      "'tabular' [t]/[b] alignment is ignored: the table stands \
+  where written" pos
+    k := skipSpaces body k'
+  let mut cols : Array Ir.ColSpec := #[]
+  let mut padL := true
+  let mut padR := true
+  match body[k]? with
+  | some (.group spec _) =>
+    let (cs, pl, pr, warns) := parseColSpec spec
+    cols := cs
+    padL := pl
+    padR := pr
+    for (key, msg, help) in warns do
+      warnOnce ctx ("tabular:" ++ key) .W0104 msg pos
+        (help := if help.isEmpty then none else some help)
+    k := k + 1
+  | _ => diag ctx .E0304 s!"'\{{n}}' needs a \{column spec} group" pos
+  let mut rows : Array (Array (Array Inline)) := #[]
+  let mut rules : Array (Nat × Ir.TableRule) := #[]
+  let mut cells : Array (Array Inline) := #[]
+  let mut cellRaws : Array Raw := #[]
+  let mut j := k
+  let ruleNames := ["toprule", "midrule", "bottomrule", "hline",
+    "cmidrule", "cline", "addlinespace"]
+  for _ in [k:body.size] do
+    if h' : j < body.size then
+      match body[j] with
+      | .ctrl "\\" bpos =>
+        cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
+        cellRaws := #[]
+        rows := rows.push cells
+        cells := #[]
+        j := j + 1
+        -- `\\[len]`: declared space after the row, booktabs'
+        -- class-2 gap.
+        let j0 := skipSpaces body j
+        match scanBracketArg body j bpos with
+        | .took j' =>
+          let src := Parse.rawSrc (body.extract (j0 + 1) (j' - 1))
+          match Decl.parseLength src with
+          | some l => do
+            rules := rules.push (rows.size, .gap { width := l })
+            j := j'
+          | none =>
+            diag ctx .E0331 s!"unreadable length '{src}' in '\\\\[...]'" (some bpos)
+            j := j'
+        | _ => pure ()
+      | .sym '&' _ =>
+        cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
+        cellRaws := #[]
+        j := j + 1
+      | .ctrl name rpos =>
+        if ruleNames.contains name &&
+            cellRaws.all isSpaceOrPar && cells.isEmpty then
+          j := j + 1
+          cellRaws := #[]
+          -- booktabs' optional [width] per rule is not modelled:
+          -- the three weights are the design, one source.
+          if let .took j' := scanBracketArg body j rpos then
+            warnOnce ctx "tabular:rulewidth" .N0102
+              s!"'\\{name}' [width] is ignored: rule weights come \
+  from the design tokens" rpos
+            j := j'
+          match name with
+          | "toprule" => rules := rules.push (rows.size, .top)
+          | "midrule" | "hline" => rules := rules.push (rows.size, .mid)
+          | "bottomrule" => rules := rules.push (rows.size, .bottom)
+          | "addlinespace" =>
+            rules := rules.push (rows.size,
+              .gap { width := Ir.defaultAddSpace })
+          | _ =>
+            -- `\cmidrule(lr){a-b}`, `\cline{a-b}`: the trim spec
+            -- lexes as one word, "(lr)"
+            let mut trimL := false
+            let mut trimR := false
+            if let some (.word w _) := body[j]? then
+              if w.startsWith "(" then
+                trimL := w.contains 'l'
+                trimR := w.contains 'r'
+                j := j + 1
+            match body[skipSpaces body j]? with
+            | some (.group g _) =>
+              j := skipSpaces body j + 1
+              match cmidRange (Parse.rawSrc g) with
+              | some (a, b) =>
+                rules := rules.push (rows.size, .cmid a b trimL trimR)
+              | none =>
+                diag ctx .E0304
+                  s!"'\\{name}' needs a \{from-to} column range" (some rpos)
+            | _ =>
+              diag ctx .E0304
+                s!"'\\{name}' needs a \{from-to} column range" (some rpos)
+        else
+          cellRaws := cellRaws.push body[j]
+          j := j + 1
+      | r' =>
+        cellRaws := cellRaws.push r'
+        j := j + 1
+    else break
+  if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
+    cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
+    rows := rows.push cells
+  -- Rectangularity: every walk below trusts `cols.size`.
+  let widest := rows.foldl (fun m r => max m r.size) cols.size
+  if cols.size < widest then
+    warnOnce ctx "tabular:wide" .W0337
+      s!"a row carries {widest} cells but the column spec declares \
+  {cols.size}; the grid widens" pos
+      (help := "declare one column type per cell: l, c, r, or p{width}")
+    for _ in [cols.size:widest] do
+      cols := cols.push { width := .natural, align := .left }
+  if rows.any (·.size < cols.size) then
+    warnOnce ctx "tabular:ragged" .W0337
+      "a row carries fewer cells than the column spec; it is \
+  padded with empty cells" pos
+  rows := Ir.padTableRows rows cols.size
+  blocks := blocks.push (.table cols padL padR rows rules)
+  return blocks
+
+/-- A display-math environment, outside the knot to keep the pack small. -/
+private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos : Pos)
+    (blocks : Array Block) : EM (Array Block) := do
+  let mut blocks := blocks
+  let (cleaned, keys, nonum) ← stripMathMeta ctx body
+  let inl ← elabMathInline ctx true cleaned pos
+  if numbered && !nonum then
+    -- The display takes the next equation number (amsldoc §3);
+    -- its labels bind to it, scoped to the environment as
+    -- LaTeX's \refstepcounter group is.
+    let num := (← get).eqNum + 1
+    modify fun st => { st with eqNum := num }
+    for key in keys do
+      recordLabel ctx key (some (toString num)) pos
+    let content := keys.map (Ir.Inline.label ·) |>.push inl
+    blocks := blocks.push (.equation s!"({num})" content)
+  else
+    -- The unnumbered forms; a label here binds to whatever the
+    -- flow last numbered, as LaTeX's \@currentlabel does.
+    for key in keys do
+      recordLabel ctx key (← get).refTarget pos
+    let content := keys.map (Ir.Inline.label ·) |>.push inl
+    blocks := blocks.push (.center #[.para content])
+  return blocks
+
+/-- An alignment environment, outside the knot: no recursion into the
+block walk. Row numbers are still owed (W0015): a label here binds to
+nothing, so a reference to it is the named ??, never a silently wrong
+number. -/
+private def alignEnvArm (ctx : Ctx) (n : String) (kind : Math.GridKind)
+    (numbered : Bool) (body : Array Raw) (pos : Pos) (blocks : Array Block) :
+    EM (Array Block) := do
+  let (cleaned, keys, _) ← stripMathMeta ctx body
+  for key in keys do
+    recordLabel ctx key none pos
+  let inl ← elabMathEnv ctx n kind numbered cleaned pos
+  let content := keys.map (Ir.Inline.label ·) |>.push inl
+  return blocks.push (.center #[.para content])
+
+/-- The `{tikzpicture}` arm, outside the knot: the rendered subset —
+shapes evaluate here, loops unrolled, expressions reduced, colours
+resolved against the palette — and everything the subset cannot render is
+a named loss beside the shapes that did (W0334 outside the subset, E0333
+unreadable inside it), never one blanket W0307. Node-body math elaborates
+through the same parser a paragraph's does; a formula the parser cannot
+model degrades to source text, named (W0012), as it would in a paragraph. -/
+private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
+    (blocks : Array Block) : EM (Array Block) := do
+  let mut blocks := blocks
+  let mathOf (d : Bool) (raws : Array Parse.Raw) :
+      Ir.Inline × Array Picture.PDiag :=
+    let expanded := expandMathList ctx.user ctx.limit #[] raws.toList
+    match MathParse.parseMath expanded with
+    | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
+    | .error what => (.math d (Parse.rawSrc raws),
+        #[(.W0012, s!"math with {what} is not rendered yet; the \
+formula is set as source text")])
+  let (pic, pdiags) := Picture.elabPicture ctx.palette body mathOf
+  for (code, msg) in pdiags do
+    warnOnce ctx ("picture:" ++ msg) code msg pos
+      (help := "the rendered subset is \\fill...rectangle, \\node at, \
+\\foreach, and \\pgfmath(truncate)setmacro")
+  unless pic.shapes.isEmpty do
+    blocks := blocks.push (.picture pic)
+  -- An all-refused picture still owes the reader its place: the
+  -- float around it would otherwise collapse to orphan captions.
+  -- A placeholder box marks it, as an unloadable image's does.
+  if pic.shapes.isEmpty && !pdiags.isEmpty then
+    warnOnce ctx "picture:placeholder" .W0362
+      "no part of this picture is inside the rendered subset; a \
+placeholder box marks its place" pos
+      (help := "the box holds the diagram's place; \\allow{W0362} \
+accepts the loss")
+    blocks := blocks.push (.picture (Picture.placeholder DiagCode.W0362.code))
+  return blocks
+
+/-- The `\maketitle`/`\titlepage` arm, outside the knot: no recursion
+into the block walk. LaTeX typesets the title once: \maketitle disables
+itself (classes.dtx, \global\let\maketitle\relax), which is also what
+keeps the document to one level-0 heading — a second call warns and
+produces nothing. -/
+private def maketitleArm (ctx : Ctx) (n : String) (pos : Pos)
+    (blocks : Array Block) : EM (Array Block) := do
+  let mut blocks := blocks
+  if (← get).titleDone then
+    warnOnce ctx "ctrl:maketitle2" .W0322
+      s!"a second '\\{n}' is ignored; the title is typeset once" pos
+      (help := "LaTeX's \\maketitle disables itself after use (classes.dtx)")
+    return blocks
+  let inner := titleBlocks ctx (← get)
+  if inner.isEmpty then
+    warnOnce ctx "ctrl:maketitle" .W0309
+      s!"'\\{n}' with nothing declared; no title is set" pos
+      (help := "declare \\title{...} (and \\author, \\date, ...) before it")
+  else if ctx.slides then
+    -- The title frame takes the golden split (moloch's
+    -- `title page` template: `0pt plus 1.618fil` + `\vfil` above
+    -- against `plus 1fil` below), and its horizontal alignment is
+    -- the `titlepage` style's declaration: moloch sets its title
+    -- matter ragged left; undeclared, the title page centres.
+    modify fun st => { st with titleDone := true }
+    let tps := (ctx.styles.find? "titlepage").getD {}
+    let content := if tps.align == some "left" then inner else #[.center inner]
+    blocks := blocks.push (.frame #[] false .golden content)
+  else
+    -- The flow classes centre the title block, as `\@maketitle`
+    -- does — unless the `titlepage` style declares its matter
+    -- ragged left, the same declaration the slides branch reads.
+    modify fun st => { st with titleDone := true }
+    let tps := (ctx.styles.find? "titlepage").getD {}
+    let content := if tps.align == some "left" then inner else #[.center inner]
+    blocks := blocks ++ content
+  return blocks
+
+/-- The `{nav}` optional argument's own facts — label, pin, offset,
+reveal — parsed outside the knot. -/
+private def navSpecOf (ctx : Ctx) (inner : String) (pos : Pos) :
+    EM Ir.NavSpec := do
+  let mut spec : Ir.NavSpec := {}
+  let mut pinned : Option (Bool × Bool) := none
+  let mut offset : Option Dim.SymGlue := none
+  let mut reveal := false
+  let mut revealBy : Option Dim.SymGlue := none
+  for e in Decl.splitEntries inner do
+    match Decl.splitEntry e with
+    | some ("label", v) =>
+      spec := { spec with label := some v }
+    | some ("pin", v) =>
+      let words := ((v.split Char.isWhitespace).toList.map
+        (·.toString)).filter (!·.isEmpty)
+      let vEdge := words.find? (fun w => w == "top" || w == "bottom")
+      let hEdge := words.find? (fun w => w == "left" || w == "right")
+      match vEdge, hEdge with
+      | some ve, some he =>
+        if words.length == 2 then
+          pinned := some (ve == "top", he == "left")
+        else
+          diag ctx .E0321
+            s!"cannot read a corner for 'pin' in 'nav': {v.quote}" (some pos)
+            (help := "a pin is a corner: two words, like \
+  pin = bottom right")
+      | _, _ =>
+        diag ctx .E0321
+          s!"cannot read a corner for 'pin' in 'nav': {v.quote}" pos
+          (help := "a pin is a corner: two words, like \
+  pin = bottom right")
+    | some ("offset", v) =>
+      match Decl.parseGlue v with
+      | some g => offset := some g
+      | none =>
+        diag ctx .E0321
+          s!"cannot read a length for 'offset' in 'nav': {v.quote}" (some pos)
+          (help := "lengths look like 1.5em or 12pt")
+    | some ("reveal", v) =>
+      if v.trimAscii.toString == "scroll" then
+        reveal := true
       else
-        if !cur.isEmpty then
-          if let some p ← mkPara ctx cur then
-            blocks := blocks.push p
-          cur := #[]
-        match r with
-        | .par _ =>
-          i := i + 1
-        | .ctrl "par" _ =>
-          i := i + 1
-        | .math _ body mpos =>
-          -- A display formula: one centred block of its own, so it
-          -- participates in the block machinery like any other line.
-          -- `\[` never numbers (amsldoc §3), but a label inside it still
-          -- binds to the flow's last number rather than degrading the
-          -- formula to source text.
-          i := i + 1
-          let (cleaned, keys, _) ← stripMathMeta ctx body
-          let inl ← elabMathInline ctx true cleaned mpos
-          for key in keys do
-            recordLabel ctx key (← get).refTarget mpos
-          let content := keys.map (Ir.Inline.label ·) |>.push inl
-          blocks := blocks.push (.center #[.para content])
-        | .ctrl "centering" _ =>
-          -- The declaration form of \begin{center}: the rest of this scope
-          -- centres. Text flushed just above stays uncentred — LaTeX would
-          -- re-align the whole broken paragraph; this engine centres from
-          -- the declaration on.
-          i := i + 1
-          let inner ← elabBlocks ctx (raws.extract i raws.size)
-          i := raws.size
+        match Decl.parseGlue v with
+        | some g => reveal := true; revealBy := some g
+        | none =>
+          diag ctx .E0321
+            s!"cannot read 'reveal' in 'nav': {v.quote}" (some pos)
+            (help := "reveal = scroll shows the nav after one \
+  viewport of scrolling; a length (reveal = 300px) shows it after that much")
+    | some (key, _) =>
+      let d := Decl.unknownKey ctx.file "nav" key
+        ["label", "pin", "offset", "reveal"] pos
+      modify fun st => { st with diags := st.diags.push d }
+    | none => pure ()
+  match pinned with
+  | some (top, left) =>
+    spec := { spec with pin := some {
+      top, left
+      offset := offset.getD {}
+      reveal
+      revealBy } }
+  | none =>
+    if offset.isSome || reveal then
+      let msg := "'nav' options 'offset' and 'reveal' ride a pin; \
+  ignored without one"
+      warnOnce ctx "nav:unpinned" .W0110 msg pos
+        (help := "declare the corner too: pin = bottom right")
+  return spec
+
+/-- Flush the open paragraph, if any: the shared prelude of every
+boundary arm. -/
+private def flushPara (ctx : Ctx) (blocks : Array Block) (cur : Array Raw) :
+    EM (Array Block) := do
+  if !cur.isEmpty then
+    if let some p ← mkPara ctx cur then
+      return blocks.push p
+  return blocks
+
+-- The well-founded translation whnf-reduces through the knot's body when
+-- it assembles the fixpoint and its equations; everything the arms call is
+-- data to that process, never proof material, and unfolding it is what
+-- blows the elaboration budget. Sealed for the knot, unsealed right after.
+seal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
+seal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
+seal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
+seal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
+seal takeArgs mkPara flushPara stripMathMeta
+seal elabMathInline elabMathEnv applyPalette applyTokens parseColSpec
+seal titleBlocks Picture.elabPicture MathParse.parseMath
+seal Decl.parseBlock Decl.parseLength Decl.parseGlue skipOptArg takeTitleDecl
+seal sectionNumber columnWidth cmidRange trimRawEdges
+seal recordLabel refuseRedef dropEnvArgs skipReservedArgs takeDefine
+seal Ir.padTableRows Ir.setAltBlocks Ir.plainText
+seal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
+seal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
+seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
+seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? overlayFrom
+seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
+seal scanBracketArg Parse.inputEnvFile?
+
+-- The block knot: the spine (`elabBlocksGo`), its two dispatch arms, the
+-- loop members that recurse into accumulated content, and the redefinition
+-- gate — mutually recursive, terminating by one six-component measure:
+--
+--   (envLimit, noteFlag, visPars + slicePars, visWeight + sliceWeight,
+--    layer, scan)
+--
+-- A user-environment expansion falls in `envLimit`; a frame's note drain
+-- falls in `noteFlag` (its bodies come from the state, so no weight fact
+-- covers them); the par-splice falls in the pars sum; every other edge
+-- falls in the weight sum — a define moves its body's weight from the
+-- slice into the visible sum and pays the group wrapper (`takeDefine`'s
+-- facts), an expansion moves it back out (`visWeight_expand`). `layer`
+-- orders spine (2) over dispatch arms (1) over loop members (0) where the
+-- sums tie, and `scan` is a loop member's own index.
+
+mutual
+
+/-- Rule (b), judged once at the definition — the gate both registration
+doors (the preamble fold and the body walk) run on a parsed definition
+before pushing it into `ctx.user`. A redefinition of a rendered built-in
+wins only if its body elaborates: the body is expanded here under the
+definition's own visibility — `ctx.limit` is exactly the prefix a call
+site will see — with each parameter bound to a probe word, so a body that
+only echoes its argument is non-empty. A block-shaped body is judged by
+the block walk, the same walk its use would take. The expansion's
+diagnostics are inspected and discarded: the verdict is recorded at the
+definition, never doubled at a use. A loss in {dropped, pending, degraded}
+means the body renders less than the built-in it shadows; config and info
+losses are harmless and do not refuse. -/
+private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
+  if !renderedBuiltins.contains cmd.name then return true
+  let saved ← get
+  set { saved with diags := #[], warnedUnknown := #[] }
+  let ⟨checkCtx, hm⟩ : MCtx ctx ← pure ⟨{ ctx with
+    args := cmd.params.map fun p => (p.name, some #[Inline.text "x"]) },
+    rfl, rfl, rfl, rfl⟩
+  let nonEmpty ←
+    if bodyIsBlock cmd.body then do
+      have hp1 : slicePars cmd.body 0 ≤ rawParsList cmd.body.toList := by
+        rw [slicePars_zero]; exact nestedParsList_le _
+      have hw1 : sliceWeight cmd.body 0 = rawWeightList cmd.body.toList :=
+        sliceWeight_zero _
+      let bs ← elabBlocksGo checkCtx cmd.body 0 #[] #[] (← get).flowGen
+      pure !bs.isEmpty
+    else do
+      let xs ← elabInlines checkCtx cmd.body
+      pure !xs.isEmpty
+  let checkDiags := (← get).diags
+  set saved
+  let lossy (d : Diag) : Bool :=
+    match DiagCode.ofString? d.code with
+    | some c => c.loss == .dropped || c.loss == .pending || c.loss == .degraded
+    | none => false
+  match checkDiags.find? lossy with
+  | some d =>
+    refuseRedef cmd (.refused d)
+    if cmd.name == "maketitle" then
+      modify fun st => { st with refusedTitleBody := some cmd.body }
+    return false
+  | none =>
+    if nonEmpty then return true
+    else
+      refuseRedef cmd .empty
+      if cmd.name == "maketitle" then
+        modify fun st => { st with refusedTitleBody := some cmd.body }
+      return false
+termination_by (ctx.envLimit, noteFlag ctx,
+  visParsGo ctx.user ctx.limit + rawParsList cmd.body.toList,
+  visWeightGo ctx.user ctx.limit + rawWeightList cmd.body.toList + 1, 0, 0)
+decreasing_by all_goals blocks_dec
+
+/-- A frame's stashed notes, drained to its end: the side channel stays
+with its frame. The bodies came from the state, not from any slice, so
+this edge falls in the measure's note component alone: the drain runs at
+`1`, between the walk that called it (`2`) and the note-body walks it
+opens (`0`). -/
+private def drainNotesGo (ctx : Ctx) (stash : List (Array Raw × Pos))
+    (inner : Array Block) : EM (Array Block) := do
+  match stash with
+  | [] => return inner
+  | (nb, npos) :: rest =>
+    let ⟨noteCtx, _hnf⟩ : { c : Ctx // c.envLimit = ctx.envLimit
+        ∧ noteFlag c = 0 } ←
+      pure ⟨{ ctx with noteBody := true, notePos := some npos }, rfl, rfl⟩
+    let nblocks ← elabBlocksGo noteCtx nb 0 #[] #[] (← get).flowGen
+    drainNotesGo ctx rest (inner.push (.note nblocks))
+termination_by (ctx.envLimit, 1, 0, 0, 0, stash.length)
+decreasing_by all_goals blocks_dec
+
+/-- One list item after another, each elaborated under its accumulated
+`\pause` base and wrapped in its overlay step — the item elaboration half
+of the split `itemSplitGo` carried the conservation facts for. -/
+private def elabItemsGo (ctx : Ctx) (items : Array (Array Raw))
+    (steps : Array (Option (Nat × Option Nat))) (itemPauses : Array Nat)
+    (m : Nat) (acc : Array (Array Block)) (bound pbound : Nat)
+    (hb : itemsW items.toList < bound) (hpb : itemsP items.toList ≤ pbound) :
+    EM (Array (Array Block)) := do
+  if hm : m < items.size then
+    let ⟨it, hit, hitp⟩ : { a : Array Raw //
+        rawWeightList a.toList ≤ itemsW items.toList
+          ∧ nestedParsList a.toList ≤ itemsP items.toList } ←
+      pure ⟨items[m], itemsW_elem_le (Array.getElem?_eq_getElem hm),
+        itemsP_elem_le (Array.getElem?_eq_getElem hm)⟩
+    let st? := (steps[m]?).getD none
+    let p := (itemPauses[m]?).getD 0
+    have hw1 : sliceWeight it 0 = rawWeightList it.toList := sliceWeight_zero _
+    have hp1 : slicePars it 0 = nestedParsList it.toList := slicePars_zero _
+    let ⟨stepCtx, hm2⟩ : MCtx ctx ←
+      pure ⟨{ ctx with stepBase := ctx.stepBase + p }, rfl, rfl, rfl, rfl⟩
+    let inner ← elabBlocksGo stepCtx it 0 #[] #[] (← get).flowGen
+    let acc := acc.push (match st? with
+      | some (s, last) => #[.step s last inner]
+      | none =>
+        if p > 0 then #[.step (ctx.stepBase + p + 1) none inner]
+        else inner)
+    elabItemsGo ctx items steps itemPauses (m + 1) acc bound pbound hb hpb
+  else return acc
+termination_by (ctx.envLimit, noteFlag ctx,
+  visParsGo ctx.user ctx.limit + pbound,
+  visWeightGo ctx.user ctx.limit + bound, 0, items.size + 1 - m)
+decreasing_by all_goals blocks_dec
+
+/-- A float body, one element at a time: `\caption` into the caption slot
+(last one wins, W0311), `\centering` satisfied, an `\hfill` between
+subfigures absorbed as the gutter, a `{subfigure}`/`{subtable}` child a
+`.sub` float in a column of its declared width — and everything else
+accumulated to elaborate in place. The invariant carries what the
+accumulated run weighs; the base case flushes it and ships the float. -/
+private def figureGo (ctx : Ctx) (n : String) (kind : Ir.FloatKind)
+    (body : Array Raw) (pos : Pos) (j : Nat) (innerBlocks : Array Block)
+    (cols : Array (Option Nat × Array Block)) (rest : Array Raw)
+    (caption : Array Inline) (capAbove : Bool) (blocks : Array Block)
+    (hw : rawWeightList rest.toList + sliceWeight body j
+      ≤ rawWeightList body.toList)
+    (hp : nestedParsList rest.toList + slicePars body j
+      ≤ nestedParsList body.toList) :
+    EM (Array Block) := do
+  if h : j < body.size then
+    match hj : body[j] with
+    | .ctrl "caption" cpos =>
+      let (⟨j2, hj2⟩, _, _) ← skipOptArg ctx "caption" body (j + 1) cpos
+      let j3 := skipSpaces body j2
+      have hj3 := skipSpaces_ge body j2
+      have hwa : sliceWeight body j3 ≤ sliceWeight body j :=
+        sliceWeight_le body (by omega)
+      have hpa : slicePars body j3 ≤ slicePars body j :=
+        slicePars_le body (by omega)
+      match body[j3]? with
+      | some (.group t _) =>
+        unless caption.isEmpty do
+          diag ctx .W0311 s!"this '\\caption' replaces the {n}'s earlier caption"
+            (some cpos) (help := "the last one wins; remove the other '\\caption'")
+        let caption ← elabInlines ctx t
+        let capAbove := innerBlocks.isEmpty && cols.isEmpty
+          && rest.all isSpaceOrPar
+        figureGo ctx n kind body pos (j3 + 1) innerBlocks cols rest caption
+          capAbove blocks
+          (by have := sliceWeight_le body (show j3 ≤ j3 + 1 by omega); omega)
+          (by have := slicePars_le body (show j3 ≤ j3 + 1 by omega); omega)
+      | _ =>
+        diag ctx .E0304 "'\\caption' needs a {text} group" cpos
+        figureGo ctx n kind body pos j3 innerBlocks cols rest caption
+          capAbove blocks (by omega) (by omega)
+    | .ctrl "centering" _ =>
+      -- The float centres already; the declaration is satisfied.
+      figureGo ctx n kind body pos (j + 1) innerBlocks cols rest caption
+        capAbove blocks
+        (by have := sliceWeight_le body (show j ≤ j + 1 by omega); omega)
+        (by have := slicePars_le body (show j ≤ j + 1 by omega); omega)
+    | .ctrl "hfill" _ =>
+      -- Between two subfigures the fill is the gutter, which the columns
+      -- layout distributes by itself; anywhere else it is ordinary content.
+      if !cols.isEmpty && rest.all isSpaceOrPar then
+        figureGo ctx n kind body pos (j + 1) innerBlocks cols rest caption
+          capAbove blocks
+          (by have := sliceWeight_le body (show j ≤ j + 1 by omega); omega)
+          (by have := slicePars_le body (show j ≤ j + 1 by omega); omega)
+      else
+        figureGo ctx n kind body pos (j + 1) innerBlocks cols
+          (rest.push body[j]) caption capAbove blocks
+          (by
+            have h1 := sliceWeight_here body h
+            rw [rawWeightList_push]; omega)
+          (by
+            have h1 := slicePars_here body h
+            have h2 := rawPars_split body[j]
+            rw [nestedParsList_push]; omega)
+    | .env sn sbody spos =>
+      if sn == "subfigure" || sn == "subtable" then do
+        have hbe : body[j]? = some (.env sn sbody spos) := by
+          rw [Array.getElem?_eq_getElem h]; exact congrArg some hj
+        have hew := elem_weight_le hbe (Nat.le_refl j)
+        have hep := elem_pars_le hbe (Nat.le_refl j)
+        have hew' : rawWeightList sbody.toList + 1 ≤ sliceWeight body j := by
+          simp only [rawWeight] at hew; omega
+        have hep' : rawParsList sbody.toList ≤ slicePars body j := by
+          simp only [nestedPars] at hep; omega
+        let (innerBlocks, cols) ←
+          if rest.any (!isSpaceOrPar ·) then do
+            let innerBlocks :=
+              if cols.isEmpty then innerBlocks
+              else innerBlocks.push (.columns cols)
+            have hr0 : sliceWeight rest 0 = rawWeightList rest.toList :=
+              sliceWeight_zero _
+            have hr1 : slicePars rest 0 = nestedParsList rest.toList :=
+              slicePars_zero _
+            let rb ← elabBlocksGo ctx rest 0 #[] #[] (← get).flowGen
+            pure (innerBlocks ++ rb, (#[] : Array (Option Nat × Array Block)))
+          else pure (innerBlocks, cols)
+        -- The minipage shape: `[pos]` baseline options are noted and
+        -- ignored (the box stands top-aligned in its row), the `{width}`
+        -- group is a fraction of the measure, exactly as a column's.
+        let mut m := 0
+        for _ in [0:3] do
+          match scanBracketArg sbody m spos with
+          | .took m' =>
+            warnOnce ctx "subfigure:options" .N0102
+              s!"'\{{sn}}' [pos] options are ignored: the box \
+stands top-aligned in its row" spos
+            m := m'
+          | .unclosed bpos =>
+            warnUnclosed ctx s!"'\\begin\{{sn}}'" bpos
+            break
+          | .content => break
+        m := skipSpaces sbody m
+        let mut width : Option Nat := none
+        if let some (.group wRaws _) := sbody[m]? then
+          m := m + 1
+          let src := rawSrc wRaws
+          width := columnWidth src
+          if width.isNone then
+            warnOnce ctx "env:subfigure-width" .W0314
+              s!"'\{{sn}}' width '{src}' is not a fraction of the \
+text width; the box shares the leftover" spos
+              (help := "write a factor like {0.48\\textwidth}")
+        else
+          diag ctx .E0304 s!"'\\begin\{{sn}}' needs a \{width} group" spos
+        let (sCaption, sCapAbove, ⟨sRest, hsr⟩) ← subRestGo ctx sn sbody m
+          #[] false #[] (sliceWeight sbody m) (slicePars sbody m)
+          (by simp [rawWeightList]) (by simp [nestedParsList])
+        have hsw : rawWeightList sRest.toList ≤ sliceWeight sbody m := hsr.1
+        have hsp : nestedParsList sRest.toList ≤ slicePars sbody m := hsr.2
+        have hsw2 : sliceWeight sbody m ≤ rawWeightList sbody.toList := by
+          have := sliceWeight_le sbody (Nat.zero_le m)
+          rw [sliceWeight_zero] at this; omega
+        have hsp2 : slicePars sbody m ≤ nestedParsList sbody.toList := by
+          have := slicePars_le sbody (Nat.zero_le m)
+          rw [slicePars_zero] at this; omega
+        have hsp3 := nestedParsList_le sbody.toList
+        have hs0 : sliceWeight sRest 0 = rawWeightList sRest.toList :=
+          sliceWeight_zero _
+        have hs1 : slicePars sRest 0 = nestedParsList sRest.toList :=
+          slicePars_zero _
+        let mut sInner ← elabBlocksGo ctx sRest 0 #[] #[] (← get).flowGen
+        unless sCaption.isEmpty do
+          sInner := Ir.setAltBlocks (Ir.plainText sCaption) sInner
+        figureGo ctx n kind body pos (j + 1) innerBlocks
+          (cols.push (width, #[.float .sub none sCapAbove sInner sCaption]))
+          #[] caption capAbove blocks
+          (by
+            have := sliceWeight_le body (show j ≤ j + 1 by omega)
+            simp [rawWeightList]; omega)
+          (by
+            have := slicePars_le body (show j ≤ j + 1 by omega)
+            simp [nestedParsList]; omega)
+      else
+        figureGo ctx n kind body pos (j + 1) innerBlocks cols
+          (rest.push body[j]) caption capAbove blocks
+          (by
+            have h1 := sliceWeight_here body h
+            rw [rawWeightList_push]; omega)
+          (by
+            have h1 := slicePars_here body h
+            have h2 := rawPars_split body[j]
+            rw [nestedParsList_push]; omega)
+    | _ =>
+      figureGo ctx n kind body pos (j + 1) innerBlocks cols
+        (rest.push body[j]) caption capAbove blocks
+        (by
+          have h1 := sliceWeight_here body h
+          rw [rawWeightList_push]; omega)
+        (by
+          have h1 := slicePars_here body h
+          have h2 := rawPars_split body[j]
+          rw [nestedParsList_push]; omega)
+  else do
+    let innerBlocks :=
+      if cols.isEmpty then innerBlocks else innerBlocks.push (.columns cols)
+    have hr0 : sliceWeight rest 0 = rawWeightList rest.toList :=
+      sliceWeight_zero _
+    have hr1 : slicePars rest 0 = nestedParsList rest.toList :=
+      slicePars_zero _
+    let rb ← elabBlocksGo ctx rest 0 #[] #[] (← get).flowGen
+    let mut inner := innerBlocks ++ rb
+    unless caption.isEmpty do
+      inner := Ir.setAltBlocks (Ir.plainText caption) inner
+    return blocks.push (.float kind none capAbove inner caption)
+termination_by (ctx.envLimit, noteFlag ctx,
+  visParsGo ctx.user ctx.limit + nestedParsList body.toList,
+  visWeightGo ctx.user ctx.limit + rawWeightList body.toList + 1, 0,
+  body.size + 1 - j)
+decreasing_by all_goals blocks_dec
+
+/-- The `{columns}` body: each `{column}` child a column of its declared
+width, consecutive ones one `.columns` row, content standing outside any
+column kept in place as ordinary blocks — never dropped. -/
+private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
+    (cols : Array (Option Nat × Array Block)) (strayRaws : Array Raw)
+    (blocks : Array Block)
+    (hw : rawWeightList strayRaws.toList + sliceWeight body j
+      ≤ rawWeightList body.toList)
+    (hp : nestedParsList strayRaws.toList + slicePars body j
+      ≤ nestedParsList body.toList) :
+    EM (Array Block) := do
+  if h : j < body.size then
+    match hj : body[j] with
+    | .env "column" cbody cpos =>
+      have hbe : body[j]? = some (.env "column" cbody cpos) := by
+        rw [Array.getElem?_eq_getElem h]; exact congrArg some hj
+      have hew := elem_weight_le hbe (Nat.le_refl j)
+      have hep := elem_pars_le hbe (Nat.le_refl j)
+      have hew' : rawWeightList cbody.toList + 1 ≤ sliceWeight body j := by
+        simp only [rawWeight] at hew; omega
+      have hep' : rawParsList cbody.toList ≤ slicePars body j := by
+        simp only [nestedPars] at hep; omega
+      let (cols, blocks) ←
+        if strayRaws.any (!isSpaceOrPar ·) then do
+          let blocks := if cols.isEmpty then blocks
+            else blocks.push (.columns cols)
+          have hs0 : sliceWeight strayRaws 0
+              = rawWeightList strayRaws.toList := sliceWeight_zero _
+          have hs1 : slicePars strayRaws 0
+              = nestedParsList strayRaws.toList := slicePars_zero _
+          let sb ← elabBlocksGo ctx strayRaws 0 #[] #[] (← get).flowGen
+          pure ((#[] : Array (Option Nat × Array Block)), blocks ++ sb)
+        else pure (cols, blocks)
+      let m := skipSpaces cbody 0
+      let mut width : Option Nat := none
+      let mut m2 := m
+      if let some (.group wRaws _) := cbody[m]? then
+        m2 := m + 1
+        let src := rawSrc wRaws
+        width := columnWidth src
+        if width.isNone then
+          warnOnce ctx "env:column-width" .W0314
+            s!"column width '{src}' is not a fraction of the text width; \
+the column shares the leftover" cpos
+            (help := "write a factor like {0.5\\textwidth}")
+      have hce : rawWeightList (cbody.extract m2 cbody.size).toList
+          ≤ rawWeightList cbody.toList := extract_weight_le ..
+      have hcp : nestedParsList (cbody.extract m2 cbody.size).toList
+          ≤ nestedParsList cbody.toList := extract_nested_le ..
+      have hcp2 := nestedParsList_le cbody.toList
+      have hc0 : sliceWeight (cbody.extract m2 cbody.size) 0
+          = rawWeightList (cbody.extract m2 cbody.size).toList :=
+        sliceWeight_zero _
+      have hc1 : slicePars (cbody.extract m2 cbody.size) 0
+          = nestedParsList (cbody.extract m2 cbody.size).toList :=
+        slicePars_zero _
+      let cinner ← elabBlocksGo ctx (cbody.extract m2 cbody.size) 0 #[] #[]
+        (← get).flowGen
+      columnsGo ctx body (j + 1) (cols.push (width, cinner)) #[] blocks
+        (by
+          have := sliceWeight_le body (show j ≤ j + 1 by omega)
+          simp [rawWeightList]; omega)
+        (by
+          have := slicePars_le body (show j ≤ j + 1 by omega)
+          simp [nestedParsList]; omega)
+    | _ =>
+      columnsGo ctx body (j + 1) cols (strayRaws.push body[j]) blocks
+        (by
+          have h1 := sliceWeight_here body h
+          rw [rawWeightList_push]; omega)
+        (by
+          have h1 := slicePars_here body h
+          have h2 := rawPars_split body[j]
+          rw [nestedParsList_push]; omega)
+  else do
+    let blocks := if cols.isEmpty then blocks else blocks.push (.columns cols)
+    if strayRaws.any (!isSpaceOrPar ·) then
+      have hs0 : sliceWeight strayRaws 0 = rawWeightList strayRaws.toList :=
+        sliceWeight_zero _
+      have hs1 : slicePars strayRaws 0 = nestedParsList strayRaws.toList :=
+        slicePars_zero _
+      let sb ← elabBlocksGo ctx strayRaws 0 #[] #[] (← get).flowGen
+      return blocks ++ sb
+    else
+      return blocks
+termination_by (ctx.envLimit, noteFlag ctx,
+  visParsGo ctx.user ctx.limit + nestedParsList body.toList,
+  visWeightGo ctx.user ctx.limit + rawWeightList body.toList + 1, 0,
+  body.size + 1 - j)
+decreasing_by all_goals blocks_dec
+
+/-- One environment at block level: the whole `.env` dispatch, from display
+math through tables, frames, lists, floats and columns to defined wrappers
+and the unknown-wrapper splice. The caller consumed the environment
+itself; every recursion here descends into its body, so the weight sum
+falls by at least the wrapper. -/
+private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
+    (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
+  have hb0 : sliceWeight body 0 = rawWeightList body.toList := sliceWeight_zero _
+  have hb1 : slicePars body 0 = nestedParsList body.toList := slicePars_zero _
+  have hb2 := nestedParsList_le body.toList
+  let mut blocks := blocks
+  if let some f := Parse.inputEnvFile? n then
+    -- An \input file's blocks, elaborated under its own name so a
+    -- diagnostic points at the file that holds the construct.
+    let ⟨fileCtx, hm⟩ : MCtx ctx ←
+      pure ⟨{ ctx with file := f }, rfl, rfl, rfl, rfl⟩
+    blocks := blocks ++ (← elabBlocksGo fileCtx body 0 #[] #[] (← get).flowGen)
+  else if let some numbered := displayMathEnvs.lookup n then
+    blocks ← displayMathArm ctx numbered body pos blocks
+  else if let some (kind, numbered) := alignEnvs.lookup n then
+    blocks ← alignEnvArm ctx n kind numbered body pos blocks
+  else if n == "tabular" || n == "tabular*" then
+    blocks ← tabularArm ctx n body pos blocks
+  else if n == "frame" then
+    -- \begin{frame}[options]{title}: options are ignored with a
+    -- note (fragile, plain say how beamer should cope, not what to
+    -- say) except
+    -- `standout`, which says what the frame IS, and `t`/`c`/`b`,
+    -- which say how it distributes its leftover vertical space
+    -- (beamer user guide §8.1; `c` is beamer's default); the title
+    -- group counts only when it follows directly — a paragraph
+    -- break before a group makes it content, which is where LaTeX's
+    -- own argument scanning stops looking too.
+    let mut k := 0
+    let mut standout := false
+    let mut valign : VAlign := .center
+    for _ in [0:body.size] do
+      let j0 := skipSpaces body k
+      match scanBracketArg body k pos with
+      | .took k' =>
+        let inner := rawSrc (body.extract (j0 + 1) (k' - 1))
+        for opt in (inner.splitOn ",").map (·.trimAscii.toString) do
+          match opt with
+          | "standout" => standout := true
+          | "t" => valign := .top
+          | "c" => valign := .center
+          | "b" => valign := .bottom
+          | other =>
+            -- fragile, plain, and friends say how beamer should
+            -- cope, not what to say: registered, never silent.
+            unless other.isEmpty do
+              warnOnce ctx ("frame:opt:" ++ other) .N0102
+                s!"frame option '{other}' is not modelled; ignored" pos
+        k := k'
+      | .unclosed bpos =>
+        warnUnclosed ctx "'\\begin{frame}'" bpos
+        break
+      | .content => break
+    k := skipSpaces body k
+    let mut title : Array Inline := #[]
+    if let some (.group t _) := body[k]? then
+      title ← elabInlines ctx t
+      k := k + 1
+    -- \frametitle{...} anywhere in the frame names it too.
+    let (title2, ⟨rest, hrf⟩) ← frameRestGo ctx body k title #[]
+      (sliceWeight body k) (slicePars body k)
+      (by simp [rawWeightList]) (by simp [nestedParsList])
+    title := title2
+    have hrw : rawWeightList rest.toList ≤ sliceWeight body k := hrf.1
+    have hrp : nestedParsList rest.toList ≤ slicePars body k := hrf.2
+    have hrw2 : sliceWeight body k ≤ rawWeightList body.toList := by
+      have := sliceWeight_le body (Nat.zero_le k); omega
+    have hrp2 : slicePars body k ≤ nestedParsList body.toList := by
+      have := slicePars_le body (Nat.zero_le k); omega
+    have hr0 : sliceWeight rest 0 = rawWeightList rest.toList := sliceWeight_zero _
+    have hr1 : slicePars rest 0 = nestedParsList rest.toList := slicePars_zero _
+    -- Notes met inside the frame's inline content drain to the
+    -- frame's end: the side channel stays with its frame. Inside a
+    -- note's own body there is no side channel to drain into — a
+    -- note is not slide content, so its frame cannot carry one —
+    -- and the stashed notes are refused, named at the note that
+    -- encloses them (E0359; the noteFlag decision, PLAN).
+    modify fun st => { st with pendingNotes := #[] }
+    let mut inner ← elabBlocksGo ctx rest 0 #[] #[] (← get).flowGen
+    let stash := (← get).pendingNotes
+    modify fun st => { st with pendingNotes := #[] }
+    if hnb : ctx.noteBody then
+      unless stash.isEmpty do
+        diag ctx .E0359
+          "a '\\note' inside this note's frame is dropped: one note cannot carry another"
+          ctx.notePos
+          (help := "move the inner '\\note' out of the enclosing '\\note', beside its frame")
+    else
+      have hnf : noteFlag ctx = 2 := by simp [noteFlag, hnb]
+      inner ← drainNotesGo ctx stash.toList inner
+    blocks := blocks.push (.frame title standout valign inner)
+  else if n == "itemize" || n == "enumerate" then
+    -- enumitem's per-instance `[keys]` are consumed and named: the
+    -- engine styles lists per element, not per instance, and the
+    -- old path let the bracket land as content before the first
+    -- \item — a false E0310 error from a documented interface.
+    let mut bodyFrom := 0
+    match scanBracketArg body 0 pos with
+    | .took k' =>
+      warnOnce ctx ("env:" ++ n ++ ":opts") .N0102
+        s!"'\{{n}}' [options] are not modelled per instance; the declared list style stands"
+        pos
+      bodyFrom := k'
+    | .unclosed bpos =>
+      warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
+    | .content => pure ()
+    let ⟨lbody, hlw, hlp⟩ : { a : Array Raw //
+        rawWeightList a.toList ≤ rawWeightList body.toList
+          ∧ nestedParsList a.toList ≤ nestedParsList body.toList } ←
+      pure ⟨body.extract bodyFrom body.size, extract_weight_le ..,
+        extract_nested_le ..⟩
+    -- `\pause` between items steps the rest of the LIST, not just
+    -- the rest of an item's own blocks: each item records how many
+    -- pauses stand before it and reveals one step after the last.
+    let ⟨(items, steps, itemPauses), hsplit⟩ ← itemSplitGo ctx lbody pos 0
+      #[] #[] #[] 0 #[] none 0 false false false false
+      (sliceWeight lbody 0) (slicePars lbody 0)
+      (by simp [itemsW, rawWeightList]) (by simp [itemsP, nestedParsList])
+    have hiw : itemsW items.toList ≤ sliceWeight lbody 0 := hsplit.1
+    have hip : itemsP items.toList ≤ slicePars lbody 0 := hsplit.2
+    have hl0 : sliceWeight lbody 0 = rawWeightList lbody.toList :=
+      sliceWeight_zero _
+    have hl1 : slicePars lbody 0 = nestedParsList lbody.toList :=
+      slicePars_zero _
+    let elabItems ← elabItemsGo ctx items steps itemPauses 0 #[]
+      (rawWeightList lbody.toList + 1) (nestedParsList lbody.toList)
+      (by omega) (by omega)
+    blocks := blocks.push (.list (n == "enumerate") elabItems)
+  else if n == "center" then
+    blocks := blocks.push (.center
+      (← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen))
+  else if n == "minipage" then
+    -- A minipage is one column of declared width: the column model
+    -- reused whole, never a parallel box model. LaTeX's signature
+    -- is [pos][height][inner-pos]{width} (classes.dtx §minipage);
+    -- the optionals position the box against a text baseline, and
+    -- at block level there is no baseline, so they are noted and
+    -- ignored exactly as the columns options are. An absolute
+    -- width is the same loss a column has (W0314).
+    let mut k := 0
+    for _ in [0:3] do
+      match scanBracketArg body k pos with
+      | .took k' =>
+        warnOnce ctx "minipage:options" .N0102
+          "'minipage' [pos] options are ignored: the box stands as a block, top-aligned"
+          pos
+        k := k'
+      | .unclosed bpos =>
+        warnUnclosed ctx "'\\begin{minipage}'" bpos
+        break
+      | .content => break
+    let m := skipSpaces body k
+    let mut width : Option Nat := none
+    let mut m2 := m
+    if let some (.group wRaws _) := body[m]? then
+      m2 := m + 1
+      let src := rawSrc wRaws
+      width := columnWidth src
+      if width.isNone then
+        warnOnce ctx "env:minipage-width" .W0314
+          s!"minipage width '{src}' is not a fraction of the text width; \
+the box takes the whole measure" pos
+          (help := "write a factor like {0.5\\textwidth}")
+    else
+      diag ctx .E0304 "'\\begin{minipage}' needs a {width} group" pos
+    have hxw : rawWeightList (body.extract m2 body.size).toList
+        ≤ rawWeightList body.toList := extract_weight_le ..
+    have hxp : nestedParsList (body.extract m2 body.size).toList
+        ≤ nestedParsList body.toList := extract_nested_le ..
+    have hx0 : sliceWeight (body.extract m2 body.size) 0
+        = rawWeightList (body.extract m2 body.size).toList := sliceWeight_zero _
+    have hx1 : slicePars (body.extract m2 body.size) 0
+        = nestedParsList (body.extract m2 body.size).toList := slicePars_zero _
+    blocks := blocks.push
+      (.columns #[(width, ← elabBlocksGo ctx (body.extract m2 body.size) 0
+        #[] #[] (← get).flowGen)])
+  else if n == "quote" || n == "quotation" then
+    -- One node for both: they differ only in \listparindent
+    -- (quotation indents each paragraph's first line), and the
+    -- engine sets no paragraph indent anywhere yet — see the
+    -- constructor's docstring.
+    blocks := blocks.push (.quote
+      (← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen))
+  else if n == "abstract" then
+    -- article's unnumbered titled block: quotation-shaped with a
+    -- centred heading in the PDF, a <section> with a heading in
+    -- HTML — see the constructor's docstring for the split.
+    blocks := blocks.push (.abstract
+      (← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen))
+  else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
+    -- A single-pass engine has nowhere for a float to float: the
+    -- float stands where written as a `.float`, `[placement]`
+    -- ignored with a note saying so. Its caption keeps its source
+    -- side — before the content it stands above, the table
+    -- convention — and becomes the alt text of the images it
+    -- captions; `numberFloats` assigns the number afterwards.
+    -- A `{subfigure}`/`{subtable}` child (subcaption §2: a
+    -- minipage-shaped box with its own caption, lettered under the
+    -- parent's number) is a `.sub` float in a column of its
+    -- declared width; consecutive ones share one `.columns` row so
+    -- they stand side by side, and an `\hfill` between them is the
+    -- gutter the columns layout already distributes.
+    let kind : Ir.FloatKind :=
+      if n == "table" || n == "table*" then .table else .figure
+    let mut k := 0
+    for _ in [0:body.size] do
+      match scanBracketArg body k pos with
+      | .took k' =>
+        warnOnce ctx "figure:placement" .N0102
+          s!"'\{{n}}' [placement] is ignored: a single-pass engine \
+has nowhere for a float to float" pos
+        k := k'
+      | .unclosed bpos =>
+        warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
+        break
+      | .content => break
+    have hkw : sliceWeight body k ≤ rawWeightList body.toList := by
+      have := sliceWeight_le body (Nat.zero_le k); omega
+    have hkp : slicePars body k ≤ nestedParsList body.toList := by
+      have := slicePars_le body (Nat.zero_le k); omega
+    blocks ← figureGo ctx n kind body pos k #[] #[] #[] #[] false blocks
+      (by simp [rawWeightList]; omega) (by simp [nestedParsList]; omega)
+  else if n == "columns" then
+    -- `[T]`-and-friends alignment options are ignored with a note:
+    -- columns are top-aligned (PLAN, M5). A column's width is its
+    -- first group, a fraction of the text width; content standing
+    -- outside any column keeps its place as ordinary blocks — never
+    -- dropped.
+    let mut k := 0
+    for _ in [0:body.size] do
+      match scanBracketArg body k pos with
+      | .took k' =>
+        warnOnce ctx "columns:options" .N0102
+          "'columns' alignment options are ignored: columns are top-aligned" pos
+        k := k'
+      | .unclosed bpos =>
+        warnUnclosed ctx "'\\begin{columns}'" bpos
+        break
+      | .content => break
+    have hkw : sliceWeight body k ≤ rawWeightList body.toList := by
+      have := sliceWeight_le body (Nat.zero_le k); omega
+    have hkp : slicePars body k ≤ nestedParsList body.toList := by
+      have := slicePars_le body (Nat.zero_le k); omega
+    blocks ← columnsGo ctx body k #[] #[] blocks
+      (by simp [rawWeightList]; omega) (by simp [nestedParsList]; omega)
+  else if n == "ifbackend" then
+    -- `{ifbackend}{html,md}`: block content addressed to a subset
+    -- of the backends. An unknown name is dropped from the set with
+    -- W0323; a set that keeps no backend along its nesting path is
+    -- E0334 — content nothing will emit. The body still elaborates
+    -- and the node still carries it (the IR reflects the document);
+    -- `Ir.keepFor` at each backend's entry is the one drop site,
+    -- and `Ir.keepFor_covers` is why the diagnostic is sufficient.
+    let j ← pure (skipSpaces body 0)
+    match body[j]? with
+    | some (.group g gpos) =>
+      -- A backend conditional writes a per-medium decision by hand
+      -- in content — the decision a construct or the class should
+      -- carry (a nav becomes the print outline by itself, a note
+      -- leaves the handout). Named where it stands, as a note: the
+      -- escape hatch remains for the genuine remainder.
+      diag ctx .N0019
+        "content addressed per backend encodes a per-medium decision by hand" pos
+        (help := "a construct carries its own medium answer (a nav, a note); \
+prefer the construct or the class, and keep '\\begin{ifbackend}' for the true remainder")
+      let names := (((rawSrc g).splitOn ",").map (·.trimAscii.toString)).filter
+        (!·.isEmpty)
+      let mut targets : Array String := #[]
+      for name in names do
+        if Ir.backendNames.contains name then
+          targets := targets.push name
+        else
+          diag ctx .W0323
+            s!"unknown backend '{name}' in '\\begin\{ifbackend}'; ignored"
+            (some gpos)
+            (help := s!"backends: {String.intercalate ", " Ir.backendNames}")
+      let eff := ctx.backendTargets.filter (targets.contains ·)
+      if eff.isEmpty then
+        diag ctx .E0334
+          "this content is addressed to no backend; no output will carry it"
+          (some pos)
+          (help := "name at least one of pdf, html, md; a nested \
+'\\begin{ifbackend}' intersects with its enclosing one; \
+\\allow{E0334} accepts the loss")
+      let ⟨backCtx, hm⟩ : MCtx ctx ←
+        pure ⟨{ ctx with backendTargets := eff }, rfl, rfl, rfl, rfl⟩
+      have hxw : rawWeightList (body.extract (j + 1) body.size).toList
+          ≤ rawWeightList body.toList := extract_weight_le ..
+      have hxp : nestedParsList (body.extract (j + 1) body.size).toList
+          ≤ nestedParsList body.toList := extract_nested_le ..
+      have hx0 : sliceWeight (body.extract (j + 1) body.size) 0
+          = rawWeightList (body.extract (j + 1) body.size).toList :=
+        sliceWeight_zero _
+      have hx1 : slicePars (body.extract (j + 1) body.size) 0
+          = nestedParsList (body.extract (j + 1) body.size).toList :=
+        slicePars_zero _
+      let inner ← elabBlocksGo backCtx (body.extract (j + 1) body.size) 0
+        #[] #[] (← get).flowGen
+      blocks := blocks.push (.only targets inner)
+    | _ =>
+      diag ctx .E0304 "'\\begin{ifbackend}' needs a {backends} group" pos
+        (help := "write \\begin{ifbackend}{html} ... \\end{ifbackend}")
+      blocks := blocks ++ (← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen)
+  else if n == "nav" then
+    -- `{nav}`: the navigation landmark — a group of links, content
+    -- rather than a widget; the links inside are ordinary `\href`s.
+    -- The optional argument declares the instance's own facts:
+    -- `label` (its accessible name; ARIA Landmark Regions asks a
+    -- repeated landmark for a unique label), `pin` (a viewport
+    -- corner: two words, `bottom right`), `offset` (a length off
+    -- both pinned edges), and `reveal` (`scroll`, or the scroll
+    -- length after which the nav is fully revealed). `offset` and
+    -- `reveal` ride the pin: without one they are named as ignored.
+    match scanBracketArg body 0 pos with
+    | .took k =>
+      let j0 := skipSpaces body 0
+      let inner := rawSrc (body.extract (j0 + 1) (k - 1))
+      let spec ← navSpecOf ctx inner pos
+      have hxw : rawWeightList (body.extract k body.size).toList
+          ≤ rawWeightList body.toList := extract_weight_le ..
+      have hxp : nestedParsList (body.extract k body.size).toList
+          ≤ nestedParsList body.toList := extract_nested_le ..
+      have hx0 : sliceWeight (body.extract k body.size) 0
+          = rawWeightList (body.extract k body.size).toList := sliceWeight_zero _
+      have hx1 : slicePars (body.extract k body.size) 0
+          = nestedParsList (body.extract k body.size).toList := slicePars_zero _
+      blocks := blocks.push (.nav spec (← elabBlocksGo ctx
+        (body.extract k body.size) 0 #[] #[] (← get).flowGen))
+    | _ =>
+      blocks := blocks.push (.nav {}
+        (← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen))
+  else if hle : (lookupUserEnv ctx n).isSome then
+    -- A defined wrapper at block level: the halves and the content
+    -- each contribute their blocks, in order. An inline half becomes
+    -- its own paragraph beside block content — the splice that would
+    -- merge them re-elaborates raws under two argument scopes.
+    let ke := (lookupUserEnv ctx n).get hle
+    have hle2 : lookupUserEnv ctx n = some ke := (Option.some_get hle).symm
+    have hk : ke.1 < ctx.envLimit := lookupUserEnv_lt hle2
+    let env := ke.2
+    let (bindings, j) ← takeArgs ctx env.params n body 0 pos
+    let ⟨envCtx, hke⟩ : { c : Ctx // c.envLimit = ke.1 } ←
+      pure ⟨{ ctx with
+        limit := env.cmdLimit, envLimit := ke.1, args := bindings }, rfl⟩
+    blocks := blocks ++ (← elabBlocksGo envCtx env.beginBody 0 #[] #[]
+      (← get).flowGen)
+    have hxw : rawWeightList (body.extract j body.size).toList
+        ≤ rawWeightList body.toList := extract_weight_le ..
+    have hxp : nestedParsList (body.extract j body.size).toList
+        ≤ nestedParsList body.toList := extract_nested_le ..
+    have hx0 : sliceWeight (body.extract j body.size) 0
+        = rawWeightList (body.extract j body.size).toList := sliceWeight_zero _
+    have hx1 : slicePars (body.extract j body.size) 0
+        = nestedParsList (body.extract j body.size).toList := slicePars_zero _
+    blocks := blocks ++ (← elabBlocksGo ctx (body.extract j body.size) 0
+      #[] #[] (← get).flowGen)
+    blocks := blocks ++ (← elabBlocksGo envCtx env.endBody 0 #[] #[]
+      (← get).flowGen)
+  else if n == "tikzpicture" then
+    blocks ← tikzArm ctx body pos blocks
+  else if reservedEnv.contains n then
+    warnOnce ctx ("env:" ++ n) .W0307
+      s!"'\{{n}}' is not implemented yet; its content is not rendered" pos
+  else
+    -- An unknown wrapper's decoration is unknowable; its body is
+    -- not. The arguments on the `\begin` line go with the wrapper.
+    warnOnce ctx ("env:" ++ n) .W0302 s!"unknown environment '\{{n}}'; its body is kept" pos
+      (help := "\\defineenv{name}(...) {begin} {end} declares one")
+    let (keptFrom, unclosed, dropped) := dropEnvArgs body pos
+    let ⟨kept, hxw, hxp⟩ : { a : Array Raw //
+        rawWeightList a.toList ≤ rawWeightList body.toList
+          ∧ nestedParsList a.toList ≤ nestedParsList body.toList } ←
+      pure ⟨body.extract keptFrom body.size, extract_weight_le ..,
+        extract_nested_le ..⟩
+    if let some bpos := unclosed then
+      warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
+    warnDroppedArgs ctx n dropped pos
+    have hx0 : sliceWeight kept 0 = rawWeightList kept.toList := sliceWeight_zero _
+    have hx1 : slicePars kept 0 = nestedParsList kept.toList := slicePars_zero _
+    blocks := blocks ++ (← elabBlocksGo ctx kept 0 #[] #[] (← get).flowGen)
+  return blocks
+termination_by (ctx.envLimit, noteFlag ctx,
+  visParsGo ctx.user ctx.limit + rawParsList body.toList,
+  visWeightGo ctx.user ctx.limit + 1 + rawWeightList body.toList, 1, 0)
+decreasing_by all_goals blocks_dec
+
+/-- One general control word at block level, standing at `i`: native
+declarations misplaced in the body, user-command expansion, block-level
+overlays, title declarations, `\logo`, `\maketitle`, and the section
+headings. Returns the walk's next index with its progress fact — every
+path consumes at least the control word itself. -/
+private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (h : i < raws.size) (n : String) (pos : Pos) (blocks : Array Block) :
+    EM (Array Block × { j : Nat // i < j }) := do
+  have hslw : sliceWeight raws (i + 1) < sliceWeight raws i :=
+    sliceWeight_lt raws h (by omega)
+  have hslp : slicePars raws (i + 1) ≤ slicePars raws i :=
+    slicePars_le raws (by omega)
+  let mut blocks := blocks
+  if declCtrl.contains n then
+    -- A native declaration met in the body is never "unknown": it
+    -- is ours, misplaced. `\palette` and `\tokens` have arms above;
+    -- the rest configure the whole document and are read only in
+    -- the preamble, so the declaration is skipped with its block,
+    -- named as what it is.
+    warnOnce ctx ("ctrl:" ++ n) .W0340
+      s!"'\\{n}' is a declaration; in the body it is ignored" pos
+      (help := "declare it in the preamble, before '\\begin{document}'")
+    let ju := skipReservedArgs raws (i + 1) pos (maxGroups := 2)
+    have hj : i + 1 ≤ ju.1 := skipReservedArgs_ge raws (i + 1) pos 2
+    if let some bpos := ju.2 then
+      warnUnclosed ctx s!"'\\{n}'" bpos
+    return (blocks, ⟨ju.1, by omega⟩)
+  else if runningCtrl.contains n then
+    -- Running head/foot in the body: ours, misplaced — never
+    -- "unknown". The declaration carries content, so skipping it
+    -- drops that content: an error, not a config warning.
+    diag ctx .E0347 s!"'\\{n}' in the body is dropped with its content" pos
+      (help := "declare it in the preamble, before '\\begin{document}'")
+    let ju := skipReservedArgs raws (i + 1) pos
+    have hj : i + 1 ≤ ju.1 := skipReservedArgs_ge raws (i + 1) pos 1
+    if let some bpos := ju.2 then
+      warnUnclosed ctx s!"'\\{n}'" bpos
+    return (blocks, ⟨ju.1, by omega⟩)
+  else
+  match hlk : lookupUser ctx n with
+  | some (k, cmd) =>
+    -- Block-producing user command: bind its arguments, then
+    -- elaborate the body as blocks so `\block` inside a definition
+    -- works instead of reporting E0312. A parameterized command's
+    -- expansion wraps in its name, as at the inline splice: the
+    -- role survives at whichever level its content lives.
+    let (bindings, ⟨j, hj⟩) ← takeArgsFrom ctx cmd.params 0 n raws (i + 1)
+      pos #[]
+    let ⟨callCtx, hm1, hm2, hvp, hvw⟩ : { c : Ctx // c.envLimit = ctx.envLimit
+        ∧ noteFlag c = noteFlag ctx
+        ∧ visParsGo c.user c.limit = visParsGo ctx.user k
+        ∧ visWeightGo c.user c.limit = visWeightGo ctx.user k } ←
+      pure ⟨{ ctx with limit := k, args := bindings }, rfl, rfl, rfl, rfl⟩
+    have hpe := visPars_expand hlk
+    have hwe := visWeight_expand hlk
+    have hp1 : slicePars cmd.body 0 ≤ rawParsList cmd.body.toList := by
+      rw [slicePars_zero]; exact nestedParsList_le _
+    have hw1 : sliceWeight cmd.body 0 = rawWeightList cmd.body.toList :=
+      sliceWeight_zero _
+    have hpos : 0 < sliceWeight raws i := by
+      have := sliceWeight_here raws h
+      have := rawWeight_pos raws[i]
+      omega
+    let expanded ← elabBlocksGo callCtx cmd.body 0 #[] #[] (← get).flowGen
+    if cmd.params.isEmpty then
+      blocks := blocks ++ expanded
+    else
+      blocks := blocks.push (.role cmd.name expanded)
+    return (blocks, ⟨j, by omega⟩)
+  | none =>
+  if overlayCtrls.contains n || n == "alt" then
+    -- Block-level overlay: the step wrapper survives at block
+    -- level, so a list or a multi-paragraph group inside
+    -- \onslide<2->{...} steps whole — elaborated as blocks, never
+    -- squeezed through a paragraph. A spec the model cannot number
+    -- keeps the honest W0105 and the content stays shown. `\pause`
+    -- inside the wrapped content counts from the wrapper's own
+    -- step, so pending stays pending.
+    let j := skipSpaces raws (i + 1)
+    have hjge : i + 1 ≤ j := skipSpaces_ge raws (i + 1)
+    let ⟨(spec, jg), hjg⟩ :
+        { t : Option (Nat × Option Nat) × Nat // i + 1 ≤ t.2 } ←
+      match raws[j]?.bind specWord? with
+      | some w => do
+        let jg := skipSpaces raws (j + 1)
+        have h2 : i + 1 ≤ jg := by
+          have := skipSpaces_ge raws (j + 1); omega
+        match overlayFrom w with
+        | some p => pure ⟨(some p, jg), h2⟩
+        | none => do
+          warnOnce ctx "spec:overlay" .W0105
+            s!"overlay specification '{w}' does not name a step; its \
+content is shown on every step" pos
+            (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
+specs are not modelled")
+          pure ⟨(none, jg), h2⟩
+      | none => pure ⟨(none, j), hjge⟩
+    have hjg2 : i + 1 ≤ jg := hjg
+    if n == "alt" then
+      let j3 := skipSpaces raws (jg + 1)
+      have hj3 := skipSpaces_ge raws (jg + 1)
+      match hga : raws[jg]?, hgb : raws[j3]? with
+      | some (.group ga _), some (.group gb _) =>
+        have hgaw : rawWeightList ga.toList + 1 ≤ sliceWeight raws jg := by
+          have := elem_weight_le hga (Nat.le_refl jg)
+          simp only [rawWeight] at this; omega
+        have hgap : nestedParsList ga.toList ≤ slicePars raws jg := by
+          have := elem_pars_le hga (Nat.le_refl jg)
+          simp only [nestedPars] at this
+          have := nestedParsList_le ga.toList; omega
+        have hgbw : rawWeightList gb.toList + 1 ≤ sliceWeight raws j3 := by
+          have := elem_weight_le hgb (Nat.le_refl j3)
+          simp only [rawWeight] at this; omega
+        have hgbp : nestedParsList gb.toList ≤ slicePars raws j3 := by
+          have := elem_pars_le hgb (Nat.le_refl j3)
+          simp only [nestedPars] at this
+          have := nestedParsList_le gb.toList; omega
+        have hga2 : sliceWeight raws jg ≤ sliceWeight raws i := by
+          have := sliceWeight_le raws (show i ≤ jg by omega); omega
+        have hgb2 : sliceWeight raws j3 ≤ sliceWeight raws i := by
+          have := sliceWeight_le raws (show i ≤ j3 by omega); omega
+        have hga3 : slicePars raws jg ≤ slicePars raws i := by
+          have := slicePars_le raws (show i ≤ jg by omega); omega
+        have hgb3 : slicePars raws j3 ≤ slicePars raws i := by
+          have := slicePars_le raws (show i ≤ j3 by omega); omega
+        have h0a : sliceWeight ga 0 = rawWeightList ga.toList := sliceWeight_zero _
+        have h1a : slicePars ga 0 = nestedParsList ga.toList := slicePars_zero _
+        have h0b : sliceWeight gb 0 = rawWeightList gb.toList := sliceWeight_zero _
+        have h1b : slicePars gb 0 = nestedParsList gb.toList := slicePars_zero _
+        match spec with
+        | some (s, last) =>
+          let ⟨stepCtx, hm⟩ : MCtx ctx ←
+            pure ⟨{ ctx with stepBase := max ctx.stepBase (s - 1) },
+              rfl, rfl, rfl, rfl⟩
+          let ia ← elabBlocksGo stepCtx ga 0 #[] #[] (← get).flowGen
+          let ib ← elabBlocksGo ctx gb 0 #[] #[] (← get).flowGen
+          blocks := blocks.push (.step s last ia)
+          blocks := blocks.push (.step 1 (some (s - 1)) ib)
+          return (blocks, ⟨j3 + 1, by omega⟩)
+        | none =>
+          blocks := blocks ++ (← elabBlocksGo ctx ga 0 #[] #[] (← get).flowGen)
+          blocks := blocks ++ (← elabBlocksGo ctx gb 0 #[] #[] (← get).flowGen)
+          return (blocks, ⟨j3 + 1, by omega⟩)
+      | _, _ =>
+        diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
+        return (blocks, ⟨i + 1, by omega⟩)
+    else
+      match hgg : raws[jg]? with
+      | some (.group gbody _) =>
+        have hgw : rawWeightList gbody.toList + 1 ≤ sliceWeight raws jg := by
+          have := elem_weight_le hgg (Nat.le_refl jg)
+          simp only [rawWeight] at this; omega
+        have hgp : nestedParsList gbody.toList ≤ slicePars raws jg := by
+          have := elem_pars_le hgg (Nat.le_refl jg)
+          simp only [nestedPars] at this
+          have := nestedParsList_le gbody.toList; omega
+        have hg2 : sliceWeight raws jg ≤ sliceWeight raws i := by
+          have := sliceWeight_le raws (show i ≤ jg by omega); omega
+        have hg3 : slicePars raws jg ≤ slicePars raws i := by
+          have := slicePars_le raws (show i ≤ jg by omega); omega
+        have h0g : sliceWeight gbody 0 = rawWeightList gbody.toList :=
+          sliceWeight_zero _
+        have h1g : slicePars gbody 0 = nestedParsList gbody.toList :=
+          slicePars_zero _
+        match spec with
+        | some (s, last) =>
+          let ⟨stepCtx, hm⟩ : MCtx ctx ←
+            pure ⟨{ ctx with stepBase := max ctx.stepBase (s - 1) },
+              rfl, rfl, rfl, rfl⟩
+          let inner ← elabBlocksGo stepCtx gbody 0 #[] #[] (← get).flowGen
           unless inner.isEmpty do
-            blocks := blocks.push (.center inner)
-        | .ctrl "appendix" _ =>
-          -- Not a heading: a declaration affecting every heading after it,
-          -- from here forward in flow order (the scope model body \palette
-          -- landed) — the counter restarts and level-1 numbers letter.
-          i := i + 1
-          modify fun st => { st with inAppendix := true, secNums := (0, 0, 0) }
-        | .ctrl "pause" _ =>
-          -- The rest of this scope reveals one step later. Numbering is
-          -- cumulative through nesting: each pause raises the base its
-          -- successors count from, so pending content stays pending.
-          i := i + 1
-          let inner ← elabBlocks { ctx with stepBase := ctx.stepBase + 1 }
-            (raws.extract i raws.size)
-          i := raws.size
+            blocks := blocks.push (.step s last inner)
+          return (blocks, ⟨jg + 1, by omega⟩)
+        | none =>
+          blocks := blocks ++ (← elabBlocksGo ctx gbody 0 #[] #[]
+            (← get).flowGen)
+          return (blocks, ⟨jg + 1, by omega⟩)
+      | _ =>
+        -- The open form: the rest of this scope steps. Bare
+        -- \onslide (no spec) ends stepping — the rest simply flows.
+        match spec with
+        | some (s, last) =>
+          have hxw : rawWeightList (raws.extract jg raws.size).toList
+              ≤ sliceWeight raws jg := extract_slice_le ..
+          have hxp : nestedParsList (raws.extract jg raws.size).toList
+              ≤ slicePars raws jg := extract_slice_pars_le ..
+          have hg2 : sliceWeight raws jg < sliceWeight raws i := by
+            have := sliceWeight_le raws (show i + 1 ≤ jg by omega); omega
+          have hg3 : slicePars raws jg ≤ slicePars raws i := by
+            have := slicePars_le raws (show i ≤ jg by omega); omega
+          have h0x : sliceWeight (raws.extract jg raws.size) 0
+              = rawWeightList (raws.extract jg raws.size).toList :=
+            sliceWeight_zero _
+          have h1x : slicePars (raws.extract jg raws.size) 0
+              = nestedParsList (raws.extract jg raws.size).toList :=
+            slicePars_zero _
+          let ⟨stepCtx, hm⟩ : MCtx ctx ←
+            pure ⟨{ ctx with stepBase := max ctx.stepBase (s - 1) },
+              rfl, rfl, rfl, rfl⟩
+          let inner ← elabBlocksGo stepCtx (raws.extract jg raws.size) 0
+            #[] #[] (← get).flowGen
           unless inner.isEmpty do
-            blocks := blocks.push (.step (ctx.stepBase + 2) none inner)
-        | .ctrl "note" npos =>
-          -- \note[placement]<spec>{...}: the placement and the spec are
-          -- ignored with a note saying so; the body is the side channel,
-          -- never slide content.
-          i := i + 1
-          if let .took _ := scanBracketArg raws i npos then
-            warnOnce ctx "note:options" .N0102
+            blocks := blocks.push (.step s last inner)
+          return (blocks, ⟨raws.size, by omega⟩)
+        | none =>
+          return (blocks, ⟨jg, by omega⟩)
+  else if titleCtrls.contains n then
+    let (⟨j, hj⟩, junk) ← takeTitleDecl ctx n raws (i + 1) pos
+    -- The malformed run of an unclosed bracket is content here.
+    if let some p ← mkPara ctx junk then
+      blocks := blocks.push p
+    return (blocks, ⟨j, by omega⟩)
+  else if n == "logo" then
+    -- The declaration is legal in the body too, where beamer decks
+    -- scope a logo to a frame (`\logo{...}` before it, `\logo{}`
+    -- after): a stateful block the layout replays per page.
+    let j := skipSpaces raws (i + 1)
+    have hjge := skipSpaces_ge raws (i + 1)
+    match raws[j]? with
+    | some (.group gbody _) =>
+      blocks := blocks.push (.logo (← elabInlines ctx gbody))
+      return (blocks, ⟨j + 1, by omega⟩)
+    | _ =>
+      diag ctx .E0304 "'\\logo' needs one group of inline content" pos
+      return (blocks, ⟨i + 1, by omega⟩)
+  else if n == "maketitle" || n == "titlepage" then
+    blocks ← maketitleArm ctx n pos blocks
+    return (blocks, ⟨i + 1, by omega⟩)
+  else
+    let level := (sectionLevel n).getD 1
+    let starred := raws[i + 1]? matches some (.word "*" _)
+    let i1p : { x : Nat // i + 1 ≤ x } :=
+      match raws[i + 1]? with
+      | some (.word "*" _) => ⟨i + 2, by omega⟩
+      | _ => ⟨i + 1, by omega⟩
+    let i1 := i1p.1
+    have hi1 : i + 1 ≤ i1 := i1p.2
+    -- `\section[short]{long}`: the short form feeds furniture no
+    -- backend consumes yet, and its bracket obeys the shared
+    -- scanner. The malformed run of an unclosed bracket is content
+    -- here, exactly as in the scanner's sibling paths.
+    if let .took _ := scanBracketArg raws i1 pos then
+      warnOnce ctx "section:short" .N0103
+        s!"'\\{n}[short]' short title is unused: nothing consumes it yet" pos
+    let (⟨j, hj⟩, recovered, junk) ← skipOptArg ctx n raws i1 pos
+    if let some p ← mkPara ctx junk then
+      blocks := blocks.push p
+    match raws[j]? with
+    | some (.group title _) =>
+      blocks := blocks.push (.section level starred
+        (← sectionNumber ctx level starred) (← elabInlines ctx title))
+      return (blocks, ⟨j + 1, by omega⟩)
+    | _ =>
+      if recovered then
+        warnSkippedDecl ctx n pos
+        return (blocks, ⟨j, by omega⟩)
+      else
+        diag ctx .E0304 s!"'\\{n}' needs a \{title}" pos
+        return (blocks, ⟨i + 1, by omega⟩)
+termination_by (ctx.envLimit, noteFlag ctx,
+  visParsGo ctx.user ctx.limit + slicePars raws i,
+  visWeightGo ctx.user ctx.limit + sliceWeight raws i, 1, 0)
+decreasing_by all_goals blocks_dec
+
+/-- The block spine: one raw considered per call. A scope group holding a
+paragraph end is spliced open first, so the `\par` inside it is the
+boundary it is everywhere else; a non-boundary raw joins the open
+paragraph; a boundary flushes it and dispatches. The flow state is re-read
+each step (`flowCtx`), so a body declaration reaches the content after the
+scope that made it. -/
+private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (blocks : Array Block) (cur : Array Raw) (gen : Nat) :
+    EM (Array Block) := do
+  let stFlow ← get
+  let ⟨ctx', hfm⟩ : MCtx ctx ←
+    pure ⟨flowCtx ctx stFlow gen, flowCtx_measure ctx stFlow gen⟩
+  let gen' ← pure stFlow.flowGen
+  if h : i < raws.size then
+    have hadv : sliceWeight raws (i + 1) < sliceWeight raws i :=
+      sliceWeight_lt raws h (by omega)
+    have hadvp : slicePars raws (i + 1) ≤ slicePars raws i :=
+      slicePars_le raws (by omega)
+    have hpos : 0 < sliceWeight raws i := by omega
+    match hr : raws[i] with
+    | .group body gpos =>
+      have hre : raws[i]? = some (.group body gpos) := by
+        rw [Array.getElem?_eq_getElem h]; exact congrArg some hr
+      have hgw : rawWeightList body.toList + 1 ≤ sliceWeight raws i := by
+        have := elem_weight_le hre (Nat.le_refl i)
+        simp only [rawWeight] at this; omega
+      have hgp : nestedParsList body.toList ≤ slicePars raws i := by
+        have := elem_pars_le hre (Nat.le_refl i)
+        simp only [nestedPars] at this
+        have := nestedParsList_le body.toList; omega
+      have hg0 : sliceWeight body 0 = rawWeightList body.toList :=
+        sliceWeight_zero _
+      have hg1 : slicePars body 0 = nestedParsList body.toList :=
+        slicePars_zero _
+      if hpp : body.any isParRaw && !isArgument cur then
+        -- A scope group holding a paragraph end is spliced open first, so
+        -- the `\par` inside it is the boundary it is everywhere else.
+        have hpp2 : body.any isParRaw = true := by
+          simp only [Bool.and_eq_true] at hpp; exact hpp.1
+        have hdec := slicePars_splice h hr hpp2 ctx' gpos
+        have hdec2 : slicePars (raws.extract 0 i
+            ++ (splitAtPars ctx' body gpos ++ raws.extract (i + 1) raws.size)) i
+            < slicePars raws i := by
+          rw [← Array.append_assoc]; exact hdec
+        elabBlocksGo ctx' (raws.extract 0 i
+          ++ splitAtPars ctx' body gpos ++ raws.extract (i + 1) raws.size) i
+          blocks cur gen'
+      else if body.any isCenteringRaw && !isArgument cur then
+        -- A scope group carrying a `\centering` declaration is a block
+        -- scope: the declaration needs blocks to centre, and the group's
+        -- edge is exactly how far it reaches. An argument group is the
+        -- command's, as in the par splice above; its own block sequence,
+        -- so the declaration stops at the closing brace.
+        let blocks ← flushPara ctx' blocks cur
+        let inner ← elabBlocksGo ctx' body 0 #[] #[] (← get).flowGen
+        elabBlocksGo ctx' raws (i + 1) (blocks ++ inner) #[] gen'
+      else
+        elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
+    | .par _ =>
+      let blocks ← flushPara ctx' blocks cur
+      elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+    | .verb s _ =>
+      let blocks ← flushPara ctx' blocks cur
+      elabBlocksGo ctx' raws (i + 1) (blocks.push (.verbatim none s)) #[] gen'
+    | .math display body mpos =>
+      if display then
+        -- A display formula: one centred block of its own, so it
+        -- participates in the block machinery like any other line.
+        -- `\[` never numbers (amsldoc §3), but a label inside it still
+        -- binds to the flow's last number rather than degrading the
+        -- formula to source text.
+        let blocks ← flushPara ctx' blocks cur
+        let (cleaned, keys, _) ← stripMathMeta ctx' body
+        let inl ← elabMathInline ctx' true cleaned mpos
+        for key in keys do
+          recordLabel ctx' key (← get).refTarget mpos
+        let content := keys.map (Ir.Inline.label ·) |>.push inl
+        elabBlocksGo ctx' raws (i + 1)
+          (blocks.push (.center #[.para content])) #[] gen'
+      else
+        elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
+    | .env n body epos =>
+      have hre : raws[i]? = some (.env n body epos) := by
+        rw [Array.getElem?_eq_getElem h]; exact congrArg some hr
+      have hew : rawWeightList body.toList + 1 ≤ sliceWeight raws i := by
+        have := elem_weight_le hre (Nat.le_refl i)
+        simp only [rawWeight] at this; omega
+      have hep : rawParsList body.toList ≤ slicePars raws i := by
+        have := elem_pars_le hre (Nat.le_refl i)
+        simp only [nestedPars] at this; omega
+      let isB : Bool :=
+        if (Parse.inputEnvFile? n).isSome then bodyIsBlock body
+        else
+          blockEnvs.contains n || isMathEnv n
+            || n == "tabular" || n == "tabular*"
+            || reservedEnv.contains n
+            || (match lookupUserEnv ctx' n with
+                | some (_, env) =>
+                  bodyIsBlock env.beginBody || bodyIsBlock env.endBody
+                | none => false)
+            || bodyIsBlock body
+      if isB then
+        let blocks ← flushPara ctx' blocks cur
+        let blocks ← elabEnvArm ctx' n body epos blocks
+        elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else
+        elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
+    | .ctrl n cpos =>
+      let isB : Bool :=
+        n == "par" || n == "block" || n == "centering" || n == "pause"
+          || n == "framefoot" || n == "pagebreak" || n == "appendix"
+          || n == "bibliography" || n == "bibliographystyle"
+          || (n == "note" && cur.isEmpty)
+          || (n != "note" &&
+            ((sectionLevel n).isSome
+              || declCtrl.contains n || runningCtrl.contains n || n == "define"
+              || (match lookupUser ctx' n with
+                  | some (_, cmd) => bodyIsBlock cmd.body
+                  | none =>
+                    ((overlayCtrls.contains n || n == "alt") &&
+                      overlayTakesBlocks raws i cur.isEmpty (n == "alt")) ||
+                    titleCtrls.contains n || n == "maketitle"
+                      || n == "titlepage" || n == "logo")))
+      if !isB then
+        elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
+      else
+      let blocks ← flushPara ctx' blocks cur
+      if n == "par" then
+        elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else if n == "centering" then
+        -- The declaration form of \begin{center}: the rest of this scope
+        -- centres. Text flushed just above stays uncentred — LaTeX would
+        -- re-align the whole broken paragraph; this engine centres from
+        -- the declaration on.
+        have hxw : rawWeightList (raws.extract (i + 1) raws.size).toList
+            ≤ sliceWeight raws (i + 1) := extract_slice_le ..
+        have hxp : nestedParsList (raws.extract (i + 1) raws.size).toList
+            ≤ slicePars raws (i + 1) := extract_slice_pars_le ..
+        have hx0 : sliceWeight (raws.extract (i + 1) raws.size) 0
+            = rawWeightList (raws.extract (i + 1) raws.size).toList :=
+          sliceWeight_zero _
+        have hx1 : slicePars (raws.extract (i + 1) raws.size) 0
+            = nestedParsList (raws.extract (i + 1) raws.size).toList :=
+          slicePars_zero _
+        let inner ← elabBlocksGo ctx' (raws.extract (i + 1) raws.size) 0
+          #[] #[] (← get).flowGen
+        let blocks := if inner.isEmpty then blocks
+          else blocks.push (.center inner)
+        have hend : sliceWeight raws raws.size = 0 :=
+          sliceWeight_end raws (Nat.le_refl _)
+        have hendp : slicePars raws raws.size = 0 :=
+          slicePars_end raws (Nat.le_refl _)
+        elabBlocksGo ctx' raws raws.size blocks #[] gen'
+      else if n == "appendix" then
+        -- Not a heading: a declaration affecting every heading after it,
+        -- from here forward in flow order (the scope model body \palette
+        -- landed) — the counter restarts and level-1 numbers letter.
+        modify fun st => { st with inAppendix := true, secNums := (0, 0, 0) }
+        elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else if n == "pause" then
+        -- The rest of this scope reveals one step later. Numbering is
+        -- cumulative through nesting: each pause raises the base its
+        -- successors count from, so pending content stays pending.
+        have hxw : rawWeightList (raws.extract (i + 1) raws.size).toList
+            ≤ sliceWeight raws (i + 1) := extract_slice_le ..
+        have hxp : nestedParsList (raws.extract (i + 1) raws.size).toList
+            ≤ slicePars raws (i + 1) := extract_slice_pars_le ..
+        have hx0 : sliceWeight (raws.extract (i + 1) raws.size) 0
+            = rawWeightList (raws.extract (i + 1) raws.size).toList :=
+          sliceWeight_zero _
+        have hx1 : slicePars (raws.extract (i + 1) raws.size) 0
+            = nestedParsList (raws.extract (i + 1) raws.size).toList :=
+          slicePars_zero _
+        let ⟨stepCtx, hm⟩ : MCtx ctx' ←
+          pure ⟨{ ctx' with stepBase := ctx'.stepBase + 1 }, rfl, rfl, rfl, rfl⟩
+        let inner ← elabBlocksGo stepCtx (raws.extract (i + 1) raws.size) 0
+          #[] #[] (← get).flowGen
+        let blocks := if inner.isEmpty then blocks
+          else blocks.push (.step (ctx'.stepBase + 2) none inner)
+        have hend : sliceWeight raws raws.size = 0 :=
+          sliceWeight_end raws (Nat.le_refl _)
+        have hendp : slicePars raws raws.size = 0 :=
+          slicePars_end raws (Nat.le_refl _)
+        elabBlocksGo ctx' raws raws.size blocks #[] gen'
+      else if n == "note" then
+        -- \note[placement]<spec>{...}: the placement and the spec are
+        -- ignored with a note saying so; the body is the side channel,
+        -- never slide content.
+        if let .took _ := scanBracketArg raws (i + 1) cpos then
+          warnOnce ctx' "note:options" .N0102
+            "'\\note' placement and overlay options are ignored: the note is \
+a side channel, never slide content" cpos
+        let (⟨j, hj⟩, _, _) ← skipOptArg ctx' "note" raws (i + 1) cpos
+        let js := skipSpaces raws j
+        have hjs := skipSpaces_ge raws j
+        let ⟨i2, hi2⟩ : { x : Nat // i + 1 ≤ x } ←
+          if (raws[js]?.bind specWord?).isSome then do
+            warnOnce ctx' "note:options" .N0102
               "'\\note' placement and overlay options are ignored: the note is \
-a side channel, never slide content" npos
-          let (⟨j, _⟩, _, _) ← skipOptArg ctx "note" raws i npos
-          i := j
-          let js := skipSpaces raws i
-          if (raws[js]?.bind specWord?).isSome then
-            warnOnce ctx "note:options" .N0102
-              "'\\note' placement and overlay options are ignored: the note is \
-a side channel, never slide content" npos
-            i := js + 1
-          let j2 := skipSpaces raws i
-          match raws[j2]? with
-          | some (.group nbody _) =>
-            i := j2 + 1
-            blocks := blocks.push (.note (← elabBlocks
-              { ctx with noteBody := true, notePos := some npos } nbody))
-          | _ =>
-            warnSkippedDecl ctx "note" npos
-        | .group gbody _ =>
-          -- A centering scope group: its own block sequence, so the
-          -- declaration stops at the closing brace.
-          i := i + 1
-          blocks := blocks ++ (← elabBlocks ctx gbody)
-        | .ctrl "framefoot" fpos =>
-          -- The per-frame footer note (beamer's `frame footer` template,
-          -- through compat): sets the chrome footer's left slot for the
-          -- frames that follow; an empty group clears it.
-          i := i + 1
-          let j := skipSpaces raws i
-          match raws[j]? with
-          | some (.group fbody _) =>
-            i := j + 1
-            blocks := blocks.push (.framefoot (← elabInlines ctx fbody))
-          | _ =>
-            diag ctx .E0304 "'\\framefoot' needs one group of inline content" fpos
-        | .ctrl "palette" dpos =>
-          -- Legal in the body as in LaTeX (`\colorlet` rewrites to it):
-          -- the entries apply from here on, and the document palette both
-          -- backends and the contrast checks read carries them.
-          i := i + 1
-          let mut decorative := false
-          let mut skipBlock := false
-          let mut j := skipSpaces raws i
-          if let some (.sym '[' _) := raws[j]? then
-            let mut opt : Array Raw := #[]
-            let mut k := j + 1
-            for _ in [k:raws.size + 1] do
-              match raws[k]? with
-              | some (.sym ']' _) => k := k + 1; break
-              | some r' => opt := opt.push r'; k := k + 1
-              | none => break
+a side channel, never slide content" cpos
+            pure ⟨js + 1, by omega⟩
+          else pure ⟨j, by omega⟩
+        let ⟨j2, hj2⟩ : { x : Nat // i2 ≤ x } ←
+          pure ⟨skipSpaces raws i2, skipSpaces_ge raws i2⟩
+        match hg2 : raws[j2]? with
+        | some (.group nbody _) =>
+          have hnw : rawWeightList nbody.toList + 1 ≤ sliceWeight raws j2 := by
+            have := elem_weight_le hg2 (Nat.le_refl j2)
+            simp only [rawWeight] at this; omega
+          have hnp : nestedParsList nbody.toList ≤ slicePars raws j2 := by
+            have := elem_pars_le hg2 (Nat.le_refl j2)
+            simp only [nestedPars] at this
+            have := nestedParsList_le nbody.toList; omega
+          have hn2 : sliceWeight raws j2 ≤ sliceWeight raws i := by
+            have := sliceWeight_le raws (show i ≤ j2 by omega); omega
+          have hn3 : slicePars raws j2 ≤ slicePars raws i := by
+            have := slicePars_le raws (show i ≤ j2 by omega); omega
+          have hn0 : sliceWeight nbody 0 = rawWeightList nbody.toList :=
+            sliceWeight_zero _
+          have hn1 : slicePars nbody 0 = nestedParsList nbody.toList :=
+            slicePars_zero _
+          let ⟨noteCtx, hnc⟩ : { c : Ctx // c.envLimit = ctx'.envLimit
+              ∧ noteFlag c = 0
+              ∧ visParsGo c.user c.limit = visParsGo ctx'.user ctx'.limit
+              ∧ visWeightGo c.user c.limit = visWeightGo ctx'.user ctx'.limit } ←
+            pure ⟨{ ctx' with noteBody := true, notePos := some cpos },
+              rfl, rfl, rfl, rfl⟩
+          let inner ← elabBlocksGo noteCtx nbody 0 #[] #[] (← get).flowGen
+          have ht1 : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
+            sliceWeight_lt raws h (by omega)
+          have ht2 : slicePars raws (j2 + 1) ≤ slicePars raws i :=
+            slicePars_le raws (by omega)
+          elabBlocksGo ctx' raws (j2 + 1)
+            (blocks.push (.note inner)) #[] gen'
+        | _ =>
+          warnSkippedDecl ctx' "note" cpos
+          have ht1 : sliceWeight raws i2 < sliceWeight raws i :=
+            sliceWeight_lt raws h (by omega)
+          have ht2 : slicePars raws i2 ≤ slicePars raws i :=
+            slicePars_le raws (by omega)
+          elabBlocksGo ctx' raws i2 blocks #[] gen'
+      else if n == "framefoot" then
+        -- The per-frame footer note (beamer's `frame footer` template,
+        -- through compat): sets the chrome footer's left slot for the
+        -- frames that follow; an empty group clears it.
+        let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
+          pure ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
+        match raws[j]? with
+        | some (.group fbody _) =>
+          let blocks := blocks.push (.framefoot (← elabInlines ctx' fbody))
+          have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
+            sliceWeight_lt raws h (by omega)
+          have ht2 : slicePars raws (j + 1) ≤ slicePars raws i :=
+            slicePars_le raws (by omega)
+          elabBlocksGo ctx' raws (j + 1) blocks #[] gen'
+        | _ =>
+          diag ctx' .E0304 "'\\framefoot' needs one group of inline content" cpos
+          elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else if n == "palette" then
+        -- Legal in the body as in LaTeX (`\colorlet` rewrites to it):
+        -- the entries apply from here on, and the document palette both
+        -- backends and the contrast checks read carries them.
+        let j0 := skipSpaces raws (i + 1)
+        have hj0 : i + 1 ≤ j0 := skipSpaces_ge raws (i + 1)
+        let ⟨(decorative, skipBlock, jf), hjf⟩ :
+            { t : Bool × Bool × Nat // i + 1 ≤ t.2.2 } ←
+          if let some (.sym '[' _) := raws[j0]? then do
+            let ⟨(opt, k), hk⟩ : { t : Array Raw × Nat // i + 1 ≤ t.2 } :=
+              match hc : closeBracketFrom raws (j0 + 1) with
+              | some c => ⟨(raws.extract (j0 + 1) c, c + 1), by
+                  have := closeBracketFrom_ge hc; omega⟩
+              | none => ⟨(raws.extract (j0 + 1) raws.size, raws.size), by omega⟩
+            have hk2 : i + 1 ≤ k := hk
+            let mut decorative := false
+            let mut skipBlock := false
             for e in Decl.splitEntries (rawSrc opt) do
               if e == "decorative" then
                 decorative := true
               else
-                diag ctx .W0316 s!"unknown option in '\\palette': {e.quote}; block skipped" dpos
+                diag ctx' .W0316
+                  s!"unknown option in '\\palette': {e.quote}; block skipped" cpos
                   (help := "options: decorative")
                 skipBlock := true
-            j := skipSpaces raws k
-          match raws[j]? with
-          | some (.group gbody _) =>
-            i := j + 1
-            unless skipBlock do
-              let pal ← applyPalette ctx ctx.palette (rawSrc gbody) dpos
-                (decorative := decorative)
-              ctx := { ctx with palette := pal }
-              -- The declaration rides the IR in flow order: both backends
-              -- replay it where it stands, and the flow state carries it
-              -- past this scope's close (no brace revert).
-              modify fun st => { st with flowPalette := some pal
-                                         flowGen := st.flowGen + 1 }
-              blocks := blocks.push (.setPalette pal)
-          | _ =>
-            diag ctx .E0304 "'\\palette' needs a {...} block" dpos
-        | .ctrl "tokens" dpos =>
-          -- `\setlength` mid-document rewrites here; same door as above.
-          i := i + 1
-          let j := skipSpaces raws i
-          match raws[j]? with
-          | some (.group gbody _) =>
-            i := j + 1
-            let tk ← applyTokens ctx ctx.tokens (rawSrc gbody) dpos
-            ctx := { ctx with tokens := tk }
-            modify fun st => { st with flowTokens := some tk
+            pure ⟨(decorative, skipBlock, skipSpaces raws k), by
+              have := skipSpaces_ge raws k
+              show i + 1 ≤ skipSpaces raws k
+              omega⟩
+          else
+            pure ⟨(false, false, j0), hj0⟩
+        have hjf2 : i + 1 ≤ jf := hjf
+        match raws[jf]? with
+        | some (.group gbody _) =>
+          have ht1 : sliceWeight raws (jf + 1) < sliceWeight raws i :=
+            sliceWeight_lt raws h (by omega)
+          have ht2 : slicePars raws (jf + 1) ≤ slicePars raws i :=
+            slicePars_le raws (by omega)
+          if skipBlock then
+            elabBlocksGo ctx' raws (jf + 1) blocks #[] gen'
+          else
+            let pal ← applyPalette ctx' ctx'.palette (rawSrc gbody) cpos
+              (decorative := decorative)
+            let ⟨palCtx, hm⟩ : MCtx ctx' ←
+              pure ⟨{ ctx' with palette := pal }, rfl, rfl, rfl, rfl⟩
+            -- The declaration rides the IR in flow order: both backends
+            -- replay it where it stands, and the flow state carries it
+            -- past this scope's close (no brace revert).
+            modify fun st => { st with flowPalette := some pal
                                        flowGen := st.flowGen + 1 }
-            blocks := blocks.push (.setTokens tk)
-          | _ =>
-            diag ctx .E0304 "'\\tokens' needs a {...} block" dpos
-        | .ctrl "define" dpos =>
-          -- A definition in the body, legal as in LaTeX (`\newcommand`
-          -- rewrites here): it binds through the shared door the preamble
-          -- uses and applies to the rest of this walk. Inline positions
-          -- (inside a paragraph or an argument) keep the E0312 refusal.
-          i := i + 1
-          let ⟨(cmd?, k), _⟩ ← takeDefine ctx raws i dpos
-          i := k
-          let cmd? ← match cmd? with
-            | some cmd => gateRedef ctx cmd (fun c b => elabBlocks c b)
-            | none => pure none
-          if let some cmd := cmd? then
+            elabBlocksGo palCtx raws (jf + 1)
+              (blocks.push (.setPalette pal)) #[] ((← get).flowGen)
+        | _ =>
+          diag ctx' .E0304 "'\\palette' needs a {...} block" cpos
+          elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else if n == "tokens" then
+        -- `\setlength` mid-document rewrites here; same door as above.
+        let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
+          pure ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
+        match raws[j]? with
+        | some (.group gbody _) =>
+          let tk ← applyTokens ctx' ctx'.tokens (rawSrc gbody) cpos
+          let ⟨tokCtx, hm⟩ : MCtx ctx' ←
+            pure ⟨{ ctx' with tokens := tk }, rfl, rfl, rfl, rfl⟩
+          modify fun st => { st with flowTokens := some tk
+                                     flowGen := st.flowGen + 1 }
+          have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
+            sliceWeight_lt raws h (by omega)
+          have ht2 : slicePars raws (j + 1) ≤ slicePars raws i :=
+            slicePars_le raws (by omega)
+          elabBlocksGo tokCtx raws (j + 1)
+            (blocks.push (.setTokens tk)) #[] ((← get).flowGen)
+        | _ =>
+          diag ctx' .E0304 "'\\tokens' needs a {...} block" cpos
+          elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else if n == "define" then
+        -- A definition in the body, legal as in LaTeX (`\newcommand`
+        -- rewrites here): it binds through the shared door the preamble
+        -- uses and applies to the rest of this walk. Inline positions
+        -- (inside a paragraph or an argument) keep the E0312 refusal.
+        let ⟨(cmd?, k), hdef⟩ ← takeDefine ctx' raws (i + 1) cpos
+        have hk : i + 1 ≤ k := hdef.1
+        have hks : sliceWeight raws k ≤ sliceWeight raws (i + 1) :=
+          sliceWeight_le raws hk
+        have hkp : slicePars raws k ≤ slicePars raws (i + 1) :=
+          slicePars_le raws hk
+        match hcm : cmd? with
+        | some cmd =>
+          have h2 : rawWeightList cmd.body.toList + sliceWeight raws k + 2
+              ≤ sliceWeight raws (i + 1) := (hdef.2 cmd hcm).1
+          have h3 : rawParsList cmd.body.toList + slicePars raws k
+              ≤ slicePars raws (i + 1) := (hdef.2 cmd hcm).2
+          let keep ← gateRedefB ctx' cmd
+          if keep then
             -- The definition binds at the visibility boundary
             -- (`bindCmd`): the rest of this walk sees exactly one more
             -- command, never the suffix beyond `limit`. Monotone
@@ -4662,65 +6160,82 @@ a side channel, never slide content" npos
             -- array's end here re-exposed a command being expanded to its
             -- own body, and a venue file's `\maketitle` — which renews
             -- `\thefootnote` and then names itself in `\let` — diverged.
-            ctx := bindCmd ctx cmd
-        | .ctrl "bibliographystyle" dpos =>
-          -- The declared style rides the state to the `\bibliography`
-          -- marker; resolution reads it from the block (W0353 there names
-          -- an unknown one).
-          i := i + 1
-          let j := skipSpaces raws i
-          match raws[j]? with
-          | some (.group body _) =>
-            i := j + 1
-            modify fun st => { st with
-              bibStyle := some (rawSrc body).trimAscii.toString }
-          | some (.word w _) =>
-            i := j + 1
-            modify fun st => { st with bibStyle := some w }
-          | _ =>
-            diag ctx .E0304 "'\\bibliographystyle' needs a {style} group" dpos
-        | .ctrl "bibliography" dpos =>
-          -- The reference list marker: an unnumbered References section
-          -- (classes.dtx: thebibliography opens with \section*{\refname})
-          -- and the empty list the driver's `.bib` effect fills
-          -- (`Ir.bibRefs` is the request, `Bib.apply` the fulfilment).
-          i := i + 1
-          let j := skipSpaces raws i
-          match raws[j]? with
-          | some (.group body _) =>
-            i := j + 1
-            let src := (rawSrc body).trimAscii.toString
-            let style := (← get).bibStyle
-            blocks := blocks.push (.section 1 true none #[.text "References"])
-            blocks := blocks.push (.bibliography src style #[])
-          | _ =>
-            diag ctx .E0304 "'\\bibliography' needs a {file} group" dpos
-        | .ctrl "pagebreak" _ =>
-          -- The declared page boundary; adjacent boundaries never make a
-          -- blank page (the page builder closes only pages that hold
-          -- something).
-          i := i + 1
-          blocks := blocks.push .pagebreak
-        | .ctrl "block" pos =>
-          i := i + 1
-          -- \block[before = <len>]{content}
-          let mut before : SymGlue := {}
-          let mut j := skipSpaces raws i
-          if let some (.sym '[' _) := raws[j]? then
-            let mut optSrc : Array Raw := #[]
-            j := j + 1
-            for _ in [j:raws.size] do
-              match raws[j]? with
-              | some (.sym ']' _) =>
-                j := j + 1
-                break
-              | some r' =>
-                optSrc := optSrc.push r'
-                j := j + 1
-              | none => break
-            let (opts, ds) := Decl.parseBlock ctx.file (rawSrc optSrc) pos "block"
-              ctx.tokens.entries
+            have hbp := bindCmd_visPars ctx' cmd
+            have hbw := bindCmd_visWeight ctx' cmd
+            have hbe : (bindCmd ctx' cmd).envLimit = ctx'.envLimit
+                ∧ noteFlag (bindCmd ctx' cmd) = noteFlag ctx' := ⟨rfl, rfl⟩
+            elabBlocksGo (bindCmd ctx' cmd) raws k blocks #[] gen'
+          else
+            elabBlocksGo ctx' raws k blocks #[] gen'
+        | none =>
+          elabBlocksGo ctx' raws k blocks #[] gen'
+      else if n == "bibliographystyle" then
+        -- The declared style rides the state to the `\bibliography`
+        -- marker; resolution reads it from the block (W0353 there names
+        -- an unknown one).
+        let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
+          pure ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
+        match raws[j]? with
+        | some (.group body _) =>
+          modify fun st => { st with
+            bibStyle := some (rawSrc body).trimAscii.toString }
+          have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
+            sliceWeight_lt raws h (by omega)
+          have ht2 : slicePars raws (j + 1) ≤ slicePars raws i :=
+            slicePars_le raws (by omega)
+          elabBlocksGo ctx' raws (j + 1) blocks #[] gen'
+        | some (.word w _) =>
+          modify fun st => { st with bibStyle := some w }
+          have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
+            sliceWeight_lt raws h (by omega)
+          have ht2 : slicePars raws (j + 1) ≤ slicePars raws i :=
+            slicePars_le raws (by omega)
+          elabBlocksGo ctx' raws (j + 1) blocks #[] gen'
+        | _ =>
+          diag ctx' .E0304 "'\\bibliographystyle' needs a {style} group" cpos
+          elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else if n == "bibliography" then
+        -- The reference list marker: an unnumbered References section
+        -- (classes.dtx: thebibliography opens with \section*{\refname})
+        -- and the empty list the driver's `.bib` effect fills
+        -- (`Ir.bibRefs` is the request, `Bib.apply` the fulfilment).
+        let ⟨j, hjge⟩ : { x : Nat // i + 1 ≤ x } ←
+          pure ⟨skipSpaces raws (i + 1), skipSpaces_ge raws (i + 1)⟩
+        match raws[j]? with
+        | some (.group body _) =>
+          let src := (rawSrc body).trimAscii.toString
+          let style := (← get).bibStyle
+          let blocks := blocks.push (.section 1 true none #[.text "References"])
+          let blocks := blocks.push (.bibliography src style #[])
+          have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
+            sliceWeight_lt raws h (by omega)
+          have ht2 : slicePars raws (j + 1) ≤ slicePars raws i :=
+            slicePars_le raws (by omega)
+          elabBlocksGo ctx' raws (j + 1) blocks #[] gen'
+        | _ =>
+          diag ctx' .E0304 "'\\bibliography' needs a {file} group" cpos
+          elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else if n == "pagebreak" then
+        -- The declared page boundary; adjacent boundaries never make a
+        -- blank page (the page builder closes only pages that hold
+        -- something).
+        elabBlocksGo ctx' raws (i + 1) (blocks.push .pagebreak) #[] gen'
+      else if n == "block" then
+        -- \block[before = <len>]{content}
+        let j0 := skipSpaces raws (i + 1)
+        have hj0 : i + 1 ≤ j0 := skipSpaces_ge raws (i + 1)
+        let ⟨(before, jf), hjf⟩ : { t : SymGlue × Nat // i + 1 ≤ t.2 } ←
+          if let some (.sym '[' _) := raws[j0]? then do
+            let ⟨(optSrc, k), hk⟩ : { t : Array Raw × Nat // i + 1 ≤ t.2 } :=
+              match hc : closeBracketFrom raws (j0 + 1) with
+              | some c => ⟨(raws.extract (j0 + 1) c, c + 1), by
+                  have := closeBracketFrom_ge hc; omega⟩
+              | none => ⟨(raws.extract (j0 + 1) raws.size, raws.size), by omega⟩
+            have hk2 : i + 1 ≤ k := hk
+            let (opts, ds) := Decl.parseBlock ctx'.file (rawSrc optSrc) cpos
+              "block" ctx'.tokens.entries
             modify fun st => { st with diags := st.diags ++ ds }
+            let mut before : SymGlue := {}
             for e in opts do
               match e.key, e.value with
               | "before", .glue g => before := g
@@ -4728,888 +6243,88 @@ a side channel, never slide content" npos
               | key, v =>
                 if key == "before" then
                   modify fun st => { st with
-                    diags := st.diags.push (Decl.wrongType ctx.file "block" key
-                      "a length" v pos) }
+                    diags := st.diags.push (Decl.wrongType ctx'.file "block" key
+                      "a length" v cpos) }
                 else
                   modify fun st => { st with
-                    diags := st.diags.push (Decl.unknownKey ctx.file "block" key
-                      ["before"] pos) }
-            j := skipSpaces raws j
-          match raws[j]? with
-          | some (.group body _) =>
-            i := j + 1
-            blocks := blocks.push (.spaced before (← elabBlocks ctx body))
-          | _ =>
-            diag ctx .E0304 "'\\block' needs a {body}" pos
-        | .ctrl n pos =>
-          i := i + 1
-          if declCtrl.contains n then
-            -- A native declaration met in the body is never "unknown": it
-            -- is ours, misplaced. `\palette` and `\tokens` have arms above;
-            -- the rest configure the whole document and are read only in
-            -- the preamble, so the declaration is skipped with its block,
-            -- named as what it is.
-            warnOnce ctx ("ctrl:" ++ n) .W0340
-              s!"'\\{n}' is a declaration; in the body it is ignored" pos
-              (help := "declare it in the preamble, before '\\begin{document}'")
-            let (j, unclosed) := skipReservedArgs raws i pos (maxGroups := 2)
-            if let some bpos := unclosed then
-              warnUnclosed ctx s!"'\\{n}'" bpos
-            i := j
-          else if runningCtrl.contains n then
-            -- Running head/foot in the body: ours, misplaced — never
-            -- "unknown". The declaration carries content, so skipping it
-            -- drops that content: an error, not a config warning.
-            diag ctx .E0347 s!"'\\{n}' in the body is dropped with its content" pos
-              (help := "declare it in the preamble, before '\\begin{document}'")
-            let (j, unclosed) := skipReservedArgs raws i pos
-            if let some bpos := unclosed then
-              warnUnclosed ctx s!"'\\{n}'" bpos
-            i := j
+                    diags := st.diags.push (Decl.unknownKey ctx'.file "block" key
+                      ["before"] cpos) }
+            pure ⟨(before, skipSpaces raws k), by
+              have := skipSpaces_ge raws k
+              show i + 1 ≤ skipSpaces raws k
+              omega⟩
           else
-          match lookupUser ctx n with
-          | some (k, cmd) =>
-            -- Block-producing user command: bind its arguments, then
-            -- elaborate the body as blocks so `\block` inside a definition
-            -- works instead of reporting E0312. A parameterized command's
-            -- expansion wraps in its name, as at the inline splice: the
-            -- role survives at whichever level its content lives.
-            let (bindings, j) ← takeArgs ctx cmd.params n raws i pos
-            i := j
-            let callCtx : Ctx := { ctx with limit := k, args := bindings }
-            let expanded ← elabBlocks callCtx cmd.body
-            if cmd.params.isEmpty then
-              blocks := blocks ++ expanded
-            else
-              blocks := blocks.push (.role cmd.name expanded)
-          | none =>
-          if overlayCtrls.contains n || n == "alt" then
-            -- Block-level overlay: the step wrapper survives at block
-            -- level, so a list or a multi-paragraph group inside
-            -- \onslide<2->{...} steps whole — elaborated as blocks, never
-            -- squeezed through a paragraph. A spec the model cannot number
-            -- keeps the honest W0105 and the content stays shown. `\pause`
-            -- inside the wrapped content counts from the wrapper's own
-            -- step, so pending stays pending.
-            let j := skipSpaces raws i
-            let mut spec : Option (Nat × Option Nat) := none
-            let mut jg := j
-            match raws[j]?.bind specWord? with
-            | some w =>
-              jg := skipSpaces raws (j + 1)
-              match overlayFrom w with
-              | some p => spec := some p
-              | none =>
-                warnOnce ctx "spec:overlay" .W0105
-                  s!"overlay specification '{w}' does not name a step; its \
-content is shown on every step" pos
-                  (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
-specs are not modelled")
-            | none => pure ()
-            if n == "alt" then
-              let j3 := skipSpaces raws (jg + 1)
-              match raws[jg]?, raws[j3]? with
-              | some (.group ga _), some (.group gb _) =>
-                i := j3 + 1
-                match spec with
-                | some (s, last) =>
-                  let ia ← elabBlocks
-                    { ctx with stepBase := max ctx.stepBase (s - 1) } ga
-                  let ib ← elabBlocks ctx gb
-                  blocks := blocks.push (.step s last ia)
-                  blocks := blocks.push (.step 1 (some (s - 1)) ib)
-                | none =>
-                  blocks := blocks ++ (← elabBlocks ctx ga)
-                  blocks := blocks ++ (← elabBlocks ctx gb)
-              | _, _ =>
-                diag ctx .E0304 "'\\alt' needs <spec>{content}{content}" pos
-            else
-              match raws[jg]? with
-              | some (.group gbody _) =>
-                i := jg + 1
-                match spec with
-                | some (s, last) =>
-                  let inner ← elabBlocks
-                    { ctx with stepBase := max ctx.stepBase (s - 1) } gbody
-                  unless inner.isEmpty do
-                    blocks := blocks.push (.step s last inner)
-                | none =>
-                  blocks := blocks ++ (← elabBlocks ctx gbody)
-              | _ =>
-                -- The open form: the rest of this scope steps. Bare
-                -- \onslide (no spec) ends stepping — the rest simply flows.
-                i := jg
-                if let some (s, last) := spec then
-                  let inner ← elabBlocks
-                    { ctx with stepBase := max ctx.stepBase (s - 1) }
-                    (raws.extract i raws.size)
-                  i := raws.size
-                  unless inner.isEmpty do
-                    blocks := blocks.push (.step s last inner)
-          else if titleCtrls.contains n then
-            let (j, junk) ← takeTitleDecl ctx n raws i pos
-            i := j
-            -- The malformed run of an unclosed bracket is content here.
-            if let some p ← mkPara ctx junk then
-              blocks := blocks.push p
-          else if n == "logo" then
-            -- The declaration is legal in the body too, where beamer decks
-            -- scope a logo to a frame (`\logo{...}` before it, `\logo{}`
-            -- after): a stateful block the layout replays per page.
-            let j := skipSpaces raws i
-            match raws[j]? with
-            | some (.group gbody _) =>
-              i := j + 1
-              blocks := blocks.push (.logo (← elabInlines ctx gbody))
-            | _ =>
-              diag ctx .E0304 "'\\logo' needs one group of inline content" pos
-          else if n == "maketitle" || n == "titlepage" then
-            if (← get).titleDone then
-              -- LaTeX typesets the title once: \maketitle disables itself
-              -- (classes.dtx, \global\let\maketitle\relax), which is also
-              -- what keeps the document to one level-0 heading. Named,
-              -- never silent.
-              warnOnce ctx "ctrl:maketitle2" .W0322
-                s!"a second '\\{n}' is ignored; the title is typeset once" pos
-                (help := "LaTeX's \\maketitle disables itself after use (classes.dtx)")
-            else
-            let inner := titleBlocks ctx (← get)
-            if inner.isEmpty then
-              warnOnce ctx "ctrl:maketitle" .W0309
-                s!"'\\{n}' with nothing declared; no title is set" pos
-                (help := "declare \\title{...} (and \\author, \\date, ...) before it")
-            else if ctx.slides then
-              -- The title frame takes the golden split (moloch's
-              -- `title page` template: `0pt plus 1.618fil` + `\vfil` above
-              -- against `plus 1fil` below), and its horizontal alignment is
-              -- the `titlepage` style's declaration: moloch sets its title
-              -- matter ragged left; undeclared, the title page centres.
-              modify fun st => { st with titleDone := true }
-              let tps := (ctx.styles.find? "titlepage").getD {}
-              let content := if tps.align == some "left" then inner else #[.center inner]
-              blocks := blocks.push (.frame #[] false .golden content)
-            else
-              -- The flow classes centre the title block, as `\@maketitle`
-              -- does — unless the `titlepage` style declares its matter
-              -- ragged left, the same declaration the slides branch reads.
-              modify fun st => { st with titleDone := true }
-              let tps := (ctx.styles.find? "titlepage").getD {}
-              let content := if tps.align == some "left" then inner else #[.center inner]
-              blocks := blocks ++ content
-          else
-            let level := (sectionLevel n).getD 1
-            let mut starred := false
-            if let some (.word "*" _) := raws[i]? then
-              starred := true
-              i := i + 1
-            -- `\section[short]{long}`: the short form feeds furniture no
-            -- backend consumes yet, and its bracket obeys the shared
-            -- scanner. The malformed run of an unclosed bracket is content
-            -- here, exactly as in the scanner's sibling paths.
-            if let .took _ := scanBracketArg raws i pos then
-              warnOnce ctx "section:short" .N0103
-                s!"'\\{n}[short]' short title is unused: nothing consumes it yet" pos
-            let (⟨j, _⟩, recovered, junk) ← skipOptArg ctx n raws i pos
-            if let some p ← mkPara ctx junk then
-              blocks := blocks.push p
-            match raws[j]? with
-            | some (.group title _) =>
-              i := j + 1
-              blocks := blocks.push (.section level starred (← sectionNumber ctx level starred) (← elabInlines ctx title))
-            | _ =>
-              if recovered then
-                warnSkippedDecl ctx n pos
-                i := j
-              else
-                diag ctx .E0304 s!"'\\{n}' needs a \{title}" pos
-        | .env n body pos =>
-          i := i + 1
-          if let some f := Parse.inputEnvFile? n then
-            -- An \input file's blocks, elaborated under its own name so a
-            -- diagnostic points at the file that holds the construct.
-            blocks := blocks ++ (← elabBlocks { ctx with file := f } body)
-          else if let some numbered := displayMathEnvs.lookup n then
-            let (cleaned, keys, nonum) ← stripMathMeta ctx body
-            let inl ← elabMathInline ctx true cleaned pos
-            if numbered && !nonum then
-              -- The display takes the next equation number (amsldoc §3);
-              -- its labels bind to it, scoped to the environment as
-              -- LaTeX's \refstepcounter group is.
-              let num := (← get).eqNum + 1
-              modify fun st => { st with eqNum := num }
-              for key in keys do
-                recordLabel ctx key (some (toString num)) pos
-              let content := keys.map (Ir.Inline.label ·) |>.push inl
-              blocks := blocks.push (.equation s!"({num})" content)
-            else
-              -- The unnumbered forms; a label here binds to whatever the
-              -- flow last numbered, as LaTeX's \@currentlabel does.
-              for key in keys do
-                recordLabel ctx key (← get).refTarget pos
-              let content := keys.map (Ir.Inline.label ·) |>.push inl
-              blocks := blocks.push (.center #[.para content])
-          else if let some (kind, numbered) := alignEnvs.lookup n then
-            -- Row numbers are still owed (W0015): a label here binds to
-            -- nothing, so a reference to it is the named ??, never a
-            -- silently wrong number.
-            let (cleaned, keys, _) ← stripMathMeta ctx body
-            for key in keys do
-              recordLabel ctx key none pos
-            let inl ← elabMathEnv ctx n kind numbered cleaned pos
-            let content := keys.map (Ir.Inline.label ·) |>.push inl
-            blocks := blocks.push (.center #[.para content])
-          else if n == "tabular" || n == "tabular*" then
-            -- A formal table, booktabs-shaped by construction: the column
-            -- spec drives `.table`'s columns, `&`/`\\` split cells and
-            -- rows, and the rule commands become typed rules at their
-            -- index. Elaboration delivers the rectangularity the layout
-            -- trusts: a short row is padded, a long one widens the grid,
-            -- warning either way (W0337).
-            let mut k := skipSpaces body 0
-            if n == "tabular*" then
-              if let some (.group _ _) := body[k]? then
-                warnOnce ctx "tabular:starwidth" .N0102
-                  "'tabular*' total width is ignored: columns take their \
-declared widths" pos
-                k := skipSpaces body (k + 1)
-            if let .took k' := scanBracketArg body k pos then
-              warnOnce ctx "tabular:valign" .N0102
-                "'tabular' [t]/[b] alignment is ignored: the table stands \
-where written" pos
-              k := skipSpaces body k'
-            let mut cols : Array Ir.ColSpec := #[]
-            let mut padL := true
-            let mut padR := true
-            match body[k]? with
-            | some (.group spec _) =>
-              let (cs, pl, pr, warns) := parseColSpec spec
-              cols := cs
-              padL := pl
-              padR := pr
-              for (key, msg, help) in warns do
-                warnOnce ctx ("tabular:" ++ key) .W0104 msg pos
-                  (help := if help.isEmpty then none else some help)
-              k := k + 1
-            | _ => diag ctx .E0304 s!"'\{{n}}' needs a \{column spec} group" pos
-            let mut rows : Array (Array (Array Inline)) := #[]
-            let mut rules : Array (Nat × Ir.TableRule) := #[]
-            let mut cells : Array (Array Inline) := #[]
-            let mut cellRaws : Array Raw := #[]
-            let mut j := k
-            let ruleNames := ["toprule", "midrule", "bottomrule", "hline",
-              "cmidrule", "cline", "addlinespace"]
-            for _ in [k:body.size] do
-              if h' : j < body.size then
-                match body[j] with
-                | .ctrl "\\" bpos =>
-                  cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
-                  cellRaws := #[]
-                  rows := rows.push cells
-                  cells := #[]
-                  j := j + 1
-                  -- `\\[len]`: declared space after the row, booktabs'
-                  -- class-2 gap.
-                  let j0 := skipSpaces body j
-                  match scanBracketArg body j bpos with
-                  | .took j' =>
-                    let src := Parse.rawSrc (body.extract (j0 + 1) (j' - 1))
-                    match Decl.parseLength src with
-                    | some l => do
-                      rules := rules.push (rows.size, .gap { width := l })
-                      j := j'
-                    | none =>
-                      diag ctx .E0331 s!"unreadable length '{src}' in '\\\\[...]'" (some bpos)
-                      j := j'
-                  | _ => pure ()
-                | .sym '&' _ =>
-                  cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
-                  cellRaws := #[]
-                  j := j + 1
-                | .ctrl name rpos =>
-                  if ruleNames.contains name &&
-                      cellRaws.all isSpaceOrPar && cells.isEmpty then
-                    j := j + 1
-                    cellRaws := #[]
-                    -- booktabs' optional [width] per rule is not modelled:
-                    -- the three weights are the design, one source.
-                    if let .took j' := scanBracketArg body j rpos then
-                      warnOnce ctx "tabular:rulewidth" .N0102
-                        s!"'\\{name}' [width] is ignored: rule weights come \
-from the design tokens" rpos
-                      j := j'
-                    match name with
-                    | "toprule" => rules := rules.push (rows.size, .top)
-                    | "midrule" | "hline" => rules := rules.push (rows.size, .mid)
-                    | "bottomrule" => rules := rules.push (rows.size, .bottom)
-                    | "addlinespace" =>
-                      rules := rules.push (rows.size,
-                        .gap { width := Ir.defaultAddSpace })
-                    | _ =>
-                      -- `\cmidrule(lr){a-b}`, `\cline{a-b}`: the trim spec
-                      -- lexes as one word, "(lr)"
-                      let mut trimL := false
-                      let mut trimR := false
-                      if let some (.word w _) := body[j]? then
-                        if w.startsWith "(" then
-                          trimL := w.contains 'l'
-                          trimR := w.contains 'r'
-                          j := j + 1
-                      match body[skipSpaces body j]? with
-                      | some (.group g _) =>
-                        j := skipSpaces body j + 1
-                        match cmidRange (Parse.rawSrc g) with
-                        | some (a, b) =>
-                          rules := rules.push (rows.size, .cmid a b trimL trimR)
-                        | none =>
-                          diag ctx .E0304
-                            s!"'\\{name}' needs a \{from-to} column range" (some rpos)
-                      | _ =>
-                        diag ctx .E0304
-                          s!"'\\{name}' needs a \{from-to} column range" (some rpos)
-                  else
-                    cellRaws := cellRaws.push body[j]
-                    j := j + 1
-                | r' =>
-                  cellRaws := cellRaws.push r'
-                  j := j + 1
-              else break
-            if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
-              cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
-              rows := rows.push cells
-            -- Rectangularity: every walk below trusts `cols.size`.
-            let widest := rows.foldl (fun m r => max m r.size) cols.size
-            if cols.size < widest then
-              warnOnce ctx "tabular:wide" .W0337
-                s!"a row carries {widest} cells but the column spec declares \
-{cols.size}; the grid widens" pos
-                (help := "declare one column type per cell: l, c, r, or p{width}")
-              for _ in [cols.size:widest] do
-                cols := cols.push { width := .natural, align := .left }
-            if rows.any (·.size < cols.size) then
-              warnOnce ctx "tabular:ragged" .W0337
-                "a row carries fewer cells than the column spec; it is \
-padded with empty cells" pos
-            rows := Ir.padTableRows rows cols.size
-            blocks := blocks.push (.table cols padL padR rows rules)
-          else if n == "frame" then
-            -- \begin{frame}[options]{title}: options are ignored with a
-            -- note (fragile, plain say how beamer should cope, not what to
-            -- say) except
-            -- `standout`, which says what the frame IS, and `t`/`c`/`b`,
-            -- which say how it distributes its leftover vertical space
-            -- (beamer user guide §8.1; `c` is beamer's default); the title
-            -- group counts only when it follows directly — a paragraph
-            -- break before a group makes it content, which is where LaTeX's
-            -- own argument scanning stops looking too.
-            let mut k := 0
-            let mut standout := false
-            let mut valign : VAlign := .center
-            for _ in [0:body.size] do
-              let j0 := skipSpaces body k
-              match scanBracketArg body k pos with
-              | .took k' =>
-                let inner := rawSrc (body.extract (j0 + 1) (k' - 1))
-                for opt in (inner.splitOn ",").map (·.trimAscii.toString) do
-                  match opt with
-                  | "standout" => standout := true
-                  | "t" => valign := .top
-                  | "c" => valign := .center
-                  | "b" => valign := .bottom
-                  | other =>
-                    -- fragile, plain, and friends say how beamer should
-                    -- cope, not what to say: registered, never silent.
-                    unless other.isEmpty do
-                      warnOnce ctx ("frame:opt:" ++ other) .N0102
-                        s!"frame option '{other}' is not modelled; ignored" pos
-                k := k'
-              | .unclosed bpos =>
-                warnUnclosed ctx "'\\begin{frame}'" bpos
-                break
-              | .content => break
-            k := skipSpaces body k
-            let mut title : Array Inline := #[]
-            if let some (.group t _) := body[k]? then
-              title ← elabInlines ctx t
-              k := k + 1
-            -- \frametitle{...} anywhere in the frame names it too.
-            let (title2, ⟨rest, _⟩) ← frameRestGo ctx body k title #[]
-              (sliceWeight body k) (slicePars body k)
-              (by simp [rawWeightList]) (by simp [nestedParsList])
-            title := title2
-            -- Notes met inside the frame's inline content drain to the
-            -- frame's end: the side channel stays with its frame. Inside a
-            -- note's own body there is no side channel to drain into — a
-            -- note is not slide content, so its frame cannot carry one —
-            -- and the stashed notes are refused, named at the note that
-            -- encloses them (E0359; the noteFlag decision, PLAN).
-            modify fun st => { st with pendingNotes := #[] }
-            let mut inner ← elabBlocks ctx rest
-            let stash := (← get).pendingNotes
-            modify fun st => { st with pendingNotes := #[] }
-            if ctx.noteBody then
-              unless stash.isEmpty do
-                diag ctx .E0359
-                  "a '\\note' inside this note's frame is dropped: one note cannot carry another"
-                  ctx.notePos
-                  (help := "move the inner '\\note' out of the enclosing '\\note', beside its frame")
-            else
-              for (nb, npos) in stash do
-                inner := inner.push (.note (← elabBlocks
-                  { ctx with noteBody := true, notePos := some npos } nb))
-            blocks := blocks.push (.frame title standout valign inner)
-          else if n == "itemize" || n == "enumerate" then
-            -- enumitem's per-instance `[keys]` are consumed and named: the
-            -- engine styles lists per element, not per instance, and the
-            -- old path let the bracket land as content before the first
-            -- \item — a false E0310 error from a documented interface.
-            let mut bodyFrom := 0
-            match scanBracketArg body 0 pos with
-            | .took k' =>
-              warnOnce ctx ("env:" ++ n ++ ":opts") .N0102
-                s!"'\{{n}}' [options] are not modelled per instance; the declared list style stands"
-                pos
-              bodyFrom := k'
-            | .unclosed bpos =>
-              warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
-            | .content => pure ()
-            let body := body.extract bodyFrom body.size
-            -- `\pause` between items steps the rest of the LIST, not just
-            -- the rest of an item's own blocks: each item records how many
-            -- pauses stand before it and reveals one step after the last.
-            let ⟨(items, steps, itemPauses), _⟩ ← itemSplitGo ctx body pos 0
-              #[] #[] #[] 0 #[] none 0 false false false false
-              (sliceWeight body 0) (slicePars body 0)
-              (by simp [itemsW, rawWeightList]) (by simp [itemsP, nestedParsList])
-            let mut elabItems : Array (Array Block) := #[]
-            for ((it, st?), p) in (items.zip steps).zip itemPauses do
-              let inner ← elabBlocks { ctx with stepBase := ctx.stepBase + p } it
-              elabItems := elabItems.push (match st? with
-                | some (s, last) => #[.step s last inner]
-                | none =>
-                  if p > 0 then #[.step (ctx.stepBase + p + 1) none inner]
-                  else inner)
-            blocks := blocks.push (.list (n == "enumerate") elabItems)
-          else if n == "center" then
-            blocks := blocks.push (.center (← elabBlocks ctx body))
-          else if n == "minipage" then
-            -- A minipage is one column of declared width: the column model
-            -- reused whole, never a parallel box model. LaTeX's signature
-            -- is [pos][height][inner-pos]{width} (classes.dtx §minipage);
-            -- the optionals position the box against a text baseline, and
-            -- at block level there is no baseline, so they are noted and
-            -- ignored exactly as the columns options are. An absolute
-            -- width is the same loss a column has (W0314).
-            let mut k := 0
-            for _ in [0:3] do
-              match scanBracketArg body k pos with
-              | .took k' =>
-                warnOnce ctx "minipage:options" .N0102
-                  "'minipage' [pos] options are ignored: the box stands as a block, top-aligned"
-                  pos
-                k := k'
-              | .unclosed bpos =>
-                warnUnclosed ctx "'\\begin{minipage}'" bpos
-                break
-              | .content => break
-            let m := skipSpaces body k
-            let mut width : Option Nat := none
-            let mut m2 := m
-            if let some (.group wRaws _) := body[m]? then
-              m2 := m + 1
-              let src := rawSrc wRaws
-              width := columnWidth src
-              if width.isNone then
-                warnOnce ctx "env:minipage-width" .W0314
-                  s!"minipage width '{src}' is not a fraction of the text width; \
-the box takes the whole measure" pos
-                  (help := "write a factor like {0.5\\textwidth}")
-            else
-              diag ctx .E0304 "'\\begin{minipage}' needs a {width} group" pos
-            blocks := blocks.push
-              (.columns #[(width, ← elabBlocks ctx (body.extract m2 body.size))])
-          else if n == "quote" || n == "quotation" then
-            -- One node for both: they differ only in \listparindent
-            -- (quotation indents each paragraph's first line), and the
-            -- engine sets no paragraph indent anywhere yet — see the
-            -- constructor's docstring.
-            blocks := blocks.push (.quote (← elabBlocks ctx body))
-          else if n == "abstract" then
-            -- article's unnumbered titled block: quotation-shaped with a
-            -- centred heading in the PDF, a <section> with a heading in
-            -- HTML — see the constructor's docstring for the split.
-            blocks := blocks.push (.abstract (← elabBlocks ctx body))
-          else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
-            -- A single-pass engine has nowhere for a float to float: the
-            -- float stands where written as a `.float`, `[placement]`
-            -- ignored with a note saying so. Its caption keeps its source
-            -- side — before the content it stands above, the table
-            -- convention — and becomes the alt text of the images it
-            -- captions; `numberFloats` assigns the number afterwards.
-            -- A `{subfigure}`/`{subtable}` child (subcaption §2: a
-            -- minipage-shaped box with its own caption, lettered under the
-            -- parent's number) is a `.sub` float in a column of its
-            -- declared width; consecutive ones share one `.columns` row so
-            -- they stand side by side, and an `\hfill` between them is the
-            -- gutter the columns layout already distributes.
-            let kind : Ir.FloatKind :=
-              if n == "table" || n == "table*" then .table else .figure
-            let mut k := 0
-            for _ in [0:body.size] do
-              match scanBracketArg body k pos with
-              | .took k' =>
-                warnOnce ctx "figure:placement" .N0102
-                  s!"'\{{n}}' [placement] is ignored: a single-pass engine \
-has nowhere for a float to float" pos
-                k := k'
-              | .unclosed bpos =>
-                warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
-                break
-              | .content => break
-            let mut innerBlocks : Array Block := #[]
-            let mut cols : Array (Option Nat × Array Block) := #[]
-            let mut rest : Array Raw := #[]
-            let mut caption : Array Inline := #[]
-            let mut capAbove := false
-            let mut j := k
-            for _ in [k:body.size] do
-              if h' : j < body.size then
-                match body[j] with
-                | .ctrl "caption" cpos =>
-                  j := j + 1
-                  let (⟨j2, _⟩, _, _) ← skipOptArg ctx "caption" body j cpos
-                  j := skipSpaces body j2
-                  match body[j]? with
-                  | some (.group t _) =>
-                    unless caption.isEmpty do
-                      diag ctx .W0311 s!"this '\\caption' replaces the {n}'s earlier caption"
-                        (some cpos) (help := "the last one wins; remove the other '\\caption'")
-                    caption ← elabInlines ctx t
-                    capAbove := innerBlocks.isEmpty && cols.isEmpty
-                      && rest.all isSpaceOrPar
-                    j := j + 1
-                  | _ => diag ctx .E0304 "'\\caption' needs a {text} group" cpos
-                | .ctrl "centering" _ =>
-                  -- The float centres already; the declaration is satisfied.
-                  j := j + 1
-                | .ctrl "hfill" _ =>
-                  -- Between two subfigures the fill is the gutter, which
-                  -- the columns layout distributes by itself; anywhere
-                  -- else it is ordinary content.
-                  if !cols.isEmpty && rest.all isSpaceOrPar then
-                    j := j + 1
-                  else
-                    rest := rest.push body[j]
-                    j := j + 1
-                | .env sn sbody spos =>
-                  if sn == "subfigure" || sn == "subtable" then
-                    if rest.any (!isSpaceOrPar ·) then
-                      unless cols.isEmpty do
-                        innerBlocks := innerBlocks.push (.columns cols)
-                        cols := #[]
-                      innerBlocks := innerBlocks ++ (← elabBlocks ctx rest)
-                    rest := #[]
-                    -- The minipage shape: `[pos]` baseline options are
-                    -- noted and ignored (the box stands top-aligned in its
-                    -- row), the `{width}` group is a fraction of the
-                    -- measure, exactly as a column's.
-                    let mut m := 0
-                    for _ in [0:3] do
-                      match scanBracketArg sbody m spos with
-                      | .took m' =>
-                        warnOnce ctx "subfigure:options" .N0102
-                          s!"'\{{sn}}' [pos] options are ignored: the box \
-stands top-aligned in its row" spos
-                        m := m'
-                      | .unclosed bpos =>
-                        warnUnclosed ctx s!"'\\begin\{{sn}}'" bpos
-                        break
-                      | .content => break
-                    m := skipSpaces sbody m
-                    let mut width : Option Nat := none
-                    if let some (.group wRaws _) := sbody[m]? then
-                      m := m + 1
-                      let src := rawSrc wRaws
-                      width := columnWidth src
-                      if width.isNone then
-                        warnOnce ctx "env:subfigure-width" .W0314
-                          s!"'\{{sn}}' width '{src}' is not a fraction of the \
-text width; the box shares the leftover" spos
-                          (help := "write a factor like {0.48\\textwidth}")
-                    else
-                      diag ctx .E0304 s!"'\\begin\{{sn}}' needs a \{width} group" spos
-                    let mut sRest : Array Raw := #[]
-                    let mut sCaption : Array Inline := #[]
-                    let mut sCapAbove := false
-                    let (sc, sca, ⟨sr, _⟩) ← subRestGo ctx sn sbody m #[] false #[]
-                      (sliceWeight sbody m) (slicePars sbody m)
-                      (by simp [rawWeightList]) (by simp [nestedParsList])
-                    sCaption := sc
-                    sCapAbove := sca
-                    sRest := sr
-                    let mut sInner ← elabBlocks ctx sRest
-                    unless sCaption.isEmpty do
-                      sInner := Ir.setAltBlocks (Ir.plainText sCaption) sInner
-                    cols := cols.push (width, #[.float .sub none sCapAbove sInner sCaption])
-                    j := j + 1
-                  else
-                    rest := rest.push body[j]
-                    j := j + 1
-                | r' =>
-                  rest := rest.push r'
-                  j := j + 1
-              else break
-            unless cols.isEmpty do
-              innerBlocks := innerBlocks.push (.columns cols)
-            let mut inner := innerBlocks ++ (← elabBlocks ctx rest)
-            unless caption.isEmpty do
-              inner := Ir.setAltBlocks (Ir.plainText caption) inner
-            blocks := blocks.push (.float kind none capAbove inner caption)
-          else if n == "columns" then
-            -- `[T]`-and-friends alignment options are ignored with a note:
-            -- columns are top-aligned (PLAN, M5). A column's width is its
-            -- first group, a fraction of the text width; content standing
-            -- outside any column keeps its place as ordinary blocks — never
-            -- dropped.
-            let mut k := 0
-            for _ in [0:body.size] do
-              match scanBracketArg body k pos with
-              | .took k' =>
-                warnOnce ctx "columns:options" .N0102
-                  "'columns' alignment options are ignored: columns are top-aligned" pos
-                k := k'
-              | .unclosed bpos =>
-                warnUnclosed ctx "'\\begin{columns}'" bpos
-                break
-              | .content => break
-            let mut cols : Array (Option Nat × Array Block) := #[]
-            let mut strayRaws : Array Raw := #[]
-            let mut j := k
-            for _ in [k:body.size] do
-              if h' : j < body.size then
-                match body[j] with
-                | .env "column" cbody cpos =>
-                  if strayRaws.any (!isSpaceOrPar ·) then
-                    unless cols.isEmpty do
-                      blocks := blocks.push (.columns cols)
-                      cols := #[]
-                    blocks := blocks ++ (← elabBlocks ctx strayRaws)
-                  strayRaws := #[]
-                  let m := skipSpaces cbody 0
-                  let mut width : Option Nat := none
-                  let mut m2 := m
-                  if let some (.group wRaws _) := cbody[m]? then
-                    m2 := m + 1
-                    let src := rawSrc wRaws
-                    width := columnWidth src
-                    if width.isNone then
-                      warnOnce ctx "env:column-width" .W0314
-                        s!"column width '{src}' is not a fraction of the text width; \
-the column shares the leftover" cpos
-                        (help := "write a factor like {0.5\\textwidth}")
-                  cols := cols.push (width, ← elabBlocks ctx (cbody.extract m2 cbody.size))
-                | r' => strayRaws := strayRaws.push r'
-                j := j + 1
-              else break
-            unless cols.isEmpty do
-              blocks := blocks.push (.columns cols)
-            if strayRaws.any (!isSpaceOrPar ·) then
-              blocks := blocks ++ (← elabBlocks ctx strayRaws)
-          else if n == "ifbackend" then
-            -- `{ifbackend}{html,md}`: block content addressed to a subset
-            -- of the backends. An unknown name is dropped from the set with
-            -- W0323; a set that keeps no backend along its nesting path is
-            -- E0334 — content nothing will emit. The body still elaborates
-            -- and the node still carries it (the IR reflects the document);
-            -- `Ir.keepFor` at each backend's entry is the one drop site,
-            -- and `Ir.keepFor_covers` is why the diagnostic is sufficient.
-            let j := skipSpaces body 0
-            match body[j]? with
-            | some (.group g gpos) =>
-              -- A backend conditional writes a per-medium decision by hand
-              -- in content — the decision a construct or the class should
-              -- carry (a nav becomes the print outline by itself, a note
-              -- leaves the handout). Named where it stands, as a note: the
-              -- escape hatch remains for the genuine remainder.
-              diag ctx .N0019
-                "content addressed per backend encodes a per-medium decision by hand" pos
-                (help := "a construct carries its own medium answer (a nav, a note); \
-prefer the construct or the class, and keep '\\begin{ifbackend}' for the true remainder")
-              let names := (((rawSrc g).splitOn ",").map (·.trimAscii.toString)).filter
-                (!·.isEmpty)
-              let mut targets : Array String := #[]
-              for name in names do
-                if Ir.backendNames.contains name then
-                  targets := targets.push name
-                else
-                  diag ctx .W0323
-                    s!"unknown backend '{name}' in '\\begin\{ifbackend}'; ignored"
-                    (some gpos)
-                    (help := s!"backends: {String.intercalate ", " Ir.backendNames}")
-              let eff := ctx.backendTargets.filter (targets.contains ·)
-              if eff.isEmpty then
-                diag ctx .E0334
-                  "this content is addressed to no backend; no output will carry it"
-                  (some pos)
-                  (help := "name at least one of pdf, html, md; a nested \
-'\\begin{ifbackend}' intersects with its enclosing one; \
-\\allow{E0334} accepts the loss")
-              let inner ← elabBlocks { ctx with backendTargets := eff }
-                (body.extract (j + 1) body.size)
-              blocks := blocks.push (.only targets inner)
-            | _ =>
-              diag ctx .E0304 "'\\begin{ifbackend}' needs a {backends} group" pos
-                (help := "write \\begin{ifbackend}{html} ... \\end{ifbackend}")
-              blocks := blocks ++ (← elabBlocks ctx body)
-          else if n == "nav" then
-            -- `{nav}`: the navigation landmark — a group of links, content
-            -- rather than a widget; the links inside are ordinary `\href`s.
-            -- The optional argument declares the instance's own facts:
-            -- `label` (its accessible name; ARIA Landmark Regions asks a
-            -- repeated landmark for a unique label), `pin` (a viewport
-            -- corner: two words, `bottom right`), `offset` (a length off
-            -- both pinned edges), and `reveal` (`scroll`, or the scroll
-            -- length after which the nav is fully revealed). `offset` and
-            -- `reveal` ride the pin: without one they are named as ignored.
-            let mut spec : Ir.NavSpec := {}
-            let mut rest := body
-            if let .took k := scanBracketArg body 0 pos then
-              let j0 := skipSpaces body 0
-              let inner := rawSrc (body.extract (j0 + 1) (k - 1))
-              rest := body.extract k body.size
-              let mut pinned : Option (Bool × Bool) := none
-              let mut offset : Option Dim.SymGlue := none
-              let mut reveal := false
-              let mut revealBy : Option Dim.SymGlue := none
-              for e in Decl.splitEntries inner do
-                match Decl.splitEntry e with
-                | some ("label", v) =>
-                  spec := { spec with label := some v }
-                | some ("pin", v) =>
-                  let words := ((v.split Char.isWhitespace).toList.map
-                    (·.toString)).filter (!·.isEmpty)
-                  let vEdge := words.find? (fun w => w == "top" || w == "bottom")
-                  let hEdge := words.find? (fun w => w == "left" || w == "right")
-                  match vEdge, hEdge with
-                  | some ve, some he =>
-                    if words.length == 2 then
-                      pinned := some (ve == "top", he == "left")
-                    else
-                      diag ctx .E0321
-                        s!"cannot read a corner for 'pin' in 'nav': {v.quote}" (some pos)
-                        (help := "a pin is a corner: two words, like \
-pin = bottom right")
-                  | _, _ =>
-                    diag ctx .E0321
-                      s!"cannot read a corner for 'pin' in 'nav': {v.quote}" pos
-                      (help := "a pin is a corner: two words, like \
-pin = bottom right")
-                | some ("offset", v) =>
-                  match Decl.parseGlue v with
-                  | some g => offset := some g
-                  | none =>
-                    diag ctx .E0321
-                      s!"cannot read a length for 'offset' in 'nav': {v.quote}" (some pos)
-                      (help := "lengths look like 1.5em or 12pt")
-                | some ("reveal", v) =>
-                  if v.trimAscii.toString == "scroll" then
-                    reveal := true
-                  else
-                    match Decl.parseGlue v with
-                    | some g => reveal := true; revealBy := some g
-                    | none =>
-                      diag ctx .E0321
-                        s!"cannot read 'reveal' in 'nav': {v.quote}" (some pos)
-                        (help := "reveal = scroll shows the nav after one \
-viewport of scrolling; a length (reveal = 300px) shows it after that much")
-                | some (key, _) =>
-                  let d := Decl.unknownKey ctx.file "nav" key
-                    ["label", "pin", "offset", "reveal"] pos
-                  modify fun st => { st with diags := st.diags.push d }
-                | none => pure ()
-              match pinned with
-              | some (top, left) =>
-                spec := { spec with pin := some {
-                  top, left
-                  offset := offset.getD {}
-                  reveal
-                  revealBy } }
-              | none =>
-                if offset.isSome || reveal then
-                  let msg := "'nav' options 'offset' and 'reveal' ride a pin; \
-ignored without one"
-                  warnOnce ctx "nav:unpinned" .W0110 msg pos
-                    (help := "declare the corner too: pin = bottom right")
-            blocks := blocks.push (.nav spec (← elabBlocks ctx rest))
-          else if let some (k, env) := lookupUserEnv ctx n then
-            -- A defined wrapper at block level: the halves and the content
-            -- each contribute their blocks, in order. An inline half becomes
-            -- its own paragraph beside block content — the splice that would
-            -- merge them re-elaborates raws under two argument scopes.
-            let (bindings, j) ← takeArgs ctx env.params n body 0 pos
-            let envCtx : Ctx := { ctx with
-              limit := env.cmdLimit, envLimit := k, args := bindings }
-            blocks := blocks ++ (← elabBlocks envCtx env.beginBody)
-            blocks := blocks ++ (← elabBlocks ctx (body.extract j body.size))
-            blocks := blocks ++ (← elabBlocks envCtx env.endBody)
-          else if n == "tikzpicture" then
-            -- The rendered subset: shapes evaluate here — loops unrolled,
-            -- expressions reduced, colours resolved against the palette —
-            -- and everything the subset cannot render is a named loss
-            -- beside the shapes that did (W0334 outside the subset, E0333
-            -- unreadable inside it), never one blanket W0307. Node-body
-            -- math elaborates through the same parser a paragraph's does;
-            -- a formula the parser cannot model degrades to source text,
-            -- named (W0012), as it would in a paragraph.
-            let mathOf (d : Bool) (raws : Array Parse.Raw) :
-                Ir.Inline × Array Picture.PDiag :=
-              let expanded := expandMathList ctx.user ctx.limit #[] raws.toList
-              match MathParse.parseMath expanded with
-              | .ok (l, _) => (.formula d (Parse.rawSrc raws) l, #[])
-              | .error what => (.math d (Parse.rawSrc raws),
-                  #[(.W0012, s!"math with {what} is not rendered yet; the \
-formula is set as source text")])
-            let (pic, pdiags) := Picture.elabPicture ctx.palette body mathOf
-            for (code, msg) in pdiags do
-              warnOnce ctx ("picture:" ++ msg) code msg pos
-                (help := "the rendered subset is \\fill...rectangle, \\node at, \
-\\foreach, and \\pgfmath(truncate)setmacro")
-            unless pic.shapes.isEmpty do
-              blocks := blocks.push (.picture pic)
-            -- An all-refused picture still owes the reader its place: the
-            -- float around it would otherwise collapse to orphan captions.
-            -- A placeholder box marks it, as an unloadable image's does.
-            if pic.shapes.isEmpty && !pdiags.isEmpty then
-              warnOnce ctx "picture:placeholder" .W0362
-                "no part of this picture is inside the rendered subset; a \
-placeholder box marks its place" pos
-                (help := "the box holds the diagram's place; \\allow{W0362} \
-accepts the loss")
-              blocks := blocks.push (.picture (Picture.placeholder DiagCode.W0362.code))
-          else if reservedEnv.contains n then
-            warnOnce ctx ("env:" ++ n) .W0307
-              s!"'\{{n}}' is not implemented yet; its content is not rendered" pos
-          else
-            -- An unknown wrapper's decoration is unknowable; its body is
-            -- not. The arguments on the `\begin` line go with the wrapper.
-            warnOnce ctx ("env:" ++ n) .W0302 s!"unknown environment '\{{n}}'; its body is kept" pos
-              (help := "\\defineenv{name}(...) {begin} {end} declares one")
-            let (keptFrom, unclosed, dropped) := dropEnvArgs body pos
-            let kept := body.extract keptFrom body.size
-            if let some bpos := unclosed then
-              warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
-            warnDroppedArgs ctx n dropped pos
-            blocks := blocks ++ (← elabBlocks ctx kept)
-        | .verb s _ =>
-          i := i + 1
-          blocks := blocks.push (.verbatim none s)
+            pure ⟨({}, j0), hj0⟩
+        have hjf2 : i + 1 ≤ jf := hjf
+        match hgf : raws[jf]? with
+        | some (.group body _) =>
+          have hbw : rawWeightList body.toList + 1 ≤ sliceWeight raws jf := by
+            have := elem_weight_le hgf (Nat.le_refl jf)
+            simp only [rawWeight] at this; omega
+          have hbp : nestedParsList body.toList ≤ slicePars raws jf := by
+            have := elem_pars_le hgf (Nat.le_refl jf)
+            simp only [nestedPars] at this
+            have := nestedParsList_le body.toList; omega
+          have hb2 : sliceWeight raws jf ≤ sliceWeight raws i := by
+            have := sliceWeight_le raws (show i ≤ jf by omega); omega
+          have hb3 : slicePars raws jf ≤ slicePars raws i := by
+            have := slicePars_le raws (show i ≤ jf by omega); omega
+          have hb0 : sliceWeight body 0 = rawWeightList body.toList :=
+            sliceWeight_zero _
+          have hb1 : slicePars body 0 = nestedParsList body.toList :=
+            slicePars_zero _
+          let inner ← elabBlocksGo ctx' body 0 #[] #[] (← get).flowGen
+          have ht1 : sliceWeight raws (jf + 1) < sliceWeight raws i :=
+            sliceWeight_lt raws h (by omega)
+          have ht2 : slicePars raws (jf + 1) ≤ slicePars raws i :=
+            slicePars_le raws (by omega)
+          elabBlocksGo ctx' raws (jf + 1)
+            (blocks.push (.spaced before inner)) #[] gen'
         | _ =>
-          i := i + 1
-    else
-      break
-  if !cur.isEmpty then
-    if let some p ← mkPara ctx cur then
-      blocks := blocks.push p
-  return blocks
+          diag ctx' .E0304 "'\\block' needs a {body}" cpos
+          elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
+      else
+        let (blocks, ⟨j, hij⟩) ← elabCtrlArm ctx' raws i h n cpos blocks
+        have ht1 : sliceWeight raws j < sliceWeight raws i :=
+          sliceWeight_lt raws h hij
+        have ht2 : slicePars raws j ≤ slicePars raws i :=
+          slicePars_le raws (by omega)
+        elabBlocksGo ctx' raws j blocks #[] gen'
+    | _ =>
+      if cur.isEmpty && isSpaceOrPar raws[i] then
+        elabBlocksGo ctx' raws (i + 1) blocks cur gen'
+      else
+        elabBlocksGo ctx' raws (i + 1) blocks (cur.push raws[i]) gen'
+  else
+    flushPara ctx' blocks cur
+termination_by (ctx.envLimit, noteFlag ctx,
+  visParsGo ctx.user ctx.limit + slicePars raws i,
+  visWeightGo ctx.user ctx.limit + sliceWeight raws i, 2, 0)
+decreasing_by all_goals blocks_dec
+
+end
+
+/-- Elaborate raw items as a block sequence. -/
+def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
+  elabBlocksGo ctx raws 0 #[] #[] (← get).flowGen
+
+unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
+unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
+unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
+unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
+unseal takeArgs mkPara flushPara stripMathMeta
+unseal elabMathInline elabMathEnv applyPalette applyTokens parseColSpec
+unseal titleBlocks Picture.elabPicture MathParse.parseMath
+unseal Decl.parseBlock Decl.parseLength Decl.parseGlue skipOptArg takeTitleDecl
+unseal sectionNumber columnWidth cmidRange trimRawEdges
+unseal recordLabel refuseRedef dropEnvArgs skipReservedArgs takeDefine
+unseal Ir.padTableRows Ir.setAltBlocks Ir.plainText
+unseal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
+unseal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
+unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
+unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? overlayFrom
+unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
+unseal scanBracketArg Parse.inputEnvFile?
 
 /-- A declared value as its author would rewrite it: what W0343 quotes back
 when a later declaration overwrites it. -/
@@ -6583,7 +7298,8 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     -- read here.
     let ⟨(cmd?, _), _⟩ ← takeDefine s.ctx decl 0 pos
     let cmd? ← match cmd? with
-      | some cmd => gateRedef s.ctx cmd elabBlocks
+      | some cmd => do
+        if (← gateRedefB s.ctx cmd) then pure (some cmd) else pure none
       | none => pure none
     match cmd? with
     | some cmd =>
