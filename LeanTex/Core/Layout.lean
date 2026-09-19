@@ -205,6 +205,38 @@ theorem furniture_gap_exact (vmargin ink gap : Sp) :
   simp only [furnitureBand, furnEdge, Option.getD]
   exact furn_gap_exact vmargin ink gap
 
+/-- The baseline-to-ink correction, applied exactly once, where the LaTeX
+spellings are read: `\headsep` positions the header's *baseline* against
+the body while the visual gap runs from the ink, and the difference is
+what the line hangs below its baseline — the face's descent. `\footskip`
+reads through the same correction — the symmetric reading — so equal
+declared values mean equal ink gaps: the engine without the strut patch
+equals LaTeX with it (tex.sx/375264's `\advance\footskip by \ht\strutbox`
+is this correction applied by hand, on the one side LaTeX measures
+baseline-to-baseline; a difference that survives the reading is declared
+asymmetry, and N0021 names it). -/
+def furnGapOfSep (sep descent : Sp) : Sp := sep - descent
+
+/-- The inverse reading, for `geometry_roundtrip`: what a gap would be
+declared as. -/
+def furnSepOfGap (gap descent : Sp) : Sp := gap + descent
+
+private theorem furn_roundtrip (sep d vm ink : Int) (h : ink + (sep - d) ≤ vm) :
+    (sep - d) + d = sep ∧ max 0 (vm - ink - (sep - d)) + ink + (sep - d) = vm := by
+  omega
+
+/-- The reader loses nothing: reading a declared sep into the ink gap and
+back yields the declared value — the correction is applied and un-applied
+consistently — and the recovered edge restores the declared margin
+(`top = g₁ + ink + g₂`) whenever the declaration fits it. -/
+theorem geometry_roundtrip (sep descent vmargin ink : Sp)
+    (h : ink + furnGapOfSep sep descent ≤ vmargin) :
+    furnSepOfGap (furnGapOfSep sep descent) descent = sep ∧
+    (furnitureBand vmargin ink (some (furnGapOfSep sep descent))).edge + ink +
+      furnGapOfSep sep descent = vmargin := by
+  simp only [furnGapOfSep, furnSepOfGap, furnitureBand, furnEdge] at h ⊢
+  exact furn_roundtrip sep descent vmargin ink h
+
 /-- The height between the margins: what `0.3\textheight` sizes against. -/
 def Geom.textHeight (g : Geom) : Sp := g.pageH - 2 * g.vmargin
 
@@ -4675,27 +4707,35 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- The running line's ink extents: the body face at the page size for a
   -- declared head or foot and the plain number, the small step for chrome
   -- slots. One `furnitureBand` per side from the same ink and gap is what
-  -- makes the two edges one number (`furniture_symmetric`).
+  -- makes the two edges one number (`furniture_symmetric`); the declared
+  -- gap is read here — the native ink key directly, the LaTeX spellings
+  -- through the one baseline-to-ink correction (`furnGapOfSep`).
   let runInk := scale font.ascent + scale (-font.descent)
   let chromeScale (u : Int) : Sp := u * footSize / (font.unitsPerEm : Int)
   let chromeInk := chromeScale font.ascent + chromeScale (-font.descent)
-  let runBand := furnitureBand geom.vmargin runInk none
-  let chromeBand := furnitureBand geom.vmargin chromeInk none
+  let corr := scale (-font.descent)
+  let gapTop := doc.page.furnitureGap <|> doc.page.headsep.map (furnGapOfSep · corr)
+  let gapBot := doc.page.furnitureGap <|> doc.page.footskip.map (furnGapOfSep · corr)
+  let headFurn := furnitureBand geom.vmargin runInk gapTop
+  let footFurn := furnitureBand geom.vmargin runInk gapBot
+  let chromeFurn := furnitureBand geom.vmargin chromeInk
+    (doc.page.furnitureGap <|>
+      doc.page.footskip.map (furnGapOfSep · (chromeScale (-font.descent))))
   -- A footer reserves its band before anything is placed, so no body line
   -- can land in it (`bodyBottom_clears_footer` is the sufficiency proof).
   -- With the default margins the half margin holds the foot line whole and
   -- the band is zero: an undeclared page is unchanged.
   let geom := if doc.foot.isSome || plainFoot then
-      { geom with footBand := runBand.band }
+      { geom with footBand := footFurn.band }
     else if chromeActive then
-      { geom with footBand := chromeBand.band }
+      { geom with footBand := chromeFurn.band }
     else geom
   -- The running head reserves its band the same way, before anything is
   -- placed (`bodyTop_clears_head` is the sufficiency proof). With the
   -- default margins the half margin holds the head line whole and the
   -- band is zero: an undeclared page is unchanged.
   let geom := if doc.head.isSome then
-      { geom with headBand := runBand.band }
+      { geom with headBand := headFurn.band }
     else geom
   let xHeight := scale font.xHeight
   -- The resolved design is the one resolving site for the document-level
@@ -4782,6 +4822,15 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   }
   let mut b := b0
   let mut prose : Nat := 0
+  -- A declared asymmetry that survives the reading is named: equal gaps
+  -- are the default, and a difference is exactly what the document asked
+  -- for — the hand-struck footskip patch made visible instead of doubled.
+  if let (some gt, some gb) := (gapTop, gapBot) then
+    if gt != gb then
+      b := { b with diags := b.diags.push (Diag.of .N0021
+        (s!"header and footer gaps differ by " ++
+          s!"{(if gt > gb then gt - gb else gb - gt).toPtString}pt as declared; " ++
+          "equal gaps are the default")) }
   -- A heading binds to the text it introduces, so its space above must not
   -- be the smaller of the two (the standard rule; Butterick, "space above
   -- and below": the space below should be smaller so the heading sits
@@ -4920,9 +4969,9 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
       (some { x := bandSlotX geom side w, y := y, size := size, segs := segs,
               setWidth := w }, ds, cache)
-  let headY := furnHeadY runBand (scale font.ascent)
-  let footY := furnFootY runBand geom.pageH (scale (-font.descent))
-  let chromeFootY := furnFootY chromeBand geom.pageH (chromeScale (-font.descent))
+  let headY := furnHeadY headFurn (scale font.ascent)
+  let footY := furnFootY footFurn geom.pageH (scale (-font.descent))
+  let chromeFootY := furnFootY chromeFurn geom.pageH (chromeScale (-font.descent))
   let mutedC := design.muted
   let mut out := pages
   let mut diags := b.diags

@@ -95,6 +95,23 @@ structure PageSpec where
   LaTeX's `plain` page style, spelled natively: `\page{ numbers = on }`
   is `\pagestyle{plain}`, `off` is `\pagestyle{empty}`'s number half. -/
   numbers : Option Bool := none
+  /-- The body-side furniture gap, in ink terms: the distance from the
+  running head's and foot's body-side ink edge to the body area — one knob,
+  both sides, which is what makes a flipped stack line up
+  (`Layout.furniture_symmetric`). The natural declarations are rhythm
+  multiples (`default_rhythm_multiples`' family: the half-unit 6 pt, the
+  unit 12 pt at the 10 pt base). `none` is the default: the furniture
+  hangs from half the margin and the body keeps its margin. -/
+  furnitureGap : Option Sp := none
+  /-- LaTeX's `\headsep`, as declared (the geometry key): it positions the
+  header's *baseline* against the body. `Layout` reads it into the ink gap
+  with the baseline-to-ink correction applied once (`furnGapOfSep`). -/
+  headsep : Option Sp := none
+  /-- LaTeX's `\footskip`, as declared: baseline to baseline. Read through
+  the same correction as `headsep` — the symmetric reading — so equal
+  declared values mean equal visual gaps; a surviving difference is
+  N0021. -/
+  footskip : Option Sp := none
   deriving Repr, BEq, Inhabited
 
 /-- The text block of an undeclared letter page: 26 picas (312 pt).

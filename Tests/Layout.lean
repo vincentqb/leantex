@@ -1437,6 +1437,44 @@ def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet
       p.lines.any (fun l => l.furniture && l.y == footY) &&
       p.lines.all (fun l => l.furniture || l.y + d + Ir.leadingFor geom.fontSize ≤ bodyBottom))
       |>.getD false)
+  -- Declared gaps: the LaTeX spellings read through the one correction
+  -- (`furnGapOfSep`), so equal declared values mean equal gaps — without
+  -- the strut patch (`geometry_roundtrip` holds the reading invertible).
+  let declPre (page : String) : String := "\\documentclass{article}" ++ page ++
+    "\\runninghead{Invented Notes}\\runningfoot{p. \\pagenumber}" ++
+    s!"\\begin\{document}\n{para}\n\\end\{document}"
+  let dsrc := declPre "\\page{ headsep = 20pt, footskip = 20pt }"
+  let (dDoc, dDs) := elabStr dsrc
+  t "declared-gap source clean" (dDs.filter (·.severity == .error)).isEmpty
+  let dGeom := Layout.Geom.ofPage dDoc.page
+  let dOut := layoutOf oneFace dDoc dGeom
+  let dGap := Layout.furnGapOfSep (Dim.pt 20) d
+  let dBand := Layout.furnitureBand dGeom.vmargin (a + d) (some dGap)
+  let dHeadY := Layout.furnHeadY dBand a
+  let dFootY := Layout.furnFootY dBand dGeom.pageH d
+  t "equal declared seps place head and foot from one band"
+    (dOut.pages.all fun p =>
+      p.lines.any (fun l => l.furniture && l.y == dHeadY) &&
+      p.lines.any (fun l => l.furniture && l.y == dFootY))
+  t "the declared gap is honoured exactly on the page"
+    ((dGeom.vmargin + dBand.band) - (dHeadY + d) == dGap &&
+     (dFootY - a) - (dGeom.pageH - dGeom.vmargin - dBand.band) == dGap)
+  t "equal declared seps carry no note" (!dOut.diags.any (·.code == "N0021"))
+  let (nDoc, _) := elabStr (declPre "\\page{ headsep = 20pt, footskip = 30pt }")
+  let nOut := layoutOf oneFace nDoc
+  t "differing declared seps are named as declared, once"
+    ((nOut.diags.filter (·.code == "N0021")).size == 1 &&
+      nOut.diags.all fun dg => dg.code != "N0021" || dg.severity == .note)
+  -- The native spelling: one ink-terms knob, both sides at once.
+  let (fDoc, _) := elabStr (declPre "\\page{ furnituregap = 12pt }")
+  let fGeom := Layout.Geom.ofPage fDoc.page
+  let fOut := layoutOf oneFace fDoc fGeom
+  let fBand := Layout.furnitureBand fGeom.vmargin (a + d) (some (Dim.pt 12))
+  t "the native furnituregap places both sides"
+    (fOut.pages.all fun p =>
+      p.lines.any (fun l => l.furniture && l.y == Layout.furnHeadY fBand a) &&
+      p.lines.any (fun l => l.furniture && l.y == Layout.furnFootY fBand fGeom.pageH d))
+  t "the native gap carries no note" (!fOut.diags.any (·.code == "N0021"))
 
 /-- `plain_numbers_every_page`, as census facts over `Layout.Out`: under
 the flow model's default page style — `plain`, the one article.cls

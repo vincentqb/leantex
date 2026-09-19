@@ -291,7 +291,8 @@ def runningCtrl : List String := ["runninghead", "runningfoot"]
 def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin",
    "textwidth", "textheight", "leading", "parskip",
-   "measure", "fontsize", "bleed", "hyphenate", "justify", "numbers"]
+   "measure", "fontsize", "bleed", "hyphenate", "justify", "numbers",
+   "furnituregap", "headsep", "footskip"]
 
 /-- The `\page` keys that declare the page's physical extent. Exactly these
 claim the page as declared (`sawPage` in `elabDoc`), keeping every value
@@ -6903,6 +6904,18 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "off" | "false" => spec := { spec with numbers := some false }
       | _ =>
         evs := say evs .E0323 s!"'numbers' in '\\page' expects on or off, got '{v}'"
+    -- The furniture gaps: the native key speaks in ink terms and sets both
+    -- sides; the LaTeX spellings carry their baseline semantics to the one
+    -- correction site in Layout (`furnGapOfSep`).
+    | "furnituregap", v =>
+      if let some d := asDim v then spec := { spec with furnitureGap := some d }
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "furnituregap" "a dimension" v pos))
+    | "headsep", v =>
+      if let some d := asDim v then spec := { spec with headsep := some d }
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "headsep" "a dimension" v pos))
+    | "footskip", v =>
+      if let some d := asDim v then spec := { spec with footskip := some d }
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "footskip" "a dimension" v pos))
     | key, v =>
       if key == "header" || key == "footer" then
         -- The feature exists, just not as a page key: running content is
@@ -6917,7 +6930,11 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
           else "a dimension"
         evs := evs.push (.say (Decl.wrongType ctx.file "page" key expected v pos))
       else
-        evs := evs.push (.say (Decl.unknownKey ctx.file "page" key pageKeys pos))
+        -- The help names the native surface; `headsep`/`footskip` stay
+        -- accepted as the LaTeX spellings of `furnituregap` (read through
+        -- the baseline-to-ink correction), not advertised beside it.
+        evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
+          (pageKeys.filter (!["headsep", "footskip"].contains ·)) pos))
     -- Every failing arm above records a diagnostic, so a clean count means
     -- the entry applied: record it, and warn if it overwrote (W0343).
     if evs.size == before then
