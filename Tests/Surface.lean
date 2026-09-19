@@ -1978,3 +1978,56 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "apply: a document with no bibliography marker is untouched"
     (Bib.apply #[("refs", bib)] { body := #[.para #[.cite false #["a"]]] } ==
       ({ body := #[.para #[.cite false #["a"]]] }, #[]))
+
+/-- The `\input`-parity cases for the local `.sty` splice: the splice runs
+inside the driver's own fixpoint (`Input.expandInputs`), so a
+`\usepackage` inside an `\input`'ed preamble file, a `\RequirePackage`
+inside a spliced `.sty`, and an `\input` inside a `.sty` all resolve —
+each degraded to a misleading W0103 "not supported" while the splice was
+one-shot, top-level-only, and ran after `\input` expansion. A `.sty` that
+`\RequirePackage`s itself hits the `\input` nesting bound (E0501), never
+loops. Fixtures live in tests/corpus/sty-parity, synthetic and invented. -/
+def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let run (name : String) :
+      IO (Ir.Doc × Array Diag × Array (String × Option String × Pos)) := do
+    let path := s!"tests/corpus/sty-parity/{name}.tex"
+    let src ← IO.FS.readFile path
+    let (raws, _) := Parse.parse path (Lex.lex path src).1
+    let (raws, inputDs, spliced) ← Input.expandInputs path raws
+    let (doc, ds) := Elab.runRaws path raws
+    -- N0020 built after elaboration, exactly as Main.frontend builds it.
+    let ds := ds ++ spliced.map fun (sty, srcF, pos) =>
+      Compat.styRead (srcF.getD path) sty pos ds
+    return (doc, inputDs ++ ds, spliced)
+  -- (a) was: W0103 "package 'venuea' is not supported" — the candidate scan
+  -- saw only top-level raws and the \input wrapper hid the \usepackage.
+  let (docA, dsA, splicedA) ← run "inputpre"
+  t "parity a: a usepackage inside an input'ed preamble file splices — never W0103"
+    (dsA.all (·.code != "W0103") && docA.page.hmargin == Dim.pt 108 &&
+     splicedA.toList.map (·.1) == ["venuea.sty"])
+  t "parity a: N0020 quotes the counts and names the file that asked"
+    (dsA.any fun d => d.code == "N0020" &&
+      (d.message.splitOn "honoured: 1, named where they stand: 0").length == 2 &&
+      d.span.any (·.file.endsWith "inputpre-preamble.tex"))
+  -- (b) was: W0103 at venueb.sty:1 — the diagnostic named the right file,
+  -- but venueb2.sty beside the document was never read.
+  let (docB, dsB, splicedB) ← run "requirechain"
+  t "parity b: a RequirePackage inside a spliced .sty reads the file beside the document"
+    (dsB.all (·.code != "W0103") &&
+     docB.page.hmargin == Dim.pt 108 && docB.page.vmargin == Dim.pt 108 &&
+     splicedB.toList.map (·.1) == ["venueb.sty", "venueb2.sty"] &&
+     Compat.styCounts "venueb.sty" dsB == (1, 0) &&
+     Compat.styCounts "venueb2.sty" dsB == (1, 0))
+  t "parity b: the nested read's N0020 names the .sty that asked, not the document"
+    (splicedB.toList.map (·.2.1) == [none, some "venueb.sty"] &&
+     dsB.any fun d => d.code == "N0020" && d.span.any (·.file == "venueb.sty"))
+  -- (c) was: unexpandable by frontend order — expandInputs ran before the
+  -- one-shot splice, so an \input inside a .sty could never expand.
+  let (docC, dsC, _) ← run "styinput"
+  t "parity c: an input inside a .sty expands on the next pass"
+    (dsC.all (fun d => d.code != "W0103" && d.code != "E0502") &&
+     docC.page.hmargin == Dim.pt 108)
+  let (_, dsD, _) ← run "styloop"
+  t "a .sty that RequirePackages itself hits the nesting bound, never loops"
+    (dsD.any (·.code == "E0501"))

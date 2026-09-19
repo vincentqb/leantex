@@ -418,94 +418,6 @@ def loadImages (file : String) (doc : Ir.Doc) : IO (Image.Store × Array Diag) :
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
 
-/-! `\input{name}` splices a file into the parsed tree. Reading a file is an
-effect, so it happens here in the driver rather than in the core; the core
-sees one tree, as if the document had been written in one file. One pass
-splices each `\input` without descending into what it read; nested inputs
-resolve on the next pass, and eight passes bound the depth the way TeX's input
-stack does. Every pass is a structural walk, so nothing here is partial. -/
-
-def readInput (dir : System.FilePath) (name : String) (pos : Pos) :
-    IO (Array Parse.Raw × Array Diag) := do
-  let name := if name.endsWith ".tex" then name else name ++ ".tex"
-  let path := dir / name
-  if ← path.pathExists then
-    let text ← IO.FS.readFile path
-    let (toks, lexDs) := Lex.lex path.toString text
-    let (sub, parseDs) := Parse.parse path.toString toks
-    -- Wrapped, not spliced flat: a diagnostic inside the file must name the
-    -- file, and the wrapper is what carries that name to the elaborator.
-    return (#[.env (Parse.inputEnv path.toString) sub pos], lexDs ++ parseDs)
-  else
-    let d := DriverDiag.inputMissing name (some ⟨dir.toString, pos⟩)
-    return (#[], #[d])
-
-mutual
-
-/-- One splicing pass. `out` accumulates so the walk is linear: prepending to
-the recursive result would copy it at every element. -/
-def spliceList (dir : System.FilePath) (out : Array Parse.Raw) (ds : Array Diag) (hit : Bool) :
-    List Parse.Raw → IO (Array Parse.Raw × Array Diag × Bool)
-  | [] => pure (out, ds, hit)
-  | .ctrl "input" pos :: .group nameRaws _ :: rest
-  | .ctrl "include" pos :: .group nameRaws _ :: rest => do
-    let (sub, ds') ← readInput dir (Parse.rawSrc nameRaws) pos
-    spliceList dir (out ++ sub) (ds ++ ds') true rest
-  | r :: rest => do
-    let (r', ds', hit') ← spliceOne dir r
-    spliceList dir (out.push r') (ds ++ ds') (hit || hit') rest
-
-def spliceOne (dir : System.FilePath) : Parse.Raw → IO (Parse.Raw × Array Diag × Bool)
-  | .env n body p => do
-    let (body', ds, hit) ← spliceList dir #[] #[] false body.toList
-    return (.env n body' p, ds, hit)
-  | .group body p => do
-    let (body', ds, hit) ← spliceList dir #[] #[] false body.toList
-    return (.group body' p, ds, hit)
-  | r => pure (r, #[], false)
-
-end
-
-def expandInputs (file : String) (raws : Array Parse.Raw) :
-    IO (Array Parse.Raw × Array Diag) := do
-  let dir := (System.FilePath.mk file).parent.getD "."
-  let mut raws := raws
-  let mut diags : Array Diag := #[]
-  for _ in [0:8] do
-    let (raws', ds, hit) ← spliceList dir #[] #[] false raws.toList
-    raws := raws'
-    diags := diags ++ ds
-    unless hit do return (raws, diags)
-  let (_, _, still) ← spliceList dir #[] #[] false raws.toList
-  if still then
-    diags := diags.push DriverDiag.inputTooDeep
-  return (raws, diags)
-
-/-- `\usepackage{p}` where `p.sty` exists beside the document is LaTeX's
-own rule (ltfiles.dtx `\@onefilewithoptions`: find `p.sty` on the input
-path and read it as TeX). Reading the file is this driver's effect, the
-same door `\input` uses; the splice and the option machinery are the pure
-core's (`Compat.applyLocalSty`), which wraps the file's text as its own
-input fragment so every diagnostic names the `.sty` and its line. Where
-no such file exists, the CTAN dispatch (W0103) applies unchanged. The
-style file's own lexer and parser diagnostics are dropped: the file is
-not the engine's to lint, and the splice carries its own positions. -/
-def expandLocalSty (file : String) (raws : Array Parse.Raw) :
-    IO (Array Parse.Raw × Array (String × Pos)) := do
-  let candidates := Compat.localStyCandidates raws
-  if candidates.isEmpty then return (raws, #[])
-  let dir := (System.FilePath.mk file).parent.getD "."
-  let mut stys : Array (String × Array Parse.Raw) := #[]
-  for name in candidates do
-    let path := dir / (name ++ ".sty")
-    if ← path.pathExists then
-      let text ← IO.FS.readFile path
-      let (toks, _) := Lex.lex (name ++ ".sty") text
-      let (sraws, _) := Parse.parse (name ++ ".sty") toks
-      stys := stys.push (name, sraws)
-  if stys.isEmpty then return (raws, #[])
-  return Compat.applyLocalSty raws stys
-
 /-- Read and decode the file, then run the front end, reporting phases.
 Returns the document, all diagnostics, and whether reading itself failed. -/
 def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := do
@@ -532,14 +444,16 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := d
     let (raws, parseDiags) := Parse.parse file toks
     ui.phase "parse" s!"{raws.size} top-level nodes" (← since t)
     let t ← IO.monoMsNow
-    let (raws, inputDiags) ← expandInputs file raws
-    let (raws, spliced) ← expandLocalSty file raws
+    let (raws, inputDiags, spliced) ← Input.expandInputs file raws
     let (doc, elabDiags) := Elab.runRaws file raws
       (lexDiags ++ parseDiags ++ inputDiags)
     -- N0020 says a `.sty` was read and how much of it took; its counts
     -- are read off the elaborated diagnostics, so it is built after them.
+    -- A record from inside an `\input` wrapper names that file, not the
+    -- document: the `\RequirePackage` lives there.
     let elabDiags := elabDiags ++
-      spliced.map fun (sty, pos) => Compat.styRead file sty pos elabDiags
+      spliced.map fun (sty, src, pos) =>
+        Compat.styRead (src.getD file) sty pos elabDiags
     ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
     let t ← IO.monoMsNow
     let (doc, bibDiags) ← resolveBibliography file doc

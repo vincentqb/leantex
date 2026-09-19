@@ -129,7 +129,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
     let draws := (Parse.parse "t" (Lex.lex "t" "\\usepackage{venueguide}\n").1).1
     let (raws, spliced) := Compat.applyLocalSty draws #[("venueguide", sraws)]
     let ds := (Elab.runRaws "t" raws).2
-    spliced.map fun (s, p) => Compat.styRead "t" s p ds
+    spliced.map fun (s, src, p) => Compat.styRead (src.getD "t") s p ds
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL one (dvDoc "" "$x^2$")
   | .W0005 => dvL one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"

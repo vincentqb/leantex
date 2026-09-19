@@ -1613,25 +1613,44 @@ wrapper carries the file name). Reading the file is the driver's effect
 pure. Where the file does not exist, the CTAN dispatch (W0103) applies
 unchanged. -/
 
-/-- The package names a top-level `\\usepackage`/`\\RequirePackage` asks for
-that the engine does not know: the candidates a local `.sty` beside the
+mutual
+
+/-- One level of the candidate scan: the list drives the recursion, the
+array gives argument access, `skip` counts elements a match already
+consumed (`rewriteList`'s shape). -/
+private def styCandList (raws : Array Raw) (out : Array String) :
+    List Raw → Nat → Nat → Array String
+  | [], _, _ => out
+  | _ :: rest, i, skip + 1 => styCandList raws out rest (i + 1) skip
+  | .ctrl "usepackage" _ :: rest, i, 0
+  | .ctrl "RequirePackage" _ :: rest, i, 0 =>
+    let (_, j) := takeOpt raws (i + 1)
+    let (args, k) := takeGroups raws j 1
+    let out := ((rawSrc (args.getD 0 #[])).splitOn ",").foldl (init := out) fun out p =>
+      let p := p.trimAscii.toString
+      if p.isEmpty || nativePackages.contains p || out.contains p then out
+      else out.push p
+    styCandList raws out rest (i + 1) (k - (i + 1))
+  | r :: rest, i, 0 => styCandList raws (styCandRaw out r) rest (i + 1) 0
+
+/-- Descend into an `\\input` wrapper — a `\\usepackage` in an `\\input`'ed
+preamble file, or a `\\RequirePackage` in an already spliced `.sty`, asks
+exactly as a top-level one does. The document environment is not a
+wrapper, so a body-position `\\usepackage` is never a candidate: its
+placement refusal is `rewriteCtrl`'s. -/
+private def styCandRaw (out : Array String) : Raw → Array String
+  | .env n body _ =>
+    if (Parse.inputEnvFile? n).isSome then styCandList body out body.toList 0 0
+    else out
+  | _ => out
+
+end
+
+/-- The package names the preamble asks for — at any `\\input` depth — that
+the engine does not know: the candidates a local `.sty` beside the
 document may answer. -/
-def localStyCandidates (raws : Array Raw) : Array String := Id.run do
-  let mut out : Array String := #[]
-  let mut i := 0
-  for _ in [0:raws.size] do
-    if h : i < raws.size then
-      match raws[i] with
-      | .ctrl "usepackage" _ | .ctrl "RequirePackage" _ =>
-        let (_, j) := takeOpt raws (i + 1)
-        let (args, k) := takeGroups raws j 1
-        for p in (rawSrc (args.getD 0 #[])).splitOn "," do
-          let p := p.trimAscii.toString
-          unless p.isEmpty || nativePackages.contains p || out.contains p do
-            out := out.push p
-        i := max k (i + 1)
-      | _ => i := i + 1
-  return out
+def localStyCandidates (raws : Array Raw) : Array String :=
+  styCandList raws #[] raws.toList 0 0
 
 /-- LaTeX's package option machinery, the minimum (ltclass.dtx):
 `\\DeclareOption{name}{body}` binds a body to an option name,
@@ -1679,62 +1698,92 @@ def resolveStyOptions (passed : List String) (raws : Array Raw) : Array Raw := I
         i := i + 1
   return (out : Array Raw)
 
+/-- The replacement for one `\\usepackage`/`\\RequirePackage` at `i`, given
+the style files read: the raws standing in its place, the splice records,
+and the index past its arguments — `none` when nothing it names is a local
+style file, leaving the command to the CTAN dispatch. -/
+private def spliceUse (stys : Array (String × Array Raw)) (raws : Array Raw)
+    (cn : String) (pos : Pos) (i : Nat) :
+    Option (Array Raw × Array (String × Option String × Pos) × Nat) := Id.run do
+  if stys.isEmpty then return none
+  let (opt, j) := takeOpt raws (i + 1)
+  let (args, k) := takeGroups raws j 1
+  if args.isEmpty then return none
+  let pkgs := (rawSrc (args.getD 0 #[])).splitOn "," |>.map (·.trimAscii.toString)
+  let passed := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+  let mut keep : Array String := #[]
+  let mut splice : Array Raw := #[]
+  let mut recs : Array (String × Option String × Pos) := #[]
+  for p in pkgs do
+    match stys.find? (·.1 == p) with
+    | some (_, sraws) =>
+      splice := splice.push
+        (.env (Parse.inputEnv (p ++ ".sty")) (resolveStyOptions passed sraws) pos)
+      recs := recs.push (p ++ ".sty", none, pos)
+    | none => keep := keep.push p
+  if recs.isEmpty then return none
+  let mut out : Array Raw := #[]
+  unless keep.isEmpty do
+    out := out.push (.ctrl cn pos)
+    for r in raws.extract (i + 1) j do
+      out := out.push r
+    out := out.push (.group #[.word (String.intercalate "," keep.toList) pos] pos)
+  return some (out ++ splice, recs, k)
+
+mutual
+
+/-- One level of the splice: the list drives the recursion, the array gives
+argument access, `skip` counts elements a replacement already consumed
+(`rewriteList`'s shape). -/
+-- conserves: none — replacement is the walk's job: a `\usepackage` of a
+-- local file becomes that file's content.
+private def applyStyList (stys : Array (String × Array Raw)) (raws : Array Raw)
+    (out : Array Raw) (recs : Array (String × Option String × Pos)) :
+    List Raw → Nat → Nat → Array Raw × Array (String × Option String × Pos)
+  | [], _, _ => (out, recs)
+  | _ :: rest, i, skip + 1 => applyStyList stys raws out recs rest (i + 1) skip
+  | .ctrl cn pos :: rest, i, 0 =>
+    if cn == "usepackage" || cn == "RequirePackage" then
+      match spliceUse stys raws cn pos i with
+      | some (repl, rs, k) =>
+        applyStyList stys raws (out ++ repl) (recs ++ rs) rest (i + 1) (k - (i + 1))
+      | none => applyStyList stys raws (out.push (.ctrl cn pos)) recs rest (i + 1) 0
+    else
+      applyStyList stys raws (out.push (.ctrl cn pos)) recs rest (i + 1) 0
+  | r :: rest, i, 0 =>
+    let (r', rs) := applyStyRaw stys r
+    applyStyList stys raws (out.push r') (recs ++ rs) rest (i + 1) 0
+
+/-- Descend into an `\\input` wrapper, splicing inside it as at the top
+level — `\\input` parity. A record from inside a wrapper carries the
+wrapper's file, so its N0020 names the `\\RequirePackage`'s own file; the
+innermost wrapper fills it first and deeper nesting keeps it. The
+document environment is not a wrapper: a body-position `\\usepackage` is
+never spliced (its placement refusal is `rewriteCtrl`'s). -/
+private def applyStyRaw (stys : Array (String × Array Raw)) :
+    Raw → Raw × Array (String × Option String × Pos)
+  | .env n body p =>
+    if (Parse.inputEnvFile? n).isSome then
+      let (body', rs) := applyStyList stys body #[] #[] body.toList 0 0
+      (.env n body' p, rs.map fun (s, f0, pos) =>
+        (s, f0 <|> Parse.inputEnvFile? n, pos))
+    else (.env n body p, #[])
+  | r => (r, #[])
+
+end
+
 /-- Splice the local style files the driver found: each `\\usepackage` of
-one becomes the file's own content, options resolved
-(`resolveStyOptions`), wrapped as that file's input fragment so every
-downstream diagnostic names the `.sty` and its line. The file's
+one — at any `\\input` depth — becomes the file's own content, options
+resolved (`resolveStyOptions`), wrapped as that file's input fragment so
+every downstream diagnostic names the `.sty` and its line. The file's
 constructs are then honoured or named individually by the same passes a
 document goes through — no second rule set. Returns the splice records
-(file, position); the read itself is named once per file (N0020), built
-after elaboration (`styRead`), when the honoured/named counts exist. -/
-def applyLocalSty (raws : Array Raw)
-    (stys : Array (String × Array Raw)) : Array Raw × Array (String × Pos) := Id.run do
-  let mut out : Array Raw := #[]
-  let mut spliced : Array (String × Pos) := #[]
-  let mut i := 0
-  for _ in [0:raws.size] do
-    if h : i < raws.size then
-      match raws[i] with
-      | .ctrl cn pos =>
-        if cn == "usepackage" || cn == "RequirePackage" then
-          let (opt, j) := takeOpt raws (i + 1)
-          let (args, k) := takeGroups raws j 1
-          if args.isEmpty then
-            out := out.push raws[i]
-            i := i + 1
-          else
-            let pkgs := (rawSrc (args.getD 0 #[])).splitOn ","
-              |>.map (·.trimAscii.toString)
-            let passed := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-            let mut keep : Array String := #[]
-            let mut splice : Array Raw := #[]
-            for p in pkgs do
-              match stys.find? (·.1 == p) with
-              | some (_, sraws) =>
-                splice := splice.push
-                  (.env (Parse.inputEnv (p ++ ".sty")) (resolveStyOptions passed sraws) pos)
-                spliced := spliced.push (p ++ ".sty", pos)
-              | none => keep := keep.push p
-            if keep.size == pkgs.length then
-              for r in raws.extract i k do
-                out := out.push r
-            else
-              unless keep.isEmpty do
-                out := out.push (.ctrl cn pos)
-                for r in raws.extract (i + 1) j do
-                  out := out.push r
-                out := out.push
-                  (.group #[.word (String.intercalate "," keep.toList) pos] pos)
-              for r in splice do
-                out := out.push r
-            i := max k (i + 1)
-        else
-          out := out.push raws[i]
-          i := i + 1
-      | r =>
-        out := out.push r
-        i := i + 1
-  return (out, spliced)
+(file, enclosing file when not the document itself, position); the read
+is named once per record (N0020), built after elaboration (`styRead`),
+when the honoured/named counts exist. -/
+def applyLocalSty (raws : Array Raw) (stys : Array (String × Array Raw)) :
+    Array Raw × Array (String × Option String × Pos) :=
+  applyStyList stys raws #[] #[] raws.toList 0 0
 
 /-- What a spliced `.sty` yielded, counted after elaboration: a construct
 was honoured when its translation note (N0100) carries the file, and
