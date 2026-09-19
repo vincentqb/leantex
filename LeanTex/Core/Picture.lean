@@ -412,16 +412,29 @@ the bindings live. -/
 inductive Stmt where
   | fill (toks : Array Tok)
   | node (toks : Array Tok)
+  | draw (toks : Array Tok)
   /-- `\pgfmathsetmacro`, and `\pgfmathtruncatemacro` when `trunc`. -/
   | set (name : String) (expr : Array Tok) (trunc : Bool)
   | foreach (vars : Array String) (list : Array Tok) (body : List Stmt)
   deriving Repr, Inhabited
 
+/-- The `;`-terminated statement kinds the machine collects. -/
+private inductive StKind where
+  | fill
+  | node
+  | draw
+  deriving Repr, BEq, Inhabited
+
+private def StKind.name : StKind → String
+  | .fill => "fill"
+  | .node => "node"
+  | .draw => "draw"
+
 /-- What the statement machine is in the middle of. -/
 private inductive Mode where
   | top
-  /-- Collecting a `\fill`/`\node` statement's tokens to its `;`. -/
-  | stmt (isFill : Bool) (acc : Array Tok)
+  /-- Collecting a `\fill`/`\node`/`\draw` statement's tokens to its `;`. -/
+  | stmt (kind : StKind) (acc : Array Tok)
   /-- After `\pgfmathsetmacro` (or the truncating form), expecting `{\name}`. -/
   | sname (trunc : Bool)
   /-- After `{\name}`, expecting the `{expr}` group. -/
@@ -472,8 +485,9 @@ private def step (t : Tok) (st : PSt) : PSt :=
   match st.mode with
   | .top =>
     match t with
-    | .ctrl "fill" => { st with mode := .stmt true #[] }
-    | .ctrl "node" => { st with mode := .stmt false #[] }
+    | .ctrl "fill" => { st with mode := .stmt .fill #[] }
+    | .ctrl "node" => { st with mode := .stmt .node #[] }
+    | .ctrl "draw" => { st with mode := .stmt .draw #[] }
     | .ctrl "foreach" => { st with mode := .fvars #[] }
     | .ctrl "pgfmathsetmacro" => { st with mode := .sname false }
     | .ctrl "pgfmathtruncatemacro" => { st with mode := .sname true }
@@ -485,10 +499,13 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .num _ => { (st.outside "a bare number") with mode := .skip }
     | .sym c => { (st.outside s!"'{c}'") with mode := .skip }
     | .group _ => { (st.outside "'{...}'") with mode := .skip }
-  | .stmt isFill acc =>
+  | .stmt kind acc =>
     match t with
-    | .sym ';' => st.finish (if isFill then .fill acc else .node acc)
-    | _ => { st with mode := .stmt isFill (acc.push t) }
+    | .sym ';' => st.finish (match kind with
+        | .fill => .fill acc
+        | .node => .node acc
+        | .draw => .draw acc)
+    | _ => { st with mode := .stmt kind (acc.push t) }
   | .sname trunc =>
     match t with
     | .space => st
@@ -526,9 +543,11 @@ private def step (t : Tok) (st : PSt) : PSt :=
     | .ctrl "foreach" =>
       { st with pending := st.pending.push (vars, list), mode := .fvars #[] }
     | .ctrl "fill" =>
-      { st with pending := st.pending.push (vars, list), mode := .stmt true #[] }
+      { st with pending := st.pending.push (vars, list), mode := .stmt .fill #[] }
     | .ctrl "node" =>
-      { st with pending := st.pending.push (vars, list), mode := .stmt false #[] }
+      { st with pending := st.pending.push (vars, list), mode := .stmt .node #[] }
+    | .ctrl "draw" =>
+      { st with pending := st.pending.push (vars, list), mode := .stmt .draw #[] }
     -- `.group` never reaches here: `parseToks` owns that arm.
     | _ =>
       { (st.outside "this '\\foreach' body")
@@ -550,9 +569,9 @@ def parseList : List Tok → PSt → PSt
     match st.mode with
     | .top => st
     | .skip => { st with mode := .top, pending := #[] }
-    | .stmt isFill _ =>
+    | .stmt kind _ =>
       { st.diag .E0333
-          s!"'\\{if isFill then "fill" else "node"}' misses its ';'; the shape is not drawn"
+          s!"'\\{kind.name}' misses its ';'; the shape is not drawn"
         with mode := .top, pending := #[] }
     | _ =>
       { st.diag .E0333 "a picture statement ends mid-construct; it is not drawn"
@@ -665,12 +684,220 @@ private def readCoord (toks : Array Tok) (i : Nat) :
   | [xs, ys] => return .ok ((xs, ys), j + 1)
   | _ => return .error "a coordinate needs exactly 'x, y'"
 
+-- Border anchoring: where an edge meets a node's outline — pgf's
+-- `\pgfpointshapeborder`, in closed form per shape.
+
+/-- Integer square root of an `Int` (callers pass sums of squares). -/
+def isqrt (n : Int) : Int := (Nat.sqrt n.toNat : Nat)
+
+/-- Where the ray from a rectangle's centre `(cx, cy)` (half-extents
+`a`, `b`) toward `(qx, qy)` crosses its border — `\pgfpointshapeborder`
+for the rectangle shape (pgf manual, Nodes and Shapes), as algebra: the
+dominant axis (`|dy|·a ≤ |dx|·b`) decides which edge, that coordinate is
+exact, and the other rounds one exact rational (`rectBorder_exact`). A
+ray with no direction answers the centre. -/
+def rectBorder (cx cy a b qx qy : Int) : Int × Int :=
+  let dx := qx - cx
+  let dy := qy - cy
+  let adx : Int := dx.natAbs
+  let ady : Int := dy.natAbs
+  if dx = 0 ∧ dy = 0 then (cx, cy)
+  else if ady * a ≤ adx * b then
+    ((if dx > 0 then cx + a else cx - a), cy + dy * a / adx)
+  else
+    (cx + dx * b / ady, if dy > 0 then cy + b else cy - b)
+
+/-- Division bound: `x ≤ c·q` gives `x/c ≤ q` (positive `c`). -/
+private theorem ediv_le_of_le_mul {x c q : Int} (hc : 0 < c) (h : x ≤ c * q) :
+    x / c ≤ q := by
+  have h2 := Int.ediv_le_ediv hc h
+  rwa [Int.mul_ediv_cancel_left _ (Int.ne_of_gt hc)] at h2
+
+/-- Division bound: `c·q ≤ x` gives `q ≤ x/c` (positive `c`). -/
+private theorem le_ediv_of_mul_le {x c q : Int} (hc : 0 < c) (h : c * q ≤ x) :
+    q ≤ x / c := by
+  have h2 := Int.ediv_le_ediv hc h
+  rwa [Int.mul_ediv_cancel_left _ (Int.ne_of_gt hc)] at h2
+
+/-- An edge between two nodes starts and ends on their borders — the
+rectangle half: the anchor lands **on** the border (the dominant
+coordinate sits exactly on an edge; a directionless ray answers the
+centre) and never outside it (both coordinates stay within the
+extents). Sourced at `rectBorder`; the one division is exact on the
+dominant axis and a single rounding on the other. -/
+theorem rectBorder_exact (cx cy a b qx qy : Int) (ha : 0 < a) (hb : 0 < b) :
+    ((rectBorder cx cy a b qx qy).1 = cx - a ∨ (rectBorder cx cy a b qx qy).1 = cx + a ∨
+     (rectBorder cx cy a b qx qy).2 = cy - b ∨ (rectBorder cx cy a b qx qy).2 = cy + b ∨
+     (qx = cx ∧ qy = cy)) ∧
+    cx - a ≤ (rectBorder cx cy a b qx qy).1 ∧ (rectBorder cx cy a b qx qy).1 ≤ cx + a ∧
+    cy - b ≤ (rectBorder cx cy a b qx qy).2 ∧ (rectBorder cx cy a b qx qy).2 ≤ cy + b := by
+  simp only [rectBorder]
+  split
+  · next hz =>
+    dsimp only
+    exact ⟨.inr (.inr (.inr (.inr (by omega)))), by omega, by omega, by omega, by omega⟩
+  · next hz =>
+    split
+    · next hle =>
+      dsimp only
+      -- The vertical-edge branch: dx ≠ 0 (a zero dx with a nonzero dy
+      -- fails the branch test, since ady·a ≥ a > 0).
+      have hdx : qx - cx ≠ 0 := by
+        intro h0
+        rw [h0] at hle
+        simp only [Int.natAbs_zero, Int.natCast_zero, Int.zero_mul] at hle
+        have h1 : (1 : Int) * a ≤ ((qy - cy).natAbs : Int) * a :=
+          Int.mul_le_mul_of_nonneg_right (by omega) (by omega)
+        rw [Int.one_mul] at h1
+        omega
+      have hpos : (0 : Int) < ((qx - cx).natAbs : Int) := by omega
+      have hup : (qy - cy) * a ≤ ((qx - cx).natAbs : Int) * b := by
+        have h1 : (qy - cy) * a ≤ ((qy - cy).natAbs : Int) * a :=
+          Int.mul_le_mul_of_nonneg_right (by omega) (by omega)
+        omega
+      have hlo : ((qx - cx).natAbs : Int) * (-b) ≤ (qy - cy) * a := by
+        have h1 : (-(qy - cy)) * a ≤ ((qy - cy).natAbs : Int) * a :=
+          Int.mul_le_mul_of_nonneg_right (by omega) (by omega)
+        have h2 : ((qx - cx).natAbs : Int) * (-b)
+            = -(((qx - cx).natAbs : Int) * b) := by
+          rw [Int.mul_neg]
+        rw [Int.neg_mul] at h1
+        omega
+      have hy1 := ediv_le_of_le_mul hpos hup
+      have hy2 := le_ediv_of_mul_le hpos hlo
+      constructor
+      · split
+        · exact .inr (.inl rfl)
+        · exact .inl rfl
+      · refine ⟨?_, ?_, by omega, by omega⟩ <;> split <;> omega
+    · next hgt =>
+      dsimp only
+      -- The horizontal-edge branch: dy ≠ 0 (both-zero was the first
+      -- branch, and dy = 0 with dx ≠ 0 satisfies the vertical test).
+      have hdy : qy - cy ≠ 0 := by
+        intro h0
+        rw [h0] at hgt
+        simp only [Int.natAbs_zero, Int.natCast_zero, Int.zero_mul] at hgt
+        have h1 : (0 : Int) ≤ ((qx - cx).natAbs : Int) * b :=
+          Int.mul_nonneg (by omega) (by omega)
+        omega
+      have hpos : (0 : Int) < ((qy - cy).natAbs : Int) := by omega
+      have hup : (qx - cx) * b ≤ ((qy - cy).natAbs : Int) * a := by
+        have h1 : (qx - cx) * b ≤ ((qx - cx).natAbs : Int) * b :=
+          Int.mul_le_mul_of_nonneg_right (by omega) (by omega)
+        omega
+      have hlo : ((qy - cy).natAbs : Int) * (-a) ≤ (qx - cx) * b := by
+        have h1 : (-(qx - cx)) * b ≤ ((qx - cx).natAbs : Int) * b :=
+          Int.mul_le_mul_of_nonneg_right (by omega) (by omega)
+        have h2 : ((qy - cy).natAbs : Int) * (-a)
+            = -(((qy - cy).natAbs : Int) * a) := by
+          rw [Int.mul_neg]
+        rw [Int.neg_mul] at h1
+        omega
+      have hx1 := ediv_le_of_le_mul hpos hup
+      have hx2 := le_ediv_of_mul_le hpos hlo
+      constructor
+      · split
+        · exact .inr (.inr (.inr (.inl rfl)))
+        · exact .inr (.inr (.inl rfl))
+      · refine ⟨by omega, by omega, ?_, ?_⟩ <;> split <;> omega
+
+/-- Where the ray from a circle's centre toward `(qx, qy)` meets its
+border: `c + r·d/‖d‖`, the normalisation through one integer square
+root — `\pgfpointshapeborder` for the circle shape. A ray with no
+direction answers the centre. -/
+def circleBorder (cx cy r qx qy : Int) : Int × Int :=
+  let dx := qx - cx
+  let dy := qy - cy
+  let n := isqrt (dx * dx + dy * dy)
+  if n = 0 then (cx, cy)
+  else (cx + r * dx / n, cy + r * dy / n)
+
+/-- An edge between two nodes starts and ends on their borders — the
+circle half, stated as the rounding bound it is (not `_exact`, said at
+review): each component of `p − c` is the exact rational `r·d_i/‖d‖`
+rounded once (within one `n`-th, where `n = ⌊√‖d‖²⌋` and
+`n² ≤ ‖d‖² < (n+1)²`), so the anchor misses `‖p − c‖ = r` by at most one
+sp per axis plus the square root's own step. The squared-distance
+corollary follows by squaring these bounds; that squaring is nonlinear
+algebra the statement deliberately stops short of — the per-axis bound
+is what the renderer's ±1 sp claim rests on. -/
+theorem circleBorder_step (cx cy r qx qy : Int)
+    (hn : isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)) ≠ 0) :
+    isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
+        * ((circleBorder cx cy r qx qy).1 - cx) ≤ r * (qx - cx) ∧
+    r * (qx - cx) < isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
+        * ((circleBorder cx cy r qx qy).1 - cx)
+      + isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)) ∧
+    isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
+        * ((circleBorder cx cy r qx qy).2 - cy) ≤ r * (qy - cy) ∧
+    r * (qy - cy) < isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
+        * ((circleBorder cx cy r qx qy).2 - cy)
+      + isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)) ∧
+    isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
+        * isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
+      ≤ (qx - cx) * (qx - cx) + (qy - cy) * (qy - cy) := by
+  have h0 : 0 ≤ isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)) := by
+    unfold isqrt
+    omega
+  have hpos : 0 < isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)) := by
+    omega
+  have hp : circleBorder cx cy r qx qy
+      = (cx + r * (qx - cx) / isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)),
+         cy + r * (qy - cy) / isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))) := by
+    simp only [circleBorder]
+    split
+    · next h => exact absurd h hn
+    · rfl
+  have hsq : isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
+      * isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
+      ≤ (qx - cx) * (qx - cx) + (qy - cy) * (qy - cy) := by
+    have h1 := Int.natAbs_mul_self (a := qx - cx)
+    have h2 := Int.natAbs_mul_self (a := qy - cy)
+    have hs := Nat.sqrt_le ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)).toNat
+    unfold isqrt
+    rw [← Int.natCast_mul]
+    omega
+  have hx := Int.emod_def (r * (qx - cx))
+    (isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)))
+  have hxm := Int.emod_nonneg (r * (qx - cx)) (by omega :
+    isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)) ≠ 0)
+  have hxl := Int.emod_lt_of_pos (r * (qx - cx)) hpos
+  have hy := Int.emod_def (r * (qy - cy))
+    (isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)))
+  have hym := Int.emod_nonneg (r * (qy - cy)) (by omega :
+    isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)) ≠ 0)
+  have hyl := Int.emod_lt_of_pos (r * (qy - cy)) hpos
+  rw [hp]
+  dsimp only
+  have e1 : cx + r * (qx - cx) / isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
+      - cx = r * (qx - cx) / isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)) := by
+    omega
+  have e2 : cy + r * (qy - cy) / isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy))
+      - cy = r * (qy - cy) / isqrt ((qx - cx) * (qx - cx) + (qy - cy) * (qy - cy)) := by
+    omega
+  rw [e1, e2]
+  exact ⟨by omega, by omega, by omega, by omega, hsq⟩
+
+/-- A named node's anchoring geometry: centre and border half-extents (a
+circle's radius twice). What an edge's `(name)` endpoint resolves to. -/
+structure NodeGeom where
+  x : Sp
+  y : Sp
+  a : Sp := 0
+  b : Sp := 0
+  circle : Bool := false
+  deriving Repr, BEq, Inhabited
+
 /-- Shapes and named losses, accumulated across the unrolled walk. A
 diagnostic dedupes on its message: one construct looped over forty times
 is one problem, not forty. -/
 structure Ev where
   shapes : Array Ir.Pic.Shape := #[]
   diags : Array PDiag := #[]
+  /-- Named nodes seen so far, latest first: what a `\draw` endpoint's
+  `(name)` resolves against. -/
+  nodes : List (String × NodeGeom) := []
 
 def Ev.diag (ev : Ev) (d : PDiag) : Ev :=
   if ev.diags.any (·.2 == d.2) then ev else { ev with diags := ev.diags.push d }
@@ -884,15 +1111,23 @@ picture subset; the option is dropped")
   -- A `(name)` before `at` names the node for edges to reference. It is
   -- recognised only when `at` follows, so a coordinate standing where the
   -- name would does not read as one.
+  let mut nodeName : Option String := none
   if ts[i]? == some (.sym '(') then
     let mut j := i + 1
+    let mut nm := ""
     for _ in [i+1:ts.size + 1] do
       if h : j < ts.size then
         if ts[j] == .sym ')' || ts[j] == .sym '(' then break
+        nm := nm ++ (match ts[j] with
+          | .ident s => s
+          | .num m => milliString m
+          | .sym c => String.singleton c
+          | _ => "")
         j := j + 1
       else break
     if ts[j]? == some (.sym ')') && ts[j+1]? == some (.ident "at") then
       i := j + 1
+      nodeName := some nm
   unless ts[i]? == some (.ident "at") do
     return ev.diag (.W0334, "a '\\node' without 'at (x, y)' is outside the rendered \
 picture subset; the node is not drawn")
@@ -910,6 +1145,19 @@ outside the rendered picture subset; the node is not drawn")
         ev := mdiags.foldl Ev.diag ev
         let sx := cx.toSp xm
         let sy := cx.toSp ym
+        let dimF (d : Sp) : Sp :=
+          if cx.transformShape then d * cx.scale / 1000 else d
+        -- A named node registers its anchoring geometry whether or not
+        -- its border draws: pgf anchors edges on the shape's border even
+        -- when the path itself is never painted.
+        if let some nm := nodeName then
+          let geom : NodeGeom :=
+            if isCircle then
+              let r := dimF (max minW minH) / 2
+              { x := sx, y := sy, a := r, b := r, circle := true }
+            else
+              { x := sx, y := sy, a := dimF minW / 2, b := dimF minH / 2 }
+          ev := { ev with nodes := (nm, geom) :: ev.nodes }
         -- The node's outline, before its label so the fill paints under
         -- the text. Extent is the declared minimum: pgf manual §"Shapes"
         -- has extent = max(minimum, text extent + 2·inner sep) per axis,
@@ -920,8 +1168,6 @@ outside the rendered picture subset; the node is not drawn")
         -- scale with the picture only under `transform shape` (§25.4);
         -- the line width is graphic state and never scales.
         if draw.isSome || fillCol.isSome then
-          let dimF (d : Sp) : Sp :=
-            if cx.transformShape then d * cx.scale / 1000 else d
           let stroke : Option Ir.Pic.Stroke := draw.map fun c =>
             { color := c.getD Ir.Color.black
               width := if thick then Ir.Pic.thickWidth else Ir.Pic.thinWidth
@@ -953,6 +1199,180 @@ here); its outline is not drawn")
 picture subset; the node is not drawn")
     | _ =>
       return ev.diag (.E0333, "'\\node' needs a '{text}' body; the node is not drawn")
+
+/-- An endpoint of a `\draw` path: a named node, whose border anchors the
+segment, or a bare coordinate. -/
+private inductive Anchor where
+  | node (g : NodeGeom)
+  | point (x y : Sp)
+
+private def Anchor.center : Anchor → Sp × Sp
+  | .node g => (g.x, g.y)
+  | .point x y => (x, y)
+
+/-- Where a segment toward `q` leaves this anchor: the border for a node
+with extents (`circleBorder`/`rectBorder`), the point itself otherwise. -/
+private def Anchor.toward (a : Anchor) (q : Sp × Sp) : Sp × Sp :=
+  match a with
+  | .point x y => (x, y)
+  | .node g =>
+    if g.a ≤ 0 || g.b ≤ 0 then (g.x, g.y)
+    else if g.circle then circleBorder g.x g.y g.a q.1 q.2
+    else rectBorder g.x g.y g.a g.b q.1 q.2
+
+/-- The `latex`/`->` arrow tip as a filled triangle, plus the point the
+stroked line shortens to. Extents are pgf's own declaration
+(pgflibraryarrows, the `latex` tip): the unit is 0.28 pt + 0.3·line
+width, the apex 9 units ahead of the anchor with the back corners 3
+behind at ±3.75 — drawn tip 12 units long; the straight sides stand in
+for the declared curved outline, a stated approximation. -/
+private def tipAt (x y dx dy width : Sp) : Option (Ir.Pic.Tip × Sp × Sp) :=
+  let n := isqrt (dx * dx + dy * dy)
+  if n == 0 then none
+  else
+    let unitA := Dim.pt 28 / 100 + width * 3 / 10
+    let len := 12 * unitA
+    let half := unitA * 15 / 4
+    let bx := x - len * dx / n
+    let byy := y - len * dy / n
+    let ox := (-dy) * half / n
+    let oy := dx * half / n
+    some ({ x1 := x, y1 := y
+            x2 := bx + ox, y2 := byy + oy
+            x3 := bx - ox, y3 := byy - oy }, bx, byy)
+
+/-- `\draw[opts] (a) -- (b) -- ...;` — a stroked edge between named nodes
+and coordinates, border-anchored at named endpoints. Options: `thick`,
+`dashed`/`dotted` (and the densely form), an arrow spec (`->`/`-latex`,
+both the triangle tip), a colour, and declared style bundles; anything
+else is outside the subset and loses only itself. A path operation other
+than `--` loses the edge by name. -/
+private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
+    (ev : Ev) : Ev := Id.run do
+  let ts := toks.filter (· != .space)
+  let mut i := 0
+  let mut ev := ev
+  let mut color := Ir.Color.black
+  let mut dash : Ir.Pic.Dash := .solid
+  let mut thick := false
+  let mut arrow := false
+  if ts[0]? == some (.sym '[') then
+    let mut j := 1
+    let mut inner : Array Tok := #[]
+    for _ in [1:ts.size + 1] do
+      if h : j < ts.size then
+        if ts[j] == .sym ']' then break
+        inner := inner.push ts[j]
+        j := j + 1
+      else break
+    unless ts[j]? == some (.sym ']') do
+      return ev.diag (.E0333, "'\\draw' options miss their ']'; the edge is not drawn")
+    let mut opts : Array (Array Tok) := #[]
+    for opt in splitTop inner ',' do
+      match opt.toList with
+      | [.ident n] =>
+        match cx.styles.lookup n with
+        | some bundle => opts := opts ++ splitTop bundle ','
+        | none => opts := opts.push opt
+      | _ => opts := opts.push opt
+    for opt in opts do
+      match opt.toList with
+      | [.ident "thick"] => thick := true
+      | [.ident "dashed"] => dash := .dashed
+      | [.ident "dotted"] | [.ident "densely", .ident "dotted"] => dash := .dotted
+      | [.sym '-', .sym '>'] | [.sym '-', .ident "latex"] => arrow := true
+      | [] => pure ()
+      | o :: rest =>
+        -- A remaining option is a colour spelling, or names itself.
+        match evalColor cx env opt with
+        | .ok c => color := c
+        | .error _ =>
+          let _ := rest
+          ev := ev.diag (.W0334, s!"draw option {tokText o} is outside the \
+rendered picture subset; the option is dropped")
+    i := j + 1
+  -- The endpoint chain: `(name|x,y)` separated by `--`.
+  let readAnchor (i : Nat) : Except PDiag (Anchor × Nat) := Id.run do
+    unless ts[i]? == some (.sym '(') do
+      return .error (.E0333, s!"in '\\draw', expected a '(...)' endpoint, found \
+{((ts[i]?).map tokText).getD "the end"}; the edge is not drawn")
+    let mut depth := 1
+    let mut j := i + 1
+    let mut inner : Array Tok := #[]
+    for _ in [i+1:ts.size + 1] do
+      if h : j < ts.size then
+        match ts[j] with
+        | .sym '(' => depth := depth + 1; inner := inner.push ts[j]; j := j + 1
+        | .sym ')' =>
+          depth := depth - 1
+          if depth == 0 then break
+          inner := inner.push ts[j]
+          j := j + 1
+        | t => inner := inner.push t; j := j + 1
+      else break
+    unless depth == 0 do
+      return .error (.E0333, "in '\\draw', an endpoint misses its ')'; the edge \
+is not drawn")
+    match (splitTop inner ',').toList with
+    | [xs, ys] =>
+      match evalNum env xs, evalNum env ys with
+      | .ok xm, .ok ym => return .ok (.point (cx.toSp xm) (cx.toSp ym), j + 1)
+      | .error e, _ | _, .error e =>
+        return .error (.E0333, s!"in '\\draw', {e}; the edge is not drawn")
+    | _ =>
+      let mut nm := ""
+      for t in inner do
+        nm := nm ++ (match t with
+          | .ident s => s
+          | .num m => milliString m
+          | .sym c => String.singleton c
+          | _ => "")
+      match ev.nodes.lookup nm with
+      | some g => return .ok (.node g, j + 1)
+      | none =>
+        return .error (.E0333, s!"in '\\draw', no node is named '{nm}'; the edge \
+is not drawn")
+  let mut pts : Array Anchor := #[]
+  match readAnchor i with
+  | .error d => return ev.diag d
+  | .ok (a, i2) =>
+    pts := pts.push a
+    i := i2
+  for _ in [0:ts.size + 1] do
+    if h : i < ts.size then
+      if ts[i]? == some (.sym '-') && ts[i+1]? == some (.sym '-') then
+        match readAnchor (i + 2) with
+        | .error d => return ev.diag d
+        | .ok (a, i2) =>
+          pts := pts.push a
+          i := i2
+      else
+        return ev.diag (.W0334, s!"'\\draw' continues with {tokText ts[i]}, \
+outside the rendered picture subset; the edge is not drawn")
+    else break
+  unless pts.size ≥ 2 do
+    return ev.diag (.E0333, "'\\draw' needs two endpoints; the edge is not drawn")
+  let stroke : Ir.Pic.Stroke :=
+    { color := color
+      width := if thick then Ir.Pic.thickWidth else Ir.Pic.thinWidth
+      dash := dash }
+  let mut segs : Array Ir.Pic.PathSeg := #[]
+  let mut tip : Option Ir.Pic.Tip := none
+  for k in [0:pts.size - 1] do
+    match pts[k]?, pts[k+1]? with
+    | some a, some c =>
+      let p1 := a.toward c.center
+      let p2 := c.toward a.center
+      if k + 2 == pts.size && arrow then
+        match tipAt p2.1 p2.2 (p2.1 - p1.1) (p2.2 - p1.2) stroke.width with
+        | some (t, bx, byy) =>
+          segs := segs.push (.line p1.1 p1.2 bx byy)
+          tip := some t
+        | none => segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
+      else
+        segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
+    | _, _ => pure ()
+  return { ev with shapes := ev.shapes.push (.edge segs stroke tip) }
 
 /-- One `\foreach` list item: values (`1`, `2/3`, a word), or the `...`
 range marker. -/
@@ -1054,6 +1474,7 @@ def evalOne (cx : Cx) : Stmt → List (String × Val) → Ev →
     | .ok shape => (env, { ev with shapes := ev.shapes.push shape })
     | .error d => (env, ev.diag d)
   | .node toks, env, ev => (env, evalNode cx env toks ev)
+  | .draw toks, env, ev => (env, evalDraw cx env toks ev)
   | .set name expr trunc, env, ev =>
     match evalExpr env expr with
     | .ok (.num m) =>

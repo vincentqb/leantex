@@ -19,6 +19,9 @@
   \node[ball]   (a) at (0, 0) {$a$};
   \node[hidden] (h) at (2, 1) {$h$};
   \node[slab]   (o) at (4, 0) {out};
+  \draw[-latex, thick] (a) -- (h);
+  \draw[gray, dashed] (h) -- (o);
+  \draw (a) -- (o);
 \end{tikzpicture}
 
 \end{document}

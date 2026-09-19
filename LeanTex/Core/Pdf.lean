@@ -160,6 +160,33 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
       let x := geom.bleed + rx
       let y := geom.bleed + geom.pageH - ry - rh
       g := g ++ s!"{x.toPtString} {y.toPtString} {rw.toPtString} {rh.toPtString} re "
+    | .segs segs =>
+      -- Segment endpoints are explicit, so each opens with its own move;
+      -- a chain of touching segments still strokes as one visual path.
+      let mut prev : Option (Sp × Sp) := none
+      for sg in segs do
+        match sg with
+        | .line x1 y1 x2 y2 =>
+          let a := (geom.bleed + x1, geom.bleed + geom.pageH - y1)
+          let b := (geom.bleed + x2, geom.bleed + geom.pageH - y2)
+          if prev != some a then
+            g := g ++ s!"{a.1.toPtString} {a.2.toPtString} m "
+          g := g ++ s!"{b.1.toPtString} {b.2.toPtString} l "
+          prev := some b
+        | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
+          let a := (geom.bleed + x1, geom.bleed + geom.pageH - y1)
+          let c1 := (geom.bleed + c1x, geom.bleed + geom.pageH - c1y)
+          let c2 := (geom.bleed + c2x, geom.bleed + geom.pageH - c2y)
+          let b := (geom.bleed + x2, geom.bleed + geom.pageH - y2)
+          if prev != some a then
+            g := g ++ s!"{a.1.toPtString} {a.2.toPtString} m "
+          g := g ++ s!"{c1.1.toPtString} {c1.2.toPtString} {c2.1.toPtString} \
+{c2.2.toPtString} {b.1.toPtString} {b.2.toPtString} c "
+          prev := some b
+    | .tri x1 y1 x2 y2 x3 y3 =>
+      let p (x y : Sp) : String :=
+        s!"{(geom.bleed + x).toPtString} {(geom.bleed + geom.pageH - y).toPtString}"
+      g := g ++ s!"{p x1 y1} m {p x2 y2} l {p x3 y3} l h "
     let paint := match p.stroke, p.fill with
       | some _, some _ => "B"
       | some _, none => "S"

@@ -2271,7 +2271,9 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       (match pa.path with
        | .circle cx cy r =>
          cx == geom.hmargin + Dim.pt 5 && cy == geom.vmargin + Dim.pt 5 && r == Dim.pt 5
-       | .rect _ _ _ _ => false) &&
+       | .rect _ _ _ _ => false
+       | .segs _ => false
+       | .tri _ _ _ _ _ _ => false) &&
       pa.stroke == some ({} : Ir.Pic.Stroke) && pa.fill == some red).getD false)
   -- `{center}` centres the box, as it centres a paragraph's lines.
   let centered := run #[.center #[.picture pic]]

@@ -433,6 +433,10 @@ inductive PagePath where
   | circle (cx cy r : Sp)
   /-- An axis-aligned rectangle: top-left corner and non-negative extents. -/
   | rect (x y w h : Sp)
+  /-- An edge's segments, endpoints already in page coordinates. -/
+  | segs (segs : Array Ir.Pic.PathSeg)
+  /-- A filled triangle: an arrow tip. -/
+  | tri (x1 y1 x2 y2 x3 y3 : Sp)
   deriving Repr, Inhabited
 
 /-- A placed path with its declared paint: stroke and/or fill, exactly as
@@ -2232,7 +2236,14 @@ private def B.finishPage (b : B) : B :=
     b.cur.paths.map fun p =>
       { p with path := match p.path with
           | .circle cx cy r => .circle cx (cy + delta) r
-          | .rect x y w h => .rect x (y + delta) w h }
+          | .rect x y w h => .rect x (y + delta) w h
+          | .segs segs => .segs (segs.map fun sg => match sg with
+              | .line x1 y1 x2 y2 => .line x1 (y1 + delta) x2 (y2 + delta)
+              | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
+                .cubic x1 (y1 + delta) c1x (c1y + delta) c2x (c2y + delta)
+                  x2 (y2 + delta))
+          | .tri x1 y1 x2 y2 x3 y3 =>
+            .tri x1 (y1 + delta) x2 (y2 + delta) x3 (y3 + delta) }
   { b with pages := b.pages.push { lines := lines, fills := fills, paths := paths,
                                    foot := b.curFoot },
            cur := {},
@@ -4071,6 +4082,26 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
         let (qx, qy) := place.toPage (min fx (fx + fw), max fy (fy + fh))
         paths := paths.push { path := .rect qx qy (max fw (-fw)) (max fh (-fh))
                               stroke := st, fill := fl }
+      | .edge segs st tip =>
+        let pt := place.toPage
+        let mapped := segs.map fun sg => match sg with
+          | .line x1 y1 x2 y2 =>
+            let (a1, b1) := pt (x1, y1)
+            let (a2, b2) := pt (x2, y2)
+            Ir.Pic.PathSeg.line a1 b1 a2 b2
+          | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
+            let (a1, b1) := pt (x1, y1)
+            let (u1, v1) := pt (c1x, c1y)
+            let (u2, v2) := pt (c2x, c2y)
+            let (a2, b2) := pt (x2, y2)
+            Ir.Pic.PathSeg.cubic a1 b1 u1 v1 u2 v2 a2 b2
+        paths := paths.push { path := .segs mapped, stroke := some st }
+        if let some t := tip then
+          let (a1, b1) := pt (t.x1, t.y1)
+          let (a2, b2) := pt (t.x2, t.y2)
+          let (a3, b3) := pt (t.x3, t.y3)
+          paths := paths.push { path := .tri a1 b1 a2 b2 a3 b3
+                                fill := some st.color }
       | .label lx ly content color scale =>
         let size := b.geom.fontSize * (scale : Int) / 1000
         let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}

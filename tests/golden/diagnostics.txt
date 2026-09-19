@@ -311,7 +311,7 @@ warning[W0332]: the footer mixes the physical page number with the frame number;
 warning[W0333]: the footer's slots collide on page 2: framenumber yields, painted over by the \framefoot note
   help: slot positions are fixed and the lower-priority slot yields in place: shorten the content or drop a slot
 ── W0334 (pending) picture construct outside the rendered subset; not drawn
-warning[W0334]: '\draw' is outside the rendered picture subset; not drawn
+warning[W0334]: '\draw' continues with 'circle', outside the rendered picture subset; the edge is not drawn
   help: the rendered subset is \fill...rectangle, \node at, \foreach, and \pgfmath(truncate)setmacro
 ── W0335 (degraded) picture larger than the text area; it may overrun the page
 warning[W0335]: the picture is 1133.858pt × 28.346pt against a text area of 312pt × 648pt; it may overrun the page

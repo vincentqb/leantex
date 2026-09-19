@@ -1004,6 +1004,38 @@ structure Stroke where
   dash : Dash := .solid
   deriving Repr, BEq, Inhabited
 
+/-- One segment of a stroked edge, endpoints spelled explicitly (no
+current-point state): a straight line, or a cubic Bézier with its two
+control points. -/
+inductive PathSeg where
+  | line (x1 y1 x2 y2 : Sp)
+  | cubic (x1 y1 c1x c1y c2x c2y x2 y2 : Sp)
+  deriving Repr, BEq, Inhabited
+
+/-- The declared box of a segment. A cubic lies in the convex hull of its
+four control points (de Casteljau), so the join of their boxes bounds
+the drawn curve. -/
+def PathSeg.box : PathSeg → (Sp × Sp) × (Sp × Sp)
+  | .line x1 y1 x2 y2 => ((min x1 x2, min y1 y2), (max x1 x2, max y1 y2))
+  | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
+    ((min (min x1 c1x) (min c2x x2), min (min y1 c1y) (min c2y y2)),
+     (max (max x1 c1x) (max c2x x2), max (max y1 c1y) (max c2y y2)))
+
+/-- An arrow tip as three concrete corner points: a filled triangle
+standing in for pgf's curved `latex` tip (a stated approximation — the
+extents match pgflibraryarrows' declaration, apex 9 units ahead and back
+corners 3 behind at ±3.75, unit 0.28pt + 0.3·line width; the curved
+sides do not). Elaboration precomputes the points so neither backend
+does geometry. -/
+structure Tip where
+  x1 : Sp
+  y1 : Sp
+  x2 : Sp
+  y2 : Sp
+  x3 : Sp
+  y3 : Sp
+  deriving Repr, BEq, Inhabited
+
 /-- The dump spelling of a shape's paint, for the IR goldens. -/
 def paintDump (st : Option Stroke) (fl : Option Color) : String :=
   let stS := match st with
@@ -1042,6 +1074,10 @@ inductive Shape where
   extents (non-negative by construction), sized like `circle` from the
   declared minimums. -/
   | frame (x y w h : Sp) (stroke : Option Stroke) (fill : Option Color)
+  /-- A stroked edge (`\draw (a) -- (b)`): segments in order, optionally
+  ending in an arrow tip filled in the stroke's colour. Endpoints are
+  concrete — border anchoring already happened at elaboration. -/
+  | edge (segs : Array PathSeg) (stroke : Stroke) (tip : Option Tip)
   deriving Repr, BEq, Inhabited
 
 /-- Repaint a shape, keeping its geometry and text: how a picture dims
@@ -1053,9 +1089,14 @@ def Shape.recolor (f : Color → Color) : Shape → Shape
     .circle x y r (st.map fun s => { s with color := f s.color }) (fl.map f)
   | .frame x y w h st fl =>
     .frame x y w h (st.map fun s => { s with color := f s.color }) (fl.map f)
+  | .edge segs st tip => .edge segs { st with color := f st.color } tip
 
 /-- A box in picture coordinates: min corner, then max corner. -/
 abbrev Box := (Sp × Sp) × (Sp × Sp)
+
+/-- The join of two boxes: the smallest box holding both. -/
+def Box.join (a b : Box) : Box :=
+  ((min a.1.1 b.1.1, min a.1.2 b.1.2), (max a.2.1 b.2.1, max a.2.2 b.2.2))
 
 /-- The declared box of a shape, corners sorted. A label's box is its
 anchor point — its text extent is a font question layout answers — so a
@@ -1069,6 +1110,14 @@ def Shape.box : Shape → Box
      (max (x - r) (x + r), max (y - r) (y + r)))
   | .frame x y w h _ _ =>
     ((min x (x + w), min y (y + h)), (max x (x + w), max y (y + h)))
+  | .edge segs _ tip =>
+    let base : Box := match tip with
+      | some t => ((min t.x1 (min t.x2 t.x3), min t.y1 (min t.y2 t.y3)),
+                   (max t.x1 (max t.x2 t.x3), max t.y1 (max t.y2 t.y3)))
+      | none => match segs[0]? with
+        | some s => s.box
+        | none => ((0, 0), (0, 0))
+    segs.foldl (fun acc s => Box.join acc s.box) base
 
 structure Picture where
   shapes : Array Shape := #[]
@@ -1085,14 +1134,11 @@ def Picture.labelContents (p : Picture) : Array (Array Inline) :=
     | .rect _ _ _ _ _ => none
     | .circle _ _ _ _ _ => none
     | .frame _ _ _ _ _ _ => none
+    | .edge _ _ _ => none
 
 /-- `a` is inside `b`, componentwise. -/
 def Box.le (a b : Box) : Prop :=
   b.1.1 ≤ a.1.1 ∧ b.1.2 ≤ a.1.2 ∧ a.2.1 ≤ b.2.1 ∧ a.2.2 ≤ b.2.2
-
-/-- The join of two boxes: the smallest box holding both. -/
-def Box.join (a b : Box) : Box :=
-  ((min a.1.1 b.1.1, min a.1.2 b.1.2), (max a.2.1 b.2.1, max a.2.2 b.2.2))
 
 -- The Box and Place proofs state their arithmetic over bare `Int` binders
 -- because `omega` does not see through the `Sp` abbreviation (the same
@@ -3235,7 +3281,15 @@ def dumpBlock (ind : String) (b : Block) : String :=
 {Pic.paintDump st fl}\n"
       | .frame x y w h st fl =>
         s!"{ind}  frame {x.toPtString} {y.toPtString} {w.toPtString} \
-{h.toPtString}{Pic.paintDump st fl}\n")
+{h.toPtString}{Pic.paintDump st fl}\n"
+      | .edge segs st tip =>
+        let pts := String.join (segs.toList.map fun sg => match sg with
+          | .line x1 y1 x2 y2 =>
+            s!" ({x1.toPtString},{y1.toPtString})--({x2.toPtString},{y2.toPtString})"
+          | .cubic x1 y1 _ _ _ _ x2 y2 =>
+            s!" ({x1.toPtString},{y1.toPtString})~({x2.toPtString},{y2.toPtString})")
+        s!"{ind}  edge{pts}{Pic.paintDump (some st) none}\
+{if tip.isSome then " tip" else ""}\n")
   | .table cols padL padR rows rules =>
     let spec := String.intercalate "," (cols.toList.map dumpColSpec)
     let pads := (if padL then "" else "@{}") ++ spec ++ (if padR then "" else "@{}")

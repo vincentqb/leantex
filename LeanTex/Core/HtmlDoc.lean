@@ -1593,6 +1593,23 @@ def blockNode (cfg : Config) (b : Block) : Node :=
           ("y", (py1 - max fy (fy + fh)).toPtString),
           ("width", (max fw (-fw)).toPtString),
           ("height", (max fh (-fh)).toPtString)] ++ paint st fl)
+      | .edge segs st tip =>
+        let px (v : Dim.Sp) : String := (v - px0).toPtString
+        let py (v : Dim.Sp) : String := (py1 - v).toPtString
+        let d := String.join (segs.toList.map fun sg => match sg with
+          | .line x1 y1 x2 y2 =>
+            s!"M {px x1} {py y1} L {px x2} {py y2} "
+          | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
+            s!"M {px x1} {py y1} C {px c1x} {py c1y}, {px c2x} {py c2y}, \
+{px x2} {py y2} ")
+        let tipNodes : Array Node := match tip with
+          | some t => #[Html.elem "path" #[] #[
+              ("d", s!"M {px t.x1} {py t.y1} L {px t.x2} {py t.y2} \
+L {px t.x3} {py t.y3} Z"),
+              ("fill", cssColor st.color)]]
+          | none => #[]
+        Html.elem "g" (#[Html.elem "path" #[] ((#[("d", d)] : Array (String × String))
+          ++ paint (some st) none)] ++ tipNodes) #[]
     Html.elem "svg" kids #[
       ("viewBox", s!"0 0 {w.toPtString} {h.toPtString}"),
       ("width", s!"{w.toPtString}pt"),

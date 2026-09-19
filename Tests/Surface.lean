@@ -1528,7 +1528,8 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- cannot render is named per construct instead of dropped whole; an
   -- all-refused picture adds the placeholder's W0362.
   t "elab tikzpicture no longer earns the blanket W0307"
-    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0334", "W0362"])
+    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0362"] &&
+     errCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["E0333"])
   -- The boundary is named, never silent — for the option bracket too: a
   -- picture option outside the subset is W0334, an unusable value inside
   -- it E0333, exactly as the statement walk already has it.
@@ -1837,6 +1838,34 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
           | .formula false "x" _ => true
           | _ => false
         | _ => false).getD false)
+  -- Edges: `\draw (a) -- (b)` border-anchors named endpoints
+  -- (`rectBorder_exact`/`circleBorder_step` are the geometry; this is
+  -- the wiring). On-axis anchors are exact, so equality is assertable.
+  let rr := 8000 * Dim.mm 10 / 10000 / 2
+  let twoCircles := "\\node[circle, draw, minimum size=8mm] (u) at (0,0) {x};" ++
+    "\\node[circle, draw, minimum size=8mm] (v) at (2,0) {y};"
+  t "an edge between two named circles border-anchors both ends"
+    ((picOf (wrap (twoCircles ++ "\\draw (u) -- (v);"))).bind (fun p => p.shapes.back?) ==
+      some (.edge #[.line rr 0 (2 * cm - rr) 0] {} none))
+  t "an arrow edge shortens its line and ships a tip"
+    (((picOf (wrap (twoCircles ++ "\\draw[->, thick] (u) -- (v);"))).map fun p =>
+      p.shapes.any fun s => match s with
+        | .edge segs st (some _) =>
+          st.width == Ir.Pic.thickWidth &&
+          (segs[0]?.map fun sg => match sg with
+            | .line _ _ x2 _ => decide (x2 < 2 * cm - rr)
+            | .cubic _ _ _ _ _ _ _ _ => false).getD false
+        | _ => false).getD false)
+  t "an edge naming no node is E0333"
+    (errCodes (wrap "\\draw (a) -- (0,0);") == ["E0333"])
+  t "a waypoint coordinate chains segments"
+    ((picOf (wrap "\\draw (0,0) -- (1,1) -- (2,0);")).map (fun p =>
+      p.shapes.any fun s => match s with
+        | .edge segs _ _ => segs.size == 2
+        | _ => false) == some true)
+  t "a path operation outside the subset loses the edge by name"
+    ((elabStr (wrap "\\draw (0,0) circle (1);")).2.any fun d =>
+      d.code == "W0334" && hasStr d.message "'circle'")
   t "one construct looped forty times is one diagnostic, not forty"
     (warnCodes (wrap "\\foreach \\x in {1,...,40}{\\draw (\\x,0) circle (1);}") ==
       ["W0334", "W0362"])
