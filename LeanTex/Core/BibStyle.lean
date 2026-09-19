@@ -471,9 +471,12 @@ transcribed `.bst` has none of them. -/
 reference list's `i`-th entry is its 1-based index in the sorted list —
 the fact every `\cite` mark rests on, `positions_exact` below being the
 half that says the positions the marks look up are those same indices.
-The same statement shape — a label is the index of first appearance in a
-sequence — is what `paper-crossref` owes floats; if its lemma lands, the
-shared form belongs beside `Ir.frameNumbers`' fold. -/
+Floats state the same vocabulary in `Ir.numberFloats_exact` — a label is
+the index of first appearance in a sequence, `List.range'` both times —
+but over a different data shape (a counter threaded through a tree walk,
+not a `mapIdx` over a sorted list). Deliberately not unified: a shared
+"consecutive assignment" lemma would leave each proof's hard part — here a
+one-line `simp`, there the tree induction — untouched. -/
 theorem bibItems_marker_exact (style : Style) (resolved : Array Resolved)
     (h : style.cite = .numeric) (i : Nat) (hi : i < resolved.size) :
     (bibItems style resolved)[i]?.bind (·.marker) =
@@ -576,7 +579,6 @@ where
         rw [insertResolved_mem] at hz
         rcases hz with rfl | hz
         · exact not_gt_of_le y z (Nat.le_of_lt (by
-            have := compare_citation_asymm z y hgt
             simp [SortOrder.compare, Nat.compare_eq_gt] at hgt
             omega))
         · exact hy z hz

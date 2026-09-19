@@ -2691,15 +2691,7 @@ def slug (title : Array Inline) : String :=
 theorem slugCharKeep_not_whitespace (k k' : Char) (h : slugCharKeep k = some k') :
     isWhiteSpaceUni k' = false := by
   unfold slugCharKeep at h
-  split at h
-  · exact absurd h (by simp)
-  · next hws =>
-    have hws' : isWhiteSpaceUni k = false := by simpa using hws
-    split at h
-    · cases h; exact hws'
-    · split at h
-      · cases h; exact hws'
-      · exact absurd h (by simp)
+  (repeat' split at h) <;> simp_all
 
 theorem slugChar_not_whitespace (c k : Char) (h : slugChar c = some k) :
     isWhiteSpaceUni k = false :=
@@ -5416,15 +5408,7 @@ theorem labelAnchorChar_not (c bad : Char)
       bad == '-' || bad == '_') = false) :
     labelAnchorChar c ≠ bad := by
   unfold labelAnchorChar
-  split
-  · next h =>
-    intro heq
-    subst heq
-    rw [h] at hbad
-    cases hbad
-  · intro heq
-    rw [← heq] at hbad
-    simp at hbad
+  split <;> rintro rfl <;> simp_all
 
 /-- The label key is author text entering an `id` attribute and an `href`,
 so it owes the same statement `roleClass_single_token` makes for authored

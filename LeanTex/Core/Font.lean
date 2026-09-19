@@ -781,10 +781,8 @@ clamps), the same sanitize-then-prove shape as `ScriptScales.clamp`. -/
 theorem Font.topAccentX_covers (f : Font) (g : Nat) :
     0 ≤ f.topAccentX g ∧ f.topAccentX g ≤ (f.widths[g]?.getD 0 : Int) := by
   unfold Font.topAccentX
-  have hw : (0 : Int) ≤ (f.widths[g]?.getD 0 : Int) := Int.natCast_nonneg _
-  cases f.mathTopAccent.find? (·.1 == g) with
-  | none => simp only []; omega
-  | some p => simp only []; omega
+  dsimp only
+  split <;> omega
 
 /-- The accent mark's own attachment x, unclamped: a combining mark may
 carry zero advance and attach inside or left of its ink, which the
