@@ -85,6 +85,7 @@ builders, `styleClass`, and the `size-` names `styleClass` derives from
 `Ir.sizeScale`; `roleClass_engine_disjoint` is the reason the list exists. -/
 def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "section-number",
+   "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
    "bt-light-above", "centered", "column", "columns", "content", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
@@ -998,6 +999,11 @@ def baseCss (doc : Doc) : String :=
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   sizeRules ++
   ".math { font-family: \"Latin Modern Math\", \"STIX Two Math\", math; }\n" ++
+  -- The numbered display: the formula's box takes the measure and centres
+  -- its own text; the tag sits on the right edge, vertically centred on
+  -- the formula (amsmath's equation shape).
+  ".equation { display: flex; align-items: center; }\n" ++
+  ".equation > .math { flex: 1 1 auto; text-align: center; }\n" ++
   "@media print {\n" ++
   "  body { background: #fff; color: #000; padding: 0; }\n" ++
   "}\n" ++
@@ -1353,6 +1359,14 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>
     Html.elem "blockquote" (blockNodesInto cfg.into #[] body.toList)
+  -- The equation's number is a structural element beside the formula,
+  -- never text glued into it: a flex row whose math child takes the
+  -- measure and whose tag sits right, the amsmath shape.
+  | .equation num content =>
+    let kids := inlines cfg content
+    Html.elem "div"
+      (kids.push (Html.elem "span" #[Html.text num] #[("class", "eqnum")]))
+      #[("class", "equation")]
   -- The abstract is HTML's own titled region: a <section> with a heading,
   -- exactly the thing a reader's tooling looks for. The heading word is
   -- class furniture (article.cls's \abstractname), generated here as the

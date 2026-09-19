@@ -106,6 +106,8 @@ level-0 heading when the body carries the document title — the summary's
 place is after the title line, wherever that line comes from (`emit`). -/
 private def blockInto (summary ind acc : String) : Block → String
   | .para xs => acc ++ ind ++ inlineText xs ++ "\n\n"
+  -- the number rides beside the formula, as it does on the page
+  | .equation num xs => acc ++ ind ++ inlineText xs ++ " " ++ num ++ "\n\n"
   | .section level _ num title =>
     -- The heading line carries its resolved number the way the page does;
     -- a level-0 heading (the document title) never has one.
@@ -326,6 +328,9 @@ private theorem blockInto_extends (summary ind acc : String) :
   | .para _ => by
     simp only [blockInto]
     exact append_chain₃ _ _ _ _
+  | .equation _ _ => by
+    simp only [blockInto]
+    exact append_chain₅ _ _ _ _ _ _
   | .section _ _ _ _ => by
     simp only [blockInto]
     split
@@ -580,6 +585,7 @@ private theorem headingLevelOne_mem (x : Nat) :
     (b : Block) → (out : Array Nat) → x ∈ out → x ∈ Ir.headingLevelOne out b
   | .section _ _ _ _, _, h => Array.mem_push_of_mem _ h
   | .para _, _, h => h
+  | .equation _ _, _, h => h
   | .list _ items, out, h => headingLevelItems_mem x items.toList out h
   | .center body, out, h => headingLevelList_mem x body.toList out h
   | .quote body, out, h => headingLevelList_mem x body.toList out h

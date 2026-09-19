@@ -149,6 +149,9 @@ structure ESt where
   `\caption` in flow order, as LaTeX's `\refstepcounter` is. -/
   figNum : Nat := 0
   tabNum : Nat := 0
+  /-- The equation counter, per document (amsmath's `\numberwithin` is not
+  modelled; a document that declares it keeps the per-document numbers). -/
+  eqNum : Nat := 0
   /-- The number of the nearest preceding numbered thing — what a `\label`
   declared here binds to. A heading sets it for the flow after it; a
   captioned float sets it for its own extent and restores the enclosing
@@ -676,6 +679,53 @@ private def needsSep (acc : Array Inline) (sb : String) : Bool :=
     | _ => true
   else !sb.endsWith " "
 
+/-- Record one `\label` binding. The first declaration of a key wins,
+LaTeX's behaviour; a second is W0350 where it stands and binds nothing. -/
+private def recordLabel (ctx : Ctx) (key : String) (target : Option String)
+    (pos : Pos) : EM Unit := do
+  let st ← get
+  if st.labels.any (·.1 == key) then
+    diag ctx .W0350 s!"'{key}' is already a \\label'ed key; the first wins" (some pos)
+      (help := s!"one \\label\{{key}} per key: give this one its own name")
+  else
+    modify fun st => { st with labels := st.labels.push (key, target) }
+
+/-- Strip a display-math body's metadata before the math parser sees it:
+top-level `\label{...}` keys (returned for binding to the display's
+number) and `\nonumber`/`\notag` (amsldoc §3: a numbered form opts out).
+Neither is mathematics; left in place they would push the whole formula
+into the W0012 source-text degradation — with the label spelled inside
+the rendered text. -/
+private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
+    EM (Array Raw × Array String × Bool) := do
+  let mut out : Array Raw := #[]
+  let mut keys : Array String := #[]
+  let mut nonum := false
+  let mut i := 0
+  repeat
+    if h : i < body.size then
+      match body[i] with
+      | .ctrl "label" pos =>
+        let j := skipSpaces body (i + 1)
+        match body[j]? with
+        | some (.group keyRaw _) =>
+          keys := keys.push (argText ctx keyRaw)
+          i := j + 1
+        | _ =>
+          diag ctx .E0304 "'\\label' needs a {key} group" pos
+          i := i + 1
+      | .ctrl "nonumber" _ =>
+        nonum := true
+        i := i + 1
+      | .ctrl "notag" _ =>
+        nonum := true
+        i := i + 1
+      | r =>
+        out := out.push r
+        i := i + 1
+    else break
+  return (out, keys, nonum)
+
 /-- One `\includegraphics` dimension: a factor of `\textwidth` (or its
 `\linewidth`/`\columnwidth` spellings) or `\textheight`, or an absolute
 length. Font-relative units are refused — an image has no font size. -/
@@ -937,16 +987,26 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           i := i + 1
           acc := flushText acc sb
           sb := ""
+          -- A display in an inline position (a caption, an item label) has
+          -- no block to hang a number on: it sets unnumbered, named.
+          let (cleaned, keys, _) ← stripMathMeta ctx body
+          for key in keys do
+            recordLabel ctx key (← get).refTarget pos
+            acc := acc.push (.label key)
           if numbered then
             warnOnce ctx "math:eqnum" .W0015
-              s!"equation numbers are not rendered yet; '\{{name}}' sets unnumbered" pos
-              (help := s!"the starred '\{{name}}*' says what renders today; see PLAN.md")
-          acc := acc.push (← elabMathInline ctx true body pos)
+              s!"equation numbers are not rendered here; '\{{name}}' sets unnumbered" pos
+              (help := s!"'\{{name}}*' spells the unnumbered form, which renders the same")
+          acc := acc.push (← elabMathInline ctx true cleaned pos)
         else if let some (kind, numbered) := alignEnvs.lookup name then
           i := i + 1
           acc := flushText acc sb
           sb := ""
-          acc := acc.push (← elabMathEnv ctx name kind numbered body pos)
+          let (cleaned, keys, _) ← stripMathMeta ctx body
+          for key in keys do
+            recordLabel ctx key none pos
+            acc := acc.push (.label key)
+          acc := acc.push (← elabMathEnv ctx name kind numbered cleaned pos)
         else if let some (k, env) := lookupUserEnv ctx name then
           -- A defined wrapper: its parameters bind from the groups after
           -- `\begin{name}`, its halves elaborate around the content. The
@@ -1101,12 +1161,7 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             acc := flushText acc sb
             sb := ""
             acc := acc.push (.label key)
-            let st ← get
-            if st.labels.any (·.1 == key) then
-              diag ctx .W0350 s!"'{key}' is already a \\label'ed key; the first wins" (some pos)
-                (help := s!"one \\label\{{key}} per key: give this one its own name")
-            else
-              modify fun st => { st with labels := st.labels.push (key, st.refTarget) }
+            recordLabel ctx key (← get).refTarget pos
           | _ =>
             diag ctx .E0304 s!"'\\label' needs a \{key} group" pos
         else if name == "ref" || name == "eqref" then
@@ -2068,9 +2123,16 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .math _ body mpos =>
           -- A display formula: one centred block of its own, so it
           -- participates in the block machinery like any other line.
+          -- `\[` never numbers (amsldoc §3), but a label inside it still
+          -- binds to the flow's last number rather than degrading the
+          -- formula to source text.
           i := i + 1
-          let inl ← elabMathInline ctx true body mpos
-          blocks := blocks.push (.center #[.para #[inl]])
+          let (cleaned, keys, _) ← stripMathMeta ctx body
+          let inl ← elabMathInline ctx true cleaned mpos
+          for key in keys do
+            recordLabel ctx key (← get).refTarget mpos
+          let content := keys.map (Ir.Inline.label ·) |>.push inl
+          blocks := blocks.push (.center #[.para content])
         | .ctrl "centering" _ =>
           -- The declaration form of \begin{center}: the rest of this scope
           -- centres. Text flushed just above stays uncentred — LaTeX would
@@ -2420,15 +2482,35 @@ specs are not modelled")
             -- diagnostic points at the file that holds the construct.
             blocks := blocks ++ (← elabBlocks { ctx with file := f } body)
           else if let some numbered := displayMathEnvs.lookup n then
-            if numbered then
-              warnOnce ctx "math:eqnum" .W0015
-                s!"equation numbers are not rendered yet; '\{{n}}' sets unnumbered" pos
-                (help := s!"'\{{n}*}' spells the unnumbered form, which renders the same")
-            let inl ← elabMathInline ctx true body pos
-            blocks := blocks.push (.center #[.para #[inl]])
+            let (cleaned, keys, nonum) ← stripMathMeta ctx body
+            let inl ← elabMathInline ctx true cleaned pos
+            if numbered && !nonum then
+              -- The display takes the next equation number (amsldoc §3);
+              -- its labels bind to it, scoped to the environment as
+              -- LaTeX's \refstepcounter group is.
+              let num := (← get).eqNum + 1
+              modify fun st => { st with eqNum := num }
+              for key in keys do
+                recordLabel ctx key (some (toString num)) pos
+              let content := keys.map (Ir.Inline.label ·) |>.push inl
+              blocks := blocks.push (.equation s!"({num})" content)
+            else
+              -- The unnumbered forms; a label here binds to whatever the
+              -- flow last numbered, as LaTeX's \@currentlabel does.
+              for key in keys do
+                recordLabel ctx key (← get).refTarget pos
+              let content := keys.map (Ir.Inline.label ·) |>.push inl
+              blocks := blocks.push (.center #[.para content])
           else if let some (kind, numbered) := alignEnvs.lookup n then
-            let inl ← elabMathEnv ctx n kind numbered body pos
-            blocks := blocks.push (.center #[.para #[inl]])
+            -- Row numbers are still owed (W0015): a label here binds to
+            -- nothing, so a reference to it is the named ??, never a
+            -- silently wrong number.
+            let (cleaned, keys, _) ← stripMathMeta ctx body
+            for key in keys do
+              recordLabel ctx key none pos
+            let inl ← elabMathEnv ctx n kind numbered cleaned pos
+            let content := keys.map (Ir.Inline.label ·) |>.push inl
+            blocks := blocks.push (.center #[.para content])
           else if n == "tabular" || n == "tabular*" then
             -- A formal table, booktabs-shaped by construction: the column
             -- spec drives `.table`'s columns, `&`/`\\` split cells and

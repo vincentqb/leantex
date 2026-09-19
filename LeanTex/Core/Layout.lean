@@ -839,6 +839,9 @@ private def scalarTextList (out : ScalarAcc) (itemD enumD : Nat) :
 private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     Block → ScalarAcc
   | .para xs => textAndMath out xs
+  -- the equation's number is set in the body face beside the formula
+  | .equation num xs =>
+    textAndMath { out with texts := out.texts.push num } xs
   -- A heading's number is set beside its title, so its digits are asked
   -- of the bold face like the title's own text.
   | .section _ _ num title =>
@@ -2966,6 +2969,45 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- gap, or a \label on its own source line would open a blank line.
     if !content.isEmpty && content.all (fun x => x matches .label _) then a
     else collectPara a pats fs content indent false a.geom.fontSize
+  | .equation num content => Id.run do
+    -- A numbered display: the formula centred on the measure, the tag
+    -- right-aligned on its baseline (amsmath's equation shape). The line
+    -- is [mirror box, fil, formula, fil, tag]: a glyphless box as wide as
+    -- the tag on the left makes the two fils centre the formula on the
+    -- full measure exactly, and when formula and tag cannot share the
+    -- line the fil between them is the legal break, so the tag drops to
+    -- its own right-aligned line rather than overprinting (TeX moves the
+    -- number down in the same overlap). Justified whatever the page
+    -- declares: the fils are the alignment.
+    let a := a.flushGap
+    let baseStyle : TextStyle := { color := a.fg }
+    let (citems, ds1, cache1, extras) :=
+      itemsOfInlines pats a.geom.fontSize a.xHeight fs baseStyle content
+        a.hyphCache a.imgs a.geom.textWidth a.geom.textHeight
+    let (nitems, ds2, cache2, _) :=
+      itemsOfInlines pats a.geom.fontSize a.xHeight fs baseStyle #[.text num]
+        cache1 a.imgs a.geom.textWidth a.geom.textHeight
+    -- both walks close with parfill glue and a forced pen; the assembled
+    -- line supplies its own ending
+    let strip (xs : Array Item) : Array Item :=
+      if xs.size ≥ 2 then xs.extract 0 (xs.size - 2) else xs
+    let citems := strip citems
+    let nitems := strip nitems
+    let numW := (measure nitems 0 nitems.size).natural
+    let mut items : Array Item :=
+      #[.box numW 0 a.fg none #[] a.geom.fontSize false 0, .glue { fil := true }]
+    items := items ++ citems
+    items := items.push (.glue { fil := true })
+    items := items ++ nitems
+    items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
+    return { a with
+      hyphCache := cache2
+      ops := a.ops.push (.para {
+        items := items, extras := extras, diags := ds1 ++ ds2
+        target := (a.measure.getD a.geom.textWidth) - indent
+        indent := indent, center := false, size := a.geom.fontSize
+        justify := true
+        markerSegs := none, rule := none }) }
   | .section level _ num title =>
     if level == 0 then
       -- The document title, a heading at level 0: display type at the

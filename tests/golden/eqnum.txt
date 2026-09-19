@@ -1,0 +1,33 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section 1 number "1"
+  text "Numbers"
+para
+  text "The identity"
+equation "(1)"
+  label "eq:idty"
+  formula display "a + b = b + a"
+    ord:𝑎 bin:+ ord:𝑏 rel:= ord:𝑏 bin:+ ord:𝑎
+para
+  text "is Equation "
+  eqref "eq:idty" shows "(1)" -> #eq:idty
+  text "; the starred form"
+center
+  para
+    formula display "c = d"
+      ord:𝑐 rel:= ord:𝑑
+para
+  text "takes no number, and"
+center
+  para
+    formula display "e = f"
+      ord:𝑒 rel:= ord:𝑓
+para
+  text "opts out, so the next one"
+equation "(2)"
+  formula display "g = h"
+    ord:𝑔 rel:= ord:ℎ
+para
+  text "is second."
+-- diagnostics
+(none)

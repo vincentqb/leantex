@@ -1245,6 +1245,16 @@ inductive Block where
   heading — exactly the region a reader's tooling looks for — while the PDF
   keeps the class's quotation shape. -/
   | abstract (body : Array Block)
+  /-- A numbered display equation: `{equation}` under amsmath's numbering
+  conventions (amsldoc §3 — `equation` numbers, `equation*` and `\[` do
+  not, `\nonumber`/`\notag` opts a numbered form out). `number` is the
+  rendered tag, parentheses included (`(1)`), assigned per document at
+  elaboration; `content` is the formula — or its source-text degradation —
+  preceded by the `\label` anchors the environment carried. The number is
+  structural in both backends: right-aligned beside the centred formula on
+  the page, its own element in HTML, never text glued into the formula.
+  The unnumbered forms keep the plain centred-paragraph shape. -/
+  | equation (number : String) (content : Array Inline)
   /-- `{verbatim}` content, kept literally: lines, spaces, and all. Both
   backends set it in the mono face and neither reflows it. `covered` is the
   dim colour painted by the overlay shade — code pending its step must read
@@ -1514,6 +1524,8 @@ def numberFloatList (c : FloatCtr) (out : Array Block) :
 
 def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .para content => (c, .para content)
+  -- an equation holds no float; its number is its own
+  | .equation n content => (c, .equation n content)
   | .section l st num title => (c, .section l st num title)
   | .list o items =>
     let (c2, items2) := numberFloatItems c #[] items.toList
@@ -1598,6 +1610,7 @@ def floatNumsList (k : FloatKind) (out : List Nat) : List Block → List Nat
 
 def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .para _ => out
+  | .equation _ _ => out
   | .section _ _ _ _ => out
   | .list _ items => floatNumsItems k out items.toList
   | .center body => floatNumsList k out body.toList
@@ -1687,7 +1700,7 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
       floatNumsOne k out (numberFloatOne c b).2
         = out ++ List.range' (c.get k + 1) n := by
   match b with
-  | .para _ | .section _ _ _ _ | .note _ | .verbatim _ _ | .logo _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ | .logo _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ =>
     exact ⟨0, by simp [numberFloatOne], by simp [numberFloatOne, floatNumsOne]⟩
@@ -2610,6 +2623,8 @@ def dumpColumns (ind : String) (cols : List (Option Nat × Array Block)) : Strin
 def dumpBlock (ind : String) (b : Block) : String :=
   match b with
   | .para content => s!"{ind}para\n" ++ dumpInlines (ind ++ "  ") content
+  | .equation number content =>
+    s!"{ind}equation {number.quote}\n" ++ dumpInlines (ind ++ "  ") content
   | .section level starred num title =>
     let star := if starred then "*" else ""
     let n := match num with
@@ -2852,6 +2867,7 @@ whole, so a step there must not multiply handout pages either — and
 verbatim carries no inline structure. -/
 def maxStepBlock : Block → Nat
   | .para content => maxStepInlines content
+  | .equation _ content => maxStepInlines content
   | .list _ items => maxStepItems items.toList
   | .center body => maxStepBlockList body.toList
   | .quote body => maxStepBlockList body.toList
@@ -2942,6 +2958,10 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
     if pending then
       .para #[.colored cover.plain none (dimInlineList cover k true #[] content.toList)]
     else .para (dimInlineList cover k false #[] content.toList)
+  | .equation num content =>
+    if pending then
+      .equation num #[.colored cover.plain none (dimInlineList cover k true #[] content.toList)]
+    else .equation num (dimInlineList cover k false #[] content.toList)
   | .list o items => .list o (dimItems cover k pending #[] items.toList)
   | .center body => .center (dimBlockList cover k pending #[] body.toList)
   | .quote body => .quote (dimBlockList cover k pending #[] body.toList)
@@ -3091,6 +3111,7 @@ def unwrapItemStep : Block → Block
   | .nav spec body => .nav spec (unwrapItemStepList #[] body.toList)
   | .frame t s v body => .frame t s v (unwrapItemStepList #[] body.toList)
   | .para content => .para content
+  | .equation n content => .equation n content
   | .section l st num title => .section l st num title
   | .verbatim c s => .verbatim c s
   | .note body => .note body
@@ -3152,6 +3173,10 @@ def blockTextOne (acc : String) : Block → String
   | .para content =>
     let t := plainText content
     acc ++ t
+  -- an equation's number ships beside its formula in every backend
+  | .equation number content =>
+    let t := plainText content
+    acc ++ t ++ number
   | .section _ _ _ title =>
     let t := plainText title
     acc ++ t
@@ -3224,6 +3249,7 @@ def headingLevelList (out : Array Nat) : List Block → Array Nat
 def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .section level _ _ _ => out.push level
   | .para _ => out
+  | .equation _ _ => out
   | .list _ items => headingLevelItems out items.toList
   | .center body => headingLevelList out body.toList
   | .quote body => headingLevelList out body.toList
@@ -3546,6 +3572,13 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
         dimInlineList_text cover k true content.toList #[]]
     · simp [h, blockTextOne, plainText,
         dimInlineList_text cover k false content.toList #[], plainTextList]
+  | .equation num content =>
+    rw [dimBlock]
+    by_cases h : pending = true
+    · simp [h, blockTextOne, plainText, plainTextList, plainTextOne,
+        dimInlineList_text cover k true content.toList #[]]
+    · simp [h, blockTextOne, plainText,
+        dimInlineList_text cover k false content.toList #[], plainTextList]
   | .list o items =>
     rw [dimBlock]
     simp [blockTextOne, dimItems_text cover k pending items.toList #[] acc, blockTextItems]
@@ -3727,7 +3760,8 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
       blockTextList]
-  | .para _ | .section _ _ _ _ | .verbatim _ _ | .note _ | .framefoot _ | .pagebreak
+  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .note _ | .framefoot _
+  | .pagebreak
   | .setPalette _ | .setTokens _
   | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
 
@@ -3785,7 +3819,7 @@ theorem numberFloatList_text (c : FloatCtr) (acc : Array Block)
 theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
     blockTextOne s (numberFloatOne c b).2 = blockTextOne s b := by
   match b with
-  | .para _ | .section _ _ _ _ | .note _ | .verbatim _ _ | .logo _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ | .logo _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
   | .list o items =>
@@ -3875,7 +3909,7 @@ def backendNames : List String := ["pdf", "html", "md"]
 /-- Does backend `t` keep this block? Only a conditional can exclude one. -/
 def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
-  | .para _ | .section _ _ _ _ | .list _ _ | .center _ | .quote _ | .abstract _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _ | .quote _ | .abstract _
   | .role _ _
   | .spaced _ _
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
@@ -3905,6 +3939,7 @@ def keepForOne (t : String) : Block → Block
   | .note body => .note (keepForList t body.toList).toArray
   | .frame ti st v body => .frame ti st v (keepForList t body.toList).toArray
   | .para c => .para c
+  | .equation n c => .equation n c
   | .section l st num title => .section l st num title
   | .verbatim c s => .verbatim c s
   | .logo c => .logo c
@@ -3955,6 +3990,7 @@ def textLeavesList (acc : List String) : List Block → List String
 
 def textLeavesOne (acc : List String) : Block → List String
   | .para content => plainText content :: acc
+  | .equation _ content => plainText content :: acc
   | .section _ _ _ title => plainText title :: acc
   | .verbatim _ s => s :: acc
   | .logo content => plainText content :: acc
@@ -4037,7 +4073,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .note body => orphanFreeList avail body.toList
   | .nav _ body => orphanFreeList avail body.toList
   | .frame _ _ _ body => orphanFreeList avail body.toList
-  | .para _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak => true
   | .float _ _ _ body _ => orphanFreeList avail body.toList
@@ -4099,6 +4135,7 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
     textLeavesOne acc b = textLeavesOne [] b ++ acc := by
   match b with
   | .para c => simp [textLeavesOne]
+  | .equation _ c => simp [textLeavesOne]
   | .section l st num title => simp [textLeavesOne]
   | .verbatim c s => simp [textLeavesOne]
   | .logo c => simp [textLeavesOne]
@@ -4232,6 +4269,9 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
       ∃ t ∈ avail, keptBy t b = true ∧ s ∈ textLeavesOne [] (keepForOne t b) := by
   match b with
   | .para c =>
+    intro s hs
+    exact ⟨t0, h0, rfl, hs⟩
+  | .equation n c =>
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
   | .section l st num title =>
@@ -4482,6 +4522,7 @@ def imageSrcsBlockList (out : Array String) : List Block → Array String
 
 def imageSrcsBlock (out : Array String) : Block → Array String
   | .para content => imageSrcsInlines out content
+  | .equation _ content => imageSrcsInlines out content
   | .section _ _ _ title => imageSrcsInlines out title
   | .list _ items => imageSrcsItems out items.toList
   | .center body => imageSrcsBlockList out body.toList
@@ -4580,6 +4621,7 @@ def setAltBlockList (alt : String) (out : Array Block) : List Block → Array Bl
 
 def setAltBlock (alt : String) : Block → Block
   | .para content => .para (setAltInlines alt content)
+  | .equation n content => .equation n content
   | .center body => .center (setAltBlockList alt #[] body.toList)
   | .quote body => .quote (setAltBlockList alt #[] body.toList)
   | .abstract body => .abstract (setAltBlockList alt #[] body.toList)
@@ -4731,6 +4773,7 @@ def resolveRefBlockList (table : RefTable) (out : Array Block) :
 
 def resolveRefBlock (table : RefTable) : Block → Block
   | .para content => .para (resolveRefInlines table content)
+  | .equation n content => .equation n (resolveRefInlines table content)
   | .section l st n title => .section l st n (resolveRefInlines table title)
   | .list ordered items => .list ordered (resolveRefItems table #[] items.toList)
   | .center body => .center (resolveRefBlockList table #[] body.toList)
