@@ -180,18 +180,4 @@ theorem titlepage_align_declared_engine :
       | none => True := by
   sorry
 
--- owed: take_args_consumes_forward
--- owner: LeanTex.Core.Elab
--- source: arch-provable I6; PLAN's phase-split design (the measure: definition-time expansion limit, then suffix length)
--- blocker: `takeArgs` is one of the elaborator's three tracked non-total functions — opaque to the checker, so nothing about it is provable as written. This is the progress half of its termination measure (the returned index never rewinds), stated now so the phase split (arch-provable R5) has its contract; the split restates it over the total Phase-A definitions and discharges it structurally.
--- goldens: no
-/-- Argument consumption only moves forward: the index `takeArgs` returns
-is never before the one it was given — the suffix-length half of the
-elaborator's termination measure. -/
-theorem take_args_consumes_forward
-    (ctx : Elab.Ctx) (params : Array Elab.Param) (name : String)
-    (raws : Array Parse.Raw) (start : Nat) (pos : Pos) (st : Elab.ESt) :
-    start ≤ ((Elab.takeArgs ctx params name raws start pos).run st).1.2 := by
-  sorry
-
 end Obligations

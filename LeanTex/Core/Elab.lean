@@ -2523,6 +2523,21 @@ def takeArgs (ctx : Ctx) (params : Array Param) (name : String)
   let (bs, ⟨j, _⟩) ← takeArgsFrom ctx params 0 name raws start pos #[]
   return (bs, j)
 
+/-- Argument consumption only moves forward: the index `takeArgs` returns
+is never before the one it was given — the progress half of the
+elaborator's termination measure (arch-provable I6), discharged by the
+subtype `takeArgsFrom` carries its progress in. -/
+theorem take_args_consumes_forward
+    (ctx : Ctx) (params : Array Param) (name : String)
+    (raws : Array Raw) (start : Nat) (pos : Pos) (st : ESt) :
+    start ≤ ((takeArgs ctx params name raws start pos).run st).1.2 := by
+  unfold takeArgs
+  rcases h : (takeArgsFrom ctx params 0 name raws start pos #[]).run st
+    with ⟨⟨bs, j, hj⟩, st'⟩
+  simp [StateT.run, bind, StateT.bind, pure, StateT.pure] at h ⊢
+  rw [h]
+  exact hj
+
 /-- Block environments: those whose content is a block sequence. -/
 def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "document", "frame", "columns", "figure",
