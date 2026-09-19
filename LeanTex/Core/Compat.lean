@@ -81,10 +81,7 @@ def configSkip : List (String × Nat × String × Option String) :=
 its own and an overfull line warns by itself", none),
    ("selectlanguage", 1,
     "'\\selectlanguage' would change the hyphenation language; patterns stay English",
-    some "hyphenation patterns are English-only; \\page{ hyphenate = off } turns them off"),
-   ("pagestyle", 1,
-    "'\\pagestyle' names page furniture the engine does not model; ignored",
-    some "\\runninghead / \\runningfoot declare the page furniture")]
+    some "hyphenation patterns are English-only; \\page{ hyphenate = off } turns them off")]
 
 /-- Beamer configuration commands: how many `{...}` arguments each carries.
 The engine has no beamer templating layer, so each is skipped whole — the
@@ -804,6 +801,61 @@ where
       else
         { st with foot := (st.foot.filter (·.1 != slot)).push (slot, src) }
     return some (#[], k)
+  | "fancyhead" | "fancyfoot" | "fancyhf" =>
+    -- fancyhdr's primary interface (manual §2): `[places]` crosses L/C/R
+    -- with E/O (even/odd). The engine has one page sequence, so E and O
+    -- collapse onto the slot letter, said once; no `[places]` means every
+    -- field, and an empty field clears its slots — both as the manual
+    -- defines (`\fancyhf{}` is its own idiom for clearing the style).
+    -- Slots land in the same gathered fields as `\lhead`'s family, so the
+    -- same-slot replace policy is one policy.
+    let (opt, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    let src := rawSrc (args.getD 0 #[])
+    let mut slots : Array Nat := #[]
+    let mut evenOdd := false
+    for e in (opt.getD "LCR").splitOn "," do
+      for c in e.toList do
+        let c := c.toUpper
+        if c == 'L' && !slots.contains 0 then slots := slots.push 0
+        else if c == 'C' && !slots.contains 1 then slots := slots.push 1
+        else if c == 'R' && !slots.contains 2 then slots := slots.push 2
+        else if c == 'E' || c == 'O' then evenOdd := true
+    if evenOdd then
+      sayOnce "fancyhdr:evenodd" .N0102
+        "even and odd pages are one sequence here; the field applies to every page" pos
+    let toHead := name != "fancyfoot"
+    let toFoot := name != "fancyhead"
+    modify fun st =>
+      let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := pos } else st
+      let put (parts : Array (Nat × String)) : Array (Nat × String) :=
+        slots.foldl (init := parts) fun parts slot =>
+          let parts := parts.filter (·.1 != slot)
+          if src.trimAscii.toString.isEmpty then parts else parts.push (slot, src)
+      { st with
+        head := if toHead then put st.head else st.head
+        foot := if toFoot then put st.foot else st.foot }
+    return some (#[], k)
+  | "pagestyle" =>
+    let (args, k) := takeGroups raws start 1
+    let v := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    match v with
+    | "fancy" | "scrheadings" =>
+      -- The styles that mean "the declared running fields apply" — which
+      -- they already do here: gathered fields land as `\runninghead` /
+      -- `\runningfoot` by themselves. Agreement, not a missing model (the
+      -- old warning said "not modelled" about exactly what is modelled).
+      became s!"\\pagestyle\{{v}}" "nothing: declared running fields apply by themselves" pos
+      return some (#[], k)
+    | "empty" =>
+      modify fun st => { st with head := #[], foot := #[] }
+      became "\\pagestyle{empty}" "no running furniture, the state the engine starts from" pos
+      return some (#[], k)
+    | _ =>
+      sayOnce "ctrl:pagestyle" .W0104
+        s!"'\\pagestyle\{{v}}' names page furniture the engine does not model; ignored" pos
+        (help := "\\runninghead / \\runningfoot declare the page furniture")
+      return some (#[], k)
   | "thispagestyle" =>
     -- Only the opening page can be meant from the preamble or the document's
     -- first line; anywhere else it would need a page model we do not have.
