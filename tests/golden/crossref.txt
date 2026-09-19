@@ -16,6 +16,24 @@ para
   text ". A key nothing declares stays honest: see "
   ref "sec:gamma" shows "??"
   text "."
+float figure 1
+  caption
+    text "An invented crossref panel."
+  para
+    text "An invented stand-in for a figure body. "
+    label "fig:panel"
+float table 1
+  caption
+    text "An invented data strip."
+  para
+    text "A one-line stand-in for tabular content. "
+    label "tab:strip"
+para
+  text "Figure "
+  ref "fig:panel" shows "1" -> #fig:panel
+  text " and Table "
+  ref "tab:strip" shows "1" -> #tab:strip
+  text " are referenced by the numbers their captions carry."
 section 1 number "A"
   text "Extras"
 para

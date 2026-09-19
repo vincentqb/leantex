@@ -100,6 +100,7 @@ def main (args : List String) : IO UInt32 := do
 
   -- goldens
   runGoldens update (failures ref)
+  floatRefAgreementChecks ref
 
   -- dim
   t "sp pt string" ((Dim.pt 10).toPtString == "10" && (Dim.pt 3 / 2).toPtString == "1.5")

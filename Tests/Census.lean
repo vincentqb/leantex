@@ -34,7 +34,12 @@ def censusTable :
       hasStr (censusText c) "AppendixA letters"),
     ("the heading line carries its number beside its title",
       ((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.text "Alpha").map
-        fun l => hasStr l.text "1").getD false)]),
+        fun l => hasStr l.text "1").getD false),
+    ("float references ship the numbers their captions carry",
+      hasStr (censusText c) "Figure1 and Table1 are referenced"),
+    ("the captions ship those same numbers as their prefixes",
+      hasStr (censusText c) "Figure 1: An invented crossref panel."
+        && hasStr (censusText c) "Table 1: An invented data strip.")]),
   ("abstract", fun geom c => [
     ("one page", c.size == 1),
     ("the class furniture heading ships", hasStr (censusText c) "Abstract"),
@@ -494,3 +499,47 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     for (label, ok) in ((censusOutlineTable.lookup n).map (· out.outline)).getD [] do
       check ref s!"census {n} outline: {label}" ok
 
+
+/-- Interim watch on the two float-numbering sites, until the single-source
+rework: elaboration *predicts* the number a `\label` inside a float binds
+to (its `figNum`/`tabNum` thread), while `Ir.numberFloats` *assigns* the
+node's number after elaboration, and nothing proves predictor and assigner
+agree. Over every golden fixture: a resolved reference to a key standing
+inside a captioned figure or table shows exactly the number the numbered
+node carries. Keys inside a nested subfloat are the nested float's own and
+subfigure letters have no predictor at all — their shipped form is the
+subfigures census row — so `.sub` stays outside this watch. The rework
+that builds the reference table from the numbered IR deletes the predictor
+and replaces this test with a theorem. This is predictor-vs-assigner
+agreement between two IR computations, not a page claim; the page-facing
+halves live in censusTable's crossref and subfigures rows. -/
+def floatRefAgreementChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let labelsIn (body : Array Ir.Block) (caption : Array Ir.Inline) : Array String :=
+    let fi := fun (out : Array String) (x : Ir.Inline) => match x with
+      | .label k => out.push k
+      | _ => out
+    Ir.foldBlocks (fun out _ => out) fi (Ir.foldInlines fi #[] caption) body
+  let floatsIn (body : Array Ir.Block) :
+      Array (Ir.FloatKind × Option Nat × Array Ir.Block × Array Ir.Inline) :=
+    Ir.foldBlocks (fun out b => match b with
+      | .float kind num _ fbody fcaption => out.push (kind, num, fbody, fcaption)
+      | _ => out) (fun out _ => out) #[] body
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, _) ← elabFixture n src
+    let refs := Ir.foldBlocks (fun out _ => out)
+      (fun out x => match x with
+        | .ref key paren text _ => out.push (key, paren, text)
+        | _ => out) #[] doc.body
+    for (kind, num, body, caption) in floatsIn doc.body do
+      if kind != Ir.FloatKind.sub then
+        if let some nnum := num then
+          let nested := (floatsIn body).flatMap fun (_, _, nb, nc) => labelsIn nb nc
+          let direct := (labelsIn body caption).filter (!nested.contains ·)
+          for key in direct do
+            for (k, paren, text) in refs do
+              if k == key then
+                let expect := if paren then s!"({nnum})" else toString nnum
+                check ref
+                  s!"float ref agreement {n}: '{key}' resolves to the number its float carries"
+                  (text == expect)
