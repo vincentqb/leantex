@@ -265,27 +265,23 @@ theorem DiagCode.code_letter (c : DiagCode) :
     c.code.front = c.loss.severity.letter := by
   cases c <;> rfl
 
-/-- Every code, for the registry checks in Tests.lean; `all_complete` holds
-the list to the type. -/
+/-- How many codes the registry holds: the one number a new code bumps.
+`all_complete` makes an undercount a build failure; `all_nodup` an
+overcount (`ofNat` clamps out of range, so an overcount duplicates the
+last constructor). -/
+def DiagCode.count : Nat := 130
+
+/-- Every code, for the registry checks in Tests.lean — derived from the
+type through the `ofNat` that `deriving DecidableEq` synthesises, never
+hand-maintained: constructor declaration order, complete and duplicate-free
+by the two theorems below, so the list cannot drift from the inductive. -/
 def DiagCode.all : List DiagCode :=
-  [.E0001, .E0002, .E0101, .E0102, .E0111, .E0112, .E0113, .E0201, .E0202, .E0205, .E0303, .E0304,
-   .E0305, .E0306, .E0309, .E0310, .E0311, .E0312, .E0313, .E0316, .E0320,
-   .E0321, .E0322, .E0323, .E0324, .E0325, .E0326, .E0327, .E0328, .E0329,
-   .E0330, .E0331, .E0332, .E0333, .E0334, .E0336, .E0340, .E0401, .E0402, .E0403, .E0404,
-   .E0405, .E0501, .E0502, .E0503, .N0100,
-   .N0016, .N0102, .N0103, .N0114, .N0200, .W0001, .W0003, .W0005, .W0006, .W0007, .W0008, .N0018, .N0017, .N0019,
-   .W0009, .W0010, .W0011, .W0012, .W0013, .W0014, .W0015, .W0101, .W0102,
-   .W0103, .W0104, .W0105, .W0106, .W0108,
-   .W0110, .W0111, .W0201, .W0202, .W0301, .W0302, .W0303, .W0304, .W0307,
-   .W0309, .W0310, .W0311, .W0312, .W0314, .W0315, .W0316, .W0317,
-   .W0318, .W0319, .W0320, .W0321, .W0322, .W0323, .W0325, .W0326,
-   .W0327, .W0328, .W0329, .W0330, .W0331, .W0332, .W0333, .W0334, .W0335,
-   .W0337, .W0338, .W0339, .W0340, .W0341, .W0342, .W0343, .W0345,
-   .W0346, .W0356, .E0347, .W0348, .W0354, .W0349, .W0350, .W0601, .W0602, .W0355, .W0357,
-   .W0351, .W0352, .W0353]
+  (List.range DiagCode.count).map DiagCode.ofNat
 
 theorem DiagCode.all_complete (c : DiagCode) : DiagCode.all.contains c := by
   cases c <;> rfl
+
+theorem DiagCode.all_nodup : DiagCode.all.Nodup := by decide +kernel
 
 /-- The code a string names, for validating a document's `\allow` list. -/
 def DiagCode.ofString? (s : String) : Option DiagCode :=
