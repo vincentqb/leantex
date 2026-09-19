@@ -140,6 +140,12 @@ private structure St where
   `showdetail`, initially false — plain TeX's `\newif` sets `\iffalse`)
   with the value the last `\Xtrue`/`\Xfalse` gave. Flat, like `defined`. -/
   flags : Array (String × Bool) := #[]
+  /-- Command names the rewrite walk has bound so far, in document order:
+  what `\providecommand`'s keep-existing policy reads. Separate from
+  `defined`, which the conditional pass fills for the whole document
+  before any rewrite runs — a policy about "before this point" cannot
+  read a whole-document set. -/
+  bound : Array String := #[]
 
 private abbrev M := StateM St
 
@@ -750,12 +756,28 @@ where
         return some (← synthAt native pos, k)
       | none => return none
     else return none
-  | "NewDocumentCommand" | "newcommand" | "providecommand"
+  | "NewDocumentCommand" | "newcommand" | "providecommand" | "renewcommand"
   | "DeclareDocumentCommand" | "RenewDocumentCommand" | "DeclareRobustCommand" =>
+    -- One arm for the whole definer family. LaTeX's documented triple
+    -- (usrguide, "Defining commands": new must not exist, renew must
+    -- exist, provide keeps an existing definition) collapses here to the
+    -- one policy that changes what a correct document *means*: a
+    -- `\providecommand` of a name this document already bound keeps the
+    -- first definition, so its body is consumed whole. The two error
+    -- halves are LaTeX's to check — kernel and package names are
+    -- invisible to this pass, so checking them would misfire on every
+    -- `\renewcommand` of a kernel command. The native store stays
+    -- last-wins, the layering mechanism.
     let xparse := name.endsWith "DocumentCommand"
     let start := skipStar raws start
     let (nameArgs, j) := takeGroups raws start 1
     let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
+    if !xparse && cmd == "sectionlinesformat" then
+      -- `\renewcommand\sectionlinesformat[4]{...}` is the spelling KOMA
+      -- documents: the rule idiom, not a definition.
+      let (_, j) := takeOpt raws j
+      let (args, k) := takeGroups raws j 1
+      return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
     let (spec, j) ← if xparse then
         let (a, j) := takeGroups raws j 1
         pure (signature (rawSrc (a.getD 0 #[])), j)
@@ -766,6 +788,13 @@ where
         let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (count - 1) 'm')
           else String.ofList (List.replicate count 'm')
         pure (signature spec, j)
+    if name == "providecommand" && (← get).bound.contains cmd then
+      let (_, k) := takeGroups raws j 1
+      became s!"\\providecommand\{\\{cmd}}"
+        s!"nothing: '\\{cmd}' is already defined and the existing definition is kept" pos
+      return some (#[], k)
+    modify fun st => { st with
+      bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
     let native := s!"\\define \\{cmd}({spec})"
     became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
     modify fun st => { st with bodyNext := 1 }
@@ -997,24 +1026,6 @@ clock, so nothing is inserted" pos
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
-  | "renewcommand" =>
-    -- \\renewcommand\\sectionlinesformat[4]{...} is the spelling KOMA documents;
-    -- other renewals define a command like \\newcommand does.
-    let start := skipStar raws start
-    let (nameArgs, j) := takeGroups raws start 1
-    let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
-    let (count, j) := takeOpt raws j
-    if cmd == "sectionlinesformat" then
-      let (args, k) := takeGroups raws j 1
-      return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
-    let (dflt, j) := takeOpt raws j
-    let n := (count.bind String.toNat?).getD 0
-    let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (n - 1) 'm')
-      else String.ofList (List.replicate n 'm')
-    let native := s!"\\define \\{cmd}({signature spec})"
-    became s!"\\renewcommand\{\\{cmd}}" (native ++ " {...}") pos
-    modify fun st => { st with bodyNext := 1 }
-    return some (← synthAt native pos, j)
   | "setmathfont" =>
     -- fontspec's math sibling: the named face fills the math slot, and a
     -- `Path=` rides into `dir` exactly as `\setmainfont`'s does.
@@ -1047,21 +1058,72 @@ clock, so nothing is inserted" pos
       (help := "\\allow{W0104} accepts the skip")
     return some (#[], k)
   | "def" | "edef" | "gdef" | "xdef" =>
-    -- TeX's macro layer: consume through the body group, so the definition
-    -- never leaks into the document as stray content.
-    let mut k := start
+    -- The declarative/programmable line. A plain `\def\x{...}` — an
+    -- undelimited parameter text `#1..#n` and a body — declares exactly
+    -- what `\define` declares, and rewrites onto it (`\gdef` too: the
+    -- store here is flat). `\edef`/`\xdef` expand at definition time, and
+    -- a delimited parameter text is a scanning program: both are
+    -- expansion-time TeX, refused by name (W0357) — the termination
+    -- design's boundary, not a gap.
+    let expanding := name == "edef" || name == "xdef"
+    let j := skipSpaces raws start
+    let cmd? := match raws[j]? with
+      | some (.ctrl c _) => some c
+      | _ => none
+    -- The parameter text: everything between the name and the body group.
+    let mut k := j + 1
+    let mut params : Array Raw := #[]
     let mut found := false
-    for j in [start:raws.size] do
-      match raws[j]? with
-      | some (.group _ _) =>
-        found := true
-        k := j + 1
-        break
-      | some _ => k := j + 1
-      | none => break
-    sayOnce "ctrl:def" .W0104 s!"TeX '\\{name}' is not supported; skipped" pos
-      (help := "\\define \\name(...) {body} declares typed commands")
-    return some (#[], if found then k else start)
+    if cmd?.isSome then
+      for j2 in [k:raws.size] do
+        match raws[j2]? with
+        | some (.group _ _) => found := true; k := j2; break
+        | some r => params := params.push r; k := j2 + 1
+        | none => break
+    let ps := params.filter fun r => match r with | .space => false | _ => true
+    let undelimited : Bool := Id.run do
+      let mut n := 0
+      let mut i2 := 0
+      for _ in [0:ps.size] do
+        match ps[i2]?, ps[i2 + 1]? with
+        | some (Raw.sym '#' _), some (Raw.word w _) =>
+          if w == toString (n + 1) then
+            n := n + 1
+            i2 := i2 + 2
+          else return false
+        | none, _ => break
+        | _, _ => return false
+      return i2 == ps.size
+    match cmd? with
+    | some cmd =>
+      if found && !expanding && undelimited then
+        let n := ps.size / 2
+        let spec := String.ofList (List.replicate n 'm')
+        modify fun st => { st with
+          bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
+        let native := s!"\\define \\{cmd}({signature spec})"
+        became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
+        modify fun st => { st with bodyNext := 1 }
+        return some (← synthAt native pos, k)
+      else
+        -- Consume through the body group, so the definition never leaks
+        -- into the document as stray content.
+        let k2 := if found then k + 1 else k
+        if expanding then
+          sayOnce ("ctrl:" ++ name) .W0357
+            s!"'\\{name}' defines by expanding at definition time; the engine has no \
+expansion step, so the definition is skipped" pos
+            (help := "\\define \\name(...) {body} declares typed commands")
+        else
+          sayOnce "ctrl:def-delimited" .W0357
+            s!"'\\{name}' with a delimited parameter text is a TeX scanning program; \
+the definition is skipped" pos
+            (help := "\\define \\name(...) {body} declares typed commands")
+        return some (#[], k2)
+    | none =>
+      sayOnce "ctrl:def" .W0357 s!"TeX '\\{name}' is not supported; skipped" pos
+        (help := "\\define \\name(...) {body} declares typed commands")
+      return some (#[], start)
   | "newenvironment" | "renewenvironment" =>
     -- `\newenvironment{name}[n][default]{begin}{end}` is the native
     -- `\defineenv{name}(a1: content, ...) {begin} {end}`. The two body

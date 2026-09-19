@@ -182,8 +182,6 @@ warning[W0103]: package 'pgfplots' is not supported; skipped
 ── W0104 (config) unsupported TeX construct skipped
 warning[W0104]: '\directlua' is Lua code for luatex; the engine does not run Lua, so it is skipped
   help: \allow{W0104} accepts the skip
-warning[W0104]: TeX '\def' is not supported; skipped
-  help: \define \name(...) {body} declares typed commands
 warning[W0104]: '\raggedright' asks for unjustified setting; the document stays justified
   help: declare \page{ justify = false }
 warning[W0104]: '\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps its own and an overfull line warns by itself
@@ -341,6 +339,11 @@ warning[W0346]: '\page' is a declaration; inside inline content it is ignored
 ── W0356 (degraded) document class option refused by name; the document renders without it
 warning[W0356]: class option 'twocolumn' asks for a two-column page; the text is set in one column
 warning[W0356]: class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full
+── W0357 (config) a definition is expansion-time TeX; refused by design
+warning[W0357]: '\edef' defines by expanding at definition time; the engine has no expansion step, so the definition is skipped
+  help: \define \name(...) {body} declares typed commands
+warning[W0357]: '\def' with a delimited parameter text is a TeX scanning program; the definition is skipped
+  help: \define \name(...) {body} declares typed commands
 ── E0347 (dropped) a running head or foot declared in the body is dropped with its content
 error[E0347]: '\runninghead' in the body is dropped with its content
   help: declare it in the preamble, before '\begin{document}'
