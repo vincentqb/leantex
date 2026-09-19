@@ -418,6 +418,31 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
       scalars.contains 'q' && scalars.contains 'r')
   t "docScalars carries the uppercase small caps set"
     (scalars.contains 'H' && scalars.contains 'I')
+  -- The reported accent class: a combining sequence (e + U+0301) in
+  -- regular and bold. The mark is content: it ships from the styled face,
+  -- from the chain (W0009), or drops loudly naming the scalar (E0405) —
+  -- never silently. (The investigated page-1 name carries no accent in
+  -- its own source; this pins the loss class the report suspected.)
+  let (accDoc, accDs) := Elab.run "t" "Be\u0301lair and \\textbf{Be\u0301lair}"
+  t "combining source clean" accDs.isEmpty
+  let accOut := layoutOf mapped accDoc geom
+  let accGlyphs := ((accOut.pages.flatMap (·.lines)).flatMap (·.segs)).flatMap
+    fun s => match s with
+      | .run _ _ _ _ glyphs _ _ _ => glyphs.map (·.2)
+      | _ => #[]
+  t "a combining mark ships or is named, never silent"
+    (accGlyphs.contains '\u0301' ||
+      accOut.diags.any fun d => d.code == "W0009" || d.code == "E0405")
+  t "the base letters survive whatever the mark does" (accGlyphs.contains 'B')
+  let icons ← load "ExampleIcons-Regular.ttf"
+  t "premise: the icon face lacks the mark"
+    ((icons.gid '\u0301').isNone)
+  let iconSet : Font.FontSet := {
+    fonts := #[icons]
+    index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
+  let dropAcc := layoutOf iconSet accDoc geom
+  t "a face lacking the mark, with no fallback, drops it loudly by name"
+    (dropAcc.diags.any fun d => d.code == "E0405" && hasStr d.message "U+0301")
   t "docScalars excludes whitespace and kerns"
     (!scalars.contains ' ' && !scalars.contains '\u2009' && !scalars.contains '\u00a0')
   t "docScalars is sorted" (scalars == scalars.qsort (· < ·))
