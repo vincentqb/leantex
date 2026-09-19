@@ -120,6 +120,9 @@ def main (args : List String) : IO UInt32 := do
   declChecks ref
   tokensChecks ref
   compatChecks ref
+  compatIndexChecks ref
+  compatConservationChecks ref
+  classOptionChecks ref
   backendSuiteChecks ref
   unitChecks ref
   exprChecks ref

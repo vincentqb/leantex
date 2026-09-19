@@ -145,8 +145,8 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0102 => dvE (dvDoc "\\definecolor{c}{hsb}{0.5,0.5,0.5}\n" "x")
   | .W0103 => dvE (dvDoc "\\usepackage{pgfplots}\n" "x")
   | .W0104 => dvE (dvDoc (String.intercalate "\n"
-      ["\\directlua{tex.print('x')}", "\\def\\x{y}", "\\raggedright",
-       "\\sloppy", "\\selectlanguage{german}", "\\pagestyle{scrheadings}",
+      ["\\directlua{tex.print('x')}", "\\raggedright",
+       "\\sloppy", "\\selectlanguage{german}", "\\pagestyle{headings}",
        "\\ifx\\x\\y\\fi", "\\usecolortheme{dove}",
        "\\setbeamercovered{transparent}", "\\titlegraphic{}"] ++ "\n") "x")
   | .W0105 => dvE "\\uncover<zz>{x}"
@@ -244,6 +244,12 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       "not a PNG or JPEG file"]
   | .W0349 => dvE "\\ref{nowhere}"
   | .W0350 => dvE "\\section{A}\\label{twice}\\label{twice}"
+  | .W0356 =>
+    dvE "\\documentclass[twocolumn]{article}\n\\begin{document}\nx\n\\end{document}" ++
+    dvE "\\documentclass[draft]{article}\n\\begin{document}\nx\n\\end{document}"
+  | .W0357 =>
+    dvE (dvDoc "\\edef\\x{y}\n" "x") ++
+    dvE (dvDoc "\\def\\pair#1.#2{#1 and #2}\n" "x")
 
 /-! The message lint: every fired message and help is judged mechanically.
 Each check exists because the pasted real output violated it (the brief's

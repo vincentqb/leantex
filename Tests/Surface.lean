@@ -373,6 +373,24 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre "\\linespread{1.04}")).1.page.leading == 1040)
   t "compat heads become one running head"
     ((elabStr (pre "\\ihead{L}\\ohead{\\thepage}")).1.head.map (·.any (· == .pageNumber)) == some true)
+  -- fancyhdr's primary interface: [places] cross L/C/R with E/O; the slots
+  -- land beside \lhead's, one replace policy, and \fancyhf{} clears.
+  t "compat fancyhead places its slots"
+    ((elabStr (pre "\\fancyhead[L]{A}\\fancyhead[R]{\\thepage}")).1.head.map
+      (·.any (· == .pageNumber)) == some true)
+  t "compat fancyhf clears the gathered fields"
+    ((elabStr (pre "\\lhead{A}\\cfoot{B}\\fancyhf{}")).1.head == none &&
+     (elabStr (pre "\\lhead{A}\\cfoot{B}\\fancyhf{}")).1.foot == none)
+  t "compat fancyhead even-odd places collapse with a note"
+    (let (doc, ds) := elabStr (pre "\\fancyhead[LE,RO]{A}")
+     doc.head.isSome && ds.any (fun d => d.code == "N0102") &&
+       ds.all (·.severity == .note))
+  t "compat pagestyle fancy is agreement, not a missing model"
+    ((elabStr (pre "\\fancyhead[L]{A}\\pagestyle{fancy}")).2.all (·.severity == .note))
+  t "compat pagestyle empty clears the furniture"
+    ((elabStr (pre "\\lhead{A}\\pagestyle{empty}")).1.head == none)
+  t "compat pagestyle headings keeps the honest warning"
+    (warnCodes (pre "\\pagestyle{headings}") == ["W0104"])
   -- `\par` ends a paragraph inside a scope group, with the group's
   -- declarations carried into what follows; a command's argument group is
   -- not a scope and is left to the command.
@@ -445,8 +463,58 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr ("\\documentclass{article}\\palette{m = #888888}\\begin{document}" ++
       "a {\\color{m}b} c\\end{document}")).1.body ==
       #[.para #[.text "a ", .colored { r := 0x88, g := 0x88, b := 0x88 } (some "m") #[.text "b"], .text " c"]])
+  -- `\color`'s argument is a palette *expression*: the `!`-mix grammar lives
+  -- once, in `Palette.resolve`, and the bare-name arm routes through it.
+  -- Before, `\color{m!50!black}` minted '\m!50!black' as a control word and
+  -- the mix warned W0301 with its content losing the colour (run-verified
+  -- wrong output). A computed mix carries no CSS var name, as `\textcolor`
+  -- already holds.
+  t "compat color mix routes through the palette resolver"
+    ((elabStr ("\\documentclass{article}\\palette{m = #888888}\\begin{document}" ++
+      "a {\\color{m!50!black}b} c\\end{document}")).1.body ==
+      #[.para #[.text "a ", .colored { r := 0x44, g := 0x44, b := 0x44 } none #[.text "b"],
+        .text " c"]])
+  t "compat color black needs no declaration"
+    ((elabStr ("\\documentclass{article}\\begin{document}" ++
+      "a {\\color{black}b} c\\end{document}")).1.body ==
+      #[.para #[.text "a ", .colored { r := 0, g := 0, b := 0 } none #[.text "b"],
+        .text " c"]])
   t "compat text symbols" ((elabStr "a\\textbar b\\textperiodcentered c").1.body ==
     #[.para #[.text "a|b·c"]])
+  -- The fixed text spaces are table rows with TeXbook widths as Unicode's
+  -- own space characters; the logos set as their plain words.
+  t "compat quad family are fixed spaces"
+    ((elabStr "a\\quad b\\qquad c\\enspace d").1.body ==
+      #[.para #[.text "a\u2003b\u2003\u2003c\u2002d"]])
+  t "compat logos and textcomp symbols are text"
+    ((elabStr "\\LaTeX{} and \\TeX{}, 90\\textdegree, 5\\texteuro").1.body ==
+      #[.para #[.text "LaTeX and TeX, 90°, 5€"]])
+  -- \url is \href's one-argument mono sibling: the URL is its own text,
+  -- set typewriter (url.sty's \urlstyle{tt} default).
+  t "url is a mono self-link"
+    ((elabStr "\\url{https://example.org/a_b}").1.body ==
+      #[.para #[.link "https://example.org/a_b"
+        #[.styled .mono #[.text "https://example.org/a_b"]]]])
+  -- A definition standing between paragraphs binds from there on (the
+  -- corpus's mid-document \newcommand); inline positions keep E0312.
+  t "body define binds for the rest of the flow"
+    (let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}Before.\n\n" ++
+      "\\define \\hi(w: content) {Hello \\w}\n\\hi{there}\n\\end{document}")
+     ds.all (·.severity == .note) &&
+       doc.body.any (fun b => match b with
+         | .para inls => inls.any (fun x => match x with
+           | .role "hi" _ => true
+           | _ => false)
+         | _ => false))
+  t "body newcommand rewrites and binds"
+    ((elabStr ("\\documentclass{article}\\begin{document}a\n\n" ++
+      "\\newcommand{\\x}{X}\n\\x\n\\end{document}")).2.all (·.severity == .note))
+  -- \today is an input, not content the document carries: the artifact is
+  -- a function of the document alone, so the clock is refused deliberately
+  -- with its own message, never the generic unknown-command fall-through.
+  t "compat today is refused deliberately"
+    (let ds := (elabStr "Dated \\today.").2
+     ds.any (fun d => d.code == "W0104") && ds.all (fun d => d.code != "W0301"))
   t "compat vspace is a spaced block"
     ((elabStr "a\n\n\\vspace{3pt}\nb").1.body.any fun b => match b with
       | .spaced _ _ => true
@@ -483,6 +551,12 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((warnCodes beamerPre).length == 1 && (warnCodes beamerPre).all (· == "W0104"))
   t "compat usetheme selects the bundle instead of warning"
     ((elabStr beamerPre).1.palette.find? "frametitlebg" |>.isSome)
+  -- moloch is the maintained metropolis fork: both metropolis spellings
+  -- select the shipped bundle instead of leaving the deck unthemed (W0319).
+  t "compat usetheme metropolis is the moloch bundle"
+    (((elabStr (pre "\\usetheme{metropolis}")).1.palette.find? "frametitlebg" |>.isSome) &&
+     ((elabStr (pre "\\usetheme{m}")).1.palette.find? "frametitlebg" |>.isSome) &&
+     warnCodes (pre "\\usetheme{metropolis}") == [])
   t "compat beamer warnings name the native spelling"
     ((elabStr (pre "\\setbeamercolor{normal text}{fg=black}")).2.any fun d =>
       d.code == "W0104" && ((d.help.getD "").splitOn "\\palette").length == 2)
@@ -491,8 +565,52 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat undecidable tex conditional skipped whole, contents included"
     (warnCodes (pre "\\ifx\\x\\y\\usepackage{pgfpages}\\setbeameroption{notes}\\fi") ==
       ["W0104"])
-  t "compat def skipped through its body"
+  t "compat def defines through its body"
     (errCodes (pre "\\makeatletter\\def\\verbatim@font{\\footnotesize\\ttfamily}\\makeatother") == [])
+  -- The declarative/programmable line: a plain \def with undelimited
+  -- #1..#n parameters declares what \define declares and rewrites onto
+  -- it; \edef and a delimited parameter text are expansion-time TeX,
+  -- refused by name (W0357), never the blanket W0104 skip.
+  t "compat plain def with parameters expands at its uses"
+    ((elabStr ("\\documentclass{article}\\def\\both#1#2{#1 and #2}" ++
+      "\\begin{document}\\both{a}{b}\\end{document}")).1.body ==
+      #[.para #[.role "both" #[.text "a and b"]]])
+  t "compat edef is refused by name"
+    (warnCodes (pre "\\edef\\x{y}") == ["W0357"])
+  t "compat delimited def is refused by name"
+    (warnCodes (pre "\\def\\pair#1.#2{#1 and #2}") == ["W0357"])
+  -- usrguide's triple: \providecommand keeps an existing definition —
+  -- the one policy of the three that changes what a correct document
+  -- means (the others need kernel names this pass cannot see).
+  t "compat providecommand keeps the existing definition"
+    ((elabStr ("\\documentclass{article}\\newcommand{\\v}{first}" ++
+      "\\providecommand{\\v}{second}\\begin{document}\\v\\end{document}")).1.body ==
+      #[.para #[.text "first"]])
+  t "compat providecommand defines when nothing is bound"
+    ((elabStr ("\\documentclass{article}\\providecommand{\\v}{only}" ++
+      "\\begin{document}\\v\\end{document}")).1.body ==
+      #[.para #[.text "only"]])
+  t "compat renewcommand replaces through the one arm"
+    ((elabStr ("\\documentclass{article}\\newcommand{\\v}{first}" ++
+      "\\renewcommand{\\v}{second}\\begin{document}\\v\\end{document}")).1.body ==
+      #[.para #[.text "second"]])
+  -- enumitem's per-instance [keys] and \item's [marker] override are
+  -- consumed and named: the bracket used to land as content before the
+  -- first \item (a false E0310 error) or as the item's own text (silent
+  -- wrong output).
+  t "list instance options are consumed and named, never E0310"
+    (let src := "\\documentclass{article}\\begin{document}\\begin{itemize}[leftmargin=2em]" ++
+      "\\item a\\end{itemize}\\end{document}"
+     errCodes src == [] && (elabStr src).2.any (fun d => d.code == "N0102"))
+  t "item marker override is consumed and named"
+    (let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}\\begin{itemize}" ++
+      "\\item[--] a\\end{itemize}\\end{document}")
+     warnCodes ("\\documentclass{article}\\begin{document}\\begin{itemize}" ++
+       "\\item[--] a\\end{itemize}\\end{document}") == ["W0110"] &&
+     doc.body == #[.list false #[#[.para #[.text "a"]]]] && ds.all (·.code != "E0310"))
+  t "alignment declarations name their loss instead of W0301"
+    (let ds := (elabStr "{\\flushleft a} {\\raggedleft b} {\\flushright c}").2
+     ds.all (fun d => d.code != "W0301") && ds.any (fun d => d.code == "W0104"))
   t "compat newenvironment defines; its titlegraphic content is a dropped loss"
     (let src := pre "\\newenvironment{wrap}[1]{\\titlegraphic{#1}}{\\titlegraphic{}}"
      errCodes src == ["E0112"] && warnCodes src == ["W0104"])
@@ -553,6 +671,115 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "input preamble diagnostics name the included file"
     ((preDs.filterMap (·.span)).any (·.file == "pre.tex") &&
      !(preDs.filterMap (·.span)).any (·.file == "main.tex"))
+
+/-- Class options and `\page` keys are one vocabulary: `*paper` names a size
+from the same `pageSizes` table `\page{ size = ... }` reads, `landscape`
+swaps the axes, and a `\page` declaration wins. `twocolumn` and `draft` are
+refused by name (W0356) — the silent drop was the defect class (an a4paper
+request quietly shipped on letter). -/
+def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pageOf (opts : String) (pre : String := "") : Ir.PageSpec :=
+    (elabStr s!"\\documentclass[{opts}]\{article}{pre}\\begin\{document}x\\end\{document}").1.page
+  t "class option a4paper sets the page size"
+    (let p := pageOf "a4paper"
+     p.width == Dim.pt 595 && p.height == Dim.pt 842)
+  t "class option letterpaper and KOMA paper= set the page size"
+    ((pageOf "letterpaper").width == Dim.pt 612 && (pageOf "paper=a5").width == Dim.pt 420)
+  t "class option landscape swaps the axes"
+    (let p := pageOf "a4paper,landscape"
+     p.width == Dim.pt 842 && p.height == Dim.pt 595)
+  t "a declared page wins over the class option"
+    ((pageOf "a4paper" "\\page{ size = a5 }").width == Dim.pt 420)
+  t "class options twocolumn and draft are refused by name"
+    ((warnCodes "\\documentclass[twocolumn,draft]{article}\\begin{document}x\\end{document}")
+      == ["W0356", "W0356"])
+  t "class option a4paper warns nothing"
+    ((elabStr "\\documentclass[a4paper,11pt]{article}\\begin{document}x\\end{document}").2.all
+      (·.severity == .note))
+
+/-- The package-claim index: every package in `Compat.nativePackages` ships
+`tests/compat-index/<pkg>.txt`, its user-facing command surface as
+reviewable data — one line per command, `<place> <annotation> <call>`,
+place `pre` | `body`, annotation `impl` | `refuse:<code>`. An `impl` call
+elaborates without W0301/W0302; a `refuse:` call fires exactly its named
+code, so a refusal that silently stops warning fails too. Adding a package
+to the list without its index file fails: the claim and its evidence
+arrive together. -/
+def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let dir : System.FilePath := "tests/compat-index"
+  for pkg in Compat.nativePackages do
+    let path := dir / (pkg ++ ".txt")
+    let found ← path.pathExists
+    check ref s!"compat index: '{pkg}' is claimed native but has no index file" found
+    unless found do continue
+    let content ← IO.FS.readFile path
+    for line in content.splitOn "\n" do
+      let line := line.trimAscii.toString
+      if line.isEmpty || line.startsWith "#" then continue
+      let place := ((line.splitOn " ").headD "")
+      let rest := (line.drop place.length).toString.trimAscii.toString
+      let ann := ((rest.splitOn " ").headD "")
+      let call := (rest.drop ann.length).toString.trimAscii.toString
+      let src := if place == "pre" then
+          s!"\\documentclass\{article}\n\\usepackage\{{pkg}}\n{call}\n\\begin\{document}\nx\n\\end\{document}"
+        else
+          s!"\\documentclass\{article}\n\\usepackage\{{pkg}}\n\\begin\{document}\n{call}\n\\end\{document}"
+      let codes := (elabStr src).2.map (·.code)
+      if place != "pre" && place != "body" then
+        failures ref s!"compat index {pkg}: unreadable place in: {line}"
+      else if ann == "impl" then
+        check ref s!"compat index {pkg}: '{call}' is marked impl but warns unknown"
+          (!codes.contains "W0301" && !codes.contains "W0302")
+      else if ann.startsWith "refuse:" then
+        let code := (ann.drop "refuse:".length).toString
+        check ref s!"compat index {pkg}: '{call}' no longer fires {code}"
+          (codes.contains code)
+      else
+        failures ref s!"compat index {pkg}: unreadable annotation in: {line}"
+
+/-- The note is the rewrite: each arm's replacement elaborates to exactly
+the document its N0100 note names — whole-`Doc` equality between the LaTeX
+spelling and the native spelling, per arm. This is the executable form of
+the owed per-arm conservation statement (an oracle, not a theorem: the
+statement over the monadic walk needs the applyDecl fold extraction PLAN
+names as T1's precondition), and the geometry pair is the template both
+audits asked to state first. -/
+def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let wrap (decls body : String) : String :=
+    s!"\\documentclass\{article}\n{decls}\n\\begin\{document}\n{body}\n\\end\{document}"
+  let pairs : List (String × String × String) := [
+    ("geometry options", wrap "\\usepackage[a4paper,margin=2cm]{geometry}" "x",
+      wrap "\\page{ size = a4, margin = 2cm }" "x"),
+    ("geometry command", wrap "\\usepackage{geometry}\\geometry{margin=1in}" "x",
+      wrap "\\page{  }\\page{ margin = 1in }" "x"),
+    ("linespread", wrap "\\linespread{1.05}" "x", wrap "\\page{ leading = 1.05 }" "x"),
+    ("setstretch", wrap "\\setstretch{1.3}" "x", wrap "\\page{ leading = 1.3 }" "x"),
+    ("onehalfspacing", wrap "\\onehalfspacing" "x", wrap "\\page{ leading = 1.25 }" "x"),
+    ("definecolor", wrap "\\definecolor{c}{HTML}{112233}" "x",
+      wrap "\\palette{ c = #112233 }" "x"),
+    ("colorlet", wrap "\\definecolor{c}{HTML}{112233}\\colorlet{d}{c}" "x",
+      wrap "\\palette{ c = #112233 }\\palette{ d = c }" "x"),
+    ("vspace", wrap "" "a\n\n\\vspace{3pt}\nb",
+      wrap "" "a\n\n\\block[before = 3pt]{}\nb"),
+    ("bigskip", wrap "" "a\n\n\\bigskip\nb",
+      wrap "" "a\n\n\\block[before = 12pt plus 4pt minus 4pt]{}\nb"),
+    ("newcommand", wrap "\\newcommand{\\hi}[1]{H #1}" "\\hi{x}",
+      -- Up to parameter renaming: the rewrite mints `a1`, a name a control
+      -- word cannot spell (digits are not name characters, as in TeX), so
+      -- the arm's own note names a spelling no author can type — found by
+      -- this oracle, recorded for a successor. Parameter names do not
+      -- survive into the Doc, so the conservation statement itself is
+      -- unaffected.
+      wrap "\\define \\hi(w: content) {H \\w}" "\\hi{x}"),
+    ("url", wrap "" "\\url{https://example.org}",
+      wrap "" "\\href{https://example.org}{\\texttt{https://example.org}}"),
+    ("enquote", wrap "" "\\enquote{x}", wrap "" "“x”"),
+    ("setlist", wrap "\\setlist[itemize]{leftmargin=2em}" "x",
+      wrap "\\style{itemize}{ indent = 2em }" "x")]
+  for (nm, latex, native) in pairs do
+    t s!"conserves {nm}" ((elabStr latex).1 == (elabStr native).1)
 
 /-- Dimension evidence beyond the fixed vectors in `main`.
 
