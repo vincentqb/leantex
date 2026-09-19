@@ -1028,6 +1028,30 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
         + adv mbase 'r' + mu mbase 3 + adv mbase '𝑦')
   t "ensuremath in text enters math"
     (glyphsOf "" "\\ensuremath{x^2}" == #['𝑥', '2'])
+  -- The diagnosed synthesis: an alphabet scalar no face covers renders as
+  -- its base letter — bold/italic from the text face where that is the
+  -- alphabet's essence, the plain letter for the shape alphabets — and
+  -- N0018 names the styling difference. Never dropped: E0405 stays for
+  -- scalars with no stand-in.
+  let calOut := Layout.run geom mfs none (Elab.run "t" "$\\mathcal{L}$").1
+  t "an uncovered calligraphic letter sets plain, named N0018"
+    ((calOut.diags.filter (·.code == "E0405")).isEmpty &&
+      (calOut.diags.filter (·.code == "N0018")).map (·.message) ==
+        #["'Fira Math' has no calligraphic 'L' (U+2112); the plain letter stands in"] &&
+      glyphChars "$\\mathcal{L}$" == #['L'])
+  t "a covered alphabet stays silent"
+    ((Layout.run geom mfs none (Elab.run "t" "$\\mathbb{R}$").1).diags.all
+      (·.code != "N0018"))
+  let noBoldFira : Font.Font := { fira with
+    cmap := fira.cmap.filter fun r => !(r.1.toNat ≤ 0x1D400 && 0x1D400 ≤ r.2.1.toNat) }
+  let noBoldSet : Font.FontSet := { mfs with fonts := #[serif, noBoldFira] }
+  let bfOut := Layout.run geom noBoldSet none (Elab.run "t" "$\\mathbf{A}$").1
+  t "a bold letter the math face lacks synthesizes from the text face"
+    ((bfOut.diags.filter (·.code == "N0018")).map (·.message) ==
+      #["'Fira Math' has no bold 'A' (U+1D400); set bold from 'Source Serif Pro'"] &&
+      ((bfOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
+        | .run 0 _ _ _ glyphs _ _ _ => glyphs.any (·.2 == 'A')
+        | _ => false))
   -- The alignment family renders as grids now; the numbered forms warn
   -- W0014 (numbers are owed, the mathematics is not), a ragged row is
   -- W0013 and still renders padded.

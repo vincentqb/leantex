@@ -1490,8 +1490,23 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       | some (fb, g) =>
         ((acc.1.push (.box g.2.2 fb e.color e.link #[g] size e.underline raise)), acc.2)
       | none =>
-        if acc.2.contains (e.idx, c) then acc
-        else (acc.1, acc.2.push (e.idx, c))
+        -- A math alphabet's scalar uncovered everywhere: the base letter
+        -- stands in — bold/italic from the text face where that is the
+        -- alphabet's styling, the plain letter otherwise — and the
+        -- per-formula post-walk names the loss (N0018). Only when even
+        -- the stand-in is uncovered does the scalar go missing (E0405).
+        let synth : Option (Nat × (Nat × Char × Sp)) := do
+          let (a, base) ← Math.MathAlphabet.unapply c
+          let (bold, italic) := a.synthStyle
+          let fi := if bold || italic then e.fs.lookup 0 bold italic else e.idx
+          let g ← glyphOf size (e.fs.get fi) base
+          return (fi, g)
+        match synth with
+        | some (fi, g) =>
+          ((acc.1.push (.box g.2.2 fi e.color e.link #[g] size e.underline raise)), acc.2)
+        | none =>
+          if acc.2.contains (e.idx, c) then acc
+          else (acc.1, acc.2.push (e.idx, c))
   | .word s => Id.run do
     -- An upright word (a function name, `\text`): boxes in the math face,
     -- split only where the chain substitutes — a box carries one face.
@@ -1599,6 +1614,7 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
   let mut items : Array Item := #[]
   let mut missing : Array (Nat × Char) := #[]
   let mut substs : Array (Nat × Char × Nat) := #[]
+  let mut unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
   let mut extras : Std.HashMap Nat Sp := {}
   let mut cache := cache
   for tk in st.toks do
@@ -1659,12 +1675,17 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
         -- The substitutions the chain made, named like text's (W0009):
         -- a scalar the math face lacks that a fallback face set. One the
         -- assembly paths recorded missing was never substituted — a grown
-        -- construction is one face — so `m` excludes it here.
+        -- construction is one face — so `m` excludes it here. A math
+        -- alphabet's scalar no face covers rendered as its stand-in base
+        -- letter (`layMathNucleus`): N0018 names the styling difference.
         for c in Math.MList.scalarsList #[] body do
           if (font.gid c).isNone && !m.contains (idx, c) then
             if let some fb := fs.fallbackFor c then
               if ((fs.get fb).gid c).isSome && !substs.contains (idx, c, fb) then
                 substs := substs.push (idx, c, fb)
+            else if let some (a, base) := Math.MathAlphabet.unapply c then
+              unless unstyled.any (·.2.1 == c) do
+                unstyled := unstyled.push (idx, c, a, base)
         missing := m
         items := items ++ ms
       | none => pure ()
@@ -1710,6 +1731,18 @@ with \\allow{E0405}"))
     diags := diags.push (Diag.of .W0009
       s!"'{(fs.get idx).family}' has no glyph for '{c}' \
         (U+{hex c.toNat}); set from '{(fs.get fb).family}'")
+  for (idx, c, a, base) in unstyled do
+    let (bold, italic) := a.synthStyle
+    if bold || italic then
+      diags := diags.push (Diag.of .N0018
+        s!"'{(fs.get idx).family}' has no {a.styleLabel} '{base}' \
+(U+{hex c.toNat}); set {a.styleLabel} from \
+'{(fs.get (fs.lookup 0 bold italic)).family}'")
+    else
+      diags := diags.push (Diag.of .N0018
+        s!"'{(fs.get idx).family}' has no {a.styleLabel} '{base}' \
+(U+{hex c.toNat}); the plain letter stands in"
+        (help := "declare a math face that carries it: \\fonts{ math = ... }"))
   return (items, diags, cache, extras)
 where
   hex (n : Nat) : String := Id.run do

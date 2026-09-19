@@ -39,9 +39,11 @@ constructor does not build until it names the input that fires it, and the
 coverage check holds each witness to actually firing its code. -/
 
 /-- One firing input per code. `one` maps every slot to one face;
-`mapped` adds a second face and a fallback map for the substitution codes.
-The synthetic driver arguments mirror what Main.lean passes. -/
-def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
+`mapped` adds a second face and a fallback map for the substitution codes;
+`withMath` carries a math face with no fallback, for the codes only a
+formula can fire. The synthetic driver arguments mirror what Main.lean
+passes. -/
+def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .E0001 => #[DriverDiag.unreadableInput "doc.tex"
       "no such file or directory (error code: 2)"]
   | .E0002 =>
@@ -109,6 +111,7 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
       "a\n\n\\vspace{20pt minus 8pt}\nb\n\n\\vspace{20pt minus 8pt}\nc")
   | .N0016 => #[DriverDiag.mathFaceCompanion "TeX Gyre Pagella Math" "TeX Gyre Pagella",
       DriverDiag.mathFaceFirst "Fira Math"]
+  | .N0018 => dvL withMath "$\\mathcal{L} + \\mathsf{A}$"
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL one (dvDoc "" "$x^2$")
   | .W0005 => dvL one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"
@@ -357,6 +360,12 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
     fonts := #[sans, code]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 1).toArray
     fallback := #[('\u2200', 1)] }
+  let some fira ← load "FiraMath-Regular.otf"
+    | failures ref "diag voice: FiraMath-Regular.otf missing"; return
+  let withMath : Font.FontSet := {
+    fonts := #[sans, fira]
+    index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray
+    math := some 1 }
   let lossLabel : Loss → String
     | .dropped => "dropped"
     | .pending => "pending"
@@ -365,7 +374,7 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
     | .info => "info"
   let mut out := ""
   for c in DiagCode.all do
-    let fired := (diagWitness one mapped c).filter (·.code == c.code)
+    let fired := (diagWitness one mapped withMath c).filter (·.code == c.code)
     check ref s!"diag voice {c.code}: the witness fires it" (!fired.isEmpty)
     -- The registry meaning is prose too: self-contained, one convention.
     if dvInternalRef c.meaning then

@@ -415,6 +415,30 @@ theorem alpha_apply_inj :
     (allAlphabets.all fun a => latinLetters.all fun c =>
       MathAlphabet.unapply (a.apply c) == some (a, c)) = true := by decide
 
+/-- The styling an alphabet declares, for the note that names its loss. -/
+def MathAlphabet.styleLabel : MathAlphabet → String
+  | .bb => "double-struck"
+  | .cal => "calligraphic"
+  | .frak => "fraktur"
+  | .bf => "bold"
+  | .bfit => "bold italic"
+  | .sf => "sans-serif"
+  | .tt => "monospace"
+  | .rm => "upright"
+  | .it => "italic"
+
+/-- What a text face can synthesize of an alphabet's styling when the math
+face lacks the mapped scalar: `(bold, italic)`. The bold and italic
+alphabets keep their essence from the text face's own variants; the shape
+alphabets (double-struck, calligraphic, fraktur, sans-serif, monospace)
+cannot be synthesized — their base letter stands in plain, the loss
+named. -/
+def MathAlphabet.synthStyle : MathAlphabet → Bool × Bool
+  | .bf => (true, false)
+  | .bfit => (true, true)
+  | .it => (false, true)
+  | _ => (false, false)
+
 /-- Inter-atom space: none, thin (3 mu), medium (4 mu), or thick (5 mu),
 where 18 mu is one em of the math font at the current style's size
 (TeXbook p. 168). Set at natural width — the rubber TeX gives `\medmuskip`

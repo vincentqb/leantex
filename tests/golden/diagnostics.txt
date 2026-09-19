@@ -123,6 +123,11 @@ note[N0016]: math is set in 'TeX Gyre Pagella Math', the designed companion of '
   help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
 note[N0016]: math is set in 'Fira Math', the first installed face with an OpenType MATH table
   help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
+── N0018 (info) math alphabet glyph missing everywhere; a stand-in letter sets, the styling difference named
+note[N0018]: 'Fira Math' has no calligraphic 'L' (U+2112); the plain letter stands in
+  help: declare a math face that carries it: \fonts{ math = ... }
+note[N0018]: 'Fira Math' has no sans-serif 'A' (U+1D5A0); the plain letter stands in
+  help: declare a math face that carries it: \fonts{ math = ... }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
 note[N0102]: frame option 'fragile' is not modelled; ignored
 ── N0103 (info) \section short title unused: nothing consumes it yet
