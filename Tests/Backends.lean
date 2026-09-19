@@ -532,7 +532,9 @@ def backendChecks (ref : IO.Ref (List String)) : IO Unit := do
     "Shared opening.\\begin{ifbackend}{html}Only the page carries this." ++
     "\\end{ifbackend}\\begin{ifbackend}{pdf,md}Print and twin carry this." ++
     "\\end{ifbackend}\\end{document}")
-  t "ifbackend source is clean" ds.isEmpty
+  t "ifbackend source is clean, apart from the note naming each conditional"
+    (ds.all (·.severity == .note) &&
+     (ds.filter (·.code == "N0019")).size == 2 && ds.size == 2)
   t "ifbackend carries its target set"
     (match doc.body[1]? with
      | some (Ir.Block.only targets _) => targets == #["html"]

@@ -29,4 +29,4 @@ nav label "Return to top" pin bottom right offset 1500/1000em reveal 225pt
     link "#top"
       icon "" label "Return to top"
 -- diagnostics
-(none)
+note[N0019] 21:1 content addressed per backend encodes a per-medium decision by hand | help: a construct carries its own medium answer (a nav, a note); prefer the construct or the class, and keep '\begin{ifbackend}' for the true remainder

@@ -122,6 +122,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       DriverDiag.mathFaceFirst "Fira Math"]
   | .N0018 => dvL withMath "$\\mathcal{L} + \\mathsf{A}$"
   | .N0017 => (Elab.run "doc.tex" "A classless page, assumed article.").2
+  | .N0019 => dvE (dvDoc "" "\\begin{ifbackend}{pdf}\nprint only\n\\end{ifbackend}")
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL one (dvDoc "" "$x^2$")
   | .W0005 => dvL one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"

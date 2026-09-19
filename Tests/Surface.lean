@@ -1256,6 +1256,14 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
       (·.code != "N0017"))
   t "a classless .md is the surface's grammar, never noted"
     ((dcl "doc.md" "x").all (·.code != "N0017"))
+  -- A backend conditional in content is a class or kernel decision made by
+  -- hand: noted where it stands, one note per conditional, and a document
+  -- without one is silent — the goal state for every reference document.
+  t "a backend conditional is noted where it stands"
+    (((elabStr "\\begin{ifbackend}{pdf}\nx\n\\end{ifbackend}").2.filter
+      (·.code == "N0019")).size == 1)
+  t "a document without a conditional is never noted"
+    ((elabStr "x\n\n\\begin{nav}\\href{#a}{A}\\end{nav}").2.all (·.code != "N0019"))
   -- The theme install names inert slides furniture: the class gates whether
   -- furniture draws, the theme supplies its values, and a bundle whose
   -- chrome and furniture styles land under article would otherwise be

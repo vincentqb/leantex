@@ -3392,6 +3392,15 @@ the column shares the leftover" cpos
             let j := skipSpaces body 0
             match body[j]? with
             | some (.group g gpos) =>
+              -- A backend conditional writes a per-medium decision by hand
+              -- in content — the decision a construct or the class should
+              -- carry (a nav becomes the print outline by itself, a note
+              -- leaves the handout). Named where it stands, as a note: the
+              -- escape hatch remains for the genuine remainder.
+              diag ctx .N0019
+                "content addressed per backend encodes a per-medium decision by hand" pos
+                (help := "a construct carries its own medium answer (a nav, a note); \
+prefer the construct or the class, and keep '\\begin{ifbackend}' for the true remainder")
               let names := (((rawSrc g).splitOn ",").map (·.trimAscii.toString)).filter
                 (!·.isEmpty)
               let mut targets : Array String := #[]

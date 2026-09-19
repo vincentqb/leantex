@@ -158,6 +158,9 @@ note[N0018]: 'Fira Math' has no sans-serif 'A' (U+1D5A0); the plain letter stand
 ── N0017 (info) no document class declared; the article page model is assumed
 note[N0017]: no '\documentclass'; the article page model is assumed
   help: declare \documentclass{article} (or slides, card, resume, webpage) to choose it
+── N0019 (info) a backend conditional in content names a class or kernel decision made by hand
+note[N0019]: content addressed per backend encodes a per-medium decision by hand
+  help: a construct carries its own medium answer (a nav, a note); prefer the construct or the class, and keep '\begin{ifbackend}' for the true remainder
 ── W0009 (degraded) no glyph in the declared face; set from a fallback face
 warning[W0009]: 'Open Sans' has no glyph for '∀' (U+2200); set from 'Source Code Pro'
 ── W0010 (degraded) lists nest four levels; deeper levels reuse the fourth marker
