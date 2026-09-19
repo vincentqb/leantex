@@ -1,1 +1,8 @@
+# source: xparse/ltcmd documentation §1 — the document-command declaration
+# family.
 pre impl \NewDocumentCommand{\zz}{m}{#1}
+pre refuse:W0303 \RenewDocumentCommand{\emph}{m}{#1}
+pre refuse:W0301 \ProvideDocumentCommand{\zz}{m}{#1}
+pre impl \DeclareDocumentCommand{\zz}{m}{#1}
+pre refuse:W0301 \NewDocumentEnvironment{zz}{}{a}{b}
+pre impl \NewDocumentCommand{\zz}{m}{#1}\RenewDocumentCommand{\zz}{m}{x}

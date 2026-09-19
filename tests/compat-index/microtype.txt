@@ -1,2 +1,9 @@
-# the load is subsumed by the breaker's own tolerances; the setup command is not read
+# source: microtype manual §3 (\microtypesetup), §6 (context), §7 (letterspacing
+# and \DisableLigatures). The load is subsumed by the breaker's own tolerances;
+# none of the configuration surface is read yet.
 pre refuse:W0301 \microtypesetup{protrusion=true}
+body refuse:W0301 \textls{x}
+body refuse:W0301 {\lsstyle x}
+pre refuse:W0301 \DisableLigatures{encoding = *}
+pre refuse:W0301 \SetTracking{encoding = *}{20}
+body refuse:W0301 \microtypecontext{kerning=x}

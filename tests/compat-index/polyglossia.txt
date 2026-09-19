@@ -1,2 +1,6 @@
+# source: polyglossia manual §2 (language setup), §3 (language switching).
+pre refuse:W0301 \setmainlanguage{english}
 pre refuse:W0301 \setdefaultlanguage{english}
+pre refuse:W0301 \setotherlanguage{french}
 body refuse:W0104 \selectlanguage{german}
+body refuse:W0301 \textenglish{x}

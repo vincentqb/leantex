@@ -1,4 +1,10 @@
+# source: fontspec manual §4.1-4.3 (\setmainfont family), §4.4 (\newfontfamily),
+# §4.5 (\fontspec), §5 (\defaultfontfeatures, \addfontfeatures).
 pre impl \setmainfont{Example Serif}
 pre impl \setsansfont{Example Sans}
 pre impl \setmonofont{Example Mono}
 pre impl \babelfont{rm}{Example Serif}
+pre refuse:W0301 \newfontfamily\myfont{Example Sans}
+body refuse:W0301 {\fontspec{Example Sans} x}
+body refuse:W0301 {\addfontfeatures{Numbers=OldStyle} x}
+pre refuse:W0301 \defaultfontfeatures{Ligatures=TeX}

@@ -1,4 +1,12 @@
+# source: textcomp documentation (encguide table 3, the TS1 symbol list) —
+# one row per documented symbol probed, not per glyph.
 body impl 90\textdegree
 body impl 5\texteuro
 body impl \textendash
 body impl \textperiodcentered
+body refuse:W0301 \textcelsius
+body refuse:W0301 \textmu
+body refuse:W0301 \textohm
+body refuse:W0301 \textperthousand
+body refuse:W0301 \textonehalf
+body refuse:W0301 \textminus

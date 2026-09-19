@@ -1,3 +1,10 @@
+# source: grfguide §4 — \includegraphics and its keys, \graphicspath,
+# the rotation and scaling commands.
+body impl \includegraphics{x.png}
 body impl \includegraphics[width=0.5\textwidth]{x.png}
 pre refuse:W0301 \graphicspath{{figs/}}
 body refuse:W0301 \rotatebox{90}{x}
+body refuse:W0301 \scalebox{2}{x}
+body refuse:W0301 \resizebox{2cm}{!}{x}
+body refuse:W0301 \reflectbox{x}
+pre refuse:W0301 \DeclareGraphicsExtensions{.png}

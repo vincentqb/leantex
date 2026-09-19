@@ -1,4 +1,8 @@
+# source: setspace documentation (setspace.sty header) — the three spacing
+# declarations, \setstretch, the spacing environment.
 pre impl \setstretch{1.2}
 pre impl \onehalfspacing
 pre impl \doublespacing
 pre impl \singlespacing
+body refuse:W0302 \begin{spacing}{1.5}x\end{spacing}
+pre refuse:W0301 \SetSinglespace{1.1}

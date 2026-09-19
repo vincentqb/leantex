@@ -1,5 +1,20 @@
+# source: the hyperref manual, "User macros" chapter — link commands,
+# bookmark commands, starred cross-references, \texorpdfstring, \hypersetup.
+# The starred \ref* breaks argument scanning (E0304, the star-scan defect the
+# \citet* row also pins); \pageref* is pending as a whole (W0307).
 body impl \href{https://example.org}{x}
 body impl \url{https://example.org}
-pre impl \hypersetup{pdftitle=T}
+body impl \nolinkurl{https://example.org}
+body refuse:W0301 \hyperref[s]{x}
+body refuse:W0301 \hyperlink{t}{x}
+body refuse:W0301 \hypertarget{t}{x}
+body refuse:W0301 \phantomsection
 body refuse:W0301 \autoref{sec}
+body refuse:W0301 \autopageref{sec}
 body refuse:W0301 \nameref{sec}
+body refuse:E0304 \section{A}\label{s}\ref*{s}
+body refuse:W0307 \section{A}\label{s}\pageref*{s}
+body refuse:W0301 \pdfbookmark[1]{T}{n}
+body refuse:W0301 \belowpdfbookmark{T}{n}
+body refuse:W0301 \texorpdfstring{a}{b}
+pre impl \hypersetup{pdftitle=T}

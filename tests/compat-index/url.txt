@@ -1,2 +1,6 @@
+# source: url package documentation (url.sty header) — \url, \urldef,
+# \urlstyle, \DeclareUrlCommand.
 body impl \url{https://example.org}
 pre impl \urlstyle{tt}
+pre refuse:W0301 \urldef\myurl\url{https://example.org}
+pre refuse:W0301 \DeclareUrlCommand\myp{\urlstyle{tt}}

@@ -1,1 +1,6 @@
+# source: subcaption manual §3 (subfigure environment), §4 (\subcaptionbox),
+# §5 (\subref).
 body impl \begin{figure}\begin{subfigure}{0.5\textwidth}x\end{subfigure}\end{figure}
+body impl \begin{figure}\begin{subfigure}{0.5\textwidth}x\caption{a}\end{subfigure}\end{figure}
+body refuse:W0301 \begin{figure}\subcaptionbox{a}{x}\end{figure}
+body refuse:W0301 \subref{l}

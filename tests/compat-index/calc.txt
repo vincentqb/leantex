@@ -1,1 +1,6 @@
+# source: calc manual §1-2 — infix length expressions inside \setlength, and
+# the text-measuring commands.
 pre impl \setlength{\parskip}{2pt}
+pre impl \setlength{\parindent}{1em + 2pt}
+pre refuse:W0301 \settowidth{\parindent}{abc}
+pre refuse:E0321 \setlength{\parindent}{\widthof{abc}}

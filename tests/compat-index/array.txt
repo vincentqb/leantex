@@ -1,1 +1,5 @@
-# colspec letters are read at the tabular; no separate commands
+# source: array manual §1-2 — colspec letters are read at the tabular; the
+# >{...} decorations are skipped W0104, \newcolumntype is not read.
+pre refuse:W0301 \newcolumntype{Y}{c}
+body refuse:W0104 \begin{tabular}{>{\bfseries}c}a\end{tabular}
+pre impl \setlength{\extrarowheight}{2pt}

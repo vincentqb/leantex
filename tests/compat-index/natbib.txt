@@ -1,12 +1,31 @@
-# natbib manual §2.3 (citation commands) and §2.4 (variants). The three the
-# paper-bib slice implements resolve through the four-axis style; the variants
-# and \nocite/\bibpunct are named as unknown until a slice takes them.
+# source: natbib manual §2.3 (basic citation commands), §2.4 (starred and
+# capitalized variants, \citetext/\citenum), §2.5 (aliases and style:
+# \defcitealias, \setcitestyle, \bibpunct). The three the paper-bib slice
+# implements resolve through the four-axis style. The starred forms break
+# argument scanning (E0304) instead of warning W0301 — an engine defect this
+# row pins until the bib slice fixes the scanner.
 body impl \citep{k}
 body impl \citet{k}
 body impl \cite{k}
-body refuse:W0301 \citeauthor{k}
-body refuse:W0301 \citeyear{k}
-body refuse:W0301 \citealp{k}
+body refuse:E0304 \citep*{k}
+body refuse:E0304 \citet*{k}
 body refuse:W0301 \citealt{k}
+body refuse:W0301 \citealt*{k}
+body refuse:W0301 \citealp{k}
+body refuse:W0301 \citealp*{k}
+body refuse:W0301 \Citet{k}
+body refuse:W0301 \Citep{k}
+body refuse:W0301 \citeauthor{k}
+body refuse:W0301 \citeauthor*{k}
+body refuse:W0301 \citeyear{k}
+body refuse:W0301 \citeyearpar{k}
+body refuse:W0301 \citetext{priv.\ comm.}
+body refuse:W0301 \citenum{k}
 body refuse:W0301 \nocite{k}
+pre refuse:W0301 \defcitealias{k}{ali}
+body refuse:W0301 \citetalias{k}
+body refuse:W0301 \citepalias{k}
+pre refuse:W0301 \setcitestyle{square}
 pre refuse:W0301 \bibpunct{(}{)}{;}{a}{,}{,}
+body impl \bibliographystyle{plainnat}
+body impl \bibliography{refs}

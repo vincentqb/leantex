@@ -1,2 +1,9 @@
+# source: color manual (color.pdf) §1 — defining and using colours, boxes,
+# page colour.
 pre impl \definecolor{c}{rgb}{1,0,0}
 body impl \textcolor{black}{x}
+body impl {\color{black} x}
+body refuse:W0301 \colorbox{black}{x}
+body refuse:W0301 \fcolorbox{black}{white}{x}
+pre refuse:W0301 \pagecolor{black}
+body refuse:W0301 \nopagecolor

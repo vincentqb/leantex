@@ -1,2 +1,6 @@
+# source: caption manual §2 (\captionsetup), §4 (\captionof, declarations).
+# An option the engine does not honour is W0354, named and ignored.
 body impl \begin{figure}\caption{x}\end{figure}
 pre refuse:W0354 \captionsetup{font=small}
+body refuse:W0301 \captionof{figure}{x}
+pre refuse:W0301 \DeclareCaptionFormat{zz}{#3}

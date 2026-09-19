@@ -1,4 +1,8 @@
+# source: soul manual §1-2 — spacing out, capitals, underlining,
+# striking out, highlighting; §5 (\sodef).
 body impl \ul{x}
 body refuse:W0301 \st{x}
 body refuse:W0301 \hl{x}
 body refuse:W0301 \so{x}
+body refuse:W0301 \caps{x}
+pre refuse:W0301 \sodef\sp{}{.1em}{.5em}{.5em}

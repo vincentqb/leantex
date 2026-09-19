@@ -1,1 +1,2 @@
+# source: xurl manual §1: url with more break points; the same \url surface.
 body impl \url{https://example.org}

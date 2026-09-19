@@ -1,5 +1,14 @@
+# source: fancyhdr manual §2 (\fancyhead/\fancyfoot/\fancyhf and the
+# \lhead...\rfoot shorthands), §7 (\fancypagestyle), §5 (\headrulewidth).
+pre impl \pagestyle{fancy}
 pre impl \fancyhead[L]{x}
 pre impl \fancyfoot[C]{x}
 pre impl \fancyhf{}
+pre refuse:W0301 \fancypagestyle{mine}{\fancyhead[L]{x}}
 pre impl \lhead{x}
-pre impl \pagestyle{fancy}
+pre impl \chead{x}
+pre impl \rhead{x}
+pre impl \lfoot{x}
+pre impl \cfoot{x}
+pre impl \rfoot{x}
+pre impl \renewcommand{\headrulewidth}{0pt}

@@ -1,2 +1,3 @@
-# the cross-reference slice landed \appendix; it numbers appendix headings from A
+# source: appendixnumberbeamer README — no commands of its own: it patches
+# \appendix, which the cross-reference slice numbers from A.
 body impl \appendix

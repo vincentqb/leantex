@@ -1,2 +1,7 @@
-# geometry manual §5: the user-facing surface is the options and \geometry
+# source: geometry manual §5 "User Interface" — the options plus \geometry,
+# \newgeometry/\restoregeometry, \savegeometry/\loadgeometry.
 pre impl \geometry{margin=1in}
+body refuse:W0301 \newgeometry{margin=1in}
+body refuse:W0301 \restoregeometry
+body refuse:W0301 \savegeometry{a}
+body refuse:W0301 \loadgeometry{a}

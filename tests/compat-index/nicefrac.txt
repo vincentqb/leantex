@@ -1,1 +1,3 @@
+# source: nicefrac manual §1 — one command, math and text mode.
+body refuse:W0012 $\nicefrac{1}{2}$
 body refuse:W0301 \nicefrac{1}{2}

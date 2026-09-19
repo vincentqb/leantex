@@ -1,1 +1,12 @@
+# source: unicode-math manual §5 (fonts), §4 (\unimathsetup), §8 (the \sym
+# alphabet commands).
 pre impl \setmathfont{Example Math}
+pre refuse:W0301 \unimathsetup{math-style=ISO}
+body refuse:W0012 $\symbf{A}$
+body refuse:W0012 $\symit{A}$
+body refuse:W0012 $\symup{A}$
+body refuse:W0012 $\symbb{R}$
+body refuse:W0012 $\symcal{L}$
+body refuse:W0012 $\symfrak{g}$
+body refuse:W0012 $\symsf{A}$
+body refuse:W0012 $\symtt{A}$

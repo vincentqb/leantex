@@ -1,2 +1,12 @@
+# source: etoolbox manual §2 (\newrobustcmd, \robustify), §3 (hooks and
+# patching), §3.5 (boolean flags). TeX conditionals resolve from the
+# document's own definitions (N0114).
 body impl \ifdefined\nope a\else b\fi
 pre refuse:W0301 \AtBeginDocument{}
+pre refuse:W0301 \AtEndPreamble{}
+pre refuse:W0301 \newrobustcmd{\zz}[1]{#1}
+pre refuse:W0301 \robustify{\emph}
+pre refuse:W0301 \newbool{mybool}
+pre refuse:W0301 \newbool{mybool}\setbool{mybool}{true}
+pre refuse:W0301 \patchcmd{\emph}{a}{b}{}{}
+pre refuse:W0301 \apptocmd{\emph}{x}{}{}

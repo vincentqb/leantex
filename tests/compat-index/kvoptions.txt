@@ -1,1 +1,7 @@
-# package-author machinery; a document never calls it
+# source: kvoptions manual §2-3 — package-author machinery; a document never
+# calls it, and every command refuses by name where it stands.
+pre refuse:W0301 \SetupKeyvalOptions{family=zz}
+pre refuse:W0301 \DeclareStringOption{opt}
+pre refuse:W0301 \DeclareBoolOption{opt}
+pre refuse:W0301 \DeclareVoidOption{opt}{}
+pre refuse:W0301 \ProcessKeyvalOptions*

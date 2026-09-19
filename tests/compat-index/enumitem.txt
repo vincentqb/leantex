@@ -1,2 +1,10 @@
+# source: enumitem manual §3 (label and layout keys), §5 (\setlist and the
+# optional-argument form on each list), §6 (\newlist family), §8 (resuming).
 pre impl \setlist{itemsep=2pt}
+pre impl \setlist[itemize]{leftmargin=2em}
+pre refuse:W0301 \newlist{steps}{enumerate}{3}
+pre refuse:W0301 \renewlist{itemize}{itemize}{4}
+pre refuse:W0301 \setlistdepth{6}
 body impl \begin{itemize}[leftmargin=2em]\item a\end{itemize}
+body impl \begin{enumerate}[label=(\alph*)]\item a\end{enumerate}
+body refuse:W0301 \restartlist{enumerate}

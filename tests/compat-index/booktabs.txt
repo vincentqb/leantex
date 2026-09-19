@@ -1,1 +1,6 @@
+# source: booktabs manual §2 — the rule commands, \cmidrule with its (lr)
+# trimming, \addlinespace, \specialrule.
 body impl \begin{tabular}{ll}\toprule a & b \\ \midrule c & d \\ \bottomrule\end{tabular}
+body impl \begin{tabular}{ll}\toprule a & b \\ \cmidrule(lr){1-2} c & d \\ \bottomrule\end{tabular}
+body impl \begin{tabular}{ll}a & b \\ \addlinespace c & d\end{tabular}
+body refuse:W0301 \begin{tabular}{ll}a & b \\ \specialrule{1pt}{2pt}{2pt} c & d\end{tabular}

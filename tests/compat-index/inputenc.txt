@@ -1,1 +1,3 @@
-# encoding declaration only; no user-facing commands
+# source: inputenc manual §4 — the encoding is an option; \inputencoding is the
+# one user command.
+body refuse:W0301 \inputencoding{utf8}

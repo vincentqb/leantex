@@ -1,1 +1,2 @@
-# a font substitution the engine does not need; no user-facing commands
+# source: lmodern package (lm-info) — a font substitution the engine does not
+# need; no user-facing commands.

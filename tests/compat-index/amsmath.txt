@@ -1,3 +1,60 @@
+# source: amsldoc (amsmath user's guide) — §3 displayed equations and their
+# environments, §4 miscellaneous math (fractions, matrices, \substack, dots,
+# mod spellings), §5 operator names, §7 \text; the command index is the row
+# list. The math slice renders the starred one-column displays; numbered rows
+# degrade W0015 and the rest of the construct set degrades W0012, set as
+# source text.
 body impl $\frac{1}{2}$
+body impl $\dfrac{1}{2}$
+body impl $\tfrac{1}{2}$
+body refuse:W0012 $\cfrac{1}{2}$
+body refuse:W0012 $\binom{n}{k}$
+body refuse:W0012 $\dbinom{n}{k}$
+body refuse:W0012 $\tbinom{n}{k}$
 body impl $\sqrt{2}$
+body impl $\sqrt[3]{2}$
+body impl \begin{equation}x\end{equation}
+body impl \begin{equation*}x\end{equation*}
+body refuse:W0015 \begin{align}x &= y\end{align}
 body impl \begin{align*}x &= y\end{align*}
+body refuse:W0302 \begin{alignat}{2}x &= y & a &= b\end{alignat}
+body refuse:W0015 \begin{gather}x = y\end{gather}
+body impl \begin{gather*}x = y\end{gather*}
+body refuse:W0302 \begin{multline}a + b\\ + c\end{multline}
+body refuse:W0302 \begin{flalign}x &= y\end{flalign}
+body refuse:W0012 \begin{equation}\begin{split}a &= b\\ &= c\end{split}\end{equation}
+body refuse:W0012 $\begin{aligned}a &= b\end{aligned}$
+body refuse:W0012 $\begin{gathered}a = b\end{gathered}$
+body refuse:W0012 $\begin{cases}a & b\\ c & d\end{cases}$
+body refuse:W0012 $\begin{matrix}a & b\end{matrix}$
+body refuse:W0012 $\begin{pmatrix}a & b\end{pmatrix}$
+body refuse:W0012 $\begin{bmatrix}a & b\end{bmatrix}$
+body refuse:W0012 $\begin{Bmatrix}a & b\end{Bmatrix}$
+body refuse:W0012 $\begin{vmatrix}a & b\end{vmatrix}$
+body refuse:W0012 $\begin{Vmatrix}a & b\end{Vmatrix}$
+body refuse:W0012 $\begin{smallmatrix}a & b\end{smallmatrix}$
+body refuse:W0302 \begin{subequations}\begin{equation}x\end{equation}\end{subequations}
+body impl \begin{equation}\label{e}x\end{equation}\eqref{e}
+body refuse:W0012 \begin{equation}x\tag{5}\end{equation}
+body refuse:W0015 \begin{align}x &= y\notag\end{align}
+pre refuse:W0301 \numberwithin{equation}{section}
+body refuse:W0012 \begin{align}a &= b\\ \intertext{so} c &= d\end{align}
+body impl $\text{ab}$
+body impl $\operatorname{foo}(x)$
+pre impl \DeclareMathOperator{\tr}{tr}
+body impl $\boldsymbol{x}$
+body refuse:W0012 $\pmb{x}$
+body refuse:W0012 $\overset{a}{b}$
+body refuse:W0012 $\underset{a}{b}$
+body refuse:W0012 $\sideset{_a}{^b}\prod$
+body refuse:W0012 $\sum_{\substack{i\\ j}}$
+body refuse:W0012 $a, \dotsc, b$
+body refuse:W0012 $a \dotsb b$
+body refuse:W0012 $a \bmod b$
+body refuse:W0012 $a \pmod{b}$
+body refuse:W0012 $a \mod b$
+body refuse:W0012 $a \pod{b}$
+body refuse:W0012 $\genfrac{(}{)}{0pt}{}{a}{b}$
+body refuse:W0012 $\xleftarrow{f} \xrightarrow{g}$
+pre refuse:W0301 \allowdisplaybreaks
+body impl $\mathbb{R}$

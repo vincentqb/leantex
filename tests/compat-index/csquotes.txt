@@ -1,1 +1,9 @@
+# source: csquotes manual §3.1 (\enquote), §3.2 (\foreignquote), §3.3-3.4
+# (\textquote/\blockquote), §4 (\MakeOuterQuote, \setquotestyle).
 body impl \enquote{x}
+body impl \enquote*{x}
+body refuse:W0301 \textquote{x}
+body refuse:W0301 \blockquote{x}
+body refuse:W0301 \foreignquote{french}{x}
+pre refuse:W0301 \MakeOuterQuote{"}
+pre refuse:W0301 \setquotestyle{english}

@@ -1,1 +1,2 @@
-# encoding declaration only; no user-facing commands
+# source: fontenc documentation (encguide) — encoding declaration only; no
+# user-facing commands.

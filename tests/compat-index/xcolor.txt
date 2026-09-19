@@ -1,7 +1,14 @@
+# source: xcolor manual §2.5 (colour definition), §2.6 (colour application),
+# §2.4 (the mix syntax), §2.14 (\rowcolors). The mix row's W0315 is a contrast
+# note about the probe's own 50% grey, not a support boundary, so it stays impl.
 pre impl \definecolor{c}{HTML}{112233}
 pre impl \colorlet{d}{black}
+pre refuse:W0301 \providecolor{c}{HTML}{112233}
 body impl \textcolor{black}{x}
 body impl {\color{black} x}
 body impl {\color{black!50!white} x}
+body refuse:W0301 \colorbox{black}{x}
+body refuse:W0301 \fcolorbox{black}{white}{x}
 pre refuse:W0301 \pagecolor{black}
+body refuse:W0301 \nopagecolor
 body refuse:W0301 \rowcolors{1}{black}{white}

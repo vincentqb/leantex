@@ -1,3 +1,16 @@
+# source: KOMA-Script manual ch. 5 (scrlayer-scrpage) — the \ihead/\chead/\ohead
+# and foot triplets, the one-sided/two-sided variants, \clearpairofpagestyles,
+# \pagestyle{scrheadings}; \setkomafont/\addtokomafont from ch. 4. The starred
+# \cfoot* breaks declaration scanning (E0313, the star-scan defect).
 pre impl \ihead{x}
+pre impl \chead{x}
+pre impl \ohead{x}
+pre impl \ifoot{x}
+pre refuse:E0313 \cfoot*{x}
+pre impl \ofoot{x}
+pre refuse:W0301 \lohead{x}
+pre refuse:W0301 \rehead{x}
 pre impl \clearpairofpagestyles
+pre impl \pagestyle{scrheadings}
 pre impl \setkomafont{section}{\bfseries}
+pre refuse:W0301 \addtokomafont{section}{\itshape}

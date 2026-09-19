@@ -1,3 +1,7 @@
-# the math slice landed the alphabet remap; these render natively now
+# source: amsfndoc — a subset of amssymb's tables; the alphabet commands
+# render natively.
 body impl $\mathbb{R}$
 body impl $\mathfrak{g}$
+body impl $\hbar$
+body refuse:W0012 $\checkmark$
+body refuse:W0012 $\yen$

@@ -1,1 +1,24 @@
+# source: amsfonts/amssymb documentation (amsfndoc §7 symbol tables) — one row
+# per symbol class, not per glyph; \mathbb/\mathfrak render via the alphabet
+# remap, the symbol names degrade W0012.
 body impl $\leq$
+body impl $\mathbb{R}$
+body impl $\mathfrak{g}$
+body refuse:W0012 $\square \blacksquare \lozenge$
+body refuse:W0012 $\varnothing \nexists \complement$
+body refuse:W0012 $\therefore \because$
+body refuse:W0012 $\lesssim \gtrsim$
+body refuse:W0012 $\subsetneq \supsetneq$
+body refuse:W0012 $\nmid \nparallel$
+body refuse:W0012 $\vDash \Vdash$
+body refuse:W0012 $\twoheadrightarrow \rightsquigarrow$
+body refuse:W0012 $\boxplus \boxtimes$
+body refuse:W0012 $\ltimes \rtimes$
+body refuse:W0012 $\smallsetminus \pitchfork$
+body refuse:W0012 $\circlearrowright \curvearrowleft$
+body refuse:W0012 $\upharpoonright \between$
+body refuse:W0012 $\hslash \backprime$
+body refuse:W0012 $\checkmark \maltese$
+body refuse:W0012 $\yen \circledR$
+body refuse:W0012 $\digamma \varkappa$
+body refuse:W0012 $\beth \gimel \daleth$
