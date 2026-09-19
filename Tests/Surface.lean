@@ -240,6 +240,18 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat known package is a note, unknown a warning"
     ((elabStr (pre "\\usepackage{hyperref}")).2.all (·.severity == .note) &&
      warnCodes (pre "\\usepackage{pgfplots}") == ["W0103"])
+  -- A body-position \usepackage is LaTeX's own refusal ("\usepackage can
+  -- be used only in preamble", ltclass.dtx \@onlypreamble): the placement
+  -- is the defect, whatever the package's support — W0103 'not supported;
+  -- skipped' was the wrong diagnosis, for the supported and the local-.sty
+  -- package alike.
+  let bodyUse (p : String) : Array Diag :=
+    (elabStr ("\\documentclass{article}\n\\begin{document}\nx\n\n" ++
+      "\\usepackage{" ++ p ++ "}\n\\end{document}")).2
+  t "compat a body usepackage is a placement refusal, never W0103"
+    ((bodyUse "pgfplots").any (·.code == "W0340") &&
+     (bodyUse "pgfplots").all (·.code != "W0103") &&
+     (bodyUse "geometry").any (·.code == "W0340"))
   -- The picture subset renders, so loading tikz loses nothing at the load:
   -- a shape outside the subset is named where it is drawn (W0334, E0333),
   -- never at the `\usepackage` line.

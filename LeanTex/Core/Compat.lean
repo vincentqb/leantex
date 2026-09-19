@@ -146,6 +146,10 @@ private structure St where
   /-- A `\usetheme` was seen: `\alert` then maps to the theme's alert colour
   rather than the unthemed bold stand-in. -/
   themed : Bool := false
+  /-- Inside the document environment: where a preamble declaration —
+  `\usepackage` first among them — is a placement defect (W0340), never
+  a support question (W0103). -/
+  inDoc : Bool := false
   /-- Constructs already warned about: forty frames sharing one unsupported
   idiom are one problem, not forty. -/
   warned : Array String := #[]
@@ -707,6 +711,17 @@ where
     -- One dispatch for both spellings: `\RequirePackage` is `\usepackage`
     -- for package writers (ltclass.dtx), and a local `.sty` spliced into
     -- the preamble spells its loads that way.
+    if (← get).inDoc then
+      -- LaTeX's own rule: "\usepackage can be used only in preamble"
+      -- (ltclass.dtx \@onlypreamble) — in the body the placement is the
+      -- defect, whatever the package's support, so the W0103 dispatch
+      -- below never judges it.
+      let (_, j) := takeOpt raws start
+      let (_, k) := takeGroups raws j 1
+      sayOnce ("ctrl:" ++ name) .W0340
+        s!"'\\{name}' is a preamble declaration; in the body it is ignored" pos
+        (help := "load the package in the preamble, before '\\begin{document}'")
+      return some (#[], k)
     let (opt, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
     if args.isEmpty then return none
@@ -1560,7 +1575,15 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
       modify fun st => { st with file := saved }
       return .env n body' p
     | none =>
-      return .env n (← rewriteList inBody body #[] body.toList 0 0) p
+      if n == "document" then
+        -- Inside the document environment a preamble declaration is a
+        -- placement defect; the flag is what the `\usepackage` arm reads.
+        modify fun st => { st with inDoc := true }
+        let body' ← rewriteList inBody body #[] body.toList 0 0
+        modify fun st => { st with inDoc := false }
+        return .env n body' p
+      else
+        return .env n (← rewriteList inBody body #[] body.toList 0 0) p
   | r => pure r
 
 end

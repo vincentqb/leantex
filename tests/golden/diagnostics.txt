@@ -326,6 +326,8 @@ warning[W0338]: the table is 211.2pt wider than the measure
 ── W0340 (config) a declaration in the document body is ignored
 warning[W0340]: '\page' is a declaration; in the body it is ignored
   help: declare it in the preamble, before '\begin{document}'
+warning[W0340]: '\usepackage' is a preamble declaration; in the body it is ignored
+  help: load the package in the preamble, before '\begin{document}'
 ── W0341 (degraded) an unknown command's [...] options went with it, never onto the page
 warning[W0341]: '[16]' went with unknown command '\textls'; an option run is not content
   help: content, not options? start the '[' on the next line

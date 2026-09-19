@@ -233,7 +233,9 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       ("\\begin{table}\n\\begin{tabular}{l}\n" ++
        String.join (List.replicate 60 "alpha \\\\\n") ++
        "\\end{tabular}\n\\caption{Below the table}\n\\end{table}"))
-  | .W0340 => dvE (dvDoc "" "x\n\n\\page{ size = a5 }\n\ny")
+  | .W0340 =>
+    dvE (dvDoc "" "x\n\n\\page{ size = a5 }\n\ny") ++
+    dvE (dvDoc "" "x\n\n\\usepackage{pgfplots}\n\ny")
   | .W0341 => dvE "\\textls[16]{spaced}.example.org"
   | .W0342 => dvE (dvDoc "\\theme{plain}\n\\define \\muted(word: content) {\\word}\n"
       "\\muted{x}")
