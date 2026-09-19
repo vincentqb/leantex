@@ -51,7 +51,9 @@ def censusTable :
   ("paragraphs", fun _ c => [
     ("one page", c.size == 1),
     ("the opening sentence ships", hasStr (censusText c) "Typesetting is the arrangement of type"),
-    ("it wraps to at least four lines", (c[0]?.map fun p => decide (p.lines.size ≥ 4)).getD false)]),
+    ("it wraps to at least four lines", (c[0]?.map fun p => decide (p.lines.size ≥ 4)).getD false),
+    ("the plain page number ships, the page's last-laid line",
+      ((c[0]?.bind fun p => p.lines.back?).map (·.text.trimAscii.toString)) == some "1")]),
   ("layout", fun _ c => [
     ("one page", c.size == 1),
     ("the heading ships", hasStr (censusText c) "The first section"),
@@ -129,7 +131,9 @@ def censusTable :
   ("latex-idioms", fun _ c => [
     ("one page", c.size == 1),
     ("the running head ships", hasStr (censusText c) "Alex Doe"),
-    ("the section rules draw", c.any fun p => decide (p.rules ≥ 1))]),
+    ("the section rules draw", c.any fun p => decide (p.rules ≥ 1)),
+    ("thispagestyle empty keeps the opening page bare of the page number",
+      (c[0]?.map fun p => p.lines.all (·.text.trimAscii.toString != "1")).getD false)]),
   ("headroom", fun geom c => [
     ("one page", c.size == 1),
     ("the head ships with its page number", hasStr (censusText c) "Invented Field Notes"),
