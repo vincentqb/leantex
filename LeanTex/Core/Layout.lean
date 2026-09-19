@@ -4132,8 +4132,15 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
   | .foot c => b := { b with curFoot := c }
   | .pin =>
+    -- The resume depth clears the chrome's ink: the title bar (the last
+    -- pinned fill) reaches `pad` below the title's depth, and a spill
+    -- page's first line spaces off the bar's bottom, not the bare
+    -- baseline — without this the resumed line's ascent clipped into the
+    -- repeated bar.
+    let barBottom := (b.cur.fills.back?.map fun f => f.y + f.h).getD 0
     b := { b with pinnedLines := b.cur.lines.size, pinnedFills := b.cur.fills.size
-                  chrome := some (b.cur.lines, b.cur.fills, b.y, b.prevDepth) }
+                  chrome := some (b.cur.lines, b.cur.fills, b.y,
+                    max b.prevDepth (barBottom - b.y)) }
   | .colOpen =>
     colSaves := colSaves.push {
       y := b.y, prevDepth := b.prevDepth, skip := b.skip
