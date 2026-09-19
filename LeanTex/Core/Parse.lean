@@ -185,13 +185,14 @@ def inputEnvFile? (name : String) : Option String :=
 /-- The index past the leading run of `.space` raws at `i`: the one spaces
 scan over sibling raws, shared by every consumer of `Raw` — a caller never
 hand-rolls its own. -/
-def skipSpaces (raws : Array Raw) (i : Nat) : Nat := Id.run do
-  let mut j := i
-  for _ in [i:raws.size] do
-    if h : j < raws.size then
-      if raws[j] matches .space then j := j + 1 else break
-    else break
-  return j
+def skipSpaces (raws : Array Raw) (i : Nat) : Nat :=
+  if h : i < raws.size then
+    if raws[i] matches .space then skipSpaces raws (i + 1) else i
+  else i
+termination_by raws.size - i
+
+theorem skipSpaces_ge (raws : Array Raw) (i : Nat) : i ≤ skipSpaces raws i := by
+  fun_induction skipSpaces raws i <;> omega
 
 mutual
 

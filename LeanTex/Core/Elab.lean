@@ -376,25 +376,58 @@ theorem every_role_is_invocable :
     (Theme.builtin.all fun t => t.palette.entries.toList.all fun e =>
       e.1.toList.all Lex.nameChar && !builtinNames.contains e.1) = true := by decide
 
-private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) := Id.run do
-  let mut k := ctx.limit
-  for _ in [0:ctx.limit] do
-    k := k - 1
-    if h : k < ctx.user.size then
-      if ctx.user[k].name == name then
-        return some (k, ctx.user[k])
-  return none
+private def lookupUserGo (user : Array UserCmd) (name : String) :
+    Nat → Option (Nat × UserCmd)
+  | 0 => none
+  | k + 1 =>
+    if h : k < user.size then
+      if user[k].name == name then some (k, user[k]) else lookupUserGo user name k
+    else lookupUserGo user name k
+
+private def lookupUser (ctx : Ctx) (name : String) : Option (Nat × UserCmd) :=
+  lookupUserGo ctx.user name ctx.limit
+
+private theorem lookupUserGo_lt {user : Array UserCmd} {name : String}
+    {n k : Nat} {cmd : UserCmd} (h : lookupUserGo user name n = some (k, cmd)) :
+    k < n := by
+  fun_induction lookupUserGo user name n with
+  | case1 => simp at h
+  | case2 m hm heq => simp_all
+  | case3 m hm heq ih => exact Nat.lt_succ_of_lt (ih h)
+  | case4 m hm ih => exact Nat.lt_succ_of_lt (ih h)
+
+/-- The visible-prefix bound expansion terminates by: a found command's
+index is strictly below the limit the caller searched under. -/
+private theorem lookupUser_lt {ctx : Ctx} {name : String} {k : Nat}
+    {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) : k < ctx.limit :=
+  lookupUserGo_lt h
 
 /-- The latest visible definition wins, so `\renewenvironment` is one more
 push, exactly as `lookupUser` treats commands. -/
-private def lookupUserEnv (ctx : Ctx) (name : String) : Option (Nat × UserEnv) := Id.run do
-  let mut k := ctx.envLimit
-  for _ in [0:ctx.envLimit] do
-    k := k - 1
-    if h : k < ctx.userEnvs.size then
-      if ctx.userEnvs[k].name == name then
-        return some (k, ctx.userEnvs[k])
-  return none
+private def lookupUserEnvGo (envs : Array UserEnv) (name : String) :
+    Nat → Option (Nat × UserEnv)
+  | 0 => none
+  | k + 1 =>
+    if h : k < envs.size then
+      if envs[k].name == name then some (k, envs[k]) else lookupUserEnvGo envs name k
+    else lookupUserEnvGo envs name k
+
+private def lookupUserEnv (ctx : Ctx) (name : String) : Option (Nat × UserEnv) :=
+  lookupUserEnvGo ctx.userEnvs name ctx.envLimit
+
+private theorem lookupUserEnvGo_lt {envs : Array UserEnv} {name : String}
+    {n k : Nat} {env : UserEnv} (h : lookupUserEnvGo envs name n = some (k, env)) :
+    k < n := by
+  fun_induction lookupUserEnvGo envs name n with
+  | case1 => simp at h
+  | case2 m hm heq => simp_all
+  | case3 m hm heq ih => exact Nat.lt_succ_of_lt (ih h)
+  | case4 m hm ih => exact Nat.lt_succ_of_lt (ih h)
+
+private theorem lookupUserEnv_lt {ctx : Ctx} {name : String} {k : Nat}
+    {env : UserEnv} (h : lookupUserEnv ctx name = some (k, env)) :
+    k < ctx.envLimit :=
+  lookupUserEnvGo_lt h
 
 -- Best-effort source text of raw content (math bodies, class options).
 -- Structural recursion through `List`; the outer call trims, and so does each
@@ -413,13 +446,15 @@ private def isSpaceOrPar : Raw → Bool
 satisfying `p`. Every scan here — spaces, the junk after a malformed
 argument, an edge trim — is this walk; a caller's intent is its predicate,
 never a hand-rolled loop of its own. -/
-private def spanRaws (raws : Array Raw) (i : Nat) (p : Raw → Bool) : Nat := Id.run do
-  let mut j := i
-  for _ in [i:raws.size] do
-    if h : j < raws.size then
-      if p raws[j] then j := j + 1 else break
-    else break
-  return j
+private def spanRaws (raws : Array Raw) (i : Nat) (p : Raw → Bool) : Nat :=
+  if h : i < raws.size then
+    if p raws[i] then spanRaws raws (i + 1) p else i
+  else i
+termination_by raws.size - i
+
+private theorem spanRaws_ge (raws : Array Raw) (i : Nat) (p : Raw → Bool) :
+    i ≤ spanRaws raws i p := by
+  fun_induction spanRaws raws i p <;> omega
 
 /-- The backward companion: the index before the trailing run satisfying `p`. -/
 private def spanRawsEnd (raws : Array Raw) (p : Raw → Bool) : Nat := Id.run do
@@ -673,6 +708,28 @@ inductive ArgScan where
   | unclosed (bpos : Pos)
   | content
 
+/-- The index of the next `]` symbol at or past `k`, if any: the closing
+half every bracket-argument collector shares, stated as an index so the
+consumed extent is a fact the termination measure can read. -/
+private def closeBracketFrom (raws : Array Raw) (k : Nat) : Option Nat :=
+  if h : k < raws.size then
+    if raws[k] matches .sym ']' _ then some k else closeBracketFrom raws (k + 1)
+  else none
+termination_by raws.size - k
+
+private theorem closeBracketFrom_ge {raws : Array Raw} {k c : Nat}
+    (h : closeBracketFrom raws k = some c) : k ≤ c ∧ c < raws.size := by
+  fun_induction closeBracketFrom raws k with
+  | case1 =>
+    rename_i hk _
+    simp only [Option.some.injEq] at h
+    omega
+  | case2 =>
+    rename_i ih
+    have := ih h
+    omega
+  | case3 => simp at h
+
 /-- The one bracket-argument scan, shared by every consumer of an optional
 `[...]`. An argument's `[` opens on `anchor`'s line — a bracket on a later
 line is content, where LaTeX's own argument scanning stops looking too — and
@@ -681,18 +738,34 @@ argument: consuming to the end of the scan would silently drop everything
 after it, a frame body or the rest of a preamble included. `.took` carries
 the index past the `]`; `.unclosed` consumes nothing and carries the `[`'s
 position for the caller to warn about. -/
-private def scanBracketArg (raws : Array Raw) (i : Nat) (anchor : Pos) : ArgScan := Id.run do
+private def scanBracketArg (raws : Array Raw) (i : Nat) (anchor : Pos) : ArgScan :=
   let j := skipSpaces raws i
   match raws[j]? with
   | some (.sym '[' bpos) =>
-    if bpos.line != anchor.line then return .content
-    let mut k := j + 1
-    for _ in [k:raws.size] do
-      if let some (.sym ']' _) := raws[k]? then
-        return .took (k + 1)
-      k := k + 1
-    return .unclosed bpos
-  | _ => return .content
+    if bpos.line != anchor.line then .content
+    else
+      match closeBracketFrom raws (j + 1) with
+      | some c => .took (c + 1)
+      | none => .unclosed bpos
+  | _ => .content
+
+private theorem scanBracketArg_took_lt {raws : Array Raw} {i : Nat}
+    {anchor : Pos} {n : Nat} (h : scanBracketArg raws i anchor = .took n) :
+    i < n ∧ n ≤ raws.size := by
+  unfold scanBracketArg at h
+  dsimp only at h
+  split at h
+  next j bpos heq =>
+    split at h
+    · simp at h
+    · split at h
+      next c hc =>
+        have h1 := skipSpaces_ge raws i
+        have h2 := closeBracketFrom_ge hc
+        simp only [ArgScan.took.injEq] at h
+        omega
+      next => simp at h
+  next => simp at h
 
 /-- An unclosed `[` stays as content; this says why it was not an argument. -/
 private def warnUnclosed (ctx : Ctx) (after : String) (bpos : Pos) : EM Unit :=
@@ -726,12 +799,35 @@ private def scanOptArg (raws : Array Raw) (start : Nat) (pos : Pos) :
     else
       (e, true, raws.extract j e, some bpos)
 
+private theorem malformedRun_ge (raws : Array Raw) (i : Nat) (anchor : Pos)
+    (groups : Bool) : i ≤ malformedRun raws i anchor groups := by
+  unfold malformedRun; exact spanRaws_ge ..
+
+private theorem scanOptArg_ge (raws : Array Raw) (start : Nat) (pos : Pos) :
+    start ≤ (scanOptArg raws start pos).1 := by
+  unfold scanOptArg
+  have hj := skipSpaces_ge raws start
+  have he := malformedRun_ge raws (skipSpaces raws start) pos false
+  have hk := spanRaws_ge raws
+    (malformedRun raws (skipSpaces raws start) pos false) isSpaceOrPar
+  dsimp only
+  split
+  next k h =>
+    have h1 := scanBracketArg_took_lt h
+    have h2 := skipSpaces_ge raws k
+    simp; omega
+  next => simp; omega
+  next bpos h =>
+    split <;> simp <;> omega
+
 private def skipOptArg (ctx : Ctx) (name : String) (raws : Array Raw)
-    (start : Nat) (pos : Pos) : EM (Nat × Bool × Array Raw) := do
-  let (j, recovered, junk, unclosed) := scanOptArg raws start pos
-  if let some bpos := unclosed then
-    warnUnclosed ctx s!"'\\{name}'" bpos
-  return (j, recovered, junk)
+    (start : Nat) (pos : Pos) : EM ({ j : Nat // start ≤ j } × Bool × Array Raw) := do
+  match h : scanOptArg raws start pos with
+  | (j, recovered, junk, unclosed) =>
+    if let some bpos := unclosed then
+      warnUnclosed ctx s!"'\\{name}'" bpos
+    return (⟨j, by have := scanOptArg_ge raws start pos; rw [h] at this; exact this⟩,
+      recovered, junk)
 
 /-- The body of an unknown environment without its arguments: leading `[...]`
 runs and `{...}` groups on the `\begin` line are the environment's own
@@ -741,13 +837,13 @@ too. Also returns the position of an unclosed `[`, for the caller to warn
 about (its run is kept as content), and how many groups went with the
 wrapper, for the caller to name what W0302's "body is kept" does not cover. -/
 private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
-    Array Raw × Option Pos × Nat := Id.run do
+    Nat × Option Pos × Nat := Id.run do
   let mut i := 0
   let mut dropped := 0
   for _ in [0:body.size] do
     match scanBracketArg body i beginPos with
     | .took k => i := k
-    | .unclosed bpos => return (body.extract i body.size, some bpos, dropped)
+    | .unclosed bpos => return (i, some bpos, dropped)
     | .content =>
       let j := skipSpaces body i
       match body[j]? with
@@ -757,7 +853,7 @@ private def dropEnvArgs (body : Array Raw) (beginPos : Pos) :
           dropped := dropped + 1
         else break
       | _ => break
-  return (body.extract i body.size, none, dropped)
+  return (i, none, dropped)
 
 /-- Exactly what went with an unknown wrapper: the count W0302's "its body
 is kept" cannot carry. -/
@@ -792,14 +888,23 @@ command rather than onto the page. A run that never closes stops the scan
 and its `[` position is returned: that run is malformed content, the
 caller's to keep and warn about. -/
 private def skipOptionRuns (raws : Array Raw) (i : Nat) (anchor : Pos) :
-    Nat × Option Pos := Id.run do
-  let mut j := i
-  for _ in [0:raws.size] do
-    match scanBracketArg raws j anchor with
-    | .took k => j := k
-    | .unclosed bpos => return (j, some bpos)
-    | .content => return (j, none)
-  return (j, none)
+    Nat × Option Pos :=
+  match _h : scanBracketArg raws i anchor with
+  | .took k => skipOptionRuns raws k anchor
+  | .unclosed bpos => (i, some bpos)
+  | .content => (i, none)
+termination_by raws.size + 1 - i
+decreasing_by have := scanBracketArg_took_lt _h; omega
+
+private theorem skipOptionRuns_ge (raws : Array Raw) (i : Nat) (anchor : Pos) :
+    i ≤ (skipOptionRuns raws i anchor).1 := by
+  fun_induction skipOptionRuns raws i anchor with
+  | case1 =>
+    rename_i k hk ih
+    have := scanBracketArg_took_lt hk
+    omega
+  | case2 => simp
+  | case3 => simp
 
 /-- Skip an argument run: argument recovery after a reserved (not yet
 implemented) or unknown command. A starred form's `*`, the `[...]` option
@@ -812,22 +917,178 @@ is no content, so the caller passes TeX's own argument limit of nine. The
 scan stops at anything else, so the author's next construct is never
 consumed. Returns the next index and, when an unclosed `[` stopped the
 scan, its position. -/
-private def skipReservedArgs (raws : Array Raw) (i : Nat) (anchor : Pos)
-    (maxGroups : Nat := 1) : Nat × Option Pos := Id.run do
-  let mut j := i
-  if let some (.word "*" _) := raws[j]? then
-    j := j + 1
-  for _ in [0:maxGroups] do
+private def skipReservedArgsGo (raws : Array Raw) (j : Nat) (anchor : Pos) :
+    Nat → Nat × Option Pos
+  | 0 => (j, none)
+  | g + 1 =>
     let (k, unclosed) := skipOptionRuns raws j anchor
-    j := k
-    if let some bpos := unclosed then
-      return (j, some bpos)
-    let k2 := skipSpaces raws j
-    if let some (.group _ _) := raws[k2]? then
-      j := k2 + 1
-    else
-      break
-  return (j, none)
+    match unclosed with
+    | some bpos => (k, some bpos)
+    | none =>
+      let k2 := skipSpaces raws k
+      if raws[k2]? matches some (.group _ _) then
+        skipReservedArgsGo raws (k2 + 1) anchor g
+      else (k, none)
+
+private theorem skipReservedArgsGo_ge (raws : Array Raw) (anchor : Pos)
+    (g : Nat) : ∀ j : Nat, j ≤ (skipReservedArgsGo raws j anchor g).1 := by
+  induction g with
+  | zero => intro j; simp [skipReservedArgsGo]
+  | succ g ih =>
+    intro j
+    have h1 := skipOptionRuns_ge raws j anchor
+    unfold skipReservedArgsGo
+    dsimp only
+    split
+    · simpa using h1
+    · split
+      · have h2 := skipSpaces_ge raws (skipOptionRuns raws j anchor).1
+        have h3 := ih (skipSpaces raws (skipOptionRuns raws j anchor).1 + 1)
+        simp only [reduceIte]
+        omega
+      · simpa using h1
+
+private def skipReservedArgs (raws : Array Raw) (i : Nat) (anchor : Pos)
+    (maxGroups : Nat := 1) : Nat × Option Pos :=
+  match raws[i]? with
+  | some (.word "*" _) => skipReservedArgsGo raws (i + 1) anchor maxGroups
+  | _ => skipReservedArgsGo raws i anchor maxGroups
+
+private theorem skipReservedArgs_ge (raws : Array Raw) (i : Nat) (anchor : Pos)
+    (maxGroups : Nat) : i ≤ (skipReservedArgs raws i anchor maxGroups).1 := by
+  unfold skipReservedArgs
+  split
+  · have := skipReservedArgsGo_ge raws anchor maxGroups (i + 1); omega
+  · exact skipReservedArgsGo_ge raws anchor maxGroups i
+
+-- The termination measure for the elaboration knot: every raw weighs at
+-- least one, a container outweighs its body, so consuming a token or
+-- descending into one strictly lightens the remaining slice. Measure only,
+-- erased at runtime — no artifact reads a weight.
+
+mutual
+-- conserves: none — a termination measure, not a content walk
+private def rawWeight : Raw → Nat
+  | .group body _ => 1 + rawWeightList body.toList
+  | .math _ body _ => 1 + rawWeightList body.toList
+  | .env _ body _ => 1 + rawWeightList body.toList
+  | _ => 1
+-- conserves: none — a termination measure, not a content walk
+private def rawWeightList : List Raw → Nat
+  | [] => 0
+  | r :: rest => rawWeight r + rawWeightList rest
+end
+
+/-- The measure component the knot's spine recurses on: the weight of the
+slice from `i`. -/
+private def sliceWeight (raws : Array Raw) (i : Nat) : Nat :=
+  rawWeightList (raws.toList.drop i)
+
+private theorem rawWeightList_append (a b : List Raw) :
+    rawWeightList (a ++ b) = rawWeightList a + rawWeightList b := by
+  induction a with
+  | nil => simp [rawWeightList]
+  | cons x xs ih => simp [rawWeightList, ih]; omega
+
+private theorem rawWeight_pos (r : Raw) : 1 ≤ rawWeight r := by
+  cases r <;> simp [rawWeight]
+
+private theorem rawWeightList_drop_le (l : List Raw) (i : Nat) :
+    rawWeightList (l.drop i) ≤ rawWeightList l := by
+  induction l generalizing i with
+  | nil => simp
+  | cons x xs ih =>
+    cases i with
+    | zero => simp
+    | succ n =>
+      have := ih n
+      simp only [List.drop_succ_cons, rawWeightList]
+      have := rawWeight_pos x
+      omega
+
+private theorem rawWeightList_take_le (l : List Raw) (i : Nat) :
+    rawWeightList (l.take i) ≤ rawWeightList l := by
+  induction l generalizing i with
+  | nil => simp
+  | cons x xs ih =>
+    cases i with
+    | zero => simp [rawWeightList]
+    | succ n =>
+      have := ih n
+      simp only [List.take_succ_cons, rawWeightList]
+      omega
+
+private theorem sliceWeight_here (raws : Array Raw) {i : Nat} (h : i < raws.size) :
+    sliceWeight raws i = rawWeight raws[i] + sliceWeight raws (i + 1) := by
+  unfold sliceWeight
+  rw [List.drop_eq_getElem_cons (by simpa using h)]
+  simp [rawWeightList]
+
+/-- The workhorse: any strict advance strictly lightens the slice. -/
+private theorem sliceWeight_lt (raws : Array Raw) {i j : Nat}
+    (hi : i < raws.size) (hij : i < j) : sliceWeight raws j < sliceWeight raws i := by
+  have h1 := sliceWeight_here raws hi
+  have h2 : sliceWeight raws j ≤ sliceWeight raws (i + 1) := by
+    unfold sliceWeight
+    have : raws.toList.drop j = (raws.toList.drop (i + 1)).drop (j - (i + 1)) := by
+      rw [List.drop_drop]; congr 1; omega
+    rw [this]
+    exact rawWeightList_drop_le _ _
+  have := rawWeight_pos raws[i]
+  omega
+
+/-- An element standing anywhere at or past `i` weighs no more than the
+slice from `i`. -/
+private theorem elem_weight_le {raws : Array Raw} {j : Nat} {r : Raw}
+    (h : raws[j]? = some r) {i : Nat} (hij : i ≤ j) :
+    rawWeight r ≤ sliceWeight raws i := by
+  cases Array.getElem?_eq_some_iff.mp h with
+  | intro hj hr =>
+    have h1 := sliceWeight_here raws hj
+    have h2 : sliceWeight raws j ≤ sliceWeight raws i := by
+      unfold sliceWeight
+      rw [show raws.toList.drop j = (raws.toList.drop i).drop (j - i) by
+        rw [List.drop_drop]; congr 1; omega]
+      exact rawWeightList_drop_le _ _
+    rw [hr] at h1
+    omega
+
+/-- An extracted tail of a body weighs no more than the body. -/
+private theorem extract_weight_le (body : Array Raw) (a b : Nat) :
+    rawWeightList (body.extract a b).toList ≤ rawWeightList body.toList := by
+  rw [Array.toList_extract]
+  exact Nat.le_trans (rawWeightList_take_le _ _) (rawWeightList_drop_le _ _)
+
+/-- The unknown-environment splice strictly lightens the slice: the kept
+body is lighter than the wrapper it replaces, whatever prefix its argument
+scan dropped. -/
+private theorem sliceWeight_splice {raws : Array Raw} {i : Nat}
+    (h : i < raws.size) {name : String} {body : Array Raw} {pos : Pos}
+    (hr : raws[i] = .env name body pos) (keptFrom : Nat) :
+    sliceWeight (raws.extract 0 i ++ body.extract keptFrom body.size
+      ++ raws.extract (i + 1) raws.size) i < sliceWeight raws i := by
+  have hlen : (raws.extract 0 i).toList.length = i := by
+    simp [Array.length_toList]; omega
+  have hdrop : ((raws.extract 0 i ++ body.extract keptFrom body.size
+      ++ raws.extract (i + 1) raws.size)).toList.drop i
+      = (body.extract keptFrom body.size).toList
+        ++ (raws.extract (i + 1) raws.size).toList := by
+    simp only [Array.toList_append, List.append_assoc]
+    rw [List.drop_append_of_le_length (by omega)]
+    rw [List.drop_eq_nil_of_le (by omega)]
+    simp
+  unfold sliceWeight
+  rw [hdrop, rawWeightList_append]
+  have h1 := sliceWeight_here raws h
+  rw [hr] at h1
+  have h2 := extract_weight_le body keptFrom body.size
+  have h3 : rawWeightList (raws.extract (i + 1) raws.size).toList
+      ≤ rawWeightList (raws.toList.drop (i + 1)) := by
+    rw [Array.toList_extract]
+    exact rawWeightList_take_le _ _
+  unfold sliceWeight at h1
+  simp only [rawWeight] at h1
+  omega
 
 -- Inline elaboration and argument binding are mutually recursive: a call
 -- site's arguments are themselves inline content. Nontermination is
@@ -1219,7 +1480,8 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           -- spaces are ordinary separators — collapsed against the
           -- neighbours by the whitespace arm, never dropped (gluing
           -- `before` to `inner`) and never doubled.
-          let (kept, unclosed, dropped) := dropEnvArgs body pos
+          let (keptFrom, unclosed, dropped) := dropEnvArgs body pos
+          let kept := body.extract keptFrom body.size
           if let some bpos := unclosed then
             warnUnclosed ctx s!"'\\begin\{{name}}'" bpos
           warnDroppedArgs ctx name dropped pos
@@ -1731,7 +1993,7 @@ specs are not modelled")
             warnOnce ctx "note:options" .N0102
               "'\\note' placement and overlay options are ignored: the note is \
 a side channel, never slide content" pos
-          let (j, _, _) ← skipOptArg ctx "note" raws i pos
+          let (⟨j, _⟩, _, _) ← skipOptArg ctx "note" raws i pos
           i := j
           let js := skipSpaces raws i
           if (raws[js]?.bind specWord?).isSome then
@@ -2072,7 +2334,7 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
   -- Past an unclosed `[`, the group the author wrote is still there —
   -- wherever the line break falls — and best effort takes it as the
   -- argument rather than failing the build.
-  let (j, recovered, junk) ← skipOptArg ctx name raws start pos
+  let (⟨j, _⟩, recovered, junk) ← skipOptArg ctx name raws start pos
   match raws[j]? with
   | some (.group body _) =>
     let content ← elabInlines ctx body
@@ -2487,7 +2749,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
             warnOnce ctx "note:options" .N0102
               "'\\note' placement and overlay options are ignored: the note is \
 a side channel, never slide content" npos
-          let (j, _, _) ← skipOptArg ctx "note" raws i npos
+          let (⟨j, _⟩, _, _) ← skipOptArg ctx "note" raws i npos
           i := j
           let js := skipSpaces raws i
           if (raws[js]?.bind specWord?).isSome then
@@ -2825,7 +3087,7 @@ specs are not modelled")
             if let .took _ := scanBracketArg raws i pos then
               warnOnce ctx "section:short" .N0103
                 s!"'\\{n}[short]' short title is unused: nothing consumes it yet" pos
-            let (j, recovered, junk) ← skipOptArg ctx n raws i pos
+            let (⟨j, _⟩, recovered, junk) ← skipOptArg ctx n raws i pos
             if let some p ← mkPara ctx junk then
               blocks := blocks.push p
             match raws[j]? with
@@ -3263,7 +3525,7 @@ has nowhere for a float to float" pos
                 match body[j] with
                 | .ctrl "caption" cpos =>
                   j := j + 1
-                  let (j2, _, _) ← skipOptArg ctx "caption" body j cpos
+                  let (⟨j2, _⟩, _, _) ← skipOptArg ctx "caption" body j cpos
                   j := skipSpaces body j2
                   match body[j]? with
                   | some (.group t _) =>
@@ -3345,7 +3607,7 @@ text width; the box shares the leftover" spos
                         match sbody[q] with
                         | .ctrl "caption" cpos =>
                           q := q + 1
-                          let (q2, _, _) ← skipOptArg ctx "caption" sbody q cpos
+                          let (⟨q2, _⟩, _, _) ← skipOptArg ctx "caption" sbody q cpos
                           q := skipSpaces sbody q2
                           match sbody[q]? with
                           | some (.group t _) =>
@@ -3590,7 +3852,8 @@ ignored without one"
             -- not. The arguments on the `\begin` line go with the wrapper.
             warnOnce ctx ("env:" ++ n) .W0302 s!"unknown environment '\{{n}}'; its body is kept" pos
               (help := "\\defineenv{name}(...) {begin} {end} declares one")
-            let (kept, unclosed, dropped) := dropEnvArgs body pos
+            let (keptFrom, unclosed, dropped) := dropEnvArgs body pos
+            let kept := body.extract keptFrom body.size
             if let some bpos := unclosed then
               warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
             warnDroppedArgs ctx n dropped pos
