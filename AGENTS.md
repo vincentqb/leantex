@@ -181,6 +181,11 @@ in this repo; refer to the private reference corpus abstractly.
 - Linters: the core linters plus the `linter.extra` set run inside
   `lake build` (enabled in `lakefile.toml`); a warning fails the pre-commit
   hook, and `linter.missingDocs` stays off deliberately.
+- A test helper used by two check blocks moves to the shared section
+  (`Tests/Support.lean`) the moment the second caller appears. Fifteen
+  copies of one deck builder grew from parallel slices each lacking a
+  visible shared builder; the by-phase split fixed the ordering that caused
+  it, and this rule prevents regrowth.
 - In-repo tests and fixtures are synthetic, and synthetic means invented: no
   text, topics, or distinctive design values (fonts, spacing constants,
   palettes) copied from the private corpus. Placeholder names, `example.org`
