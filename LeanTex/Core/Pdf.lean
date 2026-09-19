@@ -520,8 +520,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     if nOut == 0 then [] else
       (outlineRootId,
         s!"<< /Type /Outlines /First {outlineItemId 0} 0 R /Last {outlineItemId (nOut - 1)} 0 R /Count {nOut} >>") ::
-      (List.range nOut).map fun k =>
-        let e := outline[k]!
+      outline.toList.zipIdx.map fun (e, k) =>
         let prev := if k == 0 then "" else s!" /Prev {outlineItemId (k - 1)} 0 R"
         let next := if k + 1 == nOut then "" else s!" /Next {outlineItemId (k + 1)} 0 R"
         let target := match e.page, e.url with
