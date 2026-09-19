@@ -252,6 +252,26 @@ def headingNumberChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a number never moves the section anchor"
     ((((HtmlDoc.emit {} doc).1).splitOn "<section id=\"introduction\">").length == 2)
 
+/-- A user command's argument is the caller's token list: a reserved
+character in it is content where the definition places it — a `\label` key
+reads it verbatim — never an error at the binding. Dropping it there
+mangled every key that travelled through a macro parameter, so the label
+never matched its `\ref`. -/
+def argTokenChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let keyed := dvDoc "\\define \\lbl(k: content) {\\label{\\k}}\n"
+    "\\section{A}\\lbl{faq:a_b}\nSee \\ref{faq:a_b}."
+  t "underscore through an argument reaches a label key verbatim"
+    (errCodes keyed == [] && !(warnCodes keyed).contains "W0349")
+  let texty := dvDoc "\\define \\x(a: content) {\\a}\n" "\\x{p_q}"
+  t "underscore through an argument placed in text is kept, not dropped"
+    (errCodes texty == [] &&
+      (((elabStr texty).1.body.toList.filterMap fun b => match b with
+        | .para xs => some (Ir.plainText xs)
+        | _ => none).any fun s => (s.splitOn "p_q").length > 1))
+  t "a reserved character directly in text still errors"
+    (errCodes (dvDoc "" "a_b") == ["E0311"])
+
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

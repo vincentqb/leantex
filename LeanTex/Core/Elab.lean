@@ -75,6 +75,13 @@ structure Ctx where
   `noteBody` is set: where E0359 names the note whose frame tried to carry
   another note. -/
   notePos : Option Pos := none
+  /-- Inside a user command's or environment's argument, bound before its
+  use is known: a reserved character there is the caller's literal token —
+  the definition may place it in a key position (`\label{\k}`), where it
+  is content read verbatim. A text placement keeps it too, a recorded
+  leniency over LaTeX's error: dropping it mangled every key that
+  travelled through a macro parameter. -/
+  argBody : Bool := false
   /-- Overlay steps already opened by `\pause` in enclosing scopes: the next
   pause reveals at `stepBase + 1`. -/
   stepBase : Nat := 0
@@ -1687,7 +1694,7 @@ def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
           have hw : rawWeightList (raws.extract (j + 1) c).toList
               < sliceWeight raws start :=
             extract_lt_slice c (by omega) (by omega)
-          let v ← elabInlines ctx (raws.extract (j + 1) c)
+          let v ← elabInlines { ctx with argBody := true } (raws.extract (j + 1) c)
           if p.type == .text && !allText v then
             diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
           have hadv : sliceWeight raws (c + 1) < sliceWeight raws start :=
@@ -1700,7 +1707,7 @@ def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
           have hw : rawWeightList (raws.extract (j + 1) raws.size).toList
               < sliceWeight raws start :=
             extract_lt_slice raws.size (by omega) (by omega)
-          let v ← elabInlines ctx (raws.extract (j + 1) raws.size)
+          let v ← elabInlines { ctx with argBody := true } (raws.extract (j + 1) raws.size)
           if p.type == .text && !allText v then
             diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
           have hadv : sliceWeight raws raws.size < sliceWeight raws start :=
@@ -1719,7 +1726,7 @@ def takeArgsFrom (ctx : Ctx) (params : Array Param) (k : Nat) (name : String)
         have hjlt := getElem?_lt hj
         have hw : rawWeightList body.toList < sliceWeight raws start :=
           body_lt_slice hj (by simp only [rawWeight]; omega) hjge
-        let v ← elabInlines ctx body
+        let v ← elabInlines { ctx with argBody := true } body
         if p.type == .text && !allText v then
           diag ctx .E0305 s!"parameter '{p.name}' of '\\{name}' expects text" pos
         have hadv : sliceWeight raws (j + 1) < sliceWeight raws start :=
@@ -1815,9 +1822,10 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
       -- it buys nothing: there is no catcode machinery here to reserve it for.
       elabInlinesFrom ctx raws (i + 1) acc (sb.push '\u00a0')
     | .sym c pos =>
-      if ctx.noteBody then
-        -- A note is absorbed, as beamer absorbs it: its reserved
-        -- characters are the speaker's literal text.
+      if ctx.noteBody || ctx.argBody then
+        -- A note is absorbed, as beamer absorbs it, and an argument is
+        -- the caller's token list: in both, a reserved character is
+        -- literal text — an argument's may still be a key on arrival.
         elabInlinesFrom ctx raws (i + 1) acc (sb.push c)
       else
         diag ctx .E0311 s!"reserved character '{c}'" pos (help := s!"escape it as '\\{c}'")

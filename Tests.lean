@@ -20,6 +20,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   runinChecks ref
   abstractChecks ref
   headingNumberChecks ref
+  argTokenChecks ref
   anchorChecks ref
   markdownChecks ref
   mdPreambleChecks ref
