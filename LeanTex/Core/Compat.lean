@@ -721,6 +721,7 @@ private def geometry (opts : String) (pos : Pos)
     (spelling : String := "\\usepackage{geometry}") : M (Array Raw) := do
   let mut keys : Array String := #[]
   let mut dropped : Array String := #[]
+  let mut sides : Array (String × String) := #[]
   for e in Decl.splitEntries opts do
     match e.splitOn "=" with
     | [flag] =>
@@ -740,8 +741,24 @@ private def geometry (opts : String) (pos : Pos)
       if ["margin", "vmargin", "hmargin", "width", "height",
           "textwidth", "textheight"].contains k then
         keys := keys.push s!"{k} = {lengthOfTeX v}"
+      else if ["top", "bottom", "left", "right"].contains k then
+        sides := sides.push (k, v)
       else dropped := dropped.push k
     | [] => pure ()
+  -- geometry's per-side margins, folded pairwise: an equal pair is the
+  -- symmetric margin the engine centres with (geometry manual §5.2's
+  -- oneside hmarginratio 1:1 is the same statement), an unequal or lone
+  -- side has no native equivalent and stays named.
+  let side (n : String) : Option String :=
+    (sides.findRev? (·.1 == n)).map (·.2)
+  for (a, b, key) in [("top", "bottom", "vmargin"), ("left", "right", "hmargin")] do
+    match side a, side b with
+    | some va, some vb =>
+      if va == vb then keys := keys.push s!"{key} = {lengthOfTeX va}"
+      else dropped := dropped ++ #[a, b]
+    | some _, none => dropped := dropped.push a
+    | none, some _ => dropped := dropped.push b
+    | none, none => pure ()
   let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
   became spelling native pos
   unless dropped.isEmpty do

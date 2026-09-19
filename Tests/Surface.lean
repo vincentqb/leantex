@@ -312,6 +312,17 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let adv := dvDoc "\\advance \\footskip by \\ht\\strutbox\n" "x"
   t "register arithmetic is skipped whole, named W0104"
     (errCodes adv == [] && (warnCodes adv).contains "W0104")
+  -- geometry's per-side margins: an equal pair is the symmetric margin
+  -- the engine centres with; unequal or lone sides stay named (W0101).
+  let folded := dvDoc "\\usepackage[top=0.5in, bottom=0.5in, left=0.5in, right=0.5in]{geometry}\n" "x"
+  let direct := dvDoc "\\page{ vmargin = 0.5in, hmargin = 0.5in }\n" "x"
+  t "equal geometry sides fold to the symmetric margins"
+    (!(warnCodes folded).contains "W0101" &&
+      (elabStr folded).1.page.vmargin == (elabStr direct).1.page.vmargin &&
+      (elabStr folded).1.page.hmargin == (elabStr direct).1.page.hmargin)
+  t "unequal geometry sides stay named"
+    ((warnCodes (dvDoc "\\usepackage[top=1in, bottom=0.5in]{geometry}\n" "x")).contains
+      "W0101")
   -- LaTeX idioms translate to native declarations, each with a note that
   -- shows the shorter spelling. The document compiles as written.
   let pre (decls : String) : String :=
