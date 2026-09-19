@@ -6308,6 +6308,23 @@ end
 def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
   elabBlocksGo ctx raws 0 #[] #[] (← get).flowGen
 
+/-- Elaboration terminates — not a sentence in a plan: `takeArgs`,
+`elabInlines`, and `elabBlocks` are total functions of this file, so a
+change that reintroduces nontermination fails the termination checker at
+its own commit, never a document build (PLAN 2026-09-19; the sentence with
+no checker that hid the bindCmd bug for twelve hours — `bindCmd_monotone`
+holds the monotone-visibility half). The block knot's measure is
+(envLimit, noteFlag, visPars + slicePars, visWeight + sliceWeight, layer,
+scan); the inline knot's is (envLimit, limit, slice weight). The statement
+below is deliberately the weakest sufficient form — evaluation is
+defined — because the guarantee's force lives in the definitions the
+checker verified and in the pre-commit gate that keeps the escape-keyword
+allowance at none; the name exists so the plan's claim has a checker to
+cite. -/
+theorem elaboration_total (ctx : Ctx) (raws : Array Raw) (st : ESt) :
+    ∃ r, (elabBlocks ctx raws).run st = r :=
+  ⟨_, rfl⟩
+
 unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
 unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd

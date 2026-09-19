@@ -42,22 +42,23 @@ frame furniture landed 2026-09-17: defined wrappers, `\centering`,
 columns, dim-not-hide overlays with the PDF page-per-step handout, and
 speaker notes as a side channel.
 
-**Open, tracked, not hidden.** `Elab.elabBlocks` is `partial` — the last
-one: an audit found ten, seven were removed (2026-09-16 entry), and the
-`takeArgs`/`elabInlines` knot now terminates by a proved lexicographic
-measure (envLimit, then limit, then the weight of the remaining slice;
-2026-09-19). `elabBlocks` still owes the same treatment plus a decision
-already taken for its one state-carried edge (the pendingNotes drain:
-under `ctx.noteBody` the frame arm does not drain — landed 2026-09-19 as
-E0359: the refusal's loss is `.dropped`, and the class letter derives
-from the loss, so the code allocated as W0359 renders E — and `noteFlag`
-joins the measure when it lands). The second measure-breaking edge — a
-body `\define` inside a command expansion once reset `limit` past the
+**Open, tracked, not hidden.** No `partial` remains: an audit found ten,
+seven were removed (2026-09-16 entry), the `takeArgs`/`elabInlines` knot
+closed first (envLimit, then limit, then the weight of the remaining
+slice; 2026-09-19), and `elabBlocks` followed (the third 2026-09-19
+entry): the block knot terminates by the measure (envLimit, noteFlag,
+visPars + slicePars, visWeight + sliceWeight, layer, scan) —
+`elaboration_total` (Elab.lean) names the fact, the pre-commit hook keeps
+the `partial` allowance at none, and the one state-carried edge (the
+pendingNotes drain, refused inside a note body as E0359) is the measure's
+`noteFlag` component, exactly as decided. The second measure-breaking
+edge — a body `\define` inside a command expansion once reset `limit`
+past the
 expansion's own bound and looped a four-line document — is closed: the
 arm binds at the visibility boundary (`bindCmd`), the invariant is the
-theorem `bindCmd_monotone`, and a wall-clock regression test holds the
-end-to-end guarantee until `elabBlocks` is total (the second 2026-09-19
-entry). The Knuth–Plass optimality
+theorem `bindCmd_monotone`, and with `elabBlocks` total the end-to-end
+guarantee is the termination checker itself (the wall-clock regression
+test stays as the integration witness). The Knuth–Plass optimality
 theorem is held empirically by `scripts/kp-fuzz.lean`. Small caps are
 drawn from a face's own `smcp`+`c2sc` when it carries both and synthesised
 uniform otherwise (the 2026-09-18 entry), math renders its first two slices
@@ -101,6 +102,38 @@ list.
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-19 — the last `partial` is off: `elabBlocks` terminates by a
+proved measure, and the plan's termination claim has its checker.
+
+- The block knot — the spine, its ctrl and env dispatch arms, the
+  figure/columns/items loop members, the note drain, and the
+  redefinition gate — is one mutual recursion terminating by
+  (envLimit, noteFlag, visPars + slicePars, visWeight + sliceWeight,
+  layer, scan): a user-environment expansion falls in `envLimit`; the
+  frame's note drain falls in `noteFlag` (its bodies come from the
+  state, so no weight fact covers them; inside a note body the drain is
+  refused, E0359, so the flag never rises); the par-splice falls in the
+  pars sum (`slicePars_splice`); every other edge falls in the weight
+  sum — a body `\define` moves its body's weight from the slice into
+  the visible-command sum and pays the consumed group's wrapper
+  (`takeDefine`'s carried facts), and an expansion moves it back out
+  (`visWeight_expand`). No fuel, no `sorry`, no weakened statement, no
+  heartbeat raise — the arms with no recursion (tabular, display math,
+  align, tikz, maketitle, the nav options) live outside the knot, which
+  is what fits the pack in the default elaboration budget.
+- `elaboration_total` (Elab.lean) names the fact for this plan to cite:
+  the sentence that lied for twelve hours on 2026-09-19 ("nontermination
+  is impossible by design") now has a checker — the termination checker
+  verifies every recursive call against the measure at compile time, and
+  the pre-commit `partial` allowance is *none*, so the exception list
+  cannot silently regrow. The prior entry's interim rule ("or, until
+  `elabBlocks` is total, the named test") is discharged; the wall-clock
+  test stays as the end-to-end integration witness.
+- Verified behaviour-preserving: the four reference documents
+  byte-identical (PDF + HTML + normalized stderr) against the pre-rewrite
+  binary; bench at-or-faster on every corpus document; the 2026-09-19
+  hang document runs in 68 ms.
 
 2026-09-19 — a guarantee stated in prose is not a guarantee: the
 nontermination bug, and the theorem that now holds monotone visibility.

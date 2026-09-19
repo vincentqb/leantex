@@ -190,10 +190,13 @@ in this repo; refer to the private reference corpus abstractly.
   lambda the checker cannot see, and a list matched against a literal pattern
   with a catch-all variable loses the tail — write the `List` companion
   instead. Index loops bounded by `[0:xs.size + 1]` are total without it.
-  `Elab.elabBlocks` is the one known exception, tracked in PLAN; the
-  pre-commit hook rejects any new one. `takeArgs` and `elabInlines` now
-  terminate by a proved lexicographic measure (envLimit, limit, slice
-  weight) — the shape to copy for the last de-partial.
+  None remain: `takeArgs`, `elabInlines`, and `elabBlocks` all terminate by
+  proved lexicographic measures (`elaboration_total` in Elab.lean names the
+  fact; the pre-commit hook rejects any `partial` at all). The shape to
+  copy is the elabBlocks knot: explicit index recursion whose measure facts
+  stand as `have`s beside each call — and mind that the termination goals
+  zeta-expand plain `let`s while hypotheses keep the variable, so a value a
+  measure fact describes travels as a subtype pattern, never a bare `let`.
 - A claim is open until machine-checked. An executable oracle
   (`scripts/kp-fuzz.lean`) is evidence, not a theorem — say which one you have.
 - Comments: nearly none. Names and tests carry the what; a comment only for a
