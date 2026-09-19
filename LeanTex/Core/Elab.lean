@@ -3539,6 +3539,59 @@ engine cannot run; the built-in stands"
     | _ => s!"the redefinition of '\\{cmd.name}' renders nothing; the built-in stands"
   modify fun st => { st with diags := st.diags.push (Diag.of .W0361 msg (some cmd.span)) }
 
+/-- Past the end, a slice weighs nothing. -/
+private theorem sliceWeight_end (raws : Array Raw) {j : Nat}
+    (h : raws.size ≤ j) : sliceWeight raws j = 0 := by
+  unfold sliceWeight
+  rw [List.drop_eq_nil_of_le (by simpa using h)]
+  rfl
+
+private theorem slicePars_end (raws : Array Raw) {j : Nat}
+    (h : raws.size ≤ j) : slicePars raws j = 0 := by
+  unfold slicePars
+  rw [List.drop_eq_nil_of_le (by simpa using h)]
+  rfl
+
+/-- Trimming a body's whitespace edges never adds weight or pars. -/
+private theorem trimRaws_weight_le (raws : Array Raw) :
+    rawWeightList (trimRaws raws).toList ≤ rawWeightList raws.toList := by
+  unfold trimRaws trimBy
+  exact extract_weight_le ..
+
+private theorem trimRaws_pars_le (raws : Array Raw) :
+    rawParsList (trimRaws raws).toList ≤ rawParsList raws.toList := by
+  unfold trimRaws trimBy
+  exact extract_pars_le ..
+
+/-- The first `{...}` group at or past `k` with the index just after it —
+`takeDefine`'s body scan, carrying what the consumed run weighs so a
+`\define`'s termination edges can read it. -/
+private def defineBody? (raws : Array Raw) (k : Nat) :
+    Option ((b : Array Raw) × { k' : Nat //
+      k < k'
+        ∧ rawWeightList b.toList + sliceWeight raws k' + 1 ≤ sliceWeight raws k
+        ∧ rawParsList b.toList + slicePars raws k' ≤ slicePars raws k }) :=
+  if h : k < raws.size then
+    match hg : raws[k] with
+    | .group b _ => some ⟨b, k + 1, by
+        have hw := sliceWeight_here raws h
+        have hp := slicePars_here raws h
+        rw [hg] at hw hp
+        simp only [rawWeight] at hw
+        simp only [nestedPars] at hp
+        omega⟩
+    | _ =>
+      match defineBody? raws (k + 1) with
+      | some ⟨b, k', hf⟩ => some ⟨b, k', by
+          obtain ⟨h1, h2, h3⟩ := hf
+          have hw := sliceWeight_here raws h
+          have hp := slicePars_here raws h
+          have := rawWeight_pos raws[k]
+          exact ⟨by omega, by omega, by omega⟩⟩
+      | none => Option.none
+  else none
+termination_by raws.size - k
+
 /-- Rule (b), judged once at the definition — the gate both registration
 doors (the preamble fold and the body walk) run on a parsed definition
 before pushing it into `ctx.user`. A redefinition of a rendered built-in
@@ -3800,40 +3853,75 @@ the index after its body. One door for the preamble walk and the body arm,
 so the two positions cannot drift (built-in collision W0303, missing-body
 E0303, the signature grammar). -/
 private def takeDefine (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
-    EM (Option UserCmd × Nat) := do
+    EM { r : Option UserCmd × Nat // i ≤ r.2 ∧
+      ∀ cmd, r.1 = some cmd →
+        rawWeightList cmd.body.toList + sliceWeight raws r.2 + 2
+            ≤ sliceWeight raws i
+          ∧ rawParsList cmd.body.toList + slicePars raws r.2
+            ≤ slicePars raws i } := do
   let j := skipSpaces raws i
-  match raws[j]? with
+  have hj : i ≤ j := skipSpaces_ge raws i
+  match hjr : raws[j]? with
   | some (.ctrl newName npos) =>
-    let mut sigRaws : Array Raw := #[]
-    let mut k := j + 1
-    let mut bodyRaws : Option (Array Raw) := none
-    for _ in [k:raws.size] do
-      match raws[k]? with
-      | some (.group b _) =>
-        bodyRaws := some b
-        k := k + 1
-        break
-      | some r' =>
-        sigRaws := sigRaws.push r'
-        k := k + 1
-      | none => break
-    if structuralNames.contains newName then
-      modify fun st => { st with diags := st.diags.push (Diag.of .W0303
+    have hjlt := getElem?_lt hjr
+    let warnBuiltin : EM Unit := modify fun st => { st with
+      diags := st.diags.push (Diag.of .W0303
         s!"'\\{newName}' is built in; this definition is ignored"
         (some ⟨ctx.file, npos⟩)
         (help := "the built-in already does this; \\define it under another name")) }
-      return (none, k)
-    else
-      match bodyRaws with
-      | some b =>
+    match defineBody? raws (j + 1) with
+    | some ⟨b, k', hf⟩ =>
+      have h1 : j + 1 < k' := hf.1
+      if structuralNames.contains newName then
+        warnBuiltin
+        return ⟨(none, k'), by
+          refine ⟨show i ≤ k' by omega, ?_⟩
+          intro _ h; simp at h⟩
+      else
+        have h2 : rawWeightList b.toList + sliceWeight raws k' + 1
+            ≤ sliceWeight raws (j + 1) := hf.2.1
+        have h3 : rawParsList b.toList + slicePars raws k'
+            ≤ slicePars raws (j + 1) := hf.2.2
+        let sigRaws := raws.extract (j + 1) (k' - 1)
         let params ← parseSig ctx (rawSrc sigRaws) pos
-        return (some ⟨newName, params, trimRaws b, ⟨ctx.file, npos⟩⟩, k)
-      | none =>
+        return ⟨(some ⟨newName, params, trimRaws b, ⟨ctx.file, npos⟩⟩, k'), by
+          refine ⟨show i ≤ k' by omega, ?_⟩
+          intro cmd h
+          simp only [Option.some.injEq] at h
+          subst h
+          obtain ⟨_, hg⟩ := Array.getElem?_eq_some_iff.mp hjr
+          have hw := sliceWeight_here raws hjlt
+          have hpz := slicePars_here raws hjlt
+          rw [hg] at hw hpz
+          simp only [rawWeight] at hw
+          simp only [nestedPars] at hpz
+          have h4 := sliceWeight_le raws hj
+          have h5 := slicePars_le raws hj
+          have h6 := trimRaws_weight_le b
+          have h7 := trimRaws_pars_le b
+          constructor
+          · show rawWeightList (trimRaws b).toList + sliceWeight raws k' + 2
+              ≤ sliceWeight raws i
+            omega
+          · show rawParsList (trimRaws b).toList + slicePars raws k'
+              ≤ slicePars raws i
+            omega⟩
+    | none =>
+      if structuralNames.contains newName then
+        warnBuiltin
+        return ⟨(none, raws.size), by
+          refine ⟨show i ≤ raws.size by omega, ?_⟩
+          intro _ h; simp at h⟩
+      else
         diag ctx .E0303 s!"'\\define \\{newName}' is missing its \{body}" pos
-        return (none, k)
+        return ⟨(none, raws.size), by
+          refine ⟨show i ≤ raws.size by omega, ?_⟩
+          intro _ h; simp at h⟩
   | _ =>
     diag ctx .E0303 "expected '\\define \\name(...)  {body}'" pos
-    return (none, j + 1)
+    return ⟨(none, j + 1), by
+      refine ⟨show i ≤ j + 1 by omega, ?_⟩
+      intro _ h; simp at h⟩
 
 /-- Bind one document-defined command: it enters at the visibility
 boundary `min limit user.size`, and the boundary advances past it, so the
@@ -3945,59 +4033,6 @@ the flag never needs to rise. -/
 private def noteFlag (ctx : Ctx) : Nat :=
   if ctx.noteBody then 0 else 2
 
-/-- Past the end, a slice weighs nothing. -/
-private theorem sliceWeight_end (raws : Array Raw) {j : Nat}
-    (h : raws.size ≤ j) : sliceWeight raws j = 0 := by
-  unfold sliceWeight
-  rw [List.drop_eq_nil_of_le (by simpa using h)]
-  rfl
-
-private theorem slicePars_end (raws : Array Raw) {j : Nat}
-    (h : raws.size ≤ j) : slicePars raws j = 0 := by
-  unfold slicePars
-  rw [List.drop_eq_nil_of_le (by simpa using h)]
-  rfl
-
-/-- Trimming a body's whitespace edges never adds weight or pars. -/
-private theorem trimRaws_weight_le (raws : Array Raw) :
-    rawWeightList (trimRaws raws).toList ≤ rawWeightList raws.toList := by
-  unfold trimRaws trimBy
-  exact extract_weight_le ..
-
-private theorem trimRaws_pars_le (raws : Array Raw) :
-    rawParsList (trimRaws raws).toList ≤ rawParsList raws.toList := by
-  unfold trimRaws trimBy
-  exact extract_pars_le ..
-
-/-- The first `{...}` group at or past `k` with the index just after it —
-`takeDefine`'s body scan, carrying what the consumed run weighs so a
-`\define`'s termination edges can read it. -/
-private def defineBody? (raws : Array Raw) (k : Nat) :
-    Option { p : Array Raw × Nat //
-      k < p.2
-        ∧ rawWeightList p.1.toList + sliceWeight raws p.2 + 1 ≤ sliceWeight raws k
-        ∧ rawParsList p.1.toList + slicePars raws p.2 ≤ slicePars raws k } :=
-  if h : k < raws.size then
-    match hg : raws[k] with
-    | .group b _ => some ⟨(b, k + 1), by
-        dsimp only
-        have hw := sliceWeight_here raws h
-        have hp := slicePars_here raws h
-        rw [hg] at hw hp
-        simp only [rawWeight] at hw
-        simp only [nestedPars] at hp
-        omega⟩
-    | _ =>
-      match defineBody? raws (k + 1) with
-      | some ⟨p, hf⟩ => some ⟨p, by
-          obtain ⟨h1, h2, h3⟩ := hf
-          have hw := sliceWeight_here raws h
-          have hp := slicePars_here raws h
-          have := rawWeight_pos raws[k]
-          exact ⟨by omega, by omega, by omega⟩⟩
-      | none => Option.none
-  else none
-termination_by raws.size - k
 
 /-- One lexicographic fall in the block knot's six-component measure,
 stated so `omega` can discharge each edge from the `have` facts standing
@@ -4029,6 +4064,346 @@ macro "blocks_dec" : tactic =>
     <;> (first
       | omega
       | (apply lex6_of; simp only [noteFlag]; try simp; omega))))
+
+private theorem rawWeightList_push (a : Array Raw) (r : Raw) :
+    rawWeightList (a.push r).toList = rawWeightList a.toList + rawWeight r := by
+  simp [Array.toList_push, rawWeightList_append, rawWeightList]
+
+-- conserves: none — a termination measure, not a content walk
+private def itemsW : List (Array Raw) → Nat
+  | [] => 0
+  | it :: rest => rawWeightList it.toList + itemsW rest
+
+-- conserves: none — a termination measure, not a content walk
+private def itemsP : List (Array Raw) → Nat
+  | [] => 0
+  | it :: rest => nestedParsList it.toList + itemsP rest
+
+private theorem itemsW_append (a b : List (Array Raw)) :
+    itemsW (a ++ b) = itemsW a + itemsW b := by
+  induction a with
+  | nil => simp [itemsW]
+  | cons x xs ih => simp [itemsW, ih]; omega
+
+private theorem itemsP_append (a b : List (Array Raw)) :
+    itemsP (a ++ b) = itemsP a + itemsP b := by
+  induction a with
+  | nil => simp [itemsP]
+  | cons x xs ih => simp [itemsP, ih]; omega
+
+private theorem itemsW_push (a : Array (Array Raw)) (it : Array Raw) :
+    itemsW (a.push it).toList = itemsW a.toList + rawWeightList it.toList := by
+  simp [Array.toList_push, itemsW_append, itemsW]
+
+private theorem itemsP_push (a : Array (Array Raw)) (it : Array Raw) :
+    itemsP (a.push it).toList = itemsP a.toList + nestedParsList it.toList := by
+  simp [Array.toList_push, itemsP_append, itemsP]
+
+private theorem itemsW_mem_le {l : List (Array Raw)} {it : Array Raw}
+    (h : it ∈ l) : rawWeightList it.toList ≤ itemsW l := by
+  induction l with
+  | nil => simp at h
+  | cons x xs ih =>
+    simp only [itemsW]
+    rcases List.mem_cons.mp h with h | h
+    · subst h; omega
+    · have := ih h; omega
+
+private theorem itemsP_mem_le {l : List (Array Raw)} {it : Array Raw}
+    (h : it ∈ l) : nestedParsList it.toList ≤ itemsP l := by
+  induction l with
+  | nil => simp at h
+  | cons x xs ih =>
+    simp only [itemsP]
+    rcases List.mem_cons.mp h with h | h
+    · subst h; omega
+    · have := ih h; omega
+
+private theorem itemsW_elem_le {a : Array (Array Raw)} {m : Nat}
+    {it : Array Raw} (h : a[m]? = some it) :
+    rawWeightList it.toList ≤ itemsW a.toList := by
+  obtain ⟨hm, hget⟩ := Array.getElem?_eq_some_iff.mp h
+  exact itemsW_mem_le (hget ▸ Array.getElem_mem_toList hm)
+
+private theorem itemsP_elem_le {a : Array (Array Raw)} {m : Nat}
+    {it : Array Raw} (h : a[m]? = some it) :
+    nestedParsList it.toList ≤ itemsP a.toList := by
+  obtain ⟨hm, hget⟩ := Array.getElem?_eq_some_iff.mp h
+  exact itemsP_mem_le (hget ▸ Array.getElem_mem_toList hm)
+
+/-- The frame body past its options and title group: `\frametitle{...}`
+pairs consumed into the running title (the last one wins, named W0311),
+everything else kept in order — explicit recursion carrying the kept run's
+weight and pars bounds, the facts the frame arm's recursion into the kept
+content stands on. -/
+private def frameRestGo (ctx : Ctx) (body : Array Raw) (j : Nat)
+    (title : Array Inline) (rest : Array Raw) (bound pbound : Nat)
+    (hw : rawWeightList rest.toList + sliceWeight body j ≤ bound)
+    (hp : nestedParsList rest.toList + slicePars body j ≤ pbound) :
+    EM (Array Inline × { rest : Array Raw //
+      rawWeightList rest.toList ≤ bound ∧ nestedParsList rest.toList ≤ pbound }) := do
+  if h : j < body.size then
+    match hj : body[j], body[j + 1]? with
+    | .ctrl "frametitle" fpos, some (.group t _) =>
+      -- The last title wins, as in beamer, but never silently: the
+      -- author wrote two and only one can show.
+      unless title.isEmpty do
+        diag ctx .W0311 "this '\\frametitle' replaces the frame's earlier title"
+          (some fpos) (help := "the last one wins; remove the other '\\frametitle'")
+      let title ← elabInlines ctx t
+      frameRestGo ctx body (j + 2) title rest bound pbound
+        (by have := sliceWeight_le body (show j ≤ j + 2 by omega); omega)
+        (by have := slicePars_le body (show j ≤ j + 2 by omega); omega)
+    | r', _ =>
+      frameRestGo ctx body (j + 1) title (rest.push r') bound pbound
+        (by
+          have h1 := sliceWeight_here body h
+          rw [hj] at h1
+          rw [rawWeightList_push]
+          omega)
+        (by
+          have h1 := slicePars_here body h
+          rw [hj] at h1
+          rw [nestedParsList_push]
+          have h2 := rawPars_split r'
+          have h3 := nestedParsList_le rest.toList
+          omega)
+  else
+    have h1 := sliceWeight_end body (show body.size ≤ j by omega)
+    have h2 := slicePars_end body (show body.size ≤ j by omega)
+    return (title, ⟨rest, by omega, by omega⟩)
+termination_by body.size - j
+
+/-- A subfigure body past its width group: `\caption` consumed into the
+sub-caption (last one wins, W0311) and `\centering` satisfied, everything
+else kept — the subfigure mirror of `frameRestGo`, same bounds. -/
+private def subRestGo (ctx : Ctx) (sn : String) (sbody : Array Raw) (q : Nat)
+    (sCaption : Array Inline) (sCapAbove : Bool) (sRest : Array Raw)
+    (bound pbound : Nat)
+    (hw : rawWeightList sRest.toList + sliceWeight sbody q ≤ bound)
+    (hp : nestedParsList sRest.toList + slicePars sbody q ≤ pbound) :
+    EM (Array Inline × Bool × { sRest : Array Raw //
+      rawWeightList sRest.toList ≤ bound ∧ nestedParsList sRest.toList ≤ pbound }) := do
+  if h : q < sbody.size then
+    match hq : sbody[q] with
+    | .ctrl "caption" cpos =>
+      let (⟨q2, hq2⟩, _, _) ← skipOptArg ctx "caption" sbody (q + 1) cpos
+      let q3 := skipSpaces sbody q2
+      have hq3 := skipSpaces_ge sbody q2
+      have hadv : sliceWeight sbody q3 ≤ sliceWeight sbody q :=
+        sliceWeight_le sbody (by omega)
+      have hadvp : slicePars sbody q3 ≤ slicePars sbody q :=
+        slicePars_le sbody (by omega)
+      match sbody[q3]? with
+      | some (.group t _) =>
+        unless sCaption.isEmpty do
+          diag ctx .W0311
+            s!"this '\\caption' replaces the {sn}'s earlier caption"
+            (some cpos)
+            (help := "the last one wins; remove the other '\\caption'")
+        let sCaption ← elabInlines ctx t
+        let sCapAbove := sRest.all isSpaceOrPar
+        subRestGo ctx sn sbody (q3 + 1) sCaption sCapAbove sRest bound pbound
+          (by have := sliceWeight_le sbody (show q3 ≤ q3 + 1 by omega); omega)
+          (by have := slicePars_le sbody (show q3 ≤ q3 + 1 by omega); omega)
+      | _ =>
+        diag ctx .E0304 "'\\caption' needs a {text} group" cpos
+        subRestGo ctx sn sbody q3 sCaption sCapAbove sRest bound pbound
+          (by omega) (by omega)
+    | .ctrl "centering" _ =>
+      subRestGo ctx sn sbody (q + 1) sCaption sCapAbove sRest bound pbound
+        (by have := sliceWeight_le sbody (show q ≤ q + 1 by omega); omega)
+        (by have := slicePars_le sbody (show q ≤ q + 1 by omega); omega)
+    | r' =>
+      subRestGo ctx sn sbody (q + 1) sCaption sCapAbove (sRest.push r') bound pbound
+        (by
+          have h1 := sliceWeight_here sbody h
+          rw [hq] at h1
+          rw [rawWeightList_push]
+          omega)
+        (by
+          have h1 := slicePars_here sbody h
+          rw [hq] at h1
+          rw [nestedParsList_push]
+          have h2 := rawPars_split r'
+          omega)
+  else
+    have h1 := sliceWeight_end sbody (show sbody.size ≤ q by omega)
+    have h2 := slicePars_end sbody (show sbody.size ≤ q by omega)
+    return (sCaption, sCapAbove, ⟨sRest, by omega, by omega⟩)
+termination_by sbody.size - q
+decreasing_by all_goals omega
+
+/-- The list split at its `\item`s: items with their overlay steps and the
+`\pause` count standing before each, the warnings of the old in-loop split
+fired at the same points — explicit recursion so the split's conservation
+(no item outweighs the body) is a fact the item elaboration stands on. -/
+private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
+    (items : Array (Array Raw)) (steps : Array (Option (Nat × Option Nat)))
+    (itemPauses : Array Nat) (pauses : Nat) (curItem : Array Raw)
+    (curStep : Option (Nat × Option Nat)) (curPauses : Nat)
+    (awaitSpec inOpt seen strayDiagged : Bool) (bound pbound : Nat)
+    (hw : itemsW items.toList + rawWeightList curItem.toList
+      + sliceWeight body j ≤ bound)
+    (hp : itemsP items.toList + nestedParsList curItem.toList
+      + slicePars body j ≤ pbound) :
+    EM { r : Array (Array Raw) × Array (Option (Nat × Option Nat)) × Array Nat //
+      itemsW r.1.toList ≤ bound ∧ itemsP r.1.toList ≤ pbound } := do
+  if h : j < body.size then
+    match body[j] with
+    | .ctrl "item" _ =>
+      if seen then
+        itemSplitGo ctx body pos (j + 1) (items.push curItem)
+          (steps.push curStep) (itemPauses.push curPauses) pauses #[]
+          none pauses true inOpt true strayDiagged bound pbound
+          (by
+            have hwj := sliceWeight_here body h
+            have hw1 := rawWeight_pos body[j]
+            rw [itemsW_push]; simp [rawWeightList]; omega)
+          (by
+            have hpj := slicePars_here body h
+            rw [itemsP_push]; simp [nestedParsList]; omega)
+      else
+        itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses #[]
+          none pauses true inOpt true strayDiagged bound pbound
+          (by
+            have hwj := sliceWeight_here body h
+            have hw1 := rawWeight_pos body[j]
+            simp [rawWeightList]; omega)
+          (by
+            have hpj := slicePars_here body h
+            simp [nestedParsList]; omega)
+    | .ctrl "pause" _ =>
+      -- Counted for the items that follow; kept in the item so a
+      -- mid-item pause still steps the item's own remaining blocks.
+      if seen then
+        itemSplitGo ctx body pos (j + 1) items steps itemPauses (pauses + 1)
+          (curItem.push body[j]) curStep curPauses awaitSpec inOpt seen
+          strayDiagged bound pbound
+          (by
+            have hwj := sliceWeight_here body h
+            rw [rawWeightList_push]; omega)
+          (by
+            have hpj := slicePars_here body h
+            have h2 := rawPars_split body[j]
+            rw [nestedParsList_push]; omega)
+      else
+        itemSplitGo ctx body pos (j + 1) items steps itemPauses (pauses + 1)
+          curItem curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
+          (by
+            have hwj := sliceWeight_here body h
+            have hw1 := rawWeight_pos body[j]
+            omega)
+          (by
+            have hpj := slicePars_here body h
+            have h2 := rawPars_split body[j]
+            omega)
+    | item =>
+      -- Inside a consumed `\item[...]` override: dropped through its
+      -- closing bracket.
+      if inOpt then
+        let inOpt := !(item matches .sym ']' _)
+        itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses curItem
+          curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
+          (by
+            have hwj := sliceWeight_here body h
+            have hw1 := rawWeight_pos body[j]
+            omega)
+          (by
+            have hpj := slicePars_here body h
+            have h2 := rawPars_split body[j]
+            omega)
+      else
+      -- `\item<2->`: the spec directly after the item names the step its
+      -- content reveals at, dim-not-hide (PLAN M5). `\item[marker]` is
+      -- enumitem's per-item override: consumed and named (W0110).
+      if seen && awaitSpec && !isSpace item then
+        if item matches .sym '[' _ then
+          warnOnce ctx "item:marker" .W0110
+            "'\\item' [marker] override is not modelled; the level's marker stands" pos
+            (help := "\\style{itemize}{ marker = {...} } declares a level's marker")
+          itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses curItem
+            curStep curPauses false true seen strayDiagged bound pbound
+            (by
+              have hwj := sliceWeight_here body h
+              have hw1 := rawWeight_pos body[j]
+              omega)
+            (by
+              have hpj := slicePars_here body h
+              have h2 := rawPars_split body[j]
+              omega)
+        else if let some w := specWord? item then
+          let curStep ← match overlayFrom w with
+            | some s => pure (some s)
+            | none => do
+              warnOnce ctx "spec:overlay" .W0105
+                s!"overlay specification '{w}' does not name a step; its \
+content is shown on every step" pos
+                (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
+specs are not modelled")
+              pure curStep
+          itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses curItem
+            curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
+            (by
+              have hwj := sliceWeight_here body h
+              have hw1 := rawWeight_pos body[j]
+              omega)
+            (by
+              have hpj := slicePars_here body h
+              have h2 := rawPars_split body[j]
+              omega)
+        else
+          itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses
+            (curItem.push body[j]) curStep curPauses false inOpt seen strayDiagged
+            bound pbound
+            (by
+              have hwj := sliceWeight_here body h
+              rw [rawWeightList_push]
+              omega)
+            (by
+              have hpj := slicePars_here body h
+              have h2 := rawPars_split body[j]
+              rw [nestedParsList_push]
+              omega)
+      else if seen then
+        itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses
+          (curItem.push body[j]) curStep curPauses awaitSpec inOpt seen strayDiagged
+          bound pbound
+          (by
+            have hwj := sliceWeight_here body h
+            rw [rawWeightList_push]
+            omega)
+          (by
+            have hpj := slicePars_here body h
+            have h2 := rawPars_split body[j]
+            rw [nestedParsList_push]
+            omega)
+      else do
+        if !isSpaceOrPar item && !strayDiagged then
+          diag ctx .E0310 s!"content before the first '\\item'" pos
+        itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses curItem
+          curStep curPauses awaitSpec inOpt seen
+          (strayDiagged || !isSpaceOrPar item) bound pbound
+          (by
+            have hwj := sliceWeight_here body h
+            have hw1 := rawWeight_pos body[j]
+            omega)
+          (by
+            have hpj := slicePars_here body h
+            have h2 := rawPars_split body[j]
+            omega)
+  else
+    have h1 := sliceWeight_end body (show body.size ≤ j by omega)
+    have h2 := slicePars_end body (show body.size ≤ j by omega)
+    if seen then
+      return ⟨(items.push curItem, steps.push curStep, itemPauses.push curPauses),
+        show itemsW (items.push curItem).toList ≤ bound by rw [itemsW_push]; omega,
+        show itemsP (items.push curItem).toList ≤ pbound by rw [itemsP_push]; omega⟩
+    else
+      return ⟨(items, steps, itemPauses),
+        show itemsW items.toList ≤ bound by omega,
+        show itemsP items.toList ≤ pbound by omega⟩
+termination_by body.size - j
 
 /-- Elaborate raw items as a block sequence. -/
 partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
@@ -4273,7 +4648,7 @@ a side channel, never slide content" npos
           -- uses and applies to the rest of this walk. Inline positions
           -- (inside a paragraph or an argument) keep the E0312 refusal.
           i := i + 1
-          let (cmd?, k) ← takeDefine ctx raws i dpos
+          let ⟨(cmd?, k), _⟩ ← takeDefine ctx raws i dpos
           i := k
           let cmd? ← match cmd? with
             | some cmd => gateRedef ctx cmd (fun c b => elabBlocks c b)
@@ -4757,23 +5132,10 @@ padded with empty cells" pos
               title ← elabInlines ctx t
               k := k + 1
             -- \frametitle{...} anywhere in the frame names it too.
-            let mut rest : Array Raw := #[]
-            let mut j := k
-            for _ in [k:body.size] do
-              if h' : j < body.size then
-                match body[j], body[j + 1]? with
-                | .ctrl "frametitle" fpos, some (.group t _) =>
-                  -- The last title wins, as in beamer, but never silently:
-                  -- the author wrote two and only one can show.
-                  unless title.isEmpty do
-                    diag ctx .W0311 "this '\\frametitle' replaces the frame's earlier title"
-                      (some fpos) (help := "the last one wins; remove the other '\\frametitle'")
-                  title ← elabInlines ctx t
-                  j := j + 2
-                | r', _ =>
-                  rest := rest.push r'
-                  j := j + 1
-              else break
+            let (title2, ⟨rest, _⟩) ← frameRestGo ctx body k title #[]
+              (sliceWeight body k) (slicePars body k)
+              (by simp [rawWeightList]) (by simp [nestedParsList])
+            title := title2
             -- Notes met inside the frame's inline content drain to the
             -- frame's end: the side channel stays with its frame. Inside a
             -- note's own body there is no side channel to drain into — a
@@ -4811,79 +5173,13 @@ padded with empty cells" pos
               warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
             | .content => pure ()
             let body := body.extract bodyFrom body.size
-            let mut items : Array (Array Raw) := #[]
-            let mut steps : Array (Option (Nat × Option Nat)) := #[]
             -- `\pause` between items steps the rest of the LIST, not just
             -- the rest of an item's own blocks: each item records how many
             -- pauses stand before it and reveals one step after the last.
-            let mut pauses := 0
-            let mut itemPauses : Array Nat := #[]
-            let mut curItem : Array Raw := #[]
-            let mut curStep : Option (Nat × Option Nat) := none
-            let mut curPauses := 0
-            let mut awaitSpec := false
-            let mut inOpt := false
-            let mut seen := false
-            let mut strayDiagged := false
-            for item in body do
-              match item with
-              | .ctrl "item" _ =>
-                if seen then
-                  items := items.push curItem
-                  steps := steps.push curStep
-                  itemPauses := itemPauses.push curPauses
-                curItem := #[]
-                curStep := none
-                curPauses := pauses
-                awaitSpec := true
-                seen := true
-              | .ctrl "pause" _ =>
-                -- Counted for the items that follow; kept in the item so a
-                -- mid-item pause still steps the item's own remaining
-                -- blocks.
-                pauses := pauses + 1
-                if seen then
-                  curItem := curItem.push item
-              | _ =>
-                -- Inside a consumed `\item[...]` override: dropped through
-                -- its closing bracket.
-                if inOpt then
-                  if let .sym ']' _ := item then
-                    inOpt := false
-                  continue
-                -- `\item<2->`: the spec directly after the item names the
-                -- step its content reveals at, dim-not-hide (PLAN M5).
-                -- `\item[marker]` is enumitem's per-item override: consumed
-                -- and named (W0110) — it used to land as the item's own
-                -- text, silently.
-                if seen && awaitSpec && !isSpace item then
-                  if let .sym '[' _ := item then
-                    warnOnce ctx "item:marker" .W0110
-                      "'\\item' [marker] override is not modelled; the level's marker stands" pos
-                      (help := "\\style{itemize}{ marker = {...} } declares a level's marker")
-                    inOpt := true
-                    awaitSpec := false
-                    continue
-                  if let some w := specWord? item then
-                    match overlayFrom w with
-                    | some s => curStep := some s
-                    | none =>
-                      warnOnce ctx "spec:overlay" .W0105
-                        s!"overlay specification '{w}' does not name a step; its \
-content is shown on every step" pos
-                        (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
-specs are not modelled")
-                    continue
-                  awaitSpec := false
-                if seen then
-                  curItem := curItem.push item
-                else if !isSpaceOrPar item && !strayDiagged then
-                  diag ctx .E0310 s!"content before the first '\\item'" pos
-                  strayDiagged := true
-            if seen then
-              items := items.push curItem
-              steps := steps.push curStep
-              itemPauses := itemPauses.push curPauses
+            let ⟨(items, steps, itemPauses), _⟩ ← itemSplitGo ctx body pos 0
+              #[] #[] #[] 0 #[] none 0 false false false false
+              (sliceWeight body 0) (slicePars body 0)
+              (by simp [itemsW, rawWeightList]) (by simp [itemsP, nestedParsList])
             let mut elabItems : Array (Array Block) := #[]
             for ((it, st?), p) in (items.zip steps).zip itemPauses do
               let inner ← elabBlocks { ctx with stepBase := ctx.stepBase + p } it
@@ -5044,30 +5340,12 @@ text width; the box shares the leftover" spos
                     let mut sRest : Array Raw := #[]
                     let mut sCaption : Array Inline := #[]
                     let mut sCapAbove := false
-                    let mut q := m
-                    for _ in [m:sbody.size] do
-                      if hq : q < sbody.size then
-                        match sbody[q] with
-                        | .ctrl "caption" cpos =>
-                          q := q + 1
-                          let (⟨q2, _⟩, _, _) ← skipOptArg ctx "caption" sbody q cpos
-                          q := skipSpaces sbody q2
-                          match sbody[q]? with
-                          | some (.group t _) =>
-                            unless sCaption.isEmpty do
-                              diag ctx .W0311
-                                s!"this '\\caption' replaces the {sn}'s earlier caption"
-                                (some cpos)
-                                (help := "the last one wins; remove the other '\\caption'")
-                            sCaption ← elabInlines ctx t
-                            sCapAbove := sRest.all isSpaceOrPar
-                            q := q + 1
-                          | _ => diag ctx .E0304 "'\\caption' needs a {text} group" cpos
-                        | .ctrl "centering" _ => q := q + 1
-                        | r' =>
-                          sRest := sRest.push r'
-                          q := q + 1
-                      else break
+                    let (sc, sca, ⟨sr, _⟩) ← subRestGo ctx sn sbody m #[] false #[]
+                      (sliceWeight sbody m) (slicePars sbody m)
+                      (by simp [rawWeightList]) (by simp [nestedParsList])
+                    sCaption := sc
+                    sCapAbove := sca
+                    sRest := sr
                     let mut sInner ← elabBlocks ctx sRest
                     unless sCaption.isEmpty do
                       sInner := Ir.setAltBlocks (Ir.plainText sCaption) sInner
@@ -6303,7 +6581,7 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     -- between the two positions. The scan carried the declaration's own
     -- token run; the extent is the scan's, so the returned index is not
     -- read here.
-    let (cmd?, _) ← takeDefine s.ctx decl 0 pos
+    let ⟨(cmd?, _), _⟩ ← takeDefine s.ctx decl 0 pos
     let cmd? ← match cmd? with
       | some cmd => gateRedef s.ctx cmd elabBlocks
       | none => pure none
