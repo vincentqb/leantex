@@ -41,7 +41,7 @@ error[E0311]: reserved character '&'
   help: escape it as '\&'
 ── E0312 (dropped) block-level command used inline
 error[E0312]: '\section' is not allowed here
-  help: it is a block-level command: use it between paragraphs, not inside inline content or a command body
+  help: it is a block-level command: use it between paragraphs, not inside inline content
 ── E0313 (dropped) only declarations may appear before \begin{document}
 error[E0313]: only declarations may appear before '\begin{document}'
 ── E0316 (dropped) unclosed optional argument

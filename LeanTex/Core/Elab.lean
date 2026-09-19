@@ -2848,7 +2848,7 @@ from where it stands"
   else if blockOnly.contains name then
     diag ctx .E0312 s!"'\\{name}' is not allowed here" pos
       (help := "it is a block-level command: use it between paragraphs, " ++
-        "not inside inline content or a command body")
+        "not inside inline content")
     elabInlinesFrom ctx raws (i + 1) acc sb
   else
     -- Best effort: the {...} arguments are content, and content is
