@@ -2563,7 +2563,8 @@ def navLinkList (out : Array (String × String)) : List Block → Array (String 
 
 def navLinkOne (out : Array (String × String)) : Block → Array (String × String)
   | .para content => navLinkInlineList out content.toList
-  | .section _ _ title => navLinkInlineList out title.toList
+  | .equation _ content => navLinkInlineList out content.toList
+  | .section _ _ _ title => navLinkInlineList out title.toList
   | .verbatim _ _ => out
   | .logo _ => out
   | .framefoot _ => out
@@ -2575,6 +2576,7 @@ def navLinkOne (out : Array (String × String)) : Block → Array (String × Str
   | .list _ items => navLinkItems out items.toList
   | .center body => navLinkList out body.toList
   | .quote body => navLinkList out body.toList
+  | .abstract body => navLinkList out body.toList
   | .role _ body => navLinkList out body.toList
   | .spaced _ body => navLinkList out body.toList
   | .columns cols => navLinkColumns out cols.toList
@@ -2621,6 +2623,7 @@ def navLinkInline (out : Array (String × String)) : Inline → Array (String ×
   | .underline body => navLinkInlineList out body.toList
   | .step _ _ body => navLinkInlineList out body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _
   | .fill | .pageNumber | .pageCount | .linebreak _ => out
 
 end
@@ -4723,6 +4726,7 @@ def onlyFreeOne : Block → Bool
   | .list _ items => onlyFreeItems items.toList
   | .center body => onlyFreeList body.toList
   | .quote body => onlyFreeList body.toList
+  | .abstract body => onlyFreeList body.toList
   | .role _ body => onlyFreeList body.toList
   | .spaced _ body => onlyFreeList body.toList
   | .columns cols => onlyFreeColumns cols.toList
@@ -4731,7 +4735,7 @@ def onlyFreeOne : Block → Bool
   | .nav _ body => onlyFreeList body.toList
   | .frame _ _ _ body => onlyFreeList body.toList
   | .float _ _ _ body _ => onlyFreeList body.toList
-  | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _
   | .table _ _ _ _ _ | .pagebreak => true
 
@@ -4767,7 +4771,8 @@ theorem keepForOne_id (t : String) (b : Block)
   match b with
   | .only targets body => exact absurd h (by simp [onlyFreeOne])
   | .para c => rfl
-  | .section l st title => rfl
+  | .equation n c => rfl
+  | .section l st num title => rfl
   | .verbatim c s => rfl
   | .logo c => rfl
   | .framefoot c => rfl
@@ -4784,6 +4789,9 @@ theorem keepForOne_id (t : String) (b : Block)
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
   | .quote body =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+  | .abstract body =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
   | .role n body =>
