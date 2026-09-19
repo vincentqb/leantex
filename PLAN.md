@@ -86,6 +86,64 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-19 — M6's math-side interface: alphabets, accents, and macros in
+formulas. W0012 degrades a whole formula, so each closed row un-degrades
+every formula carrying it; the corpus audit's four largest math closers
+land together.
+
+- **Alphabets** (`\mathbb`/`\mathcal`/`\mathfrak`/`\mathbf`/`\bm`/
+  `\boldsymbol`/`\mathit`/`\mathsf`/`\mathtt`/`\mathrm`, plain-TeX
+  `\cal`/`\frak`): one char-level remap into the Mathematical Alphanumeric
+  block (Unicode ch. 22.2, unicode-math's usv), the Letterlike Symbols
+  holes individually — `\mathbb{R}` is U+211D, never tofu at the reserved
+  U+1D549. Theorem: the map is injective on the letters, stated as a left
+  inverse (`alpha_apply_inj`, `decide`, linear); the remap walk is the
+  identity on the classes projection (`remapList_classes_id`), so spacing
+  survives it. A mapped scalar no face covers renders as its base letter —
+  bold/italic from the text face where that is the alphabet's essence, the
+  plain letter for the shape alphabets — under a new note, N0018, naming
+  the styling difference; the per-scalar fallback chain still wins first
+  (W0009), and E0405 remains for scalars with no stand-in.
+- **Accents** (`\hat`/`\bar`/`\vec`/`\tilde`/`\dot`/`\ddot`/`\widehat`,
+  and `\overline`): the combining mark placed so its own
+  MathTopAccentAttachment x lands on the base's (OpenType MATH
+  MathGlyphInfo §MathTopAccentAttachment; half the advance where the face
+  lacks the point), raised by the base ink's excess over
+  `accentBaseHeight` — TeXbook Appendix G rule 12, base in the cramped
+  style. The spec puts no bound on the attachment value, so the base-side
+  read clamps into the advance and `Font.topAccentX_covers` is the
+  placement bound; the mark side stays unclamped (a zero-advance mark
+  attaches inside its own ink). `\widehat` stretches through horizontal
+  MathVariants by `Math.pickWidest` (widest not overhanging — the reverse
+  of a delimiter's pick; `pickWidest_covers`/`_mem`); `\overline` draws a
+  rule from the overbar constants, exact at any width — the stated
+  fallback for a face with no horizontal ladder, which Fira Math is.
+- **Macros in math**: `elabMathInline` never consulted the macro table, so
+  every `\define`d command un-rendered its formula. One raw-to-raw hook
+  (`expandMathList`) expands before parsing; termination is the visible-
+  prefix rule made structural — a body expands under `k < limit`, the
+  lexicographic measure's first component — with arguments bound already
+  expanded (the walk runs right to left), matching `takeArgs`' text-mode
+  order. A self-reference stays outside its own prefix and degrades named.
+  `\DeclareMathOperator` rewrites to a `\define` with an `\operatorname`
+  body (amsldoc §5.1); `\ensuremath` enters math from text and is
+  transparent inside it. Parameters of an enclosing text definition do not
+  reach nested math (their bindings are inlines, not raws) — named W0012,
+  the recorded remainder.
+- **`\newif`** joins the `\ifdefined` pass: flags resolve in flow order,
+  setters flip them, untaken branches never fire a setter, every
+  resolution an N0114 note.
+- The parser's pending argument slot became a chain, so a construction
+  stands as another's argument: `x^\frac{1}{2}`, `V^\text{null}`,
+  `x^\mathbb{R}` parse where each degraded its formula before.
+
+Measured: the private reference paper's extracted text went from 22 lines
+carrying backslash source (52 sequences) to 5 (25), all in formulas
+carrying `\label` — the cross-reference slice's row. Deck/résumé/card
+PDFs byte-identical under this slice's commits; bench medians within
+main's noise band. Verified as pixels beside expectation for accents,
+alphabets, and expanded macros.
+
 2026-09-18 — `\scshape` means uniform small caps, so the text can carry
 real casing.
 
