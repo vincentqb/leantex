@@ -82,7 +82,7 @@ in this repo; refer to the private reference corpus abstractly.
   | a furniture element | a declared alignment, never a hard-coded `.center` (arrives with `align` on `ElementStyle`) |
   | an `AssertKind` | its judge in `Check.one` (exhaustive match) and a test that breaks it once |
   | a document class | sourced defaults, and its contract as implied assertions |
-  | a `nativePackages` entry | `tests/compat-index/<pkg>.txt` covering the package's *documented* command list — the manual section named in its header, one row per command, `impl` proved by no W0301/W0302 and `refuse:<code>` by the code firing (`lake test` probes every row) |
+  | a `nativePackages` entry | `tests/compat-index/<pkg>.txt` covering the package's *documented* command list — the manual section named in its header, one row per command, `impl` proved by no W0301/W0302 and `refuse:<code>` by the code firing (`lake test` probes every row; the hook rejects an entry without its file) |
 
 - The **kernel** owns the page models (flow / frame / face — three today,
   `report`'s chapter-page a candidate fourth). A **document class** is a

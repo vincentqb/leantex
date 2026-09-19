@@ -463,6 +463,34 @@ def partialAllowed (l : String) : Bool :=
   containsSub l s!"{kwPartial} def takeArgs" || containsSub l s!"{kwPartial} def elabInlines"
     || containsSub l s!"{kwPartial} def elabBlocks"
 
+/-- The string-comparison spelling that compiles against the `DocClass`
+inductive and bypasses exhaustiveness: `docClass.name == "…"` re-creates
+the stringly class checks the inductive replaced, one flag at a time. The
+plain `docClass == "article"` does not build, so the compiler owns that
+spelling; this is the variant it cannot see. -/
+def classNameCompare (l : String) : Bool :=
+  containsSub (stripLineComment (stripStrings l)) "docClass.name =="
+
+/-- The quoted names of the `nativePackages` list block in a Compat
+source: from its `def nativePackages` line to the block's closing
+bracket. Package names never contain a quote or a bracket, so the scan is
+a line walk. -/
+def nativePackagesOf (src : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut inside := false
+  for l in src.splitOn "\n" do
+    if (stripLineComment l).startsWith "def nativePackages" then
+      inside := true
+    else if inside then
+      let mut parts := (l.splitOn "\"")
+      let mut quoted := false
+      for p in parts do
+        if quoted then out := out.push p
+        quoted := !quoted
+      if containsSub (stripLineComment (stripStrings l)) "]" then
+        inside := false
+  return out
+
 /-- One staged-diff check: which files it reads, the line predicate, the
 headline naming the file, and the fix paragraph. The stanzas `main` used
 to spell one by one differed only in these four fields. -/
@@ -473,6 +501,14 @@ structure Gate where
   help : String
 
 def gates : List Gate := [
+  { applies := (·.startsWith "LeanTex/")
+    flag := classNameCompare
+    what := fun f => s!"a class judged by its name string (`docClass.name ==`) in {f}"
+    help := "  The DocClass inductive exists so a class check is a match the compiler
+  keeps exhaustive; comparing the name string re-creates the stringly
+  checks it replaced, invisible to the next constructor.
+  Fix: match on the constructor; a genuinely name-shaped need (a
+  diagnostic quoting the class) reads .name without comparing it." },
   { applies := fun _ => true
     flag := fun l => bannedWord kwPartial l && !partialAllowed l
     what := fun f => s!"new '{kwPartial}' in staged changes to {f}"
@@ -635,6 +671,24 @@ def selftest : IO UInt32 := do
     ("    s!\"{ind}styled {st.label}\\n\" ++ dumpInlines (ind ++ \"  \") body", false),
     ("        chosen := chosen ++ [b]", false),
     ("  | x :: rest => #[x] ++ rest", false)]
+
+  expect "classNameCompare" classNameCompare [
+    -- the spelling that compiles past the inductive, wherever it stands
+    ("  if doc.docClass.name == \"article\" then", true),
+    ("    (d.docClass.name == cls)", true),
+    -- legal spellings: a match, a diagnostic quoting the name, prose
+    ("  match doc.docClass with", false),
+    ("    say s!\"class {doc.docClass.name} has no chapter pages\"", false),
+    ("  -- a comment naming docClass.name == article does not count", false),
+    ("    (\"docClass.name == inside a string\", true),", false)]
+
+  expect "nativePackages parse" (fun s => (nativePackagesOf s).toList
+      == ["geometry", "natbib"]) [
+    -- the list block yields exactly its quoted names, quotes elsewhere
+    -- ignored, the scan closed at the bracket
+    ("def other : List String := [\"nope\"]\n" ++
+     "def nativePackages : List String :=\n  [\"geometry\",\n   \"natbib\"]\n" ++
+     "def after : String := \"also-not-a-package\"", true)]
 
   expect "conflictMarker" conflictMarker [
     -- the shapes git writes, all of which must fire
@@ -1006,6 +1060,21 @@ def main (args : List String) : IO UInt32 := do
   Keys share one flat store per module; spell the namespace where the call is —
   a literal (\"ctrl:x\") or a concatenation opening with one ((\"env:\" ++ name)) —
   so two constructs of one name cannot silence each other, and this check can see it."
+
+  -- The claim and its evidence arrive together: a nativePackages entry
+  -- without its tests/compat-index file used to surface an hour later at
+  -- lake test (the paper-bib escape); the hook refuses it at commit time.
+  -- Whole tree, like the conservation gate: the entry and the file may
+  -- land in different hunks.
+  if (← System.FilePath.pathExists "LeanTex/Core/Compat.lean") then
+    let compatSrc ← IO.FS.readFile "LeanTex/Core/Compat.lean"
+    for pkg in nativePackagesOf compatSrc do
+      unless (← System.FilePath.pathExists s!"tests/compat-index/{pkg}.txt") do
+        say s!"pre-commit: '{pkg}' is in nativePackages with no tests/compat-index/{pkg}.txt.
+  A nativePackages entry arrives with its index file: the package's
+  documented command list, one row per command, the manual section named
+  in its header (AGENTS.md, obligation table); lake test probes every row.
+  Fix: write tests/compat-index/{pkg}.txt before adding the entry."
 
   -- The conservation gate — the obligation table's walk row, mechanical:
   -- every public IR-to-IR walk in core (a def taking and returning
