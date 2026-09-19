@@ -553,10 +553,14 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr beamerPre).1.palette.find? "frametitlebg" |>.isSome)
   -- moloch is the maintained metropolis fork: both metropolis spellings
   -- select the shipped bundle instead of leaving the deck unthemed (W0319).
+  -- The fixture is slides-class, where \usetheme belongs: under article the
+  -- same install rightly warns W0355 (inert slides furniture).
+  let slidesPre (decls : String) : String :=
+    "\\documentclass{slides}\n" ++ decls ++ "\n\\begin{document}x\\end{document}"
   t "compat usetheme metropolis is the moloch bundle"
-    (((elabStr (pre "\\usetheme{metropolis}")).1.palette.find? "frametitlebg" |>.isSome) &&
-     ((elabStr (pre "\\usetheme{m}")).1.palette.find? "frametitlebg" |>.isSome) &&
-     warnCodes (pre "\\usetheme{metropolis}") == [])
+    (((elabStr (slidesPre "\\usetheme{metropolis}")).1.palette.find? "frametitlebg" |>.isSome) &&
+     ((elabStr (slidesPre "\\usetheme{m}")).1.palette.find? "frametitlebg" |>.isSome) &&
+     warnCodes (slidesPre "\\usetheme{metropolis}") == [])
   t "compat beamer warnings name the native spelling"
     ((elabStr (pre "\\setbeamercolor{normal text}{fg=black}")).2.any fun d =>
       d.code == "W0104" && ((d.help.getD "").splitOn "\\palette").length == 2)
