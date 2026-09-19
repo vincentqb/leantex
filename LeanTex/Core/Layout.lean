@@ -39,16 +39,16 @@ structure Geom where
   coordinates and never sees it. -/
   bleed : Sp := 0
   /-- The band a page footer reserves above the bottom margin: what its ink
-  and clearance need beyond the half margin its baseline sits below the body
-  area. Zero when there is no footer or the margin already holds it, so an
-  undeclared page is unchanged. `Layout.run` computes it (`footBandFor`);
-  everything else reads it only through `bodyBottom`. -/
+  and body-side gap need beyond the margin. Zero when there is no footer or
+  the margin already holds it, so an undeclared page is unchanged.
+  `Layout.run` computes it (`furnitureBand`); everything else reads it only
+  through `bodyBottom`. -/
   footBand : Sp := 0
   /-- The band a running head reserves below the top margin: what its ink
-  and clearance need beyond the half margin it hangs below. Zero when
-  there is no head or the margin already holds it, so an undeclared page
-  is unchanged. `Layout.run` computes it (`headBandFor`); everything else
-  reads it only through `bodyTop`. -/
+  and body-side gap need beyond the margin. Zero when there is no head or
+  the margin already holds it, so an undeclared page is unchanged.
+  `Layout.run` computes it (`furnitureBand`); everything else reads it only
+  through `bodyTop`. -/
   headBand : Sp := 0
   deriving Repr
 
@@ -72,69 +72,138 @@ from here and nowhere else — a head that draws over the first line of body
 text is the same bug as the footer's, at the other edge. -/
 def Geom.bodyTop (g : Geom) : Sp := g.vmargin + g.headBand
 
-/-- The band a footer of ink height `ascent` reserves: its baseline sits
-`vmargin/2` below the body area, so whatever of `ascent + lineskip` the half
-margin cannot hold comes out of the body. -/
-def footBandFor (vmargin ascent : Sp) : Sp := max 0 (ascent + lineskip - vmargin / 2)
+/-- Where one side's running furniture stands: `edge` is the distance from
+the page edge to the furniture's nearest ink — the head's ink top, the
+foot's ink *bottom* — and `band` is what the furniture's ink and its
+body-side gap need beyond the margin. Both sides resolve through the one
+`furnitureBand`, so the two edges are equal by definition
+(`furniture_symmetric`): LaTeX's `\headsep` runs from the header's baseline
+to the body while `\footskip` runs baseline to baseline (ltpage.dtx,
+`\@outputpage`; the geometry manual §5.3 diagram), so equal declared values
+leave the gap above the body larger than the gap below by the footer's
+strut height — the correction every user of symmetric furniture rediscovers
+(tex.sx/375264). Here the two distances are between ink edges by
+definition, so the patch is unrepresentable. -/
+structure FurnBand where
+  edge : Sp
+  band : Sp
+  deriving Repr
 
-/-- The band a running head of ink `ascent + descent` reserves — the
-footer's own reservation, fed the head's ink extent below its half-margin
-line. The head's ink top sits `vmargin/2` above the body area (its
-baseline `ascent` below that), so the whole line hangs toward the body
-where the footer hangs only its ascent: whatever of
-`ascent + descent + lineskip` the half margin cannot hold comes out of
-the body. -/
-def headBandFor (vmargin ascent descent : Sp) : Sp :=
-  footBandFor vmargin (ascent + descent)
+/-- One side's edge gap. Declared gap: whatever of the margin the ink and
+the gap leave, floored at zero — `top = g₁ + ink + g₂` read backwards, the
+recovery `geometry_roundtrip` states. Default: the furniture hangs from
+half the margin, the engine's own convention (no external authority names
+the split; the head's ink top sat at `vmargin / 2` before the gap was
+declarable, and an undeclared page must not move). -/
+def furnEdge (vmargin ink : Sp) (gap : Option Sp) : Sp :=
+  match gap with
+  | some g => max 0 (vmargin - ink - g)
+  | none => vmargin / 2
 
-/-- The band arithmetic's one core inequality: a reservation of
-`max 0 (x + l - m/2)` on top of the margin `m` always holds the ink extent
-`x` plus the clearance `l` hanging from the half-margin line. Both band
-sufficiency theorems are this statement — the footer's reflected through the
-page height (`band_reserves_below`), the head's read directly — and it needs
-no sign hypothesis on the margin, so neither do they:
-`\page{ vmargin = -5mm }` parses and flows into `Geom.ofPage`, and the
-reservation still suffices there. Bare `Int` binders because `omega` does
-not see through the `Sp` abbreviation. -/
-theorem band_reserves (m x l : Int) :
-    m / 2 + x + l ≤ m + max 0 (x + l - m / 2) := by
+/-- Resolve one side's furniture band from the geometry, the furniture
+line's ink extent, and the declared body-side gap (`none` requires only
+`lineskip` clearance, and the body keeps its margin unless the ink needs
+more). A declared gap is exact (`furniture_gap_exact`): the edge gives
+first, down to zero, then the band takes the rest from the body. -/
+def furnitureBand (vmargin ink : Sp) (gap : Option Sp) : FurnBand :=
+  { edge := furnEdge vmargin ink gap
+    band := max 0 (furnEdge vmargin ink gap + ink + gap.getD lineskip - vmargin) }
+
+/-- The head line's baseline: its ink top stands exactly `edge` below the
+page's top edge. -/
+def furnHeadY (b : FurnBand) (ascent : Sp) : Sp := b.edge + ascent
+
+/-- The foot line's baseline: its ink *bottom* stands exactly `edge` above
+the page's bottom edge. Anchoring the ink rather than the baseline is the
+whole difference from LaTeX's `\footskip`, and what makes the two edge
+gaps one number. -/
+def furnFootY (b : FurnBand) (pageH descent : Sp) : Sp := pageH - b.edge - descent
+
+/-- The band arithmetic's one core inequality: the reservation always holds
+the edge gap, the ink, and the required body-side gap, and it needs no sign
+hypothesis — `\page{ vmargin = -5mm }` parses and flows into `Geom.ofPage`,
+and the reservation still suffices there. Bare `Int` binders because
+`omega` does not see through the `Sp` abbreviation. -/
+private theorem furn_reserves (vm ink req edge : Int) :
+    edge + ink + req ≤ vm + max 0 (edge + ink + req - vm) := by
   omega
 
-/-- `band_reserves` reflected through the page height: what
+/-- `furn_reserves` reflected through the page height: what
 `bodyBottom_clears_footer` reads. -/
-private theorem band_reserves_below (pageH m x l : Int) :
-    pageH - m - max 0 (x + l - m / 2) + x + l ≤ pageH - m / 2 := by
+private theorem furn_reserves_below (pageH vm ink req edge band : Int)
+    (h : edge + ink + req ≤ vm + band) :
+    pageH - vm - band + ink + req ≤ pageH - edge := by
   omega
 
-/-- `band_reserves` with the ink extent split into ascent and descent: what
-`bodyTop_clears_head` reads. -/
-private theorem band_reserves_above (m x y l : Int) :
-    m / 2 + x + y + l ≤ m + max 0 (x + y + l - m / 2) := by
+/-- The reservation is sufficient, for every geometry: the furniture's ink
+plus its required body-side gap fit between the edge and the reserved body
+boundary. -/
+theorem furniture_band_reserves (vmargin ink : Sp) (gap : Option Sp) :
+    (furnitureBand vmargin ink gap).edge + ink + gap.getD lineskip
+      ≤ vmargin + (furnitureBand vmargin ink gap).band := by
+  simp only [furnitureBand]
+  exact furn_reserves vmargin ink (gap.getD lineskip) (furnEdge vmargin ink gap)
+
+/-- With the band from `furnitureBand`, body ink starts at least the
+required gap below the head's ink bottom (`furnHeadY + descent`, which is
+`edge + ink`). -/
+theorem bodyTop_clears_head (g : Geom) (ink : Sp) (gap : Option Sp)
+    (h : g.headBand = (furnitureBand g.vmargin ink gap).band) :
+    (furnitureBand g.vmargin ink gap).edge + ink + gap.getD lineskip ≤ g.bodyTop := by
+  simp only [Geom.bodyTop]
+  rw [h]
+  exact furniture_band_reserves g.vmargin ink gap
+
+/-- The mirror of `bodyTop_clears_head`: body ink stops at least the
+required gap above the foot's ink top (`furnFootY - ascent`, which is
+`pageH - edge - ink`). -/
+theorem bodyBottom_clears_footer (g : Geom) (ink : Sp) (gap : Option Sp)
+    (h : g.footBand = (furnitureBand g.vmargin ink gap).band) :
+    g.bodyBottom + ink + gap.getD lineskip
+      ≤ g.pageH - (furnitureBand g.vmargin ink gap).edge := by
+  simp only [Geom.bodyBottom]
+  rw [h]
+  exact furn_reserves_below g.pageH g.vmargin ink (gap.getD lineskip)
+    (furnitureBand g.vmargin ink gap).edge (furnitureBand g.vmargin ink gap).band
+    (furniture_band_reserves g.vmargin ink gap)
+
+private theorem furn_symmetric (pageH vm a d edge band : Int) :
+    (edge + a) - a = pageH - ((pageH - edge - d) + d) ∧
+    (vm + band) - ((edge + a) + d) =
+      ((pageH - edge - d) - a) - (pageH - vm - band) := by
   omega
 
-/-- The reservation is sufficient, for every geometry — negative margins
-included (`band_reserves` needs no sign hypothesis): with the band from
-`footBandFor`, body ink stops at least `lineskip` above the footer's ink top
-(`footY - ascent`, the baseline at half the bottom margin less what the
-footer reaches above it). -/
-theorem bodyBottom_clears_footer (g : Geom) (ascent : Sp)
-    (h : g.footBand = footBandFor g.vmargin ascent) :
-    g.bodyBottom + ascent + lineskip ≤ g.pageH - g.vmargin / 2 := by
-  simp only [Geom.bodyBottom, footBandFor] at h ⊢
-  rw [h]
-  exact band_reserves_below g.pageH g.vmargin ascent lineskip
+/-- The user's rule, by the algebra of the definition: on every page the
+head's ink top stands the same distance below the top edge as the foot's
+ink bottom stands above the bottom edge, and on a full page the two
+body-side gaps — head ink bottom to the body area's top, the body area's
+bottom to foot ink top — agree. Over the placed baselines
+(`furnHeadY`/`furnFootY`) and the reserved body area
+(`Geom.bodyTop`/`bodyBottom`), for one `FurnBand` placing both sides —
+which is what the running head and foot are: both set in the body face at
+the page's font size, from the same declared gap. -/
+theorem furniture_symmetric (g : Geom) (a d : Sp) (b : FurnBand)
+    (hh : g.headBand = b.band) (hf : g.footBand = b.band) :
+    furnHeadY b a - a = g.pageH - (furnFootY b g.pageH d + d) ∧
+    g.bodyTop - (furnHeadY b a + d) =
+      (furnFootY b g.pageH d - a) - g.bodyBottom := by
+  simp only [furnHeadY, furnFootY, Geom.bodyTop, Geom.bodyBottom, hh, hf]
+  exact furn_symmetric g.pageH g.vmargin a d b.edge b.band
 
-/-- The mirror of `bodyBottom_clears_footer`, for every geometry: with the
-band from `headBandFor`, body ink starts at least `lineskip` below the
-head's ink bottom — `headY + descent`, the baseline at half the top margin
-plus the head's ascent, plus what it hangs below. `band_reserves`, read
-directly. -/
-theorem bodyTop_clears_head (g : Geom) (ascent descent : Sp)
-    (h : g.headBand = headBandFor g.vmargin ascent descent) :
-    g.vmargin / 2 + ascent + descent + lineskip ≤ g.bodyTop := by
-  simp only [Geom.bodyTop, headBandFor, footBandFor] at h ⊢
-  rw [h]
-  exact band_reserves_above g.vmargin ascent descent lineskip
+private theorem furn_gap_exact (vm ink g : Int) :
+    (vm + max 0 (max 0 (vm - ink - g) + ink + g - vm))
+      - (max 0 (vm - ink - g) + ink) = g := by
+  omega
+
+/-- A declared body-side gap is honoured exactly, for every geometry: the
+distance from the furniture's body-side ink edge to the reserved body
+boundary is the declared value — the edge gives first, then the band takes
+the rest from the body. -/
+theorem furniture_gap_exact (vmargin ink gap : Sp) :
+    (vmargin + (furnitureBand vmargin ink (some gap)).band)
+      - ((furnitureBand vmargin ink (some gap)).edge + ink) = gap := by
+  simp only [furnitureBand, furnEdge, Option.getD]
+  exact furn_gap_exact vmargin ink gap
 
 /-- The height between the margins: what `0.3\textheight` sizes against. -/
 def Geom.textHeight (g : Geom) : Sp := g.pageH - 2 * g.vmargin
@@ -187,8 +256,8 @@ theorem slides_lines_in_band :
   decide
 
 /-- The bands never eat the measure: any slides-default geometry whose head
-and foot bands come from `headBandFor`/`footBandFor` keeps a positive body
-height, and Tantau's 10–20 lines (beamer user guide §5.6.1, the band
+and foot bands come from `furnitureBand` keeps a positive body height, and
+Tantau's 10–20 lines (beamer user guide §5.6.1, the band
 `slides_lines_in_band` states for the bare stages) still holds between
 `bodyTop` and `bodyBottom`. The ink hypotheses allow each running line two
 em of the base size. That bound has no external authority to cite: the
@@ -203,8 +272,8 @@ theorem slides_lines_survive_bands (a d f : Sp)
     (g : Geom)
     (hg : g.pageH = Ir.slidesStage169.2 ∨ g.pageH = Ir.slidesStage43.2)
     (hv : g.vmargin = Ir.slidesVMargin)
-    (hhb : g.headBand = headBandFor g.vmargin a d)
-    (hfb : g.footBand = footBandFor g.vmargin f) :
+    (hhb : g.headBand = (furnitureBand g.vmargin (a + d) none).band)
+    (hfb : g.footBand = (furnitureBand g.vmargin f none).band) :
     0 < g.bodyBottom - g.bodyTop ∧
     10 ≤ (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ∧
     (g.bodyBottom - g.bodyTop) / leadingFor Ir.slidesFontSize ≤ 20 := by
@@ -214,13 +283,13 @@ theorem slides_lines_survive_bands (a d f : Sp)
   have h169 : Ir.slidesStage169.2 = 16719420 := by decide
   have h43 : Ir.slidesStage43.2 = 17834048 := by decide
   have hls : lineskip = 65536 := by decide
-  -- The key inequality over bare `Int` binders, as `bodyBottom_clears_footer`
+  -- The key inequality over bare `Int` binders, as `bodyTop_clears_head`
   -- does it: `omega` does not see through the `Sp` abbreviation.
   have key : ∀ a d f hb fb H : Int,
       a + d ≤ 2 * 720896 → f ≤ 2 * 720896 →
       (H = 16719420 ∨ H = 17834048) →
-      hb = max 0 (a + d + 65536 - 1730150 / 2) →
-      fb = max 0 (f + 65536 - 1730150 / 2) →
+      hb = max 0 (1730150 / 2 + (a + d) + 65536 - 1730150) →
+      fb = max 0 (1730150 / 2 + f + 65536 - 1730150) →
       0 < H - 1730150 - fb - (1730150 + hb) ∧
       10 ≤ (H - 1730150 - fb - (1730150 + hb)) / 865075 ∧
       (H - 1730150 - fb - (1730150 + hb)) / 865075 ≤ 20 := by
@@ -229,7 +298,7 @@ theorem slides_lines_survive_bands (a d f : Sp)
   rw [hfs] at hh hf
   rw [h169] at hg
   rw [h43] at hg
-  simp only [headBandFor, footBandFor, hls, hv, hvm] at hhb hfb
+  simp only [furnitureBand, furnEdge, Option.getD, hls, hv, hvm] at hhb hfb
   rw [hld]
   simp only [Geom.bodyBottom, Geom.bodyTop]
   rw [hv, hvm]
@@ -4603,23 +4672,30 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- The footer's size is a step of the scale and its colour a palette key,
   -- never a literal: the theme declares both.
   let footSize := geom.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
+  -- The running line's ink extents: the body face at the page size for a
+  -- declared head or foot and the plain number, the small step for chrome
+  -- slots. One `furnitureBand` per side from the same ink and gap is what
+  -- makes the two edges one number (`furniture_symmetric`).
+  let runInk := scale font.ascent + scale (-font.descent)
+  let chromeScale (u : Int) : Sp := u * footSize / (font.unitsPerEm : Int)
+  let chromeInk := chromeScale font.ascent + chromeScale (-font.descent)
+  let runBand := furnitureBand geom.vmargin runInk none
+  let chromeBand := furnitureBand geom.vmargin chromeInk none
   -- A footer reserves its band before anything is placed, so no body line
   -- can land in it (`bodyBottom_clears_footer` is the sufficiency proof).
   -- With the default margins the half margin holds the foot line whole and
   -- the band is zero: an undeclared page is unchanged.
   let geom := if doc.foot.isSome || plainFoot then
-      { geom with footBand := footBandFor geom.vmargin (scale font.ascent) }
+      { geom with footBand := runBand.band }
     else if chromeActive then
-      { geom with footBand :=
-          footBandFor geom.vmargin (font.ascent * footSize / (font.unitsPerEm : Int)) }
+      { geom with footBand := chromeBand.band }
     else geom
   -- The running head reserves its band the same way, before anything is
   -- placed (`bodyTop_clears_head` is the sufficiency proof). With the
   -- default margins the half margin holds the head line whole and the
   -- band is zero: an undeclared page is unchanged.
   let geom := if doc.head.isSome then
-      { geom with headBand :=
-          headBandFor geom.vmargin (scale font.ascent) (scale (-font.descent)) }
+      { geom with headBand := runBand.band }
     else geom
   let xHeight := scale font.xHeight
   -- The resolved design is the one resolving site for the document-level
@@ -4796,8 +4872,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     let target := geom.textWidth
     let breaks := kp items target
     -- A running line is one line by construction — the band reserves one
-    -- ascent (`footBandFor`). Content that wraps would silently lose every
-    -- line but its first, so losing it is a named diagnostic instead.
+    -- line's ink (`furnitureBand`). Content that wraps would silently lose
+    -- every line but its first, so losing it is a named diagnostic instead.
     let ds := if breaks.size > 1 then ds.push (Diag.of .W0328
         "running content wraps at the text width; only its first line is kept"
         (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
@@ -4844,8 +4920,9 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
       (some { x := bandSlotX geom side w, y := y, size := size, segs := segs,
               setWidth := w }, ds, cache)
-  let headY := geom.vmargin / 2 + b0.ascent
-  let footY := geom.pageH - geom.vmargin / 2
+  let headY := furnHeadY runBand (scale font.ascent)
+  let footY := furnFootY runBand geom.pageH (scale (-font.descent))
+  let chromeFootY := furnFootY chromeBand geom.pageH (chromeScale (-font.descent))
   let mutedC := design.muted
   let mut out := pages
   let mut diags := b.diags
@@ -4914,7 +4991,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     if let some band := out[i]!.foot then
       let mut placed : Array (Ir.BandSlot × LineOut) := #[]
       for slot in band do
-        let (l?, ds, c) := slotLine slot.side slot.content (i + 1) footY
+        let (l?, ds, c) := slotLine slot.side slot.content (i + 1) chromeFootY
           footSize { color := mutedC } cache
         diags := diags ++ ds
         cache := c

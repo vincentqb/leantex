@@ -1332,7 +1332,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       | .rule w _ _ _ => w == geom.textWidth
       | _ => false)
 
-/-- The running head's reserved band (`headBandFor`/`Geom.bodyTop`): with a
+/-- The running head's reserved band (`furnitureBand`/`Geom.bodyTop`): with a
 top margin too small to hold the head line, body ink still starts at least
 `lineskip` below the head's ink bottom — `bodyTop_clears_head` is the
 sufficiency proof; this is its witness over the shipped lines, the
@@ -1385,6 +1385,59 @@ def headBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
         (f.ascent + (-f.descent) ≤ 2 * (f.unitsPerEm : Int))
     | .error e => failures ref s!"headBand font parse {name}: {e}"
 
+/-- `furniture_symmetric` and `furniture_position_content_free`, as census
+facts over `Layout.Out`: with a running head and foot declared, the head's
+ink top and the foot's ink bottom stand at the same distance from their
+page edges, the two body-side gaps agree, and both baselines are the same
+on every page — the short last page included, so the foot never floats up
+toward a page's last line. The positions are a function of the geometry
+alone (`furnHeadY`/`furnFootY` take no content), and this is the executable
+witness that `Layout.run` places the shipped lines at exactly those
+functions' values. -/
+def furnitureSymmetryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let para := String.intercalate " " (List.replicate 300 "filler words run on")
+  let src := "\\documentclass{article}" ++
+    "\\runninghead{Invented Notes}\\runningfoot{p. \\pagenumber}" ++
+    s!"\\begin\{document}\n{para}\n\n{para}\n\nshort tail\n\\end\{document}"
+  let (doc, ds) := elabStr src
+  t "symmetry source clean" (ds.filter (·.severity == .error)).isEmpty
+  let geom := Layout.Geom.ofPage doc.page
+  let out := layoutOf oneFace doc geom
+  t "the fixture runs past one page" (out.pages.size ≥ 2)
+  let font := oneFace.body
+  let scale (u : Int) : Dim.Sp := u * geom.fontSize / (font.unitsPerEm : Int)
+  let a := scale font.ascent
+  let d := scale (-font.descent)
+  let band := Layout.furnitureBand geom.vmargin (a + d) none
+  let headY := Layout.furnHeadY band a
+  let footY := Layout.furnFootY band geom.pageH d
+  t "every page ships its head and foot at the geometry's own baselines"
+    (out.pages.all fun p =>
+      p.lines.any (fun l => l.furniture && l.y == headY) &&
+      p.lines.any (fun l => l.furniture && l.y == footY))
+  -- The four distances, pairwise equal: edge to ink, ink to body area.
+  let g1Top := headY - a
+  let g1Bot := geom.pageH - (footY + d)
+  let bodyTop := geom.vmargin + band.band
+  let bodyBottom := geom.pageH - geom.vmargin - band.band
+  let g2Top := bodyTop - (headY + d)
+  let g2Bot := (footY - a) - bodyBottom
+  t "the edge gaps are equal" (g1Top == g1Bot)
+  t "the body-side gaps are equal" (g2Top == g2Bot)
+  -- Full-page evidence: the first page's body demonstrably reaches the
+  -- reserved bottom, so the equal gap below is a distance to real ink.
+  t "the first page fills its body area"
+    ((out.pages[0]?.map fun p => p.lines.any fun l =>
+      !l.furniture && l.y + d + Ir.leadingFor geom.fontSize > bodyBottom).getD false)
+  -- Content-free evidence: the last page is short, and its furniture
+  -- stands exactly where the full pages' does.
+  t "the short last page keeps its foot in place"
+    ((out.pages.back?.map fun p =>
+      p.lines.any (fun l => l.furniture && l.y == footY) &&
+      p.lines.all (fun l => l.furniture || l.y + d + Ir.leadingFor geom.fontSize ≤ bodyBottom))
+      |>.getD false)
+
 /-- `plain_numbers_every_page`, as census facts over `Layout.Out`: under
 the flow model's default page style — `plain`, the one article.cls
 initialises (classes.dtx; ltpage.dtx `\ps@plain` centres `\thepage` in the
@@ -1400,10 +1453,17 @@ def pageNumberChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     let geom := Layout.Geom.ofPage doc.page
     (layoutOf oneFace doc geom, geom)
   -- The footer band's runs on page i: furniture lines at the foot
-  -- baseline, each read back as its glyph text.
+  -- baseline (`furnFootY` — the foot's ink bottom stands `edge` above the
+  -- page edge), each read back as its glyph text.
+  let font := oneFace.body
+  let footYOf (geom : Layout.Geom) : Dim.Sp :=
+    let scale (u : Int) : Dim.Sp := u * geom.fontSize / (font.unitsPerEm : Int)
+    Layout.furnFootY
+      (Layout.furnitureBand geom.vmargin (scale font.ascent + scale (-font.descent)) none)
+      geom.pageH (scale (-font.descent))
   let footTexts (out : Layout.Out) (geom : Layout.Geom) (i : Nat) : Array String :=
     ((out.pages[i]?.map (·.lines)).getD #[]).filterMap fun l =>
-      if l.furniture && l.y == geom.pageH - geom.vmargin / 2 then
+      if l.furniture && l.y == footYOf geom then
         some (String.ofList (l.segs.toList.flatMap fun s =>
           match s with
           | .run _ _ _ _ glyphs _ _ _ => (glyphs.map (·.2)).toList

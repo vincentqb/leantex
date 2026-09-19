@@ -34,7 +34,7 @@ walk when no assertion reads it.
 Engine-placed running furniture (`LineOut.furniture`) is exempt from the
 area judgement: a running head stands in the margin by design — LaTeX's
 own page styles put it there — and the furniture pass places it inside
-its reserved band by construction (`headBandFor`, W0328's single-line
+its reserved band by construction (`furnitureBand`, W0328's single-line
 rule), so judging it against the text-area margins would fail every page
 whose furniture works as declared. Its glyphs still feed the x-height
 floor: margin text must stay legible too. -/

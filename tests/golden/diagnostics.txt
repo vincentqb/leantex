@@ -158,7 +158,7 @@ note[N0103]: '\section[short]' short title is unused: nothing consumes it yet
 note[N0114]: '\ifdefined\shiny': '\shiny' is not defined, so only the '\else' branch is kept
 note[N0114]: '\ifdefined\shiny': '\shiny' is defined, so the branch before '\else' is kept
 ── N0200 (info) page set short: its skips gave their shrink
-note[N0200]: page 1 set 4pt short: its skips gave 26% of their 16pt of shrink
+note[N0200]: page 1 set 7pt short: its skips gave 45% of their 16pt of shrink
 ── W0001 (config) content after \end{document} is ignored
 warning[W0001]: content after '\end{document}' is ignored
 ── W0003 (degraded) no math face available; math set as plain text

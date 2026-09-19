@@ -587,10 +587,11 @@ def footerBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
   let font := oneFace.body
   let ascent : Dim.Sp := font.ascent * geom0.fontSize / (font.unitsPerEm : Int)
   let descent : Dim.Sp := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
-  let geom := { geom0 with footBand := Layout.footBandFor geom0.vmargin ascent }
+  let band := Layout.furnitureBand geom0.vmargin (ascent + descent) none
+  let geom := { geom0 with footBand := band.band }
   t "a 6pt margin cannot hold the foot line, so the band bites"
     (geom.footBand > (0 : Dim.Sp))
-  let footY := geom.pageH - geom.vmargin / 2
+  let footY := Layout.furnFootY band geom.pageH descent
   t "the foot line is laid on every page"
     (!out.pages.isEmpty && out.pages.all fun p => p.lines.any (·.y == footY))
   t "body ink stops above the reserved band"
@@ -631,8 +632,11 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let font := oneFace.body
   let footSize := geom0.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
   let footAscent : Dim.Sp := font.ascent * footSize / (font.unitsPerEm : Int)
+  let footDescent : Dim.Sp := (-font.descent) * footSize / (font.unitsPerEm : Int)
   let descent : Dim.Sp := (-font.descent) * geom0.fontSize / (font.unitsPerEm : Int)
-  let footY := geom0.pageH - geom0.vmargin / 2
+  let footY := Layout.furnFootY
+    (Layout.furnitureBand geom0.vmargin (footAscent + footDescent) none)
+    geom0.pageH footDescent
   t "the foot line lands in the margin at the small step, in muted"
     (match out.pages[0]? with
      | some p => p.lines.any fun l => l.y == footY && l.size == footSize &&
@@ -660,8 +664,14 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   let rOut := layoutOf oneFace rDoc
   t "runningfoot suppresses the chrome footer"
     (rOut.pages.all (·.foot.isNone))
+  -- A declared foot is a body-font line: its ink bottom stands at the same
+  -- edge gap, its baseline its own descent higher.
+  let runFootY := Layout.furnFootY
+    (Layout.furnitureBand geom0.vmargin
+      (font.ascent * geom0.fontSize / (font.unitsPerEm : Int) + descent) none)
+    geom0.pageH descent
   t "runningfoot itself is laid on every page"
-    (rOut.pages.all fun p => p.lines.any (·.y == footY))
+    (rOut.pages.all fun p => p.lines.any (·.y == runFootY))
   -- Bareness by name: `\theme{default}` opts out of the daylight
   -- default, and the deck's output carries no footer.
   let (uDoc, _) := elabStr (deck169 "\\theme{default}" body)
@@ -831,7 +841,12 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   let gOut := layoutOf oneFace gDoc gGeom
   let gFont := oneFace.body
   let headY := gGeom.vmargin / 2 + gFont.ascent * gGeom.fontSize / (gFont.unitsPerEm : Int)
-  let footY := gGeom.pageH - gGeom.vmargin / 2
+  let gFootSize := gGeom.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
+  let gFootAscent : Dim.Sp := gFont.ascent * gFootSize / (gFont.unitsPerEm : Int)
+  let gFootDescent : Dim.Sp := (-gFont.descent) * gFootSize / (gFont.unitsPerEm : Int)
+  let footY := Layout.furnFootY
+    (Layout.furnitureBand gGeom.vmargin (gFootAscent + gFootDescent) none)
+    gGeom.pageH gFootDescent
   t "runningFrom keeps the head off page 1 and on page 2"
     ((gOut.pages.map fun p => p.lines.any (·.y == headY)) == #[false, true])
   t "runningFrom does not gate the frame's chrome footer"
@@ -1762,7 +1777,11 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let gOut := layoutOf oneFace gDoc gGeom
   let gFont := oneFace.body
   let headY := gGeom.vmargin / 2 + gFont.ascent * gGeom.fontSize / (gFont.unitsPerEm : Int)
-  let footY := gGeom.pageH - gGeom.vmargin / 2
+  let gDescent : Dim.Sp := (-gFont.descent) * gGeom.fontSize / (gFont.unitsPerEm : Int)
+  let footY := Layout.furnFootY
+    (Layout.furnitureBand gGeom.vmargin
+      (gFont.ascent * gGeom.fontSize / (gFont.unitsPerEm : Int) + gDescent) none)
+    gGeom.pageH gDescent
   t "the foot's own gate leaves the head on page 1"
     ((gOut.pages.map fun p => p.lines.any (·.y == headY)) == #[true, true] &&
      (gOut.pages.map fun p => p.lines.any (·.y == footY)) == #[false, true])

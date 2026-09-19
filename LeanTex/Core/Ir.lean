@@ -1220,7 +1220,7 @@ def Box.le (a b : Box) : Prop :=
 
 -- The Box and Place proofs state their arithmetic over bare `Int` binders
 -- because `omega` does not see through the `Sp` abbreviation (the same
--- workaround `footBandFor`'s proof records in Layout).
+-- workaround `furnitureBand`'s proof records in Layout).
 
 theorem Box.le_refl (a : Box) : Box.le a a := by
   have h : ∀ x : Int, x ≤ x := fun _ => Int.le_refl _
