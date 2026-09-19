@@ -947,7 +947,7 @@ def agreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let namingCodes := ["W0007", "W0331", "W0332"]
   for n in goldenNames do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
-    let (doc, docDs) := Elab.run s!"{n}.tex" src
+    let (doc, docDs) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let out := Layout.run geom oneFace (some pats) doc
     let (_, body, htmlDs) := HtmlDoc.emitTree {} doc

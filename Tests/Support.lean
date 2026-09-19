@@ -70,6 +70,7 @@ def goldenNames : List String :=
    "marker-styled", "marker-content",
    "trio-page", "trio-deck", "trio-card", "valign", "images", "math",
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav",
+   "bibliography",
    "icons",
    "diagram", "diagram-overflow", "tables", "tables-ragged", "subfigures",
    "math-companion", "math-first", "abstract", "crossref", "eqnum"]
@@ -160,6 +161,24 @@ def checkXref (pdf : ByteArray) : Except String Nat := do
       verified := verified + 1
   return verified
 
+/-- A fixture elaborated the way the driver builds it: elaboration, then
+the `.bib` effect fulfilled from the corpus directory — the same
+fulfilment `Main.resolveBibliography` performs, so a bibliography fixture
+exercises the pipeline the paper runs. Fixtures that request no `.bib`
+pass through untouched. -/
+def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
+  let (doc, diags) := Elab.run s!"{n}.tex" src
+  let requested := Ir.bibRefs doc
+  if requested.isEmpty then return (doc, diags)
+  let mut sources : Array (String × String) := #[]
+  for srcName in requested do
+    let name := if srcName.endsWith ".bib" then srcName else srcName ++ ".bib"
+    let path := s!"tests/corpus/{name}"
+    if ← System.FilePath.pathExists path then
+      sources := sources.push (srcName, ← IO.FS.readFile path)
+  let (doc, bibDiags) := Bib.apply sources doc
+  return (doc, diags ++ bibDiags)
+
 def firstDiff (expected actual : String) : String := Id.run do
   let e := expected.splitOn "\n"
   let a := actual.splitOn "\n"
@@ -175,7 +194,7 @@ def runGoldens (update : Bool) (fail : String → IO Unit) : IO Unit := do
     IO.FS.createDirAll "tests/golden"
   for n in goldenNames do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
-    let (doc, diags) := Elab.run s!"{n}.tex" src
+    let (doc, diags) ← elabFixture n src
     let out := Ir.dump doc diags -- ir tier: goldens witness elaboration, not the artifact
     let path := s!"tests/golden/{n}.txt"
     if update then

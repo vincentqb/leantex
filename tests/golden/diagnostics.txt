@@ -116,6 +116,9 @@ error[E0501]: '\input' nesting deeper than 8 files; is a file including itself?
 ── E0502 (dropped) \input file not found; skipped
 error[E0502]: '\input' file 'chapter1.tex' is not there; its content is absent
   help: \allow{E0502} accepts the loss
+── E0503 (dropped) \bibliography file not found; the reference list is empty
+error[E0503]: '\bibliography' file 'references' is not there; the reference list is empty
+  help: looked at: /doc/references.bib; \allow{E0503} accepts the loss
 ── N0100 (info) LaTeX idiom translated to its native declaration
 note[N0100]: '\usepackage{geometry}' → \page{ margin = 1in }
 ── N0016 (info) no math face declared; the engine picked one and says which

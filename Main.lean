@@ -328,6 +328,30 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     math := mathIdx }
   return .ok (set, diags, String.intercalate ", " paths.toList)
 
+/-- The bibliography request an elaborated document states (`Ir.bibRefs`),
+fulfilled: each named `.bib` resolves beside the document, like `\input`,
+and its text goes to the pure core (`Bib.apply`) — parsing, ordering,
+formatting, and the citation rewrite all happen there. A missing file is
+E0503 naming the path; the marker stays empty and the citations' `?`
+marks say so on the page. -/
+def resolveBibliography (file : String) (doc : Ir.Doc) :
+    IO (Ir.Doc × Array Diag) := do
+  let requested := Ir.bibRefs doc
+  if requested.isEmpty then return (doc, #[])
+  let dir := (System.FilePath.mk file).parent.getD "."
+  let mut sources : Array (String × String) := #[]
+  let mut diags : Array Diag := #[]
+  for src in requested do
+    let name := if src.endsWith ".bib" then src else src ++ ".bib"
+    let path := if (System.FilePath.mk name).isAbsolute then System.FilePath.mk name
+      else dir / name
+    if ← path.pathExists then
+      sources := sources.push (src, ← IO.FS.readFile path)
+    else
+      diags := diags.push (DriverDiag.bibMissing src path.toString none)
+  let (doc, applyDiags) := Bib.apply sources doc
+  return (doc, diags ++ applyDiags)
+
 def since (t0 : Nat) : IO Nat := do
   return (← IO.monoMsNow) - t0
 
@@ -486,7 +510,11 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := d
     let (raws, inputDiags) ← expandInputs file raws
     let (doc, elabDiags) := Elab.runRaws file raws (lexDiags ++ parseDiags ++ inputDiags)
     ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
-    return some (doc, elabDiags)
+    let t ← IO.monoMsNow
+    let (doc, bibDiags) ← resolveBibliography file doc
+    unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty do
+      ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
+    return some (doc, elabDiags ++ bibDiags)
 
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow

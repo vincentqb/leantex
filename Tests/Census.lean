@@ -51,6 +51,21 @@ def censusTable :
     ("one page", c.size == 1),
     ("the heading ships", hasStr (censusText c) "The first section"),
     ("a list marker ships beside its item", hasStr (censusText c) "• One concise point")]),
+  ("bibliography", fun _ c => [
+    ("the numeric citation marks ship in first-citation order",
+      hasStr (censusText c) "[1]") ,
+    ("a textual citation ships its author names before the mark",
+      hasStr (censusText c) "Doe and van der Berg [2]"),
+    ("a grouped citation keeps one bracket", hasStr (censusText c) "[3, 1]"),
+    ("the unknown key ships its ? mark", hasStr (censusText c) "[?]"),
+    ("the References heading ships", hasStr (censusText c) "References"),
+    ("the last entry ships with its position's marker",
+      hasStr (censusText c) "[7] Casey Ray"),
+    ("the accent composes on the shipped page", hasStr (censusText c) "Künzel"),
+    ("the corporate author ships unsplit",
+      hasStr (censusText c) "Example Press Editorial Group"),
+    ("the elided list ships as et al", hasStr (censusText c) "Ariel Fox"),
+    ("the howpublished group ships with its year", hasStr (censusText c) "Online, 2020")]),
   ("declared", fun _ c => [
     ("one page, as the fixture asserts", c.size == 1),
     ("the heading ships", hasStr (censusText c) "Declared geometry")]),
@@ -430,7 +445,7 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   let shipped ← FontDb.scanRoots [testFonts]
   for (n, facts) in censusTable do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
-    let (doc, _) := Elab.run s!"{n}.tex" src
+    let (doc, _) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let fs ← if doc.fonts.math.isSome then pure mathSet
       else if (Layout.docMathScalars doc).isEmpty then pure oneFace

@@ -112,6 +112,10 @@ structure ESt where
   /-- beamer's `\logo`, a declaration legal in the preamble and the body
   alike; the last one wins, as in beamer. -/
   logo : Option (Array Inline) := none
+  /-- `\bibliographystyle`, wherever it appears — LaTeX reads it anywhere
+  before the .aux is written; here the `\bibliography` marker met later
+  carries it, so the declared name reaches resolution with the block. -/
+  bibStyle : Option String := none
   /-- The palette in force in flow order — the last body `\palette` state,
   written by the declaration arm and read back at the top of every
   `elabBlocks` iteration, so a declaration inside a nested scope reaches
@@ -1382,6 +1386,25 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
             acc := acc.push (.link url #[.styled .mono #[.text url]])
           | _ =>
             diag ctx .E0304 "'\\url' needs a {url} group" pos
+        else if name == "cite" || name == "citep" || name == "citet" then
+          -- natbib's citation commands (natbib manual §2.3): one node per
+          -- citation group, keys as written — the brackets or parentheses
+          -- around the group are the bibliography style's to draw, so
+          -- elaboration keeps the group whole and resolution renders it.
+          -- The pre/post note options (`\citep[see][p. 5]{k}`) are not
+          -- modelled; a `[` here stays literal text, named in the slice
+          -- report rather than silently eaten.
+          let j := skipSpaces raws i
+          match raws[j]? with
+          | some (.group keysRaw _) =>
+            i := j + 1
+            let keys := (((argText ctx keysRaw).splitOn ",").map
+              (·.trimAscii.toString)).filter (!·.isEmpty)
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (.cite (name == "citet") keys.toArray)
+          | _ =>
+            diag ctx .E0304 s!"'\\{name}' needs a \{keys} group" pos
         else if name == "includegraphics" then
           -- graphicx's command, native. The keys that size figures in real
           -- documents are modelled — width, height, scale, keepaspectratio —
@@ -1806,6 +1829,7 @@ one-line entry) produces one, so it is a block too. -/
 def bodyIsBlockOne : Raw → Bool
   | .ctrl n _ =>
     n == "block" || n == "par" || n == "framefoot" || n == "pagebreak"
+      || n == "bibliography" || n == "bibliographystyle"
       || ["section", "subsection", "subsubsection"].contains n
   | .par _ => true
   | .verb _ _ => true
@@ -2300,6 +2324,8 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .ctrl "framefoot" _ => true
         | .ctrl "pagebreak" _ => true
         | .ctrl "appendix" _ => true
+        | .ctrl "bibliography" _ => true
+        | .ctrl "bibliographystyle" _ => true
         -- Display math is its own centred block, as LaTeX sets a display:
         -- the paragraph splits around it. Inline `$...$` stays in its
         -- sentence.
@@ -2507,6 +2533,38 @@ a side channel, never slide content" npos
             ctx := { ctx with
               user := ctx.user.push cmd
               limit := ctx.user.size + 1 }
+        | .ctrl "bibliographystyle" dpos =>
+          -- The declared style rides the state to the `\bibliography`
+          -- marker; resolution reads it from the block (W0353 there names
+          -- an unknown one).
+          i := i + 1
+          let j := skipSpaces raws i
+          match raws[j]? with
+          | some (.group body _) =>
+            i := j + 1
+            modify fun st => { st with
+              bibStyle := some (rawSrc body).trimAscii.toString }
+          | some (.word w _) =>
+            i := j + 1
+            modify fun st => { st with bibStyle := some w }
+          | _ =>
+            diag ctx .E0304 "'\\bibliographystyle' needs a {style} group" dpos
+        | .ctrl "bibliography" dpos =>
+          -- The reference list marker: an unnumbered References section
+          -- (classes.dtx: thebibliography opens with \section*{\refname})
+          -- and the empty list the driver's `.bib` effect fills
+          -- (`Ir.bibRefs` is the request, `Bib.apply` the fulfilment).
+          i := i + 1
+          let j := skipSpaces raws i
+          match raws[j]? with
+          | some (.group body _) =>
+            i := j + 1
+            let src := (rawSrc body).trimAscii.toString
+            let style := (← get).bibStyle
+            blocks := blocks.push (.section 1 true #[.text "References"])
+            blocks := blocks.push (.bibliography src style #[])
+          | _ =>
+            diag ctx .E0304 "'\\bibliography' needs a {file} group" dpos
         | .ctrl "pagebreak" _ =>
           -- The declared page boundary; adjacent boundaries never make a
           -- blank page (the page builder closes only pages that hold

@@ -36,7 +36,7 @@ def nativePackages : List String :=
    "textcomp", "csquotes", "polyglossia", "graphicx", "booktabs", "array",
    "calc", "etoolbox", "xparse", "kvoptions", "setspace", "soul", "tikz",
    "caption", "subcaption", "nicefrac", "multirow",
-   "appendixnumberbeamer"]
+   "appendixnumberbeamer", "natbib"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=

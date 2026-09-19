@@ -1,0 +1,19 @@
+% Citations and the bibliography: natbib's citation forms over a .bib file
+% beside the document, unsrtnat's numeric first-citation-order rendering.
+\documentclass{article}
+\usepackage{natbib}
+\begin{document}
+
+A first claim \citep{roe2020}, and one by name: \citet{doe2024} showed it
+first. A grouped citation \citep{poe2022, roe2020} keeps one bracket. The
+corporate author \citep{corp2019} and the elided list \citet{team2021}
+cover the name forms; the thesis \citep{lee2018} and the report
+\citep{ray2017} cover the remaining entry types. An unknown key
+\citep{ghost} shows its mark.
+
+\allow{W0351}
+
+\bibliographystyle{unsrtnat}
+\bibliography{refs}
+
+\end{document}
