@@ -1866,6 +1866,34 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
   t "a path operation outside the subset loses the edge by name"
     ((elabStr (wrap "\\draw (0,0) circle (1);")).2.any fun d =>
       d.code == "W0334" && hasStr d.message "'circle'")
+  -- `to[out=,in=]` curves: control points 0.3915·‖d‖ along the declared
+  -- tangents (pgf To-Path library), mid-path labels at the Bézier midpoint.
+  t "a to[out,in] edge ships a cubic segment"
+    ((picOf (wrap "\\draw (0,0) to[out=90,in=180] (2,2);")).map (fun p =>
+      p.shapes.any fun s => match s with
+        | .edge segs _ _ => segs.any fun sg => match sg with
+          | .cubic _ _ _ _ _ _ _ _ => true
+          | .line _ _ _ _ => false
+        | _ => false) == some true)
+  t "a bare to draws the straight line, silently"
+    ((elabStr (wrap "\\draw (0,0) to (1,1);")).2.isEmpty &&
+      (picOf (wrap "\\draw (0,0) to (1,1);")).map (fun p =>
+        p.shapes.any fun s => match s with
+          | .edge segs _ _ => segs == #[.line 0 0 cm cm]
+          | _ => false) == some true)
+  t "a to with only one tangent names the loss and draws straight"
+    (warnCodes (wrap "\\draw (0,0) to[out=90] (1,1);") == ["W0334"] &&
+      (picOf (wrap "\\draw (0,0) to[out=90] (1,1);")).map (·.shapes.size) == some 1)
+  t "a mid-path node labels the segment at its midpoint"
+    ((picOf (wrap "\\draw (0,0) -- node {mid} (2,0);")).map (fun p =>
+      p.shapes.any fun s => match s with
+        | .label x y content _ _ => x == cm && y == 0 && content == #[.text "mid"]
+        | _ => false) == some true)
+  t "a chained to path keeps every waypoint segment"
+    ((picOf (wrap "\\draw (0,0) to[out=90,in=180] (1,1) to[out=0,in=180] (2,0);")).map
+      (fun p => p.shapes.any fun s => match s with
+        | .edge segs _ _ => segs.size == 2
+        | _ => false) == some true)
   t "one construct looped forty times is one diagnostic, not forty"
     (warnCodes (wrap "\\foreach \\x in {1,...,40}{\\draw (\\x,0) circle (1);}") ==
       ["W0334", "W0362"])

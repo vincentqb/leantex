@@ -1200,6 +1200,27 @@ picture subset; the node is not drawn")
     | _ =>
       return ev.diag (.E0333, "'\\node' needs a '{text}' body; the node is not drawn")
 
+/-- Sine of whole degrees 0–90 in milli, ⌊1000·sin d° + ½⌋: what the
+`to[out=, in=]` control points read. Any integer degree folds in by the
+circle's symmetries (`sinDeg`); whole-degree milli precision is below
+one part in two thousand of any control distance. -/
+private def sinTable : Array Int :=
+  #[0, 17, 35, 52, 70, 87, 105, 122, 139, 156, 174, 191, 208, 225, 242,
+    259, 276, 292, 309, 326, 342, 358, 375, 391, 407, 423, 438, 454, 469,
+    485, 500, 515, 530, 545, 559, 574, 588, 602, 616, 629, 643, 656, 669,
+    682, 695, 707, 719, 731, 743, 755, 766, 777, 788, 799, 809, 819, 829,
+    839, 848, 857, 866, 875, 883, 891, 899, 906, 914, 921, 927, 934, 940,
+    946, 951, 956, 961, 966, 970, 974, 978, 982, 985, 988, 990, 993, 995,
+    996, 998, 999, 999, 1000, 1000]
+
+private def sinDeg (d : Int) : Int :=
+  let d := ((d % 360) + 360) % 360
+  let (sign, d) := if d ≤ 180 then ((1 : Int), d) else (-1, d - 180)
+  let d := if d ≤ 90 then d else 180 - d
+  sign * ((sinTable[d.toNat]?).getD 0)
+
+private def cosDeg (d : Int) : Int := sinDeg (d + 90)
+
 /-- An endpoint of a `\draw` path: a named node, whose border anchors the
 segment, or a bare coordinate. -/
 private inductive Anchor where
@@ -1241,12 +1262,28 @@ private def tipAt (x y dx dy width : Sp) : Option (Ir.Pic.Tip × Sp × Sp) :=
             x2 := bx + ox, y2 := byy + oy
             x3 := bx - ox, y3 := byy - oy }, bx, byy)
 
-/-- `\draw[opts] (a) -- (b) -- ...;` — a stroked edge between named nodes
-and coordinates, border-anchored at named endpoints. Options: `thick`,
+/-- Where a segment leaving in direction `deg` (degrees) exits this
+anchor: the border along the declared tangent, for a node with extents. -/
+private def Anchor.towardDir (a : Anchor) (deg : Int) : Sp × Sp :=
+  let c := a.center
+  a.toward (c.1 + cosDeg deg, c.2 + sinDeg deg)
+
+/-- One path operation between two endpoints: pgf manual §14.13 (to
+paths) — `--` and a bare `to` are the straight line, `to[out=α, in=β]`
+the cubic whose control points sit 0.3915·‖d‖ along the departure and
+arrival tangents (the To-Path library's own factor, at looseness 1). -/
+private inductive DrawOp where
+  | straight
+  | curve (outA inA : Int)
+
+/-- `\draw[opts] (a) -- (b) to[out=α,in=β] (c) ...;` — a stroked edge
+chain between named nodes and coordinates, border-anchored at named
+endpoints (along the declared tangent for a curve). Options: `thick`,
 `dashed`/`dotted` (and the densely form), an arrow spec (`->`/`-latex`,
-both the triangle tip), a colour, and declared style bundles; anything
-else is outside the subset and loses only itself. A path operation other
-than `--` loses the edge by name. -/
+both the triangle tip), a colour, and declared style bundles; an in-path
+`node[...] {...}` is an edge label at the segment's midpoint. Anything
+else outside the subset loses only itself where an option, and the edge
+by name where a path operation. -/
 private def evalDraw (cx : Cx) (env : List (String × Val)) (toks : Array Tok)
     (ev : Ev) : Ev := Id.run do
   let ts := toks.filter (· != .space)
@@ -1333,22 +1370,118 @@ is not drawn")
         return .error (.E0333, s!"in '\\draw', no node is named '{nm}'; the edge \
 is not drawn")
   let mut pts : Array Anchor := #[]
+  let mut ops : Array (DrawOp × Option (Array Ir.Inline × Ir.Color × Nat)) := #[]
   match readAnchor i with
   | .error d => return ev.diag d
   | .ok (a, i2) =>
     pts := pts.push a
     i := i2
+  let factor : Nat := if cx.transformShape && cx.scale > 0 then cx.scale.toNat else 1000
   for _ in [0:ts.size + 1] do
     if h : i < ts.size then
+      -- the path operation: `--`, or `to` with its optional tangents
+      let mut op := DrawOp.straight
       if ts[i]? == some (.sym '-') && ts[i+1]? == some (.sym '-') then
-        match readAnchor (i + 2) with
-        | .error d => return ev.diag d
-        | .ok (a, i2) =>
-          pts := pts.push a
-          i := i2
+        i := i + 2
+      else if ts[i]? == some (.ident "to") then
+        i := i + 1
+        if ts[i]? == some (.sym '[') then
+          let mut j := i + 1
+          let mut inner : Array Tok := #[]
+          for _ in [i+1:ts.size + 1] do
+            if h2 : j < ts.size then
+              if ts[j] == .sym ']' then break
+              inner := inner.push ts[j]
+              j := j + 1
+            else break
+          unless ts[j]? == some (.sym ']') do
+            return ev.diag (.E0333, "'to' options miss their ']'; the edge is \
+not drawn")
+          i := j + 1
+          let mut outA : Option Int := none
+          let mut inA : Option Int := none
+          for opt in splitTop inner ',' do
+            match opt.toList with
+            | .ident "out" :: .sym '=' :: rest =>
+              match evalNum env rest.toArray with
+              | .ok m => outA := some ((m + 500) / 1000)
+              | .error e =>
+                return ev.diag (.E0333, s!"in 'out=', {e}; the edge is not drawn")
+            | .ident "in" :: .sym '=' :: rest =>
+              match evalNum env rest.toArray with
+              | .ok m => inA := some ((m + 500) / 1000)
+              | .error e =>
+                return ev.diag (.E0333, s!"in 'in=', {e}; the edge is not drawn")
+            | [] => pure ()
+            | o :: _ =>
+              ev := ev.diag (.W0334, s!"'to' option {tokText o} is outside the \
+rendered picture subset; the option is dropped")
+          match outA, inA with
+          | some oA, some iA => op := .curve oA iA
+          | none, none => pure ()  -- pgf's default to path is the straight line
+          | _, _ =>
+            ev := ev.diag (.W0334, "a 'to' with only one of 'out='/'in=' is \
+outside the rendered picture subset; it is drawn as a straight line")
       else
         return ev.diag (.W0334, s!"'\\draw' continues with {tokText ts[i]}, \
 outside the rendered picture subset; the edge is not drawn")
+      -- an in-path `node[...] {...}`: an edge label at the segment's
+      -- midpoint; a placement option (`right`, …) loses only itself
+      let mut mid : Option (Array Ir.Inline × Ir.Color × Nat) := none
+      if ts[i]? == some (.ident "node") then
+        i := i + 1
+        let mut mcolor := Ir.Color.black
+        let mut mscale : Nat := factor
+        if ts[i]? == some (.sym '[') then
+          let mut j := i + 1
+          let mut inner : Array Tok := #[]
+          for _ in [i+1:ts.size + 1] do
+            if h2 : j < ts.size then
+              if ts[j] == .sym ']' then break
+              inner := inner.push ts[j]
+              j := j + 1
+            else break
+          unless ts[j]? == some (.sym ']') do
+            return ev.diag (.E0333, "an edge node's options miss their ']'; the \
+edge is not drawn")
+          i := j + 1
+          for opt in splitTop inner ',' do
+            match opt.toList with
+            | .ident "font" :: .sym '=' :: .ctrl size :: [] =>
+              match Ir.sizeScale.lookup size with
+              | some k => mscale := k * factor / 1000
+              | none =>
+                ev := ev.diag (.W0334, s!"node option 'font=\\{size}' is outside \
+the rendered picture subset; the option is dropped")
+            | .ident "text" :: .sym '=' :: rest =>
+              match evalColor cx env rest.toArray with
+              | .ok c => mcolor := c
+              | .error e =>
+                ev := ev.diag (.E0333, s!"in an edge node, {e}; the colour is \
+dropped")
+            | [] => pure ()
+            | o :: _ =>
+              ev := ev.diag (.W0334, s!"edge node option {tokText o} is outside \
+the rendered picture subset; the option is dropped")
+        match ts[i]? with
+        | some (.group body) =>
+          match contentOf cx env body with
+          | .ok (content, mdiags) =>
+            ev := mdiags.foldl Ev.diag ev
+            mid := some (content, mcolor, mscale)
+            i := i + 1
+          | .error e =>
+            return ev.diag (.W0334, s!"{e} in an edge label is outside the \
+rendered picture subset; the edge is not drawn")
+        | _ =>
+          return ev.diag (.E0333, "an edge 'node' needs a '{text}' body; the \
+edge is not drawn")
+      match readAnchor i with
+      | .error d => return ev.diag d
+      | .ok (a, i2) =>
+        pts := pts.push a
+        ops := ops.push (op, mid)
+        i := i2
     else break
   unless pts.size ≥ 2 do
     return ev.diag (.E0333, "'\\draw' needs two endpoints; the edge is not drawn")
@@ -1358,21 +1491,48 @@ outside the rendered picture subset; the edge is not drawn")
       dash := dash }
   let mut segs : Array Ir.Pic.PathSeg := #[]
   let mut tip : Option Ir.Pic.Tip := none
-  for k in [0:pts.size - 1] do
-    match pts[k]?, pts[k+1]? with
-    | some a, some c =>
-      let p1 := a.toward c.center
-      let p2 := c.toward a.center
-      if k + 2 == pts.size && arrow then
-        match tipAt p2.1 p2.2 (p2.1 - p1.1) (p2.2 - p1.2) stroke.width with
-        | some (t, bx, byy) =>
-          segs := segs.push (.line p1.1 p1.2 bx byy)
-          tip := some t
-        | none => segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
-      else
-        segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
-    | _, _ => pure ()
-  return { ev with shapes := ev.shapes.push (.edge segs stroke tip) }
+  let mut labels : Array Ir.Pic.Shape := #[]
+  for k in [0:ops.size] do
+    match pts[k]?, pts[k+1]?, ops[k]? with
+    | some a, some c, some (op, mid) =>
+      let last := k + 1 == ops.size
+      match op with
+      | .straight =>
+        let p1 := a.toward c.center
+        let p2 := c.toward a.center
+        if last && arrow then
+          match tipAt p2.1 p2.2 (p2.1 - p1.1) (p2.2 - p1.2) stroke.width with
+          | some (t, bx, byy) =>
+            segs := segs.push (.line p1.1 p1.2 bx byy)
+            tip := some t
+          | none => segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
+        else
+          segs := segs.push (.line p1.1 p1.2 p2.1 p2.2)
+        if let some (content, mc, msc) := mid then
+          labels := labels.push (.label ((p1.1 + p2.1) / 2) ((p1.2 + p2.2) / 2)
+            content mc msc)
+      | .curve oA iA =>
+        let p1 := a.towardDir oA
+        let p2 := c.towardDir iA
+        let ddx := p2.1 - p1.1
+        let ddy := p2.2 - p1.2
+        -- control distance 0.3915·‖d‖: the To-Path library's factor
+        let dist := isqrt (ddx * ddx + ddy * ddy) * 3915 / 10000
+        let c1 := (p1.1 + dist * cosDeg oA / 1000, p1.2 + dist * sinDeg oA / 1000)
+        let c2 := (p2.1 + dist * cosDeg iA / 1000, p2.2 + dist * sinDeg iA / 1000)
+        segs := segs.push (.cubic p1.1 p1.2 c1.1 c1.2 c2.1 c2.2 p2.1 p2.2)
+        if last && arrow then
+          -- the tip rides the arrival tangent; the curve keeps its
+          -- endpoint and the filled tip covers its last reach
+          tip := (tipAt p2.1 p2.2 (p2.1 - c2.1) (p2.2 - c2.2) stroke.width).map (·.1)
+        if let some (content, mc, msc) := mid then
+          -- B(½) = (p1 + 3c1 + 3c2 + p2)/8, the Bézier midpoint
+          labels := labels.push (.label
+            ((p1.1 + 3 * c1.1 + 3 * c2.1 + p2.1) / 8)
+            ((p1.2 + 3 * c1.2 + 3 * c2.2 + p2.2) / 8) content mc msc)
+    | _, _, _ => pure ()
+  let withEdge := ev.shapes.push (.edge segs stroke tip)
+  return { ev with shapes := withEdge ++ labels }
 
 /-- One `\foreach` list item: values (`1`, `2/3`, a word), or the `...`
 range marker. -/

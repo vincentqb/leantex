@@ -307,10 +307,11 @@ def censusTable :
         hasStr (censusText c) "Text resumes after the placeholder")]),
   ("diagram-scm", fun _ c => [
     ("one page", c.size == 1),
-    -- three outlines + three edges + one arrow-tip triangle
+    -- three outlines + four edges + one arrow-tip triangle
     ("the node outlines, edges, and tip ship as page paths",
-      (c[0]?.map (·.paths == 7)).getD false),
+      (c[0]?.map (·.paths == 8)).getD false),
     ("the text node body ships", hasStr (censusText c) "out"),
+    ("the curve's mid-path label ships", hasStr (censusText c) "lift"),
     ("every node ships a glyph line",
       (c[0]?.map fun p => decide (p.lines.size ≥ 3)).getD false)]),
   ("tables", fun geom c => [
