@@ -1,0 +1,12 @@
+# natbib manual §2.3 (citation commands) and §2.4 (variants). The three the
+# paper-bib slice implements resolve through the four-axis style; the variants
+# and \nocite/\bibpunct are named as unknown until a slice takes them.
+body impl \citep{k}
+body impl \citet{k}
+body impl \cite{k}
+body refuse:W0301 \citeauthor{k}
+body refuse:W0301 \citeyear{k}
+body refuse:W0301 \citealp{k}
+body refuse:W0301 \citealt{k}
+body refuse:W0301 \nocite{k}
+pre refuse:W0301 \bibpunct{(}{)}{;}{a}{,}{,}
