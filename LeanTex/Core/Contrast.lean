@@ -160,9 +160,14 @@ private structure Use where
   name : Option String
   color : Color
   large : Bool
-  /-- The effective page under this use: the epoch palette's `bg`, the
-  shipped light surface when undeclared (WCAG contrast-ratio Note 3). -/
+  /-- The effective page under this use: the local ground where one stands
+  (the frame-title bar, the standout inversion), else the epoch palette's
+  `bg`, else the shipped light surface when undeclared (WCAG
+  contrast-ratio Note 3). Per pair, not per token: the same colour is
+  judged once per surface it sits on. -/
   surface : Color
+  /-- What the diagnostic calls the surface; `none` reads "the page". -/
+  groundName : Option String := none
   /-- Exempt where it stood: `covered`, a name the epoch's decorative set
   carries, or an anonymous value a decorative entry names. -/
   exempt : Bool
@@ -199,6 +204,14 @@ private structure UseCx where
   size : Sp
   bold : Bool := false
   cur : Option (Option String × Color) := none
+  /-- The local ground under this content, when it is not the page: the
+  frame-title bar, the standout inversion. A pairing is judged against
+  the surface it actually sits on — the same colour can pass on the page
+  and fail on the bar (per-pair resolution, not per-token). -/
+  ground : Option Color := none
+  /-- What the diagnostic calls the ground ("the frame-title bar"); `none`
+  reads "the page". -/
+  groundName : Option String := none
 
 private def UseCx.large (cx : UseCx) : Bool :=
   cx.size ≥ Dim.pt 18 || (cx.bold && cx.size ≥ Dim.pt 14)
@@ -220,7 +233,8 @@ private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option String)
   let u : Use := { name := nm
                    color := c
                    large := cx.large
-                   surface := surfaceOf acc.pal
+                   surface := cx.ground.getD (surfaceOf acc.pal)
+                   groundName := cx.groundName
                    exempt := exempt }
   { acc with uses := acc.uses.push u }
 
@@ -339,8 +353,20 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
     let acc := if standout then
       { acc with standoutPals := pushUnique acc.standoutPals acc.pal }
       else acc
-    let titleCx := { cx.style (.size "large") with bold := true }
-    usesBlocks cx (usesInlines titleCx acc title.toList) body.toList
+    let titleCx := cx.style (.size "large")
+    let titleCx := { titleCx with
+      bold := true
+      ground := acc.pal.find? "frametitlebg"
+      groundName := (acc.pal.find? "frametitlebg").map
+        (fun _ => "the frame-title bar") }
+    -- A standout frame's content sits on the inversion, never the page:
+    -- the ground Layout paints (`standoutbg`, else the palette's `fg`).
+    let bodyCx := if standout then
+        { cx with ground := some ((acc.pal.find? "standoutbg").getD
+            ((acc.pal.find? "fg").getD Color.black))
+                  groundName := some "the standout frame" }
+      else cx
+    usesBlocks bodyCx (usesInlines titleCx acc title.toList) body.toList
   -- A framefoot note lands as footer text on the page: its own declared
   -- colours are judged; its default colour is the muted key, judged once
   -- at the palette level.
@@ -573,7 +599,8 @@ private def declaredUseDiags (doc : Doc) (walk : UseAcc) : Array Diag := Id.run 
         | none => hexOf u.color
       out := out.push (Diag.of .W0315
         (s!"text coloured {label} reads at {ratioString milli} " ++
-          s!"on the page ({hexOf u.surface}), below the {ratioString threshold} " ++
+          s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
+          s!"below the {ratioString threshold} " ++
           s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
         (help := some ("deliberate low contrast is declared, not defaulted: " ++
           "\\palette[decorative]{ " ++

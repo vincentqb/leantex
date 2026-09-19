@@ -1692,6 +1692,22 @@ Outside after.")
   t "a bad frame-title pair declared after the last frame styles nothing"
     ((codesOf (deckDoc "" "\\palette{ frametitlebg = #F2F2F0 }\n\n")).all
       (·.code != "W0345"))
+  -- Per (fg, bg) pair, not per token: moloch's darkened alert passes on
+  -- the light page and fails on the dark frame-title bar — the same
+  -- colour, two grounds, judged where each sits.
+  let deckAlert (title body : String) : String :=
+    "\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
+\\begin{frame}{" ++ title ++ "}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
+  t "an accent inside the frame title is judged on the bar, and fails there"
+    ((codesOf (deckAlert "An \\alert{urgent} word" "plain body")).any
+      fun d => d.code == "W0315" && hasStr d.message "the frame-title bar")
+  t "the same accent in the body is judged on the page, and passes there"
+    ((codesOf (deckAlert "A title" "an \\alert{urgent} word")).all
+      (·.code != "W0315"))
+  t "an accent inside a standout frame is judged on the inversion"
+    ((codesOf ("\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
+\\begin{frame}[standout]\nan \\alert{urgent} word\n\\end{frame}\n\\end{document}")).any
+      fun d => d.code == "W0315" && hasStr d.message "the standout frame")
 
 /-- Tables and floats: the too-wide diagnostic, the caption's source side,
 and the rule extents on the shipped page — a rule claim is judged from
