@@ -318,6 +318,7 @@ def censusTable :
     ("the bold alphabets ship, variables kept italic",
       hasStr (censusText c) "𝐯" && hasStr (censusText c) "𝜷"),
     ("\\mathrm sets upright", hasStr (censusText c) "Err"),
+    ("a document macro's expansion ships", hasStr (censusText c) "𝐰"),
     ("a word stands as a script's argument", hasStr (censusText c) "null")]),
   ("math-companion", fun _ c => [
     ("one page", c.size == 1),

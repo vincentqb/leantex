@@ -995,6 +995,39 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (glyphChars "$x^\\mathbb{R}$" == #['𝑥', 'ℝ'])
   t "ensuremath is transparent in math"
     (glyphChars "$\\ensuremath{x}$" == #['𝑥'])
+  -- \define expansion inside math: the hook where MathParse meets the
+  -- elaborator's macro table. Arguments bind already expanded (the walk
+  -- runs right to left), matching takeArgs' text-mode order; a definition
+  -- sees only definitions before it, so a self-reference stays unexpanded
+  -- and the formula degrades with its name — the same rule that bounds
+  -- the expansion (expandMathList's measure).
+  let wrapDoc (pre body : String) : String :=
+    "\\documentclass{article}\n" ++ pre ++ "\\begin{document}\n" ++ body ++
+      "\n\\end{document}"
+  let glyphsOf (pre body : String) : Array Char := glyphChars (wrapDoc pre body)
+  let codesOf (pre body : String) : List String :=
+    warnCodes (wrapDoc pre body)
+  t "a defined macro expands inside math"
+    (codesOf "\\define \\R {\\mathbb{R}}\n" "$\\R^d$" == [] &&
+      glyphsOf "\\define \\R {\\mathbb{R}}\n" "$\\R^d$" == #['ℝ', '𝑑'])
+  t "a parameterized macro binds its math argument"
+    (glyphsOf "\\define \\abs(x: content) {|\\x|}\n" "$\\abs{u}$" ==
+      #['|', '𝑢', '|'])
+  t "an argument expands under the caller's definitions, later ones included"
+    (glyphsOf "\\define \\wrap(x: content) {(\\x)}\n\\define \\g {y}\n"
+      "$\\wrap{\\g}$" == #['(', '𝑦', ')'])
+  t "a self-reference stays outside its own visible prefix and degrades named"
+    (codesOf "\\define \\loop {z \\loop}\n" "$\\loop$" == ["W0012"])
+  t "DeclareMathOperator declares an upright operator with Op spacing"
+    (codesOf "\\DeclareMathOperator{\\Err}{Err}\n" "$\\Err(p)$" == [] &&
+      glyphsOf "\\DeclareMathOperator{\\Err}{Err}\n" "$\\Err(p)$" ==
+        #['E', 'r', 'r', '(', '𝑝', ')'])
+  t "operator spacing: a declared operator binds like sin"
+    (widthOf (wrapDoc "\\DeclareMathOperator{\\Err}{Err}\n" "$x \\Err y$") ==
+      adv mbase '𝑥' + mu mbase 3 + adv mbase 'E' + adv mbase 'r'
+        + adv mbase 'r' + mu mbase 3 + adv mbase '𝑦')
+  t "ensuremath in text enters math"
+    (glyphsOf "" "\\ensuremath{x^2}" == #['𝑥', '2'])
   -- The alignment family renders as grids now; the numbered forms warn
   -- W0014 (numbers are owed, the mathematics is not), a ragged row is
   -- W0013 and still renders padded.

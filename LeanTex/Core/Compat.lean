@@ -251,7 +251,8 @@ modelled — which only ever errs toward "defined", the reading that keeps
 a guarded branch. -/
 private def definesNext : List String :=
   ["def", "edef", "gdef", "xdef", "let", "newcommand", "renewcommand",
-   "providecommand", "DeclareRobustCommand", "define", "defineenv"]
+   "providecommand", "DeclareRobustCommand", "DeclareMathOperator",
+   "define", "defineenv"]
 
 private def recordDefined (n : String) : M Unit :=
   modify fun st =>
@@ -687,6 +688,21 @@ where
     became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
     modify fun st => { st with bodyNext := 1 }
     return some (← synthAt native pos, j)
+  | "DeclareMathOperator" =>
+    -- `\DeclareMathOperator{\f}{name}` declares an operator name: upright,
+    -- with an Op atom's spacing (amsldoc §5.1). The native spelling is a
+    -- definition whose body is `\operatorname{name}`; math expansion then
+    -- renders every use. The starred form's above/below display limits are
+    -- not modelled — the operator still sets, its scripts beside it.
+    let start := skipStar raws start
+    let (args, k) := takeGroups raws start 2
+    let some cmd := ctrlName (args.getD 0 #[]) | return none
+    if args.size < 2 then return none
+    let body := args.getD 1 #[]
+    became s!"\\DeclareMathOperator\{\\{cmd}}"
+      s!"\\define \\{cmd}() \{\\operatorname\{...}}" pos
+    let head ← synthAt s!"\\define \\{cmd}()" pos
+    return some (head.push (.group #[.ctrl "operatorname" pos, .group body pos] pos), k)
   | "hypersetup" =>
     let (args, k) := takeGroups raws start 1
     return some (← hypersetup (rawSrc (args.getD 0 #[])) pos, k)

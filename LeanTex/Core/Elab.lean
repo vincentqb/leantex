@@ -180,45 +180,6 @@ private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     modify fun st => { st with warnedUnknown := st.warnedUnknown.push key }
     diag ctx code msg (some pos) help
 
-/-- One formula: parsed into math atoms when this slice can model it, kept
-as source text with a warning naming the construct when it cannot — out of
-scope is a named warning, never a silent drop. A ragged alignment row
-inside the formula (an `array`) is W0014: padded with empty cells, named. -/
-private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
-    (pos : Pos) : EM Ir.Inline := do
-  match MathParse.parseMath body with
-  | .ok (l, notes) =>
-    for note in notes do
-      warnOnce ctx ("math:ragged:" ++ note) .W0014
-        s!"alignment {note}" pos
-    return .formula display (Parse.rawSrc body) l
-  | .error what =>
-    warnOnce ctx ("math:" ++ what) .W0012
-      s!"math with {what} is not rendered yet; the formula is set as source text" pos
-    return .math display (Parse.rawSrc body)
-
-/-- One alignment environment (`align`/`gather` and their starred forms):
-its rows parsed into one display grid formula. A construct the parser
-cannot model keeps the whole environment as source, named (W0012); a
-ragged row is W0014, padded; a numbered form warns W0015 once — the
-equation numbers are owed, the mathematics is not. -/
-private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
-    (numbered : Bool) (body : Array Parse.Raw) (pos : Pos) : EM Ir.Inline := do
-  match MathParse.parseMathRows kind body with
-  | .ok (l, notes) =>
-    for note in notes do
-      warnOnce ctx ("math:ragged:" ++ note) .W0014
-        s!"'\{{name}}': {note}" pos
-    if numbered then
-      warnOnce ctx "math:eqnum" .W0015
-        s!"equation numbers are not rendered yet; '\{{name}}' sets unnumbered" pos
-        (help := s!"'\{{name}*}' spells the unnumbered form, which renders the same")
-    return .formula true (Parse.rawSrc body) l
-  | .error what =>
-    warnOnce ctx ("math:" ++ what) .W0012
-      s!"math with {what} is not rendered yet; '\{{name}}' is set as source text" pos
-    return .math true (Parse.rawSrc body)
-
 /-- Reserved control words, and the code each skip earns — W0307 (pending,
 a warning: a milestone owns the construct) when the skipped arguments carry
 content, W0329 (config) when only layout or selection is lost. -/
@@ -403,6 +364,145 @@ private def trimBy (raws : Array Raw) (p : Raw → Bool) : Array Raw :=
 padding inside them is not content. -/
 private def trimRaws (raws : Array Raw) : Array Raw :=
   trimBy raws isSpaceOrPar
+
+/-- `lookupUser` over an explicit table and prefix bound, for the math
+expansion below, which threads its own decreasing `limit`. -/
+private def lookupUserIn (user : Array UserCmd) (limit : Nat) (name : String) :
+    Option (Nat × UserCmd) := Id.run do
+  let mut k := limit
+  for _ in [0:limit] do
+    k := k - 1
+    if h : k < user.size then
+      if user[k].name == name then
+        return some (k, user[k])
+  return none
+
+/-- Bind a user command's parameters from already-expanded raws, for the
+math expansion: the raw-level twin of `takeArgs` — an optional binds from
+`[...]`, a required from the next group or word — except that values stay
+raws, because they splice back into a token stream the math parser reads.
+Pure and forward: it only slices `rest`, never expands. -/
+private def bindMathArgs (params : Array Param) (rest : Array Raw) :
+    Array (String × Array Raw) × Array Raw := Id.run do
+  let mut bindings : Array (String × Array Raw) := #[]
+  let mut i := 0
+  for p in params do
+    if p.optional then
+      let j := skipSpaces rest i
+      match rest[j]? with
+      | some (.sym '[' _) =>
+        let mut body : Array Raw := #[]
+        let mut k := j + 1
+        for _ in [j:rest.size] do
+          match rest[k]? with
+          | some (.sym ']' _) =>
+            k := k + 1
+            break
+          | some r =>
+            body := body.push r
+            k := k + 1
+          | none => break
+        i := k
+        bindings := bindings.push (p.name, body)
+      | _ => bindings := bindings.push (p.name, #[])
+    else
+      let j := skipSpaces rest i
+      match rest[j]? with
+      | some (.group body _) =>
+        i := j + 1
+        bindings := bindings.push (p.name, body)
+      | some r =>
+        i := j + 1
+        bindings := bindings.push (p.name, #[r])
+      | none =>
+        bindings := bindings.push (p.name, #[])
+  return (bindings, rest.extract i rest.size)
+
+/-- Expand user commands (`\define`) inside a formula's raws: the one hook
+where `MathParse` meets the elaborator's macro table, closing the
+document-defined macro tail W0012 named formula by formula. The walk runs
+right to left — the suffix is fully expanded before its head — so when a
+command binds its arguments they are already macro-free splices, expanded
+under the caller's visible prefix exactly as `takeArgs` elaborates them in
+text. Termination is the definition-order rule that already terminates
+text-mode expansion, made structural: a definition sees only definitions
+before it, so the body expands under `k < limit` (the measure's first
+component), and within one level the walk descends the raw list (the
+second). No fuel and no escape hatch: the language stays terminating by
+design. -/
+private def expandMathList (user : Array UserCmd) (limit : Nat)
+    (args : Array (String × Array Raw)) : List Raw → Array Raw
+  | [] => #[]
+  | .ctrl n pos :: rest =>
+    let tail := expandMathList user limit args rest
+    if let some (_, sub) := args.find? (·.1 == n) then
+      sub ++ tail
+    else
+      match lookupUserIn user limit n with
+      | some (k, cmd) =>
+        if _h : k < limit then
+          let (bindings, rest') := bindMathArgs cmd.params tail
+          let body := expandMathList user k bindings cmd.body.toList
+          body ++ rest'
+        else
+          #[Raw.ctrl n pos] ++ tail
+      | none => #[Raw.ctrl n pos] ++ tail
+  | .group body p :: rest =>
+    let tail := expandMathList user limit args rest
+    let inner := expandMathList user limit args body.toList
+    #[Raw.group inner p] ++ tail
+  | r :: rest =>
+    let tail := expandMathList user limit args rest
+    #[r] ++ tail
+termination_by raws => (limit, sizeOf raws)
+decreasing_by
+  all_goals simp_wf
+  all_goals try omega
+  all_goals
+    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+
+/-- One formula: parsed into math atoms when this slice can model it, kept
+as source text with a warning naming the construct when it cannot — out of
+scope is a named warning, never a silent drop. User commands expand first
+(`expandMathList`), so a `\define`d macro renders instead of degrading its
+formula. A ragged alignment row inside the formula (an `array`) is W0014:
+padded with empty cells, named. -/
+private def elabMathInline (ctx : Ctx) (display : Bool) (body : Array Parse.Raw)
+    (pos : Pos) : EM Ir.Inline := do
+  let expanded := expandMathList ctx.user ctx.limit #[] body.toList
+  match MathParse.parseMath expanded with
+  | .ok (l, notes) =>
+    for note in notes do
+      warnOnce ctx ("math:ragged:" ++ note) .W0014
+        s!"alignment {note}" pos
+    return .formula display (Parse.rawSrc body) l
+  | .error what =>
+    warnOnce ctx ("math:" ++ what) .W0012
+      s!"math with {what} is not rendered yet; the formula is set as source text" pos
+    return .math display (Parse.rawSrc body)
+
+/-- One alignment environment (`align`/`gather` and their starred forms):
+its rows parsed into one display grid formula. A construct the parser
+cannot model keeps the whole environment as source, named (W0012); a
+ragged row is W0014, padded; a numbered form warns W0015 once — the
+equation numbers are owed, the mathematics is not. -/
+private def elabMathEnv (ctx : Ctx) (name : String) (kind : Math.GridKind)
+    (numbered : Bool) (body : Array Parse.Raw) (pos : Pos) : EM Ir.Inline := do
+  let expanded := expandMathList ctx.user ctx.limit #[] body.toList
+  match MathParse.parseMathRows kind expanded with
+  | .ok (l, notes) =>
+    for note in notes do
+      warnOnce ctx ("math:ragged:" ++ note) .W0014
+        s!"'\{{name}}': {note}" pos
+    if numbered then
+      warnOnce ctx "math:eqnum" .W0015
+        s!"equation numbers are not rendered yet; '\{{name}}' sets unnumbered" pos
+        (help := s!"'\{{name}*}' spells the unnumbered form, which renders the same")
+    return .formula true (Parse.rawSrc body) l
+  | .error what =>
+    warnOnce ctx ("math:" ++ what) .W0012
+      s!"math with {what} is not rendered yet; '\{{name}}' is set as source text" pos
+    return .math true (Parse.rawSrc body)
 
 /-- The run an unclosed `[` still owns: tokens on its command's own line —
 the stop-at-the-anchor's-line rule, stated once. A raw on a later line, or
@@ -1081,6 +1181,19 @@ partial def elabInlines (ctx : Ctx) (raws : Array Raw) : EM (Array Inline) := do
           acc := flushText acc sb
           sb := ""
           acc := acc.push .fill
+        else if name == "ensuremath" then
+          -- `\ensuremath` enters math from text (amsldoc: the argument is
+          -- typeset in math mode wherever the command lands); inside math
+          -- the parser treats it as transparent.
+          let j := skipSpaces raws i
+          match raws[j]? with
+          | some (.group body _) =>
+            acc := flushText acc sb
+            sb := ""
+            acc := acc.push (← elabMathInline ctx false body pos)
+            i := j + 1
+          | _ =>
+            diag ctx .E0304 "missing argument 'body' for '\\ensuremath'" pos
         else if name == "\\" || name == "par" then
           -- `\\[len]` adds space after the break. The bracket must be
           -- adjacent: LaTeX skips spaces here and so swallows the `[` of a

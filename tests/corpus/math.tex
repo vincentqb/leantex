@@ -2,6 +2,7 @@
 % checkout renders as a function of the checkout.
 \documentclass{article}
 \fonts{ dir = "fonts", body = "Source Serif Pro", math = "Fira Math" }
+\define \vecb(x: content) {\mathbf{\x}}
 
 \begin{document}
 
@@ -54,7 +55,8 @@ An alphabet remaps its letters through the Mathematical Alphanumeric
 block, Letterlike holes included: $\mathbb{R}^{d}$ and $\mathbb{C}$ are
 double-struck, $\mathbf{v} + \boldsymbol{\beta}$ set bold, and
 $\mathrm{Err}(p, q)$ is upright. A construction stands as a script's
-argument in $V^\text{null}$ and $2^\frac{1}{2}$.
+argument in $V^\text{null}$ and $2^\frac{1}{2}$, and a document-defined
+macro expands inside its formula: $\vecb{w}$.
 
 \begin{equation*}
   e^{i\pi} + 1 = 0
