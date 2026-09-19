@@ -139,6 +139,10 @@ private structure St where
   conditional pass: what `\ifdefined` reads. Flat — TeX's group-local
   scoping is not modelled here. -/
   defined : Array String := #[]
+  /-- `\newif` flags by base name (`\newif\ifshowdetail` records
+  `showdetail`, initially false — plain TeX's `\newif` sets `\iffalse`)
+  with the value the last `\Xtrue`/`\Xfalse` gave. Flat, like `defined`. -/
+  flags : Array (String × Bool) := #[]
 
 private abbrev M := StateM St
 
@@ -280,12 +284,29 @@ private def condMsg (n : String) (defined : Bool) : String :=
   else
     s!"'\\ifdefined\\{n}': '\\{n}' is not defined, so only the '\\else' branch is kept"
 
+/-- The same, for a `\newif` flag's conditional. -/
+private def flagMsg (n : String) (value : Bool) : String :=
+  if value then
+    s!"'\\{n}' is true here, so the branch before '\\else' is kept"
+  else
+    s!"'\\{n}' is false here, so only the '\\else' branch is kept"
+
+/-- The base name of a `\newif` flag this control word tests (`\ifX`),
+when the pass has recorded it. -/
+private def flagTested (flags : Array (String × Bool)) (n : String) :
+    Option (String × Bool) :=
+  if n.startsWith "if" && n.length > 2 then
+    flags.find? (·.1 == (n.drop 2).toString)
+  else none
+
 /-- Is the conditional heading `raws[i]` one the pass can resolve? True
 when a matching `\fi` closes it at this level and every conditional inside
-the extent is itself `\ifdefined` naming a control word. Any other `\if…`
-head is undecidable and would also desynchronise the `\else`/`\fi`
-matching, so it invalidates the whole extent. -/
-private def condExtent (raws : Array Raw) (i : Nat) : Bool := Id.run do
+the extent is itself `\ifdefined` naming a control word, or an `\ifX` of a
+recorded `\newif` flag. Any other `\if…` head is undecidable and would
+also desynchronise the `\else`/`\fi` matching, so it invalidates the whole
+extent. -/
+private def condExtent (flags : Array (String × Bool)) (raws : Array Raw)
+    (i : Nat) : Bool := Id.run do
   let mut depth := 0
   let mut j := i
   for _ in [i:raws.size] do
@@ -302,8 +323,11 @@ private def condExtent (raws : Array Raw) (i : Nat) : Bool := Id.run do
       depth := depth - 1
       j := j + 1
     | some (.ctrl n _) =>
-      if n == "if" || (n.startsWith "if" && n.length > 2) then return false
-      j := j + 1
+      if (flagTested flags n).isSome then
+        depth := depth + 1
+        j := j + 1
+      else if n == "if" || (n.startsWith "if" && n.length > 2) then return false
+      else j := j + 1
     | some _ => j := j + 1
     | none => return false
   return false
@@ -320,7 +344,7 @@ private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
     List Raw → Nat → M (Array Raw)
   | [], _ => pure out
   | .ctrl "ifdefined" pos :: .ctrl n np :: rest, i => do
-    if stack.isEmpty && !condExtent raws i then
+    if stack.isEmpty && !condExtent (← get).flags raws i then
       -- Undecidable: leave the construct for the skip-whole warning.
       condList raws ((out.push (.ctrl "ifdefined" pos)).push (.ctrl n np)) stack rest (i + 2)
     else
@@ -329,7 +353,7 @@ private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
         say .N0114 (condMsg n defined) pos
       condList raws out (defined :: stack) rest (i + 2)
   | .ctrl "ifdefined" pos :: .space :: .ctrl n np :: rest, i => do
-    if stack.isEmpty && !condExtent raws i then
+    if stack.isEmpty && !condExtent (← get).flags raws i then
       condList raws (((out.push (.ctrl "ifdefined" pos)).push .space).push (.ctrl n np))
         stack rest (i + 3)
     else
@@ -340,6 +364,39 @@ private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
   | .ctrl "ifdefined" pos :: rest, i =>
     -- Nothing testable follows; pass the head through untouched.
     condList raws (out.push (.ctrl "ifdefined" pos)) stack rest (i + 1)
+  | .ctrl "newif" pos :: .ctrl n np :: rest, i => do
+    -- `\newif\ifX` declares a decidable flag, initially false (plain TeX:
+    -- `\newif` ends with `\csname …false\endcsname`): `\ifX` joins this
+    -- pass, `\Xtrue`/`\Xfalse` set it. A `\newif` whose next token is not
+    -- an `\if…` name passes through for the ordinary unknown warning.
+    if !(stack.all id) then
+      condList raws out stack rest (i + 2)
+    else if n.startsWith "if" && n.length > 2 then
+      let x := (n.drop 2).toString
+      modify fun st => { st with
+        flags := (st.flags.filter (·.1 != x)).push (x, false) }
+      recordDefined n
+      recordDefined (x ++ "true")
+      recordDefined (x ++ "false")
+      say .N0114 s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false" pos
+      condList raws out stack rest (i + 2)
+    else
+      condList raws ((out.push (.ctrl "newif" pos)).push (.ctrl n np)) stack rest (i + 2)
+  | .ctrl "newif" pos :: .space :: .ctrl n np :: rest, i => do
+    if !(stack.all id) then
+      condList raws out stack rest (i + 3)
+    else if n.startsWith "if" && n.length > 2 then
+      let x := (n.drop 2).toString
+      modify fun st => { st with
+        flags := (st.flags.filter (·.1 != x)).push (x, false) }
+      recordDefined n
+      recordDefined (x ++ "true")
+      recordDefined (x ++ "false")
+      say .N0114 s!"'\\newif\\{n}': '\\{n}' is resolved from here on, initially false" pos
+      condList raws out stack rest (i + 3)
+    else
+      condList raws (((out.push (.ctrl "newif" pos)).push .space).push (.ctrl n np))
+        stack rest (i + 3)
   | .ctrl "else" pos :: rest, i => do
     match stack with
     | [] => condList raws (out.push (.ctrl "else" pos)) [] rest (i + 1)
@@ -348,12 +405,40 @@ private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
     match stack with
     | [] => condList raws (out.push (.ctrl "fi" pos)) [] rest (i + 1)
     | _ :: more => condList raws out more rest (i + 1)
+  | .ctrl n pos :: rest, i => do
+    let flags := (← get).flags
+    match flagTested flags n with
+    | some (_, value) =>
+      -- `\ifX` of a recorded flag: resolve exactly as `\ifdefined` does,
+      -- extent check included.
+      if stack.isEmpty && !condExtent flags raws i then
+        condList raws (out.push (.ctrl n pos)) stack rest (i + 1)
+      else
+        if stack.all id then
+          say .N0114 (flagMsg n value) pos
+        condList raws out (value :: stack) rest (i + 1)
+    | none =>
+      if !(stack.all id) then
+        condList raws out stack rest (i + 1)
+      else if n.endsWith "true" && flags.any (·.1 == (n.dropEnd 4).toString) then
+        let x := (n.dropEnd 4).toString
+        modify fun st => { st with
+          flags := (st.flags.filter (·.1 != x)).push (x, true) }
+        say .N0114 s!"'\\{n}': '\\if{x}' is true from here on" pos
+        condList raws out stack rest (i + 1)
+      else if n.endsWith "false" && flags.any (·.1 == (n.dropEnd 5).toString) then
+        let x := (n.dropEnd 5).toString
+        modify fun st => { st with
+          flags := (st.flags.filter (·.1 != x)).push (x, false) }
+        say .N0114 s!"'\\{n}': '\\if{x}' is false from here on" pos
+        condList raws out stack rest (i + 1)
+      else
+        if definesNext.contains n then
+          if let some m := (rest.dropWhile isSpaceOrStar).head?.bind boundName then
+            recordDefined m
+        condList raws (out.push (.ctrl n pos)) stack rest (i + 1)
   | r :: rest, i => do
     if stack.all id then
-      if let .ctrl d _ := r then
-        if definesNext.contains d then
-          if let some n := (rest.dropWhile isSpaceOrStar).head?.bind boundName then
-            recordDefined n
       condList raws (out.push (← condOne r)) stack rest (i + 1)
     else
       condList raws out stack rest (i + 1)

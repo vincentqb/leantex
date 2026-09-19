@@ -334,6 +334,28 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat a foreign conditional inside keeps the skip-whole warning"
     (let ds := (elabStr "\\ifdefined\\a\\ifx\\b\\c\\fi\\fi x").2
      ds.any (·.code == "W0104") && ds.all (·.code != "N0114"))
+  -- `\newif` joins the same pass: `\ifX` resolves from the flag's flow
+  -- state, `\Xtrue`/`\Xfalse` set it, the initial value is false (plain
+  -- TeX's `\newif` ends by setting the false branch). A flag's `\ifX`
+  -- also counts as decidable inside an `\ifdefined` extent.
+  t "compat newif starts false: the else branch is kept"
+    (let (doc, ds) := elabStr "\\newif\\ifdtl\\ifdtl A\\else B\\fi"
+     doc.body == #[.para #[.text "B"]] && ds.all (·.severity == .note))
+  t "compat a flag setter flips the taken branch"
+    ((elabStr "\\newif\\ifdtl\\dtltrue\\ifdtl A\\else B\\fi").1.body ==
+      #[.para #[.text "A"]])
+  t "compat a later setter flips it back, in flow order"
+    ((elabStr "\\newif\\ifdtl\\dtltrue\\dtlfalse\\ifdtl A\\else B\\fi").1.body ==
+      #[.para #[.text "B"]])
+  t "compat a setter in an untaken branch does not fire"
+    ((elabStr "\\newif\\ifdtl\\ifdtl\\dtltrue A\\else B\\fi\\ifdtl C\\else D\\fi").1.body ==
+      #[.para #[.text "BD"]])
+  t "compat newif inside an ifdefined extent stays decidable"
+    ((elabStr "\\newif\\ifdtl\\ifdefined\\nope A\\else\\ifdtl B\\else C\\fi\\fi").1.body ==
+      #[.para #[.text "C"]])
+  t "compat an undeclared if-name is not a flag: the extent stays skipped"
+    (let ds := (elabStr "\\ifsomething A\\else B\\fi x").2
+     ds.all (·.code != "N0114"))
   t "compat definecolor rgb" ((elabStr (pre "\\definecolor{c}{rgb}{1,0,0.5}")).1.palette.find? "c" ==
     some { r := 255, g := 0, b := 127 })
   t "compat colorlet aliases"
