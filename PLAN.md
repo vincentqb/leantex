@@ -86,6 +86,56 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-19 — the preamble is a fold over declaration values, and T1's
+proved tier is a theorem.
+
+- **The fold (audit-compose item 7, landed).** `scanDecls` segments the
+  preamble into `PDecl` values — pure, positional, extents only, with
+  malformation facts (an unclosed `[`, a missing group) carried as data —
+  and `elabDoc` is now `foldlM applyDecl` over them; `applyDecl` owns
+  every diagnostic in scan order. The loop's recovery quirks are
+  transcribed, not cleaned up: a declaration whose group never
+  materialises consumes only what the loop consumed, and the tokens it
+  looked past rescan as their own units. The refactor was proven, not
+  argued: the whole corpus rendered to PDF and HTML at main and at each
+  restructuring commit, byte-identical in every artifact, normalized run
+  report, and exit code; no golden moved; bench flat.
+- **The state split (compose-fix's named precondition).** The six keyed
+  apply steps (page, fonts, pdfmeta, output, chrome, assert) plus allow
+  are pure functions returning a value and ordered reporting events
+  (`PEvent`: a diagnostic, a W0343 scalar note, a W0348 declared-key
+  note); `applyEvent` is the one meaning behind `noteScalar` and
+  `noteDeclared` too. Effects as data: a step's whole interaction with
+  the elaboration state is an event list a lemma folds over.
+- **T1, proved tier (`applyDecl_comm`).** Independent keyed declarations
+  — different heads among page/pdfmeta/fonts/output/chrome/assert/allow
+  (`PDecl.Independent`) — commute: the fold state agrees under
+  `PreState.sem`, and the elaboration state returns reporting-equal to
+  where it started under `ESt.sem`. The projections erase exactly the
+  four stores whose only readers are diagnostic sites (diags, warn-once
+  memo, W0343 store, W0348 store) and nothing else. Exceptions carried
+  verbatim from the audit (reference→referent wholesale, `\theme`
+  position, `\documentclass`, same-key order), plus one the proof forces
+  into the open: the inline-content heads (running head/foot, logo,
+  titles) elaborate through `elabInlines`, a tracked termination-checker
+  exemption no theorem can range over — those stay oracle-only. The
+  oracle is KEPT: it alone covers the content heads, same-head
+  field-disjoint swaps, and the diagnostic-code multiset. `_comm` is a
+  new theorem shape beside the registered suffixes: a two-order equality
+  under a named projection, with an independence side condition.
+- **Proof shape, learned the expensive way (the collectBlock lesson's
+  twin).** A keyed arm is `stepDone` of a pure step; run lemmas are
+  stated per projection (`EM.run_stepDone_fst/snd`) so pair literals
+  never appear in goals; and a step's value is ONE record literal with
+  any conditional inside the field (`sawPage := cond || s.sawPage`, a
+  field-level match for asserts) — a branch at record level forced
+  split-then-rfl through kernel-opaque terms and ground for hours, while
+  the in-field form makes the whole 529-case dispatch elaborate in
+  seconds. Whoever states the fold-permutation corollary: the remaining
+  work is the suffix-congruence (a later arm's value must be shown to
+  read only `sem` fields plus order-insensitive views of the keyed
+  stores), not more pairwise cases.
+
 2026-09-19 — M6's math-side interface: alphabets, accents, and macros in
 formulas. W0012 degrades a whole formula, so each closed row un-degrades
 every formula carrying it; the corpus audit's four largest math closers
