@@ -11,6 +11,38 @@ shipped (or deliberately not, for a note), covered-coloured runs on step
 pages, rules and fills drawn, line positions for centring and columns. -/
 def censusTable :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
+  ("eqnum", fun geom c => [
+    ("one page", c.size == 1),
+    ("the first equation ships its number", hasStr (censusText c) "(1)"),
+    ("the opted-out display frees its number for the next",
+      hasStr (censusText c) "(2)" && !hasStr (censusText c) "(3)"),
+    ("the number is right-aligned on the measure",
+      -- to the sp integer division owes the fil pair, as pad_center does
+      (lineRightOf c 0 "(1)").any fun r =>
+        decide (r ≤ geom.hmargin + geom.textWidth ∧
+          geom.hmargin + geom.textWidth - r ≤ 2)),
+    ("eqref resolves to the parenthesised number",
+      hasStr (censusText c) "Equation(1)")]),
+  ("crossref", fun _ c => [
+    ("one page", c.size == 1),
+    ("a resolved reference ships its number on the page",
+      hasStr (censusText c) "Section1 opened"),
+    ("eqref ships its parenthesised number", hasStr (censusText c) "(2)"),
+    ("an unresolved reference ships LaTeX's ??",
+      hasStr (censusText c) "see??"),
+    ("an appendix reference letters itself",
+      hasStr (censusText c) "AppendixA letters"),
+    ("the heading line carries its number beside its title",
+      ((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.text "Alpha").map
+        fun l => hasStr l.text "1").getD false)]),
+  ("abstract", fun geom c => [
+    ("one page", c.size == 1),
+    ("the class furniture heading ships", hasStr (censusText c) "Abstract"),
+    ("the abstract body ships", hasStr (censusText c) "Entirely synthetic findings"),
+    ("the abstract body is set off the margin",
+      (lineXOf c 0 "Entirely synthetic findings").any fun x => decide (x > geom.hmargin)),
+    ("the following body returns to the margin",
+      lineXOf c 0 "Body text follows the abstract" == some geom.hmargin)]),
   ("paragraphs", fun _ c => [
     ("one page", c.size == 1),
     ("the opening sentence ships", hasStr (censusText c) "Typesetting is the arrangement of type"),

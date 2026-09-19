@@ -133,7 +133,8 @@ def styleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- the heading and the rule as a class the stylesheet draws.
   let (stylePage, _) := HtmlDoc.emit {} styled.1
   t "html styled heading wraps in the template"
-    ((stylePage.splitOn "<h2 class=\"ruled\"><span class=\"size-large\"><span class=\"sans\">").length == 2)
+    ((stylePage.splitOn "</span>\u2003<span class=\"size-large\"><span class=\"sans\">").length == 2 &&
+     (stylePage.splitOn "<h2 class=\"ruled\"><span class=\"section-number\">").length == 2)
   t "html styled heading spacing" ((stylePage.splitOn "h2 { margin-top: 6pt; margin-bottom: 3pt;").length == 2)
   t "html styled list indent and gap"
     ((stylePage.splitOn "ul { padding-left: 1.2em; }").length == 2 &&
@@ -444,7 +445,7 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- 2: body heading only — the summary follows the body's own title line.
   let bodyOnly : Ir.Doc := {
     info := { subject := some "A body-titled summary." }
-    body := #[.section 0 false #[.text "Body Title"], .para #[.text "After."]] }
+    body := #[.section 0 false none #[.text "Body Title"], .para #[.text "After."]] }
   t "body title: summary follows the body's title line"
     ((MarkdownDoc.emit bodyOnly) ==
       "# Body Title\n\n> A body-titled summary.\n\nAfter.\n")
@@ -468,7 +469,7 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- summary to its own line — after the title, never above the body.
   let mid : Ir.Doc := {
     info := { subject := some "A late summary." }
-    body := #[.para #[.text "Lead."], .section 0 false #[.text "Late Title"]] }
+    body := #[.para #[.text "Lead."], .section 0 false none #[.text "Late Title"]] }
   t "a mid-document title carries the summary with it"
     ((MarkdownDoc.emit mid) == "Lead.\n\n# Late Title\n\n> A late summary.\n")
   -- The twin of a small-caps run is its text with the authored casing:
@@ -1040,7 +1041,8 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html emit clean" pageDiags.isEmpty
   t "html has doctype" (page.startsWith "<!DOCTYPE html>")
   t "html sets the title" ((page.splitOn "<title>T</title>").length == 2)
-  t "html section becomes h2" ((page.splitOn "<h2>Head</h2>").length == 2)
+  t "html section becomes h2, its number a structural span"
+    ((page.splitOn "<h2><span class=\"section-number\">1</span>\u2003Head</h2>").length == 2)
   t "html bold becomes strong" ((page.splitOn "<strong>bold</strong>").length == 2)
   t "html colour references the token"
     ((page.splitOn "var(--primary, #7c3aed)").length == 2)

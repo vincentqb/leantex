@@ -237,6 +237,8 @@ def diagWitness (one mapped : Font.FontSet) : DiagCode → Array Diag
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
       "not a PNG or JPEG file"]
+  | .W0349 => dvE "\\ref{nowhere}"
+  | .W0350 => dvE "\\section{A}\\label{twice}\\label{twice}"
 
 /-! The message lint: every fired message and help is judged mechanically.
 Each check exists because the pasted real output violated it (the brief's

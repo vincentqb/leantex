@@ -146,6 +146,82 @@ full = w + 2bleed, gap = bleed - 3pt, half = 0.5 * (bleed + safe) }")
        d2.tokens.find? "cm" == some { width := .ofSp (Dim.pt 6) } &&
        d2.tokens.find? "ch" == some { width := .ofSp (Dim.pt 8) })
 
+/-- The run-in headings: `\paragraph`/`\subparagraph` are run-in in article
+(clsguide §2.2; classes.dtx gives both a negative afterskip), so the title
+joins its own text's paragraph — bold, an em quad after — and never makes a
+display heading, keeping `heading_hierarchy`'s levels what they were. -/
+def runinChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let wrap (body : String) : String :=
+    "\\documentclass{article}\n\\begin{document}\n" ++ body ++ "\n\\end{document}"
+  let (doc, ds) := elabStr (wrap "\\paragraph{Setup} The details follow.")
+  t "a run-in heading sources clean" ds.isEmpty
+  t "run-in title and text share one paragraph, an em quad between"
+    (match doc.body[0]? with
+     | some (Ir.Block.para xs) =>
+       (match xs[0]? with
+        | some (Ir.Inline.styled .bold ttl) => Ir.plainText ttl == "Setup"
+        | _ => false) &&
+       (Ir.plainText xs) == "Setup\u2003The details follow."
+     | _ => false)
+  let (doc2, ds2) := elabStr (wrap "\\subparagraph*{Aside} Runs in too.")
+  t "a starred subparagraph runs in the same way"
+    (ds2.isEmpty && (match doc2.body[0]? with
+     | some (Ir.Block.para xs) => (Ir.plainText xs) == "Aside\u2003Runs in too."
+     | _ => false))
+  let (_, ds3) := elabStr (wrap "\\paragraph{A}[short] kept")
+  t "a bracket after the title group is content, not an argument"
+    (ds3.isEmpty)
+
+/-- The abstract environment: its own titled block (article.cls §abstract —
+`\small`, a centred bold `\abstractname`, quotation margins), a `<section>`
+with a heading in HTML, so a reader's tooling can find it. -/
+def abstractChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\begin{abstract} Invented summary text. \\end{abstract}\\end{document}")
+  t "abstract sources clean" ds.isEmpty
+  t "abstract elaborates to its own block"
+    (match doc.body[0]? with
+     | some (Ir.Block.abstract body) => !body.isEmpty
+     | _ => false)
+  let page := (HtmlDoc.emit {} doc).1
+  t "HTML sets the abstract as a classed section with a heading"
+    ((page.splitOn "class=\"abstract\"").length == 2 &&
+     (page.splitOn "<h2>").length == 2 &&
+     (page.splitOn "Abstract").length == 2)
+  let md := MarkdownDoc.emit doc
+  t "the markdown twin carries the heading and the body"
+    ((md.splitOn "## Abstract").length == 2 &&
+     (md.splitOn "Invented summary text.").length == 2)
+
+/-- Heading numbers: article numbers unstarred levels 1–3 in flow order
+(classes.dtx §Sectioning), `\appendix` letters from A and restarts the
+counter, starred forms neither number nor step, slides never number — and
+a number never moves a section's HTML anchor, which reads the title text
+alone. -/
+def headingNumberChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let art (body : String) : Ir.Doc :=
+    (elabStr ("\\documentclass{article}\\begin{document}\n" ++ body ++ "\n\\end{document}")).1
+  let nums (doc : Ir.Doc) : List (Option String) :=
+    doc.body.toList.filterMap fun b => match b with
+      | .section _ _ n _ => some n
+      | _ => none
+  t "article numbers unstarred headings in flow order"
+    (nums (art "\\section{A}\\subsection{B}\\subsection{C}\\subsubsection{D}\\section*{S}\\section{E}\\subsection{F}") ==
+      [some "1", some "1.1", some "1.2", some "1.2.1", none, some "2", some "2.1"])
+  t "a subsection before any section prefixes zero, as LaTeX does"
+    (nums (art "\\subsection{B}") == [some "0.1"])
+  t "appendix letters level 1 and restarts the counter"
+    (nums (art "\\section{A}\\appendix\\section{B}\\subsection{C}\\section{D}") ==
+      [some "1", some "A", some "A.1", some "B"])
+  let deck := (elabStr ("\\documentclass{slides}\\begin{document}\\section{Only}\\begin{frame}x\\end{frame}\\end{document}")).1
+  t "slides sections never number" (nums deck == [none])
+  let (doc, _) := elabStr ("\\documentclass{article}\\begin{document}\\section{Introduction}\nBody.\n\\end{document}")
+  t "a number never moves the section anchor"
+    ((((HtmlDoc.emit {} doc).1).splitOn "<section id=\"introduction\">").length == 2)
+
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -192,10 +268,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       "\\captionsetup[subtable]{skip=\\abovecaptionskip}")) == ["W0354"] &&
      ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).2.map (·.message)).any
       (fun m => (m.splitOn "'skip'").length == 2))
-  t "compat appendixnumberbeamer is native; \\appendix warns where it stands"
+  t "compat appendixnumberbeamer is native; \\appendix is too"
     ((elabStr (pre "\\usepackage{appendixnumberbeamer}")).2.all (·.severity == .note) &&
      warnCodes ("\\documentclass{article}\n\\usepackage{appendixnumberbeamer}\n" ++
-       "\\begin{document}\n\\appendix\nx\n\\end{document}") == ["W0301"])
+       "\\begin{document}\n\\appendix\nx\n\\end{document}") == [])
   t "compat definecolor" ((elabStr (pre "\\definecolor{c}{HTML}{0F766E}")).1.palette.find? "c" ==
     some { r := 0x0F, g := 0x76, b := 0x6E })
   -- \setbeamercovered{transparent} asks for what the engine always does
@@ -550,7 +626,7 @@ def walkChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- title whole, so a step there must not multiply handout pages either.
   -- A deliberate answer, pinned; the wildcard used to decide it silently.
   t "maxStep keeps furniture outside the overlay model"
-    (Ir.maxStepBlocks #[.section 1 false #[.step 2 none #[.text "t"]]] == 1)
+    (Ir.maxStepBlocks #[.section 1 false none #[.step 2 none #[.text "t"]]] == 1)
 
 /-- The paragraph boundary, judged from a body's shape: an unknown
 environment follows the same rule as the `@input:` wrapper — an inline body
@@ -645,19 +721,19 @@ def optArgChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (secDoc, secDs) := elabStr "\\section[Short]{Long Title}\n\nBody."
   t "section takes its short form and keeps the long title"
     (secDs.all (·.severity == .note) && match secDoc.body with
-     | #[.section 1 false title, .para _] => Ir.plainText title == "Long Title"
+     | #[.section 1 false (some "1") title, .para _] => Ir.plainText title == "Long Title"
      | _ => false)
   -- The short title is unused today, and that is registered, never silent.
   t "an unused short title is a note" (secDs.any (·.code == "N0103"))
   t "section recovers its title past an unclosed bracket"
     (match (elabStr "\\section[never closes {Recovered}\nBody.").1.body with
-     | #[.para _, .section 1 false title, .para _] => Ir.plainText title == "Recovered"
+     | #[.para _, .section 1 false (some "1") title, .para _] => Ir.plainText title == "Recovered"
      | _ => false)
   -- Principle 8: the malformed run W0310 calls content IS content in a
   -- content position, exactly as in the scanner's two sibling paths
   t "the malformed run before a recovered section title stays content"
     (match (elabStr "\\section[never closes IMPORTANTWORDS {Recovered}\nBody.").1.body with
-     | #[.para junk, .section 1 false title, .para _] =>
+     | #[.para junk, .section 1 false (some "1") title, .para _] =>
        (Ir.plainText junk).endsWith "IMPORTANTWORDS" && Ir.plainText title == "Recovered"
      | _ => false)
   t "a body title's malformed run stays content, the title still taken"
@@ -900,7 +976,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     #[.para #[.text "a"], .para #[.text "b"]])
   let (doc4, d4) := elabStr "\\section*{Work}\ntext"
   t "elab section star" (d4.isEmpty && doc4.body ==
-    #[.section 1 true #[.text "Work"], .para #[.text "text"]])
+    #[.section 1 true none #[.text "Work"], .para #[.text "text"]])
   let (doc5, d5) := elabStr "\\begin{itemize}\\item a\\item b\\end{itemize}"
   t "elab itemize" (d5.isEmpty && doc5.body ==
     #[.list false #[#[.para #[.text "a"]], #[.para #[.text "b"]]]])

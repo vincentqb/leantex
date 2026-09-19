@@ -250,6 +250,100 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   t "verbatim sets one line per code line, blanks included"
     ((measureOf "\\begin{verbatim}\na\n\nb\n\\end{verbatim}").size == 3)
 
+/-- Cross-references: a \label binds to the nearest preceding numbered
+thing in flow order, resolution is one pure pass over the IR
+(`Ir.resolveOneRef_exact` is the statement; these run it), a forward
+reference costs nothing, an unresolved one is LaTeX's `??` named by W0349,
+and a duplicate key keeps its first binding (W0350). -/
+def refChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let art (body : String) : Ir.Doc × Array Diag :=
+    elabStr ("\\documentclass{article}\\begin{document}\n" ++ body ++ "\n\\end{document}")
+  let refShows (doc : Ir.Doc) (key : String) : Option (String × Option String) := Id.run do
+    for b in doc.body do
+      if let .para xs := b then
+        for x in xs do
+          if let .ref k _ text target := x then
+            if k == key then return some (text, target)
+    return none
+  -- Forward reference: the label follows the reference and still resolves.
+  let (fwd, fwdDs) := art
+    "\\section{A}\\label{s:a}\nSee \\ref{s:b}.\n\\section{B}\\label{s:b}\nBack to \\ref{s:a}."
+  t "a forward reference resolves without a second pass"
+    (fwdDs.isEmpty && refShows fwd "s:b" == some ("2", some "s:b") &&
+     refShows fwd "s:a" == some ("1", some "s:a"))
+  -- eqref parenthesises whatever the label's number is (amsmath's \eqref).
+  let (eq, _) := art "\\section{A}\\label{s:a}\nAs \\eqref{s:a}."
+  t "eqref parenthesises the number" (refShows eq "s:a" == some ("(1)", some "s:a"))
+  -- A missing key is LaTeX's ?? and W0349 names it, once per key.
+  let (missing, missDs) := art "\\section{A}\nSee \\ref{gone} and \\ref{gone}."
+  t "an unresolved reference is ?? and W0349 names the key once"
+    (refShows missing "gone" == some ("??", none) &&
+     (missDs.filter (·.code == "W0349")).size == 1)
+  -- A label where nothing is numbered binds to nothing.
+  let (bare, bareDs) := art "\\label{early}\nSee \\ref{early}."
+  t "a label where nothing numbers resolves to ??"
+    (refShows bare "early" == some ("??", none) &&
+     bareDs.any (·.code == "W0349"))
+  -- A duplicate key keeps its first binding; W0350 names the second.
+  let (dup, dupDs) := art
+    "\\section{A}\\label{k}\n\\section{B}\\label{k}\nSee \\ref{k}."
+  t "a duplicate label warns and the first wins"
+    (dupDs.any (·.code == "W0350") && refShows dup "k" == some ("1", some "k"))
+  -- A label inside a captioned float binds to the float's number, and one
+  -- after the float binds back to the enclosing heading (group scoping).
+  let (flt, _) := art ("\\section{A}\\label{s:a}\n" ++
+    "\\begin{figure}\\caption{Invented}\\label{fig:x}\\end{figure}\n" ++
+    "\\label{after}\nSee \\ref{fig:x} and \\ref{after}.")
+  t "a float's label takes the float's number; one after it, the section's"
+    ((refShows flt "fig:x").map (·.1) == some "1" &&
+     (refShows flt "after").map (·.1) == some "1" &&
+     (refShows flt "fig:x").bind (·.2) == some "fig:x")
+  -- An equation's label binds to the equation's own number, scoped to the
+  -- environment; \nonumber opts out and frees the number for the next.
+  let (eqn, eqnDs) := art ("\\section{A}\n" ++
+    "\\begin{equation}\\label{eq:one} a = b \\end{equation}\n" ++
+    "\\begin{equation} c = d \\nonumber\\end{equation}\n" ++
+    "\\begin{equation}\\label{eq:two} e = f \\end{equation}\n" ++
+    "See \\eqref{eq:one} and \\eqref{eq:two}.")
+  t "equation labels bind to the equation's number; nonumber opts out"
+    (eqnDs.isEmpty &&
+     (refShows eqn "eq:one").map (·.1) == some "(1)" &&
+     (refShows eqn "eq:two").map (·.1) == some "(2)")
+  -- The label table (bound at elaboration) and Ir.numberFloats (assigned
+  -- over the finished IR) are two sites counting one thing; this pins them
+  -- equal: each float's carried num is the number its label resolves to.
+  let (agree, _) := art ("\\section{A}\n" ++
+    "\\begin{figure}\\caption{One}\\label{f:1}\\end{figure}\n" ++
+    "\\begin{table}\\caption{T}\\label{t:1}\\end{table}\n" ++
+    "\\begin{figure}\\caption{Two}\\label{f:2}\\end{figure}\n" ++
+    "Refs: \\ref{f:1} \\ref{t:1} \\ref{f:2}.")
+  let floatNums := agree.body.toList.filterMap fun b => match b with
+    | Ir.Block.float _ num _ _ _ => some num
+    | _ => none
+  t "float labels resolve to the numbers numberFloats carries"
+    (floatNums == [some 1, some 1, some 2] &&
+     (refShows agree "f:1").map (·.1) == some "1" &&
+     (refShows agree "t:1").map (·.1) == some "1" &&
+     (refShows agree "f:2").map (·.1) == some "2")
+  -- The anchor sanitiser: author text entering an id keeps no whitespace.
+  t "an anchor keeps no whitespace and stays nonempty"
+    (Ir.labelAnchor "a b\"c" == "a-b-c" && Ir.labelAnchor "" == "label")
+  -- HTML: the anchor and the link are the same pure function's answer.
+  let (htmlDoc, _) := art "\\section{A}\\label{s:a}\nSee \\ref{s:a}."
+  let page := (HtmlDoc.emit {} htmlDoc).1
+  t "HTML links a resolved reference to its label's anchor"
+    ((page.splitOn "<span id=\"s:a\">").length == 2 &&
+     (page.splitOn "href=\"#s:a\"").length == 2)
+  -- The rendered check: a \label alone on its source line opens no blank
+  -- line — the shipped pages with and without it are line-for-line equal.
+  let run (body : String) : Nat :=
+    let (doc, _) := art body
+    let out := Layout.run (Layout.Geom.ofPage doc.page) oneFace none doc
+    out.pages.foldl (fun n p => n + p.lines.size) 0
+  t "a lone label line ships no blank line"
+    (run "\\section{A}\\label{s:a}\nText after." == run "\\section{A}\nText after.")
+
 /-- The quotation node: `{quote}` and `{quotation}` elaborate to the one
 `Block.quote` (classes.dtx defines both as `\list{}{\rightmargin
 \leftmargin}`; they differ only in a paragraph indent the engine cannot

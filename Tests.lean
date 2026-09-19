@@ -17,6 +17,9 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   htmlLayoutChecks ref
   htmlRhythmChecks ref
   classHookChecks ref
+  runinChecks ref
+  abstractChecks ref
+  headingNumberChecks ref
   anchorChecks ref
   markdownChecks ref
   mdPreambleChecks ref
@@ -61,6 +64,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   agreeChecks ref oneFace pats
   pictureLayoutChecks ref oneFace
   quoteChecks ref oneFace
+  refChecks ref oneFace
   titleChecks ref
   outlineChecks ref
   columnsChecks ref oneFace
