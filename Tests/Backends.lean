@@ -801,6 +801,16 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
      bytesContain pdf "/Title (Alex Doe, PhD)")
   t "the one declared url reaches the pdf as XMP dc:identifier"
     (bytesContain pdf "<dc:identifier>https://example.org/alex</dc:identifier>")
+  -- A text string past ASCII is UTF-16BE with the byte-order mark
+  -- (ISO 32000-2 §7.9.2.2): raw UTF-8 in an Info string is read as
+  -- PDFDocEncoding, and an 'é' displayed as 'Ã©' in the document panel.
+  let accDoc := { doc with info := { doc.info with title := some "Bélair Résumé" } }
+  let accPdf := Pdf.write geom oneFace (layoutOf oneFace accDoc geom).pages accDoc.info
+  t "an accented Info title is a UTF-16BE hex string with the BOM"
+    (bytesContain accPdf
+      "/Title <FEFF004200E9006C0061006900720020005200E900730075006D00E9>")
+  t "the ascii entries beside it keep the literal spelling"
+    (bytesContain accPdf "/Author (Alex Doe)")
   -- JSON-LD is the same record again, as a data block. Values pass the
   -- certified JSON escaper, so a hostile title can neither end its own
   -- string nor close the script element.

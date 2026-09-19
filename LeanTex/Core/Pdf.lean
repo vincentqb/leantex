@@ -365,6 +365,33 @@ private def pdfString (s : String) : String := Id.run do
     out := out.push c
   return out
 
+/-- A PDF *text string*, delimiters included (ISO 32000-2 §7.9.2.2): ASCII
+rides as a literal string; anything beyond it is written as a UTF-16BE
+hex string opening with the byte-order mark (§7.9.2.2.1). Raw UTF-8 bytes
+in an unmarked string read as PDFDocEncoding — 'é' displays as 'Ã©' in a
+viewer's document panel — so the spelling is the spec's, never the
+source's bytes. Byte strings (URIs) stay `pdfString`. -/
+private def pdfTextString (s : String) : String :=
+  if s.toList.all (fun c => c.toNat < 0x80) then s!"({pdfString s})"
+  else Id.run do
+    let hexDigit (v : Nat) : Char :=
+      if v < 10 then Char.ofNat ('0'.toNat + v) else Char.ofNat ('A'.toNat + v - 10)
+    let mut out := "<FEFF"
+    for c in s.toList do
+      let push16 (out : String) (v : Nat) : String :=
+        (((out.push (hexDigit (v / 4096 % 16))).push
+          (hexDigit (v / 256 % 16))).push
+          (hexDigit (v / 16 % 16))).push (hexDigit (v % 16))
+      let n := c.toNat
+      if n < 0x10000 then
+        out := push16 out n
+      else
+        -- Outside the BMP: the surrogate pair (Unicode §3.9, UTF-16).
+        let m := n - 0x10000
+        out := push16 out (0xD800 + m / 0x400)
+        out := push16 out (0xDC00 + m % 0x400)
+    return out ++ ">"
+
 /-- Escape text for XML character data. -/
 private def xmlEscape (s : String) : String := Id.run do
   let mut out := ""
@@ -566,11 +593,12 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       " /XObject << " ++ String.intercalate " "
         ((List.range ni).map fun n => s!"/Im{n + 1} {imgId n} 0 R") ++ " >>"
     s!"<< /Type /Page /Parent 2 0 R /MediaBox {media.render}{boxes} /Resources << /Font << {fontResources} >>{xobj} >>{annots i} /Contents {contentId i} 0 R >>"
-  -- PDF 2.0 text strings are UTF-8, so declared metadata needs no escaping
-  -- beyond the literal-string delimiters.
+  -- Metadata is a *text string* (§7.9.2.2): ASCII literal, or UTF-16BE
+  -- with the BOM past ASCII — never raw UTF-8 bytes, which a reader
+  -- decodes as PDFDocEncoding.
   let infoEntry (key : String) (v : Option String) : String :=
     match v with
-    | some s => s!" /{key} ({pdfString s})"
+    | some s => s!" /{key} {pdfTextString s}"
     | none => ""
   let infoDict :=
     "<<" ++ infoEntry "Title" info.title ++ infoEntry "Author" info.author ++
@@ -593,7 +621,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
           | none, some u => s!" /A << /S /URI /URI ({pdfString u}) >>"
           | none, none => ""
         (outlineItemId k,
-          s!"<< /Title ({pdfString e.title}) /Parent {outlineRootId} 0 R{prev}{next}{target} >>")
+          s!"<< /Title {pdfTextString e.title} /Parent {outlineRootId} 0 R{prev}{next}{target} >>")
   let compressed : List (Nat × String) :=
     [(1, catalog), (2, pagesObj)] ++ fontObjs ++ [(infoId, infoDict)] ++ outlineObjs ++
     (List.range np).map fun i => (pageId i, pageDict i)
