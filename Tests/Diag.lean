@@ -251,6 +251,8 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .E0347 =>
     dvE (dvDoc "" "\\runninghead{Chapter One}\n\nx") ++
     dvE (dvDoc "" "\\textbf{\\runningfoot{Y} z}")
+  | .E0359 => dvE (dvDeck ""
+      "\\note{\\begin{frame}{Carried}\nspoken \\note{never carried} words\n\\end{frame}}")
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"

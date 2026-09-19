@@ -100,6 +100,9 @@ error[E0347]: '\runninghead' in the body is dropped with its content
   help: declare it in the preamble, before '\begin{document}'
 error[E0347]: '\runningfoot' in the body is dropped with its content
   help: declare it in the preamble, before '\begin{document}'
+── E0359 (dropped) a \note nested inside another note's frame is dropped
+error[E0359]: a '\note' inside this note's frame is dropped: one note cannot carry another
+  help: move the inner '\note' out of the enclosing '\note', beside its frame
 ── E0401 (dropped) no usable font found on the host
 error[E0401]: no usable font found
   help: install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT

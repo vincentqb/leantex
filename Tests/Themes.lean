@@ -348,6 +348,20 @@ def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :
       | #[.frame _ _ _ #[_, .note nbody]] =>
         ((Ir.dumpBlocks "" nbody).splitOn "name_with_underscores & more").length == 2 -- ir tier: note content, not a page claim
       | _ => false))
+  -- A note is not slide content, so a frame inside a note cannot carry a
+  -- side channel of its own: the inner note is refused, named at the outer
+  -- note (E0359), and the frame's visible words survive. An ordinary
+  -- note-in-frame (the drain tests above, all `ds.isEmpty`) stays silent.
+  let (nested, nestedDs) := elabStr (deck169Body
+    "\\note{\\begin{frame}{T}\nspoken \\note{inner aside} words\n\\end{frame}}")
+  t "a note inside a note's frame is refused, named"
+    ((nestedDs.map (·.code)) == #["E0359"])
+  t "the refusal keeps the frame's visible words and drops only the inner note"
+    (match nested.body with
+     | #[.note #[.frame _ _ _ inner]] =>
+       ((Ir.dumpBlocks "" inner).splitOn "spoken words").length == 2 && -- ir tier: note content, not a page claim
+       ((Ir.dumpBlocks "" inner).splitOn "inner aside").length == 1 -- ir tier: note content, not a page claim
+     | _ => false)
 
 /-- The theme × frame-furniture reconciliation invariants: standout and
 overlay steps are orthogonal (the flag rides onto every step page), the

@@ -71,6 +71,10 @@ structure Ctx where
   /-- Inside a speaker note, absorbed as beamer absorbs it: a reserved
   character is literal text there, never a build error. -/
   noteBody : Bool := false
+  /-- The position of the `\note` whose body is being elaborated, when
+  `noteBody` is set: where E0359 names the note whose frame tried to carry
+  another note. -/
+  notePos : Option Pos := none
   /-- Overlay steps already opened by `\pause` in enclosing scopes: the next
   pause reveals at `stepBase + 1`. -/
   stepBase : Nat := 0
@@ -106,9 +110,10 @@ structure ESt where
   construction — a second call warns and produces nothing. -/
   titleDone : Bool := false
   /-- Speaker-note bodies met inside inline content, where a block cannot
-  stand: the enclosing frame drains them to its end, so a mid-sentence
-  `\note` neither splits its paragraph nor loses its words. -/
-  pendingNotes : Array (Array Raw) := #[]
+  stand, each with its `\note`'s position: the enclosing frame drains them
+  to its end, so a mid-sentence `\note` neither splits its paragraph nor
+  loses its words. -/
+  pendingNotes : Array (Array Raw × Pos) := #[]
   /-- beamer's `\logo`, a declaration legal in the preamble and the body
   alike; the last one wins, as in beamer. -/
   logo : Option (Array Inline) := none
@@ -2404,7 +2409,7 @@ a side channel, never slide content" pos
       have hj2ge := skipSpaces_ge raws (js + 1)
       match hn : raws[j2]? with
       | some (.group nbody _) =>
-        modify fun st => { st with pendingNotes := st.pendingNotes.push nbody }
+        modify fun st => { st with pendingNotes := st.pendingNotes.push (nbody, pos) }
         have hadv : sliceWeight raws (j2 + 1) < sliceWeight raws i :=
           sliceWeight_lt raws h (by omega)
         elabInlinesFrom ctx raws (j2 + 1) acc sb
@@ -2415,7 +2420,7 @@ a side channel, never slide content" pos
     else
       match hn : raws[js]? with
       | some (.group nbody _) =>
-        modify fun st => { st with pendingNotes := st.pendingNotes.push nbody }
+        modify fun st => { st with pendingNotes := st.pendingNotes.push (nbody, pos) }
         have hadv : sliceWeight raws (js + 1) < sliceWeight raws i :=
           sliceWeight_lt raws h (by omega)
         elabInlinesFrom ctx raws (js + 1) acc sb
@@ -3198,7 +3203,8 @@ a side channel, never slide content" npos
           match raws[j2]? with
           | some (.group nbody _) =>
             i := j2 + 1
-            blocks := blocks.push (.note (← elabBlocks { ctx with noteBody := true } nbody))
+            blocks := blocks.push (.note (← elabBlocks
+              { ctx with noteBody := true, notePos := some npos } nbody))
           | _ =>
             warnSkippedDecl ctx "note" npos
         | .group gbody _ =>
@@ -3765,13 +3771,25 @@ padded with empty cells" pos
                   j := j + 1
               else break
             -- Notes met inside the frame's inline content drain to the
-            -- frame's end: the side channel stays with its frame.
+            -- frame's end: the side channel stays with its frame. Inside a
+            -- note's own body there is no side channel to drain into — a
+            -- note is not slide content, so its frame cannot carry one —
+            -- and the stashed notes are refused, named at the note that
+            -- encloses them (E0359; the noteFlag decision, PLAN).
             modify fun st => { st with pendingNotes := #[] }
             let mut inner ← elabBlocks ctx rest
             let stash := (← get).pendingNotes
             modify fun st => { st with pendingNotes := #[] }
-            for nb in stash do
-              inner := inner.push (.note (← elabBlocks { ctx with noteBody := true } nb))
+            if ctx.noteBody then
+              unless stash.isEmpty do
+                diag ctx .E0359
+                  "a '\\note' inside this note's frame is dropped: one note cannot carry another"
+                  ctx.notePos
+                  (help := "move the inner '\\note' out of the enclosing '\\note', beside its frame")
+            else
+              for (nb, npos) in stash do
+                inner := inner.push (.note (← elabBlocks
+                  { ctx with noteBody := true, notePos := some npos } nb))
             blocks := blocks.push (.frame title standout valign inner)
           else if n == "itemize" || n == "enumerate" then
             -- enumitem's per-instance `[keys]` are consumed and named: the

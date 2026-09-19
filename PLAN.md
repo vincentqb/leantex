@@ -48,8 +48,16 @@ one: an audit found ten, seven were removed (2026-09-16 entry), and the
 measure (envLimit, then limit, then the weight of the remaining slice;
 2026-09-19). `elabBlocks` still owes the same treatment plus a decision
 already taken for its one state-carried edge (the pendingNotes drain:
-under `ctx.noteBody` the frame arm will not drain, W0359 names the
-refused note, and `noteFlag` joins the measure). The Knuth–Plass optimality
+under `ctx.noteBody` the frame arm does not drain — landed 2026-09-19 as
+E0359: the refusal's loss is `.dropped`, and the class letter derives
+from the loss, so the code allocated as W0359 renders E — and `noteFlag`
+joins the measure when it lands). A second measure-breaking edge has
+surfaced since the plan: a body-position `\define` met inside a command
+expansion resets `limit` past the expansion's own bound
+(`limit := ctx.user.size + 1`), which re-exposes the command being
+expanded — real nontermination, a four-line document loops — so the
+de-partial now waits on a design decision for that arm (departial3's
+report carries the options). The Knuth–Plass optimality
 theorem is held empirically by `scripts/kp-fuzz.lean`. Small caps are
 drawn from a face's own `smcp`+`c2sc` when it carries both and synthesised
 uniform otherwise (the 2026-09-18 entry), math renders its first two slices
