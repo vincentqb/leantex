@@ -8,7 +8,16 @@ open LeanTex.Core.Ir LeanTex.Core.Dim
 document has declared at the theme site, and what its later declarations
 keep overriding. Values in, values out — the install is `apply` below, a
 function of these alone. A `Theme` extends this record: a bundle is the
-same four surfaces plus a name. -/
+same four surfaces plus a name.
+
+`theme_fixes_no_page`, by construction: a class fixes the page model and
+nothing a theme may override. This structure is `apply`'s whole domain and
+codomain, and it carries no page and no class, so a bundle *cannot* reach
+the geometry — the compiler enforces the rule at the type, the same way
+`DocClass` closes the class set. Keep it that way: a bundle wanting
+geometry is a genre or class question, never a theme field (the
+value-vs-consumer layering rule; audit-layer's `Theme.apply`/W0348 fixed
+the value-vs-value face, and W0355 names the consumer face at install). -/
 structure Decls where
   palette : Palette := {}
   tokens : Tokens := {}

@@ -4706,6 +4706,144 @@ theorem keepFor_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail)
   obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 xs.toList h s hs
   exact ⟨t, ht, by simpa [textLeaves, keepFor] using hmem⟩
 
+-- Content is backend-free: `onlyFree` is the premise (no `{ifbackend}`
+-- anywhere), `keepFor_id` the statement. Structural recursion through
+-- `List`, on `keepForList_covers`' skeleton.
+
+mutual
+
+/-- No backend conditional stands anywhere in the blocks: the premise under
+which every backend's view is the whole document (`keepFor_id`). -/
+def onlyFreeList : List Block → Bool
+  | [] => true
+  | b :: rest => onlyFreeOne b && onlyFreeList rest
+
+def onlyFreeOne : Block → Bool
+  | .only _ _ => false
+  | .list _ items => onlyFreeItems items.toList
+  | .center body => onlyFreeList body.toList
+  | .quote body => onlyFreeList body.toList
+  | .role _ body => onlyFreeList body.toList
+  | .spaced _ body => onlyFreeList body.toList
+  | .columns cols => onlyFreeColumns cols.toList
+  | .step _ _ body => onlyFreeList body.toList
+  | .note body => onlyFreeList body.toList
+  | .nav _ body => onlyFreeList body.toList
+  | .frame _ _ _ body => onlyFreeList body.toList
+  | .float _ _ body _ => onlyFreeList body.toList
+  | .para _ | .section _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _
+  | .table _ _ _ _ _ | .pagebreak => true
+
+def onlyFreeItems : List (Array Block) → Bool
+  | [] => true
+  | item :: rest => onlyFreeList item.toList && onlyFreeItems rest
+
+def onlyFreeColumns : List (Option Nat × Array Block) → Bool
+  | [] => true
+  | (_, body) :: rest => onlyFreeList body.toList && onlyFreeColumns rest
+
+end
+
+def onlyFree (xs : Array Block) : Bool := onlyFreeList xs.toList
+
+mutual
+
+theorem keepForList_id (t : String) (xs : List Block)
+    (h : onlyFreeList xs = true) : keepForList t xs = xs := by
+  match xs with
+  | [] => rfl
+  | b :: rest =>
+    rw [onlyFreeList, Bool.and_eq_true] at h
+    have hk : keptBy t b = true := by
+      cases b
+      case only => exact absurd h.1 (by simp [onlyFreeOne])
+      all_goals rfl
+    rw [keepForList_kept t b rest hk, keepForOne_id t b h.1,
+      keepForList_id t rest h.2]
+
+theorem keepForOne_id (t : String) (b : Block)
+    (h : onlyFreeOne b = true) : keepForOne t b = b := by
+  match b with
+  | .only targets body => exact absurd h (by simp [onlyFreeOne])
+  | .para c => rfl
+  | .section l st title => rfl
+  | .verbatim c s => rfl
+  | .logo c => rfl
+  | .framefoot c => rfl
+  | .setPalette pal => rfl
+  | .setTokens tk => rfl
+  | .pagebreak => rfl
+  | .rule c n th => rfl
+  | .picture p => rfl
+  | .table c pl pr rows rules => rfl
+  | .list o items =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForItems_id t items.toList h]
+  | .center body =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+  | .quote body =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+  | .role n body =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+  | .spaced g body =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+  | .columns cols =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForColumns_id t cols.toList h]
+  | .step n l body =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+  | .note body =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+  | .nav spec body =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+  | .frame ti st v body =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+  | .float k ca body caption =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+
+theorem keepForItems_id (t : String) (items : List (Array Block))
+    (h : onlyFreeItems items = true) : keepForItems t items = items := by
+  match items with
+  | [] => rfl
+  | item :: rest =>
+    rw [onlyFreeItems, Bool.and_eq_true] at h
+    rw [keepForItems, keepForList_id t item.toList h.1,
+      keepForItems_id t rest h.2]
+
+theorem keepForColumns_id (t : String) (cols : List (Option Nat × Array Block))
+    (h : onlyFreeColumns cols = true) : keepForColumns t cols = cols := by
+  match cols with
+  | [] => rfl
+  | (w, body) :: rest =>
+    rw [onlyFreeColumns, Bool.and_eq_true] at h
+    rw [keepForColumns, keepForList_id t body.toList h.1,
+      keepForColumns_id t rest h.2]
+
+end
+
+/-- **Content is backend-free.** The elaborated body of a document with no
+`{ifbackend}` is identical whichever backend consumes it: every backend's
+view (`keepFor` under its own name) is the whole document. The modulus is
+exactly `keepFor`, applied once at each backend's entry — `Layout.run`,
+`HtmlDoc.emitTree`, `MarkdownDoc.emit` — and nowhere else, so with no
+conditional declared, "one source, N artifacts" ranges over the identical
+block tree; what a backend then renders of a shared node (a nav as
+outline, a note as nothing) is that medium's declared semantics, never a
+different document. -/
+theorem keepFor_id (t : String) (xs : Array Block) (h : onlyFree xs = true) :
+    keepFor t xs = xs := by
+  rw [keepFor, keepForList_id t xs.toList h]
+
 
 -- Image walks: the request an image node states, and the caption an image
 -- inherits. Structural recursion through `List`, as the printers above.
