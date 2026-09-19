@@ -1358,6 +1358,18 @@ def parseChecks (ref : IO.Ref (List String)) : IO Unit := do
     | .env n body _ => s!"env {n}/{body.size}"
     | _ => "?") == #["env itemize/2"])
   t "parse env mismatch" (((praw "\\begin{a}x\\end{b}").2.map (·.code)) == #["E0205"])
+  -- The group boundary wins: an environment opened inside `{...}` and still
+  -- open at the `}` closes there, named — the `}` is never dropped, so the
+  -- env cannot swallow what follows the group (a `\def` body's unbalanced
+  -- `\begin{tabular}` once ate the rest of a venue's `.sty`, taking its
+  -- `\renewenvironment{abstract}` and the W0303 that refuses it).
+  t "parse env unclosed in group closes at the group's end"
+    ((((praw "{\\begin{tabular}a}b").1.map fun r =>
+      match r with
+      | .group body _ => s!"group/{body.size}"
+      | .word w _ => w
+      | _ => "?") == #["group/1", "b"]) &&
+      ((praw "{\\begin{tabular}a}b").2.map (·.code)) == #["E0201"])
   t "parse display math" (((praw "\\[x\\]").1.map fun r =>
     match r with
     | .math true _ _ => "display"

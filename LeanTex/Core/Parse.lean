@@ -80,14 +80,27 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
         frames := frames.push ⟨.brace, pos, acc⟩
         acc := #[]
       | .rbrace =>
-        match frames.back? with
-        | some f =>
-          if f.stop == .brace then
+        -- The group boundary wins: a delimiter opened inside `{...}` and
+        -- still open at the `}` closes here, diagnosed — dropping the `}`
+        -- instead would leave that frame to swallow everything after the
+        -- group (a `\def` body's unbalanced `\begin{tabular}` once ate the
+        -- rest of a venue's `.sty`, silently).
+        if frames.any (·.stop == .brace) then
+          for _ in [0:frames.size] do
+            match frames.back? with
+            | some f =>
+              if f.stop == .brace then break
+              diags := diags.push (err file .E0201
+                s!"unclosed: expected {f.stop.name} before the group's '}'" f.openPos)
+              frames := frames.pop
+              acc := f.close acc
+            | none => break
+          match frames.back? with
+          | some f =>
             frames := frames.pop
             acc := f.close acc
-          else
-            diags := diags.push (err file .E0202 "unexpected '}'" pos)
-        | none =>
+          | none => pure ()
+        else
           diags := diags.push (err file .E0202 "unexpected '}'" pos)
       | .math =>
         match frames.back? with
