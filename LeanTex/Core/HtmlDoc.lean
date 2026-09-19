@@ -268,6 +268,7 @@ private def markerTextInto (acc : String) : List Inline → Option String
   | .link _ _ :: _ => none
   | .underline _ :: _ => none
   | .fill :: _ => none
+  | .strut _ :: _ => none
   | .pageNumber :: _ => none
   | .pageCount :: _ => none
   | .linebreak _ :: _ => none
@@ -306,6 +307,7 @@ def markerCssOne (decls : Array String) : Inline → Option MarkerCss
   | .link _ _ => none
   | .underline _ => none
   | .fill => none
+  | .strut _ => none
   | .pageNumber => none
   | .pageCount => none
   | .linebreak _ => none
@@ -365,8 +367,8 @@ theorem markerCssOne_text (decls : Array String) (x : Inline) (r : MarkerCss)
     rw [Ir.plainTextOne]
     exact markerCssList_text _ body.toList r h
   | .math _ _ | .formula _ _ _ | .link _ _ | .underline _ | .fill
-  | .pageNumber | .pageCount | .linebreak _ | .step _ _ _ | .image _ _ _
-  | .icon _ _ | .label _ | .ref _ _ _ _ =>
+  | .strut _ | .pageNumber | .pageCount | .linebreak _ | .step _ _ _
+  | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _ =>
     simp [markerCssOne] at h
 
 theorem markerCssList_text (decls : Array String) (xs : List Inline)
@@ -1175,6 +1177,9 @@ height: auto"
       #[Html.elem "span" #[Html.text (String.ofList [c])] #[("aria-hidden", "true")]]
       #[("class", "icon"), ("role", "img"), ("aria-label", label)])
   | .fill => acc.push (Html.elem "span" #[] #[("class", "fill")])
+  -- A strut props its line open in print; a continuous page reads at its
+  -- own line-height, so the carrier is empty and adds no box.
+  | .strut _ => acc
   -- An unresolved citation shows its marks; resolution would have replaced
   -- this node with the style's linked inlines, and the diagnostic that let
   -- it through already named the gap.

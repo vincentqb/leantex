@@ -617,6 +617,7 @@ private def resolveInline (style : CiteStyle) (find : Resolver)
   | .label k => out.push (.label k)
   | .ref k paren text anchor => out.push (.ref k paren text anchor)
   | .fill => out.push .fill
+  | .strut h => out.push (.strut h)
   | .pageNumber => out.push .pageNumber
   | .pageCount => out.push .pageCount
   | .linebreak e => out.push (.linebreak e)
@@ -645,7 +646,7 @@ def citeFreeOne : Ir.Inline → Bool
   | .step _ _ body => citeFreeList body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
-  | .fill | .pageNumber | .pageCount | .linebreak _ => true
+  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => true
 
 def citeFreeList : List Ir.Inline → Bool
   | [] => true
@@ -671,7 +672,8 @@ where
     | .underline body | .step _ _ body => simp [resolveInline]
     | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
     | .label _ | .ref _ _ _ _
-    | .fill | .pageNumber | .pageCount | .linebreak _ => simp [resolveInline]
+    | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ =>
+      simp [resolveInline]
 
 mutual
 
@@ -704,7 +706,8 @@ theorem resolveInline_id (style : CiteStyle) (find : Resolver)
     rw [resolveInline, resolveInlines_id style find body.toList h]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
-  | .fill | .pageNumber | .pageCount | .linebreak _ => rw [resolveInline]
+  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ =>
+    rw [resolveInline]
 
 theorem resolveInlines_id (style : CiteStyle) (find : Resolver)
     (xs : List Ir.Inline) (h : citeFreeList xs = true) :

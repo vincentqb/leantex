@@ -118,7 +118,24 @@ def censusTable :
      -- scale's LARGE step, so a default-styled title fails this fact.
      ("the title sets at the body's declared \\Large, not the LARGE default",
        lineSizeOf c 0 "Bars Probe Title" ==
-         some (geom.fontSize * 1440 / 1000))]),
+         some (geom.fontSize * 1440 / 1000)),
+     -- The author line's 2u strut (`Ir.titleAuthorStrut`): its baseline
+     -- stands the strut's 24pt plus the bar's declared 0.1in skip under
+     -- the bottom bar; unstrutted, the interline alone (~12pt + skip)
+     -- never reaches the floor.
+     ("the author line carries its 2u strut under the bottom bar",
+       ((pageRuleSegs c 0)[1]?.map fun s =>
+         let d := (lineYOf c 0 "An Invented Author").getD 0 - s.1
+         decide (Dim.pt 24 + Dim.inch 1 / 10 ≤ d ∧
+           d ≤ Dim.pt 24 + Dim.inch 1 / 10 + 2 * geom.fontSize)).getD false),
+     -- The rhythm gap after the block (`Ir.titleBlockAfter`, 2u at the
+     -- body size): the body text stands the gap plus its interline under
+     -- the author line; without the gap the default (parskip + leading,
+     -- under 20pt) never reaches the floor.
+     ("the 2u gap after the title block stands before the body text",
+       let d := (lineYOf c 0 "Body text follows").getD 0 -
+         (lineYOf c 0 "An Invented Author").getD 0
+       decide (Dim.pt 36 ≤ d ∧ d ≤ Dim.pt 36 + 3 * geom.fontSize))]),
   ("fonts", fun _ c => [
     ("one page", c.size == 1),
     ("the heading ships", hasStr (censusText c) "Faces"),

@@ -502,6 +502,8 @@ private inductive Tk where
   | word (style : TextStyle) (chars : Array Char)
   | space (style : TextStyle)
   | fill
+  /-- A strut: zero width, this much height above the baseline. -/
+  | strut (height : SymGlue)
   | brk (extra : SymGlue)
   /-- An image reference, resolved against the store when items are built. -/
   | img (src : String) (spec : Image.SizeSpec)
@@ -603,6 +605,7 @@ private def flattenOne (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
   | .image src spec _ => { st with toks := st.toks.push (.img src spec) }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra) }
   | .fill => { st with toks := st.toks.push .fill }
+  | .strut h => { st with toks := st.toks.push (.strut h) }
   -- Math carried as source (the constructs M6 still owes): the elaborator
   -- warned by name; here the source sets as plain text, so nothing drops.
   | .math _ src => pushText st sty src
@@ -861,6 +864,7 @@ private def leafScalarsOne (icons math : Array Char) :
   | .image _ _ _ => (icons, math)
   | .linebreak _ => (icons, math)
   | .fill => (icons, math)
+  | .strut _ => (icons, math)
   | .pageNumber => (icons, math)
   | .pageCount => (icons, math)
   | .cite _ _ => (icons, math)
@@ -1759,6 +1763,10 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     | .fill =>
       -- Stretchable but not a legal breakpoint on its own.
       items := items.push (.glue { fil := true })
+    | .strut g =>
+      -- Zero width, declared height: raises the line box, ships no ink.
+      items := items.push (.rule 0 (max 0 (g.width.resolve size xHeight)) 0
+        Ir.Color.black)
     | .img src spec =>
       -- The request resolves against the store the driver filled. An entry
       -- that did not load (the driver has said why) keeps the requested
@@ -2342,6 +2350,11 @@ at the top of a page. Glue is never stretched: the bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
     (w : Sp) : B :=
   let (tallest, height, depth) := lineExtent fs b size segs
+  -- A zero-width rule is a strut: it shaped the extent above and ships no
+  -- ink — kept, a degenerate rect rasterizes as a hairline in some viewers.
+  let segs := segs.filter fun s => match s with
+    | .rule w _ _ _ => w != 0
+    | _ => true
   let bottom := b.geom.bodyBottom
   let mk (y : Sp) : LineOut := { x := x, y := y, size := size, segs := segs, setWidth := w }
   let firstY := b.geom.bodyTop + max b.ascent height
@@ -3827,6 +3840,7 @@ def substPageOne (n total : Nat) : Inline → Inline
   | .label k => .label k
   | .ref k p t tg => .ref k p t tg
   | .fill => .fill
+  | .strut h => .strut h
   | .linebreak e => .linebreak e
   -- a citation's keys are not content: no placeholder can hide in one
   | .cite t keys => .cite t keys
@@ -3867,7 +3881,7 @@ theorem substPageOne_id (n total : Nat) (x : Inline)
     rw [Ir.hasPhysicalPageOne] at h
     rw [substPageOne, substPageList_id n total body.toList h]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .fill
-  | .label _ | .ref _ _ _ _
+  | .strut _ | .label _ | .ref _ _ _ _
   | .linebreak _ | .cite _ _ => rw [substPageOne]
 
 theorem substPageList_id (n total : Nat) (xs : List Inline)

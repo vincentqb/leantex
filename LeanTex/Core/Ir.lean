@@ -425,6 +425,32 @@ theorem caption_gaps_rhythm :
     floatSepDefault.width.sp = leadingFor baseFontSize ∧
     captionSepDefault.width.sp < floatSepDefault.width.sp := by decide
 
+/-- The title block's author strut: two rhythm units of line box for the
+author's name. The NeurIPS-lineage `.sty` sets `\rule{\z@}{24\p@}` in the
+author `tabular` — and 24pt at the 10pt body *is* exactly 2u, a rhythm
+multiple already, so the engine's value coincides with the venue's there.
+Spelled in em so it re-derives from the body size, as the rhythm does. -/
+def titleAuthorStrut : SymGlue := { width := { em := 2 * leadingMilli } }
+
+/-- The gap after the whole title block, before the abstract or the text:
+two rhythm units, shrinkable by the half-unit — a little rubber, as the
+lineage's `\vskip 0.3in \@minus 0.1in` has. The venue's 21.7pt (shrunk
+floor 14.5pt) becomes the engine's 24pt (floor 18pt) at the 10pt body:
+the grid lands 2.3pt over what the venue eyeballed. -/
+def titleBlockAfter : SymGlue :=
+  { width := { em := 2 * leadingMilli }, shrink := { em := leadingMilli / 2 } }
+
+/-- The author block joins the rhythm (`default_rhythm_multiples`' family):
+the strut and the post-block gap are half-unit multiples of the body
+leading — four quanta each, the gap's shrink one — so the title block
+stays the engine's typography while the venue chooses only that the
+furniture exists (and the author's weight). -/
+theorem title_author_rhythm :
+    titleAuthorStrut.width.resolve baseFontSize 0 = 4 * rhythmQuantum baseFontSize ∧
+    titleBlockAfter.width.resolve baseFontSize 0 = 4 * rhythmQuantum baseFontSize ∧
+    titleBlockAfter.shrink.resolve baseFontSize 0 = rhythmQuantum baseFontSize := by
+  decide
+
 /-- The declared rhythm multiples, one table both backends realize from: at
 each kind of default block boundary, how many quanta the gap is. The PDF's
 tokens are held to it (`rhythm_table_exact`; the heading row is the block
@@ -918,6 +944,12 @@ inductive Inline where
   | pageCount
   /-- `\\`, carrying LaTeX's optional extra space: `\\[1ex]`. -/
   | linebreak (extra : SymGlue)
+  /-- A strut, LaTeX's `\rule{\z@}{h}`: a zero-width prop that makes its
+  line's box at least `h` tall above the baseline. It ships no ink and no
+  text — layout raises the line, the other backends keep an empty carrier —
+  so it owes no census fact. The author line of a styled title block
+  carries one (`ElementStyle.authorStrut`). -/
+  | strut (height : SymGlue)
   /-- Overlay content crisp on steps `n` through `last` (`\uncover<2>`,
   `<2->` when `last` is `none`, `<2-3>`): outside its range it dims, never
   hides, so no step reflows the slide (PLAN M5). Zero metric impact — a
@@ -2254,6 +2286,14 @@ structure ElementStyle where
   ruleBelowGap : Option SymGlue := none
   /-- Space below `ruleBelow`, before what follows (the author block). -/
   ruleBelowSkip : Option SymGlue := none
+  /-- The author line's font template, read at the title block: the
+  NeurIPS-lineage `\bf` inside the author `tabular`, or a document's own
+  `\style{titlepage}{ author-font = ... }`. -/
+  authorFont : Option (Array Inline) := none
+  /-- The author line's minimum height above its baseline — the lineage's
+  `\rule{\z@}{24\p@}` strut, giving the name room instead of its bare cap
+  height. The engine's value is `titleAuthorStrut`, a rhythm multiple. -/
+  authorStrut : Option SymGlue := none
   /-- Interaction states, read by the HTML backend only — a printed page
   has no hover or focus, so the PDF path ignores all three keys (said once
   here, not per consumer). `hover` and `focus` colour the element's links
@@ -2518,6 +2558,7 @@ def fillOne (content : Array Inline) : Inline → Inline
   | .label k => .label k
   | .ref k p t tg => .ref k p t tg
   | .fill => .fill
+  | .strut h => .strut h
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
   | .linebreak e => .linebreak e
@@ -2803,7 +2844,7 @@ def plainTextOne (x : Inline) : String :=
   | .link _ body => plainTextList body.toList
   | .underline body => plainTextList body.toList
   | .step _ _ body => plainTextList body.toList
-  | .fill | .pageNumber | .pageCount => ""
+  | .fill | .strut _ | .pageNumber | .pageCount => ""
   | .image _ _ _ => ""
   -- an icon is worth its text alternative: what the markdown twin renders
   | .icon _ label => label
@@ -2999,7 +3040,7 @@ def navLinkInline (out : Array (String × String)) : Inline → Array (String ×
   | .step _ _ body => navLinkInlineList out body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
-  | .fill | .pageNumber | .pageCount | .linebreak _ => out
+  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => out
 
 end
 
@@ -3128,6 +3169,7 @@ def dumpInline (ind : String) (x : Inline) : String :=
   | .step n last body =>
     s!"{ind}{dumpStepRange n last}\n" ++ dumpInlines (ind ++ "  ") body
   | .fill => s!"{ind}fill\n"
+  | .strut _ => s!"{ind}strut\n"
   | .label key => s!"{ind}label {key.quote}\n"
   | .ref key paren text target =>
     let form := if paren then "eqref" else "ref"
@@ -3564,7 +3606,7 @@ def maxStepInline : Inline → Nat
   | .step n last body => max (max n (last.getD n)) (maxStepInlineList body.toList)
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
-  | .fill | .pageNumber | .pageCount | .linebreak _ | .cite _ _ => 1
+  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ | .cite _ _ => 1
 
 end
 
@@ -3704,6 +3746,7 @@ def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → Inline
   | .label k => .label k
   | .ref k p t tg => .ref k p t tg
   | .fill => .fill
+  | .strut h => .strut h
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
   | .linebreak e => .linebreak e
@@ -4106,6 +4149,7 @@ def hasPhysicalPageOne : Inline → Bool
   | .formula _ _ _ => false
   | .image _ _ _ => false
   | .fill => false
+  | .strut _ => false
   | .linebreak _ => false
   -- a citation shows its own number, never the page's
   | .cite _ _ => false
@@ -4263,7 +4307,7 @@ theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : Inline) :
     -- the walk leaves a formula node whole (a pending formula dims in the
     -- backends' hands); its census is its source, untouched on both sides
     rfl
-  | .text _ | .math _ _ | .fill | .pageNumber | .pageCount | .linebreak _
+  | .text _ | .math _ _ | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _
   | .label _ | .ref _ _ _ _
   | .icon _ _ | .cite _ _ =>
     rfl
@@ -5526,7 +5570,7 @@ def foldInline (fi : α → Inline → α) (acc : α) (x : Inline) : α :=
   | .step _ _ body => foldInlineList fi (fi acc x) body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
-  | .fill | .pageNumber | .pageCount | .linebreak _ => fi acc x
+  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => fi acc x
 
 def foldInlineList (fi : α → Inline → α) (acc : α) : List Inline → α
   | [] => acc
@@ -5784,6 +5828,7 @@ def resolveRefInline (table : RefTable) : Inline → Inline
   | .label k => .label k
   | .cite tx keys => .cite tx keys
   | .fill => .fill
+  | .strut h => .strut h
   | .pageNumber => .pageNumber
   | .pageCount => .pageCount
   | .linebreak e => .linebreak e

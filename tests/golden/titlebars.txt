@@ -12,7 +12,10 @@ center
   rule #000000 2pt
   block before 7.2pt
   para
-    text "An Invented Author"
+    strut
+    styled bold
+      text "An Invented Author"
+  block before 2400/1000em minus 600/1000em
 para
   text "Body text follows the styled built-in title."
 -- diagnostics

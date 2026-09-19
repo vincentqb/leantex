@@ -13,7 +13,7 @@
 \newcommand{\@toptitlebar}{\hrule height 3pt \vskip 0.5in \vskip -\parskip}
 \newcommand{\@bottomtitlebar}{\vskip 0.75in \vskip -\parskip \hrule height 2pt \vskip 0.1in}
 \providecommand{\@maketitle}{}
-\renewcommand{\@maketitle}{\vbox{\hsize\textwidth \vskip 0.1in \@toptitlebar \centering {\Large\bf \@title\par} \@bottomtitlebar}}
+\renewcommand{\@maketitle}{\vbox{\hsize\textwidth \vskip 0.1in \@toptitlebar \centering {\Large\bf \@title\par} \@bottomtitlebar \begin{tabular}[t]{c}\bf\rule{\z@}{24\p@}\@author\end{tabular} \vskip 0.3in \@minus 0.1in}}
 \begin{document}
 \maketitle
 

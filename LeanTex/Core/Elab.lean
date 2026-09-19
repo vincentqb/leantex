@@ -3343,6 +3343,15 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
       inner := push inner none (.rule c nm th)
       pending := ctx.tokens.find? "separatorgap"
   if let some xs := part st.author then
+    -- The declared author styling: the font template wraps the name (the
+    -- lineage's \bf, or author-font), and the strut props its line open
+    -- to the declared height.
+    let xs := match tps.authorFont with
+      | some tpl => Ir.fillTemplate tpl xs
+      | none => xs
+    let xs := match tps.authorStrut with
+      | some h => #[Ir.Inline.strut h] ++ xs
+      | none => xs
     inner := push inner pending (.para xs)
     pending := ctx.tokens.find? "authorgap"
   if let some xs := part st.institute then
@@ -3360,7 +3369,12 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
     let ink := match ctx.palette.find? "fg" with
       | some c => (c, some "fg")
       | none => (Ir.Color.black, none)
-    return Ir.titleBars tps ink inner
+    let blocks := Ir.titleBars tps ink inner
+    -- The declared gap after the whole block (`after` on titlepage): a
+    -- standalone skip the next placed line pays, no ink of its own.
+    return match tps.after with
+      | some g => blocks.push (.spaced g #[])
+      | none => blocks
 
 /-- One keyed declaration accepted from the document, remembered for the
 `\theme` site: replacing it there is worth a word (W0348). The store logic
@@ -3623,6 +3637,11 @@ private inductive BarEvent where
   /-- `\@title`, with the size, weight, and alignment declarations in
   force where it stands. -/
   | title (size : Option String) (bold : Bool) (align : Option String)
+  /-- `\@author`, with the weight in force and whether a zero-width
+  `\rule` strut props its line — the NeurIPS-lineage author `tabular`
+  (`\begin{tabular}[t]{c}\bf\rule{\z@}{24\p@}\@author`). Ink, like
+  `.content`: it closes the bottom bar's trailing skip. -/
+  | author (bold : Bool) (strut : Bool)
   /-- Ink that is not the title — an environment, math, verbatim, a word:
   what closes the bottom bar's trailing skip. -/
   | content
@@ -3689,6 +3708,35 @@ private def barWordTransparent (w : String) : Bool :=
 
 private def sizeCtrlNames : List String := Ir.sizeScale.map (·.1)
 
+/-- The author `tabular` of a refused `\maketitle` body, folded to
+(bold, strut, author): does it hold `\@author`, under `\bf`, behind a
+zero-width `\rule` strut (`\rule{\z@}{...}`, the lineage's spelling —
+the strut's own height is not taken; the engine's is `Ir.titleAuthorStrut`).
+Groups are looked through; everything else stays the refusal's. -/
+private def authorScanList (found : Bool × Bool × Bool) :
+    List Raw → Bool × Bool × Bool
+  | [] => found
+  | .group body _ :: rest =>
+    authorScanList (authorScanList found body.toList) rest
+  | .ctrl "rule" _ :: rest =>
+    let strut := match barSkipSp rest with
+      | .group w _ :: _ => match barSkipSp w.toList with
+        | .ctrl "z@" _ :: _ => true
+        | _ => false
+      | _ => false
+    authorScanList (found.1, found.2.1 || strut, found.2.2) rest
+  | .ctrl n _ :: rest =>
+    if n == "bf" || n == "bfseries" then authorScanList (true, found.2) rest
+    else if n == "@author" then authorScanList (found.1, found.2.1, true) rest
+    else authorScanList found rest
+  | _ :: rest => authorScanList found rest
+termination_by l => sizeOf l
+decreasing_by
+  all_goals simp_wf
+  all_goals try omega
+  all_goals
+    (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
+
 /-- The scan: one pass over the refused body, expanding the user commands
 visible below `bound` (the definition-order rule that terminates every
 expansion here), descending into groups with a copy of the declarations in
@@ -3706,7 +3754,11 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
     barScanList user bound st events rest
   | .verb _ _ :: rest => barScanList user bound st (events.push .content) rest
   | .math _ _ _ :: rest => barScanList user bound st (events.push .content) rest
-  | .env _ _ _ :: rest => barScanList user bound st (events.push .content) rest
+  | .env _ body _ :: rest =>
+    let (bold, strut, author) := authorScanList (false, false, false) body.toList
+    let events := if author then events.push (.author (bold || st.bold) strut)
+      else events.push .content
+    barScanList user bound st events rest
   | .group body _ :: rest =>
     let events := barScanList user bound st events body.toList
     barScanList user bound st events rest
@@ -3729,7 +3781,9 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
       barScanList user bound { st with align := some "left" } events rest
     else if n == "@title" then
       barScanList user bound st (events.push (.title st.size st.bold st.align)) rest
-    else if n == "@author" || n == "@date" then
+    else if n == "@author" then
+      barScanList user bound st (events.push (.author st.bold false)) rest
+    else if n == "@date" then
       barScanList user bound st (events.push .content) rest
     else
       match lookupUserIn user bound n with
@@ -3799,12 +3853,34 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
         let stop := Id.run do
           for k in [j + 1:events.size] do
             if hk : k < events.size then
-              if events[k] matches .content then return k
+              if (events[k] matches .content) || (events[k] matches .author _ _) then
+                return k
           return events.size
         st := { st with
           ruleBelow := some w
           ruleBelowGap := barGapSum events (t + 1) j
           ruleBelowSkip := barGapSum events (j + 1) stop }
+  -- The author block: the weight is the venue's, read; the strut and the
+  -- gap after the block are the engine's rhythm (`Ir.titleAuthorStrut`,
+  -- `Ir.titleBlockAfter`) — the venue chooses that the furniture exists,
+  -- the engine chooses where it sits (title-bars' gap rule).
+  if let some ai := events.findIdx? (· matches .author _ _) then
+    if h : ai < events.size then
+      if let .author bold strutDeclared := events[ai] then
+        if bold then
+          st := { st with authorFont := some #[.styled .bold #[]] }
+        if strutDeclared then
+          st := { st with authorStrut := some Ir.titleAuthorStrut }
+        let trailing := Id.run do
+          for k in [ai + 1:events.size] do
+            if hk : k < events.size then
+              match events[k] with
+              | .gap _ | .gapUnknown => return true
+              | .content | .author _ _ => return false
+              | _ => pure ()
+          return false
+        if trailing then
+          st := { st with after := some Ir.titleBlockAfter }
   return if st == ({} : Ir.ElementStyle) then none else some st
 
 /-- `\\define \\name(sig) {body}`, from the element after the `\\define`
@@ -6569,7 +6645,8 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
 def styleKeys : List String :=
   ["font", "before", "after", "rule", "marker", "indent", "gap",
    "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
-   "rule-below", "rule-below-gap", "rule-below-skip", "hover", "focus", "motion"]
+   "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
+   "author-strut", "hover", "focus", "motion"]
 
 /-- `\style{element}{...}`: how an element kind looks. `font` and `marker`
 are inline content and elaborate as such; the rest are lengths and a palette
@@ -6623,6 +6700,8 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
       | "rule-below" => st := { st with ruleBelow := ← asLength }
       | "rule-below-gap" => st := { st with ruleBelowGap := ← asLength }
       | "rule-below-skip" => st := { st with ruleBelowSkip := ← asLength }
+      | "author-font" => st := { st with authorFont := ← asInline }
+      | "author-strut" => st := { st with authorStrut := ← asLength }
       | "rule" =>
         match ctx.palette.resolve valueSrc with
         | some c =>

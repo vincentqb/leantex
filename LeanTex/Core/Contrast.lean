@@ -288,7 +288,7 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   | .link _ body => usesInlines cx acc body.toList
   | .underline body => usesInlines cx acc body.toList
   | .step n last body => usesInlines cx (acc.step n last) body.toList
-  | .fill | .linebreak _ => acc
+  | .fill | .strut _ | .linebreak _ => acc
   -- An image carries no text; its alt is read by a screen reader, not set
   -- in a colour.
   | .image _ _ _ => acc

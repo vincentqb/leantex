@@ -547,6 +547,46 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an empty maketitle redefinition renders nothing and is refused"
     (warnCodes emptied == ["W0361"] &&
      Ir.headingLevels (elabStr emptied).1.body == #[0])
+  -- The author block's styling joins the refused-body scan: the lineage's
+  -- tabular — \bf, a zero-width \rule strut, \@author — lands the venue's
+  -- weight and the engine's rhythm strut on the built-in author line, and
+  -- the trailing \vskip the engine's rhythm gap after the whole block
+  -- (`Ir.titleAuthorStrut`/`Ir.titleBlockAfter`: the venue chooses that
+  -- the furniture exists, the engine chooses where it sits).
+  let authorVenue := "\\documentclass{article}\\title{T}\\author{A. Name}" ++
+    "\\renewcommand{\\maketitle}{\\begingroup\\@maketitle\\endgroup}" ++
+    "\\providecommand{\\@maketitle}{}" ++
+    "\\renewcommand{\\@maketitle}{\\vbox{\\centering{\\Large\\bf \\@title\\par}" ++
+    "\\begin{tabular}[t]{c}\\bf\\rule{\\z@}{24\\p@}\\@author\\end{tabular}" ++
+    "\\vskip 0.3in \\@minus 0.1in}}" ++
+    "\\begin{document}\\maketitle Body.\\end{document}"
+  let (aDoc, _) := elabStr authorVenue
+  -- The title block may stand inside its alignment wrapper; the probe
+  -- looks one level into `.center` for the styled author line and the gap.
+  let inTitleBlock (doc : Ir.Doc) (p : Ir.Block → Bool) : Bool :=
+    doc.body.any fun b => p b ||
+      (match b with | .center xs => xs.any p | _ => false)
+  t "the refused body's author tabular styles the built-in author line"
+    (inTitleBlock aDoc fun b => match b with
+      | .para #[.strut h, .styled .bold _] => h == Ir.titleAuthorStrut
+      | _ => false)
+  t "the trailing vskip becomes the engine's rhythm gap after the block"
+    (inTitleBlock aDoc fun b => match b with
+      | .spaced g #[] => g == Ir.titleBlockAfter
+      | _ => false)
+  -- The native spellings, as rule-above fell out for the bars.
+  let (nDoc, nDs) := elabStr ("\\documentclass{article}\\title{T}\\author{A. Name}" ++
+    "\\style{titlepage}{ author-font = {\\bfseries}, author-strut = 18pt, after = 30pt }" ++
+    "\\begin{document}\\maketitle\\end{document}")
+  t "style titlepage author-strut and author-font reach the author line"
+    (nDs.isEmpty && (inTitleBlock nDoc fun b => match b with
+      | .para #[.strut h, .styled .bold _] =>
+        h == { width := Dim.Length.ofSp (Dim.pt 18) }
+      | _ => false))
+  t "style titlepage after gaps the whole title block"
+    (inTitleBlock nDoc fun b => match b with
+      | .spaced g #[] => g.width == Dim.Length.ofSp (Dim.pt 30)
+      | _ => false)
   -- A body that only echoes its parameter is not "empty": the probe
   -- binding sees the echo, so LaTeX's identity-renew idiom wins.
   t "an argument-echoing redefinition of a rendered built-in wins"
