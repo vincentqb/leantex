@@ -2179,6 +2179,88 @@ private def applyPalette (ctx : Ctx) (pal : Palette) (src : String)
   return pal
 
 
+private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := do
+  let s := s.trimAscii.toString
+  if s == "" || s == "()" then
+    return #[]
+  if !(s.startsWith "(" && s.endsWith ")") then
+    diag ctx .E0303 s!"malformed signature '{s}'" pos
+      (help := "expected (name: type, ..., opt?: type)")
+    return #[]
+  let inner := (String.ofList (s.toList.drop 1).dropLast).trimAscii.toString
+  if inner == "" then
+    return #[]
+  let mut params : Array Param := #[]
+  for entry in inner.splitOn "," do
+    match entry.splitOn ":" with
+    | [name, ty] =>
+      let name := name.trimAscii.toString
+      let ty := ty.trimAscii.toString
+      let optional := name.endsWith "?"
+      let name := if optional then (String.ofList name.toList.dropLast).trimAscii.toString else name
+      let type? : Option ParamType :=
+        if ty == "text" then some .text
+        else if ty == "content" then some .content
+        else none
+      let wellFormed := match name.toList with
+        | c :: rest => c.isAlpha && rest.all Char.isAlphanum
+        | [] => false
+      if !wellFormed then
+        diag ctx .E0303 s!"invalid parameter name '{name}'" pos
+          (help := "parameter names start with a letter")
+      else
+        match type? with
+        | some t => params := params.push ⟨name, t, optional⟩
+        | none =>
+          diag ctx .E0303 s!"unknown parameter type '{ty}' for '{name}'" pos
+            (help := "types: text | content")
+    | _ =>
+      diag ctx .E0303 s!"malformed parameter '{entry.trimAscii.toString}'" pos
+        (help := "expected name: type")
+  return params
+
+
+/-- `\\define \\name(sig) {body}`, from the element after the `\\define`
+head: parses and validates the definition, returning the bound command and
+the index after its body. One door for the preamble walk and the body arm,
+so the two positions cannot drift (built-in collision W0303, missing-body
+E0303, the signature grammar). -/
+private def takeDefine (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
+    EM (Option UserCmd × Nat) := do
+  let j := skipSpaces raws i
+  match raws[j]? with
+  | some (.ctrl newName npos) =>
+    let mut sigRaws : Array Raw := #[]
+    let mut k := j + 1
+    let mut bodyRaws : Option (Array Raw) := none
+    for _ in [k:raws.size] do
+      match raws[k]? with
+      | some (.group b _) =>
+        bodyRaws := some b
+        k := k + 1
+        break
+      | some r' =>
+        sigRaws := sigRaws.push r'
+        k := k + 1
+      | none => break
+    if builtinNames.contains newName && (Lex.textSymbols.lookup newName).isNone then
+      modify fun st => { st with diags := st.diags.push (Diag.of .W0303
+        s!"'\\{newName}' is built in; this definition is ignored"
+        (some ⟨ctx.file, npos⟩)
+        (help := "the built-in already does this; \\define it under another name")) }
+      return (none, k)
+    else
+      match bodyRaws with
+      | some b =>
+        let params ← parseSig ctx (rawSrc sigRaws) pos
+        return (some ⟨newName, params, trimRaws b, ⟨ctx.file, npos⟩⟩, k)
+      | none =>
+        diag ctx .E0303 s!"'\\define \\{newName}' is missing its \{body}" pos
+        return (none, k)
+  | _ =>
+    diag ctx .E0303 "expected '\\define \\name(...)  {body}'" pos
+    return (none, j + 1)
+
 /-- Elaborate raw items as a block sequence. -/
 partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
   -- Shadowed mutable: a body declaration (`\palette`, `\tokens`) applies to
@@ -2229,7 +2311,7 @@ partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
         | .ctrl n _ =>
           (sectionLevel n).isSome ||
           -- A declaration between paragraphs stands at block level.
-          declCtrl.contains n || runningCtrl.contains n ||
+          declCtrl.contains n || runningCtrl.contains n || n == "define" ||
           -- A user command whose body produces blocks is itself a boundary.
           (match lookupUser ctx n with
            | some (_, cmd) => bodyIsBlock cmd.body
@@ -2413,6 +2495,18 @@ a side channel, never slide content" npos
             blocks := blocks.push (.setTokens tk)
           | _ =>
             diag ctx .E0304 "'\\tokens' needs a {...} block" dpos
+        | .ctrl "define" dpos =>
+          -- A definition in the body, legal as in LaTeX (`\newcommand`
+          -- rewrites here): it binds through the shared door the preamble
+          -- uses and applies to the rest of this walk. Inline positions
+          -- (inside a paragraph or an argument) keep the E0312 refusal.
+          i := i + 1
+          let (cmd?, k) ← takeDefine ctx raws i dpos
+          i := k
+          if let some cmd := cmd? then
+            ctx := { ctx with
+              user := ctx.user.push cmd
+              limit := ctx.user.size + 1 }
         | .ctrl "pagebreak" _ =>
           -- The declared page boundary; adjacent boundaries never make a
           -- blank page (the page builder closes only pages that hold
@@ -3363,46 +3457,6 @@ ignored without one"
       blocks := blocks.push p
   return blocks
 
-private def parseSig (ctx : Ctx) (s : String) (pos : Pos) : EM (Array Param) := do
-  let s := s.trimAscii.toString
-  if s == "" || s == "()" then
-    return #[]
-  if !(s.startsWith "(" && s.endsWith ")") then
-    diag ctx .E0303 s!"malformed signature '{s}'" pos
-      (help := "expected (name: type, ..., opt?: type)")
-    return #[]
-  let inner := (String.ofList (s.toList.drop 1).dropLast).trimAscii.toString
-  if inner == "" then
-    return #[]
-  let mut params : Array Param := #[]
-  for entry in inner.splitOn "," do
-    match entry.splitOn ":" with
-    | [name, ty] =>
-      let name := name.trimAscii.toString
-      let ty := ty.trimAscii.toString
-      let optional := name.endsWith "?"
-      let name := if optional then (String.ofList name.toList.dropLast).trimAscii.toString else name
-      let type? : Option ParamType :=
-        if ty == "text" then some .text
-        else if ty == "content" then some .content
-        else none
-      let wellFormed := match name.toList with
-        | c :: rest => c.isAlpha && rest.all Char.isAlphanum
-        | [] => false
-      if !wellFormed then
-        diag ctx .E0303 s!"invalid parameter name '{name}'" pos
-          (help := "parameter names start with a letter")
-      else
-        match type? with
-        | some t => params := params.push ⟨name, t, optional⟩
-        | none =>
-          diag ctx .E0303 s!"unknown parameter type '{ty}' for '{name}'" pos
-            (help := "types: text | content")
-    | _ =>
-      diag ctx .E0303 s!"malformed parameter '{entry.trimAscii.toString}'" pos
-        (help := "expected name: type")
-  return params
-
 /-- A declared value as its author would rewrite it: what W0343 quotes back
 when a later declaration overwrites it. -/
 private def renderValue : Decl.Value → String
@@ -3994,40 +4048,12 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
           diag ctx .E0304 "'\\documentclass' needs a {class}" pos
       | .ctrl "define" pos =>
         i := i + 1
-        let j := skipSpaces preamble i
-        match preamble[j]? with
-        | some (.ctrl newName npos) =>
-          let mut sigRaws : Array Raw := #[]
-          let mut k := j + 1
-          let mut bodyRaws : Option (Array Raw) := none
-          for _ in [k:preamble.size] do
-            match preamble[k]? with
-            | some (.group b _) =>
-              bodyRaws := some b
-              k := k + 1
-              break
-            | some r' =>
-              sigRaws := sigRaws.push r'
-              k := k + 1
-            | none => break
-          i := k
-          if builtinNames.contains newName && (Lex.textSymbols.lookup newName).isNone then
-            modify fun st => { st with diags := st.diags.push (Diag.of .W0303
-              s!"'\\{newName}' is built in; this definition is ignored"
-              (some ⟨ctx.file, npos⟩)
-              (help := "the built-in already does this; \\define it under another name")) }
-          else
-            match bodyRaws with
-            | some b =>
-              let params ← parseSig ctx (rawSrc sigRaws) pos
-              ctx := { ctx with
-                user := ctx.user.push ⟨newName, params, trimRaws b, ⟨ctx.file, npos⟩⟩
-                limit := ctx.user.size + 1 }
-            | none =>
-              diag ctx .E0303 s!"'\\define \\{newName}' is missing its \{body}" pos
-        | _ =>
-          diag ctx .E0303 "expected '\\define \\name(...)  {body}'" pos
-          i := j + 1
+        let (cmd?, k) ← takeDefine ctx preamble i pos
+        i := k
+        if let some cmd := cmd? then
+          ctx := { ctx with
+            user := ctx.user.push cmd
+            limit := ctx.user.size + 1 }
       | .ctrl "defineenv" pos =>
         -- `\defineenv{name}(sig) {begin} {end}`: the native spelling of
         -- `\newenvironment`. The halves are stored raw and elaborate at
