@@ -1142,6 +1142,83 @@ private theorem sliceWeight_splice {raws : Array Raw} {i : Nat}
   simp only [rawWeight] at h1
   omega
 
+/-- The weight of every command body the walk can see: the elabBlocks
+measure term that makes a user-command expansion decrease — the expanded
+body leaves this sum (`visWeight_expand`), and what a body `\define` adds
+to it is exactly the body the walk paid a heavier group for
+(`bindCmd_visWeight`). The old `(envLimit, limit, …)` lex is unsound for
+the block walk: `limit` rises across a define on the spine; this sum
+replaces it. -/
+private def visWeightGo (user : Array UserCmd) : Nat → Nat
+  | 0 => 0
+  | k + 1 =>
+    (if h : k < user.size then rawWeightList user[k].body.toList else 0)
+      + visWeightGo user k
+
+private theorem visWeightGo_mono (user : Array UserCmd) {a b : Nat}
+    (h : a ≤ b) : visWeightGo user a ≤ visWeightGo user b := by
+  induction b with
+  | zero =>
+    have : a = 0 := by omega
+    subst this
+    exact Nat.le_refl _
+  | succ n ih =>
+    rcases Nat.eq_or_lt_of_le h with heq | hlt
+    · subst heq; exact Nat.le_refl _
+    · have h2 := ih (by omega)
+      simp only [visWeightGo]
+      omega
+
+private theorem visWeightGo_congr {u v : Array UserCmd} {n : Nat}
+    (h : ∀ m, m < n → u[m]? = v[m]?) : visWeightGo u n = visWeightGo v n := by
+  induction n with
+  | zero => rfl
+  | succ m ih =>
+    have h1 := h m (by omega)
+    have h2 := ih fun k hk => h k (by omega)
+    simp only [visWeightGo]
+    split <;> split
+    · rename_i hu hv
+      have : u[m] = v[m] := by
+        have := Array.getElem?_eq_getElem hu
+        have := Array.getElem?_eq_getElem hv
+        simp_all
+      rw [this, h2]
+    · rename_i hu hv
+      rw [Array.getElem?_eq_getElem hu, Array.getElem?_eq_none (by omega)] at h1
+      simp at h1
+    · rename_i hu hv
+      rw [Array.getElem?_eq_getElem hv, Array.getElem?_eq_none (by omega)] at h1
+      simp at h1
+    · rw [h2]
+
+private theorem lookupUserGo_found {user : Array UserCmd} {name : String}
+    {n k : Nat} {cmd : UserCmd}
+    (h : lookupUserGo user name n = some (k, cmd)) : user[k]? = some cmd := by
+  fun_induction lookupUserGo user name n with
+  | case1 => simp at h
+  | case2 m hm heq =>
+    simp only [Option.some.injEq, Prod.mk.injEq] at h
+    rw [← h.1, Array.getElem?_eq_getElem hm, h.2]
+  | case3 m hm heq ih => exact ih h
+  | case4 m hm ih => exact ih h
+
+/-- Expanding a visible command moves weight out of the visible sum: the
+body recursed into, plus everything still visible to the callee, never
+exceeds what the caller's sum already carried. -/
+private theorem visWeight_expand {ctx : Ctx} {name : String} {k : Nat}
+    {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) :
+    rawWeightList cmd.body.toList + visWeightGo ctx.user k
+      ≤ visWeightGo ctx.user ctx.limit := by
+  have hlt := lookupUser_lt h
+  have hfound := lookupUserGo_found h
+  obtain ⟨hk, hbody⟩ := Array.getElem?_eq_some_iff.mp hfound
+  have hstep : visWeightGo ctx.user (k + 1)
+      = rawWeightList cmd.body.toList + visWeightGo ctx.user k := by
+    simp only [visWeightGo, hk, dite_true, hbody]
+  have hmono := visWeightGo_mono ctx.user (show k + 1 ≤ ctx.limit by omega)
+  omega
+
 -- Inline elaboration and argument binding are mutually recursive: a call
 -- site's arguments are themselves inline content. Nontermination is
 -- impossible by design (a body sees only earlier definitions), but the
@@ -2734,6 +2811,76 @@ private def isParRaw : Raw → Bool
   | .ctrl "par" _ => true
   | _ => false
 
+mutual
+-- conserves: none — a termination measure, not a content walk
+private def rawPars : Raw → Nat
+  | .par _ => 1
+  | .ctrl n _ => if n == "par" then 1 else 0
+  | .group body _ => rawParsList body.toList
+  | .math _ body _ => rawParsList body.toList
+  | .env _ body _ => rawParsList body.toList
+  | _ => 0
+-- conserves: none — a termination measure, not a content walk
+private def rawParsList : List Raw → Nat
+  | [] => 0
+  | r :: rest => rawPars r + rawParsList rest
+end
+
+/-- The pars standing strictly inside an element: what the par-splice
+measure component counts, since a top-level `\par` is a boundary the walk
+consumes, never descends into. -/
+private def nestedPars : Raw → Nat
+  | .group body _ => rawParsList body.toList
+  | .math _ body _ => rawParsList body.toList
+  | .env _ body _ => rawParsList body.toList
+  | _ => 0
+
+-- conserves: none — a termination measure, not a content walk
+private def nestedParsList : List Raw → Nat
+  | [] => 0
+  | r :: rest => nestedPars r + nestedParsList rest
+
+private theorem rawPars_split (r : Raw) :
+    rawPars r = (if isParRaw r then 1 else 0) + nestedPars r := by
+  cases r with
+  | ctrl n _ => simp only [rawPars, nestedPars, isParRaw]; split <;> simp_all
+  | _ => simp [rawPars, nestedPars, isParRaw]
+
+private theorem rawParsList_append (a b : List Raw) :
+    rawParsList (a ++ b) = rawParsList a + rawParsList b := by
+  induction a with
+  | nil => simp [rawParsList]
+  | cons x xs ih => simp [rawParsList, ih]; omega
+
+private theorem nestedParsList_append (a b : List Raw) :
+    nestedParsList (a ++ b) = nestedParsList a + nestedParsList b := by
+  induction a with
+  | nil => simp [nestedParsList]
+  | cons x xs ih => simp [nestedParsList, ih]; omega
+
+private theorem nestedParsList_le (l : List Raw) :
+    nestedParsList l ≤ rawParsList l := by
+  induction l with
+  | nil => simp [nestedParsList, rawParsList]
+  | cons x xs ih =>
+    have := rawPars_split x
+    simp only [nestedParsList, rawParsList]
+    omega
+
+/-- A declaration is a control word other than `\par`, so it carries no
+pars: duplicating the declarations into each split part costs the measure
+nothing. -/
+private theorem rawPars_decl {ctx : Ctx} {r : Raw}
+    (hnp : isParRaw r = false) (hd : isDeclaration ctx r = true) :
+    rawPars r = 0 := by
+  cases r with
+  | ctrl n _ =>
+    simp only [rawPars]
+    split
+    · simp_all [isParRaw]
+    · rfl
+  | _ => simp_all [isDeclaration]
+
 private def isCenteringRaw : Raw → Bool
   | .ctrl "centering" _ => true
   | _ => false
@@ -2756,26 +2903,137 @@ private def isArgument (cur : Array Raw) : Bool := Id.run do
 `{A \par B}` is `{A}\par{decls B}`, the declarations active at the break
 re-applied to what follows. So `{\Huge Title \par}` sets one line and stops,
 where a forced break would have set an empty Huge line after it. A part that
-holds only declarations and space sets nothing and is dropped. -/
-private def splitAtPars (ctx : Ctx) (body : Array Raw) (pos : Pos) : Array Raw := Id.run do
-  let hasContent (rs : Array Raw) : Bool :=
-    rs.any fun r => !(isSpaceOrPar r || isDeclaration ctx r)
-  let mut out : Array Raw := #[]
-  let mut decls : Array Raw := #[]
-  let mut pre : Array Raw := #[]
-  for r in body do
+holds only declarations and space sets nothing and is dropped. Explicit
+recursion (state: split parts built, declarations seen, the open part) so
+`splitAtPars_pars_lt` — the splice edge of the elabBlocks measure — can
+follow the accumulators; the goldens witness it computes what the old
+`Id.run` loop did. -/
+private def splitAtParsGo (ctx : Ctx) (pos : Pos) :
+    List Raw → Array Raw → Array Raw → Array Raw → Array Raw
+  | [], out, _, pre =>
+    if pre.any (fun r => !(isSpaceOrPar r || isDeclaration ctx r)) then
+      out.push (.group pre pos)
+    else out
+  | r :: rest, out, decls, pre =>
     if isParRaw r then
-      if hasContent pre then
-        out := out.push (.group pre pos)
-      out := out.push r
-      pre := decls
+      splitAtParsGo ctx pos rest
+        ((if pre.any (fun r => !(isSpaceOrPar r || isDeclaration ctx r)) then
+            out.push (.group pre pos)
+          else out).push r)
+        decls decls
     else
-      if isDeclaration ctx r then
-        decls := decls.push r
-      pre := pre.push r
-  if hasContent pre then
-    out := out.push (.group pre pos)
-  return out
+      splitAtParsGo ctx pos rest out
+        (if isDeclaration ctx r then decls.push r else decls) (pre.push r)
+
+private def splitAtPars (ctx : Ctx) (body : Array Raw) (pos : Pos) : Array Raw :=
+  splitAtParsGo ctx pos body.toList #[] #[] #[]
+
+private theorem nestedParsList_push (a : Array Raw) (r : Raw) :
+    nestedParsList (a.push r).toList = nestedParsList a.toList + nestedPars r := by
+  simp [Array.toList_push, nestedParsList_append, nestedParsList]
+
+private theorem rawParsList_push (a : Array Raw) (r : Raw) :
+    rawParsList (a.push r).toList = rawParsList a.toList + rawPars r := by
+  simp [Array.toList_push, rawParsList_append, rawParsList]
+
+/-- The accounting invariant of the split: however the walk closes its
+parts, the pars nested in its output never exceed the pars already nested
+in `out`, still open in `pre`, or anywhere in the input — with the
+declarations array par-free, so duplicating it into each part costs
+nothing. -/
+private theorem splitAtParsGo_pars (ctx : Ctx) (pos : Pos) (l : List Raw)
+    (out decls pre : Array Raw) (hd : rawParsList decls.toList = 0) :
+    nestedParsList (splitAtParsGo ctx pos l out decls pre).toList
+      ≤ nestedParsList out.toList + rawParsList pre.toList
+        + nestedParsList l := by
+  induction l generalizing out decls pre with
+  | nil =>
+    simp only [splitAtParsGo]
+    split
+    · rw [nestedParsList_push]
+      simp only [nestedPars, nestedParsList]
+      omega
+    · simp only [nestedParsList]; omega
+  | cons r rest ih =>
+    simp only [splitAtParsGo]
+    split
+    · rename_i hpar
+      have h1 := ih ((if pre.any (fun r => !(isSpaceOrPar r || isDeclaration ctx r)) then
+          out.push (.group pre pos) else out).push r) decls decls hd
+      have h2 : nestedParsList ((if pre.any (fun r =>
+          !(isSpaceOrPar r || isDeclaration ctx r)) then
+            out.push (.group pre pos) else out).push r).toList
+          ≤ nestedParsList out.toList + rawParsList pre.toList + nestedPars r := by
+        split
+        · rw [nestedParsList_push, nestedParsList_push]
+          simp only [nestedPars] <;> omega
+        · rw [nestedParsList_push]; omega
+      have h3 : rawParsList decls.toList = 0 := hd
+      have h4 : nestedPars r = 0 := by
+        cases r <;> simp_all [isParRaw, nestedPars]
+      simp only [nestedParsList]
+      omega
+    · rename_i hpar
+      have hd' : rawParsList (if isDeclaration ctx r then decls.push r
+          else decls).toList = 0 := by
+        split
+        · rename_i hdecl
+          rw [rawParsList_push, rawPars_decl (by simpa using hpar) hdecl]
+          omega
+        · exact hd
+      have h1 := ih out (if isDeclaration ctx r then decls.push r else decls)
+        (pre.push r) hd'
+      have h2 : rawParsList (pre.push r).toList
+          = rawParsList pre.toList + rawPars r := rawParsList_push pre r
+      have h3 := rawPars_split r
+      simp only [isParRaw] at hpar
+      simp only [nestedParsList]
+      rw [show (if isParRaw r then 1 else 0) = 0 by simp_all [isParRaw]] at h3
+      omega
+
+private def directParsList : List Raw → Nat
+  | [] => 0
+  | r :: rest => (if isParRaw r then 1 else 0) + directParsList rest
+
+private theorem rawParsList_split (l : List Raw) :
+    rawParsList l = directParsList l + nestedParsList l := by
+  induction l with
+  | nil => simp [rawParsList, directParsList, nestedParsList]
+  | cons x xs ih =>
+    have := rawPars_split x
+    simp only [rawParsList, directParsList, nestedParsList]
+    omega
+
+private theorem directParsList_mem {l : List Raw} {r : Raw}
+    (hmem : r ∈ l) (hr : isParRaw r = true) : 0 < directParsList l := by
+  induction l with
+  | nil => simp at hmem
+  | cons x xs ih =>
+    simp only [directParsList]
+    rcases List.mem_cons.mp hmem with h | h
+    · subst h; simp only [hr, ite_true]; omega
+    · have := ih h; omega
+
+private theorem directParsList_pos {body : Array Raw}
+    (hp : body.any isParRaw = true) : 0 < directParsList body.toList := by
+  rw [Array.any_eq_true] at hp
+  obtain ⟨i, hi, hr⟩ := hp
+  exact directParsList_mem (Array.getElem_mem_toList hi) hr
+
+/-- The splice edge strictly lightens the par component: what the split
+emits nests strictly fewer pars than the group it replaces carried,
+because every top-level `\par` of the body — and the guard promises one —
+now stands at the boundary depth the walk consumes directly. -/
+private theorem splitAtPars_pars_lt (ctx : Ctx) (body : Array Raw) (pos : Pos)
+    (hp : body.any isParRaw = true) :
+    nestedParsList (splitAtPars ctx body pos).toList
+      < rawParsList body.toList := by
+  have h1 := splitAtParsGo_pars ctx pos body.toList #[] #[] #[] (by rfl)
+  have h2 := rawParsList_split body.toList
+  have h3 := directParsList_pos hp
+  simp only [splitAtPars]
+  simp only [nestedParsList, rawParsList] at h1 ⊢
+  omega
 
 private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   let mut cur := cur
@@ -3192,6 +3450,38 @@ private theorem bindCmd_monotone (ctx : Ctx) (cmd : UserCmd) {j : Nat}
     Array.getElem?_extract]
   rw [ite_eq_left (by simp; omega),
     show min ctx.limit ctx.user.size + (j - min ctx.limit ctx.user.size) = j by omega]
+
+/-- What a body define adds to the visible sum is exactly its stored body,
+which the walk paid a strictly heavier group for: across the bind, the
+elabBlocks measure still falls. -/
+private theorem bindCmd_visWeight (ctx : Ctx) (cmd : UserCmd) :
+    visWeightGo (bindCmd ctx cmd).user (bindCmd ctx cmd).limit
+      ≤ visWeightGo ctx.user ctx.limit + rawWeightList cmd.body.toList := by
+  simp only [bindCmd]
+  have hb' : min ctx.limit ctx.user.size ≤ ctx.user.size := by omega
+  have hbs : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd).size
+      = min ctx.limit ctx.user.size + 1 := by
+    simp [Nat.min_eq_left hb']
+  have hsame : ∀ m, m < min ctx.limit ctx.user.size →
+      ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd
+        ++ ctx.user.extract (min ctx.limit ctx.user.size) ctx.user.size)[m]?
+      = ctx.user[m]? := by
+    intro m hm
+    have hmu : m < ctx.user.size := by omega
+    rw [Array.getElem?_append_left (by simp; omega),
+      Array.getElem?_push_lt (by simp; omega), Array.getElem?_eq_getElem hmu]
+    simp [Array.getElem_extract]
+  have hat : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd
+      ++ ctx.user.extract (min ctx.limit ctx.user.size) ctx.user.size)[
+        min ctx.limit ctx.user.size]? = some cmd := by
+    rw [Array.getElem?_append_left (by simp), Array.getElem?_push]
+    simp
+  simp only [visWeightGo]
+  obtain ⟨hlt, hcmd⟩ := Array.getElem?_eq_some_iff.mp hat
+  rw [visWeightGo_congr fun m hm => hsame m hm]
+  simp only [hlt, dite_true, hcmd]
+  have := visWeightGo_mono ctx.user (show min ctx.limit ctx.user.size ≤ ctx.limit by omega)
+  omega
 
 /-- Elaborate raw items as a block sequence. -/
 partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
