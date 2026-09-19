@@ -412,7 +412,12 @@ def styleRules (doc : Doc) : String × Array Diag :=
     | "enumerate2" => some "ol ol" | "enumerate3" => some "ol ol ol"
     | "enumerate4" => some "ol ol ol ol"
     | "nav" => some "nav"
-    | _ => none
+    -- A defined role: its style addresses the class hook the role already
+    -- ships (`roleClass`, injective), so a declared rhythm or state lands
+    -- on `.u-<name>` — the same selector a framework stylesheet uses. The
+    -- remaining engine elements (the slides furniture) have no selector
+    -- here and stay skipped, as before.
+    | e => if Ir.styleableElements.contains e then none else some ("." ++ roleClass e)
   let markerSel : String → String
     | "ul" => "ul > li::marker, ul ul > li::marker, ul ul ul > li::marker, " ++
       "ul ul ul ul > li::marker"

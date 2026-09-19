@@ -2046,7 +2046,10 @@ nesting level, and `itemize2`..`itemize4` / `enumerate2`..`enumerate4`
 override one level, the way `\labelitemii` or `\setlist[itemize,2]` does;
 `frametitle`, `sectionpage`, `standout`, and `titlepage` are the slides
 furniture (their `font` is read; `titlepage` also reads `align` and
-`separator`; the other keys have no meaning there yet). -/
+`separator`; the other keys have no meaning there yet). Beyond this list, a
+`\define`d name is styleable too (the elaborator admits it once the
+`\define` stands): the role's rhythm rides `before`/`after` on the page,
+and the whole style addresses the `u-<name>` class hook in HTML. -/
 def styleableElements : List String :=
   ["section", "subsection", "subsubsection", "itemize", "enumerate",
    "itemize2", "itemize3", "itemize4", "enumerate2", "enumerate3", "enumerate4",

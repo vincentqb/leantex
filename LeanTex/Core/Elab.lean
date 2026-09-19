@@ -3573,8 +3573,12 @@ colour. A length may name a token, so the entries are read one at a time
 against the tokens declared so far. -/
 private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos : Pos) :
     EM Styles := do
-  unless styleableElements.contains element do
-    diag ctx .E0328 s!"'{element}' is not a styleable element" pos
+  -- A `\define`d name is styleable too: the role survives as a class hook
+  -- (`u-<name>` in HTML, `Block.role` on the page), so its rhythm and
+  -- format are declared once, upstream, instead of leaking into every use
+  -- site. Positional, like every declaration: the `\define` stands first.
+  unless styleableElements.contains element || ctx.user.any (·.name == element) do
+    diag ctx .E0328 s!"'{element}' is not a styleable element or a '\\define'd name" pos
       (help := s!"elements: {String.intercalate ", " styleableElements}")
     return styles
   let mut st : ElementStyle := (styles.find? element).getD {}

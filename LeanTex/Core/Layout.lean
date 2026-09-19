@@ -3224,10 +3224,20 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     | none => a
   | .center body =>
     collectCentered a pats fs body.toList indent
-  -- A role is a name for the HTML class hook; the page it does not touch:
-  -- the body collects exactly as it would unwrapped (role_transparent_layout).
-  | .role _ body =>
-    collectBlocks a pats fs body indent
+  -- A role is a name for the class hook; undeclared, the body collects
+  -- exactly as it would unwrapped (roleLayoutChecks pins the zero-byte
+  -- claim). A declared `\style{<role>}` gives the role its own rhythm —
+  -- the space stands above and below where the role stands, as a list's
+  -- topsep does, so the value lives once, upstream, never at use sites.
+  | .role n body =>
+    let st := a.style n
+    let a := match st.before with
+      | some g => a.addvspace (a.resolve g)
+      | none => a
+    let a := collectBlocks a pats fs body indent
+    match st.after with
+    | some g => a.addvspace (a.resolve g)
+    | none => a
   | .quote body =>
     -- A quotation is set off by indenting both margins by the list indent:
     -- classes.dtx defines quote and quotation as `\list{}{\rightmargin
@@ -3447,13 +3457,15 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
 
 end
 
--- The block half of `role_transparent_layout` — `collectBlock` on a
--- `.role` delegates to `collectBlocks` unchanged — is pinned executably
--- over `Layout.run`'s shipped pages in Tests.lean (roleLayoutChecks): an
--- oracle, not a theorem. The statement's `rw [collectBlock]` needs the
--- collector's equation lemmas, whose generation for this (very large)
--- match exhausts `whnf` whatever the heartbeat budget; the arm itself is
--- one line, reviewed where it stands (the `.role` arm above).
+-- The block half of `role_transparent_layout` — `collectBlock` on an
+-- unstyled `.role` delegates to `collectBlocks` unchanged — is pinned
+-- executably over `Layout.run`'s shipped pages in Tests.lean
+-- (roleLayoutChecks): an oracle, not a theorem. The statement's
+-- `rw [collectBlock]` needs the collector's equation lemmas, whose
+-- generation for this (very large) match exhausts `whnf` whatever the
+-- heartbeat budget; the arm is reviewed where it stands (the `.role` arm
+-- above — with no declared style both rhythm matches are `none` and the
+-- body collects unwrapped).
 
 /-- Underline rules for one set line: a second walk over its segs, aligned by
 gaps, so it can ride as its own `LineOut` at the same baseline — the PDF
