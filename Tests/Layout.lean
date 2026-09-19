@@ -2423,3 +2423,25 @@ def headingRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     t "more space above the heading than below it"
       (yh - yo > yc - yh)
   | _, _, _ => failures ref "heading rhythm: probe lines missing from the page"
+
+/-- A title is not a paragraph: its ragged display lines balance and never
+strand one word on a line (the finite-stretch ragged setting plus the
+minimum-last-line parfill, `Layout.displayItems`). Greedy ragged packing
+sets everything-but-the-last-word on line one here and strands
+"Functions". -/
+def titleBreakChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let (d, _) := elabStr ("\\page{ width = 480pt, hmargin = 30pt, height = 500pt }\n" ++
+    "\\title{Alpha Beta Gamma Epsilon Omega Sigma Zeta Functions}\n" ++
+    "\\begin{document}\n\\maketitle\nBody.\n\\end{document}")
+  let c := censusOf #[] (layoutOf oneFace d)
+  t "the title wraps to two lines"
+    ((lineYOf c 0 "Alpha").isSome && (lineYOf c 0 "Functions").isSome &&
+      lineYOf c 0 "Alpha" != lineYOf c 0 "Functions")
+  t "the break balances: no two-word first line under a full second"
+    (((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.text "Alpha").map
+      fun l => hasStr l.text "Gamma").getD false)
+  t "the break balances: no one-word last line"
+    (((c[0]?.bind fun p => p.lines.find? fun l => hasStr l.text "Functions").map
+      fun l => hasStr l.text "Zeta").getD false)

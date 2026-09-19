@@ -828,6 +828,30 @@ def raggedItems (items : Array Item) : Array Item :=
     | .glue g => .glue { width := g.width, fil := true, parfill := g.parfill }
     | .box .. | .pen .. | .img .. | .rule .. => it
 
+/-- Ragged setting for display lines — titles and headings: interword glue
+keeps its natural width and gains *finite* stretch (six times its own
+width, ≈1.5 em per space at TeX's quarter-em space, so it scales with the
+styled size the glue was built at), and the closing parfill stretches by
+half the measure — TeX's minimum-last-line idiom (`\parfillskip 0pt plus
+.5\hsize`: a last line shorter than half the measure runs past the
+parfill's stretch and its badness rises cubically) — so the breaker
+balances the lines instead of packing every line but the last. A display
+break never strands one word on a line: a title is not a paragraph. Fil
+hides all looseness from the badness function; a finite stretch prices it
+(TeXbook ch. 14 on ragged setting). An author's own `\hfill` keeps its
+fil. Body ragged setting stays `raggedItems`' free fil: paragraphs are
+reading, not display. -/
+def displayItems (target : Sp) (items : Array Item) : Array Item :=
+  items.map fun it =>
+    match it with
+    | .glue g =>
+      if g.fil && !g.parfill then it
+      else if g.parfill then .glue { width := g.width,
+                                     stretch := max 0 (target / 2),
+                                     parfill := true }
+      else .glue { width := g.width, stretch := g.width * 6 }
+    | .box .. | .pen .. | .img .. | .rule .. => it
+
 -- The document's scalars, for the driver's per-glyph fallback ------------------
 
 mutual
@@ -2758,7 +2782,8 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
     (marker : Option (Array Inline) := none)
-    (rule : Option (Sp × Ir.Color) := none) : Acc :=
+    (rule : Option (Sp × Ir.Color) := none)
+    (display : Bool := false) : Acc :=
   let a := a.flushGap
   -- The page's text colour is the default: content that declared its own
   -- keeps it, so a themed page colours everything or nothing silently dies
@@ -2768,7 +2793,11 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
   let (items, ds, cache, extras) :=
     itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache a.imgs
       a.geom.textWidth a.geom.textHeight
-  let items := if a.geom.justify then items else raggedItems items
+  let items :=
+    if a.geom.justify then items
+    else if display then
+      displayItems ((a.measure.getD a.geom.textWidth) - indent) items
+    else raggedItems items
   -- A marker is content: set as a line of its own, unjustified, so it can
   -- carry any style the document gave it. Its diagnostics ride with the
   -- paragraph's — a marker glyph no face covers must warn, not vanish.
@@ -2846,6 +2875,7 @@ private def collectDisplay (a : Acc) (fs : FontSet)
     (rule : Option (Sp × Ir.Color) := none) : Acc :=
   let sub := collectPara { a with geom := { a.geom with justify := false } }
     none fs inlines indent center size (baseStyle := baseStyle) (rule := rule)
+    (display := true)
   { sub with geom := a.geom }
 
 /-- The natural (unstretched, unshrunk) width of a set of items: what the
