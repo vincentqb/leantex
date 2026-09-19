@@ -1404,6 +1404,13 @@ recursion; the array gives a rewrite O(1) access to its arguments, and `out`
 accumulates so the result is built in one pass -- prepending to the recursive
 result would copy it at every step. `skip` counts elements a rewrite already
 consumed; they fall away one per step, which keeps this total without fuel. -/
+-- conserves: none — the rewrite walk's whole job is replacement: arms
+-- consume configuration and synthesize the native spelling their N0100
+-- note names, so a census equality over the tree is false by design. The
+-- conservation contract lives per arm — the replacement elaborates to the
+-- document its note names — held by `compatConservationChecks` (an
+-- executable oracle; the theorem over the monadic walk waits on the
+-- applyDecl fold extraction PLAN names for T1).
 private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
     List Raw → Nat → Nat → M (Array Raw)
   | [], _, _ => pure out
