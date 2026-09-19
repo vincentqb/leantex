@@ -91,6 +91,7 @@ bibliography, and math elaboration blocks, so an added block lands here and
 `main`'s spent elaboration budget stays flat — the regrowth the two suite
 dispatchers above exist to prevent. -/
 def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  terminationChecks ref
   compatIndexChecks ref
   compatConservationChecks ref
   classOptionChecks ref

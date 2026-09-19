@@ -3155,6 +3155,44 @@ private def takeDefine (ctx : Ctx) (raws : Array Raw) (i : Nat) (pos : Pos) :
     diag ctx .E0303 "expected '\\define \\name(...)  {body}'" pos
     return (none, j + 1)
 
+/-- Bind one document-defined command: it enters at the visibility
+boundary `min limit user.size`, and the boundary advances past it, so the
+walk sees exactly one more command — never the suffix beyond `limit`. One
+door for the preamble fold and the body arm, so the two positions cannot
+drift; `bindCmd_monotone` is the invariant every edit here must keep. -/
+private def bindCmd (ctx : Ctx) (cmd : UserCmd) : Ctx :=
+  let b := min ctx.limit ctx.user.size
+  { ctx with
+    user := (ctx.user.extract 0 b).push cmd ++ ctx.user.extract b ctx.user.size
+    limit := b + 1 }
+
+/-- Monotone visibility survives a body definition: a command the walk
+cannot see — the one being expanded, standing at `j ≥ limit` — is after
+the bind still the same command and still invisible, at its shifted
+index. This is the statement the body-`\define` arm of 2026-09-19 01:56
+(cffb141, `limit := ctx.user.size + 1`) would have failed to compile: it
+re-exposed an expanding command to its own body, and a four-line document
+looped forever while PLAN still said nontermination was impossible by
+design. A termination guarantee is a theorem the build checks, never a
+sentence in a plan (PLAN 2026-09-19). -/
+private theorem bindCmd_monotone (ctx : Ctx) (cmd : UserCmd) {j : Nat}
+    (hj : ctx.limit ≤ j) (hs : j < ctx.user.size) :
+    (bindCmd ctx cmd).limit ≤ j + 1 ∧
+      (bindCmd ctx cmd).user[j + 1]? = ctx.user[j]? := by
+  simp only [bindCmd]
+  have hb : min ctx.limit ctx.user.size ≤ j := by omega
+  have hb' : min ctx.limit ctx.user.size ≤ ctx.user.size := by omega
+  have hbs : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd).size
+      = min ctx.limit ctx.user.size + 1 := by
+    simp [Nat.min_eq_left hb']
+  refine ⟨by omega, ?_⟩
+  rw [Array.getElem?_append_right (by omega), hbs,
+    show j + 1 - (min ctx.limit ctx.user.size + 1)
+      = j - min ctx.limit ctx.user.size by omega,
+    Array.getElem?_extract]
+  rw [ite_eq_left (by simp; omega),
+    show min ctx.limit ctx.user.size + (j - min ctx.limit ctx.user.size) = j by omega]
+
 /-- Elaborate raw items as a block sequence. -/
 partial def elabBlocks (ctx : Ctx) (raws : Array Raw) : EM (Array Block) := do
   -- Shadowed mutable: a body declaration (`\palette`, `\tokens`) applies to
@@ -3404,17 +3442,15 @@ a side channel, never slide content" npos
             | some cmd => gateRedef ctx cmd (fun c b => elabBlocks c b)
             | none => pure none
           if let some cmd := cmd? then
-            -- The definition binds at the visibility boundary: the rest of
-            -- this walk sees exactly one more command, never the suffix
-            -- beyond `limit`. Monotone visibility is the expansion's whole
-            -- termination argument (`Ctx.limit`); raising `limit` to the
+            -- The definition binds at the visibility boundary
+            -- (`bindCmd`): the rest of this walk sees exactly one more
+            -- command, never the suffix beyond `limit`. Monotone
+            -- visibility is the expansion's whole termination argument
+            -- (`Ctx.limit`, `bindCmd_monotone`); raising `limit` to the
             -- array's end here re-exposed a command being expanded to its
             -- own body, and a venue file's `\maketitle` — which renews
             -- `\thefootnote` and then names itself in `\let` — diverged.
-            let b := min ctx.limit ctx.user.size
-            ctx := { ctx with
-              user := (ctx.user.extract 0 b).push cmd ++ ctx.user.extract b ctx.user.size
-              limit := b + 1 }
+            ctx := bindCmd ctx cmd
         | .ctrl "bibliographystyle" dpos =>
           -- The declared style rides the state to the `\bibliography`
           -- marker; resolution reads it from the block (W0353 there names
@@ -5397,14 +5433,11 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       | none => pure none
     match cmd? with
     | some cmd =>
-      -- The same boundary insertion as the body walk's define arm: at
-      -- the preamble top level `limit` equals the array's size and this
-      -- is a plain push, but the spelling keeps visibility monotone
-      -- wherever the fold runs.
-      let b := min s.ctx.limit s.ctx.user.size
-      return { s with ctx := { s.ctx with
-        user := (s.ctx.user.extract 0 b).push cmd ++ s.ctx.user.extract b s.ctx.user.size
-        limit := b + 1 } }
+      -- The same boundary insertion as the body walk's define arm
+      -- (`bindCmd`): at the preamble top level `limit` equals the array's
+      -- size and this is a plain push, but the spelling keeps visibility
+      -- monotone wherever the fold runs.
+      return { s with ctx := bindCmd s.ctx cmd }
     | none => return s
   | .defineEnv name sig beginB endB pos =>
     match name with

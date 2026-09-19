@@ -2105,3 +2105,37 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, dsD, _) ← run "styloop"
   t "a .sty that RequirePackages itself hits the nesting bound, never loops"
     (dsD.any (·.code == "E0501"))
+
+/-- Elaboration terminates — checked under a wall clock, because the
+guarantee once lived only as prose and broke silently: the body-`\define`
+arm of cffb141 (2026-09-19 01:56) re-exposed a command being expanded to
+its own body, and this four-line document looped forever while every
+golden stayed green. The bound is generous (the document elaborates in
+milliseconds; the failure mode is forever); on a regression the test
+fails loudly and exits rather than hanging the suite. The invariant that
+forbids the loop is `bindCmd_monotone` in Elab.lean. -/
+def terminationChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let name := "a \\define inside its own expansion terminates (cffb141 regression)"
+  let doc := "\\begin{document}\n\\define \\x {\\block{\\define \\y {z} \\x}}\n\n\\x\n\\end{document}"
+  -- The elaboration runs on its own task so the deadline is enforceable;
+  -- `lazyPure` defers the pure call into the task, where `asTask (pure e)`
+  -- would evaluate `e` on this thread and hang here.
+  let task ← IO.asTask (IO.lazyPure fun _ => (Elab.run "t" doc).2.map (·.code))
+  let deadline := (← IO.monoMsNow) + 30000
+  let mut finished := false
+  while !finished && (← IO.monoMsNow) < deadline do
+    if (← IO.hasFinished task) then
+      finished := true
+    else
+      IO.sleep 20
+  unless finished do
+    failures ref name
+    IO.eprintln s!"FAIL {name}: still elaborating after 30 s; killing the suite"
+    IO.Process.exit 1
+  -- Terminated — and with the loop refused honestly: the unbound `\x` in
+  -- the expansion is the named W0301, never a silent success.
+  match task.get with
+  | .ok codes => check ref name (codes.contains "W0301")
+  | .error e =>
+    failures ref name
+    IO.eprintln s!"FAIL {name}: {e}"
