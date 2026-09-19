@@ -309,8 +309,14 @@ def censusTable :
     ("the display-size sum ships as a glyph", hasStr (censusText c) "∑"),
     ("an align row ships aligned glyphs", hasStr (censusText c) "=(𝑥−1)(𝑥+1)"),
     ("every fraction bar and overbar ships as a rule",
-      ((c[0]?.map (·.rules)).getD 0) == 8),
-    ("the out-of-scope accent keeps its source", hasStr (censusText c) "\\hat")]),
+      ((c[0]?.map (·.rules)).getD 0) == 9),
+    ("the out-of-scope accent keeps its source", hasStr (censusText c) "\\hat"),
+    ("\\mathbb takes its Letterlike scalars", hasStr (censusText c) "ℝ"
+      && hasStr (censusText c) "ℂ"),
+    ("the bold alphabets ship, variables kept italic",
+      hasStr (censusText c) "𝐯" && hasStr (censusText c) "𝜷"),
+    ("\\mathrm sets upright", hasStr (censusText c) "Err"),
+    ("a word stands as a script's argument", hasStr (censusText c) "null")]),
   ("math-companion", fun _ c => [
     ("one page", c.size == 1),
     ("the inline formula ships italic math glyphs", hasStr (censusText c) "𝑥"),

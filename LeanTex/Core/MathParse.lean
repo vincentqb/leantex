@@ -182,6 +182,16 @@ def ctrlSpace : List (String × Int) :=
   [(",", 3), (":", 4), (";", 5), ("!", -3), ("quad", 18), ("qquad", 36),
    (" ", 6), ("~", 6)]
 
+/-- The math alphabet commands, each one argument whose letters remap
+(`Math.MathAlphabet.apply`): LaTeX's `\math…` family, `\bm`/`\boldsymbol`
+(bold with variables kept italic), and the plain-TeX `\cal`/`\frak`, whose
+dominant use `{\cal L}` reads here as `\cal` taking the single letter. -/
+def alphaCtrl : List (String × Math.MathAlphabet) :=
+  [("mathbb", .bb), ("mathcal", .cal), ("cal", .cal),
+   ("mathfrak", .frak), ("frak", .frak),
+   ("mathbf", .bf), ("bm", .bfit), ("boldsymbol", .bfit),
+   ("mathit", .it), ("mathsf", .sf), ("mathtt", .tt), ("mathrm", .rm)]
+
 /-- Delimiters `\left`/`\right` accept: the char actually set, or `none`
 for the empty `.`. Names looked up in `ctrlAtom` too, so `\left\langle`
 works. -/
@@ -330,6 +340,9 @@ private inductive Dest where
   | fracNum
   | fracDen (num : MList)
   | sqrtBody (deg : MList)
+  /-- A math alphabet's argument: its letters remap
+  (`Math.MathAlphabet.apply`) when the argument closes. -/
+  | alpha (a : Math.MathAlphabet)
   | leftRight (l : Option Char)
   | grid (kind : GridKind) (rows : Array (Array MList)) (cells : Array MList)
 
@@ -338,7 +351,10 @@ private structure PFrame where
   /-- The items before a `\over` on this level, once one is seen: TeX's
   whole-level fraction (TeXbook ch. 17). -/
   overNum : Option (Array MItem)
-  dest : Dest
+  /-- What this level answers when it closes, innermost awaiting
+  construction first: `x^\mathbb{…}` opens with
+  `[.alpha .bb, .script true]`. -/
+  dests : List Dest
 
 /-- Close a level's items into the list it denotes: everything before a
 `\over` over everything after it, else just the items. -/
@@ -350,21 +366,43 @@ private def closeLevel (overNum : Option (Array MItem)) (acc : Array MItem) : ML
   | none => MList.ofList acc.toList
 
 /-- The one place every parsed argument lands: an argument answers the
-`Await` that asked for it — a script attaches, a numerator asks for its
-denominator, a completed construction becomes an atom. Returns the new
-accumulator and the next pending state. -/
-private def resolveArg (acc : Array MItem) (await : Dest) (arg : MList) :
-    Except String (Array MItem × Option Dest) := do
-  match await with
-  | .script isSup => return (← attach acc isSup arg, none)
-  | .fracNum => return (acc, some (.fracDen arg))
-  | .fracDen num =>
-    return (acc.push (.atom .inner (.frac num arg) .nil .nil false), none)
-  | .sqrtBody deg =>
-    return (acc.push (.atom .ord (.rad deg arg) .nil .nil false), none)
-  | .grp => return (acc.push (.atom .ord (.list arg) .nil .nil false), none)
-  | .leftRight _ => throw "'\\left' without its '\\right'"
-  | .grid _ _ _ => throw "an unbalanced group"
+innermost awaiting destination, whose result may in turn answer the next —
+`x^\frac{a}{b}` feeds the braced numerator to the fraction and the built
+fraction to the script. Each iteration pops one destination (or turns a
+numerator into its awaiting denominator and returns), so the loop is
+bounded by the chain's length. Returns the new accumulator and what is
+still awaited. -/
+private def resolveChain (acc0 : Array MItem) (chain : List Dest) (arg0 : MList) :
+    Except String (Array MItem × List Dest) := do
+  let mut acc := acc0
+  let mut arg := arg0
+  let mut rest := chain
+  for _ in [0:chain.length + 1] do
+    match rest with
+    | [] =>
+      -- Every wrap step below leaves one constructed atom; land it.
+      match arg with
+      | .cons x .nil => return (acc.push x, [])
+      | _ => throw "an unbalanced group"
+    | .script isSup :: more =>
+      return (← attach acc isSup arg, more)
+    | .grp :: more =>
+      arg := .cons (.atom .ord (.list arg) .nil .nil false) .nil
+      rest := more
+    | .fracNum :: more =>
+      return (acc, .fracDen arg :: more)
+    | .fracDen num :: more =>
+      arg := .cons (.atom .inner (.frac num arg) .nil .nil false) .nil
+      rest := more
+    | .sqrtBody deg :: more =>
+      arg := .cons (.atom .ord (.rad deg arg) .nil .nil false) .nil
+      rest := more
+    | .alpha a :: more =>
+      arg := .cons (.atom .ord (.list (a.remapList arg)) .nil .nil false) .nil
+      rest := more
+    | .leftRight _ :: _ => throw "'\\left' without its '\\right'"
+    | .grid _ _ _ :: _ => throw "an unbalanced group"
+  throw "an unbalanced group"
 
 /-- amsmath's even alignment columns open with an empty Ord (`{}#` in
 `\align@preamble`, amsmath.dtx), so a cell beginning with a relation keeps
@@ -407,91 +445,82 @@ padded with empty cells"
 puts the formula outside this slice. One forward pass with an explicit
 frame stack; every iteration consumes at least one token, so the loop
 bound is never the reason it stops. `top` opens an alignment grid at the
-bottom of the stack (`align`/`gather` bodies); notes name ragged rows. -/
+bottom of the stack (`align`/`gather` bodies); notes name ragged rows.
+`pending` is the chain of constructions awaiting their next argument,
+innermost first — `x^\frac{a}{b}` stacks the fraction's request on the
+script's — and `resolveChain` is where every argument lands. -/
 private def parseToks (toks : Array MTok) (top : Option GridKind) :
     Except String (MList × Array String) := do
   let mut stack : Array PFrame := #[]
   let mut acc : Array MItem := #[]
   let mut overNum : Option (Array MItem) := none
-  let mut pending : Option Dest := none
+  let mut pending : List Dest := []
   let mut notes : Array String := #[]
   if let some kind := top then
-    stack := stack.push { acc := #[], overNum := none, dest := .grid kind #[] #[] }
+    stack := stack.push { acc := #[], overNum := none, dests := [.grid kind #[] #[]] }
   let mut i := 0
   for _ in [0:toks.size] do
     let some tok := toks[i]? | break
-    -- One argument, when a construct is waiting for it: a braced group
-    -- opens a frame; a single atom token answers at once.
-    match pending, tok with
-    | some _, .ws =>
-      i := i + 1
-    | some await, .openGrp =>
-      pending := none
-      stack := stack.push { acc, overNum, dest := await }
-      acc := #[]
-      overNum := none
-      i := i + 1
-    | some await, t =>
-      match tokAtom t with
-      | some a =>
-        pending := none
-        let (acc', pending') ← resolveArg acc await (.cons a .nil)
-        acc := acc'
-        pending := pending'
-        i := i + 1
-      | none => throw (tokName t)
-    | none, _ =>
     match tok with
     | .ws =>
       i := i + 1
     | .sup =>
-      pending := some (.script true)
+      unless pending.isEmpty do throw (tokName tok)
+      pending := [.script true]
       i := i + 1
     | .sub =>
-      pending := some (.script false)
+      unless pending.isEmpty do throw (tokName tok)
+      pending := [.script false]
       i := i + 1
     | .openGrp =>
-      stack := stack.push { acc, overNum, dest := .grp }
+      let dests := if pending.isEmpty then [.grp] else pending
+      stack := stack.push { acc, overNum, dests }
+      pending := []
       acc := #[]
       overNum := none
       i := i + 1
     | .closeGrp =>
+      unless pending.isEmpty do throw (tokName tok)
       let some frame := stack.back? | throw "an unbalanced group"
-      match frame.dest with
-      | .grid _ _ _ => throw "an unbalanced group"
-      | .leftRight _ => throw "'\\left' without its '\\right'"
-      | dest =>
+      match frame.dests with
+      | .grid _ _ _ :: _ => throw "an unbalanced group"
+      | .leftRight _ :: _ => throw "'\\left' without its '\\right'"
+      | [] => throw "an unbalanced group"
+      | dests =>
         stack := stack.pop
         let body := closeLevel overNum acc
         overNum := frame.overNum
-        let (acc', pending') ← resolveArg frame.acc dest body
+        let (acc', pending') ← resolveChain frame.acc dests body
         acc := acc'
         pending := pending'
         i := i + 1
     | .amp =>
+      unless pending.isEmpty do throw (tokName tok)
       let some frame := stack.back? | throw "'&'"
-      let .grid kind rows cells := frame.dest | throw "'&'"
+      let [.grid kind rows cells] := frame.dests | throw "'&'"
       if kind matches .gather then throw "'&'"
       let cells := closeCell kind cells overNum acc
       acc := #[]
       overNum := none
-      stack := stack.pop.push { frame with dest := .grid kind rows cells }
+      stack := stack.pop.push { frame with dests := [.grid kind rows cells] }
       i := i + 1
     | .rowEnd =>
+      unless pending.isEmpty do throw (tokName tok)
       let some frame := stack.back? | throw "'\\\\'"
-      let .grid kind rows cells := frame.dest | throw "'\\\\'"
+      let [.grid kind rows cells] := frame.dests | throw "'\\\\'"
       if let some (.ch '[') := toks[i+1]? then
         throw "'\\\\[...]' extra row space"
       let cells := closeCell kind cells overNum acc
       acc := #[]
       overNum := none
-      stack := stack.pop.push { frame with dest := .grid kind (rows.push cells) #[] }
+      stack := stack.pop.push { frame with dests := [.grid kind (rows.push cells) #[]] }
       i := i + 1
     | .arrOpen =>
       -- `[pos]{spec}`: the position is burned (the grid centres on the
       -- axis either way in this slice); the spec gives the column
       -- alignments. Anything else a spec can say (`|` rules, `@{}`,
       -- `p{}`) is outside this slice, named.
+      unless pending.isEmpty do throw (tokName tok)
       let mut j := i + 1
       if let some .ws := toks[j]? then j := j + 1
       if let some (.ch '[') := toks[j]? then
@@ -517,13 +546,14 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
         | some t => throw s!"the array column spec {tokName t}"
         | none => break
       let some .closeGrp := toks[j]? | throw "an array without its column spec"
-      stack := stack.push { acc, overNum, dest := .grid (.array cols) #[] #[] }
+      stack := stack.push { acc, overNum, dests := [.grid (.array cols) #[] #[]] }
       acc := #[]
       overNum := none
       i := j + 1
     | .arrClose =>
+      unless pending.isEmpty do throw (tokName tok)
       let some frame := stack.back? | throw "'\\end{array}'"
-      let .grid kind rows cells := frame.dest | throw "'\\end{array}'"
+      let [.grid kind rows cells] := frame.dests | throw "'\\end{array}'"
       let .array _ := kind | throw "'\\end{array}'"
       stack := stack.pop
       let rows :=
@@ -536,6 +566,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
       overNum := frame.overNum
       i := i + 1
     | .ctrl "over" =>
+      unless pending.isEmpty do throw (tokName tok)
       if overNum.isSome then throw "a double \\over"
       overNum := some acc
       acc := #[]
@@ -543,7 +574,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
     | .ctrl "frac" | .ctrl "dfrac" | .ctrl "tfrac" =>
       -- \dfrac/\tfrac force display/text style in LaTeX; this slice sets
       -- them as \frac, the style the formula is already in.
-      pending := some .fracNum
+      pending := .fracNum :: pending
       i := i + 1
     | .ctrl "sqrt" =>
       let mut j := i + 1
@@ -561,9 +592,15 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
           | none => throw "an unclosed root index"
         let some (.ch ']') := toks[j]? | throw "an unclosed root index"
         j := j + 1
-      pending := some (.sqrtBody (MList.ofList deg.toList))
+      pending := .sqrtBody (MList.ofList deg.toList) :: pending
       i := j
+    | .ctrl "ensuremath" =>
+      -- Transparent inside math (amsldoc: `\ensuremath`'s argument sets in
+      -- math mode, which this already is): the group after it is an
+      -- ordinary braced group.
+      i := i + 1
     | .ctrl "left" =>
+      unless pending.isEmpty do throw (tokName tok)
       let mut j := i + 1
       if let some .ws := toks[j]? then j := j + 1
       let l ← match toks[j]? with
@@ -576,11 +613,12 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
           | some (_, c) => pure (some c)
           | none => throw s!"'\\left \\{n}'"
         | _ => throw "'\\left' without a delimiter"
-      stack := stack.push { acc, overNum, dest := .leftRight l }
+      stack := stack.push { acc, overNum, dests := [.leftRight l] }
       acc := #[]
       overNum := none
       i := j + 1
     | .ctrl "right" =>
+      unless pending.isEmpty do throw (tokName tok)
       let mut j := i + 1
       if let some .ws := toks[j]? then j := j + 1
       let r ← match toks[j]? with
@@ -594,19 +632,21 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
           | none => throw s!"'\\right \\{n}'"
         | _ => throw "'\\right' without a delimiter"
       let some frame := stack.back? | throw "'\\right' without its '\\left'"
-      let .leftRight l := frame.dest | throw "'\\right' without its '\\left'"
+      let [.leftRight l] := frame.dests | throw "'\\right' without its '\\left'"
       stack := stack.pop
       let body := closeLevel overNum acc
       overNum := frame.overNum
       acc := frame.acc.push (.atom .inner (.delim l r body) .nil .nil false)
       i := j + 1
     | .ctrl "limits" =>
+      unless pending.isEmpty do throw (tokName tok)
       match acc.back? with
       | some (.atom cls nuc sup sub _) =>
         acc := acc.pop.push (.atom cls nuc sup sub true)
       | _ => throw "\\limits without an operator"
       i := i + 1
     | .ctrl "nolimits" =>
+      unless pending.isEmpty do throw (tokName tok)
       match acc.back? with
       | some (.atom cls nuc sup sub _) =>
         acc := acc.pop.push (.atom cls nuc sup sub false)
@@ -634,32 +674,55 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
         | none => throw "an unbalanced group"
       let some .closeGrp := toks[j]? | throw "an unbalanced group"
       let cls : MathClass := if tok == .ctrl "operatorname" then .op else .ord
-      acc := acc.push (.atom cls (.word s) .nil .nil false)
+      let atom : MItem := .atom cls (.word s) .nil .nil false
+      if pending.isEmpty then
+        acc := acc.push atom
+      else
+        let (acc', pending') ← resolveChain acc pending (.cons atom .nil)
+        acc := acc'
+        pending := pending'
       i := j + 1
     | .ctrl n =>
+      match alphaCtrl.lookup n with
+      | some a =>
+        pending := .alpha a :: pending
+        i := i + 1
+      | none =>
       match ctrlSpace.lookup n with
       | some mu =>
+        unless pending.isEmpty do throw (tokName tok)
         acc := acc.push (.space mu)
         i := i + 1
       | none =>
         match tokAtom tok with
         | some atom =>
-          acc := acc.push atom
+          if pending.isEmpty then
+            acc := acc.push atom
+          else
+            let (acc', pending') ← resolveChain acc pending (.cons atom .nil)
+            acc := acc'
+            pending := pending'
           i := i + 1
         | none => throw (tokName tok)
     | .ch '\'' =>
+      unless pending.isEmpty do throw (tokName tok)
       acc := ← attachPrime acc
       i := i + 1
     | .ch _ =>
       match tokAtom tok with
       | some atom =>
-        acc := acc.push atom
+        if pending.isEmpty then
+          acc := acc.push atom
+        else
+          let (acc', pending') ← resolveChain acc pending (.cons atom .nil)
+          acc := acc'
+          pending := pending'
         i := i + 1
       | none => throw (tokName tok)
-  if pending.isSome then throw "a trailing script mark"
+  unless pending.isEmpty do throw "a trailing script mark"
   let unbalanced (f : Option PFrame) : String :=
     match f with
-    | some { dest := .leftRight _, .. } => "'\\left' without its '\\right'"
+    | some { dests := .leftRight _ :: _, .. } => "'\\left' without its '\\right'"
     | _ => "an unbalanced group"
   match top with
   | none =>
@@ -670,7 +733,7 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
     unless stack.size == 1 do
       throw (unbalanced stack.back?)
     let some frame := stack.back? | throw "an unbalanced group"
-    let .grid _ rows cells := frame.dest | throw "an unbalanced group"
+    let [.grid _ rows cells] := frame.dests | throw "an unbalanced group"
     let rows :=
       if cells.isEmpty && acc.isEmpty && overNum.isNone then rows
       else rows.push (closeCell kind cells overNum acc)

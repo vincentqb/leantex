@@ -924,6 +924,39 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
           | .math false _ => true
           | _ => false
         | _ => false))
+  -- Math alphabets: one remap per letter (Math.MathAlphabet.apply), the
+  -- Letterlike holes individually — \mathbb{R} is ℝ, never tofu at
+  -- U+1D549 — and the classes projection untouched
+  -- (remapList_classes_id), so spacing survives the remap.
+  t "mathbb takes the Letterlike hole: R is ℝ"
+    (glyphChars "$\\mathbb{R}$" == #['ℝ'] && warnCodes "$\\mathbb{R}$" == [])
+  t "mathrm recovers the upright letters"
+    (glyphChars "$\\mathrm{Err}$" == #['E', 'r', 'r'])
+  t "mathbf keeps the spacing classes: x+y bolds with its medium spaces"
+    (widthOf "$\\mathbf{x+y}$" ==
+      adv mbase '𝐱' + mu mbase 4 + adv mbase '+' + mu mbase 4 + adv mbase '𝐲')
+  t "boldsymbol bolds a Greek variable italic"
+    (glyphChars "$\\boldsymbol{\\beta}$" == #['𝜷'])
+  -- The corpus math face's cmap, per mapped scalar: the alphabets it
+  -- covers render from it; the ones it lacks take the diagnosed fallback
+  -- path (per-scalar chain, N0018 synthesis where the chain is empty).
+  t "fira math covers the bb, bf, bfit, tt, it, and rm letter alphabets"
+    ([Math.MathAlphabet.bb, .bf, .bfit, .tt, .it, .rm].all fun a =>
+      Math.latinLetters.all fun c => (fira.gid (a.apply c)).isSome)
+  t "fira math lacks cal, frak, and sf letters (all but ℊ): the fallback path"
+    (([Math.MathAlphabet.cal, .frak, .sf].all fun a =>
+      Math.latinLetters.all fun c =>
+        (fira.gid (a.apply c)).isNone || a.apply c == '\u210A'))
+  -- A construction stands as a script's argument: the pending chain.
+  t "a word is a script's argument"
+    (warnCodes "$V^\\text{null}$" == [] &&
+      glyphChars "$V^\\text{null}$" == #['𝑉', 'n', 'u', 'l', 'l'])
+  t "a fraction is a script's argument"
+    (warnCodes "$2^\\frac{1}{2}$" == [])
+  t "an alphabet is a script's argument"
+    (glyphChars "$x^\\mathbb{R}$" == #['𝑥', 'ℝ'])
+  t "ensuremath is transparent in math"
+    (glyphChars "$\\ensuremath{x}$" == #['𝑥'])
   -- The alignment family renders as grids now; the numbered forms warn
   -- W0014 (numbers are owed, the mathematics is not), a ragged row is
   -- W0013 and still renders padded.

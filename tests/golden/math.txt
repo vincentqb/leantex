@@ -66,6 +66,26 @@ para
   text "What this slice does not model keeps its source and a warning that names it: "
   math inline "\\hat {x} + 1"
   text " stays text."
+para
+  text "An alphabet remaps its letters through the Mathematical Alphanumeric block, Letterlike holes included: "
+  formula inline "\\mathbb {R}^{d}"
+    ord:{ord:ℝ}^{ord:𝑑}
+  text " and "
+  formula inline "\\mathbb {C}"
+    ord:{ord:ℂ}
+  text " are double-struck, "
+  formula inline "\\mathbf {v} + \\boldsymbol {\\beta}"
+    ord:{ord:𝐯} bin:+ ord:{ord:𝜷}
+  text " set bold, and "
+  formula inline "\\mathrm {Err}(p, q)"
+    ord:{ord:E ord:r ord:r} open:( ord:𝑝 punct:, ord:𝑞 close:)
+  text " is upright. A construction stands as a script’s argument in "
+  formula inline "V^\\text {null}"
+    ord:𝑉^{ord:"null"}
+  text " and "
+  formula inline "2^\\frac {1}{2}"
+    ord:2^{inner:frac{ord:1}{ord:2}}
+  text "."
 center
   para
     formula display "e^{i\\pi} + 1 = 0"

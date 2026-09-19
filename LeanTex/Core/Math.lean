@@ -279,6 +279,142 @@ theorem body_xheight_le_mathSize_next (bodySize xhB upemB xhM upemM : Nat)
     (Nat.le_div_iff_mul_le hupemM).mpr h6
   rwa [Nat.add_div_right _ hupemM] at h7
 
+/-- The math alphabets a formula can ask for by command (`\mathbb`,
+`\mathcal`, …): each is one remap of a letter's scalar into its Unicode
+Mathematical Alphanumeric Symbols form (Unicode ch. 22.2; unicode-math's
+`\um_to_usv:nn` mapping does the same). `rm` is the upright alphabet, which
+Unicode leaves at the ASCII letters themselves — remapping an italic
+variable back is what `\mathrm` means. -/
+inductive MathAlphabet where
+  | bb
+  | cal
+  | frak
+  | bf
+  /-- `\bm`/`\boldsymbol`: everything bold, variables staying italic —
+  bold italic letters, bold digits, bold italic lowercase Greek — where
+  `\mathbf` (`bf`) sets upright bold, LaTeX's split (bm package docs §1;
+  amsldoc §9.1 on `\boldsymbol`). -/
+  | bfit
+  | sf
+  | tt
+  | rm
+  | it
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+def allAlphabets : List MathAlphabet :=
+  [.bb, .cal, .frak, .bf, .bfit, .sf, .tt, .rm, .it]
+
+/-- The plain letter behind a scalar the parser produces: a mathematical
+italic Latin letter returns to its ASCII base (including the U+210E Planck
+hole `italicVar` mapped `h` to); anything else stays. What lets one
+alphabet table serve arguments whose letters were already italicized. -/
+def unItalic (c : Char) : Char :=
+  if c == '\u210E' then 'h'
+  else if 0x1D44E ≤ c.toNat && c.toNat ≤ 0x1D467 then
+    Char.ofNat ('a'.toNat + (c.toNat - 0x1D44E))
+  else if 0x1D434 ≤ c.toNat && c.toNat ≤ 0x1D44D then
+    Char.ofNat ('A'.toNat + (c.toNat - 0x1D434))
+  else c
+
+/-- The Letterlike Symbols holes of the Mathematical Alphanumeric block
+(Unicode ch. 22.2 — the code chart marks each slot reserved, pointing into
+Letterlike Symbols), as `(alphabet, letter, scalar)` rows: the scalars a
+naive base-offset map would get wrong, ℝ and ℂ among them. One table read
+in both directions (`hole`, `unapply`). -/
+def alphaHoles : List (MathAlphabet × Char × Char) :=
+  [(.cal, 'B', '\u212C'), (.cal, 'E', '\u2130'), (.cal, 'F', '\u2131'),
+   (.cal, 'H', '\u210B'), (.cal, 'I', '\u2110'), (.cal, 'L', '\u2112'),
+   (.cal, 'M', '\u2133'), (.cal, 'R', '\u211B'),
+   (.cal, 'e', '\u212F'), (.cal, 'g', '\u210A'), (.cal, 'o', '\u2134'),
+   (.frak, 'C', '\u212D'), (.frak, 'H', '\u210C'), (.frak, 'I', '\u2111'),
+   (.frak, 'R', '\u211C'), (.frak, 'Z', '\u2128'),
+   (.bb, 'C', '\u2102'), (.bb, 'H', '\u210D'), (.bb, 'N', '\u2115'),
+   (.bb, 'P', '\u2119'), (.bb, 'Q', '\u211A'), (.bb, 'R', '\u211D'),
+   (.bb, 'Z', '\u2124'),
+   (.it, 'h', '\u210E')]
+
+def MathAlphabet.hole (a : MathAlphabet) (c : Char) : Option Char :=
+  (alphaHoles.find? fun (b, l, _) => b == a && l == c).map (·.2.2)
+
+/-- Where each alphabet's `A`, `a`, and `0` start in the Mathematical
+Alphanumeric block (Unicode ch. 22.2). `none` where the block has no such
+run: no script, fraktur, italic, or upright-beyond-ASCII digits — those
+digits stay as written, as unicode-math leaves them. `rm` is ASCII itself.
+`bfit` digits are the bold digits: Unicode encodes no italic digits, and
+bold is the half of `\bm`'s meaning a digit can carry. -/
+def MathAlphabet.bases : MathAlphabet → Nat × Nat × Option Nat
+  | .bb => (0x1D538, 0x1D552, some 0x1D7D8)
+  | .cal => (0x1D49C, 0x1D4B6, none)
+  | .frak => (0x1D504, 0x1D51E, none)
+  | .bf => (0x1D400, 0x1D41A, some 0x1D7CE)
+  | .bfit => (0x1D468, 0x1D482, some 0x1D7CE)
+  | .sf => (0x1D5A0, 0x1D5BA, some 0x1D7E2)
+  | .tt => (0x1D670, 0x1D68A, some 0x1D7F6)
+  | .rm => ('A'.toNat, 'a'.toNat, some '0'.toNat)
+  | .it => (0x1D434, 0x1D44E, none)
+
+/-- One letter or digit under an alphabet: the Letterlike hole when the
+block reserves the slot, else the base-offset scalar; a char the alphabet
+does not cover stays itself, so the map is total and `\mathbb{+}` keeps
+its plus. Greek: only the bold alphabets touch it — `bf` embolden the
+upright capitals (U+1D6A8 block), `bfit` also the italic lowercase
+(U+1D736 block, one uniform offset across the letters and their variant
+forms) and `∇` — LaTeX's `\mathbf`/`\bm` split. -/
+def MathAlphabet.apply (a : MathAlphabet) (c0 : Char) : Char :=
+  let c := unItalic c0
+  match a.hole c with
+  | some h => h
+  | none =>
+    let (upper, lower, digit) := a.bases
+    if 'A' ≤ c && c ≤ 'Z' then Char.ofNat (upper + (c.toNat - 'A'.toNat))
+    else if 'a' ≤ c && c ≤ 'z' then Char.ofNat (lower + (c.toNat - 'a'.toNat))
+    else if '0' ≤ c && c ≤ '9' then
+      match digit with
+      | some d => Char.ofNat (d + (c.toNat - '0'.toNat))
+      | none => c
+    else if (a == .bf || a == .bfit) && 0x391 ≤ c.toNat && c.toNat ≤ 0x3A9 then
+      Char.ofNat (0x1D6A8 + (c.toNat - 0x391))
+    else if a == .bfit && 0x1D6FC ≤ c.toNat && c.toNat ≤ 0x1D71B then
+      Char.ofNat (c.toNat + 0x3A)
+    else if a == .bfit && c == '\u2207' then Char.ofNat 0x1D6C1
+    else c0
+
+/-- The Latin letters every alphabet maps. -/
+def latinLetters : List Char :=
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz".toList
+
+/-- The (alphabet, base character) behind a mapped scalar — `apply`'s left
+inverse on the letters and digits (`alpha_apply_inj` holds them inverse
+over every letter). Also the layout's recovery when the math face lacks
+the mapped scalar: the base character is what still renders, the alphabet
+names the styling lost. A digit run shared by two alphabets (`bf`/`bfit`
+both use the bold digits) answers with the first, which recovery cannot
+tell apart anyway. -/
+def MathAlphabet.unapply (c : Char) : Option (MathAlphabet × Char) :=
+  match alphaHoles.find? fun (_, _, h) => h == c with
+  | some (a, l, _) => some (a, l)
+  | none =>
+    let n := c.toNat
+    let run (a : MathAlphabet) (base : Nat) (first : Char) (len : Nat) :
+        Option (MathAlphabet × Char) :=
+      if base ≤ n && n < base + len then
+        some (a, Char.ofNat (first.toNat + (n - base)))
+      else none
+    allAlphabets.findSome? fun a =>
+      let (upper, lower, digit) := a.bases
+      run a upper 'A' 26 <|> run a lower 'a' 26 <|>
+        (digit.bind fun d => run a d '0' 10)
+
+/-- The alphanumeric map is injective on the letters: within one alphabet
+two different letters never collide, and no two alphabets share a scalar —
+`\mathcal{R}` (ℛ), `\mathbb{R}` (ℝ), `\mathfrak{R}` (ℜ), and `R` itself
+are four scalars. Stated constructively: `unapply` recovers the alphabet
+and the letter from every image, holes included — a left inverse, so two
+distinct (alphabet, letter) pairs cannot map to one scalar. -/
+theorem alpha_apply_inj :
+    (allAlphabets.all fun a => latinLetters.all fun c =>
+      MathAlphabet.unapply (a.apply c) == some (a, c)) = true := by decide
+
 /-- Inter-atom space: none, thin (3 mu), medium (4 mu), or thick (5 mu),
 where 18 mu is one em of the math font at the current style's size
 (TeXbook p. 168). Set at natural width — the rubber TeX gives `\medmuskip`
@@ -787,5 +923,52 @@ def MRows.scalarsRows (acc : Array Char) : MRows → Array Char
   | .cons r rest => MRows.scalarsRows (MRow.scalarsRow acc r) rest
 
 end
+
+mutual
+
+/-- An alphabet applied through a parsed math list: every `sym` scalar
+remaps (`MathAlphabet.apply`), a construction passes through with its
+contents remapped — `\mathbf{x^2}` bolds the script too, TeX's alphabet
+scope — and upright words (`\text`, function names) stay as written.
+Structure, classes, and count are untouched (`remapList_classes_id`), so
+remapping never moves a space the table would insert. -/
+def MathAlphabet.remapList (a : MathAlphabet) : MList → MList
+  | .nil => .nil
+  | .cons x rest => .cons (a.remapItem x) (a.remapList rest)
+
+def MathAlphabet.remapItem (a : MathAlphabet) : MItem → MItem
+  | .atom cls nuc sup sub lim =>
+    .atom cls (a.remapNucleus nuc) (a.remapList sup) (a.remapList sub) lim
+  | .space mu => .space mu
+
+def MathAlphabet.remapNucleus (a : MathAlphabet) : MNucleus → MNucleus
+  | .sym c => .sym (a.apply c)
+  | .word s => .word s
+  | .list body => .list (a.remapList body)
+  | .frac num den => .frac (a.remapList num) (a.remapList den)
+  | .rad deg body => .rad (a.remapList deg) (a.remapList body)
+  | .delim l r body => .delim l r (a.remapList body)
+  | .grid kind rows => .grid kind (a.remapRows rows)
+
+def MathAlphabet.remapRow (a : MathAlphabet) : MRow → MRow
+  | .nil => .nil
+  | .cons cell rest => .cons (a.remapList cell) (a.remapRow rest)
+
+def MathAlphabet.remapRows (a : MathAlphabet) : MRows → MRows
+  | .nil => .nil
+  | .cons row rest => .cons (a.remapRow row) (a.remapRows rest)
+
+end
+
+/-- Remapping is the identity on the classes projection: the spacing walk
+sees the same list before and after, so an alphabet changes glyphs, never
+the space between them. -/
+theorem MathAlphabet.remapList_classes_id (a : MathAlphabet) :
+    ∀ l : MList, (a.remapList l).classes = l.classes
+  | .nil => rfl
+  | .cons (.atom _ _ _ _ _) rest => by
+    simp only [remapList, remapItem, MList.classes, remapList_classes_id a rest]
+  | .cons (.space _) rest => by
+    simp only [remapList, remapItem, MList.classes, remapList_classes_id a rest]
 
 end LeanTex.Core.Math
