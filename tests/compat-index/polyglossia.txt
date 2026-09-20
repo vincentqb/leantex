@@ -2,5 +2,5 @@
 pre refuse:W0301 \setmainlanguage{english}
 pre refuse:W0301 \setdefaultlanguage{english}
 pre refuse:W0301 \setotherlanguage{french}
-body refuse:W0104 \selectlanguage{german}
+body impl \selectlanguage{german}
 body refuse:W0301 \textenglish{x}

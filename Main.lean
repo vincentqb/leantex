@@ -541,11 +541,15 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       unless imgs.entries.isEmpty do
         ui.phase "images" s!"{imgs.entries.size} files" (← since t)
       let t ← IO.monoMsNow
-      let pats := Hyphen.load
-      ui.phase "hyphen" s!"{pats.map.size} patterns" (← since t)
+      -- The main language's patterns; a language whose table has not
+      -- landed is honestly unhyphenated (W0368 already named it).
+      let pats := Hyphen.forTag doc.info.locale.tag
+      ui.phase "hyphen" (match pats with
+        | some p => s!"{p.map.size} patterns ({doc.info.locale.tag})"
+        | none => s!"no patterns for '{doc.info.locale.tag}'") (← since t)
       let t ← IO.monoMsNow
       let geom := Layout.Geom.ofPage doc.page
-      let out := Layout.run geom fs (some pats) doc imgs
+      let out := Layout.run geom fs pats doc imgs
       let r3 ← ui.resolve doc.allow allowAll out.diags
       fired := fired ++ r3.fired
       accepted := accepted ++ r3.accepted

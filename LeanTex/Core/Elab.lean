@@ -179,6 +179,11 @@ structure ESt where
   flowPalette : Option Palette := none
   /-- Body-declared tokens (`\setlength` mid-document), same door. -/
   flowTokens : Option Tokens := none
+  /-- The language in force from a block-level switch (`\selectlanguage`),
+  `none` for the document's main language — the same from-here-forward
+  flow state `inAppendix` uses. Paragraphs formed under it carry the
+  attribute (`mkPara`). -/
+  flowLang : Option String := none
   /-- Bumped by each body declaration: the cheap guard that lets the block
   loop skip re-reading the flow state per raw item. -/
   flowGen : Nat := 0
@@ -507,9 +512,35 @@ def accentCompose (mark : Char) (r : Parse.Raw) : Option String :=
   | _ => none
 
 /-- The one-character word commands (`\ss`, `\ae`, `\o`…), the same table
-`.bib` values read (`Bib.charCommands`). -/
-def charCommandOf (name : String) : Option String :=
-  (Bib.charCommands.find? (·.1 == name)).map (·.2)
+`.bib` values read (`Bib.charCommands`), folded into one lookup with the
+escape table: both splice literal text. -/
+def escapeOf (name : String) : Option String :=
+  match escapes.lookup name with
+  | some lit => some lit
+  | none => (Bib.charCommands.find? (·.1 == name)).map (·.2)
+
+/-- The declaration styles by name, plus the language marker (`@lang:fr`
+→ `Style.lang "fr"` — Compat's rewrite of `\selectlanguage`, unforgeable
+since `@` never lexes into a control word): both apply to the rest of
+the scope, so one dispatch arm serves both. -/
+def declStyleOf (name : String) : Option Ir.Style :=
+  if name.startsWith "@lang:" then
+    some (.lang ((name.drop "@lang:".length).toString))
+  else declStyles.lookup name
+
+/-- The block form of the language switch: the flow state update, outside
+the block-walk knot so the arm inside costs it one call. A switch back to
+the main language clears the attribute rather than tagging redundantly. -/
+def flowLangUpdate (ctx : Ctx) (marker : String) (st : ESt) : ESt :=
+  let tag := (marker.drop "@lang:".length).toString
+  { st with flowLang := if tag == ctx.locale.tag then none else some tag }
+
+/-- A paragraph under the flow language carries the attribute
+(`langWrap_text`: the census is untouched). -/
+def paraUnder (lang : Option String) (inlines : Array Ir.Inline) : Ir.Block :=
+  match lang with
+  | some tag => .para (Ir.langWrap tag inlines)
+  | none => .para inlines
 
 /-- Every palette role is invocable: a role is *defined by the palette* —
 `\muted{Alex}` works with no `\newcommand`, because the palette arm of the
@@ -2313,9 +2344,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           have hadv : sliceWeight raws (i + 2) < sliceWeight raws i :=
             sliceWeight_lt raws h (by omega)
           elabInlinesFrom ctx raws (i + 2) acc (sb ++ composed)
-        else if let some lit := charCommandOf name then
-          elabInlinesFrom ctx raws (i + 1) acc (sb ++ lit)
-        else if let some lit := escapes.lookup name then
+        else if let some lit := escapeOf name then
           elabInlinesFrom ctx raws (i + 1) acc (sb ++ lit)
         else if (Lex.textSymbols.lookup name).isSome then
           -- A document may define a symbol's name for itself; its definition
@@ -2671,7 +2700,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
       have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
         sliceWeight_lt raws h h
       elabInlinesFrom ctx raws raws.size acc ""
-  else if let some style := declStyles.lookup name then
+  else if let some style := declStyleOf name then
     let declCtx := { ctx with
       literalText := style == Style.mono || ctx.literalText }
     have hw : rawWeightList (raws.extract (i + 1) raws.size).toList
@@ -3614,7 +3643,8 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
           inlines := inlines.pop.push (.text t)
         break
     | _ => break
-  return if inlines.isEmpty then none else some (.para inlines)
+  if inlines.isEmpty then return none
+  return some (paraUnder (← get).flowLang inlines)
 
 /-- Store one `\title`-family declaration; `\maketitle` reads them back.
 Returns the index just past the consumed arguments, and the malformed run
@@ -6537,6 +6567,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           -- below). Mid-paragraph the marker keeps the inline reading —
           -- splitting the paragraph there would move text.
           || (cur.isEmpty && n.startsWith "@ink:")
+          || (cur.isEmpty && n.startsWith "@lang:")
           || (n != "note" &&
             ((sectionLevel n).isSome
               || declCtrl.contains n || runningCtrl.contains n || n == "define"
@@ -6578,6 +6609,11 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         have hendp : slicePars raws raws.size = 0 :=
           slicePars_end raws (Nat.le_refl _)
         elabBlocksGo ctx' raws raws.size blocks #[] gen'
+      else if n.startsWith "@lang:" then
+        -- The language switch, block form: from here forward in flow
+        -- order (the `\appendix` scope model).
+        modify (flowLangUpdate ctx' n)
+        elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
       else if n == "appendix" then
         -- Not a heading: a declaration affecting every heading after it,
         -- from here forward in flow order (the scope model body \palette

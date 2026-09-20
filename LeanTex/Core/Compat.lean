@@ -96,10 +96,7 @@ def configSkip : List (String × Nat × String × Option String) :=
     none),
    ("sloppy", 0,
     "'\\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps \
-its own and an overfull line warns by itself", none),
-   ("selectlanguage", 1,
-    "'\\selectlanguage' would change the hyphenation language; patterns stay English",
-    some "hyphenation patterns are English-only; \\page{ hyphenate = off } turns them off")]
+its own and an overfull line warns by itself", none)]
 
 /-- Beamer configuration commands: how many `{...}` arguments each carries.
 The engine has no beamer templating layer, so each is skipped whole — the
@@ -1092,7 +1089,13 @@ captions and patterns stand in" pos
       return some (← synthAt s!"\\documentclass{o}\{slides}" pos, k)
     else return none
   | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont" =>
-    let (slotArgs, j) := if name == "babelfont" then takeGroups raws start 1 else (#[], start)
+    -- `\babelfont[lang]{slot}{font}` binds a font per language (babel
+    -- manual §1.8). The option parses first — it stands before the slot —
+    -- and the binding is then dropped by name (W0369): one Latin body
+    -- face covers en/fr/de, and a per-language face buys nothing until a
+    -- non-Latin document exists. The unoptioned form is the main font.
+    let (langOpt, j0) := if name == "babelfont" then takeOpt raws start else (none, start)
+    let (slotArgs, j) := if name == "babelfont" then takeGroups raws j0 1 else (#[], start)
     let (optBefore, j) := takeOpt raws j
     let (args, k) := takeGroups raws j 1
     -- fontspec takes its features before the name or after it.
@@ -1129,6 +1132,12 @@ captions and patterns stand in" pos
         -- `UprightFont = *-Medium` under `{Inter}` names "Inter-Medium".
         let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
         parts := parts.push s!"{slot}.{variant} = \"{f}\""
+    if name == "babelfont" then
+      if let some l := langOpt then
+        say .W0369 s!"'\\babelfont[{l}]' binds a font per language; one \
+face serves every language, so the binding is dropped" pos
+          (help := "\\fonts{ body = \"...\" } names the face every language uses")
+        return some (#[], k)
     let native := s!"\\fonts\{ {dirPart}{String.intercalate ", " parts.toList} }"
     became s!"\\{name}" native pos
     return some (← synthAt native pos, k)
@@ -1461,6 +1470,38 @@ declare the furniture directly")
     let native := s!"\\page\{ leading = {v} }"
     became s!"\\{name}" native pos
     return some (← synthAt native pos, start)
+  | "selectlanguage" =>
+    -- babel's mid-document switch: from here on, in flow order (babel
+    -- manual §1.5). The marker is unforgeable (`@` never lexes into a
+    -- control word); elaboration turns it into the language attribute,
+    -- which hyphenation and both artifacts read.
+    let (args, k) := takeGroups raws start 1
+    if args.isEmpty then return none
+    let lname := rawSrc (args.getD 0 #[])
+    let tag := Locale.babelTagOf lname
+    if (Locale.forTag tag).isNone then
+      say .W0368 s!"no locale for language '{lname}'; English captions \
+and patterns stand in" pos
+        (help := "the engine ships locale records for: en, fr, de")
+    modify fun st => { st with mainLang := tag }
+    became s!"\\selectlanguage\{{lname}}" s!"the '{tag}' language attribute" pos
+    return some (#[.ctrl ("@lang:" ++ tag) pos], k)
+  | "foreignlanguage" =>
+    -- One run in another language (babel manual §1.5): the content group
+    -- carries the attribute. babel's optional argument holds locale
+    -- modifiers the engine has no reader for; the language still lands.
+    let (_, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 2
+    if h : args.size = 2 then
+      let lname := rawSrc args[0]
+      let tag := Locale.babelTagOf lname
+      if (Locale.forTag tag).isNone then
+        say .W0368 s!"no locale for language '{lname}'; English captions \
+and patterns stand in" pos
+          (help := "the engine ships locale records for: en, fr, de")
+      became s!"\\foreignlanguage\{{lname}}" s!"the '{tag}' language attribute" pos
+      return some (#[.group (#[Raw.ctrl ("@lang:" ++ tag) pos] ++ args[1]) pos], k)
+    else return none
   | "enquote" =>
     -- csquotes' quoting command: typographic quotes around the content,
     -- single for the starred form (csquotes manual §3.1). The delimiters
@@ -2000,7 +2041,21 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
       modify fun st => { st with file := saved }
       return .env n body' p
     | none =>
-      if n == "document" then
+      if n == "otherlanguage" || n == "otherlanguage*" then
+        -- The environment form of the switch: the body takes the language
+        -- attribute; the starred form differs only in date handling the
+        -- engine does not model. The first group is the language.
+        let body' ← rewriteList inBody body #[] body.toList 0 0
+        let (langArg, j) := takeGroups body' 0 1
+        let lname := rawSrc (langArg.getD 0 #[])
+        let tag := Locale.babelTagOf lname
+        if (Locale.forTag tag).isNone then
+          say .W0368 s!"no locale for language '{lname}'; English captions \
+and patterns stand in" p
+            (help := "the engine ships locale records for: en, fr, de")
+        became s!"\\begin\{{n}}\{{lname}}" s!"the '{tag}' language attribute" p
+        return .group (#[Raw.ctrl ("@lang:" ++ tag) p] ++ body'.extract j body'.size) p
+      else if n == "document" then
         -- Inside the document environment a preamble declaration is a
         -- placement defect; the flag is what the `\usepackage` arm reads.
         modify fun st => { st with inDoc := true }

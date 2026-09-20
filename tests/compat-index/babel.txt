@@ -1,7 +1,7 @@
 # source: babel user guide §1.3 — language selection commands and
 # \babelfont.
-body refuse:W0104 \selectlanguage{german}
-body refuse:W0301 \foreignlanguage{french}{x}
-body refuse:W0302 \begin{otherlanguage}{french}x\end{otherlanguage}
+body impl \selectlanguage{german}
+body impl \foreignlanguage{french}{x}
+body impl \begin{otherlanguage}{french}x\end{otherlanguage}
 pre impl \babelfont{rm}{Example Serif}
 body refuse:W0301 \iflanguage{english}{a}{b}

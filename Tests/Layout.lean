@@ -2214,6 +2214,34 @@ def hyphenChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "hyphen set is ushyphmax (definition)" (hyph "definition" == "de-f-i-n-i-tion")
   t "hyphen set is ushyphmax (monotone)" (hyph "monotone" == "mo-not-one")
   t "hyphen set is ushyphmax (toolchain)" (hyph "toolchain" == "tool-chain")
+  -- French (hyph-fr.tex, selected per language: patsOf). Expectations are
+  -- lualatex \showhyphens output under [french]{babel} on this host, the
+  -- same oracle as the English rows.
+  let frp := Hyphen.french
+  let hyphFr (w : String) : String := Id.run do
+    let breaks := Hyphen.hyphenate frp w
+    let mut out := ""
+    for (c, i) in w.toList.zipIdx do
+      if i > 0 && breaks.contains i then
+        out := out.push '-'
+      out := out.push c
+    return out
+  t "hyphen french patterns loaded" (frp.map.size > 1000)
+  t "hyphen fr considérablement" (hyphFr "considérablement" == "consi-dé-ra-ble-ment")
+  t "hyphen fr constitution" (hyphFr "constitution" == "consti-tu-tion")
+  t "hyphen fr déclaration" (hyphFr "déclaration" == "dé-cla-ra-tion")
+  -- The word boundary is Unicode (Nfc.isLetter/toLower): an accented word
+  -- hyphenates whole, capitalized included.
+  t "hyphen fr accented capital folds" (hyphFr "Bélair" == "Bé-lair")
+  -- English patterns on the same word give different (wrong) breaks: the
+  -- selection is load-bearing.
+  t "hyphen en mis-breaks french" (hyph "considérablement" != "consi-dé-ra-ble-ment")
+  -- patsOf: the one selection site (hyphenation_follows_language is the
+  -- theorem; these pin the executable readings).
+  t "patsOf main for untagged" (Layout.patsOf (some pats) none |>.isSome)
+  t "patsOf tagged run takes its own language"
+    ((Layout.patsOf (some pats) (some "fr")).map (·.map.size) == some frp.map.size)
+  t "patsOf off is off for every tag" ((Layout.patsOf none (some "fr")).isNone)
   -- leftMin=2 / rightMin=3 are enforced, so no break may strand 1 letter or 2.
   t "hyphen respects hyphenmins" ((Hyphen.hyphenate pats "typesetting").all
     fun p => p ≥ 2 && p + 3 ≤ 11)

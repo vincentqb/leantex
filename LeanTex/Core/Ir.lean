@@ -963,6 +963,12 @@ inductive Style where
   selecting upright clears italic and small caps both. -/
   | upright
   | size (name : String)
+  /-- A language switch (BCP 47 tag): `\foreignlanguage`, `\selectlanguage`,
+  babel's `otherlanguage`. Not a new `Inline` constructor — every walk
+  already recurses through `.styled` generically, and the attribute is
+  pure markup (`langWrap_text`): hyphenation patterns and the artifacts'
+  span-level language declarations read it, ink never moves. -/
+  | lang (tag : String)
   deriving Repr, BEq
 
 /-- The LaTeX 10pt size scale, per mille of the surrounding size. It lives in
@@ -1028,6 +1034,7 @@ def Style.label : Style → String
   | .medium => "medium"
   | .upright => "upright"
   | .size n => s!"size:{n}"
+  | .lang tag => s!"lang:{tag}"
 
 inductive Inline where
   | text (s : String)
@@ -4140,6 +4147,18 @@ pre-commit hook can ask a new walk for one (or for the one-line refusal
 naming why none holds). -/
 def Conserves (census : α → β) (f : α → α) : Prop :=
   ∀ x, census (f x) = census x
+
+/-- Wrap inline content in a language switch: what `\foreignlanguage`,
+`\selectlanguage`, and `otherlanguage` become. -/
+def langWrap (tag : String) (xs : Array Inline) : Array Inline :=
+  #[.styled (.lang tag) xs]
+
+/-- The language attribute is pure markup: tagging content ships exactly
+the text census the content already had — `language_attribute_text_free`,
+near-definitional because the census ignores style wrappers. -/
+theorem langWrap_text (tag : String) :
+    Conserves plainText (langWrap tag) := fun xs => by
+  simp [langWrap, plainText, plainTextList, plainTextOne]
 
 -- Nothing vanishes: dimming recolours, never removes. The text of a frame's
 -- body is identical on every handout page, so the union of what the steps

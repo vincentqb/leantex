@@ -616,6 +616,10 @@ structure TextStyle where
   smallcaps : Bool := false
   /-- Under a drawn underline; the run carries it into the set line. -/
   underline : Bool := false
+  /-- A language switch in force (`Style.lang`), a BCP 47 tag; `none` is
+  the document's main language. Hyphenation patterns select through it
+  (`patsOf`), the one reader today. -/
+  lang : Option String := none
   deriving Repr, BEq, Inhabited
 
 private inductive Tk where
@@ -731,6 +735,7 @@ private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
   -- NFSS shapes are exclusive (fntguide §2.2): upright clears both.
   | .upright => { sty with italic := false, smallcaps := false }
   | .normal => {}
+  | .lang tag => { sty with lang := some tag }
   | .size n => match Ir.sizeScale.lookup n with
     | some k => { sty with scale := k }
     | none => sty
@@ -851,7 +856,8 @@ carry `(styled font, scalar)` so the diagnostic can name the family.
 through that face's own `smcp`+`c2sc` substitution (`glyphOfSc`); it is set
 only when the styled face has one, synthesis having already rewritten the
 word otherwise. -/
-private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat)
+private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
+    (size : Sp) (fontIdx : Nat)
     (color : Ir.Color) (link : Option String) (underline : Bool) (smallcaps : Bool)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
     (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat)) :
@@ -883,14 +889,19 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
           else
             break
         let word := String.ofList run.toList
+        -- The cache key carries the language: one paragraph can mix
+        -- tagged runs, and a French word's breaks must never answer for
+        -- the same spelling under English (a letter run never contains
+        -- ':', so the key is unambiguous).
+        let key := langKey ++ ":" ++ word
         let mut breaks : Array Nat := #[]
         match pats with
         | some p =>
-          match cache[word]? with
+          match cache[key]? with
           | some b => breaks := b
           | none =>
             let b := Hyphen.hyphenate p word
-            cache := cache.insert word b
+            cache := cache.insert key b
             breaks := b
         | none => pure ()
         for (c', k) in run.zipIdx do
@@ -1860,6 +1871,32 @@ private def mathItems (e : MathEnv) (display : Bool) (body : Math.MList)
   let st : Math.MathStyle := if display then .display false else .text false
   layMathTail e st 0 (Math.degrade body.classes) none (#[], missing) body
 
+/-- The one pattern-selection site: which hyphenation table a run's text
+consults. An untagged run takes the document's (the main language's)
+table; a run tagged `Style.lang` takes its own language's — never the
+main table, so a French word under an English main is broken as French
+or not at all. `main = none` is hyphenation off (a card, `\page{
+hyphenate = off }`) and wins over any tag. -/
+def patsOf (main : Option Hyphen.Patterns) (lang : Option String) :
+    Option Hyphen.Patterns :=
+  match lang with
+  | none => main
+  | some tag => if main.isNone then none else Hyphen.forTag tag
+
+/-- `hyphenation_follows_language`: the breaks consulted for a run tagged
+ℓ are exactly its own language's patterns' — the wiring statement, held
+at the selection site. -/
+theorem hyphenation_follows_language (main : Option Hyphen.Patterns)
+    (tag : String) (h : main.isSome) :
+    patsOf main (some tag) = Hyphen.forTag tag := by
+  cases main with
+  | none => simp at h
+  | some _ => rfl
+
+/-- Hyphenation off is off for every language: no tag re-enables it. -/
+theorem patsOf_off (lang : Option String) : patsOf none lang = none := by
+  cases lang <;> rfl
+
 /-- Flatten inlines into Knuth-Plass items. The fourth component maps the
 index of a forced-break penalty to extra vertical space the document asked for
 there (`\\[1ex]`); it rides beside the items because the line breaker has no
@@ -1893,7 +1930,8 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
         else (sty, chars)
       let sz := size * sty.scale / 1000
       let (ws, m, s, c') :=
-        wordItems pats sz idx sty.color sty.link sty.underline useGsub fs font chars
+        wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz idx sty.color
+          sty.link sty.underline useGsub fs font chars
           missing substs cache
       missing := m
       substs := s

@@ -116,6 +116,7 @@ inductive DiagCode where
   | N0021
   | W0367
   | W0368
+  | W0369
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -264,6 +265,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .N0021 => ("0021", .info, "header and footer gaps differ as declared; equal gaps are the default")
   | .W0367 => ("0367", .config, "a beamerposter option outside the poster model; named and ignored")
   | .W0368 => ("0368", .degraded, "a language the engine ships no locale for; English captions and patterns stand in")
+  | .W0369 => ("0369", .degraded, "a per-language font binding; one face serves every language, so the binding is dropped")
 
 def DiagCode.digits (c : DiagCode) : String := c.spec.1
 

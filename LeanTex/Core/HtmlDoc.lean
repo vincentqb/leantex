@@ -252,6 +252,9 @@ private def markerStyleDecls : Style → Option (Array String)
   | .normal => some #[]
   | .size name => (Ir.sizeScale.lookup name).map fun k =>
       #[s!"font-size: {decMilli k}em;"]
+  -- a language changes no marker styling; the wrapper is expressible as
+  -- nothing rather than inexpressible
+  | .lang _ => some #[]
 
 private def markerColorDecl (c : Ir.Color) (name : Option String) : String :=
   match name with
@@ -1079,6 +1082,9 @@ private def styleClass : Style → String
   | .medium => "md"
   | .upright => "up"
   | .size n => "size-" ++ n
+  -- unused: the styled arm emits `.lang` as a `lang` attribute, the
+  -- declaration WCAG 2.2 SC 3.1.2 reads, never a class
+  | .lang tag => "lang-" ++ tag
 
 mutual
 
@@ -1156,6 +1162,10 @@ height: auto"
     | .emph => acc.push (Html.elem "em" kids)
     | .mono => acc.push (Html.elem "code" kids)
     | .normal => acc ++ kids
+    -- The language of a run is a declaration, not a style: the span
+    -- carries `lang` (HTML §3.2.6.2; WCAG 2.2 SC 3.1.2), which CSS
+    -- `hyphens: auto` and assistive technology both read.
+    | .lang tag => acc.push (Html.elem "span" kids #[("lang", tag)])
     | other => acc.push (Html.elem "span" kids #[("class", styleClass other)])
   | .role n body =>
     -- The class hook: the authored name survives as an addressable class,

@@ -1,7 +1,7 @@
 /-
 Differential test: leantex hyphenation vs real TeX on a word list. Run with:
 
-  lake env lean --run scripts/hyphen-diff.lean [wordlist]
+  lake env lean --run scripts/hyphen-diff.lean [wordlist] [--lang en|fr]
 
 The oracle is luatex loading THE SAME pattern set the engine embeds
 (hyph-en-us.tex / ushyphmax), with matching hyphenmins. Note that plain
@@ -51,7 +51,25 @@ def defaultWords : IO (Array String) := do
       out := out.push w
   return out
 
+structure DiffLang where
+  input : String
+  pats : Hyphen.Patterns
+  leftMin : Nat
+  rightMin : Nat
+
 def main (args : List String) : IO UInt32 := do
+  let lang := match args with
+    | "--lang" :: l :: _ => l
+    | _ :: "--lang" :: l :: _ => l
+    | _ => "en"
+  let args := args.filter (fun a => a != "--lang" && a != lang)
+  let some dl := (match lang with
+    | "en" => some { input := "hyph-en-us", pats := Hyphen.load
+                     leftMin := Locale.en.leftMin, rightMin := Locale.en.rightMin : DiffLang }
+    | "fr" => some { input := "hyph-fr", pats := Hyphen.french
+                     leftMin := Locale.fr.leftMin, rightMin := Locale.fr.rightMin : DiffLang }
+    | _ => none)
+    | return (← die 2 s!"no pattern table for '{lang}'")
   let haveLuatex ← try
     pure ((← IO.Process.output { cmd := "luatex", args := #["--version"] }).exitCode == 0)
   catch _ => pure false
@@ -71,8 +89,8 @@ def main (args : List String) : IO UInt32 := do
   try
     let mut oracleTex := #["\\newlanguage\\probelang",
       "\\language=\\probelang",
-      "\\lefthyphenmin=2 \\righthyphenmin=3",
-      "\\input hyph-en-us"]
+      s!"\\lefthyphenmin={dl.leftMin} \\righthyphenmin={dl.rightMin}",
+      s!"\\input {dl.input}"]
     for w in words do
       oracleTex := oracleTex.push s!"\\showhyphens\{{w}}"
     oracleTex := oracleTex.push "\\end"
@@ -89,7 +107,7 @@ def main (args : List String) : IO UInt32 := do
     if oracle.size != total then
       return (← die 2 s!"oracle produced {oracle.size} lines for {total} words; cannot compare")
 
-    let pats := Hyphen.load
+    let pats := dl.pats
     let mut mismatches : Array String := #[]
     for (w, i) in words.zipIdx do
       let ours := showHyphens pats w

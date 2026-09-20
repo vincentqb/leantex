@@ -1676,6 +1676,42 @@ def localeChecks (ref : IO.Ref (List String)) : IO Unit := do
     | _ => acc
   t "bibliography months are worded in the main language"
     ((bibText.splitOn "janvier").length == 2)
+  -- The language switches: \foreignlanguage tags a run, \selectlanguage
+  -- tags the paragraphs after it (from-here-forward flow order), and the
+  -- otherlanguage environment tags its body. The attribute is Style.lang
+  -- — pure markup, langWrap_text — never a new Inline.
+  let (df, dsf) := elabStr "aa \\foreignlanguage{french}{du texte} bb"
+  t "foreignlanguage tags its run" (!dsf.any (·.severity != .note) &&
+    df.body == #[.para #[.text "aa ",
+      .styled (.lang "fr") #[.text "du texte"], .text " bb"]])
+  let (dsl, _) := elabStr
+    "\\documentclass{article}\n\\begin{document}\nplain\n\n\\selectlanguage{french}\nen français\n\\end{document}"
+  t "selectlanguage tags the paragraphs after it"
+    (dsl.body == #[.para #[.text "plain"],
+      .para #[.styled (.lang "fr") #[.text "en français"]]])
+  let (dol, _) := elabStr
+    "\\documentclass{article}\n\\begin{document}\nx \\begin{otherlanguage}{german}Wort\\end{otherlanguage} y\n\\end{document}"
+  t "otherlanguage tags its body"
+    (dol.body == #[.para #[.text "x ",
+      .styled (.lang "de") #[.text "Wort"], .text " y"]])
+  -- A switch back to the main language clears the attribute.
+  let (dback, _) := elabStr
+    "\\documentclass{article}\n\\begin{document}\n\\selectlanguage{french}\nfr\n\n\\selectlanguage{english}\nen\n\\end{document}"
+  t "switching back to main clears the attribute"
+    (dback.body == #[.para #[.styled (.lang "fr") #[.text "fr"]],
+      .para #[.text "en"]])
+  -- \babelfont[lang] parses — the option stands before the slot — and
+  -- the per-language binding is dropped by name, never an error cascade.
+  let (dbf, dsbf) := elabStr
+    "\\documentclass{article}\n\\babelfont[french]{rm}{Example Serif}\n\\begin{document}\nx\n\\end{document}"
+  t "babelfont language binding drops named, no cascade"
+    ((dsbf.map (·.code)).contains "W0369" &&
+      !dsbf.any (fun d => d.code == "E0320" || d.code == "E0313") &&
+      dbf.fonts.body.isNone)
+  let (dbf2, dsbf2) := elabStr
+    "\\documentclass{article}\n\\babelfont{rm}{Example Serif}\n\\begin{document}\nx\n\\end{document}"
+  t "unoptioned babelfont still names the main font"
+    (!dsbf2.any (·.code == "W0369") && dbf2.fonts.body == some "Example Serif")
 
 def parseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
