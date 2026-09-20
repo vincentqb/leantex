@@ -1141,6 +1141,21 @@ def main (args : List String) : IO UInt32 := do
     ["imageSrcsInline", "setAltInline", "setAltBlock", "flattenLeadStep"]
   for (f, lines) in coreTexts do
     if f.startsWith "LeanTex/Core/" then
+      -- A leaf projection is not a walk: a def handed to `foldInlines`/
+      -- `foldBlocks`/`mapInline`/`mapBlock` reads one node while the shared
+      -- fold recurses, so its catch-all is the fold's own totality, not a
+      -- hole (AGENTS: a new collector is a fold leaf). Every identifier
+      -- following a fold call on its line is exempt.
+      let folds := ["foldInlines", "foldBlocks", "mapInline", "mapBlock"]
+      let leafNames : Array String := lines.foldl (fun acc l =>
+        let t := stripLineComment l
+        match folds.find? (fun fd => hasWord t fd) with
+        | none => acc
+        | some fd =>
+          let after := (t.splitOn fd).drop 1 |> String.intercalate fd
+          (after.splitOn " ").foldl (fun acc w =>
+            let w := (w.takeWhile (fun c => isWordChar c || c == '.')).toString
+            if w.isEmpty then acc else acc.push w) acc) #[]
       let mut cur := ""
       let mut curWalk := false
       for i in [0:lines.size] do
@@ -1150,7 +1165,8 @@ def main (args : List String) : IO UInt32 := do
           let rest := (if t.startsWith "private def " then t.drop 12 else t.drop 4).toString
           cur := (rest.takeWhile (fun c => isWordChar c || c == '.')).toString
           curWalk := hasWord t "Inline" || hasWord t "Block"
-        if curWalk && wildcardThrough l && !armAllow.contains cur then
+        if curWalk && wildcardThrough l && !armAllow.contains cur
+            && !leafNames.contains cur then
           say s!"pre-commit: wildcard arm in the IR walk `{cur}` ({f}:{i + 1}):
   {l.trimAscii}
   Spell every constructor, or the next Ir constructor silently falls
