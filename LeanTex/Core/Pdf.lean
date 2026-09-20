@@ -430,45 +430,18 @@ viewer's document panel — so the spelling is the spec's, never the
 source's bytes. Byte strings (URIs) stay `pdfString`. -/
 private def pdfTextString (s : String) : String :=
   if s.toList.all (fun c => c.toNat < 0x80) then s!"({pdfString s})"
-  else Id.run do
-    let hexDigit (v : Nat) : Char :=
-      if v < 10 then Char.ofNat ('0'.toNat + v) else Char.ofNat ('A'.toNat + v - 10)
-    let mut out := "<FEFF"
-    for c in s.toList do
-      let push16 (out : String) (v : Nat) : String :=
-        (((out.push (hexDigit (v / 4096 % 16))).push
-          (hexDigit (v / 256 % 16))).push
-          (hexDigit (v / 16 % 16))).push (hexDigit (v % 16))
-      let n := c.toNat
-      if n < 0x10000 then
-        out := push16 out n
-      else
-        -- Outside the BMP: the surrogate pair (Unicode §3.9, UTF-16).
-        let m := n - 0x10000
-        out := push16 out (0xD800 + m / 0x400)
-        out := push16 out (0xDC00 + m % 0x400)
-    return out ++ ">"
-
-/-- Escape text for XML character data. -/
-private def xmlEscape (s : String) : String := Id.run do
-  let mut out := ""
-  for c in s.toList do
-    if c == '&' then out := out ++ "&amp;"
-    else if c == '<' then out := out ++ "&lt;"
-    else if c == '>' then out := out ++ "&gt;"
-    else out := out.push c
-  return out
+  else s.toList.foldl (· ++ utf16Hex ·) "<FEFF" ++ ">"
 
 /-- XMP packet mirroring the Info dictionary; PDF 2.0 expects metadata here. -/
 private def xmpPacket (info : Ir.Meta) : String :=
   let elem (tag : String) (v : Option String) : String :=
     match v with
     | some s =>
-      s!"        <{tag}><rdf:Alt><rdf:li xml:lang=\"x-default\">{xmlEscape s}</rdf:li></rdf:Alt></{tag}>\n"
+      s!"        <{tag}><rdf:Alt><rdf:li xml:lang=\"x-default\">{Html.escapeText s}</rdf:li></rdf:Alt></{tag}>\n"
     | none => ""
   let seqElem (tag : String) (v : Option String) : String :=
     match v with
-    | some s => s!"        <{tag}><rdf:Seq><rdf:li>{xmlEscape s}</rdf:li></rdf:Seq></{tag}>\n"
+    | some s => s!"        <{tag}><rdf:Seq><rdf:li>{Html.escapeText s}</rdf:li></rdf:Seq></{tag}>\n"
     | none => ""
   "<?xpacket begin=\"\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n" ++
   "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\">\n" ++
@@ -484,10 +457,10 @@ private def xmpPacket (info : Ir.Meta) : String :=
   -- resource within a given context" (XMP Specification Part 1 §8.3,
   -- ISO 16684-1, Dublin Core namespace; simple Text, not Alt/Seq).
   (match info.url with
-   | some u => s!"        <dc:identifier>{xmlEscape u}</dc:identifier>\n"
+   | some u => s!"        <dc:identifier>{Html.escapeText u}</dc:identifier>\n"
    | none => "") ++
   (match info.keywords with
-   | some k => s!"        <pdf:Keywords>{xmlEscape k}</pdf:Keywords>\n"
+   | some k => s!"        <pdf:Keywords>{Html.escapeText k}</pdf:Keywords>\n"
    | none => "") ++
   "        <pdf:Producer>leantex</pdf:Producer>\n" ++
   "    </rdf:Description>\n" ++
