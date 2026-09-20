@@ -50,6 +50,11 @@ structure Config where
   model): the frame arm then realizes its declared vertical distribution
   with flex spacers, which every other class's flow has no use for. -/
   deck : Bool := false
+  /-- The document's page geometry, from the document at `emitTree`'s
+  entry: the deck's image sizing reads the stage and its margins to state
+  every dimension as a share of the stage (`deckStageMilli`), never a
+  print length on a screen. -/
+  page : Ir.PageSpec := {}
   /-- The accumulated custom-property redefinitions the siblings from here
   on carry on their own style attribute. Properties on an element inherit
   into it, so styling each following sibling realizes "from here on"
@@ -1209,35 +1214,63 @@ theorem deckStepCss_guarded (covered : String) :
     ∃ rule, deckStepCss covered = rule ++ deckStepGuard :=
   ⟨_, rfl⟩
 
-/-- The deck's body size over the viewport height, in milli-vh: the very
-ratio the PDF stage declares — `fontSize` over the page height
-(`Ir.slidesStage169`'s 90mm carries beamer's 11pt as ≈4.31% of the stage;
-beamer user guide §18.2.1 for the size, the stage for the height). The
-HTML deck sets its type from this number, so the two artifacts show the
-same type-to-stage proportion whatever the screen's size. `Int` binders,
-not `Sp`, so `omega` can read the ratio statement below. -/
-def deckFontMilliVh (fontSize height : Int) : Int :=
-  fontSize * 100000 / height
+/-- A length's share of the deck stage, in milli-percent: the one
+projection every deck emission rides when it states a PDF stage length
+against the viewport — the type size over the stage height, an image
+dimension over the stage width or height. `Int` binders, not `Sp`, so
+`omega` can read the ratio statements below. -/
+def deckStageMilli (x stage : Int) : Int :=
+  x * 100000 / stage
 
-/-- The cross-backend ratio, exact up to the printed milli: the emitted
-milli-vh value is the PDF's fontSize/height ratio, truncated — the value
-times the stage height never exceeds the fontSize (at the 100000 scale)
-and falls short by less than one stage height. `backend_gaps_agree`'s
-mold: the shared thing is the ratio, each backend realizing it in its own
-context's unit (the PDF in its stage, the screen in its viewport). -/
-theorem deck_type_is_stage_ratio (fontSize height : Int) (hh : 0 < height) :
-    deckFontMilliVh fontSize height * height ≤ fontSize * 100000 ∧
-    fontSize * 100000 < deckFontMilliVh fontSize height * height + height := by
-  have hne : height ≠ 0 := by omega
-  have hmod := Int.emod_nonneg (fontSize * 100000) hne
-  have hlt := Int.emod_lt_of_pos (fontSize * 100000) hh
-  have heq := Int.mul_ediv_add_emod (fontSize * 100000) height
-  unfold deckFontMilliVh
-  rw [Int.mul_comm (fontSize * 100000 / height) height]
-  generalize hr : fontSize * 100000 % height = r at hmod hlt heq
-  generalize hp : height * (fontSize * 100000 / height) = p at heq ⊢
-  generalize ha : fontSize * 100000 = a at heq ⊢
+/-- The projection is the ratio, exact up to the printed milli: the
+emitted value times the stage never exceeds the length (at the 100000
+scale) and falls short by less than one stage. The fact both ratio
+statements below instantiate. -/
+theorem deckStageMilli_share (x stage : Int) (hs : 0 < stage) :
+    deckStageMilli x stage * stage ≤ x * 100000 ∧
+    x * 100000 < deckStageMilli x stage * stage + stage := by
+  have hne : stage ≠ 0 := by omega
+  have hmod := Int.emod_nonneg (x * 100000) hne
+  have hlt := Int.emod_lt_of_pos (x * 100000) hs
+  have heq := Int.mul_ediv_add_emod (x * 100000) stage
+  unfold deckStageMilli
+  rw [Int.mul_comm (x * 100000 / stage) stage]
+  generalize hr : x * 100000 % stage = r at hmod hlt heq
+  generalize hp : stage * (x * 100000 / stage) = p at heq ⊢
+  generalize ha : x * 100000 = a at heq ⊢
   omega
+
+/-- The cross-backend type ratio, exact up to the printed milli: the
+deck's body size over the viewport height is the very ratio the PDF
+stage declares — `fontSize` over the page height (`Ir.slidesStage169`'s
+90mm carries beamer's 11pt as ≈4.31% of the stage; beamer user guide
+§18.2.1 for the size, the stage for the height) — so the two artifacts
+show the same type-to-stage proportion whatever the screen's size.
+`backend_gaps_agree`'s mold: the shared thing is the ratio, each backend
+realizing it in its own context's unit (the PDF in its stage, the screen
+in its viewport). -/
+theorem deck_type_is_stage_ratio (fontSize height : Int) (hh : 0 < height) :
+    deckStageMilli fontSize height * height ≤ fontSize * 100000 ∧
+    fontSize * 100000 < deckStageMilli fontSize height * height + height :=
+  deckStageMilli_share fontSize height hh
+
+/-- The cross-backend image ratio, the same mold: the deck's HTML states
+an image dimension as its share of the stage (`deckStageMilli`, printed
+in `vw`/`dvh` — the stage realized as the viewport, CSS Values 4 §6.1.2),
+and the PDF's image box is `Image.resolveSize` over the same request
+(graphicx's semantics, sourced at `resolveSize`). For a declared width
+the two are one number: the box *is* the resolved request (the first
+conjunct, definitional), and the emitted milli times the stage brackets
+the box's share to within one printed milli — both are `size / stage`. -/
+theorem image_share_agrees (l : Image.Len) (iW iH textW textH stage : Int)
+    (hs : 0 < stage) :
+    (Image.resolveSize { width := some l } iW iH textW textH).1
+        = l.resolve textW textH ∧
+    deckStageMilli (l.resolve textW textH) stage * stage
+        ≤ (Image.resolveSize { width := some l } iW iH textW textH).1 * 100000 ∧
+    (Image.resolveSize { width := some l } iW iH textW textH).1 * 100000
+        < deckStageMilli (l.resolve textW textH) stage * stage + stage :=
+  ⟨rfl, deckStageMilli_share (l.resolve textW textH) stage hs⟩
 
 /-- The slide sections' stylesheet, split by class. A deck (the `slides`
 class) is one tree with two media renderings: on screen a paged
@@ -1278,7 +1311,7 @@ private def slideCss (doc : Doc) : String :=
     -- scale step in em to ride the same base.
     "body { padding: 0; }\n" ++
     "main { max-width: none; margin: 0; display: flex;\n" ++
-    s!"  font-size: {milliFactor (deckFontMilliVh doc.page.fontSize doc.page.height).toNat}vh; }\n" ++
+    s!"  font-size: {milliFactor (deckStageMilli doc.page.fontSize doc.page.height).toNat}vh; }\n" ++
     "section.slide, section.section-page { width: 100vw; flex: 0 0 100vw;\n" ++
     "  min-height: 100dvh; scroll-snap-align: start;\n" ++
     "  scroll-snap-stop: always; display: flex; flex-direction: column;\n" ++
@@ -1592,10 +1625,18 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- The typed tree and the escaper carry the attributes; the intrinsic
     -- pixel size rides as width/height so the page never reflows while the
     -- file loads, and the requested size becomes CSS. A fraction of the
-    -- text width is a percentage — HTML's measure is the container. A
-    -- `\textheight` fraction has no CSS analog and the intrinsic size
-    -- stands. `height: auto` (or width) keeps the browser on the intrinsic
-    -- ratio, the same invariant the PDF path proves.
+    -- text width is a percentage — HTML's measure is the container, which
+    -- is also what the PDF resolves it against (`Layout.collectPara`: the
+    -- current measure, minipage semantics). In flow classes an absolute
+    -- length is `pt` — paper is paper — and a `\textheight` fraction has
+    -- no CSS analog, so the intrinsic size stands. On the paged deck
+    -- (`cfg.deck`) the stage is the viewport, so every stage-resolved
+    -- dimension is emitted as its share of the stage (`deckStageMilli`,
+    -- `image_share_agrees`): absolute lengths and `\textheight` fractions
+    -- become `vw`/`dvh` — a print length on a stage that is the viewport
+    -- was the "very small image" defect. `height: auto` (or width) keeps
+    -- the browser on the intrinsic ratio, the same invariant the PDF path
+    -- proves.
     let info? := (cfg.imgs.find? src).bind fun k => (cfg.imgs.get? k).bind (·.info)
     -- A bare graphicx name resolved to a file with an extension: the link
     -- must name the file on disk, not the spelling in the source.
@@ -1608,8 +1649,20 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
       else if l.sp != 0 && l.tw == 0 && l.th == 0 then
         some s!"{Dim.Sp.toPtString l.sp}pt"
       else none
-    let wCss := size.width.bind cssDim
-    let hCss := size.height.bind cssDim
+    let deckDim (l : Image.Len) (vertical : Bool) : Option String :=
+      if l.tw != 0 && l.sp == 0 && l.th == 0 then
+        some (decMilli (l.tw * 100) ++ "%")
+      else if l.tw == 0 then
+        let (stage, unit) :=
+          if vertical then (cfg.page.height, "dvh") else (cfg.page.width, "vw")
+        let textW := cfg.page.width - 2 * cfg.page.hmargin
+        let textH := cfg.page.height - 2 * cfg.page.vmargin
+        some (decMilli (deckStageMilli (l.resolve textW textH) stage) ++ unit)
+      else none
+    let dim (l : Image.Len) (vertical : Bool) : Option String :=
+      if cfg.deck then deckDim l vertical else cssDim l
+    let wCss := size.width.bind (dim · false)
+    let hCss := size.height.bind (dim · true)
     let style : Option String :=
       match wCss, hCss with
       | some w, some h =>
@@ -1621,8 +1674,11 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
         if size.width.isNone && size.height.isNone &&
             (size.scaleNum != 1 || size.scaleDen != 1) then
           info?.map fun inf =>
-            s!"width: {Dim.Sp.toPtString (inf.width * size.scaleNum / size.scaleDen)}pt; \
-height: auto"
+            let scaled := inf.width * size.scaleNum / size.scaleDen
+            if cfg.deck then
+              s!"width: {decMilli (deckStageMilli scaled cfg.page.width)}vw; height: auto"
+            else
+              s!"width: {Dim.Sp.toPtString scaled}pt; height: auto"
         else none
     let attrs := #[("src", href), ("alt", alt)] ++
       (match info? with
@@ -2572,7 +2628,8 @@ def emitTree (cfg : Config) (doc : Doc) :
   let cfg := { cfg with styles := doc.styles
                         pal := doc.palette
                         tokens := doc.tokens
-                        deck := doc.docClass.record.model == .frame }
+                        deck := doc.docClass.record.model == .frame
+                        page := doc.page }
   -- The themed section page: in a slides document with progress keys, a
   -- top-level section becomes its own deck section carrying the position.
   let themedSections := doc.docClass.record.model == .frame &&

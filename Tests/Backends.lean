@@ -907,6 +907,54 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
        !has page "scroll-state" && !has page "ltx-uncover" &&
        has page "section.slide { border:")
 
+/-- Rubber image sizes in the deck: the stage is the viewport, so every
+stage-resolved image dimension ships as its share of the stage
+(`HtmlDoc.image_share_agrees`) — `vw`/`dvh` for absolute lengths,
+`\textheight` fractions and bare scales; `%` for the `\textwidth`
+fraction both backends resolve against the local measure — and the
+deck's HTML carries no `pt` image dimension (the "very small image"
+defect: a print length on a stage that is the viewport). Flow classes
+keep the print reading untouched: paper is paper. -/
+def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let imgs := "\\includegraphics[width=0.5\\textwidth]{a.png}\n\n" ++
+    "\\includegraphics[height=0.4\\textheight]{a.png}\n\n" ++
+    "\\includegraphics[width=5cm]{a.png}\n\n" ++
+    "\\includegraphics[scale=0.5]{a.png}"
+  -- 144 px at the default density is 144 pt intrinsic width.
+  let info : Image.Info := { format := .png
+                             pxW := 144
+                             pxH := 72 }
+  let store : Image.Store := { entries := #[{ src := "a.png"
+                                              info := some info }] }
+  let (doc, ds) := elabStr (deck169 ""
+    ("\\begin{frame}{Pics}\n" ++ imgs ++ "\n\\end{frame}"))
+  t "deck image fixture elaborates clean" ds.isEmpty
+  let html := (HtmlDoc.emit { imgs := store } doc).1
+  let has (s : String) : Bool := (html.splitOn s).length ≥ 2
+  let count (s : String) : Nat := (html.splitOn s).length - 1
+  t "a textwidth fraction stays the measure's percentage"
+    (has "width: 50%; height: auto")
+  t "a textheight fraction is its share of the stage height, in dvh"
+    (has "dvh; width: auto")
+  t "an absolute length and a bare scale are shares of the stage width"
+    (count "vw; height: auto" == 2)
+  t "the deck carries no pt image dimension"
+    (((html.splitOn "<img").drop 1).all fun s =>
+      (((s.splitOn ">").headD "").splitOn "pt").length == 1)
+  -- The flow reading, untouched: pt for the absolute length and the
+  -- scale, % for the fraction, the intrinsic size for the textheight
+  -- fraction (no CSS analog on paper).
+  let (art, artDs) := elabStr (dvDoc "" imgs)
+  t "flow image fixture elaborates clean" artDs.isEmpty
+  let artHtml := (HtmlDoc.emit { imgs := store } art).1
+  let hasA (s : String) : Bool := (artHtml.splitOn s).length ≥ 2
+  t "flow keeps the print reading: pt lengths, no viewport unit"
+    (hasA "width: 50%; height: auto" &&
+     hasA "pt; height: auto" &&
+     hasA "width: 72pt; height: auto" &&
+     !hasA "dvh" && !hasA "vw")
+
 /-- The paged deck's structure: a frame's declared vertical distribution
 reaches the artifact as flex spacers carrying the PDF's own ratios — the
 two backends state one vdist table (a backend may not read another, so
