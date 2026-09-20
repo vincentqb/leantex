@@ -1570,21 +1570,31 @@ private def stripMathMeta (ctx : Ctx) (body : Array Raw) :
     else break
   return (out, keys, nonum)
 
+/-- A decimal factor of a named measure, in permille: `0.48\textwidth`,
+`.5\linewidth`, or a bare suffix (a factor of one, as TeX reads a
+coefficient-less internal dimen). `none` when `src` does not end in one of
+`suffixes`, or its factor does not read. The three fraction-of-measure
+readers — `imageLen`, `colWidth`, `columnWidth` — are its wrappers. -/
+private def measureFrac (suffixes : List String) (src : String) :
+    Option Int := Id.run do
+  let s := src.trimAscii.toString
+  for suffix in suffixes do
+    if s.endsWith suffix then
+      let f := (s.dropEnd suffix.length).toString.trimAscii.toString
+      if f.isEmpty then return some 1000
+      return (Decl.parseDecimal f).map fun (m, sc) => m * 1000 / sc
+  return none
+
 /-- One `\includegraphics` dimension: a factor of `\textwidth` (or its
 `\linewidth`/`\columnwidth` spellings) or `\textheight`, or an absolute
 length. Font-relative units are refused — an image has no font size. -/
 private def imageLen (src : String) : Option Image.Len := Id.run do
   let s := src.trimAscii.toString
-  let factor (f : String) : Option (Int × Nat) :=
-    let f := f.trimAscii.toString
-    if f.isEmpty then some (1, 1) else Decl.parseDecimal f
-  for suffix in ["\\textwidth", "\\linewidth", "\\columnwidth"] do
-    if s.endsWith suffix then
-      return (factor ((s.dropEnd suffix.length).toString)).map
-        fun (m, sc) => { tw := m * 1000 / sc }
+  if ["\\textwidth", "\\linewidth", "\\columnwidth"].any (s.endsWith ·) then
+    return (measureFrac ["\\textwidth", "\\linewidth", "\\columnwidth"] s).map
+      fun p => { tw := p }
   if s.endsWith "\\textheight" then
-    return (factor ((s.dropEnd "\\textheight".length).toString)).map
-      fun (m, sc) => { th := m * 1000 / sc }
+    return (measureFrac ["\\textheight"] s).map fun p => { th := p }
   match Decl.parseLength s with
   | some l => return if l.em == 0 && l.ex == 0 then some { sp := l.sp } else none
   | none => return none
@@ -1594,11 +1604,9 @@ private def imageLen (src : String) : Option Image.Len := Id.run do
 `none` is unreadable. -/
 private def colWidth (src : String) : Option Ir.ColWidth := Id.run do
   let s := src.trimAscii.toString
-  for suffix in ["\\linewidth", "\\textwidth", "\\columnwidth"] do
-    if s.endsWith suffix then
-      let f := (s.dropEnd suffix.length).toString.trimAscii.toString
-      if f.isEmpty then return some (.frac 1000)
-      return (Decl.parseDecimal f).map fun (m, sc) => .frac (m * 1000 / sc).toNat
+  if ["\\linewidth", "\\textwidth", "\\columnwidth"].any (s.endsWith ·) then
+    return (measureFrac ["\\linewidth", "\\textwidth", "\\columnwidth"] s).map
+      fun p => .frac p.toNat
   match Decl.parseLength s with
   | some l =>
     return if l.em == 0 && l.ex == 0 then some (.abs l.sp) else none
@@ -2212,9 +2220,40 @@ private def warnOptionRun (ctx : Ctx) (run : String) (name : String)
     s!"'{run}' went with unknown command '\\{name}'; an option run is not content" pos
     (help := "content, not options? start the '[' on the next line")
 
+/-- The one W0304: a palette name that resolves to nothing keeps its
+content uncoloured. Both colour doors — the inline `\textcolor` arm and
+the flow block form — speak through here, so the message has one
+spelling. Outside the knot. -/
+private def warnPaletteMiss (ctx : Ctx) (key : String) (pos : Pos) : EM Unit :=
+  warnOnce ctx ("palette:" ++ key) .W0304
+    s!"'{key}' is not in the palette; content kept uncoloured" pos
+    (help := if ctx.palette.entries.isEmpty then
+        "declare colours with \\palette{ name = #RRGGBB }"
+      else s!"declared: {String.intercalate ", "
+        (ctx.palette.entries.toList.map (·.1))}")
+
+/-- The one W0105 for an overlay specification the step model cannot
+number, outside the knot: one spelling for its three doors. -/
+private def warnOverlaySpec (ctx : Ctx) (w : String) (pos : Pos) : EM Unit :=
+  warnOnce ctx "spec:overlay" .W0105
+    s!"overlay specification '{w}' does not name a step; its content is \
+shown on every step" pos
+    (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
+specs are not modelled")
+
+/-- The one W0105 for `\alt` without a numbered specification, outside
+the knot. -/
+private def warnAltSpec (ctx : Ctx) (pos : Pos) : EM Unit :=
+  warnOnce ctx "spec:overlay" .W0105
+    "'\\alt' without a numbered specification shows both \
+alternatives on every step" pos
+    (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
+specs are not modelled")
+
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
 seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd
 seal warnMisplacedDecl warnReservedCtrl warnOptionRun
+seal warnPaletteMiss warnOverlaySpec warnAltSpec
 seal argText skipBracketRun bracketRunSrc
 seal warnUnclosed warnDroppedArgs
 
@@ -2878,12 +2917,7 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
         -- The colour is unresolvable; the content is not. Keeping it
         -- uncoloured is the best-effort contract: a wrong colour beats
         -- a missing word.
-        warnOnce ctx ("palette:" ++ key) .W0304
-          s!"'{key}' is not in the palette; content kept uncoloured" pos
-          (help := if ctx.palette.entries.isEmpty then
-              "declare colours with \\palette{ name = #RRGGBB }"
-            else s!"declared: {String.intercalate ", "
-              (ctx.palette.entries.toList.map (·.1))}")
+        warnPaletteMiss ctx key pos
         let acc := flushText acc sb
         let inner ← elabInlines ctx body
         elabInlinesFrom ctx raws (j2 + 1) (acc ++ inner) ""
@@ -3012,11 +3046,7 @@ def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
             sliceWeight_lt raws h h
           elabInlinesFrom ctx raws raws.size (acc.push (.step n last inner)) ""
       | none =>
-        warnOnce ctx "spec:overlay" .W0105
-          s!"overlay specification '{w}' does not name a step; its content is \
-shown on every step" pos
-          (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
-specs are not modelled")
+        warnOverlaySpec ctx w pos
         have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
           sliceWeight_lt raws h (by omega)
         elabInlinesFrom ctx raws (j + 1) acc sb
@@ -3054,11 +3084,7 @@ specs are not modelled")
           elabInlinesFrom ctx raws (j3 + 1)
             ((acc.push (.step n last ia)).push (.step 1 (some (n - 1)) ib)) ""
         | none =>
-          warnOnce ctx "spec:overlay" .W0105
-            "'\\alt' without a numbered specification shows both \
-alternatives on every step" pos
-            (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
-specs are not modelled")
+          warnAltSpec ctx pos
           let ia ← elabInlines ctx ga
           let ib ← elabInlines ctx gb
           elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia ++ ib) ""
@@ -3078,11 +3104,7 @@ specs are not modelled")
         have hadv : sliceWeight raws (j3 + 1) < sliceWeight raws i :=
           sliceWeight_lt raws h (by omega)
         let acc := flushText acc sb
-        warnOnce ctx "spec:overlay" .W0105
-          "'\\alt' without a numbered specification shows both \
-alternatives on every step" pos
-          (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
-specs are not modelled")
+        warnAltSpec ctx pos
         let ia ← elabInlines ctx ga
         let ib ← elabInlines ctx gb
         elabInlinesFrom ctx raws (j3 + 1) (acc ++ ia ++ ib) ""
@@ -3259,6 +3281,7 @@ unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 unseal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
 unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd
 unseal warnMisplacedDecl warnReservedCtrl warnOptionRun
+unseal warnPaletteMiss warnOverlaySpec warnAltSpec
 unseal argText skipBracketRun bracketRunSrc
 unseal warnUnclosed warnDroppedArgs
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
@@ -3378,18 +3401,15 @@ private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
 TeX reads a coefficient-less internal dimen. An absolute length is not
 modelled. -/
 private def columnWidth (ctx : Ctx) (src : String) : Option Nat := Id.run do
-  let mut s := src.trimAscii.toString
-  let mut stripped := false
-  for suffix in ["\\textwidth", "\\linewidth", "\\columnwidth"] do
-    if s.endsWith suffix then
-      s := ((s.dropEnd suffix.length).trimAscii).toString
-      stripped := true
-  if s.isEmpty then return if stripped then some 1000 else none
+  let s := src.trimAscii.toString
+  if ["\\textwidth", "\\linewidth", "\\columnwidth"].any (s.endsWith ·) then
+    return (measureFrac ["\\textwidth", "\\linewidth", "\\columnwidth"] s).bind
+      fun p => if 0 ≤ p then some p.toNat else none
   -- A declared token names the width (`\begin{column}{\colwidth}`, the
   -- beamerposter idiom): its resolved length against the page's text
   -- width, the same permille every fraction spelling produces — W0314
   -- retires exactly where the token resolves.
-  if !stripped && s.startsWith "\\" then
+  if s.startsWith "\\" then
     let name := (s.drop 1).toString.trimAscii.toString
     match ctx.tokens.find? name with
     | some g =>
@@ -3506,14 +3526,8 @@ private def inkFlowPalette (ctx : Ctx) (marker : String) : Option Ir.Palette :=
     ctx.palette.declare "fg" c
 
 /-- The W0304 the inline colour arm speaks, for the block form. -/
-private def warnInkUnknown (ctx : Ctx) (marker : String) (pos : Pos) : EM Unit := do
-  let key := (marker.drop "@ink:".length).toString
-  warnOnce ctx ("palette:" ++ key) .W0304
-    s!"'{key}' is not in the palette; content kept uncoloured" pos
-    (help := if ctx.palette.entries.isEmpty then
-        "declare colours with \\palette{ name = #RRGGBB }"
-      else s!"declared: {String.intercalate ", "
-        (ctx.palette.entries.toList.map (·.1))}")
+private def warnInkUnknown (ctx : Ctx) (marker : String) (pos : Pos) : EM Unit :=
+  warnPaletteMiss ctx ((marker.drop "@ink:".length).toString) pos
 
 /-- The block form's whole effect but the recursion: declare the flow ink
 (the palette with `fg` resolved) and bump the flow state, or warn. One
@@ -3880,6 +3894,17 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   if inlines.isEmpty then return none
   return some (paraUnder (← get).flowLang inlines)
 
+/-- Store one `\title`-family part; both doors — the body's
+`takeTitleDecl` and the preamble's `.titleDecl` arm — write through
+here. -/
+private def storeTitlePart (name : String) (content : Array Inline) : EM Unit :=
+  modify fun st => match name with
+    | "title" => { st with title := some content }
+    | "subtitle" => { st with subtitle := some content }
+    | "author" => { st with author := some content }
+    | "institute" => { st with institute := some content }
+    | _ => { st with date := some content }
+
 /-- Store one `\title`-family declaration; `\maketitle` reads them back.
 Returns the index just past the consumed arguments, and the malformed run
 of an unclosed optional argument for the caller to keep where content can
@@ -3893,13 +3918,7 @@ private def takeTitleDecl (ctx : Ctx) (name : String) (raws : Array Raw)
   let (⟨j, hj⟩, recovered, junk) ← skipOptArg ctx name raws start pos
   match raws[j]? with
   | some (.group body _) =>
-    let content ← elabInlines ctx body
-    modify fun st => match name with
-      | "title" => { st with title := some content }
-      | "subtitle" => { st with subtitle := some content }
-      | "author" => { st with author := some content }
-      | "institute" => { st with institute := some content }
-      | _ => { st with date := some content }
+    storeTitlePart name (← elabInlines ctx body)
     return (⟨j + 1, by omega⟩, junk)
   | _ =>
     if recovered then
@@ -4099,6 +4118,25 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
           (help := "lengths look like 10pt, 1.5ex, 2em, a + 2b, or 0.6 * other-token")
   return acc
 
+
+/-- The `\palette` option run: `decorative` marks the block's entries as
+deliberately low-contrast and exempt from the pairing check. An
+unrecognised option skips the block (W0316) rather than applying it as the
+base palette — a variant block applied as base would silently restyle the
+document. Returns (decorative, skipBlock); both `\palette` doors — the
+preamble's `.palette` arm and the body arm — read their options here. -/
+private def parsePaletteOpts (ctx : Ctx) (src : String) (pos : Pos) :
+    EM (Bool × Bool) := do
+  let mut decorative := false
+  let mut skipBlock := false
+  for e in Decl.splitEntries src do
+    if e == "decorative" then
+      decorative := true
+    else
+      diag ctx .W0316 s!"unknown option in '\\palette': {e.quote}; block skipped" pos
+        (help := "options: decorative")
+      skipBlock := true
+  return (decorative, skipBlock)
 
 /-- `\palette{...}`: named colours. Every entry becomes usable both as
 `\textcolor{name}{...}` and as a bare `\name` declaration. Parses its own
@@ -4437,14 +4475,20 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
+/-- The size × bold font fragment `envStyleInterpret` and `barInterpret`
+both spell: the inline tree the closed style vocabulary can honour. -/
+private def fontFragment (size : Option String) (bold : Bool) :
+    Option (Array Ir.Inline) :=
+  match size, bold with
+  | some s, true => some #[.styled (.size s) #[.styled .bold #[]]]
+  | some s, false => some #[.styled (.size s) #[]]
+  | none, true => some #[.styled .bold #[]]
+  | none, false => none
+
 /-- `envStyleScanList`'s verdict as the style fragment the built-in can
 honour, `barInterpret`'s font shape. -/
 private def envStyleInterpret (sc : BarSt) : Option Ir.ElementStyle :=
-  let font : Option (Array Ir.Inline) := match sc.size, sc.bold with
-    | some s, true => some #[.styled (.size s) #[.styled .bold #[]]]
-    | some s, false => some #[.styled (.size s) #[]]
-    | none, true => some #[.styled .bold #[]]
-    | none, false => none
+  let font := fontFragment sc.size sc.bold
   if font.isNone && sc.align.isNone then none
   else some { font := font, align := sc.align }
 
@@ -4526,11 +4570,7 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
   if let some (.title size bold align) := events[t]? then
     st := { st with
       align := align
-      font := match size, bold with
-        | some s, true => some #[.styled (.size s) #[.styled .bold #[]]]
-        | some s, false => some #[.styled (.size s) #[]]
-        | none, true => some #[.styled .bold #[]]
-        | none, false => none }
+      font := fontFragment size bold }
   let mut above : Option Nat := none
   for i in [0:t] do
     if h : i < events.size then
@@ -5086,11 +5126,7 @@ private def itemSplitGo (ctx : Ctx) (body : Array Raw) (pos : Pos) (j : Nat)
           let curStep ← match overlayFrom w with
             | some s => pure (some s)
             | none => do
-              warnOnce ctx "spec:overlay" .W0105
-                s!"overlay specification '{w}' does not name a step; its \
-content is shown on every step" pos
-                (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
-specs are not modelled")
+              warnOverlaySpec ctx w pos
               pure curStep
           itemSplitGo ctx body pos (j + 1) items steps itemPauses pauses curItem
             curStep curPauses awaitSpec inOpt seen strayDiagged bound pbound
@@ -5525,7 +5561,7 @@ seal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 seal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 seal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
 seal takeArgs mkPara flushPara stripMathMeta
-seal elabMathInline elabMathEnv applyPalette applyTokens parseColSpec
+seal elabMathInline elabMathEnv applyPalette parsePaletteOpts applyTokens parseColSpec
 seal titleBlocks Picture.elabPicture MathParse.parseMath
 seal Decl.parseBlock Decl.parseLength Decl.parseGlue skipOptArg takeTitleDecl
 seal sectionNumber columnWidth cmidRange trimRawEdges
@@ -6457,11 +6493,7 @@ private def elabCtrlArm (ctx : Ctx) (raws : Array Raw) (i : Nat)
         match overlayFrom w with
         | some p => pure ⟨(some p, jg), h2⟩
         | none => do
-          warnOnce ctx "spec:overlay" .W0105
-            s!"overlay specification '{w}' does not name a step; its \
-content is shown on every step" pos
-            (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
-specs are not modelled")
+          warnOverlaySpec ctx w pos
           pure ⟨(none, jg), h2⟩
       | none => pure ⟨(none, j), hjge⟩
     have hjg2 : i + 1 ≤ jg := hjg
@@ -6938,16 +6970,7 @@ a side channel, never slide content" cpos
                   have := closeBracketFrom_ge hc; omega⟩
               | none => ⟨(raws.extract (j0 + 1) raws.size, raws.size), by omega⟩
             have hk2 : i + 1 ≤ k := hk
-            let mut decorative := false
-            let mut skipBlock := false
-            for e in Decl.splitEntries (rawSrc opt) do
-              if e == "decorative" then
-                decorative := true
-              else
-                diag ctx' .W0316
-                  s!"unknown option in '\\palette': {e.quote}; block skipped" cpos
-                  (help := "options: decorative")
-                skipBlock := true
+            let (decorative, skipBlock) ← parsePaletteOpts ctx' (rawSrc opt) cpos
             pure ⟨(decorative, skipBlock, skipSpaces raws k), by
               have := skipSpaces_ge raws k
               show i + 1 ≤ skipSpaces raws k
@@ -7213,7 +7236,7 @@ unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 unseal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
 unseal takeArgs mkPara flushPara stripMathMeta
-unseal elabMathInline elabMathEnv applyPalette applyTokens parseColSpec
+unseal elabMathInline elabMathEnv applyPalette parsePaletteOpts applyTokens parseColSpec
 unseal titleBlocks Picture.elabPicture MathParse.parseMath
 unseal Decl.parseBlock Decl.parseLength Decl.parseGlue skipOptArg takeTitleDecl
 unseal sectionNumber columnWidth cmidRange trimRawEdges
@@ -7548,6 +7571,21 @@ a list level styles as itemize2..4 / enumerate2..4")
           diag ctx .E0321 s!"cannot read length for '{key}' in '\\style': {valueSrc.quote}" pos
             (help := "lengths look like 10pt, 1.5ex, or a token name")
           return none
+      -- A colour key resolves through the palette (mixes included), then
+      -- as a literal colour; a value that is neither is E0326 and the
+      -- key keeps what it had. Only a plain palette name rides along for
+      -- the HTML var(--name).
+      let asColor : EM (Option (Ir.Color × Option String)) := do
+        match ctx.palette.resolve valueSrc with
+        | some c =>
+          return some (c, if (ctx.palette.find? valueSrc).isSome then some valueSrc else none)
+        | none =>
+          match Decl.parseValue valueSrc with
+          | some (.color r g b) => return some ({ r := r, g := g, b := b }, none)
+          | some (.cmyk c m y k) => return some (Ir.Color.ofCmyk c m y k, none)
+          | _ =>
+            diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
+            return none
       match key with
       | "font" => st := { st with font := ← asInline }
       | "marker" => st := { st with marker := ← asInline }
@@ -7564,27 +7602,9 @@ a list level styles as itemize2..4 / enumerate2..4")
       | "author-font" => st := { st with authorFont := ← asInline }
       | "author-strut" => st := { st with authorStrut := ← asLength }
       | "rule" =>
-        match ctx.palette.resolve valueSrc with
-        | some c =>
-          let name := if (ctx.palette.find? valueSrc).isSome then some valueSrc else none
-          st := { st with rule := some (c, name) }
-        | none =>
-          match Decl.parseValue valueSrc with
-          | some (.color r g b) => st := { st with rule := some ({ r := r, g := g, b := b }, none) }
-          | some (.cmyk c m y k) =>
-            st := { st with rule := some (Ir.Color.ofCmyk c m y k, none) }
-          | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
+        if let some v ← asColor then st := { st with rule := some v }
       | "separator" =>
-        match ctx.palette.resolve valueSrc with
-        | some c =>
-          let name := if (ctx.palette.find? valueSrc).isSome then some valueSrc else none
-          st := { st with separator := some (c, name) }
-        | none =>
-          match Decl.parseValue valueSrc with
-          | some (.color r g b) => st := { st with separator := some ({ r := r, g := g, b := b }, none) }
-          | some (.cmyk c m y k) =>
-            st := { st with separator := some (Ir.Color.ofCmyk c m y k, none) }
-          | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
+        if let some v ← asColor then st := { st with separator := some v }
       | "align" =>
         match valueSrc.trimAscii.toString with
         | "left" => st := { st with align := some "left" }
@@ -7592,27 +7612,9 @@ a list level styles as itemize2..4 / enumerate2..4")
         | v =>
           diag ctx .E0323 s!"'align' in '\\style' expects left or center, got '{v}'" pos
       | "hover" =>
-        match ctx.palette.resolve valueSrc with
-        | some c =>
-          let name := if (ctx.palette.find? valueSrc).isSome then some valueSrc else none
-          st := { st with hover := some (c, name) }
-        | none =>
-          match Decl.parseValue valueSrc with
-          | some (.color r g b) => st := { st with hover := some ({ r := r, g := g, b := b }, none) }
-          | some (.cmyk c m y k) =>
-            st := { st with hover := some (Ir.Color.ofCmyk c m y k, none) }
-          | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
+        if let some v ← asColor then st := { st with hover := some v }
       | "focus" =>
-        match ctx.palette.resolve valueSrc with
-        | some c =>
-          let name := if (ctx.palette.find? valueSrc).isSome then some valueSrc else none
-          st := { st with focus := some (c, name) }
-        | none =>
-          match Decl.parseValue valueSrc with
-          | some (.color r g b) => st := { st with focus := some ({ r := r, g := g, b := b }, none) }
-          | some (.cmyk c m y k) =>
-            st := { st with focus := some (Ir.Color.ofCmyk c m y k, none) }
-          | _ => diag ctx .E0326 s!"'{valueSrc}' is not in the palette" pos
+        if let some v ← asColor then st := { st with focus := some v }
       | "motion" =>
         -- A duration, in milliseconds: the one unit CSS transitions and
         -- the reduced-motion literature both speak in.
@@ -7899,6 +7901,17 @@ structure PreState where
   author's choice stands and the class default steps aside. -/
   sawTheme : Bool := false
 
+/-- An optional `[...]` run at `j`: its contents and the index past it —
+`closeBracketFrom` doing the collection the preamble scanners below used
+to hand-roll. An unclosed run reaches the end of the preamble. -/
+private def takeOptRun (preamble : Array Raw) (j : Nat) :
+    Option (Array Raw) × Nat :=
+  if preamble[j]? matches some (.sym '[' _) then
+    match closeBracketFrom preamble (j + 1) with
+    | some c => (some (preamble.extract (j + 1) c), c + 1)
+    | none => (some (preamble.extract (j + 1) preamble.size), preamble.size)
+  else (none, j)
+
 /-- Segment the preamble into declaration values. Pure and positional: the
 same argument extents the imperative loop walked (`skipSpaces`,
 `scanBracketArg`, group taking, `skipReservedArgs`), including its recovery
@@ -7926,22 +7939,9 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
       | .par _ => i := i + 1
       | .ctrl "documentclass" pos =>
         i := i + 1
-        let mut j := skipSpaces preamble i
-        let mut options : Option String := none
-        if let some (.sym '[' _) := preamble[j]? then
-          let mut opts : Array Raw := #[]
-          j := j + 1
-          for _ in [j:preamble.size] do
-            match preamble[j]? with
-            | some (.sym ']' _) =>
-              j := j + 1
-              break
-            | some r' =>
-              opts := opts.push r'
-              j := j + 1
-            | none => break
-          options := some (rawSrc opts)
-          j := skipSpaces preamble j
+        let (optRun, j1) := takeOptRun preamble (skipSpaces preamble i)
+        let options : Option String := optRun.map rawSrc
+        let j := skipSpaces preamble j1
         match preamble[j]? with
         | some (.group nameRaws _) =>
           i := j + 1
@@ -8002,18 +8002,8 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
           curFile := f
           out := out.push (.fileMark f)
         else if runningCtrl.contains name then
-          let mut j := skipSpaces preamble i
-          let mut opts : Option (Array Raw) := none
-          if let some (.sym '[' _) := preamble[j]? then
-            let mut opt : Array Raw := #[]
-            let mut k := j + 1
-            for _ in [k:preamble.size + 1] do
-              match preamble[k]? with
-              | some (.sym ']' _) => k := k + 1; break
-              | some r => opt := opt.push r; k := k + 1
-              | none => break
-            opts := some opt
-            j := skipSpaces preamble k
+          let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
+          let j := skipSpaces preamble k
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
@@ -8029,18 +8019,8 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
           | _ =>
             out := out.push (.logo none pos)
         else if name == "palette" then
-          let mut j := skipSpaces preamble i
-          let mut opts : Option (Array Raw) := none
-          if let some (.sym '[' _) := preamble[j]? then
-            let mut opt : Array Raw := #[]
-            let mut k := j + 1
-            for _ in [k:preamble.size + 1] do
-              match preamble[k]? with
-              | some (.sym ']' _) => k := k + 1; break
-              | some r => opt := opt.push r; k := k + 1
-              | none => break
-            opts := some opt
-            j := skipSpaces preamble k
+          let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
+          let j := skipSpaces preamble k
           match preamble[j]? with
           | some (.group body _) =>
             i := j + 1
@@ -8388,21 +8368,11 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       diag s.ctx .E0304 "'\\logo' needs one group of inline content" pos
       return s
   | .palette opts body pos =>
-    -- `\palette[decorative]{...}`: the block's entries are declared
-    -- deliberately low-contrast and exempt from the pairing check. An
-    -- unrecognised option skips the block rather than applying it as
-    -- the base palette -- a variant block applied as base would
-    -- silently restyle the document.
-    let mut decorative := false
-    let mut skipBlock := false
-    if let some opt := opts then
-      for e in Decl.splitEntries (rawSrc opt) do
-        if e == "decorative" then
-          decorative := true
-        else
-          diag s.ctx .W0316 s!"unknown option in '\\palette': {e.quote}; block skipped" pos
-            (help := "options: decorative")
-          skipBlock := true
+    -- `\palette[decorative]{...}`: options read by the one door
+    -- (`parsePaletteOpts`), the body arm's too.
+    let (decorative, skipBlock) ← match opts with
+      | some opt => parsePaletteOpts s.ctx (rawSrc opt) pos
+      | none => pure (false, false)
     match body with
     | some src =>
       if skipBlock then
@@ -8567,13 +8537,7 @@ its declared layout" pos
       warnUnclosed s.ctx s!"'\\{name}'" bpos
     match body with
     | some b =>
-      let content ← elabInlines s.ctx b
-      modify fun st => match name with
-        | "title" => { st with title := some content }
-        | "subtitle" => { st with subtitle := some content }
-        | "author" => { st with author := some content }
-        | "institute" => { st with institute := some content }
-        | _ => { st with date := some content }
+      storeTitlePart name (← elabInlines s.ctx b)
       return s
     | none =>
       if recovered then
