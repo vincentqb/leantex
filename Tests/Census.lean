@@ -269,6 +269,15 @@ def censusTable :
     ("the title frame ships the title", pageHas c 0 "A Certified Deck"),
     ("the standout frame fills its background", (c[7]?.map (·.fills == 1)).getD false),
     ("the standout content ships", pageHas c 7 "Questions?")]),
+  ("deck1610", fun geom c => [
+    ("one page, the frame", c.size == 1),
+    -- The stage a class option declares is the stage the pages ship on:
+    -- aspectratio=1610 is beamer's 160×100 mm row (user guide §8.1),
+    -- selected through Ir.slidesStages, never a string match.
+    ("the pages ship on the declared 16:10 stage",
+      geom.pageW == Dim.mm 160 && geom.pageH == Dim.mm 100),
+    ("the frame title ships", pageHas c 0 "One declared key"),
+    ("the frame body ships", pageHas c 0 "160 by 100 millimetres")]),
   ("themed", fun _ c => [
     ("pages", c.size == 8),
     ("the section page carries its progress-bar fills", (c[1]?.map fun p => decide (p.fills ≥ 2)).getD false),
