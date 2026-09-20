@@ -538,16 +538,39 @@ def classify (data : ByteArray) : Except String Class := do
 `(position, thickness)` in font units, the band spanning
 `[position - thickness, position]` relative to the baseline. `post` values
 are taken only when plausible — position strictly below the baseline and no
-deeper than half the em, thickness positive and at most a quarter em — and
-each falls back to the convention (a tenth of the em down, a twentieth
-thick) independently, so one absurd value does not discard the other. The
-single normalization shared by ink extraction (`parse`) and rule placement
-(`Layout.underlineSegs`): the two must agree on the band, or the rule is
-cleared against ink it does not overlap. -/
-def underlineBand (upem pos thick : Int) : Int × Int :=
-  let p := if pos < 0 && -(upem / 2) ≤ pos then pos else -(upem / 10)
+deeper than the face's own descender line (or half the em, whichever is
+nearer: a band below the descent would leave the descender region an
+underline is defined to occupy, `underline_in_descent`), thickness positive
+and at most a quarter em — and each falls back to the convention
+independently, so one absurd value does not discard the other. The fallback
+band — a tenth of the em down, a twentieth thick — is the Adobe Type 1
+convention (UnderlinePosition -100, UnderlineThickness 50 in the
+1000-unit em: the Type 1 font-program defaults the ecosystem carried
+forward). The single normalization shared by ink extraction (`parse`) and
+rule placement (`Layout.underlineSegs`): the two must agree on the band,
+or the rule is cleared against ink it does not overlap. -/
+def underlineBand (upem descent pos thick : Int) : Int × Int :=
+  let mag := if descent < 0 then -descent else descent
+  let p := if pos < 0 && -(min (upem / 2) mag) ≤ pos then pos else -(upem / 10)
   let t := if 0 < thick && thick ≤ upem / 4 then thick else max 1 (upem / 20)
   (p, t)
+
+/-- The tightened guard's algebra: for a face whose descent magnitude is
+at least the em-tenth fallback, the normalized band position stays at or
+above the descender line — the rule is drawn in the descender region,
+inside the metric box `Layout.lineExtent` already reserves below the
+baseline, so drawing it can never ask for room (`underline_no_growth` is
+the placement half). Containment of the band's full thickness is per-face
+(post values are fallback-normalized, so it is not a theorem) and is
+pinned as a test over every shipped fixture face. -/
+theorem underline_in_descent (upem descent pos thick : Int)
+    (h : upem / 10 ≤ -descent) :
+    descent ≤ (underlineBand upem descent pos thick).1 := by
+  unfold underlineBand
+  dsimp only
+  repeat' split
+  all_goals simp_all only [Bool.and_eq_true, decide_eq_true_eq]
+  all_goals omega
 
 /-- Glyph id for a scalar in sorted cmap ranges, or `none`. Binary search. -/
 def gidIn (cmap : Array (UInt32 × UInt32 × UInt32)) (c : Char) : Option Nat := Id.run do
@@ -638,7 +661,7 @@ def parse (data : ByteArray) : Except String Font := do
   -- CID-keyed CFF, seac or point-matched composition, an exceeded budget —
   -- obstructs its whole advance: undecodable input clears the rule, it
   -- never leaves one through ink.
-  let (bandPos, bandThick) := underlineBand (upem : Int) upos uthick
+  let (bandPos, bandThick) := underlineBand (upem : Int) descent upos uthick
   let bandHi := bandPos
   let bandLo := bandPos - bandThick
   let src := Ink.Src.make data isCff numGlyphs
@@ -796,7 +819,8 @@ def Font.markAttachX (f : Font) (g : Nat) : Int :=
 /-- This face's normalized underline band: `(position, thickness)` in font
 units. See `underlineBand`. -/
 def Font.band (f : Font) : Int × Int :=
-  underlineBand (f.unitsPerEm : Int) f.underlinePosition f.underlineThickness
+  underlineBand (f.unitsPerEm : Int) f.descent f.underlinePosition
+    f.underlineThickness
 
 /-- The faces a document typesets with. Index 0 is always the body regular
 face; `Style` resolves to an index at layout time. -/

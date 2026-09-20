@@ -869,6 +869,18 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let hasInk (c : Char) : Bool := !(font.inkAt (gidOf c)).isEmpty
   t "g has ink in the band" (hasInk 'g')
   t "y has ink in the band" (hasInk 'y')
+  -- Band containment is per-face (post values are fallback-normalized, so
+  -- it is not a theorem past the position `underline_in_descent` covers):
+  -- on every shipped fixture face the whole band — position down to
+  -- position minus thickness — stays inside the metric descent, so the
+  -- rule and the descenders it clears share one region.
+  let shipped ← FontDb.scanRoots [testFonts]
+  let mut bandOk := true
+  for face in shipped do
+    if let .ok f := Font.parse (← IO.FS.readBinFile face.path) then
+      let (p, th) := f.band
+      unless f.descent ≤ p - th && p < 0 do bandOk := false
+  t "every shipped face's underline band stays in its descent" bandOk
   t "a has no ink in the band" (!hasInk 'a')
   t "x-height b has no ink in the band" (!hasInk 'b')
   t "comma has ink in the band" (hasInk ',')
@@ -1070,16 +1082,20 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
         (f.inkAt g == #[(0, (f.widths[g]?.getD 0 : Int))])
   -- Underline metrics normalize through one helper shared by ink extraction
   -- and rule placement: a `post` table declaring an implausible position
-  -- (above the baseline, or below half the em) or thickness (nonpositive,
-  -- or over a quarter em) falls back to the convention, each independently.
-  t "band: declared plausible values pass" (Font.underlineBand 2048 (-154) 102 == (-154, 102))
-  t "band: zero position falls back" ((Font.underlineBand 1000 0 50).1 == -100)
-  t "band: positive position falls back" ((Font.underlineBand 1000 200 50).1 == -100)
-  t "band: absurdly deep position falls back" ((Font.underlineBand 1000 (-30000) 50).1 == -100)
-  t "band: zero thickness falls back" ((Font.underlineBand 1000 (-50) 0).2 == 50)
-  t "band: negative thickness falls back" ((Font.underlineBand 1000 (-50) (-80)).2 == 50)
-  t "band: absurdly thick falls back" ((Font.underlineBand 1000 (-50) 900).2 == 50)
-  t "band: one bad value keeps the other" (Font.underlineBand 1000 (-50) (-80) == (-50, 50))
+  -- (above the baseline, or below the face's descender line — a rule
+  -- there would leave the descender region, `underline_in_descent`) or
+  -- thickness (nonpositive, or over a quarter em) falls back to the
+  -- convention, each independently.
+  t "band: declared plausible values pass" (Font.underlineBand 2048 (-500) (-154) 102 == (-154, 102))
+  t "band: zero position falls back" ((Font.underlineBand 1000 (-250) 0 50).1 == -100)
+  t "band: positive position falls back" ((Font.underlineBand 1000 (-250) 200 50).1 == -100)
+  t "band: absurdly deep position falls back" ((Font.underlineBand 1000 (-250) (-30000) 50).1 == -100)
+  t "band: a position below the descender line falls back"
+    ((Font.underlineBand 1000 (-250) (-300) 50).1 == -100)
+  t "band: zero thickness falls back" ((Font.underlineBand 1000 (-250) (-50) 0).2 == 50)
+  t "band: negative thickness falls back" ((Font.underlineBand 1000 (-250) (-50) (-80)).2 == 50)
+  t "band: absurdly thick falls back" ((Font.underlineBand 1000 (-250) (-50) 900).2 == 50)
+  t "band: one bad value keeps the other" (Font.underlineBand 1000 (-250) (-50) (-80) == (-50, 50))
   -- End to end: a font whose post table declares a positive position and a
   -- negative thickness still draws a positive-thickness rule below the
   -- baseline.
