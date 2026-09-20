@@ -37,6 +37,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   deckStructureChecks ref
   deckProgressChecks ref
   mathmlChecks ref
+  linkHtmlChecks ref
 
 /-- The layout, census, theme, and chrome blocks all read the same shipped
 face; dispatched together so each stays a leaf the module split can place.
@@ -119,11 +120,42 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   bibIrChecks ref
   bibApplyChecks ref
   dataChecks ref
+  wrapperChecks ref
+  unitChecks ref
+  exprChecks ref
+  centeringChecks ref
+  smartChecks ref
+
+/-- The theme, palette, and role blocks (Tests/Themes.lean), dispatched
+together so each stays a leaf and `main`'s spent elaboration budget stays
+flat. -/
+def themeSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  paletteChecks ref
+  mixChecks ref
+  contrastChecks ref
+  a11yChecks ref
+  themeChecks ref
+  designChecks ref
+  roleChecks ref
+  roleInvocationChecks ref
+  realizedChecks ref
+  roleShadowChecks ref
+
+/-- The font-face blocks (Tests/FontMath.lean), run unconditionally:
+fontSuiteChecks owns reporting a missing or unparsable font, so none of
+these may hide behind the layout suite's font gate. -/
+def fontFaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  fontDiagChecks ref
+  declaredFaceChecks ref
+  fallbackChecks ref
+  smallCapsGsubChecks ref
+  iconChecks ref
+  fontsDeclChecks ref
+  fontSuiteChecks ref
 
 def main (args : List String) : IO UInt32 := do
   let update := args.contains "--update"
   let ref ← IO.mkRef ([] : List String)
-  let t := check ref
 
   utf8Checks ref
   argsChecks ref
@@ -139,14 +171,11 @@ def main (args : List String) : IO UInt32 := do
   runGoldens update (failures ref)
   floatRefAgreementChecks ref
 
-  -- dim
-  t "sp pt string" ((Dim.pt 10).toPtString == "10" && (Dim.pt 3 / 2).toPtString == "1.5")
   dimChecks ref
-  -- The two spellings of one length must agree: the engine's pt is the big
-  -- point everywhere, so a default deck stage and \page{ width = 160mm }
-  -- name the same number of sp.
-  t "dim mm agrees with inch" (Dim.mm 254 == Dim.inch 10)
-
+  -- The integral toPtString case and mm/inch agreement are compile-time
+  -- examples beside Dim; this fractional case is not decide-able (its
+  -- String.Slice ops get stuck for decide and the kernel alike).
+  check ref "sp pt string fractional" ((Dim.pt 3 / 2).toPtString == "1.5")
   kpChecks ref
   hyphenChecks ref
   walkChecks ref
@@ -162,29 +191,8 @@ def main (args : List String) : IO UInt32 := do
   styParityChecks ref
   surfaceSuiteChecks ref
   backendSuiteChecks ref
-  unitChecks ref
-  exprChecks ref
-  wrapperChecks ref
-  centeringChecks ref
-  fontDiagChecks ref
-  declaredFaceChecks ref
-  fallbackChecks ref
-  smallCapsGsubChecks ref
-  iconChecks ref
-  smartChecks ref
-  linkHtmlChecks ref
-  paletteChecks ref
-  mixChecks ref
-  contrastChecks ref
-  a11yChecks ref
-  themeChecks ref
-  designChecks ref
-  roleChecks ref
-  roleInvocationChecks ref
-  realizedChecks ref
-  roleShadowChecks ref
-  fontsDeclChecks ref
-  fontSuiteChecks ref
+  themeSuiteChecks ref
+  fontFaceSuiteChecks ref
   layoutSuiteChecks ref
 
   let failed := (← ref.get).reverse

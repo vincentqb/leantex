@@ -60,6 +60,14 @@ def Sp.toPtString (x : Sp) : String :=
     let frs := (frs.dropEndWhile (· == '0')).toString
     s!"{sign}{ip}.{frs}"
 
+-- The Tests.lean checks these began as, upgraded to the compiler's tier:
+-- a decidable ground fact needs no runtime test. The fractional
+-- toPtString case does not join them: its String.Slice ops (`pushn`,
+-- `dropEndWhile`) reduce for neither `decide`, `decide +kernel`, nor
+-- `rfl`, so it stays a runtime check in Tests.lean.
+example : mm 254 = inch 10 := by decide
+example : (pt 10).toPtString = "10" := rfl
+
 structure Glue where
   width : Sp := 0
   stretch : Sp := 0

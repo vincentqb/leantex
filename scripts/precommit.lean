@@ -458,11 +458,6 @@ def undeclaredConfigRead (l : String) : Bool := Id.run do
     pre := pre ++ "cfg." ++ p
   return false
 
-/-- No allowance remains: the last one (Elab.elabBlocks) came off on
-2026-09-19 — `elaboration_total` names the fact — and the list is empty
-and stays empty. -/
-def partialAllowed (_l : String) : Bool := false
-
 /-- The string-comparison spelling that compiles against the `DocClass`
 inductive and bypasses exhaustiveness: `docClass.name == "…"` re-creates
 the stringly class checks the inductive replaced, one flag at a time. The
@@ -522,11 +517,12 @@ def gates : List Gate := [
   Fix: match on the constructor; a genuinely name-shaped need (a
   diagnostic quoting the class) reads .name without comparing it." },
   { applies := fun _ => true
-    flag := fun l => bannedWord kwPartial l && !partialAllowed l
+    flag := bannedWord kwPartial
     what := fun f => s!"new '{kwPartial}' in staged changes to {f}"
     help := s!"  The tree holds no '{kwPartial}': every recursion terminates by a
   proved measure (elaboration_total names the elaborator's; AGENTS.md,
-  Conventions, holds the technique).
+  Conventions, holds the technique) — the allowance list emptied on
+  2026-09-19 and stays empty.
   Fix: make the recursion structural (see AGENTS.md, Conventions)." },
   { applies := (!obligationsFile ·)
     flag := bannedWord kwSorry
