@@ -1296,6 +1296,21 @@ inductive VAlign where
   | golden
   deriving Repr, BEq, Inhabited
 
+/-- The shares of a page's leftover vertical space above and below its
+content, per declared alignment: the ratio form of beamer's `\vfil`-glue
+model — top-flush 0:1 (all leftover below), centring 1:1 (beamer user
+guide §8.1: `c` is the default), bottom-flush 1:0, and the title page's
+golden 2618:1000 (beamerinnerthememoloch.dtx, the "golden ratio spacing"
+of its `title page` template). The one table both artifacts must honour:
+`Layout.VDist.of` projects it onto the PDF page, `HtmlDoc.vdistShares`
+onto the deck's flex spacers, and `vdist_shares_agree` in Tests states
+the agreement. -/
+def VAlign.shares : VAlign → Nat × Nat
+  | .top => (0, 1)
+  | .center => (1, 1)
+  | .bottom => (1, 0)
+  | .golden => (2618, 1000)
+
 namespace Pic
 
 /-- The two line widths the subset strokes: pgf manual §15.3.1 — `thin`,

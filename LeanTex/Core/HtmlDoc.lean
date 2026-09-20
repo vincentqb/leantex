@@ -1670,20 +1670,13 @@ private def styleClass : Style → String
   | .lang tag => "lang-" ++ tag
 
 /-- The shares of a slide's leftover vertical space above and below its
-content: the frame's declared distribution, the ratio form of beamer's
-`\vfil`-glue model — centring 1:1 (beamer user guide §8.1: `c` is the
-default), top-flush 0:1, bottom-flush 1:0, and the title page's golden
-2618:1000 (beamerinnerthememoloch.dtx, the "golden ratio spacing" of its
-`title page` template). The same ratios `Layout.VDist.of` declares for
-the PDF page — a backend may not read another backend, so the table is
-stated twice and `deckStructureChecks` pins the two to each other. A
-page-opening path owes a declared distribution, never a default (the
-obligation table): every arm answers, no wildcard. -/
-def vdistShares : Ir.VAlign → Nat × Nat
-  | .top => (0, 1)
-  | .center => (1, 1)
-  | .bottom => (1, 0)
-  | .golden => (2618, 1000)
+content: the frame's declared distribution, projected from the one IR
+table (`Ir.VAlign.shares` carries the sourcing) exactly as
+`Layout.VDist.of` projects it for the PDF page — a backend may not read
+another backend, so each projects the IR and `vdist_shares_agree` in
+Tests states the agreement. A page-opening path owes a declared
+distribution, never a default (the obligation table). -/
+def vdistShares : Ir.VAlign → Nat × Nat := Ir.VAlign.shares
 
 mutual
 

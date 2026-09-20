@@ -453,13 +453,11 @@ theorem VDist.top_is_flush (l : Sp) : VDist.top.aboveShare l = 0 := by
   · rfl
   · simp
 
-/-- The distribution a frame's declaration names. `golden` is the moloch
-title page's 2618:1000. -/
-def VDist.of : Ir.VAlign → VDist
-  | .top => .top
-  | .center => .center
-  | .bottom => .bottom
-  | .golden => .golden
+/-- The distribution a frame's declaration names: a projection of the one
+IR table (`Ir.VAlign.shares`), so the PDF page cannot drift from the HTML
+deck's spacers. `golden` is the moloch title page's 2618:1000. -/
+def VDist.of (v : Ir.VAlign) : VDist :=
+  ⟨v.shares.1, v.shares.2⟩
 
 inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)

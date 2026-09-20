@@ -651,6 +651,14 @@ theorem heading_renderings_agree (level : Nat) :
   refine ⟨rfl, ?_⟩
   simp [MarkdownDoc.headingMarker]
 
+/-- The two backends declare one vertical-distribution table: each is a
+projection of `Ir.VAlign.shares`, so the agreement is `rfl` at every
+alignment — the previous form was a runtime pin over the four constants
+in `deckStructureChecks`, a decide-over-constants wearing a test. -/
+theorem vdist_shares_agree (v : Ir.VAlign) :
+    HtmlDoc.vdistShares v =
+      ((Layout.VDist.of v).above, (Layout.VDist.of v).below) := rfl
+
 /-- `{ifbackend}`: content addressed to a subset of the backends. One IR,
 elaborated once; each backend keeps or drops through `Ir.keepFor` at its own
 entry. The diagnostics, the `orphanFree` correspondence (the hypothesis of
@@ -1073,15 +1081,12 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasA "pt\" height=\"" || hasA "pt\" role=\"img\"")
 
 /-- The paged deck's structure: a frame's declared vertical distribution
-reaches the artifact as flex spacers carrying the PDF's own ratios — the
-two backends state one vdist table (a backend may not read another, so
-the table is spelled twice and pinned here) — and every slide is
-fragment-addressable through an id unique by the shared claim walk. -/
+reaches the artifact as flex spacers carrying the PDF's own ratios (both
+project `Ir.VAlign.shares`; `vdist_shares_agree` states it) and every
+slide is fragment-addressable through an id unique by the shared claim
+walk. -/
 def deckStructureChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  t "the two backends declare one vdist table"
-    ([Ir.VAlign.top, .center, .bottom, .golden].all fun v =>
-      HtmlDoc.vdistShares v == ((Layout.VDist.of v).above, (Layout.VDist.of v).below))
   let (doc, ds) := elabStr (deck169 "\\title{T}\\author{A}"
     ("\\maketitle\n" ++
      "\\begin{frame}[t]{Alpha}\na\n\\end{frame}\n" ++
