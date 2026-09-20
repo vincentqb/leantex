@@ -9063,8 +9063,9 @@ def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
   let (doc, contrast) := Contrast.realizeDoc doc
   let outline := Ir.outlineDiags doc
   let alt := Ir.altDiags doc
+  let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
-  (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ sequences)
+  (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences)
 
 def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input

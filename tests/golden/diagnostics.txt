@@ -434,6 +434,9 @@ warning[W0374]: a footnote on this card is kept inline; a card face has no note 
 ── W0376 (degraded) an image ships no text alternative (WCAG 2.2)
 warning[W0376]: image 'chart.png' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
   help: describe the image — \includegraphics[alt={...}] — or caption its figure: the caption becomes the alternative
+── W0377 (degraded) a link carries no text to name its purpose (WCAG 2.2)
+warning[W0377]: link 'https://example.org/x' carries no text; assistive technology reads nothing to name its purpose (WCAG 2.2 SC 2.4.4)
+  help: give the link visible text — \href{...}{words} — or an image with alt inside it
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

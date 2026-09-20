@@ -6897,6 +6897,61 @@ theorem alt_judged_complete (doc : Doc) :
   rw [← Array.size_eq_zero_iff, ← Array.size_eq_zero_iff, altDiags,
     Array.size_map]
 
+/-- The text a link's body offers the accessibility tree: its plain text
+(icon labels and reference texts included, as `plainTextOne` reads them)
+together with each contained image's declared alternative — WCAG 2.2
+SC 2.4.4 takes a link's purpose from its link text, and technique H30
+names the `alt` of an image inside the link as that text. -/
+def linkReading (body : Array Inline) : String :=
+  foldInlines
+    (fun s x => match x with | .image _ _ alt => s ++ alt | _ => s)
+    (plainText body) body
+
+/-- One link node's contribution to the no-text census: a `.link` whose
+body reads as nothing (`linkReading`), its target collected once. A leaf
+projection of the shared fold, `sansAltStep`'s shape — the fold visits
+the `.link` node itself before its body, so no link escapes the census
+without escaping the fold, whose arms are all explicit. -/
+private def sansTextLinkStep (out : Array String)
+    (x : Inline) : Array String :=
+  match x with
+  | .link url body =>
+    if (linkReading body).isEmpty && !out.contains url then out.push url
+    else out
+  | _ => out
+
+/-- Every link the artifacts ship with no reading — no text, no icon
+label, no image alternative — deduplicated by target, in document order:
+the backends read the body, the running head and foot, and the logo, so
+the census reads the same regions (`imageRefs`' scope for shipped ink). -/
+def linksSansText (doc : Doc) : Array String :=
+  let out := foldBlocks (fun out _ => out) sansTextLinkStep #[] doc.body
+  let out := match doc.head with | some h => foldInlines sansTextLinkStep out h | none => out
+  let out := match doc.foot with | some f => foldInlines sansTextLinkStep out f | none => out
+  match doc.logo with | some l => foldInlines sansTextLinkStep out l | none => out
+
+/-- The link-purpose judge (WCAG 2.2 SC 2.4.4, Link Purpose (In Context):
+the purpose of each link can be determined from the link text; sufficient
+technique H30). One diagnostic per distinct target: a link a reader can
+follow and an assistive reader cannot name is a per-link fact, and the
+target names which. -/
+def linkDiags (doc : Doc) : Array Diag :=
+  (linksSansText doc).map fun url =>
+    Diag.of .W0377
+      (s!"link '{url}' carries no text; assistive technology reads " ++
+        "nothing to name its purpose (WCAG 2.2 SC 2.4.4)")
+      (help := some ("give the link visible text — \\href{...}{words} — " ++
+        "or an image with alt inside it"))
+
+/-- The judge is silent exactly when no shipped link lacks a reading:
+`linkDiags` is a per-offender map over the census (`linksSansText`, a
+leaf projection of the shared fold), so an unnameable link is a reported
+fact, never a discovery — `alt_judged_complete`'s shape. -/
+theorem links_judged_complete (doc : Doc) :
+    linkDiags doc = #[] ↔ linksSansText doc = #[] := by
+  rw [← Array.size_eq_zero_iff, ← Array.size_eq_zero_iff, linkDiags,
+    Array.size_map]
+
 mutual
 
 /-- One leaf-parameterised map hosts every leaf-rewrite walk over the tree:

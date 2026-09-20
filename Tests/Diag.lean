@@ -155,6 +155,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0374 => dvE ("\\documentclass{card}\n\\begin{document}\n" ++
       "x\\footnote{an aside}\n\\end{document}")
   | .W0376 => dvE (dvDoc "" "\\includegraphics{chart.png}")
+  | .W0377 => dvE (dvDoc "" "\\href{https://example.org/x}{}")
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL one (dvDoc "" "$x^2$")
   | .W0005 => dvL one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"
@@ -637,6 +638,23 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "alt_judged_complete's face: judge silent iff census empty"
     ((Ir.altDiags bare).isEmpty == (Ir.imagesSansAlt bare).isEmpty &&
       !(Ir.altDiags bare).isEmpty)
+  -- W0377 (WCAG 2.2 SC 2.4.4) fires on a link with no reading and is
+  -- silenced by each escape: link text, or an image alternative inside.
+  t "a link with no text fires W0377"
+    ((dvE (dvDoc "" "\\href{https://example.org/x}{}")).any (·.code == "W0377"))
+  t "link text silences W0377"
+    (((dvE (dvDoc "" "\\href{https://example.org/x}{example}")).any
+      (·.code == "W0377")) == false)
+  t "an image with alt inside the link silences W0377"
+    (((dvE (dvDoc "" ("\\href{https://example.org/x}" ++
+        "{\\includegraphics[alt={A synthetic chart}]{chart.png}}"))).any
+      (·.code == "W0377")) == false)
+  let (bareLink, _) := elabStr (dvDoc "" "\\href{https://example.org/x}{}")
+  t "linksSansText names the offending target"
+    (Ir.linksSansText bareLink == #["https://example.org/x"])
+  t "links_judged_complete's face: judge silent iff census empty"
+    ((Ir.linkDiags bareLink).isEmpty == (Ir.linksSansText bareLink).isEmpty &&
+      !(Ir.linkDiags bareLink).isEmpty)
   -- headings_no_skip_judged's executable face: the fact and the fired
   -- code travel together.
   let (gapped, gds) := elabStr (dvDoc ""
