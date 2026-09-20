@@ -23,24 +23,29 @@ rules, no vertical lines) with captioned floats whose gaps are held to the
 vertical rhythm by theorem, and layout assertions that
 fail the build. HTML5: a typed tree with a certified escaper, semantic
 markup, tokens
-as CSS custom properties, `--css bulma` interop, one self-contained file.
+as CSS custom properties, `\output{ css = bulma }` interop, one
+self-contained file.
 A document written for lualatex compiles as written: LaTeX idioms translate
 to the native declarations, unknown constructs degrade to their content with
 a warning, and `-v` lists every translation with its shorter spelling.
-Measured by `scripts/bench.lean`: 1 KB in ~16 ms against lualatex's ~476 ms; a
-generated 129 KB / 30 pages in ~149 ms against ~983 ms, with paragraphs
-broken in parallel.
+Measured by `scripts/bench.lean` (2026-09-20, medians of 5): 1 KB in 91 ms
+against lualatex's 674 ms; a generated 129 KB / 30 pages in 339 ms against
+1786 ms, with paragraphs broken in parallel.
 
 **Where it is going.** This plan now covers one engine with **two surfaces**
 (tex primary, markdown as sugar) and **two backends** (PDF and HTML,
 including slides).
 
-**Immediately next.** The rest of M5: the ≈3 KB HTML deck controller
-(interactive stepping over the `data-step` attributes the IR already
-emits), the speaker window reading the note asides, `--emit reveal`. The
-frame furniture landed 2026-09-17: defined wrappers, `\centering`,
-columns, dim-not-hide overlays with the PDF page-per-step handout, and
-speaker notes as a side channel.
+**Immediately next.** M5's deck HTML landed without the planned ≈3 KB
+controller: scroll-snap pages the deck, steps uncover in place, both with
+zero script (the 2026-09-20 entries), and `--emit reveal` died with
+`--emit` — the document declares what to build (`\output{ formats = … }`).
+What remains of the controller ask is the speaker view alone
+(notes/timer/next-slide), a user decision behind a named `\output` key and
+a design discussion, not a default; remote stepping and auto-advance are
+likewise script-only and stay asks. The frame furniture landed 2026-09-17:
+defined wrappers, `\centering`, columns, dim-not-hide overlays with the PDF
+page-per-step handout, and speaker notes as a side channel.
 
 **Open, tracked, not hidden.** No `partial` remains: an audit found ten,
 seven were removed (2026-09-16 entry), the `takeArgs`/`elabInlines` knot
@@ -66,8 +71,9 @@ uniform otherwise (the 2026-09-18 entry), math renders its first two slices
 spacing, scripts; then fractions, radicals, grown delimiters, big-operator
 limits, and alignment grids — the second 2026-09-17 M6 entry lists what
 still carries a named warning), and element styling
-(section fonts, list spacing) is not yet declarable, which is what keeps the
-real resume from matching its lualatex build exactly.
+(section fonts, list spacing) is declarable through `\style{element}{ … }`
+(`Ir.Styles.declare`; the `\style` help text in Elab.lean lists the
+styleable elements).
 
 ### Owed obligations
 
@@ -87,7 +93,9 @@ list.
   counterexample.
 - `pages_count_frame_steps` — numbering, page-count face of
   audit-numbering's model: one page per overlay step of a titled countable
-  frame (restate as its T2–T4 verbatim once `Ir.frameNumbers` lands).
+  frame. `Ir.frameNumbers` landed and the counting side is proved there
+  (`frameNumbers_gapless`, `frameNumbers_last_is_count`); what this record
+  still owes is the page side, blocked on the collect walk's `Acc` split.
 - `frame_pages_footed` — numbering: every page of a footed countable-frame
   deck is footed (audit-numbering T2's page face; excludes the golden
   title frame so the statement survives its refactor 1).
@@ -3459,11 +3467,16 @@ Zero-config by intent: good defaults, flags for the rest, nothing required.
 
 ## Hyphenation
 
-American English, Liang patterns from `hyph-en-us.tex` (ushyphmax: Knuth's
+Liang patterns per language, embedded as generated Lean data with each
+upstream licence notice preserved, one `langs` row in
+`scripts/gen-hyphen-data.lean` per language — adding a language is adding a
+row. Regenerate with `lake env lean --run scripts/gen-hyphen-data.lean`.
+Shipped rows: American English from `hyph-en-us.tex` (ushyphmax: Knuth's
 frozen `hyphen.tex` plus Gerard Kuiken's additions — a strict superset, 4938
-patterns vs 4447), hyphenmins 2/3, embedded as generated Lean data with the
-upstream licence notice preserved. Regenerate with
-`lake env lean --run scripts/gen-hyphen-data.lean`.
+patterns vs 4447), hyphenmins 2/3; French from `hyph-fr.tex`; German
+(1996 orthography) from `hyph-de-1996.tex`. A document's declared language
+selects the set through `Locale.forTag`/`Hyphen.forTag`; English is the
+default.
 
 Why the superset: it offers strictly more admissible break points, which is
 what reduces loose and overfull lines — the quality axis that matters here.
