@@ -359,7 +359,7 @@ tree — the hand-rolled walk's wildcard arm skipped list, titled, role,
 columns, frame, and float bodies, so a listed image silently kept an empty
 alt (the named behaviour change of the `mapBlocks` rehost). Asserted on
 the typed HTML tree's rendering, where the alt is reader-visible. -/
-def altWalkChecks (ref : IO.Ref (List String)) : IO Unit := do
+def altWalkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\begin{figure}\\begin{itemize}\\item \\includegraphics{one.png}" ++
@@ -368,13 +368,38 @@ def altWalkChecks (ref : IO.Ref (List String)) : IO Unit := do
   let html := (HtmlDoc.emit {} doc).1
   t "a listed image inherits the figure caption as its alt"
     ((html.splitOn "alt=\"An invented caption\"").length == 2)
+  -- The request value covers every image the layout will place: an
+  -- `\includegraphics` inside a `\footnote` or a defined role is content
+  -- like any other, so it appears in `imageRefs` — the list the driver
+  -- loads — and, with the driver's own store, ships as the image rather
+  -- than a silent placeholder (the invariant whose absence let a loaded
+  -- file beside the document ship as an unexplained box: the collect and
+  -- the placement walked different descents; both are one fold now).
+  let (idoc, ids) := elabStr ("\\documentclass{article}" ++
+    "\\newcommand{\\hl}[1]{\\textbf{#1}}\\begin{document}" ++
+    "Seen\\footnote{note \\includegraphics[width=20pt]{notefig.png}} and " ++
+    "\\hl{\\includegraphics[width=20pt]{rolefig.png}} here.\\end{document}")
+  t "footnote/role image source raises no error" (ids.all (·.severity != .error))
+  t "an image inside a footnote is requested"
+    ((Ir.imageRefs idoc).contains "notefig.png")
+  t "an image inside a defined role is requested"
+    ((Ir.imageRefs idoc).contains "rolefig.png")
+  let store : Image.Store := { entries := (Ir.imageRefs idoc).map fun s =>
+    { src := s, info := some { format := .png, pxW := 64, pxH := 64 } } }
+  let out := layoutOf oneFace idoc (imgs := store)
+  let imgSegs := out.pages.flatMap fun p => p.lines.flatMap fun l =>
+    l.segs.filterMap fun s => match s with
+      | .image store _ _ => some store
+      | _ => none
+  t "the shipped pages place no unexplained placeholder"
+    (!imgSegs.isEmpty && imgSegs.all (·.isSome))
 
 /-- Speaker notes: a side channel — never slide content, omitted from the
 PDF handout, an inert hidden aside in HTML for the coming speaker view.
 Own function: `main`'s do block has no budget left. -/
 def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  altWalkChecks ref
+  altWalkChecks ref oneFace
   let (doc, ds) := elabStr (deck169Frame "Visible words.\n\\note{Hidden speaker words.}")
   t "note elaborates to a side channel, warning nothing" (ds.isEmpty &&
     doc.body == #[.frame #[] false .center #[

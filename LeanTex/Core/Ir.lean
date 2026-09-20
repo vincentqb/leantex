@@ -6141,106 +6141,6 @@ theorem keepFor_id (t : String) (xs : Array Block) (h : onlyFree xs = true) :
   rw [keepFor, keepForList_id t xs.toList h]
 
 
--- Image walks: the request an image node states, and the caption an image
--- inherits. Structural recursion through `List`, as the printers above.
-
-mutual
-
-/-- Every image source the inlines reference, in document order, `out`
-threading through so the walk is linear. -/
-def imageSrcsInlines (out : Array String) (xs : Array Inline) : Array String :=
-  imageSrcsInlineList out xs.toList
-
-def imageSrcsInlineList (out : Array String) : List Inline → Array String
-  | [] => out
-  | x :: rest => imageSrcsInlineList (imageSrcsInline out x) rest
-
-def imageSrcsInline (out : Array String) : Inline → Array String
-  | .image src _ _ => if out.contains src then out else out.push src
-  | .styled _ body => imageSrcsInlineList out body.toList
-  | .colored _ _ body => imageSrcsInlineList out body.toList
-  | .link _ body => imageSrcsInlineList out body.toList
-  | .underline body => imageSrcsInlineList out body.toList
-  | .step _ _ body => imageSrcsInlineList out body.toList
-  | _ => out
-
-end
-
-mutual
-
-def imageSrcsBlocks (out : Array String) (xs : Array Block) : Array String :=
-  imageSrcsBlockList out xs.toList
-
-def imageSrcsBlockList (out : Array String) : List Block → Array String
-  | [] => out
-  | b :: rest => imageSrcsBlockList (imageSrcsBlock out b) rest
-
-def imageSrcsBlock (out : Array String) : Block → Array String
-  | .para content => imageSrcsInlines out content
-  | .equation _ content => imageSrcsInlines out content
-  | .section _ _ _ title => imageSrcsInlines out title
-  | .list _ items => imageSrcsItems out items.toList
-  | .center body => imageSrcsBlockList out body.toList
-  | .quote body => imageSrcsBlockList out body.toList
-  | .abstract body => imageSrcsBlockList out body.toList
-  | .titled _ title body => imageSrcsBlockList (imageSrcsInlines out title) body.toList
-  | .role _ body => imageSrcsBlockList out body.toList
-  | .spaced _ body => imageSrcsBlockList out body.toList
-  | .columns cols => imageSrcsColumns out cols.toList
-  | .step _ _ body => imageSrcsBlockList out body.toList
-  | .only _ body => imageSrcsBlockList out body.toList
-  | .nav _ body => imageSrcsBlockList out body.toList
-  | .note body => imageSrcsBlockList out body.toList
-  | .logo content => imageSrcsInlines out content
-  | .verbatim _ _ => out
-  | .frame title _ _ body => imageSrcsBlockList (imageSrcsInlines out title) body.toList
-  | .framefoot content => imageSrcsInlines out content
-  | .setPalette _ => out
-  | .setTokens _ => out
-  | .pagebreak => out
-  | .rule _ _ _ => out
-  | .picture _ => out
-  -- A cell may carry an inline image; a float's body is where
-  -- `\includegraphics` usually stands, and a caption may hold one too.
-  | .table _ _ _ rows _ => imageSrcsTableRows out rows.toList
-  | .float _ _ _ body caption =>
-    imageSrcsBlockList (imageSrcsInlines out caption) body.toList
-  -- An entry is formatted text and links; Bib.apply builds no image node.
-  | .bibliography _ _ _ => out
-
-def imageSrcsTableRows (out : Array String) :
-    List (Array (Array Inline)) → Array String
-  | [] => out
-  | row :: rest => imageSrcsTableRows (imageSrcsTableCells out row.toList) rest
-
-def imageSrcsTableCells (out : Array String) : List (Array Inline) → Array String
-  | [] => out
-  | cell :: rest => imageSrcsTableCells (imageSrcsInlines out cell) rest
-
-def imageSrcsItems (out : Array String) : List (Array Block) → Array String
-  | [] => out
-  | item :: rest => imageSrcsItems (imageSrcsBlockList out item.toList) rest
-
-def imageSrcsColumns (out : Array String) : List (Option Nat × Array Block) → Array String
-  | [] => out
-  | (_, body) :: rest => imageSrcsColumns (imageSrcsBlockList out body.toList) rest
-
-end
-
-/-- Every image the document references, deduplicated, in document order:
-the request value the CLI driver fulfils by reading and decoding each file
-into the `Image.Store` layout and the backends consume. Files are effects,
-so the core never opens one — the same shape as fonts. -/
-def imageRefs (doc : Doc) : Array String := Id.run do
-  let mut out := imageSrcsBlocks #[] doc.body
-  if let some h := doc.head then out := imageSrcsInlines out h
-  if let some f := doc.foot then out := imageSrcsInlines out f
-  if let some l := doc.logo then out := imageSrcsInlines out l
-  for (_, st) in doc.styles.entries do
-    if let some tpl := st.font then out := imageSrcsInlines out tpl
-    if let some m := st.marker then out := imageSrcsInlines out m
-  return out
-
 mutual
 
 /-- One leaf-parameterised fold hosts every collect walk over the tree:
@@ -6353,6 +6253,46 @@ def bibStyleName (doc : Doc) : Option String :=
   (foldBlocks (fun out b => match b with
     | .bibliography _ (some s) _ => out.push s
     | _ => out) (fun out _ => out) #[] doc.body)[0]?
+
+-- Image walks: the request an image node states, and the caption an image
+-- inherits.
+
+/-- One image-source leaf into the collect: each `.image`'s source,
+deduplicated, in document order. -/
+private def imageSrcPush (out : Array String)
+    (x : Inline) : Array String :=
+  match x with
+  | .image src _ _ => if out.contains src then out else out.push src
+  | _ => out
+
+/-- Every image source the inlines reference, in document order: a
+`foldInlines` leaf, so the descent — `.role` and `.footnote` bodies
+included — is the fold's, declared once and never re-decided here. An
+image inside a footnote once shipped a silent placeholder because a
+hand-rolled copy of this walk skipped those two arms while layout's
+placement did not. -/
+def imageSrcsInlines (out : Array String) (xs : Array Inline) : Array String :=
+  foldInlines imageSrcPush out xs
+
+/-- The block face: `foldBlocks` with the same leaf. A `.bibliography`'s
+items are formatted renderings and `Bib.apply` builds no image node, so
+the fold's refusal to descend them loses nothing. -/
+def imageSrcsBlocks (out : Array String) (xs : Array Block) : Array String :=
+  foldBlocks (fun out _ => out) imageSrcPush out xs
+
+/-- Every image the document references, deduplicated, in document order:
+the request value the CLI driver fulfils by reading and decoding each file
+into the `Image.Store` layout and the backends consume. Files are effects,
+so the core never opens one — the same shape as fonts. -/
+def imageRefs (doc : Doc) : Array String := Id.run do
+  let mut out := imageSrcsBlocks #[] doc.body
+  if let some h := doc.head then out := imageSrcsInlines out h
+  if let some f := doc.foot then out := imageSrcsInlines out f
+  if let some l := doc.logo then out := imageSrcsInlines out l
+  for (_, st) in doc.styles.entries do
+    if let some tpl := st.font then out := imageSrcsInlines out tpl
+    if let some m := st.marker then out := imageSrcsInlines out m
+  return out
 
 mutual
 
