@@ -834,6 +834,80 @@ def hyphenGlyph (size : Sp) (font : Font) : Array (Nat × Char × Sp) :=
   | some g => #[g]
   | none => #[]
 
+/-- The width a box's glyphs carry: what the KP breaker measures. -/
+def boxWidth (box : Array (Nat × Char × Sp)) : Sp :=
+  box.foldl (fun w g => w + g.2.2) 0
+
+theorem boxWidth_push (xs : Array (Nat × Char × Sp)) (a : Nat × Char × Sp) :
+    boxWidth (xs.push a) = boxWidth xs + a.2.2 := by
+  unfold boxWidth
+  rw [Array.foldl_push]
+
+/-- The scaled pair kern the next glyph owes against the box's last: 0
+at a box head, and 0 for every pair of a face with no kern data (Open
+Sans ships none). Both backends read one `Ir.Features` value for whether
+kerning applies at all — `features_agree` by construction, `font-kerning`
+in CSS and this application being two projections of it. -/
+def kernVal (kern : Bool) (size : Sp) (font : Font)
+    (box : Array (Nat × Char × Sp)) (g1 : Nat) : Sp :=
+  match box.back? with
+  | some (pg, _, _) =>
+    (if kern then font.kernAdv pg g1 else 0) * size / (font.unitsPerEm : Int)
+  | none => 0
+
+/-- Apply a pair kern to the box's last glyph's advance: the pen position
+of everything after it — the next glyph first — moves by exactly the
+declared value, which is what kerning is. -/
+def kernApply (box : Array (Nat × Char × Sp)) (ks : Sp) : Array (Nat × Char × Sp) :=
+  match box.back? with
+  | some (pg, pc, padv) => box.pop.push (pg, pc, padv + ks)
+  | none => box
+
+private theorem back?_pop_push {α : Type} (xs : Array α) (a : α)
+    (h : xs.back? = some a) : xs = xs.pop.push a := by
+  unfold Array.back? at h
+  apply Array.toList_inj.mp
+  simp only [Array.toList_push, Array.toList_pop]
+  have hg : xs.toList.getLast? = some a := by
+    rw [List.getLast?_eq_getElem?]
+    simpa using h
+  have hne : xs.toList ≠ [] := by rintro h0; simp [h0] at hg
+  rw [List.getLast?_eq_some_getLast hne] at hg
+  have := List.dropLast_concat_getLast hne
+  rw [Option.some_inj.mp hg] at this
+  exact this.symm
+
+/-- kern_symmetric_in_measure: setting the next glyph after a kern moves
+the box width by exactly the glyph's advance plus the applied pair value,
+and nothing else — the KP breaker's widths stay the exact sum of what
+the box carries, GPOS application included. -/
+theorem kern_symmetric_in_measure (box : Array (Nat × Char × Sp))
+    (ks : Sp) (g : Nat × Char × Sp) (h : box.back?.isSome) :
+    boxWidth ((kernApply box ks).push g) = boxWidth box + ks + g.2.2 := by
+  cases hb : box.back? with
+  | none => simp [hb] at h
+  | some p =>
+    obtain ⟨pg, pc, padv⟩ := p
+    have hbox := back?_pop_push box _ hb
+    have hw : boxWidth box = boxWidth box.pop + padv := by
+      rw [hbox]
+      simp [boxWidth, Array.pop_push]
+    rw [show kernApply box ks = box.pop.push (pg, pc, padv + ks) by
+      unfold kernApply
+      rw [hb]]
+    rw [boxWidth_push, boxWidth_push, hw]
+    change boxWidth box.pop + (padv + ks) + g.2.2
+      = boxWidth box.pop + padv + ks + g.2.2
+    rw [Int.add_assoc (boxWidth box.pop) padv ks]
+
+/-- At a box head there is nothing to kern against: the applied value is
+0 by definition, so the width moves by the glyph's advance alone. -/
+theorem kernVal_head (kern : Bool) (size : Sp) (font : Font) (g1 : Nat)
+    (box : Array (Nat × Char × Sp)) (h : box.back? = none) :
+    kernVal kern size font box g1 = 0 := by
+  unfold kernVal
+  rw [h]
+
 /-- Fixed-width spaces, as a fraction of the em. These are kerns, not
 characters: a Type 1-derived face has no glyph at U+2009, so looking one up
 drops the space that `\,` asked for. `\!`-style negative kerns are not here
@@ -913,8 +987,9 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
               (.pen hyphW hyphenPenalty true fontIdx color (hyphenGlyph size font))
           match glyphOfSc smallcaps size font c' with
           | some g =>
-            box := box.push g
-            boxW := boxW + g.2.2
+            let ks := kernVal Ir.features.kern size font box g.1
+            box := (kernApply box ks).push g
+            boxW := boxW + ks + g.2.2
           | none =>
             match fs.fallbackFor c' |>.bind fun fb =>
                 (glyphOfSc smallcaps size (fs.get fb) c').map (fb, ·) with
@@ -951,8 +1026,9 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
         else
         match glyphOfSc smallcaps size font c with
         | some g =>
-          box := box.push g
-          boxW := boxW + g.2.2
+          let ks := kernVal Ir.features.kern size font box g.1
+          box := (kernApply box ks).push g
+          boxW := boxW + ks + g.2.2
         | none =>
           match fs.fallbackFor c |>.bind fun fb =>
               (glyphOfSc smallcaps size (fs.get fb) c).map (fb, ·) with

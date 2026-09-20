@@ -909,6 +909,9 @@ def baseCss (doc : Doc) : String :=
   "  font-size: 1rem;\n" ++
   s!"  line-height: {milliFactor bodyLeadingMilli};\n" ++
   "  text-rendering: optimizeLegibility;\n" ++
+  -- The same feature record the PDF path applies (Ir.features): the two
+  -- artifacts request kerning from one value, agreement by construction.
+  (if Ir.features.kern then "  font-kerning: normal;\n" else "") ++
   "  -webkit-font-smoothing: antialiased;\n" ++
   "}\n" ++
   "main { max-width: var(--measure); margin: 0 auto; }\n" ++

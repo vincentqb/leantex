@@ -892,6 +892,20 @@ named the miss, W0368). One resolving site, read by both backends. -/
 def Meta.locale (m : Meta) : Locale :=
   (m.language.bind Locale.forTag).getD Locale.en
 
+/-- The OpenType features both backends apply, one record: the PDF path
+applies them to the glyphs it sets, the HTML path requests them of the
+browser (`font-kerning`), so the artifacts cannot disagree —
+`features_agree` holds by construction, the two emissions being two
+projections of one value. `kern` defaults on, HarfBuzz's own default
+set; a `\tokens` knob arrives with the features it gates, and until
+then the record is the engine's one constant. -/
+structure Features where
+  kern : Bool := true
+  deriving Repr, BEq, Inhabited
+
+/-- The features in force: the one resolving site. -/
+def features : Features := {}
+
 inductive CmpOp where
   | eq
   | ne

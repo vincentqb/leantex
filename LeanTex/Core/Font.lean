@@ -303,6 +303,153 @@ private def parseGsubSmallCaps (b : ByteArray) : Bool × Bool × Array (Nat × N
       out := out.push (gid, cur)
   return (hasSmcp, hasC2sc, out)
 
+/-- A ClassDef table (OpenType spec, class definition formats 1 and 2) as
+`(gid, class)` pairs sorted by gid, listed glyphs only — an unlisted glyph
+is class 0, the spec's default. -/
+private def parseClassDef (b : ByteArray) (off : Nat) : Array (Nat × Nat) := Id.run do
+  let mut out : Array (Nat × Nat) := #[]
+  match u16 b off with
+  | 1 =>
+    let start := u16 b (off + 2)
+    let n := u16 b (off + 4)
+    for i in [0:n] do
+      out := out.push (start + i, u16 b (off + 6 + 2 * i))
+  | 2 =>
+    let n := u16 b (off + 2)
+    for i in [0:n] do
+      let s := u16 b (off + 4 + 6 * i)
+      let e := u16 b (off + 6 + 6 * i)
+      let cls := u16 b (off + 8 + 6 * i)
+      -- Bounded: a malformed range never expands past the glyph space.
+      for g in [s : min (e + 1) 0x10000] do
+        out := out.push (g, cls)
+  | _ => pure ()
+  return out.qsort fun a c => a.1 < c.1
+
+/-- Binary search over sorted `(gid, v)` pairs: the value, or `none`. -/
+private def sortedFind (pairs : Array (Nat × Nat)) (g : Nat) : Option Nat := Id.run do
+  let mut lo := 0
+  let mut hi := pairs.size
+  for _ in [0:34] do
+    if lo ≥ hi then
+      break
+    let mid := (lo + hi) / 2
+    match pairs[mid]? with
+    | none => break
+    | some (k, v) =>
+      if g < k then hi := mid
+      else if g > k then lo := mid + 1
+      else return some v
+  return none
+
+/-- The size in bytes of a GPOS ValueRecord under a value format, and the
+byte offset of its XAdvance field: one 16-bit word per set bit, XAdvance
+(0x0004) after XPlacement (0x0001) and YPlacement (0x0002) when those are
+set (GPOS spec §"ValueRecord"). -/
+private def valueRecord (vf : Nat) : Nat × Option Nat :=
+  let bits (n : Nat) : Nat := (List.range 16).foldl
+    (fun acc i => acc + (n >>> i) % 2) 0
+  (2 * bits (vf % 0x10000),
+   if vf % 8 ≥ 4 then some (2 * bits (vf % 4)) else none)
+
+/-- One GPOS PairPos subtable, parsed to its skeleton: coverage and class
+definitions up front (they answer per-pair queries by binary search), the
+value matrix left in the font bytes and indexed on demand — enumerating a
+class-based subtable into explicit pairs costs ~30 ms per Source Serif
+face (178k pairs) at every parse, for pairs mostly never asked for. -/
+private structure KernSub where
+  fmt : Nat
+  off : Nat
+  /-- Coverage gids in coverage order (ascending): index = coverage index. -/
+  cov : Array Nat
+  size1 : Nat
+  size2 : Nat
+  /-- Byte offset of XAdvance inside the first value record. -/
+  xAdv : Nat
+  cd1 : Array (Nat × Nat) := #[]
+  cd2 : Array (Nat × Nat) := #[]
+  c1Count : Nat := 0
+  c2Count : Nat := 0
+  deriving Inhabited
+
+/-- The PairPos subtables one GPOS `kern` feature carries for
+`latn`/`DFLT`, formats 1 and 2, XAdvance of the first glyph only — the
+one value horizontal Latin kerning uses. Extension lookups (type 9) and
+contextual positioning are outside this slice; a font with no GPOS kern
+reads as empty (Open Sans) and the legacy `kern` table answers instead. -/
+private def parseKernSubs (b : ByteArray) : Array KernSub := Id.run do
+  let some t := findTable b "GPOS" | return #[]
+  unless fits b t && t.length ≥ 10 do return #[]
+  let g := t.offset
+  let scriptList := g + u16 b (g + 4)
+  let featList := g + u16 b (g + 6)
+  let lookupList := g + u16 b (g + 8)
+  let lookups := gsubFeatureLookups b scriptList featList "kern"
+  let mut out : Array KernSub := #[]
+  for li in lookups do
+    if li ≥ u16 b lookupList then continue
+    let lo := lookupList + u16 b (lookupList + 2 + 2 * li)
+    unless u16 b lo == 2 do continue
+    let nSub := u16 b (lo + 4)
+    for s in [0:nSub] do
+      let so := lo + u16 b (lo + 6 + 2 * s)
+      let fmt := u16 b so
+      unless fmt == 1 || fmt == 2 do continue
+      let cov := parseCoverage b (so + u16 b (so + 2))
+      let (size1, xa1) := valueRecord (u16 b (so + 4))
+      let (size2, _) := valueRecord (u16 b (so + 6))
+      let some xAdv := xa1 | continue
+      if fmt == 1 then
+        out := out.push { fmt, off := so, cov, size1, size2, xAdv }
+      else
+        out := out.push { fmt, off := so, cov, size1, size2, xAdv
+                          cd1 := parseClassDef b (so + u16 b (so + 8))
+                          cd2 := parseClassDef b (so + u16 b (so + 10))
+                          c1Count := u16 b (so + 12)
+                          c2Count := u16 b (so + 14) }
+  return out
+
+/-- The coverage index of `g` (coverage arrays are ascending). -/
+private def covIndex (cov : Array Nat) (g : Nat) : Option Nat := Id.run do
+  let mut lo := 0
+  let mut hi := cov.size
+  for _ in [0:34] do
+    if lo ≥ hi then
+      break
+    let mid := (lo + hi) / 2
+    match cov[mid]? with
+    | none => break
+    | some k =>
+      if g < k then hi := mid
+      else if g > k then lo := mid + 1
+      else return some mid
+  return none
+
+/-- The legacy `kern` table, format 0 horizontal subtables (TrueType):
+HarfBuzz's own fallback when GPOS carries no `kern` feature. Sorted
+`(g1 * 0x10000 + g2, value)` pairs. -/
+private def parseLegacyKern (b : ByteArray) : Array (Nat × Int) := Id.run do
+  let some t := findTable b "kern" | return #[]
+  unless fits b t && t.length ≥ 4 do return #[]
+  let k := t.offset
+  let nTables := u16 b (k + 2)
+  let mut off := k + 4
+  let mut out : Array (Nat × Int) := #[]
+  for _ in [0:nTables] do
+    let len := u16 b (off + 2)
+    let cov := u16 b (off + 4)
+    -- horizontal (bit 0), format 0 (high byte), not cross-stream
+    if cov % 2 == 1 && cov / 256 == 0 && cov % 8 < 4 then
+      let n := u16 b (off + 6)
+      for i in [0:n] do
+        let r := off + 14 + 6 * i
+        let v := i16 b (r + 4)
+        if v != 0 then
+          out := out.push (u16 b r * 0x10000 + u16 b (r + 2), v)
+    off := off + max len 6
+  return (out.qsort fun a c => a.1 < c.1).foldl
+    (fun acc p => if acc.back?.map (·.1) == some p.1 then acc else acc.push p) #[]
+
 /-- A parsed sfnt font: the metrics the layout engine needs, the char→glyph
 map, and the raw bytes for embedding. Pure data; loading the file is the
 driver's job. -/
@@ -377,6 +524,14 @@ structure Font where
   Empty unless the face carries both features (see `parseGsubSmallCaps`);
   empty means the layout synthesises small caps instead. -/
   smallCaps : Array (Nat × Nat)
+  /-- GPOS `kern` PairPos subtables, parsed to their skeletons and
+  queried per pair (`Font.kernAdv`): the class matrices stay in `data`.
+  Empty for a face with no GPOS kern — Open Sans, and every monospace
+  done right (Source Code Pro). -/
+  kernSubs : Array KernSub
+  /-- The legacy `kern` table pairs, HarfBuzz's own fallback rule
+  (F_GLOBAL_HAS_FALLBACK): read only when `kernSubs` is empty. -/
+  kernPairs : Array (Nat × Int)
   deriving Inhabited
 
 private def parseCmap4 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × UInt32) := Id.run do
@@ -683,6 +838,7 @@ def parse (data : ByteArray) : Except String Font := do
       ext := ext.push (Thunk.mk fun _ => src.yExtentAt g)
     return ext
   let sc := parseGsubSmallCaps data
+  let kernSubs := parseKernSubs data
   return {
     data := data
     isCff := isCff
@@ -716,6 +872,8 @@ def parse (data : ByteArray) : Except String Font := do
     hasSmcp := sc.1
     hasC2sc := sc.2.1
     smallCaps := sc.2.2
+    kernSubs := kernSubs
+    kernPairs := if kernSubs.isEmpty then parseLegacyKern data else #[]
   }
 
 /-- Glyph id for a scalar, or `none` (missing glyph). -/
@@ -727,6 +885,53 @@ substitutions, or `g` itself when the face maps it nowhere — a digit or a
 point of punctuation passes through unchanged. -/
 def Font.smallCapGid (f : Font) (g : Nat) : Nat :=
   substGid f.smallCaps g
+
+/-- The pair kern between two adjacent glyphs of this face, in font units
+(usually negative — 'Ta' tightens): the first GPOS PairPos subtable whose
+coverage holds `g1` answers (format 1 by pair-set scan, format 2 by class
+matrix), else the legacy pairs, else 0 — including for every pair of a
+face with no kern data at all. -/
+def Font.kernAdv (f : Font) (g1 g2 : Nat) : Int := Id.run do
+  let b := f.data
+  for sub in f.kernSubs do
+    match covIndex sub.cov g1 with
+    | none => pure ()
+    | some ci =>
+      if sub.fmt == 1 then
+        if ci < u16 b (sub.off + 8) then
+          let ps := sub.off + u16 b (sub.off + 10 + 2 * ci)
+          let n := u16 b ps
+          let rec2 := 2 + sub.size1 + sub.size2
+          for k in [0:n] do
+            let r := ps + 2 + rec2 * k
+            if u16 b r == g2 then
+              return i16 b (r + 2 + sub.xAdv)
+      else
+        let c1 := (sortedFind sub.cd1 g1).getD 0
+        let c2 := (sortedFind sub.cd2 g2).getD 0
+        if c1 < sub.c1Count && c2 < sub.c2Count then
+          let r := sub.off + 16 + (sub.size1 + sub.size2) * (c1 * sub.c2Count + c2)
+          let v := i16 b (r + sub.xAdv)
+          if v != 0 then
+            return v
+  -- legacy pairs, binary search
+  let key := g1 * 0x10000 + g2
+  let mut lo := 0
+  let mut hi := f.kernPairs.size
+  for _ in [0:34] do
+    if lo ≥ hi then
+      break
+    let mid := (lo + hi) / 2
+    match f.kernPairs[mid]? with
+    | none => break
+    | some (k, v) =>
+      if key < k then
+        hi := mid
+      else if key > k then
+        lo := mid + 1
+      else
+        return v
+  return 0
 
 /-- The char→glyph ranges of a font image alone, sorted, without parsing the
 rest of it: what the per-glyph fallback scan asks of a candidate face is only

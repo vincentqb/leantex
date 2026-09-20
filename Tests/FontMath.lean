@@ -486,6 +486,41 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "no-companion branch: the first MATH-table face serves, rowless"
     ((← FontDb.pickMathFace shipped "Source Serif Pro").map
         (fun (f, r) => (f.family, r.isNone)) == some ("Fira Math", true))
+  -- GPOS pair kerning (PairPos formats 1+2 + ClassDef; legacy kern
+  -- table as HarfBuzz's fallback rule). The −41 is hb-shape's own
+  -- number for Source Serif Pro "Ta" at upem 1000; Open Sans ships no
+  -- pairs and must read as zero everywhere, costing nothing.
+  let ssp ← load "SourceSerifPro-Regular.otf"
+  let sspT := (ssp.gid 'T').getD 0
+  let sspA := (ssp.gid 'a').getD 0
+  t "kern: Source Serif Pro Ta matches hb-shape"
+    (ssp.kernAdv sspT sspA == -41)
+  t "kern: an unkerned pair answers 0" (ssp.kernAdv sspA sspA == 0)
+  let osans ← load "OpenSans-Regular.ttf"
+  t "kern: a face with no pairs answers 0 for every pair"
+    (osans.kernSubs.isEmpty && osans.kernPairs.isEmpty &&
+      osans.kernAdv ((osans.gid 'T').getD 0) ((osans.gid 'a').getD 0) == 0)
+  -- The applied value reaches the box: a "Ta" word's width is the two
+  -- advances plus the (negative) kern, exactly
+  -- (kern_symmetric_in_measure holds the general fact).
+  let sspSet := oneFaceOf ssp
+  let (taDoc, _) := Elab.run "t" "Ta"
+  let taOut := layoutOf sspSet taDoc ({} : Layout.Geom)
+  let taRun := ((taOut.pages.flatMap (·.lines)).flatMap (·.segs)).findSome?
+    fun s => match s with
+      | .run _ _ _ w glyphs _ _ _ =>
+        if (glyphs.map (·.2)) == #['T', 'a'] then some (w, glyphs) else none
+      | _ => none
+  t "kern: the run width is the advances plus the pair value"
+    (match taRun with
+     | some (w, glyphs) =>
+       let geom : Layout.Geom := {}
+       let want : Dim.Sp :=
+         ((ssp.widths[sspT]! : Int) * geom.fontSize / 1000
+           + (-41 : Int) * geom.fontSize / 1000)
+           + (ssp.widths[sspA]! : Int) * geom.fontSize / 1000
+       glyphs.size == 2 && w == want
+     | none => false)
   t "no MATH face anywhere: the pick is none"
     ((← FontDb.pickMathFace
         (shipped.filter fun f => !(f.path.endsWith "FiraMath-Regular.otf"))
