@@ -139,6 +139,27 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
          | .para xs => xs.any (fun x => x matches .fill)
          | _ => false
      | _ => false)
+  -- Inside a `column`, `width=\textwidth` is the column's width: a column
+  -- is a minipage of its declared width (beamerbaseframecomponents.sty,
+  -- `beamer@columnenv`), and a minipage sets `\textwidth` and
+  -- `\columnwidth` to its own `\hsize` (latex.ltx, `\@iiiminipage`). The
+  -- image box must span exactly the column, never the page's measure.
+  let imgSrc := deck169Frame ("\\begin{columns}\n\\begin{column}{0.3\\textwidth}\n" ++
+    "\\includegraphics[width=\\textwidth]{missing.png}\n\\end{column}\n" ++
+    "\\begin{column}{0.7\\textwidth}\nright\n\\end{column}\n\\end{columns}")
+  let (iDoc, _) := elabStr imgSrc
+  let iGeom := Layout.Geom.ofPage iDoc.page
+  let iOut := layoutOf oneFace iDoc iGeom
+  let colW := iGeom.textWidth * 300 / 1000
+  t "a column image of width textwidth spans exactly the column"
+    ((iOut.pages.flatMap (·.lines)).any fun l => l.segs.any fun s =>
+      match s with
+      | .image _ w _ => w == colW
+      | _ => false)
+  -- The joint shape the A0 poster failed on: with the image held to its
+  -- column, no ink can start left of the text origin.
+  t "a column image never lands past the left margin"
+    ((iOut.pages.flatMap (·.lines)).all fun l => l.x ≥ iGeom.hmargin)
 
 /-- Overlays, dim-not-hide (PLAN M5): steps ride the IR, the PDF handout
 gets one page per step with pending content dimmed and no reflow, HTML

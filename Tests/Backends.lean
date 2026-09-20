@@ -1352,6 +1352,16 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     layoutSrc "\\includegraphics[width=32pt, height=32pt, keepaspectratio]{rects.jpg}"
   t "layout keepaspect fits the box"
     (imageSegs outKeep == #[(some 1, Dim.pt 32, Dim.pt 32 * 40 / 64)])
+  -- The mirror bound, in the poster's own spelling: with `width` and
+  -- `totalheight` both given, `keepaspectratio` takes the smaller of the
+  -- two scales so neither bound is exceeded (graphicx.sty, the `Gin@iso`
+  -- branch of `\Gin@req@sizes`; `resolveSize_keepAspect_fits` is the
+  -- engine's statement). Here the height is the binding bound: the width
+  -- follows the intrinsic ratio, never the declared 60pt.
+  let outKeepH :=
+    layoutSrc "\\includegraphics[width=60pt, totalheight=20pt, keepaspectratio]{rects.jpg}"
+  t "layout keepaspect picks the binding bound"
+    (imageSegs outKeepH == #[(some 1, Dim.pt 20 * 64 / 40, Dim.pt 20)])
   -- A source the store has no entry for is a placeholder box: the document
   -- still compiles, at the requested size.
   let outMissing := layoutSrc "\\includegraphics[width=50pt]{missing.png}"

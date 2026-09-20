@@ -3587,6 +3587,13 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     (rule : Option (Sp × Ir.Color) := none)
     (display : Bool := false) : Acc :=
   let a := a.flushGap
+  -- The measure the paragraph sets against — and what a fraction-of-
+  -- `\textwidth` image size resolves against: inside a `column` the
+  -- current measure, not the page's. A column is a minipage of its
+  -- declared width, and a minipage sets `\textwidth` and `\columnwidth`
+  -- to its own `\hsize` (latex.ltx, `\@iiiminipage`), so `.95\textwidth`
+  -- inside a column names 95% of the column.
+  let measure := (a.measure.getD a.geom.textWidth) - indent
   -- The page's text colour is the default: content that declared its own
   -- keeps it, so a themed page colours everything or nothing silently dies
   -- on a dark standout background.
@@ -3594,11 +3601,11 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       { baseStyle with color := a.fg } else baseStyle
   let (items, ds, cache, extras) :=
     itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache a.imgs
-      a.geom.textWidth a.geom.textHeight
+      measure a.geom.textHeight
   let items :=
     if a.geom.justify then items
     else if display then
-      displayItems ((a.measure.getD a.geom.textWidth) - indent) items
+      displayItems measure items
     else raggedItems items
   -- A marker is content: set as a line of its own, unjustified, so it can
   -- carry any style the document gave it. Its diagnostics ride with the
@@ -3607,7 +3614,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     | some m =>
       let (mi, mds, cache, _) :=
         itemsOfInlines pats size a.xHeight fs { color := a.fg } m cache
-          a.imgs a.geom.textWidth a.geom.textHeight
+          a.imgs measure a.geom.textHeight
       let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) a.geom.textWidth false
       (some (segs, w), ds ++ mds, cache)
     | none => (none, ds, cache)
@@ -3615,7 +3622,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     hyphCache := cache
     ops := a.ops.push (.para {
       items := items, extras := extras, diags := ds
-      target := (a.measure.getD a.geom.textWidth) - indent
+      target := measure
       indent := indent, center := center, size := size
       justify := a.geom.justify
       protrude := a.geom.protrude
@@ -4127,12 +4134,14 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- declares: the fils are the alignment.
     let a := a.flushGap
     let baseStyle : TextStyle := { color := a.fg }
+    -- Image fractions resolve against the current measure, as collectPara's.
+    let target := (a.measure.getD a.geom.textWidth) - indent
     let (citems, ds1, cache1, extras) :=
       itemsOfInlines pats a.geom.fontSize a.xHeight fs baseStyle content
-        a.hyphCache a.imgs a.geom.textWidth a.geom.textHeight
+        a.hyphCache a.imgs target a.geom.textHeight
     let (nitems, ds2, cache2, _) :=
       itemsOfInlines pats a.geom.fontSize a.xHeight fs baseStyle #[.text num]
-        cache1 a.imgs a.geom.textWidth a.geom.textHeight
+        cache1 a.imgs target a.geom.textHeight
     -- both walks close with parfill glue and a forced pen; the assembled
     -- line supplies its own ending
     let strip (xs : Array Item) : Array Item :=
@@ -4150,7 +4159,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       hyphCache := cache2
       ops := a.ops.push (.para {
         items := items, extras := extras, diags := ds1 ++ ds2
-        target := (a.measure.getD a.geom.textWidth) - indent
+        target := target
         indent := indent, center := false, size := a.geom.fontSize
         justify := true
         markerSegs := none, rule := none }) }
@@ -4474,11 +4483,12 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- longer one sets as an ordinary paragraph.
     let setCaption (a : Acc) : Acc :=
       if caption.isEmpty then a else
+      let avail := (a.measure.getD a.geom.textWidth) - indent
       let (items, _, cache, _) :=
         itemsOfInlines pats a.geom.fontSize a.xHeight fs { color := a.fg } caption
-          a.hyphCache a.imgs a.geom.textWidth a.geom.textHeight
+          a.hyphCache a.imgs avail a.geom.textHeight
       let a := { a with hyphCache := cache }
-      let fits := itemsNaturalWidth items ≤ (a.measure.getD a.geom.textWidth) - indent
+      let fits := itemsNaturalWidth items ≤ avail
       collectPara a pats fs caption indent fits a.geom.fontSize
     let a := (floatPlan capAbove (!caption.isEmpty) floatSep capSep).foldl
       (fun a slot => match slot with
