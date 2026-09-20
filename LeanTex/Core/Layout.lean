@@ -539,6 +539,11 @@ structure LineOut where
   walk) can tell the band's ink from the flow's: furniture stands in the
   margin by design, exactly where LaTeX's own page styles put it. -/
   furniture : Bool := false
+  /-- A footnote line (or the footnote rule): body ink laid by the
+  bottom-anchored flush in `finishPage`, above `Geom.bodyBottom`, never in
+  the furniture band — marked so the census can tell the note apparatus
+  from the flow structurally. -/
+  note : Bool := false
   deriving Repr, Inhabited
 
 /-- A filled rectangle behind a page's text: the page background, a frame
@@ -649,6 +654,10 @@ private inductive Tk where
   a fallback face is the declared path, not a degradation, and earns no
   W0009. A scalar no face covers is the ordinary coverage loss (E0405). -/
   | icon (style : TextStyle) (c : Char)
+  /-- A footnote mark with the note body it owes: the mark sets as a raised
+  run at the scriptsize step (`Ir.markRaise` holds the raise); the body is
+  staged as its own pre-broken note block whose page is the mark's. -/
+  | note (num : Nat) (style : TextStyle) (body : Array Ir.Inline)
   deriving Repr
 
 private structure FlattenSt where
@@ -752,17 +761,17 @@ private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
 
 mutual
 
-private def flatten (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
+private def flatten (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     (xs : Array Inline) : FlattenSt :=
-  flattenList mathOk st sty xs.toList
+  flattenList mathOk noteOk st sty xs.toList
 
-private def flattenList (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
+private def flattenList (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     (xs : List Inline) : FlattenSt :=
   match xs with
   | [] => st
-  | x :: rest => flattenList mathOk (flattenOne mathOk st sty x) sty rest
+  | x :: rest => flattenList mathOk noteOk (flattenOne mathOk noteOk st sty x) sty rest
 
-private def flattenOne (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
+private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
     (x : Inline) : FlattenSt :=
   match x with
   | .text s => pushText st sty s
@@ -772,8 +781,12 @@ private def flattenOne (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
   -- An unresolved citation sets its marks as plain text: something stands
   -- here, and the diagnostic that let it through has already said why.
   | .cite _ keys => pushText st sty (Ir.citeMarks keys)
-  -- Interim, until the note machinery lands: the note body sets inline.
-  | .footnote _ body => flatten mathOk st sty body
+  -- The mark rides as its own token when the context has a note apparatus
+  -- (a paragraph of a paged flow); where none exists — furniture, markers,
+  -- captions, a card face — the body stays inline, the declared refusal.
+  | .footnote num body =>
+    if noteOk then { st with toks := st.toks.push (.note (num.getD 0) sty body) }
+    else flatten mathOk noteOk st sty body
   | .icon c _ => { st with toks := st.toks.push (.icon sty c) }
   | .image src spec _ => { st with toks := st.toks.push (.img src spec) }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra) }
@@ -791,19 +804,19 @@ private def flattenOne (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
                  (some "declare \\fonts{ math = \"...\" } naming an installed \
 OpenType math face; `leantex fonts` lists families") with warnedMath := true }
       pushText st sty src
-  | .styled s body => flatten mathOk st (applyStyle sty s) body
-  | .colored c _ body => flatten mathOk st { sty with color := c } body
+  | .styled s body => flatten mathOk noteOk st (applyStyle sty s) body
+  | .colored c _ body => flatten mathOk noteOk st { sty with color := c } body
   -- A role is a name, pure grouping: zero metric impact, no style change
   -- (role_transparent_layout is the statement).
-  | .role _ body => flatten mathOk st sty body
+  | .role _ body => flatten mathOk noteOk st sty body
   -- The underline is the link's affordance in both backends (the HTML
   -- anchor keeps the browser's): never colour alone, and never nothing
   -- (WCAG 2.2 SC 1.4.1, use of colour).
-  | .link url body => flatten mathOk st { sty with link := some url, underline := true } body
-  | .underline body => flatten mathOk st { sty with underline := true } body
+  | .link url body => flatten mathOk noteOk st { sty with link := some url, underline := true } body
+  | .underline body => flatten mathOk noteOk st { sty with underline := true } body
   -- A step is pure grouping here: the PDF path dims pending content by
   -- recolouring copies before layout (`run`'s step driver), never by metrics.
-  | .step _ _ body => flatten mathOk st sty body
+  | .step _ _ body => flatten mathOk noteOk st sty body
   -- Placeholders are substituted before layout; reaching here means the
   -- document used one outside running content.
   | .pageNumber => pushText st sty "?"
@@ -816,9 +829,10 @@ body with the state and the style unchanged, so wrapping content in a role
 moves no ink and no metric — the `.step` property, and the reason the PDF
 page is byte-identical with and without the annotation. The block half is
 `collectRole_transparent`, over the collector's own arm. -/
-theorem role_transparent_layout (mathOk : Bool) (st : FlattenSt)
+theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
     (sty : TextStyle) (n : String) (body : Array Inline) :
-    flattenOne mathOk st sty (.role n body) = flatten mathOk st sty body := by
+    flattenOne mathOk noteOk st sty (.role n body)
+      = flatten mathOk noteOk st sty body := by
   simp [flattenOne]
 
 -- Items -----------------------------------------------------------------------
@@ -1987,6 +2001,29 @@ theorem hyphenation_follows_language (main : Option Hyphen.Patterns)
 theorem patsOf_off (lang : Option String) : patsOf none lang = none := by
   cases lang <;> rfl
 
+/-- A footnote mark's box: the number's digits as one raised run at the
+scriptsize step of `around`, lifted by `Ir.markRaise` (the OS/2
+`ySuperscript*` stand-in; parsing the table is owed) — the shape the
+in-text mark and the note's own leading mark share. A box, so no break can
+part the mark from the word it follows. Digits the face lacks return
+beside the box for the caller's E0405. -/
+private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp) (num : Nat) :
+    Item × Array (Nat × Char) := Id.run do
+  let idx := fs.lookup sty.slot sty.bold sty.italic
+  let font := fs.get idx
+  let markSize := around * ((Ir.sizeScale.lookup "scriptsize").getD 700) / 1000
+  let raise := around * Ir.markRaise / 1000
+  let mut gs : Array (Nat × Char × Sp) := #[]
+  let mut w : Sp := 0
+  let mut miss : Array (Nat × Char) := #[]
+  for c in (toString num).toList do
+    match glyphOf markSize font c with
+    | some g =>
+      gs := gs.push g
+      w := w + g.2.2
+    | none => miss := miss.push (idx, c)
+  return (.box w idx sty.color sty.link gs markSize sty.underline raise, miss)
+
 /-- Flatten inlines into Knuth-Plass items. The fourth component maps the
 index of a forced-break penalty to extra vertical space the document asked for
 there (`\\[1ex]`); it rides beside the items because the line breaker has no
@@ -1995,11 +2032,12 @@ only the page builder reads. -/
 private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (imgs : Image.Store := {})
-    (textW : Sp := 0) (textH : Sp := 0) :
+    (textW : Sp := 0) (textH : Sp := 0) (noteOk : Bool := false) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
-      Std.HashMap Nat Sp := Id.run do
-  let st := flatten (fs.mathFont?.isSome) {} baseStyle xs
+      Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline) := Id.run do
+  let st := flatten (fs.mathFont?.isSome) noteOk {} baseStyle xs
   let mut items : Array Item := #[]
+  let mut notes : Array (Nat × Nat × Array Inline) := #[]
   let mut missing : Array (Nat × Char) := #[]
   let mut substs : Array (Nat × Char × Nat) := #[]
   let mut unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
@@ -2045,6 +2083,13 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       | none =>
         unless missing.contains (idx, c) do
           missing := missing.push (idx, c)
+    | .note num sty body =>
+      let (mk, miss) := markBox fs sty (size * sty.scale / 1000) num
+      for m in miss do
+        unless missing.contains m do
+          missing := missing.push m
+      notes := notes.push (items.size, num, body)
+      items := items.push mk
     | .formula display sty body =>
       -- The flatten pass pushes a formula token only when a math face with
       -- constants is present.
@@ -2138,7 +2183,7 @@ with \\allow{E0405}"))
         s!"'{(fs.get idx).family}' has no {a.styleLabel} '{base}' \
 (U+{hex c.toNat}); the plain letter stands in"
         (help := "declare a math face that carries it: \\fonts{ math = ... }"))
-  return (items, diags, cache, extras)
+  return (items, diags, cache, extras, notes)
 where
   hex (n : Nat) : String := Id.run do
     let ds := "0123456789ABCDEF".toList
@@ -2721,6 +2766,25 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
 
 -- Page assembly ----------------------------------------------------------------
 
+/-- One footnote, set and ready to ship: its lines with `y` measured from
+the note block's own top (the first line's `\footnotesep` strut top), and
+the block's total height — strut top to last ink bottom. Built where the
+paragraph is collected (`collectPara`), attached to the open page when the
+mark's line commits (`B.attachNotes`), shipped whole by the
+bottom-anchored flush in `finishPage`. -/
+private structure NoteBlock where
+  lines : Array LineOut
+  height : Sp
+  deriving Repr, Inhabited
+
+/-- The lowest y body ink may reach on a page carrying `h` of note ink:
+the note block and the `\skip\footins` gap above it come out of the text
+block's bottom; with no notes the floor is `bodyBottom` itself. Every
+placement fit test on a noted page reads the bottom from here. -/
+private def noteFloor (geom : Geom) (footins h : Sp) : Sp :=
+  if h == 0 then geom.bodyBottom else geom.bodyBottom - h - footins
+
+
 /-- Page assembly state. A page is set the way a line is: its lines are
 boxes, the vertical skips between them are glue, and `y` is the baseline of
 the last line at the glue's natural size. Shrink is applied to the whole
@@ -2811,7 +2875,156 @@ private structure B where
   /-- Each resolved anchor with its 0-based page index, first declaration
   first — the table the outline's in-document targets resolve against. -/
   anchors : Array (String × Nat) := #[]
+  /-- The resolved `\skip\footins` gap for this run — `Ir.footinsDefault`
+  or the document's `\tokens{ footins = ... }` — fixed at `Layout.run`. -/
+  footins : Sp := 0
+  /-- The footnote rule's ink colour: the design's `fg`. -/
+  noteInk : Ir.Color := Ir.Color.black
+  /-- Footnote lines committed to the open page, y relative to the note
+  block's top: the bottom-anchored flush in `finishPage` ships them. A
+  note enters only through `attachNotes`, in the same step as its mark's
+  committed line — `placeLine_note_with_mark`'s statement. -/
+  pendingNotes : Array LineOut := #[]
+  /-- Total height of the pending note block (strut tops to ink bottoms):
+  what the fit test in `placeLine` reserves above `bodyBottom`. -/
+  notesH : Sp := 0
   diags : Array Diag := #[]
+
+/-- Attach a committed line's notes to the open page: each note's lines
+join `pendingNotes` shifted below what already stands, whole — no branch
+anywhere splits a `NoteBlock`. Called only beside `B.commit`, so a note
+and its mark's line enter the builder in one step
+(`placeLine_note_with_mark`). -/
+private def B.attachNotes (b : B) (notes : Array NoteBlock) : B :=
+  if notes.isEmpty then b
+  else notes.foldl (fun b nb =>
+    { b with pendingNotes := b.pendingNotes
+               ++ nb.lines.map (fun l => { l with y := l.y + b.notesH })
+             notesH := b.notesH + nb.height }) b
+
+/-- W0372: the note block plus its mark's line reach below the text
+block's floor even on a fresh page — the note ships whole and the page is
+honestly overrun (the W0358 shape), never silently truncated or split. -/
+private def B.warnNoteOverrun (b : B) (y inkBelow : Sp) : B :=
+  let over := y + inkBelow - noteFloor b.geom b.footins b.notesH
+  if b.notesH > 0 && over > 0 then
+    { b with diags := b.diags.push (Diag.of .W0372
+        (s!"a footnote is {over.toPtString}pt taller than the text block; " ++
+          "it overruns its page")
+        (help := "shorten the note, or raise the text height (\\page{ vmargin = ... })")) }
+  else b
+
+@[simp] private theorem attachNotes_pages (b : B) (ns : Array NoteBlock) :
+    (b.attachNotes ns).pages = b.pages := by
+  unfold B.attachNotes
+  split
+  · rfl
+  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.pages = b.pages)
+      rfl (fun _ _ h => h)
+
+@[simp] private theorem attachNotes_noBreak (b : B) (ns : Array NoteBlock) :
+    (b.attachNotes ns).noBreak = b.noBreak := by
+  unfold B.attachNotes
+  split
+  · rfl
+  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.noBreak = b.noBreak)
+      rfl (fun _ _ h => h)
+
+@[simp] private theorem attachNotes_cur (b : B) (ns : Array NoteBlock) :
+    (b.attachNotes ns).cur = b.cur := by
+  unfold B.attachNotes
+  split
+  · rfl
+  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.cur = b.cur)
+      rfl (fun _ _ h => h)
+
+/-- Attaching keeps every note line: whatever already pends survives the
+append, and each attached note's lines land whole (segs intact, y
+restacked). -/
+private theorem attachNotes_mem (b : B) (ns : Array NoteBlock)
+    (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
+    ∃ l' ∈ (b.attachNotes ns).pendingNotes, l'.segs = l.segs := by
+  unfold B.attachNotes
+  split
+  · next hemp =>
+    rw [Array.isEmpty_iff] at hemp
+    subst hemp
+    simp at hnb
+  · obtain ⟨j, hj, hje⟩ := Array.mem_iff_getElem.mp hnb
+    exact Array.foldl_induction
+      (motive := fun n (acc : B) => j < n →
+        ∃ l' ∈ acc.pendingNotes, l'.segs = l.segs)
+      (fun h => absurd h (Nat.not_lt_zero j))
+      (fun i acc ih hji => by
+        rcases Nat.lt_or_ge j i.val with hlt | hge
+        · obtain ⟨l', hl', hseg⟩ := ih hlt
+          exact ⟨l', Array.mem_append.mpr (Or.inl hl'), hseg⟩
+        · have hji' : j = i.val := Nat.le_antisymm (Nat.lt_succ_iff.mp hji) hge
+          refine ⟨{ l with y := l.y + acc.notesH },
+            Array.mem_append.mpr (Or.inr (Array.mem_map.mpr ⟨l, ?_, rfl⟩)), rfl⟩
+          subst hji'
+          exact hje ▸ hl) hj
+
+@[simp] private theorem warnNoteOverrun_pages (b : B) (y d : Sp) :
+    (b.warnNoteOverrun y d).pages = b.pages := by
+  simp only [B.warnNoteOverrun]
+  split <;> rfl
+
+@[simp] private theorem warnNoteOverrun_noBreak (b : B) (y d : Sp) :
+    (b.warnNoteOverrun y d).noBreak = b.noBreak := by
+  simp only [B.warnNoteOverrun]
+  split <;> rfl
+
+@[simp] private theorem warnNoteOverrun_cur (b : B) (y d : Sp) :
+    (b.warnNoteOverrun y d).cur = b.cur := by
+  simp only [B.warnNoteOverrun]
+  split <;> rfl
+
+@[simp] private theorem warnNoteOverrun_pendingNotes (b : B) (y d : Sp) :
+    (b.warnNoteOverrun y d).pendingNotes = b.pendingNotes := by
+  simp only [B.warnNoteOverrun]
+  split <;> rfl
+
+/-- The note block as it ships: the footnote rule, then every pending note
+line, bottom-anchored — the block's bottom at `bodyBottom`, the rule in
+the `footins` gap above the block. The rule follows the source and the
+type: `\footnoterule` is a 0.4pt rule over 0.4\columnwidth whose
+net-zero kerns place it 2.6pt clear of the notes (ltmiscen.dtx), read
+here as 0.04 em and 0.26 em of the body size — the heading rule's
+precedent of a sourced absolute following the type. Empty when no note is
+pending, so an unnoted page ships exactly what it always shipped. One
+`++` per page close, bounded, never a walk's accumulator. -/
+private def B.noteLines (b : B) : Array LineOut :=
+  if b.pendingNotes.isEmpty then #[] else
+    let top := b.geom.bodyBottom - b.notesH
+    let thick := b.geom.fontSize * 4 / 100
+    let ruleW := b.geom.textWidth * 2 / 5
+    let rule : LineOut := { x := b.geom.hmargin
+                            y := top - b.geom.fontSize * 26 / 100
+                            size := 0
+                            segs := #[.rule ruleW thick 0 b.noteInk]
+                            setWidth := ruleW
+                            note := true }
+    #[rule] ++ b.pendingNotes.map (fun l => { l with y := top + l.y, note := true })
+
+/-- `note_whole`: every pending note line ships in the one closing page's
+note block — `noteLines` carries each with only its y moved (and the rule
+beside them), so no note is ever split across pages. TeX's split
+insertions (TeXbook ch. 15) are refused by design: whole-or-move,
+`runFloat`'s rule; a note that cannot fit moved with its mark's line
+(`placeLine`'s spill path), and one taller than the text block shipped
+whole with W0372 naming the overrun. -/
+private theorem note_whole (b : B) :
+    ∀ l ∈ b.pendingNotes, ∃ l' ∈ b.noteLines, l'.segs = l.segs ∧ l'.note = true := by
+  intro l hl
+  unfold B.noteLines
+  split
+  · next hemp =>
+    rw [Array.isEmpty_iff] at hemp
+    rw [hemp] at hl
+    simp at hl
+  · exact ⟨_, Array.mem_append.mpr (Or.inr (Array.mem_map.mpr ⟨l, hl, rfl⟩)),
+      rfl, rfl⟩
 
 /-- Close the current page. A page that overflowed at natural size within
 its shrink is set to fit: every line moves up by its share of the shrink
@@ -2837,7 +3050,10 @@ private def B.finishPage (b : B) : B :=
   let pageFils := b.pageFils + (if b.skip.fil then 1 else 0)
   let leftover := if lines.size > b.pinnedLines then
       let lastY := lines.foldl (fun m l => max m l.y) 0
-      b.geom.bodyBottom - (lastY + b.prevDepth)
+      -- the vertical distribution fills down to the note block's top, so
+      -- flush or centred bottoms never move a note (they are appended
+      -- after the shift, anchored at bodyBottom)
+      noteFloor b.geom b.footins b.notesH - (lastY + b.prevDepth)
     else 0
   let (lines, delta) := if pageFils > 0 then
       (lines.mapIdx fun i l =>
@@ -2869,13 +3085,68 @@ private def B.finishPage (b : B) : B :=
                   x2 (y2 + delta))
           | .tri x1 y1 x2 y2 x3 y3 =>
             .tri x1 (y1 + delta) x2 (y2 + delta) x3 (y3 + delta) }
-  { b with pages := b.pages.push { lines := lines, fills := fills, paths := paths,
-                                   foot := b.curFoot },
+  -- The bottom-anchored flush: the pending notes (and their rule) join
+  -- the page after the vertical distribution moved the body lines, so
+  -- the distribution can never move a note.
+  { b with pages := b.pages.push { lines := lines ++ b.noteLines, fills := fills,
+                                   paths := paths, foot := b.curFoot },
            cur := {},
            shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
            pinnedLines := 0, pinnedFills := 0,
+           pendingNotes := #[], notesH := 0,
            diags := diags }
+
+/-- A y-only rewrite keeps every line's segs: the projection both closing
+transformations (the shrink zip and the distribution `mapIdx`) satisfy. -/
+private theorem map_segs_mapIdx (xs : Array LineOut) (f : Nat → LineOut → LineOut)
+    (hf : ∀ i l, (f i l).segs = l.segs) :
+    (xs.mapIdx f).map (·.segs) = xs.map (·.segs) := by
+  apply Array.ext
+  · simp
+  · intro i h1 h2
+    simp [hf]
+
+private theorem map_segs_zip (xs : Array LineOut) (sh : Array Sp)
+    (hsz : sh.size = xs.size) (f : LineOut × Sp → LineOut)
+    (hf : ∀ p, (f p).segs = p.1.segs) :
+    ((xs.zip sh).map f).map (·.segs) = xs.map (·.segs) := by
+  apply Array.ext
+  · simp [hsz]
+  · intro i h1 h2
+    simp [hf]
+
+/-- `footnote_with_mark`, the ship half: the one page `finishPage` pushes
+carries every committed line — the mark's among them — and then the whole
+note block, segs intact: the close's transformations (shrink, the vertical
+distribution, fil glue) move only y, and the notes join after them,
+bottom-anchored. With `placeLine`'s attach (a mark's line and its notes
+enter `cur`/`pendingNotes` in one step, both spilling together when the
+line does) and `stepStaged_extends` (a shipped page never changes), a
+committed line carrying mark k has note k's first line on its own page
+index. The census tests over `Layout.Out` are the realisation check, as
+`float_whole`'s are. Sourced as the behaviour is: a LaTeX footnote is an
+insertion on the page of its mark (TeXbook ch. 15; ltmiscen.dtx's
+`\@makecol` builds the page as body then rule then notes). -/
+private theorem footnote_with_mark (b : B)
+    (hs : b.shrinkAbove.size = b.cur.lines.size) :
+    (b.finishPage.pages.back?.map fun p => p.lines.map (·.segs)) =
+      some (b.cur.lines.map (·.segs) ++ b.noteLines.map (·.segs)) := by
+  simp only [B.finishPage, Array.back?_push, Option.map_some, Option.some.injEq,
+    Array.map_append]
+  congr 1
+  repeat' split
+  all_goals
+    first
+    | rfl
+    | (exact map_segs_zip _ _ hs _ (fun p => rfl))
+    | (refine map_segs_mapIdx _ _ ?_
+       intro i l
+       split <;> rfl)
+    | (refine (map_segs_mapIdx _ _ ?_).trans
+        (map_segs_zip _ _ hs _ (fun p => rfl))
+       intro i l
+       split <;> rfl)
 
 /-- Reopen the frame's page-top chrome on a fresh page: the pinned title
 lines and bar fills repeat, and content resumes below the chrome's own
@@ -3188,7 +3459,8 @@ it overflowed) and the line opens the next, its pending glue discarded as
 TeX discards glue at the top of a page. Glue is never stretched: the
 bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
-    (w : Sp) (hang : Sp := 0) (expand : Int := 0) : B :=
+    (w : Sp) (hang : Sp := 0) (expand : Int := 0)
+    (notes : Array NoteBlock := #[]) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   let rl := ruleOnly segs
@@ -3197,13 +3469,19 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   let segs := segs.filter fun s => match s with
     | .rule w _ _ _ => w != 0
     | _ => true
-  let bottom := b.geom.bodyBottom
+  -- The fit test reads the note floor: what already stands reserved plus
+  -- what THIS line's notes need — decided at commit, so a line that does
+  -- not fit spills WITH its notes and the reservation follows the mark.
+  let need := if notes.isEmpty then 0
+    else notes.foldl (fun s nb => s + nb.height) 0
+  let bottom := noteFloor b.geom b.footins (b.notesH + need)
   let mk (y : Sp) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
       hang := hang, expand := expand }
   let firstY := b.geom.bodyTop + max b.ascent box.above
   if b.cur.lines.isEmpty || b.freshStart then
-    b.commit (mk firstY) box.inkBelow box.below rl 0 0
+    ((b.commit (mk firstY) box.inkBelow box.below rl 0 0).attachNotes
+      notes).warnNoteOverrun firstY box.inkBelow
   else
     let interline := if b.noInterline then box.inkAbove
       else interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box
@@ -3211,17 +3489,20 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     let overflow := y + box.inkBelow - bottom
     let above := b.pageShrink + b.skip.shrink
     if overflow ≤ above ∨ b.noBreak then
-      b.commit (mk y) box.inkBelow box.below rl above (min overflow above)
+      (b.commit (mk y) box.inkBelow box.below rl above
+        (min overflow above)).attachNotes notes
     else
       let b := b.spillPage
       if b.cur.lines.isEmpty then
-        b.commit (mk firstY) box.inkBelow box.below rl 0 0
+        ((b.commit (mk firstY) box.inkBelow box.below rl 0 0).attachNotes
+          notes).warnNoteOverrun firstY box.inkBelow
       else
         -- Below the reopened frame chrome: interline from the chrome's
         -- own baseline; the pending glue died with the break, as TeX
         -- discards glue at the top of a page.
-        b.commit (mk (b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box))
-          box.inkBelow box.below rl 0 0
+        ((b.commit (mk (b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box))
+          box.inkBelow box.below rl 0 0).attachNotes notes).warnNoteOverrun
+          (b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box) box.inkBelow
 
 /-- The realization theorem's placement step: a line placed on the same
 page (the fit condition holds), under interline spacing (not flush under a
@@ -3245,6 +3526,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
     (hni : b.noInterline = false)
     (hpr : b.prevRuleOnly = false) (hrl : ruleOnly segs = false)
+    (hnn : b.notesH = 0)
     (hfit : b.y + b.skip.width
         + (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
             b.descent b.geom.leading size segs).above)
@@ -3262,8 +3544,11 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine
   rw [hle]
   dsimp only
-  simp only [hcur, hfresh, hni, hpr, hrl, interlineFor, Bool.or_self,
-    Bool.false_eq_true, ite_false, hfit, true_or, ite_true, B.commit]
+  simp only [hcur, hfresh, hni, hpr, hrl, interlineFor, hnn, noteFloor,
+    Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
+    ite_true, Int.add_zero, beq_self_eq_true]
+  simp only [hfit, true_or, ite_true, B.commit, B.attachNotes,
+    Array.isEmpty_empty, ite_true]
   simp [Array.back?_push]
 
 /-- The first baseline, declared: on a fresh page the line lands at the
@@ -3282,7 +3567,7 @@ private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine
   rw [hle]
   dsimp only
-  simp [hcur, B.commit, Array.back?_push]
+  simp [hcur, B.commit, B.attachNotes, Array.back?_push]
 
 /-- The other half of the PDF realization: what page close does to the gaps
 placement realized — nothing, on a page that shipped without consuming
@@ -3297,17 +3582,20 @@ itself (N0200, below), and fil glue exists only where the document asked
 for it. -/
 private theorem finishPage_shift_uniform (b : B)
     (hsh : b.needed ≤ 0 ∨ b.pageShrink ≤ 0)
-    (hfil : b.pageFils = 0) (hsf : b.skip.fil = false) :
+    (hfil : b.pageFils = 0) (hsf : b.skip.fil = false)
+    (hpn : b.pendingNotes.isEmpty = true) :
     ∃ d, ∀ i, b.pinnedLines ≤ i →
       (b.finishPage.pages.back?.bind fun p => p.lines[i]?.map (·.y)) =
         (b.cur.lines[i]?.map fun l => l.y + d) := by
   have hcond : (decide (b.needed > 0) && decide (b.pageShrink > 0)) = false := by
     rcases hsh with h | h <;> simp [Int.not_lt.mpr h]
-  unfold B.finishPage
-  simp only [hcond, hsf, hfil, Bool.false_eq_true, ite_false, Nat.add_zero,
+  unfold B.finishPage B.noteLines
+  simp only [hcond, hsf, hfil, hpn, Bool.false_eq_true, ite_false, ite_true,
+    Array.append_empty, Nat.add_zero,
     Nat.lt_irrefl, Array.back?_push, Option.bind_some]
   refine ⟨b.vdist.aboveShare (if b.cur.lines.size > b.pinnedLines then
-      b.geom.bodyBottom - (b.cur.lines.foldl (fun m l => max m l.y) 0 + b.prevDepth)
+      noteFloor b.geom b.footins b.notesH
+        - (b.cur.lines.foldl (fun m l => max m l.y) 0 + b.prevDepth)
     else 0), fun i hi => ?_⟩
   split <;> split <;>
     simp_all [Array.getElem?_mapIdx, Option.map_map, Function.comp_def,
@@ -3338,6 +3626,10 @@ private structure ParaJob where
   markerSegs : Option (Array Seg × Sp) := none
   /-- A rule filling the first line after the content. -/
   rule : Option (Sp × Ir.Color) := none
+  /-- The paragraph's footnotes, pre-broken: each with the item index of
+  its mark's box, so placement can hand a line exactly the notes whose
+  marks it carries. -/
+  notes : Array (Nat × NoteBlock) := #[]
 
 /-- The block walk emits vertical skips and paragraph jobs; placement replays
 them in document order, so the page builder stays sequential and the output
@@ -3613,20 +3905,76 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
   -- on a dark standout background.
   let baseStyle := if baseStyle.color == Ir.Color.black then
       { baseStyle with color := a.fg } else baseStyle
-  let (items, ds, cache, extras) :=
+  let (items, ds, cache, extras, rawNotes) :=
     itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache a.imgs
-      measure a.geom.textHeight
+      measure a.geom.textHeight (noteOk := true)
   let items :=
     if a.geom.justify then items
     else if display then
       displayItems measure items
     else raggedItems items
+  -- Each footnote as its own pre-broken block: footnotesize on the FULL
+  -- measure (a note belongs to the page, not to the paragraph's column or
+  -- indent), the note's own mark leading its first line with no space
+  -- after it (\@makefntext's box abuts the text, ltmiscen.dtx), a
+  -- \footnotesep strut on the first line (classes.dtx: 6.65pt at the
+  -- 10pt option, following the type as 0.665 of the body size).
+  let (noteBlocks, ds, cache) : Array (Nat × NoteBlock) × Array Diag ×
+      Std.HashMap String (Array Nat) := Id.run do
+    if rawNotes.isEmpty then return (#[], ds, cache)
+    let mut out : Array (Nat × NoteBlock) := #[]
+    let mut ds := ds
+    let mut cache := cache
+    let noteSize := a.geom.fontSize
+      * ((Ir.sizeScale.lookup "footnotesize").getD 1000) / 1000
+    let sep := a.geom.fontSize * 665 / 1000
+    let bodyFont := fs.get (fs.lookup 0 false false)
+    let scaleB (v : Int) : Sp := v * a.geom.fontSize / bodyFont.unitsPerEm
+    let target := a.geom.textWidth
+    for (markIdx, num, body) in rawNotes do
+      let (nitems0, nds, cache2, _, _) :=
+        itemsOfInlines pats noteSize a.xHeight fs { color := a.fg } body
+          cache a.imgs a.geom.textWidth a.geom.textHeight
+      ds := ds ++ nds
+      cache := cache2
+      let (mk, miss) := markBox fs { color := a.fg } noteSize num
+      for (idx, c) in miss do
+        ds := ds.push (Diag.of .E0405
+          s!"'{(fs.get idx).family}' has no glyph for '{c}'; dropped")
+      let nitems := #[mk] ++ nitems0
+      let nitems := if a.geom.justify then nitems else raggedItems nitems
+      let breaks := kpTwoPass nitems target
+      let mut lines : Array LineOut := #[]
+      let mut yPrev : Sp := 0
+      let mut belowPrev : Sp := 0
+      let mut hgt : Sp := 0
+      let mut prev := 0
+      let mut first := true
+      for brk in breaks do
+        let s := if first then lineStart nitems 0 else lineStart nitems (prev + 1)
+        let (lsegs, lw, overfull, _, _) :=
+          setLine nitems s brk target a.geom.justify false false
+        if overfull then
+          ds := ds.push (Diag.of .W0005 "overfull line; no feasible break")
+        let box := lineExtent fs a.geom.fontSize (scaleB bodyFont.ascent)
+          (scaleB bodyFont.capHeight) (scaleB (-bodyFont.descent))
+          a.geom.leading noteSize lsegs
+        let y := if first then max box.above sep else yPrev + belowPrev + box.above
+        lines := lines.push { x := a.geom.hmargin, y := y, size := noteSize,
+                              segs := lsegs, setWidth := lw, note := true }
+        hgt := y + box.inkBelow
+        yPrev := y
+        belowPrev := box.below
+        prev := brk
+        first := false
+      out := out.push (markIdx, { lines := lines, height := hgt })
+    return (out, ds, cache)
   -- A marker is content: set as a line of its own, unjustified, so it can
   -- carry any style the document gave it. Its diagnostics ride with the
   -- paragraph's — a marker glyph no face covers must warn, not vanish.
   let (markerSegs, ds, cache) := match marker with
     | some m =>
-      let (mi, mds, cache, _) :=
+      let (mi, mds, cache, _, _) :=
         itemsOfInlines pats size a.xHeight fs { color := a.fg } m cache
           a.imgs measure a.geom.textHeight
       let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) a.geom.textWidth false
@@ -3641,7 +3989,8 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       justify := a.geom.justify
       protrude := a.geom.protrude
       expand := a.geom.expand
-      markerSegs := markerSegs, rule := rule }) }
+      markerSegs := markerSegs, rule := rule
+      notes := noteBlocks }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base — the
 0.6 pt the engine shipped at the 10 pt base where it was picked, now
@@ -4150,10 +4499,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let baseStyle : TextStyle := { color := a.fg }
     -- Image fractions resolve against the current measure, as collectPara's.
     let target := (a.measure.getD a.geom.textWidth) - indent
-    let (citems, ds1, cache1, extras) :=
+    let (citems, ds1, cache1, extras, _) :=
       itemsOfInlines pats a.geom.fontSize a.xHeight fs baseStyle content
         a.hyphCache a.imgs target a.geom.textHeight
-    let (nitems, ds2, cache2, _) :=
+    let (nitems, ds2, cache2, _, _) :=
       itemsOfInlines pats a.geom.fontSize a.xHeight fs baseStyle #[.text num]
         cache1 a.imgs target a.geom.textHeight
     -- both walks close with parfill glue and a forced pen; the assembled
@@ -4975,8 +5324,13 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
   let b0 := st.1
   let g := paraLineGeom fs j b0 st.2.2 st.2.1 brk
   let b1 := if g.2.2.2.1 then b0.warnOverfull else b0
+  -- The notes whose marks this line carries: mark boxes strictly between
+  -- the previous break and this one ride with the line, so the note
+  -- follows its mark through fit and spill alike.
+  let ns := if j.notes.isEmpty then #[] else
+    (j.notes.filter fun n => (st.2.2 || st.2.1 < n.1) && n.1 < brk).map (·.2)
   (placeParaTrailer fs j brk g.1
-    (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2), brk, false)
+    (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns), brk, false)
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
   (breaks.foldl (placeParaLine fs j)
@@ -5408,7 +5762,7 @@ private def runFloat (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     let st2 := group.foldl (stepStaged fs imgs)
       { st with b := { b with noBreak := true } }
     let b2 := st2.b
-    let overrun := b2.y + b2.prevDepth - b2.geom.bodyBottom
+    let overrun := b2.y + b2.prevDepth - noteFloor b2.geom b2.footins b2.notesH
     let b2 := if overrun > b2.pageShrink then
         { b2 with diags := b2.diags.push (Diag.of .W0358
           (s!"a figure or table is {(overrun - b2.pageShrink).toPtString}pt taller " ++
@@ -5470,8 +5824,8 @@ private theorem finishPage_extends (b : B) : PagesExtend b b.finishPage :=
   ⟨#[_], rfl⟩
 
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) :
-    PagesExtend b (b.placeLine fs x size segs w hang ex) := by
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) :
+    PagesExtend b (b.placeLine fs x size segs w hang ex ns) := by
   simp only [B.placeLine]
   repeat' split
   all_goals first
@@ -5482,8 +5836,9 @@ private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
 /-- Under `noBreak` a placed line never closes a page and never clears
 the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex).pages = b.pages := by
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock)
+    (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang ex ns).pages = b.pages := by
   simp only [B.placeLine]
   repeat' split
   all_goals first
@@ -5491,19 +5846,40 @@ private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex).noBreak = true := by
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock)
+    (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang ex ns).noBreak = true := by
   simp only [B.placeLine]
   repeat' split
   all_goals first
     | (simp [h]; done)
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
 
+/-- `footnote_with_mark`'s attach half: whatever branch `placeLine` takes,
+every line of every note handed in stands in `pendingNotes` of the SAME
+builder that holds the mark's committed line — mark and notes enter
+together, and spill together (the spill closes the page before the retry
+commit, so an earlier line's notes ship with the earlier page and this
+line's follow their mark onto the fresh one). -/
+private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock)
+    (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
+    ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns).pendingNotes,
+      l'.segs = l.segs := by
+  simp only [B.placeLine]
+  repeat' split
+  all_goals
+    first
+    | (rw [warnNoteOverrun_pendingNotes]
+       exact attachNotes_mem _ ns nb hnb l hl)
+    | exact attachNotes_mem _ ns nb hnb l hl
+
 /-- `placeLine` from a pages-preserving wrapper of `b0` still only
 extends `b0`'s shipped pages. -/
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
-    (ex : Int) : PagesExtend b0 (b1.placeLine fs x size segs w hang ex) :=
+    (ex : Int) (ns : Array NoteBlock) :
+    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
@@ -5570,7 +5946,8 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
   all_goals first
     | exact absurd rfl hs
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
-    | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ _ _ h, placeLine_keeps_noBreak _ _ _ _ _ _ _ _ h⟩
+    | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ _ _ _ h,
+        placeLine_keeps_noBreak _ _ _ _ _ _ _ _ _ h⟩
     | exact placePara_noBreak _ _ _ _ h
     | (refine ⟨?_, ?_⟩ <;> simp [h]; done)
 
@@ -5780,6 +6157,9 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     capHeight := scale font.capHeight
     xHeight := xHeight
     docBg := if design.bgDeclared then some design.bg else none
+    footins := ((doc.tokens.find? "footins").getD
+      (Ir.footinsDefault geom.fontSize)).resolve geom.fontSize xHeight |>.width
+    noteInk := design.fg
     diags := acc.diags
   }
   let mut b := b0

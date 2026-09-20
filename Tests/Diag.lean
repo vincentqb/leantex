@@ -144,6 +144,8 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       "\\newlength{\\half}\\setlength{\\half}{\\dimexpr\\textwidth/2\\relax}\n" "x")
   | .W0370 => dvE (dvDoc "" "a claim\\footnotemark stands here")
   | .W0371 => dvE (dvDoc "" "a\\footnote{first\n\nsecond}")
+  | .W0372 => dvL one (dvDoc "\\page{ width = 120pt, height = 150pt, margin = 20pt }\n"
+      ("x\\footnote{" ++ String.intercalate " " (List.replicate 60 "wow") ++ "}"))
   | .W0373 => dvE (dvDoc "\\title{An Invented Panel\\thanks{Synthetic Grant 1}}\n"
       "x\n\\maketitle")
   | .W0374 => dvE ("\\documentclass{card}\n\\begin{document}\n" ++

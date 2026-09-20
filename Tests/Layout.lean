@@ -2869,3 +2869,103 @@ def bodyColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     ((bodyLines out).all fun l => l.segs.all fun s => match s with
       | .run _ c _ _ glyphs _ _ _ => glyphs.isEmpty || c != Ir.Color.black
       | _ => true)
+
+/-- The page-1 fix, judged on shipped pages, never on the IR dump: the
+mark is a raised smaller run in its sentence's line; the note lands at
+the foot of the mark's own page — above `bodyBottom`, non-furniture,
+under its rule — and the page's vertical distribution never moves it. A
+line whose note does not fit spills with it (the sweep), and a note
+taller than the text block overruns, named (W0372). -/
+def footnoteLayoutChecks (ref : IO.Ref (List String))
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let hasMarkRun (geom : Layout.Geom) (l : Layout.LineOut) : Bool :=
+    l.segs.any fun s => match s with
+      | .run _ _ _ _ _ sz _ raise => raise > 0 && sz > 0 && sz < geom.fontSize
+      | _ => false
+  let src := dvDoc "" "A first sentence\\footnote{a note body} continues here."
+  let (doc, _) := elabStr src
+  let geom := Layout.Geom.ofPage doc.page
+  let out := layoutOf oneFace doc
+  let notesOf (out : Layout.Out) : Array Layout.LineOut :=
+    out.pages.flatMap (·.lines.filter (·.note))
+  let flowOf (out : Layout.Out) : Array Layout.LineOut :=
+    out.pages.flatMap (·.lines.filter (fun l => !l.note && !l.furniture))
+  t "footnote: one page" (out.pages.size == 1)
+  t "footnote: note-flagged lines ship" (!(notesOf out).isEmpty)
+  t "footnote: the mark is a raised smaller run in the flow"
+    ((flowOf out).any (hasMarkRun geom))
+  t "footnote: the note stands below every flow line, above bodyBottom"
+    ((notesOf out).all fun n => n.y ≤ geom.bodyBottom &&
+      (flowOf out).all fun b => b.y < n.y)
+  t "footnote: the rule ships with the notes"
+    ((notesOf out).any fun l => l.segs.any fun s => s matches .rule _ _ _ _)
+  t "footnote: notes are body ink, never furniture"
+    ((notesOf out).all fun l => !l.furniture)
+  -- The mark's page carries its note: on a multi-page article the note
+  -- stands at the foot of page 1, and nothing note-flagged leaks onward.
+  let filler := String.intercalate " " (List.replicate 40 "wandering syllables")
+  let src2 := dvDoc "" ("Opening claim\\footnote{the note under discussion} here.\n\n" ++
+    String.intercalate "\n\n" (List.replicate 24 filler))
+  let (doc2, _) := elabStr src2
+  let out2 := layoutOf oneFace doc2
+  t "footnote: the article spans pages" (out2.pages.size ≥ 2)
+  t "footnote: the note ships on page 1, its mark's page"
+    (((out2.pages[0]?.map fun p => p.lines.any (·.note)).getD false) &&
+      (out2.pages.toList.drop 1).all fun p => p.lines.all (!·.note))
+  -- The sweep: wherever the mark's line falls as filler grows — page
+  -- middle, page boundary (the spill), fresh page — mark and note share
+  -- one page index, and exactly one page carries the note.
+  let mut sweepOk := true
+  for k in [0:18] do
+    let src3 := dvDoc "" (String.intercalate "\n\n" (List.replicate k filler) ++
+      "\n\nA measured claim\\footnote{its supporting note} stands here.")
+    let (doc3, _) := elabStr src3
+    let out3 := layoutOf oneFace doc3
+    let geom3 := Layout.Geom.ofPage doc3.page
+    let notePages := (List.range out3.pages.size).filter fun i =>
+      ((out3.pages[i]?.map fun p => p.lines.any (·.note)).getD false)
+    let markPages := (List.range out3.pages.size).filter fun i =>
+      ((out3.pages[i]?.map fun p =>
+        p.lines.any fun l => !l.note && !l.furniture && hasMarkRun geom3 l).getD false)
+    unless notePages.length == 1 && markPages == notePages do
+      sweepOk := false
+  t "footnote: mark and note share one page at every fill depth" sweepOk
+  -- The frame foot: the same flush lands a deck's note at the bottom of
+  -- its frame's page while the centred body stays above it.
+  let dsrc := deck169Frame "Frame words\\footnote{a frame-foot note} here."
+  let (ddoc, _) := elabStr dsrc
+  let dgeom := Layout.Geom.ofPage ddoc.page
+  let dout := layoutOf oneFace ddoc
+  t "footnote: a frame's note lands at the frame foot"
+    (!(notesOf dout).isEmpty &&
+      (notesOf dout).all fun n => n.y ≤ dgeom.bodyBottom &&
+        (flowOf dout).all fun b => b.y < n.y)
+  -- W0372: a note taller than the text block overruns, named; an
+  -- ordinary note stays silent.
+  let (bigDoc, _) := elabStr (dvDoc
+    "\\page{ width = 120pt, height = 150pt, margin = 20pt }\n"
+    ("x\\footnote{" ++ String.intercalate " " (List.replicate 60 "wow") ++ "}"))
+  t "footnote: a note taller than the text block fires W0372"
+    ((layoutOf oneFace bigDoc).diags.any (·.code == "W0372"))
+  t "footnote: an ordinary note stays silent on W0372"
+    (out.diags.all (·.code != "W0372") && (dvE src).all (·.code != "W0372"))
+  -- The declared token: on a full page the fit floor is the note block
+  -- plus the footins gap, so a larger \tokens{ footins } presses the last
+  -- flow line higher above the notes (the notes themselves are anchored
+  -- at bodyBottom and never move).
+  let gapOf (pre : String) : Option Dim.Sp := Id.run do
+    let (d, _) := elabStr (dvDoc pre
+      ("Top claim\\footnote{gap probe} anchor.\n\n" ++
+        String.intercalate "\n\n" (List.replicate 24 filler)))
+    let o := layoutOf oneFace d
+    let some p0 := o.pages[0]? | return none
+    let flows := p0.lines.filter (fun l => !l.note && !l.furniture)
+    let notes := p0.lines.filter (·.note)
+    let some top := (notes.map (·.y)).min? | return none
+    let some bot := (flows.map (·.y)).max? | return none
+    return some (top - bot)
+  t "footnote: the footins token declares the body-to-note gap"
+    (match gapOf "", gapOf "\\tokens{ footins = 60pt }\n" with
+     | some g1, some g2 => g2 > g1
+     | _, _ => false)

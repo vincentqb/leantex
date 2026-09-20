@@ -451,6 +451,25 @@ the governing size. Overridable as `\tokens{ floatsep = ... }`. -/
 def floatSepDefault (size : Sp) : SymGlue :=
   { width := { sp := 2 * rhythmQuantum size } }
 
+/-- Gap between the last body line and the footnote region: `\skip\footins`
+(classes.dtx, the 10pt option: 9pt plus 4pt minus 2pt), quantized to the
+rhythm — two quanta, one full leading. The quantized value lies inside the
+source glue's own range (7..13pt at the 10pt base, `footins_within_glue`),
+so it is a length LaTeX's own glue could set. Overridable as
+`\tokens{ footins = ... }`. -/
+def footinsDefault (size : Sp) : SymGlue :=
+  { width := { sp := 2 * rhythmQuantum size } }
+
+/-- The quantized `\skip\footins` is on the rhythm and inside the source
+glue's own rubber range at the base it was sourced at: 9−2 ≤ 12 ≤ 9+4 pt.
+An edit that moves the default off the grid or outside what the LaTeX glue
+could legally set fails the build here. -/
+theorem footins_within_glue :
+    (footinsDefault baseFontSize).width.sp = 2 * rhythmQuantum baseFontSize ∧
+    Dim.pt 7 ≤ (footinsDefault baseFontSize).width.sp ∧
+    (footinsDefault baseFontSize).width.sp ≤ Dim.pt 13 := by
+  refine ⟨rfl, ?_, ?_⟩ <;> decide
+
 /-- The heading's default spaces, their own tokens rather than the
 parskip's doubles: article.cls pairs a zero `\parskip` with 3.5ex above /
 2.3ex below a `\section` (classes.dtx `\@startsection`), so a class that

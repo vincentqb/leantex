@@ -424,6 +424,9 @@ warning[W0370]: '\footnotemark' is not paired with its partner yet; its text is 
 ── W0371 (degraded) a paragraph break inside \footnote is set as a space
 warning[W0371]: a paragraph break inside '\footnote' is set as a space
   help: a footnote is one paragraph; split a long note into two \footnote calls
+── W0372 (degraded) a footnote taller than the text block overruns its page
+warning[W0372]: a footnote is 65.176pt taller than the text block; it overruns its page
+  help: shorten the note, or raise the text height (\page{ vmargin = ... })
 ── W0373 (degraded) \thanks is kept inline in the title block
 warning[W0373]: '\thanks' content is kept inline in the title block
   help: a plain \footnote in the body text renders as a page footnote

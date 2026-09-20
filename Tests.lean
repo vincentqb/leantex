@@ -50,6 +50,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   webMetaChecks ref geom oneFace
 
   lineChecks ref geom oneFace
+  footnoteLayoutChecks ref oneFace
   headingRhythmChecks ref oneFace
   titleBreakChecks ref oneFace
   bodyColorChecks ref oneFace

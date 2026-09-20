@@ -120,6 +120,7 @@ inductive DiagCode where
   | E0375
   | W0370
   | W0371
+  | W0372
   | W0373
   | W0374
   deriving Repr, BEq, DecidableEq
@@ -274,6 +275,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .E0375 => ("0375", .dropped, "\\dimexpr division rounds to nearest, not this engine's truncation, so the statement is dropped")
   | .W0370 => ("0370", .pending, "\\footnotemark and \\footnotetext are not paired yet; kept as text")
   | .W0371 => ("0371", .degraded, "a paragraph break inside \\footnote is set as a space")
+  | .W0372 => ("0372", .degraded, "a footnote taller than the text block overruns its page")
   | .W0373 => ("0373", .degraded, "\\thanks is kept inline in the title block")
   | .W0374 => ("0374", .degraded, "a footnote on a card face is kept inline; a face has no note apparatus")
 
@@ -300,7 +302,7 @@ theorem DiagCode.code_letter (c : DiagCode) :
 `all_complete` makes an undercount a build failure; `all_nodup` an
 overcount (`ofNat` clamps out of range, so an overcount duplicates the
 last constructor). -/
-def DiagCode.count : Nat := 146
+def DiagCode.count : Nat := 147
 
 /-- Every code, for the registry checks in Tests.lean — derived from the
 type through the `ofNat` that `deriving DecidableEq` synthesises, never
