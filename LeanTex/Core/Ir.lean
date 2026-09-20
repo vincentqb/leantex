@@ -4444,6 +4444,16 @@ naming why none holds). -/
 def Conserves (census : α → β) (f : α → α) : Prop :=
   ∀ x, census (f x) = census x
 
+/-- Body-transparent wraps, once: a constructor whose own census is exactly
+its body's conserves the census when wrapped around any content.
+`langWrap_text`, `footnoteWrap_text`, and `underline_text` are its
+one-line instances (`rfl` per constructor), and the next wrapper's costs
+the same line. -/
+theorem wrap_text (w : Array Inline → Inline)
+    (hw : ∀ xs, plainTextOne (w xs) = plainText xs) :
+    Conserves plainText (fun xs => #[w xs]) := fun xs => by
+  simp [plainText, plainTextList, hw]
+
 /-- Wrap inline content in a language switch: what `\foreignlanguage`,
 `\selectlanguage`, and `otherlanguage` become. -/
 def langWrap (tag : String) (xs : Array Inline) : Array Inline :=
@@ -4451,10 +4461,10 @@ def langWrap (tag : String) (xs : Array Inline) : Array Inline :=
 
 /-- The language attribute is pure markup: tagging content ships exactly
 the text census the content already had — `language_attribute_text_free`,
-near-definitional because the census ignores style wrappers. -/
+an instance of `wrap_text` because the census ignores style wrappers. -/
 theorem langWrap_text (tag : String) :
-    Conserves plainText (langWrap tag) := fun xs => by
-  simp [langWrap, plainText, plainTextList, plainTextOne]
+    Conserves plainText (langWrap tag) :=
+  wrap_text (.styled (.lang tag)) fun _ => rfl
 
 /-- Wrap inline content as a footnote's body: what `\footnote` becomes. -/
 def footnoteWrap (num : Option Nat) (xs : Array Inline) : Array Inline :=
@@ -4464,8 +4474,8 @@ def footnoteWrap (num : Option Nat) (xs : Array Inline) : Array Inline :=
 exactly the text census the content already had. The mark digit is
 generated ink, excluded as `citeMark` is. -/
 theorem footnoteWrap_text (num : Option Nat) :
-    Conserves plainText (footnoteWrap num) := fun xs => by
-  simp [footnoteWrap, plainText, plainTextList, plainTextOne]
+    Conserves plainText (footnoteWrap num) :=
+  wrap_text (.footnote num) fun _ => rfl
 
 -- Nothing vanishes: dimming recolours, never removes. The text of a frame's
 -- body is identical on every handout page, so the union of what the steps
@@ -5333,7 +5343,7 @@ a character — the conservation half of the underline convention (its
 rules ride a sibling line; `underline_no_growth` in Layout is the metric
 half). -/
 theorem underline_text : Conserves plainText (fun xs => #[Inline.underline xs]) :=
-  fun xs => by simp [plainText, plainTextList, plainTextOne]
+  wrap_text .underline fun _ => rfl
 
 -- Float numbering conserves the census: the pass writes the `num` field
 -- and nothing else, so no caption and no body content moves. Same
