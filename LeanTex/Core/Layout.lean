@@ -2518,6 +2518,15 @@ private theorem doc_geometry_uniform (b : B) (l line : LineOut)
       (b.commit line depth above overflow).geom = b.geom :=
   ⟨rfl, rfl, rfl⟩
 
+/-- A run emptied of its glyph payload, every metric field kept: the
+transformation `line_box_glyph_free` quantifies over. -/
+def Seg.stripGlyphs : Seg → Seg
+  | .run idx color link w _ size underline raise =>
+    .run idx color link w #[] size underline raise
+  | .gap w => .gap w
+  | .rule w t r c => .rule w t r c
+  | .image s w h => .image s w h
+
 /-- A line's vertical extent — (tallest run size, height above the
 baseline, depth below it) — measured seg by seg, each run in its own face:
 a sans title is as tall as the sans says, not as the body face would be at
@@ -2525,10 +2534,12 @@ that size. An image stands `h` above the baseline with no depth: it raises
 the line's height, never its nominal size, so the leading after it is
 decided by the text that follows, as TeX decides it. A math rule (a
 fraction bar) reaches from `raise` to `raise + thickness`: it can add
-height above the baseline or depth below it, never both. -/
-private def lineExtent (fs : FontSet) (b : B) (size : Sp) (segs : Array Seg) :
-    Sp × Sp × Sp :=
-  let nominal := if size == 0 then b.geom.fontSize else size
+height above the baseline or depth below it, never both. `fontSize`,
+`bodyCap`, and `bodyDescent` are the page's body metrics — the extent an
+empty line still has. -/
+def lineExtent (fs : FontSet) (fontSize bodyCap bodyDescent : Sp)
+    (size : Sp) (segs : Array Seg) : Sp × Sp × Sp :=
+  let nominal := if size == 0 then fontSize else size
   segs.foldl (fun (acc : Sp × Sp × Sp) s => match s with
     | .run idx _ _ _ _ sz _ raise =>
       let font := fs.get idx
@@ -2538,8 +2549,30 @@ private def lineExtent (fs : FontSet) (b : B) (size : Sp) (segs : Array Seg) :
        max acc.2.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
     | .image _ _ h => (acc.1, max acc.2.1 h, acc.2.2)
     | .rule _ t r _ => (acc.1, max acc.2.1 (r + t), max acc.2.2 (-r))
-    | _ => acc) (nominal, b.capHeight * nominal / b.geom.fontSize,
-                 b.descent * nominal / b.geom.fontSize)
+    | _ => acc) (nominal, bodyCap * nominal / fontSize,
+                 bodyDescent * nominal / fontSize)
+
+/-- The line-box convention's guard: a line's box is the metric extent of
+the (font, size, raise) triples present on it — the fonts' declared
+vertical metrics at each run's size — and never consults a glyph (CSS 2.1
+§10.8.1's model: layout bounds come from font metrics; ink may overflow
+the box). Emptying every run's glyph array changes no component, by fold
+congruence: no arm reads the payload. Everything placed against a line
+measures from these metric lines at the run's own size; ink is read only
+to interrupt (the underline band) or to clear (math minimum gaps,
+furniture bands), never to position. The accepted cost is stated here
+once: a descender-less title keeps its full metric depth, so its optical
+gap to the next line is larger than its ink suggests — furniture that
+moved with the letters would make the artifact content-dependent. -/
+theorem line_box_glyph_free (fs : FontSet) (fontSize bodyCap bodyDescent : Sp)
+    (size : Sp) (segs : Array Seg) :
+    lineExtent fs fontSize bodyCap bodyDescent size (segs.map Seg.stripGlyphs) =
+      lineExtent fs fontSize bodyCap bodyDescent size segs := by
+  unfold lineExtent
+  rw [Array.foldl_map]
+  congr 1
+  funext acc s
+  cases s <;> rfl
 
 /-- TeX's interline rule, the one distance placement adds beyond the
 pending skip: the leading of the line being placed, unless the previous
@@ -2565,7 +2598,7 @@ and the line opens the next, its pending glue discarded as TeX discards glue
 at the top of a page. Glue is never stretched: the bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
     (w : Sp) : B :=
-  let (tallest, height, depth) := lineExtent fs b size segs
+  let (tallest, height, depth) := lineExtent fs b.geom.fontSize b.capHeight b.descent size segs
   -- A zero-width rule is a strut: it shaped the extent above and ships no
   -- ink — kept, a degenerate rect rasterizes as a hairline in some viewers.
   let segs := segs.filter fun s => match s with
@@ -2613,15 +2646,15 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
     (hni : b.noInterline = false)
     (hfit : b.y + b.skip.width
-        + interlineFor b.geom.leading b.prevDepth (lineExtent fs b size segs).1
-            (lineExtent fs b size segs).2.1
-        + (lineExtent fs b size segs).2.2 - b.geom.bodyBottom
+        + interlineFor b.geom.leading b.prevDepth (lineExtent fs b.geom.fontSize b.capHeight b.descent size segs).1
+            (lineExtent fs b.geom.fontSize b.capHeight b.descent size segs).2.1
+        + (lineExtent fs b.geom.fontSize b.capHeight b.descent size segs).2.2 - b.geom.bodyBottom
         ≤ b.pageShrink + b.skip.shrink) :
     (b.placeLine fs x size segs w).cur.lines.back?.map (·.y) =
       some (b.y + b.skip.width
-        + interlineFor b.geom.leading b.prevDepth (lineExtent fs b size segs).1
-            (lineExtent fs b size segs).2.1) := by
-  rcases hle : lineExtent fs b size segs with ⟨t, ht, dp⟩
+        + interlineFor b.geom.leading b.prevDepth (lineExtent fs b.geom.fontSize b.capHeight b.descent size segs).1
+            (lineExtent fs b.geom.fontSize b.capHeight b.descent size segs).2.1) := by
+  rcases hle : lineExtent fs b.geom.fontSize b.capHeight b.descent size segs with ⟨t, ht, dp⟩
   rw [hle] at hfit
   unfold B.placeLine
   rw [hle]
