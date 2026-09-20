@@ -686,6 +686,9 @@ def pinChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the reveal ships its declarative form, and only that"
     (has page "@supports (animation-timeline: scroll())" &&
       has page "@keyframes ltx-reveal")
+  t "the reveal ships with its reduced-motion guard"
+    (has page ("@media (prefers-reduced-motion: reduce) " ++
+      "{ .reveal-scroll { animation: none; } }"))
   -- Compatibility is the framework's job, not the engine's: where the
   -- platform lacks scroll-driven animations the control is simply visible,
   -- and no backend emits script to hide that.
@@ -757,7 +760,17 @@ def interactionChecks (ref : IO.Ref (List String)) : IO Unit := do
 `HtmlDoc.motionCss` and the base stylesheet's global reduce guard — both in
 HtmlDoc.lean — may spell a transition into emitted styles. This is the
 architectural half of the by-construction claim `motionCss_guarded`
-states; the scan is the same shape as `diagChecks`'. -/
+states; the scan is the same shape as `diagChecks`'.
+
+The `animation:` half of the same convention: only HtmlDoc.lean may spell
+an animation into emitted styles, and every definition there that does
+ends in its own reduced-motion guard (the guard travels with the
+declaration — `revealCss`, `deckEntryCss`, `deckStepCss`), spells the
+guard query itself (the base stylesheet's global block and the guards),
+or is named on the allowlist with its reason (`themeCss`'s deck progress
+bar ships only under the theme's own stylesheet, whose global reduce
+block covers it). Doc comments are stripped first so prose spelling
+"animation:" cannot satisfy or trip the census. -/
 def motionSiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let mut files := (← System.FilePath.walkDir "LeanTex").filter
     (·.toString.endsWith ".lean")
@@ -767,6 +780,37 @@ def motionSiteChecks (ref : IO.Ref (List String)) : IO Unit := do
     if (src.splitOn "transition:").length > 1 then
       check ref s!"transition is spelled only in HtmlDoc ({f})"
         (f.toString.endsWith "HtmlDoc.lean")
+    if (src.splitOn "animation:").length > 1 then
+      check ref s!"animation is spelled only in HtmlDoc ({f})"
+        (f.toString.endsWith "HtmlDoc.lean")
+  let ownGated := ["themeCss"]
+  let src ← IO.FS.readFile "LeanTex/Core/HtmlDoc.lean"
+  let stripped := match src.splitOn "/--" with
+    | [] => ""
+    | first :: rest => first ++ String.join (rest.map fun (seg : String) =>
+        String.intercalate "-/" ((seg.splitOn "-/").drop 1))
+  let mut name := ""
+  let mut body := ""
+  let mut blocks : Array (String × String) := #[]
+  for line in stripped.splitOn "\n" do
+    let starter := ["def ", "private def ", "theorem ", "private theorem ",
+      "structure ", "instance ", "mutual", "end "].any (line.startsWith ·)
+    if starter then
+      blocks := blocks.push (name, body)
+      name := if line.startsWith "def " || line.startsWith "private def " then
+          (((line.splitOn "def ").getD 1 "").splitOn " ").headD ""
+        else ""
+      body := line
+    else
+      body := body ++ "\n" ++ line
+  blocks := blocks.push (name, body)
+  for (n, b) in blocks do
+    if !n.isEmpty && (b.splitOn "animation:").length > 1 then
+      let lastToken := (((b.trimAscii.toString.splitOn "\n").getLast?.getD ""
+        ).trimAscii.toString.splitOn " ").getLast?.getD ""
+      check ref s!"animation-emitting def carries its guard ({n})"
+        ((b.splitOn "prefers-reduced-motion").length > 1 ||
+         lastToken.endsWith "Guard" || ownGated.contains n)
 
 /-- The paged deck's stylesheet is the slides class's own: snap paging on
 screen, the handout card in print, and no other class ships a deck rule —

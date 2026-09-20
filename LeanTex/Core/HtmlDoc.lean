@@ -211,6 +211,15 @@ theorem motionCss_guarded (sel : String) (ms : Nat) :
     ∃ rule, motionCss sel ms = rule ++ reducedMotionGuard sel :=
   ⟨_, rfl⟩
 
+/-- The reduced-motion guard for the reveal: under the reader's reduce
+preference the element simply stands, fully visible (WCAG 2.2 SC 2.3.3,
+technique C39; CSS Media Queries 5 §12.1). As `motionCss`, the guard
+travels with the declaration itself — a `css = none` page ships only the
+declared rules, so no global block can be relied on to cover it. -/
+def revealMotionGuard : String :=
+  "@media (prefers-reduced-motion: reduce) \
+{ .reveal-scroll { animation: none; } }\n"
+
 /-- The declared reveal's CSS, shipped only when the emitted tree carries a
 `reveal-scroll` element. Where the platform has scroll-driven animations
 (CSS scroll-driven animations, `animation-timeline: scroll()`), the reveal
@@ -232,7 +241,14 @@ def revealCss : String :=
 to { opacity: 1; visibility: visible } }\n" ++
   "@supports (animation-timeline: scroll()) { .reveal-scroll { \
 animation: ltx-reveal linear both; animation-timeline: scroll(); \
-animation-range: 0 var(--reveal-range, 100vh); } }\n"
+animation-range: 0 var(--reveal-range, 100vh); } }\n" ++
+  revealMotionGuard
+
+/-- The reveal carries its reduced-motion form by construction:
+definitionally the keyframes and trigger followed by the guard —
+`motionCss_guarded`'s shape for the one page-level animation site. -/
+theorem revealCss_guarded : ∃ rule, revealCss = rule ++ revealMotionGuard :=
+  ⟨_, rfl⟩
 
 
 /-- A declared marker resolved to what a `::marker` rule can say: the text
