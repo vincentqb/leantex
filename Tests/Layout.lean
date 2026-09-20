@@ -1157,24 +1157,41 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let body := geom.fontSize
   let leading := Ir.leadingFor body geom.leading
   let scaled (sz : Dim.Sp) (units : Int) : Dim.Sp := units * sz / font.unitsPerEm
-  -- Interline: body lines sit one leading apart, and a body line after a
-  -- Huge one is one body leading below it plus what the Huge line hangs
-  -- under its baseline — not a Huge leading.
+  let leadedAt (sz : Dim.Sp) : Dim.Sp × Dim.Sp :=
+    Layout.leadedBox (scaled sz font.ascent) (scaled sz (-font.descent))
+      (Ir.leadingFor sz geom.leading)
+  -- Interline is the metric rule (CSS 2.1 §10.8.1): the previous line's
+  -- leaded below plus this line's leaded above — for uniform text exactly
+  -- one leading, and after a Huge line the Huge box's own below, never a
+  -- collision term.
   let plain := ysOf geom "a\n\nb"
   t "peers sit a leading plus parskip apart"
     (plain.size == 2 && plain[1]! - plain[0]! == leading + (geom.parskip.resolve body 0).width)
   let huge := ysOf geom "{\\Huge Title \\par}\n\nbody"
   let hugeSize := body * 2488 / 1000
-  let hugeDepth := scaled hugeSize (-font.descent)
-  let bodyHeight := scaled body font.capHeight
   t "a Huge title ends one paragraph, not two lines" (huge.size == 2)
-  t "the line after a Huge title is spaced by TeX's rule"
+  t "the line after a Huge title is spaced by the metric rule"
     (huge.size == 2 && huge[1]! - huge[0]! ==
-      max leading (hugeDepth + bodyHeight + Dim.pt 1) + (geom.parskip.resolve body 0).width)
+      (leadedAt hugeSize).2 + (leadedAt body).1 + (geom.parskip.resolve body 0).width)
   t "the line after a Huge title is not a Huge leading away"
     (huge.size == 2 && huge[1]! - huge[0]! < Ir.leadingFor hugeSize geom.leading)
-  t "the first line hangs the title's own height below the margin"
-    (huge.size == 2 && huge[0]! == geom.vmargin + max (scaled body font.ascent) (scaled hugeSize font.capHeight))
+  t "the first line hangs the title's own leaded ascent below the margin"
+    (huge.size == 2 && huge[0]! == geom.vmargin + max (scaled body font.ascent) (leadedAt hugeSize).1)
+  -- The grid, realized: a uniform paragraph's baselines sit exactly one
+  -- leading apart — `baselines_on_grid`'s algebra on the shipped page,
+  -- unconditional, no per-font inequality.
+  let uni := ysOf geom (String.intercalate " " (List.replicate 60 "grid"))
+  t "uniform baselines sit on the grid"
+    (uni.size ≥ 3 && (uni.zip (uni.extract 1 uni.size)).all
+      (fun (a, b) => b - a == leading))
+  -- A mid-paragraph size change displaces by the larger leaded box —
+  -- deterministic and glyph-free — and the paragraph returns to the grid
+  -- on the next uniform pair: the documented cost of honest metrics.
+  let mixed := ysOf geom ("{\\Huge M} " ++
+    String.intercalate " " (List.replicate 60 "grid"))
+  t "a size change displaces by the metric rule and leaves the grid"
+    (mixed.size ≥ 3 && mixed[1]! - mixed[0]! == (leadedAt hugeSize).2 + (leadedAt body).1 &&
+     mixed[1]! - mixed[0]! != leading && mixed[2]! - mixed[1]! == leading)
   -- Gaps: `\vspace` is the gap in place of parskip and adds to other declared
   -- glue; an element's own space (a list's topsep, a heading's before) takes
   -- the larger against what is owed, as LaTeX's `\addvspace` does.
@@ -1196,9 +1213,7 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let sec := ysOf geom secSrc
   t "a heading after a list takes the larger space, not the sum"
     (sec.size == 3 && sec[1]! - sec[0]! ==
-      max (Ir.leadingFor (Layout.sectionSize geom 1) geom.leading)
-        (scaled body (-font.descent) + scaled (Layout.sectionSize geom 1) font.capHeight + Dim.pt 1)
-      + Dim.pt 15)
+      (leadedAt body).2 + (leadedAt (Layout.sectionSize geom 1)).1 + Dim.pt 15)
   -- parskip is a page property with rubber.
   let g0 := ysOf { geom with parskip := { width := Dim.Length.ofSp 0 } } "a\n\nb"
   t "parskip zero sets peers one leading apart" (g0.size == 2 && g0[1]! - g0[0]! == leading)
@@ -1370,7 +1385,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
 
 /-- The running head's reserved band (`furnitureBand`/`Geom.bodyTop`): with a
 top margin too small to hold the head line, body ink still starts at least
-`lineskip` below the head's ink bottom — `bodyTop_clears_head` is the
+`inkClearance` below the head's ink bottom — `bodyTop_clears_head` is the
 sufficiency proof; this is its witness over the shipped lines, the
 invariant whose absence let the head collide with the first body line. The
 mirrored default is also pinned: at the default margins the band is zero,
@@ -1391,9 +1406,9 @@ def headBandChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let headBottom := headY + scale (-font.descent)
   let bodyInkTops := lines.filterMap fun l =>
     if l.y == headY then none else some (l.y - scale font.capHeight)
-  t "body ink clears the head's ink by lineskip under a tight margin"
+  t "body ink clears the head's ink by the clearance floor under a tight margin"
     (!bodyInkTops.isEmpty &&
-      bodyInkTops.all fun top => headBottom + Layout.lineskip ≤ top)
+      bodyInkTops.all fun top => headBottom + Layout.inkClearance ≤ top)
   -- The default margin holds the head whole: the band is zero and the
   -- first body line sits exactly where a headless page puts it.
   let dflt (head : Bool) : Option Dim.Sp := Id.run do

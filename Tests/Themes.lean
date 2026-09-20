@@ -654,7 +654,7 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (tallOut.pages.size > 1 && tallOut.pages.all (·.foot.isSome))
   t "body ink never reaches the footer ink"
     (tallOut.pages.all fun p => p.lines.all fun l =>
-      l.y == footY || l.y + descent ≤ footY - footAscent - Layout.lineskip)
+      l.y == footY || l.y + descent ≤ footY - footAscent - Layout.inkClearance)
   t "the tall frame demonstrably fills the body area"
     (tallOut.pages.any fun p => p.lines.any fun l =>
       l.y != footY && l.y + descent + Ir.leadingFor geom0.fontSize >
