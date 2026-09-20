@@ -4,11 +4,11 @@ section 1 number "1"
   text "Figures"
 para
   text "An inline mark "
-  image "rects.png" height 8pt
+  image "rects.png" height 8pt alt "A small synthetic mark"
   text " sits in the line like a word."
 center
   para
-    image "rects.png" width 800/1000tw
+    image "rects.png" width 800/1000tw alt "Three synthetic rectangles, wide"
 float figure 1
   caption
     text "Three rectangles, fitted"
@@ -16,13 +16,13 @@ float figure 1
     image "rects.jpg" width 85.039pt height 85.039pt keepaspect alt "Three rectangles, fitted"
 para
   text "Scaled to half: "
-  image "rects.png" scale 5/10
+  image "rects.png" scale 5/10 alt "Three synthetic rectangles, halved"
   text ", and exactly sized: "
-  image "rects.png" width 32pt height 40pt
+  image "rects.png" width 32pt height 40pt alt "Three synthetic rectangles, squeezed"
   text "."
 para
   text "A transparent overlay: "
-  image "rects-alpha.png"
+  image "rects-alpha.png" alt "Three synthetic rectangles over transparency"
   text " keeps its alpha."
 -- diagnostics
-note[N0100] 6:1 '\usepackage{graphicx}' → nothing: the engine does this itself
+note[N0100] 8:1 '\usepackage{graphicx}' → nothing: the engine does this itself

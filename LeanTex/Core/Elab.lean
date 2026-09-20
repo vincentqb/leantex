@@ -7827,6 +7827,11 @@ private def parseAssert (ctx : Ctx) (src : String) (pos : Pos) :
     (some { kind := .fontsAllEmbedded, span := some ⟨ctx.file, pos⟩ }, #[])
   | ["text.in_area"] =>
     (some { kind := .textInArea, span := some ⟨ctx.file, pos⟩ }, #[])
+  | ["accessibility", "=", "AA"] =>
+    (some { kind := .accessibilityAA, span := some ⟨ctx.file, pos⟩
+            help := some ("each failing fact is also a warning above, " ++
+              "naming its pair and its fix; a deliberate exception is " ++
+              "declared where the warning says, never defaulted") }, #[])
   | ["text.xheight", ">=", v] =>
     match Decl.parseValue v with
     | some (.dim d) => (some { kind := .minXHeight d, span := some ⟨ctx.file, pos⟩ }, #[])
@@ -7836,7 +7841,7 @@ private def parseAssert (ctx : Ctx) (src : String) (pos : Pos) :
     | some o, some v => (some { kind := .pages o v, span := some ⟨ctx.file, pos⟩ }, #[])
     | none, _ => fail s!"'{op}' is not a comparison (== != <= < >= >)"
     | _, none => fail s!"'{n}' is not a whole number"
-  | _ => fail "supported forms: pages <op> N, fonts.all_embedded, text.in_area, text.xheight >= <len>"
+  | _ => fail "supported forms: pages <op> N, fonts.all_embedded, text.in_area, text.xheight >= <len>, accessibility = AA"
 
 /-- One scanned preamble declaration: the value `applyDecl` folds over and
 the commutation statement (T1) quantifies over. Scanning is segmentation
@@ -9053,8 +9058,9 @@ def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
   let (doc, st) := (elabDoc file raws).run {}
   let contrast := Contrast.docDiags doc
   let outline := Ir.outlineDiags doc
+  let alt := Ir.altDiags doc
   let sequences := Ir.footerSequenceDiags doc
-  (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ sequences)
+  (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ sequences)
 
 def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input

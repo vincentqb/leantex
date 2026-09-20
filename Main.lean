@@ -569,6 +569,13 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let shipped := if doc.asserts.isEmpty then
           { pages := out.pages.size, fontsEmbedded := true : Check.Shipped }
         else Check.Shipped.ofOut geom fs out (fontsEmbedded := true)
+      -- The AA rows read the document and its elaborated diagnostics —
+      -- the judges speak before layout — so the driver fills them here,
+      -- from the pre-\allow stream: accepting a warning quiets the
+      -- report, never the fact.
+      let shipped := if doc.asserts.any (·.kind == .accessibilityAA) then
+          { shipped with a11y := Check.a11ySummary doc diags }
+        else shipped
       let failures := Check.all shipped doc.asserts
       unless doc.asserts.isEmpty do
         ui.phase "assert"

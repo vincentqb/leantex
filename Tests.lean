@@ -176,6 +176,7 @@ def main (args : List String) : IO UInt32 := do
   paletteChecks ref
   mixChecks ref
   contrastChecks ref
+  a11yChecks ref
   themeChecks ref
   designChecks ref
   roleChecks ref

@@ -1027,10 +1027,10 @@ defect: a print length on a stage that is the viewport). Flow classes
 keep the print reading untouched: paper is paper. -/
 def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let imgs := "\\includegraphics[width=0.5\\textwidth]{a.png}\n\n" ++
-    "\\includegraphics[height=0.4\\textheight]{a.png}\n\n" ++
-    "\\includegraphics[width=5cm]{a.png}\n\n" ++
-    "\\includegraphics[scale=0.5]{a.png}\n\n" ++
+  let imgs := "\\includegraphics[width=0.5\\textwidth, alt={A synthetic box}]{a.png}\n\n" ++
+    "\\includegraphics[height=0.4\\textheight, alt={A synthetic box}]{a.png}\n\n" ++
+    "\\includegraphics[width=5cm, alt={A synthetic box}]{a.png}\n\n" ++
+    "\\includegraphics[scale=0.5, alt={A synthetic box}]{a.png}\n\n" ++
     "\\begin{tikzpicture}\n\\fill (0,0) rectangle (2,1);\n\\end{tikzpicture}"
   -- 144 px at the default density is 144 pt intrinsic width.
   let info : Image.Info := { format := .png
@@ -1772,7 +1772,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- The deck logo: same image node, placed at the lower-right corner of
   -- every page, its right edge on the margin.
   let (logoDoc, logoDiags) := Elab.run "t"
-    "\\documentclass{slides}\\logo{\\includegraphics[height=8pt]{rects.png}}\
+    "\\documentclass{slides}\\logo{\\includegraphics[height=8pt, alt={A synthetic mark}]{rects.png}}\
 \\begin{document}\\begin{frame}{A}x\\end{frame}\\begin{frame}{B}y\\end{frame}\\end{document}"
   t "logo declaration elaborates clean" (logoDiags.isEmpty)
   let logoGeom := Layout.Geom.ofPage logoDoc.page
@@ -1857,7 +1857,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "includegraphics em length is E0331"
     (errCodes "\\includegraphics[width=2em]{x.png}" == ["E0331"])
   t "includegraphics unknown option warns W0110"
-    (warnCodes "\\includegraphics[angle=45]{x.png}" == ["W0110"])
+    (warnCodes "\\includegraphics[angle=45, alt={A box}]{x.png}" == ["W0110"])
   t "includegraphics without a file group is E0304"
     (errCodes "\\includegraphics[width=3cm]" == ["E0304"])
   -- totalheight is height plus depth and an image has no depth: one key.
@@ -1871,7 +1871,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- in beamer: a deck scopes a logo to one frame with `\logo{...}` before
   -- it and `\logo{}` after.
   let (bodyLogoDoc, bodyLogoDiags) := Elab.run "t"
-    "\\documentclass{slides}\\begin{document}\\logo{\\includegraphics[height=8pt]{rects.png}}\
+    "\\documentclass{slides}\\begin{document}\\logo{\\includegraphics[height=8pt, alt={A synthetic mark}]{rects.png}}\
 \\begin{frame}{A}x\\end{frame}\\logo{}\\begin{frame}{B}y\\end{frame}\\end{document}"
   t "logo declared in the body binds" (bodyLogoDiags.isEmpty && bodyLogoDoc.logo.isNone)
   let blOut := layoutOf oneFace bodyLogoDoc (pats := none) (imgs := store)

@@ -433,6 +433,9 @@ warning[W0373]: '\thanks' content is kept inline in the title block
 ── W0374 (degraded) a footnote on a card face is kept inline; a face has no note apparatus
 warning[W0374]: a footnote on this card is kept inline; a card face has no note apparatus
   help: write the aside in the running text, or declare \documentclass{article} to give notes a page foot
+── W0376 (degraded) an image ships no text alternative (WCAG 2.2)
+warning[W0376]: image 'chart.png' ships no text alternative; assistive technology reads nothing in its place (WCAG 2.2 SC 1.1.1)
+  help: describe the image — \includegraphics[alt={...}] — or caption its figure: the caption becomes the alternative
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

@@ -150,6 +150,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       "x\n\\maketitle")
   | .W0374 => dvE ("\\documentclass{card}\n\\begin{document}\n" ++
       "x\\footnote{an aside}\n\\end{document}")
+  | .W0376 => dvE (dvDoc "" "\\includegraphics{chart.png}")
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL one (dvDoc "" "$x^2$")
   | .W0005 => dvL one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"
@@ -602,3 +603,60 @@ def werrorChecks (ref : IO.Ref (List String)) : IO Unit := do
       "{\"event\":\"summary\",\"file\":\"a.tex\",\"ok\":false,\"errors\":0," ++
       "\"warnings\":3,\"ms\":17}")
 
+
+/-- The accessibility contract's judge sites. The alt judge (W0376, WCAG
+2.2 SC 1.1.1): fires on an image with no text alternative, silenced by
+each declared escape — an `alt` option, a figure caption (which becomes
+the alt at elaboration). The AA assertion surface: `\assert{ accessibility
+= AA }` turns the judged facts into one named failing assertion (exit 2's
+E0330), holds when nothing failed, and reads facts before `\allow`
+resolution. Each check breaks its judge once, the AssertKind row's own
+obligation. -/
+def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- W0376 fires and is silenced by each escape.
+  t "an image with no text alternative fires W0376"
+    ((dvE (dvDoc "" "\\includegraphics{chart.png}")).any (·.code == "W0376"))
+  t "a declared alt silences W0376"
+    (((dvE (dvDoc "" "\\includegraphics[alt={A synthetic chart}]{chart.png}")).any
+      (·.code == "W0376")) == false)
+  t "a figure caption becomes the alternative and silences W0376"
+    (((dvE (dvDoc "" ("\\begin{figure}\\includegraphics{chart.png}" ++
+        "\\caption{A synthetic chart}\\end{figure}"))).any
+      (·.code == "W0376")) == false)
+  -- The theorem's executable face: the judge and the census agree on the
+  -- offender.
+  let (bare, _) := elabStr (dvDoc "" "\\includegraphics{chart.png}")
+  t "imagesSansAlt names the offending source"
+    (Ir.imagesSansAlt bare == #["chart.png"])
+  t "alt_judged_complete's face: judge silent iff census empty"
+    ((Ir.altDiags bare).isEmpty == (Ir.imagesSansAlt bare).isEmpty &&
+      !(Ir.altDiags bare).isEmpty)
+  -- headings_no_skip_judged's executable face: the fact and the fired
+  -- code travel together.
+  let (gapped, gds) := elabStr (dvDoc ""
+    "\\section{One}\nx\n\\subsubsection{Deep}\ny")
+  t "outlineHasSkip names the fact W0320 fires on"
+    (Ir.outlineHasSkip gapped && gds.any (·.code == "W0320"))
+  -- The AA assertion: parse, fail on a judged fact, hold when clean.
+  let (failing, fds) := elabStr (dvDoc "\\assert{ accessibility = AA }\n"
+    "\\includegraphics{chart.png}")
+  t "accessibility = AA parses to its kind"
+    (failing.asserts.any (·.kind == Ir.AssertKind.accessibilityAA))
+  let shippedOf (doc : Ir.Doc) (ds : Array Diag) : Check.Shipped :=
+    { pages := 1, fontsEmbedded := true, a11y := Check.a11ySummary doc ds }
+  t "AA fails on a judged fact, naming the assertion"
+    ((Check.all (shippedOf failing fds) failing.asserts).size == 1 &&
+      (Check.all (shippedOf failing fds) failing.asserts).all
+        (·.message.startsWith "assertion failed: accessibility = AA"))
+  let (clean, cds) := elabStr (dvDoc
+    ("\\assert{ accessibility = AA }\n" ++
+      "\\pdfmeta{ language = \"en\" }\n") "plain text")
+  t "AA holds on a clean document with a declared language"
+    ((Check.all (shippedOf clean cds) clean.asserts).isEmpty)
+  -- The one non-diagnostic row: an undeclared language fails AA even on
+  -- an otherwise clean document (SC 3.1.1: the declaration is the fact).
+  let (nolang, nds) := elabStr (dvDoc "\\assert{ accessibility = AA }\n"
+    "plain text")
+  t "AA fails without a declared language"
+    (!(Check.all (shippedOf nolang nds) nolang.asserts).isEmpty)

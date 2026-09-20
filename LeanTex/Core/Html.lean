@@ -320,6 +320,18 @@ def document (lang : String) (head body : Array Node) : String :=
 where
   inlineRenderTop (n : Node) : String := render n 0
 
+/-- The root element always carries the language it was given: `document`
+builds `<html lang=...>` by construction, so no complete page can ship
+without the declaration WCAG 2.2 SC 3.1.1 asks for (the page's default
+human language, programmatically determinable — H57 is exactly this
+attribute). -/
+theorem document_declares_lang (lang : String) (head body : Array Node) :
+    document lang head body =
+      "<!DOCTYPE html>\n" ++
+        render (elem "html" #[elem "head" head, elem "body" body]
+          #[("lang", lang)]) 0 :=
+  rfl
+
 /-- The heading rank a section level takes, the one fact every text
 backend projects: level 0 is the document title, rank 1 — `h1` is "for a
 top-level section" (HTML §4.3.6), `#` its markdown twin — and each deeper

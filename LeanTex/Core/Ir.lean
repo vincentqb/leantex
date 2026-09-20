@@ -1028,6 +1028,13 @@ inductive AssertKind where
   run's font at its size: the legibility floor is an angular x-height, so
   the check reads the metric the source speaks in. -/
   | minXHeight (min : Sp)
+  /-- The document conforms to the engine's judged WCAG 2.2 AA rows: no
+  accessibility fact the judges name (a failing contrast pair, an image
+  with no text alternative, a broken heading outline) and a declared
+  language. Facts the engine cannot judge (a PDF's tagged reading order,
+  browser rendering) are outside the assertion and stay named in PLAN,
+  never implied passes. -/
+  | accessibilityAA
   deriving Repr, BEq, Inhabited
 
 def AssertKind.source : AssertKind → String
@@ -1035,6 +1042,7 @@ def AssertKind.source : AssertKind → String
   | .fontsAllEmbedded => "fonts.all_embedded"
   | .textInArea => "text.in_area"
   | .minXHeight m => s!"text.xheight >= {m.toPtString}pt"
+  | .accessibilityAA => "accessibility = AA"
 
 structure Assertion where
   kind : AssertKind
@@ -4832,6 +4840,56 @@ private def levelName : Nat → String
   | 2 => "'\\subsection'"
   | _ => "'\\subsubsection'"
 
+/-- The broken-outline diagnostic W0320 fires: named so the completeness
+theorem below can point at the pushed value's code. -/
+private def outlineGapDiag (p l : Nat) : Diag :=
+  Diag.of .W0320
+    s!"heading levels skip a step: {levelName p} is followed by {levelName l}"
+    (help := some "descend one level at a time — here \\subsection \
+(HTML §4.3.11, WCAG G141); \
+a screen reader reads the gap as a broken outline")
+
+private def outlineTitleDiag : Diag :=
+  Diag.of .W0321
+    "the document title follows another heading"
+    (help := some "put \\maketitle before the first \\section, so the \
+outline starts at its top")
+
+/-- The outline walk over the heading levels, `prev` the level just read:
+each element is judged against its lead — the gap first, then the
+misplaced title — with one latch per code, so each fires once per
+document, in encounter order. Recursion over the `List` with a threaded
+accumulator, so `headings_no_skip_judged` can reason by induction where
+the imperative loop this replaces could not. -/
+def outlineWalk (prev : Nat) (gapNamed titleNamed : Bool)
+    (out : Array Diag) : List Nat → Array Diag
+  | [] => out
+  | l :: rest =>
+    if l > prev + 1 && !gapNamed then
+      if l == 0 && !titleNamed then
+        outlineWalk l true true
+          ((out.push (outlineGapDiag prev l)).push outlineTitleDiag) rest
+      else
+        outlineWalk l true titleNamed (out.push (outlineGapDiag prev l)) rest
+    else
+      if l == 0 && !titleNamed then
+        outlineWalk l gapNamed true (out.push outlineTitleDiag) rest
+      else
+        outlineWalk l gapNamed titleNamed out rest
+
+/-- Somewhere after a heading at `prev`, a heading exceeds its lead by
+more than one level: the broken-outline fact `outlineWalk` judges. -/
+def outlineSkips (prev : Nat) : List Nat → Bool
+  | [] => false
+  | l :: rest => l > prev + 1 || outlineSkips l rest
+
+/-- The document's outline skips a level: the fact W0320 exists to name
+(HTML §4.3.11; WCAG technique G141). -/
+def outlineHasSkip (doc : Doc) : Bool :=
+  match (headingLevels doc.body).toList with
+  | [] => false
+  | l :: rest => outlineSkips l rest
+
 /-- Outline diagnostics over the document's heading levels — the two
 machine-checkable rules the authorities state, checked on the IR without
 rendering anything.
@@ -4847,29 +4905,62 @@ elaborator already keeps it unique; its position is the document's).
 Warnings, once each per document, never errors: a document that skips a
 level still means something and still renders — the diagnostic names the
 native spelling that repairs it. -/
-def outlineDiags (doc : Doc) : Array Diag := Id.run do
-  let levels := headingLevels doc.body
-  let mut out : Array Diag := #[]
-  let mut prev : Option Nat := none
-  let mut gapNamed := false
-  let mut titleNamed := false
-  for l in levels do
-    if let some p := prev then
-      if l > p + 1 && !gapNamed then
-        gapNamed := true
-        out := out.push (Diag.of .W0320
-          s!"heading levels skip a step: {levelName p} is followed by {levelName l}"
-          (help := some "descend one level at a time — here \\subsection \
-(HTML §4.3.11, WCAG G141); \
-a screen reader reads the gap as a broken outline"))
-      if l == 0 && !titleNamed then
-        titleNamed := true
-        out := out.push (Diag.of .W0321
-          "the document title follows another heading"
-          (help := some "put \\maketitle before the first \\section, so the \
-outline starts at its top"))
-    prev := some l
-  return out
+def outlineDiags (doc : Doc) : Array Diag :=
+  match (headingLevels doc.body).toList with
+  | [] => #[]
+  | l :: rest => outlineWalk l false false #[] rest
+
+/-- A diagnostic already collected survives the rest of the walk. -/
+private theorem outlineWalk_mem (d : Diag) :
+    ∀ (ls : List Nat) (prev : Nat) (gN tN : Bool) (out : Array Diag),
+      d ∈ out → d ∈ outlineWalk prev gN tN out ls
+  | [], _, _, _, _, h => h
+  | _ :: rest, _, _, _, _, h => by
+    unfold outlineWalk
+    split <;> split <;>
+      exact outlineWalk_mem d rest _ _ _ _ (by
+        first
+        | exact h
+        | exact Array.mem_push.mpr (Or.inl h)
+        | exact Array.mem_push.mpr (Or.inl (Array.mem_push.mpr (Or.inl h))))
+
+private theorem outlineWalk_finds :
+    ∀ (ls : List Nat) (prev : Nat) (tN : Bool) (out : Array Diag),
+      outlineSkips prev ls = true →
+      ∃ d ∈ outlineWalk prev false tN out ls, d.code = "W0320"
+  | l :: rest, prev, tN, out, hskip => by
+    unfold outlineWalk
+    by_cases hgap : l > prev + 1
+    · refine ⟨outlineGapDiag prev l, ?_, by
+        show DiagCode.code .W0320 = "W0320"
+        decide +kernel⟩
+      simp only [hgap, decide_true, Bool.not_false, Bool.and_true, ite_true]
+      split <;>
+        exact outlineWalk_mem _ rest _ _ _ _ (by simp [Array.mem_push])
+    · have hrest : outlineSkips l rest = true := by
+        unfold outlineSkips at hskip
+        simpa [hgap] using hskip
+      simp only [hgap, decide_false, Bool.false_and, Bool.false_eq_true,
+        ite_false]
+      split
+      · exact outlineWalk_finds rest l true _ hrest
+      · exact outlineWalk_finds rest l tN out hrest
+
+/-- The heading-structure judge is complete: a document whose outline
+skips a level (a heading more than one level deeper than its lead —
+`outlineHasSkip`, the fact HTML §4.3.11's conformance rule and WCAG
+technique G141 both state) always ships a W0320 among its outline
+diagnostics. Weak heading structure is then a reported fact, never a
+reader's discovery: the theorem closes the gap between "the judge
+exists" and "no document escapes it". -/
+theorem headings_no_skip_judged (doc : Doc)
+    (h : outlineHasSkip doc = true) :
+    ∃ d ∈ outlineDiags doc, d.code = "W0320" := by
+  unfold outlineHasSkip at h
+  unfold outlineDiags
+  split at h
+  · exact absurd h (by simp)
+  · exact outlineWalk_finds _ _ false #[] h
 
 /-- Is this node a physical-page placeholder (`\pagenumber` /
 `\pagecount`)? The physical sequence's only spellings — what
@@ -6297,6 +6388,49 @@ def imageRefs (doc : Doc) : Array String := Id.run do
     if let some tpl := st.font then out := imageSrcsInlines out tpl
     if let some m := st.marker then out := imageSrcsInlines out m
   return out
+
+/-- One image node's contribution to the no-alternative census: an
+`.image` whose `alt` is empty, its `src` collected once. A leaf
+projection of the shared fold — the fold recurses, so this leaf reads
+only the node itself; `imageSrcPush`'s shape. -/
+private def sansAltStep (out : Array String) : Inline → Array String
+  | .image src _ alt =>
+    if alt.isEmpty && !out.contains src then out.push src else out
+  | _ => out
+
+/-- Every image the artifacts ship with no text alternative, deduplicated,
+in document order: the backends read the body, the running head and foot,
+and the logo, so the census reads the same regions (`imageRefs`' scope for
+shipped ink). A figure's caption has already become its image's `alt` by
+elaboration (`setAltBlocks`), so a captioned figure is not counted. -/
+def imagesSansAlt (doc : Doc) : Array String :=
+  let out := foldBlocks (fun out _ => out) sansAltStep #[] doc.body
+  let out := match doc.head with | some h => foldInlines sansAltStep out h | none => out
+  let out := match doc.foot with | some f => foldInlines sansAltStep out f | none => out
+  match doc.logo with | some l => foldInlines sansAltStep out l | none => out
+
+/-- The text-alternative judge (WCAG 2.2 SC 1.1.1, Non-text Content: non-text
+content has a text alternative that serves the equivalent purpose; sufficient
+technique G94/H37 — the `alt` attribute). One diagnostic per distinct source:
+an image a reader of the page sees and a reader of the accessibility tree
+does not is a per-image fact, and the source names which. -/
+def altDiags (doc : Doc) : Array Diag :=
+  (imagesSansAlt doc).map fun src =>
+    Diag.of .W0376
+      (s!"image '{src}' ships no text alternative; assistive technology " ++
+        "reads nothing in its place (WCAG 2.2 SC 1.1.1)")
+      (help := some ("describe the image — \\includegraphics[alt={...}] — " ++
+        "or caption its figure: the caption becomes the alternative"))
+
+/-- The judge is silent exactly when no shipped image lacks a text
+alternative: `altDiags` is a per-offender map over the census
+(`imagesSansAlt`, a leaf projection of the shared fold), so an image
+cannot escape it without escaping the fold — whose arms are all explicit.
+Weak accessibility of images is then a reported fact, never a discovery. -/
+theorem alt_judged_complete (doc : Doc) :
+    altDiags doc = #[] ↔ imagesSansAlt doc = #[] := by
+  rw [← Array.size_eq_zero_iff, ← Array.size_eq_zero_iff, altDiags,
+    Array.size_map]
 
 mutual
 

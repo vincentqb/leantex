@@ -2924,4 +2924,17 @@ def emit (cfg : Config) (doc : Doc) : String × Array Diag :=
   -- data are different questions.
   (Html.document (doc.info.language.getD "en") head body, diags)
 
+/-- Every emitted page declares a language: the artifact is
+`Html.document` over the document's declared tag, the engine's `en`
+assumption standing in when it names none — `emit`'s one construction
+site, so with `Html.document_declares_lang` the root element always
+carries `lang` (WCAG 2.2 SC 3.1.1, technique H57). Whether the tag
+matches the text is the document's own truth; the engine judges the
+declaration, never the prose. -/
+theorem emit_lang_declared (cfg : Config) (doc : Doc) :
+    ∃ head body,
+      (emit cfg doc).1 = Html.document (doc.info.language.getD "en") head body := by
+  rcases h : emitTree cfg doc with ⟨head, body, ds⟩
+  exact ⟨head, body, by simp [emit, h]⟩
+
 end LeanTex.Core.HtmlDoc
