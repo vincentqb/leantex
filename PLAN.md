@@ -101,6 +101,42 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — the text reveals itself: one HTML section per frame, steps
+uncover in place. Supersedes the 2026-09-20 scroll-snap entry's
+"steps are pages" item.
+
+- HTML does not have to be made of pages: the per-step section expansion
+  copied the PDF handout's pagination into a medium that animates. Now
+  one `section.slide` per frame; `frames_sections` replaces
+  `frames_pages` as the census — HTML section count = frame count = the
+  PDF's page count less its per-step duplicates, both projections of
+  `Ir.maxStepBlocks` (`deckStepChecks`). Presenter-paced stepping is
+  given up deliberately (the user's call); the deck still snaps frame by
+  frame. Label anchors return to their single site; frame ids stay
+  unique through the shared claim walk.
+- A `.step` starts covered — the design's own oklab `color-mix` shade,
+  dim never hide, no reflow — and uncovers to full colour delayed by
+  `(--step − 1) × --motionstagger` once its frame is the snapped one.
+  Two declarative triggers under `@supports`, best first: scroll-state
+  container queries (CSS Conditional 5 `scroll-state(snapped: y)`;
+  Chromium 133+ only, ≈71% global, caniuse read 2026-09-20), else the
+  `view()` timeline entry motion already uses, so the steps uncover as
+  the frame scrolls in. Floor: full colour, the handout state; reduced
+  motion likewise, guard by construction (`deckStepCss_guarded`). Print
+  never sees a step rule. The emit-time cover plumbing (and
+  `role_use_names_its_token_covered`) went with the expansion: coverage
+  is a stylesheet state now, so an explicitly coloured run inside a
+  covered step no longer dims pre-reveal — the remainder is named in
+  the covered-pictures line of the scroll-snap entry's out-of-scope.
+- Tokens: `--motionduration` gets its default after all, 0.4 s
+  (reveal.js/Quarto default transition-duration) — the earlier "no
+  duration token" reasoning held for scroll-scrubbed timelines and the
+  snap trigger is time-based; `--motionstagger` defaults to 150 ms (no
+  authority fixes a reveal stagger — Material's ≤20 ms choreography rule
+  is for simultaneous surface creation — so the default takes one beat
+  from Material's small-animation band, 150–200 ms). Both are var()
+  doors; a time-typed `\tokens` key remains owed.
+
 2026-09-20 — the stage is one declared key: beamer's aspectratio table
 entire, and a native spelling.
 
