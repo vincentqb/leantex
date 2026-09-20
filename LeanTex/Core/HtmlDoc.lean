@@ -46,6 +46,10 @@ structure Config where
   pal : Ir.Palette := {}
   /-- The token state in force, same door (`.setTokens`). -/
   tokens : Ir.Tokens := {}
+  /-- Whether the emitted page is the paged deck (the slides class's frame
+  model): the frame arm then realizes its declared vertical distribution
+  with flex spacers, which every other class's flow has no use for. -/
+  deck : Bool := false
   /-- The accumulated custom-property redefinitions the siblings from here
   on carry on their own style attribute. Properties on an element inherit
   into it, so styling each following sibling realizes "from here on"
@@ -1341,6 +1345,22 @@ private def styleClass : Style → String
   -- declaration WCAG 2.2 SC 3.1.2 reads, never a class
   | .lang tag => "lang-" ++ tag
 
+/-- The shares of a slide's leftover vertical space above and below its
+content: the frame's declared distribution, the ratio form of beamer's
+`\vfil`-glue model — centring 1:1 (beamer user guide §8.1: `c` is the
+default), top-flush 0:1, bottom-flush 1:0, and the title page's golden
+2618:1000 (beamerinnerthememoloch.dtx, the "golden ratio spacing" of its
+`title page` template). The same ratios `Layout.VDist.of` declares for
+the PDF page — a backend may not read another backend, so the table is
+stated twice and `deckStructureChecks` pins the two to each other. A
+page-opening path owes a declared distribution, never a default (the
+obligation table): every arm answers, no wildcard. -/
+def vdistShares : Ir.VAlign → Nat × Nat
+  | .top => (0, 1)
+  | .center => (1, 1)
+  | .bottom => (1, 0)
+  | .golden => (2618, 1000)
+
 mutual
 
 /-- Inline content, pushed onto `acc`. Style maps onto the element that
@@ -1795,14 +1815,28 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       | none => cssColor color
     Html.elem "hr" #[] #[("class", "separator"),
       ("style", s!"border: none; height: {cssLength thickness.width}; background: {c}")]
-  | .frame title standout _ body =>
-    -- One slide of the deck. With no controller yet this is the no-JS
-    -- rendering the plan promises anyway: a linear readable handout, every
-    -- slide a section.
+  | .frame title standout valign body =>
+    -- One slide of the deck: a linear readable section in every class. On
+    -- the paged deck (`cfg.deck`) the slide is a flex column the height of
+    -- the viewport, and its declared vertical distribution is realized as
+    -- two spacers whose flex-grow carries the declared ratio
+    -- (`vdistShares`) — glue, exactly as the PDF page distributes its
+    -- leftover; in block flow (the print handout, every other class) an
+    -- empty div has no height and the declaration rides along inert.
     let header := if title.isEmpty then #[]
       else #[Html.elem "header" #[Html.elem "h2" (inlines cfg title)]]
     let cls := if standout then "slide standout" else "slide"
-    Html.elem "section" (header ++ blockNodesInto cfg.into #[] body.toList) #[("class", cls)]
+    let kids := blockNodesInto cfg.into #[] body.toList
+    let kids := if cfg.deck then
+        let (above, below) := vdistShares valign
+        let spacer (n : Nat) : Array Html.Node :=
+          if n == 0 then #[] else
+            #[Html.elem "div" #[] #[("class", "fill"), ("style", s!"flex-grow: {n}")]]
+        let up := spacer above
+        let down := spacer below
+        up ++ kids ++ down
+      else kids
+    Html.elem "section" (header ++ kids) #[("class", cls)]
   | .framefoot _ =>
     -- A state change for the deck walk in `emit`, not content: nothing to
     -- render where one stands alone.
@@ -2105,6 +2139,25 @@ private def pageFactsList (acc : PageFacts) : List Node → PageFacts
 
 end
 
+/-- The first free anchor among `taken` (`base`, `base-2`, `base-3`, …),
+plus the holder's title when a *different* title collides — the W0327
+case. k assigned ids can block at most k candidates, so the first free
+one is always found among the k+1 checked. One uniqueness rule for every
+id this backend assigns: the article's sections and the deck's frames
+claim through the same door, which `getElementById` semantics require. -/
+private def claimId (taken : Array (String × String)) (base text : String) :
+    String × Option String := Id.run do
+  let mut id := base
+  let mut clash : Option String := none
+  for n in [2 : taken.size + 3] do
+    match taken.find? (·.1 == id) with
+    | some (_, holder) =>
+      if holder != text && clash.isNone then
+        clash := some holder
+      id := s!"{base}-{n}"
+    | none => break
+  return (id, clash)
+
 /-- An article's top-level sections become `<section id="...">` containers:
 the heading and everything up to the next level-1 heading. The id gives every
 section an anchor and a styling handle, and the container is what HTML 5 says
@@ -2147,17 +2200,7 @@ private def sectionize (cfg : Config) (blocks : Array Block) :
       let text := Ir.plainText title
       let base := slug title
       let base := if base.isEmpty then "section" else base
-      -- k assigned ids can block at most k candidates, so the first free
-      -- one is always found among the k+1 checked here.
-      let mut id := base
-      let mut clash : Option String := none
-      for n in [2 : taken.size + 3] do
-        match taken.find? (·.1 == id) with
-        | some (_, holder) =>
-          if holder != text && clash.isNone then
-            clash := some holder
-          id := s!"{base}-{n}"
-        | none => break
+      let (id, clash) := claimId taken base text
       if let some holder := clash then
         diags := diags.push (Diag.of .W0327
           s!"sections {holder.quote} and {text.quote} share the \
@@ -2300,7 +2343,8 @@ def emitTree (cfg : Config) (doc : Doc) :
     | _ => ""
   let cfg := { cfg with styles := doc.styles
                         pal := doc.palette
-                        tokens := doc.tokens }
+                        tokens := doc.tokens
+                        deck := doc.docClass.record.model == .frame }
   -- The themed section page: in a slides document with progress keys, a
   -- top-level section becomes its own deck section carrying the position.
   let themedSections := doc.docClass.record.model == .frame &&
@@ -2316,7 +2360,7 @@ def emitTree (cfg : Config) (doc : Doc) :
     (doc.chrome.hasFooter || hasFrameFoot)
   let (inner, sectionDiags) := if doc.docClass.record.model == .flow then
       sectionize cfg doc.body
-    else if !themedSections && !chromeFoot then
+    else if doc.docClass.record.model != .frame then
       (blockNodesInto cfg #[] doc.body.toList, #[])
     else Id.run do
       -- The one numbering: the same array the PDF path threads
@@ -2329,6 +2373,9 @@ def emitTree (cfg : Config) (doc : Doc) :
       let mut frameFoot : Option (Array Inline) := none
       let mut acc : Array Node := #[]
       let mut walkDiags : Array Diag := #[]
+      -- Each assigned frame id with the plain title that holds it: the
+      -- same uniqueness door the article's sections claim through.
+      let mut taken : Array (String × String) := #[]
       -- The epoch state threads through the deck's top level exactly as
       -- through `blockNodesInto`.
       let mut cfg := cfg
@@ -2352,10 +2399,31 @@ def emitTree (cfg : Config) (doc : Doc) :
 omitted from HTML"
               (help := some "the deck has no physical pages; \\framenumber \
 via \\chrome is the sequence both backends share"))
-        | .frame _ _ _ _ =>
+        | .frame title _ _ _ =>
           let num := nums[i]?.getD none
           done := num.getD done
           let node := blockNode cfg b
+          -- The frame's anchor: its title slug, unique among the deck's
+          -- ids (`claimId`), so every slide is fragment-addressable — a
+          -- deep link into the paged deck is `#its-title`. A repeated
+          -- identical title numbers itself quietly; two different titles
+          -- folding to one slug are named as W0327, as in the article.
+          let text := Ir.plainText title
+          let base := slug title
+          let base := if base.isEmpty then "slide" else base
+          let (id, clash) := claimId taken base text
+          if let some holder := clash then
+            walkDiags := walkDiags.push (Diag.of .W0327
+              s!"frames {holder.quote} and {text.quote} share the \
+anchor '{base}'; the second becomes '{id}'"
+              (help := some s!"an in-page link '#{base}' reaches only the \
+first; retitle one frame, or link to '#{id}'"))
+          taken := taken.push (id, text)
+          let node := match node with
+            | .elem tag attrs kids => Node.elem tag (attrs.push ("id", id)) kids
+            | .text s => Node.text s
+            | .style s => Node.style s
+            | .script attrs s => Node.script attrs s
           let node := if chromeFoot then
               match num, node with
               | some n, .elem tag attrs kids =>

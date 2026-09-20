@@ -803,6 +803,43 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
       (!has page "scroll-snap" && !has page "scroll-behavior" &&
        has page "section.slide { border:")
 
+/-- The paged deck's structure: a frame's declared vertical distribution
+reaches the artifact as flex spacers carrying the PDF's own ratios — the
+two backends state one vdist table (a backend may not read another, so
+the table is spelled twice and pinned here) — and every slide is
+fragment-addressable through an id unique by the shared claim walk. -/
+def deckStructureChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  t "the two backends declare one vdist table"
+    ([Ir.VAlign.top, .center, .bottom, .golden].all fun v =>
+      HtmlDoc.vdistShares v == ((Layout.VDist.of v).above, (Layout.VDist.of v).below))
+  let (doc, ds) := elabStr (deck169 "\\title{T}\\author{A}"
+    ("\\maketitle\n" ++
+     "\\begin{frame}[t]{Alpha}\na\n\\end{frame}\n" ++
+     "\\begin{frame}[b]{Alpha}\nb\n\\end{frame}\n" ++
+     "\\begin{frame}{Beta}\nc\n\\end{frame}"))
+  t "deck structure fixture elaborates clean" ds.isEmpty
+  let (html, eds) := HtmlDoc.emit {} doc
+  let count (s : String) : Nat := (html.splitOn s).length - 1
+  t "declared distributions land as their ratios"
+    -- golden above the title matter, its below share beneath; [t] one
+    -- spacer below, [b] one above, the default centring one each side.
+    (count "flex-grow: 2618" == 1 && count "flex-grow: 1000" == 1 &&
+     count "flex-grow: 1\"" == 4)
+  t "frame ids are unique, a repeated identical title numbers quietly"
+    (count "id=\"alpha\"" == 1 && count "id=\"alpha-2\"" == 1 &&
+     count "id=\"beta\"" == 1 && !eds.any (·.code == "W0327"))
+  let (linkDoc, _) := elabStr (deck169 ""
+    ("\\begin{frame}{A-B}\nx\n\\end{frame}\n" ++
+     "\\begin{frame}{A B}\n\\href{#a-b}{go}\n\\end{frame}"))
+  let (linkHtml, linkDs) := HtmlDoc.emit {} linkDoc
+  t "two different frame titles folding to one slug are named"
+    (linkDs.any (·.code == "W0327"))
+  t "a deep link to a frame id resolves"
+    (!linkDs.any (·.code == "W0326") &&
+     (linkHtml.splitOn "id=\"a-b\"").length == 2 &&
+     (linkHtml.splitOn "id=\"a-b-2\"").length == 2)
+
 /-- Declared once, derived everywhere: every metadata fact lives in the one
 `Ir.Meta` record and each surface derives its own rendering of it — the HTML
 head, the llms.txt preamble, and the PDF's Info dictionary and XMP read the
