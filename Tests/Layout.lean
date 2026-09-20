@@ -1364,6 +1364,26 @@ def titleBarChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     t "title bars: a descender on the last line never moves the bottom bar"
       (below' == below)
   | _, _ => t "title bars: the probe produced its lines" false
+  -- Undeclared, the gaps are the engine's rhythm tokens: three quanta on
+  -- both sides (`Ir.titleBarGap`, `title_bar_rhythm`) — the default is
+  -- symmetric; declared asymmetry is the author's.
+  let dsrc := "\\documentclass{article}" ++
+    "\\style{titlepage}{ rule-above = 4pt, rule-below = 1pt }" ++
+    "\\title{Invented Title Bars Stand All Their Rules Even}" ++
+    "\\author{Placeholder Name}" ++
+    "\\begin{document}\\maketitle Body text.\\end{document}"
+  let dlines := bodyLines (layoutOf oneFace (Elab.run "t" dsrc).1 tg)
+  let dbars := dlines.filter (fun l => Layout.ruleOnly l.segs)
+  let dtitles := dlines.filter (fun l => !Layout.ruleOnly l.segs && l.size == titleSize)
+  let q := Ir.rhythmQuantum geom.fontSize
+  t "title bars: the undeclared gap is three rhythm quanta, both sides"
+    ((do
+      let bar1 ← dbars[0]?
+      let bar2 ← dbars[1]?
+      let firstT ← dtitles[0]?
+      let lastT ← dtitles.back?
+      return (firstT.y - cap) - bar1.y == 3 * q &&
+        (bar2.y - Dim.pt 1) - lastT.y == 3 * q : Option Bool).getD false)
 
 /-- Recovery emits the author's content, never the source's syntax. An
 unknown command's leading `[...]` run is how the author addressed the

@@ -156,16 +156,17 @@ def censusTable :
        bars.map (·.2) == #[Dim.pt 3, Dim.pt 2]),
      ("the top bar stands above the title line, the bottom below",
        (bars.map fun s => decide (s.1 < titleY)) == #[true, false]),
-     -- The declared skip reaches the page 1:1 (`placeLine_gap_exact`); the
-     -- band's width is the interline the placement adds beyond it, well
-     -- under three body sizes — while an unstyled default gap (a parskip
-     -- plus interline, under two) never reaches the band's floor.
-     ("the title stands its declared 0.5in below the top bar, within its interline",
-       (bars[0]?.map fun s => decide (Dim.inch 1 / 2 ≤ titleY - s.1 ∧
-         titleY - s.1 ≤ Dim.inch 1 / 2 + 3 * geom.fontSize)).getD false),
-     ("the bottom bar stands its declared 0.75in below the title, within its interline",
-       (bars[1]?.map fun s => decide (Dim.inch 3 / 4 ≤ s.1 - titleY ∧
-         s.1 - titleY ≤ Dim.inch 3 / 4 + 3 * geom.fontSize)).getD false),
+     -- The gaps beside the bars are the engine's rhythm, not the venue's
+     -- \vskips (the fixture's 0.5in/0.75in are deliberately unread): three
+     -- quanta from the bar to the type's body — the cap line above the
+     -- title, so the band over the exact gap is under one \Large cap —
+     -- and the baseline below it, where the bottom bar lands exactly.
+     ("the top bar stands three quanta above the title's cap line",
+       (bars[0]?.map fun s => decide (3 * Ir.rhythmQuantum geom.fontSize ≤ titleY - s.1 ∧
+         titleY - s.1 ≤ 3 * Ir.rhythmQuantum geom.fontSize + geom.fontSize * 1440 / 1000)).getD false),
+     ("the bottom bar stands exactly three quanta below the title's baseline",
+       (bars[1]?.map fun s => decide (s.1 - titleY ==
+         3 * Ir.rhythmQuantum geom.fontSize + Dim.pt 2)).getD false),
      ("the title is centred in the measure",
        ((lineXOf c 0 "Bars Probe Title").map fun x =>
          decide (x > geom.hmargin)).getD false),
@@ -175,14 +176,15 @@ def censusTable :
        lineSizeOf c 0 "Bars Probe Title" ==
          some (geom.fontSize * 1440 / 1000)),
      -- The author line's 2u strut (`Ir.titleAuthorStrut`): its baseline
-     -- stands the strut's 24pt plus the bar's declared 0.1in skip under
-     -- the bottom bar; unstrutted, the interline alone (~12pt + skip)
-     -- never reaches the floor.
+     -- stands the strut's 24pt plus the engine's one-quantum bar skip
+     -- under the bottom bar (the venue's 0.1in is unread); unstrutted,
+     -- the skip plus a bare cap height (under 14pt) never reaches the
+     -- floor.
      ("the author line carries its 2u strut under the bottom bar",
        ((pageRuleSegs c 0)[1]?.map fun s =>
          let d := (lineYOf c 0 "An Invented Author").getD 0 - s.1
-         decide (Dim.pt 24 + Dim.inch 1 / 10 ≤ d ∧
-           d ≤ Dim.pt 24 + Dim.inch 1 / 10 + 2 * geom.fontSize)).getD false),
+         decide (Dim.pt 24 + Ir.rhythmQuantum geom.fontSize ≤ d ∧
+           d ≤ Dim.pt 24 + Ir.rhythmQuantum geom.fontSize + 2 * geom.fontSize)).getD false),
      -- The rhythm gap after the block (`Ir.titleBlockAfter`, 2u at the
      -- body size): the body text stands the gap plus its interline under
      -- the author line; without the gap the default (parskip + leading,

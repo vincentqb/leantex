@@ -555,6 +555,21 @@ the grid lands 2.3pt over what the venue eyeballed. -/
 def titleBlockAfter : SymGlue :=
   { width := { em := 2 * leadingMilli }, shrink := { em := leadingMilli / 2 } }
 
+/-- The gap between a title bar and the type it cuts: three rhythm quanta
+(1½ leadings), the same on both sides. Under the placement convention
+(`Layout.interlineFor`) the gap runs to the type's *body* — the cap line
+above the text, the baseline below it — so equal declared gaps are equal
+visible gaps by definition (Hochuli, *Detail in Typography*, "Rules": a
+rule relates to the type it cuts; Bringhurst §2.2.2 for the unit). The
+venue contributes only the bars' weights; a document declares its own
+asymmetry through `\style{titlepage}{ rule-above-gap = … }`. Spelled in
+em so it re-derives from the body size, as the rhythm does. -/
+def titleBarGap : SymGlue := { width := { em := 3 * leadingMilli / 2 } }
+
+/-- The skip outside a title bar — above the top one, below the bottom
+one: one rhythm quantum. -/
+def titleBarSkip : SymGlue := { width := { em := leadingMilli / 2 } }
+
 /-- The author block joins the rhythm (`default_rhythm_multiples`' family):
 the strut and the post-block gap are half-unit multiples of the body
 leading — four quanta each, the gap's shrink one — so the title block
@@ -564,6 +579,15 @@ theorem title_author_rhythm :
     titleAuthorStrut.width.resolve baseFontSize 0 = 4 * rhythmQuantum baseFontSize ∧
     titleBlockAfter.width.resolve baseFontSize 0 = 4 * rhythmQuantum baseFontSize ∧
     titleBlockAfter.shrink.resolve baseFontSize 0 = rhythmQuantum baseFontSize := by
+  decide
+
+/-- The title bars join the rhythm too (`default_rhythm_multiples`'
+family): the gap either side of a bar is three quanta, the skip outside
+it one — every default around the title block is a half-unit multiple,
+and an edit that moves a token off its multiple fails the build here. -/
+theorem title_bar_rhythm :
+    titleBarGap.width.resolve baseFontSize 0 = 3 * rhythmQuantum baseFontSize ∧
+    titleBarSkip.width.resolve baseFontSize 0 = rhythmQuantum baseFontSize := by
   decide
 
 /-- The declared rhythm multiples, one table both backends realize from: at
@@ -2462,19 +2486,24 @@ structure ElementStyle where
   separator : Option (Color × Option String) := none
   /-- A full-measure rule above the element, this thick, in the ink colour:
   the NeurIPS-lineage top title bar (`\@toptitlebar`, `\hrule height 4\p@`
-  above `\@title`). Read at the title block (`titleBars`); the four skips
-  below place it and its sibling exactly where the venue declares. -/
+  above `\@title`). Read at the title block (`titleBars`); the venue
+  contributes the weight — the four skips below are the document's own
+  declarations, and where none stands the engine's rhythm places the bar
+  (`titleBarGap`/`titleBarSkip`). -/
   ruleAbove : Option SymGlue := none
-  /-- Space above `ruleAbove`: the venue's `\vskip` before its top bar. -/
+  /-- Declared space above `ruleAbove`; undeclared, `titleBarSkip`. -/
   ruleAboveSkip : Option SymGlue := none
-  /-- Space between `ruleAbove` and the element's first line. -/
+  /-- Declared space between `ruleAbove` and the element's first line;
+  undeclared, `titleBarGap`. -/
   ruleAboveGap : Option SymGlue := none
   /-- A full-measure rule below the element, this thick: the bottom title
   bar (`\@bottomtitlebar`, `\hrule height 1\p@`). -/
   ruleBelow : Option SymGlue := none
-  /-- Space between the element's last line and `ruleBelow`. -/
+  /-- Declared space between the element's last line and `ruleBelow`;
+  undeclared, `titleBarGap`. -/
   ruleBelowGap : Option SymGlue := none
-  /-- Space below `ruleBelow`, before what follows (the author block). -/
+  /-- Declared space below `ruleBelow`, before what follows (the author
+  block); undeclared, `titleBarSkip`. -/
   ruleBelowSkip : Option SymGlue := none
   /-- The author line's font template, read at the title block: the
   NeurIPS-lineage `\bf` inside the author `tabular`, or a document's own
@@ -4281,35 +4310,37 @@ theorem titled_text (acc : String) (kind : TitledKind) (title : Array Inline)
       = blockTextList (acc ++ plainText title) body.toList := rfl
 
 /-- A declared vertical skip standing on its own, as `\vskip` does: glue
-the next placed line pays, no content. `none` declares nothing. -/
-private def gapBlock : Option Dim.SymGlue → Array Block
-  | some g => #[.spaced g #[]]
-  | none => #[]
+the next placed line pays, no content. -/
+private def gapBlock (g : Dim.SymGlue) : Block := .spaced g #[]
 
 /-- A declared bar with the skips beside it; no declared weight, no ink. -/
 private def barSide (ink : Color × Option String)
-    (before after : Option Dim.SymGlue) : Option Dim.SymGlue → Array Block
-  | some w =>
-    let bar := (gapBlock before).push (.rule ink.1 ink.2 w)
-    let trail := gapBlock after
-    bar ++ trail
+    (before after : Dim.SymGlue) : Option Dim.SymGlue → Array Block
+  | some w => #[gapBlock before, .rule ink.1 ink.2 w, gapBlock after]
   | none => #[]
 
 /-- One title bracketed by its declared bars, appended to the walk's
 accumulator: the furniture above, the heading itself — a sibling, never
-wrapped, so the centred walk still meets it — and the furniture below. -/
+wrapped, so the centred walk still meets it — and the furniture below.
+The gaps beside each bar are the engine's rhythm (`titleBarGap` to the
+type, `titleBarSkip` outside) where the document declares none: the
+venue contributes the bars' weights, the engine where they sit. -/
 private def titleStep (st : ElementStyle) (ink : Color × Option String)
     (out : Array Block) (starred : Bool) (num : Option String)
     (title : Array Inline) : Array Block :=
-  let above := barSide ink st.ruleAboveSkip st.ruleAboveGap st.ruleAbove
-  let below := barSide ink st.ruleBelowGap st.ruleBelowSkip st.ruleBelow
+  let above := barSide ink (st.ruleAboveSkip.getD titleBarSkip)
+    (st.ruleAboveGap.getD titleBarGap) st.ruleAbove
+  let below := barSide ink (st.ruleBelowGap.getD titleBarGap)
+    (st.ruleBelowSkip.getD titleBarSkip) st.ruleBelow
   ((out ++ above).push (.section 0 starred num title)) ++ below
 
 /-- Bracket a title block's level-0 heading with its declared bars: a
-full-measure rule above and below at the declared weights, each standing at
-its declared skips — the NeurIPS-lineage title bars
-(`\@toptitlebar`/`\@bottomtitlebar` read as the declarations they are, or a
-document's own `\style{titlepage}{ rule-above = ... }`). Top level only,
+full-measure rule above and below at the declared weights, each standing
+its gap from the type — the engine's rhythm (`titleBarGap`,
+`titleBarSkip`) unless the document declares its own — the
+NeurIPS-lineage title bars (`\@toptitlebar`/`\@bottomtitlebar` read for
+the weights they declare, or a document's own
+`\style{titlepage}{ rule-above = ... }`). Top level only,
 deliberately: the title is the block `Elab.titleBlocks` pushes at the top
 of the title block, and descending would let a nested heading take the
 venue's furniture. Bars and skips are siblings of the heading, never
@@ -4336,9 +4367,10 @@ private theorem blocksText_push (out : Array Block) (b : Block) :
   simp [blocksText, Array.toList_push, blockTextList_append, blockTextList]
 
 private theorem blocksText_append_barSide (out : Array Block)
-    (ink : Color × Option String) (before after w : Option Dim.SymGlue) :
+    (ink : Color × Option String) (before after : Dim.SymGlue)
+    (w : Option Dim.SymGlue) :
     blocksText (out ++ barSide ink before after w) = blocksText out := by
-  cases w <;> cases before <;> cases after <;>
+  cases w <;>
     simp [barSide, gapBlock, blocksText, blockTextList_append, blockTextList,
       blockTextOne]
 

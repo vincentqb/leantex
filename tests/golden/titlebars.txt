@@ -3,14 +3,14 @@ page 612x792 vmargin 72 hmargin 150
 meta title "Bars Probe Title"
 meta author "An Invented Author"
 center
-  block before 7.2pt
+  block before 600/1000em
   rule #000000 3pt
-  block before 36pt
+  block before 1800/1000em
   section* 0
     text "Bars Probe Title"
-  block before 54pt
+  block before 1800/1000em
   rule #000000 2pt
-  block before 7.2pt
+  block before 600/1000em
   para
     strut
     styled bold
@@ -19,10 +19,10 @@ center
 para
   text "Body text follows the styled built-in title."
 -- diagnostics
-note[N0100] 12:1 '\renewcommand{\maketitle}' → \define \maketitle() {...}
-note[N0100] 12:38 '\thispagestyle{empty}' → \runninghead[from = 2]{...}
-note[N0100] 13:1 '\newcommand{\@toptitlebar}' → \define \@toptitlebar() {...}
-note[N0100] 14:1 '\newcommand{\@bottomtitlebar}' → \define \@bottomtitlebar() {...}
-note[N0100] 15:1 '\providecommand{\@maketitle}' → \define \@maketitle() {...}
-note[N0100] 16:1 '\renewcommand{\@maketitle}' → \define \@maketitle() {...}
-warning[W0361] 12:1 the redefinition of '\maketitle' uses '\begingroup' (titlebars.tex:12), which the engine cannot run; the built-in stands, styled by the redefinition's rules and spacing
+note[N0100] 15:1 '\renewcommand{\maketitle}' → \define \maketitle() {...}
+note[N0100] 15:38 '\thispagestyle{empty}' → \runninghead[from = 2]{...}
+note[N0100] 16:1 '\newcommand{\@toptitlebar}' → \define \@toptitlebar() {...}
+note[N0100] 17:1 '\newcommand{\@bottomtitlebar}' → \define \@bottomtitlebar() {...}
+note[N0100] 18:1 '\providecommand{\@maketitle}' → \define \@maketitle() {...}
+note[N0100] 19:1 '\renewcommand{\@maketitle}' → \define \@maketitle() {...}
+warning[W0361] 15:1 the redefinition of '\maketitle' uses '\begingroup' (titlebars.tex:15), which the engine cannot run; the built-in stands, styled by the redefinition's rules and spacing

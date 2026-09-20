@@ -1,11 +1,14 @@
 % A refused \maketitle redefinition still declares the built-in's styling
-% (rule (b)'s remainder): the rules and skips around \@title land on the
-% built-in's title block. Fixture-only numbers -- 3pt/2pt bars, 0.5in and
-% 0.4in gaps, \Large -- differ from the NeurIPS lineage's 4pt/1pt and from
-% every engine default, so the census can tell a declared value from a
-% default. The definition order matches the venue's: \maketitle is redefined
-% before the internals it names exist, which is why extraction reads the
-% body at the preamble's end.
+% (rule (b)'s remainder): the bar weights around \@title land on the
+% built-in's title block. Weights only: the \vskips beside the bars are
+% deliberately present and deliberately unread — the gaps are the engine's
+% rhythm (Ir.titleBarGap/titleBarSkip, three quanta to the type and one
+% outside), and the census asserts those. Fixture-only numbers -- 3pt/2pt
+% bars and \Large -- differ from the NeurIPS lineage's 4pt/1pt and from
+% every engine default, so the census can tell a declared weight from a
+% default. The definition order matches the venue's: \maketitle is
+% redefined before the internals it names exist, which is why extraction
+% reads the body at the preamble's end.
 \documentclass{article}
 \title{Bars Probe Title}
 \author{An Invented Author}

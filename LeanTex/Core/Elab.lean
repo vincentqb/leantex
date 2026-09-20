@@ -4070,14 +4070,15 @@ termination_by raws.size - k
 /-- One observed construct of a refused `\maketitle` body, in body order:
 `barInterpret` reads the sequence relative to the `\@title` event. -/
 private inductive BarEvent where
-  /-- A `\vskip` of this length; `\vskip -\parskip` emits nothing — under
-  the engine's gap model a declared gap already replaces the paragraph
-  skip, so the venue's cancellation is the identity. -/
-  | gap (g : Dim.SymGlue)
-  /-- A `\vskip` whose length the scan cannot read: the run it stands in
-  extracts no gap — an incomplete sum would place a bar where the venue
-  never asked. -/
-  | gapUnknown
+  /-- A `\vskip` stands here. Its length is not read: the venue
+  contributes the bars' weights, and the gaps beside them are the
+  engine's rhythm (`Ir.titleBarGap`/`Ir.titleBarSkip`) unless the
+  document declares its own through `\style{titlepage}`. The event
+  survives to close the author block's trailing skip; `\vskip -\parskip`
+  emits nothing — under the engine's gap model a declared gap already
+  replaces the paragraph skip, so the venue's cancellation is the
+  identity. -/
+  | gap
   /-- An `\hrule`; `none` when its declared height cannot be read, which
   abandons that side's extraction entirely. -/
   | bar (w : Option Dim.SymGlue)
@@ -4248,9 +4249,8 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
   | .ctrl n _ :: rest =>
     if n == "vskip" then
       let events := match barLength rest with
-        | .len g => events.push (.gap g)
         | .cancel => events
-        | .unread => events.push .gapUnknown
+        | _ => events.push .gap
       barScanList user bound st events rest
     else if n == "hrule" then
       barScanList user bound st (events.push (.bar (barRuleWeight rest))) rest
@@ -4285,25 +4285,14 @@ decreasing_by
   all_goals
     (have hb : sizeOf body = 1 + sizeOf body.toList := rfl; omega)
 
-/-- The `\vskip`s between two events, summed; `none` when the run holds one
-the scan could not read — an incomplete sum would misplace a bar. -/
-private def barGapSum (events : Array BarEvent) (lo hi : Nat) :
-    Option Dim.SymGlue := Id.run do
-  let mut acc : Option Dim.SymGlue := none
-  for i in [lo:hi] do
-    if h : i < events.size then
-      match events[i] with
-      | .gap g => acc := some (match acc with | some a => a.add g | none => g)
-      | .gapUnknown => return none
-      | _ => pure ()
-  return acc
-
 /-- Read the event sequence relative to `\@title` into the style fragment
 the built-in can honour: the last bar before the title and the first after
-it, each placed by the skips beside it, plus the size, weight, and
-alignment the title stood under. A body with no `\@title` is not a title
-restyling — rule (b) stands alone and nothing is extracted. A bar whose
-weight cannot be read extracts nothing on its side. -/
+it — their declared *weights* only; the skips beside a venue's bars are
+the engine's rhythm (`Ir.titleBars`'s defaults), never the venue's
+`\vskip`s — plus the size, weight, and alignment the title stood under. A
+body with no `\@title` is not a title restyling — rule (b) stands alone
+and nothing is extracted. A bar whose weight cannot be read extracts
+nothing on its side. -/
 private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := Id.run do
   let some t := events.findIdx? (· matches .title _ _ _) | return none
   let mut st : Ir.ElementStyle := {}
@@ -4322,10 +4311,7 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
   if let some i := above then
     if h : i < events.size then
       if let .bar (some w) := events[i] then
-        st := { st with
-          ruleAbove := some w
-          ruleAboveSkip := barGapSum events 0 i
-          ruleAboveGap := barGapSum events (i + 1) t }
+        st := { st with ruleAbove := some w }
   let mut below : Option Nat := none
   for i in [t + 1:events.size] do
     if h : i < events.size then
@@ -4333,16 +4319,7 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
   if let some j := below then
     if h : j < events.size then
       if let .bar (some w) := events[j] then
-        let stop := Id.run do
-          for k in [j + 1:events.size] do
-            if hk : k < events.size then
-              if (events[k] matches .content) || (events[k] matches .author _ _) then
-                return k
-          return events.size
-        st := { st with
-          ruleBelow := some w
-          ruleBelowGap := barGapSum events (t + 1) j
-          ruleBelowSkip := barGapSum events (j + 1) stop }
+        st := { st with ruleBelow := some w }
   -- The author block: the weight is the venue's, read; the strut and the
   -- gap after the block are the engine's rhythm (`Ir.titleAuthorStrut`,
   -- `Ir.titleBlockAfter`) — the venue chooses that the furniture exists,
@@ -4358,7 +4335,7 @@ private def barInterpret (events : Array BarEvent) : Option Ir.ElementStyle := I
           for k in [ai + 1:events.size] do
             if hk : k < events.size then
               match events[k] with
-              | .gap _ | .gapUnknown => return true
+              | .gap => return true
               | .content | .author _ _ => return false
               | _ => pure ()
           return false
