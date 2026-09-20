@@ -1192,6 +1192,20 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "a size change displaces by the metric rule and leaves the grid"
     (mixed.size ≥ 3 && mixed[1]! - mixed[0]! == (leadedAt hugeSize).2 + (leadedAt body).1 &&
      mixed[1]! - mixed[0]! != leading && mixed[2]! - mixed[1]! == leading)
+  -- The heading rule is raised half the x-height of the heading's own
+  -- face at the heading's size — never the body's — asserted over
+  -- `Layout.Out`, per AGENTS: a visual bug's regression never reads an IR
+  -- dump. The x-height is the measured ink 'x' (`Font.xHeightOptical`).
+  let rdoc := (Elab.run "t" ("\\documentclass{article}\\palette{ ink = #112233 }" ++
+    "\\style{section}{ rule = ink }\\begin{document}\\section{S}x\\end{document}")).1
+  let ruleRaises := ((layoutOf oneFace rdoc geom).pages.flatMap (·.lines)).filterMap
+    fun l => if l.furniture then none else
+      l.segs.findSome? fun s => match s with
+        | .rule _ _ raise _ => if raise > 0 then some raise else none
+        | _ => none
+  t "the heading rule sits at half the heading's own x-height"
+    (ruleRaises ==
+      #[(font.xHeightOptical : Int) * Layout.sectionSize geom 1 / font.unitsPerEm / 2])
   -- Gaps: `\vspace` is the gap in place of parskip and adds to other declared
   -- glue; an element's own space (a list's topsep, a heading's before) takes
   -- the larger against what is owed, as LaTeX's `\addvspace` does.

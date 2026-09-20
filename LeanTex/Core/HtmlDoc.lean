@@ -445,8 +445,11 @@ def styleRules (doc : Doc) : String × Array Diag :=
         let color := match n with
           | some name => s!"var(--{name}, {cssColor c})"
           | none => cssColor c
-        -- Baseline, not center: the rule is drawn where the PDF draws it,
-        -- level with the heading's baseline, via the flex items' baselines.
+        -- The flex items align by baseline; the rule element then lifts
+        -- itself half its own ex — the heading's x-height, since it
+        -- inherits the heading's font — matching the PDF, which raises the
+        -- rule half the heading face's x-height at the heading's size
+        -- (`Layout.paraLineGeom`).
         s!"display: flex; align-items: baseline; gap: 0.5em; --rule-color: {color};").toList
     let mut liDecls :=
       (st.gap.map fun g => s!"{tag} > li \{ margin-top: {cssLength g.width}; }\n").toList
@@ -961,7 +964,11 @@ def baseCss (doc : Doc) : String :=
   ".rm { font-family: var(--font-body); }\n" ++
   ".md { font-weight: 400; }\n" ++
   ".up { font-style: normal; font-variant-caps: normal; }\n" ++
-  ".ruled::after { content: \"\"; flex: 1; border-top: 1px solid var(--rule-color); }\n" ++
+  ".ruled::after { content: \"\"; flex: 1; border-top: 1px solid var(--rule-color);\n" ++
+  -- Half the x-height up from the baseline, in the rule's own inherited
+  -- ex — the heading's face — where the PDF draws it (Layout.paraLineGeom;
+  -- Hochuli: a rule relates to the type it cuts).
+  "  transform: translateY(-0.5ex); }\n" ++
   -- Uniform small caps (CSS Fonts 4 §font-variant-caps: `all-small-caps`
   -- asks for c2sc + smcp), so mixed-case source sets at one height and the
   -- text carries the real casing. The browser uses the face's own small

@@ -244,13 +244,17 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((bulmaPage.splitOn "--bulma-link:").length == 1)
   t "html link keeps a visible focus"
     ((entryPage.splitOn "a:focus-visible { outline:").length == 2)
-  -- A heading rule sits on the text baseline, where the PDF draws it, not at
-  -- the heading's vertical middle.
+  -- A heading rule sits at half the heading's own x-height, as the PDF
+  -- draws it (Layout.paraLineGeom): the flex items align by baseline and
+  -- the rule element lifts half its own inherited ex.
   let (ruledDoc, _) := elabStr ("\\documentclass{article}\\palette{ ink = #112233 }" ++
     "\\style{section}{ rule = ink }\\begin{document}\\section{H}\\end{document}")
-  t "html heading rule aligns at the baseline"
+  t "html heading rule declares the flex baseline anchor"
     (((HtmlDoc.emit {} ruledDoc).1.splitOn
       "h2 { display: flex; align-items: baseline;").length == 2)
+  t "html heading rule lifts half the heading's own ex"
+    (((HtmlDoc.emit {} ruledDoc).1.splitOn
+      "transform: translateY(-0.5ex)").length == 2)
 
 /-- The HTML rhythm realization, censused over emitted sheets: every default
 vertical gap is one emission — the below element's `margin-top`, computed

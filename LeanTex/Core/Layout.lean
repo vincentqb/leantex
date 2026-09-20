@@ -4102,7 +4102,7 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
 whether the break was overfull. Pure in the builder — it reads only the
 page geometry — so the placement pipeline below is the only part of a
 paragraph line that touches pages. -/
-private def paraLineGeom (_fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
+private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
     (prev brk : Nat) : Array Seg × Sp × Sp × Bool :=
   let width := j.target
   let a := if first then lineStart j.items 0 else lineStart j.items (prev + 1)
@@ -4119,7 +4119,11 @@ private def paraLineGeom (_fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
       | none => (segs0, x0, w0)
     else (segs0, x0, w0)
   -- The rule fills what the heading left of its line, a word-space away
-  -- from the text, sitting at half the x-height like a dash.
+  -- from the text, sitting at half the x-height of the heading's own face
+  -- at its own size, like a dash — Hochuli, Detail in Typography: a rule
+  -- relates to the type it cuts. The x-height is the measured ink 'x'
+  -- (`xHeightOptical`) because OS/2 sxHeight lies in some fonts — the
+  -- trust order the math size match already uses.
   let (segs2, w2) :=
     if first then
       match j.rule with
@@ -4127,7 +4131,15 @@ private def paraLineGeom (_fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
         let gap := j.size / 2
         let ruleW := width - w1 - gap
         if ruleW > 0 then
-          (segs1 ++ #[Seg.gap gap, Seg.rule ruleW thickness (b.xHeight / 2) color], width)
+          let raise := match segs1.find? (fun s => match s with
+            | .run .. => true
+            | _ => false) with
+            | some (.run idx _ _ _ _ sz _ _) =>
+              let font := fs.get idx
+              let sz := if sz == 0 then j.size else sz
+              scaledAt sz font font.xHeightOptical / 2
+            | _ => b.xHeight / 2
+          (segs1 ++ #[Seg.gap gap, Seg.rule ruleW thickness raise color], width)
         else (segs1, w1)
       | none => (segs1, w1)
     else (segs1, w1)
