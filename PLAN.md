@@ -101,6 +101,41 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — the HTML ships the faces the PDF embeds: one `FontSet`, two
+emitters.
+
+- The convention (ratified): the artifact is a function of the document
+  and the font environment, so the HTML artifact ships the faces the
+  document resolved, exactly as the PDF does — the emission was
+  name-only (`--font-body: "Fira Sans", Georgia, serif`), so a viewer
+  without the face installed read the deck in Georgia. Now one
+  `@font-face` per face of the driver's resolved set (`shipFaces`),
+  under synthetic slot families (`ltx-body`/`-sans`/`-mono`/`-math`, so
+  an installed font of the same name never substitutes), weight/style
+  the face's own declarations, whole font programs written by the
+  driver as `<stem>.fonts/` siblings from the emitter's write requests
+  (`fontAssets`, effects as data). No WOFF (no compressor) and no
+  subsetting yet — subsetting both backends is named next.
+- The contract: `Pdf.html_fonts_cover_pdf` — every face the PDF writer
+  would embed (`keepFaces`, the factored keep set) has a `@font-face`
+  in the emission from the same set; stated as the superset (HTML never
+  sees used-glyph data, so it declares every face), with
+  `shipFaces_covers` and `shipFaces_src_shipped` the emitter halves.
+  The census tests pin the deck fixture's rules, stacks, and requests.
+- Degradation matches the PDF's: `body` states the resolved regular
+  face's weight and `font-synthesis: small-caps` — no faux bold or
+  oblique, a missing variant takes the nearest real face, as
+  `FontSet.lookup` does (rendered proof: the deck's Light body and
+  Regular titles now match pdftoppm). A slot's stack lists every family
+  of the set after its own — the browser's per-character walk is the
+  CSS spelling of `FontSet.fallbackFor`. The generic keyword comes from
+  the face's OS/2 sFamilyClass / post isFixedPitch (both now parsed,
+  fsType recorded, nothing gated), else the slot's declared kind.
+- A document that declared its `css =` story owns fonts itself: the
+  driver passes no set and nothing ships — the site port's `css = own`
+  output is unchanged but for `.math` reading through `var(--font-math,
+  <the old stack>)`, its new token.
+
 2026-09-20 — the vertical convention lands: the line box is the leaded
 metric extent, and everything against a line measures from metric lines.
 
