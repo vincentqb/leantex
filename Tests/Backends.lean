@@ -72,7 +72,7 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
       "<mtable displaystyle=\"true\">")
   t "align columns alternate right and left through mtd CSS"
     (has "\\begin{align*} a &= b \\end{align*}"
-      "<mtd style=\"text-align: right\">")
+      "<mtd style=\"text-align: right; text-align: -webkit-right; padding-right: 0\">")
   t "an array takes text style: no displaystyle on its mtable"
     (has "\\[ \\begin{array}{cc} 1 & 2 \\\\ 3 & 4 \\end{array} \\]"
       "<mtable><mtr>")

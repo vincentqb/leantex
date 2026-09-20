@@ -172,15 +172,37 @@ its column (`GridKind.colAlign`), declared as CSS `text-align` — MathML
 Core's `mtd` computes to `table-cell` with a `text-align: center` default
 and no `columnalign` attribute (§3.5.3 and its user-agent stylesheet;
 styling beyond it is CSS, §2.1.5) — so only a non-centred column carries
-the property. -/
+the property. An `align` pair's halves abut at the alignment point
+(amsmath's `\align@preamble`, the source `GridKind.gapAfter` cites; the
+PDF assembly realizes the same zero), so the pair-inner padding of Core's
+default `mtd` rule (0.5ex 0.4em) is zeroed on that side; the default
+stays as the stand-in for the other gaps, as `gapAfter`'s 2 em between
+pairs is already a stated stand-in. A right column declares the standard
+value and its `-webkit-` twin: today's Chromium renders every standard
+`text-align` on a math cell flush-left and reads only the prefixed forms
+(its own default centring is `-webkit-center`; probed 2026-09-20,
+Playwright Chromium), and an unsupported value invalidates only its own
+declaration (CSS Syntax 3 §declaration error handling), so each engine
+keeps the one it understands — delete the twin when Chromium honours the
+standard value. -/
 def rowNodes (disp : Bool) (kind : GridKind) (k : Nat)
     (acc : Array Html.Node) : MRow → Array Html.Node
   | .nil => acc
   | .cons cell rest =>
-    let attrs : Array (String × String) := match kind.colAlign k with
-      | .center => #[]
-      | .left => #[("style", "text-align: left")]
-      | .right => #[("style", "text-align: right")]
+    let attrs : Array (String × String) := match kind, kind.colAlign k with
+      | .align, .right =>
+        #[("style",
+          "text-align: right; text-align: -webkit-right; padding-right: 0")]
+      | .align, .left => #[("style", "text-align: left; padding-left: 0")]
+      | .align, .center => #[]
+      | .gather, .center => #[]
+      | .gather, .left => #[("style", "text-align: left")]
+      | .gather, .right =>
+        #[("style", "text-align: right; text-align: -webkit-right")]
+      | .array _, .center => #[]
+      | .array _, .left => #[("style", "text-align: left")]
+      | .array _, .right =>
+        #[("style", "text-align: right; text-align: -webkit-right")]
     rowNodes disp kind (k + 1)
       (acc.push (.elem "mtd" attrs (listNodes disp #[] cell))) rest
 
