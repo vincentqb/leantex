@@ -2009,8 +2009,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count ".snap { flex: 0 0 100vw; scroll-snap-align: start; scroll-snap-stop: always; }" == 1 &&
      count "width: calc(var(--steps) * 100vw)" == 1)
   t "the pre-reveal state is the design's own covered mix, offset in the direction of travel"
-    (count "@keyframes ltx-uncover { from { color: color-mix(in oklab, currentColor 31%" == 1 &&
-     count ")); transform: translateX(var(--motiondistance, 1rem)) } }" == 1)
+    (count "@keyframes ltx-uncover { from { opacity: 31%; transform: translateX(var(--motiondistance, 1rem)) } }" == 1)
   t "without view() timelines the spacers collapse: one page, full colour"
     (count "@supports not (animation-timeline: view()) { .snap { display: none; } }" == 1)
   t "reduced motion collapses the snap points and shows full colour"

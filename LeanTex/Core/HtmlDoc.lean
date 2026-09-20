@@ -1193,10 +1193,11 @@ scroll offset does.
 The track declares the timeline: `view-timeline: --frame x`
 (Scroll-driven Animations 1 §3.4, a named view progress timeline;
 §4.2: descendants find the name, and the steps are descendants). A
-`.step` (`--step: n`, the track `--steps: N`) starts *covered* — dimmed
-to the same oklab `color-mix` shade the PDF handout dims pending content
-to (the caller passes it; dim, never hide), offset by `--motiondistance`
-in the direction of travel — and animates to place at full colour over
+`.step` (`--step: n`, the track `--steps: N`) starts *covered* — at the
+design's covered fraction as an opacity (dim, never hide; the whole step
+including its own coloured runs, as the PDF's per-run cover dims every
+ink), offset by `--motiondistance` in the direction of travel — and
+animates to place at full opacity over
 `animation-range: contain (n−2)/(N−1) → contain (n−1)/(N−1)` (§3.1:
 for a subject wider than the scrollport, `contain` 0% is the earliest
 edge-coincident position — snap 1 — and 100% the latest — snap N; the
@@ -1204,9 +1205,15 @@ appendix's `animation-range` takes `<length-percentage>`, explicitly
 including `calc()`, and the unitless-custom-property calc is verified
 against this engine's Chromium). So item n fades in *during* the smooth
 scroll from snap n−1 to snap n and holds (fill-mode both). Step 1 items
-are never covered (`:not([data-step="1"])`). Colour and transform only:
+are never covered (`:not([data-step="1"])`). Opacity and transform only:
 neither reflows, so the frame's layout is fixed from the first paint
-(CSS Transforms 1 §3). Support (caniuse
+(CSS Transforms 1 §3). Not `color: color-mix(… currentColor …)`: inside a
+keyframe, Chromium resolves `currentColor` for the `color` property
+against the element's own colour, so that from-state equals the to-state
+and nothing dims — a rendered probe showed it (the static mix dims, the
+keyframed one does not). Opacity composites in sRGB where the PDF mixes
+in Oklab; the same declared fraction, two blends — the divergence PLAN
+already names for the covered shade. Support (caniuse
 `mdn-css_properties_animation-timeline_view`, read 2026-09-20):
 Chromium 115+ (Jul 2023), Safari 26, Firefox 159+.
 
@@ -1218,8 +1225,8 @@ spacers there too. Reduced motion likewise, the guard riding
 definitionally (`deckStepCss_guarded`). The deck's progress hairline
 reads `scroll(root x)`, so a stepped frame advances it N times — its
 snap points are the PDF handout's pagination. -/
-def deckStepCss (covered : String) : String :=
-  s!"@keyframes ltx-uncover \{ from \{ color: {covered}; \
+def deckStepCss (coveredPct : Nat) : String :=
+  s!"@keyframes ltx-uncover \{ from \{ opacity: {coveredPct}%; \
 transform: translateX(var(--motiondistance, 1rem)) } }\n" ++
   "@supports (animation-timeline: view()) {\n" ++
   ".slide-track { display: flex; align-items: flex-start;\n" ++
@@ -1238,8 +1245,8 @@ contain calc((var(--step) - 1) / (var(--steps) - 1) * 100%); }\n" ++
 
 /-- The uncover carries its reduced-motion form by construction:
 definitionally the trigger rules followed by the guard. -/
-theorem deckStepCss_guarded (covered : String) :
-    ∃ rule, deckStepCss covered = rule ++ deckStepGuard :=
+theorem deckStepCss_guarded (coveredPct : Nat) :
+    ∃ rule, deckStepCss coveredPct = rule ++ deckStepGuard :=
   ⟨_, rfl⟩
 
 /-- A length's share of the deck stage, in milli-percent: the one
@@ -1372,8 +1379,7 @@ private def slideCss (doc : Doc) : String :=
     -- every step at full colour.
     (if hasSteps then
       let d := Design.ofDoc doc
-      deckStepCss s!"color-mix(in oklab, currentColor \
-{d.coveredFraction}%, var(--bg, {cssColor d.bg}))"
+      deckStepCss d.coveredFraction
      else "") ++
     "}\n" ++
     "@media print {\n" ++ handout ++
