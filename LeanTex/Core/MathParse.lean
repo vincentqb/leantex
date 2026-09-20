@@ -343,6 +343,23 @@ private def tokName : MTok → String
   | .arrOpen => "'\\begin{array}'"
   | .arrClose => "'\\end{array}'"
 
+/-- The delimiter after `\left`/`\right` (the twins read one shape): the
+char actually set (`none` for the empty `.`) and the index past it,
+skipping one leading space. `cmd` names the caller in the error. -/
+private def readDelim (toks : Array MTok) (i : Nat) (cmd : String) :
+    Except String (Option Char × Nat) := do
+  let j := if toks[i]? == some .ws then i + 1 else i
+  match toks[j]? with
+  | some (.ch c) =>
+    match delimChar c with
+    | some d => return (d, j + 1)
+    | none => throw s!"'\\{cmd} {String.ofList [c]}'"
+  | some (.ctrl n) =>
+    match ctrlAtom.lookup n with
+    | some (_, c) => return (some c, j + 1)
+    | none => throw s!"'\\{cmd} \\{n}'"
+  | _ => throw s!"'\\{cmd}' without a delimiter"
+
 /-- What a `{`-opened level will become when it closes, or what an argument
 just parsed is for. -/
 private inductive Dest where
@@ -617,43 +634,21 @@ private def parseToks (toks : Array MTok) (top : Option GridKind) :
       i := i + 1
     | .ctrl "left" =>
       unless pending.isEmpty do throw (tokName tok)
-      let mut j := i + 1
-      if let some .ws := toks[j]? then j := j + 1
-      let l ← match toks[j]? with
-        | some (.ch c) =>
-          match delimChar c with
-          | some l => pure l
-          | none => throw s!"'\\left {String.ofList [c]}'"
-        | some (.ctrl n) =>
-          match ctrlAtom.lookup n with
-          | some (_, c) => pure (some c)
-          | none => throw s!"'\\left \\{n}'"
-        | _ => throw "'\\left' without a delimiter"
+      let (l, j) ← readDelim toks (i + 1) "left"
       stack := stack.push { acc, overNum, dests := [.leftRight l] }
       acc := #[]
       overNum := none
-      i := j + 1
+      i := j
     | .ctrl "right" =>
       unless pending.isEmpty do throw (tokName tok)
-      let mut j := i + 1
-      if let some .ws := toks[j]? then j := j + 1
-      let r ← match toks[j]? with
-        | some (.ch c) =>
-          match delimChar c with
-          | some r => pure r
-          | none => throw s!"'\\right {String.ofList [c]}'"
-        | some (.ctrl n) =>
-          match ctrlAtom.lookup n with
-          | some (_, c) => pure (some c)
-          | none => throw s!"'\\right \\{n}'"
-        | _ => throw "'\\right' without a delimiter"
+      let (r, j) ← readDelim toks (i + 1) "right"
       let some frame := stack.back? | throw "'\\right' without its '\\left'"
       let [.leftRight l] := frame.dests | throw "'\\right' without its '\\left'"
       stack := stack.pop
       let body := closeLevel overNum acc
       overNum := frame.overNum
       acc := frame.acc.push (.atom .inner (.delim l r body) .nil .nil false)
-      i := j + 1
+      i := j
     | .ctrl "limits" =>
       unless pending.isEmpty do throw (tokName tok)
       match acc.back? with
