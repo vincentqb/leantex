@@ -498,6 +498,38 @@ def splitOnIdiom (l : String) : Bool :=
   t.startsWith "let " && containsSub t ".splitOn " &&
     (containsSub t ".length > 1" || containsSub t ".length ≥ 2")
 
+/-- The `seal`/`unseal` names of one source, in occurrence order: `seal`
+keeps a knot's elaboration budget, and every sealed name must be unsealed
+right after the knot — the lists are hand-kept in pairs, and a
+mis-mirrored unseal is silent until a later proof slows or fails strangely
+(asked by q-elab). Comments are stripped; a docstring's continuation line
+opening with `seal ` is a stated line-scanner blind spot, like
+`ioInCore`'s. -/
+def sealNames (lines : Array String) : List String × List String := Id.run do
+  let mut sl : List String := []
+  let mut ul : List String := []
+  for l in lines do
+    let t := (((stripLineComment l).trimAscii).toString)
+    if t.startsWith "unseal " then
+      for w in tokens ((t.drop 7).toString) do ul := w :: ul
+    else if t.startsWith "seal " then
+      for w in tokens ((t.drop 5).toString) do sl := w :: sl
+  return (sl, ul)
+
+/-- The mirror's residue as a multiset difference — (sealed but never
+unsealed, unsealed but never sealed) — so a name two knots seal must be
+unsealed twice. Empty on both sides is the invariant. -/
+def sealMismatch (lines : Array String) : List String × List String :=
+  let (sl, ul) := sealNames lines
+  (ul.foldl (fun acc n => acc.erase n) sl, sl.foldl (fun acc n => acc.erase n) ul)
+
+/-- Deliberately module-final seals, frozen by name: MarkdownDoc seals
+`noteDefs` so unification cannot whnf through the collection walk, and
+never unseals it — its comment says so where it stands. Shrink the list
+when a site closes; a new entry is a deliberate decision, not a mirror
+miss. -/
+def sealAllow : List String := ["noteDefs"]
+
 /-- One staged-diff check: which files it reads, the line predicate, the
 headline naming the file, and the fix paragraph. The stanzas `main` used
 to spell one by one differed only in these four fields. -/
@@ -691,6 +723,18 @@ def selftest : IO UInt32 := do
     ("  let parts := (l.splitOn \"+\")", false),
     ("  let once (s : String) : Bool := (page.splitOn s).length == 2", false),
     ("  -- let has (hay needle : String) : Bool := (hay.splitOn needle).length > 1", false)]
+
+  -- the seal/unseal mirror: pairs balance as multisets, order and grouping
+  -- free; comments are data; the residue names each side
+  let smCase (name : String) (src : List String) (want : List String × List String) : IO Unit := do
+    if sealMismatch src.toArray != want then
+      fails.modify (s!"sealMismatch {name}" :: ·)
+  smCase "mirrored pair" ["seal Foo Bar", "unseal Bar Foo"] ([], [])
+  smCase "two knots, one name each" ["seal Foo", "unseal Foo", "seal Foo", "unseal Foo"] ([], [])
+  smCase "sealed but never unsealed" ["seal Foo Bar", "unseal Foo"] (["Bar"], [])
+  smCase "unsealed but never sealed" ["unseal Foo"] ([], ["Foo"])
+  smCase "twice sealed, once unsealed" ["seal Foo", "seal Foo", "unseal Foo"] (["Foo"], [])
+  smCase "a comment is data" ["-- seal Foo"] ([], [])
 
   expect "topLevelDefName" (fun l => (topLevelDefName l).isSome) [
     -- the Support-rule gate: only a top-level def counts
@@ -1163,6 +1207,22 @@ def main (args : List String) : IO UInt32 := do
   `Conserves` instance), `{name}_covers`, or `{name}_id` — or, when the
   walk genuinely conserves nothing, the one-line refusal
   `-- conserves: none — <why>` beside the def."
+
+  -- The seal/unseal mirror (asked by q-elab), whole tree over LeanTex/:
+  -- a knot's seal list and its unseal list are hand-kept in pairs, and a
+  -- name sealed but never unsealed degrades every later elaboration in
+  -- the file silently. Multiset equality per file; the deliberately
+  -- module-final seals are allowlisted by name in sealAllow.
+  for (f, lines) in coreTexts do
+    let (sealedOnly, unsealedOnly) := sealMismatch lines
+    let sealedOnly := sealedOnly.filter (!sealAllow.contains ·)
+    unless sealedOnly.isEmpty && unsealedOnly.isEmpty do
+      let side (what : String) (ns : List String) : String :=
+        if ns.isEmpty then "" else s!"\n  {what}: {String.intercalate " " ns}"
+      say s!"pre-commit: seal/unseal mismatch in {f}:{side "sealed but never unsealed" sealedOnly}{side "unsealed but never sealed" unsealedOnly}
+  Every name a knot seals is unsealed right after it (Elab.lean's pairs
+  are the shape); a deliberately module-final seal is allowlisted in
+  sealAllow (scripts/precommit.lean) with its reason where it stands."
 
   -- The arm gate (handed by impl-shapes), whole tree over LeanTex/Core:
   -- a pass-through catch-all in a def whose one-line signature takes IR is
