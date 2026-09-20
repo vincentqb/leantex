@@ -109,6 +109,46 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — a role names a hue; the contract chooses its lightness on
+each ground (brand-palette).
+
+- The rule (Material 3 tonal palettes, Radix light/dark scales, Tailwind
+  v4 OKLCH ladders; WCAG 2.2 SC 1.4.3/1.4.11 the judged requirement): a
+  palette role declares hue and chroma; where a (role, ground) pair a
+  document ships fails its ratio, `Contrast.realize` binary-searches the
+  Oklab lightness axis at the declared (a, b) — nearest passing lightness,
+  chroma reduced toward neutral only when the axis never reaches — and
+  N0022 (`Loss.info`) reports the realization. Unreachable pairs, inline
+  (anonymous) colours, defaulted inks (W0330), and DeviceCMYK declarations
+  keep their warnings exactly as before: never silent, never repainted in
+  a model the author did not declare.
+- Theorems: `realize_meets_contract` (postcondition by construction — the
+  return is guarded by the judged quantity, no search argument is
+  load-bearing), `realize_id_of_passing` (`_id`: a passing document's
+  artifact cannot move), `realized_builtin_contract` (kernel, quantified
+  over `Theme.builtin`'s own pairs), `recolorRoles_text` (`Conserves`:
+  realization recolours, never rewrites content). The cross-ground census
+  (content colours on each bundle's bar and standout ground) and the
+  backend agreement (the PDF's recoloured run and the HTML's scoped
+  custom property both carry the one solver's answer) are executable
+  oracles in Tests.lean (`realizedChecks`), not theorems: the search is
+  kernel-expensive off the identity path.
+- The application site is `Contrast.realizeDoc` in `Elab.runRaws`: palette
+  entries rewrite where the pair is the palette's own (frame-title bar,
+  titled bars, standout, fg and content colours on their page, per
+  epoch), role-named runs rewrite where a use sits on a local ground
+  (`Ir.recolorRoles`, palette threading in flow scope); HTML additionally
+  scopes `--alert`/`--example` per ground since its runs stay live
+  `var()` references. moloch's `#A55A13` alert is now an instance of the
+  rule rather than a hand derivation.
+- Known remainder: grounds are read at judge time, so a realized `fg`
+  that also grounds a defaulted standout inversion is realized against
+  the pre-realization ground (rare: needs a failing declared fg under a
+  standout frame with no standout keys); HTML scoped realization covers
+  the content colours (`alert`, `example`) — an arbitrary role inside a
+  frame title keeps its `:root` value in HTML while the PDF realizes it.
+
+
 2026-09-20 — a step appears on the arrow key: one sticky stage over N
 snap points, script-free. Supersedes the reveal-in-place entry's
 scroll-state trigger and its token items.

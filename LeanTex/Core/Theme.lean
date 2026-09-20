@@ -89,9 +89,12 @@ def moloch : Theme :=
   let fg : Color := { r := 0x23, g := 0x37, b := 0x3B }
   let bg := Color.black.mix 2 Color.white                     -- black!2
   -- moloch's own alert is #EB811B, which reads at 2.61:1 on this page —
-  -- under the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text. The same orange at
-  -- 70% over black clears it at 4.94:1, so the lineage keeps its hue and
-  -- the bundle keeps the engine's contract (Core/Contrast.lean).
+  -- under the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text. This value is the
+  -- same hue at a lightness that clears it: an instance of the
+  -- realization rule (a role names a hue; the contract chooses its
+  -- lightness on each ground — Contrast.realize), and
+  -- Contrast.realized_builtin_contract holds it, with every shipped
+  -- pair, to the ratio by kernel check.
   let alert : Color := { r := 0xA5, g := 0x5A, b := 0x13 }
   let progressfg := alert
   let progressbg := (progressfg.mix 50 .black).mix 30 .white  -- progressfg!50!black!30
