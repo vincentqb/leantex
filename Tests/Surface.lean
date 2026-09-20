@@ -2158,6 +2158,29 @@ def smartChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "mono keeps punctuation literal"
     ((elabStr "\\texttt{a--b}").1.body ==
       #[.para #[.styled .mono #[.text "a--b"]]])
+  -- TeX's quote ligatures: `` '' ` and the Spanish !` ?` pairs are what a
+  -- LaTeX author types for curly quotes (TeXbook ch. 2 and Appendix F).
+  t "tex double quotes" ((elabStr "``x''").1.body == #[.para #[.text "“x”"]])
+  t "tex single quotes" ((elabStr "`x'").1.body == #[.para #[.text "‘x’"]])
+  t "tex quotes around an apostrophe"
+    ((elabStr "``don't''").1.body == #[.para #[.text "“don’t”"]])
+  t "tex double open after a space"
+    ((elabStr "a ``b'' c").1.body == #[.para #[.text "a “b” c"]])
+  t "spanish open exclamation" ((elabStr "!`ay!").1.body == #[.para #[.text "¡ay!"]])
+  t "spanish open question" ((elabStr "?`ay?").1.body == #[.para #[.text "¿ay?"]])
+  t "mono keeps backticks literal"
+    ((elabStr "\\texttt{``x''}").1.body ==
+      #[.para #[.styled .mono #[.text "``x''"]]])
+  -- smartPunct is idempotent: every rewritable spelling is consumed on the
+  -- first pass, so the curly output is a fixed point. Property test over an
+  -- adversarial corpus; the theorem needs a multi-invariant induction over
+  -- `go`'s accumulator and is not stated yet.
+  let punctSamples := ["``x''", "`x'", "``don't''", "a ``b'' c", "!`ay!", "?`ay?",
+    "----", "-----", "....", ".....", "''''", "'''", "```", "!``", "?``", "?`?`",
+    "say \"hi\" and don't", "2021--2024", "a---b", "wait...", "-.-.", "([\"'"]
+  t "smartPunct idempotent on the ligature corpus"
+    (punctSamples.all fun s =>
+      Elab.smartPunct (Elab.smartPunct s) == Elab.smartPunct s)
 
 /-- The picture subset's boundary is named, never silent: a construct
 outside the subset is W0334 naming it, an unreadable expression, range, or
