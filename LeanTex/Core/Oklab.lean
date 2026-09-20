@@ -212,10 +212,11 @@ checked exhaustively by `scripts/oklab-roundtrip.lean`, not assumed.
 
 WARNING (color-factor F8): this consumes the 10²⁰ scale `labMix` produces,
 not the 10¹⁸ scale `labOf` produces — both are `Lab`, so
-`toColor (labOf c)` type-checks and is silently wrong by 100×. The one
-composition today is `cover` (`toColor (labMix …)`), pinned by the
-round-trip oracle. The day a second `toColor` caller appears, introduce a
-scale-indexed wrapper instead of trusting this warning twice. -/
+`toColor (labOf c)` type-checks and is silently wrong by 100×. The direct
+compositions are `cover` (`toColor (labMix …)`) — pinned by the round-trip
+oracle — and `toColorOfLab`, the scale wrapper every caller holding a
+`labOf`-scale value goes through; a new caller uses one of the two, never
+a bare `toColor`. -/
 def toColor (lab : Lab) : Color :=
   let lp := rdiv (10000000000 * lab.L + 3963377774 * lab.a + 2158037573 * lab.b) (10 ^ 24)
   let mp := rdiv (10000000000 * lab.L - 1055613458 * lab.a - 638541728 * lab.b) (10 ^ 24)
@@ -226,6 +227,13 @@ def toColor (lab : Lab) : Color :=
   { r := nearestChannel (rdiv (40767416621 * l - 33077115913 * m + 2309699292 * s) (10 ^ 21))
     g := nearestChannel (rdiv (-12684380046 * l + 26097574011 * m - 3413193965 * s) (10 ^ 21))
     b := nearestChannel (rdiv (-41960863 * l - 7034186147 * m + 17076147010 * s) (10 ^ 21)) }
+
+/-- `toColor` for a value at `labOf`'s own 10¹⁸ scale: the ×100 scale
+conversion spelled once (F8's wrapper), so a caller holding forward-space
+coordinates — the lightness search in `Contrast.realize` — cannot be
+silently wrong by 100×. -/
+def toColorOfLab (lab : Lab) : Color :=
+  toColor { L := 100 * lab.L, a := 100 * lab.a, b := 100 * lab.b }
 
 /-- The cover of a colour: `f`% of its own Oklab value over the surface —
 Material's 38% disabled-state opacity translated to compositing over an

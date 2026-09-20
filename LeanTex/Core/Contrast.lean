@@ -147,6 +147,117 @@ registry is only a registry if a suffix has one meaning.) -/
 theorem pdf_default_aa : contrastMilli Color.black Color.white ≥ aaText := by
   decide +kernel
 
+/-! ## Realization: a role names a hue; the contract chooses its lightness
+
+A palette role declares a hue and chroma; on each ground it ships on, the
+engine realizes the lightness that meets the pair's requirement. Sources,
+and the rule taken from each:
+
+* https://m3.material.io/styles/color/system/how-the-system-works —
+  Material 3 tonal palettes: a key color fixes hue and chroma, and each
+  role takes a *tone* (lightness) chosen against its surface so the pair
+  meets its contrast; the 40/100 and 90/10 tone pairings exist exactly to
+  make the on-color legible on its container.
+* https://www.radix-ui.com/colors — one named scale realizes differently
+  on light and dark grounds; the hue is the identity, the lightness the
+  ground's choice.
+* https://tailwindcss.com/docs/colors (v4) — each named hue is an OKLCH
+  ladder: one (hue, chroma) family, eleven lightness steps, picked per
+  ground.
+* https://www.w3.org/TR/WCAG22/#contrast-minimum — the requirement judged:
+  SC 1.4.3's 4.5:1 (text) and 3:1 (large-scale text); SC 1.4.11's 3:1 for
+  non-text state information. The judged quantity is `contrastMilli`, the
+  WCAG relative-luminance ratio — monotone in lightness moving away from
+  the ground, which is what the binary search below rides.
+
+The solver searches the Oklab lightness axis at the declared `(a, b)`
+(hue and chroma held fixed, exactly Material's tonal walk), taking the
+nearest passing lightness to the declared one; when no lightness at that
+chroma reaches the ratio (a saturated hue against a mid ground), chroma
+reduces stepwise toward the neutral axis before giving up. `none` means
+the declared colour stands and the pairing warning fires as before —
+realization is never silent and never approximate: every returned colour
+re-judges against the requirement by construction
+(`realize_meets_contract`), and a pair that already passes is returned
+unchanged (`realize_id_of_passing`). -/
+
+/-- The candidate at lightness `L` (the `labOf` 10¹⁸ scale) with chroma
+scaled to `f`% of the declared: hue held, tone the variable. -/
+private def realizeCand (lab : Oklab.Lab) (f : Nat) (L : Int) : Color :=
+  Oklab.toColorOfLab
+    { L := L, a := (f : Int) * lab.a / 100, b := (f : Int) * lab.b / 100 }
+
+/-- Binary search on structural fuel between a failing lightness and a
+passing one, returning the passing side of the boundary; 60 halvings close
+the 10¹⁸ lightness range. The monotonicity assumption only steers the
+search — correctness is the caller's re-judgement of the result. -/
+private def realizeBisect (pass : Int → Bool) : Nat → Int → Int → Int
+  | 0, _, p => p
+  | fuel + 1, f, p =>
+    let mid := (f + p) / 2
+    if mid == f || mid == p then p
+    else if pass mid then realizeBisect pass fuel f mid
+    else realizeBisect pass fuel mid p
+
+/-- The `labOf` lightness of pure white, the top of the searched axis. -/
+private def realizeLMax : Int := 10 ^ 18
+
+/-- The nearest passing lightness at one chroma fraction: both directions
+searched, the boundary nearer the declared lightness taken; `none` when
+neither end of the axis reaches the requirement at this chroma. -/
+private def realizeAt (req : Nat) (ground : Color) (lab : Oklab.Lab)
+    (f : Nat) : Option Color :=
+  let pass := fun L => decide (req ≤ contrastMilli (realizeCand lab f L) ground)
+  if pass lab.L then some (realizeCand lab f lab.L)
+  else
+    let up := if pass realizeLMax then
+        some (realizeBisect pass 60 lab.L realizeLMax) else none
+    let down := if pass 0 then some (realizeBisect pass 60 lab.L 0) else none
+    match up, down with
+    | some u, some d =>
+      some (realizeCand lab f (if u - lab.L ≤ lab.L - d then u else d))
+    | some u, none => some (realizeCand lab f u)
+    | none, some d => some (realizeCand lab f d)
+    | none, none => none
+
+/-- Realize a colour on a ground: unchanged when the pair already meets
+`req` (milli-ratio, `contrastMilli`'s scale); otherwise the nearest
+lightness at the declared hue and chroma that does, reducing chroma toward
+the neutral axis when the full-chroma axis never reaches it; `none` when
+nothing does — the declared colour then stands and the pairing diagnostic
+fires as before. -/
+def realize (req : Nat) (ground c : Color) : Option Color :=
+  if req ≤ contrastMilli c ground then some c
+  else
+    (([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
+        realizeAt req ground (Oklab.labOf c) f).bind fun cand =>
+      if req ≤ contrastMilli cand ground then some cand else none
+
+/-- The realized colour passes the pair's requirement whenever the solver
+returns one — the postcondition by construction: every return is guarded
+by the judged quantity itself, so no monotonicity or search argument is
+load-bearing. -/
+theorem realize_meets_contract {req : Nat} {ground c c' : Color}
+    (h : realize req ground c = some c') : req ≤ contrastMilli c' ground := by
+  unfold realize at h
+  split at h
+  next hp => cases h; exact hp
+  next =>
+    match hb : ([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
+        realizeAt req ground (Oklab.labOf c) f with
+    | none => rw [hb] at h; cases h
+    | some cand =>
+      rw [hb, Option.bind_some] at h
+      split at h
+      next hp => cases h; exact hp
+      next => cases h
+
+/-- A pair that already passes is unchanged: realization is the identity
+on every legible pairing, so a passing document's artifact cannot move. -/
+theorem realize_id_of_passing {req : Nat} {ground c : Color}
+    (h : req ≤ contrastMilli c ground) : realize req ground c = some c := by
+  simp [realize, h]
+
 -- The document-level check: the pairings a document's own colours create.
 
 private def hexOf (c : Color) : String :=
@@ -870,5 +981,33 @@ def judgedPairs (doc : Doc) : Array (Color × Color) := Id.run do
     let d := Design.ofDoc { doc with palette := pal }
     out := out.push (d.standout.fg, d.standout.bg)
   return out
+
+/-- Every (role, ground) pair a shipped bundle's resolved design creates
+realizes to itself: the pairs already meet their WCAG 2.2 requirement, so
+realization is the identity on them (`realize_id_of_passing` is the
+general statement; this is its kernel check over the shipped values, the
+census half of the realization rule). Quantified over `Theme.builtin` and
+over the design's own grounds — the page under the content colours and
+`muted`, the frame-title bar under its ink, each titled bar under its
+title, the standout ground under its ink — so adding a bundle is entering
+the contract. The cross-ground pairs a document's own content creates
+(a content colour inside a frame title or a standout frame) realize at
+their use sites and are pinned executably in Tests.lean
+(realizedCrossChecks): the search there is not the identity, and the
+kernel does not evaluate it cheaply. -/
+theorem realized_builtin_contract :
+    (Theme.builtin.all fun th =>
+      let pal := th.palette
+      let d := Design.ofDoc { palette := pal }
+      let ok (req : Nat) (ground c : Color) : Bool := realize req ground c == some c
+      ok aaText d.bg d.fg && ok aaText d.bg d.muted
+        && (match pal.find? "alert" with | some c => ok aaText d.bg c | none => true)
+        && (match pal.find? "example" with | some c => ok aaText d.bg c | none => true)
+        && (match d.frametitle with | some p => ok aaText p.bg p.fg | none => true)
+        && ok aaText (d.blockTitle.bar.getD d.bg) d.blockTitle.fg
+        && ok aaText (d.alertTitle.bar.getD d.bg) d.alertTitle.fg
+        && ok aaText (d.exampleTitle.bar.getD d.bg) d.exampleTitle.fg
+        && ok aaLargeText d.standout.bg d.standout.fg) = true := by
+  decide +kernel
 
 end LeanTex.Core.Contrast
