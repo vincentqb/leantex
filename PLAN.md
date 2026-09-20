@@ -101,6 +101,33 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — the stage is one declared key: beamer's aspectratio table
+entire, and a native spelling.
+
+- The defect class: two stage constants selected by string-matching
+  `aspectratio=169`, so every other documented beamer ratio (`1610`,
+  `149`, `141`, `54`, `32`) silently shipped 4:3. The invariant: option
+  vocabulary and engine geometry come from one sourced table.
+  `Ir.slidesStages` carries beamer's §8.1 / `beamer.cls` table (1610 →
+  160×100 mm, 169 → 160×90, 149 → 140×90, 141 → 148.5×105, 54 →
+  125×100, 32 → 135×90, 43 → 128×96), each row named by its ratio;
+  every `aspectratio=` option and the native `\page{ size = 16:9 }` —
+  the same `size` key papers use, `√2:1` by beamer's digits `141` —
+  resolve through it, colon elided. Unknown names keep E0324; an
+  unknown `aspectratio=` value keeps beamer's 4:3 default, silently for
+  now (no allocated code).
+- The contract travels with the table: `slides_lines_in_band`
+  quantifies over every row (one `decide`, the `Theme.builtin`
+  pattern), and `slides_lines_survive_bands` takes table membership —
+  adding a stage is entering the contract. Witness fixture `deck1610`
+  with its census row asserting the shipped 160×100 stage.
+- HTML stays stage-free by construction, now stated: the screen deck
+  reads only the stage-height ratio (`deck_type_is_stage_ratio`), so
+  equal-height stages emit identical screen decks (16:9 vs 14:9,
+  pinned in `deckCssChecks`) and the frame reflows on any viewport —
+  "html can probably just do it itself", held as a test. Print is the
+  handout, a paged medium; its measure legitimately reads the page.
+
 2026-09-20 — the HTML ships the faces the PDF embeds: one `FontSet`, two
 emitters.
 
