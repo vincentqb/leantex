@@ -320,28 +320,41 @@ theorem DiagCode.all_nodup : DiagCode.all.Nodup := by decide +kernel
 def DiagCode.ofString? (s : String) : Option DiagCode :=
   DiagCode.all.find? (·.code == s)
 
+/-- A diagnostic as delivered: `kind` is the registered code, and both the
+rendered code string and the severity are its projections — no free
+severity or code field exists, so a diagnostic disagreeing with its
+code's declared `Loss` is unrepresentable rather than merely
+unconstructed. `demoted` is the one policy bit (`accept`/`demote`): an
+accepted or demoted diagnostic delivers as a note, whatever its loss. -/
 structure Diag where
-  severity : Severity
-  code : String
+  kind : DiagCode
   message : String
   span : Option Span := none
   help : Option String := none
+  demoted : Bool := false
   deriving Repr, BEq
 
-/-- The one door a diagnostic is made through: the severity is the declared
-loss's, so a free severity is unrepresentable at the call sites. -/
+/-- The rendered code string: the kind's own spelling, derived. -/
+def Diag.code (d : Diag) : String := d.kind.code
+
+/-- Severity is a projection, never a stored field: the declared loss's
+severity, demoted to a note by policy alone. -/
+def Diag.severity (d : Diag) : Severity :=
+  match d.demoted with
+  | true => .note
+  | false => d.kind.loss.severity
+
+/-- The one door a diagnostic is made through. -/
 def Diag.of (c : DiagCode) (message : String) (span : Option Span := none)
     (help : Option String := none) : Diag :=
-  { severity := c.loss.severity
-    code := c.code
+  { kind := c
     message := message
     span := span
     help := help }
 
-/-- Severity derives from the declared loss — definitionally: `Diag.of`
-copies `c.loss.severity` into the field, so this is `rfl`, not a proof
-with content. Its value is that the statement compiles at all: a call
-site cannot make it false. -/
+/-- Severity derives from the declared loss — structurally now: `severity`
+is a projection of the stored `kind`, so this is `rfl` and a call site
+cannot make it false anywhere, not only at construction. -/
 theorem Diag.of_severity (c : DiagCode) (message : String) (span : Option Span)
     (help : Option String) :
     (Diag.of c message span help).severity = c.loss.severity := rfl
@@ -367,7 +380,7 @@ warning, so it never trips `--werror`: that is the point of accepting it.
 Returns the resolved diagnostic and whether it was accepted. -/
 def Diag.accept (allowed : Array String) (allowAll : Bool) (d : Diag) : Diag × Bool :=
   if d.severity != .note && (allowAll || allowed.contains d.code) then
-    ({ d with severity := .note }, true)
+    ({ d with demoted := true }, true)
   else (d, false)
 
 /-- The spliced-`.sty` demotion: a TeX internal the engine correctly
@@ -375,10 +388,11 @@ refuses inside a style file the author did not write is per-line correct
 and per-line unactionable — "'\\z@' is unknown" helps nobody holding only
 their own document. The diagnostic keeps its code and message but is
 delivered as a note (listed under `-v`), and N0020's "TeX internals
-refused" count carries it at default verbosity. The severity write lives
-here beside `Diag.accept`, the other policy door: severity is a function
-of policy declared in this module, never of a call site. -/
-def Diag.demote (d : Diag) : Diag := { d with severity := .note }
+refused" count carries it at default verbosity. The demotion bit is
+written here beside `Diag.accept`, the other policy door: severity is a
+function of the declared loss and of policy declared in this module,
+never of a call site. -/
+def Diag.demote (d : Diag) : Diag := { d with demoted := true }
 
 /-- One phase's diagnostics resolved against the document's acceptance,
 with the counts the driver's exit contract reads: errors and warnings are
