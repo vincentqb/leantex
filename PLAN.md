@@ -101,6 +101,48 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — a step appears on the arrow key: one sticky stage over N
+snap points, script-free. Supersedes the reveal-in-place entry's
+scroll-state trigger and its token items.
+
+- The arrival-triggered uncover ran to completion within a second of
+  the frame snapping, so the reader never saw the covered state and
+  there was no presenter pacing. Now a stepped frame
+  (`Ir.maxStepBlocks` N ≥ 2) is one sticky stage over N snap points: a
+  `.slide-track` wrapper N × 100vw wide carries the frame section as a
+  sticky stage (CSS Positioned Layout 3 §3.4) and N `.snap` spacers,
+  each one viewport and a mandatory x-snap (CSS Scroll Snap 1), each a
+  deep-link anchor `<frame>-k` claimed through the shared id door
+  (W0327 names a colliding frame slug). An arrow press advances one
+  snap point — the stage does not move; the scroll offset does. The
+  track declares `view-timeline: --frame x` (Scroll-driven Animations 1
+  §3.4; §4.2 scoping reaches the steps); step n uncovers over
+  `animation-range: contain (n−2)/(N−1) → contain (n−1)/(N−1)` — its
+  own snap interval, since `contain` spans snap 1 to snap N for a
+  subject wider than the scrollport (§3.1) — and holds (fill both).
+  Step 1 is never covered. The `calc()` of unitless custom properties
+  × 100% in `animation-range` is spec-blessed (the appendix's
+  `<length-percentage>` example) and render-verified on the dev
+  Chromium. Support (caniuse, read 2026-09-20): Chromium 115+
+  (Jul 2023), Safari 26, Firefox 159+ — the flag era is over; ≈87%
+  global.
+- Floors, honest and by construction (`deckStepCss_guarded`): without
+  `view()` timelines the layout block never applies and the spacers
+  hide — one page per frame, every item full colour, no dead arrow
+  presses. Reduced motion likewise collapses the snap points and drops
+  the fade: SC 2.3.3 removes motion and a colour fade alone is
+  arguably not motion, but the base sheet's global reduce block strips
+  every animation with `!important`, and a kept fade over dead snap
+  presses would be the worst of both — decided as full colour on one
+  page, the handout state, the why on `deckStepGuard`. Print hides the
+  spacers and keeps the bordered card. The deck's progress hairline
+  reads `scroll(root x)`, so a stepped frame advances it N times — its
+  snap points are the PDF handout's pagination, page for page.
+- Tokens: `--motionstagger` and `--motionduration` go — a scrubbed
+  timeline has no delay and no duration, so nothing reads them; the
+  time-typed `\tokens` key owed for them is owed no longer.
+  `--motiondistance` stays (the come-in offset).
+
 2026-09-20 — the elaborator's duplicated facts get one site each
 (impl-q-elab, from the q-elab audit): factorization, behaviour-preserving,
 reference documents byte-identical.
