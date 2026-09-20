@@ -1,0 +1,34 @@
+% A caption inside a float's center group is the float's caption: LaTeX's
+% own manual spells the figure idiom this way, and the table twin puts the
+% caption after \end{tabular} inside the group. Synthetic: invented text,
+% nothing from any private document.
+\documentclass{article}
+\begin{document}
+
+\section{Grouped floats}
+
+A paragraph before the floats, so their separation is on the page.
+
+\begin{figure}[h]
+\begin{center}
+An invented stand-in for a centred panel body.
+\caption{An invented centred panel.}
+\label{fig:panel}
+\end{center}
+\end{figure}
+
+\begin{table}[h]
+\begin{center}
+\begin{tabular}{ll}
+alpha & beta \\
+gamma & delta \\
+\end{tabular}
+\caption{An invented centred strip.}
+\label{tab:strip}
+\end{center}
+\end{table}
+
+Figure~\ref{fig:panel} and Table~\ref{tab:strip} are referenced by the
+numbers their captions carry.
+
+\end{document}

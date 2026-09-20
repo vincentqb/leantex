@@ -73,7 +73,7 @@ def goldenNames : List String :=
    "bibliography", "resume-data",
    "icons",
    "diagram", "diagram-overflow", "diagram-refused", "diagram-scm",
-   "tables", "tables-ragged", "subfigures",
+   "tables", "tables-ragged", "subfigures", "float-center",
    "math-companion", "math-first", "abstract", "crossref", "eqnum",
    "redefine", "titlebars", "daylight"]
 

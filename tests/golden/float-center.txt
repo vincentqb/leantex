@@ -1,0 +1,36 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section 1 number "1"
+  text "Grouped floats"
+para
+  text "A paragraph before the floats, so their separation is on the page."
+float figure 1
+  caption
+    text "An invented centred panel."
+  para
+    text "An invented stand-in for a centred panel body. "
+    label "fig:panel"
+float table 1
+  caption
+    text "An invented centred strip."
+  table l,l
+    row
+      cell
+        text "alpha"
+      cell
+        text "beta"
+    row
+      cell
+        text "gamma"
+      cell
+        text "delta"
+  para
+    label "tab:strip"
+para
+  text "Figure "
+  ref "fig:panel" shows "1" -> #fig:panel
+  text " and Table "
+  ref "tab:strip" shows "1" -> #tab:strip
+  text " are referenced by the numbers their captions carry."
+-- diagnostics
+note[N0102] 12:1 '{figure}' [placement] is ignored: a single-pass engine has nowhere for a float to float

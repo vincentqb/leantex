@@ -453,6 +453,18 @@ def censusTable :
     ("the panels stand side by side: the right label right of the left",
       ((lineXOf c 0 "left box").bind fun xl => (lineXOf c 0 "right box").map
         fun xr => decide (xl < xr)).getD false)]),
+  ("float-center", fun _ c => [
+    ("one page", c.size == 1),
+    ("the figure caption ships with its number",
+      hasStr (censusText c) "Figure 1: An invented centred panel."),
+    ("the grouped body ships as float content",
+      hasStr (censusText c) "An invented stand-in for a centred panel body."),
+    ("the table caption ships with its number after its tabular",
+      hasStr (censusText c) "Table 1: An invented centred strip."),
+    ("the tabular content ships",
+      hasStr (censusText c) "alpha" && hasStr (censusText c) "delta"),
+    ("the references resolve to the numbers the captions carry",
+      hasStr (censusText c) "Figure1 and Table1 are referenced")]),
   ("math", fun _ c => [
     ("one page", c.size == 1),
     ("prose around the display ships",
