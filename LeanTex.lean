@@ -18,6 +18,7 @@ import LeanTex.Core.Oklab
 import LeanTex.Core.Contrast
 import LeanTex.Core.Locale
 import LeanTex.Core.LocaleData
+import LeanTex.Core.LocaleContract
 import LeanTex.Core.Compat
 import LeanTex.Core.Elab
 import LeanTex.Core.Dim

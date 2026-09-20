@@ -2,7 +2,7 @@ import Std.Data.HashMap
 import LeanTex.Core.HyphenData
 import LeanTex.Core.HyphenDataFr
 import LeanTex.Core.HyphenDataDe
-import LeanTex.Core.LocaleData
+import LeanTex.Core.LocaleContract
 import LeanTex.Core.Nfc
 
 namespace LeanTex.Core.Hyphen

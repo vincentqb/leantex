@@ -2,7 +2,7 @@ import LeanTex.Core.Diag
 import LeanTex.Core.Dim
 import LeanTex.Core.Image
 import LeanTex.Core.Math
-import LeanTex.Core.LocaleData
+import LeanTex.Core.LocaleContract
 
 namespace LeanTex.Core.Ir
 
