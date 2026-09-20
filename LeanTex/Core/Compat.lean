@@ -982,6 +982,36 @@ afterskip), which is not modelled; the redefinition is skipped" pos
     else return none
   | _ => return none
 
+/-- Commands that are one fixed token by another name: each row rewrites
+the control word to its literal replacement — no arguments, no note, since
+the spelling is native content, not a loss. `compatChecks` pins each
+spelling. -/
+private def literalReplace : List (String × (Pos → Raw)) :=
+  [("thepage", fun p => .ctrl "pagenumber" p),
+   ("textbar", fun p => .word "|" p),
+   ("textperiodcentered", fun p => .ctrl "middot" p),
+   ("textendash", fun p => .ctrl "endash" p),
+   ("textemdash", fun p => .ctrl "emdash" p),
+   ("textbackslash", fun p => .word "\\" p),
+   ("textasciitilde", fun p => .word "~" p)]
+
+/-- Commands whose whole meaning is one fixed native spelling, synthesised
+in place with a `became` note: each row is an argument-free rewrite.
+`\vfill` is `\vspace{\fill}` (ltspace.dtx): fil glue between blocks. The
+skip commands carry LaTeX's own `\bigskipamount` family values. The
+setspace named stretches sit at the values its source sets for the 10pt
+base size the engine defaults to (setspace.sty: \onehalfspacing =
+\setstretch{1.25}, \doublespacing = \setstretch{1.667} under \@ptsize 0).
+`compatChecks` pins each spelling. -/
+private def simpleNative : List (String × String) :=
+  [("vfill", "\\block[before = fill]{}"),
+   ("bigskip", "\\block[before = 12pt plus 4pt minus 4pt]{}"),
+   ("medskip", "\\block[before = 6pt plus 2pt minus 2pt]{}"),
+   ("smallskip", "\\block[before = 3pt plus 1pt minus 1pt]{}"),
+   ("singlespacing", "\\page{ leading = 1 }"),
+   ("onehalfspacing", "\\page{ leading = 1.25 }"),
+   ("doublespacing", "\\page{ leading = 1.667 }")]
+
 /-- Rewrite the control sequence `name` given what follows it. Returns the
 replacement and how many following elements it consumed, or `none` to leave
 the command alone. -/
@@ -992,6 +1022,11 @@ private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : 
 where
   rewriteCtrlAt (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
       M (Option (Array Raw × Nat)) := do
+  if let some tok := literalReplace.lookup name then
+    return some (#[tok pos], start)
+  if let some native := simpleNative.lookup name then
+    became s!"\\{name}" native pos
+    return some (← synthAt native pos, start)
   match name with
   | "usepackage" | "RequirePackage" =>
     -- One dispatch for both spellings: `\RequirePackage` is `\usepackage`
@@ -1455,31 +1490,14 @@ declare the furniture directly")
       modify fun st => { st with runFrom := 2 }
       became "\\thispagestyle{empty}" "\\runninghead[from = 2]{...}" pos
     return some (#[], k)
-  | "linespread" =>
-    let (args, k) := takeGroups raws start 1
-    let native := s!"\\page\{ leading = {rawSrc (args.getD 0 #[])} }"
-    became "\\linespread" native pos
-    return some (← synthAt native pos, k)
-  | "setstretch" =>
+  | "linespread" | "setstretch" =>
     -- setspace's parameterised form is \linespread by another name
     -- (setspace.sty: both set \baselinestretch).
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     let native := s!"\\page\{ leading = {rawSrc (args.getD 0 #[])} }"
-    became "\\setstretch" native pos
-    return some (← synthAt native pos, k)
-  | "singlespacing" | "onehalfspacing" | "doublespacing" =>
-    -- setspace's named stretches, at the values its source sets for the
-    -- 10pt base size the engine defaults to (setspace.sty:
-    -- \onehalfspacing = \setstretch{1.25}, \doublespacing =
-    -- \setstretch{1.667} under \@ptsize 0).
-    let v := match name with
-      | "singlespacing" => "1"
-      | "onehalfspacing" => "1.25"
-      | _ => "1.667"
-    let native := s!"\\page\{ leading = {v} }"
     became s!"\\{name}" native pos
-    return some (← synthAt native pos, start)
+    return some (← synthAt native pos, k)
   | "selectlanguage" =>
     -- babel's mid-document switch: from here on, in flow order (babel
     -- manual §1.5). The marker is unforgeable (`@` never lexes into a
@@ -1547,11 +1565,6 @@ and patterns stand in" pos
     let native := s!"\\block[before = {lengthSrc (args.getD 0 #[])}]\{}"
     became "\\vspace" native pos
     return some (← synthAt native pos, k)
-  | "vfill" =>
-    -- \vfill is \vspace{\fill} (ltspace.dtx): fil glue between blocks.
-    let native := "\\block[before = fill]{}"
-    became "\\vfill" native pos
-    return some (← synthAt native pos, start)
   | "newpage" | "clearpage" =>
     -- One page model: with no floats to flush, \clearpage and \newpage are
     -- the declared boundary \pagebreak names.
@@ -1564,7 +1577,6 @@ and patterns stand in" pos
     if opt.isSome then
       say .N0102 "'\\pagebreak' demand levels are ignored: the break is taken" pos
     return some (#[.ctrl "pagebreak" pos], j)
-  | "thepage" => return some (#[.ctrl "pagenumber" pos], start)
   | "today" =>
     -- A date is an input, and the artifact is a function of the document
     -- and its fonts alone: core reads no clock, or two builds of one
@@ -1602,12 +1614,6 @@ clock, so nothing is inserted" pos
       if let some (.ctrl "ExplSyntaxOff" _) := raws[j]? then break
     say .W0106 "expl3 code (\\ExplSyntaxOn … \\ExplSyntaxOff) is not supported; skipped" pos
     return some (#[], k)
-  | "textbar" => return some (#[.word "|" pos], start)
-  | "textperiodcentered" => return some (#[.ctrl "middot" pos], start)
-  | "textendash" => return some (#[.ctrl "endash" pos], start)
-  | "textemdash" => return some (#[.ctrl "emdash" pos], start)
-  | "textbackslash" => return some (#[.word "\\" pos], start)
-  | "textasciitilde" => return some (#[.word "~" pos], start)
   | "setkomafont" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
@@ -1883,13 +1889,6 @@ the definition is skipped" pos
     match gs with
     | #[_, _, text] => return some (#[.group text pos], k)
     | _ => return none
-  | "bigskip" | "medskip" | "smallskip" =>
-    let native := match name with
-      | "bigskip" => "\\block[before = 12pt plus 4pt minus 4pt]{}"
-      | "medskip" => "\\block[before = 6pt plus 2pt minus 2pt]{}"
-      | _ => "\\block[before = 3pt plus 1pt minus 1pt]{}"
-    became s!"\\{name}" native pos
-    return some (← synthAt native pos, start)
   | "usefonttheme" =>
     -- beamer's `professionalfonts` theme turns beamer's font substitution
     -- off and keeps the document's declared fonts — the only behaviour this
