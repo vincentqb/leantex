@@ -275,6 +275,9 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0356 =>
     dvE "\\documentclass[twocolumn]{article}\n\\begin{document}\nx\n\\end{document}" ++
     dvE "\\documentclass[draft]{article}\n\\begin{document}\nx\n\\end{document}"
+  | .W0367 =>
+    dvE ("\\documentclass{beamer}\n\\usepackage[debug,size=a1]{beamerposter}\n" ++
+      "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}")
   | .W0357 =>
     dvE (dvDoc "\\edef\\x{y}\n" "x") ++
     dvE (dvDoc "\\def\\pair#1.#2{#1 and #2}\n" "x")

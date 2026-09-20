@@ -406,6 +406,9 @@ warning[W0366]: 'Demo Sans Light' asks for weight 300, which is not installed; '
   help: install the named weight, or name the face to use (\fonts{ sans.upright = "..." } and siblings)
 warning[W0366]: 'Demo Sans Medium' asks for weight 500, which is not installed; 'Demo Sans Regular' (weight 400) is the nearest
   help: install the named weight, or name the face to use (\fonts{ sans.upright = "..." } and siblings)
+── W0367 (config) a beamerposter option outside the poster model; named and ignored
+warning[W0367]: beamerposter options outside the poster model: debug; ignored
+  help: size, orientation, scale, and custom width/height carry over; \page{ ... } declares anything further
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

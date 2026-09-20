@@ -303,6 +303,40 @@ def argTokenChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a reserved character directly in text still errors"
     (errCodes (dvDoc "" "a_b") == ["E0311"])
 
+/-- The beamerposter rewrite lands on the poster class: the synthesized
+`\documentclass{poster}` stands after the beamer→slides rewrite in stream
+order, and the last `\documentclass` wins in `applyDecl` — the fact the
+whole compat arm rides on, pinned here (the audit verified it in code;
+this is its test). The board and body size carry the sty's own table:
+size/orientation/scale from beamerposter.sty v1.13, fontsize = 24.88pt ×
+scale × fontscale rounded to two decimals as the sty rounds. -/
+def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let deck (opts : String) : String :=
+    s!"\\documentclass[final,t]\{beamer}\n\\usepackage[{opts}]\{beamerposter}\n" ++
+    "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}"
+  let (d, ds) := elabStr (deck "orientation=portrait,size=a1,scale=1.4")
+  t "the later synthesized poster class wins over the beamer→slides rewrite"
+    (d.docClass == .poster)
+  t "the a1 board carries the sty's landscape values, axes swapped for portrait"
+    (d.page.width == Dim.mm 594 && d.page.height == Dim.mm 841)
+  -- a1 fontscale (1/√2), × 1.4, rounded to two decimals = 0.99;
+  -- 24.88pt × 0.99 = 24.6312pt.
+  t "fontsize is 24.88 × scale × the size's fontscale, rounded as the sty rounds"
+    (d.page.fontSize == Dim.pt 246312 / 10000)
+  t "the carried options fire no beamerposter drop" (!ds.any (·.code == "W0367"))
+  let (d0, _) := elabStr (deck "size=a0")
+  t "the default a0 board is the poster record's own"
+    (d0.page.width == Dim.mm 1189 && d0.page.height == Dim.mm 841 &&
+      d0.page.fontSize == Dim.pt 2488 / 100)
+  let (dc, _) := elabStr (deck "size=custom,width=84,height=59.4,scale=1.2")
+  t "a custom board reads width/height as cm at fontscale 1"
+    (dc.page.width == (84 : Int) * (7200 * Dim.spPerPt) / 254 &&
+      dc.page.fontSize == Dim.pt (2488 * 120) / 10000)
+  let (_, dd) := elabStr (deck "debug,size=a2")
+  t "an option outside the model is dropped by name (W0367)"
+    (dd.any (·.code == "W0367"))
+
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

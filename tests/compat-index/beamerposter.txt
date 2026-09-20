@@ -1,0 +1,12 @@
+# source: beamerposter.sty v1.13 — the package is option-driven (size,
+# orientation, scale; width/height under size=custom; debug) and defines no
+# user commands; the options rewrite to \documentclass{poster} + \page.
+pre impl \usepackage[orientation=landscape,size=a0]{beamerposter}
+pre impl \usepackage[size=a0b]{beamerposter}
+pre impl \usepackage[orientation=portrait,size=a1,scale=1.4]{beamerposter}
+pre impl \usepackage[size=a2]{beamerposter}
+pre impl \usepackage[size=a3]{beamerposter}
+pre impl \usepackage[size=a4,scale=2]{beamerposter}
+pre impl \usepackage[size=custom,width=84,height=59.4,scale=1.2]{beamerposter}
+pre refuse:W0367 \usepackage[debug,size=a0]{beamerposter}
+body refuse:W0340 \usepackage{beamerposter}

@@ -31,6 +31,7 @@ a document actually uses them). `xurl` is `url` with better breaking;
 judged at `\captionsetup` (honoured or W0354, never silent). -/
 def nativePackages : List String :=
   ["geometry", "hyperref", "xcolor", "color", "microtype", "enumitem", "babel",
+   "beamerposter",
    "fontspec", "url", "xurl", "scrlayer-scrpage", "inputenc", "fontenc", "lmodern",
    "amsmath", "amssymb", "amsfonts", "unicode-math", "parskip", "titlesec", "fancyhdr",
    "textcomp", "csquotes", "polyglossia", "graphicx", "booktabs", "array",
@@ -780,6 +781,99 @@ private def geometry (opts : String) (pos : Pos)
 {String.intercalate ", " dropped.toList}" pos
   synthAt native pos
 
+/-- The beamerposter size table, read off beamerposter.sty v1.13's own
+size branch: name → board (w × h in mm, landscape as the sty spells it)
+and the fontscale normalization in hundred-millionths — (1/√2)ⁿ against
+a0, the sty's own comments beside each value. -/
+private def beamerposterSizes : List (String × (Nat × Nat) × Nat) :=
+  [("a0b", (1190, 880), 100000000),
+   ("a0", (1189, 841), 100000000),
+   ("a1", (841, 594), 70710678),
+   ("a2", (594, 420), 50000000),
+   ("a3", (420, 297), 35355339),
+   ("a4", (297, 210), 25000000)]
+
+/-- Format sp-free fixed-point `v/10000` pt as a decimal `pt` value. -/
+private def ptTenThousandths (v : Int) : String :=
+  let whole := v / 10000
+  let frac := (v % 10000).toNat
+  if frac == 0 then s!"{whole}pt"
+  else
+    let digits := String.ofList (Nat.toDigits 10 frac)
+    let padded := String.ofList (List.replicate (4 - digits.length) '0') ++ digits
+    let fs := String.ofList (padded.toList.reverse.dropWhile (· == '0')).reverse
+    s!"{whole}.{fs}pt"
+
+/-- `\usepackage[size=…,orientation=…,scale=…]{beamerposter}` →
+`\documentclass{poster}` + `\page{ width, height, fontsize }`. The board
+comes from the sty's own size table (`beamerposterSizes`); the sty's
+default is `size=a0`, landscape, `scale=1.0` (`\ExecuteOptionsX`), and
+`orientation=portrait` swaps the axes. `size=custom` reads `width=` and
+`height=` as cm, fontscale 1, exactly the sty's custom branch. The body
+size is the sty's own calibration — 24.88 pt at scale 1 — times
+`scale=` times the named size's fontscale normalization, the product
+rounded to two decimals as the sty's `\FPupn{...}{... 2 round}` rounds
+it. The synthesized `\documentclass` stands after the beamer→slides
+rewrite in stream order and the last `\documentclass` wins in
+`applyDecl` (posterCompatChecks pins it), so the poster class displaces
+the slides one. An option outside the model (`debug`, printer sizing) is
+dropped by name (W0367). -/
+private def beamerposter (opts : String) (pos : Pos) : M (Array Raw) := do
+  let mut size := "a0"
+  let mut portrait := false
+  let mut scaleNum : Int := 1
+  let mut scaleDen : Nat := 1
+  let mut customW : Option String := none
+  let mut customH : Option String := none
+  let mut dropped : Array String := #[]
+  for e in Decl.splitEntries opts do
+    match (e.splitOn "=").map (·.trimAscii.toString) with
+    | ["size", v] => size := v
+    | ["orientation", v] => portrait := v == "portrait"
+    -- a bare `orientation` takes the sty's declared default value
+    -- (`\DeclareOptionX{orientation}[portrait]`).
+    | ["orientation"] => portrait := true
+    | ["scale", v] =>
+      match Decl.parseDecimal v with
+      | some (m, s) => scaleNum := m; scaleDen := s
+      | none => dropped := dropped.push (e.trimAscii.toString)
+    | ["scale"] => pure ()
+    | ["width", v] => customW := some v
+    | ["height", v] => customH := some v
+    | [""] => pure ()
+    | _ => dropped := dropped.push (e.trimAscii.toString)
+  let mut keys : Array String := #[]
+  let mut fontscale : Nat := 100000000
+  if size == "custom" then
+    match customW, customH with
+    | some w, some h =>
+      let (w, h) := if portrait then (h, w) else (w, h)
+      keys := keys.push s!"width = {w}cm"
+      keys := keys.push s!"height = {h}cm"
+    | _, _ =>
+      dropped := dropped.push "size=custom (needs width= and height=)"
+  else
+    match beamerposterSizes.lookup size with
+    | some ((w, h), fs) =>
+      fontscale := fs
+      let (w, h) := if portrait then (h, w) else (w, h)
+      keys := keys.push s!"width = {w}mm"
+      keys := keys.push s!"height = {h}mm"
+    | none => dropped := dropped.push s!"size={size}"
+  -- myfontscale = scale × fontscale, rounded to two decimals (the sty's
+  -- own FPupn rounding); normalsize = 24.88 pt × myfontscale.
+  let den : Int := (scaleDen : Int) * 100000000
+  let cents := (scaleNum * (fontscale : Int) * 100 + den / 2) / den
+  keys := keys.push s!"fontsize = {ptTenThousandths (2488 * cents)}"
+  let native := s!"\\documentclass\{poster}\\page\{ {String.intercalate ", " keys.toList} }"
+  became "\\usepackage{beamerposter}" native pos
+  unless dropped.isEmpty do
+    say .W0367 s!"beamerposter options outside the poster model: \
+{String.intercalate ", " dropped.toList}; ignored" pos
+      (help := "size, orientation, scale, and custom width/height carry over; \
+\\page{ ... } declares anything further")
+  synthAt native pos
+
 /-- `\hypersetup{pdfauthor=..., pdftitle=...}` → `\pdfmeta{...}`; rendering
 hints (`colorlinks`, `pdfborder`) have no meaning and go quietly. -/
 private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
@@ -921,6 +1015,8 @@ where
     for p in pkgs do
       if p == "geometry" then
         out := out ++ (← geometry (opt.getD "") pos)
+      else if p == "beamerposter" then
+        out := out ++ (← beamerposter (opt.getD "") pos)
       else if p == "parskip" then
         -- The package sets `\parskip` to half a line plus 2pt and drops the
         -- indent; the half line is what changes the page.
