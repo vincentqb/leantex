@@ -115,7 +115,8 @@ def engineClasses : List String :=
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
-   "slide-foot", "slides", "spaced", "standout", "step", "table-float"] ++
+   "slide-foot", "slide-track", "slides", "snap", "spaced", "standout",
+   "step", "table-float"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
@@ -1160,64 +1161,79 @@ theorem deckEntryCss_guarded : ∃ rule, deckEntryCss = rule ++ deckMotionGuard 
   ⟨_, rfl⟩
 
 /-- The reduced-motion guard for the steps' uncover: under the reader's
-reduce preference no step animates — everything stands at full colour,
-the handout state (WCAG 2.2 SC 2.3.3, technique C39; CSS Media Queries 5
-§12.1). The from-state now moves (the come-in offset), and SC 2.3.3 asks
-for the *motion* to be removable — a colour fade is not motion — but the
-base stylesheet's global reduce block already removes every animation
-with `!important`, so keeping the fade here would demand unwinding that
-contract for one effect; the criterion permits removing more than the
-motion, and the static floor is the handout state either way. As
+reduce preference no step animates and the frame keeps one snap point —
+everything stands at full colour on one page per frame, the handout
+state (WCAG 2.2 SC 2.3.3, technique C39; CSS Media Queries 5 §12.1).
+SC 2.3.3 asks for the *motion* to be removable, and the scroll-scrubbed
+colour fade alone is arguably not motion — but the base stylesheet's
+global reduce block already removes every animation with `!important`,
+so keeping the fade under reduce would demand unwinding that contract
+for one effect; the criterion permits removing more than the motion.
+With the fade gone the extra snap points would be N dead arrow presses,
+so they collapse with it (the same floor `@supports not` takes). As
 `deckMotionGuard`, the guard travels with the declaration. -/
 def deckStepGuard : String :=
-  "@media (prefers-reduced-motion: reduce) { .step { animation: none; } }\n"
+  "@media (prefers-reduced-motion: reduce) { .step { animation: none; }\n" ++
+  "  .slide-track { width: 100vw; flex: 0 0 100vw; }\n" ++
+  "  .snap { display: none; } }\n"
 
-/-- The steps' come-in reveal: a `.step` starts *covered* — dimmed to the
-same oklab `color-mix` shade the PDF handout dims pending content to (the
-caller passes it; dim, never hide) and offset by `--motiondistance` in
-the direction of travel — and moves to place at full colour, each step
-delayed by its own `--step` index times the stagger token. Colour and
-transform only: neither reflows, so the frame's layout is fixed from the
-first paint and a step's arrival moves nothing else (CSS Transforms 1
-§3: transforms do not affect layout). Two declarative triggers, best
-available first, each under `@supports`:
+/-- The steps' uncover, paced by the reader's own arrow key: a stepped
+frame with N overlay steps (`Ir.maxStepBlocks`) is one sticky stage over
+N snap points. Its `.slide-track` wrapper is `N × 100vw` wide, a flex
+row of N `.snap` spacers (each one viewport, each a mandatory snap stop
+— CSS Scroll Snap 1 §4.1 `scroll-snap-align`, §4.3 `scroll-snap-stop`),
+and the frame section rides it as a sticky stage (`position: sticky;
+left: 0` — CSS Positioned Layout 3 §3.4: insets from the nearest
+scrollport keep the box in view within its containing block, so the
+stage pins at the viewport's left edge while the spacers scroll
+underneath; its own snap alignment comes off, the spacers carry it). An
+arrow press advances one snap point — the stage does not move; the
+scroll offset does.
 
-- Scroll-state container queries (CSS Conditional 5, `scroll-state()`):
-  the slide is its own scroll-state container, and when it is the snapped
-  one its steps come in, in sequence. Support (caniuse
-  `mdn-css_at-rules_container_scroll-state_queries_snapped`, read
-  2026-09-20): Chromium 133+ (Feb 2025) only, ≈71% global — no Safari,
-  no Firefox.
-- Where those are unsupported, the `view(x)` timeline the entry motion
-  already uses (Scroll-driven Animations 1): the steps come in together
-  as the frame scrolls in along the row. Support (caniuse
-  `wf-scroll-driven-animations`, read 2026-09-20): Chromium 115+,
-  Safari 26, Firefox behind a flag — ≈84% global.
+The track declares the timeline: `view-timeline: --frame x`
+(Scroll-driven Animations 1 §3.4, a named view progress timeline;
+§4.2: descendants find the name, and the steps are descendants). A
+`.step` (`--step: n`, the track `--steps: N`) starts *covered* — dimmed
+to the same oklab `color-mix` shade the PDF handout dims pending content
+to (the caller passes it; dim, never hide), offset by `--motiondistance`
+in the direction of travel — and animates to place at full colour over
+`animation-range: contain (n−2)/(N−1) → contain (n−1)/(N−1)` (§3.1:
+for a subject wider than the scrollport, `contain` 0% is the earliest
+edge-coincident position — snap 1 — and 100% the latest — snap N; the
+appendix's `animation-range` takes `<length-percentage>`, explicitly
+including `calc()`, and the unitless-custom-property calc is verified
+against this engine's Chromium). So item n fades in *during* the smooth
+scroll from snap n−1 to snap n and holds (fill-mode both). Step 1 items
+are never covered (`:not([data-step="1"])`). Colour and transform only:
+neither reflows, so the frame's layout is fixed from the first paint
+(CSS Transforms 1 §3). Support (caniuse
+`mdn-css_properties_animation-timeline_view`, read 2026-09-20):
+Chromium 115+ (Jul 2023), Safari 26, Firefox 159+.
 
-Floor: neither supported, no rule applies and every step stands at full
-colour — the handout state, `revealCss`'s design. The uncover runs for
-`--motionduration` (default 0.4 s — reveal.js and Quarto's default
-transition-duration) after `(--step − 1) × --motionstagger`. No authority
-fixes a reveal stagger: Material's own stagger guidance (Motion,
-Choreography — entrances ≤ 20 ms apart) addresses surfaces created
-*simultaneously*, not a sequence the document declares, so the default
-takes one perceptible beat from Material's duration band for small
-animations (Duration & easing, 150–200 ms): 150 ms. Both are var()
-doors a bundle or reader overrides. Reduced motion: no animation, full
-colour — the guard rides by construction (`deckStepCss_guarded`). -/
+Floors, by construction: without `view()` timelines the whole layout
+block never applies and the spacers hide — one page per frame, every
+item full colour, the handout state, no dead arrow presses. Print (the
+handout) never sees these screen-gated rules; `slideCss` hides the
+spacers there too. Reduced motion likewise, the guard riding
+definitionally (`deckStepCss_guarded`). The deck's progress hairline
+reads `scroll(root x)`, so a stepped frame advances it N times — its
+snap points are the PDF handout's pagination. -/
 def deckStepCss (covered : String) : String :=
   s!"@keyframes ltx-uncover \{ from \{ color: {covered}; \
 transform: translateX(var(--motiondistance, 1rem)) } }\n" ++
-  "@supports (container-type: scroll-state) {\n" ++
-  "section.slide { container-type: scroll-state; }\n" ++
-  "@container scroll-state(snapped: x) {\n" ++
-  ".step { animation: ltx-uncover var(--motionduration, 400ms) both;\n" ++
-  "  animation-delay: calc((var(--step, 1) - 1) * var(--motionstagger, 150ms)); }\n" ++
-  "} }\n" ++
-  "@supports (animation-timeline: view()) and (not (container-type: scroll-state)) {\n" ++
-  ".step { animation: ltx-uncover linear both; animation-timeline: view(x);\n" ++
-  "  animation-range: entry; }\n" ++
+  "@supports (animation-timeline: view()) {\n" ++
+  ".slide-track { display: flex; align-items: flex-start;\n" ++
+  "  width: calc(var(--steps) * 100vw); flex: 0 0 calc(var(--steps) * 100vw);\n" ++
+  "  view-timeline: --frame x; }\n" ++
+  ".slide-track > section.slide { position: sticky; left: 0;\n" ++
+  "  margin-right: -100vw; scroll-snap-align: none; }\n" ++
+  ".snap { flex: 0 0 100vw; scroll-snap-align: start; scroll-snap-stop: always; }\n" ++
+  ".step:not([data-step=\"1\"]) { animation: ltx-uncover linear both;\n" ++
+  "  animation-timeline: --frame;\n" ++
+  "  animation-range: contain calc((var(--step) - 2) / (var(--steps) - 1) * 100%) \
+contain calc((var(--step) - 1) / (var(--steps) - 1) * 100%); }\n" ++
   "}\n" ++
+  "@supports not (animation-timeline: view()) { .snap { display: none; } }\n" ++
   deckStepGuard
 
 /-- The uncover carries its reduced-motion form by construction:
@@ -1307,6 +1323,9 @@ private def slideCss (doc : Doc) : String :=
   -- screen override below can stand after it and win the cascade.
   let headerH2 :=
     s!"section.slide > header h2 \{ margin: 0; font-size: {scaleSize "Large" "rem"}; }\n"
+  let hasSteps := doc.body.any (fun b => match b with
+    | .frame _ _ _ fb => Ir.maxStepBlocks fb > 1
+    | _ => false)
   if doc.docClass == .slides then
     headerH2 ++
     "@media screen {\n" ++
@@ -1351,9 +1370,7 @@ private def slideCss (doc : Doc) : String :=
     -- from-state. Shipped exactly when the deck has steps — a stepless
     -- deck has nothing to reveal. Screen only: print is the handout,
     -- every step at full colour.
-    (if doc.body.any (fun b => match b with
-        | .frame _ _ _ fb => Ir.maxStepBlocks fb > 1
-        | _ => false) then
+    (if hasSteps then
       let d := Design.ofDoc doc
       deckStepCss s!"color-mix(in oklab, currentColor \
 {d.coveredFraction}%, var(--bg, {cssColor d.bg}))"
@@ -1361,6 +1378,14 @@ private def slideCss (doc : Doc) : String :=
     "}\n" ++
     "@media print {\n" ++ handout ++
     "section.slide { break-after: page; }\n" ++
+    -- The stepped frame's print floor: the handout, one bordered card —
+    -- the snap spacers hide, the wrapper takes the card gap its section
+    -- can no longer claim as `* + section.slide` (it is the wrapper's
+    -- first child).
+    (if hasSteps then
+      ".snap { display: none; }\n" ++
+      s!"* + .slide-track \{ margin-top: {slidePadV}; }\n"
+     else "") ++
     "}\n"
   else handout ++ headerH2
 
@@ -1781,9 +1806,9 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
   | .step n last body =>
     -- Every step is fully visible here — the handout state, the floor the
     -- deck's reveal degrades to. On the paged deck the class-gated
-    -- stylesheet uncovers the step in place when its frame snaps
-    -- (`deckStepCss`), staggered by the step's own `--step`; the range
-    -- rides as data either way.
+    -- stylesheet uncovers the step in place as the reader's arrow
+    -- advances the frame's snap points (`deckStepCss`); the `--step`
+    -- index names its snap point, and the range rides as data either way.
     acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
       (#[("class", "step"), ("data-step", toString n)] ++
         (match last with
@@ -2720,7 +2745,7 @@ def emitTree (cfg : Config) (doc : Doc) :
 omitted from HTML"
               (help := some "the deck has no physical pages; \\framenumber \
 via \\chrome is the sequence both backends share"))
-        | .frame title _ _ _ =>
+        | .frame title _ _ fb =>
           let num := nums[i]?.getD none
           done := num.getD done
           -- One `section` per frame: the deck's steps reveal *in place*
@@ -2772,6 +2797,31 @@ first; retitle one frame, or link to '#{id}'"))
                   #[("class", "slide-foot size-small")]))
               | _, other => other
             else node
+          -- A stepped frame is one sticky stage over N snap points: the
+          -- section rides a `.slide-track` wrapper while N `.snap`
+          -- spacers — one per overlay step, `Ir.maxStepBlocks`, the same
+          -- count the PDF handout paginates by — scroll underneath
+          -- (`deckStepCss`). Each spacer carries a deep-link anchor
+          -- `<frame>-k`, claimed through the same door as every id this
+          -- backend assigns; the wrapper carries `--steps` for the
+          -- track's width and the steps' animation ranges.
+          let steps := Ir.maxStepBlocks fb
+          let mut node := node
+          if steps > 1 then
+            let mut kids : Array Node := #[node]
+            for k in [1 : steps + 1] do
+              let (sid, sclash) := claimId taken s!"{id}-{k}" text
+              if let some holder := sclash then
+                walkDiags := walkDiags.push (Diag.of .W0327
+                  s!"frames {holder.quote} and {text.quote} share the \
+anchor '{id}-{k}'; the step anchor becomes '{sid}'"
+                  (help := some s!"an in-page link '#{id}-{k}' reaches only \
+the first; retitle one frame, or link to '#{sid}'"))
+              taken := taken.push (sid, text)
+              kids := kids.push (Html.elem "div" #[]
+                #[("class", "snap"), ("id", sid)])
+            node := Html.elem "div" kids
+              #[("class", "slide-track"), ("style", s!"--steps: {steps}")]
           acc := acc.push (withEpoch cfg.epochStyle node)
         | .section 1 starred num title =>
           curSection := title

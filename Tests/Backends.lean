@@ -1001,9 +1001,10 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      screenOf (deckAt "169") == screenOf (deckAt "149") &&
      screenOf (deckAt "169") != screenOf (deckAt "1610"))
   -- The other half of the uncover census: a stepless deck has nothing to
-  -- reveal and ships no trigger.
+  -- reveal and ships no timeline, track, or spacer.
   t "a stepless deck ships no uncover rule"
-    (!has deckPage "ltx-uncover" && !has deckPage "scroll-state")
+    (!has deckPage "ltx-uncover" && !has deckPage "slide-track" &&
+     !has deckPage "--frame" && !has deckPage "scroll-state")
   -- The gate, both directions: no deck rule outside the slides class.
   for (name, src) in [
       ("article", "\\documentclass{article}\\begin{document}x\\end{document}"),
@@ -1013,6 +1014,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     t s!"{name} ships no deck rule"
       (!has page "scroll-snap" && !has page "scroll-behavior" &&
        !has page "scroll-state" && !has page "ltx-uncover" &&
+       !has page "slide-track" &&
        has page "section.slide { border:")
 
 /-- Rubber image sizes in the deck: the stage is the viewport, so every

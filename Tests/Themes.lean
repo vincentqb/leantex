@@ -1930,25 +1930,50 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count " hidden=\"hidden\"" == 0)
   t "the label anchor has its single site"
     ((html.splitOn s!"id=\"{Ir.labelAnchor "fr:steps"}\"").length == 2)
+  -- The stepped frame's structure: one sticky stage (the section) over N
+  -- snap spacers inside its track, each spacer a claimed deep-link
+  -- anchor `<frame>-k`; the plain frame rides bare — no track, no
+  -- spacers beyond the stepped frame's three.
+  t "a stepped frame is one stage over N snap anchors, a plain frame is bare"
+    (count "class=\"slide-track\"" == 1 && count "class=\"snap\"" == 3 &&
+     count "--steps: 3" == 1 &&
+     count "id=\"steps-1\"" == 1 && count "id=\"steps-2\"" == 1 &&
+     count "id=\"steps-3\"" == 1)
   t "frame sections keep unique ids"
-    (count "id=\"steps\"" == 1 && count "id=\"steps-2\"" == 0 &&
-     count "id=\"plain\"" == 1)
-  -- The uncover CSS census: the two declarative triggers, best available
-  -- first, each under @supports; the from-state is the design's own mix;
-  -- the guard rides; print (the handout) never sees a step rule.
-  t "the uncover ships under scroll-state, its fallback under view()"
-    (count "@supports (container-type: scroll-state)" == 1 &&
-     count "section.slide { container-type: scroll-state; }" == 1 &&
-     count "@container scroll-state(snapped: x)" == 1 &&
-     count "@supports (animation-timeline: view()) and (not (container-type: scroll-state))" == 1)
-  t "the uncover staggers by the step's own index through the tokens"
-    (count "animation: ltx-uncover var(--motionduration, 400ms) both" == 1 &&
-     count "animation-delay: calc((var(--step, 1) - 1) * var(--motionstagger, 150ms))" == 1)
+    (count "id=\"steps\"" == 1 && count "id=\"plain\"" == 1)
+  -- The spacer anchors claim through the same door as every id: a frame
+  -- whose slug collides with a step anchor is renamed and named.
+  let (cdoc, _) := elabStr (deck169 "\\title{T}\\author{A}"
+    ("\\begin{frame}{Steps}\na\n\n\\pause\nb\n\\end{frame}\n" ++
+     "\\begin{frame}{Steps 1}\nd\n\\end{frame}"))
+  let (chtml, cds) := HtmlDoc.emit {} cdoc
+  t "a frame slug colliding with a step anchor is renamed and warned"
+    (cds.any (·.code == "W0327") &&
+     (chtml.splitOn "id=\"steps-1\"").length - 1 == 1 &&
+     (chtml.splitOn "id=\"steps-1-2\"").length - 1 == 1)
+  -- The uncover CSS census: the track declares the frame's view
+  -- timeline; each step's range is its own snap interval; step 1 is
+  -- never covered; the three floors stand (no view() support, print,
+  -- reduced motion), and the from-state is the design's own mix.
+  t "the uncover rides the frame's view timeline between snap points"
+    (count "view-timeline: --frame x" == 1 &&
+     count "animation-timeline: --frame;" == 1 &&
+     count ".step:not([data-step=\"1\"])" == 1 &&
+     count ("animation-range: contain calc((var(--step) - 2) / (var(--steps) - 1) * 100%) " ++
+       "contain calc((var(--step) - 1) / (var(--steps) - 1) * 100%)") == 1)
+  t "the stage is sticky over the spacers, which carry the snaps"
+    (count ".slide-track > section.slide { position: sticky; left: 0;" == 1 &&
+     count ".snap { flex: 0 0 100vw; scroll-snap-align: start; scroll-snap-stop: always; }" == 1 &&
+     count "width: calc(var(--steps) * 100vw)" == 1)
   t "the pre-reveal state is the design's own covered mix, offset in the direction of travel"
     (count "@keyframes ltx-uncover { from { color: color-mix(in oklab, currentColor 31%" == 1 &&
      count ")); transform: translateX(var(--motiondistance, 1rem)) } }" == 1)
-  t "reduced motion shows every step at full colour"
-    (count "@media (prefers-reduced-motion: reduce) { .step { animation: none; } }" == 1)
-  t "print shows every step uncovered"
-    (((html.splitOn "@media print").drop 1).all fun s =>
-      (s.splitOn "ltx-uncover").length == 1 && (s.splitOn ".step {").length == 1)
+  t "without view() timelines the spacers collapse: one page, full colour"
+    (count "@supports not (animation-timeline: view()) { .snap { display: none; } }" == 1)
+  t "reduced motion collapses the snap points and shows full colour"
+    (count "@media (prefers-reduced-motion: reduce) { .step { animation: none; }" == 1 &&
+     count ".slide-track { width: 100vw; flex: 0 0 100vw; }" == 1)
+  t "print shows every step uncovered on one card, spacers hidden"
+    (count ".snap { display: none; }\n* + .slide-track { margin-top:" == 1 &&
+     (((html.splitOn "@media print").drop 1).all fun s =>
+      (s.splitOn "ltx-uncover").length == 1 && (s.splitOn ".step {").length == 1))
