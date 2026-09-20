@@ -594,10 +594,19 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           | .own => HtmlDoc.CssMode.own
           | .bulma => HtmlDoc.CssMode.bulma
           | .none => HtmlDoc.CssMode.none
+        let htmlPath := outPath ui.cfg.output outIsDir file .html
+        -- The artifact ships the faces the document resolved, as the PDF
+        -- embeds them — unless the document declared its `css =` story
+        -- (the site port's `css = own`): then its stylesheet owns fonts
+        -- and nothing ships.
+        let shipFonts := doc.output.css.isNone
+        let fontsDir := ((System.FilePath.mk htmlPath).fileStem.getD "out") ++ ".fonts"
         let hcfg : HtmlDoc.Config := {
           css := cssMode
           mathBoundary := ui.cfg.mathBoundary
           imgs := imgs
+          fonts := if shipFonts then some fs else none
+          fontsDir := fontsDir
           -- The markdown twin, when one is being written beside the page,
           -- is linked from the head as the alternate representation.
           mdHref := if emit.contains .md then
@@ -610,10 +619,22 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         fired := fired ++ r4.fired
         accepted := accepted ++ r4.accepted
         warnings := warnings + r4.warnings
-        let htmlPath := outPath ui.cfg.output outIsDir file .html
         IO.FS.writeFile htmlPath html
         written := written.push htmlPath
         ui.phase "html" s!"{html.utf8ByteSize} bytes" (← since t)
+        -- The emission's font-file requests, fulfilled beside the page:
+        -- the faces the styling references, byte for byte the ones the
+        -- PDF embeds.
+        if shipFonts then
+          let t ← IO.monoMsNow
+          let assets := HtmlDoc.fontAssets fs
+          let dir := ((System.FilePath.mk htmlPath).parent.getD ".") / fontsDir
+          IO.FS.createDirAll dir
+          let mut bytes := 0
+          for a in assets do
+            IO.FS.writeBinFile (dir / a.file) a.data
+            bytes := bytes + a.data.size
+          ui.phase "fonts" s!"{assets.size} faces, {bytes} bytes ({fontsDir})" (← since t)
       if emit.contains .md then
         let t ← IO.monoMsNow
         let md := MarkdownDoc.emit doc
