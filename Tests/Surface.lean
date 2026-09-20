@@ -1593,6 +1593,32 @@ def nfcChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The lexer feeds normalized text to everything downstream.
   t "lex normalizes to NFC" (toks "Be\u0301lair" == [.word "Bélair"])
 
+def accentChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- TeX accent commands compose to NFC in text elaboration, the same
+  -- table .bib values read (Bib.accentTable via Elab.accentCompose):
+  -- B\'elair renders "Bélair", not "Belair" + W0301.
+  let para? (p : Ir.Doc × Array Diag) : Option (Array Ir.Inline) :=
+    match p.1.body with
+    | #[.para xs] => some xs
+    | _ => none
+  let (d1, ds1) := elabStr "B\\'elair"
+  t "accent on adjacent word composes" (ds1.isEmpty &&
+    para? (d1, ds1) == some #[.text "Bélair"])
+  let (d2, ds2) := elabStr "sch\\\"{o}n and \\c{c}a and gro\\ss e"
+  t "accent groups, cedilla, and char commands compose" (ds2.isEmpty &&
+    para? (d2, ds2) == some #[.text "schön and ça and große"])
+  let (d3, ds3) := elabStr "ma\\~nana"
+  t "tilde accent composes before the tilde escape" (ds3.isEmpty &&
+    para? (d3, ds3) == some #[.text "mañana"])
+  let (d4, ds4) := elabStr "a\\~{}b"
+  t "empty-group tilde stays the literal escape" (ds4.isEmpty &&
+    para? (d4, ds4) == some #[.text "a~b"])
+  -- A pair the table does not know keeps its base and warns by name, as
+  -- before: nothing new is dropped.
+  let (_, ds5) := elabStr "\\'q"
+  t "unknown accent pair still warns" (ds5.map (·.code) == #["W0301"])
+
 def parseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- parse

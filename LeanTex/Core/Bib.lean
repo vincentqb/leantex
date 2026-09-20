@@ -351,7 +351,7 @@ def charCommands : Array (String × String) :=
   #[("ss", "ß"), ("o", "ø"), ("O", "Ø"), ("ae", "æ"), ("AE", "Æ"),
     ("aa", "å"), ("AA", "Å"), ("l", "ł"), ("L", "Ł"), ("i", "ı")]
 
-private def accentOf (mark base : Char) : Char :=
+def accentOf (mark base : Char) : Char :=
   ((accentTable.find? fun (m, b, _) => m == mark && b == base).map (·.2.2)).getD base
 
 private def isAccentMark (c : Char) : Bool :=

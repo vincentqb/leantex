@@ -10,6 +10,7 @@ import LeanTex.Core.Compat
 import LeanTex.Core.Contrast
 import LeanTex.Core.Picture
 import LeanTex.Core.FaIcons
+import LeanTex.Core.Bib
 
 namespace LeanTex.Core.Elab
 
@@ -466,6 +467,44 @@ theorem builtin_verdict_total :
     (builtinNames.all fun n =>
       structuralNames.contains n || renderedBuiltins.contains n) = true := by
   decide +kernel
+
+/-- TeX's accent commands the engine composes to NFC: the control-symbol
+marks and the cedilla word, one table with .bib values (`Bib.accentTable`),
+so a name renders identically in text and in a bibliography entry. -/
+def accentMarkOf (name : String) : Option Char :=
+  if name == "'" || name == "`" || name == "\"" || name == "^" || name == "~" then
+    some name.front
+  else if name == "c" then some 'c'
+  else none
+
+/-- The composed text of an accent command applied to what follows: the
+first letter of an adjacent word (`\'elair` → "élair") or a one-letter
+group (`\'{e}`). `none` — a shape or a pair the table does not know —
+falls through to the ordinary dispatch, so nothing new is dropped and an
+unknown pair still warns by name. -/
+def accentCompose (mark : Char) (r : Parse.Raw) : Option String :=
+  match r with
+  | .word s _ =>
+    match s.toList with
+    | b :: rest =>
+      let c := Bib.accentOf mark b
+      if c == b then none else some (String.ofList (c :: rest))
+    | [] => none
+  | .group body _ =>
+    match body.toList with
+    | [.word s _] =>
+      match s.toList with
+      | [b] =>
+        let c := Bib.accentOf mark b
+        if c == b then none else some (String.ofList [c])
+      | _ => none
+    | _ => none
+  | _ => none
+
+/-- The one-character word commands (`\ss`, `\ae`, `\o`…), the same table
+`.bib` values read (`Bib.charCommands`). -/
+def charCommandOf (name : String) : Option String :=
+  (Bib.charCommands.find? (·.1 == name)).map (·.2)
 
 /-- Every palette role is invocable: a role is *defined by the palette* —
 `\muted{Alex}` works with no `\newcommand`, because the palette arm of the
@@ -2262,6 +2301,15 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             have hadv : sliceWeight raws j < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws j acc ""
+        else if let some composed := (accentMarkOf name).bind
+            (fun mk => raws[i + 1]?.bind (accentCompose mk)) then
+          -- `\'e` and family: composed to NFC at elaboration, one table
+          -- with Bib — the accent is content, never a droppable mark.
+          have hadv : sliceWeight raws (i + 2) < sliceWeight raws i :=
+            sliceWeight_lt raws h (by omega)
+          elabInlinesFrom ctx raws (i + 2) acc (sb ++ composed)
+        else if let some lit := charCommandOf name then
+          elabInlinesFrom ctx raws (i + 1) acc (sb ++ lit)
         else if let some lit := escapes.lookup name then
           elabInlinesFrom ctx raws (i + 1) acc (sb ++ lit)
         else if (Lex.textSymbols.lookup name).isSome then
