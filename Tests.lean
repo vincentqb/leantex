@@ -13,6 +13,7 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 module split can place; main runs this right after compatChecks, which
 used to carry these calls as its tail. -/
 def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  footnoteBackendChecks ref
   styleChecks ref
   htmlLayoutChecks ref
   htmlRhythmChecks ref

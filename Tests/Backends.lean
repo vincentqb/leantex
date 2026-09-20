@@ -1734,3 +1734,41 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     (HtmlDoc.genericFor (oneFaceOf (mkF 8 true)) 0 "serif" == "monospace")
   t "generic keyword: an undeclared class takes the slot's declared kind"
     (HtmlDoc.genericFor (oneFaceOf (mkF 0 false)) 0 "serif" == "serif")
+
+/-- The backends' note apparatus: the HTML mark is a `doc-noteref` sup
+link, the one `doc-endnotes` section carries each body once with its
+`doc-backlink` (W3C DPUB-ARIA 1.1), no script and no broken anchor; the
+markdown twin sets `[^k]` marks with their definitions after the body. -/
+def footnoteBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let src := dvDoc "" ("A claim\\footnote{the note text} continues.\n\n" ++
+    "Second\\footnote[7]{a seventh aside} claim.")
+  let (doc, _) := elabStr src
+  let (html, hds) := HtmlDoc.emit {} doc
+  t "html: each mark is a doc-noteref link"
+    ((html.splitOn "role=\"doc-noteref\"").length == 3 &&
+     (html.splitOn "href=\"#fn1\"").length == 2 &&
+     (html.splitOn "id=\"fnref1\"").length == 2)
+  t "html: one doc-endnotes section ships"
+    ((html.splitOn "role=\"doc-endnotes\"").length == 2)
+  t "html: the note body lands once, in its endnote item"
+    ((html.splitOn "id=\"fn1\"").length == 2 &&
+     (html.splitOn "the note text").length == 2)
+  t "html: each endnote carries its doc-backlink to the mark"
+    ((html.splitOn "role=\"doc-backlink\"").length == 3 &&
+     (html.splitOn "href=\"#fnref7\"").length == 2)
+  t "html: the note anchors resolve both ways (W0326 silent)"
+    (hds.all (·.code != "W0326"))
+  t "html: the apparatus ships no script"
+    ((html.splitOn "<script").length == 1)
+  let md := MarkdownDoc.emit doc
+  t "md: the marks are [^k] labels"
+    ((md.splitOn "[^1]").length ≥ 2 && (md.splitOn "[^7]").length ≥ 2)
+  t "md: the definitions land after the body"
+    ((md.splitOn "[^1]: the note text").length == 2 &&
+     (md.splitOn "[^7]: a seventh aside").length == 2)
+  t "md: a noted document keeps one trailing newline"
+    (md.endsWith "\n" && !(md.endsWith "\n\n"))
+  t "md: an unnoted document is unchanged in shape"
+    (let md0 := MarkdownDoc.emit (elabStr (dvDoc "" "plain words")).1
+     md0.endsWith "\n" && !(md0.endsWith "\n\n") && !((md0.splitOn "[^").length ≥ 2))

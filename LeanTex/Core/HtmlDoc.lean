@@ -1670,9 +1670,15 @@ height: auto"
   -- this node with the style's linked inlines, and the diagnostic that let
   -- it through already named the gap.
   | .cite _ keys => acc.push (Html.text (Ir.citeMarks keys))
-  -- Interim, until the endnotes section lands: the note body sets inline.
-  | .footnote _ body =>
-    acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList))
+  -- The mark: a superscripted link to the note's endnote entry (W3C
+  -- DPUB-ARIA 1.1, doc-noteref). The body renders once, in the one
+  -- doc-endnotes section before the article end — never twice.
+  | .footnote num _ =>
+    let n := num.getD 0
+    acc.push (Html.elem "sup"
+      #[Html.elem "a" #[Html.text (toString n)]
+        #[("href", s!"#fn{n}"), ("id", s!"fnref{n}"),
+          ("role", "doc-noteref"), ("style", "color: inherit")]])
   -- Page furniture has no meaning in a continuous document.
   | .pageNumber => acc
   | .pageCount => acc
@@ -2670,6 +2676,24 @@ first; retitle one frame, or link to '#{id}'"))
         | _ => acc := acc.push (withEpoch cfg.epochStyle (blockNode cfg b))
       return (acc, walkDiags)
   diags := diags ++ sectionDiags
+  -- The endnotes: one section before the article end (W3C DPUB-ARIA 1.1
+  -- doc-endnotes), one list item per note in flow order — the same
+  -- `Ir.footnotesOf` flow the marks were numbered in — each carrying its
+  -- body and a back-link to its mark (doc-backlink). No script: the
+  -- mark/note pairing is two plain anchors, and W0326's target check
+  -- holds both directions on the emitted tree.
+  let notes := Ir.footnotesOf doc.body
+  let inner := if notes.isEmpty then inner else
+    inner.push (Html.elem "section"
+      #[Html.elem "ol" (notes.map fun (num, content) =>
+          let n := num.getD 0
+          Html.elem "li"
+            ((inlineNodesInto cfg #[] content.toList).push (Html.text " ")
+              |>.push (Html.elem "a" #[Html.text "\u21a9"]
+                #[("href", s!"#fnref{n}"), ("role", "doc-backlink"),
+                  ("aria-label", "back to the text"), ("style", "color: inherit")]))
+            #[("id", s!"fn{n}")]) #[]]
+      #[("role", "doc-endnotes")])
   let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]
     else #[("class", bodyClass)])
   let mut body : Array Node := #[main]

@@ -84,8 +84,9 @@ private def inlineInto (acc : String) : Inline → String
     -- bound first: the append is one-off, not a walk (the cost gate's shape)
     let marks := Ir.citeMarks keys
     acc ++ marks
-  -- Interim, until the [^k] definitions land: the note body sets inline.
-  | .footnote _ body => inlinesInto acc body.toList
+  -- The mark, CommonMark-extension footnote syntax: the body lands once,
+  -- as the `[^k]: ...` definition after the document (`noteDefs`).
+  | .footnote num _ => acc ++ s!"[^{num.getD 0}]"
   | .linebreak _ => acc ++ "\\\n"
 
 private def inlinesInto (acc : String) : List Inline → String
@@ -271,6 +272,19 @@ private def tighten (s : String) : String :=
   let trimmed := String.ofList ((tightenGo 0 [] s.toList).dropWhile (· == '\n')).reverse
   if trimmed.isEmpty then trimmed else trimmed ++ "\n"
 
+/-- The `[^k]: …` definitions, one per footnote in flow order — the
+markdown twin of the endnotes section, after the body. Empty when the
+document has no notes, so an unnoted document emits exactly what it always
+did. The locale is threaded for the day a definition needs furniture
+words; today the syntax is the label. -/
+private def noteDefs (_loc : Locale) (body : Array Block) : String := Id.run do
+  let notes := Ir.footnotesOf body
+  if notes.isEmpty then return ""
+  let mut out := ""
+  for (num, content) in notes do
+    out := out ++ "\n" ++ s!"[^{num.getD 0}]: " ++ inlineText content ++ "\n"
+  return out
+
 /-- Emit the document. Small caps land as their text with the authored
 casing — since `\scshape` renders uniform small capitals, the source
 carries the reading form and the twin is correct as typed (the retired
@@ -303,6 +317,11 @@ def emit (doc : Doc) : String :=
     | none => ""
   let preamble := title ++ (if bodyTitled then "" else summary)
   tighten (preamble ++ blocksInto doc.info.locale summary "" "" doc.body.toList)
+    ++ noteDefs doc.info.locale doc.body
+
+-- The definitions are data to the placement proofs, never proof material:
+-- sealed so unification cannot whnf through the collection walk.
+seal noteDefs
 
 /-! ## The placement theorems
 
@@ -684,9 +703,10 @@ theorem emit_meta_title_first (doc : Doc) (t s : String)
   obtain ⟨q, hq⟩ := tighten_head t s
     (blocksInto doc.info.locale ("> " ++ s ++ "\n\n") "" "" (Ir.keepFor "md" doc.body).toList)
     htn hsn
-  refine ⟨q, ?_⟩
+  refine ⟨q ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body), ?_⟩
   simp only [emit, ht, hs, hbody]
-  exact hq
+  exact (congrArg (· ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body)) hq).trans
+    (String.append_assoc ..)
 
 /-- Title from the body: when the twin's view of the body opens with its own
 level-0 heading (`\maketitle`), the preamble yields — no second `#` line, no
@@ -718,15 +738,17 @@ theorem emit_body_title_first (doc : Doc) (s : String) (st : Bool)
   obtain ⟨w, hw⟩ := blocksInto_extends doc.info.locale ("> " ++ s ++ "\n\n") ""
     ("# " ++ inlineText ttl ++ "\n\n" ++ ("> " ++ s ++ "\n\n")) rest
   obtain ⟨q, hq⟩ := tighten_head (inlineText ttl) s w htn hsn
-  refine ⟨q, ?_⟩
+  refine ⟨q ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body), ?_⟩
   cases hT : doc.info.title with
   | some t =>
     simp only [emit, hs, hbt, hT, ite_true, String.empty_append]
     rw [hfirst, hw]
-    exact hq
+    exact (congrArg (· ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body)) hq).trans
+      (String.append_assoc ..)
   | none =>
     simp only [emit, hs, hbt, hT, ite_true, String.empty_append]
     rw [hfirst, hw]
-    exact hq
+    exact (congrArg (· ++ noteDefs doc.info.locale (Ir.keepFor "md" doc.body)) hq).trans
+      (String.append_assoc ..)
 
 end LeanTex.Core.MarkdownDoc
