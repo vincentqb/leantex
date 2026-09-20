@@ -1576,9 +1576,11 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((HtmlDoc.fontAssets fs).size == fs.fonts.size &&
      (HtmlDoc.fontAssets fs).all fun a => !a.data.isEmpty)
   t "font ship: the OS/2 sans class closes the body stack, not the slot's serif"
-    ((html.splitOn "--font-body: \"ltx-body\", sans-serif;").length == 2)
+    ((html.splitOn "--font-body: \"ltx-body\", \"ltx-sans\", \"ltx-mono\", sans-serif;").length == 2)
   t "font ship: an undeclared class takes the slot's kind"
-    ((html.splitOn "--font-mono: \"ltx-mono\", monospace;").length == 2)
+    ((html.splitOn "--font-mono: \"ltx-mono\", \"ltx-body\", \"ltx-sans\", monospace;").length == 2)
+  t "font ship: the body weight is the resolved face's, and nothing is faked"
+    ((html.splitOn "body { font-weight: 400; font-synthesis: small-caps; }").length == 2)
   -- A face only per-glyph fallback reaches ships under its own family and
   -- every slot stack appends it, so the browser's per-character walk can
   -- reach it — the CSS spelling of `FontSet.fallback`.
@@ -1586,12 +1588,13 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (htmlFb, _) := HtmlDoc.emit { cfg with fonts := some fsFb } doc
   t "font ship: a slotless face ships under its fallback family"
     (((htmlFb.splitOn "font-family: \"ltx-fb2\"").length == 2) &&
-     ((htmlFb.splitOn "--font-body: \"ltx-body\", \"ltx-fb2\", sans-serif;").length == 2))
+     ((htmlFb.splitOn
+        "--font-body: \"ltx-body\", \"ltx-sans\", \"ltx-mono\", \"ltx-fb2\", sans-serif;").length == 2))
   -- The math face rides through its token; the `.math` rule reads it.
   let fsMath : Font.FontSet := { fs with math := some 1 }
   let (htmlMath, _) := HtmlDoc.emit { cfg with fonts := some fsMath } doc
   t "font ship: the resolved math face lands in --font-math"
-    ((htmlMath.splitOn "--font-math: \"ltx-math\", math;").length == 2)
+    ((htmlMath.splitOn "--font-math: \"ltx-math\", \"ltx-body\", \"ltx-sans\", \"ltx-mono\", math;").length == 2)
   t "font ship: .math reads the document's math face through its token"
     ((htmlMath.splitOn ".math { font-family: var(--font-math,").length == 2)
   -- Without a set nothing ships: the name-only stacks stay, unchanged.

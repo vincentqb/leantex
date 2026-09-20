@@ -858,11 +858,16 @@ theorem familiesOf_ne_nil (fs : Font.FontSet) (i : Nat) : familiesOf fs i ≠ []
   · simp
   · next h => exact fun hn => h (by simp [hn])
 
-/-- The fallback families, in face order — `FontSet.fallback`'s "first
-covering face" order, which declaration order seeds. -/
-def fbFamilies (fs : Font.FontSet) : List String :=
-  (List.range fs.fonts.size).filterMap fun i =>
-    if (namedFamiliesOf fs i).isEmpty then some s!"ltx-fb{i}" else none
+/-- A slot's full stack: its own family first, then every other family of
+the set in face order, then the honest generic. The browser walks the list
+per character (CSS Fonts 4 §5.2), which is the CSS spelling of
+`FontSet.fallbackFor` — a glyph the slot's face lacks is set from the
+first face that covers it, in the set's own order — so the deck whose
+mono face lacks ⟨⟩ reads them from its math face on both pages. -/
+def stackFor (fs : Font.FontSet) (own generic : String) : String :=
+  let rest := (((List.range fs.fonts.size).flatMap fun i =>
+    familiesOf fs i).eraseDups.filter (· != own)).map fun f => s!"\"{f}\""
+  String.intercalate ", " ([s!"\"{own}\""] ++ rest ++ [generic])
 
 /-- The face's file name in the sibling fonts directory. The index prefix
 makes the name collision-free by construction whatever the faces declare;
@@ -951,6 +956,22 @@ def fontFaceRule (dir : String) (ff : FontFace) : String :=
 def fontFaceCss (dir : String) (fs : Font.FontSet) : String :=
   String.join ((shipFaces fs).toList.map (fontFaceRule dir))
 
+/-- The face-shipping rules: every `@font-face`, then the body weight the
+document resolved and the synthesis contract. The slot's regular face sets
+text, so the request must name that face's weight — a Light body family is
+a 300, and the browser's matching (CSS Fonts 4 §5.2) would hand a bare
+default `font-weight: 400` the family's Regular instead. And the engine
+never fakes a weight or a slant: a missing variant resolves to a real face
+or stays upright (`FontSet.lookup`), in both backends — so synthesis is
+limited to small caps, which both backends do synthesise (CSS Fonts 4
+§font-synthesis; the PDF's is Layout's own, from its GSUB read). Without
+this line a title asking for 600 over a 300/400 family renders faux-bold
+where the PDF sets the family's real Regular. -/
+def fontCss (dir : String) (fs : Font.FontSet) : String :=
+  fontFaceCss dir fs ++
+  s!"body \{ font-weight: {(fs.get (fs.lookup 0 false false)).weight}; " ++
+  "font-synthesis: small-caps; }\n"
+
 /-- The generic family closing a slot's stack — what a reader sees only if
 the shipped face fails to load. From the face's own declarations: `post`
 isFixedPitch is monospace, else OS/2 sFamilyClass (8 = Sans Serif, 1–7 the
@@ -981,15 +1002,13 @@ def tokenVars (cfg : Config) (doc : Doc) : String :=
       let bodyDeclared :=
         if doc.docClass == DocClass.slides && doc.fonts.sans.isSome then "sans-serif"
         else "serif"
-      let fb := (fbFamilies fs).map fun f => s!"\"{f}\""
-      let stack (slot : Nat) (declared : String) : String :=
-        String.intercalate ", "
-          ([s!"\"ltx-{slotName slot}\""] ++ fb ++ [genericFor fs slot declared])
-      [s!"    --font-body: {stack 0 bodyDeclared};",
-       s!"    --font-sans: {stack 1 "sans-serif"};",
-       s!"    --font-mono: {stack 2 "monospace"};"] ++
+      let slot (s : Nat) (declared : String) : String :=
+        stackFor fs s!"ltx-{slotName s}" (genericFor fs s declared)
+      [s!"    --font-body: {slot 0 bodyDeclared};",
+       s!"    --font-sans: {slot 1 "sans-serif"};",
+       s!"    --font-mono: {slot 2 "monospace"};"] ++
       (if fs.math.isSome then
-        [String.intercalate ", " (["    --font-math: \"ltx-math\""] ++ fb ++ ["math;"])]
+        [s!"    --font-math: {stackFor fs "ltx-math" "math"};"]
        else [])
     | none =>
       (match doc.fonts.body with
@@ -2203,7 +2222,7 @@ def emitTree (cfg : Config) (doc : Doc) :
   -- a mode that emits no variables ships no rules, and the driver writes
   -- the files only when it passed the set.
   let faceRules := match cfg.fonts with
-    | some fs => fontFaceCss cfg.fontsDir fs
+    | some fs => fontCss cfg.fontsDir fs
     | none => ""
   match cfg.css with
   | .own => head := head.push (Node.style (faceRules ++ baseCss cfg doc ++ "\n" ++ themeCss doc ++ styled))
