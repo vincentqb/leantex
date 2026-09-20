@@ -1040,6 +1040,37 @@ where
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     return some (← geometry (rawSrc (args.getD 0 #[])) pos s!"\\{name}", k)
+  | "microtypesetup" =>
+    -- microtype's switchboard (manual §3.1): `protrusion` reaches the
+    -- native protrusion gate, and `activate` — the manual's shorthand for
+    -- protrusion and expansion together — reaches its protrusion half.
+    -- A key the engine does not perform is dropped named (W0101), never
+    -- silently; a bare key means `=true`, as in the manual.
+    let (args, k) := takeGroups raws start 1
+    if args.isEmpty then return none
+    let mut keys : Array String := #[]
+    let mut dropped : Array String := #[]
+    for e in Decl.splitEntries (rawSrc (args.getD 0 #[])) do
+      match e.splitOn "=" with
+      | [] => pure ()
+      | key :: v =>
+        let key := key.trimAscii.toString
+        let v := (String.intercalate "=" v).trimAscii.toString
+        if key == "protrusion" || key == "activate" then
+          match v with
+          | "" | "true" | "compatibility" | "nocompatibility" =>
+            keys := keys.push "protrusion = on"
+          | "false" => keys := keys.push "protrusion = off"
+          | _ => dropped := dropped.push key
+          if key == "activate" then dropped := dropped.push "expansion"
+        else if !key.isEmpty then dropped := dropped.push key
+    unless dropped.isEmpty do
+      say .W0101 s!"microtype keys without a native equivalent were dropped: \
+{String.intercalate ", " dropped.toList}" pos
+    if keys.isEmpty then return some (#[], k)
+    let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
+    became "\\microtypesetup" native pos
+    return some (← synthAt native pos, k)
   | "newlength" =>
     -- `\newlength{\x}` allocates a length register at 0pt (usrguide,
     -- "Defining lengths"); the native store is a token, so a later

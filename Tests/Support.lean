@@ -305,7 +305,10 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
           ruleSegs := ruleSegs.push (l.y, th)
         -- an image is decorative ink to the text census, like a rule
         | .image .. => pure ()
-      lines := lines.push { x := l.x, y := l.y, size := runSize
+      -- The census asks where the text block stands, so a protruded
+      -- line reports its measure edge: the ink deliberately hangs
+      -- `l.hang` left of it (`Layout.protrudeLeft`).
+      lines := lines.push { x := l.x + l.hang, y := l.y, size := runSize
                             width := l.setWidth, text := chars }
       covered := covered.push ' '
     pages := pages.push { lines := lines

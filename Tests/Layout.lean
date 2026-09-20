@@ -253,6 +253,41 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   t "verbatim sets one line per code line, blanks included"
     ((measureOf "\\begin{verbatim}\na\n\nb\n\\end{verbatim}").size == 3)
 
+  -- Character protrusion (stage 1): every justified full line's boundary
+  -- glyphs hang into the margin by the cmr-default fractions of their own
+  -- width (`Layout.protrusionLR`); the line is set against the enlarged
+  -- measure and shifted left by the hang, so the optical edge is straight
+  -- and breaks are unchanged. Every word of the fixture starts 'A' and
+  -- ends '.', so both boundary glyphs of every full line are known
+  -- whatever breaks the breaker picks; the fil-set last line keeps its
+  -- exact margins. The left hang is exact; the right edge sits within the
+  -- period's allowance up to the glue set's sub-sp rounding (each gap
+  -- rounds under 1 sp), so the band asserted is (allowance/2, 2×).
+  let font := oneFace.get 0
+  let scaledAdv (c : Char) : Dim.Sp :=
+    (font.advance c * geom.fontSize.toNat) / font.unitsPerEm
+  let lp := scaledAdv 'A' * 50 / 1000
+  let rp := scaledAdv '.' * 700 / 1000
+  let protDoc := (Elab.run "t" (String.intercalate " " (List.replicate 40 "Aaaa."))).1
+  let protLines := bodyLines (layoutOf oneFace protDoc geom)
+  let full := protLines.pop
+  t "protrusion fixture wraps into full lines" (protLines.size ≥ 3)
+  t "protrusion hangs every full line left by exactly the A's fraction"
+    (!full.isEmpty && full.all fun l => l.x == geom.hmargin - lp && l.hang == lp)
+  t "protrusion hangs the period past the measure by its allowance"
+    (full.all fun l =>
+      l.x + l.setWidth > geom.hmargin + geom.textWidth + rp / 2 &&
+      l.x + l.setWidth < geom.hmargin + geom.textWidth + 2 * rp)
+  let offLines := bodyLines (layoutOf oneFace protDoc { geom with protrude := false })
+  t "protrusion never re-breaks: the line count is the unprotruded one"
+    (protLines.size == offLines.size)
+  t "protrusion off restores the exact margins"
+    (offLines.all fun l => l.x == geom.hmargin && l.hang == 0 &&
+      l.x + l.setWidth ≤ geom.hmargin + geom.textWidth)
+  t "a page declares protrusion off"
+    ((Elab.run "t" "\\documentclass{article}\\page{ protrusion = off }\
+\\begin{document}x\\end{document}").1.page.protrude == some false)
+
 /-- Cross-references: a \label binds to the nearest preceding numbered
 thing in flow order, resolution is one pure pass over the IR
 (`Ir.resolveOneRef_exact` is the statement; these run it), a forward

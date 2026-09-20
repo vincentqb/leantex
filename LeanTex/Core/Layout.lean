@@ -35,6 +35,9 @@ structure Geom where
   /-- Whether paragraphs justify. Off means ragged right: word spaces stay
   natural, an underfull line costs nothing, and only real overfull is bad. -/
   justify : Bool := true
+  /-- Whether boundary glyphs protrude into the margin (microtype's
+  character protrusion). Layout owns the gate, as it owns `hyphenate`'s. -/
+  protrude : Bool := true
   /-- Bleed past the trim edge, for the PDF writer: layout works in trim
   coordinates and never sees it. -/
   bleed : Sp := 0
@@ -273,6 +276,7 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     parskip := spec.parskip.getD base.parskip
     hyphenate := spec.hyphenate.getD base.hyphenate
     justify := spec.justify.getD base.justify
+    protrude := spec.protrude.getD base.protrude
     bleed := spec.bleed }
 
 /-- The slides stage carries a readable number of text lines. Tantau's rule
@@ -505,6 +509,11 @@ structure LineOut where
   size : Sp
   segs : Array Seg
   setWidth : Sp
+  /-- How far the line's first glyph deliberately hangs left of the
+  measure — character protrusion's left overhang. `x` is the ink truth
+  the backends paint at; `x + hang` is the measure edge, where the text
+  block logically starts. -/
+  hang : Sp := 0
   /-- Engine-placed running furniture — head, foot, chrome slots, the
   logo — laid into its reserved margin band by the furniture pass. Marked
   so a judge of the document's own ink (`Check.Shipped.ofOut`'s area
@@ -2250,9 +2259,121 @@ def kpTwoPass (items : Array Item) (target : Sp) : Array Nat := Id.run do
 
 -- Line setting ----------------------------------------------------------------
 
+/-- Character protrusion factors `(left, right)` in per-mille of the
+glyph's own width: how far a line-boundary glyph may hang into the margin
+so the optical edge reads straight (Thành, "Margin kerning and font
+expansion with pdfTeX", TUGboat 22(3); microtype manual §2). The values
+are microtype's `cmr-default` list, mt-cmr.cfg v2.2 (R. Schlicht) — the
+generic set microtype itself applies to families without their own
+config, which is how one table serves any face here. Curly and double
+quotes are the config's `\textquoteleft`-family rows; the dashes its
+`\textendash`/`\textemdash`. -/
+def protrusionLR (c : Char) : Nat × Nat :=
+  match c with
+  | 'A' => (50, 50)
+  | 'F' => (0, 50)
+  | 'J' => (50, 0)
+  | 'K' => (0, 50)
+  | 'L' => (0, 50)
+  | 'T' => (50, 50)
+  | 'V' => (50, 50)
+  | 'W' => (50, 50)
+  | 'X' => (50, 50)
+  | 'Y' => (50, 50)
+  | 'k' => (0, 50)
+  | 'r' => (0, 50)
+  | 't' => (0, 70)
+  | 'v' => (50, 50)
+  | 'w' => (50, 50)
+  | 'x' => (50, 50)
+  | 'y' => (50, 70)
+  | '0' => (0, 50)
+  | '1' => (100, 200)
+  | '2' => (50, 50)
+  | '3' => (50, 50)
+  | '4' => (70, 70)
+  | '5' => (0, 50)
+  | '6' => (0, 50)
+  | '7' => (50, 100)
+  | '8' => (0, 50)
+  | '9' => (0, 50)
+  | '.' => (0, 700)
+  | ',' => (0, 500)
+  | ':' => (0, 500)
+  | ';' => (0, 500)
+  | '!' => (0, 100)
+  | '?' => (0, 200)
+  | '@' => (50, 50)
+  | '~' => (200, 250)
+  | '%' => (50, 50)
+  | '*' => (300, 300)
+  | '+' => (250, 250)
+  | '(' => (300, 0)
+  | ')' => (0, 300)
+  | '/' => (200, 300)
+  | '-' => (400, 500)
+  | '–' => (400, 300)
+  | '—' => (300, 200)
+  | '‘' => (500, 700)
+  | '’' => (500, 600)
+  | '“' => (500, 300)
+  | '”' => (200, 600)
+  | _ => (0, 0)
+
+/-- The table never grants a glyph more overhang than its own width: every
+entry is under 1000‰ — the source's own largest is the period's 700 right
+(mt-cmr.cfg `cmr-default`) — so a protruded boundary glyph always keeps ink
+inside the measure and the hang stays within one glyph advance. -/
+theorem protrusionLR_covers (c : Char) :
+    (protrusionLR c).1 ≤ 1000 ∧ (protrusionLR c).2 ≤ 1000 := by
+  unfold protrusionLR
+  split <;> decide
+
+/-- How far the line `[a:j)` may hang left of the measure: the left
+protrusion of its first glyph, in sp. Kerns (glyphless boxes) and
+penalties are passed over; an image or rule at the edge protrudes
+nothing. -/
+def protrudeLeft (items : Array Item) (a j : Nat) : Sp := Id.run do
+  for k in [a:j] do
+    match items[k]? with
+    | some (.box _ _ _ _ glyphs _ _ _) =>
+      if let some (_, c, adv) := glyphs[0]? then
+        return adv * (protrusionLR c).1 / 1000
+    | some (.img ..) | some (.rule ..) => return 0
+    | _ => pure ()
+  return 0
+
+/-- How far the line breaking at `j` may hang right of the measure: the
+right protrusion of its last glyph — the break penalty's own hyphen when
+it carries one (the single biggest win: the hyphen protrudes 500‰), else
+the last boxed glyph before the break. -/
+def protrudeRight (items : Array Item) (a j : Nat) : Sp := Id.run do
+  if let some (.pen _ _ _ _ _ glyphs) := items[j]? then
+    if let some (_, c, adv) := glyphs.back? then
+      return adv * (protrusionLR c).2 / 1000
+  for i in [0:j - a] do
+    match items[j - 1 - i]? with
+    | some (.box _ _ _ _ glyphs _ _ _) =>
+      if let some (_, c, adv) := glyphs.back? then
+        return adv * (protrusionLR c).2 / 1000
+    | some (.img ..) | some (.rule ..) => return 0
+    | _ => pure ()
+  return 0
+
 private def setLine (items : Array Item) (a j : Nat) (target : Sp)
-    (justify : Bool) : Array Seg × Sp × Bool := Id.run do
+    (justify : Bool) (protrude : Bool := false) :
+    Array Seg × Sp × Bool × Sp := Id.run do
   let m := measure items a j
+  -- Protrusion (stage 1): boundary glyphs hang into the margin by the
+  -- table's fraction of their own width, so the optical edge is straight.
+  -- The line is set against the enlarged target and the caller shifts its
+  -- x left by the returned hang, so interior glue absorbs exactly the
+  -- overhang. Lines with fil keep their exact margins: a last line or
+  -- an `\hfill` row never reaches the edge, so nothing is gained there
+  -- and a dates row set flush stays flush.
+  let doProt := protrude && justify && !m.fil
+  let leftHang := if doProt then protrudeLeft items a j else 0
+  let target := target + leftHang + (if doProt then protrudeRight items a j else 0)
   let delta := target - m.natural
   let mut overfull := false
   -- Fill glue shares the leftover, but a line-running fill does not count as a
@@ -2328,7 +2449,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
       segs' := segs'.pop
       width := width - w
     | _ => break
-  return (segs', width, overfull)
+  return (segs', width, overfull, leftHang)
 
 -- Page assembly ----------------------------------------------------------------
 
@@ -2696,7 +2817,7 @@ it overflowed) and the line opens the next, its pending glue discarded as
 TeX discards glue at the top of a page. Glue is never stretched: the
 bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
-    (w : Sp) : B :=
+    (w : Sp) (hang : Sp := 0) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   -- A zero-width rule is a strut: it shaped the extent above and ships no
@@ -2705,7 +2826,8 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     | .rule w _ _ _ => w != 0
     | _ => true
   let bottom := b.geom.bodyBottom
-  let mk (y : Sp) : LineOut := { x := x, y := y, size := size, segs := segs, setWidth := w }
+  let mk (y : Sp) : LineOut :=
+    { x := x, y := y, size := size, segs := segs, setWidth := w, hang := hang }
   let firstY := b.geom.bodyTop + max b.ascent box.above
   if b.cur.lines.isEmpty || b.freshStart then
     b.commit (mk firstY) box.inkBelow box.below 0 0
@@ -2743,7 +2865,7 @@ peer boundary the pending skip is the resolved parskip
 (`flushGap_default_exact`), so the realized baseline delta is the leading
 plus exactly one rhythm quantum (`Ir.default_rhythm_multiples`). -/
 private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w : Sp)
+    (segs : Array Seg) (w hang : Sp)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
     (hni : b.noInterline = false)
     (hfit : b.y + b.skip.width
@@ -2752,7 +2874,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
         + (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
             b.geom.leading size segs).inkBelow - b.geom.bodyBottom
         ≤ b.pageShrink + b.skip.shrink) :
-    (b.placeLine fs x size segs w).cur.lines.back?.map (·.y) =
+    (b.placeLine fs x size segs w hang).cur.lines.back?.map (·.y) =
       some (b.y + b.skip.width
         + (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
             b.descent b.geom.leading size segs).above)) := by
@@ -2831,6 +2953,8 @@ private structure ParaJob where
   /-- Justified or ragged, from the page: ragged lines break free of
   stretch badness and are set at their natural width. -/
   justify : Bool := true
+  /-- Whether boundary glyphs protrude into the margin, from the page. -/
+  protrude : Bool := true
   /-- Marker content set as its own items and placed before the first line. -/
   markerSegs : Option (Array Seg × Sp) := none
   /-- A rule filling the first line after the content. -/
@@ -3111,7 +3235,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       let (mi, mds, cache, _) :=
         itemsOfInlines pats size a.xHeight fs { color := a.fg } m cache
           a.imgs a.geom.textWidth a.geom.textHeight
-      let (segs, w, _) := setLine mi (lineStart mi 0) (mi.size - 1) a.geom.textWidth false
+      let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) a.geom.textWidth false
       (some (segs, w), ds ++ mds, cache)
     | none => (none, ds, cache)
   { a with
@@ -3121,6 +3245,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       target := (a.measure.getD a.geom.textWidth) - indent
       indent := indent, center := center, size := size
       justify := a.geom.justify
+      protrude := a.geom.protrude
       markerSegs := markerSegs, rule := rule }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base — the
@@ -4324,17 +4449,19 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
       x := x + w
   return out
 
-/-- The geometry of one paragraph line: its segs, x, set width, and
-whether the break was overfull. Pure in the builder — it reads only the
-page geometry — so the placement pipeline below is the only part of a
-paragraph line that touches pages. -/
+/-- The geometry of one paragraph line: its segs, x, set width, whether
+the break was overfull, and the protrusion hang its x was shifted left
+by. Pure in the builder — it reads only the page geometry — so the
+placement pipeline below is the only part of a paragraph line that
+touches pages. -/
 private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
-    (prev brk : Nat) : Array Seg × Sp × Sp × Bool :=
+    (prev brk : Nat) : Array Seg × Sp × Sp × Bool × Sp :=
   let width := j.target
   let a := if first then lineStart j.items 0 else lineStart j.items (prev + 1)
-  let (segs0, w0, overfull) := setLine j.items a brk width (!j.center && j.justify)
+  let (segs0, w0, overfull, hang) :=
+    setLine j.items a brk width (!j.center && j.justify) j.protrude
   let x0 := if j.center then b.geom.hmargin + j.indent + (width - w0) / 2
-    else b.geom.hmargin + j.indent
+    else b.geom.hmargin + j.indent - hang
   -- The marker stands `\labelsep` left of the item: half an em, LaTeX's
   -- own separation (classes.dtx: \setlength\labelsep{.5em}).
   let sep := b.geom.fontSize / 2
@@ -4369,7 +4496,7 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
         else (segs1, w1)
       | none => (segs1, w1)
     else (segs1, w1)
-  (segs2, x1, w2, overfull)
+  (segs2, x1, w2, overfull, hang)
 
 /-- What follows a placed paragraph line: its underline siblings (pushed
 after `placeLine`, so a page break has already decided where the text
@@ -4426,8 +4553,9 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
     (st : B × Nat × Bool) (brk : Nat) : B × Nat × Bool :=
   let b0 := st.1
   let g := paraLineGeom fs j b0 st.2.2 st.2.1 brk
-  let b1 := if g.2.2.2 then b0.warnOverfull else b0
-  (placeParaTrailer fs j brk g.1 (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1), brk, false)
+  let b1 := if g.2.2.2.1 then b0.warnOverfull else b0
+  (placeParaTrailer fs j brk g.1
+    (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2), brk, false)
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
   (breaks.foldl (placeParaLine fs j)
@@ -4773,7 +4901,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
           #[.colored color none content] {} imgs b.geom.textWidth b.geom.textHeight
         let breaks := kp items b.geom.textWidth
         if let some brk := breaks[0]? then
-          let (segs, w, _) := setLine items (lineStart items 0) brk b.geom.textWidth false
+          let (segs, w, _, _) := setLine items (lineStart items 0) brk b.geom.textWidth false
           -- The node's box centres on its anchor, as TikZ anchors a node:
           -- the baseline sits below the centre by half the ink height
           -- less half the depth.
@@ -4894,7 +5022,8 @@ private theorem finishPage_extends (b : B) : PagesExtend b b.finishPage :=
   ⟨#[_], rfl⟩
 
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w : Sp) : PagesExtend b (b.placeLine fs x size segs w) := by
+    (segs : Array Seg) (w hang : Sp) :
+    PagesExtend b (b.placeLine fs x size segs w hang) := by
   simp only [B.placeLine]
   repeat' split
   all_goals first
@@ -4905,8 +5034,8 @@ private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
 /-- Under `noBreak` a placed line never closes a page and never clears
 the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w : Sp) (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w).pages = b.pages := by
+    (segs : Array Seg) (w hang : Sp) (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang).pages = b.pages := by
   simp only [B.placeLine]
   repeat' split
   all_goals first
@@ -4914,8 +5043,8 @@ private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w : Sp) (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w).noBreak = true := by
+    (segs : Array Seg) (w hang : Sp) (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang).noBreak = true := by
   simp only [B.placeLine]
   repeat' split
   all_goals first
@@ -4925,8 +5054,8 @@ private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
 /-- `placeLine` from a pages-preserving wrapper of `b0` still only
 extends `b0`'s shipped pages. -/
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
-    (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w : Sp) :
-    PagesExtend b0 (b1.placeLine fs x size segs w) :=
+    (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp) :
+    PagesExtend b0 (b1.placeLine fs x size segs w hang) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
@@ -4993,7 +5122,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
   all_goals first
     | exact absurd rfl hs
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
-    | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ h, placeLine_keeps_noBreak _ _ _ _ _ _ h⟩
+    | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ _ h, placeLine_keeps_noBreak _ _ _ _ _ _ _ h⟩
     | exact placePara_noBreak _ _ _ _ h
     | (refine ⟨?_, ?_⟩ <;> simp [h]; done)
 

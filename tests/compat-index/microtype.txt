@@ -1,7 +1,18 @@
-# source: microtype manual §3 (\microtypesetup), §6 (context), §7 (letterspacing
-# and \DisableLigatures). The load is subsumed by the breaker's own tolerances;
-# none of the configuration surface is read yet.
-pre refuse:W0301 \microtypesetup{protrusion=true}
+# source: microtype manual §3.1 (\microtypesetup), §5.1-5.2 (\SetProtrusion,
+# \SetExpansion), §5.3 (\SetTracking), §5.4-5.5 (\SetExtraKerning,
+# \SetExtraSpacing — declined: pdfTeX-only interword adjustments, the
+# smallest visible effect), §6 (context), §7 (letterspacing and
+# \DisableLigatures). Character protrusion is native (the generic
+# cmr-default table, Layout.protrusionLR); its switchboard key is honoured.
+# Per-font protrusion/expansion declarations and the rest of the
+# configuration surface stay named where used.
+pre impl \microtypesetup{protrusion=true}
+pre impl \microtypesetup{protrusion=false}
+pre refuse:W0101 \microtypesetup{kerning=true}
+pre refuse:W0301 \SetProtrusion{encoding = *}{. = {,700}}
+pre refuse:W0301 \SetExpansion{encoding = *}{}
+pre refuse:W0301 \SetExtraKerning{encoding = *}{}
+pre refuse:W0301 \SetExtraSpacing{encoding = *}{}
 body refuse:W0301 \textls{x}
 body refuse:W0301 {\lsstyle x}
 pre refuse:W0301 \DisableLigatures{encoding = *}

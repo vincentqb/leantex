@@ -53,7 +53,7 @@ error[E0320]: 'oops' in '\page' has no value
 error[E0321]: 'scale' needs a number, got "big"
 ── E0322 (dropped) unknown key in a declaration block
 error[E0322]: '\page' has no key 'zoom'
-  help: known keys: size, width, height, margin, vmargin, hmargin, textwidth, textheight, leading, parskip, measure, fontsize, bleed, hyphenate, justify, numbers, furnituregap
+  help: known keys: size, width, height, margin, vmargin, hmargin, textwidth, textheight, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, numbers, furnituregap
 ── E0323 (dropped) declaration key value has the wrong type
 error[E0323]: 'vmargin' in '\page' expects a dimension, got a string
 ── E0324 (dropped) unknown page size name
@@ -194,7 +194,7 @@ warning[W0014]: '{align*}': row 2 has 1 cell(s) where 2 align; padded with empty
 ── W0015 (degraded) equation numbers not rendered yet; rows set unnumbered
 warning[W0015]: equation numbers are not rendered yet; '{align}' sets unnumbered
   help: '{align*}' spells the unnumbered form, which renders the same
-── W0101 (config) geometry keys without a native equivalent dropped
+── W0101 (config) preamble keys without a native equivalent dropped
 warning[W0101]: geometry keys without a native equivalent were dropped: voffset
 ── W0102 (degraded) unsupported colour model
 warning[W0102]: colour model 'hsb' is not supported; use HTML, rgb, or cmyk

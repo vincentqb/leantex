@@ -161,7 +161,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .E0404 => ("0404", .dropped, "a font file could not be used")
   | .E0501 => ("0501", .dropped, "\\input nesting too deep")
   | .N0100 => ("0100", .info, "LaTeX idiom translated to its native declaration")
-  | .W0101 => ("0101", .config, "geometry keys without a native equivalent dropped")
+  | .W0101 => ("0101", .config, "preamble keys without a native equivalent dropped")
   | .N0102 => ("0102", .info, "option ignored: it configures machinery the engine does not model")
   | .N0103 => ("0103", .info, "\\section short title unused: nothing consumes it yet")
   | .N0114 => ("0114", .info, "TeX '\\ifdefined' resolved from the document's own definitions")

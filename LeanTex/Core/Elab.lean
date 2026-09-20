@@ -291,7 +291,7 @@ def runningCtrl : List String := ["runninghead", "runningfoot"]
 def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin",
    "textwidth", "textheight", "leading", "parskip",
-   "measure", "fontsize", "bleed", "hyphenate", "justify", "numbers",
+   "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion", "numbers",
    "furnituregap", "headsep", "footskip"]
 
 /-- The `\page` keys that declare the page's physical extent. Exactly these
@@ -6967,6 +6967,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "off" | "false" => spec := { spec with justify := some false }
       | _ =>
         evs := say evs .E0323 s!"'justify' in '\\page' expects on or off, got '{v}'"
+    | "protrusion", .ident v =>
+      match v with
+      | "on" | "true" => spec := { spec with protrude := some true }
+      | "off" | "false" => spec := { spec with protrude := some false }
+      | _ =>
+        evs := say evs .E0323 s!"'protrusion' in '\\page' expects on or off, got '{v}'"
     | "numbers", .ident v =>
       match v with
       | "on" | "true" => spec := { spec with numbers := some true }
@@ -6995,7 +7001,8 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       else if pageKeys.contains key then
         let expected := if key == "size" then "a page size name"
           else if key == "measure" then "'checked' or 'free'"
-          else if key == "hyphenate" || key == "justify" || key == "numbers" then "on or off"
+          else if key == "hyphenate" || key == "justify" || key == "protrusion"
+            || key == "numbers" then "on or off"
           else "a dimension"
         evs := evs.push (.say (Decl.wrongType ctx.file "page" key expected v pos))
       else

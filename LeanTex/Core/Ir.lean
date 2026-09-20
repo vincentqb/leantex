@@ -90,6 +90,13 @@ structure PageSpec where
   the stretch justification needs, and forcing it gives the breaker only
   overfull answers. -/
   justify : Option Bool := none
+  /-- Whether boundary glyphs protrude into the margin so the optical edge
+  is straight — microtype's character protrusion (Thành, "Margin kerning
+  and font expansion with pdfTeX", TUGboat 22(3); microtype manual §2),
+  on by default as microtype's own `protrusion=true` is. `\page{
+  protrusion = off }` or `\microtypesetup{protrusion=false}` opts out;
+  `none` takes the default. -/
+  protrude : Option Bool := none
   /-- Whether pages carry the physical page number, centred in the foot;
   `none` takes the class default (`ClassRecord.pageNumbers`). This is
   LaTeX's `plain` page style, spelled natively: `\page{ numbers = on }`
