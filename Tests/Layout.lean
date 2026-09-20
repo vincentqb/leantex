@@ -2666,8 +2666,10 @@ def headingRhythmChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
     -- below), within a point of slack: without the tokens the same page
     -- carries interlines alone, ~12pt less.
     t "the heading's own rhythm stands: a full unit above plus a half below"
-      (yc - yo ≥ 2 * leading + Ir.headingBeforeDefault.width.sp
-        + Ir.headingAfterDefault.width.sp - Dim.pt 1)
+      (yc - yo ≥ 2 * leading
+        + (Ir.headingBeforeDefault (Layout.Geom.ofPage d.page).fontSize).width.sp
+        + (Ir.headingAfterDefault (Layout.Geom.ofPage d.page).fontSize).width.sp
+        - Dim.pt 1)
     t "more space above the heading than below it"
       (yh - yo > yc - yh)
   | _, _, _ => failures ref "heading rhythm: probe lines missing from the page"

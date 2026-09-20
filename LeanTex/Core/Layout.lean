@@ -20,7 +20,7 @@ structure Geom where
   /-- The gap between peer paragraphs. The default is the declared token
   (`Ir.parskipDefault`, one rhythm quantum); a document declares its own
   through `\page{ parskip = ... }`. -/
-  parskip : SymGlue := Ir.parskipDefault
+  parskip : SymGlue := Ir.parskipDefault Ir.baseFontSize
   /-- Per-level list indent. The default is the engine's own choice — 1.5 em
   at the 10 pt base, shallower than classes.dtx's 2.5/2.2/1.87 em stack,
   which reads deep at this engine's narrower default measure; no external
@@ -276,7 +276,7 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     vmargin := spec.vmargin
     fontSize := spec.fontSize
     leading := spec.leading
-    parskip := spec.parskip.getD base.parskip
+    parskip := spec.parskip.getD (Ir.parskipDefault spec.fontSize)
     hyphenate := spec.hyphenate.getD base.hyphenate
     justify := spec.justify.getD base.justify
     protrude := spec.protrude.getD base.protrude
@@ -3999,7 +3999,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- more above than below) — its own tokens, so a class that zeroes
     -- \parskip keeps its heading space; a document with a larger parskip
     -- keeps the walk's 2-quanta growth.
-    let hb := a.resolve Ir.headingBeforeDefault
+    let hb := a.resolve (Ir.headingBeforeDefault a.geom.fontSize)
     let two := a.parskip.add a.parskip
     let a := a.addvspace ((st.before.map a.resolve).getD
       (if two.width > hb.width then two else hb))
@@ -4015,7 +4015,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
           (baseStyle := { bold := true })
           (rule := st.rule.map fun (r : Ir.Color × Option String) =>
             (headingRuleWeight a.geom.fontSize, r.1))
-    let ha := a.resolve Ir.headingAfterDefault
+    let ha := a.resolve (Ir.headingAfterDefault a.geom.fontSize)
     let a := a.vskip ((st.after.map a.resolve).getD
       (if a.parskip.width > ha.width then a.parskip else ha))
     if a.slides then a.pageBreak else a
@@ -4235,8 +4235,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- number from. Everything between `floatOpen` and `floatClose` ships
     -- on one page (`runFloat`): a float is unbreakable, as LaTeX's are.
     let caption := Ir.numberedCaption kind num caption
-    let floatSep := a.resolve ((a.tokens.find? "floatsep").getD Ir.floatSepDefault)
-    let capSep := a.resolve ((a.tokens.find? "captionsep").getD Ir.captionSepDefault)
+    let floatSep := a.resolve ((a.tokens.find? "floatsep").getD
+      (Ir.floatSepDefault a.geom.fontSize))
+    let capSep := a.resolve ((a.tokens.find? "captionsep").getD
+      (Ir.captionSepDefault a.geom.fontSize))
     let a := a.pushOp .floatOpen
     -- classes.dtx `\@makecaption`: a caption that fits one line centres; a
     -- longer one sets as an ordinary paragraph.

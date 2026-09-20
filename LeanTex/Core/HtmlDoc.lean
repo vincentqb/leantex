@@ -604,10 +604,10 @@ table's row names and the engine's tokens; an unknown name is 0, which
 `backend_gaps_agree` cannot miss (a zero row agrees with no positive
 one). -/
 private def pdfGapSp : String → Dim.Sp
-  | "peer" => Ir.parskipDefault.width.sp
-  | "heading" => 2 * Ir.parskipDefault.width.sp
-  | "caption" => Ir.captionSepDefault.width.sp
-  | "float" => Ir.floatSepDefault.width.sp
+  | "peer" => (Ir.parskipDefault Ir.baseFontSize).width.sp
+  | "heading" => 2 * (Ir.parskipDefault Ir.baseFontSize).width.sp
+  | "caption" => (Ir.captionSepDefault Ir.baseFontSize).width.sp
+  | "float" => (Ir.floatSepDefault Ir.baseFontSize).width.sp
   | _ => 0
 
 /-- The screen backend's emitted default gap, in milli-rem: the number

@@ -43,10 +43,16 @@ is an integer number of these, which `default_rhythm_multiples` and
 def rhythmQuantum (size : Sp) (factor : Nat := 1000) : Sp :=
   leadingFor size factor / 2
 
-/-- The default gap between peer paragraphs: one rhythm quantum, half the
-base leading (6pt at the 10pt base). The default is the engine's own; a
-document declares its own through `\page{ parskip = ... }`. -/
-def parskipDefault : SymGlue := { width := Dim.Length.ofSp (Dim.pt 6) }
+/-- The default gap between peer paragraphs: one rhythm quantum of the
+governing size, half its leading (6pt at the 10pt base, 6.6pt at the
+slides 11pt). Derivation-closed in the base size by construction —
+`parskip_is_quantum` is `rfl` at every base — which is what makes a
+uniform `\page{ fontsize }` scale the whole design (`\linespread` moves
+the lines it declares, not the default gaps: the gap quantizes on the
+base rhythm). A document declares its own through
+`\page{ parskip = ... }`. -/
+def parskipDefault (size : Sp) : SymGlue :=
+  { width := Dim.Length.ofSp (rhythmQuantum size) }
 
 /-- Page geometry, as declared by `\page`. -/
 structure PageSpec where
@@ -416,12 +422,14 @@ theorem rule_seps_ordered : 0 < aboveRuleSep.ex ∧ aboveRuleSep.ex < belowRuleS
 
 /-- Gap between a float's object and its caption — the object side only;
 the caption's text side is `floatSepDefault` (the sourcing note above).
-Overridable as `\tokens{ captionsep = ... }` or the caption package's
-`skip=` key. -/
-def captionSepDefault : SymGlue := { width := { sp := Dim.pt 6 } }
-/-- Gap between a float and the text around it. Overridable as
-`\tokens{ floatsep = ... }`. -/
-def floatSepDefault : SymGlue := { width := { sp := Dim.pt 12 } }
+One rhythm quantum of the governing size. Overridable as
+`\tokens{ captionsep = ... }` or the caption package's `skip=` key. -/
+def captionSepDefault (size : Sp) : SymGlue :=
+  { width := { sp := rhythmQuantum size } }
+/-- Gap between a float and the text around it: one full rhythm unit of
+the governing size. Overridable as `\tokens{ floatsep = ... }`. -/
+def floatSepDefault (size : Sp) : SymGlue :=
+  { width := { sp := 2 * rhythmQuantum size } }
 
 /-- The heading's default spaces, their own tokens rather than the
 parskip's doubles: article.cls pairs a zero `\parskip` with 3.5ex above /
@@ -432,10 +440,12 @@ rhythm-aligned stand-ins are one full unit above and the half-unit below
 document with a larger declared parskip keeps the walk's 2-quanta growth
 (the walk takes the larger); a declared `\style{section}{ before/after }`
 overrides entirely. -/
-def headingBeforeDefault : SymGlue := { width := { sp := Dim.pt 12 } }
+def headingBeforeDefault (size : Sp) : SymGlue :=
+  { width := { sp := 2 * rhythmQuantum size } }
 /-- The heading's default space below: the half-unit. See
 `headingBeforeDefault`. -/
-def headingAfterDefault : SymGlue := { width := { sp := Dim.pt 6 } }
+def headingAfterDefault (size : Sp) : SymGlue :=
+  { width := { sp := rhythmQuantum size } }
 
 /-- A heading binds to the text it introduces: its default space above is
 at least — here exactly twice — its space below (Hochuli, Detail in
@@ -444,11 +454,20 @@ it; article.cls's 3.5ex/2.3ex is the same ordering at 1.52), both on the
 rhythm, and neither zero. W0202 is the declared-values half of the same
 rule; this is the defaults' half, and an edit that inverts them fails the
 build here. -/
-theorem heading_space_above_ge_below :
-    headingAfterDefault.width.sp ≤ headingBeforeDefault.width.sp ∧
-    headingBeforeDefault.width.sp = 2 * rhythmQuantum baseFontSize ∧
-    headingAfterDefault.width.sp = rhythmQuantum baseFontSize ∧
-    0 < headingAfterDefault.width.sp := by decide
+theorem heading_space_above_ge_below (size : Int) (h : Dim.pt 1 ≤ size) :
+    (headingAfterDefault size).width.sp ≤ (headingBeforeDefault size).width.sp ∧
+    (headingBeforeDefault size).width.sp = 2 * rhythmQuantum size ∧
+    (headingAfterDefault size).width.sp = rhythmQuantum size ∧
+    0 < (headingAfterDefault size).width.sp := by
+  -- The key facts over bare `Int` binders: omega does not see through
+  -- the `Sp` abbreviation (the `slides_lines_survive_bands` pattern).
+  have key : ∀ x : Int, 65536 ≤ x →
+      x * 1200 / 1000 * 1000 / 1000 / 2
+          ≤ 2 * (x * 1200 / 1000 * 1000 / 1000 / 2) ∧
+      0 < x * 1200 / 1000 * 1000 / 1000 / 2 := by
+    intro x hx
+    omega
+  exact ⟨(key size h).1, rfl, rfl, (key size h).2⟩
 
 /-- The default vertical rhythm is one system, not three numbers: the peer
 gap (`parskipDefault`, 6pt at the 10pt base) is the rhythm quantum — half
@@ -460,10 +479,30 @@ conjunct is what makes a heading's space above strictly exceed its space
 below. Stated here, over the declared tokens, because both backends
 realize these gaps: the PDF's placement and the HTML base stylesheet each
 owe the theorem that what they ship equals what this layer declares. -/
-theorem default_rhythm_multiples :
-    parskipDefault.width.sp = rhythmQuantum baseFontSize ∧
-    2 * parskipDefault.width.sp = leadingFor baseFontSize ∧
-    0 < parskipDefault.width.sp := by decide
+theorem default_rhythm_multiples (size : Int) (h : Dim.pt 1 ≤ size) :
+    (parskipDefault size).width.sp = rhythmQuantum size ∧
+    0 < (parskipDefault size).width.sp := by
+  have key : ∀ x : Int, 65536 ≤ x →
+      0 < x * 1200 / 1000 * 1000 / 1000 / 2 := by
+    intro x hx
+    omega
+  exact ⟨rfl, key size h⟩
+
+/-- The anchor, `rfl` by derivation at every base: the peer gap IS the
+rhythm quantum, because it is defined as it — no absolute constant
+survives in the default, which is the soundness of mapping a poster's
+`scale=` onto `\page{ fontsize }`. -/
+theorem parskip_is_quantum (size : Sp) :
+    (parskipDefault size).width.sp = rhythmQuantum size := rfl
+
+/-- At the shipped article base the leading is even, so the half-unit
+halves it exactly. The slides 11pt leading is odd in sp (865075), so its
+quantum rounds down half an sp — invisible ink, stated rather than
+implied; the exactness is per-base, the derivation universal
+(`parskip_is_quantum`). -/
+theorem parskip_halves_leading_at_bases :
+    2 * (parskipDefault baseFontSize).width.sp = leadingFor baseFontSize := by
+  decide
 
 /-- Caption and float gaps sit on the same rhythm: the caption gap — the
 object-side gap, the sourcing note above `captionSepDefault` — is the
@@ -476,11 +515,16 @@ lands on is `Layout.floatPlan`'s statement; this one holds the values. A
 default edit that breaks the quantization or the ordering fails the
 build; this is the user-visible "spacing around tables and figures"
 contract, stated over the values the engine ships. -/
-theorem caption_gaps_rhythm :
-    captionSepDefault.width.sp = rhythmQuantum baseFontSize ∧
-    floatSepDefault.width.sp = 2 * rhythmQuantum baseFontSize ∧
-    floatSepDefault.width.sp = leadingFor baseFontSize ∧
-    captionSepDefault.width.sp < floatSepDefault.width.sp := by decide
+theorem caption_gaps_rhythm (size : Int) (h : Dim.pt 1 ≤ size) :
+    (captionSepDefault size).width.sp = rhythmQuantum size ∧
+    (floatSepDefault size).width.sp = 2 * rhythmQuantum size ∧
+    (captionSepDefault size).width.sp < (floatSepDefault size).width.sp := by
+  have key : ∀ x : Int, 65536 ≤ x →
+      x * 1200 / 1000 * 1000 / 1000 / 2
+        < 2 * (x * 1200 / 1000 * 1000 / 1000 / 2) := by
+    intro x hx
+    omega
+  exact ⟨rfl, rfl, key size h⟩
 
 /-- The title block's author strut: two rhythm units of line box for the
 author's name. The NeurIPS-lineage `.sty` sets `\rule{\z@}{24\p@}` in the
@@ -524,17 +568,20 @@ multiple of the quantum, and the heading row is twice the peer row — the
 walk's `parskip.add parskip` spelled as a multiple. An edit that moves a
 token off its declared multiple, or drops a row a backend reads, fails the
 build here. -/
-theorem rhythm_table_exact :
-    ((rhythmGapQuanta.lookup "peer").getD 0 : Int) * rhythmQuantum baseFontSize
-      = parskipDefault.width.sp ∧
-    ((rhythmGapQuanta.lookup "caption").getD 0 : Int) * rhythmQuantum baseFontSize
-      = captionSepDefault.width.sp ∧
-    ((rhythmGapQuanta.lookup "float").getD 0 : Int) * rhythmQuantum baseFontSize
-      = floatSepDefault.width.sp ∧
-    ((rhythmGapQuanta.lookup "heading").getD 0 : Int) * rhythmQuantum baseFontSize
-      = headingBeforeDefault.width.sp ∧
+theorem rhythm_table_exact (size : Sp) :
+    ((rhythmGapQuanta.lookup "peer").getD 0 : Int) * rhythmQuantum size
+      = (parskipDefault size).width.sp ∧
+    ((rhythmGapQuanta.lookup "caption").getD 0 : Int) * rhythmQuantum size
+      = (captionSepDefault size).width.sp ∧
+    ((rhythmGapQuanta.lookup "float").getD 0 : Int) * rhythmQuantum size
+      = (floatSepDefault size).width.sp ∧
+    ((rhythmGapQuanta.lookup "heading").getD 0 : Int) * rhythmQuantum size
+      = (headingBeforeDefault size).width.sp ∧
     (rhythmGapQuanta.lookup "heading").getD 0
-      = 2 * (rhythmGapQuanta.lookup "peer").getD 0 := by decide
+      = 2 * (rhythmGapQuanta.lookup "peer").getD 0 := by
+  refine ⟨?_, ?_, ?_, ?_, by decide⟩ <;>
+    simp [rhythmGapQuanta, parskipDefault, captionSepDefault, floatSepDefault,
+      headingBeforeDefault, Dim.Length.ofSp, List.lookup]
 
 /-- Named colours declared by `\palette`. -/
 structure Palette where
