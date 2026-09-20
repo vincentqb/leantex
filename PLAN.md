@@ -101,6 +101,39 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — the elaborator's duplicated facts get one site each
+(impl-q-elab, from the q-elab audit): factorization, behaviour-preserving,
+reference documents byte-identical.
+
+- The knot's measure vocabulary is one parametrized family: `measList
+  (μ : α → Nat)` with append/push/drop/take/mem/extract, `sliceMeas` with
+  here/le/end/elem/extract/splice, `visGo (f : UserCmd → Nat)` with
+  mono/congr/expand, one `bindCmd_visGo`. The weight, pars, and items
+  components are instances through one `_eq` bridge each; a future
+  measure component is an instantiation, not a copy. Knot arms untouched;
+  Elab.lean rebuild 75 s before, 73–75 s after (medians of 3).
+- Class page geometry has one resolving site, `classPageDefaults`, read
+  by the `elabDoc` fold and by `engineLengthTokens` — now an offer-mask
+  filter over `engineLengthTokensOfPage ∘ classPageDefaults`, so the
+  preamble token environment and the shipped page agree by construction;
+  `engine_tokens_agree` states it (inclusion over the token array, the
+  `_set_eq` shape). `PageSpec.textWidth`/`.textHeight` are the one
+  spelling of the text block; the flow classes' undeclared Bringhurst
+  block stays the fold's own `!sawPage` step and its token stays
+  deliberately withheld pre-fold.
+- Ten Compat arms became the `literalReplace` and `simpleNative` tables;
+  `linespread`/`setstretch` are one arm. `measureFrac` carries the three
+  fraction-of-measure parsers; `asColor` the four colour keys of
+  `\style`; `parsePaletteOpts`, `storeTitlePart`, `takeOptRun`,
+  `fontFragment` each replace a copied loop or match. W0304 and the two
+  W0105 texts have one spelling each (`warnPaletteMiss`,
+  `warnOverlaySpec`, `warnAltSpec`, sealed like `warnUnknownCmd`) — the
+  seed for the duplicated-message lint handed to impl-q-harness, with
+  the seal/unseal mirror check.
+- `_hadv1` proved load-bearing by deletion+rebuild; the explicit-passing
+  site drops the underscore, the tactic-only site keeps it (the linter
+  cannot see an `assumption` use) with the why written beside it.
+
 2026-09-20 — the deck pages sideways: the row, rubber image sizes, and
 the come-in reveal. Supersedes the scroll-snap entry's `y mandatory` and
 the reveal entry's `snapped: y`.
