@@ -467,6 +467,17 @@ structure Font where
   isItalic : Bool
   isFixedPitch : Bool
   weight : Nat
+  /-- OS/2 sFamilyClass, class ID (high byte): the IBM font class the face
+  itself declares — 8 is Sans Serif, 1–7 the serif classes (OpenType spec,
+  OS/2 table, sFamilyClass). 0 when the face declares none, which many do
+  (Fira Sans, Source Code Pro); the consumer falls back to the slot's own
+  declaration then, never to a guess from the family name. -/
+  familyClass : Nat := 0
+  /-- OS/2 fsType embedding-licensing bits, recorded as declared (OpenType
+  spec, OS/2 table, fsType; bit 2 = preview & print only). Nothing gates on
+  them yet: the PDF path embeds without reading them either, and gating is
+  a design decision this record keeps honest when it arrives. -/
+  fsType : Nat := 0
   xHeight : Int
   /-- OS/2 sCapHeight: how tall a line of text is, as TeX measures it from the
   glyphs. `ascent` is the room the font reserves for accents, not that. -/
@@ -798,6 +809,12 @@ def parse (data : ByteArray) : Except String Font := do
   let xHeight := os2Metric 86 ((unitsPerEm : Int) / 2)
   -- Seven tenths of the em is where capitals top out in most text faces.
   let capHeight := os2Metric 88 ((unitsPerEm : Int) * 7 / 10)
+  -- OS/2 version-0 fields: sFamilyClass (offset 30) and fsType (offset 8).
+  let os2U16 (off : Nat) : Nat := match findTable data "OS/2" with
+    | some t => if t.offset + off + 2 ≤ data.size then u16 data (t.offset + off) else 0
+    | none => 0
+  let familyClass := os2U16 30 / 256
+  let fsType := os2U16 8
   let upem := if unitsPerEm == 0 then 1000 else unitsPerEm
   -- post underline metrics: FWords at offsets 8 and 10 — and italicAngle,
   -- the face's own declared slant: a signed 16.16 Fixed in degrees at
@@ -852,6 +869,8 @@ def parse (data : ByteArray) : Except String Font := do
     isItalic := isItalic
     isFixedPitch := isFixedPitch
     weight := weight
+    familyClass := familyClass
+    fsType := fsType
     xHeight := xHeight
     capHeight := capHeight
     cmap := cmap
