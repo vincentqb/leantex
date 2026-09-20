@@ -548,7 +548,15 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- compressed (non-stream) objects, serialized bare
   let kids := String.intercalate " " ((List.range np).map fun i => s!"{pageId i} 0 R")
   let outlinesRef := if nOut == 0 then "" else s!" /Outlines {outlineRootId} 0 R"
-  let catalog := s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R >>"
+  -- /Lang: the document's main language over every text run that carries
+  -- no finer mark (ISO 32000-2 §14.9.2.2; BCP 47). /ViewerPreferences
+  -- /DisplayDocTitle: the reader's window titles from the document's own
+  -- metadata title rather than its file name (§12.2; PDF/UA requires it).
+  let langRef := match info.language with
+    | some tag => s!" /Lang ({pdfString tag})"
+    | none => ""
+  let catalog := s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R\
+{langRef} /ViewerPreferences << /DisplayDocTitle true >> >>"
   let pagesObj := s!"<< /Type /Pages /Kids [{kids}] /Count {np} >>"
   let fontResources := String.intercalate " "
     ((List.range nf).map fun k => s!"/F{k + 1} {type0Id k} 0 R")

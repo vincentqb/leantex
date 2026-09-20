@@ -296,7 +296,7 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((plainPage.splitOn "margin: 0 0 0.725rem;").length == 2 &&
      (plainPage.splitOn ":where(h1, h2, h3, h4) + * { margin-top: 0; }").length == 2)
   t "html block elements own no vertical margins"
-    ((plainPage.splitOn "p { margin: 0; }").length == 2 &&
+    ((plainPage.splitOn "p { margin: 0; hyphens: auto; }").length == 2 &&
      (plainPage.splitOn "ul, ol { margin: 0; padding-left: 1.35rem; }").length == 2 &&
      (plainPage.splitOn "li { margin: 0; }").length == 2 &&
      (plainPage.splitOn "blockquote { margin: 0; padding: 0 1.35rem; }").length == 2 &&
@@ -824,6 +824,28 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       "/Title <FEFF004200E9006C0061006900720020005200E900730075006D00E9>")
   t "the ascii entries beside it keep the literal spelling"
     (bytesContain accPdf "/Author (Alex Doe)")
+  -- Both artifacts declare the document's language everywhere text
+  -- appears: <html lang> (WCAG 2.2 SC 3.1.1) and the catalog /Lang
+  -- (ISO 32000-2 §14.9.2.2) carry the SAME declared tag, a switched run
+  -- is a span with its own lang (SC 3.1.2), and the window titles from
+  -- the metadata (/DisplayDocTitle, §12.2).
+  let (frDoc, _) := elabStr ("\\documentclass{article}\n" ++
+    "\\usepackage[french]{babel}\n\\begin{document}\n" ++
+    "texte \\foreignlanguage{english}{words}\n\\end{document}")
+  let frPage := (HtmlDoc.emit {} frDoc).1
+  let frPdf := Pdf.write geom oneFace (layoutOf oneFace frDoc geom).pages frDoc.info
+  t "both artifacts carry the declared language"
+    ((frPage.splitOn "<html lang=\"fr\">").length == 2 &&
+     bytesContain frPdf "/Lang (fr)")
+  t "a switched run is a span with its own lang"
+    ((frPage.splitOn "<span lang=\"en\">words</span>").length == 2)
+  t "an undeclared document declares english, and only at the root"
+    ((page.splitOn "<html lang=\"en\">").length == 2 &&
+     !bytesContain pdf "/Lang")
+  t "the reader's window titles from the document's own title"
+    (bytesContain pdf "/ViewerPreferences << /DisplayDocTitle true >>")
+  t "the stylesheet asks the browser to hyphenate by that declaration"
+    ((frPage.splitOn "hyphens: auto").length == 2)
   -- JSON-LD is the same record again, as a data block. Values pass the
   -- certified JSON escaper, so a hostile title can neither end its own
   -- string nor close the script element.

@@ -22,7 +22,6 @@ inductive CssMode where
 
 structure Config where
   css : CssMode := .own
-  lang : String := "en"
   /-- The document's resolved main locale, set from the document at
   `emitTree`'s entry: what the backend's generated furniture (the
   abstract heading, caption prefixes) is worded in. -/
@@ -935,7 +934,10 @@ def baseCss (doc : Doc) : String :=
   s!"h1 \{ font-size: {scaleSize "LARGE" "rem"}; }\n" ++
   s!"h2 \{ font-size: {scaleSize "Large" "rem"}; }\n" ++
   s!"h3 \{ font-size: {scaleSize "large" "rem"}; }\n" ++
-  "p { margin: 0; }\n" ++
+  -- hyphens follows the declared language: the browser's dictionaries on
+  -- the same lang= tags the engine's patterns read — one declaration, two
+  -- conforming hyphenators (the agreement is about tags, never breaks).
+  "p { margin: 0; hyphens: auto; }\n" ++
   "ul, ol { margin: 0; padding-left: 1.35rem; }\n" ++
   -- No per-item gap, as the PDF declares none: a list is one block, and
   -- its leading is its rhythm. A document declares its own through
@@ -2188,6 +2190,11 @@ in a continuous document, and dropping it silently would be the kind of quiet
 failure this engine exists to avoid. -/
 def emit (cfg : Config) (doc : Doc) : String × Array Diag :=
   let (head, body, diags) := emitTree cfg doc
-  (Html.document cfg.lang head body, diags)
+  -- <html lang> is the document's declared language (WCAG 2.2 SC 3.1.1;
+  -- a hard-coded "en" on a French page is worse than absent — an
+  -- actively wrong declaration). The tag ships as declared even when no
+  -- locale record backs it: the artifact's declaration and the engine's
+  -- data are different questions.
+  (Html.document (doc.info.language.getD "en") head body, diags)
 
 end LeanTex.Core.HtmlDoc
