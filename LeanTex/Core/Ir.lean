@@ -2,6 +2,7 @@ import LeanTex.Core.Diag
 import LeanTex.Core.Dim
 import LeanTex.Core.Image
 import LeanTex.Core.Math
+import LeanTex.Core.LocaleData
 
 namespace LeanTex.Core.Ir
 
@@ -877,7 +878,19 @@ structure Meta where
   image : Option String := none
   /-- The page icon: `<link rel="icon">`. -/
   favicon : Option String := none
+  /-- The document's main language, a BCP 47 tag: babel's package options
+  declare it (last option = main, babel's rule), `\pdfmeta{ language = .. }`
+  spells it natively. Both artifacts declare it — `<html lang>` and the
+  PDF catalog `/Lang` — and every language-reading site (captions,
+  hyphenation patterns, quotes) resolves through it. -/
+  language : Option String := none
   deriving Repr, BEq, Inhabited
+
+/-- The document's resolved main locale: the declared language when a
+record ships for it, English otherwise (the site that declared the tag
+named the miss, W0368). One resolving site, read by both backends. -/
+def Meta.locale (m : Meta) : Locale :=
+  (m.language.bind Locale.forTag).getD Locale.en
 
 inductive CmpOp where
   | eq
@@ -2354,22 +2367,23 @@ float's number identically. Sourced: article's `\@makecaption` sets
 `\fnum@figure: text` with `\fnum@figure` = `\figurename~\thefigure`
 (classes.dtx §\@makecaption), and subcaption's `\thesubfigure` is
 `(\alph{subfigure})` followed by a space (subcaption.dtx, the default
-`labelformat=parens`, `labelsep=space`). A captionless float carries no
-number and no prefix. -/
-def captionPrefix (kind : FloatKind) (num : Option Nat) : Option String :=
+`labelformat=parens`, `labelsep=space`). `\figurename`/`\tablename` are
+locale data (babel's ini captions), so the prefix takes the document's
+locale. A captionless float carries no number and no prefix. -/
+def captionPrefix (loc : Locale) (kind : FloatKind) (num : Option Nat) : Option String :=
   num.map fun n =>
     match kind with
-    | .figure => s!"Figure {n}: "
-    | .table => s!"Table {n}: "
+    | .figure => s!"{loc.figure} {n}: "
+    | .table => s!"{loc.table} {n}: "
     | .sub => s!"({subLetter n}) "
 
 /-- A caption with its number prefix set in front: what a backend hands
 its text machinery. The prefix is furniture the backend adds, like a list
 marker — the IR's caption stays the declared text, so the census reads
 declarations, not renderings. -/
-def numberedCaption (kind : FloatKind) (num : Option Nat)
+def numberedCaption (loc : Locale) (kind : FloatKind) (num : Option Nat)
     (caption : Array Inline) : Array Inline :=
-  match captionPrefix kind num with
+  match captionPrefix loc kind num with
   | some p => (Inline.text p :: caption.toList).toArray
   | none => caption
 

@@ -1998,11 +1998,12 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
         | _ => none) == [none, some 1])
   -- The prefix is one definition site both backends read.
   t "caption prefixes spell from the node"
-    (Ir.captionPrefix .figure (some 2) == some "Figure 2: " &&
-     Ir.captionPrefix .table (some 1) == some "Table 1: " &&
-     Ir.captionPrefix .sub (some 1) == some "(a) " &&
-     Ir.captionPrefix .sub (some 2) == some "(b) " &&
-     Ir.captionPrefix .figure none == none)
+    (Ir.captionPrefix Locale.en .figure (some 2) == some "Figure 2: " &&
+     Ir.captionPrefix Locale.en .table (some 1) == some "Table 1: " &&
+     Ir.captionPrefix Locale.en .sub (some 1) == some "(a) " &&
+     Ir.captionPrefix Locale.en .sub (some 2) == some "(b) " &&
+     Ir.captionPrefix Locale.de .figure (some 2) == some "Abbildung 2: " &&
+     Ir.captionPrefix Locale.en .figure none == none)
   -- subcaption's subfigure: a minipage-shaped box with its own caption,
   -- lettered under the parent's number (subcaption §2). Consecutive ones
   -- share a `.columns` row; the `\hfill` between them is the gutter.

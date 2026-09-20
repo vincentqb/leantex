@@ -1063,13 +1063,17 @@ whether the document reaches math at all. -/
 private structure ScalarAcc where
   texts : Array String := #[]
   math : Array Char := #[]
+  /-- The locale whose furniture words (the abstract heading) the census
+  counts as shipped text. -/
+  locale : Locale := Locale.en
 
 /-- The plain text of a run and, when it carries formulas or icons, their
 scalars: what keeps the per-scalar fallback one mechanism — a math or icon
 scalar enters the same precompute a text scalar does. -/
 private def textAndMath (out : ScalarAcc) (xs : Array Ir.Inline) : ScalarAcc :=
   let (icons, math) := leafScalarsList #[] out.math xs.toList
-  { texts := (out.texts.push (Ir.plainText xs)).push
+  { out with
+    texts := (out.texts.push (Ir.plainText xs)).push
       (String.ofList icons.toList)
     math }
 
@@ -1106,7 +1110,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   -- The abstract's heading word is class furniture set in the bold face;
   -- its glyphs are asked for like any other text.
   | .abstract body =>
-    scalarTextList { out with texts := out.texts.push "Abstract" } itemD enumD body.toList
+    scalarTextList { out with texts := out.texts.push out.locale.abstract } itemD enumD body.toList
   -- The block's title is set in the bold face at the body size; its
   -- glyphs are asked for like a heading's.
   | .titled _ title body => scalarTextList (textAndMath out title) itemD enumD body.toList
@@ -1175,7 +1179,8 @@ against the loaded faces to precompute `FontSet.fallback` before layout
 begins, which is what keeps layout pure: finding a covering face on disk is
 the driver's effect, and by layout time it has already happened. -/
 private def docScalarAcc (doc : Doc) : ScalarAcc := Id.run do
-  let mut acc : ScalarAcc := scalarTextList {} 0 0 doc.body.toList
+  let mut acc : ScalarAcc :=
+    scalarTextList { locale := doc.info.locale } 0 0 doc.body.toList
   if let some h := doc.head then
     acc := textAndMath acc h |> fun a => { a with texts := a.texts.push "0123456789" }
   if let some f := doc.foot then
@@ -3179,6 +3184,9 @@ private structure Acc where
   geom : Geom
   xHeight : Sp
   styles : Ir.Styles := {}
+  /-- The document's resolved main locale: what the class furniture the
+  walk generates (the abstract heading, caption prefixes) is worded in. -/
+  locale : Locale := Locale.en
   /-- The `slides` class: frames and sections open fresh pages. -/
   slides : Bool := false
   /-- The right edge paragraphs break against, from the page's left margin:
@@ -4110,10 +4118,10 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let hcenter := hst.align != some "left"
     let a := match hst.font with
       | some tpl =>
-        collectDisplay a fs (Ir.fillTemplate tpl #[.text "Abstract"]) indent
+        collectDisplay a fs (Ir.fillTemplate tpl #[.text a.locale.abstract]) indent
           hcenter a.geom.fontSize
       | none =>
-        collectDisplay a fs #[.text "Abstract"] indent hcenter small
+        collectDisplay a fs #[.text a.locale.abstract] indent hcenter small
           (baseStyle := { bold := true })
     let a := a.wantGap
     let saved := a.measure
@@ -4234,7 +4242,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- `Ir.numberedCaption`, the one site both backends spell a float's
     -- number from. Everything between `floatOpen` and `floatClose` ships
     -- on one page (`runFloat`): a float is unbreakable, as LaTeX's are.
-    let caption := Ir.numberedCaption kind num caption
+    let caption := Ir.numberedCaption a.locale kind num caption
     let floatSep := a.resolve ((a.tokens.find? "floatsep").getD
       (Ir.floatSepDefault a.geom.fontSize))
     let capSep := a.resolve ((a.tokens.find? "captionsep").getD
@@ -5434,6 +5442,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let design := Ir.Design.ofDoc doc
   let cover := design.cover
   let acc0 : Acc := { geom := geom, xHeight := xHeight, styles := doc.styles
+                      locale := doc.info.locale
                       slides := doc.docClass.record.model == .frame
                       pal := doc.palette
                       tokens := doc.tokens

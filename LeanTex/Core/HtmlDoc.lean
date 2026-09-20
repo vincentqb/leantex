@@ -23,6 +23,10 @@ inductive CssMode where
 structure Config where
   css : CssMode := .own
   lang : String := "en"
+  /-- The document's resolved main locale, set from the document at
+  `emitTree`'s entry: what the backend's generated furniture (the
+  abstract heading, caption prefixes) is worded in. -/
+  locale : Locale := Locale.en
   /-- Optional client-side math renderer, used until native MathML lands.
   A boundary, not a dependency: nothing is emitted unless asked for. -/
   mathBoundary : Option String := none
@@ -1479,7 +1483,7 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- by construction (`Ir.abstract_heading_follows_section`); centred, as
     -- the class centres it (article.cls §abstract).
     Html.elem "section"
-      (#[Html.elem "h2" #[Html.text "Abstract"] #[("style", "text-align: center")]] ++
+      (#[Html.elem "h2" #[Html.text cfg.locale.abstract] #[("style", "text-align: center")]] ++
         blockNodesInto cfg.into #[] body.toList)
       #[("class", "abstract")]
   | .columns cols =>
@@ -1730,7 +1734,7 @@ L {px t.x3} {py t.y3} Z"),
     let capNode : Array Node :=
       if caption.isEmpty then #[]
       else #[Html.elem "figcaption"
-        (inlines cfg (Ir.numberedCaption kind num caption))]
+        (inlines cfg (Ir.numberedCaption cfg.locale kind num caption))]
     let kids := blockNodesInto cfg.into #[] body.toList
     let cls := match kind with
       | .table => "float table-float"
@@ -1913,6 +1917,9 @@ def emitTree (cfg : Config) (doc : Doc) :
   -- content), so every walk below — sectioning, the deck chrome, the
   -- landmark and anchor checks — sees only what this page carries.
   let doc := { doc with body := Ir.keepFor "html" doc.body }
+  -- The locale resolves here, once, from the document: the furniture the
+  -- walks below generate is worded in the document's language.
+  let cfg := { cfg with locale := doc.info.locale }
   let mut diags : Array Diag := #[]
   if doc.head.isSome || doc.foot.isSome then
     diags := diags.push (Diag.of .W0007

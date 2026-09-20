@@ -822,7 +822,7 @@ def apply (sources : Array (String × String)) (doc : Ir.Doc) :
     match sources.find? (·.1 == src) with
     | none => pure ()  -- the driver's missing-file diagnostic already fired
     | some (_, text) =>
-      let parsed := parse text
+      let parsed := parse text (monthMacros doc.info.locale.months)
       for (pos, msg) in parsed.errors do
         diags := diags.push (Diag.of .W0352 s!"malformed .bib entry: {msg}; \
           the entry is skipped and the rest of '{src}' is kept"

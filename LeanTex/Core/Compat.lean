@@ -147,6 +147,10 @@ private structure St where
   /-- A `\usetheme` was seen: `\alert` then maps to the theme's alert colour
   rather than the unthemed bold stand-in. -/
   themed : Bool := false
+  /-- The main language's BCP 47 tag, from babel's package options (last
+  language option = main, babel's rule): what `\enquote` reads its quote
+  delimiters through. -/
+  mainLang : String := "en"
   /-- Inside the document environment: where a preamble declaration —
   `\usepackage` first among them — is a placement defect (W0340), never
   a support question (W0103). -/
@@ -1031,6 +1035,29 @@ where
         let native := s!"\\captionsetup\{{opt.getD ""}}"
         became s!"\\usepackage[{opt.getD ""}]\{{p}}" native pos
         out := out ++ (← synthAt native pos)
+      else if p == "babel" then
+        -- babel's package options are its language list, and "the last
+        -- language option is the main one" (babel manual §1.2). The main
+        -- language becomes document metadata (`\pdfmeta{ language }`);
+        -- the locale record then words captions, selects hyphenation
+        -- patterns, and shapes `\enquote`. Non-language options carry
+        -- `=` and are configuration, skipped as before.
+        let names := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+          |>.filter (fun o => !o.isEmpty && !o.contains '=')
+        match names.reverse.head? with
+        | some main =>
+          let tag := Locale.babelTagOf main
+          if (Locale.forTag tag).isSome then
+            let native := s!"\\pdfmeta\{ language = \"{tag}\" }"
+            became s!"\\usepackage[{main}]\{babel}" native pos
+            modify fun st => { st with mainLang := tag }
+            out := out ++ (← synthAt native pos)
+          else
+            say .W0368 s!"no locale for language '{main}'; English \
+captions and patterns stand in" pos
+              (help := "the engine ships locale records for: en, fr, de")
+        | none =>
+          became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
       else if nativePackages.contains p then
         became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
       else
@@ -1436,15 +1463,19 @@ declare the furniture directly")
     return some (← synthAt native pos, start)
   | "enquote" =>
     -- csquotes' quoting command: typographic quotes around the content,
-    -- single for the starred form (csquotes manual §3.1). Nesting-aware
-    -- inner quotes are not modelled: a nested \enquote repeats its own
-    -- pair.
+    -- single for the starred form (csquotes manual §3.1). The delimiters
+    -- are locale data (babel ini `delimiters.quotes`): « » under french,
+    -- „ “ under german; the starred (inner) form takes the locale's inner
+    -- pair. Nesting-aware inner quotes are not modelled: a nested
+    -- \enquote repeats its own pair.
     let j := skipStar raws start
     let starred := j != start
     let k := skipSpaces raws j
     match raws[k]? with
     | some (g@(.group _ _)) =>
-      let (o, c) := if starred then ("‘", "’") else ("“", "”")
+      let loc := (Locale.forTag (← get).mainLang).getD Locale.en
+      let (o, c) := if starred then (loc.quoteInnerOpen, loc.quoteInnerClose)
+        else (loc.quoteOpen, loc.quoteClose)
       became "\\enquote" s!"{o}...{c}" pos
       return some (#[.word o pos, g, .word c pos], k + 1)
     | _ => return none

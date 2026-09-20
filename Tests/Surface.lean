@@ -1628,6 +1628,55 @@ def accentChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, ds5) := elabStr "\\'q"
   t "unknown accent pair still warns" (ds5.map (·.code) == #["W0301"])
 
+def localeChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- Language is data (Locale.lean): babel's package options declare the
+  -- main language (last language option = main, babel's rule), and every
+  -- generated word — captions, the References heading, quotes — reads the
+  -- locale record.
+  let (dfr, dsfr) := elabStr
+    "\\documentclass{article}\n\\usepackage[english,french]{babel}\n\\begin{document}\nx\n\\end{document}"
+  t "babel options declare the main language" (dfr.info.language == some "fr")
+  t "the locale resolves from the tag" (dfr.info.locale.tag == "fr")
+  t "a shipped language fires nothing" (!dsfr.any (·.code == "W0368"))
+  let (den, _) := elabStr
+    "\\documentclass{article}\n\\usepackage[french,english]{babel}\n\\begin{document}\nx\n\\end{document}"
+  t "the last language option is the main one" (den.info.language == some "en")
+  let (_, dsxx) := elabStr
+    "\\documentclass{article}\n\\usepackage[klingon]{babel}\n\\begin{document}\nx\n\\end{document}"
+  t "a language with no record is named, English stands in"
+    (dsxx.any (·.code == "W0368"))
+  -- \enquote reads the active locale's delimiters (csquotes under babel).
+  let (dq, _) := elabStr
+    "\\documentclass{article}\n\\usepackage[french]{babel}\n\\begin{document}\n\\enquote{x}\n\\end{document}"
+  t "enquote takes the locale's quotes"
+    (dq.body == #[.para #[.text "«x»"]])
+  -- The References heading is \refname, locale data.
+  let (dref, _) := elabStr
+    "\\documentclass{article}\n\\usepackage[french]{babel}\n\\begin{document}\nx\n\n\\bibliography{refs}\n\\end{document}"
+  t "the references heading is worded in the main language"
+    (dref.body.any fun b => match b with
+      | .section 1 true none xs => xs == #[.text "Références"]
+      | _ => false)
+  -- The abstract heading, in both text backends.
+  let (dab, _) := elabStr
+    "\\documentclass{article}\n\\usepackage[french]{babel}\n\\begin{document}\n\\begin{abstract}\ny\n\\end{abstract}\nx\n\\end{document}"
+  t "the markdown abstract heading follows the locale"
+    (((MarkdownDoc.emit dab).splitOn "## Résumé").length == 2)
+  t "the html abstract heading follows the locale"
+    (((HtmlDoc.emit {} dab).1.splitOn ">Résumé<").length == 2)
+  -- Bibliography months come from the locale (BibTeX's jan..dec macros).
+  let bib := "@article{k, author={A B}, title={T}, journal={J}, year={2020}, month=jan}"
+  let (dcite, _) := elabStr
+    "\\documentclass{article}\n\\usepackage[french]{babel}\n\\begin{document}\n\\cite{k}\n\n\\bibliography{refs}\n\\end{document}"
+  let (applied, _) := Bib.apply #[("refs", bib)] dcite
+  let bibText := applied.body.foldl (init := "") fun acc b => match b with
+    | .bibliography _ _ items =>
+      items.foldl (init := acc) fun acc i => acc ++ Ir.plainText i.content
+    | _ => acc
+  t "bibliography months are worded in the main language"
+    ((bibText.splitOn "janvier").length == 2)
+
 def parseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- parse

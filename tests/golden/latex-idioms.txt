@@ -85,7 +85,7 @@ para
   text " by a jury."
 -- diagnostics
 note[N0100] 5:1 '\documentclass{scrartcl}' → \documentclass[paper=letter,fontsize=10pt]{article}\page{ parskip = 0pt }
-note[N0100] 7:1 '\usepackage{babel}' → nothing: the engine does this itself
+note[N0100] 7:1 '\usepackage[english]{babel}' → \pdfmeta{ language = "en" }
 note[N0100] 8:1 '\babelfont' → \fonts{ dir = "fonts/", body = "SourceSerifPro-Regular.otf" }
 note[N0100] 9:1 '\babelfont' → \fonts{ dir = "fonts/", sans = "OpenSans-Regular.ttf" }
 note[N0100] 10:1 '\usepackage{microtype}' → nothing: the engine does this itself

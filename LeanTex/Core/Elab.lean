@@ -63,6 +63,10 @@ structure Ctx where
   args : Array (String × Option (Array Inline)) := #[]
   /-- Palette names usable as colour commands, from `\palette`. -/
   palette : Palette := {}
+  /-- The document's resolved main locale, from the preamble's declared
+  language: what the body walk's generated furniture (the References
+  heading) is worded in. -/
+  locale : Locale := Locale.en
   /-- Named lengths from `\tokens`. -/
   tokens : Tokens := {}
   /-- The resolved page in force for the body: what the engine length
@@ -313,7 +317,8 @@ def pageGeometryKeys : List String :=
    "textwidth", "textheight", "bleed"]
 
 def metaKeys : List String :=
-  ["title", "author", "subject", "keywords", "url", "image", "favicon"]
+  ["title", "author", "subject", "keywords", "url", "image", "favicon",
+   "language"]
 
 def fontKeys : List String := ["body", "sans", "mono", "math", "rm", "sf", "tt", "dir"]
 
@@ -6863,7 +6868,10 @@ a side channel, never slide content" cpos
         | some (.group body _) =>
           let src := (rawSrc body).trimAscii.toString
           let style := (← get).bibStyle
-          let blocks := blocks.push (.section 1 true none #[.text "References"])
+          -- \refname is locale data (babel ini captions): the heading is
+          -- worded in the document's declared language.
+          let blocks := blocks.push
+            (.section 1 true none #[.text ctx'.locale.references])
           let blocks := blocks.push (.bibliography src style #[])
           have ht1 : sliceWeight raws (j + 1) < sliceWeight raws i :=
             sliceWeight_lt raws h (by omega)
@@ -7534,6 +7542,14 @@ private def applyMeta (ctx : Ctx) (m0 : Meta) (entries : Array Decl.Entry)
     let before := evs.size
     match e.key, e.value with
     | "title", .str s => m := { m with title := some s }
+    | "language", .str s =>
+      -- Stored as declared — both artifacts carry the author's tag even
+      -- when no locale record ships; the data fallback is named here.
+      if (Locale.forTag s).isNone then
+        evs := evs.push (.say (Diag.of .W0368
+          s!"no locale for language '{s}'; English captions and patterns stand in" (some ⟨ctx.file, pos⟩)
+          (help := some "the engine ships locale records for: en, fr, de")))
+      m := { m with language := some s }
     | "author", .str s => m := { m with author := some s }
     | "subject", .str s => m := { m with subject := some s }
     | "keywords", .str s => m := { m with keywords := some s }
@@ -8614,7 +8630,8 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   let tokens := themedDs.tokens
   let styles := themedDs.styles
   let chrome := themedDs.chrome
-  ctx := { ctx with palette := palette, tokens := tokens, styles := styles }
+  ctx := { ctx with palette := palette, tokens := tokens, styles := styles
+                    locale := s.info.locale }
   let mut head := s.head
   let mut foot := s.foot
   let headFrom := s.headFrom

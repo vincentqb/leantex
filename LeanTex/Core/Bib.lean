@@ -1,4 +1,5 @@
 import LeanTex.Core.Diag
+import LeanTex.Core.LocaleData
 
 /-! BibTeX bibliography files, parsed in the pure core. The grammar is the
 one btxdoc.tex and "Tame the BeaST" §2 document: `@type{key, field = value,
@@ -46,13 +47,15 @@ private def Parsed.err (out : Parsed) (p : Pos) (msg : String) : Parsed :=
 private def Parsed.entry (out : Parsed) (e : Entry) : Parsed :=
   { out with entries := out.entries.push e }
 
-/-- The month macros every BibTeX style file defines (plain.bst MACRO
-{jan}–{dec}); a `.bib` may use them without declaring them. -/
-def monthMacros : Array (String × String) :=
-  #[("jan", "January"), ("feb", "February"), ("mar", "March"),
-    ("apr", "April"), ("may", "May"), ("jun", "June"),
-    ("jul", "July"), ("aug", "August"), ("sep", "September"),
-    ("oct", "October"), ("nov", "November"), ("dec", "December")]
+/-- The month macro keys every BibTeX style file defines (plain.bst MACRO
+{jan}–{dec}); a `.bib` may use them without declaring them. The rendered
+names come from the document's locale (babel ini `months.wide`). -/
+def monthKeys : Array String :=
+  #["jan", "feb", "mar", "apr", "may", "jun",
+    "jul", "aug", "sep", "oct", "nov", "dec"]
+
+def monthMacros (months : Array String) : Array (String × String) :=
+  monthKeys.zip months
 
 private def isWs (c : Char) : Bool :=
   c == ' ' || c == '\t' || c == '\n' || c == '\r'
@@ -242,10 +245,12 @@ by the input length and the cursor only moves forward. Everything outside
 later values read. A malformed entry is recorded at its position and
 skipped, and the parse continues at the next `@` — one bad entry costs
 itself, never the file (W0352). -/
-def parse (src : String) : Parsed := Id.run do
+def parse (src : String)
+    (macros0 : Array (String × String) := monthMacros Locale.en.months) :
+    Parsed := Id.run do
   let cs := src.toList.toArray
   let mut out : Parsed := {}
-  let mut macros := monthMacros
+  let mut macros := macros0
   let mut i := 0
   for _ in [0:cs.size + 1] do
     i := nextAt cs i

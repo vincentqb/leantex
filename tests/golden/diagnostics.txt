@@ -409,6 +409,11 @@ warning[W0366]: 'Demo Sans Medium' asks for weight 500, which is not installed; 
 ── W0367 (config) a beamerposter option outside the poster model; named and ignored
 warning[W0367]: beamerposter options outside the poster model: debug; ignored
   help: size, orientation, scale, and custom width/height carry over; \page{ ... } declares anything further
+── W0368 (degraded) a language the engine ships no locale for; English captions and patterns stand in
+warning[W0368]: no locale for language 'klingon'; English captions and patterns stand in
+  help: the engine ships locale records for: en, fr, de
+warning[W0368]: no locale for language 'xx'; English captions and patterns stand in
+  help: the engine ships locale records for: en, fr, de
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added

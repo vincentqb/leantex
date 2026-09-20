@@ -115,6 +115,7 @@ inductive DiagCode where
   | W0366
   | N0021
   | W0367
+  | W0368
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -262,6 +263,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0366 => ("0366", .degraded, "a named font weight is not installed; the nearest installed weight substitutes")
   | .N0021 => ("0021", .info, "header and footer gaps differ as declared; equal gaps are the default")
   | .W0367 => ("0367", .config, "a beamerposter option outside the poster model; named and ignored")
+  | .W0368 => ("0368", .degraded, "a language the engine ships no locale for; English captions and patterns stand in")
 
 def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
@@ -286,7 +288,7 @@ theorem DiagCode.code_letter (c : DiagCode) :
 `all_complete` makes an undercount a build failure; `all_nodup` an
 overcount (`ofNat` clamps out of range, so an overcount duplicates the
 last constructor). -/
-def DiagCode.count : Nat := 139
+def DiagCode.count : Nat := 140
 
 /-- Every code, for the registry checks in Tests.lean — derived from the
 type through the `ofNat` that `deriving DecidableEq` synthesises, never
