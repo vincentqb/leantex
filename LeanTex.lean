@@ -27,6 +27,7 @@ import LeanTex.Core.HyphenData
 import LeanTex.Core.Hyphen
 import LeanTex.Core.Decl
 import LeanTex.Core.Html
+import LeanTex.Core.MathMl
 import LeanTex.Core.HtmlDoc
 import LeanTex.Core.MarkdownDoc
 import LeanTex.Core.Layout
