@@ -1576,6 +1576,23 @@ def lexChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "lex position" (((Lex.lex "t" "a\nbé c").1.map fun tk => (tk.pos.line, tk.pos.col)).toList ==
     [(1, 1), (1, 2), (2, 1), (2, 3), (2, 4)])
 
+def nfcChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- UAX #15 NFC at input (Nfc.lean): composed output, canonical
+  -- reordering, singleton mapping, idempotence, ASCII passthrough.
+  t "nfc composes NFD pair" (Nfc.normalize "e\u0301" == "é")
+  t "nfc composes iteratively" (Nfc.normalize "e\u0302\u0301" == "\u1EBF")
+  t "nfc reorders by combining class"
+    (Nfc.normalize "e\u0301\u0327" == "\u0229\u0301")
+  t "nfc maps singleton" (Nfc.normalize "\u212B" == "Å")
+  t "nfc keeps ascii" (Nfc.normalize "hello" == "hello")
+  t "nfc keeps composed" (Nfc.normalize "Bélair" == "Bélair")
+  t "nfc idempotent" (Nfc.normalize (Nfc.normalize "e\u0301\u0327 ơ\u0323")
+    == Nfc.normalize "e\u0301\u0327 ơ\u0323")
+  t "nfc hangul composes" (Nfc.normalize "\u1100\u1161\u11A8" == "\uAC01")
+  -- The lexer feeds normalized text to everything downstream.
+  t "lex normalizes to NFC" (toks "Be\u0301lair" == [.word "Bélair"])
+
 def parseChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   -- parse

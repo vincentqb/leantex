@@ -1,4 +1,5 @@
 import LeanTex.Core.Diag
+import LeanTex.Core.Nfc
 
 namespace LeanTex.Core.Lex
 
@@ -101,8 +102,12 @@ private def verbatimClose : Array Char := "\\end{verbatim}".toList.toArray
 
 def lex (file : String) (input : String) : Array Token × Array Diag := Id.run do
   -- Folded straight into an array: `toList.toArray` builds and drops a cons
-  -- cell per character of the document.
-  let cs : Array Char := input.foldl (fun a c => a.push c) (Array.mkEmpty input.utf8ByteSize)
+  -- cell per character of the document. Normalized to NFC here, once, so
+  -- every downstream consumer — hyphenation, slugs, font cmap lookups,
+  -- both backends — sees one canonical spelling (UAX #15; Nfc.lean says
+  -- why input is the right place).
+  let cs : Array Char := Nfc.normalizeChars
+    (input.foldl (fun a c => a.push c) (Array.mkEmpty input.utf8ByteSize))
   let mut toks : Array Token := #[]
   let mut diags : Array Diag := #[]
   let mut i := 0

@@ -117,6 +117,7 @@ def main (args : List String) : IO UInt32 := do
   argsChecks ref
   renderChecks ref
   lexChecks ref
+  nfcChecks ref
   parseChecks ref
   elabDocChecks ref
 
