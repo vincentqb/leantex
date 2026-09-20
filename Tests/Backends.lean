@@ -807,6 +807,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- truncated to the printed milli: deck_type_is_stage_ratio's bounds.
   t "deck type is the PDF's stage ratio, in vh"
     (has deckPage "font-size: 4.311vh; }" &&
+     has deckPage "h1 { font-size: 1.728em; }" &&
      has deckPage "section.slide > header h2 { font-size: 1.440em; }")
   let (tokDoc, _) := elabStr (deck169 "\\tokens{ safearea = 20pt }"
     "\\begin{frame}{T}\nx\n\\end{frame}")

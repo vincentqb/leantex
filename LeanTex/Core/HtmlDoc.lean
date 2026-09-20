@@ -1224,6 +1224,12 @@ private def slideCss (doc : Doc) : String :=
     "section.slide { min-height: 100dvh; scroll-snap-align: start;\n" ++
     "  scroll-snap-stop: always; display: flex; flex-direction: column;\n" ++
     s!"  padding: {safeareaVar}; }\n" ++
+    -- Headings retake their scale steps in em: the base sheet's rem steps
+    -- size from the reader's root, which the stage-ratio base above
+    -- deliberately leaves behind.
+    s!"h1 \{ font-size: {scaleSize "LARGE" "em"}; }\n" ++
+    s!"h2 \{ font-size: {scaleSize "Large" "em"}; }\n" ++
+    s!"h3 \{ font-size: {scaleSize "large" "em"}; }\n" ++
     s!"section.slide > header \{ max-height: {titlebandVar}; }\n" ++
     s!"section.slide > header h2 \{ font-size: {scaleSize "Large" "em"}; }\n" ++
     deckEntryCss ++
