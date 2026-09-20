@@ -760,6 +760,25 @@ def themeCss (doc : Doc) : String :=
       s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n" ++
       s!"  padding: {quantaRem 1} {safeareaVar}; } }\n"
      else "") else "") ++
+  -- A role names a hue; the contract chooses its lightness on each ground
+  -- (`Contrast.realize`, the same solver `Contrast.realizeDoc` ships the
+  -- PDF's runs through): on the frame-title bar and the standout
+  -- inversion a content colour that fails re-realizes, and the scope
+  -- carries its own value of the token, so a run's var(--alert) resolves
+  -- to the bar's realization rather than the page's. Emitted only where
+  -- the realized value differs — a bundle whose pairs pass emits nothing
+  -- (realizedChecks in Tests.lean pins the backend agreement).
+  (String.join ((
+    [("section.slide > header", d.frametitle.map (·.bg)),
+     ("section.slide.standout", some d.standout.bg)] :
+      List (String × Option Ir.Color)).filterMap
+    fun (sel, groundOf) => groundOf.bind fun ground =>
+      let vars := String.join ((["alert", "example"] : List String).filterMap fun role =>
+        (doc.palette.find? role).bind fun c =>
+          if doc.palette.decorative.contains role then none
+          else (Contrast.realize Contrast.aaText ground c).bind fun c' =>
+            if c' == c then none else some s!"  --{role}: {cssColor c'};\n")
+      if vars.isEmpty then none else some (sel ++ " {\n" ++ vars ++ "}\n"))) ++
   (if d.progress.isSome then
     s!"section.section-page \{ text-align: center; padding: {quantaRem 3} 0;\n" ++
     "  break-inside: avoid; }\n" ++

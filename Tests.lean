@@ -181,6 +181,7 @@ def main (args : List String) : IO UInt32 := do
   designChecks ref
   roleChecks ref
   roleInvocationChecks ref
+  realizedChecks ref
   roleShadowChecks ref
   fontsDeclChecks ref
   fontSuiteChecks ref

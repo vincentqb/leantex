@@ -1765,6 +1765,54 @@ def roleChecks (ref : IO.Ref (List String)) : IO Unit := do
   check ref "pending roles are really unread"
     (pendingConsumer.all fun (r, _) => !Ir.Design.consumedRoles.contains r)
 
+/-- The realization rule's executable census — the cross-ground half of
+`Contrast.realized_builtin_contract`, whose kernel check covers the pairs
+a bundle's design creates itself: for every shipped bundle the content
+colours realize on the frame-title bar and the standout inversion (the
+lightness search is not the identity there, and the kernel does not
+evaluate it cheaply, so this half is an oracle). And the backend
+agreement, `features_agree` shape: the run the PDF path ships and the
+scoped custom property the HTML path declares both carry the one
+solver's answer. -/
+def realizedChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  for th in Theme.builtin do
+    let d := Ir.Design.ofDoc { palette := th.palette }
+    let grounds := (match d.frametitle with
+      | some p => [("the frame-title bar", p.bg)]
+      | none => []) ++ [("the standout frame", d.standout.bg)]
+    for (gname, ground) in grounds do
+      for role in ["alert", "example"] do
+        if let some c := th.palette.find? role then
+          t s!"'{role}' of '{th.name}' realizes on {gname}"
+            (match Contrast.realize Contrast.aaText ground c with
+             | some c' => Contrast.aaText ≤ Contrast.contrastMilli c' ground
+             | none => false)
+  -- One solver, two backends: moloch's alert inside a frame title.
+  let deck := "\\documentclass{slides}\\theme{moloch}\\begin{document}" ++
+    "\\begin{frame}{An \\alert{urgent} word}x\\end{frame}\\end{document}"
+  let (doc, ds) := elabStr deck
+  let bar := (Theme.moloch.palette.find? "frametitlebg").getD Ir.Color.black
+  let alert := (Theme.moloch.palette.find? "alert").getD Ir.Color.black
+  match Contrast.realize Contrast.aaText bar alert with
+  | some c' =>
+    t "the realized run ships the solver's value (the PDF half)"
+      (doc.body.any fun b => match b with
+        | .frame title _ _ _ => title.any fun x => match x with
+          | .colored cRun (some "alert") _ => cRun == c'
+          | _ => false
+        | _ => false)
+    t "the realized note names the ground"
+      (ds.any fun d => d.code == "N0022" && hasStr d.message "the frame-title bar")
+    t "the scoped custom property ships the solver's value (the HTML half)"
+      (hasStr (HtmlDoc.themeCss doc)
+        ("section.slide > header {\n  --alert: " ++ HtmlDoc.cssColor c' ++ ";"))
+  | none => failures ref "moloch alert does not realize on its bar"
+  -- The shipped census: the realized deck carries no failing role pair —
+  -- every pairing warning either realized away or never fired.
+  t "the realized deck ships no failing role pair"
+    (ds.all fun d => d.code != "W0315" && d.code != "W0345")
+
 /-- The executable half of `every_role_is_invocable` (Elab.lean): resolution
 order lives in `elabInlines`, whose sanctioned recursion no theorem can
 range over, so the fact that every shipped bundle's role really reaches the
