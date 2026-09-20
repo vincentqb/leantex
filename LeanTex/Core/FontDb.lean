@@ -409,6 +409,12 @@ private def canonicalSubfamily (s : String) : Bool :=
 axis, so "bold" means "as close to 700 as this family gets". -/
 private def targetWeight (bold : Bool) : Nat := if bold then 700 else 400
 
+/-- Distance from a target weight on the family's weight axis: the one
+spelling of the fact both scan orderings rank by (`pickWeighted` toward
+the requested variant's target, `faceLt` toward regular). -/
+private def weightDist (target : Nat) (f : Face) : Nat :=
+  max f.weight target - min f.weight target
+
 /-- Rank candidates for a target weight: closest weight wins; ties prefer the
 plain face over one carrying an extra descriptor ("Condensed Bold"), because
 condensed faces commonly share the typographic family name. A remaining tie
@@ -417,8 +423,8 @@ goes to the earlier face in scan order — the property `scan`'s ordered join
 exists to provide — so the first search directory that holds a family owns it. -/
 private def pickWeighted (cands : Array Face) (target : Nat) : Option Face :=
   let sorted := cands.zipIdx.qsort fun (a, ia) (b, ib) =>
-    let da := if a.weight ≥ target then a.weight - target else target - a.weight
-    let db := if b.weight ≥ target then b.weight - target else target - b.weight
+    let da := weightDist target a
+    let db := weightDist target b
     if da != db then da < db
     else
       let ca := if canonicalSubfamily a.subfamily then 0 else 1
@@ -587,8 +593,8 @@ def faceLt (a b : Face) : Bool :=
   if norm a.family != norm b.family then norm a.family < norm b.family
   else if a.italic != b.italic then !a.italic && b.italic
   else
-    let da := max a.weight 400 - min a.weight 400
-    let db := max b.weight 400 - min b.weight 400
+    let da := weightDist 400 a
+    let db := weightDist 400 b
     if da != db then da < db
     else if a.subfamily != b.subfamily then a.subfamily < b.subfamily
     else a.path < b.path

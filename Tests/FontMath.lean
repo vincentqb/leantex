@@ -343,7 +343,7 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
      ink scSans != ink (drawn (set sans) "PhD"))
   t "synthesised small caps set every letter at one reduced size"
     (!scSans.isEmpty &&
-     scSans.all (·.2 == geom.fontSize * Layout.smallCapScale / 1000))
+     scSans.all (·.2 == geom.fontSize * Layout.smallCapScaleFor sans / 1000))
   -- The HTML side, judged on the typed tree and the stylesheet: the run
   -- keeps the authored casing as text under the `sc` class, and the class
   -- asks for uniform small caps (CSS Fonts 4: `all-small-caps` is c2sc +
@@ -563,6 +563,22 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((← FontDb.fallbackPicksPreferring
         (fun p => (p.splitOn "SourceCodePro").length ≥ 2) shipped #['\uF09B']).find?
       (·.1 == '\uF09B')).any (fun e => (e.2.splitOn "ExampleIcons").length ≥ 2))
+
+  -- NFC idempotence (UAX #15 §4: "the result of normalizing a string that
+  -- is already normalized is the string itself") over the strings that
+  -- exercise the machinery at all: every decomposition key, alone, doubled,
+  -- and with a combining acute appended so reorder and blocked composition
+  -- run too. The ASCII fast path is the theorem `normalizeChars_ascii_id`;
+  -- this is the rest of the domain, where a reorder or compose bug breaks
+  -- the fixed point.
+  let acute := String.ofList ['\u0301']
+  let notIdempotent := Nfc.tables.get.decomp.fold (init := #[]) fun bad k _ =>
+    let c := String.ofList [Char.ofNat k.toNat]
+    [c, c ++ c, c ++ acute, acute ++ c].foldl (init := bad) fun bad s =>
+      let once := Nfc.normalize s
+      if Nfc.normalize once == once then bad else bad.push s
+  t s!"nfc is idempotent over the decomposition keys ({notIdempotent.size} broke it)"
+    notIdempotent.isEmpty
 
 /-- The default-family choice and the search roots are what make a fresh
 machine work with no configuration, so they are pinned here on synthetic

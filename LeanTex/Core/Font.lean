@@ -881,7 +881,7 @@ def parse (data : ByteArray) : Except String Font := do
   return {
     data := data
     isCff := isCff
-    unitsPerEm := if unitsPerEm == 0 then 1000 else unitsPerEm
+    unitsPerEm := upem
     ascent := ascent
     descent := descent
     lineGap := lineGap

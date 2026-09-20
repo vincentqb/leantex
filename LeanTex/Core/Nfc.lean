@@ -166,6 +166,14 @@ def normalizeChars (cs : Array Char) : Array Char := Id.run do
     work := decomposeInto t work c
   compose t (reorder t work)
 
+/-- The fast path is the identity: text whose scalars all sit below U+00C0
+passes through NFC unchanged. Idempotence over the full domain is UAX #15's
+own guarantee and is held by the property test seeded from the
+decomposition keys, not by a theorem. -/
+theorem normalizeChars_ascii_id (cs : Array Char)
+    (h : cs.all (·.toNat < 0xC0)) : normalizeChars cs = cs := by
+  simp only [normalizeChars, Id.run, h, ite_true]; rfl
+
 /-- NFC over a string. -/
 def normalize (s : String) : String := Id.run do
   let cs := s.foldl (fun a c => a.push c) (Array.mkEmpty s.utf8ByteSize)
