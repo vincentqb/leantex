@@ -189,13 +189,15 @@ def surfaceMods : List String := ["Lex", "Parse", "Elab", "Compat"]
 
 /-- Composed like the banned keywords: the gate scans this file's own staged
 diff, and the pattern must not read as a violation where it is defined. -/
-def kwSeverityAssign : String := "sever" ++ "ity :="
+def kwDemotedAssign : String := "demo" ++ "ted :="
 
-/-- A literal severity assignment: severity derives from a `DiagCode`'s
-declared `Loss` through `Diag.of`, never chosen at a call site, so the field
-may be written in Diag.lean alone. String and comment content aside. -/
-def severityAssign (l : String) : Bool :=
-  containsSub (stripLineComment (stripStrings l)) kwSeverityAssign
+/-- A literal demotion: severity and code derive from a `Diag`'s stored
+kind (`Diag.of`), and `demoted` — the one policy bit left — is written in
+Diag.lean alone (`\allow`'s demote). A call site that writes it delivers a
+content loss as a note, the free-severity defect in its new spelling.
+String and comment content aside. -/
+def demotedAssign (l : String) : Bool :=
+  containsSub (stripLineComment (stripStrings l)) kwDemotedAssign
 
 def surfaceImports : List String := surfaceMods.map ("import LeanTex.Core." ++ ·)
 
@@ -597,13 +599,15 @@ def gates : List Gate := [
   the whole tree).
   Fix: prove the statement and move it into its owner module first." },
   { applies := fun f => f.endsWith ".lean" && f != "LeanTex/Core/Diag.lean"
-    flag := severityAssign
-    what := fun f => s!"a severity written outside Diag.lean, in {f}"
-    help := "  Severity is a function of the code's declared Loss — a free severity is how
-  \"content silently gone\" shipped as a warning fourteen times (PLAN, the
-  severity policy).
-  Fix: emit through Diag.of with a DiagCode; if the code's loss category is
-  wrong, change it in DiagCode.spec." },
+    flag := demotedAssign
+    what := fun f => s!"a demotion written outside Diag.lean, in {f}"
+    help := "  Severity and the code letter are projections of a Diag's stored kind
+  since the derivation landed — `severity :=` no longer compiles — and
+  `demoted` is the one policy bit left: a call site that writes it ships
+  a content loss as a note, which is how \"content silently gone\" once
+  shipped as a warning fourteen times (PLAN, the severity policy).
+  Fix: emit through Diag.of; demotion is `\\allow`'s decision alone
+  (Diag.demote, in Diag.lean)." },
   { applies := fun f => f.startsWith "LeanTex/" || f == "Main.lean"
     flag := repoRefInString
     what := fun f => s!"a repo-internal reference in a string the user can see, in {f}"
@@ -1038,16 +1042,14 @@ def selftest : IO UInt32 := do
     ("  say .W0104 \"a 10mm margin\" pos", false),
     ("  let m8 := M8.compute x", false)]
 
-  expect "severityAssign" severityAssign [
-    -- the free-severity spellings the DiagCode gate closed over
-    ("    severity := .error", true),
-    ("  { d with severity := .warning }", true),
-    ("  let d : Diag := { severity := sev, code := code, message := msg }", true),
+  expect "demotedAssign" demotedAssign [
+    -- the free-severity channel in its new spelling: a call-site demotion
+    ("    ({ d with " ++ kwDemotedAssign ++ " true }, true)", true),
+    ("  let d : Diag := { kind := k, " ++ kwDemotedAssign ++ " quiet }", true),
     -- mentions in comments and strings, and reads of the field, stay legal
-    ("  -- severity := comes only from Diag.of, never a call site", false),
-    ("  say s!\"a string naming severity := x\"", false),
-    ("  let sev := d.severity", false),
-    ("    severity := c.loss.severity", true)]
+    ("  -- " ++ kwDemotedAssign ++ " comes only from \\allow, never a call site", false),
+    ("  say s!\"a string naming " ++ kwDemotedAssign ++ " x\"", false),
+    ("  match d.demoted with", false)]
 
   expect "undeclaredConfigRead" undeclaredConfigRead [
     -- the leak shape: a new Config field threaded from the driver toward a
@@ -1253,11 +1255,18 @@ def main (args : List String) : IO UInt32 := do
   sealAllow (scripts/precommit.lean) with its reason where it stands."
 
   -- The arm gate (handed by impl-shapes), whole tree over LeanTex/Core:
-  -- a pass-through catch-all in a def whose one-line signature takes IR is
-  -- the next constructor silently falling through. The frozen holes are
-  -- allowlisted by def name; shrink the list as they close.
+  -- a pass-through catch-all in a def whose signature takes IR is the
+  -- next constructor silently falling through. Two allowlists in one:
+  -- the leaf functions of the generic walks (setAltLeaf, resolveRefLeaf,
+  -- substPageLeaf, imageSrcPush, floatLabelPush) carry deliberate
+  -- catch-alls — the explicit-arm obligation lives at the one walk
+  -- (mapInlines/foldInlines), and a leaf answers "not my node" by design —
+  -- and the frozen holes (flattenLeadStep, collectTable, collectItem),
+  -- which shrink the list as they close.
   let armAllow : List String :=
-    ["imageSrcsInline", "setAltInline", "setAltBlock", "flattenLeadStep"]
+    ["setAltLeaf", "resolveRefLeaf", "substPageLeaf", "imageSrcPush",
+     "floatLabelPush",
+     "flattenLeadStep", "collectTable", "collectItem"]
   for (f, lines) in coreTexts do
     if f.startsWith "LeanTex/Core/" then
       -- A leaf projection is not a walk: a def handed to `foldInlines`/
@@ -1277,6 +1286,7 @@ def main (args : List String) : IO UInt32 := do
             if w.isEmpty then acc else acc.push w) acc) #[]
       let mut cur := ""
       let mut curWalk := false
+      let mut sigOpen := false
       for i in [0:lines.size] do
         let l := lines[i]!
         let t := stripLineComment l
@@ -1284,6 +1294,12 @@ def main (args : List String) : IO UInt32 := do
           let rest := (if t.startsWith "private def " then t.drop 12 else t.drop 4).toString
           cur := (rest.takeWhile (fun c => isWordChar c || c == '.')).toString
           curWalk := hasWord t "Inline" || hasWord t "Block"
+          -- a signature split across lines (the leaf-function spelling)
+          -- keeps contributing to the walk judgement until its `:=`
+          sigOpen := !containsSub t ":="
+        else if sigOpen then
+          curWalk := curWalk || hasWord t "Inline" || hasWord t "Block"
+          if containsSub t ":=" then sigOpen := false
         if curWalk && wildcardThrough l && !armAllow.contains cur
             && !leafNames.contains cur then
           say s!"pre-commit: wildcard arm in the IR walk `{cur}` ({f}:{i + 1}):
