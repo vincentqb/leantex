@@ -27,8 +27,13 @@ private def Gen.next (g : Gen) (bound : Nat) : Nat × Gen :=
   ((v % UInt64.ofNat bound).toNat, { seed := s })
 
 /-- Random item list: boxes separated by glue, with occasional flagged
-hyphen penalties and forced breaks, terminated like a real paragraph. -/
+hyphen penalties and forced breaks, terminated like a real paragraph.
+Every box carries one glyph drawn from a pool spanning the protrusion
+table's classes (letters, punctuation, quotes, none), and a hyphen pen
+carries its hyphen glyph, so the protrusion boundary term is exercised
+at every kind of break. -/
 private def randItems (g : Gen) : Array Item × Gen := Id.run do
+  let pool : Array Char := #['a', 'A', 'y', '1', '.', ',', '-', '‘', '”', 'x']
   let mut g := g
   let (nWords, g') := g.next 5
   g := g'
@@ -46,19 +51,23 @@ private def randItems (g : Gen) : Array Item × Gen := Id.run do
           shrink := Dim.pt (sw / 3 + 1)
         })
       else if kind < 9 then
-        items := items.push (.pen (Dim.pt 3) hyphenPenalty true 0 Ir.Color.black #[])
+        items := items.push (.pen (Dim.pt 3) hyphenPenalty true 0 Ir.Color.black
+          #[(0, '-', Dim.pt 3)])
       else
         items := items.push (.glue { fil := true })
         items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
     let (w, g') := g.next 60
     g := g'
-    items := items.push (.box (Dim.pt (w + 10)) 0 Ir.Color.black none #[] (Dim.pt 10) false 0)
+    let (ci, g'') := g.next pool.size
+    g := g''
+    items := items.push (.box (Dim.pt (w + 10)) 0 Ir.Color.black none
+      #[(0, pool[ci]!, Dim.pt (w + 10))] (Dim.pt 10) false 0)
   items := items.push (.glue { fil := true })
   items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   return (items, g)
 
-private def seqCost (items : Array Item) (target : Dim.Sp) (breaks : List Nat) :
-    Option Int := Id.run do
+private def seqCost (items : Array Item) (target : Dim.Sp) (protrude : Bool)
+    (breaks : List Nat) : Option Int := Id.run do
   let mut prev : Nat := 0
   let mut first := true
   let mut prevFlagged := false
@@ -68,7 +77,7 @@ private def seqCost (items : Array Item) (target : Dim.Sp) (breaks : List Nat) :
     for k in [a:b] do
       if isForced items k then
         return none
-    let m := measure items a b
+    let m := measure items a b protrude
     total := total + lineDemerits items m target b
     if prevFlagged && isFlagged items b then
       total := total + doubleHyphenDemerits
@@ -81,7 +90,8 @@ private def seqCost (items : Array Item) (target : Dim.Sp) (breaks : List Nat) :
     return none
   return some total
 
-private def bruteBest (items : Array Item) (target : Dim.Sp) : Option Int := Id.run do
+private def bruteBest (items : Array Item) (target : Dim.Sp) (protrude : Bool) :
+    Option Int := Id.run do
   let n := items.size
   let legal := (List.range n).filter (canBreakAt items ·)
   let optional' := legal.filter (· != n - 1)
@@ -91,24 +101,26 @@ private def bruteBest (items : Array Item) (target : Dim.Sp) : Option Int := Id.
     for (b, idx) in optional'.zipIdx do
       if mask / 2 ^ idx % 2 == 1 then
         chosen := chosen ++ [b]
-    if let some c := seqCost items target (chosen ++ [n - 1]) then
+    if let some c := seqCost items target protrude (chosen ++ [n - 1]) then
       match best with
       | some b0 => if c < b0 then best := some c
       | none => best := some c
   return best
 
 /-- `kp`'s prefix-sum measure must agree with the direct `measure` wherever
-`kp` evaluates it: a line start to a legal breakpoint. -/
+`kp` evaluates it: a line start to a legal breakpoint — with and without
+the protrusion boundary term. -/
 private def measuresAgree (items : Array Item) : Bool := Id.run do
   let sums := kpSums items
   for a in [0:items.size] do
     for j in [a:items.size] do
       if a == lineStart items a && canBreakAt items j then
-        let direct := measure items a j
-        let viaKp := kpMeasure items sums a j
-        if direct.natural != viaKp.natural || direct.stretch != viaKp.stretch ||
-            direct.shrink != viaKp.shrink || direct.fil != viaKp.fil then
-          return false
+        for protrude in [false, true] do
+          let direct := measure items a j protrude
+          let viaKp := kpMeasure items sums a j protrude
+          if direct.natural != viaKp.natural || direct.stretch != viaKp.stretch ||
+              direct.shrink != viaKp.shrink || direct.fil != viaKp.fil then
+            return false
   return true
 
 def main (args : List String) : IO UInt32 := do
@@ -122,16 +134,19 @@ def main (args : List String) : IO UInt32 := do
     g := g''
     let target := Dim.pt (tw + 40)
     -- Justified, and ragged as the fil-glue transform the card class uses:
-    -- the same breaker must be optimal over both item shapes.
+    -- the same breaker must be optimal over both item shapes — and with
+    -- the protrusion boundary term on and off.
     for shape in [items, raggedItems items] do
-      let kpBreaks := (kp shape target).toList
-      let kpCost := seqCost shape target kpBreaks
-      let brute := bruteBest shape target
-      unless kpCost.isSome && kpCost == brute do
-        failures := failures + 1
-        IO.eprintln s!"FAIL case {i}: target={target} kp={kpCost} brute={brute}"
-        IO.eprintln s!"  breaks={kpBreaks}"
-        IO.eprintln s!"  items={shape.size}"
+      for protrude in [false, true] do
+        let kpBreaks := (kp shape target protrude).toList
+        let kpCost := seqCost shape target protrude kpBreaks
+        let brute := bruteBest shape target protrude
+        unless kpCost.isSome && kpCost == brute do
+          failures := failures + 1
+          IO.eprintln s!"FAIL case {i} (protrude={protrude}): target={target} \
+kp={kpCost} brute={brute}"
+          IO.eprintln s!"  breaks={kpBreaks}"
+          IO.eprintln s!"  items={shape.size}"
     unless measuresAgree items do
       failures := failures + 1
       IO.eprintln s!"FAIL case {i}: prefix-sum measure disagrees with direct measure"

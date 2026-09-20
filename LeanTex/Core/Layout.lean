@@ -2025,6 +2025,126 @@ structure Measure where
   shrink : Sp := 0
   fil : Bool := false
 
+/-- Character protrusion factors `(left, right)` in per-mille of the
+glyph's own width: how far a line-boundary glyph may hang into the margin
+so the optical edge reads straight (Thành, "Margin kerning and font
+expansion with pdfTeX", TUGboat 22(3); microtype manual §2). The values
+are microtype's `cmr-default` list, mt-cmr.cfg v2.2 (R. Schlicht) — the
+generic set microtype itself applies to families without their own
+config, which is how one table serves any face here. Curly and double
+quotes are the config's `\textquoteleft`-family rows; the dashes its
+`\textendash`/`\textemdash`. -/
+def protrusionLR (c : Char) : Nat × Nat :=
+  match c with
+  | 'A' => (50, 50)
+  | 'F' => (0, 50)
+  | 'J' => (50, 0)
+  | 'K' => (0, 50)
+  | 'L' => (0, 50)
+  | 'T' => (50, 50)
+  | 'V' => (50, 50)
+  | 'W' => (50, 50)
+  | 'X' => (50, 50)
+  | 'Y' => (50, 50)
+  | 'k' => (0, 50)
+  | 'r' => (0, 50)
+  | 't' => (0, 70)
+  | 'v' => (50, 50)
+  | 'w' => (50, 50)
+  | 'x' => (50, 50)
+  | 'y' => (50, 70)
+  | '0' => (0, 50)
+  | '1' => (100, 200)
+  | '2' => (50, 50)
+  | '3' => (50, 50)
+  | '4' => (70, 70)
+  | '5' => (0, 50)
+  | '6' => (0, 50)
+  | '7' => (50, 100)
+  | '8' => (0, 50)
+  | '9' => (0, 50)
+  | '.' => (0, 700)
+  | ',' => (0, 500)
+  | ':' => (0, 500)
+  | ';' => (0, 500)
+  | '!' => (0, 100)
+  | '?' => (0, 200)
+  | '@' => (50, 50)
+  | '~' => (200, 250)
+  | '%' => (50, 50)
+  | '*' => (300, 300)
+  | '+' => (250, 250)
+  | '(' => (300, 0)
+  | ')' => (0, 300)
+  | '/' => (200, 300)
+  | '-' => (400, 500)
+  | '–' => (400, 300)
+  | '—' => (300, 200)
+  | '‘' => (500, 700)
+  | '’' => (500, 600)
+  | '“' => (500, 300)
+  | '”' => (200, 600)
+  | _ => (0, 0)
+
+/-- The table never grants a glyph more overhang than its own width: every
+entry is under 1000‰ — the source's own largest is the period's 700 right
+(mt-cmr.cfg `cmr-default`) — so a protruded boundary glyph always keeps ink
+inside the measure and the hang stays within one glyph advance. -/
+theorem protrusionLR_covers (c : Char) :
+    (protrusionLR c).1 ≤ 1000 ∧ (protrusionLR c).2 ≤ 1000 := by
+  unfold protrusionLR
+  split <;> decide
+
+/-- How far the line `[a:j)` may hang left of the measure: the left
+protrusion of its first glyph, in sp. Kerns (glyphless boxes) and
+penalties are passed over; an image or rule at the edge protrudes
+nothing. `canBreakAt` puts a box directly before a glue break and a
+hyphen pen carries its own glyph, so both boundary scans are O(1) at
+every candidate the breaker evaluates. -/
+def protrudeLeft (items : Array Item) (a j : Nat) : Sp := Id.run do
+  for k in [a:j] do
+    match items[k]? with
+    | some (.box _ _ _ _ glyphs _ _ _) =>
+      if let some (_, c, adv) := glyphs[0]? then
+        return adv * (protrusionLR c).1 / 1000
+    | some (.img ..) | some (.rule ..) => return 0
+    | _ => pure ()
+  return 0
+
+/-- How far the line breaking at `j` may hang right of the measure: the
+right protrusion of its last glyph — the break penalty's own hyphen when
+it carries one (the single biggest win: the hyphen protrudes 500‰), else
+the last boxed glyph before the break. -/
+def protrudeRight (items : Array Item) (a j : Nat) : Sp := Id.run do
+  if let some (.pen _ _ _ _ _ glyphs) := items[j]? then
+    if let some (_, c, adv) := glyphs.back? then
+      return adv * (protrusionLR c).2 / 1000
+  for i in [0:j - a] do
+    match items[j - 1 - i]? with
+    | some (.box _ _ _ _ glyphs _ _ _) =>
+      if let some (_, c, adv) := glyphs.back? then
+        return adv * (protrusionLR c).2 / 1000
+    | some (.img ..) | some (.rule ..) => return 0
+    | _ => pure ()
+  return 0
+
+/-- The largest right overhang any break in `items` can grant: what
+`kp`'s deactivation slackens by under protrusion, so a node judged
+hopeless at one break cannot become feasible again at a later break
+whose boundary glyph protrudes more. -/
+def maxProtrudeRight (items : Array Item) : Sp := Id.run do
+  let mut best : Sp := 0
+  for it in items do
+    match it with
+    | .box _ _ _ _ glyphs _ _ _ =>
+      if let some (_, c, adv) := glyphs.back? then
+        best := max best (adv * (protrusionLR c).2 / 1000)
+    | .pen _ _ _ _ _ glyphs =>
+      if let some (_, c, adv) := glyphs.back? then
+        best := max best (adv * (protrusionLR c).2 / 1000)
+    | _ => pure ()
+  return best
+
 def lineStart (items : Array Item) (start : Nat) : Nat := Id.run do
   let mut a := start
   for _ in [a:items.size] do
@@ -2034,7 +2154,8 @@ def lineStart (items : Array Item) (start : Nat) : Nat := Id.run do
     | _ => break
   return a
 
-def measure (items : Array Item) (a j : Nat) : Measure := Id.run do
+def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
+    Measure := Id.run do
   let mut m : Measure := {}
   for k in [a:j] do
     match items[k]! with
@@ -2049,6 +2170,13 @@ def measure (items : Array Item) (a j : Nat) : Measure := Id.run do
     | .pen _ _ _ _ _ _ => pure ()
   if let some (.pen w _ _ _ _ _) := items[j]? then
     m := { m with natural := m.natural + w }
+  -- Protrusion, stage 2: the breaker measures a line as it will be set —
+  -- boundary glyphs hanging into the margin do not count against the
+  -- measure. Fil lines never protrude (`setLine`'s own gate), so the
+  -- term drops with fil, and ragged item shapes (all glue fil) are
+  -- untouched by construction.
+  if protrude && !m.fil then
+    m := { m with natural := m.natural - protrudeLeft items a j - protrudeRight items a j }
   return m
 
 def overfullDemerits : Int := 100000000
@@ -2128,26 +2256,39 @@ def kpSums (items : Array Item) : KpSums := Id.run do
   return { w := pw, s := ps, k := pk, f := pf, forced := pforced }
 
 /-- The line measure `kp` uses: prefix-sum differences over [a:j) plus the
-width of the penalty broken at. Must agree with `measure` wherever `kp`
-evaluates it; `scripts/kp-fuzz.lean` holds it to that. -/
-def kpMeasure (items : Array Item) (sums : KpSums) (a j : Nat) : Measure :=
+width of the penalty broken at, less the protrusion boundary term when the
+breaker is protruding. Must agree with `measure` wherever `kp` evaluates
+it; `scripts/kp-fuzz.lean` holds it to that. -/
+def kpMeasure (items : Array Item) (sums : KpSums) (a j : Nat)
+    (protrude : Bool := false) : Measure :=
   let penW : Sp := match items[j]? with
     | some (.pen w _ _ _ _ _) => w
     | _ => 0
-  { natural := sums.w[j]! - sums.w[a]! + penW
-    stretch := sums.s[j]! - sums.s[a]!
-    shrink := sums.k[j]! - sums.k[a]!
-    fil := sums.f[j]! - sums.f[a]! > 0 }
+  let m : Measure :=
+    { natural := sums.w[j]! - sums.w[a]! + penW
+      stretch := sums.s[j]! - sums.s[a]!
+      shrink := sums.k[j]! - sums.k[a]!
+      fil := sums.f[j]! - sums.f[a]! > 0 }
+  if protrude && !m.fil then
+    { m with natural := m.natural - protrudeLeft items a j - protrudeRight items a j }
+  else m
 
 /-- Optimal breakpoints by dynamic programming over break positions, with
 prefix-sum line measures and an active list: a node whose line to the
 current position is already overfull beyond shrink can only get worse, so
 it is considered one last time and then deactivated (one node is always
 retained so a solution exists even for unbreakable content). -/
-def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
+def kp (items : Array Item) (target : Sp) (protrude : Bool := false) :
+    Array Nat := Id.run do
   let n := items.size
   let sums := kpSums items
-  let measureAt (a j : Nat) : Measure := kpMeasure items sums a j
+  let measureAt (a j : Nat) : Measure := kpMeasure items sums a j protrude
+  -- Under protrusion the deactivation test slackens by the largest right
+  -- overhang any break can grant: a node overfull beyond shrink at this
+  -- break could otherwise become feasible again at a later break whose
+  -- boundary glyph protrudes more, and dropping it would lose the
+  -- optimum kp-fuzz checks against.
+  let slack : Sp := if protrude then maxProtrudeRight items else 0
   let mut best : Array (Option (Int × Nat)) := Array.replicate (n + 1) none
   best := best.set! n (some (0, n))
   let mut active : Array Nat := #[n]
@@ -2177,7 +2318,7 @@ def kp (items : Array Item) (target : Sp) : Array Nat := Id.run do
               -- Once overfull beyond shrink, this predecessor only gets
               -- worse. Keep the best one per flagged state because that is
               -- the only predecessor property future line costs observe.
-              if m.natural - m.shrink > target then
+              if m.natural - m.shrink > target + slack then
                 if p != n && isFlagged items p then
                   match bestDroppedFlagged with
                   | some (dD, _) =>
@@ -2235,22 +2376,23 @@ paragraph that fails gets the hyphenating pass. This is what keeps
 hyphens rare — a paragraph that sets cleanly without them never
 hyphenates, whatever small demerit gain a hyphen could buy. Explicit
 hyphens (unflagged pens) and forced breaks keep their pens. -/
-def kpTwoPass (items : Array Item) (target : Sp) : Array Nat := Id.run do
+def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := false) :
+    Array Nat := Id.run do
   let sealable : Item → Bool := fun it => match it with
     | .pen _ cost flagged _ _ _ => flagged && forcedCost < cost && cost < 10000
     | .box .. | .glue .. | .img .. | .rule .. => false
-  if !items.any sealable then return kp items target
+  if !items.any sealable then return kp items target protrude
   let plain := items.map fun it => match it with
     | .pen w cost flagged f c g =>
       if flagged && forcedCost < cost && cost < 10000 then .pen w 10000 flagged f c g
       else .pen w cost flagged f c g
     | .box .. | .glue .. | .img .. | .rule .. => it
-  let breaks := kp plain target
-  if breaks.isEmpty then return kp items target
+  let breaks := kp plain target protrude
+  if breaks.isEmpty then return kp items target protrude
   let mut prev := plain.size
   for j in breaks do
     let a := lineStart plain (if prev == plain.size then 0 else prev + 1)
-    let m := measure plain a j
+    let m := measure plain a j protrude
     let delta := target - m.natural
     let bad : Int :=
       if delta == 0 then 0
@@ -2258,112 +2400,11 @@ def kpTwoPass (items : Array Item) (target : Sp) : Array Nat := Id.run do
       else if m.shrink < -delta then (pretolerance : Int) + 1
       else badness delta m.shrink
     if bad > (pretolerance : Int) then
-      return kp items target
+      return kp items target protrude
     prev := j
   return breaks
 
 -- Line setting ----------------------------------------------------------------
-
-/-- Character protrusion factors `(left, right)` in per-mille of the
-glyph's own width: how far a line-boundary glyph may hang into the margin
-so the optical edge reads straight (Thành, "Margin kerning and font
-expansion with pdfTeX", TUGboat 22(3); microtype manual §2). The values
-are microtype's `cmr-default` list, mt-cmr.cfg v2.2 (R. Schlicht) — the
-generic set microtype itself applies to families without their own
-config, which is how one table serves any face here. Curly and double
-quotes are the config's `\textquoteleft`-family rows; the dashes its
-`\textendash`/`\textemdash`. -/
-def protrusionLR (c : Char) : Nat × Nat :=
-  match c with
-  | 'A' => (50, 50)
-  | 'F' => (0, 50)
-  | 'J' => (50, 0)
-  | 'K' => (0, 50)
-  | 'L' => (0, 50)
-  | 'T' => (50, 50)
-  | 'V' => (50, 50)
-  | 'W' => (50, 50)
-  | 'X' => (50, 50)
-  | 'Y' => (50, 50)
-  | 'k' => (0, 50)
-  | 'r' => (0, 50)
-  | 't' => (0, 70)
-  | 'v' => (50, 50)
-  | 'w' => (50, 50)
-  | 'x' => (50, 50)
-  | 'y' => (50, 70)
-  | '0' => (0, 50)
-  | '1' => (100, 200)
-  | '2' => (50, 50)
-  | '3' => (50, 50)
-  | '4' => (70, 70)
-  | '5' => (0, 50)
-  | '6' => (0, 50)
-  | '7' => (50, 100)
-  | '8' => (0, 50)
-  | '9' => (0, 50)
-  | '.' => (0, 700)
-  | ',' => (0, 500)
-  | ':' => (0, 500)
-  | ';' => (0, 500)
-  | '!' => (0, 100)
-  | '?' => (0, 200)
-  | '@' => (50, 50)
-  | '~' => (200, 250)
-  | '%' => (50, 50)
-  | '*' => (300, 300)
-  | '+' => (250, 250)
-  | '(' => (300, 0)
-  | ')' => (0, 300)
-  | '/' => (200, 300)
-  | '-' => (400, 500)
-  | '–' => (400, 300)
-  | '—' => (300, 200)
-  | '‘' => (500, 700)
-  | '’' => (500, 600)
-  | '“' => (500, 300)
-  | '”' => (200, 600)
-  | _ => (0, 0)
-
-/-- The table never grants a glyph more overhang than its own width: every
-entry is under 1000‰ — the source's own largest is the period's 700 right
-(mt-cmr.cfg `cmr-default`) — so a protruded boundary glyph always keeps ink
-inside the measure and the hang stays within one glyph advance. -/
-theorem protrusionLR_covers (c : Char) :
-    (protrusionLR c).1 ≤ 1000 ∧ (protrusionLR c).2 ≤ 1000 := by
-  unfold protrusionLR
-  split <;> decide
-
-/-- How far the line `[a:j)` may hang left of the measure: the left
-protrusion of its first glyph, in sp. Kerns (glyphless boxes) and
-penalties are passed over; an image or rule at the edge protrudes
-nothing. -/
-def protrudeLeft (items : Array Item) (a j : Nat) : Sp := Id.run do
-  for k in [a:j] do
-    match items[k]? with
-    | some (.box _ _ _ _ glyphs _ _ _) =>
-      if let some (_, c, adv) := glyphs[0]? then
-        return adv * (protrusionLR c).1 / 1000
-    | some (.img ..) | some (.rule ..) => return 0
-    | _ => pure ()
-  return 0
-
-/-- How far the line breaking at `j` may hang right of the measure: the
-right protrusion of its last glyph — the break penalty's own hyphen when
-it carries one (the single biggest win: the hyphen protrudes 500‰), else
-the last boxed glyph before the break. -/
-def protrudeRight (items : Array Item) (a j : Nat) : Sp := Id.run do
-  if let some (.pen _ _ _ _ _ glyphs) := items[j]? then
-    if let some (_, c, adv) := glyphs.back? then
-      return adv * (protrusionLR c).2 / 1000
-  for i in [0:j - a] do
-    match items[j - 1 - i]? with
-    | some (.box _ _ _ _ glyphs _ _ _) =>
-      if let some (_, c, adv) := glyphs.back? then
-        return adv * (protrusionLR c).2 / 1000
-    | some (.img ..) | some (.rule ..) => return 0
-    | _ => pure ()
-  return 0
 
 private def setLine (items : Array Item) (a j : Nat) (target : Sp)
     (justify : Bool) (protrude : Bool := false) :
@@ -5317,7 +5358,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .pin => .pin
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
     | .foot c => .foot c
-    | .para j => .para j (Task.spawn fun _ => kpTwoPass j.items j.target)
+    | .para j => .para j (Task.spawn fun _ =>
+        kpTwoPass j.items j.target (j.protrude && j.justify && !j.center))
     | .colOpen => .colOpen
     | .colNext => .colNext
     | .colClose => .colClose
