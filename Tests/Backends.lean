@@ -892,7 +892,7 @@ states; the scan is the same shape as `diagChecks`'.
 The `animation:` half of the same convention: only HtmlDoc.lean may spell
 an animation into emitted styles, and every definition there that does
 ends in its own reduced-motion guard (the guard travels with the
-declaration — `revealCss`, `deckEntryCss`, `deckStepCss`), spells the
+declaration — `revealCss`, `deckPushCss`, `deckStepCss`), spells the
 guard query itself (the base stylesheet's global block and the guards),
 or is named on the allowlist with its reason (`themeCss`'s deck progress
 bar ships only under the theme's own stylesheet, whose global reduce
@@ -950,13 +950,14 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   let deckPage := (HtmlDoc.emit {} deckDoc).1
   let has := hasStr
   t "deck css fixture elaborates clean" deckDs.isEmpty
-  t "the deck pages sideways by scroll snap"
-    (has deckPage "html { scroll-snap-type: x mandatory; }" &&
+  t "the deck pages vertically by scroll snap on the root"
+    (has deckPage "html { scroll-snap-type: y mandatory; }" &&
      has deckPage "scroll-snap-align: start" &&
      has deckPage "scroll-snap-stop: always")
-  t "the deck is a row: each section one viewport of it, its own height"
-    (has deckPage "main { max-width: none; margin: 0; display: flex; align-items: flex-start;" &&
-     has deckPage "section.slide, section.section-page { width: 100vw; flex: 0 0 100vw;")
+  t "the deck is a stack: main block flow, each section one viewport of it"
+    (has deckPage "main { max-width: none; margin: 0;" &&
+     !has deckPage "display: flex; align-items: flex-start" &&
+     has deckPage "section.slide, section.section-page { min-height: 100dvh;")
   t "the deck glide ships with its reduced-motion guard"
     (has deckPage "html { scroll-behavior: smooth; }" &&
      has deckPage ("@media (prefers-reduced-motion: reduce) " ++
@@ -968,12 +969,15 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has deckPage "@media print" &&
      has deckPage "break-inside: avoid" &&
      has deckPage "section.slide { break-after: page; }")
-  t "entry motion is scroll-scrubbed on the row's axis, guard attached"
+  t "the push pins the stage and arrives sideways, guard attached"
     (has deckPage "@supports (animation-timeline: view())" &&
-     has deckPage "animation-timeline: view(x); animation-range: entry;" &&
-     has deckPage "translateX(var(--motiondistance, 1rem))" &&
-     has deckPage ("@media (prefers-reduced-motion: reduce) " ++
-       "{ section.slide > * { animation: none; } }"))
+     has deckPage "@keyframes ltx-push { from { transform: translate(100vw, -100dvh) } }" &&
+     has deckPage "section.slide, section.section-page { position: sticky; top: 0;" &&
+     has deckPage "animation-timeline: view(y); animation-range: entry;" &&
+     has deckPage "html { overflow-x: clip; }" &&
+     has deckPage ("@media (prefers-reduced-motion: reduce) {\n" ++
+       "  section.slide, section.section-page { animation: none; \
+position: static;"))
   t "the deck keeps the safe area and caps the title band"
     (has deckPage "padding: var(--safearea, 6vmin); }" &&
      has deckPage "max-height: var(--titleband, 12.5dvh)")
@@ -1010,10 +1014,12 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      screenOf (deckAt "169") == screenOf (deckAt "149") &&
      screenOf (deckAt "169") != screenOf (deckAt "1610"))
   -- The other half of the uncover census: a stepless deck has nothing to
-  -- reveal and ships no timeline, track, or spacer.
-  t "a stepless deck ships no uncover rule"
-    (!has deckPage "ltx-uncover" && !has deckPage "slide-track" &&
-     !has deckPage "--frame" && !has deckPage "scroll-state")
+  -- reveal and ships no timeline, uncover rule, or control — its frames
+  -- still ride tracks and spacers (the push's snap carriers).
+  t "a stepless deck ships no uncover rule and no control"
+    (!has deckPage "ltx-uncover" && !has deckPage "--frame" &&
+     !has deckPage "step-nav" && !has deckPage "scroll-state" &&
+     has deckPage "class=\"slide-track\"" && has deckPage "class=\"snap\"")
   -- The gate, both directions: no deck rule outside the slides class.
   for (name, src) in [
       ("article", "\\documentclass{article}\\begin{document}x\\end{document}"),
@@ -1129,9 +1135,9 @@ def deckProgressChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "progress deck elaborates clean" (ds.all fun d => d.severity == .note)
   t "the themed deck ships its progress hairline"
     (has html "class=\"deck-progress\"")
-  t "the hairline scales by the root scroll's row axis under supports"
+  t "the hairline scales by the root scroll's deck axis under supports"
     (has html "@supports (animation-timeline: scroll())" &&
-     has html "animation-timeline: scroll(root x)")
+     has html "animation-timeline: scroll(root y)")
   t "the hairline reads the tokens the PDF's bar reads"
     (has html (".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
       "  height: var(--progressheight, 1pt); background: var(--progressfg);"))
