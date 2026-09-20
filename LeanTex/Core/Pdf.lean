@@ -477,6 +477,36 @@ private def Wr.put (w : Wr) (s : String) : Wr :=
 private def Wr.putB (w : Wr) (b : ByteArray) : Wr :=
   { out := w.out ++ b }
 
+/-- The catalog's language entry: `/Lang` spelled from the declared tag —
+the document's main language over every text run that carries no finer
+mark (ISO 32000-2 §14.9.2.2; BCP 47) — and nothing when the document
+declares none. The same `Ir.Meta` field the HTML root's `lang` attribute
+reads (`HtmlDoc.emit_lang_declared`). -/
+def langEntry : Option String → String
+  | some tag => s!" /Lang ({pdfString tag})"
+  | none => ""
+
+/-- The document catalog (ISO 32000-2 §7.7.2): the page tree, an outline
+when the layout carried one, the XMP metadata stream, the declared
+language, and `/ViewerPreferences /DisplayDocTitle` — the reader's window
+titles from the document's own metadata title rather than its file name
+(§12.2; PDF/UA requires it). -/
+def catalogDict (outlinesRef : String) (xmpId : Nat) (lang : Option String) : String :=
+  s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R\
+{langEntry lang} /ViewerPreferences << /DisplayDocTitle true >> >>"
+
+/-- The PDF twin of `emit_lang_declared`: the catalog is the language
+entry of the document's declared tag between two fixed dictionary halves,
+by construction — so `/Lang` appears exactly when the document declares a
+language, reading the same `Ir.Meta` field as the HTML root's `lang`.
+The webMetaChecks census in Tests/Backends is the wiring witness that
+`write` ships this dictionary. -/
+theorem pdf_lang_declared (outlinesRef : String) (xmpId : Nat) (lang : Option String) :
+    ∃ pre post,
+      catalogDict outlinesRef xmpId lang = pre ++ langEntry lang ++ post :=
+  ⟨s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R",
+   " /ViewerPreferences << /DisplayDocTitle true >> >>", rfl⟩
+
 /-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
 object streams, one Identity-H CID font per face actually used (fully
 embedded, with its own ToUnicode), image XObjects for every image actually
@@ -564,15 +594,9 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- compressed (non-stream) objects, serialized bare
   let kids := String.intercalate " " ((List.range np).map fun i => s!"{pageId i} 0 R")
   let outlinesRef := if nOut == 0 then "" else s!" /Outlines {outlineRootId} 0 R"
-  -- /Lang: the document's main language over every text run that carries
-  -- no finer mark (ISO 32000-2 §14.9.2.2; BCP 47). /ViewerPreferences
-  -- /DisplayDocTitle: the reader's window titles from the document's own
-  -- metadata title rather than its file name (§12.2; PDF/UA requires it).
-  let langRef := match info.language with
-    | some tag => s!" /Lang ({pdfString tag})"
-    | none => ""
-  let catalog := s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R\
-{langRef} /ViewerPreferences << /DisplayDocTitle true >> >>"
+  -- The catalog: `catalogDict`, whose `/Lang` is `pdf_lang_declared`'s
+  -- statement — present exactly when the document declares a language.
+  let catalog := catalogDict outlinesRef xmpId info.language
   let pagesObj := s!"<< /Type /Pages /Kids [{kids}] /Count {np} >>"
   let fontResources := String.intercalate " "
     ((List.range nf).map fun k => s!"/F{k + 1} {type0Id k} 0 R")
