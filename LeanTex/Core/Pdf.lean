@@ -486,11 +486,13 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[]) : ByteArray := Id.run do
   let np := pages.size
-  -- Only faces that actually contribute glyphs are embedded (`keepOf`,
-  -- shared with `keepFaces` so the contract quantifies over this choice).
+  -- Only faces that actually contribute glyphs are embedded — `keepFaces`,
+  -- the very function `html_fonts_cover_pdf` quantifies over, so the
+  -- contract holds of the writer's own decision, not a copy. `allUsed`
+  -- stays for the per-face glyph census the kept faces subset.
   let allUsed : Array (Array (Nat × Char)) :=
     (Array.range fs.fonts.size).map fun k => usedGlyphs k (fs.get k).numGlyphs pages
-  let keep : Array Nat := keepOf allUsed
+  let keep : Array Nat := keepFaces fs pages
   let remap : Array Nat := Id.run do
     let mut r : Array Nat := Array.replicate fs.fonts.size 0
     for (old, new) in keep.zipIdx do
