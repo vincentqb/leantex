@@ -121,9 +121,24 @@ integer subtraction, no rounding anywhere. -/
 def sub (a b : Length) : Length :=
   { sp := a.sp - b.sp, em := a.em - b.em, ex := a.ex - b.ex }
 
-/-- Scale by a rational `num/den`, keeping the fixed point exact. -/
+/-- Scale by a rational `num/den`, truncating toward zero — TeX's one
+rounding: `\divide` truncates (TeXbook ch. 24), and so does the
+coefficient scaling `⟨factor⟩⟨dimen⟩` (`xn_over_d`, TeX §107). Only
+e-TeX's `\dimexpr` division rounds to nearest instead (e-TeX manual
+§3.5), which is why that spelling is refused, not mapped here. -/
 def scale (l : Length) (num : Int) (den : Nat) : Length :=
-  { sp := l.sp * num / den, em := l.em * num / den, ex := l.ex * num / den }
+  { sp := (l.sp * num).tdiv den
+    em := (l.em * num).tdiv den
+    ex := (l.ex * num).tdiv den }
+
+/-- The settled rounding agrees with the floor `scale` used before
+wherever the scaled product is nonnegative — truncation toward zero and
+Euclidean division (Lean's `Int./`, floor for a positive divisor) differ
+only on negative dividends, so every nonnegative value scales exactly as
+it always did. -/
+theorem scale_tdiv_eq_of_nonneg (v num : Int) (den : Nat) (h : 0 ≤ v * num) :
+    (v * num).tdiv den = v * num / den :=
+  Int.tdiv_eq_ediv_of_nonneg h
 
 /-- Resolve against a font size and x-height, both in sp. -/
 def resolve (l : Length) (fontSize xHeight : Sp) : Sp :=

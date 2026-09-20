@@ -253,12 +253,15 @@ optionally multiplied and/or divided by numeric factors; a factor … is
 either a parenthesized subexpression or a quantity"). TeX's coefficient
 form rides along: `2\cardbleed` is a ⟨factor⟩ before an internal dimen
 (TeXbook ch. 24, ⟨dimen⟩ syntax), so `cardheight + 2 cardbleed` reads as
-`cardheight + 2 * cardbleed`. Division is not taken: e-TeX's division
-rounds to the nearest multiple (ties away from zero), this engine's
-fixed-point scaling floors, and offering a spelling whose rounding
-silently disagrees with its source is worse than not offering it until
-the rounding is settled. Scaling by a decimal keeps `Length.scale`'s
-existing floor semantics, which `0.6 * token` has always had.
+`cardheight + 2 * cardbleed`. Division by a numeric factor folds into the
+same scaling (`a / n` is `.scale 1 n a`), and a parenthesized numeric
+subexpression such as `(3+1)` evaluates as a scalar before it scales or
+divides. One rounding rule for the whole language, TeX's: `\divide`
+truncates toward zero (TeXbook ch. 24) and so does coefficient scaling
+(`xn_over_d`, TeX §107); e-TeX's `\dimexpr` division rounds to nearest
+instead (e-TeX manual §3.5) and is therefore refused by name, never
+mapped onto arithmetic that would disagree with its source. Scaling by a
+decimal keeps `Length.scale`'s semantics, now truncation throughout.
 
 Token references resolve eagerly, against the values declared so far —
 the same rule `\tokens` and TeX's `\setlength{\x}{2\x}` follow — so a
@@ -331,9 +334,10 @@ theorem eval_names_agree (l₁ l₂ : String → Option SymGlue) (e : LenExpr)
 /-- The same expression evaluated in ℤ, over any one fixed-point component
 (the sp part, the em part, …): the arithmetic the engine owes exactness
 to. Sums and differences are integer sums and differences; scaling is
-`· * num / den` with the floor `Length.scale` has always used — the one
-stated rounding (e-TeX's `\dimexpr` division rounds to nearest instead,
-which is why the expression language offers no division). -/
+`(· * num).tdiv den` with the truncation `Length.scale` uses — the one
+stated rounding, TeX's own (`\divide` and `xn_over_d` both truncate
+toward zero; only e-TeX's `\dimexpr` division rounds to nearest, which is
+why that spelling is refused rather than mapped). -/
 def evalInt (look : String → Option Int) : LenExpr → (Length → Int) → Except String Int
   | .lit l, part => .ok (part l)
   | .tok n, _ =>
@@ -342,7 +346,7 @@ def evalInt (look : String → Option Int) : LenExpr → (Length → Int) → Ex
     | none => .error n
   | .scale num den e, part =>
     match evalInt look e part with
-    | .ok v => .ok (v * num / den)
+    | .ok v => .ok ((v * num).tdiv den)
     | .error m => .error m
   | .add a b, part =>
     match evalInt look a part, evalInt look b part with
@@ -357,8 +361,9 @@ def evalInt (look : String → Option Int) : LenExpr → (Length → Int) → Ex
 
 /-- Arithmetic is exact in sp: the width's sp component of an evaluated
 expression is the same expression evaluated in ℤ over the sp components —
-no drift is introduced anywhere, and the only rounding is the stated floor
-in `scale`. (The same proof shape holds for every component; sp is the one
+no drift is introduced anywhere, and the only rounding is the stated
+truncation in `scale`. (The same proof shape holds for every component;
+sp is the one
 print geometry rides on.) -/
 theorem eval_exact_sp (look : String → Option SymGlue) (e : LenExpr) :
     (eval look e).map (fun g => g.width.sp)
@@ -406,7 +411,7 @@ end LenExpr
 private inductive ETok where
   | num (mantissa : Int) (scale : Nat)
   | ident (s : String)
-  | plus | minus | times | lparen | rparen
+  | plus | minus | times | divide | lparen | rparen
   deriving Repr, BEq
 
 /-- Scan a length expression into tokens. Numbers are unsigned here — a
@@ -442,6 +447,7 @@ private def exprToks (s : String) : Option (Array ETok) := Id.run do
       else if c == '+' then out := out.push .plus; i := i + 1
       else if c == '-' then out := out.push .minus; i := i + 1
       else if c == '*' then out := out.push .times; i := i + 1
+      else if c == '/' then out := out.push .divide; i := i + 1
       else if c == '(' then out := out.push .lparen; i := i + 1
       else if c == ')' then out := out.push .rparen; i := i + 1
       else return none
@@ -457,14 +463,22 @@ private def applyBinOp (op : Char) (a b : EVal) : Except String EVal :=
   match op, a, b with
   | '+', .len x, .len y => .ok (.len (.add x y))
   | '-', .len x, .len y => .ok (.len (.sub x y))
+  | '+', .scalar m s, .scalar m' s' => .ok (.scalar (m * s' + m' * s) (s * s'))
+  | '-', .scalar m s, .scalar m' s' => .ok (.scalar (m * s' - m' * s) (s * s'))
   | '*', .scalar m s, .len e => .ok (.len (.scale m s e))
   | '*', .len e, .scalar m s => .ok (.len (.scale m s e))
   | '*', .scalar m s, .scalar m' s' => .ok (.scalar (m * m') (s * s'))
   | '*', .len _, .len _ => .error "a length times a length has no meaning"
+  | '/', _, .scalar 0 _ => .error "division by zero"
+  | '/', .len e, .scalar m s =>
+    .ok (.len (.scale (if m < 0 then -(s : Int) else (s : Int)) m.natAbs e))
+  | '/', .scalar m s, .scalar m' s' =>
+    .ok (.scalar (if m' < 0 then -(m * s') else m * s') (s * m'.natAbs))
+  | '/', _, .len _ => .error "dividing by a length has no meaning"
   | _, _, _ => .error "a bare number in a length expression needs a unit"
 
 private def opPrec (op : Char) : Nat :=
-  if op == 'u' then 3 else if op == '*' then 2 else 1
+  if op == 'u' then 3 else if op == '*' || op == '/' then 2 else 1
 
 /-- Pop and apply one operator from the stack. -/
 private def popOne (vals : Array EVal) (op : Char) : Except String (Array EVal) := do
@@ -522,17 +536,18 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
         -- Unary: highest precedence, applied to the next operand alone.
         ops := ops.push 'u'
       -- A unary plus says nothing; it is skipped.
-    | .times =>
+    | .times | .divide =>
       unless prevOperand do throw "malformed expression"
+      let c := if t == ETok.divide then '/' else '*'
       for _ in [0:ops.size + 1] do
         match ops.back? with
         | some top =>
-          if top != '(' && opPrec top ≥ opPrec '*' then
+          if top != '(' && opPrec top ≥ opPrec c then
             vals ← popOne vals top
             ops := ops.pop
           else break
         | none => break
-      ops := ops.push '*'
+      ops := ops.push c
       prevOperand := false
     | .lparen =>
       if prevOperand then throw "malformed expression"
@@ -567,7 +582,8 @@ private def exprParse (toks : Array ETok) : Except String LenExpr := do
   | _, _ => throw "malformed expression"
 
 /-- Read a length expression against the declared tokens: `a + b`,
-`a - b`, `2 b` and `0.5 * b`, parentheses, literals with units. The error
+`a - b`, `2 b`, `0.5 * b` and `a / 2`, parentheses (a parenthesized
+numeric subexpression is a scalar factor), literals with units. The error
 is worth surfacing — an unknown token name errors as itself. -/
 def parseLengthExpr (tokens : Array (String × SymGlue)) (s : String) :
     Except String SymGlue := do
@@ -587,7 +603,7 @@ def looksLikeExpr (s : String) : Bool := Id.run do
   let mut prevDigit := false
   let mut i := 0
   for c in cs do
-    if c == '(' || c == ')' || c == '*' then return true
+    if c == '(' || c == ')' || c == '*' || c == '/' then return true
     if (c == '+' || c == '-') && i > 0 then return true
     if prevDigit && (c.isAlpha || c == '_') then
       -- a digit running into letters is a unit or a coefficient; only the
