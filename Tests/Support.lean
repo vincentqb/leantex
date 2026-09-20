@@ -74,7 +74,7 @@ def goldenNames : List String :=
    "icons",
    "diagram", "diagram-overflow", "diagram-refused", "diagram-scm",
    "tables", "tables-ragged", "subfigures", "float-center",
-   "math-companion", "math-first", "abstract", "crossref", "eqnum",
+   "math-companion", "math-first", "abstract", "crossref", "eqnum", "footnotes",
    "redefine", "titlebars", "daylight", "blocks", "poster"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force

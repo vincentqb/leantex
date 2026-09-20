@@ -11,6 +11,33 @@ shipped (or deliberately not, for a note), covered-coloured runs on step
 pages, rules and fills drawn, line positions for centring and columns. -/
 def censusTable :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
+  ("footnotes", fun geom c => [
+    ("the article spans two pages", c.size ≥ 2),
+    ("the first note ships at the foot of page one",
+      pageHas c 0 "first" && pageHas c 0 "foot of page one" &&
+      ((lineYOf c 0 "invented survey").bind fun sy =>
+        (lineYOf c 0 "foot of page one").map fun ny => decide (sy < ny)).getD false),
+    ("the note ink stands above bodyBottom, in the text block",
+      ((lineYOf c 0 "foot of page one").map fun ny =>
+        decide (ny ≤ geom.pageH - geom.vmargin)).getD false),
+    ("the mark's digit ships raised beside its word",
+      pageHas c 0 "here1"),
+    ("the boundary note shares its mark's page, wherever the break fell",
+      (List.range c.size).any fun i =>
+        pageHas c i "boundary claim" && pageHas c i "boundary note"),
+    ("no page carries a note whose mark is elsewhere",
+      (List.range c.size).all fun i =>
+        (!pageHas c i "boundary note" || pageHas c i "boundary claim") &&
+        (!pageHas c i "foot of page one" || pageHas c i "invented survey")),
+    ("the override mark ships as 12, unstepped",
+      hasStr (censusText c) "number12" && hasStr (censusText c) "chosen note"),
+    ("the footnote rule ships at its declared weight above the notes",
+      ((lineYOf c 0 "foot of page one").map fun ny =>
+        (pageRuleSegs c 0).any fun rt =>
+          decide (rt.1 < ny) && rt.2 == geom.fontSize * 4 / 100).getD false),
+    ("the notes set at footnotesize",
+      lineSizeOf c 0 "foot of page one" ==
+        some (geom.fontSize * ((Ir.sizeScale.lookup "footnotesize").getD 1000) / 1000))]),
   ("eqnum", fun geom c => [
     ("one page", c.size == 1),
     ("the first equation ships its number", hasStr (censusText c) "(1)"),
