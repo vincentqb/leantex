@@ -6356,66 +6356,389 @@ def bibStyleName (doc : Doc) : Option String :=
 
 mutual
 
-/-- Give every image that has no `alt` yet this text: how a `figure`'s
-caption becomes the accessible name of the image it captions. -/
--- conserves: none — the walk's one edit is an image's empty alt, which the
--- text census does not read; a census fact here would guarantee arms the
--- walk does not touch at the cost of another hand-written proof family
--- (the images fixture pins the behaviour).
-def setAltInlines (alt : String) (xs : Array Inline) : Array Inline :=
-  setAltInlineList alt #[] xs.toList
+/-- One leaf-parameterised map hosts every leaf-rewrite walk over the tree:
+`f` rewrites each childless node — applied to the node itself, never to a
+wrapper, whose body recurses below so the checker sees the recursion, as
+`foldInline`'s shape does. `setAltBlocks`, `resolveRefs`, and
+`Layout.substPage` are its leaf functions: a leaf function carries the one
+rewrite, and the explicit-arm obligation lives here, once. -/
+def mapInlines (f : Inline → Inline) (xs : Array Inline) : Array Inline :=
+  mapInlineList f #[] xs.toList
 
-def setAltInlineList (alt : String) (out : Array Inline) : List Inline → Array Inline
+def mapInlineList (f : Inline → Inline) (out : Array Inline) :
+    List Inline → Array Inline
   | [] => out
-  | x :: rest => setAltInlineList alt (out.push (setAltInline alt x)) rest
+  | x :: rest => mapInlineList f (out.push (mapInline f x)) rest
 
-def setAltInline (alt : String) : Inline → Inline
-  | .image src size old => .image src size (if old.isEmpty then alt else old)
-  | .styled st body => .styled st (setAltInlineList alt #[] body.toList)
-  | .colored c n body => .colored c n (setAltInlineList alt #[] body.toList)
-  | .link u body => .link u (setAltInlineList alt #[] body.toList)
-  | .underline body => .underline (setAltInlineList alt #[] body.toList)
-  | .step n l body => .step n l (setAltInlineList alt #[] body.toList)
-  | other => other
+def mapInline (f : Inline → Inline) : Inline → Inline
+  | .styled st body => .styled st (mapInlineList f #[] body.toList)
+  | .colored c n body => .colored c n (mapInlineList f #[] body.toList)
+  | .role n body => .role n (mapInlineList f #[] body.toList)
+  | .link u body => .link u (mapInlineList f #[] body.toList)
+  | .underline body => .underline (mapInlineList f #[] body.toList)
+  | .step n l body => .step n l (mapInlineList f #[] body.toList)
+  | .footnote n body => .footnote n (mapInlineList f #[] body.toList)
+  | .text s => f (.text s)
+  | .math d src => f (.math d src)
+  | .formula d src body => f (.formula d src body)
+  | .image src size alt => f (.image src size alt)
+  | .icon s l => f (.icon s l)
+  | .label k => f (.label k)
+  | .ref k p t tg => f (.ref k p t tg)
+  | .cite tx keys => f (.cite tx keys)
+  | .fill => f .fill
+  | .strut h => f (.strut h)
+  | .pageNumber => f .pageNumber
+  | .pageCount => f .pageCount
+  | .linebreak e => f (.linebreak e)
+
+end
+
+def mapTableCells (f : Inline → Inline) (out : Array (Array Inline)) :
+    List (Array Inline) → Array (Array Inline)
+  | [] => out
+  | cell :: rest => mapTableCells f (out.push (mapInlines f cell)) rest
+
+def mapTableRows (f : Inline → Inline) (out : Array (Array (Array Inline))) :
+    List (Array (Array Inline)) → Array (Array (Array Inline))
+  | [] => out
+  | row :: rest => mapTableRows f (out.push (mapTableCells f #[] row.toList)) rest
+
+def mapBibItems (f : Inline → Inline) (out : Array BibItem) :
+    List BibItem → Array BibItem
+  | [] => out
+  | i :: rest =>
+    mapBibItems f (out.push { i with content := mapInlines f i.content }) rest
+
+mutual
+
+/-- The block face of the map: every inline region — a paragraph's content,
+a title, a caption, each table cell, a formatted bibliography entry, the
+running furniture — is mapped, and every block wrapper keeps its shape.
+One descent for the whole leaf-rewrite family, so a rewrite cannot
+silently skip a region a sibling walk reaches: two of the three hand-rolled
+copies this map replaced skipped real ones. -/
+def mapBlocks (f : Inline → Inline) (xs : Array Block) : Array Block :=
+  mapBlockList f #[] xs.toList
+
+def mapBlockList (f : Inline → Inline) (out : Array Block) :
+    List Block → Array Block
+  | [] => out
+  | b :: rest => mapBlockList f (out.push (mapBlock f b)) rest
+
+def mapBlock (f : Inline → Inline) : Block → Block
+  | .para content => .para (mapInlines f content)
+  | .equation n content => .equation n (mapInlines f content)
+  | .section l st n title => .section l st n (mapInlines f title)
+  | .list o items => .list o (mapBlockItems f #[] items.toList)
+  | .center body => .center (mapBlockList f #[] body.toList)
+  | .quote body => .quote (mapBlockList f #[] body.toList)
+  | .abstract body => .abstract (mapBlockList f #[] body.toList)
+  | .titled kind title body =>
+    .titled kind (mapInlines f title) (mapBlockList f #[] body.toList)
+  | .role n body => .role n (mapBlockList f #[] body.toList)
+  | .spaced g body => .spaced g (mapBlockList f #[] body.toList)
+  | .columns cols => .columns (mapBlockCols f #[] cols.toList)
+  | .step n l body => .step n l (mapBlockList f #[] body.toList)
+  | .only targets body => .only targets (mapBlockList f #[] body.toList)
+  | .nav spec body => .nav spec (mapBlockList f #[] body.toList)
+  | .note body => .note (mapBlockList f #[] body.toList)
+  | .frame title st v body =>
+    .frame (mapInlines f title) st v (mapBlockList f #[] body.toList)
+  | .framefoot content => .framefoot (mapInlines f content)
+  | .float k num ca body caption =>
+    .float k num ca (mapBlockList f #[] body.toList) (mapInlines f caption)
+  | .table c pl pr rows rules =>
+    .table c pl pr (mapTableRows f #[] rows.toList) rules
+  | .logo content => .logo (mapInlines f content)
+  | .bibliography src style items =>
+    .bibliography src style (mapBibItems f #[] items.toList)
+  | .verbatim c s => .verbatim c s
+  | .setPalette pal => .setPalette pal
+  | .setTokens tk => .setTokens tk
+  | .pagebreak => .pagebreak
+  | .rule c n th => .rule c n th
+  | .picture pic => .picture pic
+
+def mapBlockItems (f : Inline → Inline) (out : Array (Array Block)) :
+    List (Array Block) → Array (Array Block)
+  | [] => out
+  | item :: rest => mapBlockItems f (out.push (mapBlockList f #[] item.toList)) rest
+
+def mapBlockCols (f : Inline → Inline) (out : Array (Option Nat × Array Block)) :
+    List (Option Nat × Array Block) → Array (Option Nat × Array Block)
+  | [] => out
+  | (w, body) :: rest =>
+    mapBlockCols f (out.push (w, mapBlockList f #[] body.toList)) rest
 
 end
 
 mutual
 
--- conserves: none — the block face of setAltInlines, same reason.
-def setAltBlocks (alt : String) (xs : Array Block) : Array Block :=
-  setAltBlockList alt #[] xs.toList
+/-- The census face of the map, per node: a leaf function that conserves
+each node's own census conserves every node's. `mapInlines_text` and
+`mapBlocks_text` are the walk-level schema; a leaf-rewrite states its
+census fact as their one-line instance instead of one hand induction per
+walk. -/
+theorem mapInline_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (x : Inline) :
+    plainTextOne (mapInline f x) = plainTextOne x := by
+  match x with
+  | .styled st body =>
+    show plainTextList (mapInlineList f #[] body.toList).toList = _
+    rw [mapInlineList_text f hf body.toList #[]]
+    simp [plainTextList, plainTextOne]
+  | .colored c n body =>
+    show plainTextList (mapInlineList f #[] body.toList).toList = _
+    rw [mapInlineList_text f hf body.toList #[]]
+    simp [plainTextList, plainTextOne]
+  | .role n body =>
+    show plainTextList (mapInlineList f #[] body.toList).toList = _
+    rw [mapInlineList_text f hf body.toList #[]]
+    simp [plainTextList, plainTextOne]
+  | .link u body =>
+    show plainTextList (mapInlineList f #[] body.toList).toList = _
+    rw [mapInlineList_text f hf body.toList #[]]
+    simp [plainTextList, plainTextOne]
+  | .underline body =>
+    show plainTextList (mapInlineList f #[] body.toList).toList = _
+    rw [mapInlineList_text f hf body.toList #[]]
+    simp [plainTextList, plainTextOne]
+  | .step n l body =>
+    show plainTextList (mapInlineList f #[] body.toList).toList = _
+    rw [mapInlineList_text f hf body.toList #[]]
+    simp [plainTextList, plainTextOne]
+  | .footnote n body =>
+    show plainTextList (mapInlineList f #[] body.toList).toList = _
+    rw [mapInlineList_text f hf body.toList #[]]
+    simp [plainTextList, plainTextOne]
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .strut _
+  | .pageNumber | .pageCount | .linebreak _ => exact hf _
 
-def setAltBlockList (alt : String) (out : Array Block) : List Block → Array Block
-  | [] => out
-  | b :: rest => setAltBlockList alt (out.push (setAltBlock alt b)) rest
-
-def setAltBlock (alt : String) : Block → Block
-  | .para content => .para (setAltInlines alt content)
-  | .equation n content => .equation n content
-  | .center body => .center (setAltBlockList alt #[] body.toList)
-  | .quote body => .quote (setAltBlockList alt #[] body.toList)
-  | .abstract body => .abstract (setAltBlockList alt #[] body.toList)
-  | .spaced g body => .spaced g (setAltBlockList alt #[] body.toList)
-  | .step n l body => .step n l (setAltBlockList alt #[] body.toList)
-  | .only targets body => .only targets (setAltBlockList alt #[] body.toList)
-  | .nav spec body => .nav spec (setAltBlockList alt #[] body.toList)
-  -- A cell may hold the image a table's caption names. A nested float owns
-  -- its caption and is left whole: the inner caption already applied.
-  | .table c pl pr rows rules => .table c pl pr (setAltTableRows alt #[] rows.toList) rules
-  | other => other
-
-def setAltTableRows (alt : String) (out : Array (Array (Array Inline))) :
-    List (Array (Array Inline)) → Array (Array (Array Inline))
-  | [] => out
-  | row :: rest => setAltTableRows alt (out.push (setAltTableCells alt #[] row.toList)) rest
-
-def setAltTableCells (alt : String) (out : Array (Array Inline)) :
-    List (Array Inline) → Array (Array Inline)
-  | [] => out
-  | cell :: rest => setAltTableCells alt (out.push (setAltInlines alt cell)) rest
+theorem mapInlineList_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (xs : List Inline)
+    (out : Array Inline) :
+    plainTextList (mapInlineList f out xs).toList
+      = plainTextList out.toList ++ plainTextList xs := by
+  match xs with
+  | [] => simp [mapInlineList, plainTextList]
+  | x :: rest =>
+    rw [mapInlineList, mapInlineList_text f hf rest (out.push (mapInline f x))]
+    rw [Array.toList_push, plainTextList_append]
+    simp [plainTextList, mapInline_text f hf x, String.append_assoc]
 
 end
+
+/-- The `Conserves` schema over the generic map, inline face: whatever the
+leaf function, if it conserves each node's census the walk conserves the
+content's. -/
+theorem mapInlines_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
+    Conserves plainText (mapInlines f) := fun xs => by
+  show plainTextList (mapInlineList f #[] xs.toList).toList = _
+  rw [mapInlineList_text f hf xs.toList #[]]
+  simp [plainTextList, plainText]
+
+private theorem blockTextBibItems_chain (l1 l2 : List BibItem) (acc : String) :
+    blockTextBibItems acc (l1 ++ l2)
+      = blockTextBibItems (blockTextBibItems acc l1) l2 := by
+  induction l1 generalizing acc with
+  | nil => rfl
+  | cons x xs ih => simp [blockTextBibItems, ih]
+
+private theorem mapTableCells_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (cells : List (Array Inline))
+    (out : Array (Array Inline)) (acc : String) :
+    blockTextTableCells acc (mapTableCells f out cells).toList
+      = blockTextTableCells (blockTextTableCells acc out.toList) cells := by
+  match cells with
+  | [] => simp [mapTableCells, blockTextTableCells]
+  | cell :: rest =>
+    rw [mapTableCells, mapTableCells_text f hf rest]
+    rw [Array.toList_push, blockTextTableCells_chain]
+    simp [blockTextTableCells, mapInlines_text f hf cell]
+
+private theorem mapTableRows_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (rows : List (Array (Array Inline)))
+    (out : Array (Array (Array Inline))) (acc : String) :
+    blockTextTableRows acc (mapTableRows f out rows).toList
+      = blockTextTableRows (blockTextTableRows acc out.toList) rows := by
+  match rows with
+  | [] => simp [mapTableRows, blockTextTableRows]
+  | row :: rest =>
+    rw [mapTableRows, mapTableRows_text f hf rest]
+    rw [Array.toList_push, blockTextTableRows_chain]
+    simp [blockTextTableRows, blockTextTableCells, mapTableCells_text f hf row.toList #[]]
+
+private theorem mapBibItems_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (items : List BibItem)
+    (out : Array BibItem) (acc : String) :
+    blockTextBibItems acc (mapBibItems f out items).toList
+      = blockTextBibItems (blockTextBibItems acc out.toList) items := by
+  match items with
+  | [] => simp [mapBibItems, blockTextBibItems]
+  | i :: rest =>
+    rw [mapBibItems, mapBibItems_text f hf rest]
+    rw [Array.toList_push, blockTextBibItems_chain]
+    simp [blockTextBibItems, mapInlines_text f hf i.content]
+
+mutual
+
+theorem mapBlock_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (acc : String) (b : Block) :
+    blockTextOne acc (mapBlock f b) = blockTextOne acc b := by
+  match b with
+  | .para content => simp [mapBlock, blockTextOne, mapInlines_text f hf content]
+  | .equation n content =>
+    simp [mapBlock, blockTextOne, mapInlines_text f hf content]
+  | .section l st n title =>
+    simp [mapBlock, blockTextOne, mapInlines_text f hf title]
+  | .list o items =>
+    show blockTextItems acc (mapBlockItems f #[] items.toList).toList = _
+    rw [mapBlockItems_text f hf items.toList #[]]
+    rfl
+  | .center body =>
+    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
+    rw [mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .quote body =>
+    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
+    rw [mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .abstract body =>
+    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
+    rw [mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .titled kind title body =>
+    show blockTextList (acc ++ plainText (mapInlines f title))
+      (mapBlockList f #[] body.toList).toList = _
+    rw [mapInlines_text f hf title, mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .role n body =>
+    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
+    rw [mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .spaced g body =>
+    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
+    rw [mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .columns cols =>
+    show blockTextColumns acc (mapBlockCols f #[] cols.toList).toList = _
+    rw [mapBlockCols_text f hf cols.toList #[]]
+    rfl
+  | .step n l body =>
+    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
+    rw [mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .only targets body =>
+    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
+    rw [mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .nav spec body =>
+    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
+    rw [mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .note body =>
+    show blockTextList acc (mapBlockList f #[] body.toList).toList = _
+    rw [mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .frame title st v body =>
+    show blockTextList (acc ++ plainText (mapInlines f title))
+      (mapBlockList f #[] body.toList).toList = _
+    rw [mapInlines_text f hf title, mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .framefoot content =>
+    simp [mapBlock, blockTextOne, mapInlines_text f hf content]
+  | .float k num ca body caption =>
+    show blockTextList (acc ++ plainText (mapInlines f caption))
+      (mapBlockList f #[] body.toList).toList = _
+    rw [mapInlines_text f hf caption, mapBlockList_text f hf body.toList #[]]
+    rfl
+  | .table c pl pr rows rules =>
+    show blockTextTableRows acc (mapTableRows f #[] rows.toList).toList = _
+    rw [mapTableRows_text f hf rows.toList #[]]
+    rfl
+  | .logo content => simp [mapBlock, blockTextOne, mapInlines_text f hf content]
+  | .bibliography src style items =>
+    show blockTextBibItems acc (mapBibItems f #[] items.toList).toList = _
+    rw [mapBibItems_text f hf items.toList #[]]
+    rfl
+  | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .rule _ _ _ | .picture _ => rfl
+
+theorem mapBlockList_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (bs : List Block)
+    (out : Array Block) (acc : String) :
+    blockTextList acc (mapBlockList f out bs).toList
+      = blockTextList (blockTextList acc out.toList) bs := by
+  match bs with
+  | [] => simp [mapBlockList, blockTextList]
+  | b :: rest =>
+    rw [mapBlockList, mapBlockList_text f hf rest]
+    rw [Array.toList_push, blockTextList_chain]
+    simp [blockTextList, mapBlock_text f hf]
+
+theorem mapBlockItems_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (items : List (Array Block))
+    (out : Array (Array Block)) (acc : String) :
+    blockTextItems acc (mapBlockItems f out items).toList
+      = blockTextItems (blockTextItems acc out.toList) items := by
+  match items with
+  | [] => simp [mapBlockItems, blockTextItems]
+  | item :: rest =>
+    rw [mapBlockItems, mapBlockItems_text f hf rest]
+    rw [Array.toList_push, blockTextItems_chain]
+    simp [blockTextItems, blockTextList, mapBlockList_text f hf item.toList #[]]
+
+theorem mapBlockCols_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x)
+    (cols : List (Option Nat × Array Block))
+    (out : Array (Option Nat × Array Block)) (acc : String) :
+    blockTextColumns acc (mapBlockCols f out cols).toList
+      = blockTextColumns (blockTextColumns acc out.toList) cols := by
+  match cols with
+  | [] => simp [mapBlockCols, blockTextColumns]
+  | (w, body) :: rest =>
+    rw [mapBlockCols, mapBlockCols_text f hf rest]
+    rw [Array.toList_push, blockTextColumns_chain]
+    simp [blockTextColumns, blockTextList, mapBlockList_text f hf body.toList #[]]
+
+end
+
+/-- The `Conserves` schema over the generic map, block face:
+`setAltBlocks_text` is its one-line instance, and the next leaf-rewrite's
+census fact costs the same one line. -/
+theorem mapBlocks_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) :
+    Conserves blocksText (mapBlocks f) := fun xs => by
+  show blockTextList "" (mapBlockList f #[] xs.toList).toList = _
+  rw [mapBlockList_text f hf xs.toList #[]]
+  rfl
+
+/-- Give every image that has no `alt` yet this text: how a `figure`'s
+caption becomes the accessible name of the image it captions. The walk is
+`mapBlocks`, whose descent is total, so the caption reaches an image
+wherever the body put it — in a list, under a wrapper, in a table cell.
+(The hand-rolled walk this replaced skipped those bodies through a
+wildcard arm; an image already carrying an alt keeps its own, so an inner
+float's caption still wins over the outer's.) -/
+private def setAltLeaf (alt : String)
+    (x : Inline) : Inline :=
+  match x with
+  | .image src size old => .image src size (if old.isEmpty then alt else old)
+  | _ => x
+
+def setAltBlocks (alt : String) (xs : Array Block) : Array Block :=
+  mapBlocks (setAltLeaf alt) xs
+
+/-- Caption-to-alt is markup, never content: the census does not read an
+image's text alternative, so the walk ships exactly the text census the
+body had — the schema's first one-line instance. -/
+theorem setAltBlocks_text (alt : String) :
+    Conserves blocksText (setAltBlocks alt) :=
+  mapBlocks_text _ (fun x => by cases x <;> rfl)
 
 /-- One character of a label's anchor: word characters and the punctuation
 label keys conventionally carry (`fig:scm`, `eq.1`, `a-b`, `x_y`) survive
@@ -6486,120 +6809,24 @@ def resolveOneRef (table : RefTable) (key : String) (paren : Bool) : Inline :=
     .ref key paren (if paren then "(" ++ n ++ ")" else n) (some (labelAnchor key))
   | _ => .ref key paren "??" none
 
-mutual
+/-- Resolution's one rewrite: every `.ref` is rewritten from the table
+(`resolveOneRef_exact` is its statement), everything else keeps its shape
+and is walked by the generic map. -/
+private def resolveRefLeaf (table : RefTable)
+    (x : Inline) : Inline :=
+  match x with
+  | .ref key paren _ _ => resolveOneRef table key paren
+  | _ => x
 
-/-- Resolution over inline content: every `.ref` is rewritten from the
-table, everything else keeps its shape and is walked for the references
-inside it. -/
 -- conserves: none — resolution rewrites a ref's placeholder text to its
 -- number, which is the pass's whole point; `resolveOneRef_exact` is its
 -- statement.
-def resolveRefInlines (table : RefTable) (xs : Array Inline) : Array Inline :=
-  resolveRefInlineList table #[] xs.toList
+def resolveRefInline (table : RefTable) (x : Inline) : Inline :=
+  mapInline (resolveRefLeaf table) x
 
-def resolveRefInlineList (table : RefTable) (out : Array Inline) :
-    List Inline → Array Inline
-  | [] => out
-  | x :: rest => resolveRefInlineList table (out.push (resolveRefInline table x)) rest
-
-def resolveRefInline (table : RefTable) : Inline → Inline
-  | .ref key paren _ _ => resolveOneRef table key paren
-  | .styled st body => .styled st (resolveRefInlineList table #[] body.toList)
-  | .colored c n body => .colored c n (resolveRefInlineList table #[] body.toList)
-  | .role n body => .role n (resolveRefInlineList table #[] body.toList)
-  | .link u body => .link u (resolveRefInlineList table #[] body.toList)
-  | .underline body => .underline (resolveRefInlineList table #[] body.toList)
-  | .step n l body => .step n l (resolveRefInlineList table #[] body.toList)
-  | .text s => .text s
-  | .math d src => .math d src
-  | .formula d src body => .formula d src body
-  | .image src size alt => .image src size alt
-  | .icon s l => .icon s l
-  | .label k => .label k
-  | .cite tx keys => .cite tx keys
-  -- a reference inside a note resolves like any other
-  | .footnote n body => .footnote n (resolveRefInlineList table #[] body.toList)
-  | .fill => .fill
-  | .strut h => .strut h
-  | .pageNumber => .pageNumber
-  | .pageCount => .pageCount
-  | .linebreak e => .linebreak e
-
-end
-
-mutual
-
--- conserves: none — the block face of resolveRefInlines, same reason.
+-- conserves: none — the block face of resolveRefInline, same reason.
 def resolveRefs (table : RefTable) (xs : Array Block) : Array Block :=
-  resolveRefBlockList table #[] xs.toList
-
-def resolveRefBlockList (table : RefTable) (out : Array Block) :
-    List Block → Array Block
-  | [] => out
-  | b :: rest => resolveRefBlockList table (out.push (resolveRefBlock table b)) rest
-
-def resolveRefBlock (table : RefTable) : Block → Block
-  | .para content => .para (resolveRefInlines table content)
-  | .equation n content => .equation n (resolveRefInlines table content)
-  | .section l st n title => .section l st n (resolveRefInlines table title)
-  | .list ordered items => .list ordered (resolveRefItems table #[] items.toList)
-  | .center body => .center (resolveRefBlockList table #[] body.toList)
-  | .quote body => .quote (resolveRefBlockList table #[] body.toList)
-  | .abstract body => .abstract (resolveRefBlockList table #[] body.toList)
-  | .titled kind title body =>
-    .titled kind (resolveRefInlines table title)
-      (resolveRefBlockList table #[] body.toList)
-  | .spaced g body => .spaced g (resolveRefBlockList table #[] body.toList)
-  | .role n body => .role n (resolveRefBlockList table #[] body.toList)
-  | .columns cols => .columns (resolveRefColumns table #[] cols.toList)
-  | .step n l body => .step n l (resolveRefBlockList table #[] body.toList)
-  | .only targets body => .only targets (resolveRefBlockList table #[] body.toList)
-  | .nav spec body => .nav spec (resolveRefBlockList table #[] body.toList)
-  | .note body => .note (resolveRefBlockList table #[] body.toList)
-  | .frame title st v body =>
-    .frame (resolveRefInlines table title) st v (resolveRefBlockList table #[] body.toList)
-  | .float k num ca body caption =>
-    .float k num ca (resolveRefBlockList table #[] body.toList)
-      (resolveRefInlines table caption)
-  | .table c pl pr rows rules =>
-    .table c pl pr (resolveRefTableRows table #[] rows.toList) rules
-  | .bibliography src style items =>
-    .bibliography src style (items.map fun i =>
-      { i with content := resolveRefInlines table i.content })
-  | .verbatim c s => .verbatim c s
-  | .framefoot c => .framefoot c
-  | .setPalette pal => .setPalette pal
-  | .setTokens tk => .setTokens tk
-  | .pagebreak => .pagebreak
-  | .logo c => .logo c
-  | .rule c n th => .rule c n th
-  | .picture pic => .picture pic
-
-def resolveRefItems (table : RefTable) (out : Array (Array Block)) :
-    List (Array Block) → Array (Array Block)
-  | [] => out
-  | item :: rest =>
-    resolveRefItems table (out.push (resolveRefBlockList table #[] item.toList)) rest
-
-def resolveRefColumns (table : RefTable) (out : Array (Option Nat × Array Block)) :
-    List (Option Nat × Array Block) → Array (Option Nat × Array Block)
-  | [] => out
-  | (w, body) :: rest =>
-    resolveRefColumns table (out.push (w, resolveRefBlockList table #[] body.toList)) rest
-
-def resolveRefTableRows (table : RefTable) (out : Array (Array (Array Inline))) :
-    List (Array (Array Inline)) → Array (Array (Array Inline))
-  | [] => out
-  | row :: rest =>
-    resolveRefTableRows table (out.push (resolveRefTableCells table #[] row.toList)) rest
-
-def resolveRefTableCells (table : RefTable) (out : Array (Array Inline)) :
-    List (Array Inline) → Array (Array Inline)
-  | [] => out
-  | cell :: rest =>
-    resolveRefTableCells table (out.push (resolveRefInlines table cell)) rest
-
-end
+  mapBlocks (resolveRefLeaf table) xs
 
 /-- References resolve to what they name: when the table binds `key` to
 number `n` — elaboration binds a key declared exactly once to the numbered

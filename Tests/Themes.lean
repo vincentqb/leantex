@@ -352,11 +352,29 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     ((uDs.map (·.code)) == #["W0105"] && uDoc.body == #[.frame #[] false .center #[
       .list false #[#[.para #[.text "shown anyway"]]]]])
 
+/-- The caption-to-alt walk reaches every image of a float's body: a figure
+whose body holds its image inside a list still names it by its caption.
+The walk is the generic `Ir.mapBlocks`, whose descent is total over the
+tree — the hand-rolled walk's wildcard arm skipped list, titled, role,
+columns, frame, and float bodies, so a listed image silently kept an empty
+alt (the named behaviour change of the `mapBlocks` rehost). Asserted on
+the typed HTML tree's rendering, where the alt is reader-visible. -/
+def altWalkChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}" ++
+    "\\begin{figure}\\begin{itemize}\\item \\includegraphics{one.png}" ++
+    "\\end{itemize}\\caption{An invented caption}\\end{figure}\\end{document}")
+  t "figure-list source raises no error" (ds.all (·.severity != .error))
+  let html := (HtmlDoc.emit {} doc).1
+  t "a listed image inherits the figure caption as its alt"
+    ((html.splitOn "alt=\"An invented caption\"").length == 2)
+
 /-- Speaker notes: a side channel — never slide content, omitted from the
 PDF handout, an inert hidden aside in HTML for the coming speaker view.
 Own function: `main`'s do block has no budget left. -/
 def noteChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
+  altWalkChecks ref
   let (doc, ds) := elabStr (deck169Frame "Visible words.\n\\note{Hidden speaker words.}")
   t "note elaborates to a side channel, warning nothing" (ds.isEmpty &&
     doc.body == #[.frame #[] false .center #[
