@@ -767,6 +767,42 @@ def motionSiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       check ref s!"transition is spelled only in HtmlDoc ({f})"
         (f.toString.endsWith "HtmlDoc.lean")
 
+/-- The paged deck's stylesheet is the slides class's own: snap paging on
+screen, the handout card in print, and no other class ships a deck rule —
+which is what keeps the site port's webpage output unchanged. The smooth
+glide carries its reduced-motion guard by construction
+(`HtmlDoc.smoothScrollCss_guarded`); this pins the emitted page. -/
+def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (deckDoc, deckDs) := elabStr (deck169 "" "\\begin{frame}{T}\nx\n\\end{frame}")
+  let deckPage := (HtmlDoc.emit {} deckDoc).1
+  let has (page s : String) : Bool := (page.splitOn s).length ≥ 2
+  t "deck css fixture elaborates clean" deckDs.isEmpty
+  t "the deck pages by scroll snap"
+    (has deckPage "html { scroll-snap-type: y mandatory; }" &&
+     has deckPage "scroll-snap-align: start" &&
+     has deckPage "scroll-snap-stop: always")
+  t "the deck glide ships with its reduced-motion guard"
+    (has deckPage "html { scroll-behavior: smooth; }" &&
+     has deckPage ("@media (prefers-reduced-motion: reduce) " ++
+       "{ html { scroll-behavior: auto; } }"))
+  t "the deck slide fills the viewport as a column"
+    (has deckPage "min-height: 100dvh" &&
+     has deckPage "display: flex; flex-direction: column;")
+  t "the deck prints as the handout, one card per page"
+    (has deckPage "@media print" &&
+     has deckPage "break-inside: avoid" &&
+     has deckPage "section.slide { break-after: page; }")
+  -- The gate, both directions: no deck rule outside the slides class.
+  for (name, src) in [
+      ("article", "\\documentclass{article}\\begin{document}x\\end{document}"),
+      ("webpage", "\\documentclass{webpage}\\begin{document}x\\end{document}")] do
+    let (doc, _) := elabStr src
+    let page := (HtmlDoc.emit {} doc).1
+    t s!"{name} ships no deck rule"
+      (!has page "scroll-snap" && !has page "scroll-behavior" &&
+       has page "section.slide { border:")
+
 /-- Declared once, derived everywhere: every metadata fact lives in the one
 `Ir.Meta` record and each surface derives its own rendering of it — the HTML
 head, the llms.txt preamble, and the PDF's Info dictionary and XMP read the

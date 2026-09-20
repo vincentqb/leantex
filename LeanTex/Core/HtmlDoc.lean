@@ -706,7 +706,12 @@ def themeCss (doc : Doc) : String :=
     -- own gap (`blockGapCss`), one emitter per boundary.
     s!"  margin: -{slidePadV} -{slidePadH} 0; padding: {quantaRem 1} {slidePadH};\n" ++
     s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
-    "section.slide > header h2 { color: inherit; }\n" else "") ++
+    "section.slide > header h2 { color: inherit; }\n" ++
+    -- On the paged deck the slide is the viewport, cornerless: the bar
+    -- squares off with it (the nested-corner rule, gap zero).
+    (if doc.docClass == .slides then
+      "@media screen { section.slide > header { border-radius: 0; } }\n"
+     else "") else "") ++
   (if d.progress.isSome then
     s!"section.section-page \{ text-align: center; padding: {quantaRem 3} 0;\n" ++
     "  break-inside: avoid; }\n" ++
@@ -1034,6 +1039,59 @@ private def sizeRules : String :=
   String.join (Ir.sizeScale.map fun (name, k) =>
     s!".size-{name} \{ font-size: {milliFactor k}em; }\n")
 
+/-- The reduced-motion guard for smooth scrolling: under the reader's
+reduce preference the deck pages jump instead of gliding. The base
+stylesheet's global reduce block covers `animation` and `transition`
+only; `scroll-behavior` is neither, so the glide needs its own guard
+(WCAG 2.2 SC 2.3.3; the query is CSS Media Queries 5 §12.1). -/
+def scrollMotionGuard (sel : String) : String :=
+  s!"@media (prefers-reduced-motion: reduce) \{ {sel} \{ scroll-behavior: auto; } }\n"
+
+/-- Smooth snap-paging carries its reduced-motion form by construction —
+`motionCss`'s shape: the emitted CSS is definitionally the smooth-scroll
+rule followed by the guard for the same selector, so no deck can ship a
+gliding page without the opt-out (`smoothScrollCss_guarded`). -/
+def smoothScrollCss (sel : String) : String :=
+  s!"{sel} \{ scroll-behavior: smooth; }\n" ++
+    scrollMotionGuard sel
+
+theorem smoothScrollCss_guarded (sel : String) :
+    ∃ rule, smoothScrollCss sel = rule ++ scrollMotionGuard sel :=
+  ⟨_, rfl⟩
+
+/-- The slide sections' stylesheet, split by class. A deck (the `slides`
+class) is one tree with two media renderings: on screen a paged
+full-viewport deck whose paging is the browser's own — CSS Scroll Snap 1:
+`scroll-snap-type: y mandatory` on the root scroll container,
+`scroll-snap-stop: always` so a fling cannot skip a slide — and in print
+the linear handout, one bordered card per page (Tufte: the handout is the
+document). Every other class keeps the card rendering on both media:
+deck rules are the slides class's own, which is what keeps the site
+port's webpage output unchanged. -/
+private def slideCss (doc : Doc) : String :=
+  -- The handout card, today's rendering, byte for byte: the only-media
+  -- form for every non-deck class, the print twin for the deck.
+  let handout :=
+    s!"section.slide \{ border: {slideBorderPx}px solid var(--rule); border-radius: {slideRadiusPx}px;\n" ++
+    s!"  padding: {slidePadV} {slidePadH}; margin: 0; break-inside: avoid; }\n" ++
+    s!"* + section.slide \{ margin-top: {slidePadV}; }\n"
+  if doc.docClass == .slides then
+    "@media screen {\n" ++
+    "html { scroll-snap-type: y mandatory; }\n" ++
+    smoothScrollCss "html" ++
+    -- The deck fills the viewport: the article measure and the reading
+    -- padding are the continuous page's, not the stage's.
+    "body { padding: 0; }\n" ++
+    "main { max-width: none; margin: 0; }\n" ++
+    "section.slide { min-height: 100dvh; scroll-snap-align: start;\n" ++
+    "  scroll-snap-stop: always; display: flex; flex-direction: column;\n" ++
+    s!"  padding: {slidePadV} {slidePadH}; }\n" ++
+    "}\n" ++
+    "@media print {\n" ++ handout ++
+    "section.slide { break-after: page; }\n" ++
+    "}\n"
+  else handout
+
 /-- The base stylesheet. Small on purpose: a generated document should not
 ship a framework to use four of its rules. Dark mode is a variant of the same
 token set, not an inversion hack. The typography with an authority behind it
@@ -1236,11 +1294,9 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   s!"figure.float > figcaption:first-child \{ margin-top: 0;\n" ++
   s!"  margin-bottom: var(--captionsep, {quantaRem (gapK "caption")}); }\n" ++
   blockGapCss ++
-  -- Slides, as the linear handout: one bordered section per frame, printing
-  -- one per page. The interactive controller is the rest of M5.
-  s!"section.slide \{ border: {slideBorderPx}px solid var(--rule); border-radius: {slideRadiusPx}px;\n" ++
-  s!"  padding: {slidePadV} {slidePadH}; margin: 0; break-inside: avoid; }\n" ++
-  s!"* + section.slide \{ margin-top: {slidePadV}; }\n" ++
+  -- Slides: the class-split deck/handout rules (`slideCss`); the shared
+  -- header and standout rules below hold on both media.
+  slideCss doc ++
   s!"section.slide > header h2 \{ margin: 0; font-size: {scaleSize "Large" "rem"}; }\n" ++
   -- A standout frame inverts: the palette's standout keys override, and
   -- without them the page's own fg/bg swap — the same rule as the PDF path.
