@@ -580,6 +580,17 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t s!"nfc is idempotent over the decomposition keys ({notIdempotent.size} broke it)"
     notIdempotent.isEmpty
 
+  -- A new language touches four hand-maintained sites (gen-hyphen row,
+  -- gen-locale list, the Hyphen thunk, the forTag arm) — the Diag-registry
+  -- lesson: a miscount must be a test failure, not a silent gap. Every
+  -- shipped locale is served by Hyphen.forTag or stands on the named
+  -- unhyphenated list beside this check; a tag on neither is a locale
+  -- whose text silently stopped hyphenating.
+  let unhyphenated : List String := []
+  t "every builtin locale hyphenates or is declared unhyphenated"
+    (Locale.builtin.all fun l =>
+      (Hyphen.forTag l.tag).isSome || unhyphenated.contains l.tag)
+
 /-- The default-family choice and the search roots are what make a fresh
 machine work with no configuration, so they are pinned here on synthetic
 faces: preference order beats scan order among preferred names; then the
