@@ -813,6 +813,28 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\begin{frame}{T}\nx\n\\end{frame}")
   t "a declared safearea token overrides the engine default"
     (has (HtmlDoc.emit {} tokDoc).1 "--safearea: 20pt;")
+  -- The deck is stage-free by construction: the emitted page carries no
+  -- stage millimetre — type rides the stage-height ratio in vh (above)
+  -- and the slide fills the viewport (100dvh; a block section fills the
+  -- width) — so on a viewport of another ratio the frame reflows rather
+  -- than letterboxing. The sharp half: two stages of equal height and
+  -- different width (16:9 is 160×90 mm, 14:9 is 140×90) emit identical
+  -- screen decks, so the screen rendering never reads the stage width;
+  -- the third stage differing keeps the comparison honest (16:10's
+  -- 100 mm height moves the vh). Print is the handout — a paged medium
+  -- with a stage — so its measure legitimately reads the page and stays
+  -- outside this property.
+  t "the deck page carries no stage millimetre" (!has deckPage "mm")
+  let deckAt (ratio : String) : String :=
+    (HtmlDoc.emit {} (elabStr
+      (s!"\\documentclass[aspectratio={ratio}]\{slides}\n" ++
+        "\\begin{document}\n\\begin{frame}{T}\nx\n\\end{frame}\n\\end{document}")).1).1
+  let screenOf (page : String) : String :=
+    (((page.splitOn "@media screen {").getD 1 "").splitOn "@media print").headD ""
+  t "equal-height stages emit one screen deck: the width is never read"
+    (screenOf (deckAt "169") != "" &&
+     screenOf (deckAt "169") == screenOf (deckAt "149") &&
+     screenOf (deckAt "169") != screenOf (deckAt "1610"))
   -- The gate, both directions: no deck rule outside the slides class.
   for (name, src) in [
       ("article", "\\documentclass{article}\\begin{document}x\\end{document}"),
