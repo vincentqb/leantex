@@ -2871,7 +2871,7 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
         ++ (if alt then "-alt" else "")
       have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
-      match FaIcons.byName[iconName]? with
+      match FaIcons.byName.get[iconName]? with
       | some e =>
         elabInlinesFrom ctx raws (j + 1)
           ((flushText acc sb).push (.icon e.scalar (label.getD e.label))) ""
@@ -2882,7 +2882,7 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | _ =>
       diag ctx .E0304 "'\\faIcon' needs an {icon-name} group" pos
       elabInlinesFrom ctx raws (i + 1) acc sb
-  else if let some e := FaIcons.byMacro[name]? then
+  else if let some e := FaIcons.byMacro.get[name]? then
     -- The per-icon fontawesome5 command (`\faGithub`, `\faArrowUp`):
     -- the package's own name-to-scalar mapping, carried as data
     -- (`FaData`, generated from fontawesome5-mapping.def).

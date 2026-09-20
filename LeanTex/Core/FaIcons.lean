@@ -35,20 +35,26 @@ private def parseLine (line : String) : Option Entry :=
       none
   | _ => none
 
-/-- The table, parsed once. Generated data (`FaData.table`), so a line that
-does not parse is a generator bug; it is skipped rather than trusted. -/
-def entries : Array Entry :=
+/-- The table, parsed on first use (`Thunk` is call-by-need: a top-level
+constant is computed at process start, and parsing the 58 KB generated
+table there taxed every run whether or not it set an icon — the same trap
+the Hyphen/Nfc tables already close). Generated data (`FaData.table`), so
+a line that does not parse is a generator bug; it is skipped rather than
+trusted. -/
+def entries : Thunk (Array Entry) := Thunk.mk fun _ =>
   FaData.table.splitOn "\n" |>.toArray |>.filterMap parseLine
 
 private def index (key : Entry → String) : Std.HashMap String Entry :=
-  entries.foldl (fun m e =>
+  entries.get.foldl (fun m e =>
     let k := key e
     if k.isEmpty || m.contains k then m else m.insert k e) {}
 
 /-- `\faGithub` → its entry: lookup by the fontawesome5 command name. -/
-def byMacro : Std.HashMap String Entry := index (·.macroName)
+def byMacro : Thunk (Std.HashMap String Entry) := Thunk.mk fun _ =>
+  index (·.macroName)
 
 /-- `\faIcon{github}` → its entry: lookup by the icon's own name. -/
-def byName : Std.HashMap String Entry := index (·.name)
+def byName : Thunk (Std.HashMap String Entry) := Thunk.mk fun _ =>
+  index (·.name)
 
 end LeanTex.Core.FaIcons
