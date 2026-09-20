@@ -3983,26 +3983,52 @@ def sectionSize (geom : Geom) : Nat → Sp
   | 2 => Ir.scaleStep geom.fontSize "large"
   | _ => geom.fontSize
 
-private theorem heading_hierarchy_int (x : Int) (h : 1 * 65536 ≤ x) :
-    x * 1440 / 1000 > x * 1200 / 1000 ∧ x * 1200 / 1000 ≥ x := by
-  omega
+/-- The applied scale is strictly monotone at every base size of at least
+one point: between each named step of `Ir.sizeScale` and the next, the
+set size strictly grows — `Ir.sizeScale_monotone` (the bare factors)
+carried through `Ir.scaleStep`'s integer division, quantified over the
+table's own ladder so a new step enters the contract by being added. The
+1 pt floor is what strictness costs under integer division — below 9 sp
+(~0.00014 pt) adjacent steps round together, so the bound is the coarsest
+honest one. (Each case is `Int` arithmetic with literal factors, which
+`omega` reads directly.) -/
+theorem scaleStep_monotone (base : Int)
+    (hb : pt 1 ≤ base) : -- 1 pt floor: what strictness costs under integer division (docstring), not a design value
+    ∀ q ∈ Ir.sizeScale.zip Ir.sizeScale.tail,
+      Ir.scaleStep base q.1.1 < Ir.scaleStep base q.2.1 := by
+  have hb' : (65536 : Int) ≤ base := hb
+  intro q hq
+  simp only [Ir.sizeScale, List.tail_cons, List.zip_cons_cons, List.zip_nil_right,
+    List.mem_cons, List.not_mem_nil, or_false] at hq
+  rcases hq with h|h|h|h|h|h|h|h|h <;> subst h <;>
+    first
+    | (show base * 500 / 1000 < base * 700 / 1000; omega)
+    | (show base * 700 / 1000 < base * 800 / 1000; omega)
+    | (show base * 800 / 1000 < base * 900 / 1000; omega)
+    | (show base * 900 / 1000 < base * 1000 / 1000; omega)
+    | (show base * 1000 / 1000 < base * 1200 / 1000; omega)
+    | (show base * 1200 / 1000 < base * 1440 / 1000; omega)
+    | (show base * 1440 / 1000 < base * 1728 / 1000; omega)
+    | (show base * 1728 / 1000 < base * 2074 / 1000; omega)
+    | (show base * 2074 / 1000 < base * 2488 / 1000; omega)
 
-/-- Heading hierarchy (arch-design I3): at every base size of at least one
-point, a section sets strictly larger than a subsection, and no heading
-sets smaller than its body. The scale (`Ir.sizeScale`, size10.clo's own
-values) carries the ordering; the 1 pt floor is what strictness costs
-under integer division — below 9 sp (~0.00014 pt) the two levels round
-together, so the bound is the coarsest honest one. (The arithmetic lives
-in the `Int`-typed lemma above: `omega` reads `Int` syntactically and
-does not unfold the `Sp` abbreviation.) -/
+/-- Heading hierarchy (arch-design I3), an instance of `scaleStep_monotone`
+at the ladder's normalsize–large–Large run: at every base size of at least
+one point, a section sets strictly larger than a subsection, and no
+heading sets smaller than its body. The scale (`Ir.sizeScale`,
+size10.clo's own values) carries the ordering. -/
 theorem heading_hierarchy (g : Geom)
-    (hfs : pt 1 ≤ g.fontSize) : -- 1 pt floor: what strictness costs under integer division (docstring)
+    (hfs : pt 1 ≤ g.fontSize) : -- 1 pt floor: what strictness costs under integer division (scaleStep_monotone)
     sectionSize g 1 > sectionSize g 2 ∧ sectionSize g 2 ≥ g.fontSize := by
-  have e1 : sectionSize g 1 = g.fontSize * 1440 / 1000 := by rfl
-  have e2 : sectionSize g 2 = g.fontSize * 1200 / 1000 := by rfl
-  rw [e1, e2]
-  simp only [pt, spPerPt] at hfs
-  exact heading_hierarchy_int g.fontSize hfs
+  have h12 := scaleStep_monotone g.fontSize hfs
+    (("large", 1200), ("Large", 1440)) (by decide)
+  have h01 := scaleStep_monotone g.fontSize hfs
+    (("normalsize", 1000), ("large", 1200)) (by decide)
+  have e0 : Ir.scaleStep g.fontSize "normalsize" = g.fontSize := by
+    show g.fontSize * 1000 / 1000 = g.fontSize
+    exact Int.mul_ediv_cancel _ (by decide)
+  rw [e0] at h01
+  exact ⟨h12, Int.le_of_lt h01⟩
 
 /-- Display type: headings, frame titles, section-page and standout text.
 Display is not body text: it is never hyphenated (Butterick, Practical
