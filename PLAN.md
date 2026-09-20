@@ -136,6 +136,55 @@ emitters.
   output is unchanged but for `.math` reading through `var(--font-math,
   <the old stack>)`, its new token.
 
+2026-09-20 — the deck pages itself: scroll-snap supersedes the vendored
+controller, and the same talk is a lightly animated HTML deck with zero
+script.
+
+- One tree, two media renderings, every rule gated on the slides class:
+  on screen a paged full-viewport deck — the browser's own paging (CSS
+  Scroll Snap 1, `y mandatory` + `scroll-snap-stop: always`), smooth
+  scrolling guarded by construction (`smoothScrollCss_guarded`) — and in
+  print the stacked-card handout, one slide per page (Tufte: the handout
+  is the document). No `\output{ html = handout }` key: add it only if
+  someone wants the scrolling view on screen. The webpage class's output
+  byte-compares against main at every commit in the slice.
+- Steps are pages: the deck walk expands each frame to one `section`
+  per overlay step — the PDF handout's exact pagination, from the same
+  `Ir.maxStepBlocks` — and on page k a pending step is *covered*, never
+  hidden, in the page's own spelling: `color-mix(in oklab, …)` at the
+  design's declared fraction (CSS Color 4 §12.2), each explicitly
+  coloured run its own reference inside the mix
+  (`role_use_names_its_token_covered`). `frames_pages` is the census:
+  slide sections = Σ frameSteps, and with the themed section pages the
+  PDF's shipped page count (`deckStepChecks`); footline agreement holds
+  across the expansion by collapsing consecutive step pages, as the PDF
+  side always has.
+- A frame's declared vdist reaches the artifact: flex spacers carrying
+  `Layout.VDist`'s own ratios (golden 2618:1000 included), stated once
+  per backend and pinned to each other by test. Every slide claims an
+  id through the article's uniqueness walk (`claimId`, shared) — deep
+  links per slide, label anchors on a frame's first step page only.
+- The lightly-animated half is scroll-driven CSS under `@supports`,
+  floor = static and visible (revealCss's design): a viewport-top
+  progress hairline scaled by `scroll(root)` reading the PDF's own
+  `--progressheight`/`--progressfg`, and entry motion scrubbed by
+  `view()` — fade plus a `--motiondistance` rise, guard travelling with
+  the declaration (`deckEntryCss_guarded`). No duration token: a
+  scroll-scrubbed timeline has none. `@view-transition` declined
+  (cross-document only; weaker floor than snap).
+- Keynote-clean is tokens: `--safearea` (Keynote masters keep ≈5–7%
+  clear; default 6vmin), `--titleband` (≤1/8 of the slide), and type
+  from the stage — `main` carries fontSize/stage-height in vh
+  (`deck_type_is_stage_ratio`, the `backend_gaps_agree` mold), headings
+  retaking their scale steps in em so nothing sizes from the reader's
+  root.
+- The controller: scroll-snap supersedes it for paging and stepping;
+  `--emit reveal` is dead with `--emit`. What remains of M5's
+  controller ask is the speaker view alone (notes/timer/next-slide) —
+  a user decision behind a named `\output` key and a design discussion,
+  not a default. Remote stepping and auto-advance are likewise
+  script-only and stay asks.
+
 2026-09-20 — the vertical convention lands: the line box is the leaded
 metric extent, and everything against a line measures from metric lines.
 
