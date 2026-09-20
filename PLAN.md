@@ -101,6 +101,59 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — the vertical convention lands: the line box is the leaded
+metric extent, and everything against a line measures from metric lines.
+
+- The PDF adopts CSS 2.1 §10.8.1's half-leading (the operator decision
+  of 2026-09-19, ratifying vert-line): a line's box is the fonts'
+  ascent/descent at each run's size plus half the leftover leading each
+  way (`leadedBox`; the odd unit goes below), glyphs never consulted
+  (`line_box_glyph_free`); consecutive baselines sit apart by
+  below(prev) + above(next), which for uniform text is *exactly* the
+  leading (`baselines_on_grid` — termination of the off-grid accident
+  the old TeX collision rule allowed). `\lineskip` leaves the interline
+  rule entirely and survives only as the furniture ink-clearance floor
+  (`inkClearance`). `placeLine_gap_exact` drops its collision
+  hypothesis; `first_baseline_declared` pins the `\topskip`-shaped
+  first-baseline rule over metric ascent. The two backends now share
+  one baseline convention — HTML already shipped it as `line-height`.
+- Ink is read only to interrupt (the underline band) or to clear (page
+  bottom, furniture bands, flush stacking under a table rule), never to
+  position; `LineBox` carries the leaded box and the ink extent side by
+  side. The accepted cost is written beside `lineExtent`: a
+  descender-less title keeps its metric depth, so its optical gap is
+  larger than its ink suggests. Grid-snap after size changes
+  (ConTeXt-style) remains a candidate *declared* behaviour, not the
+  default.
+- The heading rule is raised half the x-height of the heading's own
+  face at the heading's size in both backends (`xHeightOptical`: the
+  measured ink 'x', the trust order the math match uses); it was the
+  body's x-height at body size in the PDF and the bare baseline in
+  HTML, whose comment claimed parity.
+- The underline theorems close on a pure core: pass 2 is `subtract`
+  over pass 1's `mergeIntervals`, whose `Chained` postcondition is
+  proved — `underline_skips_ink`, `underline_covers_gaps`,
+  `subtract_bounds`, `underline_text` (the registered `Conserves`
+  instance), `underline_no_growth`. The band guard tightens to the
+  face's own descender line (`underline_in_descent`); HTML declares the
+  same band source (`text-decoration-thickness/-position: from-font`,
+  CSS Text Decoration 4 §2.4.1/§2.8.2), dropping the unsourced 0.15em
+  and 1px. A skip-ink-off knob is owed on demand, not built: nothing in
+  the corpus asks for it (vert-underline implement-4 has the shape —
+  an `underlinegap` token plus a declared off key).
+- Small-cap synthesis scales per face (`smallCapScaleFor`,
+  `smallcap_height_between`): 800‰ (fontinst tradition) lifted exactly
+  where it would drop small caps below the lowercase x (Bringhurst
+  §3.2.2), never above full caps.
+- Owed, not fixed: `\textsuperscript`/text scripts stay the loud W0301
+  refusal (pinned by test). When they land, the raise comes from the
+  face's OS/2 `ySuperscript*`/`ySubscript*` metrics (or the MATH
+  constants when the face has them), never a ratio — blocked on the
+  OS/2 script metrics being unparsed in `Font.parse`; the machinery
+  (`Seg.run` raise) is ready. Icon centring stays the face's own design
+  until a rendered page argues otherwise (vert-align: do not change
+  blind).
+
 2026-09-19 — the taste slice lands what four advisors agreed on: decks
 default to `daylight`, and six reader-visible defects close.
 

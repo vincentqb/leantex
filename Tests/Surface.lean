@@ -646,6 +646,13 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a structural built-in cannot be redefined"
     ((warnCodes ("\\documentclass{article}\\define \\underline(x: content) {\\emph{\\x}}" ++
       "\\begin{document}\\underline{a}\\end{document}")) == ["W0303"])
+  -- Text superscripts are owed, not implemented (PLAN 2026-09-20: the
+  -- raise will come from OS/2 ySuperscript metrics, unparsed today), and
+  -- the refusal stays loud: a construct that quietly stopped warning
+  -- while unimplemented is worse than one that never worked.
+  t "textsuperscript refuses loudly while owed"
+    ((warnCodes ("\\documentclass{article}" ++
+      "\\begin{document}a\\textsuperscript{2}\\end{document}")) == ["W0301"])
   -- The font commands are rendered built-ins: a runnable redefinition of
   -- \textbf wins, as \renewcommand intends, and its role names the use.
   let (bfDoc, bfDs) := elabStr ("\\documentclass{article}" ++

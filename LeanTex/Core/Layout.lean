@@ -631,19 +631,55 @@ private def warn (st : FlattenSt) (code : DiagCode) (msg : String)
 /-- Small caps at synthesis size, relative to the surrounding text. The
 fallback for a face that ships no `smcp`+`c2sc` (`Font.smallCaps`): letters
 take their capital form set smaller. Real small caps are drawn, not scaled,
-so this is a stand-in ratio until the face itself can answer. -/
+so this is a stand-in ratio until the face itself can answer. The 800‰ is
+the fontinst fake-caps tradition — it also covers the stroke-weight loss a
+bare x-height match would worsen. -/
 def smallCapScale : Nat := 800
 
+/-- The scalar core of the per-face synthesis scale, over (x-height, cap
+height) in font units: the tradition's 800‰, lifted exactly where it would
+drop small caps *below* the lowercase x — Bringhurst, Elements §3.2.2:
+small caps sit at the x-height or slightly taller — and never above full
+capitals. `smallcap_height_between` is its band. -/
+def smallCapScaleCore (x c : Nat) : Nat :=
+  min 1000 (max smallCapScale (x * 1000 / c))
+
+/-- The per-face synthesis scale: `smallCapScaleCore` over the face's
+measured x-height (`Font.xHeightOptical` — OS/2 sxHeight lies in some
+fonts, the trust order the math size match already uses) and its declared
+cap height. -/
+def smallCapScaleFor (f : Font) : Nat :=
+  smallCapScaleCore f.xHeightOptical f.capHeight.toNat
+
+/-- `smallcap_height_between`, in scale space: the synthesis scale is at
+least the face's x/cap ratio in mille (floored — so the synthesized cap
+height reaches the lowercase x within one division quantum), at least the
+800‰ tradition, and at most full capitals. Multiplying through by the cap
+height reads: x-height ≲ synthesized cap height ≤ cap height, the honest
+band — equality with the x-height only when x/cap ≥ 0.8, so the band is
+the statement, not an `_eq`. -/
+theorem smallcap_height_between (x c : Nat) (hc : 0 < c) (hx : x ≤ c) :
+    x * 1000 / c ≤ smallCapScaleCore x c ∧
+      smallCapScale ≤ smallCapScaleCore x c ∧ smallCapScaleCore x c ≤ 1000 := by
+  have h1 : x * 1000 ≤ c * 1000 := Nat.mul_le_mul_right 1000 hx
+  have hq : x * 1000 / c ≤ 1000 := by
+    have h2 : x * 1000 / c ≤ c * 1000 / c := Nat.div_le_div_right h1
+    rwa [Nat.mul_div_cancel_left 1000 hc] at h2
+  unfold smallCapScaleCore smallCapScale
+  omega
+
 /-- The synthesised uniform small-caps form of one word: every letter its
-capital form, the whole word at `smallCapScale` — one style, one size, so
-mixed case cannot come out at two heights. The invariant whose absence was
-the defect: the old synthesis kept capitals full-size beside their scaled
-neighbours, and `{\scshape PhD}` set a full P and D against a small H.
+capital form, the whole word at the face's own scale
+(`smallCapScaleFor`) — one style, one size, so mixed case cannot come out
+at two heights. The invariant whose absence was the defect: the old
+synthesis kept capitals full-size beside their scaled neighbours, and
+`{\scshape PhD}` set a full P and D against a small H.
 Chosen only when the face carries no real small caps (`Font.smallCaps`);
 `\scshape` means uniform small capitals in both mechanisms (the PLAN
 2026-09-18 entry carries the decision). -/
-def smallCapSynth (sty : TextStyle) (chars : Array Char) : TextStyle × Array Char :=
-  ({ sty with scale := sty.scale * smallCapScale / 1000 }, chars.map (·.toUpper))
+def smallCapSynth (scale : Nat) (sty : TextStyle) (chars : Array Char) :
+    TextStyle × Array Char :=
+  ({ sty with scale := sty.scale * scale / 1000 }, chars.map (·.toUpper))
 
 private def pushWord (st : FlattenSt) (sty : TextStyle) (cur : Array Char) : FlattenSt :=
   { st with toks := st.toks.push (.word sty cur) }
@@ -1821,7 +1857,9 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       -- uniform synthesis otherwise. One meaning, two mechanisms.
       let useGsub := sty.smallcaps && !font.smallCaps.isEmpty
       let (sty, chars) :=
-        if sty.smallcaps && !useGsub then smallCapSynth sty chars else (sty, chars)
+        if sty.smallcaps && !useGsub then
+          smallCapSynth (smallCapScaleFor font) sty chars
+        else (sty, chars)
       let sz := size * sty.scale / 1000
       let (ws, m, s, c') :=
         wordItems pats sz idx sty.color sty.link sty.underline useGsub fs font chars
