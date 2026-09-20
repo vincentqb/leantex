@@ -2521,6 +2521,64 @@ private def claimId (taken : Array (String × String)) (base text : String) :
     | none => break
   return (id, clash)
 
+/-- The snap spacers of a stepped frame's track, one per overlay step:
+each claims its deep-link anchor `<frame>-k` through the same door as
+every id this backend assigns (`claimId`), a clash named exactly as a
+frame title's is. Recursion over the step list with threaded
+accumulators, so the spacer count is a statement
+(`track_snaps_exact`), not a reading of a loop. -/
+private def snapWalk (id text : String) (kids : Array Node)
+    (taken : Array (String × String)) (diags : Array Diag) :
+    List Nat → Array Node × Array (String × String) × Array Diag
+  | [] => (kids, taken, diags)
+  | k :: rest =>
+    let (sid, sclash) := claimId taken s!"{id}-{k}" text
+    let diags := match sclash with
+      | some holder => diags.push (Diag.of .W0327
+          s!"frames {holder.quote} and {text.quote} share the \
+anchor '{id}-{k}'; the step anchor becomes '{sid}'"
+          (help := some s!"an in-page link '#{id}-{k}' reaches only \
+the first; retitle one frame, or link to '#{sid}'"))
+      | none => diags
+    snapWalk id text
+      (kids.push (Html.elem "div" #[] #[("class", "snap"), ("id", sid)]))
+      (taken.push (sid, text)) diags rest
+
+/-- The steps a frame with `steps` overlay steps snaps through: 1 to
+`steps`, the range both the spacer walk and the PDF handout's per-step
+pages traverse. -/
+private def stepList (steps : Nat) : List Nat :=
+  (List.range steps).map (· + 1)
+
+@[simp] private theorem stepList_length (steps : Nat) :
+    (stepList steps).length = steps := by
+  simp [stepList]
+
+private theorem snapWalk_count (id text : String) :
+    ∀ (ks : List Nat) (kids : Array Node) (taken : Array (String × String))
+      (diags : Array Diag),
+      (snapWalk id text kids taken diags ks).1.size = kids.size + ks.length
+  | [], _, _, _ => rfl
+  | k :: rest, kids, taken, diags => by
+    unfold snapWalk
+    rw [snapWalk_count id text rest]
+    simp only [Array.size_push, List.length_cons]
+    omega
+
+/-- The HTML half of `steps_agree`, stated over `Ir.maxStepBlocks`: a
+stepped frame's track carries exactly `maxStepBlocks fb` snap spacers
+over its one sticky stage — the count `deckStepCss` reads back as
+`--steps` and the very count the PDF handout paginates the frame by
+(its half is the owed `pages_count_frame_steps`). -/
+private theorem track_snaps_exact (id text : String) (stage : Node)
+    (taken : Array (String × String)) (diags : Array Diag)
+    (fb : Array Ir.Block) :
+    (snapWalk id text #[stage] taken diags
+        (stepList (Ir.maxStepBlocks fb))).1.size
+      = 1 + Ir.maxStepBlocks fb := by
+  rw [snapWalk_count, stepList_length]
+  rfl
+
 /-- An article's top-level sections become `<section id="...">` containers:
 the heading and everything up to the next level-1 heading. The id gives every
 section an anchor and a styling handle, and the container is what HTML 5 says
@@ -2826,18 +2884,10 @@ first; retitle one frame, or link to '#{id}'"))
           let steps := Ir.maxStepBlocks fb
           let mut node := node
           if steps > 1 then
-            let mut kids : Array Node := #[node]
-            for k in [1 : steps + 1] do
-              let (sid, sclash) := claimId taken s!"{id}-{k}" text
-              if let some holder := sclash then
-                walkDiags := walkDiags.push (Diag.of .W0327
-                  s!"frames {holder.quote} and {text.quote} share the \
-anchor '{id}-{k}'; the step anchor becomes '{sid}'"
-                  (help := some s!"an in-page link '#{id}-{k}' reaches only \
-the first; retitle one frame, or link to '#{sid}'"))
-              taken := taken.push (sid, text)
-              kids := kids.push (Html.elem "div" #[]
-                #[("class", "snap"), ("id", sid)])
+            let (kids, taken2, diags2) :=
+              snapWalk id text #[node] taken walkDiags (stepList steps)
+            taken := taken2
+            walkDiags := diags2
             node := Html.elem "div" kids
               #[("class", "slide-track"), ("style", s!"--steps: {steps}")]
           acc := acc.push (withEpoch cfg.epochStyle node)
