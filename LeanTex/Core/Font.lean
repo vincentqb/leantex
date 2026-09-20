@@ -742,6 +742,22 @@ def Font.advance (f : Font) (c : Char) : Nat :=
   | some g => f.widths[g]?.getD 0
   | none => 0
 
+/-- The interword space in font units: the space glyph's own advance —
+what LuaTeX gives an OpenType face for `\fontdimen2` (luatex-fonts-merged
+.lua, `constructors.scale`: `spaceunits = descriptions[0x20].width`, and
+under the default `syncspace` the stretch and shrink follow as
+`spaceunits/2` and `spaceunits/3`). A face without a space glyph takes the
+same loader's fallback chain: half the em dash, else half the em (the
+loader's `averagewidth` step between them is a field this engine does not
+read; half the em is its same class of stand-in). Zero — words jammed
+together with no room to justify — is never an answer. -/
+def Font.spaceAdvance (f : Font) : Nat :=
+  let sp := f.advance ' '
+  if sp > 0 then sp
+  else
+    let em := f.advance '—'
+    if em > 0 then em / 2 else f.unitsPerEm / 2
+
 /-- The x-intervals (font units) where this glyph's ink crosses the underline
 band. Empty means the rule runs unbroken; a gid past the table has no ink.
 Forces the lazy decode; the answer is memoized in the font. -/

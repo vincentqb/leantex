@@ -209,6 +209,22 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
     (italicFace.italicAngle == -12 && sans.italicAngle == 0)
   t "coverage premise: only the invented icon face has U+F09B"
     ((sans.gid '\uF09B').isNone && (iconsFace.gid '\uF09B').isSome)
+  -- The interword space from the face, never zero: the fontloader's own
+  -- chain (space glyph; else half the em dash; else half the em). Every
+  -- fixture face carries a space glyph, so the fallback arms are
+  -- exercised on copies with the covering cmap ranges filtered out.
+  t "spaceAdvance is the space glyph's advance where one exists"
+    (sans.spaceAdvance == sans.advance ' ' && sans.advance ' ' > 0)
+  let noSpace : Font.Font :=
+    { sans with cmap := sans.cmap.filter fun r => r.1 > 32 || r.2.1 < 32 }
+  t "a face without a space glyph takes half the em dash"
+    (noSpace.advance ' ' == 0 &&
+     noSpace.spaceAdvance == noSpace.advance '—' / 2 && noSpace.spaceAdvance > 0)
+  let dash := '—'.toNat.toUInt32
+  let noDash : Font.Font :=
+    { noSpace with cmap := noSpace.cmap.filter fun r => r.1 > dash || r.2.1 < dash }
+  t "a face without space or em dash takes half the em"
+    (noDash.advance '—' == 0 && noDash.spaceAdvance == noDash.unitsPerEm / 2)
   let allVariants (slot idx : Nat) : List ((Nat × Bool × Bool) × Nat) :=
     [((slot, false, false), idx), ((slot, true, false), idx),
      ((slot, false, true), idx), ((slot, true, true), idx)]

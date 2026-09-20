@@ -926,7 +926,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
           box := #[]
           boxW := 0
           items := items.push
-            (.box (scaledAt size font (font.advance ' ')) fontIdx color link #[] size underline 0)
+            (.box (scaledAt size font font.spaceAdvance) fontIdx color link #[] size underline 0)
           i := i + 1
         else
         match glyphOfSc smallcaps size font c with
@@ -958,11 +958,16 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
   return (items, missing, substs, cache)
 
 /-- Interword glue: the face's space advance, stretching by half and
-shrinking by a third — the proportions of TeX's default space factor
-(TeXbook Ch. 12: interword glue is the font's space with stretch and
-shrink from its fontdimens, w/2 and w/3 in the plain fonts). -/
+shrinking by a third. The proportions are TeX's plain-font fontdimens
+(TeXbook Ch. 12) and exactly what LuaTeX synthesizes for an OpenType
+face, which declares no fontdimens: `space_stretch = spaceunits/2`,
+`space_shrink = spaceunits/3` under the default `syncspace`
+(luatex-fonts-merged.lua, `constructors.scale`) — so a document set here
+gets the same space rubber lualatex gives it. The advance itself comes
+from `Font.spaceAdvance`, never zero even for a face with no space
+glyph. -/
 private def interword (size : Sp) (font : Font) : Glue :=
-  let w := scaledAt size font (font.advance ' ')
+  let w := scaledAt size font font.spaceAdvance
   { width := w, stretch := w / 2, shrink := w / 3 }
 
 /-- Ragged setting as an item transform, leaving the breaker untouched:
