@@ -1522,3 +1522,89 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
        ((Elab.run "t" "\\includegraphics{figures/plot}").1)
      (h.splitOn "<img src=\"figures/plot.png\"").length == 2)
 
+
+/-- The page ships the faces it names — the census of the `@font-face`
+emission (the same obligation every backend emission carries): one rule per
+face of the resolved set, slot variables naming only the synthetic families,
+every referenced file among the write requests, and the generic keyword read
+from the face's own OS/2 class, never from its name. The set is built from
+the shipped corpus faces, so the checks also pin the OS/2 read on real
+tables (Open Sans declares class 8; Source Code Pro declares nothing and
+takes the slot's kind). -/
+def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let load (name : String) : IO (Option Font.Font) := do
+    try
+      match Font.parse (← IO.FS.readBinFile s!"{testFonts}/{name}") with
+      | .ok f => pure (some f)
+      | .error _ => pure none
+    catch _ => pure none
+  let some sans ← load "OpenSans-Regular.ttf"
+    | t "font ship: OpenSans-Regular loads" false
+  let some code ← load "SourceCodePro-Regular.otf"
+    | t "font ship: SourceCodePro-Regular loads" false
+  let some icons ← load "ExampleIcons-Regular.ttf"
+    | t "font ship: ExampleIcons-Regular loads" false
+  -- The OS/2 fields, pinned on the real tables the fixtures ship.
+  t "font ship: Open Sans declares OS/2 class 8, Source Code Pro none"
+    (sans.familyClass == 8 && code.familyClass == 0)
+  t "font ship: fsType embedding bits are recorded as declared"
+    (sans.fsType == 0 && icons.fsType == 4)
+  -- The deck's shape: body and sans from one face, mono its own — the
+  -- driver's index for a document that declared body and mono families.
+  let fs : Font.FontSet := {
+    fonts := #[sans, code]
+    index := ((List.range 2).flatMap fun slot =>
+      [((slot, false, false), 0), ((slot, true, false), 0),
+       ((slot, false, true), 0), ((slot, true, true), 0)]).toArray ++
+      #[((2, false, false), 1), ((2, true, false), 1),
+        ((2, false, true), 1), ((2, true, true), 1)] }
+  let src ← IO.FS.readFile "tests/corpus/deck.tex"
+  let (doc, _) ← elabFixture "deck" src
+  let cfg : HtmlDoc.Config := { fonts := some fs, fontsDir := "deck.fonts" }
+  let (html, _) := HtmlDoc.emit cfg doc
+  let faces := HtmlDoc.shipFaces fs
+  t "census deck html: one @font-face per resolved face"
+    ((html.splitOn "@font-face").length == faces.size + 1)
+  t "census deck html: the font-family variables name the synthetic families"
+    (((html.splitOn "--font-body: \"ltx-body\"").length == 2) &&
+     ((html.splitOn "--font-sans: \"ltx-sans\"").length == 2) &&
+     ((html.splitOn "--font-mono: \"ltx-mono\"").length == 2))
+  t "font ship: every requested file is referenced from the page"
+    ((HtmlDoc.fontAssets fs).all fun a => (html.splitOn a.file).length ≥ 2)
+  t "font ship: one write request per face, carrying its bytes"
+    ((HtmlDoc.fontAssets fs).size == fs.fonts.size &&
+     (HtmlDoc.fontAssets fs).all fun a => !a.data.isEmpty)
+  t "font ship: the OS/2 sans class closes the body stack, not the slot's serif"
+    ((html.splitOn "--font-body: \"ltx-body\", sans-serif;").length == 2)
+  t "font ship: an undeclared class takes the slot's kind"
+    ((html.splitOn "--font-mono: \"ltx-mono\", monospace;").length == 2)
+  -- A face only per-glyph fallback reaches ships under its own family and
+  -- every slot stack appends it, so the browser's per-character walk can
+  -- reach it — the CSS spelling of `FontSet.fallback`.
+  let fsFb : Font.FontSet := { fs with fonts := fs.fonts.push icons }
+  let (htmlFb, _) := HtmlDoc.emit { cfg with fonts := some fsFb } doc
+  t "font ship: a slotless face ships under its fallback family"
+    (((htmlFb.splitOn "font-family: \"ltx-fb2\"").length == 2) &&
+     ((htmlFb.splitOn "--font-body: \"ltx-body\", \"ltx-fb2\", sans-serif;").length == 2))
+  -- The math face rides through its token; the `.math` rule reads it.
+  let fsMath : Font.FontSet := { fs with math := some 1 }
+  let (htmlMath, _) := HtmlDoc.emit { cfg with fonts := some fsMath } doc
+  t "font ship: the resolved math face lands in --font-math"
+    ((htmlMath.splitOn "--font-math: \"ltx-math\", math;").length == 2)
+  t "font ship: .math reads the document's math face through its token"
+    ((htmlMath.splitOn ".math { font-family: var(--font-math,").length == 2)
+  -- Without a set nothing ships: the name-only stacks stay, unchanged.
+  t "font ship: a config with no set ships no rules"
+    (((HtmlDoc.emit {} doc).1.splitOn "@font-face").length == 1)
+  -- The generic keyword rules, on faces that declare each field.
+  let mkF (cls : Nat) (fixed : Bool) : Font.Font :=
+    { (default : Font.Font) with familyClass := cls, isFixedPitch := fixed }
+  t "generic keyword: class 8 is sans-serif"
+    (HtmlDoc.genericFor (oneFaceOf (mkF 8 false)) 0 "serif" == "sans-serif")
+  t "generic keyword: classes 1-7 are serif"
+    (HtmlDoc.genericFor (oneFaceOf (mkF 3 false)) 1 "sans-serif" == "serif")
+  t "generic keyword: fixed pitch is monospace whatever the class"
+    (HtmlDoc.genericFor (oneFaceOf (mkF 8 true)) 0 "serif" == "monospace")
+  t "generic keyword: an undeclared class takes the slot's declared kind"
+    (HtmlDoc.genericFor (oneFaceOf (mkF 0 false)) 0 "serif" == "serif")

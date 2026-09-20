@@ -2,6 +2,7 @@ import LeanTex.Core.Html
 import LeanTex.Core.Ir
 import LeanTex.Core.Dim
 import LeanTex.Core.Contrast
+import LeanTex.Core.Font
 
 namespace LeanTex.Core.HtmlDoc
 
@@ -51,6 +52,15 @@ structure Config where
   without a wrapper element — a wrapper would break the `* + *` sibling
   adjacency the rhythm gap rules key on. -/
   epochStyle : String := ""
+  /-- The document's resolved faces, from the driver — the same `FontSet`
+  the PDF embeds from — when the artifact ships them: one `@font-face` per
+  face, files written beside the page. `none` (a document that declared
+  its `css =` story owns fonts itself, and so does a caller with no font
+  environment) keeps the name-only stacks. -/
+  fonts : Option Font.FontSet := none
+  /-- The sibling directory the driver writes the shipped faces into,
+  relative to the page — what every `src: url(...)` references. -/
+  fontsDir : String := "fonts"
 
 def cssColor (c : Color) : String :=
   let r := Color.hexByte c.r false
@@ -812,22 +822,185 @@ theorem role_use_is_palette_dependent (p : Ir.Palette) (r : String)
   have hrgb := cssColor_inj c₁ c₂ (String.ext (List.append_cancel_right h3))
   exact hne (by simp [hrgb.1, hrgb.2.1, hrgb.2.2])
 
+/-- The synthetic family for a slot: `ltx-body`, `ltx-sans`, `ltx-mono` —
+never the face's own name, so an installed font of the same name can never
+substitute for the shipped file. -/
+def slotName : Nat → String
+  | 0 => "body"
+  | 1 => "sans"
+  | _ => "mono"
+
+/-- The four variant axes a slot resolves (`Font.FontSet.lookup`). -/
+def slotVariants : List (Bool × Bool) :=
+  [(false, false), (true, false), (false, true), (true, true)]
+
+/-- The synthetic families face `i` serves: one per slot any of whose
+variants resolves to it, plus `ltx-math` for the math face. Empty for a
+face only per-glyph fallback reaches. -/
+def namedFamiliesOf (fs : Font.FontSet) (i : Nat) : List String :=
+  ((List.range 3).filterMap fun s =>
+    if slotVariants.any (fun v => fs.lookup s v.1 v.2 == i) then
+      some s!"ltx-{slotName s}"
+    else none) ++
+  (if fs.math == some i then ["ltx-math"] else [])
+
+/-- Every face ships under at least one family: the slots' own, or a
+fallback family of its own (`ltx-fb<i>`) that the slot stacks append, so
+the browser's per-character walk down the family list (CSS Fonts 4 §5.2,
+the font matching algorithm runs per character) reaches it — the same
+per-scalar recourse the PDF path takes through `FontSet.fallback`. -/
+def familiesOf (fs : Font.FontSet) (i : Nat) : List String :=
+  if (namedFamiliesOf fs i).isEmpty then [s!"ltx-fb{i}"] else namedFamiliesOf fs i
+
+theorem familiesOf_ne_nil (fs : Font.FontSet) (i : Nat) : familiesOf fs i ≠ [] := by
+  unfold familiesOf
+  split
+  · simp
+  · next h => exact fun hn => h (by simp [hn])
+
+/-- The fallback families, in face order — `FontSet.fallback`'s "first
+covering face" order, which declaration order seeds. -/
+def fbFamilies (fs : Font.FontSet) : List String :=
+  (List.range fs.fonts.size).filterMap fun i =>
+    if (namedFamiliesOf fs i).isEmpty then some s!"ltx-fb{i}" else none
+
+/-- The face's file name in the sibling fonts directory. The index prefix
+makes the name collision-free by construction whatever the faces declare;
+the PostScript name, kept to its safe characters, keeps it readable. -/
+def fontFileName (i : Nat) (f : Font.Font) : String :=
+  let safe := f.psName.toList.filter fun c =>
+    c.isAlphanum || c == '-' || c == '_' || c == '.'
+  s!"f{i}-{String.ofList safe}." ++ (if f.isCff then "otf" else "ttf")
+
+/-- One `@font-face` the page ships: face `index` of the set under one
+synthetic family, with the descriptors CSS matches on — the face's own
+declared weight and italic flag, never the slot's request, so a family's
+Light stays 300 and the browser's matching (CSS Fonts 4 §5.2) does the
+rest. -/
+structure FontFace where
+  index : Nat
+  family : String
+  weight : Nat
+  italic : Bool
+  file : String
+  format : String
+  deriving Repr, BEq
+
+/-- The `@font-face` list of the artifact: every face of the resolved set,
+under every synthetic family it serves — the HTML's projection of the one
+`FontSet` the PDF embeds from. It never sees layout's used-glyph data, so
+it declares the whole set: the superset of the PDF's `keep`, which is what
+`Pdf.html_fonts_cover_pdf` states. -/
+def shipFaces (fs : Font.FontSet) : Array FontFace :=
+  (Array.range fs.fonts.size).flatMap fun i =>
+    (familiesOf fs i).toArray.map fun fam =>
+      { index := i
+        family := fam
+        weight := (fs.get i).weight
+        italic := (fs.get i).isItalic
+        file := fontFileName i (fs.get i)
+        format := if (fs.get i).isCff then "opentype" else "truetype" }
+
+/-- Every face of the set is declared: for each index a `@font-face` entry
+carries it — the emitter-side half of `Pdf.html_fonts_cover_pdf`. -/
+theorem shipFaces_covers (fs : Font.FontSet) {k : Nat} (hk : k < fs.fonts.size) :
+    ∃ ff ∈ shipFaces fs, ff.index = k := by
+  obtain ⟨fam, rest, heq⟩ : ∃ a l, familiesOf fs k = a :: l := by
+    cases h : familiesOf fs k with
+    | nil => exact absurd h (familiesOf_ne_nil fs k)
+    | cons a l => exact ⟨a, l, rfl⟩
+  refine ⟨{ index := k, family := fam, weight := (fs.get k).weight
+            italic := (fs.get k).isItalic, file := fontFileName k (fs.get k)
+            format := if (fs.get k).isCff then "opentype" else "truetype" }, ?_, rfl⟩
+  simp only [shipFaces, Array.mem_flatMap]
+  refine ⟨k, by simpa using hk, ?_⟩
+  simp only [Array.mem_map, List.mem_toArray]
+  exact ⟨fam, by simp [heq], rfl⟩
+
+/-- The font files the emitted page references, as write requests for the
+driver (effects as data): the bytes are already in the set, and the file
+names are the ones the styling references. One request per face. -/
+structure FontAsset where
+  file : String
+  data : ByteArray
+
+def fontAssets (fs : Font.FontSet) : Array FontAsset :=
+  (Array.range fs.fonts.size).map fun i =>
+    { file := fontFileName i (fs.get i), data := (fs.get i).data }
+
+/-- Every `src:` the styling names is a file the driver is asked to write:
+rules and requests are projections of one enumeration, so the page cannot
+reference a face whose bytes were never requested. -/
+theorem shipFaces_src_shipped (fs : Font.FontSet) :
+    ∀ ff ∈ shipFaces fs, ∃ a ∈ fontAssets fs, a.file = ff.file := by
+  intro ff hff
+  simp only [shipFaces, Array.mem_flatMap] at hff
+  obtain ⟨i, hi, hmem⟩ := hff
+  simp only [Array.mem_map, List.mem_toArray] at hmem
+  obtain ⟨fam, _, rfl⟩ := hmem
+  refine ⟨{ file := fontFileName i (fs.get i), data := (fs.get i).data }, ?_, rfl⟩
+  simp only [fontAssets, Array.mem_map]
+  exact ⟨i, hi, rfl⟩
+
+def fontFaceRule (dir : String) (ff : FontFace) : String :=
+  s!"@font-face \{ font-family: \"{ff.family}\"; font-weight: {ff.weight}; " ++
+  s!"font-style: {if ff.italic then "italic" else "normal"}; " ++
+  s!"src: url(\"{dir}/{ff.file}\") format(\"{ff.format}\"); }\n"
+
+/-- The `@font-face` block, one rule per `shipFaces` entry. -/
+def fontFaceCss (dir : String) (fs : Font.FontSet) : String :=
+  String.join ((shipFaces fs).toList.map (fontFaceRule dir))
+
+/-- The generic family closing a slot's stack — what a reader sees only if
+the shipped face fails to load. From the face's own declarations: `post`
+isFixedPitch is monospace, else OS/2 sFamilyClass (8 = Sans Serif, 1–7 the
+serif classes — OpenType spec, OS/2 table, sFamilyClass), else the slot's
+declared kind, passed in by the caller who knows which declaration filled
+the slot — never a guess from the family name. -/
+def genericFor (fs : Font.FontSet) (slot : Nat) (declared : String) : String :=
+  let f := fs.get (fs.lookup slot false false)
+  if f.isFixedPitch then "monospace"
+  else if f.familyClass == 8 then "sans-serif"
+  else if 1 ≤ f.familyClass && f.familyClass ≤ 7 then "serif"
+  else declared
+
 /-- Design tokens become CSS custom properties, so the same declarations drive
-both backends and a reader's stylesheet can override them. -/
-def tokenVars (doc : Doc) : String :=
+both backends and a reader's stylesheet can override them. With a resolved
+`FontSet` the slot stacks name only the synthetic families (plus the honest
+generic), exactly the faces the sibling directory ships; without one they
+name the declared families against the platform, today's degraded state. -/
+def tokenVars (cfg : Config) (doc : Doc) : String :=
   let palette := paletteVars doc.palette
   let tokens := doc.tokens.entries.toList.map fun (n, g) =>
     s!"    --{n}: {cssLength g.width};"
-  let fonts :=
-    (match doc.fonts.body with
-     | some f => [s!"    --font-body: \"{f}\", Georgia, serif;"]
-     | none => []) ++
-    (match doc.fonts.sans with
-     | some f => [s!"    --font-sans: \"{f}\", system-ui, sans-serif;"]
-     | none => []) ++
-    (match doc.fonts.mono with
-     | some f => [s!"    --font-mono: \"{f}\", ui-monospace, monospace;"]
-     | none => [])
+  let fonts := match cfg.fonts with
+    | some fs =>
+      -- The declared kind per slot: in the slides class the text slot is
+      -- filled from the sans declaration (beamer user guide §18, the
+      -- default font theme is sans serif; the driver resolves it so).
+      let bodyDeclared :=
+        if doc.docClass == DocClass.slides && doc.fonts.sans.isSome then "sans-serif"
+        else "serif"
+      let fb := (fbFamilies fs).map fun f => s!"\"{f}\""
+      let stack (slot : Nat) (declared : String) : String :=
+        String.intercalate ", "
+          ([s!"\"ltx-{slotName slot}\""] ++ fb ++ [genericFor fs slot declared])
+      [s!"    --font-body: {stack 0 bodyDeclared};",
+       s!"    --font-sans: {stack 1 "sans-serif"};",
+       s!"    --font-mono: {stack 2 "monospace"};"] ++
+      (if fs.math.isSome then
+        [String.intercalate ", " (["    --font-math: \"ltx-math\""] ++ fb ++ ["math;"])]
+       else [])
+    | none =>
+      (match doc.fonts.body with
+       | some f => [s!"    --font-body: \"{f}\", Georgia, serif;"]
+       | none => []) ++
+      (match doc.fonts.sans with
+       | some f => [s!"    --font-sans: \"{f}\", system-ui, sans-serif;"]
+       | none => []) ++
+      (match doc.fonts.mono with
+       | some f => [s!"    --font-mono: \"{f}\", ui-monospace, monospace;"]
+       | none => [])
   String.intercalate "\n" (palette ++ tokens ++ fonts)
 
 /-- One scale step as a CSS size: the same table the PDF sets from
@@ -851,7 +1024,7 @@ paddings, margins, radii and breakpoints are this stylesheet's own screen
 furniture — stated as the engine's choices, no external authority names
 them, and each is overridable by a reader stylesheet, which is the HTML
 backend's contract. -/
-def baseCss (doc : Doc) : String :=
+def baseCss (cfg : Config) (doc : Doc) : String :=
   -- The two token sets are `Contrast.light`/`Contrast.dark`, not literals
   -- here: every pairing they create is proved legible over there
   -- (`light_contract`, `dark_contract`), and a value only a backend knows
@@ -893,7 +1066,7 @@ def baseCss (doc : Doc) : String :=
   -- the shared :root specificity source order is the whole cascade here
   -- — the same equal-specificity, order-decides contract the declared
   -- stylesheet link relies on below.
-  (let tv := tokenVars doc
+  (let tv := tokenVars cfg doc
    if tv.isEmpty then "" else ":root {\n" ++ tv ++ "\n}\n") ++
   "*, *::before, *::after { box-sizing: border-box; }\n" ++
   "body {\n" ++
@@ -1059,7 +1232,9 @@ def baseCss (doc : Doc) : String :=
   s!"  font-size: {scaleSize "Large" "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   sizeRules ++
-  ".math { font-family: \"Latin Modern Math\", \"STIX Two Math\", math; }\n" ++
+  -- The math face the document resolved, through its token; the stack
+  -- behind the var is the degraded state for a page with no shipped face.
+  ".math { font-family: var(--font-math, \"Latin Modern Math\", \"STIX Two Math\", math); }\n" ++
   -- The numbered display: the formula's box takes the measure and centres
   -- its own text; the tag sits on the right edge, vertically centred on
   -- the formula (amsmath's equation shape).
@@ -2024,12 +2199,18 @@ def emitTree (cfg : Config) (doc : Doc) :
   -- express is named here (W0328), not silently defaulted.
   let (styled, styleDiags) := styleRules doc
   diags := diags ++ styleDiags
+  -- The shipped faces' rules ride exactly where the slot variables ride:
+  -- a mode that emits no variables ships no rules, and the driver writes
+  -- the files only when it passed the set.
+  let faceRules := match cfg.fonts with
+    | some fs => fontFaceCss cfg.fontsDir fs
+    | none => ""
   match cfg.css with
-  | .own => head := head.push (Node.style (baseCss doc ++ "\n" ++ themeCss doc ++ styled))
+  | .own => head := head.push (Node.style (faceRules ++ baseCss cfg doc ++ "\n" ++ themeCss doc ++ styled))
   | .bulma =>
     -- Bind our tokens onto Bulma's own custom properties so a host page's
     -- theme and ours agree instead of fighting.
-    head := head.push (Node.style (":root {\n" ++ tokenVars doc ++ "\n" ++
+    head := head.push (Node.style (faceRules ++ ":root {\n" ++ tokenVars cfg doc ++ "\n" ++
       "    --bulma-primary: var(--primary, var(--accent, #1d4ed8));\n" ++
       "    --bulma-body-family: var(--font-body, inherit);\n" ++
       "}\n" ++ styled))

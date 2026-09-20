@@ -30,6 +30,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   mdNameChecks ref
   interactionChecks ref
   motionSiteChecks ref
+  fontShipChecks ref
 
 /-- The layout, census, theme, and chrome blocks all read the same shipped
 face; dispatched together so each stays a leaf the module split can place.
