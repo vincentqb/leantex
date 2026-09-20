@@ -2732,6 +2732,10 @@ private structure B where
   /-- Leaded below of the last line placed (`LineBox.below`): the upper
   term of the metric interline rule. -/
   prevBelow : Sp := 0
+  /-- The last line placed was bare rule ink (`ruleOnly`): the next
+  interline is ink-referenced — from the rule's bottom edge to the
+  next line's cap line (`interlineFor`). -/
+  prevRuleOnly : Bool := false
   /-- Vertical glue since the last line, not yet laid. -/
   skip : Glue := {}
   /-- Per line of the current page: total shrink in the glue above it. -/
@@ -2873,7 +2877,10 @@ private def B.reopenChrome (b : B) : B :=
              filsAbove := .replicate lines.size 0
              y := y0
              prevDepth := d0
-             prevBelow := bl0 }
+             prevBelow := bl0
+             -- The chrome's last line is the frame title's text, never a
+             -- bare rule: the resumed interline is the metric rule.
+             prevRuleOnly := false }
   | none => b
 
 /-- Close an overfull page mid-frame and repeat the frame's chrome on the
@@ -2903,7 +2910,8 @@ private def B.pushSibling (b : B) (l : LineOut) : B :=
            shrinkAbove := b.shrinkAbove.push (b.shrinkAbove.back?.getD 0)
            filsAbove := b.filsAbove.push (b.filsAbove.back?.getD 0) }
 
-private def B.commit (b : B) (line : LineOut) (depth below above overflow : Sp) : B :=
+private def B.commit (b : B) (line : LineOut) (depth below : Sp)
+    (ruleLine : Bool) (above overflow : Sp) : B :=
   -- The consumed skip's fil counts here, page top included: an author's
   -- \vspace*{\fill} above the first line is what the star means (the
   -- space survives the break), and fil width is zero, so counting it
@@ -2922,6 +2930,7 @@ private def B.commit (b : B) (line : LineOut) (depth below above overflow : Sp) 
            noInterline := false
            prevDepth := depth
            prevBelow := below
+           prevRuleOnly := ruleLine
            skip := {} }
 
 /-- `doc_geometry_uniform`, the honest whole-document statement for the
@@ -2933,9 +2942,9 @@ is unrepresentable on the way to `Out`. The body door for geometry does
 not exist, and this is the statement that keeps it that way: a step that
 started writing `geom` would fail here at build time. -/
 private theorem doc_geometry_uniform (b : B) (l line : LineOut)
-    (depth below above overflow : Sp) :
+    (depth below : Sp) (ruleLine : Bool) (above overflow : Sp) :
     b.finishPage.geom = b.geom ∧ (b.pushSibling l).geom = b.geom ∧
-      (b.commit line depth below above overflow).geom = b.geom :=
+      (b.commit line depth below ruleLine above overflow).geom = b.geom :=
   ⟨rfl, rfl, rfl⟩
 
 /-- A run emptied of its glyph payload, every metric field kept: the
@@ -3003,13 +3012,22 @@ replaced-element rule): it raises the box, and the leading after it is
 the text's own. A math rule (a fraction bar) reaches from `raise` to
 `raise + thickness`: it can add height above the baseline or depth below
 it, never both. `fontSize`, `bodyAscent`, and `bodyDescent` are the
-page's body metrics — the strut every line contains, so an empty line
-still holds one leading. -/
+page's body metrics — the strut of every line of text, so an empty line
+still holds one leading. The strut belongs to lines carrying a glyph
+run; a line of rules, gaps, or images has exactly the box its segments
+make — TeX's `\hrule` is a rule box with no strut (TeXbook ch. 21), and
+the title-bars convention (`interlineFor`) measures to a rule's edges,
+which a phantom body ascent above a 1 pt rule would falsify. -/
 def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : Sp)
     (leadFactor : Nat) (size : Sp) (segs : Array Seg) : LineBox :=
   let nominal := if size == 0 then fontSize else size
-  let strut := leadedBox (bodyAscent * nominal / fontSize)
-    (bodyDescent * nominal / fontSize) (Ir.leadingFor nominal leadFactor)
+  let init : LineBox :=
+    if segs.isEmpty || segs.any (· matches .run ..) then
+      let strut := leadedBox (bodyAscent * nominal / fontSize)
+        (bodyDescent * nominal / fontSize) (Ir.leadingFor nominal leadFactor)
+      ⟨strut.1, strut.2, bodyCap * nominal / fontSize,
+       bodyDescent * nominal / fontSize⟩
+    else ⟨0, 0, 0, 0⟩
   segs.foldl (fun (acc : LineBox) s => match s with
     | .run idx _ _ _ _ sz _ raise =>
       let font := fs.get idx
@@ -3024,8 +3042,7 @@ def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : Sp)
     | .rule _ t r _ => ⟨max acc.above (r + t), max acc.below (-r),
        max acc.inkAbove (r + t), max acc.inkBelow (-r)⟩
     | _ => acc)
-    ⟨strut.1, strut.2, bodyCap * nominal / fontSize,
-     bodyDescent * nominal / fontSize⟩
+    init
 
 /-- The line-box convention's guard: a line's box is the metric extent of
 the (font, size, raise) triples present on it — the fonts' declared
@@ -3046,10 +3063,93 @@ theorem line_box_glyph_free (fs : FontSet)
         (segs.map Seg.stripGlyphs) =
       lineExtent fs fontSize bodyAscent bodyCap bodyDescent leadFactor size segs := by
   unfold lineExtent
-  rw [Array.foldl_map]
+  have hrun : (segs.map Seg.stripGlyphs).any (· matches Seg.run ..)
+      = segs.any (· matches Seg.run ..) := by
+    rw [Array.any_map]
+    congr 1
+    funext s
+    cases s <;> rfl
+  have hemp : (segs.map Seg.stripGlyphs).isEmpty = segs.isEmpty := by
+    unfold Array.isEmpty
+    rw [Array.size_map]
+  rw [Array.foldl_map, hrun, hemp]
   congr 1
   funext acc s
   cases s <;> rfl
+
+/-- A line that is bare rule ink: at least one segment, every segment a
+rule. The interline convention measures to its edges (`interlineFor`),
+and the body strut never applies to it (`lineExtent`). -/
+def ruleOnly (segs : Array Seg) : Bool :=
+  !segs.isEmpty && segs.all (· matches .rule ..)
+
+/-- The metric interline rule with the rule-line convention: the baseline
+distance placement adds beyond the pending skip. Between lines of text it
+is the previous line's leaded below plus this line's leaded above
+(CSS 2.1 §10.8.1). A full-measure rule stands its declared gap from the
+type's *body* — the cap-height line above the text, the baseline below
+it — never from the metric box, never from glyph ink (Hochuli, *Detail in
+Typography*, "Rules": a rule relates to the type it cuts — the sourcing
+at `headingRuleWeight`; Bringhurst §2.2.2 for the unit the default gap is
+spelled in). So against a rule-only neighbour the terms are
+ink-referenced: an upper rule contributes its ink depth and the lower
+line its cap line (`inkAbove`); an upper line of text contributes its
+baseline (zero) and a lower rule its top edge. Cap height and baseline
+are font metrics, so the artifact stays content-free; the accepted cost,
+written once here: a descender-free last line's gap below is not larger —
+that is the point — and an accented capital's accent rises into the upper
+gap. Equal declared gaps are equal visible gaps by definition
+(`title_bars_symmetric`), and under the default gap a descender can never
+reach the bottom bar (`bars_clear_descenders`). -/
+def interlineFor (prevRule : Bool) (prevDepth prevBelow : Sp)
+    (ruleLine : Bool) (box : LineBox) : Sp :=
+  (if prevRule then prevDepth else if ruleLine then 0 else prevBelow)
+    + (if prevRule || ruleLine then box.inkAbove else box.above)
+
+/-- The furniture-symmetry argument, applied to bars: the realized gap
+from an upper rule's bottom edge (`prevDepth` below its baseline) to the
+next line's cap line equals the pending skip, and from a line's baseline
+to a lower rule's top edge (`inkAbove` above its baseline) equals the
+pending skip — so equal declared gaps are equal visible gaps by
+definition, whatever the type's metrics or the rule weights. -/
+theorem title_bars_symmetric (skip prevDepth prevBelow : Int)
+    (above below inkAbove inkBelow : Int) :
+    skip + interlineFor true prevDepth prevBelow false
+        ⟨above, below, inkAbove, inkBelow⟩ - inkAbove - prevDepth = skip ∧
+    skip + interlineFor false prevDepth prevBelow true
+        ⟨above, below, inkAbove, inkBelow⟩ - inkAbove = skip := by
+  simp only [interlineFor]
+  constructor <;> simp <;> omega
+
+/-- Under the default bar gap the bottom bar clears every descender: the
+gap below the title runs from the baseline (`interlineFor`), a descender
+hangs its face's descent below that, and three rhythm quanta of the body
+(1.8 × body with the engine's 6⁄5 leading, `Ir.titleBarGap`) exceed even
+a full-em descender at the scale's LARGE title step (1.728 × body) —
+stated as the inequality it needs, `descMilli ≤ 1000`: no shipped face's
+descent approaches its em (OpenType descents sit near a third of it). -/
+theorem bars_clear_descenders (body descMilli : Int)
+    (hb : Dim.pt 1 ≤ body) -- 1 pt: the rhythm family's floor hypothesis (Ir.default_rhythm_multiples), not a design value
+    (hm : descMilli ≤ 1000) :
+    body * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000 * descMilli / 1000
+      < 3 * Ir.rhythmQuantum body := by
+  have hb' : (65536 : Int) ≤ body := hb
+  have hL : ((Ir.sizeScale.lookup "LARGE").getD 1000 : Int) = 1728 := by decide
+  rw [hL]
+  have ht : (0 : Int) ≤ body * 1728 / 1000 := by omega
+  have h1 : body * 1728 / 1000 * descMilli ≤ body * 1728 / 1000 * 1000 :=
+    Int.mul_le_mul_of_nonneg_left hm ht
+  have h2 : body * 1728 / 1000 * descMilli / 1000
+      ≤ body * 1728 / 1000 * 1000 / 1000 :=
+    Int.ediv_le_ediv (by decide) h1
+  have h3 : body * 1728 / 1000 * 1000 / 1000 = body * 1728 / 1000 :=
+    Int.mul_ediv_cancel _ (by decide)
+  calc body * 1728 / 1000 * descMilli / 1000
+      ≤ body * 1728 / 1000 * 1000 / 1000 := h2
+    _ = body * 1728 / 1000 := h3
+    _ < 3 * Ir.rhythmQuantum body := by
+        simp only [Ir.rhythmQuantum, Ir.leadingFor, Ir.leadingMilli]
+        omega
 
 /-- Place one line. Its box follows the tallest run on it (`lineExtent`),
 not the paragraph's nominal size: a line carrying `\Huge` needs room above
@@ -3061,9 +3161,12 @@ text exactly the leading, unconditionally (`baselines_on_grid`); a size
 change displaces by the larger leaded extent, deterministically,
 glyph-free, with no collision term at all. The HTML backend already ships
 this convention (`line-height`); this is what unifies the backends'
-baselines. Flush under a table rule (`noInterline`) stacks by ink instead —
-the convention's sanctioned clearance reading — as TeX ignores
-`\prevdepth` after an `\hrule`; booktabs' rule padding depends on it.
+baselines. Against a rule-only line the terms are ink-referenced
+(`interlineFor`): a full-measure rule stands its gap from the type's
+body — the cap line above the text, the baseline below it. Flush under a
+table rule (`noInterline`) stacks by ink instead — the convention's
+sanctioned clearance reading — as TeX ignores `\prevdepth` after an
+`\hrule`; booktabs' rule padding depends on it.
 
 A page fills at natural glue until a line's ink will not fit even with
 every skip above it fully shrunk; then the page closes (shrunk to fit if
@@ -3074,6 +3177,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     (w : Sp) (hang : Sp := 0) (expand : Int := 0) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
+  let rl := ruleOnly segs
   -- A zero-width rule is a strut: it shaped the extent above and ships no
   -- ink — kept, a degenerate rect rasterizes as a hairline in some viewers.
   let segs := segs.filter fun s => match s with
@@ -3085,28 +3189,31 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
       hang := hang, expand := expand }
   let firstY := b.geom.bodyTop + max b.ascent box.above
   if b.cur.lines.isEmpty || b.freshStart then
-    b.commit (mk firstY) box.inkBelow box.below 0 0
+    b.commit (mk firstY) box.inkBelow box.below rl 0 0
   else
     let interline := if b.noInterline then box.inkAbove
-      else b.prevBelow + box.above
+      else interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box
     let y := b.y + b.skip.width + interline
     let overflow := y + box.inkBelow - bottom
     let above := b.pageShrink + b.skip.shrink
     if overflow ≤ above ∨ b.noBreak then
-      b.commit (mk y) box.inkBelow box.below above (min overflow above)
+      b.commit (mk y) box.inkBelow box.below rl above (min overflow above)
     else
       let b := b.spillPage
       if b.cur.lines.isEmpty then
-        b.commit (mk firstY) box.inkBelow box.below 0 0
+        b.commit (mk firstY) box.inkBelow box.below rl 0 0
       else
         -- Below the reopened frame chrome: interline from the chrome's
         -- own baseline; the pending glue died with the break, as TeX
         -- discards glue at the top of a page.
-        b.commit (mk (b.y + b.prevBelow + box.above)) box.inkBelow box.below 0 0
+        b.commit (mk (b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box))
+          box.inkBelow box.below rl 0 0
 
 /-- The realization theorem's placement step: a line placed on the same
 page (the fit condition holds), under interline spacing (not flush under a
-table rule), lands exactly the pending skip's natural width plus the
+table rule, neither neighbour bare rule ink — a rule's realized gap is
+`title_bars_symmetric`'s statement), lands exactly the pending skip's
+natural width plus the
 metric interline — the previous line's leaded below plus this line's
 leaded above — below the previous baseline, with no collision
 side-condition: the realized peer gap for uniform-size text is the leading
@@ -3123,6 +3230,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
     (hni : b.noInterline = false)
+    (hpr : b.prevRuleOnly = false) (hrl : ruleOnly segs = false)
     (hfit : b.y + b.skip.width
         + (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
             b.descent b.geom.leading size segs).above)
@@ -3140,8 +3248,8 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine
   rw [hle]
   dsimp only
-  simp only [hcur, hfresh, hni, Bool.or_self, Bool.false_eq_true, ite_false,
-    hfit, true_or, ite_true, B.commit]
+  simp only [hcur, hfresh, hni, hpr, hrl, interlineFor, Bool.or_self,
+    Bool.false_eq_true, ite_false, hfit, true_or, ite_true, B.commit]
   simp [Array.back?_push]
 
 /-- The first baseline, declared: on a fresh page the line lands at the
@@ -4975,6 +5083,7 @@ private structure ColSave where
   y : Sp
   prevDepth : Sp
   prevBelow : Sp
+  prevRule : Bool
   skip : Glue
   fresh : Bool
   /-- The `noInterline` state at the open: every cell of a row under a
@@ -4983,6 +5092,7 @@ private structure ColSave where
   bottomY : Sp
   bottomDepth : Sp
   bottomBelow : Sp
+  bottomRule : Bool
 
 /-- The placement walk's whole state: the page builder, the column-save
 stack, the logo spans keyed to page indexes, and the running prose-line
@@ -5037,28 +5147,32 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     max b.prevBelow (barBottom - b.y)) }
   | .colOpen =>
     colSaves := colSaves.push {
-      y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow, skip := b.skip
+      y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow
+      prevRule := b.prevRuleOnly, skip := b.skip
       fresh := b.cur.lines.isEmpty || b.freshStart
       flush := b.noInterline
-      bottomY := b.y, bottomDepth := b.prevDepth, bottomBelow := b.prevBelow }
+      bottomY := b.y, bottomDepth := b.prevDepth, bottomBelow := b.prevBelow
+      bottomRule := b.prevRuleOnly }
   | .colNext =>
     if let some save := colSaves.back? then
       let save := if b.y > save.bottomY
         then { save with bottomY := b.y, bottomDepth := b.prevDepth
-                         bottomBelow := b.prevBelow }
+                         bottomBelow := b.prevBelow, bottomRule := b.prevRuleOnly }
         else save
       colSaves := colSaves.pop.push save
       b := { b with y := save.y, prevDepth := save.prevDepth
-                    prevBelow := save.prevBelow, skip := save.skip
+                    prevBelow := save.prevBelow, prevRuleOnly := save.prevRule
+                    skip := save.skip
                     freshStart := save.fresh, noInterline := save.flush }
   | .colClose =>
     if let some save := colSaves.back? then
       colSaves := colSaves.pop
-      let (bottomY, bottomDepth, bottomBelow) := if b.y > save.bottomY
-        then (b.y, b.prevDepth, b.prevBelow)
-        else (save.bottomY, save.bottomDepth, save.bottomBelow)
+      let (bottomY, bottomDepth, bottomBelow, bottomRule) := if b.y > save.bottomY
+        then (b.y, b.prevDepth, b.prevBelow, b.prevRuleOnly)
+        else (save.bottomY, save.bottomDepth, save.bottomBelow, save.bottomRule)
       b := { b with y := bottomY, prevDepth := bottomDepth
-                    prevBelow := bottomBelow, skip := {}
+                    prevBelow := bottomBelow, prevRuleOnly := bottomRule
+                    skip := {}
                     freshStart := false, noInterline := false }
   | .titleBar color pad =>
     -- The bar sits behind the line just placed: full page width, page
@@ -5096,19 +5210,19 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- `\prevdepth` after an `\hrule`.
     let mk (y : Sp) : LineOut := { x := x, y := y, size := 0, segs := segs, setWidth := w }
     if b.cur.lines.isEmpty || b.freshStart then
-      b := { b.commit (mk (b.geom.vmargin + th)) 0 0 0 0 with noInterline := true }
+      b := { b.commit (mk (b.geom.vmargin + th)) 0 0 true 0 0 with noInterline := true }
     else
       let y := b.y + b.prevDepth + b.skip.width + th
       let overflow := y - b.geom.bodyBottom
       let above := b.pageShrink + b.skip.shrink
       if overflow ≤ above ∨ b.noBreak then
-        b := { b.commit (mk y) 0 0 above (min overflow above) with noInterline := true }
+        b := { b.commit (mk y) 0 0 true above (min overflow above) with noInterline := true }
       else
         b := b.spillPage
         if b.cur.lines.isEmpty then
-          b := { b.commit (mk (b.geom.vmargin + th)) 0 0 0 0 with noInterline := true }
+          b := { b.commit (mk (b.geom.vmargin + th)) 0 0 true 0 0 with noInterline := true }
         else
-          b := { b.commit (mk (b.y + b.prevDepth + th)) 0 0 0 0 with noInterline := true }
+          b := { b.commit (mk (b.y + b.prevDepth + th)) 0 0 true 0 0 with noInterline := true }
   | .progress num den fg bg thick x w =>
     -- Half a line under the last baseline: the track, then the elapsed
     -- share over it. The bar joins the page's depth so following content
@@ -5240,6 +5354,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       y := yTop + h
       prevDepth := 0
       prevBelow := 0
+      prevRuleOnly := false
       skip := {}
       freshStart := false }
   return { b := b, colSaves := colSaves, logoSpans := logoSpans, prose := prose }
@@ -5307,10 +5422,12 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
     (he : PagesExtend b b') : PagesExtend b c :=
   he.imp fun _ hs => h ▸ hs
 
-@[simp] private theorem commit_pages (b : B) (l : LineOut) (d bl a o : Sp) :
-    (b.commit l d bl a o).pages = b.pages := rfl
-@[simp] private theorem commit_noBreak (b : B) (l : LineOut) (d bl a o : Sp) :
-    (b.commit l d bl a o).noBreak = b.noBreak := rfl
+@[simp] private theorem commit_pages (b : B) (l : LineOut) (d bl : Sp)
+    (r : Bool) (a o : Sp) :
+    (b.commit l d bl r a o).pages = b.pages := rfl
+@[simp] private theorem commit_noBreak (b : B) (l : LineOut) (d bl : Sp)
+    (r : Bool) (a o : Sp) :
+    (b.commit l d bl r a o).noBreak = b.noBreak := rfl
 @[simp] private theorem warnOverfull_pages (b : B) :
     b.warnOverfull.pages = b.pages := rfl
 @[simp] private theorem warnOverfull_noBreak (b : B) :

@@ -1320,6 +1320,51 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "an unshrunk page says nothing"
     (!(layoutOf oneFace (Elab.run "t" three).1 geom).diags.any (·.code == "N0200"))
 
+/-- Title bars stand their declared gap from the type's body: the cap line
+above the text, the baseline below it (`Layout.interlineFor`,
+`Layout.title_bars_symmetric`) — asserted over `Layout.Out`, never an IR
+dump. The fixture is the paper's shape: a LARGE title over two lines,
+every word descender-free, a heavier bar above than below, equal declared
+gaps. Both facts fail under the strut-and-metric placement this
+convention replaced: a rule-only line carried the body strut, and the
+gaps ran to the leaded box. The descender probe is the content-free
+half: furniture that moved with the letters would make the artifact
+content-dependent. -/
+def titleBarChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
+    (oneFace : Font.FontSet) (font : Font.Font) : IO Unit := do
+  let t := check ref
+  let src (last : String) := "\\documentclass{article}" ++
+    "\\style{titlepage}{ rule-above = 4pt, rule-above-gap = 18pt, " ++
+    "rule-below = 1pt, rule-below-gap = 18pt }" ++
+    "\\title{Invented Title Bars Stand All Their Rules " ++ last ++ "}" ++
+    "\\author{Placeholder Name}" ++
+    "\\begin{document}\\maketitle Body text.\\end{document}"
+  -- A measure narrow enough that the LARGE title breaks over two lines.
+  let tg : Layout.Geom := { geom with pageW := Dim.inch 3 + 2 * geom.hmargin }
+  let titleSize := geom.fontSize * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000
+  let cap : Dim.Sp := (font.capHeight : Int) * titleSize / font.unitsPerEm
+  let probe (last : String) : Option (Dim.Sp × Dim.Sp × Nat) := do
+    let lines := bodyLines (layoutOf oneFace (Elab.run "t" (src last)).1 tg)
+    let bars := lines.filter (fun l => Layout.ruleOnly l.segs)
+    let titles := lines.filter (fun l => !Layout.ruleOnly l.segs && l.size == titleSize)
+    let bar1 ← bars[0]?
+    let bar2 ← bars[1]?
+    let firstT ← titles[0]?
+    let lastT ← titles.back?
+    let th2 ← bar2.segs.findSome? fun s => match s with
+      | .rule _ th _ _ => some th | _ => none
+    return ((firstT.y - cap) - bar1.y, (bar2.y - th2) - lastT.y, titles.size)
+  match probe "Even", probe "Gyp" with
+  | some (above, below, n), some (_, below', n') =>
+    t "title bars: the title broke over two lines" (n == 2 && n' == 2)
+    t "title bars: the rule stands its declared gap above the cap line"
+      (above == Dim.pt 18)
+    t "title bars: equal declared gaps are equal visible gaps"
+      (below == Dim.pt 18 && above == below)
+    t "title bars: a descender on the last line never moves the bottom bar"
+      (below' == below)
+  | _, _ => t "title bars: the probe produced its lines" false
+
 /-- Recovery emits the author's content, never the source's syntax. An
 unknown command's leading `[...]` run is how the author addressed the
 command — a parameter, not content — so no character of it reaches the
