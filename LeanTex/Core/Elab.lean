@@ -3304,6 +3304,75 @@ def builtinEnvNames : List String :=
   ["verbatim", "tabular", "tabular*", "column", "array"] ++
   reservedEnv
 
+/-- The text-block width the page yields: `width − 2·hmargin`, spelled
+once — a page fact has one resolving def. -/
+private def _root_.LeanTex.Core.Ir.PageSpec.textWidth (p : PageSpec) : Sp :=
+  p.width - 2 * p.hmargin
+
+/-- The text-block height the page yields: `height − 2·vmargin`. -/
+private def _root_.LeanTex.Core.Ir.PageSpec.textHeight (p : PageSpec) : Sp :=
+  p.height - 2 * p.vmargin
+
+/-- The page the class yields for a declared spec and options: the one
+resolving site for class page geometry, read by `engineLengthTokens` and
+the `elabDoc` fold alike so the preamble's token environment and the
+shipped page cannot drift (`engine_tokens_agree`). A face takes the class
+option's US (3.5 × 2 in) or Japanese (91 × 55 mm) card trade size, else
+the class record's `trimDefault`, with `safeMargin` on both margins, and
+sets display-text policy: no hyphenation, and — below the 40-character
+working minimum for justified text (Bringhurst, Elements 2.1.2) — ragged.
+A frame fills beamer's stage (`slidesStageOf`) with the slides margins.
+Flow reads the `*paper`/`paper=` options against `pageSizes` and
+`landscape` swaps the axes — the reading the geometry package documents
+for exactly these options (geometry manual §5.2). A document that declared
+its own geometry keeps every value it named: a class option is a default,
+never a lock. The flow classes' undeclared text block (Bringhurst's 26
+picas, `Ir.articleTextBlock`) is deliberately not applied here — it is the
+fold's own `!sawPage` step, after the whole preamble has spoken. -/
+private def classPageDefaults (record : Ir.ClassRecord) (opts : List String)
+    (page : PageSpec) : PageSpec := Id.run do
+  let dflt : PageSpec := {}
+  let mut page := page
+  if record.model == .flow then
+    if page.width == dflt.width && page.height == dflt.height then
+      let sized := opts.findSome? fun o =>
+        let o := if o.startsWith "paper=" then
+          (o.drop "paper=".length).toString ++ "paper" else o
+        if o.endsWith "paper" then
+          pageSizes.lookup ((o.dropEnd "paper".length).toString)
+        else none
+      if let some (w, h) := sized then
+        page := { page with width := w, height := h }
+      if opts.contains "landscape" then
+        page := { page with width := page.height, height := page.width }
+  if record.model == .frame then
+    if page.width == dflt.width && page.height == dflt.height then
+      let (w, h) := slidesStageOf opts
+      page := { page with width := w, height := h }
+    if page.hmargin == dflt.hmargin then
+      page := { page with hmargin := Ir.slidesHMargin }
+    if page.vmargin == dflt.vmargin then
+      page := { page with vmargin := Ir.slidesVMargin }
+  else if record.model == .face then
+    if page.width == dflt.width && page.height == dflt.height then
+      let named :=
+        if opts.contains "us" then some (Dim.pt 252, Dim.pt 144)
+        else if opts.contains "jis" then some (Dim.mm 91, Dim.mm 55)
+        else none
+      match named.orElse (fun _ => record.trimDefault) with
+      | some (w, h) => page := { page with width := w, height := h }
+      | none => pure ()
+    if let some m := record.safeMargin then
+      if page.hmargin == dflt.hmargin then
+        page := { page with hmargin := m }
+      if page.vmargin == dflt.vmargin then
+        page := { page with vmargin := m }
+    if page.hyphenate.isNone then
+      page := { page with hyphenate := some false }
+    if page.justify.isNone then
+      page := { page with justify := some false }
+  return page
+
 /-- A column width as per mille of the text width: `0.48\textwidth`,
 `.5\linewidth`, a bare factor, or `\textwidth` alone — a factor of one, as
 TeX reads a coefficient-less internal dimen. An absolute length is not
@@ -3324,7 +3393,7 @@ private def columnWidth (ctx : Ctx) (src : String) : Option Nat := Id.run do
     let name := (s.drop 1).toString.trimAscii.toString
     match ctx.tokens.find? name with
     | some g =>
-      let tw := ctx.page.width - 2 * ctx.page.hmargin
+      let tw := ctx.page.textWidth
       let v := g.width.resolve ctx.page.fontSize 0
       if tw > 0 && 0 ≤ v && v ≤ tw then return some ((v * 1000 / tw).toNat)
       else return none
@@ -3924,71 +3993,72 @@ is `applyEvent`'s `.declared` arm — one meaning, two doors. -/
 private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
   modify fun st => applyEvent ctx st (.declared decl key)
 
-/-- The engine's own length tokens, LaTeX's page dimen parameters read
-onto the token namespace: `paperwidth`/`paperheight` (the physical page),
-`textwidth`/`textheight` (the measure between the margins — TeX's own
-parameters, TeXbook ch. 23). Resolved eagerly at the read site, as every
-token reference is (the `\setlength{\x}{2\x}` rule) — from the declared
-page where one is declared, else from what the class already fixes: a
-face's `trimDefault`/`safeMargin` row, the slides stage and margins, a
-flow class's named paper option. A dimension the class will still adjust
-after the preamble fold — the flow classes' text block — is deliberately
-not offered: an expression reading it keeps its named error (E0321)
-rather than capturing a value the finished page would contradict. -/
-private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
-    (page : PageSpec) : Array (String × Dim.SymGlue) := Id.run do
-  let record := docClass.record
-  let dflt : PageSpec := {}
-  let opts := (classOptions.splitOn ",").map (·.trimAscii.toString)
-  let wh : Option (Dim.Sp × Dim.Sp) :=
-    if !(page.width == dflt.width && page.height == dflt.height) then
-      some (page.width, page.height)
-    else match record.model with
-      | .face =>
-        if opts.contains "us" then some (Dim.pt 252, Dim.pt 144)
-        else if opts.contains "jis" then some (Dim.mm 91, Dim.mm 55)
-        else record.trimDefault
-      | .frame =>
-        some (slidesStageOf opts)
-      | .flow =>
-        let sized := opts.findSome? fun o =>
-          let o := if o.startsWith "paper=" then
-            (o.drop "paper=".length).toString ++ "paper" else o
-          if o.endsWith "paper" then
-            pageSizes.lookup ((o.dropEnd "paper".length).toString)
-          else none
-        let base := sized.getD (page.width, page.height)
-        some (if opts.contains "landscape" then (base.2, base.1) else base)
-  let hm : Option Dim.Sp :=
-    if page.hmargin != dflt.hmargin then some page.hmargin
-    else match record.model with
-      | .face => record.safeMargin
-      | .frame => some Ir.slidesHMargin
-      | .flow => none
-  let vm : Option Dim.Sp :=
-    if page.vmargin != dflt.vmargin then some page.vmargin
-    else match record.model with
-      | .face => record.safeMargin
-      | .frame => some Ir.slidesVMargin
-      | .flow => some dflt.vmargin
-  let mut out : Array (String × Dim.SymGlue) := #[]
-  if let some (w, h) := wh then
-    out := out.push ("paperwidth", { width := Dim.Length.ofSp w })
-    out := out.push ("paperheight", { width := Dim.Length.ofSp h })
-    if let some m := hm then
-      out := out.push ("textwidth", { width := Dim.Length.ofSp (w - 2 * m) })
-    if let some m := vm then
-      out := out.push ("textheight", { width := Dim.Length.ofSp (h - 2 * m) })
-  return out
-
 /-- The engine tokens over the finished page, for body reads: every value
 is determined once the class defaults are applied, so all four resolve. -/
 private def engineLengthTokensOfPage (page : PageSpec) :
     Array (String × Dim.SymGlue) :=
   #[("paperwidth", { width := Dim.Length.ofSp page.width }),
     ("paperheight", { width := Dim.Length.ofSp page.height }),
-    ("textwidth", { width := Dim.Length.ofSp (page.width - 2 * page.hmargin) }),
-    ("textheight", { width := Dim.Length.ofSp (page.height - 2 * page.vmargin) })]
+    ("textwidth", { width := Dim.Length.ofSp page.textWidth }),
+    ("textheight", { width := Dim.Length.ofSp page.textHeight })]
+
+/-- The engine's own length tokens, LaTeX's page dimen parameters read
+onto the token namespace: `paperwidth`/`paperheight` (the physical page),
+`textwidth`/`textheight` (the measure between the margins — TeX's own
+parameters, TeXbook ch. 23). Resolved eagerly at the read site, as every
+token reference is (the `\setlength{\x}{2\x}` rule) — the offered keys of
+the one resolving site, `engineLengthTokensOfPage ∘ classPageDefaults`:
+offered from the declared page where one is declared, else where the class
+already fixes the value. A dimension the class will still adjust after the
+preamble fold — the flow classes' text block — is deliberately not
+offered: an expression reading it keeps its named error (E0321) rather
+than capturing a value the finished page would contradict. -/
+private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
+    (page : PageSpec) : Array (String × Dim.SymGlue) :=
+  let record := docClass.record
+  let dflt : PageSpec := {}
+  let opts := (classOptions.splitOn ",").map (·.trimAscii.toString)
+  let whKnown := !(page.width == dflt.width && page.height == dflt.height) ||
+    (match record.model with
+     | .face => opts.contains "us" || opts.contains "jis" || record.trimDefault.isSome
+     | .frame => true
+     | .flow => true)
+  let hmKnown := page.hmargin != dflt.hmargin ||
+    (match record.model with
+     | .face => record.safeMargin.isSome
+     | .frame => true
+     | .flow => false)
+  let vmKnown := page.vmargin != dflt.vmargin ||
+    (match record.model with
+     | .face => record.safeMargin.isSome
+     | .frame => true
+     | .flow => true)
+  let offered (key : String) : Bool :=
+    match key with
+    | "paperwidth" | "paperheight" => whKnown
+    | "textwidth" => whKnown && hmKnown
+    | "textheight" => whKnown && vmKnown
+    | _ => false
+  (engineLengthTokensOfPage (classPageDefaults record opts page)).filter
+    (fun kv => offered kv.1)
+
+/-- The preamble's engine token environment and the shipped page are one
+value (shape: `_set_eq` over the token array, as an inclusion — the offered
+keys are exactly those the class already fixes): every binding
+`engineLengthTokens` offers is the corresponding entry of the resolved
+page's environment. The one deliberate remainder is the flow classes'
+undeclared text block, applied by the fold's `!sawPage` step — and exactly
+then `textwidth` is withheld here, so no offered token can disagree with
+the page that ships. This is the statement whose absence would let a
+preamble `\setlength` read a different page than the document renders
+on. -/
+private theorem engine_tokens_agree (docClass : Ir.DocClass)
+    (classOptions : String) (page : PageSpec) :
+    ∀ kv ∈ engineLengthTokens docClass classOptions page,
+      kv ∈ engineLengthTokensOfPage (classPageDefaults docClass.record
+        ((classOptions.splitOn ",").map (·.trimAscii.toString)) page) := by
+  intro kv h
+  exact (Array.mem_filter.mp h).1
 
 /-- `\tokens{...}`: named lengths. Entries are walked one at a time so a
 token may be defined by scaling an earlier one (`sep = 0.6 * rhythm`);
@@ -8835,32 +8905,14 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
       page := { page with parskip := some g }
   -- The geometry is the page model's, the kernel's own: a frame fills
   -- beamer's stage, a face is trimmed to a trade size, flow takes the
-  -- text block. Option-keyed sizes (aspectratio, us/jis) live here with
-  -- the model, not on the class record — they are the model's stages.
-  -- Class options and `\page` keys are one vocabulary: `*paper` (and
-  -- KOMA's `paper=`) names a size from the same `pageSizes` table
-  -- `\page{ size = ... }` reads, and `landscape` swaps the axes — the
-  -- reading the geometry package documents for exactly these options
-  -- (geometry manual §5.2, paper size options). A document that declared
-  -- its own geometry keeps it: the class option is a default, never a
-  -- lock (the same rule the slides stage takes). `twocolumn` and `draft`
-  -- ask for a page model and a proofing mode the engine does not have:
-  -- each is refused by name (W0356) — the silent drop was the defect
-  -- class here, an a4paper request quietly shipping on letter.
+  -- text block. `classPageDefaults` is the one resolving site — the same
+  -- door `engineLengthTokens` reads, so the preamble's token environment
+  -- and the shipped page are one value (`engine_tokens_agree`). `twocolumn`
+  -- and `draft` ask for a page model and a proofing mode the engine does
+  -- not have: each is refused by name (W0356) — the silent drop was the
+  -- defect class here, an a4paper request quietly shipping on letter.
   let classOpts := (classOptions.splitOn ",").map (·.trimAscii.toString)
-  if record.model == .flow then
-    let dflt : PageSpec := {}
-    if page.width == dflt.width && page.height == dflt.height then
-      let sized := classOpts.findSome? fun o =>
-        let o := if o.startsWith "paper=" then
-          (o.drop "paper=".length).toString ++ "paper" else o
-        if o.endsWith "paper" then
-          pageSizes.lookup ((o.dropEnd "paper".length).toString)
-        else none
-      if let some (w, h) := sized then
-        page := { page with width := w, height := h }
-      if classOpts.contains "landscape" then
-        page := { page with width := page.height, height := page.width }
+  page := classPageDefaults record classOpts page
   for o in classOpts do
     if o == "twocolumn" then
       diag ctx .W0356
@@ -8870,50 +8922,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
       diag ctx .W0356
         "class option 'draft' asks for a proofing mode the engine does not have; the document is rendered in full"
         none
-  -- Slides fill beamer's stage unless the document declared its own
-  -- geometry: a handout on letter portrait is not best effort, it is wrong.
-  if record.model == .frame then
-    let dflt : PageSpec := {}
-    if page.width == dflt.width && page.height == dflt.height then
-      let (w, h) := slidesStageOf classOpts
-      page := { page with width := w, height := h }
-    if page.hmargin == dflt.hmargin then
-      page := { page with hmargin := Ir.slidesHMargin }
-    if page.vmargin == dflt.vmargin then
-      page := { page with vmargin := Ir.slidesVMargin }
-  -- A face is trimmed from a sheet, so its defaults are the print
-  -- trade's, not a guess, and they live on the class record
-  -- (`ClassRecord.trimDefault`/`safeMargin`): the card's ISO/IEC 7810
-  -- ID-1 with the 5 mm safe zone, the poster's ISO 216 A0 with
-  -- beamerposter's 1 cm — unless the class option names the US
-  -- (3.5 × 2 in) or Japanese (91 × 55 mm) card trade size. No
-  -- hyphenation: a face is display text, not a page of a run — which is
-  -- also why the prose measure band (W0201) does not apply to it.
-  else if record.model == .face then
-    let dflt : PageSpec := {}
-    let opts := (classOptions.splitOn ",").map (·.trimAscii.toString)
-    if page.width == dflt.width && page.height == dflt.height then
-      let named :=
-        if opts.contains "us" then some (Dim.pt 252, Dim.pt 144)
-        else if opts.contains "jis" then some (Dim.mm 91, Dim.mm 55)
-        else none
-      match named.orElse (fun _ => record.trimDefault) with
-      | some (w, h) => page := { page with width := w, height := h }
-      | none => pure ()
-    if let some m := record.safeMargin then
-      if page.hmargin == dflt.hmargin then
-        page := { page with hmargin := m }
-      if page.vmargin == dflt.vmargin then
-        page := { page with vmargin := m }
-    if page.hyphenate.isNone then
-      page := { page with hyphenate := some false }
-    -- Below the 40-character working minimum for justified text
-    -- (Bringhurst, Elements 2.1.2), the measure is set ragged: at card
-    -- width justification has no stretch to work with and the breaker is
-    -- left choosing between overfull answers.
-    if page.justify.isNone then
-      page := { page with justify := some false }
-  else if !sawPage then
+  if record.model == .flow && !sawPage then
     -- An undeclared letter page takes Bringhurst's text block for a 10pt
     -- text face, 26 picas, not the word-processor inch: the default must
     -- satisfy the measure band the engine checks (W0201). A document that
