@@ -145,6 +145,45 @@ full = w + 2bleed, gap = bleed - 3pt, half = 0.5 * (bleed + safe) }")
      ds2.all (·.severity != .error) &&
        d2.tokens.find? "cm" == some { width := .ofSp (Dim.pt 6) } &&
        d2.tokens.find? "ch" == some { width := .ofSp (Dim.pt 8) })
+  -- Division: calc's `/` on a length is TeX's \divide, truncation toward
+  -- zero (TeXbook ch. 24) — the one rounding of the whole language. A
+  -- parenthesized numeric subexpression is a scalar divisor.
+  let (d3, ds3) := elabStr (pre
+    "\\tokens{ bleed = 9pt, safe = 9pt, w = 240pt, q = (bleed + safe) / 2, \
+r = w / 2.5, neg = 0pt - 3sp, negh = neg / 2 }")
+  t "division by a numeric factor evaluates without errors"
+    (ds3.all (·.severity != .error))
+  t "a length divides by an integer"
+    (d3.tokens.find? "q" == some { width := .ofSp (Dim.pt 9) })
+  t "a length divides by a decimal"
+    (d3.tokens.find? "r" == some { width := .ofSp (Dim.pt 96) })
+  t "a negative length truncates toward zero, as TeX's \\divide does"
+    (d3.tokens.find? "negh" == some { width := .ofSp (-1) })
+  t "a parenthesized numeric divisor evaluates as a scalar (the beamerposter shape)"
+    (let (d4, ds4) := elabStr (pre
+      "\\newlength{\\cw}\\setlength{\\cw}{100pt}\\newlength{\\cb}\
+\\setlength{\\cb}{24pt}\\newlength{\\sw}\\setlength{\\sw}{(\\cw - 3\\cb) / (3+1)}")
+     ds4.all (·.severity != .error) &&
+       d4.tokens.find? "sw" == some { width := .ofSp (Dim.pt 7) })
+  t "division by zero is refused with a diagnostic, never a silent 0"
+    (let (d5, ds5) := elabStr (pre "\\tokens{ a = 4pt, b = a / 0 }")
+     d5.tokens.find? "b" == none &&
+       ds5.any fun d => d.code == "E0321" &&
+         (d.message.splitOn "division by zero").length > 1)
+  t "a number divided by a length is refused"
+    (let ds6 := (elabStr (pre "\\tokens{ a = 4pt, b = 8 / a }")).2
+     ds6.any fun d => d.code == "E0321" && (d.message.splitOn "no meaning").length > 1)
+  -- e-TeX's \dimexpr division rounds to nearest — different arithmetic,
+  -- refused by name (E0375), never mis-rounded silently; plain division
+  -- outside \dimexpr stays clean of it.
+  t "\\dimexpr division is refused by name"
+    (let ds7 := (elabStr (pre
+      "\\newlength{\\x}\\setlength{\\x}{\\dimexpr\\textwidth/2\\relax}")).2
+     ds7.any (·.code == "E0375"))
+  t "native division does not fire the \\dimexpr refusal"
+    (let ds8 := (elabStr (pre
+      "\\newlength{\\y}\\setlength{\\y}{4pt}\\newlength{\\z}\\setlength{\\z}{\\y/2}")).2
+     ds8.all (·.code != "E0375") && ds8.all (·.severity != .error))
 
 /-- The run-in headings: `\paragraph`/`\subparagraph` are run-in in article
 (clsguide §2.2; classes.dtx gives both a negative afterskip), so the title

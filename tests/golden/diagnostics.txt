@@ -106,6 +106,9 @@ error[E0359]: a '\note' inside this note's frame is dropped: one note cannot car
 ── E0365 (dropped) \data file not found; its records are absent
 error[E0365]: '\data' file 'records' is not there; its records are absent
   help: looked at: /documents/records.bib; \allow{E0365} accepts the loss
+── E0375 (dropped) \dimexpr division rounds to nearest, not this engine's truncation, so the statement is dropped
+error[E0375]: '\dimexpr' division rounds to nearest; this engine's length arithmetic truncates toward zero as TeX's '\divide' does
+  help: divide outside '\dimexpr': '(\a - \b) / 2' truncates as TeX does
 ── E0401 (dropped) no usable font found on the host
 error[E0401]: no usable font found
   help: install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT

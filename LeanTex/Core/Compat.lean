@@ -1218,6 +1218,16 @@ face serves every language, so the binding is dropped" pos
   | "setlength" =>
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
+      -- e-TeX's `\dimexpr` division rounds to the nearest multiple (e-TeX
+      -- manual §3.5); the native language truncates toward zero as TeX's
+      -- `\divide` does. Mapping the spelling would mis-round silently, so
+      -- it is refused by name instead.
+      if (args[1].any fun r => match r with | .ctrl "dimexpr" _ => true | _ => false)
+          && (lengthSrc args[1]).toList.contains '/' then
+        say .E0375 "'\\dimexpr' division rounds to nearest; this engine's length \
+arithmetic truncates toward zero as TeX's '\\divide' does" pos
+          (help := "divide outside '\\dimexpr': '(\\a - \\b) / 2' truncates as TeX does")
+        return some (#[], k)
       match ctrlName args[0] with
       | some "abovecaptionskip" =>
         -- The object-side caption gap (classes.dtx `\@makecaption`:

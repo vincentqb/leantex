@@ -140,6 +140,8 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0368 => dvE (dvDoc "\\usepackage[klingon]{babel}\n" "x") ++
       dvE (dvDoc "\\pdfmeta{ language = \"xx\" }\n" "x")
   | .W0369 => dvE (dvDoc "\\babelfont[french]{rm}{Demo Serif}\n" "x")
+  | .E0375 => dvE (dvDoc
+      "\\newlength{\\half}\\setlength{\\half}{\\dimexpr\\textwidth/2\\relax}\n" "x")
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL one (dvDoc "" "$x^2$")
   | .W0005 => dvL one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"
