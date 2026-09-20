@@ -50,23 +50,6 @@ structure Config where
   model): the frame arm then realizes its declared vertical distribution
   with flex spacers, which every other class's flow has no use for. -/
   deck : Bool := false
-  /-- The overlay step this section shows, on a per-step page of the deck
-  (`emitTree`'s frame expansion); `none` everywhere else, where every
-  step is crisp — the single-section rendering and the article flow. -/
-  stepPage : Option Nat := none
-  /-- Inside covered content: the walk is under a step that is pending on
-  `stepPage`, so an explicitly coloured run below takes its own cover —
-  the same mode flag `Ir.dimBlocks` threads for the PDF page. -/
-  covering : Bool := false
-  /-- The cover's declared fraction (percent of the ink over the surface)
-  and the page surface's literal, for the `color-mix` fallback: the same
-  `Design.coveredFraction`/`bg` the PDF's cover resolves from. -/
-  coverFraction : Nat := Ir.coveredFractionDefault
-  coverBg : String := "#ffffff"
-  /-- Whether `\label` anchors emit here: on, except on the second and
-  later pages of a step-expanded frame, where a repeated anchor would
-  break id uniqueness — the anchor lands on the frame's first page. -/
-  anchors : Bool := true
   /-- The accumulated custom-property redefinitions the siblings from here
   on carry on their own style attribute. Properties on an element inherit
   into it, so styling each following sibling realizes "from here on"
@@ -121,7 +104,7 @@ def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up",
    "section-number", "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
-   "bt-light-above", "centered", "column", "columns", "content", "covered",
+   "bt-light-above", "centered", "column", "columns", "content",
    "deck-progress", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
@@ -1203,15 +1186,7 @@ private def slideCss (doc : Doc) : String :=
   let headerH2 :=
     s!"section.slide > header h2 \{ margin: 0; font-size: {scaleSize "Large" "rem"}; }\n"
   if doc.docClass == .slides then
-    -- Covered overlay content on a per-step page: the same ink, quieter —
-    -- each run at the design's declared fraction of itself over the page,
-    -- mixed in oklab (CSS Color 4 §12.2 `color-mix`), the very fraction
-    -- and space the PDF's cover mixes (`Ir.Design.cover`, Core/Oklab).
-    -- Unmediaed: the print twin is the PDF handout's dimmed page.
-    let d := Design.ofDoc doc
     headerH2 ++
-    s!".covered \{ color: color-mix(in oklab, currentColor \
-{d.coveredFraction}%, var(--bg, {cssColor d.bg})); }\n" ++
     "@media screen {\n" ++
     "html { scroll-snap-type: y mandatory; }\n" ++
     smoothScrollCss "html" ++
@@ -1596,19 +1571,10 @@ height: auto"
   | .colored c name body =>
     -- A named colour becomes a custom-property reference with the literal as
     -- fallback, so the token really is the styling API: a host page can
-    -- restyle the document by redefining --primary. Under a pending step
-    -- the run takes its own cover — the same colour, quieter, spelled as
-    -- the page's `color-mix` (CSS Color 4 §12.2, the oklab space the PDF
-    -- mixes in), never a repaint to one constant.
-    let value := match name, cfg.covering with
-      | some n, false => s!"color: var(--{n}, {cssColor c})"
-      | none, false => s!"color: {cssColor c}"
-      | some n, true =>
-        s!"color: color-mix(in oklab, var(--{n}, {cssColor c}) \
-{cfg.coverFraction}%, var(--bg, {cfg.coverBg}))"
-      | none, true =>
-        s!"color: color-mix(in oklab, {cssColor c} \
-{cfg.coverFraction}%, var(--bg, {cfg.coverBg}))"
+    -- restyle the document by redefining --primary.
+    let value := match name with
+      | some n => s!"color: var(--{n}, {cssColor c})"
+      | none => s!"color: {cssColor c}"
     acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList) #[("style", value)])
   | .link url body =>
     acc.push (Html.elem "a" (inlineNodesInto cfg #[] body.toList)
@@ -1616,13 +1582,9 @@ height: auto"
   -- The anchor a cross-reference lands on: an empty span carrying the
   -- label's id, through the typed tree and the attribute escaper (the key
   -- is author text entering an attribute; `Ir.labelAnchor_single_token`
-  -- holds its shape). On the later pages of a step-expanded frame the
-  -- anchor is suppressed (`cfg.anchors`): it lands once, on the frame's
-  -- first page, keeping ids unique.
+  -- holds its shape).
   | .label key =>
-    if cfg.anchors then
-      acc.push (Html.elem "span" #[] #[("id", Ir.labelAnchor key)])
-    else acc
+    acc.push (Html.elem "span" #[] #[("id", Ir.labelAnchor key)])
   -- A resolved reference is an in-page link showing its number; an
   -- unresolved one shows LaTeX's own '??', already diagnosed by name
   -- (W0349), with nothing to link to.
@@ -1637,21 +1599,17 @@ height: auto"
     -- rule breaks where a descender crosses it.
     acc.push (Html.elem "u" (inlineNodesInto cfg #[] body.toList))
   | .step n last body =>
-    -- Every step is visible on the single-section rendering; on a
-    -- per-step page (`cfg.stepPage`) a step not yet reached is *covered*,
-    -- never hidden — the class the deck stylesheet dims, the mode flip at
-    -- the outermost pending step only, exactly `Ir.dimBlocks`' walk. The
-    -- range rides as data either way.
-    let pend := match cfg.stepPage with
-      | some k => !cfg.covering && Ir.stepPending n last k
-      | none => false
-    let cfg := if pend then { cfg with covering := true } else cfg
+    -- Every step is fully visible here — the handout state, the floor the
+    -- deck's reveal degrades to. On the paged deck the class-gated
+    -- stylesheet uncovers the step in place when its frame snaps
+    -- (`deckStepCss`), staggered by the step's own `--step`; the range
+    -- rides as data either way.
     acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
-      (#[("class", if pend then "step covered" else "step"),
-         ("data-step", toString n)] ++
+      (#[("class", "step"), ("data-step", toString n)] ++
         (match last with
          | some u => #[("data-step-last", toString u)]
-         | none => #[])))
+         | none => #[]) ++
+        #[("style", s!"--step: {n}")]))
   | .icon c label =>
     -- The glyph is a Private Use Area scalar assistive technology cannot
     -- read, so it is hidden (`aria-hidden`) and the accessible name rides
@@ -1710,25 +1668,11 @@ the contrapositive of "frozen at authoring time"; a colour that arrived
 with no palette name (`name = none`) has no variable to follow and really
 is frozen. -/
 theorem role_use_names_its_token (cfg : Config) (acc : Array Node)
-    (c : Ir.Color) (n : String) (body : Array Inline)
-    (h : cfg.covering = false) :
+    (c : Ir.Color) (n : String) (body : Array Inline) :
     inlineNodeInto cfg acc (.colored c (some n) body) =
       acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
         #[("style", s!"color: var(--{n}, {cssColor c})")]) := by
-  simp [inlineNodeInto, h]
-
-/-- Covered content names its token too: under a pending step the same
-span's colour is its own reference inside the cover's `color-mix` — the
-same ink, quieter, still the palette's to restyle — never a repaint to a
-constant no palette can reach. -/
-theorem role_use_names_its_token_covered (cfg : Config) (acc : Array Node)
-    (c : Ir.Color) (n : String) (body : Array Inline)
-    (h : cfg.covering = true) :
-    inlineNodeInto cfg acc (.colored c (some n) body) =
-      acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
-        #[("style", s!"color: color-mix(in oklab, var(--{n}, {cssColor c}) \
-{cfg.coverFraction}%, var(--bg, {cfg.coverBg}))")]) := by
-  simp [inlineNodeInto, h]
+  simp [inlineNodeInto]
 
 /-- The class hook's emission half: an authored role reaches the artifact
 as an element carrying exactly `roleClass name`, children the emission of
@@ -1968,18 +1912,14 @@ def blockNode (cfg : Config) (b : Block) : Node :=
         ("style", s!"display: grid; grid-template-columns: {gridTracks cols}; " ++
           "justify-content: space-between; column-gap: 0.75rem")]
   | .step n last body =>
-    -- The block form of the inline step arm: covered on a per-step page
-    -- when pending, visible everywhere, range as data.
-    let pend := match cfg.stepPage with
-      | some k => !cfg.covering && Ir.stepPending n last k
-      | none => false
-    let cfg := if pend then { cfg with covering := true } else cfg
+    -- The block form of the inline step arm: visible — the handout floor —
+    -- with its `--step` index for the class-gated uncover, range as data.
     Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
-      (#[("class", if pend then "step covered" else "step"),
-         ("data-step", toString n)] ++
+      (#[("class", "step"), ("data-step", toString n)] ++
         (match last with
          | some u => #[("data-step-last", toString u)]
-         | none => #[]))
+         | none => #[]) ++
+        #[("style", s!"--step: {n}")])
   | .note body =>
     -- Inert and hidden: available to a speaker view, invisible in the deck
     -- and in print.
@@ -2539,11 +2479,7 @@ def emitTree (cfg : Config) (doc : Doc) :
   let cfg := { cfg with styles := doc.styles
                         pal := doc.palette
                         tokens := doc.tokens
-                        deck := doc.docClass.record.model == .frame
-                        -- The cover's declared fraction and surface, the
-                        -- same resolved design the PDF's cover reads.
-                        coverFraction := (Design.ofDoc doc).coveredFraction
-                        coverBg := cssColor (Design.ofDoc doc).bg }
+                        deck := doc.docClass.record.model == .frame }
   -- The themed section page: in a slides document with progress keys, a
   -- top-level section becomes its own deck section carrying the position.
   let themedSections := doc.docClass.record.model == .frame &&
@@ -2598,65 +2534,59 @@ def emitTree (cfg : Config) (doc : Doc) :
 omitted from HTML"
               (help := some "the deck has no physical pages; \\framenumber \
 via \\chrome is the sequence both backends share"))
-        | .frame title _ _ fbody =>
+        | .frame title _ _ _ =>
           let num := nums[i]?.getD none
           done := num.getD done
-          -- One `section` per overlay step — the PDF handout's exact
-          -- pagination (`Layout.run` drives its page loop from the same
-          -- `Ir.maxStepBlocks`): on page k a step not yet reached renders
-          -- covered, and the chrome footer repeats under the frame's one
-          -- number, as the shipped pages do. A stepless frame is the
-          -- single section it always was.
-          let steps := Ir.maxStepBlocks fbody
-          for k in [1:steps + 1] do
-            let pcfg := if steps ≤ 1 then cfg else
-              { cfg with stepPage := some k, anchors := k == 1 }
-            let node := blockNode pcfg b
-            -- The frame's anchor: its title slug, unique among the deck's
-            -- ids (`claimId`), so every slide is fragment-addressable — a
-            -- deep link into the paged deck is `#its-title`. A repeated
-            -- identical title (a stepped frame's later pages included)
-            -- numbers itself quietly; two different titles folding to one
-            -- slug are named as W0327, as in the article.
-            let text := Ir.plainText title
-            let base := slug title
-            let base := if base.isEmpty then "slide" else base
-            let (id, clash) := claimId taken base text
-            if let some holder := clash then
-              walkDiags := walkDiags.push (Diag.of .W0327
-                s!"frames {holder.quote} and {text.quote} share the \
+          -- One `section` per frame: the deck's steps reveal *in place*
+          -- under the class-gated uncover rules (`deckStepCss`), so the
+          -- HTML section count is the frame count — the PDF's page count
+          -- less its per-step duplicates (`frames_sections` in Tests;
+          -- both counts are projections of `Ir.maxStepBlocks`).
+          let node := blockNode cfg b
+          -- The frame's anchor: its title slug, unique among the deck's
+          -- ids (`claimId`), so every slide is fragment-addressable — a
+          -- deep link into the paged deck is `#its-title`. A repeated
+          -- identical title numbers itself quietly; two different titles
+          -- folding to one slug are named as W0327, as in the article.
+          let text := Ir.plainText title
+          let base := slug title
+          let base := if base.isEmpty then "slide" else base
+          let (id, clash) := claimId taken base text
+          if let some holder := clash then
+            walkDiags := walkDiags.push (Diag.of .W0327
+              s!"frames {holder.quote} and {text.quote} share the \
 anchor '{base}'; the second becomes '{id}'"
-                (help := some s!"an in-page link '#{base}' reaches only the \
+              (help := some s!"an in-page link '#{base}' reaches only the \
 first; retitle one frame, or link to '#{id}'"))
-            taken := taken.push (id, text)
-            let node := match node with
-              | .elem tag attrs kids => Node.elem tag (attrs.push ("id", id)) kids
-              | .text s => Node.text s
-              | .style s => Node.style s
-              | .script attrs s => Node.script attrs s
-            let node := if chromeFoot then
-                match num, node with
-                | some n, .elem tag attrs kids =>
-                  -- The one slot band (`Ir.Chrome.footBand`): the same
-                  -- function the PDF's final pass consumes, so the two
-                  -- backends resolve the same slots and can only diverge by
-                  -- rendering them. Fixed positions come from the declared
-                  -- side (the stylesheet pins `band-left`/`band-right` to the
-                  -- edges, as `Layout.bandSlotX` does); the paint order is
-                  -- the declared priority, `z-index` carrying `rank` so a
-                  -- colliding lower-priority slot is painted under, in place,
-                  -- exactly as on the page.
-                  let band := doc.chrome.footBand frameFoot curSection n total
-                  Node.elem tag attrs (kids.push (Html.elem "footer"
-                    (band.map fun s => Html.elem "span" (inlines cfg s.content)
-                      #[("class", match s.side with
-                          | .left => "band-left"
-                          | .right => "band-right"),
-                        ("style", s!"z-index: {s.rank}")])
-                    #[("class", "slide-foot size-small")]))
-                | _, other => other
-              else node
-            acc := acc.push (withEpoch cfg.epochStyle node)
+          taken := taken.push (id, text)
+          let node := match node with
+            | .elem tag attrs kids => Node.elem tag (attrs.push ("id", id)) kids
+            | .text s => Node.text s
+            | .style s => Node.style s
+            | .script attrs s => Node.script attrs s
+          let node := if chromeFoot then
+              match num, node with
+              | some n, .elem tag attrs kids =>
+                -- The one slot band (`Ir.Chrome.footBand`): the same
+                -- function the PDF's final pass consumes, so the two
+                -- backends resolve the same slots and can only diverge by
+                -- rendering them. Fixed positions come from the declared
+                -- side (the stylesheet pins `band-left`/`band-right` to the
+                -- edges, as `Layout.bandSlotX` does); the paint order is
+                -- the declared priority, `z-index` carrying `rank` so a
+                -- colliding lower-priority slot is painted under, in place,
+                -- exactly as on the page.
+                let band := doc.chrome.footBand frameFoot curSection n total
+                Node.elem tag attrs (kids.push (Html.elem "footer"
+                  (band.map fun s => Html.elem "span" (inlines cfg s.content)
+                    #[("class", match s.side with
+                        | .left => "band-left"
+                        | .right => "band-right"),
+                      ("style", s!"z-index: {s.rank}")])
+                  #[("class", "slide-foot size-small")]))
+              | _, other => other
+            else node
+          acc := acc.push (withEpoch cfg.epochStyle node)
         | .section 1 starred num title =>
           curSection := title
           if themedSections then
