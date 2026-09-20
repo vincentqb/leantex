@@ -800,6 +800,18 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      has deckPage "translateY(var(--motiondistance, 1rem))" &&
      has deckPage ("@media (prefers-reduced-motion: reduce) " ++
        "{ section.slide > * { animation: none; } }"))
+  t "the deck keeps the safe area and caps the title band"
+    (has deckPage "padding: var(--safearea, 6vmin); }" &&
+     has deckPage "max-height: var(--titleband, 12.5dvh)")
+  -- 11pt over the 90mm stage (Ir.slidesFontSize / Ir.slidesStage169.2),
+  -- truncated to the printed milli: deck_type_is_stage_ratio's bounds.
+  t "deck type is the PDF's stage ratio, in vh"
+    (has deckPage "font-size: 4.311vh; }" &&
+     has deckPage "section.slide > header h2 { font-size: 1.440em; }")
+  let (tokDoc, _) := elabStr (deck169 "\\tokens{ safearea = 20pt }"
+    "\\begin{frame}{T}\nx\n\\end{frame}")
+  t "a declared safearea token overrides the engine default"
+    (has (HtmlDoc.emit {} tokDoc).1 "--safearea: 20pt;")
   -- The gate, both directions: no deck rule outside the slides class.
   for (name, src) in [
       ("article", "\\documentclass{article}\\begin{document}x\\end{document}"),

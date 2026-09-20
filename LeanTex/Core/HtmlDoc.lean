@@ -692,6 +692,20 @@ private def slidePadH : String := "1.8rem"
 private def slideRadiusPx : Nat := 8
 private def slideBorderPx : Nat := 1
 
+/-- The deck's safe area: the padding the paged slide keeps clear on
+every side, as a token reference with its engine default. Keynote's
+default themes keep roughly 5–7% of the slide dimension clear (read from
+the bundled masters); the default takes the middle, 6vmin — per mille of
+the smaller viewport dimension, so the ratio holds in either orientation.
+Overridable like any token (`--safearea`), by a bundle or a reader. -/
+private def safeareaVar : String := "var(--safearea, 6vmin)"
+
+/-- The title band's cap: a slide header may take at most this much of
+the slide's height — Keynote's default masters hold the title band to
+about 1/8 to 1/10 of the slide; the default takes the upper bound, 1/8,
+as `--titleband`'s engine value. -/
+private def titlebandVar : String := "var(--titleband, 12.5dvh)"
+
 /-- Furniture the semantic palette keys turn on — one shared rule set for
 every theme, so a theme stays a table of values. The conditions read the
 resolved `Design`, the same record the PDF path consumes; a rule fires only
@@ -730,9 +744,12 @@ def themeCss (doc : Doc) : String :=
     s!"  border-radius: {slideRadiusPx - slideBorderPx}px {slideRadiusPx - slideBorderPx}px 0 0; }\n" ++
     "section.slide > header h2 { color: inherit; }\n" ++
     -- On the paged deck the slide is the viewport, cornerless: the bar
-    -- squares off with it (the nested-corner rule, gap zero).
+    -- squares off with it and bleeds through the safe-area padding,
+    -- negating exactly the token the slide pads by.
     (if doc.docClass == .slides then
-      "@media screen { section.slide > header { border-radius: 0; } }\n"
+      "@media screen { section.slide > header { border-radius: 0;\n" ++
+      s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n" ++
+      s!"  padding: {quantaRem 1} {safeareaVar}; } }\n"
      else "") else "") ++
   (if d.progress.isSome then
     s!"section.section-page \{ text-align: center; padding: {quantaRem 3} 0;\n" ++
@@ -1132,6 +1149,36 @@ definitionally the animation rules followed by the guard. -/
 theorem deckEntryCss_guarded : ∃ rule, deckEntryCss = rule ++ deckMotionGuard :=
   ⟨_, rfl⟩
 
+/-- The deck's body size over the viewport height, in milli-vh: the very
+ratio the PDF stage declares — `fontSize` over the page height
+(`Ir.slidesStage169`'s 90mm carries beamer's 11pt as ≈4.31% of the stage;
+beamer user guide §18.2.1 for the size, the stage for the height). The
+HTML deck sets its type from this number, so the two artifacts show the
+same type-to-stage proportion whatever the screen's size. `Int` binders,
+not `Sp`, so `omega` can read the ratio statement below. -/
+def deckFontMilliVh (fontSize height : Int) : Int :=
+  fontSize * 100000 / height
+
+/-- The cross-backend ratio, exact up to the printed milli: the emitted
+milli-vh value is the PDF's fontSize/height ratio, truncated — the value
+times the stage height never exceeds the fontSize (at the 100000 scale)
+and falls short by less than one stage height. `backend_gaps_agree`'s
+mold: the shared thing is the ratio, each backend realizing it in its own
+context's unit (the PDF in its stage, the screen in its viewport). -/
+theorem deck_type_is_stage_ratio (fontSize height : Int) (hh : 0 < height) :
+    deckFontMilliVh fontSize height * height ≤ fontSize * 100000 ∧
+    fontSize * 100000 < deckFontMilliVh fontSize height * height + height := by
+  have hne : height ≠ 0 := by omega
+  have hmod := Int.emod_nonneg (fontSize * 100000) hne
+  have hlt := Int.emod_lt_of_pos (fontSize * 100000) hh
+  have heq := Int.mul_ediv_add_emod (fontSize * 100000) height
+  unfold deckFontMilliVh
+  rw [Int.mul_comm (fontSize * 100000 / height) height]
+  generalize hr : fontSize * 100000 % height = r at hmod hlt heq
+  generalize hp : height * (fontSize * 100000 / height) = p at heq ⊢
+  generalize ha : fontSize * 100000 = a at heq ⊢
+  omega
+
 /-- The slide sections' stylesheet, split by class. A deck (the `slides`
 class) is one tree with two media renderings: on screen a paged
 full-viewport deck whose paging is the browser's own — CSS Scroll Snap 1:
@@ -1148,6 +1195,10 @@ private def slideCss (doc : Doc) : String :=
     s!"section.slide \{ border: {slideBorderPx}px solid var(--rule); border-radius: {slideRadiusPx}px;\n" ++
     s!"  padding: {slidePadV} {slidePadH}; margin: 0; break-inside: avoid; }\n" ++
     s!"* + section.slide \{ margin-top: {slidePadV}; }\n"
+  -- The slide header's shared type rule, inside this split so the deck's
+  -- screen override below can stand after it and win the cascade.
+  let headerH2 :=
+    s!"section.slide > header h2 \{ margin: 0; font-size: {scaleSize "Large" "rem"}; }\n"
   if doc.docClass == .slides then
     -- Covered overlay content on a per-step page: the same ink, quieter —
     -- each run at the design's declared fraction of itself over the page,
@@ -1155,24 +1206,32 @@ private def slideCss (doc : Doc) : String :=
     -- and space the PDF's cover mixes (`Ir.Design.cover`, Core/Oklab).
     -- Unmediaed: the print twin is the PDF handout's dimmed page.
     let d := Design.ofDoc doc
+    headerH2 ++
     s!".covered \{ color: color-mix(in oklab, currentColor \
 {d.coveredFraction}%, var(--bg, {cssColor d.bg})); }\n" ++
     "@media screen {\n" ++
     "html { scroll-snap-type: y mandatory; }\n" ++
     smoothScrollCss "html" ++
     -- The deck fills the viewport: the article measure and the reading
-    -- padding are the continuous page's, not the stage's.
+    -- padding are the continuous page's, not the stage's. Type is set on
+    -- main in vh — the PDF's own fontSize/stage-height ratio
+    -- (`deck_type_is_stage_ratio`) — so every slide, the standout's em
+    -- step included, scales from the stage; the heading retakes its
+    -- scale step in em to ride the same base.
     "body { padding: 0; }\n" ++
-    "main { max-width: none; margin: 0; }\n" ++
+    "main { max-width: none; margin: 0;\n" ++
+    s!"  font-size: {milliFactor (deckFontMilliVh doc.page.fontSize doc.page.height).toNat}vh; }\n" ++
     "section.slide { min-height: 100dvh; scroll-snap-align: start;\n" ++
     "  scroll-snap-stop: always; display: flex; flex-direction: column;\n" ++
-    s!"  padding: {slidePadV} {slidePadH}; }\n" ++
+    s!"  padding: {safeareaVar}; }\n" ++
+    s!"section.slide > header \{ max-height: {titlebandVar}; }\n" ++
+    s!"section.slide > header h2 \{ font-size: {scaleSize "Large" "em"}; }\n" ++
     deckEntryCss ++
     "}\n" ++
     "@media print {\n" ++ handout ++
     "section.slide { break-after: page; }\n" ++
     "}\n"
-  else handout
+  else handout ++ headerH2
 
 /-- The base stylesheet. Small on purpose: a generated document should not
 ship a framework to use four of its rules. Dark mode is a variant of the same
@@ -1376,10 +1435,9 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   s!"figure.float > figcaption:first-child \{ margin-top: 0;\n" ++
   s!"  margin-bottom: var(--captionsep, {quantaRem (gapK "caption")}); }\n" ++
   blockGapCss ++
-  -- Slides: the class-split deck/handout rules (`slideCss`); the shared
-  -- header and standout rules below hold on both media.
+  -- Slides: the class-split deck/handout rules, header type included
+  -- (`slideCss`); the standout rule below holds on both media.
   slideCss doc ++
-  s!"section.slide > header h2 \{ margin: 0; font-size: {scaleSize "Large" "rem"}; }\n" ++
   -- A standout frame inverts: the palette's standout keys override, and
   -- without them the page's own fg/bg swap — the same rule as the PDF path.
   -- Its size is the scale's own Large step (`\Large\bfseries`, the shipped
