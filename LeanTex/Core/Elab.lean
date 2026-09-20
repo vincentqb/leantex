@@ -1187,7 +1187,143 @@ private theorem skipReservedArgs_ge (raws : Array Raw) (i : Nat) (anchor : Pos)
 -- The termination measure for the elaboration knot: every raw weighs at
 -- least one, a container outweighs its body, so consuming a token or
 -- descending into one strictly lightens the remaining slice. Measure only,
--- erased at runtime — no artifact reads a weight.
+-- erased at runtime — no artifact reads a weight. Every component of the
+-- knot's measure — weight, pars, items — is a pointwise `Nat` measure
+-- summed over a list, so each list-sum fact is stated once below over the
+-- pointwise measure `μ` and instantiated per component.
+
+/-- The sum of a pointwise measure over a list: the one shape every
+component of the knot's termination measure shares. -/
+private def measList (μ : α → Nat) : List α → Nat
+  | [] => 0
+  | x :: rest => μ x + measList μ rest
+
+private theorem measList_append (μ : α → Nat) (a b : List α) :
+    measList μ (a ++ b) = measList μ a + measList μ b := by
+  induction a with
+  | nil => simp [measList]
+  | cons x xs ih => simp [measList, ih]; omega
+
+private theorem measList_push (μ : α → Nat) (a : Array α) (x : α) :
+    measList μ (a.push x).toList = measList μ a.toList + μ x := by
+  simp [Array.toList_push, measList_append, measList]
+
+private theorem measList_drop_le (μ : α → Nat) (l : List α) (i : Nat) :
+    measList μ (l.drop i) ≤ measList μ l := by
+  induction l generalizing i with
+  | nil => simp
+  | cons x xs ih =>
+    cases i with
+    | zero => simp
+    | succ n =>
+      have := ih n
+      simp only [List.drop_succ_cons, measList]
+      omega
+
+private theorem measList_take_le (μ : α → Nat) (l : List α) (i : Nat) :
+    measList μ (l.take i) ≤ measList μ l := by
+  induction l generalizing i with
+  | nil => simp
+  | cons x xs ih =>
+    cases i with
+    | zero => simp [measList]
+    | succ n =>
+      have := ih n
+      simp only [List.take_succ_cons, measList]
+      omega
+
+private theorem measList_mem_le {μ : α → Nat} {l : List α} {x : α}
+    (h : x ∈ l) : μ x ≤ measList μ l := by
+  induction l with
+  | nil => simp at h
+  | cons y ys ih =>
+    simp only [measList]
+    rcases List.mem_cons.mp h with h | h
+    · subst h; omega
+    · have := ih h; omega
+
+private theorem measList_le_of_le {μ ν : α → Nat} (h : ∀ x, μ x ≤ ν x)
+    (l : List α) : measList μ l ≤ measList ν l := by
+  induction l with
+  | nil => exact Nat.le_refl _
+  | cons x xs ih =>
+    have := h x
+    simp only [measList]
+    omega
+
+private theorem measList_extract_le (μ : α → Nat) (body : Array α) (a b : Nat) :
+    measList μ (body.extract a b).toList ≤ measList μ body.toList := by
+  rw [Array.toList_extract]
+  exact Nat.le_trans (measList_take_le ..) (measList_drop_le ..)
+
+/-- A measure component over the knot spine's slice: the pointwise sum
+from `i` on. -/
+private def sliceMeas (μ : α → Nat) (raws : Array α) (i : Nat) : Nat :=
+  measList μ (raws.toList.drop i)
+
+private theorem sliceMeas_here (μ : α → Nat) (raws : Array α) {i : Nat}
+    (h : i < raws.size) :
+    sliceMeas μ raws i = μ raws[i] + sliceMeas μ raws (i + 1) := by
+  unfold sliceMeas
+  rw [List.drop_eq_getElem_cons (by simpa using h)]
+  simp [measList]
+
+private theorem sliceMeas_le (μ : α → Nat) (raws : Array α) {i j : Nat}
+    (hij : i ≤ j) : sliceMeas μ raws j ≤ sliceMeas μ raws i := by
+  unfold sliceMeas
+  rw [show raws.toList.drop j = (raws.toList.drop i).drop (j - i) by
+    rw [List.drop_drop]; congr 1; omega]
+  exact measList_drop_le ..
+
+private theorem sliceMeas_end (μ : α → Nat) (raws : Array α) {j : Nat}
+    (h : raws.size ≤ j) : sliceMeas μ raws j = 0 := by
+  unfold sliceMeas
+  rw [List.drop_eq_nil_of_le (by simpa using h)]
+  rfl
+
+/-- An element standing anywhere at or past `i` measures no more than the
+slice from `i`. -/
+private theorem sliceMeas_elem_le {μ : α → Nat} {raws : Array α} {j : Nat}
+    {x : α} (h : raws[j]? = some x) {i : Nat} (hij : i ≤ j) :
+    μ x ≤ sliceMeas μ raws i := by
+  obtain ⟨hj, hx⟩ := Array.getElem?_eq_some_iff.mp h
+  have h1 := sliceMeas_here μ raws hj
+  have h2 := sliceMeas_le μ raws hij
+  rw [hx] at h1
+  omega
+
+private theorem sliceMeas_extract_le (μ : α → Nat) (raws : Array α) (a b : Nat) :
+    measList μ (raws.extract a b).toList ≤ sliceMeas μ raws a := by
+  rw [Array.toList_extract]
+  exact measList_take_le ..
+
+/-- Replacing the element at `i` by a run that measures strictly below it
+strictly lowers the slice measure from `i`: the shape of every splice
+edge. -/
+private theorem sliceMeas_splice_lt {μ : α → Nat} {raws : Array α} {i : Nat}
+    (h : i < raws.size) {seg : Array α}
+    (hseg : measList μ seg.toList < μ raws[i]) :
+    sliceMeas μ (raws.extract 0 i ++ seg ++ raws.extract (i + 1) raws.size) i
+      < sliceMeas μ raws i := by
+  have hlen : (raws.extract 0 i).toList.length = i := by
+    simp [Array.length_toList]; omega
+  have hdrop : (raws.extract 0 i ++ seg
+      ++ raws.extract (i + 1) raws.size).toList.drop i
+      = seg.toList ++ (raws.extract (i + 1) raws.size).toList := by
+    simp only [Array.toList_append, List.append_assoc]
+    rw [List.drop_append_of_le_length (by omega)]
+    rw [List.drop_eq_nil_of_le (by omega)]
+    simp
+  have h1 := sliceMeas_here μ raws h
+  have h3 : measList μ (raws.extract (i + 1) raws.size).toList
+      ≤ measList μ (raws.toList.drop (i + 1)) := by
+    rw [Array.toList_extract]
+    exact measList_take_le ..
+  unfold sliceMeas at h1 ⊢
+  rw [hdrop, measList_append]
+  omega
+
+-- The weight component of the knot's measure.
 
 mutual
 -- conserves: none — a termination measure, not a content walk
@@ -1202,62 +1338,42 @@ private def rawWeightList : List Raw → Nat
   | r :: rest => rawWeight r + rawWeightList rest
 end
 
+/-- The mutual recursion above is `measList rawWeight`: the bridge every
+weight fact crosses into the parametrized family. -/
+private theorem rawWeightList_eq (l : List Raw) :
+    rawWeightList l = measList rawWeight l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => simp [rawWeightList, measList, ih]
+
 /-- The measure component the knot's spine recurses on: the weight of the
-slice from `i`. -/
+slice from `i`. Kept definitionally over `rawWeightList`, so `sliceWeight a 0`
+still unfolds to the whole-array weight the knot's `have` facts spell. -/
 private def sliceWeight (raws : Array Raw) (i : Nat) : Nat :=
   rawWeightList (raws.toList.drop i)
 
+private theorem sliceWeight_eq (raws : Array Raw) (i : Nat) :
+    sliceWeight raws i = sliceMeas rawWeight raws i := by
+  unfold sliceWeight sliceMeas; rw [rawWeightList_eq]
+
 private theorem rawWeightList_append (a b : List Raw) :
     rawWeightList (a ++ b) = rawWeightList a + rawWeightList b := by
-  induction a with
-  | nil => simp [rawWeightList]
-  | cons x xs ih => simp [rawWeightList, ih]; omega
+  simp only [rawWeightList_eq]; exact measList_append ..
 
 private theorem rawWeight_pos (r : Raw) : 1 ≤ rawWeight r := by
   cases r <;> simp [rawWeight]
 
-private theorem rawWeightList_drop_le (l : List Raw) (i : Nat) :
-    rawWeightList (l.drop i) ≤ rawWeightList l := by
-  induction l generalizing i with
-  | nil => simp
-  | cons x xs ih =>
-    cases i with
-    | zero => simp
-    | succ n =>
-      have := ih n
-      simp only [List.drop_succ_cons, rawWeightList]
-      have := rawWeight_pos x
-      omega
-
-private theorem rawWeightList_take_le (l : List Raw) (i : Nat) :
-    rawWeightList (l.take i) ≤ rawWeightList l := by
-  induction l generalizing i with
-  | nil => simp
-  | cons x xs ih =>
-    cases i with
-    | zero => simp [rawWeightList]
-    | succ n =>
-      have := ih n
-      simp only [List.take_succ_cons, rawWeightList]
-      omega
-
 private theorem sliceWeight_here (raws : Array Raw) {i : Nat} (h : i < raws.size) :
     sliceWeight raws i = rawWeight raws[i] + sliceWeight raws (i + 1) := by
-  unfold sliceWeight
-  rw [List.drop_eq_getElem_cons (by simpa using h)]
-  simp [rawWeightList]
+  simp only [sliceWeight_eq]; exact sliceMeas_here rawWeight raws h
 
 /-- The workhorse: any strict advance strictly lightens the slice. -/
 private theorem sliceWeight_lt (raws : Array Raw) {i j : Nat}
     (hi : i < raws.size) (hij : i < j) : sliceWeight raws j < sliceWeight raws i := by
-  have h1 := sliceWeight_here raws hi
-  have h2 : sliceWeight raws j ≤ sliceWeight raws (i + 1) := by
-    unfold sliceWeight
-    have : raws.toList.drop j = (raws.toList.drop (i + 1)).drop (j - (i + 1)) := by
-      rw [List.drop_drop]; congr 1; omega
-    rw [this]
-    exact rawWeightList_drop_le _ _
-  have := rawWeight_pos raws[i]
+  have h1 := sliceMeas_here rawWeight raws hi
+  have h2 := sliceMeas_le rawWeight raws (show i + 1 ≤ j by omega)
+  have h3 := rawWeight_pos raws[i]
+  simp only [sliceWeight_eq]
   omega
 
 /-- An element standing anywhere at or past `i` weighs no more than the
@@ -1265,22 +1381,12 @@ slice from `i`. -/
 private theorem elem_weight_le {raws : Array Raw} {j : Nat} {r : Raw}
     (h : raws[j]? = some r) {i : Nat} (hij : i ≤ j) :
     rawWeight r ≤ sliceWeight raws i := by
-  cases Array.getElem?_eq_some_iff.mp h with
-  | intro hj hr =>
-    have h1 := sliceWeight_here raws hj
-    have h2 : sliceWeight raws j ≤ sliceWeight raws i := by
-      unfold sliceWeight
-      rw [show raws.toList.drop j = (raws.toList.drop i).drop (j - i) by
-        rw [List.drop_drop]; congr 1; omega]
-      exact rawWeightList_drop_le _ _
-    rw [hr] at h1
-    omega
+  simp only [sliceWeight_eq]; exact sliceMeas_elem_le h hij
 
 /-- An extracted tail of a body weighs no more than the body. -/
 private theorem extract_weight_le (body : Array Raw) (a b : Nat) :
     rawWeightList (body.extract a b).toList ≤ rawWeightList body.toList := by
-  rw [Array.toList_extract]
-  exact Nat.le_trans (rawWeightList_take_le _ _) (rawWeightList_drop_le _ _)
+  simp only [rawWeightList_eq]; exact measList_extract_le ..
 
 /-- The unknown-environment splice strictly lightens the slice: the kept
 body is lighter than the wrapper it replaces, whatever prefix its argument
@@ -1290,44 +1396,27 @@ private theorem sliceWeight_splice {raws : Array Raw} {i : Nat}
     (hr : raws[i] = .env name body pos) (keptFrom : Nat) :
     sliceWeight (raws.extract 0 i ++ body.extract keptFrom body.size
       ++ raws.extract (i + 1) raws.size) i < sliceWeight raws i := by
-  have hlen : (raws.extract 0 i).toList.length = i := by
-    simp [Array.length_toList]; omega
-  have hdrop : ((raws.extract 0 i ++ body.extract keptFrom body.size
-      ++ raws.extract (i + 1) raws.size)).toList.drop i
-      = (body.extract keptFrom body.size).toList
-        ++ (raws.extract (i + 1) raws.size).toList := by
-    simp only [Array.toList_append, List.append_assoc]
-    rw [List.drop_append_of_le_length (by omega)]
-    rw [List.drop_eq_nil_of_le (by omega)]
-    simp
-  unfold sliceWeight
-  rw [hdrop, rawWeightList_append]
-  have h1 := sliceWeight_here raws h
-  rw [hr] at h1
-  have h2 := extract_weight_le body keptFrom body.size
-  have h3 : rawWeightList (raws.extract (i + 1) raws.size).toList
-      ≤ rawWeightList (raws.toList.drop (i + 1)) := by
-    rw [Array.toList_extract]
-    exact rawWeightList_take_le _ _
-  unfold sliceWeight at h1
-  simp only [rawWeight] at h1
+  simp only [sliceWeight_eq]
+  refine sliceMeas_splice_lt h ?_
+  have h2 := measList_extract_le rawWeight body keptFrom body.size
+  rw [hr]
+  simp only [rawWeight, rawWeightList_eq]
   omega
 
-/-- The weight of every command body the walk can see: the elabBlocks
+/-- The measure of every command body the walk can see: the elabBlocks
 measure term that makes a user-command expansion decrease — the expanded
-body leaves this sum (`visWeight_expand`), and what a body `\define` adds
-to it is exactly the body the walk paid a heavier group for
-(`bindCmd_visWeight`). The old `(envLimit, limit, …)` lex is unsound for
-the block walk: `limit` rises across a define on the spine; this sum
-replaces it. -/
-private def visWeightGo (user : Array UserCmd) : Nat → Nat
+body leaves this sum (`visGo_expand`), and what a body `\define` adds to it
+is exactly the body the walk paid a heavier group for (`bindCmd_visGo`).
+The old `(envLimit, limit, …)` lex is unsound for the block walk: `limit`
+rises across a define on the spine; this sum replaces it. Parametrized by
+the pointwise body measure `f`; the weight and pars components
+instantiate it. -/
+private def visGo (f : UserCmd → Nat) (user : Array UserCmd) : Nat → Nat
   | 0 => 0
-  | k + 1 =>
-    (if h : k < user.size then rawWeightList user[k].body.toList else 0)
-      + visWeightGo user k
+  | k + 1 => (if h : k < user.size then f user[k] else 0) + visGo f user k
 
-private theorem visWeightGo_mono (user : Array UserCmd) {a b : Nat}
-    (h : a ≤ b) : visWeightGo user a ≤ visWeightGo user b := by
+private theorem visGo_mono (f : UserCmd → Nat) (user : Array UserCmd)
+    {a b : Nat} (h : a ≤ b) : visGo f user a ≤ visGo f user b := by
   induction b with
   | zero =>
     have : a = 0 := by omega
@@ -1337,17 +1426,17 @@ private theorem visWeightGo_mono (user : Array UserCmd) {a b : Nat}
     rcases Nat.eq_or_lt_of_le h with heq | hlt
     · subst heq; exact Nat.le_refl _
     · have h2 := ih (by omega)
-      simp only [visWeightGo]
+      simp only [visGo]
       omega
 
-private theorem visWeightGo_congr {u v : Array UserCmd} {n : Nat}
-    (h : ∀ m, m < n → u[m]? = v[m]?) : visWeightGo u n = visWeightGo v n := by
+private theorem visGo_congr {f : UserCmd → Nat} {u v : Array UserCmd} {n : Nat}
+    (h : ∀ m, m < n → u[m]? = v[m]?) : visGo f u n = visGo f v n := by
   induction n with
   | zero => rfl
   | succ m ih =>
     have h1 := h m (by omega)
     have h2 := ih fun k hk => h k (by omega)
-    simp only [visWeightGo]
+    simp only [visGo]
     split <;> split
     · rename_i hu hv
       have : u[m] = v[m] := by
@@ -1363,6 +1452,10 @@ private theorem visWeightGo_congr {u v : Array UserCmd} {n : Nat}
       simp at h1
     · rw [h2]
 
+/-- The weight component of the visible sum. -/
+private def visWeightGo (user : Array UserCmd) : Nat → Nat :=
+  visGo (fun cmd => rawWeightList cmd.body.toList) user
+
 private theorem lookupUserGo_found {user : Array UserCmd} {name : String}
     {n k : Nat} {cmd : UserCmd}
     (h : lookupUserGo user name n = some (k, cmd)) : user[k]? = some cmd := by
@@ -1374,21 +1467,27 @@ private theorem lookupUserGo_found {user : Array UserCmd} {name : String}
   | case3 m hm heq ih => exact ih h
   | case4 m hm ih => exact ih h
 
-/-- Expanding a visible command moves weight out of the visible sum: the
-body recursed into, plus everything still visible to the callee, never
+/-- Expanding a visible command moves its measure out of the visible sum:
+the body recursed into, plus everything still visible to the callee, never
 exceeds what the caller's sum already carried. -/
+private theorem visGo_expand {f : UserCmd → Nat} {ctx : Ctx} {name : String}
+    {k : Nat} {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) :
+    f cmd + visGo f ctx.user k ≤ visGo f ctx.user ctx.limit := by
+  have hlt := lookupUser_lt h
+  have hfound := lookupUserGo_found h
+  obtain ⟨hk, hbody⟩ := Array.getElem?_eq_some_iff.mp hfound
+  have hstep : visGo f ctx.user (k + 1) = f cmd + visGo f ctx.user k := by
+    simp only [visGo, hk, dite_true, hbody]
+  have hmono := visGo_mono f ctx.user (show k + 1 ≤ ctx.limit by omega)
+  omega
+
+/-- Expanding a visible command moves its weight out of the visible sum. -/
 private theorem visWeight_expand {ctx : Ctx} {name : String} {k : Nat}
     {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) :
     rawWeightList cmd.body.toList + visWeightGo ctx.user k
       ≤ visWeightGo ctx.user ctx.limit := by
-  have hlt := lookupUser_lt h
-  have hfound := lookupUserGo_found h
-  obtain ⟨hk, hbody⟩ := Array.getElem?_eq_some_iff.mp hfound
-  have hstep : visWeightGo ctx.user (k + 1)
-      = rawWeightList cmd.body.toList + visWeightGo ctx.user k := by
-    simp only [visWeightGo, hk, dite_true, hbody]
-  have hmono := visWeightGo_mono ctx.user (show k + 1 ≤ ctx.limit by omega)
-  omega
+  unfold visWeightGo
+  exact visGo_expand (f := fun cmd => rawWeightList cmd.body.toList) h
 
 -- Inline elaboration and argument binding are mutually recursive: a call
 -- site's arguments are themselves inline content. Nontermination is
@@ -1628,15 +1727,11 @@ private theorem getElem?_lt {raws : Array Raw} {j : Nat} {r : Raw}
 
 private theorem sliceWeight_le (raws : Array Raw) {i j : Nat} (hij : i ≤ j) :
     sliceWeight raws j ≤ sliceWeight raws i := by
-  unfold sliceWeight
-  rw [show raws.toList.drop j = (raws.toList.drop i).drop (j - i) by
-    rw [List.drop_drop]; congr 1; omega]
-  exact rawWeightList_drop_le _ _
+  simp only [sliceWeight_eq]; exact sliceMeas_le rawWeight raws hij
 
 private theorem extract_slice_le (raws : Array Raw) (a b : Nat) :
     rawWeightList (raws.extract a b).toList ≤ sliceWeight raws a := by
-  rw [Array.toList_extract]
-  exact rawWeightList_take_le _ _
+  rw [rawWeightList_eq, sliceWeight_eq]; exact sliceMeas_extract_le ..
 
 private theorem extract_lt_slice {raws : Array Raw} {i a : Nat} (b : Nat)
     (h : i < raws.size) (ha : i < a) :
@@ -3406,26 +3501,32 @@ private theorem rawPars_split (r : Raw) :
   | ctrl n _ => simp only [rawPars, nestedPars, isParRaw]; split <;> simp_all
   | _ => simp [rawPars, nestedPars, isParRaw]
 
+/-- The bridge from the pars recursion into the parametrized family,
+mirroring `rawWeightList_eq`. -/
+private theorem rawParsList_eq (l : List Raw) :
+    rawParsList l = measList rawPars l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => simp [rawParsList, measList, ih]
+
+private theorem nestedParsList_eq (l : List Raw) :
+    nestedParsList l = measList nestedPars l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => simp [nestedParsList, measList, ih]
+
 private theorem rawParsList_append (a b : List Raw) :
     rawParsList (a ++ b) = rawParsList a + rawParsList b := by
-  induction a with
-  | nil => simp [rawParsList]
-  | cons x xs ih => simp [rawParsList, ih]; omega
+  simp only [rawParsList_eq]; exact measList_append ..
 
 private theorem nestedParsList_append (a b : List Raw) :
     nestedParsList (a ++ b) = nestedParsList a + nestedParsList b := by
-  induction a with
-  | nil => simp [nestedParsList]
-  | cons x xs ih => simp [nestedParsList, ih]; omega
+  simp only [nestedParsList_eq]; exact measList_append ..
 
 private theorem nestedParsList_le (l : List Raw) :
     nestedParsList l ≤ rawParsList l := by
-  induction l with
-  | nil => simp [nestedParsList, rawParsList]
-  | cons x xs ih =>
-    have := rawPars_split x
-    simp only [nestedParsList, rawParsList]
-    omega
+  simp only [nestedParsList_eq, rawParsList_eq]
+  exact measList_le_of_le (fun r => by have := rawPars_split r; omega) l
 
 /-- A declaration is a control word other than `\par`, so it carries no
 pars: duplicating the declarations into each split part costs the measure
@@ -3601,99 +3702,43 @@ private theorem splitAtPars_pars_lt (ctx : Ctx) (body : Array Raw) (pos : Pos)
 -- edge falls in this component (`slicePars_splice`); every other edge
 -- keeps it and falls in the weight component.
 
-private theorem nestedParsList_drop_le (l : List Raw) (i : Nat) :
-    nestedParsList (l.drop i) ≤ nestedParsList l := by
-  induction l generalizing i with
-  | nil => simp
-  | cons x xs ih =>
-    cases i with
-    | zero => simp
-    | succ n =>
-      have := ih n
-      simp only [List.drop_succ_cons, nestedParsList]
-      omega
-
-private theorem nestedParsList_take_le (l : List Raw) (i : Nat) :
-    nestedParsList (l.take i) ≤ nestedParsList l := by
-  induction l generalizing i with
-  | nil => simp
-  | cons x xs ih =>
-    cases i with
-    | zero => simp [nestedParsList]
-    | succ n =>
-      have := ih n
-      simp only [List.take_succ_cons, nestedParsList]
-      omega
-
-private theorem rawParsList_drop_le (l : List Raw) (i : Nat) :
-    rawParsList (l.drop i) ≤ rawParsList l := by
-  induction l generalizing i with
-  | nil => simp
-  | cons x xs ih =>
-    cases i with
-    | zero => simp
-    | succ n =>
-      have := ih n
-      simp only [List.drop_succ_cons, rawParsList]
-      omega
-
-private theorem rawParsList_take_le (l : List Raw) (i : Nat) :
-    rawParsList (l.take i) ≤ rawParsList l := by
-  induction l generalizing i with
-  | nil => simp [rawParsList]
-  | cons x xs ih =>
-    cases i with
-    | zero => simp [rawParsList]
-    | succ n =>
-      have := ih n
-      simp only [List.take_succ_cons, rawParsList]
-      omega
-
 /-- An extracted piece of a body nests no more pars than the body. -/
 private theorem extract_pars_le (body : Array Raw) (a b : Nat) :
     rawParsList (body.extract a b).toList ≤ rawParsList body.toList := by
-  rw [Array.toList_extract]
-  exact Nat.le_trans (rawParsList_take_le _ _) (rawParsList_drop_le _ _)
+  simp only [rawParsList_eq]; exact measList_extract_le ..
 
 private theorem extract_nested_le (body : Array Raw) (a b : Nat) :
     nestedParsList (body.extract a b).toList ≤ nestedParsList body.toList := by
-  rw [Array.toList_extract]
-  exact Nat.le_trans (nestedParsList_take_le _ _) (nestedParsList_drop_le _ _)
+  simp only [nestedParsList_eq]; exact measList_extract_le ..
 
 /-- The pars companion of `sliceWeight`: what still nests below the
-spine's own boundary depth, from `i` on. -/
+spine's own boundary depth, from `i` on. Kept definitionally over
+`nestedParsList` for the same reason as `sliceWeight`. -/
 private def slicePars (raws : Array Raw) (i : Nat) : Nat :=
   nestedParsList (raws.toList.drop i)
 
+private theorem slicePars_eq (raws : Array Raw) (i : Nat) :
+    slicePars raws i = sliceMeas nestedPars raws i := by
+  unfold slicePars sliceMeas; rw [nestedParsList_eq]
+
 private theorem slicePars_here (raws : Array Raw) {i : Nat} (h : i < raws.size) :
     slicePars raws i = nestedPars raws[i] + slicePars raws (i + 1) := by
-  unfold slicePars
-  rw [List.drop_eq_getElem_cons (by simpa using h)]
-  simp [nestedParsList]
+  simp only [slicePars_eq]; exact sliceMeas_here nestedPars raws h
 
 private theorem slicePars_le (raws : Array Raw) {i j : Nat} (hij : i ≤ j) :
     slicePars raws j ≤ slicePars raws i := by
-  unfold slicePars
-  rw [show raws.toList.drop j = (raws.toList.drop i).drop (j - i) by
-    rw [List.drop_drop]; congr 1; omega]
-  exact nestedParsList_drop_le _ _
+  simp only [slicePars_eq]; exact sliceMeas_le nestedPars raws hij
 
 /-- An element standing anywhere at or past `i` nests no more pars than the
 slice from `i`. -/
 private theorem elem_pars_le {raws : Array Raw} {j : Nat} {r : Raw}
     (h : raws[j]? = some r) {i : Nat} (hij : i ≤ j) :
     nestedPars r ≤ slicePars raws i := by
-  cases Array.getElem?_eq_some_iff.mp h with
-  | intro hj hr =>
-    have h1 := slicePars_here raws hj
-    have h2 := slicePars_le raws hij
-    rw [hr] at h1
-    omega
+  simp only [slicePars_eq]; exact sliceMeas_elem_le h hij
 
 private theorem extract_slice_pars_le (raws : Array Raw) (a b : Nat) :
     nestedParsList (raws.extract a b).toList ≤ slicePars raws a := by
-  rw [Array.toList_extract]
-  exact nestedParsList_take_le _ _
+  rw [nestedParsList_eq, slicePars_eq]; exact sliceMeas_extract_le ..
 
 /-- The par-splice strictly lowers the pars component: the split parts
 spliced in place of the group nest strictly fewer pars than the group
@@ -3705,73 +3750,17 @@ private theorem slicePars_splice {raws : Array Raw} {i : Nat}
     slicePars (raws.extract 0 i
         ++ splitAtPars ctx body pos ++ raws.extract (i + 1) raws.size) i
       < slicePars raws i := by
-  have hlen : (raws.extract 0 i).toList.length = i := by
-    simp [Array.length_toList]; omega
-  have hdrop : ((raws.extract 0 i
-      ++ splitAtPars ctx body pos ++ raws.extract (i + 1) raws.size)).toList.drop i
-      = (splitAtPars ctx body pos).toList
-        ++ (raws.extract (i + 1) raws.size).toList := by
-    simp only [Array.toList_append, List.append_assoc]
-    rw [List.drop_append_of_le_length (by omega)]
-    rw [List.drop_eq_nil_of_le (by omega)]
-    simp
-  unfold slicePars
-  rw [hdrop, nestedParsList_append]
-  have h1 := slicePars_here raws h
-  rw [hr] at h1
-  have h2 := splitAtPars_pars_lt ctx body pos hp
-  have h3 : nestedParsList (raws.extract (i + 1) raws.size).toList
-      ≤ nestedParsList (raws.toList.drop (i + 1)) := by
-    rw [Array.toList_extract]
-    exact nestedParsList_take_le _ _
-  unfold slicePars at h1
-  simp only [nestedPars] at h1
-  omega
+  simp only [slicePars_eq]
+  refine sliceMeas_splice_lt h ?_
+  rw [hr]
+  simp only [nestedPars]
+  rw [← nestedParsList_eq]
+  exact splitAtPars_pars_lt ctx body pos hp
 
-/-- The pars of every command body the walk can see, mirroring
-`visWeightGo`: the pars component a user-command expansion must not raise. -/
-private def visParsGo (user : Array UserCmd) : Nat → Nat
-  | 0 => 0
-  | k + 1 =>
-    (if h : k < user.size then rawParsList user[k].body.toList else 0)
-      + visParsGo user k
-
-private theorem visParsGo_mono (user : Array UserCmd) {a b : Nat}
-    (h : a ≤ b) : visParsGo user a ≤ visParsGo user b := by
-  induction b with
-  | zero =>
-    have : a = 0 := by omega
-    subst this
-    exact Nat.le_refl _
-  | succ n ih =>
-    rcases Nat.eq_or_lt_of_le h with heq | hlt
-    · subst heq; exact Nat.le_refl _
-    · have h2 := ih (by omega)
-      simp only [visParsGo]
-      omega
-
-private theorem visParsGo_congr {u v : Array UserCmd} {n : Nat}
-    (h : ∀ m, m < n → u[m]? = v[m]?) : visParsGo u n = visParsGo v n := by
-  induction n with
-  | zero => rfl
-  | succ m ih =>
-    have h1 := h m (by omega)
-    have h2 := ih fun k hk => h k (by omega)
-    simp only [visParsGo]
-    split <;> split
-    · rename_i hu hv
-      have : u[m] = v[m] := by
-        have := Array.getElem?_eq_getElem hu
-        have := Array.getElem?_eq_getElem hv
-        simp_all
-      rw [this, h2]
-    · rename_i hu hv
-      rw [Array.getElem?_eq_getElem hu, Array.getElem?_eq_none (by omega)] at h1
-      simp at h1
-    · rename_i hu hv
-      rw [Array.getElem?_eq_getElem hv, Array.getElem?_eq_none (by omega)] at h1
-      simp at h1
-    · rw [h2]
+/-- The pars component of the visible sum, mirroring `visWeightGo` through
+the same `visGo`: the component a user-command expansion must not raise. -/
+private def visParsGo (user : Array UserCmd) : Nat → Nat :=
+  visGo (fun cmd => rawParsList cmd.body.toList) user
 
 /-- Expanding a visible command moves its pars out of the visible sum,
 mirroring `visWeight_expand`. -/
@@ -3779,14 +3768,8 @@ private theorem visPars_expand {ctx : Ctx} {name : String} {k : Nat}
     {cmd : UserCmd} (h : lookupUser ctx name = some (k, cmd)) :
     rawParsList cmd.body.toList + visParsGo ctx.user k
       ≤ visParsGo ctx.user ctx.limit := by
-  have hlt := lookupUser_lt h
-  have hfound := lookupUserGo_found h
-  obtain ⟨hk, hbody⟩ := Array.getElem?_eq_some_iff.mp hfound
-  have hstep : visParsGo ctx.user (k + 1)
-      = rawParsList cmd.body.toList + visParsGo ctx.user k := by
-    simp only [visParsGo, hk, dite_true, hbody]
-  have hmono := visParsGo_mono ctx.user (show k + 1 ≤ ctx.limit by omega)
-  omega
+  unfold visParsGo
+  exact visGo_expand (f := fun cmd => rawParsList cmd.body.toList) h
 
 private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
   let mut cur := cur
@@ -4181,15 +4164,11 @@ engine cannot run; the built-in stands"
 /-- Past the end, a slice weighs nothing. -/
 private theorem sliceWeight_end (raws : Array Raw) {j : Nat}
     (h : raws.size ≤ j) : sliceWeight raws j = 0 := by
-  unfold sliceWeight
-  rw [List.drop_eq_nil_of_le (by simpa using h)]
-  rfl
+  rw [sliceWeight_eq]; exact sliceMeas_end rawWeight raws h
 
 private theorem slicePars_end (raws : Array Raw) {j : Nat}
     (h : raws.size ≤ j) : slicePars raws j = 0 := by
-  unfold slicePars
-  rw [List.drop_eq_nil_of_le (by simpa using h)]
-  rfl
+  rw [slicePars_eq]; exact sliceMeas_end nestedPars raws h
 
 private theorem sliceWeight_zero (a : Array Raw) :
     sliceWeight a 0 = rawWeightList a.toList := rfl
@@ -4637,66 +4616,48 @@ private theorem bindCmd_monotone (ctx : Ctx) (cmd : UserCmd) {j : Nat}
 
 /-- What a body define adds to the visible sum is exactly its stored body,
 which the walk paid a strictly heavier group for: across the bind, the
-elabBlocks measure still falls. -/
+elabBlocks measure still falls — in every component at once, since the
+bound is parametrized by the pointwise body measure. -/
+private theorem bindCmd_visGo (f : UserCmd → Nat) (ctx : Ctx) (cmd : UserCmd) :
+    visGo f (bindCmd ctx cmd).user (bindCmd ctx cmd).limit
+      ≤ visGo f ctx.user ctx.limit + f cmd := by
+  simp only [bindCmd]
+  have hb' : min ctx.limit ctx.user.size ≤ ctx.user.size := by omega
+  have hbs : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd).size
+      = min ctx.limit ctx.user.size + 1 := by
+    simp [Nat.min_eq_left hb']
+  have hsame : ∀ m, m < min ctx.limit ctx.user.size →
+      ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd
+        ++ ctx.user.extract (min ctx.limit ctx.user.size) ctx.user.size)[m]?
+      = ctx.user[m]? := by
+    intro m hm
+    have hmu : m < ctx.user.size := by omega
+    rw [Array.getElem?_append_left (by simp; omega),
+      Array.getElem?_push_lt (by simp; omega), Array.getElem?_eq_getElem hmu]
+    simp [Array.getElem_extract]
+  have hat : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd
+      ++ ctx.user.extract (min ctx.limit ctx.user.size) ctx.user.size)[
+        min ctx.limit ctx.user.size]? = some cmd := by
+    rw [Array.getElem?_append_left (by simp), Array.getElem?_push]
+    simp
+  simp only [visGo]
+  obtain ⟨hlt, hcmd⟩ := Array.getElem?_eq_some_iff.mp hat
+  rw [visGo_congr fun m hm => hsame m hm]
+  simp only [hlt, dite_true, hcmd]
+  have := visGo_mono f ctx.user (show min ctx.limit ctx.user.size ≤ ctx.limit by omega)
+  omega
+
+/-- The weight instance of `bindCmd_visGo`. -/
 private theorem bindCmd_visWeight (ctx : Ctx) (cmd : UserCmd) :
     visWeightGo (bindCmd ctx cmd).user (bindCmd ctx cmd).limit
       ≤ visWeightGo ctx.user ctx.limit + rawWeightList cmd.body.toList := by
-  simp only [bindCmd]
-  have hb' : min ctx.limit ctx.user.size ≤ ctx.user.size := by omega
-  have hbs : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd).size
-      = min ctx.limit ctx.user.size + 1 := by
-    simp [Nat.min_eq_left hb']
-  have hsame : ∀ m, m < min ctx.limit ctx.user.size →
-      ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd
-        ++ ctx.user.extract (min ctx.limit ctx.user.size) ctx.user.size)[m]?
-      = ctx.user[m]? := by
-    intro m hm
-    have hmu : m < ctx.user.size := by omega
-    rw [Array.getElem?_append_left (by simp; omega),
-      Array.getElem?_push_lt (by simp; omega), Array.getElem?_eq_getElem hmu]
-    simp [Array.getElem_extract]
-  have hat : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd
-      ++ ctx.user.extract (min ctx.limit ctx.user.size) ctx.user.size)[
-        min ctx.limit ctx.user.size]? = some cmd := by
-    rw [Array.getElem?_append_left (by simp), Array.getElem?_push]
-    simp
-  simp only [visWeightGo]
-  obtain ⟨hlt, hcmd⟩ := Array.getElem?_eq_some_iff.mp hat
-  rw [visWeightGo_congr fun m hm => hsame m hm]
-  simp only [hlt, dite_true, hcmd]
-  have := visWeightGo_mono ctx.user (show min ctx.limit ctx.user.size ≤ ctx.limit by omega)
-  omega
+  unfold visWeightGo; exact bindCmd_visGo _ ctx cmd
 
-/-- The pars mirror of `bindCmd_visWeight`: a body define adds exactly its
-stored body's pars to the visible sum. -/
+/-- The pars instance of `bindCmd_visGo`. -/
 private theorem bindCmd_visPars (ctx : Ctx) (cmd : UserCmd) :
     visParsGo (bindCmd ctx cmd).user (bindCmd ctx cmd).limit
       ≤ visParsGo ctx.user ctx.limit + rawParsList cmd.body.toList := by
-  simp only [bindCmd]
-  have hb' : min ctx.limit ctx.user.size ≤ ctx.user.size := by omega
-  have hbs : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd).size
-      = min ctx.limit ctx.user.size + 1 := by
-    simp [Nat.min_eq_left hb']
-  have hsame : ∀ m, m < min ctx.limit ctx.user.size →
-      ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd
-        ++ ctx.user.extract (min ctx.limit ctx.user.size) ctx.user.size)[m]?
-      = ctx.user[m]? := by
-    intro m hm
-    have hmu : m < ctx.user.size := by omega
-    rw [Array.getElem?_append_left (by simp; omega),
-      Array.getElem?_push_lt (by simp; omega), Array.getElem?_eq_getElem hmu]
-    simp [Array.getElem_extract]
-  have hat : ((ctx.user.extract 0 (min ctx.limit ctx.user.size)).push cmd
-      ++ ctx.user.extract (min ctx.limit ctx.user.size) ctx.user.size)[
-        min ctx.limit ctx.user.size]? = some cmd := by
-    rw [Array.getElem?_append_left (by simp), Array.getElem?_push]
-    simp
-  simp only [visParsGo]
-  obtain ⟨hlt, hcmd⟩ := Array.getElem?_eq_some_iff.mp hat
-  rw [visParsGo_congr fun m hm => hsame m hm]
-  simp only [hlt, dite_true, hcmd]
-  have := visParsGo_mono ctx.user (show min ctx.limit ctx.user.size ≤ ctx.limit by omega)
-  omega
+  unfold visParsGo; exact bindCmd_visGo _ ctx cmd
 
 /-- The note component of the block knot's measure: draining a frame's
 stashed notes elaborates bodies that came from the state, not from the
@@ -4755,57 +4716,41 @@ private def itemsP : List (Array Raw) → Nat
   | [] => 0
   | it :: rest => nestedParsList it.toList + itemsP rest
 
-private theorem itemsW_append (a b : List (Array Raw)) :
-    itemsW (a ++ b) = itemsW a + itemsW b := by
-  induction a with
-  | nil => simp [itemsW]
-  | cons x xs ih => simp [itemsW, ih]; omega
+private theorem itemsW_eq (l : List (Array Raw)) :
+    itemsW l = measList (fun it => rawWeightList it.toList) l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => simp [itemsW, measList, ih]
 
-private theorem itemsP_append (a b : List (Array Raw)) :
-    itemsP (a ++ b) = itemsP a + itemsP b := by
-  induction a with
-  | nil => simp [itemsP]
-  | cons x xs ih => simp [itemsP, ih]; omega
+private theorem itemsP_eq (l : List (Array Raw)) :
+    itemsP l = measList (fun it => nestedParsList it.toList) l := by
+  induction l with
+  | nil => rfl
+  | cons x xs ih => simp [itemsP, measList, ih]
 
 private theorem itemsW_push (a : Array (Array Raw)) (it : Array Raw) :
     itemsW (a.push it).toList = itemsW a.toList + rawWeightList it.toList := by
-  simp [Array.toList_push, itemsW_append, itemsW]
+  simp only [itemsW_eq]; exact measList_push ..
 
 private theorem itemsP_push (a : Array (Array Raw)) (it : Array Raw) :
     itemsP (a.push it).toList = itemsP a.toList + nestedParsList it.toList := by
-  simp [Array.toList_push, itemsP_append, itemsP]
-
-private theorem itemsW_mem_le {l : List (Array Raw)} {it : Array Raw}
-    (h : it ∈ l) : rawWeightList it.toList ≤ itemsW l := by
-  induction l with
-  | nil => simp at h
-  | cons x xs ih =>
-    simp only [itemsW]
-    rcases List.mem_cons.mp h with h | h
-    · subst h; omega
-    · have := ih h; omega
-
-private theorem itemsP_mem_le {l : List (Array Raw)} {it : Array Raw}
-    (h : it ∈ l) : nestedParsList it.toList ≤ itemsP l := by
-  induction l with
-  | nil => simp at h
-  | cons x xs ih =>
-    simp only [itemsP]
-    rcases List.mem_cons.mp h with h | h
-    · subst h; omega
-    · have := ih h; omega
+  simp only [itemsP_eq]; exact measList_push ..
 
 private theorem itemsW_elem_le {a : Array (Array Raw)} {m : Nat}
     {it : Array Raw} (h : a[m]? = some it) :
     rawWeightList it.toList ≤ itemsW a.toList := by
   obtain ⟨hm, hget⟩ := Array.getElem?_eq_some_iff.mp h
-  exact itemsW_mem_le (hget ▸ Array.getElem_mem_toList hm)
+  rw [itemsW_eq]
+  exact measList_mem_le (μ := fun it => rawWeightList it.toList)
+    (hget ▸ Array.getElem_mem_toList hm)
 
 private theorem itemsP_elem_le {a : Array (Array Raw)} {m : Nat}
     {it : Array Raw} (h : a[m]? = some it) :
     nestedParsList it.toList ≤ itemsP a.toList := by
   obtain ⟨hm, hget⟩ := Array.getElem?_eq_some_iff.mp h
-  exact itemsP_mem_le (hget ▸ Array.getElem_mem_toList hm)
+  rw [itemsP_eq]
+  exact measList_mem_le (μ := fun it => nestedParsList it.toList)
+    (hget ▸ Array.getElem_mem_toList hm)
 
 /-- The frame body past its options and title group: `\frametitle{...}`
 pairs consumed into the running title (the last one wins, named W0311),
