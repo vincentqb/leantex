@@ -522,16 +522,18 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the twin of a mixed-case small-caps run carries the authored casing"
     ((MarkdownDoc.emit sc) == "PhD\n")
 
-/-- One fact, three renderings: a heading's level maps to the same rank in
-every backend — `#`-count and `h`-number are both level + 1 (the PDF side
-is the census assertion that the title text ships as furniture). Stated
-over the two functions the backends actually run. -/
-theorem heading_renderings_agree :
-    (MarkdownDoc.headingMarker 0 = "#" ∧ HtmlDoc.headingTag 0 = "h1") ∧
-    (MarkdownDoc.headingMarker 1 = "##" ∧ HtmlDoc.headingTag 1 = "h2") ∧
-    (MarkdownDoc.headingMarker 2 = "###" ∧ HtmlDoc.headingTag 2 = "h3") ∧
-    (MarkdownDoc.headingMarker 3 = "####" ∧ HtmlDoc.headingTag 3 = "h4") := by
-  decide
+/-- One fact, three renderings, at every level: a heading's `#` count and
+its `h` number are both projections of the one shared rank,
+`Html.headingRank` (the PDF side is the census assertion that the title
+text ships as furniture). Stated over the two functions the backends
+actually run, quantified over the level — the previous form was a `decide`
+over the four constants. -/
+theorem heading_renderings_agree (level : Nat) :
+    HtmlDoc.headingTag level = "h" ++ toString (Html.headingRank level) ∧
+    (MarkdownDoc.headingMarker level).toList =
+      List.replicate (Html.headingRank level) '#' := by
+  refine ⟨rfl, ?_⟩
+  simp [MarkdownDoc.headingMarker]
 
 /-- `{ifbackend}`: content addressed to a subset of the backends. One IR,
 elaborated once; each backend keeps or drops through `Ir.keepFor` at its own

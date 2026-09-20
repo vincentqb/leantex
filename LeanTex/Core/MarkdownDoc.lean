@@ -1,3 +1,4 @@
+import LeanTex.Core.Html
 import LeanTex.Core.Ir
 
 /-! The markdown backend. A web page today publishes a plain-text twin — the
@@ -112,13 +113,12 @@ private def bibItemsText (ind : String) (items : Array Ir.BibItem) : String := I
     out := out ++ ind ++ mark ++ inlineText item.content ++ "\n\n"
   return out
 
-/-- The heading marker a section level takes: `#` marks the level-0
-document title, exactly as the HTML backend reserves `<h1>` for it, and
-each deeper level adds one `#` (capped at `####`, the deepest level the
-elaborator produces plus one). One fact, shared with the HTML backend's
-tag; `heading_renderings_agree` in Tests pins the agreement. -/
+/-- The heading marker a section level takes: as many `#` as the shared
+rank (`Html.headingRank`, which carries the sourcing and the cap), so the
+marker and the HTML tag cannot drift; `heading_renderings_agree` in Tests
+states the agreement over every level. -/
 def headingMarker (level : Nat) : String :=
-  String.ofList (List.replicate (min (level + 1) 4) '#')
+  String.ofList (List.replicate (Html.headingRank level) '#')
 
 mutual
 

@@ -1820,17 +1820,12 @@ private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
     | other => cur := cur.push other
   return out.push cur
 
-/-- The heading tag a section level takes: level 0 is the document title —
-`h1` is "for a top-level section" (HTML §4.3.6) — and each deeper level
-takes the next tag, so an IR outline without gaps ships as a page outline
-without gaps (§4.3.11's conformance rule). One fact, shared with the
-markdown backend's `#` count; `heading_renderings_agree` in Tests pins the
-agreement. -/
-def headingTag : Nat → String
-  | 0 => "h1"
-  | 1 => "h2"
-  | 2 => "h3"
-  | _ => "h4"
+/-- The heading tag a section level takes: `h` and the shared rank
+(`Html.headingRank`, which carries the sourcing), so the tag and the
+markdown marker cannot drift; `heading_renderings_agree` in Tests states
+the agreement over every level. -/
+def headingTag (level : Nat) : String :=
+  s!"h{Html.headingRank level}"
 
 private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) : Node :=
   let groups := splitAtFills xs
