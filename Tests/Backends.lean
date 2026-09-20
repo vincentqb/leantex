@@ -1111,7 +1111,9 @@ def agreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let (_, body, htmlDs) := HtmlDoc.emitTree {} doc
     let naming := (docDs ++ out.diags ++ htmlDs).any (namingCodes.contains ·.code)
     let pdf := dedupConsecutive (pdfFoots out)
-    let html := slideFootsList #[] body.toList
+    -- Both sides collapse a stepped frame's repeated footer: the deck
+    -- emits one section per overlay step, as the PDF ships pages.
+    let html := dedupConsecutive (slideFootsList #[] body.toList)
     check ref s!"agree {n}: footer slots match across backends, or are named"
       (pdf == html || naming)
     for (element, st) in doc.styles.entries do

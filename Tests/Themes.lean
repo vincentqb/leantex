@@ -728,10 +728,12 @@ def chromeFooterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   -- section closes with the footer, styled by the muted token and the
   -- shared size scale.
   let (html, _) := HtmlDoc.emit {} doc
+  -- One footer per step page: the stepped frame's two sections repeat
+  -- theirs under one number, the PDF's own pagination.
   t "html frames close with the footer, standout none"
-    ((html.splitOn "class=\"slide-foot size-small\"").length == 3)
-  t "html footer carries the frame number"
-    ((html.splitOn ">2</span>").length == 2)
+    ((html.splitOn "class=\"slide-foot size-small\"").length == 4)
+  t "html footer carries the frame number on each of its step pages"
+    ((html.splitOn ">2</span>").length == 3)
   t "html footer styling comes from the tokens"
     ((html.splitOn "section.slide > footer.slide-foot").length == 2 &&
      (((html.splitOn "footer.slide-foot {")[1]?.getD "").splitOn
@@ -768,8 +770,13 @@ def numberingChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       else if !inTag && !c.isWhitespace then out := out.push c
     return out
   let htmlFoots (html : String) : List String :=
-    ((html.splitOn "class=\"slide-foot size-small\">").drop 1).map fun s =>
+    -- Consecutive sections sharing one footer are one frame: the deck
+    -- paginates one section per overlay step, exactly the PDF's pages,
+    -- so the frame-level sequence collapses the same way on both sides.
+    let raw := ((html.splitOn "class=\"slide-foot size-small\">").drop 1).map fun s =>
       strip ((s.splitOn "</footer>")[0]?.getD "")
+    (raw.foldl (fun (acc : List String) s =>
+      if acc.head? == some s then acc else s :: acc) []).reverse
   -- Consecutive pages sharing one footer are one frame (steps, spills):
   -- the frame-level sequence both backends must agree on.
   let pdfFoots (out : Layout.Out) : List String :=
@@ -1887,3 +1894,44 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "a document override after a theme never warns"
     (!w0343 (deck "\\theme{moloch}\n\\chrome{ footer = { left = \\sectiontitle } }" frame))
 
+
+/-- Steps are pages — the `frames_pages` census: the deck's HTML carries
+one `section` per overlay step, `Σ frameSteps` in all, and with the
+themed section pages that is exactly the PDF's shipped page count. On
+page k a pending step renders *covered* in the page's own oklab mix —
+never hidden — an explicitly coloured run takes its own cover through
+the same `color-mix`, a `\label` anchor lands on the frame's first page
+only, and every expanded section keeps a unique id. -/
+def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr (deck169 "\\theme{moloch}\\title{T}\\author{A}"
+    ("\\maketitle\n\\section{S}\n" ++
+     "\\begin{frame}{Steps}\n\\label{fr:steps}first\n\n\\pause\n" ++
+     "\\alert{second}\n\n\\pause\nthird\n\\end{frame}\n" ++
+     "\\begin{frame}{Plain}\nd\n\\end{frame}"))
+  t "step deck elaborates clean" (ds.all fun d => d.severity == .note)
+  let out := layoutOf oneFace doc
+  let (html, _) := HtmlDoc.emit {} doc
+  let count (s : String) : Nat := (html.splitOn s).length - 1
+  let slideSections := count "<section class=\"slide\""
+    + count "<section class=\"slide standout\""
+  let frameSum := doc.body.foldl (fun n b => n + match b with
+    | Ir.Block.frame _ _ _ fb => max 1 (Ir.maxStepBlocks fb)
+    | _ => 0) 0
+  t "frames_pages: one section per overlay step, the PDF's page count"
+    (slideSections == frameSum &&
+     slideSections + count "<section class=\"section-page\"" == out.pages.size)
+  t "a pending step is covered, never hidden"
+    -- page 1 covers the outer step (its nested step covers by
+    -- inheritance), page 2 the nested one alone, page 3 nothing.
+    (count "class=\"step covered\"" == 2 && count "class=\"step\"" == 4 &&
+     count " hidden=\"hidden\"" == 0)
+  t "the covered class dims in the deck's own oklab mix"
+    (count ".covered { color: color-mix(in oklab, currentColor 31%" == 1)
+  t "a covered coloured run takes its own cover through the same mix"
+    (count "color-mix(in oklab, var(--alert" == 1)
+  t "the label anchor lands on the frame's first page only"
+    ((html.splitOn s!"id=\"{Ir.labelAnchor "fr:steps"}\"").length == 2)
+  t "expanded sections keep unique ids"
+    (count "id=\"steps\"" == 1 && count "id=\"steps-2\"" == 1 &&
+     count "id=\"steps-3\"" == 1 && count "id=\"plain\"" == 1)
