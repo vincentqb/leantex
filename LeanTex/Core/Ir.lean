@@ -4873,6 +4873,17 @@ private def outlineGapDiag (p l : Nat) : Diag :=
 (HTML §4.3.11, WCAG G141); \
 a screen reader reads the gap as a broken outline")
 
+/-- The heading rank a section level takes, the one outline fact every
+text backend projects: level 0 is the document title, rank 1 — `h1` is
+"for a top-level section" (HTML §4.3.6), `#` its markdown twin — and each
+deeper level takes the next rank, capped at 4, the deepest level the
+elaborator produces plus one. An IR outline without gaps (`outlineWalk`'s
+judgement, below) therefore ships as a page outline without gaps (HTML
+§4.3.11's conformance rule); `heading_renderings_agree` in Tests states
+each backend's projection. -/
+def headingRank (level : Nat) : Nat :=
+  min (level + 1) 4
+
 private def outlineTitleDiag : Diag :=
   Diag.of .W0321
     "the document title follows another heading"

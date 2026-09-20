@@ -1,4 +1,3 @@
-import LeanTex.Core.Html
 import LeanTex.Core.Ir
 
 /-! The markdown backend. A web page today publishes a plain-text twin — the
@@ -117,11 +116,11 @@ private def bibItemsText (ind : String) (items : Array Ir.BibItem) : String := I
   return out
 
 /-- The heading marker a section level takes: as many `#` as the shared
-rank (`Html.headingRank`, which carries the sourcing and the cap), so the
+rank (`Ir.headingRank`, which carries the sourcing and the cap), so the
 marker and the HTML tag cannot drift; `heading_renderings_agree` in Tests
 states the agreement over every level. -/
 def headingMarker (level : Nat) : String :=
-  String.ofList (List.replicate (Html.headingRank level) '#')
+  String.ofList (List.replicate (Ir.headingRank level) '#')
 
 mutual
 

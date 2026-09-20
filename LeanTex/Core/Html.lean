@@ -332,14 +332,4 @@ theorem document_declares_lang (lang : String) (head body : Array Node) :
           #[("lang", lang)]) 0 :=
   rfl
 
-/-- The heading rank a section level takes, the one fact every text
-backend projects: level 0 is the document title, rank 1 — `h1` is "for a
-top-level section" (HTML §4.3.6), `#` its markdown twin — and each deeper
-level takes the next rank, capped at 4, the deepest level the elaborator
-produces plus one. An IR outline without gaps therefore ships as a page
-outline without gaps (HTML §4.3.11's conformance rule);
-`heading_renderings_agree` in Tests states the projections. -/
-def headingRank (level : Nat) : Nat :=
-  min (level + 1) 4
-
 end LeanTex.Core.Html

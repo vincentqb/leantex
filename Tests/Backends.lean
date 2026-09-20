@@ -640,14 +640,15 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- One fact, three renderings, at every level: a heading's `#` count and
 its `h` number are both projections of the one shared rank,
-`Html.headingRank` (the PDF side is the census assertion that the title
+`Ir.headingRank`, held beside the outline walk it serves (the PDF side
+is the census assertion that the title
 text ships as furniture). Stated over the two functions the backends
 actually run, quantified over the level — the previous form was a `decide`
 over the four constants. -/
 theorem heading_renderings_agree (level : Nat) :
-    HtmlDoc.headingTag level = "h" ++ toString (Html.headingRank level) ∧
+    HtmlDoc.headingTag level = "h" ++ toString (Ir.headingRank level) ∧
     (MarkdownDoc.headingMarker level).toList =
-      List.replicate (Html.headingRank level) '#' := by
+      List.replicate (Ir.headingRank level) '#' := by
   refine ⟨rfl, ?_⟩
   simp [MarkdownDoc.headingMarker]
 

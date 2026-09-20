@@ -1959,11 +1959,11 @@ private def splitAtFills (xs : Array Inline) : Array (Array Inline) := Id.run do
   return out.push cur
 
 /-- The heading tag a section level takes: `h` and the shared rank
-(`Html.headingRank`, which carries the sourcing), so the tag and the
+(`Ir.headingRank`, which carries the sourcing), so the tag and the
 markdown marker cannot drift; `heading_renderings_agree` in Tests states
 the agreement over every level. -/
 def headingTag (level : Nat) : String :=
-  s!"h{Html.headingRank level}"
+  s!"h{Ir.headingRank level}"
 
 private def fillRow (cfg : Config) (tag baseClass : String) (xs : Array Inline) : Node :=
   let groups := splitAtFills xs
