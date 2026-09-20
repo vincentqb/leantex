@@ -180,7 +180,7 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes (wrap "\\faIcon[regular]{envelope} x") == ["W0110"])
   -- HTML: the glyph is aria-hidden, the accessible name rides the wrapper.
   let page := (HtmlDoc.emit {} doc).1
-  let has (n : String) : Bool := (page.splitOn n).length ≥ 2
+  let has := hasStr page
   t "html hides the glyph and names the icon"
     (has ("<span class=\"icon\" role=\"img\" aria-label=\"GitHub\">" ++
       "<span aria-hidden=\"true\">\uF09B</span></span>"))

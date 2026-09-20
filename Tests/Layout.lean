@@ -544,8 +544,7 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   let t := check ref
   let geom : Layout.Geom := {}
   let linesOf (src : String) : Array Layout.LineOut :=
-    let (d, _) := Elab.run "t" src
-    (layoutOf oneFace d geom).pages.flatMap (·.lines)
+    allLines (layoutOf oneFace (elabStr src).1 geom)
   let doc (body : String) : String :=
     s!"\\documentclass\{article}\\begin\{document}{body}\\end\{document}"
   let top := linesOf (doc "hello")
@@ -1402,7 +1401,7 @@ def recoveryChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     let (d, _) := elabStr src
     let lines := bodyLines (layoutOf oneFace d geom)
     String.join (lines.toList.map (lineText ·))
-  let has (page part : String) : Bool := (page.splitOn part).length > 1
+  let has := hasStr
   -- The user's own case: a bracketed number in front of a URL, and one in
   -- front of an email address.
   let url := pageText "\\textls[16]{placeholder}.example.org"
@@ -1445,7 +1444,7 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let linesOf (src : String) : Array Layout.LineOut :=
-    (layoutOf oneFace (elabStr src).1 geom).pages.flatMap (·.lines)
+    allLines (layoutOf oneFace (elabStr src).1 geom)
   let firstY (body : String) : Dim.Sp :=
     ((linesOf (deck169Body body))[0]?.map (·.y)).getD 0
   let yT := firstY "\\begin{frame}[t]\nhello\n\\end{frame}"
@@ -1933,7 +1932,7 @@ Outside after.")
      | _, _ => false)
   -- Contrast per epoch: a pairing is judged against the palette in force
   -- where it is used, never the document's final (or initial) one.
-  let codesOf (src : String) : Array Diag := (elabStr src).2
+  let codesOf := dvE
   -- A use whose epoch declares a dark page is judged on that page.
   let dsDark := codesOf (doc
     "\\palette{ bg = #202020, dim = #333333 }\n\n\\textcolor{dim}{dim words} here.")

@@ -565,6 +565,12 @@ def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
     (imgs : Image.Store := {}) : Layout.Out :=
   Layout.run geom fonts pats doc imgs
 
+/-- Every shipped line, furniture included, in page order: what a claim
+about absolute placement (a fil sandwich, a frame's vertical distribution)
+reads. `bodyLines` is this with the furniture filtered out. -/
+def allLines (out : Layout.Out) : Array Layout.LineOut :=
+  out.pages.flatMap (·.lines)
+
 /-- The document's own flow lines, shipped: every line except engine-placed
 furniture (`LineOut.furniture` — running content, the plain page number).
 What a claim about the body's setting means; a furniture claim reads the

@@ -491,6 +491,18 @@ def nativePackagesOf (src : String) : Array String := Id.run do
         inside := false
   return out
 
+/-- A local reimplementation of Support's `hasStr`: a function-shaped `let`
+whose body splits on a needle and compares the piece count against one —
+`> 1` and `≥ 2` are the two spellings of "it appears". Eight copies of
+this idiom grew across the test tree before the shared helper was reached
+for; the Support-rule gate below could not see them because they are
+`let`s, not top-level defs. Checked in test files only: the hook's own
+scanners split on markers legitimately. -/
+def splitOnIdiom (l : String) : Bool :=
+  let t := ((stripLineComment l).trimAscii).toString
+  t.startsWith "let " && containsSub t ".splitOn " &&
+    (containsSub t ".length > 1" || containsSub t ".length ≥ 2")
+
 /-- One staged-diff check: which files it reads, the line predicate, the
 headline naming the file, and the fix paragraph. The stanzas `main` used
 to spell one by one differed only in these four fields. -/
@@ -629,6 +641,14 @@ def gates : List Gate := [
   defects once passed a fully green suite that way (AGENTS.md, Conventions).
   Fix: assert over Layout.Out or the typed HTML tree; an IR-tier fact that
   is not a page claim says so on the line: `{irTierMark} <why>`." },
+  { applies := fun f => (f == "Tests.lean" || f.startsWith "Tests/")
+      && f != "Tests/Support.lean"
+    flag := splitOnIdiom
+    what := fun f => s!"a local copy of Support's hasStr (a splitOn-count `let`) in {f}"
+    help := "  (hay.splitOn needle).length > 1 is Tests/Support.lean's hasStr; eight
+  copies of the idiom grew across the test tree before the shared helper
+  was reached for (AGENTS.md, Conventions: the second caller moves it).
+  Fix: use hasStr, or bind it over a fixed page: let has := hasStr page." },
   { applies := fun f => f.startsWith "LeanTex/" && f.endsWith ".lean"
     flag := heartbeatRaise
     what := fun f => s!"a {kwMaxHeartbeats} raise in {f}"
@@ -660,6 +680,21 @@ def selftest : IO UInt32 := do
     for (line, want) in cases do
       if p line != want then
         fails.modify (s!"{name} {if want then "missed" else "fired on"}: {line}" :: ·)
+
+  expect "splitOnIdiom" splitOnIdiom [
+    -- the copies the audit deleted, both count spellings and the
+    -- fixed-page curried variant
+    ("  let has (hay needle : String) : Bool := (hay.splitOn needle).length > 1", true),
+    ("  let has (page s : String) : Bool := (page.splitOn s).length ≥ 2", true),
+    ("  let has (n : String) : Bool := (page.splitOn n).length ≥ 2", true),
+    -- an inline assertion is a use, not a helper copy; the shared binding,
+    -- a splitOn let without the count compare, an exactly-once count, and
+    -- a comment stay legal
+    ("    ((mutedPage.splitOn \"u-muted\").length == 2)", false),
+    ("  let has := hasStr page", false),
+    ("  let parts := (l.splitOn \"+\")", false),
+    ("  let once (s : String) : Bool := (page.splitOn s).length == 2", false),
+    ("  -- let has (hay needle : String) : Bool := (hay.splitOn needle).length > 1", false)]
 
   expect "topLevelDefName" (fun l => (topLevelDefName l).isSome) [
     -- the Support-rule gate: only a top-level def counts

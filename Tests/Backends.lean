@@ -659,7 +659,7 @@ kept view are pinned. Invented content. Its own function: `main` is one `do`
 block and its elaboration budget is spent. -/
 def backendChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let has (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+  let has := hasStr
   let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "Shared opening.\\begin{ifbackend}{html}Only the page carries this." ++
     "\\end{ifbackend}\\begin{ifbackend}{pdf,md}Print and twin carry this." ++
@@ -724,7 +724,7 @@ a nav on one surface only, and only the tree knows what this page carries.
 Invented content. -/
 def landmarkChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let has (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+  let has := hasStr
   let (doc, ds) := elabStr ("\\documentclass{article}\\begin{document}" ++
     "\\begin{nav}\\href{#field-notes}{Notes} \\href{#top}{Top}\\end{nav}" ++
     "\\section*{Field Notes}Body text.\\end{document}")
@@ -785,7 +785,7 @@ the constant script fallback, judged over the emitted tree. Invented
 content. -/
 def pinChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let has (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+  let has := hasStr
   let pinnedSrc := "\\documentclass{article}\\begin{document}" ++
     "\\begin{nav}\\href{#one-head}{One}\\end{nav}" ++
     "\\begin{nav}[label = Return to top, pin = bottom right, " ++
@@ -851,7 +851,7 @@ WCAG 2.2 SC 2.3.3 with sufficient technique C39, the
 reads none of the three keys. Invented content. -/
 def interactionChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let has (hay needle : String) : Bool := (hay.splitOn needle).length > 1
+  let has := hasStr
   let (doc, ds) := elabStr ("\\documentclass{article}" ++
     "\\palette{ ink = #1D4ED8 }" ++
     "\\style{nav}{ hover = ink, focus = ink, motion = 150ms }" ++
@@ -939,7 +939,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (deckDoc, deckDs) := elabStr (deck169 "" "\\begin{frame}{T}\nx\n\\end{frame}")
   let deckPage := (HtmlDoc.emit {} deckDoc).1
-  let has (page s : String) : Bool := (page.splitOn s).length ≥ 2
+  let has := hasStr
   t "deck css fixture elaborates clean" deckDs.isEmpty
   t "the deck pages sideways by scroll snap"
     (has deckPage "html { scroll-snap-type: x mandatory; }" &&
@@ -1119,7 +1119,7 @@ def deckProgressChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (doc, ds) := elabStr (deck169 "\\theme{moloch}"
     "\\section{S}\n\\begin{frame}{T}\nx\n\\end{frame}")
   let html := (HtmlDoc.emit {} doc).1
-  let has (page s : String) : Bool := (page.splitOn s).length ≥ 2
+  let has := hasStr
   t "progress deck elaborates clean" (ds.all fun d => d.severity == .note)
   t "the themed deck ships its progress hairline"
     (has html "class=\"deck-progress\"")
@@ -1156,7 +1156,7 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
      doc.info.image == some "https://example.org/alex/card.png" &&
      doc.info.favicon == some "favicon.svg")
   let page := (HtmlDoc.emit {} doc).1
-  let has (s : String) : Bool := (page.splitOn s).length ≥ 2
+  let has := hasStr page
   t "html head links the canonical url"
     (has "<link rel=\"canonical\" href=\"https://example.org/alex\">")
   t "html head links the favicon" (has "<link rel=\"icon\" href=\"favicon.svg\">")
