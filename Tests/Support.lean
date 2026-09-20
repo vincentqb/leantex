@@ -357,6 +357,27 @@ def lineRightOf (c : Array CensusPage) (i : Nat) (needle : String) : Option Dim.
   (c[i]?.bind fun p => p.lines.find? fun l => hasStr l.text needle).map
     fun l => l.x + l.width
 
+/-- The glyph text of one shipped line: each run's characters in order,
+a gap as one space (`gapAsSpace := false` reads the bare glyphs — a page
+number's centring gaps are not its text). -/
+def lineText (l : Layout.LineOut) (gapAsSpace : Bool := true) : String :=
+  l.segs.foldl (fun s seg => match seg with
+    | .run _ _ _ _ glyphs _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
+    | .gap _ => if gapAsSpace then s.push ' ' else s
+    | _ => s) ""
+
+/-- The furniture baselines (head y, foot y) a geometry owes under `font`'s
+ink and a declared gap: functions of the geometry alone
+(`furnHeadY`/`furnFootY` take no content) — what the shipped furniture
+lines must stand at (`furniture_symmetric`'s realisation). -/
+def furnYs (font : Font.Font) (geom : Layout.Geom)
+    (gap : Option Dim.Sp := none) : Dim.Sp × Dim.Sp :=
+  let scale (u : Int) : Dim.Sp := u * geom.fontSize / (font.unitsPerEm : Int)
+  let band := Layout.furnitureBand geom.vmargin
+    (scale font.ascent + scale (-font.descent)) gap
+  (Layout.furnHeadY band (scale font.ascent),
+   Layout.furnFootY band geom.pageH (scale (-font.descent)))
+
 mutual
 
 /-- The text content of an emitted HTML node, for the agreement census: the
