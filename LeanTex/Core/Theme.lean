@@ -451,32 +451,6 @@ private def installEntries {α : Type} (xs : Array (String × α)) :
   | [] => xs
   | (k, v) :: es => installEntries ((xs.filter (·.1 != k)).push (k, v)) es
 
-private theorem step_find_eq {α : Type} (xs : Array (String × α)) (k : String) (v : α) :
-    ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k) = some (k, v) := by
-  have hnone : (xs.filter (·.1 != k)).find? (·.1 == k) = none := by
-    rw [Array.find?_eq_none]
-    intro x hx
-    have hne := (Array.mem_filter.mp hx).2
-    simpa using hne
-  rw [Array.find?_push, hnone]
-  simp
-
-private theorem step_find_ne {α : Type} (xs : Array (String × α)) (k k' : String) (v : α)
-    (h : k' ≠ k) :
-    ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k') = xs.find? (·.1 == k') := by
-  rw [Array.find?_push, Array.find?_filter]
-  have hpred : (fun a : String × α => decide ((a.fst != k) = true ∧ (a.fst == k') = true))
-      = (fun a : String × α => a.fst == k') := by
-    funext x
-    by_cases hx : (x.1 == k') = true
-    · have hxe : x.1 = k' := by simpa using hx
-      simp [hxe, h]
-    · simp [hx]
-  rw [hpred]
-  have hkk : (k == k') = false := by
-    simpa using fun hk => h hk.symm
-  simp [hkk]
-
 private theorem installEntries_keeps {α : Type} (es : List (String × α))
     (xs : Array (String × α)) (k : String) (h : ∀ e ∈ es, e.1 ≠ k) :
     (installEntries xs es).find? (·.1 == k) = xs.find? (·.1 == k) := by
@@ -487,7 +461,7 @@ private theorem installEntries_keeps {α : Type} (es : List (String × α))
     have hk : k0 ≠ k := h (k0, v0) (List.mem_cons_self ..)
     simp only [installEntries]
     rw [ih _ (fun e' he' => h e' (List.mem_cons_of_mem _ he')),
-      step_find_ne _ _ _ _ (fun hh => hk hh.symm)]
+      declare_keeps _ _ _ _ (fun hh => hk hh.symm)]
 
 private theorem installEntries_residue {α : Type} (es : List (String × α))
     (xs : Array (String × α)) :
@@ -629,7 +603,7 @@ private theorem styles_declare_find_ne (s : Styles) (k k' : String) (st : Elemen
     (h : k' ≠ k) : (s.declare k st).find? k' = s.find? k' := by
   show (((s.entries.filter (·.1 != k)).push (k, st)).find? (·.1 == k')).map (·.2)
       = (s.entries.find? (·.1 == k')).map (·.2)
-  rw [step_find_ne _ _ _ _ h]
+  rw [declare_keeps _ _ _ _ h]
 
 private theorem styleWrites_congr (s₁ s₂ : Styles) (es : List (String × ElementStyle))
     (h : ∀ e ∈ es, styleMerge e.2 ((s₁.find? e.1).getD {})
@@ -693,7 +667,7 @@ private theorem installStyles_find_mem (s : Styles) (es : List (String × Elemen
       rw [installStyles_keeps _ _ _ hne]
       show ((((s.entries.filter (·.1 != k)).push
           (k, styleMerge st ((s.find? k).getD {}))).find? (·.1 == k)).map (·.2)) = _
-      rw [step_find_eq]
+      rw [declare_find_eq]
       rfl
     | tail _ hmem' =>
       have hkne : k ≠ k0 := by

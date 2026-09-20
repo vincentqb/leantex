@@ -328,8 +328,9 @@ def Tokens.declare (t : Tokens) (key : String) (g : SymGlue) : Tokens :=
 /-- The two halves of keyed last-wins, over the one keyed store both
 `Tokens.declare` and `Palette.declare` are built on: the declared value is
 the one read back, and a redeclaration collapses — declaring a key twice is
-declaring the later value once. -/
-private theorem declare_find_eq {α : Type} (xs : Array (String × α)) (k : String) (v : α) :
+declaring the later value once. Public: `Theme`'s install fold runs the
+same store step, so its lemmas consume these rather than re-proving them. -/
+theorem declare_find_eq {α : Type} (xs : Array (String × α)) (k : String) (v : α) :
     ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k) = some (k, v) := by
   have hnone : (xs.filter (·.1 != k)).find? (·.1 == k) = none := by
     rw [Array.find?_eq_none]
@@ -346,7 +347,7 @@ private theorem declare_collapse {α : Type} (xs : Array (String × α)) (k : St
 
 /-- The locality half over the same store: a declaration changes exactly
 the key it names — every other key reads back as before. -/
-private theorem declare_keeps {α : Type} (xs : Array (String × α)) (k k' : String) (v : α)
+theorem declare_keeps {α : Type} (xs : Array (String × α)) (k k' : String) (v : α)
     (h : k' ≠ k) :
     ((xs.filter (·.1 != k)).push (k, v)).find? (·.1 == k') = xs.find? (·.1 == k') := by
   rw [Array.find?_push, Array.find?_filter]
