@@ -1122,6 +1122,28 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "class option a4paper warns nothing"
     ((elabStr "\\documentclass[a4paper,11pt]{article}\\begin{document}x\\end{document}").2.all
       (·.severity == .note))
+  -- The slides stage is the same one-key vocabulary: every beamer
+  -- `aspectratio=` option resolves through `Ir.slidesStages`, and
+  -- `\page{ size = 16:9 }` names the same row natively (`141` — beamer's
+  -- √2:1 digits — arrives as an int and still names its row).
+  let deckOf (opts : String) (pre : String := "") : Ir.PageSpec :=
+    (elabStr s!"\\documentclass[{opts}]\{slides}{pre}\\begin\{document}x\\end\{document}").1.page
+  t "every beamer aspectratio option selects its documented stage"
+    (Ir.slidesStages.all fun r =>
+      let p := deckOf s!"aspectratio={String.ofList (r.1.toList.filter (· != ':'))}"
+      p.width == r.2.1 && p.height == r.2.2)
+  t "an unknown aspectratio keeps beamer's 4:3 default"
+    ((deckOf "aspectratio=679").height == Ir.slidesStage43.2)
+  t "the native size key names the stage the option names"
+    (let p := deckOf "" "\\page{ size = 16:10 }"
+     p.width == Dim.mm 160 && p.height == Dim.mm 100 &&
+       p == deckOf "aspectratio=1610")
+  t "beamer's bare digits name the root-two stage"
+    (let p := deckOf "" "\\page{ size = 141 }"
+     p.width == Dim.mm100 14850 && p.height == Dim.mm 105)
+  t "an unknown ratio size is refused by name"
+    (errCodes ("\\documentclass{slides}\\page{ size = 17:9 }" ++
+      "\\begin{document}x\\end{document}") == ["E0324"])
 
 /-- The package-claim index: every package in `Compat.nativePackages` ships
 `tests/compat-index/<pkg>.txt`, its user-facing command surface as

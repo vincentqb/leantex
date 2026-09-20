@@ -296,32 +296,35 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
 /-- The slides stage carries a readable number of text lines. Tantau's rule
 for presentations is lines, not points: "between 10 and 20 lines should fit
 on each slide; the less lines, the more readable" (beamer user guide
-§5.6.1). Both default stages at the default margins and the 11 pt base sit
-inside that band — 15 full lines at 16:9, 16 at 4:3 — so the slides
-defaults cannot drift apart without this failing the build. -/
+§5.6.1). Every stage in `Ir.slidesStages` at the default margins and the
+11 pt base sits inside that band — 16 full lines at 4:3, 15 at 16:9, up to
+18 at √2:1 — so a stage cannot enter the table without entering this
+contract, and the slides defaults cannot drift apart without failing the
+build. -/
 theorem slides_lines_in_band :
-    10 ≤ (Ir.slidesStage169.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ∧
-    (Ir.slidesStage169.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ≤ 20 ∧
-    10 ≤ (Ir.slidesStage43.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ∧
-    (Ir.slidesStage43.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ≤ 20 := by
+    ∀ r ∈ Ir.slidesStages,
+      10 ≤ (r.2.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ∧
+      (r.2.2 - 2 * Ir.slidesVMargin) / leadingFor Ir.slidesFontSize ≤ 20 := by
   decide
 
-/-- The bands never eat the measure: any slides-default geometry whose head
+/-- The bands never eat the measure: any slides-stage geometry whose head
 and foot bands come from `furnitureBand` keeps a positive body height, and
 Tantau's 10–20 lines (beamer user guide §5.6.1, the band
 `slides_lines_in_band` states for the bare stages) still holds between
-`bodyTop` and `bodyBottom`. The ink hypotheses allow each running line two
-em of the base size. That bound has no external authority to cite: the
-OpenType spec bounds no line metric — OS/2 `sTypoAscender`: "It is not a
-general requirement that sTypoAscender − sTypoDescender be equal to
-unitsPerEm", and the hhea ascender/descender the engine reads are the
-font's own — so two em is this engine's coverage choice, chosen generous
-against real faces (typical line metrics sit at 1.0–1.3 em; the shipped
-test faces are pinned under the bound in `Tests.lean`). -/
+`bodyTop` and `bodyBottom` — for every stage in `Ir.slidesStages`, so a
+stage entering the table enters this contract too. The ink hypotheses
+allow each running line two em of the base size. That bound has no
+external authority to cite: the OpenType spec bounds no line metric — OS/2
+`sTypoAscender`: "It is not a general requirement that sTypoAscender −
+sTypoDescender be equal to unitsPerEm", and the hhea ascender/descender
+the engine reads are the font's own — so two em is this engine's coverage
+choice, chosen generous against real faces (typical line metrics sit at
+1.0–1.3 em; the shipped test faces are pinned under the bound in
+`Tests.lean`). -/
 theorem slides_lines_survive_bands (a d f : Sp)
     (hh : a + d ≤ 2 * Ir.slidesFontSize) (hf : f ≤ 2 * Ir.slidesFontSize)
     (g : Geom)
-    (hg : g.pageH = Ir.slidesStage169.2 ∨ g.pageH = Ir.slidesStage43.2)
+    (hg : g.pageH ∈ Ir.slidesStages.map (·.2.2))
     (hv : g.vmargin = Ir.slidesVMargin)
     (hhb : g.headBand = (furnitureBand g.vmargin (a + d) none).band)
     (hfb : g.footBand = (furnitureBand g.vmargin f none).band) :
@@ -331,29 +334,33 @@ theorem slides_lines_survive_bands (a d f : Sp)
   have hvm : Ir.slidesVMargin = 1730150 := by decide
   have hfs : Ir.slidesFontSize = 720896 := by decide
   have hld : leadingFor Ir.slidesFontSize = 865075 := by decide
-  have h169 : Ir.slidesStage169.2 = 16719420 := by decide
-  have h43 : Ir.slidesStage43.2 = 17834048 := by decide
   have hls : inkClearance = 65536 := by decide
+  -- Every table height sits between the 16:9 row's 90 mm and the √2:1
+  -- row's 105 mm; the band arithmetic below needs only the interval, and
+  -- the interval is decided over the whole table — a taller or shorter
+  -- stage fails here, not silently.
+  have hrange : ∀ r ∈ Ir.slidesStages,
+      16719420 ≤ r.2.2 ∧ r.2.2 ≤ 19505990 := by decide
+  have ⟨r, hr, heq⟩ := Array.mem_map.mp hg
+  have hH : 16719420 ≤ g.pageH ∧ g.pageH ≤ 19505990 := heq ▸ hrange r hr
   -- The key inequality over bare `Int` binders, as `bodyTop_clears_head`
   -- does it: `omega` does not see through the `Sp` abbreviation.
   have key : ∀ a d f hb fb H : Int,
       a + d ≤ 2 * 720896 → f ≤ 2 * 720896 →
-      (H = 16719420 ∨ H = 17834048) →
+      16719420 ≤ H → H ≤ 19505990 →
       hb = max 0 (1730150 / 2 + (a + d) + 65536 - 1730150) →
       fb = max 0 (1730150 / 2 + f + 65536 - 1730150) →
       0 < H - 1730150 - fb - (1730150 + hb) ∧
       10 ≤ (H - 1730150 - fb - (1730150 + hb)) / 865075 ∧
       (H - 1730150 - fb - (1730150 + hb)) / 865075 ≤ 20 := by
-    intro a d f hb fb H hh hf hH hhb hfb
+    intro a d f hb fb H hh hf hlo hhi hhb hfb
     omega
   rw [hfs] at hh hf
-  rw [h169] at hg
-  rw [h43] at hg
   simp only [furnitureBand, furnEdge, Option.getD, hls, hv, hvm] at hhb hfb
   rw [hld]
   simp only [Geom.bodyBottom, Geom.bodyTop]
   rw [hv, hvm]
-  exact key a d f g.headBand g.footBand g.pageH hh hf hg hhb hfb
+  exact key a d f g.headBand g.footBand g.pageH hh hf hH.1 hH.2 hhb hfb
 
 /-- How a page distributes its leftover vertical space: declared shares of
 the stretch above and below the content, the ratio form of beamer's

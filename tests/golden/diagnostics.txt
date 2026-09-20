@@ -58,7 +58,7 @@ error[E0322]: '\page' has no key 'zoom'
 error[E0323]: 'vmargin' in '\page' expects a dimension, got a string
 ── E0324 (dropped) unknown page size name
 error[E0324]: unknown page size 'quarto'
-  help: known sizes: letter, legal, a4, a5
+  help: known sizes: letter, legal, a4, a5, 4:3, 16:9, 16:10, 14:9, 141, 5:4, 3:2
 ── E0325 (dropped) unreadable \assert expression
 error[E0325]: cannot read assertion: "pages =~ 1"
   help: '=~' is not a comparison (== != <= < >= >)

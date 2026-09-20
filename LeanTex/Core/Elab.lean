@@ -346,6 +346,15 @@ def pageSizes : List (String × (Sp × Sp)) :=
    ("a4", (Dim.pt 595, Dim.pt 842)),
    ("a5", (Dim.pt 420, Dim.pt 595))]
 
+/-- The slides stage a class-option list selects: beamer's `aspectratio=`
+option read through `Ir.slidesStages`; absent — or naming a ratio beamer
+does not — the 4:3 stage, beamer's documented default (user guide §8.1). -/
+def slidesStageOf (opts : List String) : Sp × Sp :=
+  (opts.findSome? fun o =>
+    if o.startsWith "aspectratio=" then
+      Ir.slidesStageNamed ((o.drop "aspectratio=".length).toString)
+    else none).getD Ir.slidesStage43
+
 def reservedEnv : List String :=
   ["external", "tikzpicture"]
 
@@ -3957,8 +3966,7 @@ private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
         else if opts.contains "jis" then some (Dim.mm 91, Dim.mm 55)
         else record.trimDefault
       | .frame =>
-        some (if opts.contains "aspectratio=169" then Ir.slidesStage169
-          else Ir.slidesStage43)
+        some (slidesStageOf opts)
       | .flow =>
         let sized := opts.findSome? fun o =>
           let o := if o.startsWith "paper=" then
@@ -7248,12 +7256,24 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
   for e in entries do
     let before := evs.size
     match e.key, e.value with
+    -- `size` names a paper (`a4`) or a slides stage by its ratio
+    -- (`16:9`, or beamer's bare digits, which arrive as an int) — one
+    -- vocabulary; the ratio spellings are `Ir.slidesStages`'s rows.
     | "size", .ident name =>
-      match pageSizes.lookup name.toLower with
+      match (pageSizes.lookup name.toLower).orElse
+          (fun _ => Ir.slidesStageNamed name) with
       | some (w, h) => spec := { spec with width := w, height := h }
       | none =>
         evs := say evs .E0324 s!"unknown page size '{name}'"
-          (help := s!"known sizes: {String.intercalate ", " (pageSizes.map (·.1))}")
+          (help := s!"known sizes: {String.intercalate ", "
+            (pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
+    | "size", .int n =>
+      match Ir.slidesStageNamed (toString n) with
+      | some (w, h) => spec := { spec with width := w, height := h }
+      | none =>
+        evs := say evs .E0324 s!"unknown page size '{n}'"
+          (help := s!"known sizes: {String.intercalate ", "
+            (pageSizes.map (·.1) ++ (Ir.slidesStages.map (·.1)).toList)}")
     | "width", v =>
       if let some d := asDim v then spec := { spec with width := d }
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "width" "a dimension" v pos))
@@ -8910,9 +8930,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   if record.model == .frame then
     let dflt : PageSpec := {}
     if page.width == dflt.width && page.height == dflt.height then
-      let ratio169 := (classOptions.splitOn ",").any
-        fun o => o.trimAscii.toString == "aspectratio=169"
-      let (w, h) := if ratio169 then Ir.slidesStage169 else Ir.slidesStage43
+      let (w, h) := slidesStageOf classOpts
       page := { page with width := w, height := h }
     if page.hmargin == dflt.hmargin then
       page := { page with hmargin := Ir.slidesHMargin }

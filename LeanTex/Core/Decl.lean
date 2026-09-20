@@ -629,6 +629,17 @@ private def parseCmyk (s : String) : Option Value := do
   | [c, m, y, k] => some (.cmyk c m y k)
   | _ => none
 
+/-- `digits:digits` is a name, not a malformed dimension: the slides stage
+spellings (`\page{ size = 16:9 }`) parse as idents and the consuming
+declaration decides what the name means — an unknown one keeps its own
+refusal (E0324 for `size`) instead of a parse error here. -/
+private def isRatioName (s : String) : Bool :=
+  match s.splitOn ":" with
+  | [a, b] =>
+    !a.isEmpty && !b.isEmpty &&
+      a.toList.all (·.isDigit) && b.toList.all (·.isDigit)
+  | _ => false
+
 def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Option Value :=
   let s := raw.trimAscii.toString
   if s.startsWith "\"" && s.endsWith "\"" && s.length ≥ 2 then
@@ -664,6 +675,7 @@ def parseValue (raw : String) (tokens : Array (String × SymGlue) := #[]) : Opti
       some (.dim (mantissa * num / (scale * den : Nat)))
     | some (mantissa, 1), none =>
       if unit.isEmpty then some (.int mantissa)
+      else if isRatioName s then some (.ident s)
       else if looksLikeExpr s then (parseLengthExpr tokens s).toOption.map .glue
       else none
     | _, _ =>

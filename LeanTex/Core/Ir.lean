@@ -159,6 +159,31 @@ The lines-per-slide theorem in Layout is what holds these numbers
 together. -/
 def slidesStage43 : Sp × Sp := (Dim.mm 128, Dim.mm 96)
 def slidesStage169 : Sp × Sp := (Dim.mm 160, Dim.mm 90)
+
+/-- The slides stages, beamer's `aspectratio` table entire (beamer user
+guide §8.1, the `aspectratio=` class option; the millimetre pairs are
+`beamer.cls`'s own: 1610 → 160×100, 169 → 160×90, 149 → 140×90,
+141 → 148.5×105, 54 → 125×100, 32 → 135×90, 43 → 128×96). Each row is
+named by its ratio as `\page{ size = ... }` spells it — `√2:1` by beamer's
+own digits `141` — and `slidesStageNamed` matches with the colon elided,
+so `aspectratio=169` and the native `16:9` select one row. The lines-fit
+contract (`Layout.slides_lines_in_band`) quantifies over every row:
+adding a stage is entering that contract. -/
+def slidesStages : Array (String × Sp × Sp) :=
+  #[("4:3", slidesStage43),
+    ("16:9", slidesStage169),
+    ("16:10", Dim.mm 160, Dim.mm 100),
+    ("14:9", Dim.mm 140, Dim.mm 90),
+    ("141", Dim.mm100 14850, Dim.mm 105),
+    ("5:4", Dim.mm 125, Dim.mm 100),
+    ("3:2", Dim.mm 135, Dim.mm 90)]
+
+/-- The stage a ratio name selects, colon elided on both sides: `16:9`,
+`169`, and beamer's option digits agree on one row. -/
+def slidesStageNamed (name : String) : Option (Sp × Sp) :=
+  let strip := fun (s : String) => String.ofList (s.toList.filter (· != ':'))
+  (slidesStages.find? fun r => strip r.1 == strip name).map (·.2)
+
 def slidesHMargin : Sp := Dim.mm 10
 def slidesFontSize : Sp := Dim.pt 11
 def slidesVMargin : Sp := 2 * leadingFor slidesFontSize
