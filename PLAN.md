@@ -157,6 +157,35 @@ each ground (brand-palette).
   frame title keeps its `:root` value in HTML while the PDF realizes it.
 
 
+2026-09-20 — the harness reads what the wave landed: shared helpers, one
+measure per fact, gates that police the new invariants.
+
+- Tests: the eight local `hasStr`/`dvE`/line-collection copies now bind
+  Support's helpers (`allLines` is new — `bodyLines` without the furniture
+  filter); `main`'s regrown 21-call tail folded into the suite dispatchers
+  (two new leaves, theme and font-face — the latter must not hide behind
+  the layout suite's font gate); the mm/inch agreement and the integral
+  `toPtString` case are compile-time examples beside `Dim` (the fractional
+  case stays a runtime check: its `String.Slice` ops reduce for neither
+  `decide`, `decide +kernel`, nor `rfl`).
+- One resolving site per fact: `Bib.sourceName` for the `.bib` fulfilment
+  rule (the driver's two resolvers and the harness's `elabFixture` read
+  it), `Ir.frameSteps` for the frame-page measure (the
+  `pages_count_frame_steps` obligation now ranges over the engine's own
+  function; `deckStepChecks` reads it too).
+- Hook: a splitOn-idiom gate (the shape all eight test copies shared); the
+  seal/unseal mirror per file (q-elab's knots keep four hand-paired
+  lists); the size-step-formula gate outside Ir (q-layout's `scaleStep`
+  handoff); the free-severity gate retargeted to `demoted :=` (q-ir's
+  derivation made `severity :=` uncompilable); the arm gate reads
+  signatures split across lines and blesses the generic walks' leaf
+  functions by name; the constant-false `partialAllowed` inlined away.
+  `tests/golden/diagnostics.txt` merges by union (audit2-harness's other
+  half was already in).
+- PLAN Status, the Owed registry, and § Hyphenation brought back to the
+  tree; bench re-measured this session (91 / 339 ms medians of 5 vs
+  lualatex 674 / 1786).
+
 2026-09-20 — a step appears on the arrow key: one sticky stage over N
 snap points, script-free. Supersedes the reveal-in-place entry's
 scroll-state trigger and its token items.
