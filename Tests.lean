@@ -66,6 +66,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   furnitureSymmetryChecks ref oneFace
   pageNumberChecks ref oneFace
   cardChecks ref oneFace pats
+  posterChecks ref oneFace
   censusChecks ref oneFace pats
   scopeChecks ref oneFace
   bandChecks ref oneFace

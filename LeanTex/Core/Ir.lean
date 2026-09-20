@@ -186,11 +186,17 @@ def posterFontSize : Sp := Dim.pt 2488 / 100
 
 /-- The poster class's legibility floor: the same 3.5 mrad angular
 x-height bound as the card's (the fluent-reading range, Legge & Bigelow
-2011), at a 1.5 m viewing distance — 5.25 mm. No authority fixes how far
-a reader stands from a poster; 1.5 m is this engine's stated convention
-(the failure help says so), and a document's own
-`\assert{ text.xheight >= ... }` takes control. -/
-def posterXHeightFloor : Sp := Dim.mm100 525
+2011), at a 1 m viewing distance — 3.5 mm. No authority fixes how far a
+reader stands from a poster, so the distance is derived from the body
+size the class already sources: beamerposter's scale-1 A0 normalsize is
+24.88 pt (`posterFontSize`), whose x-height at a text face's typical
+0.437 x/em is 3.8 mm — fluent at 3.5 mrad out to ~1.1 m. So 1 m is the
+stated convention (a poster's body is read up close; titles carry
+further), and the floor accepts the calibration it is derived from at
+every scale ≥ 1 while still catching an unscaled 10 pt article body
+pasted on a board. A document's own `\assert{ text.xheight >= ... }`
+takes control. -/
+def posterXHeightFloor : Sp := Dim.mm100 350
 
 /-- An sRGB colour — and, when the document declared it in CMYK, the
 declared components ride along so the PDF can honour the declared model.
@@ -1059,6 +1065,16 @@ assertion exists to catch on the shipped pages. -/
 theorem card_floor_within_scale :
     ∀ p ∈ sizeScale, 800 ≤ p.2 →
       baseFontSize * (p.2 : Int) / 1000 / 2 ≥ cardXHeightFloor := by decide
+
+/-- The poster's mirror of `card_floor_within_scale`: at the same
+half-nominal fallback ratio, every scale step from `footnotesize` up on
+beamerposter's scale-1 body (`posterFontSize`) clears the 1 m fluent-
+reading floor — the class never states an assertion the calibration it is
+derived from violates, and what fails (`scriptsize`, `tiny`, or a body
+pasted in unscaled from an article) is what the assertion exists to catch. -/
+theorem poster_floor_within_scale :
+    ∀ p ∈ sizeScale, 800 ≤ p.2 →
+      posterFontSize * (p.2 : Int) / 1000 / 2 ≥ posterXHeightFloor := by decide
 
 def Style.label : Style → String
   | .bold => "bold"
@@ -3021,9 +3037,9 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
       inkInArea := some "the margins are the print safe zone: ink past them risks \
 the trim; declare \\assert{ text.in_area } to take control"
       xHeightFloor := some (posterXHeightFloor,
-        "5.25mm x-height is the fluent-reading floor at a 1.5m viewing \
-distance, this engine's stated convention (Legge & Bigelow 2011 gives the \
-angular floor; no authority fixes the distance); declare \
+        "3.5mm x-height is the fluent-reading floor (Legge & Bigelow 2011) \
+at 1m, the distance where a poster body at beamerposter's own 24.88pt \
+calibration reads fluently; declare \
 \\assert{ text.xheight >= ... } to take control")
       -- ISO 216 A0, landscape: beamerposter's default board. The measure
       -- band stays off as an honest gap: its judge reads the page text

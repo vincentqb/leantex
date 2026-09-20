@@ -2584,6 +2584,38 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (!(warnCodes (card "" "\\textcolor{washed}{faint}"
       "\\palette[decorative]{ washed = #DDDDDD }\n")).contains "W0315")
 
+/-- The poster's legibility floor, judged over the shipped pages. The floor
+is derived from the calibration the class already sources — beamerposter's
+scale-1 normalsize at the 3.5 mrad fluent-reading bound (Legge & Bigelow
+2011) gives a ~1 m reading distance — so the class default itself must
+pass: a floor that rejects the package's own body size (as a 1.5 m
+convention did, at 5.25 mm) states an assertion its own defaults violate.
+What it exists to catch — an unscaled article body pasted on a board —
+still fails. -/
+def posterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let poster (pre body : String) : String :=
+    s!"\\documentclass\{poster}\n{pre}\\begin\{document}\n\\begin\{frame}\n{body}\n\\end\{frame}\n\\end\{document}"
+  let pDoc := (elabStr (poster "" "x")).1
+  t "poster implies its contract: the faces bound, ink in area, the 1m floor"
+    (pDoc.asserts.any (·.kind == .pages .le 1) &&
+     pDoc.asserts.any (·.kind == .textInArea) &&
+     pDoc.asserts.any (·.kind == .minXHeight Ir.posterXHeightFloor))
+  let judge (src : String) : Array Diag :=
+    let doc := (elabStr src).1
+    let geom := Layout.Geom.ofPage doc.page
+    let out := layoutOf oneFace doc geom
+    Check.all (Check.Shipped.ofOut geom oneFace out true) doc.asserts
+  t "the class default body passes its own floor"
+    ((judge (poster "" "Body text at beamerposter's own calibration.")).all
+      fun d => (d.message.splitOn "text.xheight").length == 1)
+  t "an unscaled article body pasted on the board fails the floor"
+    -- 11pt, not 10: a declared 10pt equals the PageSpec default, so the
+    -- class record silently wins it back — a doors quirk noted in the
+    -- fontsize fold, not this contract's to fix.
+    ((judge (poster "\\page{ fontsize = 11pt }\n" "An unscaled article body.")).any
+      fun d => (d.message.splitOn "text.xheight").length == 2)
+
 /-- The picture block through layout: shapes land as fills and label runs
 through one `Pic.Place` transform. The transform and bounding-box facts are
 theorems (`Pic.Place.ofPage_toPage`, `Pic.Picture.box_in_bbox`); what is
