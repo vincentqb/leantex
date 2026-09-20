@@ -515,7 +515,7 @@ structure Font where
   underline never pays for it and a repeated glyph decodes once; malformed
   or truncated outline data obstructs its whole advance, never panics and
   never leaves a rule through ink it could not read. -/
-  underlineInk : Array (Thunk (Array (Int × Int)))
+  underlineInk : Thunk (Array (Thunk (Array (Int × Int))))
   /-- OpenType MATH constants, when the face carries the table: what makes
   a face usable as a document's math font. -/
   math : Option MathConsts
@@ -533,9 +533,10 @@ structure Font where
   /-- Per-gid, lazily: the glyph's vertical ink extent `(minY, maxY)` in
   font units, from its own outline — control-point hull, so the true ink is
   inside it. `none` where the outline could not be decoded; the consumer
-  falls back to nominal metrics. Memoized like `underlineInk`, so only
+  falls back to nominal metrics. Memoized like `underlineInk` (only math
+  layout asks, so a text face never builds the array), and only
   glyphs math actually measures ever decode. -/
-  inkExtent : Array (Thunk (Option (Int × Int)))
+  inkExtent : Thunk (Array (Thunk (Option (Int × Int))))
   /-- Lazily: the measured ink top of this face's own 'x' in font units,
   from its outline. `none` when the face has no 'x' or the outline does not
   decode. Optical size matching prefers this over the declared `xHeight`
@@ -859,23 +860,23 @@ def parse (data : ByteArray) : Except String Font := do
   let (bandPos, bandThick) := underlineBand (upem : Int) descent upos uthick
   let bandHi := bandPos
   let bandLo := bandPos - bandThick
-  let src := Ink.Src.make data isCff numGlyphs
-  let underlineInk : Array (Thunk (Array (Int × Int))) := Id.run do
+  -- One lazy pattern for the ink tables: the decode source (whose CFF
+  -- INDEX walk is O(numGlyphs)) and both per-gid thunk arrays sit behind
+  -- an outer Thunk each, so a face never asked for ink pays nothing at
+  -- load; the inner thunks keep per-gid memoization.
+  let src : Thunk Ink.Src := Thunk.mk fun _ => Ink.Src.make data isCff numGlyphs
+  let underlineInk : Thunk (Array (Thunk (Array (Int × Int)))) := Thunk.mk fun _ => Id.run do
     let mut ink : Array (Thunk (Array (Int × Int))) := Array.mkEmpty numGlyphs
     for g in [0:numGlyphs] do
       ink := ink.push (Thunk.mk fun _ =>
-        match src.inkAt g bandLo bandHi with
+        match src.get.inkAt g bandLo bandHi with
         | some iv => iv
         | none => #[(0, (widths[g]?.getD 0 : Int))])
     return ink
-  let inkExtent : Array (Thunk (Option (Int × Int))) := Id.run do
-    -- Only math layout asks for vertical extents, so only a face with a
-    -- MATH table pays for the per-gid thunk array: a text face costs
-    -- nothing at load and answers `none` (nominal metrics) if ever asked.
-    if (findTable data "MATH").isNone then return #[]
+  let inkExtent : Thunk (Array (Thunk (Option (Int × Int)))) := Thunk.mk fun _ => Id.run do
     let mut ext : Array (Thunk (Option (Int × Int))) := Array.mkEmpty numGlyphs
     for g in [0:numGlyphs] do
-      ext := ext.push (Thunk.mk fun _ => src.yExtentAt g)
+      ext := ext.push (Thunk.mk fun _ => src.get.yExtentAt g)
     return ext
   let sc := parseGsubSmallCaps data
   return {
@@ -909,7 +910,7 @@ def parse (data : ByteArray) : Except String Font := do
     mathTopAccent := parseTopAccent data
     inkExtent := inkExtent
     xInkTop := Thunk.mk fun _ =>
-      (gidIn cmap 'x').bind fun g => (src.yExtentAt g).map (·.2)
+      (gidIn cmap 'x').bind fun g => (src.get.yExtentAt g).map (·.2)
     hasSmcp := sc.1
     hasC2sc := sc.2.1
     smallCaps := sc.2.2
@@ -1004,7 +1005,7 @@ def Font.spaceAdvance (f : Font) : Nat :=
 band. Empty means the rule runs unbroken; a gid past the table has no ink.
 Forces the lazy decode; the answer is memoized in the font. -/
 def Font.inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
-  match f.underlineInk[g]? with
+  match f.underlineInk.get[g]? with
   | some t => t.get
   | none => #[]
 
@@ -1012,7 +1013,7 @@ def Font.inkAt (f : Font) (g : Nat) : Array (Int × Int) :=
 its own outline. `none` for an undecodable outline or a gid past the table;
 the consumer falls back to nominal metrics. Memoized in the font. -/
 def Font.yExtent (f : Font) (g : Nat) : Option (Int × Int) :=
-  (f.inkExtent[g]?).bind (·.get)
+  (f.inkExtent.get[g]?).bind (·.get)
 
 /-- The x-height optical size matching trusts, in font units: the measured
 ink top of the face's own 'x' when its outline decodes — OS/2 sxHeight lies
