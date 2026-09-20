@@ -3705,15 +3705,30 @@ bottom space and the heading after it do not stack. `parskip`, the default
 between peers, is paid only when nothing was declared. `wantDefault` marks a
 peer boundary, `owed` is the glue sequence, `flushGap` pays it when the next
 line comes. -/
-private structure Acc where
+private structure Rd where
   geom : Geom
   xHeight : Sp
+  /-- Hyphenation patterns; a path that must never hyphenate (display
+  type, verbatim) passes the sub-walk a reader with `none`. -/
+  pats : Option Hyphen.Patterns := none
+  fs : FontSet
   styles : Ir.Styles := {}
   /-- The document's resolved main locale: what the class furniture the
   walk generates (the abstract heading, caption prefixes) is worded in. -/
   locale : Locale := Locale.en
   /-- The `slides` class: frames and sections open fresh pages. -/
   slides : Bool := false
+  /-- The document's loaded images, from the driver: layout only measures
+  and places them; the bytes ride to the backends. -/
+  imgs : Image.Store := {}
+
+/-- The threaded state of the block walk, now only what the walk actually
+writes; everything it merely reads rides in `Rd`, passed to every
+`collect*` once. A scoped override — display type turning justification
+off, a verbatim block refusing hyphenation, the abstract's `\small` —
+is a modified reader handed to the sub-walk, so no restore code exists
+to forget. -/
+private structure Acc where
   /-- The right edge paragraphs break against, from the page's left margin:
   the text width, unless a column narrows it. -/
   measure : Option Sp := none
@@ -3766,19 +3781,16 @@ private structure Acc where
   owed : Array Glue := #[]
   ops : Array Op := #[]
   hyphCache : Std.HashMap String (Array Nat) := {}
-  /-- The document's loaded images, from the driver: layout only measures
-  and places them; the bytes ride to the backends. -/
-  imgs : Image.Store := {}
   /-- Links of the unpinned navigation landmarks met so far, in document
   order, as (text, target): the entries the document outline resolves. -/
   navEntries : Array (String × String) := #[]
 
 /-- A declared length with its rubber: `1.8ex plus 0.8ex minus 0.4ex` keeps
 all three parts, so a page can take up the slack the author allowed. -/
-private def Acc.resolve (a : Acc) (g : SymGlue) : Glue :=
-  g.resolve a.geom.fontSize a.xHeight
+private def Rd.resolve (r : Rd) (g : SymGlue) : Glue :=
+  g.resolve r.geom.fontSize r.xHeight
 
-private def Acc.parskip (a : Acc) : Glue := a.resolve a.geom.parskip
+private def Rd.parskip (r : Rd) : Glue := r.resolve r.geom.parskip
 
 /-- The next line is a peer of the last: the default gap, unless something
 is declared. -/
@@ -3797,9 +3809,9 @@ private def Acc.addvspace (a : Acc) (g : Glue) : Acc :=
   | none => { a with owed := #[g] }
 
 /-- Emit the gap owed, just before a line is placed. -/
-private def Acc.flushGap (a : Acc) : Acc :=
+private def Acc.flushGap (a : Acc) (r : Rd) : Acc :=
   let a := if a.owed.isEmpty then
-      (if a.wantDefault then { a with ops := a.ops.push (.skip a.parskip) } else a)
+      (if a.wantDefault then { a with ops := a.ops.push (.skip r.parskip) } else a)
     else { a with ops := a.ops.push (.skip (a.owed.foldl Glue.add {})) }
   { a with wantDefault := false, owed := #[] }
 
@@ -3808,9 +3820,9 @@ default and only it: one `.skip` of the page's parskip — the resolved
 `Ir.parskipDefault`, one rhythm quantum, unless the document declared its
 own — never two emissions on one boundary. With anything declared (`owed`
 non-empty) the default stands aside entirely. -/
-private theorem flushGap_default_exact (a : Acc) (howed : a.owed.isEmpty = true)
-    (hw : a.wantDefault = true) :
-    a.flushGap.ops = a.ops.push (.skip a.parskip) := by
+private theorem flushGap_default_exact (a : Acc) (r : Rd)
+    (howed : a.owed.isEmpty = true) (hw : a.wantDefault = true) :
+    (a.flushGap r).ops = a.ops.push (.skip r.parskip) := by
   simp [Acc.flushGap, howed, hw]
 
 /-- The parskip-growth arm of the heading's undeclared space above
@@ -3818,8 +3830,8 @@ private theorem flushGap_default_exact (a : Acc) (howed : a.owed.isEmpty = true)
 heading token's half): exactly twice the peer gap — one full rhythm unit,
 two quanta, by `Ir.default_rhythm_multiples`; the token arm is
 `Ir.heading_space_above_ge_below`'s. -/
-private theorem heading_default_before_exact (a : Acc) :
-    ((a.parskip).add (a.parskip)).width = 2 * a.parskip.width := by
+private theorem heading_default_before_exact (r : Rd) :
+    ((r.parskip).add (r.parskip)).width = 2 * r.parskip.width := by
   simp [Glue.add, Int.two_mul]
 
 /-- A page boundary. Whatever gap was owed dies with the old page, as TeX
@@ -3836,8 +3848,8 @@ private def Acc.pageBreak (a : Acc) : Acc :=
 private def Acc.pushOp (a : Acc) (op : Op) : Acc :=
   { a with ops := a.ops.push op }
 
-private def Acc.style (a : Acc) (element : String) : Ir.ElementStyle :=
-  (a.styles.find? element).getD {}
+private def Rd.style (r : Rd) (element : String) : Ir.ElementStyle :=
+  (r.styles.find? element).getD {}
 
 /-- The default ink a palette implies: its `fg` when declared, else black —
 `Design.ofDoc`'s own rule, applied here per epoch so the ink always follows
@@ -3889,20 +3901,20 @@ private def Acc.chromeFoot (a : Acc) : Option (Array Ir.BandSlot) :=
     some (Ir.bandSlotIf .left (a.frameFoot.getD #[]) Ir.notePriority
       "the \\framefoot note")
 
-private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+private def collectPara (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
     (marker : Option (Array Inline) := none)
     (rule : Option (Sp × Ir.Color) := none)
     (display : Bool := false) : Acc :=
-  let a := a.flushGap
+  let a := a.flushGap r
   -- The measure the paragraph sets against — and what a fraction-of-
   -- `\textwidth` image size resolves against: inside a `column` the
   -- current measure, not the page's. A column is a minipage of its
   -- declared width, and a minipage sets `\textwidth` and `\columnwidth`
   -- to its own `\hsize` (latex.ltx, `\@iiiminipage`), so `.95\textwidth`
   -- inside a column names 95% of the column.
-  let measure := (a.measure.getD a.geom.textWidth) - indent
+  let measure := (a.measure.getD r.geom.textWidth) - indent
   -- The page's text colour is the default: content that declared its own
   -- keeps it, so a themed page colours everything or nothing silently dies
   -- on a dark standout background.
@@ -3910,10 +3922,10 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       { baseStyle with color := a.fg } else baseStyle
   let baseStyle := { baseStyle with ground := a.ground }
   let (items, ds, cache, extras, rawNotes) :=
-    itemsOfInlines pats size a.xHeight fs baseStyle inlines a.hyphCache a.imgs
-      measure a.geom.textHeight (noteOk := true)
+    itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache r.imgs
+      measure r.geom.textHeight (noteOk := true)
   let items :=
-    if a.geom.justify then items
+    if r.geom.justify then items
     else if display then
       displayItems measure items
     else raggedItems items
@@ -3929,23 +3941,23 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     let mut out : Array (Nat × NoteBlock) := #[]
     let mut ds := ds
     let mut cache := cache
-    let noteSize := Ir.scaleStep a.geom.fontSize "footnotesize"
-    let sep := a.geom.fontSize * 665 / 1000
-    let bodyFont := fs.get (fs.lookup 0 false false)
-    let scaleB (v : Int) : Sp := v * a.geom.fontSize / bodyFont.unitsPerEm
-    let target := a.geom.textWidth
+    let noteSize := Ir.scaleStep r.geom.fontSize "footnotesize"
+    let sep := r.geom.fontSize * 665 / 1000
+    let bodyFont := r.fs.get (r.fs.lookup 0 false false)
+    let scaleB (v : Int) : Sp := v * r.geom.fontSize / bodyFont.unitsPerEm
+    let target := r.geom.textWidth
     for (markIdx, num, body) in rawNotes do
       let (nitems0, nds, cache2, _, _) :=
-        itemsOfInlines pats noteSize a.xHeight fs { color := a.fg, ground := a.ground } body
-          cache a.imgs a.geom.textWidth a.geom.textHeight
+        itemsOfInlines r.pats noteSize r.xHeight r.fs { color := a.fg, ground := a.ground } body
+          cache r.imgs r.geom.textWidth r.geom.textHeight
       ds := ds ++ nds
       cache := cache2
-      let (mk, miss) := markBox fs { color := a.fg, ground := a.ground } noteSize num
+      let (mk, miss) := markBox r.fs { color := a.fg, ground := a.ground } noteSize num
       for (idx, c) in miss do
         ds := ds.push (Diag.of .E0405
-          s!"'{(fs.get idx).family}' has no glyph for '{c}'; dropped")
+          s!"'{(r.fs.get idx).family}' has no glyph for '{c}'; dropped")
       let nitems := #[mk] ++ nitems0
-      let nitems := if a.geom.justify then nitems else raggedItems nitems
+      let nitems := if r.geom.justify then nitems else raggedItems nitems
       let breaks := kpTwoPass nitems target
       let mut lines : Array LineOut := #[]
       let mut yPrev : Sp := 0
@@ -3956,14 +3968,14 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       for brk in breaks do
         let s := if first then lineStart nitems 0 else lineStart nitems (prev + 1)
         let (lsegs, lw, overfull, _, _) :=
-          setLine nitems s brk target a.geom.justify false false
+          setLine nitems s brk target r.geom.justify false false
         if overfull then
           ds := ds.push (Diag.of .W0005 "overfull line; no feasible break")
-        let box := lineExtent fs a.geom.fontSize (scaleB bodyFont.ascent)
+        let box := lineExtent r.fs r.geom.fontSize (scaleB bodyFont.ascent)
           (scaleB bodyFont.capHeight) (scaleB (-bodyFont.descent))
-          a.geom.leading noteSize lsegs
+          r.geom.leading noteSize lsegs
         let y := if first then max box.above sep else yPrev + belowPrev + box.above
-        lines := lines.push { x := a.geom.hmargin, y := y, size := noteSize,
+        lines := lines.push { x := r.geom.hmargin, y := y, size := noteSize,
                               segs := lsegs, setWidth := lw, note := true }
         hgt := y + box.inkBelow
         yPrev := y
@@ -3978,9 +3990,9 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
   let (markerSegs, ds, cache) := match marker with
     | some m =>
       let (mi, mds, cache, _, _) :=
-        itemsOfInlines pats size a.xHeight fs { color := a.fg, ground := a.ground } m cache
-          a.imgs measure a.geom.textHeight
-      let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) a.geom.textWidth false
+        itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } m cache
+          r.imgs measure r.geom.textHeight
+      let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) r.geom.textWidth false
       (some (segs, w), ds ++ mds, cache)
     | none => (none, ds, cache)
   { a with
@@ -3989,9 +4001,9 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       items := items, extras := extras, diags := ds
       target := measure
       indent := indent, center := center, size := size
-      justify := a.geom.justify
-      protrude := a.geom.protrude
-      expand := a.geom.expand
+      justify := r.geom.justify
+      protrude := r.geom.protrude
+      expand := r.geom.expand
       markerSegs := markerSegs, rule := rule
       notes := noteBlocks }) }
 
@@ -4070,16 +4082,16 @@ saves), and therefore never justified either (Butterick, "Justified
 text": justification without hyphenation leaves the breaker only word
 spaces, and a two-word display line stretches across the whole measure;
 moloch's own title and title-page templates are `\raggedright`). The
-door takes no patterns and forces ragged, so no heading path can do
-either by construction — the invariant is the signature. -/
-private def collectDisplay (a : Acc) (fs : FontSet)
+door hands the sub-walk a reader with no patterns and ragged setting, so
+no heading path can do either by construction — the invariant is the
+signature. -/
+private def collectDisplay (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
     (rule : Option (Sp × Ir.Color) := none) : Acc :=
-  let sub := collectPara { a with geom := { a.geom with justify := false } }
-    none fs inlines indent center size (baseStyle := baseStyle) (rule := rule)
+  collectPara { r with pats := none, geom := { r.geom with justify := false } }
+    a inlines indent center size (baseStyle := baseStyle) (rule := rule)
     (display := true)
-  { sub with geom := a.geom }
 
 /-- The natural (unstretched, unshrunk) width of a set of items: what the
 cell takes when nothing bends. Penalties add nothing — a pen's width is
@@ -4097,14 +4109,14 @@ declared `titlepage` font template wraps it — the same template the HTML
 backend applies to its <h1>, so the two surfaces cannot diverge — and
 undeclared it takes display type at the scale's LARGE step in the bold
 face (classes.dtx's \@maketitle sets {\LARGE \@title \par}). -/
-private def collectTitle (a : Acc) (fs : FontSet) (title : Array Inline)
+private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
     (indent : Sp) (center : Bool) : Acc :=
-  match (a.style "titlepage").font with
+  match (r.style "titlepage").font with
   | some tpl =>
-    collectDisplay a fs (Ir.fillTemplate tpl title) indent center a.geom.fontSize
+    collectDisplay r a (Ir.fillTemplate tpl title) indent center r.geom.fontSize
   | none =>
-    collectDisplay a fs title indent center
-      (Ir.scaleStep a.geom.fontSize "LARGE")
+    collectDisplay r a title indent center
+      (Ir.scaleStep r.geom.fontSize "LARGE")
       (baseStyle := { bold := true })
 
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
@@ -4115,20 +4127,20 @@ a row advances by its tallest cell; rules are set rows of rule segments at
 booktabs' weights, padded by exactly their declared seps — `tableRule`
 placement stacks flush, no leading. `center` centres the whole table box in
 the measure (a table under `\centering` or inside a float). -/
-private def collectTable (a0 : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+private def collectTable (r : Rd) (a0 : Acc)
     (cols : Array Ir.ColSpec) (padL padR : Bool)
     (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule))
     (indent : Sp) (center : Bool) : Acc := Id.run do
   if cols.isEmpty then
     return a0
-  let mut a := a0.flushGap
-  let size := a.geom.fontSize
+  let mut a := a0.flushGap r
+  let size := r.geom.fontSize
   let tok (name : String) (dflt : Dim.Length) : Sp :=
     match a.tokens.find? name with
-    | some g => (a.resolve g).width
-    | none => dflt.resolve size a.xHeight
+    | some g => (r.resolve g).width
+    | none => dflt.resolve size r.xHeight
   let colsep := tok "tabcolsep" Ir.tabColSep
-  let total := (a.measure.getD a.geom.textWidth) - indent
+  let total := (a.measure.getD r.geom.textWidth) - indent
   -- Natural widths, measured per cell (needed for `l`/`c`/`r` column
   -- widths and for right-aligned placement). The measuring pass drops its
   -- diagnostics: the setting pass below emits them once.
@@ -4138,8 +4150,8 @@ private def collectTable (a0 : Acc) (pats : Option Hyphen.Patterns) (fs : FontSe
     let mut rowNats : Array Sp := #[]
     for cell in row do
       let (items, _, c, _) :=
-        itemsOfInlines pats size a.xHeight fs { color := a.fg, ground := a.ground } cell cache
-          a.imgs a.geom.textWidth a.geom.textHeight
+        itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } cell cache
+          r.imgs r.geom.textWidth r.geom.textHeight
       cache := c
       rowNats := rowNats.push (itemsNaturalWidth items)
     nats := nats.push rowNats
@@ -4198,8 +4210,8 @@ private def collectTable (a0 : Acc) (pats : Option Hyphen.Patterns) (fs : FontSe
   let mut prev : Nat := 0
   for i in [0:rows.size + 1] do
     let mut here : Array Ir.TableRule := #[]
-    for (k, r) in rules do
-      if k == i then here := here.push r
+    for (k, tr) in rules do
+      if k == i then here := here.push tr
     let mut hi := 0
     for _ in [0:here.size] do
       if h : hi < here.size then
@@ -4207,7 +4219,7 @@ private def collectTable (a0 : Acc) (pats : Option Hyphen.Patterns) (fs : FontSe
         | .gap g =>
           -- exactly this space: it replaces a neighbouring rule's sep
           pendBelow := none
-          a := { a with ops := a.ops.push (.skip { width := (a.resolve g).width }) }
+          a := { a with ops := a.ops.push (.skip { width := (r.resolve g).width }) }
           prev := 2
           hi := hi + 1
         | .cmid _ _ _ _ =>
@@ -4221,7 +4233,7 @@ private def collectTable (a0 : Acc) (pats : Option Hyphen.Patterns) (fs : FontSe
               match here[hi] with
               | .cmid ca cb tl tr =>
                 let (l, w) := cmidSeg ca cb tl tr
-                let l' := a.geom.hmargin + l
+                let l' := r.geom.hmargin + l
                 if first then
                   lineX := l'
                   x := l'
@@ -4240,8 +4252,8 @@ private def collectTable (a0 : Acc) (pats : Option Hyphen.Patterns) (fs : FontSe
           a := { a with ops := ops }
           pendBelow := some belowSep
           prev := 1
-        | r =>
-          let (th, ab, be) := match r with
+        | tr =>
+          let (th, ab, be) := match tr with
             | .top => (heavy, aboveTop, belowSep)
             | .bottom => (heavy, aboveSep, belowBottom)
             | _ => (light, aboveSep, belowSep)
@@ -4250,7 +4262,7 @@ private def collectTable (a0 : Acc) (pats : Option Hyphen.Patterns) (fs : FontSe
             | 2 => 0
             | _ => ab
           let ops := (a.ops.push (.skip { width := sep })).push
-            (.tableRule th (a.geom.hmargin + x0) tableW #[.rule tableW th 0 fg])
+            (.tableRule th (r.geom.hmargin + x0) tableW #[.rule tableW th 0 fg])
           a := { a with ops := ops }
           pendBelow := some be
           prev := 1
@@ -4274,11 +4286,11 @@ private def collectTable (a0 : Acc) (pats : Option Hyphen.Patterns) (fs : FontSe
             wantDefault := false
             owed := #[] }
           let sub := match spec.align with
-            | .center => collectPara sub pats fs cell x true size
+            | .center => collectPara r sub cell x true size
             | .right =>
               let nat := ((nats[i]?).bind (·[j]?)).getD 0
-              collectPara sub pats fs cell (x + max 0 (wj - nat)) false size
-            | .left => collectPara sub pats fs cell x false size
+              collectPara r sub cell (x + max 0 (wj - nat)) false size
+            | .left => collectPara r sub cell x false size
           a := { a with
             ops := a.ops ++ sub.ops
             hyphCache := sub.hyphCache
@@ -4302,23 +4314,23 @@ this is the diagnostic side, bounding the box by the text area — a picture
 that cannot fit is still placed (best effort, never a blank), and W0335
 says the page may be overrun. `center` sets the box's left edge the way a
 centred paragraph sets its lines. -/
-private def collectPicture (a : Acc) (pic : Ir.Pic.Picture) (indent : Sp)
-    (center : Bool) : Acc :=
+private def collectPicture (r : Rd) (a : Acc) (pic : Ir.Pic.Picture)
+    (indent : Sp) (center : Bool) : Acc :=
   let ((px0, _), (px1, py1)) := pic.bbox
   let w := px1 - px0
   let h := py1 - pic.bbox.1.2
-  let avail := (a.measure.getD a.geom.textWidth) - indent
-  let a := if w > avail || h > a.geom.textHeight then
+  let avail := (a.measure.getD r.geom.textWidth) - indent
+  let a := if w > avail || h > r.geom.textHeight then
       { a with diags := a.diags.push (Diag.of .W0335
         (s!"the picture is {w.toPtString}pt × {h.toPtString}pt against a text area " ++
-          s!"of {avail.toPtString}pt × {a.geom.textHeight.toPtString}pt; it may overrun \
+          s!"of {avail.toPtString}pt × {r.geom.textHeight.toPtString}pt; it may overrun \
 the page")
         (help := "shrink the picture ([scale=...]) or widen the text area \
 (\\page{ margin = ... })")) }
     else a
   let x := if center then indent + max 0 ((avail - w) / 2) else indent
-  let a := a.flushGap
-  { a with ops := a.ops.push (.picture (a.geom.hmargin + x) pic) }
+  let a := a.flushGap r
+  { a with ops := a.ops.push (.picture (r.geom.hmargin + x) pic) }
 
 /-- What a captioned float stacks, top to bottom. Position decides where
 the caption and the object stand, never which gaps are paid — that is the
@@ -4379,30 +4391,30 @@ private def statefulBlock : Block → Bool
 mutual
 
 /-- Walk a block sequence, spacing peers by `parskip`. -/
-private def collectBlocks (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+private def collectBlocks (r : Rd) (a : Acc)
     (blocks : Array Block) (indent : Sp) : Acc :=
-  collectBlockList a pats fs blocks.toList indent true
+  collectBlockList r a blocks.toList indent true
 
-private def collectBlockList (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+private def collectBlockList (r : Rd) (a : Acc)
     (blocks : List Block) (indent : Sp) (first : Bool) : Acc :=
   match blocks with
   | [] => a
   | blk :: rest =>
     if statefulBlock blk then
-      collectBlockList (collectBlock a pats fs blk indent) pats fs rest indent first
+      collectBlockList r (collectBlock r a blk indent) rest indent first
     else
     let a := if first then a else a.wantGap
-    let a := collectBlock a pats fs blk indent
-    collectBlockList a pats fs rest indent false
+    let a := collectBlock r a blk indent
+    collectBlockList r a rest indent false
 
 /-- One list item: its leading paragraph carries the marker. -/
-private def collectItem (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+private def collectItem (r : Rd) (a : Acc)
     (item : List Block) (indent : Sp) (first : Bool) (marker : Array Inline) : Acc :=
   match item with
   | [] => a
   | blk :: rest =>
     if statefulBlock blk then
-      collectItem (collectBlock a pats fs blk indent) pats fs rest indent first marker
+      collectItem r (collectBlock r a blk indent) rest indent first marker
     else
     let a := if first then a else a.wantGap
     let a := match blk, first with
@@ -4414,12 +4426,12 @@ private def collectItem (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
         let marker := match content with
           | #[.colored c none _] => #[Ir.Inline.colored c none marker]
           | _ => marker
-        collectPara a pats fs content indent false a.geom.fontSize
+        collectPara r a content indent false r.geom.fontSize
           (marker := some marker)
-      | _, _ => collectBlock a pats fs blk indent
-    collectItem a pats fs rest indent false marker
+      | _, _ => collectBlock r a blk indent
+    collectItem r a rest indent false marker
 
-private def collectItems (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+private def collectItems (r : Rd) (a : Acc)
     (items : List (Array Block)) (indent : Sp) (st : Ir.ElementStyle)
     (ordered : Bool) (level : Nat) (idx : Nat) : Acc :=
   match items with
@@ -4428,46 +4440,46 @@ private def collectItems (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- Items are peers separated by the declared gap. The default is none,
     -- as it was: a list is one block, and its leading is its rhythm.
     let a := match idx == 1, st.gap with
-      | false, some g => a.addvspace (a.resolve g)
+      | false, some g => a.addvspace (r.resolve g)
       | _, _ => a
     -- The item's marker: the declared style, or the class default for the
     -- level and, for enumerate, this item's number. The class glyph is
     -- checked against the loaded faces so it degrades to its stand-in
     -- rather than to nothing.
     let covered := fun c =>
-      (fs.body.gid c).isSome || (fs.fallbackFor c).isSome
+      (r.fs.body.gid c).isSome || (r.fs.fallbackFor c).isSome
     let marker := st.marker.getD (ListMark.marker ordered level idx covered)
-    let a := collectItem a pats fs item.toList indent true marker
-    collectItems a pats fs rest indent st ordered level (idx + 1)
+    let a := collectItem r a item.toList indent true marker
+    collectItems r a rest indent st ordered level (idx + 1)
 
 /-- Centered content: paragraphs center, anything else nests unchanged. -/
-private def collectCentered (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+private def collectCentered (r : Rd) (a : Acc)
     (body : List Block) (indent : Sp) : Acc :=
   match body with
   | [] => a
   | blk :: rest =>
     let a := match blk with
-      | .para content => collectPara a pats fs content indent true a.geom.fontSize
+      | .para content => collectPara r a content indent true r.geom.fontSize
       -- The centred title block: the level-0 heading centres with the
       -- furniture around it, through the same title door as the uncentred
       -- path.
-      | .section 0 _ _ title => collectTitle a fs title indent true
+      | .section 0 _ _ title => collectTitle r a title indent true
       -- A centred picture: its box centres in the measure, as the lines of
       -- a centred paragraph do.
-      | .picture pic => collectPicture a pic indent true
+      | .picture pic => collectPicture r a pic indent true
       -- A table under \centering (or in a float's centred body) centres
       -- as one box in the measure; its cells keep their own alignment.
       | .table cols pl pr rows rules =>
-        collectTable a pats fs cols pl pr rows rules indent true
-      | _ => collectBlock a pats fs blk indent
-    collectCentered (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
-      pats fs rest indent
+        collectTable r a cols pl pr rows rules indent true
+      | _ => collectBlock r a blk indent
+    collectCentered r (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
+      rest indent
 
 /-- One column after another: each collects against its own measure at its
 own offset, a `colNext` marker between two so placement rewinds the
 vertical position. The hyphenation cache threads through; the outer
 measure and gap state are restored per column. -/
-private def collectColumns (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+private def collectColumns (r : Rd) (a : Acc)
     (cols : List (Option Nat × Array Block)) (x0 shareW gutter total : Sp) : Acc :=
   match cols with
   | [] => a
@@ -4480,40 +4492,40 @@ private def collectColumns (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontS
       ops := #[]
       wantDefault := false
       owed := #[] }
-    let sub := collectBlocks sub pats fs body x0
+    let sub := collectBlocks r sub body x0
     let a := { a with
       ops := a.ops ++ sub.ops ++ (if rest.isEmpty then #[] else #[Op.colNext])
       hyphCache := sub.hyphCache }
-    collectColumns a pats fs rest (x0 + wi + gutter) shareW gutter total
+    collectColumns r a rest (x0 + wi + gutter) shareW gutter total
 
 /-- A standout frame's content: paragraphs centre and set Large bold, in
 the page's (inverted) text colour; anything else nests through the normal
 walk and still inherits the colour. -/
-private def collectStandout (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+private def collectStandout (r : Rd) (a : Acc)
     (body : List Block) (indent : Sp) : Acc :=
   match body with
   | [] => a
   | blk :: rest =>
     let a := match blk with
       | .para content =>
-        match (a.style "standout").font with
+        match (r.style "standout").font with
         | some tpl =>
-          collectDisplay a fs (Ir.fillTemplate tpl content) indent true a.geom.fontSize
+          collectDisplay r a (Ir.fillTemplate tpl content) indent true r.geom.fontSize
         | none =>
-          collectDisplay a fs content indent true (a.geom.fontSize * 1440 / 1000)
+          collectDisplay r a content indent true (r.geom.fontSize * 1440 / 1000)
             (baseStyle := { bold := true })
-      | _ => collectBlock a pats fs blk indent
-    collectStandout (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
-      pats fs rest indent
+      | _ => collectBlock r a blk indent
+    collectStandout r (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
+      rest indent
 
-private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
+private def collectBlock (r : Rd) (a : Acc)
     (blk : Block) (indent : Sp) : Acc :=
   match blk with
   | .para content =>
     -- A paragraph holding only label anchors ships no ink: no line and no
     -- gap, or a \label on its own source line would open a blank line.
     if !content.isEmpty && content.all (fun x => x matches .label _) then a
-    else collectPara a pats fs content indent false a.geom.fontSize
+    else collectPara r a content indent false r.geom.fontSize
   | .equation num content => Id.run do
     -- A numbered display: the formula centred on the measure, the tag
     -- right-aligned on its baseline (amsmath's equation shape). The line
@@ -4524,16 +4536,16 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- its own right-aligned line rather than overprinting (TeX moves the
     -- number down in the same overlap). Justified whatever the page
     -- declares: the fils are the alignment.
-    let a := a.flushGap
+    let a := a.flushGap r
     let baseStyle : TextStyle := { color := a.fg, ground := a.ground }
     -- Image fractions resolve against the current measure, as collectPara's.
-    let target := (a.measure.getD a.geom.textWidth) - indent
+    let target := (a.measure.getD r.geom.textWidth) - indent
     let (citems, ds1, cache1, extras, _) :=
-      itemsOfInlines pats a.geom.fontSize a.xHeight fs baseStyle content
-        a.hyphCache a.imgs target a.geom.textHeight
+      itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
+        a.hyphCache r.imgs target r.geom.textHeight
     let (nitems, ds2, cache2, _, _) :=
-      itemsOfInlines pats a.geom.fontSize a.xHeight fs baseStyle #[.text num]
-        cache1 a.imgs target a.geom.textHeight
+      itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle #[.text num]
+        cache1 r.imgs target r.geom.textHeight
     -- both walks close with parfill glue and a forced pen; the assembled
     -- line supplies its own ending
     let strip (xs : Array Item) : Array Item :=
@@ -4542,7 +4554,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let nitems := strip nitems
     let numW := (measure nitems 0 nitems.size).natural
     let mut items : Array Item :=
-      #[.box numW 0 a.fg none #[] a.geom.fontSize false 0 a.ground, .glue { fil := true }]
+      #[.box numW 0 a.fg none #[] r.geom.fontSize false 0 a.ground, .glue { fil := true }]
     items := items ++ citems
     items := items.push (.glue { fil := true })
     items := items ++ nitems
@@ -4552,7 +4564,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       ops := a.ops.push (.para {
         items := items, extras := extras, diags := ds1 ++ ds2
         target := target
-        indent := indent, center := false, size := a.geom.fontSize
+        indent := indent, center := false, size := r.geom.fontSize
         justify := true
         markerSegs := none, rule := none }) }
   | .section level _ num title =>
@@ -4561,7 +4573,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       -- door (`collectTitle`). Never a divider: it stands inside the
       -- furniture \maketitle built (the title frame, the centred block),
       -- so it opens no page of its own even in slides.
-      collectTitle a fs title indent false
+      collectTitle r a title indent false
     else
     -- The section in force, for the footer's \sectiontitle slot — and its
     -- anchor: a level-1 heading is addressable (`Ir.slug`, the id the HTML
@@ -4571,7 +4583,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
         { a with curSection := title
                  ops := a.ops.push (.anchor (Ir.slug title)) }
       else a
-    if a.slides && level == 1 && (a.pal.find? "progressfg").isSome then
+    if r.slides && level == 1 && (a.pal.find? "progressfg").isSome then
       -- The themed section page: its own page, vertically centred, the
       -- title ragged-left in a centred measure with the deck position
       -- drawn under it as a progress bar.
@@ -4583,14 +4595,14 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       -- The centred measure the title and the bar share: moloch's own
       -- 0.7875 of the line width (beamerinnerthememoloch.dtx, section page
       -- progressbar template: \begin{minipage}{0.7875\linewidth}).
-      let mp : Sp := a.geom.textWidth * 7875 / 10000
-      let indent : Sp := (a.geom.textWidth - mp) / 2
-      let st := a.style "sectionpage"
+      let mp : Sp := r.geom.textWidth * 7875 / 10000
+      let indent : Sp := (r.geom.textWidth - mp) / 2
+      let st := r.style "sectionpage"
       let a := match st.font with
         | some tpl =>
-          collectDisplay a fs (Ir.fillTemplate tpl title) indent false a.geom.fontSize
+          collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
         | none =>
-          collectDisplay a fs title indent false (a.geom.fontSize * 1440 / 1000)
+          collectDisplay r a title indent false (r.geom.fontSize * 1440 / 1000)
             (baseStyle := { bold := true })
       let fgC := (a.pal.find? "progressfg").getD a.fg
       let bgC := (a.pal.find? "progressbg").getD ((a.pal.find? "bg").getD Ir.Color.white)
@@ -4598,7 +4610,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       -- (beamerouterthememoloch.dtx, \moloch@outer@setdefaults) — the same
       -- value the bundles declare through the token.
       let thick := ((a.tokens.find? "progressheight").map
-        fun g => (a.resolve g).width).getD (pt 1)
+        fun g => (r.resolve g).width).getD (pt 1) -- moloch's own default: progressbar linewidth=1pt (beamerouterthememoloch.dtx, \moloch@outer@setdefaults)
       -- No clamp: every threaded position is a some of `Ir.frameNumbers`,
       -- ≤ the denominator by theorem (`frameNumbers_le_count`) — moloch
       -- clamps (beamerouterthememoloch.dtx:290) only because its total
@@ -4608,17 +4620,17 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       let a := if a.frameCount == 0 then a else
         { a with ops := a.ops.push (.progress
           a.framesDone a.frameCount fgC bgC thick
-          (a.geom.hmargin + indent) mp) }
+          (r.geom.hmargin + indent) mp) }
       a.pageBreak
     else
     -- In slides, a section is a divider: its own page between frames rather
     -- than a heading dropped onto the bottom of the previous slide.
-    let a := if a.slides then a.pageBreak else a
+    let a := if r.slides then a.pageBreak else a
     let a := if a.footAllowed then
         { a with ops := a.ops.push (.foot none none) } else a
     let element := match level with
       | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
-    let st := a.style element
+    let st := r.style element
     -- The resolved number stands before the title with a \quad between
     -- (classes.dtx \@seccntformat: `\csname the#1\endcsname\quad`),
     -- carried as the em-quad kern so no face is asked for a glyph.
@@ -4630,26 +4642,26 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- more above than below) — its own tokens, so a class that zeroes
     -- \parskip keeps its heading space; a document with a larger parskip
     -- keeps the walk's 2-quanta growth.
-    let hb := a.resolve (Ir.headingBeforeDefault a.geom.fontSize)
-    let two := a.parskip.add a.parskip
-    let a := a.addvspace ((st.before.map a.resolve).getD
+    let hb := r.resolve (Ir.headingBeforeDefault r.geom.fontSize)
+    let two := r.parskip.add r.parskip
+    let a := a.addvspace ((st.before.map r.resolve).getD
       (if two.width > hb.width then two else hb))
     -- A declared font template wraps the title; without one, headings set in
     -- the bold face of the body family at the level's size.
     let a := match st.font with
       | some tpl =>
-        collectDisplay a fs (Ir.fillTemplate tpl title) indent false a.geom.fontSize
-          (rule := st.rule.map fun (r : Ir.Color × Option String) =>
-            (headingRuleWeight a.geom.fontSize, r.1))
+        collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
+          (rule := st.rule.map fun (rc : Ir.Color × Option String) =>
+            (headingRuleWeight r.geom.fontSize, rc.1))
       | none =>
-        collectDisplay a fs title indent false (sectionSize a.geom level)
+        collectDisplay r a title indent false (sectionSize r.geom level)
           (baseStyle := { bold := true })
-          (rule := st.rule.map fun (r : Ir.Color × Option String) =>
-            (headingRuleWeight a.geom.fontSize, r.1))
-    let ha := a.resolve (Ir.headingAfterDefault a.geom.fontSize)
-    let a := a.vskip ((st.after.map a.resolve).getD
-      (if a.parskip.width > ha.width then a.parskip else ha))
-    if a.slides then a.pageBreak else a
+          (rule := st.rule.map fun (rc : Ir.Color × Option String) =>
+            (headingRuleWeight r.geom.fontSize, rc.1))
+    let ha := r.resolve (Ir.headingAfterDefault r.geom.fontSize)
+    let a := a.vskip ((st.after.map r.resolve).getD
+      (if r.parskip.width > ha.width then r.parskip else ha))
+    if r.slides then a.pageBreak else a
   | .list ordered items =>
     -- Depth is per list kind, as LaTeX counts it. The class defines four
     -- levels; where LaTeX errors ("Too deeply nested"), leantex warns and
@@ -4664,35 +4676,35 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- The level's own style, falling back to the kind's base style — so a
     -- bare `\style{itemize}{...}` keeps styling every level, as it did.
     let element := if ordered then "enumerate" else "itemize"
-    let st := if level == 1 then a.style element
-      else (a.styles.find? s!"{element}{level}").getD (a.style element)
+    let st := if level == 1 then r.style element
+      else (r.styles.find? s!"{element}{level}").getD (r.style element)
     -- LaTeX's `topsep`: the declared space stands above the list and below it.
     let a := match st.before with
-      | some g => a.addvspace (a.resolve g)
+      | some g => a.addvspace (r.resolve g)
       | none => a
-    let indent := indent + (st.indent.map fun g => (a.resolve g).width).getD a.geom.listIndent
+    let indent := indent + (st.indent.map fun g => (r.resolve g).width).getD r.geom.listIndent
     let a := if ordered then { a with enumDepth := depth } else { a with itemDepth := depth }
-    let a := collectItems a pats fs items.toList indent st ordered level 1
+    let a := collectItems r a items.toList indent st ordered level 1
     let a := if ordered then { a with enumDepth := depth - 1 }
       else { a with itemDepth := depth - 1 }
     match st.before with
-    | some g => a.addvspace (a.resolve g)
+    | some g => a.addvspace (r.resolve g)
     | none => a
   | .center body =>
-    collectCentered a pats fs body.toList indent
+    collectCentered r a body.toList indent
   -- A role is a name for the class hook; undeclared, the body collects
   -- exactly as it would unwrapped (roleLayoutChecks pins the zero-byte
   -- claim). A declared `\style{<role>}` gives the role its own rhythm —
   -- the space stands above and below where the role stands, as a list's
   -- topsep does, so the value lives once, upstream, never at use sites.
   | .role n body =>
-    let st := a.style n
+    let st := r.style n
     let a := match st.before with
-      | some g => a.addvspace (a.resolve g)
+      | some g => a.addvspace (r.resolve g)
       | none => a
-    let a := collectBlocks a pats fs body indent
+    let a := collectBlocks r a body indent
     match st.after with
-    | some g => a.addvspace (a.resolve g)
+    | some g => a.addvspace (r.resolve g)
     | none => a
   | .quote body =>
     -- A quotation is set off by indenting both margins by the list indent:
@@ -4703,8 +4715,8 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- is restored after, exactly as a column restores it.
     let saved := a.measure
     let sub := { a with
-      measure := some ((a.measure.getD a.geom.textWidth) - a.geom.listIndent) }
-    let sub := collectBlocks sub pats fs body (indent + a.geom.listIndent)
+      measure := some ((a.measure.getD r.geom.textWidth) - r.geom.listIndent) }
+    let sub := collectBlocks r sub body (indent + r.geom.listIndent)
     { sub with measure := saved }
   | .titled kind title body =>
     -- beamer's titled block: the title line in the kind's role pair
@@ -4718,16 +4730,16 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       let saved := (a.fg, a.ground)
       let a := { a with fg := look.fg
                         ground := look.bar.orElse fun _ => a.ground }
-      let a := collectDisplay a fs title indent false a.geom.fontSize
+      let a := collectDisplay r a title indent false r.geom.fontSize
         (baseStyle := { bold := true })
       let a := match look.bar with
         | some barBg =>
-          { a with ops := a.ops.push (.blockBar barBg (a.geom.fontSize / 2)
-              (a.geom.hmargin + indent)
-              ((a.measure.getD a.geom.textWidth) - indent)) }
+          { a with ops := a.ops.push (.blockBar barBg (r.geom.fontSize / 2)
+              (r.geom.hmargin + indent)
+              ((a.measure.getD r.geom.textWidth) - indent)) }
         | none => a
       { a with fg := saved.1, ground := saved.2 }.wantGap
-    collectBlocks a pats fs body indent
+    collectBlocks r a body indent
   | .abstract body =>
     -- article.cls §abstract: `\small`, a centred `{\bfseries\abstractname}`
     -- heading, then the body on quotation margins. The heading word is
@@ -4737,30 +4749,29 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- follows; undeclared, the class's own small bold line. The body takes
     -- the scale's own \small, the quotation margins are the quote arm's,
     -- and the outer state is restored the way a quote restores its measure.
-    let small := Ir.scaleStep a.geom.fontSize "small"
-    let hst := Ir.abstractHeadingStyle a.styles
+    let small := Ir.scaleStep r.geom.fontSize "small"
+    let hst := Ir.abstractHeadingStyle r.styles
     let hcenter := hst.align != some "left"
     let a := match hst.font with
       | some tpl =>
-        collectDisplay a fs (Ir.fillTemplate tpl #[.text a.locale.abstract]) indent
-          hcenter a.geom.fontSize
+        collectDisplay r a (Ir.fillTemplate tpl #[.text r.locale.abstract]) indent
+          hcenter r.geom.fontSize
       | none =>
-        collectDisplay a fs #[.text a.locale.abstract] indent hcenter small
+        collectDisplay r a #[.text r.locale.abstract] indent hcenter small
           (baseStyle := { bold := true })
     let a := a.wantGap
     let saved := a.measure
-    let savedSize := a.geom.fontSize
     let sub := { a with
-      measure := some ((a.measure.getD a.geom.textWidth) - a.geom.listIndent)
-      geom := { a.geom with fontSize := small } }
-    let sub := collectBlocks sub pats fs body (indent + a.geom.listIndent)
-    { sub with measure := saved, geom := { sub.geom with fontSize := savedSize } }
+      measure := some ((a.measure.getD r.geom.textWidth) - r.geom.listIndent) }
+    let sub := collectBlocks { r with geom := { r.geom with fontSize := small } }
+      sub body (indent + r.geom.listIndent)
+    { sub with measure := saved }
   | .columns cols =>
     -- Declared widths are per mille of the full measure. The leftover goes
     -- to the widthless columns in equal shares when there are any, and into
     -- equal gutters between the columns otherwise.
-    let a := a.flushGap
-    let total := (a.measure.getD a.geom.textWidth) - indent
+    let a := a.flushGap r
+    let total := (a.measure.getD r.geom.textWidth) - indent
     let declared := cols.foldl (fun s (c : Option Nat × Array Block) =>
       s + ((c.1.map fun f => total * f / 1000).getD 0)) 0
     let unspecified := cols.foldl (fun c (col : Option Nat × Array Block) =>
@@ -4769,7 +4780,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let shareW := if unspecified > 0 then rem / unspecified else 0
     let gutter := if unspecified == 0 && cols.size > 1 then rem / (cols.size - 1) else 0
     let a := { a with ops := a.ops.push .colOpen }
-    let a := collectColumns a pats fs cols.toList indent shareW gutter total
+    let a := collectColumns r a cols.toList indent shareW gutter total
     { a with ops := a.ops.push .colClose }
   | .bibliography _ _ items =>
     -- The reference list: each resolved entry is one paragraph led by its
@@ -4780,21 +4791,21 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       let content := match item.marker with
         | some m => #[Ir.Inline.text s!"[{m}] "] ++ item.content
         | none => item.content
-      let a := collectPara a pats fs content indent false a.geom.fontSize
+      let a := collectPara r a content indent false r.geom.fontSize
       a.wantGap
   | .spaced before body =>
     -- Declared space above the block, resolved against the body font: the
     -- gap in place of the default, added to any other declared glue — a
     -- bare `\vspace` after a list adds to the list's `topsep`, as in LaTeX.
-    let a := a.vskip (a.resolve before)
-    collectBlocks a pats fs body indent
+    let a := a.vskip (r.resolve before)
+    collectBlocks r a body indent
   | .step _ _ body =>
     -- Pure grouping: any dimming was painted into colours before layout.
-    collectBlocks a pats fs body indent
+    collectBlocks r a body indent
   | .only _ body =>
     -- `run` already kept this node for the PDF (`Ir.keepFor "pdf"`), so by
     -- here it is pure grouping, exactly as a resolved step is.
-    collectBlocks a pats fs body indent
+    collectBlocks r a body indent
   | .nav spec body =>
     -- A nav is furniture, and each medium has its own answer. The paged
     -- surface renders an unpinned nav as the document outline — print's
@@ -4825,8 +4836,8 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     let inner := match covered with
       | some c => #[.colored c none inner]
       | none => inner
-    collectPara a none fs inner indent false
-      (Ir.scaleStep a.geom.fontSize "footnotesize")
+    collectPara { r with pats := none } a inner indent false
+      (Ir.scaleStep r.geom.fontSize "footnotesize")
   | .framefoot content =>
     -- Not a line, a state change: the note the following frames' footers
     -- carry. Empty clears back to the chrome default.
@@ -4848,14 +4859,14 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- The title page's separator: colour and thickness were declared
     -- (palette `separator`, token `separatorheight`); the measure is the
     -- text width, as moloch draws it.
-    let a := a.flushGap
-    { a with ops := a.ops.push (.hrule color (a.resolve thickness).width) }
+    let a := a.flushGap r
+    { a with ops := a.ops.push (.hrule color (r.resolve thickness).width) }
   | .picture pic =>
     -- Left on the current indent, as LaTeX places the box where it stands;
     -- a `{center}` around it goes through `collectCentered`'s arm.
-    collectPicture a pic indent false
+    collectPicture r a pic indent false
   | .table cols padL padR rows rules =>
-    collectTable a pats fs cols padL padR rows rules indent false
+    collectTable r a cols padL padR rows rules indent false
   | .float kind num capAbove body caption =>
     -- Set off from the text by `floatsep` on both sides, the caption bound
     -- `captionsep` from the content on its object side (the sourced side
@@ -4866,28 +4877,28 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- `Ir.numberedCaption`, the one site both backends spell a float's
     -- number from. Everything between `floatOpen` and `floatClose` ships
     -- on one page (`runFloat`): a float is unbreakable, as LaTeX's are.
-    let caption := Ir.numberedCaption a.locale kind num caption
-    let floatSep := a.resolve ((a.tokens.find? "floatsep").getD
-      (Ir.floatSepDefault a.geom.fontSize))
-    let capSep := a.resolve ((a.tokens.find? "captionsep").getD
-      (Ir.captionSepDefault a.geom.fontSize))
+    let caption := Ir.numberedCaption r.locale kind num caption
+    let floatSep := r.resolve ((a.tokens.find? "floatsep").getD
+      (Ir.floatSepDefault r.geom.fontSize))
+    let capSep := r.resolve ((a.tokens.find? "captionsep").getD
+      (Ir.captionSepDefault r.geom.fontSize))
     let a := a.pushOp .floatOpen
     -- classes.dtx `\@makecaption`: a caption that fits one line centres; a
     -- longer one sets as an ordinary paragraph.
     let setCaption (a : Acc) : Acc :=
       if caption.isEmpty then a else
-      let avail := (a.measure.getD a.geom.textWidth) - indent
+      let avail := (a.measure.getD r.geom.textWidth) - indent
       let (items, _, cache, _) :=
-        itemsOfInlines pats a.geom.fontSize a.xHeight fs { color := a.fg, ground := a.ground } caption
-          a.hyphCache a.imgs avail a.geom.textHeight
+        itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs { color := a.fg, ground := a.ground } caption
+          a.hyphCache r.imgs avail r.geom.textHeight
       let a := { a with hyphCache := cache }
       let fits := itemsNaturalWidth items ≤ avail
-      collectPara a pats fs caption indent fits a.geom.fontSize
+      collectPara r a caption indent fits r.geom.fontSize
     let a := (floatPlan capAbove (!caption.isEmpty) floatSep capSep).foldl
       (fun a slot => match slot with
         | .gap g => a.addvspace g
         | .caption => setCaption a
-        | .object => collectCentered a pats fs body.toList indent) a
+        | .object => collectCentered r a body.toList indent) a
     a.pushOp .floatClose
   | .frame title standout valign body =>
     -- A frame is a page boundary, not an article paragraph. Content past
@@ -4913,7 +4924,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       let bg := (a.pal.find? "standoutbg").getD ((a.pal.find? "fg").getD Ir.Color.black)
       let fg := (a.pal.find? "standoutfg").getD ((a.pal.find? "bg").getD Ir.Color.white)
       let a := { a with ops := a.ops.push (.pageStyle (some bg) (VDist.of valign)) }
-      let a := collectStandout { a with fg := fg, ground := some bg } pats fs body.toList indent
+      let a := collectStandout r { a with fg := fg, ground := some bg } body.toList indent
       -- Restore by recomputing from the palette in force: a `.setPalette`
       -- inside the frame must reach what follows it (flow scope), so a
       -- saved copy would restore a stale epoch's ink.
@@ -4930,21 +4941,21 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
           ((a.pal.find? "bg").getD Ir.Color.white)
         let saved := (a.fg, a.ground)
         let a := { a with fg := ftFg, ground := some barBg }
-        let st := a.style "frametitle"
+        let st := r.style "frametitle"
         let a := match st.font with
           | some tpl =>
-            collectDisplay a fs (Ir.fillTemplate tpl title) 0 false a.geom.fontSize
+            collectDisplay r a (Ir.fillTemplate tpl title) 0 false r.geom.fontSize
           | none =>
-            collectDisplay a fs title 0 false (sectionSize a.geom 1)
+            collectDisplay r a title 0 false (sectionSize r.geom 1)
               (baseStyle := { bold := true })
         -- The title itself is inline content: no `.setPalette` can stand
         -- in it, so the saved ink is the epoch's own.
         let a := { a with fg := saved.1
                           ground := saved.2
-                          ops := a.ops.push (.titleBar barBg (a.geom.fontSize / 2)) }
+                          ops := a.ops.push (.titleBar barBg (r.geom.fontSize / 2)) }
         { a with wantDefault := true }
       | none =>
-        let a := collectDisplay a fs title 0 false (sectionSize a.geom 1)
+        let a := collectDisplay r a title 0 false (sectionSize r.geom 1)
           (baseStyle := { bold := true })
         { a with wantDefault := true }
     -- The title just placed is page-top chrome: the frame's distribution
@@ -4954,10 +4965,9 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- and everything on it is display furniture: titles never hyphenate
     -- and never justify (collectDisplay's rule, through the declaration).
     let a := if valign matches .golden then
-        let sub := collectBlocks { a with geom := { a.geom with justify := false } }
-          none fs body indent
-        { sub with geom := a.geom }
-      else collectBlocks a pats fs body indent
+        collectBlocks { r with pats := none, geom := { r.geom with justify := false } }
+          a body indent
+      else collectBlocks r a body indent
     a.pageBreak
 
 end
@@ -6071,18 +6081,19 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- judges (`judged_pair_is_shipped`), never a second `getD` chain.
   let design := Ir.Design.ofDoc doc
   let cover := design.cover
-  let acc0 : Acc := { geom := geom, xHeight := xHeight, styles := doc.styles
-                      locale := doc.info.locale
-                      slides := doc.docClass.record.model == .frame
-                      pal := doc.palette
+  let rd : Rd := { geom := geom, xHeight := xHeight, pats := pats, fs := fs
+                   styles := doc.styles
+                   locale := doc.info.locale
+                   slides := doc.docClass.record.model == .frame
+                   imgs := imgs }
+  let acc0 : Acc := { pal := doc.palette
                       tokens := doc.tokens
                       frameCount := doc.frameCount
                       chromeL := if footAllowed then doc.chrome.footerLeft else none
                       chromeR := if footAllowed then doc.chrome.footerRight else none
                       footAllowed := footAllowed
                       fg := design.fg
-                      ground := doc.palette.find? "bg"
-                      imgs := imgs }
+                      ground := doc.palette.find? "bg" }
   -- One handout page per overlay step, driven here at the top level: a
   -- multi-step frame collects once per step with pending content dimmed
   -- (`Ir.dimBlocks`), under ONE frame number — the furniture belongs to the
@@ -6106,13 +6117,13 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       acc := { acc with frameNum := num, framesDone := num.getD acc.framesDone }
       let steps := Ir.maxStepBlocks body
       if steps ≤ 1 then
-        acc := collectBlock acc pats fs
+        acc := collectBlock rd acc
           (.frame title standout valign (Ir.unwrapItemSteps body)) 0
       else
         for k in [1:steps + 1] do
-          acc := collectBlock acc pats fs
+          acc := collectBlock rd acc
             (.frame title standout valign (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
-    | other => acc := collectBlock acc pats fs (Ir.unwrapItemStep other) 0
+    | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
   -- Trailing fil glue stretches on the page it ends (a \vfill nothing
   -- follows is how a page bottom-flushes its leftover), so it must reach
   -- placement; trailing finite glue stays invisible and stays dropped.
