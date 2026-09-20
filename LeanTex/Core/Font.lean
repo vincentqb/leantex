@@ -185,26 +185,47 @@ private def parseTopAccent (b : ByteArray) : Array (Nat × Int) := Id.run do
 private def tag4 (b : ByteArray) (off : Nat) : String :=
   String.ofList ((b.extract off (off + 4)).toList.map fun v => Char.ofNat v.toNat)
 
+/-- Exact-key binary search over `xs`, sorted ascending by `key` with no
+duplicate keys: the index and element whose key equals `k`, or `none`.
+The one search the sorted-table readers share (substitution maps,
+ClassDefs, coverage arrays, legacy kern pairs). -/
+def bsearch (xs : Array α) (key : α → Nat) (k : Nat) : Option (Nat × α) :=
+  go 0 xs.size
+where
+  go (lo hi : Nat) : Option (Nat × α) :=
+    if _h : lo < hi then
+      if let some x := xs[(lo + hi) / 2]? then
+        if k < key x then go lo ((lo + hi) / 2)
+        else if k > key x then go ((lo + hi) / 2 + 1) hi
+        else some ((lo + hi) / 2, x)
+      else none
+    else none
+  termination_by hi - lo
+  decreasing_by all_goals omega
+
+/-- A hit names a real element with the searched key: `bsearch`'s answer
+is an index into `xs` whose element the key function maps to `k`. -/
+theorem bsearch_mem (xs : Array α) (key : α → Nat) (k i : Nat) (x : α)
+    (h : bsearch xs key k = some (i, x)) : xs[i]? = some x ∧ key x = k := by
+  unfold bsearch at h
+  revert h
+  fun_induction bsearch.go xs key k 0 xs.size
+  all_goals intro h
+  all_goals first
+    | (rename_i ih; exact ih h)
+    | (simp only [Option.some.injEq, Prod.mk.injEq] at h
+       obtain ⟨rfl, rfl⟩ := h
+       rename_i hx hklt hkgt
+       exact ⟨hx, by omega⟩)
+    | simp at h
+
 /-- The image of `g` under a sorted gid→gid substitution map: the mapped
 gid, or `g` itself when the map does not cover it. Binary search; the map
 is sorted by source gid. -/
-def substGid (map : Array (Nat × Nat)) (g : Nat) : Nat := Id.run do
-  let mut lo := 0
-  let mut hi := map.size
-  for _ in [0:32] do
-    if lo ≥ hi then
-      break
-    let mid := (lo + hi) / 2
-    match map[mid]? with
-    | none => break
-    | some (src, dst) =>
-      if g < src then
-        hi := mid
-      else if g > src then
-        lo := mid + 1
-      else
-        return dst
-  return g
+def substGid (map : Array (Nat × Nat)) (g : Nat) : Nat :=
+  match bsearch map (·.1) g with
+  | some (_, _, dst) => dst
+  | none => g
 
 /-- The lookup indices one GSUB feature tag selects, resolved for `latn`
 falling back to `DFLT` and the default language system (OpenType spec,
@@ -327,20 +348,8 @@ private def parseClassDef (b : ByteArray) (off : Nat) : Array (Nat × Nat) := Id
   return out.qsort fun a c => a.1 < c.1
 
 /-- Binary search over sorted `(gid, v)` pairs: the value, or `none`. -/
-private def sortedFind (pairs : Array (Nat × Nat)) (g : Nat) : Option Nat := Id.run do
-  let mut lo := 0
-  let mut hi := pairs.size
-  for _ in [0:34] do
-    if lo ≥ hi then
-      break
-    let mid := (lo + hi) / 2
-    match pairs[mid]? with
-    | none => break
-    | some (k, v) =>
-      if g < k then hi := mid
-      else if g > k then lo := mid + 1
-      else return some v
-  return none
+private def sortedFind (pairs : Array (Nat × Nat)) (g : Nat) : Option Nat :=
+  (bsearch pairs (·.1) g).map (·.2.2)
 
 /-- The size in bytes of a GPOS ValueRecord under a value format, and the
 byte offset of its XAdvance field: one 16-bit word per set bit, XAdvance
@@ -410,20 +419,8 @@ private def parseKernSubs (b : ByteArray) : Array KernSub := Id.run do
   return out
 
 /-- The coverage index of `g` (coverage arrays are ascending). -/
-private def covIndex (cov : Array Nat) (g : Nat) : Option Nat := Id.run do
-  let mut lo := 0
-  let mut hi := cov.size
-  for _ in [0:34] do
-    if lo ≥ hi then
-      break
-    let mid := (lo + hi) / 2
-    match cov[mid]? with
-    | none => break
-    | some k =>
-      if g < k then hi := mid
-      else if g > k then lo := mid + 1
-      else return some mid
-  return none
+private def covIndex (cov : Array Nat) (g : Nat) : Option Nat :=
+  (bsearch cov id g).map (·.1)
 
 /-- The legacy `kern` table, format 0 horizontal subtables (TrueType):
 HarfBuzz's own fallback when GPOS carries no `kern` feature. Sorted
@@ -738,22 +735,26 @@ theorem underline_in_descent (upem descent pos thick : Int)
   all_goals simp_all only [Bool.and_eq_true, decide_eq_true_eq]
   all_goals omega
 
-/-- Glyph id for a scalar in sorted cmap ranges, or `none`. Binary search. -/
+/-- Glyph id for a scalar in sorted cmap ranges, or `none`. Binary search
+over ranges (containment, not exact key — the one search `bsearch` does
+not subsume). -/
 def gidIn (cmap : Array (UInt32 × UInt32 × UInt32)) (c : Char) : Option Nat := Id.run do
   let x := UInt32.ofNat c.toNat
   let mut lo := 0
   let mut hi := cmap.size
-  for _ in [0:32] do
+  for _ in [0:cmap.size + 1] do
     if lo >= hi then
       break
     let mid := (lo + hi) / 2
-    let (s, e, g) := cmap[mid]!
-    if x < s then
-      hi := mid
-    else if x > e then
-      lo := mid + 1
-    else
-      return some ((g + (x - s)).toNat % 0x10000)
+    match cmap[mid]? with
+    | none => break
+    | some (s, e, g) =>
+      if x < s then
+        hi := mid
+      else if x > e then
+        lo := mid + 1
+      else
+        return some ((g + (x - s)).toNat % 0x10000)
   return none
 
 def parse (data : ByteArray) : Except String Font := do
@@ -942,24 +943,10 @@ def Font.kernAdv (f : Font) (g1 g2 : Nat) : Int := Id.run do
           let v := i16 b (r + sub.xAdv)
           if v != 0 then
             return v
-  -- legacy pairs, binary search
-  let key := g1 * 0x10000 + g2
-  let mut lo := 0
-  let mut hi := pairs.size
-  for _ in [0:34] do
-    if lo ≥ hi then
-      break
-    let mid := (lo + hi) / 2
-    match pairs[mid]? with
-    | none => break
-    | some (k, v) =>
-      if key < k then
-        hi := mid
-      else if key > k then
-        lo := mid + 1
-      else
-        return v
-  return 0
+  -- legacy pairs
+  match bsearch pairs (·.1) (g1 * 0x10000 + g2) with
+  | some (_, _, v) => return v
+  | none => return 0
 
 /-- The char→glyph ranges of a font image alone, sorted, without parsing the
 rest of it: what the per-glyph fallback scan asks of a candidate face is only
