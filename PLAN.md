@@ -176,6 +176,40 @@ reference documents byte-identical.
   site drops the underscore, the tactic-only site keeps it (the linter
   cannot see an `assumption` use) with the why written beside it.
 
+2026-09-20 — impl-q-ir: the q-ir audit's implement list lands — one walk
+family, one keyed-store proof, derived diagnostic severity.
+
+- The leaf-rewrite family is one generic map: `Ir.mapInline`/`mapBlocks`
+  host `setAltBlocks`, `resolveRefs`, and `Layout.substPage` as leaf
+  functions, with the explicit-arm obligation at the one walk. Census
+  schemas over the map: `mapInlines_text`/`mapBlocks_text` (Conserves
+  given a per-node hypothesis; `setAltBlocks_text` is a one-line
+  instance) and `mapInlines_id` (conditional identity given a trigger
+  census; `substPage_id` its instance). `wrap_text` is the same move for
+  body-transparent wraps: `langWrap_text`/`footnoteWrap_text`/
+  `underline_text` are one-line instances.
+- Named behaviour changes, tests first: a figure body holding a list of
+  images now inherits the caption alt (the old wildcard skipped those
+  bodies), and an `\includegraphics` inside a `\footnote` or a defined
+  role now appears in `imageRefs` — before, it shipped a silent
+  placeholder while the file sat beside the document (the collect and
+  the placement walked different descents; both are the fold now, and
+  `imageSrcs*`/`hasPhysicalPage` are fold leaves). `altWalkChecks` pins
+  both, over the HTML tree and `Layout.Out`.
+- `Diag` stores its `DiagCode` plus one policy bit; severity and the
+  rendered code string are projections, so a diagnostic disagreeing with
+  its code's declared `Loss` is unrepresentable. The hook's
+  severityAssign gate and its allowlist row now guard nothing
+  (impl-q-harness's brief names them for deletion).
+- Rhythm: `rhythmQuantum_pos`/`rhythmQuantum_lt_double` carry the omega
+  key facts once; `heading_space_above_ge_below` drops the conjunct that
+  restated `rhythm_table_exact`'s heading row;
+  `Theme.titlepage_align_declared` (subsumed by `_engine`) and
+  `Theme.step_find_eq`/`_ne` (verbatim copies of the now-public
+  `Ir.declare_find_eq`/`declare_keeps`) are deleted; moloch/daylight
+  share `lineageTokens`, all bundles `builtinChrome`. Goldens and the
+  four reference documents byte-identical throughout; bench flat.
+
 2026-09-20 — the deck pages sideways: the row, rubber image sizes, and
 the come-in reveal. Supersedes the scroll-snap entry's `y mandatory` and
 the reveal entry's `snapped: y`.
