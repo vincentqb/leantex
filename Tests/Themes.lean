@@ -1939,7 +1939,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "the uncover ships under scroll-state, its fallback under view()"
     (count "@supports (container-type: scroll-state)" == 1 &&
      count "section.slide { container-type: scroll-state; }" == 1 &&
-     count "@container scroll-state(snapped: y)" == 1 &&
+     count "@container scroll-state(snapped: x)" == 1 &&
      count "@supports (animation-timeline: view()) and (not (container-type: scroll-state))" == 1)
   t "the uncover staggers by the step's own index through the tokens"
     (count "animation: ltx-uncover var(--motionduration, 400ms) both" == 1 &&

@@ -767,19 +767,20 @@ def themeCss (doc : Doc) : String :=
     s!"  width: 60%; margin: {quantaRem 1} auto 0; }\n" ++
     ".progress > div { background: var(--progressfg); height: 100%; }\n" ++
     -- The paged deck's own progress: a hairline across the viewport top,
-    -- scaled by how far the reader has paged — declarative where the
-    -- platform has scroll-driven animations (`scroll(root)`, Scroll-driven
-    -- Animations 1), the same tokens as the section-page bar, and the
-    -- same floor as `revealCss`: without the feature the rules never
-    -- apply and the deck is fully navigable without its bar. Screen only:
-    -- a printed handout has no scroll to report.
+    -- scaled by how far the reader has paged along the row — declarative
+    -- where the platform has scroll-driven animations (`scroll(root x)`,
+    -- Scroll-driven Animations 1: the axis is the deck's own), the same
+    -- tokens as the section-page bar, and the same floor as `revealCss`:
+    -- without the feature the rules never apply and the deck is fully
+    -- navigable without its bar. Screen only: a printed handout has no
+    -- scroll to report.
     (if doc.docClass == .slides then
       "@media screen { @supports (animation-timeline: scroll()) {\n" ++
       ".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
       "  height: var(--progressheight, 1pt); background: var(--progressfg);\n" ++
       "  transform-origin: 0 50%;\n" ++
       "  animation: ltx-deck-progress linear both;\n" ++
-      "  animation-timeline: scroll(root); }\n" ++
+      "  animation-timeline: scroll(root x); }\n" ++
       "@keyframes ltx-deck-progress { from { transform: scaleX(0) } \
 to { transform: scaleX(1) } }\n" ++
       "} }\n"
@@ -1128,10 +1129,11 @@ def deckMotionGuard : String :=
   "@media (prefers-reduced-motion: reduce) \
 { section.slide > * { animation: none; } }\n"
 
-/-- The deck's entry motion: a slide's content fades and rises as the
-slide scrolls in — scrubbed by the scroll itself (`view()`, Scroll-driven
-Animations 1; the range ends at `entry`'s end, the snap point, so
-content is whole exactly when the slide is). The rise distance is the
+/-- The deck's entry motion: a slide's content fades in from the
+direction of travel as the slide scrolls in sideways — scrubbed by the
+scroll itself (`view(x)`, Scroll-driven Animations 1: the axis names the
+row; the range ends at `entry`'s end, the snap point, so content is
+whole exactly when the slide is). The offset distance is the
 `motiondistance` token; no authority fixes it, so the default is 1rem —
 about one line's travel, the engine's stated convention, overridable
 like any token. Floor as `revealCss`: without the feature the rules
@@ -1140,9 +1142,9 @@ duration token: a scroll-scrubbed timeline has none. -/
 def deckEntryCss : String :=
   "@supports (animation-timeline: view()) {\n" ++
   "@keyframes ltx-enter { from { opacity: 0; \
-transform: translateY(var(--motiondistance, 1rem)) } }\n" ++
+transform: translateX(var(--motiondistance, 1rem)) } }\n" ++
   "section.slide > * { animation: ltx-enter linear both;\n" ++
-  "  animation-timeline: view(); animation-range: entry; }\n" ++
+  "  animation-timeline: view(x); animation-range: entry; }\n" ++
   "}\n" ++
     deckMotionGuard
 
@@ -1191,12 +1193,12 @@ def deckStepCss (covered : String) : String :=
   s!"@keyframes ltx-uncover \{ from \{ color: {covered} } }\n" ++
   "@supports (container-type: scroll-state) {\n" ++
   "section.slide { container-type: scroll-state; }\n" ++
-  "@container scroll-state(snapped: y) {\n" ++
+  "@container scroll-state(snapped: x) {\n" ++
   ".step { animation: ltx-uncover var(--motionduration, 400ms) both;\n" ++
   "  animation-delay: calc((var(--step, 1) - 1) * var(--motionstagger, 150ms)); }\n" ++
   "} }\n" ++
   "@supports (animation-timeline: view()) and (not (container-type: scroll-state)) {\n" ++
-  ".step { animation: ltx-uncover linear both; animation-timeline: view();\n" ++
+  ".step { animation: ltx-uncover linear both; animation-timeline: view(x);\n" ++
   "  animation-range: entry; }\n" ++
   "}\n" ++
   deckStepGuard
@@ -1239,13 +1241,16 @@ theorem deck_type_is_stage_ratio (fontSize height : Int) (hh : 0 < height) :
 
 /-- The slide sections' stylesheet, split by class. A deck (the `slides`
 class) is one tree with two media renderings: on screen a paged
-full-viewport deck whose paging is the browser's own — CSS Scroll Snap 1:
-`scroll-snap-type: y mandatory` on the root scroll container,
-`scroll-snap-stop: always` so a fling cannot skip a slide — and in print
-the linear handout, one bordered card per page (Tufte: the handout is the
-document). Every other class keeps the card rendering on both media:
-deck rules are the slides class's own, which is what keeps the site
-port's webpage output unchanged. -/
+full-viewport deck laid out as a row — frames advance sideways, so the
+title band holds its place while the next frame's content arrives from
+the side, the physical reading of "the next slide" — whose paging is the
+browser's own: CSS Scroll Snap 1, `scroll-snap-type: x mandatory` on the
+root scroll container, `scroll-snap-stop: always` so a fling cannot skip
+a slide. In print it is the linear handout, one bordered card per page
+(Tufte: the handout is the document). A section page is one page of the
+row like any frame, its content centred on both axes. Every other class
+keeps the card rendering on both media: deck rules are the slides class's
+own, which is what keeps the site port's webpage output unchanged. -/
 private def slideCss (doc : Doc) : String :=
   -- The handout card, today's rendering, byte for byte: the only-media
   -- form for every non-deck class, the print twin for the deck.
@@ -1260,20 +1265,28 @@ private def slideCss (doc : Doc) : String :=
   if doc.docClass == .slides then
     headerH2 ++
     "@media screen {\n" ++
-    "html { scroll-snap-type: y mandatory; }\n" ++
+    "html { scroll-snap-type: x mandatory; }\n" ++
     smoothScrollCss "html" ++
     -- The deck fills the viewport: the article measure and the reading
-    -- padding are the continuous page's, not the stage's. Type is set on
-    -- main in vh — the PDF's own fontSize/stage-height ratio
+    -- padding are the continuous page's, not the stage's. `main` is the
+    -- row the root scroller pages through; each section is one viewport
+    -- of it, and a frame taller than the viewport (the PDF's spill)
+    -- grows the row rather than clipping, staying readable. Type is set
+    -- on main in vh — the PDF's own fontSize/stage-height ratio
     -- (`deck_type_is_stage_ratio`) — so every slide, the standout's em
     -- step included, scales from the stage; the heading retakes its
     -- scale step in em to ride the same base.
     "body { padding: 0; }\n" ++
-    "main { max-width: none; margin: 0;\n" ++
+    "main { max-width: none; margin: 0; display: flex;\n" ++
     s!"  font-size: {milliFactor (deckFontMilliVh doc.page.fontSize doc.page.height).toNat}vh; }\n" ++
-    "section.slide { min-height: 100dvh; scroll-snap-align: start;\n" ++
+    "section.slide, section.section-page { width: 100vw; flex: 0 0 100vw;\n" ++
+    "  min-height: 100dvh; scroll-snap-align: start;\n" ++
     "  scroll-snap-stop: always; display: flex; flex-direction: column;\n" ++
     s!"  padding: {safeareaVar}; }\n" ++
+    -- A section page owns a whole page of the row; its title and bar
+    -- centre on both axes (its own rule: a frame's children must keep
+    -- the full slide width).
+    "section.section-page { justify-content: center; align-items: center; }\n" ++
     -- Headings retake their scale steps in em: the base sheet's rem steps
     -- size from the reader's root, which the stage-ratio base above
     -- deliberately leaves behind.

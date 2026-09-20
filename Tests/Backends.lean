@@ -833,10 +833,13 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   let deckPage := (HtmlDoc.emit {} deckDoc).1
   let has (page s : String) : Bool := (page.splitOn s).length ≥ 2
   t "deck css fixture elaborates clean" deckDs.isEmpty
-  t "the deck pages by scroll snap"
-    (has deckPage "html { scroll-snap-type: y mandatory; }" &&
+  t "the deck pages sideways by scroll snap"
+    (has deckPage "html { scroll-snap-type: x mandatory; }" &&
      has deckPage "scroll-snap-align: start" &&
      has deckPage "scroll-snap-stop: always")
+  t "the deck is a row: each section one viewport of it"
+    (has deckPage "main { max-width: none; margin: 0; display: flex;" &&
+     has deckPage "section.slide, section.section-page { width: 100vw; flex: 0 0 100vw;")
   t "the deck glide ships with its reduced-motion guard"
     (has deckPage "html { scroll-behavior: smooth; }" &&
      has deckPage ("@media (prefers-reduced-motion: reduce) " ++
@@ -848,10 +851,10 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has deckPage "@media print" &&
      has deckPage "break-inside: avoid" &&
      has deckPage "section.slide { break-after: page; }")
-  t "entry motion is scroll-scrubbed under supports, guard attached"
+  t "entry motion is scroll-scrubbed on the row's axis, guard attached"
     (has deckPage "@supports (animation-timeline: view())" &&
-     has deckPage "animation-timeline: view(); animation-range: entry;" &&
-     has deckPage "translateY(var(--motiondistance, 1rem))" &&
+     has deckPage "animation-timeline: view(x); animation-range: entry;" &&
+     has deckPage "translateX(var(--motiondistance, 1rem))" &&
      has deckPage ("@media (prefers-reduced-motion: reduce) " ++
        "{ section.slide > * { animation: none; } }"))
   t "the deck keeps the safe area and caps the title band"
@@ -955,9 +958,9 @@ def deckProgressChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "progress deck elaborates clean" (ds.all fun d => d.severity == .note)
   t "the themed deck ships its progress hairline"
     (has html "class=\"deck-progress\"")
-  t "the hairline scales by the root scroll under supports"
+  t "the hairline scales by the root scroll's row axis under supports"
     (has html "@supports (animation-timeline: scroll())" &&
-     has html "animation-timeline: scroll(root)")
+     has html "animation-timeline: scroll(root x)")
   t "the hairline reads the tokens the PDF's bar reads"
     (has html (".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
       "  height: var(--progressheight, 1pt); background: var(--progressfg);"))
