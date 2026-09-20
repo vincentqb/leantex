@@ -2,12 +2,15 @@
 # \SetExpansion), §5.3 (\SetTracking), §5.4-5.5 (\SetExtraKerning,
 # \SetExtraSpacing — declined: pdfTeX-only interword adjustments, the
 # smallest visible effect), §6 (context), §7 (letterspacing and
-# \DisableLigatures). Character protrusion is native (the generic
-# cmr-default table, Layout.protrusionLR); its switchboard key is honoured.
-# Per-font protrusion/expansion declarations and the rest of the
-# configuration surface stay named where used.
+# \DisableLigatures). Character protrusion (the generic cmr-default table,
+# Layout.protrusionLR) and font expansion (±20‰, Layout.expandFactor) are
+# native; the switchboard keys protrusion/expansion/activate are honoured.
+# Per-font declarations and the rest of the configuration surface stay
+# named where used.
 pre impl \microtypesetup{protrusion=true}
 pre impl \microtypesetup{protrusion=false}
+pre impl \microtypesetup{expansion=false}
+pre impl \microtypesetup{activate=true}
 pre refuse:W0101 \microtypesetup{kerning=true}
 pre refuse:W0301 \SetProtrusion{encoding = *}{. = {,700}}
 pre refuse:W0301 \SetExpansion{encoding = *}{}

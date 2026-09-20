@@ -288,6 +288,21 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
     ((Elab.run "t" "\\documentclass{article}\\page{ protrusion = off }\
 \\begin{document}x\\end{document}").1.page.protrude == some false)
 
+  -- Font expansion: one bounded factor per line (`Layout.expandFactor`,
+  -- ±20‰), fonts absorbing the delta first and glue taking the remainder.
+  -- The bound is `expandFactor_bounded`; these pin the realization.
+  t "expansion stays within microtype's bounds on every line"
+    (protLines.all fun l =>
+      -(Layout.expandLimit : Int) ≤ l.expand && l.expand ≤ (Layout.expandLimit : Int))
+  t "some full line actually expands on the wrapped fixture"
+    ((protLines.pop).any fun l => l.expand != 0)
+  t "expansion off zeroes every factor and keeps run widths natural"
+    ((bodyLines (layoutOf oneFace protDoc { geom with expand := false })).all
+      fun l => l.expand == 0)
+  t "a page declares expansion off"
+    ((Elab.run "t" "\\documentclass{article}\\page{ expansion = off }\
+\\begin{document}x\\end{document}").1.page.expand == some false)
+
 /-- Cross-references: a \label binds to the nearest preceding numbered
 thing in flow order, resolution is one pure pass over the IR
 (`Ir.resolveOneRef_exact` is the statement; these run it), a forward

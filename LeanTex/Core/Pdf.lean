@@ -197,6 +197,12 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
   let mut curFont : Int := -1
   let mut curSize : Sp := -1
   let mut curColor : Ir.Color := Ir.Color.black
+  -- The live horizontal text scale, per-mille delta from 100%: font
+  -- expansion's per-line factor. `Tz` (ISO 32000-2 §9.3.4) scales glyph
+  -- shapes and advances alike, which is exactly hz-style expansion — the
+  -- run widths layout emitted are already rescaled by the same factor,
+  -- so painted ink and measured metrics agree.
+  let mut curTz : Int := 0
   -- Rules are path operators, which may not appear inside BT/ET, so they are
   -- gathered here and drawn after the text. Images gather with them: `Do`
   -- is likewise not a text-object operator.
@@ -206,6 +212,10 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
     -- Bleed shifts everything: layout works in trim coordinates and the
     -- trim box sits `bleed` in from the medium's corner.
     let ypdf := geom.bleed + geom.pageH - l.y
+    if l.expand != curTz then
+      let tz := 1000 + l.expand
+      s := s ++ s!"{tz / 10}.{tz % 10} Tz\n"
+      curTz := l.expand
     let mut inArray := false
     let mut x := geom.bleed + l.x
     -- Where the pen is, when it is known: a fresh line has no position until
@@ -239,7 +249,11 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
         match pen with
         | some (hx, hy) =>
           if hx != x || hy != runY then
-            let v : Int := (x - hx) * 1000 / curSize
+            -- A TJ adjustment displaces by thousandths of the font size
+            -- *times the horizontal scale*, so under expansion the number
+            -- compensates by the inverse factor.
+            let v0 : Int := (x - hx) * 1000 / curSize
+            let v : Int := if curTz == 0 then v0 else v0 * 1000 / (1000 + curTz)
             if inArray && !changes && hy == runY && v.natAbs ≤ 32000 then
               s := s ++ s!"{-v}"
             else

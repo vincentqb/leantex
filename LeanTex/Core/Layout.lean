@@ -38,6 +38,9 @@ structure Geom where
   /-- Whether boundary glyphs protrude into the margin (microtype's
   character protrusion). Layout owns the gate, as it owns `hyphenate`'s. -/
   protrude : Bool := true
+  /-- Whether font boxes may expand within ±`expandLimit` (microtype's
+  font expansion). Layout owns the gate, as it owns `protrude`'s. -/
+  expand : Bool := true
   /-- Bleed past the trim edge, for the PDF writer: layout works in trim
   coordinates and never sees it. -/
   bleed : Sp := 0
@@ -277,6 +280,7 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     hyphenate := spec.hyphenate.getD base.hyphenate
     justify := spec.justify.getD base.justify
     protrude := spec.protrude.getD base.protrude
+    expand := spec.expand.getD base.expand
     bleed := spec.bleed }
 
 /-- The slides stage carries a readable number of text lines. Tantau's rule
@@ -514,6 +518,11 @@ structure LineOut where
   the backends paint at; `x + hang` is the measure edge, where the text
   block logically starts. -/
   hang : Sp := 0
+  /-- The line's font-expansion factor in per-mille (`expandFactor`,
+  within ±`expandLimit`): every run's width is already rescaled by it,
+  and the PDF writer paints the line's glyphs under the same horizontal
+  scale so ink and metrics agree. -/
+  expand : Int := 0
   /-- Engine-placed running furniture — head, foot, chrome slots, the
   logo — laid into its reserved margin band by the furniture pass. Marked
   so a judge of the document's own ink (`Check.Shipped.ofOut`'s area
@@ -2024,6 +2033,18 @@ structure Measure where
   stretch : Sp := 0
   shrink : Sp := 0
   fil : Bool := false
+  /-- Total width of the line's font boxes (and the hyphen broken at):
+  what font expansion may rescale. Images and rules never scale. -/
+  boxW : Sp := 0
+
+/-- Font expansion bound, per-mille of a glyph's width, symmetric:
+microtype's own defaults `stretch = 20`, `shrink = 20` (microtype.sty
+v3.1, the `\DeclareMicrotypeSet` defaults at lines 229–230), with step 1
+as on the modern engines (microtype-luatex.def; the pdfTeX `stretch/5`
+step is the legacy fallback). Expansion is a third degree of freedom the
+breaker consumes as stretchability (Thành, "Margin kerning and font
+expansion with pdfTeX", TUGboat 22(3)). -/
+def expandLimit : Nat := 20
 
 /-- Character protrusion factors `(left, right)` in per-mille of the
 glyph's own width: how far a line-boundary glyph may hang into the margin
@@ -2159,7 +2180,8 @@ def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
   let mut m : Measure := {}
   for k in [a:j] do
     match items[k]! with
-    | .box w _ _ _ _ _ _ _ => m := { m with natural := m.natural + w }
+    | .box w _ _ _ _ _ _ _ =>
+      m := { m with natural := m.natural + w, boxW := m.boxW + w }
     | .img _ w _ => m := { m with natural := m.natural + w }
     | .rule w _ _ _ => m := { m with natural := m.natural + w }
     | .glue g => m := { m with
@@ -2169,7 +2191,7 @@ def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
         fil := m.fil || g.fil }
     | .pen _ _ _ _ _ _ => pure ()
   if let some (.pen w _ _ _ _ _) := items[j]? then
-    m := { m with natural := m.natural + w }
+    m := { m with natural := m.natural + w, boxW := m.boxW + w }
   -- Protrusion, stage 2: the breaker measures a line as it will be set —
   -- boundary glyphs hanging into the margin do not count against the
   -- measure. Fil lines never protrude (`setLine`'s own gate), so the
@@ -2179,18 +2201,30 @@ def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
     m := { m with natural := m.natural - protrudeLeft items a j - protrudeRight items a j }
   return m
 
+/-- What a `Measure`'s font boxes may stretch or shrink beyond the glue,
+in sp: the symmetric `expandLimit` fraction of the expandable width, zero
+on a fil line (which never expands, as it never protrudes). -/
+def Measure.ex (m : Measure) (expand : Bool) : Sp :=
+  if expand && !m.fil then m.boxW * expandLimit / 1000 else 0
+
 def overfullDemerits : Int := 100000000
 
-/-- Demerits of one candidate line. -/
-def lineDemerits (items : Array Item) (m : Measure) (target : Sp) (j : Nat) : Int :=
+/-- Demerits of one candidate line. Under font expansion the badness
+denominators grow by the boxes' own flexibility (`Measure.ex`): the form
+of the cost is unchanged, expansion is only more room (Thành tb71 —
+expansion gives a font "stretchability and shrinkability … used by the
+line-breaking engine"). -/
+def lineDemerits (items : Array Item) (m : Measure) (target : Sp) (j : Nat)
+    (expand : Bool := false) : Int :=
+  let ex := m.ex expand
   let delta := target - m.natural
   let b : Int :=
     if delta == 0 then 0
     else if delta > 0 then
-      if m.fil then 0 else badness delta m.stretch
+      if m.fil then 0 else badness delta (m.stretch + ex)
     else
-      if m.shrink < -delta then -1  -- overfull marker
-      else badness delta m.shrink
+      if m.shrink + ex < -delta then -1  -- overfull marker
+      else badness delta (m.shrink + ex)
   let base : Int :=
     if b < 0 then overfullDemerits + (m.natural - target)
     else (10 + b) ^ 2
@@ -2228,6 +2262,10 @@ structure KpSums where
   k : Array Sp
   f : Array Nat
   forced : Array Nat
+  /-- Prefix sums of font-box widths: the expandable width of any line by
+  differencing, scaled once at the read so it cannot drift from
+  `measure`'s own accumulation. -/
+  b : Array Sp
 
 def kpSums (items : Array Item) : KpSums := Id.run do
   let n := items.size
@@ -2236,24 +2274,29 @@ def kpSums (items : Array Item) : KpSums := Id.run do
   let mut pk : Array Sp := Array.mkEmpty (n + 1)
   let mut pf : Array Nat := Array.mkEmpty (n + 1)
   let mut pforced : Array Nat := Array.mkEmpty (n + 1)
+  let mut pb : Array Sp := Array.mkEmpty (n + 1)
+  let mut btot : Sp := 0
   pw := pw.push 0
   ps := ps.push 0
   pk := pk.push 0
   pf := pf.push 0
   pforced := pforced.push 0
+  pb := pb.push 0
   for k in [0:n] do
-    let (dw, dst, dsh, dfil) : Sp × Sp × Sp × Nat := match items[k]! with
-      | .box w _ _ _ _ _ _ _ => (w, 0, 0, 0)
-      | .img _ w _ => (w, 0, 0, 0)
-      | .rule w _ _ _ => (w, 0, 0, 0)
-      | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0)
-      | .pen _ _ _ _ _ _ => (0, 0, 0, 0)
+    let (dw, dst, dsh, dfil, db) : Sp × Sp × Sp × Nat × Sp := match items[k]! with
+      | .box w _ _ _ _ _ _ _ => (w, 0, 0, 0, w)
+      | .img _ w _ => (w, 0, 0, 0, 0)
+      | .rule w _ _ _ => (w, 0, 0, 0, 0)
+      | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0, 0)
+      | .pen _ _ _ _ _ _ => (0, 0, 0, 0, 0)
     pw := pw.push (pw[k]! + dw)
     ps := ps.push (ps[k]! + dst)
     pk := pk.push (pk[k]! + dsh)
     pf := pf.push (pf[k]! + dfil)
     pforced := pforced.push (pforced[k]! + (if isForced items k then 1 else 0))
-  return { w := pw, s := ps, k := pk, f := pf, forced := pforced }
+    btot := btot + db
+    pb := pb.push btot
+  return { w := pw, s := ps, k := pk, f := pf, forced := pforced, b := pb }
 
 /-- The line measure `kp` uses: prefix-sum differences over [a:j) plus the
 width of the penalty broken at, less the protrusion boundary term when the
@@ -2268,7 +2311,8 @@ def kpMeasure (items : Array Item) (sums : KpSums) (a j : Nat)
     { natural := sums.w[j]! - sums.w[a]! + penW
       stretch := sums.s[j]! - sums.s[a]!
       shrink := sums.k[j]! - sums.k[a]!
-      fil := sums.f[j]! - sums.f[a]! > 0 }
+      fil := sums.f[j]! - sums.f[a]! > 0
+      boxW := (sums.b[j]?.getD 0) - (sums.b[a]?.getD 0) + penW }
   if protrude && !m.fil then
     { m with natural := m.natural - protrudeLeft items a j - protrudeRight items a j }
   else m
@@ -2278,8 +2322,8 @@ prefix-sum line measures and an active list: a node whose line to the
 current position is already overfull beyond shrink can only get worse, so
 it is considered one last time and then deactivated (one node is always
 retained so a solution exists even for unbreakable content). -/
-def kp (items : Array Item) (target : Sp) (protrude : Bool := false) :
-    Array Nat := Id.run do
+def kp (items : Array Item) (target : Sp) (protrude : Bool := false)
+    (expand : Bool := false) : Array Nat := Id.run do
   let n := items.size
   let sums := kpSums items
   let measureAt (a j : Nat) : Measure := kpMeasure items sums a j protrude
@@ -2310,7 +2354,7 @@ def kp (items : Array Item) (target : Sp) (protrude : Bool := false) :
                 doubleHyphenDemerits else 0
               let fin := if p != n && isFlagged items p && j == n - 1 then
                 finalHyphenDemerits else 0
-              let d := d0 + lineDemerits items m target j + dbl + fin
+              let d := d0 + lineDemerits items m target j expand + dbl + fin
               match bestHere with
               | some (dBest, _) =>
                 if d < dBest then bestHere := some (d, p)
@@ -2318,7 +2362,10 @@ def kp (items : Array Item) (target : Sp) (protrude : Bool := false) :
               -- Once overfull beyond shrink, this predecessor only gets
               -- worse. Keep the best one per flagged state because that is
               -- the only predecessor property future line costs observe.
-              if m.natural - m.shrink > target + slack then
+              -- The shrink read is the *expanded* shrink: pruning against
+              -- the bare glue would drop predecessors expansion could
+              -- still save (kp-fuzz catches the violation).
+              if m.natural - (m.shrink + m.ex expand) > target + slack then
                 if p != n && isFlagged items p then
                   match bestDroppedFlagged with
                   | some (dD, _) =>
@@ -2376,39 +2423,61 @@ paragraph that fails gets the hyphenating pass. This is what keeps
 hyphens rare — a paragraph that sets cleanly without them never
 hyphenates, whatever small demerit gain a hyphen could buy. Explicit
 hyphens (unflagged pens) and forced breaks keep their pens. -/
-def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := false) :
-    Array Nat := Id.run do
+def kpTwoPass (items : Array Item) (target : Sp) (protrude : Bool := false)
+    (expand : Bool := false) : Array Nat := Id.run do
   let sealable : Item → Bool := fun it => match it with
     | .pen _ cost flagged _ _ _ => flagged && forcedCost < cost && cost < 10000
     | .box .. | .glue .. | .img .. | .rule .. => false
-  if !items.any sealable then return kp items target protrude
+  if !items.any sealable then return kp items target protrude expand
   let plain := items.map fun it => match it with
     | .pen w cost flagged f c g =>
       if flagged && forcedCost < cost && cost < 10000 then .pen w 10000 flagged f c g
       else .pen w cost flagged f c g
     | .box .. | .glue .. | .img .. | .rule .. => it
-  let breaks := kp plain target protrude
-  if breaks.isEmpty then return kp items target protrude
+  let breaks := kp plain target protrude expand
+  if breaks.isEmpty then return kp items target protrude expand
   let mut prev := plain.size
   for j in breaks do
     let a := lineStart plain (if prev == plain.size then 0 else prev + 1)
     let m := measure plain a j protrude
+    let ex := m.ex expand
     let delta := target - m.natural
     let bad : Int :=
       if delta == 0 then 0
-      else if delta > 0 then (if m.fil then 0 else badness delta m.stretch)
-      else if m.shrink < -delta then (pretolerance : Int) + 1
-      else badness delta m.shrink
+      else if delta > 0 then (if m.fil then 0 else badness delta (m.stretch + ex))
+      else if m.shrink + ex < -delta then (pretolerance : Int) + 1
+      else badness delta (m.shrink + ex)
     if bad > (pretolerance : Int) then
-      return kp items target protrude
+      return kp items target protrude expand
     prev := j
   return breaks
 
 -- Line setting ----------------------------------------------------------------
 
+/-- The uniform expansion factor a set line applies to its font boxes, in
+per-mille: expansion-first, the fonts absorb what they can of the line's
+delta up to `expandLimit` in either direction, and glue takes the
+remainder — Thành's design, where expansion is chosen to bring the glue
+setting closest to natural (TUGboat 22(3)). One factor per line, never
+per glyph, so glyphs are only rescaled, never re-ordered. -/
+def expandFactor (delta boxW : Int) : Int :=
+  if boxW > 0 && delta != 0 then
+    min (max (delta * 1000 / boxW) (-(expandLimit : Int))) (expandLimit : Int)
+  else 0
+
+/-- Every set line's expansion factor stays inside microtype's bounds:
+±`expandLimit` per-mille, whatever the line's delta and expandable width.
+Uniformity per line is by construction — `setLine` computes one factor
+and applies it to every box. -/
+theorem expandFactor_bounded (delta boxW : Int) :
+    -(expandLimit : Int) ≤ expandFactor delta boxW ∧
+      expandFactor delta boxW ≤ (expandLimit : Int) := by
+  unfold expandFactor expandLimit
+  split <;> omega
+
 private def setLine (items : Array Item) (a j : Nat) (target : Sp)
-    (justify : Bool) (protrude : Bool := false) :
-    Array Seg × Sp × Bool × Sp := Id.run do
+    (justify : Bool) (protrude : Bool := false) (expand : Bool := false) :
+    Array Seg × Sp × Bool × Sp × Int := Id.run do
   let m := measure items a j
   -- Protrusion (stage 1): boundary glyphs hang into the margin by the
   -- table's fraction of their own width, so the optical edge is straight.
@@ -2421,6 +2490,18 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let leftHang := if doProt then protrudeLeft items a j else 0
   let target := target + leftHang + (if doProt then protrudeRight items a j else 0)
   let delta := target - m.natural
+  -- Font expansion: one bounded factor per line takes its share of the
+  -- delta first; the glue arms below distribute what remains. Fil lines
+  -- never expand, as they never protrude.
+  let f : Int := if expand && justify && !m.fil then expandFactor delta m.boxW else 0
+  let mut boxTaken : Sp := 0
+  if f != 0 then
+    for k in [a:j] do
+      if let some (.box w _ _ _ _ _ _ _) := items[k]? then
+        boxTaken := boxTaken + w * f / 1000
+    if let some (.pen w _ _ _ _ _) := items[j]? then
+      boxTaken := boxTaken + w * f / 1000
+  let delta := delta - boxTaken
   let mut overfull := false
   -- Fill glue shares the leftover, but a line-running fill does not count as a
   -- sharer when the author wrote their own `\hfill`: otherwise
@@ -2442,7 +2523,10 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
     | .box w fontIdx color link glyphs size underline raise =>
       -- The declared width is authoritative, as it already is in `measure`: a
       -- kern is a box with a width and no glyphs, and recomputing from the
-      -- advances would silently set it to zero.
+      -- advances would silently set it to zero. Expansion rescales the box
+      -- by the line's one factor; the PDF writer paints the run's glyphs
+      -- under the same horizontal scale.
+      let w := w + w * f / 1000
       segs := segs.push
         (.run fontIdx color link w (glyphs.map fun (g, c, _) => (g, c)) size underline raise)
       width := width + w
@@ -2480,7 +2564,9 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   if let some (.pen w _ _ fontIdx color glyphs) := items[j]? then
     if !glyphs.isEmpty then
       -- A hyphenation point sits inside a word, so the hyphen is set at the
-      -- size (and under the underline) of the run it interrupts.
+      -- size (and under the underline) of the run it interrupts — and under
+      -- the line's expansion factor, like any glyph.
+      let w := w + w * f / 1000
       let (inherited, inheritedUl) := segs.foldl (fun acc s => match s with
         | .run _ _ _ _ _ sz ul _ => (if sz != 0 then sz else acc.1, ul)
         | _ => acc) ((0 : Sp), false)
@@ -2495,7 +2581,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
       segs' := segs'.pop
       width := width - w
     | _ => break
-  return (segs', width, overfull, leftHang)
+  return (segs', width, overfull, leftHang, f)
 
 -- Page assembly ----------------------------------------------------------------
 
@@ -2863,7 +2949,7 @@ it overflowed) and the line opens the next, its pending glue discarded as
 TeX discards glue at the top of a page. Glue is never stretched: the
 bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
-    (w : Sp) (hang : Sp := 0) : B :=
+    (w : Sp) (hang : Sp := 0) (expand : Int := 0) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   -- A zero-width rule is a strut: it shaped the extent above and ships no
@@ -2873,7 +2959,8 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     | _ => true
   let bottom := b.geom.bodyBottom
   let mk (y : Sp) : LineOut :=
-    { x := x, y := y, size := size, segs := segs, setWidth := w, hang := hang }
+    { x := x, y := y, size := size, segs := segs, setWidth := w
+      hang := hang, expand := expand }
   let firstY := b.geom.bodyTop + max b.ascent box.above
   if b.cur.lines.isEmpty || b.freshStart then
     b.commit (mk firstY) box.inkBelow box.below 0 0
@@ -2911,7 +2998,7 @@ peer boundary the pending skip is the resolved parskip
 (`flushGap_default_exact`), so the realized baseline delta is the leading
 plus exactly one rhythm quantum (`Ir.default_rhythm_multiples`). -/
 private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp)
+    (segs : Array Seg) (w hang : Sp) (ex : Int)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
     (hni : b.noInterline = false)
     (hfit : b.y + b.skip.width
@@ -2920,7 +3007,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
         + (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
             b.geom.leading size segs).inkBelow - b.geom.bodyBottom
         ≤ b.pageShrink + b.skip.shrink) :
-    (b.placeLine fs x size segs w hang).cur.lines.back?.map (·.y) =
+    (b.placeLine fs x size segs w hang ex).cur.lines.back?.map (·.y) =
       some (b.y + b.skip.width
         + (b.prevBelow + (lineExtent fs b.geom.fontSize b.ascent b.capHeight
             b.descent b.geom.leading size segs).above)) := by
@@ -3001,6 +3088,8 @@ private structure ParaJob where
   justify : Bool := true
   /-- Whether boundary glyphs protrude into the margin, from the page. -/
   protrude : Bool := true
+  /-- Whether font boxes may expand within ±`expandLimit`, from the page. -/
+  expand : Bool := true
   /-- Marker content set as its own items and placed before the first line. -/
   markerSegs : Option (Array Seg × Sp) := none
   /-- A rule filling the first line after the content. -/
@@ -3292,6 +3381,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
       indent := indent, center := center, size := size
       justify := a.geom.justify
       protrude := a.geom.protrude
+      expand := a.geom.expand
       markerSegs := markerSegs, rule := rule }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base — the
@@ -4496,16 +4586,16 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
   return out
 
 /-- The geometry of one paragraph line: its segs, x, set width, whether
-the break was overfull, and the protrusion hang its x was shifted left
-by. Pure in the builder — it reads only the page geometry — so the
-placement pipeline below is the only part of a paragraph line that
-touches pages. -/
+the break was overfull, the protrusion hang its x was shifted left by,
+and its expansion factor. Pure in the builder — it reads only the page
+geometry — so the placement pipeline below is the only part of a
+paragraph line that touches pages. -/
 private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
-    (prev brk : Nat) : Array Seg × Sp × Sp × Bool × Sp :=
+    (prev brk : Nat) : Array Seg × Sp × Sp × Bool × Sp × Int :=
   let width := j.target
   let a := if first then lineStart j.items 0 else lineStart j.items (prev + 1)
-  let (segs0, w0, overfull, hang) :=
-    setLine j.items a brk width (!j.center && j.justify) j.protrude
+  let (segs0, w0, overfull, hang, exf) :=
+    setLine j.items a brk width (!j.center && j.justify) j.protrude j.expand
   let x0 := if j.center then b.geom.hmargin + j.indent + (width - w0) / 2
     else b.geom.hmargin + j.indent - hang
   -- The marker stands `\labelsep` left of the item: half an em, LaTeX's
@@ -4542,7 +4632,7 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
         else (segs1, w1)
       | none => (segs1, w1)
     else (segs1, w1)
-  (segs2, x1, w2, overfull, hang)
+  (segs2, x1, w2, overfull, hang, exf)
 
 /-- What follows a placed paragraph line: its underline siblings (pushed
 after `placeLine`, so a page break has already decided where the text
@@ -4601,7 +4691,7 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
   let g := paraLineGeom fs j b0 st.2.2 st.2.1 brk
   let b1 := if g.2.2.2.1 then b0.warnOverfull else b0
   (placeParaTrailer fs j brk g.1
-    (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2), brk, false)
+    (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2), brk, false)
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
   (breaks.foldl (placeParaLine fs j)
@@ -5068,8 +5158,8 @@ private theorem finishPage_extends (b : B) : PagesExtend b b.finishPage :=
   ⟨#[_], rfl⟩
 
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) :
-    PagesExtend b (b.placeLine fs x size segs w hang) := by
+    (segs : Array Seg) (w hang : Sp) (ex : Int) :
+    PagesExtend b (b.placeLine fs x size segs w hang ex) := by
   simp only [B.placeLine]
   repeat' split
   all_goals first
@@ -5080,8 +5170,8 @@ private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
 /-- Under `noBreak` a placed line never closes a page and never clears
 the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang).pages = b.pages := by
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang ex).pages = b.pages := by
   simp only [B.placeLine]
   repeat' split
   all_goals first
@@ -5089,8 +5179,8 @@ private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang).noBreak = true := by
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang ex).noBreak = true := by
   simp only [B.placeLine]
   repeat' split
   all_goals first
@@ -5100,8 +5190,8 @@ private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
 /-- `placeLine` from a pages-preserving wrapper of `b0` still only
 extends `b0`'s shipped pages. -/
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
-    (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp) :
-    PagesExtend b0 (b1.placeLine fs x size segs w hang) :=
+    (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
+    (ex : Int) : PagesExtend b0 (b1.placeLine fs x size segs w hang ex) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
@@ -5168,7 +5258,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
   all_goals first
     | exact absurd rfl hs
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
-    | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ _ h, placeLine_keeps_noBreak _ _ _ _ _ _ _ h⟩
+    | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ _ _ h, placeLine_keeps_noBreak _ _ _ _ _ _ _ _ h⟩
     | exact placePara_noBreak _ _ _ _ h
     | (refine ⟨?_, ?_⟩ <;> simp [h]; done)
 
@@ -5359,7 +5449,8 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
     | .foot c => .foot c
     | .para j => .para j (Task.spawn fun _ =>
-        kpTwoPass j.items j.target (j.protrude && j.justify && !j.center))
+        kpTwoPass j.items j.target (j.protrude && j.justify && !j.center)
+          (j.expand && j.justify && !j.center))
     | .colOpen => .colOpen
     | .colNext => .colNext
     | .colClose => .colClose

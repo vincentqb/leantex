@@ -66,8 +66,8 @@ private def randItems (g : Gen) : Array Item × Gen := Id.run do
   items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   return (items, g)
 
-private def seqCost (items : Array Item) (target : Dim.Sp) (protrude : Bool)
-    (breaks : List Nat) : Option Int := Id.run do
+private def seqCost (items : Array Item) (target : Dim.Sp)
+    (protrude expand : Bool) (breaks : List Nat) : Option Int := Id.run do
   let mut prev : Nat := 0
   let mut first := true
   let mut prevFlagged := false
@@ -78,7 +78,7 @@ private def seqCost (items : Array Item) (target : Dim.Sp) (protrude : Bool)
       if isForced items k then
         return none
     let m := measure items a b protrude
-    total := total + lineDemerits items m target b
+    total := total + lineDemerits items m target b expand
     if prevFlagged && isFlagged items b then
       total := total + doubleHyphenDemerits
     if prevFlagged && b == items.size - 1 then
@@ -90,8 +90,8 @@ private def seqCost (items : Array Item) (target : Dim.Sp) (protrude : Bool)
     return none
   return some total
 
-private def bruteBest (items : Array Item) (target : Dim.Sp) (protrude : Bool) :
-    Option Int := Id.run do
+private def bruteBest (items : Array Item) (target : Dim.Sp)
+    (protrude expand : Bool) : Option Int := Id.run do
   let n := items.size
   let legal := (List.range n).filter (canBreakAt items ·)
   let optional' := legal.filter (· != n - 1)
@@ -101,7 +101,7 @@ private def bruteBest (items : Array Item) (target : Dim.Sp) (protrude : Bool) :
     for (b, idx) in optional'.zipIdx do
       if mask / 2 ^ idx % 2 == 1 then
         chosen := chosen ++ [b]
-    if let some c := seqCost items target protrude (chosen ++ [n - 1]) then
+    if let some c := seqCost items target protrude expand (chosen ++ [n - 1]) then
       match best with
       | some b0 => if c < b0 then best := some c
       | none => best := some c
@@ -119,7 +119,8 @@ private def measuresAgree (items : Array Item) : Bool := Id.run do
           let direct := measure items a j protrude
           let viaKp := kpMeasure items sums a j protrude
           if direct.natural != viaKp.natural || direct.stretch != viaKp.stretch ||
-              direct.shrink != viaKp.shrink || direct.fil != viaKp.fil then
+              direct.shrink != viaKp.shrink || direct.fil != viaKp.fil ||
+              direct.boxW != viaKp.boxW then
             return false
   return true
 
@@ -135,16 +136,17 @@ def main (args : List String) : IO UInt32 := do
     let target := Dim.pt (tw + 40)
     -- Justified, and ragged as the fil-glue transform the card class uses:
     -- the same breaker must be optimal over both item shapes — and with
-    -- the protrusion boundary term on and off.
+    -- the protrusion boundary term and the expansion flexibility on and
+    -- off, independently.
     for shape in [items, raggedItems items] do
-      for protrude in [false, true] do
-        let kpBreaks := (kp shape target protrude).toList
-        let kpCost := seqCost shape target protrude kpBreaks
-        let brute := bruteBest shape target protrude
+      for (protrude, expand) in [(false, false), (true, false), (false, true), (true, true)] do
+        let kpBreaks := (kp shape target protrude expand).toList
+        let kpCost := seqCost shape target protrude expand kpBreaks
+        let brute := bruteBest shape target protrude expand
         unless kpCost.isSome && kpCost == brute do
           failures := failures + 1
-          IO.eprintln s!"FAIL case {i} (protrude={protrude}): target={target} \
-kp={kpCost} brute={brute}"
+          IO.eprintln s!"FAIL case {i} (protrude={protrude}, expand={expand}): \
+target={target} kp={kpCost} brute={brute}"
           IO.eprintln s!"  breaks={kpBreaks}"
           IO.eprintln s!"  items={shape.size}"
     unless measuresAgree items do

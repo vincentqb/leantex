@@ -97,6 +97,12 @@ structure PageSpec where
   protrusion = off }` or `\microtypesetup{protrusion=false}` opts out;
   `none` takes the default. -/
   protrude : Option Bool := none
+  /-- Whether font boxes may expand within microtype's ±2% so the breaker
+  gains a third degree of freedom (Thành, TUGboat 22(3); microtype manual
+  §2), on by default as microtype's own `expansion=true` is. `\page{
+  expansion = off }` or `\microtypesetup{expansion=false}` opts out;
+  `none` takes the default. -/
+  expand : Option Bool := none
   /-- Whether pages carry the physical page number, centred in the foot;
   `none` takes the class default (`ClassRecord.pageNumbers`). This is
   LaTeX's `plain` page style, spelled natively: `\page{ numbers = on }`

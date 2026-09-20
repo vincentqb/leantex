@@ -291,7 +291,8 @@ def runningCtrl : List String := ["runninghead", "runningfoot"]
 def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin",
    "textwidth", "textheight", "leading", "parskip",
-   "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion", "numbers",
+   "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion",
+   "expansion", "numbers",
    "furnituregap", "headsep", "footskip"]
 
 /-- The `\page` keys that declare the page's physical extent. Exactly these
@@ -6973,6 +6974,12 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "off" | "false" => spec := { spec with protrude := some false }
       | _ =>
         evs := say evs .E0323 s!"'protrusion' in '\\page' expects on or off, got '{v}'"
+    | "expansion", .ident v =>
+      match v with
+      | "on" | "true" => spec := { spec with expand := some true }
+      | "off" | "false" => spec := { spec with expand := some false }
+      | _ =>
+        evs := say evs .E0323 s!"'expansion' in '\\page' expects on or off, got '{v}'"
     | "numbers", .ident v =>
       match v with
       | "on" | "true" => spec := { spec with numbers := some true }
@@ -7002,15 +7009,19 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
         let expected := if key == "size" then "a page size name"
           else if key == "measure" then "'checked' or 'free'"
           else if key == "hyphenate" || key == "justify" || key == "protrusion"
-            || key == "numbers" then "on or off"
+            || key == "expansion" || key == "numbers" then "on or off"
           else "a dimension"
         evs := evs.push (.say (Decl.wrongType ctx.file "page" key expected v pos))
       else
         -- The help names the native surface; `headsep`/`footskip` stay
         -- accepted as the LaTeX spellings of `furnituregap` (read through
-        -- the baseline-to-ink correction), not advertised beside it.
+        -- the baseline-to-ink correction), and `textwidth`/`textheight`
+        -- as geometry's spellings of the block size the native
+        -- width/height + margin surface already covers — accepted, not
+        -- advertised beside it.
         evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
-          (pageKeys.filter (!["headsep", "footskip"].contains ·)) pos))
+          (pageKeys.filter
+            (!["headsep", "footskip", "textwidth", "textheight"].contains ·)) pos))
     -- Every failing arm above records a diagnostic, so a clean count means
     -- the entry applied: record it, and warn if it overwrote (W0343).
     if evs.size == before then

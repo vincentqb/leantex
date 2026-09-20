@@ -1041,11 +1041,11 @@ where
     if args.isEmpty then return none
     return some (← geometry (rawSrc (args.getD 0 #[])) pos s!"\\{name}", k)
   | "microtypesetup" =>
-    -- microtype's switchboard (manual §3.1): `protrusion` reaches the
-    -- native protrusion gate, and `activate` — the manual's shorthand for
-    -- protrusion and expansion together — reaches its protrusion half.
-    -- A key the engine does not perform is dropped named (W0101), never
-    -- silently; a bare key means `=true`, as in the manual.
+    -- microtype's switchboard (manual §3.1): `protrusion` and `expansion`
+    -- reach the native gates, and `activate` — the manual's shorthand for
+    -- both — sets the pair. A key the engine does not perform is dropped
+    -- named (W0101), never silently; a bare key means `=true`, as in the
+    -- manual.
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     let mut keys : Array String := #[]
@@ -1056,14 +1056,17 @@ where
       | key :: v =>
         let key := key.trimAscii.toString
         let v := (String.intercalate "=" v).trimAscii.toString
-        if key == "protrusion" || key == "activate" then
+        let native := if key == "activate" then ["protrusion", "expansion"]
+          else if key == "protrusion" || key == "expansion" then [key]
+          else []
+        if native.isEmpty then
+          if !key.isEmpty then dropped := dropped.push key
+        else
           match v with
           | "" | "true" | "compatibility" | "nocompatibility" =>
-            keys := keys.push "protrusion = on"
-          | "false" => keys := keys.push "protrusion = off"
+            keys := keys ++ (native.map (s!"{·} = on")).toArray
+          | "false" => keys := keys ++ (native.map (s!"{·} = off")).toArray
           | _ => dropped := dropped.push key
-          if key == "activate" then dropped := dropped.push "expansion"
-        else if !key.isEmpty then dropped := dropped.push key
     unless dropped.isEmpty do
       say .W0101 s!"microtype keys without a native equivalent were dropped: \
 {String.intercalate ", " dropped.toList}" pos
