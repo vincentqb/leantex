@@ -336,6 +336,28 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, dd) := elabStr (deck "debug,size=a2")
   t "an option outside the model is dropped by name (W0367)"
     (dd.any (·.code == "W0367"))
+  -- The engine length tokens: a preamble \setlength reads the page the
+  -- class record fixes, the declared token then names a column width —
+  -- the two constructs the beamerposter idiom is written in.
+  let src := "\\documentclass{poster}\n" ++
+    "\\newlength{\\colwidth}\n\\setlength{\\colwidth}{0.3\\paperwidth}\n" ++
+    "\\begin{document}\n\\begin{frame}{T}\n\\begin{columns}\n" ++
+    "\\begin{column}{\\colwidth}\nx\n\\end{column}\n" ++
+    "\\begin{column}{\\colwidth}\ny\n\\end{column}\n" ++
+    "\\end{columns}\n\\end{frame}\n\\end{document}"
+  let (dp, dps) := elabStr src
+  t "a preamble \\setlength reads the engine's paperwidth from the class board"
+    ((dp.tokens.find? "colwidth").map (·.width.sp) == some (Dim.mm 1189 * 3 / 10))
+  t "the token names the column width: E0321 closes and W0314 retires"
+    (!dps.any (·.code == "E0321") && !dps.any (·.code == "W0314"))
+  let (_, da) := elabStr ("\\documentclass{article}\n\\newlength{\\x}\n" ++
+    "\\setlength{\\x}{0.5\\textwidth}\n\\begin{document}\nx\n\\end{document}")
+  t "a flow class's preamble textwidth stays a named error: the text block is set after the fold"
+    (da.any (·.code == "E0321"))
+  let (_, db) := elabStr ("\\documentclass{article}\n\\begin{document}\n" ++
+    "\\setlength{\\y}{0.5\\textwidth}\nx\n\\end{document}")
+  t "a body \\setlength resolves textwidth from the finished page"
+    (!db.any (·.code == "E0321"))
 
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do

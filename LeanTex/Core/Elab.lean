@@ -64,6 +64,13 @@ structure Ctx where
   palette : Palette := {}
   /-- Named lengths from `\tokens`. -/
   tokens : Tokens := {}
+  /-- The resolved page in force for the body: what the engine length
+  tokens (`paperwidth`, `textwidth`, …) and a token-named column width
+  resolve against. Set once, after the class defaults are applied. -/
+  page : Ir.PageSpec := {}
+  /-- The engine's own length tokens, resolved from the final page: the
+  body-side lookup `\setlength` expressions extend theirs with. -/
+  engineTokens : Array (String × Dim.SymGlue) := #[]
   /-- Element styles declared so far (`\style`, theme bundles): the body
   reads `titlepage` at `\maketitle`. -/
   styles : Styles := {}
@@ -2942,7 +2949,7 @@ def builtinEnvNames : List String :=
 `.5\linewidth`, a bare factor, or `\textwidth` alone — a factor of one, as
 TeX reads a coefficient-less internal dimen. An absolute length is not
 modelled. -/
-private def columnWidth (src : String) : Option Nat := Id.run do
+private def columnWidth (ctx : Ctx) (src : String) : Option Nat := Id.run do
   let mut s := src.trimAscii.toString
   let mut stripped := false
   for suffix in ["\\textwidth", "\\linewidth", "\\columnwidth"] do
@@ -2950,6 +2957,19 @@ private def columnWidth (src : String) : Option Nat := Id.run do
       s := ((s.dropEnd suffix.length).trimAscii).toString
       stripped := true
   if s.isEmpty then return if stripped then some 1000 else none
+  -- A declared token names the width (`\begin{column}{\colwidth}`, the
+  -- beamerposter idiom): its resolved length against the page's text
+  -- width, the same permille every fraction spelling produces — W0314
+  -- retires exactly where the token resolves.
+  if !stripped && s.startsWith "\\" then
+    let name := (s.drop 1).toString.trimAscii.toString
+    match ctx.tokens.find? name with
+    | some g =>
+      let tw := ctx.page.width - 2 * ctx.page.hmargin
+      let v := g.width.resolve ctx.page.fontSize 0
+      if tw > 0 && 0 ≤ v && v ≤ tw then return some ((v * 1000 / tw).toNat)
+      else return none
+    | none => return none
   match Decl.parseDecimal s with
   | some (m, sc) =>
     if m ≥ 0 && sc > 0 then return some ((m * 1000 / sc).toNat) else return none
@@ -3649,11 +3669,78 @@ is `applyEvent`'s `.declared` arm — one meaning, two doors. -/
 private def noteDeclared (ctx : Ctx) (decl key : String) : EM Unit :=
   modify fun st => applyEvent ctx st (.declared decl key)
 
+/-- The engine's own length tokens, LaTeX's page dimen parameters read
+onto the token namespace: `paperwidth`/`paperheight` (the physical page),
+`textwidth`/`textheight` (the measure between the margins — TeX's own
+parameters, TeXbook ch. 23). Resolved eagerly at the read site, as every
+token reference is (the `\setlength{\x}{2\x}` rule) — from the declared
+page where one is declared, else from what the class already fixes: a
+face's `trimDefault`/`safeMargin` row, the slides stage and margins, a
+flow class's named paper option. A dimension the class will still adjust
+after the preamble fold — the flow classes' text block — is deliberately
+not offered: an expression reading it keeps its named error (E0321)
+rather than capturing a value the finished page would contradict. -/
+private def engineLengthTokens (docClass : Ir.DocClass) (classOptions : String)
+    (page : PageSpec) : Array (String × Dim.SymGlue) := Id.run do
+  let record := docClass.record
+  let dflt : PageSpec := {}
+  let opts := (classOptions.splitOn ",").map (·.trimAscii.toString)
+  let wh : Option (Dim.Sp × Dim.Sp) :=
+    if !(page.width == dflt.width && page.height == dflt.height) then
+      some (page.width, page.height)
+    else match record.model with
+      | .face =>
+        if opts.contains "us" then some (Dim.pt 252, Dim.pt 144)
+        else if opts.contains "jis" then some (Dim.mm 91, Dim.mm 55)
+        else record.trimDefault
+      | .frame =>
+        some (if opts.contains "aspectratio=169" then Ir.slidesStage169
+          else Ir.slidesStage43)
+      | .flow =>
+        let sized := opts.findSome? fun o =>
+          let o := if o.startsWith "paper=" then
+            (o.drop "paper=".length).toString ++ "paper" else o
+          if o.endsWith "paper" then
+            pageSizes.lookup ((o.dropEnd "paper".length).toString)
+          else none
+        let base := sized.getD (page.width, page.height)
+        some (if opts.contains "landscape" then (base.2, base.1) else base)
+  let hm : Option Dim.Sp :=
+    if page.hmargin != dflt.hmargin then some page.hmargin
+    else match record.model with
+      | .face => record.safeMargin
+      | .frame => some Ir.slidesHMargin
+      | .flow => none
+  let vm : Option Dim.Sp :=
+    if page.vmargin != dflt.vmargin then some page.vmargin
+    else match record.model with
+      | .face => record.safeMargin
+      | .frame => some Ir.slidesVMargin
+      | .flow => some dflt.vmargin
+  let mut out : Array (String × Dim.SymGlue) := #[]
+  if let some (w, h) := wh then
+    out := out.push ("paperwidth", { width := Dim.Length.ofSp w })
+    out := out.push ("paperheight", { width := Dim.Length.ofSp h })
+    if let some m := hm then
+      out := out.push ("textwidth", { width := Dim.Length.ofSp (w - 2 * m) })
+    if let some m := vm then
+      out := out.push ("textheight", { width := Dim.Length.ofSp (h - 2 * m) })
+  return out
+
+/-- The engine tokens over the finished page, for body reads: every value
+is determined once the class defaults are applied, so all four resolve. -/
+private def engineLengthTokensOfPage (page : PageSpec) :
+    Array (String × Dim.SymGlue) :=
+  #[("paperwidth", { width := Dim.Length.ofSp page.width }),
+    ("paperheight", { width := Dim.Length.ofSp page.height }),
+    ("textwidth", { width := Dim.Length.ofSp (page.width - 2 * page.hmargin) }),
+    ("textheight", { width := Dim.Length.ofSp (page.height - 2 * page.vmargin) })]
+
 /-- `\tokens{...}`: named lengths. Entries are walked one at a time so a
 token may be defined by scaling an earlier one (`sep = 0.6 * rhythm`);
 parsing the block in one shot would leave those references unresolved. -/
-private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
-    EM Tokens := do
+private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos)
+    (engine : Array (String × Dim.SymGlue) := #[]) : EM Tokens := do
   let mut acc : Tokens := toks
   for entry in Decl.splitEntries src do
     match Decl.splitEntry entry with
@@ -3665,7 +3752,7 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
       -- declaration overrides — a theme's defaults included. Entries
       -- already derived from the old value keep it: references resolve
       -- when the entry is read, in declaration order.
-      match Decl.parseValue valueSrc acc.entries with
+      match Decl.parseValue valueSrc (acc.entries ++ engine) with
       | some (.glue g) =>
         acc := acc.declare key g
         noteDeclared ctx "tokens" key
@@ -3680,7 +3767,7 @@ private def applyTokens (ctx : Ctx) (toks : Tokens) (src : String) (pos : Pos) :
         -- The expression parser's own verdict names the defect: an
         -- unknown token errors as itself, never resolving to zero.
         let detail := if Decl.looksLikeExpr valueSrc then
-            match Decl.parseLengthExpr acc.entries valueSrc with
+            match Decl.parseLengthExpr (acc.entries ++ engine) valueSrc with
             | .error e => s!": {e}"
             | .ok _ => ""
           else ""
@@ -5420,7 +5507,7 @@ stands top-aligned in its row" spos
         if let some (.group wRaws _) := sbody[m]? then
           m := m + 1
           let src := rawSrc wRaws
-          width := columnWidth src
+          width := columnWidth ctx src
           if width.isNone then
             warnOnce ctx "env:subfigure-width" .W0314
               s!"'\{{sn}}' width '{src}' is not a fraction of the \
@@ -5533,7 +5620,7 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
       if let some (.group wRaws _) := cbody[m]? then
         m2 := m + 1
         let src := rawSrc wRaws
-        width := columnWidth src
+        width := columnWidth ctx src
         if width.isNone then
           warnOnce ctx "env:column-width" .W0314
             s!"column width '{src}' is not a fraction of the text width; \
@@ -5747,7 +5834,7 @@ private def elabEnvArm (ctx : Ctx) (n : String) (body : Array Raw)
     if let some (.group wRaws _) := body[m]? then
       m2 := m + 1
       let src := rawSrc wRaws
-      width := columnWidth src
+      width := columnWidth ctx src
       if width.isNone then
         warnOnce ctx "env:minipage-width" .W0314
           s!"minipage width '{src}' is not a fraction of the text width; \
@@ -6628,6 +6715,7 @@ a side channel, never slide content" cpos
         match raws[j]? with
         | some (.group gbody _) =>
           let tk ← applyTokens ctx' ctx'.tokens (rawSrc gbody) cpos
+            (engine := ctx'.engineTokens)
           let ⟨tokCtx, hm⟩ : MCtx ctx' ←
             pure ⟨{ ctx' with tokens := tk }, rfl, rfl, rfl, rfl⟩
           modify fun st => { st with flowTokens := some tk
@@ -8120,6 +8208,7 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       -- Parses its own entries one at a time; a generic pre-parse
       -- would reject `0.6 * rhythm` before the reference resolves.
       let tk ← applyTokens s.ctx s.tokens src pos
+        (engine := engineLengthTokens s.docClass s.classOptions s.page)
       return { s with tokens := tk, ctx := { s.ctx with tokens := tk } }
     | none =>
       diag s.ctx .E0304 "'\\tokens' needs a {...} block" pos
@@ -8624,7 +8713,9 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   if output.md.isNone then
     output := { output with md := record.mdName }
   ctx := { ctx with slides := record.model == .frame
-                    numberHeadings := record.numberHeadings, styles := styles }
+                    numberHeadings := record.numberHeadings, styles := styles
+                    page := page
+                    engineTokens := engineLengthTokensOfPage page }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's
   -- number in document order (`numberFloats_exact` is the fact `\ref`
