@@ -1135,6 +1135,62 @@ definitionally the animation rules followed by the guard. -/
 theorem deckEntryCss_guarded : ∃ rule, deckEntryCss = rule ++ deckMotionGuard :=
   ⟨_, rfl⟩
 
+/-- The reduced-motion guard for the steps' uncover: under the reader's
+reduce preference no step animates — everything stands at full colour,
+the handout state (WCAG 2.2 SC 2.3.3, technique C39; CSS Media Queries 5
+§12.1). As `deckMotionGuard`, the guard travels with the declaration. -/
+def deckStepGuard : String :=
+  "@media (prefers-reduced-motion: reduce) { .step { animation: none; } }\n"
+
+/-- The steps' reveal in place: a `.step` starts *covered* — the caller
+passes the same oklab `color-mix` shade the PDF handout dims pending
+content to (dim, never hide; no reflow) — and uncovers to full colour,
+each step delayed by its own `--step` index times the stagger token. Two
+declarative triggers, best available first, each under `@supports`:
+
+- Scroll-state container queries (CSS Conditional 5, `scroll-state()`):
+  the slide is its own scroll-state container, and when it is the snapped
+  one its steps uncover in sequence. Support (caniuse
+  `mdn-css_at-rules_container_scroll-state_queries_snapped`, read
+  2026-09-20): Chromium 133+ (Feb 2025) only, ≈71% global — no Safari,
+  no Firefox.
+- Where those are unsupported, the `view()` timeline the entry motion
+  already uses (Scroll-driven Animations 1): the steps uncover together
+  as the frame scrolls in. Support (caniuse
+  `wf-scroll-driven-animations`, read 2026-09-20): Chromium 115+,
+  Safari 26, Firefox behind a flag — ≈84% global.
+
+Floor: neither supported, no rule applies and every step stands at full
+colour — the handout state, `revealCss`'s design. The uncover runs for
+`--motionduration` (default 0.4 s — reveal.js and Quarto's default
+transition-duration) after `(--step − 1) × --motionstagger`. No authority
+fixes a reveal stagger: Material's own stagger guidance (Motion,
+Choreography — entrances ≤ 20 ms apart) addresses surfaces created
+*simultaneously*, not a sequence the document declares, so the default
+takes one perceptible beat from Material's duration band for small
+animations (Duration & easing, 150–200 ms): 150 ms. Both are var()
+doors a bundle or reader overrides. Reduced motion: no animation, full
+colour — the guard rides by construction (`deckStepCss_guarded`). -/
+def deckStepCss (covered : String) : String :=
+  s!"@keyframes ltx-uncover \{ from \{ color: {covered} } }\n" ++
+  "@supports (container-type: scroll-state) {\n" ++
+  "section.slide { container-type: scroll-state; }\n" ++
+  "@container scroll-state(snapped: y) {\n" ++
+  ".step { animation: ltx-uncover var(--motionduration, 400ms) both;\n" ++
+  "  animation-delay: calc((var(--step, 1) - 1) * var(--motionstagger, 150ms)); }\n" ++
+  "} }\n" ++
+  "@supports (animation-timeline: view()) and (not (container-type: scroll-state)) {\n" ++
+  ".step { animation: ltx-uncover linear both; animation-timeline: view();\n" ++
+  "  animation-range: entry; }\n" ++
+  "}\n" ++
+  deckStepGuard
+
+/-- The uncover carries its reduced-motion form by construction:
+definitionally the trigger rules followed by the guard. -/
+theorem deckStepCss_guarded (covered : String) :
+    ∃ rule, deckStepCss covered = rule ++ deckStepGuard :=
+  ⟨_, rfl⟩
+
 /-- The deck's body size over the viewport height, in milli-vh: the very
 ratio the PDF stage declares — `fontSize` over the page height
 (`Ir.slidesStage169`'s 90mm carries beamer's 11pt as ≈4.31% of the stage;
@@ -1211,6 +1267,19 @@ private def slideCss (doc : Doc) : String :=
     s!"section.slide > header \{ max-height: {titlebandVar}; }\n" ++
     s!"section.slide > header h2 \{ font-size: {scaleSize "Large" "em"}; }\n" ++
     deckEntryCss ++
+    -- The pre-reveal shade, spelled from the resolved design: the very
+    -- fraction and space the PDF's cover mixes (`Ir.Design.cover`,
+    -- Core/Oklab; CSS Color 4 §12.2 `color-mix`), now the uncover's
+    -- from-state. Shipped exactly when the deck has steps — a stepless
+    -- deck has nothing to reveal. Screen only: print is the handout,
+    -- every step at full colour.
+    (if doc.body.any (fun b => match b with
+        | .frame _ _ _ fb => Ir.maxStepBlocks fb > 1
+        | _ => false) then
+      let d := Design.ofDoc doc
+      deckStepCss s!"color-mix(in oklab, currentColor \
+{d.coveredFraction}%, var(--bg, {cssColor d.bg}))"
+     else "") ++
     "}\n" ++
     "@media print {\n" ++ handout ++
     "section.slide { break-after: page; }\n" ++

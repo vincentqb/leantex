@@ -1933,3 +1933,21 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "frame sections keep unique ids"
     (count "id=\"steps\"" == 1 && count "id=\"steps-2\"" == 0 &&
      count "id=\"plain\"" == 1)
+  -- The uncover CSS census: the two declarative triggers, best available
+  -- first, each under @supports; the from-state is the design's own mix;
+  -- the guard rides; print (the handout) never sees a step rule.
+  t "the uncover ships under scroll-state, its fallback under view()"
+    (count "@supports (container-type: scroll-state)" == 1 &&
+     count "section.slide { container-type: scroll-state; }" == 1 &&
+     count "@container scroll-state(snapped: y)" == 1 &&
+     count "@supports (animation-timeline: view()) and (not (container-type: scroll-state))" == 1)
+  t "the uncover staggers by the step's own index through the tokens"
+    (count "animation: ltx-uncover var(--motionduration, 400ms) both" == 1 &&
+     count "animation-delay: calc((var(--step, 1) - 1) * var(--motionstagger, 150ms))" == 1)
+  t "the pre-reveal state is the design's own covered mix"
+    (count "@keyframes ltx-uncover { from { color: color-mix(in oklab, currentColor 31%" == 1)
+  t "reduced motion shows every step at full colour"
+    (count "@media (prefers-reduced-motion: reduce) { .step { animation: none; } }" == 1)
+  t "print shows every step uncovered"
+    (((html.splitOn "@media print").drop 1).all fun s =>
+      (s.splitOn "ltx-uncover").length == 1 && (s.splitOn ".step {").length == 1)
