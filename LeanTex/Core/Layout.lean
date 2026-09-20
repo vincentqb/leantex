@@ -1968,7 +1968,7 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp) (num : Nat) :
     Item × Array (Nat × Char) := Id.run do
   let idx := fs.lookup sty.slot sty.bold sty.italic
   let font := fs.get idx
-  let markSize := around * ((Ir.sizeScale.lookup "scriptsize").getD 700) / 1000
+  let markSize := Ir.scaleStep around "scriptsize"
   let raise := around * Ir.markRaise / 1000
   let mut gs : Array (Nat × Char × Sp) := #[]
   let mut w : Sp := 0
@@ -3371,11 +3371,14 @@ descent approaches its em (OpenType descents sit near a third of it). -/
 theorem bars_clear_descenders (body descMilli : Int)
     (hb : Dim.pt 1 ≤ body) -- 1 pt: the rhythm family's floor hypothesis (Ir.default_rhythm_multiples), not a design value
     (hm : descMilli ≤ 1000) :
-    body * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000 * descMilli / 1000
+    Ir.scaleStep body "LARGE" * descMilli / 1000
       < 3 * Ir.rhythmQuantum body := by
   have hb' : (65536 : Int) ≤ body := hb
   have hL : ((Ir.sizeScale.lookup "LARGE").getD 1000 : Int) = 1728 := by decide
-  rw [hL]
+  have hstep : Ir.scaleStep body "LARGE" = body * 1728 / 1000 := by
+    unfold Ir.scaleStep
+    rw [hL]
+  rw [hstep]
   have ht : (0 : Int) ≤ body * 1728 / 1000 := by omega
   have h1 : body * 1728 / 1000 * descMilli ≤ body * 1728 / 1000 * 1000 :=
     Int.mul_le_mul_of_nonneg_left hm ht
@@ -3894,8 +3897,7 @@ private def collectPara (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet)
     let mut out : Array (Nat × NoteBlock) := #[]
     let mut ds := ds
     let mut cache := cache
-    let noteSize := a.geom.fontSize
-      * ((Ir.sizeScale.lookup "footnotesize").getD 1000) / 1000
+    let noteSize := Ir.scaleStep a.geom.fontSize "footnotesize"
     let sep := a.geom.fontSize * 665 / 1000
     let bodyFont := fs.get (fs.lookup 0 false false)
     let scaleB (v : Int) : Sp := v * a.geom.fontSize / bodyFont.unitsPerEm
@@ -3977,8 +3979,8 @@ hierarchy holds at every base size — the old 14/12-point constants
 made a 12 pt subsection equal its body and a >14 pt body outgrow its own
 sections. -/
 def sectionSize (geom : Geom) : Nat → Sp
-  | 1 => geom.fontSize * ((Ir.sizeScale.lookup "Large").getD 1000) / 1000
-  | 2 => geom.fontSize * ((Ir.sizeScale.lookup "large").getD 1000) / 1000
+  | 1 => Ir.scaleStep geom.fontSize "Large"
+  | 2 => Ir.scaleStep geom.fontSize "large"
   | _ => geom.fontSize
 
 private theorem heading_hierarchy_int (x : Int) (h : 1 * 65536 ≤ x) :
@@ -4044,7 +4046,7 @@ private def collectTitle (a : Acc) (fs : FontSet) (title : Array Inline)
     collectDisplay a fs (Ir.fillTemplate tpl title) indent center a.geom.fontSize
   | none =>
     collectDisplay a fs title indent center
-      (a.geom.fontSize * ((Ir.sizeScale.lookup "LARGE").getD 1000) / 1000)
+      (Ir.scaleStep a.geom.fontSize "LARGE")
       (baseStyle := { bold := true })
 
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
@@ -4676,7 +4678,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- follows; undeclared, the class's own small bold line. The body takes
     -- the scale's own \small, the quotation margins are the quote arm's,
     -- and the outer state is restored the way a quote restores its measure.
-    let small := a.geom.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
+    let small := Ir.scaleStep a.geom.fontSize "small"
     let hst := Ir.abstractHeadingStyle a.styles
     let hcenter := hst.align != some "left"
     let a := match hst.font with
@@ -4765,7 +4767,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       | some c => #[.colored c none inner]
       | none => inner
     collectPara a none fs inner indent false
-      (a.geom.fontSize * ((Ir.sizeScale.lookup "footnotesize").getD 1000) / 1000)
+      (Ir.scaleStep a.geom.fontSize "footnotesize")
   | .framefoot content =>
     -- Not a line, a state change: the note the following frames' footers
     -- carry. Empty clears back to the chrome default.
@@ -6035,7 +6037,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let plainFoot := doc.foot.isNone && doc.pageNumbersOn
   -- The footer's size is a step of the scale and its colour a palette key,
   -- never a literal: the theme declares both.
-  let footSize := geom.fontSize * ((Ir.sizeScale.lookup "small").getD 1000) / 1000
+  let footSize := Ir.scaleStep geom.fontSize "small"
   -- The running line's ink extents: the body face at the page size for a
   -- declared head or foot and the plain number, the small step for chrome
   -- slots. One `furnitureBand` per side from the same ink and gap is what

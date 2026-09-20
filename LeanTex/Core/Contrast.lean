@@ -259,7 +259,7 @@ ships is what makes the large-scale call (WCAG 2.2 glossary: ≥ 18pt, or
 bold ≥ 14pt) the page's own: a re-spelled absolute here once judged a
 phantom 14 pt bold while a 9 pt base set its sections at 12.96 pt. -/
 private def headingCx (base : Sp) : Nat → UseCx
-  | 0 => { base, size := base * ((sizeScale.lookup "LARGE").getD 1000) / 1000
+  | 0 => { base, size := scaleStep base "LARGE"
            bold := true }
   | l => { base, size := Layout.sectionSize { fontSize := base } l, bold := true }
 

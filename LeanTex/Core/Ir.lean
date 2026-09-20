@@ -1074,6 +1074,13 @@ def sizeScale : List (String × Nat) :=
    ("normalsize", 1000), ("large", 1200), ("Large", 1440), ("LARGE", 1728),
    ("huge", 2074), ("Huge", 2488)]
 
+/-- A named step of the scale applied to a base size — the one resolving
+site for `base * step / 1000`, so the backends and the layout cannot
+drift on what a named size means. A name off the scale is the base
+itself: the identity factor, `normalsize`'s. -/
+def scaleStep (base : Sp) (name : String) : Sp :=
+  base * ((sizeScale.lookup name).getD 1000) / 1000
+
 /-- Adjacent steps of the scale, in order: what the scale theorems below
 quantify over. -/
 def sizeScaleSteps : List (Nat × Nat) :=
