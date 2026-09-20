@@ -379,66 +379,14 @@ def VDist.center : VDist := ⟨1, 1⟩
 def VDist.bottom : VDist := ⟨1, 0⟩
 def VDist.golden : VDist := ⟨2618, 1000⟩
 
-/-- The share of a page's leftover placed above the content. Content taller
-than the area (leftover ≤ 0) takes nothing above: it stays top-flush and
-spills below, never rides off the top of the page. -/
-def VDist.aboveShare (d : VDist) (leftover : Sp) : Sp :=
-  if leftover ≤ 0 then 0
-  else leftover * d.above / (d.above + d.below)
-
-/-- The split loses and invents nothing: the above share never leaves
-`[0, leftover]`, and the below share is the exact difference — so both
-shares are non-negative and sum to exactly the leftover, whatever the
-ratio and whatever rounding the division did. -/
-theorem VDist.split_exact (d : VDist) (l : Int) :
-    0 ≤ d.aboveShare l ∧ (0 ≤ l → d.aboveShare l ≤ l) ∧
-    d.aboveShare l + (l - d.aboveShare l) = l := by
-  have hsum : (0 : Int) ≤ (d.above : Int) + (d.below : Int) := by
-    have := Int.natCast_nonneg d.above
-    have := Int.natCast_nonneg d.below
-    omega
-  have hcancel : ∀ x y : Int, x + (y - x) = y := by omega
-  have hnn : 0 ≤ d.aboveShare l := by
-    unfold aboveShare
-    split
-    · exact Int.le_refl 0
-    · next hc =>
-      have hc2 : ¬l ≤ (0 : Int) := hc
-      have hl : (0 : Int) ≤ l := by omega
-      exact Int.ediv_nonneg (Int.mul_nonneg hl (Int.natCast_nonneg _)) hsum
-  refine ⟨hnn, ?_, hcancel _ _⟩
-  intro hl
-  unfold aboveShare
-  split
-  · exact hl
-  · next hc =>
-    by_cases hz : (d.above : Int) + (d.below : Int) = 0
-    · rw [hz, Int.ediv_zero]
-      exact hl
-    · have hmul : l * (d.above : Int) ≤ l * ((d.above : Int) + (d.below : Int)) := by
-        have hb := Int.natCast_nonneg d.below
-        exact Int.mul_le_mul_of_nonneg_left (by omega) hl
-      calc l * (d.above : Int) / ((d.above : Int) + (d.below : Int))
-          ≤ l * ((d.above : Int) + (d.below : Int)) / ((d.above : Int) + (d.below : Int)) :=
-            Int.ediv_le_ediv (by omega) hmul
-        _ = l := Int.mul_ediv_cancel l hz
-
-/-- Ratio 1:1 is the old vertical centring, division and guard included:
-the generalisation moves no standout frame and no section page. -/
-theorem VDist.center_is_halving (l : Sp) :
-    VDist.center.aboveShare l = if l ≤ 0 then 0 else l / 2 := by
-  unfold aboveShare center
-  split
-  · rfl
-  · simp
-
 /-- The shift of a line with `k` of its page's `n` fil units above it:
 TeX's first-order infinite glue, as a share of the page's leftover.
 `\vspace{\fill}` above and below the content is k=0 for nothing and k=1
 of n=2 for every line — the centring sandwich; a leading fil alone pushes
 everything down by the whole leftover (bottom-flush), a trailing fil
 alone moves nothing. Content taller than the area (leftover ≤ 0) stays
-put, exactly as `VDist.aboveShare` guards. -/
+put: it stays top-flush and spills below, never rides off the top of the
+page. -/
 def filShare (leftover : Sp) (k n : Nat) : Sp :=
   if leftover ≤ 0 then 0
   else if n = 0 then 0
@@ -469,10 +417,38 @@ theorem filShare_sound (l : Sp) (k k' n : Nat) (hk : k ≤ k') (hk' : k' ≤ n) 
       · exact Int.ediv_le_ediv hnn
           (Int.mul_le_mul_of_nonneg_left (by exact_mod_cast hk) (by omega))
 
+/-- The share of a page's leftover placed above the content: the ratio
+distribution IS the fil distribution — a ratio a:b is a of (a+b) fil
+units above the content, division-by-zero convention included. -/
+def VDist.aboveShare (d : VDist) (leftover : Sp) : Sp :=
+  filShare leftover d.above (d.above + d.below)
+
+/-- The split loses and invents nothing: the above share never leaves
+`[0, leftover]` (`filShare_sound` at a of a+b fils), and the below share
+is the exact difference — so both shares are non-negative and sum to
+exactly the leftover, whatever the ratio and whatever rounding the
+division did. -/
+theorem VDist.split_exact (d : VDist) (l : Int) :
+    0 ≤ d.aboveShare l ∧ (0 ≤ l → d.aboveShare l ≤ l) ∧
+    d.aboveShare l + (l - d.aboveShare l) = l := by
+  have h := filShare_sound l d.above d.above (d.above + d.below)
+    (Nat.le_refl _) (Nat.le_add_right _ _)
+  have hcancel : ∀ x y : Int, x + (y - x) = y := by omega
+  exact ⟨h.1, h.2.1, hcancel _ _⟩
+
+/-- Ratio 1:1 is the old vertical centring, division and guard included:
+the generalisation moves no standout frame and no section page. -/
+theorem VDist.center_is_halving (l : Sp) :
+    VDist.center.aboveShare l = if l ≤ 0 then 0 else l / 2 := by
+  unfold aboveShare filShare center
+  split
+  · rfl
+  · simp
+
 /-- "All leftover below" is the old top-flush behaviour: the article page
 and every other undeclared page keep their lines exactly where they were. -/
 theorem VDist.top_is_flush (l : Sp) : VDist.top.aboveShare l = 0 := by
-  unfold aboveShare top
+  unfold aboveShare filShare top
   split
   · rfl
   · simp
