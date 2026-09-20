@@ -4574,6 +4574,65 @@ private def subRestGo (ctx : Ctx) (sn : String) (sbody : Array Raw) (q : Nat)
 termination_by sbody.size - q
 decreasing_by all_goals omega
 
+/-- A float's alignment grouping is transparent: a `center` (or
+`centering`) environment child of a float body is spliced into the body
+before the float walk, so the `\caption` and `\label` inside it are the
+float's own — LaTeX's manual spells the figure idiom
+`\begin{figure}\begin{center} … \caption{…} \end{center}\end{figure}`, and
+inside a float the group adds no box: the float centres already, as the
+`\centering` arm of `figureGo` says. The bounds returned are what the
+float walk's own invariant reads: splicing only ever drops wrapper
+weight. -/
+-- conserves: none — deliberately drops the grouping wrapper; the float
+-- walk's census facts stand over the spliced body
+private def spliceCenterGo (l : List Raw) (acc : Array Raw)
+    (bound pbound : Nat)
+    (hw : rawWeightList acc.toList + rawWeightList l ≤ bound)
+    (hp : nestedParsList acc.toList + nestedParsList l ≤ pbound) :
+    { a : Array Raw // rawWeightList a.toList ≤ bound ∧
+        nestedParsList a.toList ≤ pbound } :=
+  match l with
+  | [] =>
+    ⟨acc, by simp [rawWeightList] at hw; omega,
+      by simp [nestedParsList] at hp; omega⟩
+  | .env en ebody epos :: rest =>
+    if en == "center" || en == "centering" then
+      spliceCenterGo (ebody.toList ++ rest) acc bound pbound
+        (by
+          rw [rawWeightList_append]
+          simp only [rawWeightList, rawWeight] at hw
+          omega)
+        (by
+          rw [nestedParsList_append]
+          have hle := nestedParsList_le ebody.toList
+          simp only [nestedParsList, nestedPars] at hp
+          omega)
+    else
+      spliceCenterGo rest (acc.push (.env en ebody epos)) bound pbound
+        (by
+          rw [rawWeightList_push]
+          simp only [rawWeightList] at hw
+          omega)
+        (by
+          rw [nestedParsList_push]
+          simp only [nestedParsList] at hp
+          omega)
+  | r :: rest =>
+    spliceCenterGo rest (acc.push r) bound pbound
+      (by
+        rw [rawWeightList_push]
+        simp only [rawWeightList] at hw
+        omega)
+      (by
+        rw [nestedParsList_push]
+        simp only [nestedParsList] at hp
+        omega)
+termination_by rawWeightList l
+decreasing_by
+  · simp only [rawWeightList, rawWeight, rawWeightList_append]; omega
+  · simp only [rawWeightList, rawWeight]; omega
+  · simp only [rawWeightList]; have := rawWeight_pos r; omega
+
 /-- The list split at its `\item`s: items with their overlay steps and the
 `\pause` count standing before each, the warnings of the old in-loop split
 fired at the same points — explicit recursion so the split's conservation
@@ -5734,9 +5793,15 @@ the box takes the whole measure" pos
     -- gutter the columns layout already distributes.
     let kind : Ir.FloatKind :=
       if n == "table" || n == "table*" then .table else .figure
+    -- A float's alignment grouping is transparent (`spliceCenterGo`): a
+    -- `center` child is spliced before the walk, so its `\caption` and
+    -- `\label` are the float's own.
+    let ⟨fbody, hfw, hfp⟩ ← pure (spliceCenterGo body.toList #[]
+      (rawWeightList body.toList) (nestedParsList body.toList)
+      (by simp [rawWeightList]) (by simp [nestedParsList]))
     let mut k := 0
-    for _ in [0:body.size] do
-      match scanBracketArg body k pos with
+    for _ in [0:fbody.size] do
+      match scanBracketArg fbody k pos with
       | .took k' =>
         warnOnce ctx "figure:placement" .N0102
           s!"'\{{n}}' [placement] is ignored: a single-pass engine \
@@ -5746,11 +5811,15 @@ has nowhere for a float to float" pos
         warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
         break
       | .content => break
-    have hkw : sliceWeight body k ≤ rawWeightList body.toList := by
-      have := sliceWeight_le body (Nat.zero_le k); omega
-    have hkp : slicePars body k ≤ nestedParsList body.toList := by
-      have := slicePars_le body (Nat.zero_le k); omega
-    blocks ← figureGo ctx n kind body pos k #[] #[] #[] #[] false blocks
+    have hf0 : sliceWeight fbody 0 = rawWeightList fbody.toList :=
+      sliceWeight_zero _
+    have hf1 : slicePars fbody 0 = nestedParsList fbody.toList :=
+      slicePars_zero _
+    have hkw : sliceWeight fbody k ≤ rawWeightList fbody.toList := by
+      have := sliceWeight_le fbody (Nat.zero_le k); omega
+    have hkp : slicePars fbody k ≤ nestedParsList fbody.toList := by
+      have := slicePars_le fbody (Nat.zero_le k); omega
+    blocks ← figureGo ctx n kind fbody pos k #[] #[] #[] #[] false blocks
       (by simp [rawWeightList]; omega) (by simp [nestedParsList]; omega)
   else if n == "columns" then
     -- `[T]`-and-friends alignment options are ignored with a note:

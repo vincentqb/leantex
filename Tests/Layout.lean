@@ -449,6 +449,42 @@ def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- Inside inline content there is no block to centre; the warning stays.
   t "centering in an argument still warns"
     (warnCodes "\\textbf{\\centering x}" == ["W0108"])
+  -- A float's alignment grouping is transparent: the LaTeX-manual idiom
+  -- `\begin{figure}\begin{center} B \caption{..} \end{center}\end{figure}`
+  -- and `\begin{figure}\centering B \caption{..}\end{figure}` elaborate to
+  -- the same Ir — same float, same caption, same label binding, same
+  -- diagnostics — for `center` and for `centering` as the group's name,
+  -- and the caption inside the grouping is never an unknown command.
+  let floatDoc (inner : String) : String :=
+    "\\documentclass{article}\n\\begin{document}\n" ++ inner ++ "\n\\end{document}"
+  let figBody := "A panel body.\n\\caption{An invented panel.}\n\\label{fig:p}\n"
+  let grouped (env : String) := floatDoc
+    ("\\begin{figure}[h]\n\\begin{" ++ env ++ "}\n" ++ figBody ++
+      "\\end{" ++ env ++ "}\n\\end{figure}\nSee \\ref{fig:p}.")
+  let flat := floatDoc
+    ("\\begin{figure}[h]\n\\centering\n" ++ figBody ++ "\\end{figure}\nSee \\ref{fig:p}.")
+  let sig (ds : Array Diag) : Array (String × Severity × String) :=
+    ds.map fun d => (d.code, d.severity, d.message)
+  let (gDoc, gDs) := elabStr (grouped "center")
+  let (fDoc, fDs) := elabStr flat
+  t "a float's center group is transparent: same Ir as \\centering"
+    (gDoc == fDoc)
+  t "a float's center group is transparent: same diagnostics"
+    (sig gDs == sig fDs)
+  t "the caption inside the group is the float's, never unknown"
+    (gDs.all (·.code != "W0301"))
+  let (cDoc, cDs) := elabStr (grouped "centering")
+  t "the centering environment name is the same transparent group"
+    (cDoc == fDoc && sig cDs == sig fDs)
+  -- The table twin: a caption after \end{tabular} inside the group.
+  let tblBody := "\\begin{tabular}{ll}\na & b \\\\\n\\end{tabular}\n" ++
+    "\\caption{An invented strip.}\n\\label{tab:s}\n"
+  let (tg, tgDs) := elabStr (floatDoc
+    ("\\begin{table}[h]\n\\begin{center}\n" ++ tblBody ++ "\\end{center}\n\\end{table}"))
+  let (tf, tfDs) := elabStr (floatDoc
+    ("\\begin{table}[h]\n\\centering\n" ++ tblBody ++ "\\end{table}"))
+  t "a table's center group is transparent: same Ir and diagnostics"
+    (tg == tf && sig tgDs == sig tfDs && tgDs.all (·.code != "W0301"))
 
 /-- `\vspace{\fill}` and `\vfill`: TeX's first-order infinite glue, whose
 share of the page's leftover is what places the content. Asserted over
