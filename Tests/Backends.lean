@@ -2,6 +2,114 @@ import Tests.Support
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
+/-- The first elaborated formula in a document's paragraphs, equations,
+and centred display blocks (a display alignment sets under `.center`):
+enough reach for the one-formula snippets below. -/
+def blockFormula (b : Ir.Block) : Option Math.MList :=
+  let inls := match b with
+    | .para content => content
+    | .equation _ content => content
+    | _ => #[]
+  inls.findSome? fun x => match x with
+    | .formula _ _ body => some body
+    | _ => none
+
+def firstFormula (d : Ir.Doc) : Option Math.MList :=
+  d.body.findSome? fun b => match b with
+    | .center bs => bs.findSome? blockFormula
+    | b => blockFormula b
+
+/-- Math in HTML is MathML Core from the parsed atoms — one row per
+construct, judged on the emitted page. The shapes cite MathML Core (W3C CR
+2025-06-24): scripts (§3.4.1 child order base, sub, sup), limits in
+display (§3.4.2), fractions and radicals (§3.3.2–3.3.3), stretchy
+delimiters (§3.2.4.2), accents (§3.4.2.4) with the U+0305 overline as the
+dictionary's stretchy U+203E, alignments as `mtable` with CSS cell
+alignment (§3.5.3) and restored `displaystyle` (§2.1.6), spaces as
+`mspace` (§3.2.5). The census half: per formula, every scalar the PDF's
+coverage census asks (`Math.MList.scalarsList`) appears in the MathML leaf
+text and everything in the leaf text is a census scalar or the overline
+operator — the executable relation `mathml_glyphs_agree`'s docstring
+promises, the U+0305 rule-drawn accent being the one stated exception. -/
+def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let page (body : String) : String :=
+    (HtmlDoc.emit {} (elabStr (dvDoc "" body)).1).1
+  let has (body frag : String) : Bool :=
+    ((page body).splitOn frag).length ≥ 2
+  -- One row per construct: the MathML shape on the page.
+  t "inline math is an inline math element"
+    (has "$x$" "<math class=\"math\" data-tex=\"x\"><mi mathvariant=\"normal\">𝑥</mi></math>")
+  t "display math is a block math element with the display class"
+    (has "\\[ x \\]" "<math display=\"block\" class=\"math math-display\"")
+  t "a superscript is msup with an mrow script"
+    (has "$x^2$" "<msup><mi mathvariant=\"normal\">𝑥</mi><mrow><mn>2</mn></mrow></msup>")
+  t "a stacked pair is msubsup in base, sub, sup order"
+    (has "$a_i^2$"
+      "<msubsup><mi mathvariant=\"normal\">𝑎</mi><mrow><mi mathvariant=\"normal\">𝑖</mi></mrow><mrow><mn>2</mn></mrow></msubsup>")
+  t "a fraction is mfrac with two mrow children"
+    (has "$\\frac{1}{2}$" "<mfrac><mrow><mn>1</mn></mrow><mrow><mn>2</mn></mrow></mfrac>")
+  t "a square root is msqrt"
+    (has "$\\sqrt{x}$" "<msqrt><mi mathvariant=\"normal\">𝑥</mi></msqrt>")
+  t "an indexed radical is mroot: base then index"
+    (has "$\\sqrt[3]{x}$" "<mroot><mrow><mi mathvariant=\"normal\">𝑥</mi></mrow><mrow><mn>3</mn></mrow></mroot>")
+  t "a grown pair is stretchy symmetric mo delimiters"
+    (has "$\\left( x \\right)$"
+      "<mrow><mo stretchy=\"true\" symmetric=\"true\">(</mo><mi mathvariant=\"normal\">𝑥</mi><mo stretchy=\"true\" symmetric=\"true\">)</mo></mrow>")
+  t "display limits are munderover: base, under, over"
+    (has "\\[ \\sum_{i}^{n} \\]"
+      "<munderover><mo>∑</mo><mrow><mi mathvariant=\"normal\">𝑖</mi></mrow><mrow><mi mathvariant=\"normal\">𝑛</mi></mrow></munderover>")
+  t "inline limits ride beside as msubsup"
+    (has "$\\sum_{i}^{n}$" "<msubsup><mo>∑</mo>")
+  t "an accent is mover accent=true, non-stretching for \\hat"
+    (has "$\\hat{x}$"
+      "<mover accent=\"true\"><mrow><mi mathvariant=\"normal\">𝑥</mi></mrow><mo stretchy=\"false\">̂</mo></mover>")
+  t "\\overline is mover accent=false over the stretchy U+203E operator"
+    (has "$\\overline{x}$"
+      "<mover accent=\"false\"><mrow><mi mathvariant=\"normal\">𝑥</mi></mrow><mo stretchy=\"true\">‾</mo></mover>")
+  t "a display alignment is mtable with displaystyle restored"
+    (has "\\begin{align*} a &= b \\\\ c &= d \\end{align*}"
+      "<mtable displaystyle=\"true\">")
+  t "align columns alternate right and left through mtd CSS"
+    (has "\\begin{align*} a &= b \\end{align*}"
+      "<mtd style=\"text-align: right\">")
+  t "an array takes text style: no displaystyle on its mtable"
+    (has "\\[ \\begin{array}{cc} 1 & 2 \\\\ 3 & 4 \\end{array} \\]"
+      "<mtable><mtr>")
+  t "a numbered display keeps its number beside the math, never inside"
+    (let p := page "\\begin{equation} e = mc^2 \\end{equation}"
+     let inMath := (((p.splitOn "<math").getD 1 "").splitOn "</math>").headD ""
+     ((p.splitOn "class=\"equation\"").length ≥ 2) &&
+       ((p.splitOn "eqnum").length ≥ 2) &&
+       ((inMath.splitOn "eqnum").length == 1))
+  t "an explicit space is mspace at its mu width"
+    (has "$a\\quad b$" "<mspace width=\"1em\">") -- 18 mu is one em
+  t "a thin space is three eighteenths of an em"
+    (has "$a\\, b$" "<mspace width=\"0.166em\">")
+  t "a negative kern declares the zero floor"
+    (has "$a\\! b$" "<mspace width=\"0em\">")
+  t "a function name is a multi-character upright mi"
+    (has "$\\sin x$" "<mi>sin</mi>")
+  t "an unparsed construct stays source text with its data-tex hook"
+    (let p := page "$\\overset{?}{=}$"
+     ((p.splitOn "<span class=\"math\" data-tex=").length ≥ 2))
+  -- The census half, over the same construct list plus the alphabets:
+  -- MathML leaf text against the PDF's coverage census, per formula.
+  let census := ["$x^2$", "$a_i^2$", "$\\frac{1}{2}$", "$\\sqrt[3]{x}$",
+    "$\\left( x \\right)$", "$\\sum_{i=1}^{n} i$", "$\\hat{x}$",
+    "$\\overline{x+y}$", "$a \\quad b$", "$\\mathbb{R}^d + \\mathcal{L}$",
+    "\\begin{align*} a &= b \\\\ c &= d \\end{align*}"]
+  for src in census do
+    match firstFormula (elabStr (dvDoc "" src)).1 with
+    | none => failures ref s!"census: no formula elaborated for {src}"
+    | some body =>
+      let leaf := MathMl.listChars #[] body
+      let pdf := Math.MList.scalarsList #[] body
+      t s!"every PDF census scalar reaches the MathML leaf text: {src}"
+        (pdf.all leaf.contains)
+      t s!"every MathML leaf scalar is a census scalar or the overline: {src}"
+        (leaf.all fun c => pdf.contains c || c == MathMl.overlineChar)
+
 /-- The class hook: a semantic distinction the author declares as a named
 wrapper survives into the artifact as an addressable annotation. Its absence
 was the audited defect — `HtmlDoc.emit ∘ elab` of `\muted{x}` and of `x`
