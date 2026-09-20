@@ -895,6 +895,14 @@ def parse (data : ByteArray) : Except String Font := do
       (subs, if subs.isEmpty then parseLegacyKern data else #[])
   }
 
+/-- A face's ink above the baseline, in font units: its cap height, or its
+ascent when the face declares none — the one reading the line builder
+places with (`lineExtent`) and the shipped-page census judges by
+(`Check.Shipped.ofOut`), so a face cannot be placed under one convention
+and judged under another. -/
+def Font.inkAscent (f : Font) : Int :=
+  if f.capHeight > 0 then f.capHeight else f.ascent
+
 /-- Glyph id for a scalar, or `none` (missing glyph). -/
 def Font.gid (f : Font) (c : Char) : Option Nat :=
   gidIn f.cmap c

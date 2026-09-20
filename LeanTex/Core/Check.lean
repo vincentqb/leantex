@@ -87,8 +87,7 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
             let font := fs.get idx
             let sz := if size == 0 then l.size else size
             let upem : Int := font.unitsPerEm
-            let asc := (if font.capHeight > 0 then font.capHeight else font.ascent)
-              * sz / upem
+            let asc := font.inkAscent * sz / upem
             let desc := (-font.descent) * sz / upem
             -- A raised run's ink is judged from its own baseline: a
             -- superscript rides above the line's.

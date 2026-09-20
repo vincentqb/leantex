@@ -3272,7 +3272,7 @@ def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : Sp)
         (scaledAt sz font (-font.descent).toNat) (Ir.leadingFor sz leadFactor)
       ⟨max acc.above (box.1 + max 0 raise),
        max acc.below (box.2 + max 0 (-raise)),
-       max acc.inkAbove (scaledAt sz font font.capHeight.toNat + max 0 raise),
+       max acc.inkAbove (scaledAt sz font font.inkAscent.toNat + max 0 raise),
        max acc.inkBelow (scaledAt sz font (-font.descent).toNat + max 0 (-raise))⟩
     | .image _ _ h => ⟨max acc.above h, acc.below, max acc.inkAbove h, acc.inkBelow⟩
     | .rule _ t r _ => ⟨max acc.above (r + t), max acc.below (-r),
