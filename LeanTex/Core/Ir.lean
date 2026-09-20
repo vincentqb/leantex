@@ -6832,7 +6832,9 @@ def imageRefs (doc : Doc) : Array String := Id.run do
 `.image` whose `alt` is empty, its `src` collected once. A leaf
 projection of the shared fold — the fold recurses, so this leaf reads
 only the node itself; `imageSrcPush`'s shape. -/
-private def sansAltStep (out : Array String) : Inline → Array String
+private def sansAltStep (out : Array String)
+    (x : Inline) : Array String :=
+  match x with
   | .image src _ alt =>
     if alt.isEmpty && !out.contains src then out.push src else out
   | _ => out
@@ -7178,13 +7180,6 @@ theorem mapInlines_id (f : Inline → Inline) (p : Inline → Bool)
     (h : anyInline p xs = false) : mapInlines f xs = xs := by
   rw [mapInlines, mapInlineList_id f p hf xs.toList #[] h]
   simp
-
-private theorem blockTextBibItems_chain (l1 l2 : List BibItem) (acc : String) :
-    blockTextBibItems acc (l1 ++ l2)
-      = blockTextBibItems (blockTextBibItems acc l1) l2 := by
-  induction l1 generalizing acc with
-  | nil => rfl
-  | cons x xs ih => simp [blockTextBibItems, ih]
 
 private theorem mapTableCells_text (f : Inline → Inline)
     (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (cells : List (Array Inline))
