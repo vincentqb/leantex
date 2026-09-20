@@ -3391,6 +3391,38 @@ theorem bars_clear_descenders (body descMilli : Int)
         simp only [Ir.rhythmQuantum, Ir.leadingFor, Ir.leadingMilli]
         omega
 
+/-- The fit-or-spill skeleton every committed band takes — the one
+spelling of `overflow ≤ shrink ∨ noBreak → commit | close and retry`:
+commit at `stepY b` when the band's ink past `bottom` is within the
+page's shrink (or a replayed float forbids breaking, `noBreak`), else
+close the page and retry — at `firstY b` when the new page is empty,
+else at `retryY b` under the reopened frame chrome. The y's are
+functions of the builder because a spill moves it, and the retry's
+pending glue died with the break, as TeX discards glue at the top of a
+page. Notes attach beside every commit (mark and note enter in one
+step), and every unchecked commit reports a note overrun (W0372) — the
+checked one proved it fits. -/
+private def B.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B → Sp)
+    (depth below : Sp) (rl : Bool) (inkBelow bottom : Sp)
+    (notes : Array NoteBlock := #[]) : B :=
+  if b.cur.lines.isEmpty || b.freshStart then
+    ((b.commit (mk (firstY b)) depth below rl 0 0).attachNotes
+      notes).warnNoteOverrun (firstY b) inkBelow
+  else
+    let y := stepY b
+    let overflow := y + inkBelow - bottom
+    let above := b.pageShrink + b.skip.shrink
+    if overflow ≤ above ∨ b.noBreak then
+      (b.commit (mk y) depth below rl above (min overflow above)).attachNotes notes
+    else
+      let b := b.spillPage
+      if b.cur.lines.isEmpty then
+        ((b.commit (mk (firstY b)) depth below rl 0 0).attachNotes
+          notes).warnNoteOverrun (firstY b) inkBelow
+      else
+        ((b.commit (mk (retryY b)) depth below rl 0 0).attachNotes
+          notes).warnNoteOverrun (retryY b) inkBelow
+
 /-- Place one line. Its box follows the tallest run on it (`lineExtent`),
 not the paragraph's nominal size: a line carrying `\Huge` needs room above
 its baseline and below it.
@@ -3407,9 +3439,9 @@ body — the cap line above the text, the baseline below it.
 
 A page fills at natural glue until a line's ink will not fit even with
 every skip above it fully shrunk; then the page closes (shrunk to fit if
-it overflowed) and the line opens the next, its pending glue discarded as
-TeX discards glue at the top of a page. Glue is never stretched: the
-bottom is ragged. -/
+it overflowed) and the line opens the next (`fitCommit`), its pending glue
+discarded as TeX discards glue at the top of a page. Glue is never
+stretched: the bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
     (w : Sp) (hang : Sp := 0) (expand : Int := 0)
     (notes : Array NoteBlock := #[]) : B :=
@@ -3430,30 +3462,16 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   let mk (y : Sp) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
       hang := hang, expand := expand }
-  let firstY := b.geom.bodyTop + max b.ascent box.above
-  if b.cur.lines.isEmpty || b.freshStart then
-    ((b.commit (mk firstY) box.inkBelow box.below rl 0 0).attachNotes
-      notes).warnNoteOverrun firstY box.inkBelow
-  else
-    let interline := interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box
-    let y := b.y + b.skip.width + interline
-    let overflow := y + box.inkBelow - bottom
-    let above := b.pageShrink + b.skip.shrink
-    if overflow ≤ above ∨ b.noBreak then
-      (b.commit (mk y) box.inkBelow box.below rl above
-        (min overflow above)).attachNotes notes
-    else
-      let b := b.spillPage
-      if b.cur.lines.isEmpty then
-        ((b.commit (mk firstY) box.inkBelow box.below rl 0 0).attachNotes
-          notes).warnNoteOverrun firstY box.inkBelow
-      else
-        -- Below the reopened frame chrome: interline from the chrome's
-        -- own baseline; the pending glue died with the break, as TeX
-        -- discards glue at the top of a page.
-        ((b.commit (mk (b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box))
-          box.inkBelow box.below rl 0 0).attachNotes notes).warnNoteOverrun
-          (b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box) box.inkBelow
+  -- The first baseline is the body top plus the larger of the body's
+  -- metric ascent and the line's own leaded above (`first_baseline_declared`).
+  b.fitCommit mk
+    (fun b => b.geom.bodyTop + max b.ascent box.above)
+    (fun b => b.y + b.skip.width
+      + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box)
+    -- Below the reopened frame chrome: interline from the chrome's own
+    -- baseline.
+    (fun b => b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box)
+    box.inkBelow box.below rl box.inkBelow bottom notes
 
 /-- The realization theorem's placement step: a line placed on the same
 page (the fit condition holds), under interline spacing (neither neighbour
@@ -3491,7 +3509,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
   rw [hle] at hfit
   dsimp only at hfit
-  unfold B.placeLine
+  unfold B.placeLine B.fitCommit
   rw [hle]
   dsimp only
   simp only [hcur, hfresh, hpr, hrl, interlineFor, hnn, noteFloor,
@@ -3514,7 +3532,7 @@ private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
           b.geom.leading size segs).above) := by
   rcases hle : lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
-  unfold B.placeLine
+  unfold B.placeLine B.fitCommit
   rw [hle]
   dsimp only
   simp [hcur, B.commit, B.attachNotes, Array.back?_push]
@@ -5539,20 +5557,11 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- the interline convention makes the next line stack flush, as TeX
     -- ignores `\prevdepth` after an `\hrule`.
     let mk (y : Sp) : LineOut := { x := x, y := y, size := 0, segs := segs, setWidth := w }
-    if b.cur.lines.isEmpty || b.freshStart then
-      b := b.commit (mk (b.geom.vmargin + th)) 0 0 true 0 0
-    else
-      let y := b.y + b.prevDepth + b.skip.width + th
-      let overflow := y - b.geom.bodyBottom
-      let above := b.pageShrink + b.skip.shrink
-      if overflow ≤ above ∨ b.noBreak then
-        b := b.commit (mk y) 0 0 true above (min overflow above)
-      else
-        b := b.spillPage
-        if b.cur.lines.isEmpty then
-          b := b.commit (mk (b.geom.vmargin + th)) 0 0 true 0 0
-        else
-          b := b.commit (mk (b.y + b.prevDepth + th)) 0 0 true 0 0
+    b := b.fitCommit mk
+      (fun b => b.geom.vmargin + th)
+      (fun b => b.y + b.prevDepth + b.skip.width + th)
+      (fun b => b.y + b.prevDepth + th)
+      0 0 true 0 b.geom.bodyBottom
   | .progress num den fg bg thick x w =>
     -- Half a line under the last baseline: the track, then the elapsed
     -- share over it. The bar joins the page's depth so following content
@@ -5770,15 +5779,68 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
 private theorem finishPage_extends (b : B) : PagesExtend b b.finishPage :=
   ⟨#[_], rfl⟩
 
-private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) :
-    PagesExtend b (b.placeLine fs x size segs w hang ex ns) := by
-  simp only [B.placeLine]
+private theorem fitCommit_extends (b : B) (mk : Sp → LineOut)
+    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
+    (inkBelow bottom : Sp) (ns : Array NoteBlock) :
+    PagesExtend b
+      (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) := by
+  simp only [B.fitCommit]
   repeat' split
   all_goals first
     | (refine pagesExtend_of_eq ?_; simp; done)
     | (refine pagesExtend_trans (finishPage_extends b) (pagesExtend_of_eq ?_);
        simp; done)
+
+/-- Under `noBreak` a committed band never closes a page and never clears
+the flag: the group's one legal position has already been decided. -/
+private theorem fitCommit_pages_noBreak (b : B) (mk : Sp → LineOut)
+    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
+    (inkBelow bottom : Sp) (ns : Array NoteBlock) (h : b.noBreak = true) :
+    (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns).pages
+      = b.pages := by
+  simp only [B.fitCommit]
+  repeat' split
+  all_goals first
+    | (simp; done)
+    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+
+private theorem fitCommit_keeps_noBreak (b : B) (mk : Sp → LineOut)
+    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
+    (inkBelow bottom : Sp) (ns : Array NoteBlock) (h : b.noBreak = true) :
+    (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns).noBreak
+      = true := by
+  simp only [B.fitCommit]
+  repeat' split
+  all_goals first
+    | (simp [h]; done)
+    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+
+/-- Whatever branch `fitCommit` takes, every line of every note handed in
+stands in `pendingNotes` of the SAME builder that holds the committed
+band — mark and notes enter together, and spill together (the spill
+closes the page before the retry commit, so an earlier line's notes ship
+with the earlier page and this line's follow their mark onto the fresh
+one). -/
+private theorem fitCommit_note_with_mark (b : B) (mk : Sp → LineOut)
+    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
+    (inkBelow bottom : Sp) (ns : Array NoteBlock)
+    (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
+    ∃ l' ∈ (b.fitCommit mk firstY stepY retryY depth below rl inkBelow
+        bottom ns).pendingNotes,
+      l'.segs = l.segs := by
+  simp only [B.fitCommit]
+  repeat' split
+  all_goals
+    first
+    | (rw [warnNoteOverrun_pendingNotes]
+       exact attachNotes_mem _ ns nb hnb l hl)
+    | exact attachNotes_mem _ ns nb hnb l hl
+
+private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) :
+    PagesExtend b (b.placeLine fs x size segs w hang ex ns) := by
+  simp only [B.placeLine]
+  exact fitCommit_extends ..
 
 /-- Under `noBreak` a placed line never closes a page and never clears
 the flag: the group's one legal position has already been decided. -/
@@ -5787,39 +5849,24 @@ private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (h : b.noBreak = true) :
     (b.placeLine fs x size segs w hang ex ns).pages = b.pages := by
   simp only [B.placeLine]
-  repeat' split
-  all_goals first
-    | (simp; done)
-    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+  exact fitCommit_pages_noBreak (h := h) ..
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock)
     (h : b.noBreak = true) :
     (b.placeLine fs x size segs w hang ex ns).noBreak = true := by
   simp only [B.placeLine]
-  repeat' split
-  all_goals first
-    | (simp [h]; done)
-    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+  exact fitCommit_keeps_noBreak (h := h) ..
 
-/-- `footnote_with_mark`'s attach half: whatever branch `placeLine` takes,
-every line of every note handed in stands in `pendingNotes` of the SAME
-builder that holds the mark's committed line — mark and notes enter
-together, and spill together (the spill closes the page before the retry
-commit, so an earlier line's notes ship with the earlier page and this
-line's follow their mark onto the fresh one). -/
+/-- `footnote_with_mark`'s attach half: `fitCommit_note_with_mark` at
+`placeLine`'s band. -/
 private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock)
     (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
     ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns).pendingNotes,
       l'.segs = l.segs := by
   simp only [B.placeLine]
-  repeat' split
-  all_goals
-    first
-    | (rw [warnNoteOverrun_pendingNotes]
-       exact attachNotes_mem _ ns nb hnb l hl)
-    | exact attachNotes_mem _ ns nb hnb l hl
+  exact fitCommit_note_with_mark (hnb := hnb) (hl := hl) ..
 
 /-- `placeLine` from a pages-preserving wrapper of `b0` still only
 extends `b0`'s shipped pages. -/
@@ -5877,6 +5924,7 @@ private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
   cases s <;> simp only [stepStaged, Id.run, Id, pure, bind] <;> repeat' split
   all_goals first
     | (refine pagesExtend_of_eq ?_; simp; done)
+    | exact fitCommit_extends ..
     | exact placeLine_extends ..
     | exact placePara_extends ..
     | (refine pagesExtend_congr ?_ (finishPage_extends _); simp; done)
@@ -5893,6 +5941,8 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
   all_goals first
     | exact absurd rfl hs
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+    | exact ⟨fitCommit_pages_noBreak (h := h) ..,
+        fitCommit_keeps_noBreak (h := h) ..⟩
     | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ _ _ _ h,
         placeLine_keeps_noBreak _ _ _ _ _ _ _ _ _ h⟩
     | exact placePara_noBreak _ _ _ _ h
