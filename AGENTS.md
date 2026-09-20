@@ -39,7 +39,10 @@ in this repo; refer to the private reference corpus abstractly.
   Elab.lean (declaration commutation — T1's oracle until the theorem
   closes),
   `scripts/oklab-roundtrip.lean` when touching `Core/Oklab.lean`
-  (sRGB→Oklab→sRGB identity over all 2²⁴ inputs, ~30 min), and
+  (sRGB→Oklab→sRGB identity over all 2²⁴ inputs, ~30 min),
+  `scripts/img-fuzz.lean` when touching the image decode paths
+  (`Image.decode` totality — truncations, mutants, random blobs — plus the
+  pristine fixtures decoding to their known sizes), and
   `scripts/fontcache-check.lean` when touching the font scan or its cache
   (it replaces a font under the same name and checks the answer follows
   the file).
@@ -77,9 +80,9 @@ in this repo; refer to the private reference corpus abstractly.
   | a diagnostic code | a `DiagCode` constructor with its declared `Loss` — severity and the code letter derive from the loss, one code one meaning (compiler + `lake test`; the hook rejects a severity written outside Diag.lean) — a firing witness in `diagWitness` whose rendered form lands in the diagnostics golden, and a message that passes the voice lint: self-contained (no repo file, no milestone), an action or no help, one convention (Tests.lean; the hook rejects repo-internal references in strings). Registering a new code is one constructor, one `spec` arm, and `count + 1` — nothing else: `all` is derived, and `all_complete`/`all_nodup` make a miscount a build failure in both directions |
   | a design constant | a token, or the source written where it stands (hook, backend files) |
   | a recursive IR walk | a `List` companion + accumulator (hook), and its census statement: a public Block/Inline walk ships a theorem named with a registered conservation suffix — `_text` (census equality, stated as a `Conserves` instance), `_covers`, `_id` — or the one-line refusal `-- conserves: none — <why>` beside the def (hook, whole tree) |
-  | a palette role or token the engine reads | one resolving site, its contrast contract, a per-bundle check (arrives with `Design`; today Contrast.lean + bundle pins) |
-  | a page-opening path | a declared vertical distribution, never a default (arrives with `vdist`; until then set `centerV` deliberately) |
-  | a furniture element | a declared alignment, never a hard-coded `.center` (arrives with `align` on `ElementStyle`) |
+  | a palette role or token the engine reads | one resolving site, its contrast contract, a per-bundle check (`Ir.Design.ofDoc` is the resolving site; Contrast.lean holds the contracts, the bundle pins the checks) |
+  | a page-opening path | a declared vertical distribution, never a default (`Layout.VDist` is the vocabulary; declare through it) |
+  | a furniture element | a declared alignment, never a hard-coded `.center` (`align` on `ElementStyle` carries it) |
   | an `AssertKind` | its judge in `Check.one` (exhaustive match) and a test that breaks it once |
   | a document class | sourced defaults, and its contract as implied assertions |
   | a `nativePackages` entry | `tests/compat-index/<pkg>.txt` covering the package's *documented* command list — the manual section named in its header, one row per command, `impl` proved by no W0301/W0302 and `refuse:<code>` by the code firing (`lake test` probes every row; the hook rejects an entry without its file) |
@@ -99,10 +102,27 @@ in this repo; refer to the private reference corpus abstractly.
 - Theorem shape suffixes are a registry, not a habit: `_text` (census
   equality; state it as a `Conserves` instance), `_covers`, `_id`, `_inj`,
   `_rectangular`, `_exact`, `_monotone`, `_fixed_point`, `_contract`,
-  `_set_eq`. A new property instantiates a suffix, or the review says why
+  `_set_eq`, `_between` (a value inside two named bounds), `_mem` (the
+  result is drawn from the input set). A new property instantiates a
+  suffix, or the review says why
   it is a new shape; the first three are what the hook's walk gate looks
-  for. A contract over shipped bundles quantifies over `Theme.builtin`,
+  for. `_in_measure` is not a shape: `kern_symmetric_in_measure` is an
+  `_exact` statement and takes that suffix the next time Layout.lean is
+  open. A contract over shipped bundles quantifies over `Theme.builtin`,
   never per bundle — adding a bundle is entering the contract.
+
+- A new collector over the IR is a `foldBlocks`/`foldInlines` leaf
+  function; a new leaf-rewrite is a `mapInlines`/`mapBlocks` function; a
+  hand-rolled mutual walk states its reason beside the def. Ten copies of
+  the two generic shapes accumulated before the walks were factored — two
+  of the three wildcards among them hid real gaps (a footnote's image
+  shipped a silent placeholder).
+
+- A generated module (`*Data.lean`) carries only data; contracts and
+  lookups over it live in a hand-owned module (`LocaleContract.lean` is
+  the shape). Code embedded in a generator's output drifts from the
+  checked-in file the first time one of the pair is edited alone, and no
+  check can see it: regeneration needs this host's TeX tree, so CI cannot.
 
 - Pure core: modules under `LeanTex/Core/` do no IO (`FontDb` is the one
   exception; the pre-commit hook rejects new IO in core). Files, fonts,
