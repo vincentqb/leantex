@@ -2811,3 +2811,67 @@ def dataChecks (ref : IO.Ref (List String)) : IO Unit := do
   let plain := (Parse.parse "t" (Lex.lex "t" "\\val{j.x} and \\begin{foreach}{j}{job}\\end{foreach}").1).1
   t "data: no \\data, no vocabulary — the document passes through untouched"
     (Data.expandData "t" #[] plain == (plain, #[]))
+
+/-- Footnotes at the surface: `\footnote` is native (never W0301), its
+numbering is the gapless counter with `[num]` overriding unstepped, and
+the refusals around it are the named codes, each firing exactly where its
+loss stands and staying silent elsewhere. -/
+def footnoteChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  -- The invariant whose absence was the defect: a \footnote is a modelled
+  -- node, never the W0301 keep-as-text fallback.
+  t "footnote elaborates without W0301"
+    ((dvE (dvDoc "" "a\\footnote{note body}")).all (·.code != "W0301"))
+  t "footnote body lands in a footnote node with number 1"
+    ((elabStr (dvDoc "" "a\\footnote{note body}")).1.body ==
+      #[.para #[.text "a", .footnote (some 1) #[.text "note body"]]])
+  -- Numbering: document-wide, gapless, an override unstepped
+  -- (`Ir.footnote_numbers_gapless` is the theorem; this is its wiring).
+  t "footnote numbers are 1, 7, 2 under an unstepping override"
+    (let doc := (elabStr (dvDoc ""
+      "a\\footnote{x} b\\footnote[7]{y} c\\footnote{z}")).1
+     (Ir.footnotesOf doc.body).map (·.1) == #[some 1, some 7, some 2])
+  t "footnotesOf reads the notes in flow order with their bodies"
+    (let doc := (elabStr (dvDoc "" "a\\footnote{x} b\\footnote{y}")).1
+     (Ir.footnotesOf doc.body).map (fun n => Ir.plainText n.2) == #["x", "y"])
+  -- The note body is document text: the census reads through the wrapper.
+  t "the note body survives the text census"
+    (let doc := (elabStr (dvDoc "" "a\\footnote{surviving words}")).1
+     (Ir.blocksText doc.body).splitOn "surviving words" |>.length == 2)
+  t "footnote with no group is E0304"
+    ((dvE (dvDoc "" "a\\footnote and on")).any (·.code == "E0304"))
+  -- W0371: a paragraph break inside a note is a space, named once.
+  t "a paragraph break inside a footnote fires W0371"
+    ((dvE (dvDoc "" "a\\footnote{first\n\nsecond}")).any (·.code == "W0371"))
+  t "the broken note keeps both halves as one note"
+    (let doc := (elabStr (dvDoc "" "a\\footnote{first\n\nsecond}")).1
+     (Ir.footnotesOf doc.body).map (fun n => Ir.plainText n.2) == #["first second"])
+  t "a one-paragraph footnote stays silent on W0371"
+    ((dvE (dvDoc "" "a\\footnote{plain}")).all (·.code != "W0371"))
+  -- W0370: the unpaired pair, named as pending, never "unknown".
+  t "footnotemark fires W0370, not W0301"
+    (let ds := dvE (dvDoc "" "a claim\\footnotemark stands")
+     ds.any (·.code == "W0370") && ds.all (·.code != "W0301"))
+  t "footnotetext fires W0370 and keeps its text"
+    (let (doc, ds) := elabStr (dvDoc "" "a\\footnotetext{kept words}")
+     ds.any (·.code == "W0370") &&
+       ((Ir.blocksText doc.body).splitOn "kept words").length == 2)
+  t "a plain footnote stays silent on W0370"
+    ((dvE (dvDoc "" "a\\footnote{x}")).all (·.code != "W0370"))
+  -- W0373: \thanks kept inline in the title block, named.
+  t "thanks in the title fires W0373 and keeps its text inline"
+    (let (doc, ds) := elabStr (dvDoc
+      "\\title{A Panel\\thanks{Synthetic Grant 1}}\n" "x\n\\maketitle")
+     ds.any (·.code == "W0373") &&
+       ((Ir.blocksText doc.body).splitOn "Synthetic Grant 1").length == 2)
+  t "a title without thanks stays silent on W0373"
+    ((dvE (dvDoc "\\title{A Panel}\n" "x\n\\maketitle")).all (·.code != "W0373"))
+  -- W0374: a card face has no note apparatus; the text stays inline.
+  t "a footnote on a card fires W0374 and keeps its text inline"
+    (let (doc, ds) := elabStr ("\\documentclass{card}\n\\begin{document}\n" ++
+      "x\\footnote{an aside}\n\\end{document}")
+     ds.any (·.code == "W0374") &&
+       (Ir.footnotesOf doc.body).isEmpty &&
+       ((Ir.blocksText doc.body).splitOn "an aside").length == 2)
+  t "a footnote in an article stays silent on W0374"
+    ((dvE (dvDoc "" "x\\footnote{y}")).all (·.code != "W0374"))

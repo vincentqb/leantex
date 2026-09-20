@@ -142,6 +142,12 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0369 => dvE (dvDoc "\\babelfont[french]{rm}{Demo Serif}\n" "x")
   | .E0375 => dvE (dvDoc
       "\\newlength{\\half}\\setlength{\\half}{\\dimexpr\\textwidth/2\\relax}\n" "x")
+  | .W0370 => dvE (dvDoc "" "a claim\\footnotemark stands here")
+  | .W0371 => dvE (dvDoc "" "a\\footnote{first\n\nsecond}")
+  | .W0373 => dvE (dvDoc "\\title{An Invented Panel\\thanks{Synthetic Grant 1}}\n"
+      "x\n\\maketitle")
+  | .W0374 => dvE ("\\documentclass{card}\n\\begin{document}\n" ++
+      "x\\footnote{an aside}\n\\end{document}")
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL one (dvDoc "" "$x^2$")
   | .W0005 => dvL one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"

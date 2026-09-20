@@ -307,6 +307,8 @@ private def usesInline (cx : UseCx) (acc : UseAcc) : Inline → UseAcc
   | .link _ body => usesInlines cx acc body.toList
   | .underline body => usesInlines cx acc body.toList
   | .step n last body => usesInlines cx (acc.step n last) body.toList
+  -- a note's body is ink like any other; it holds the contrast contract
+  | .footnote _ body => usesInlines cx acc body.toList
   | .fill | .strut _ | .linebreak _ => acc
   -- An image carries no text; its alt is read by a screen reader, not set
   -- in a colour.

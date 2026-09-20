@@ -772,6 +772,8 @@ private def flattenOne (mathOk : Bool) (st : FlattenSt) (sty : TextStyle)
   -- An unresolved citation sets its marks as plain text: something stands
   -- here, and the diagnostic that let it through has already said why.
   | .cite _ keys => pushText st sty (Ir.citeMarks keys)
+  -- Interim, until the note machinery lands: the note body sets inline.
+  | .footnote _ body => flatten mathOk st sty body
   | .icon c _ => { st with toks := st.toks.push (.icon sty c) }
   | .image src spec _ => { st with toks := st.toks.push (.img src spec) }
   | .linebreak extra => { st with toks := st.toks.push (.brk extra) }
@@ -1150,6 +1152,8 @@ private def leafScalarsOne (icons math : Array Char) :
   | .pageNumber => (icons, math)
   | .pageCount => (icons, math)
   | .cite _ _ => (icons, math)
+  -- a note's body ships glyphs like any inline content
+  | .footnote _ body => leafScalarsList icons math body.toList
 
 end
 
@@ -5009,6 +5013,8 @@ def substPageOne (n total : Nat) : Inline → Inline
   | .linebreak e => .linebreak e
   -- a citation's keys are not content: no placeholder can hide in one
   | .cite t keys => .cite t keys
+  -- a note's body can carry a placeholder like any inline content
+  | .footnote k body => .footnote k (substPageList n total body.toList).toArray
 
 def substPageList (n total : Nat) : List Inline → List Inline
   | [] => []
@@ -5028,6 +5034,9 @@ theorem substPageOne_id (n total : Nat) (x : Inline)
   | .pageNumber => simp [Ir.hasPhysicalPageOne] at h
   | .pageCount => simp [Ir.hasPhysicalPageOne] at h
   | .styled st body =>
+    rw [Ir.hasPhysicalPageOne] at h
+    rw [substPageOne, substPageList_id n total body.toList h]
+  | .footnote k body =>
     rw [Ir.hasPhysicalPageOne] at h
     rw [substPageOne, substPageList_id n total body.toList h]
   | .colored c nm body =>

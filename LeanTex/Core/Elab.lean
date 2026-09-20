@@ -100,6 +100,10 @@ structure Ctx where
   stepBase : Nat := 0
   /-- The document class is `slides`: `\maketitle` makes a title frame. -/
   slides : Bool := false
+  /-- The page model is `face` (card, poster's trimmed faces): one face of
+  display text with no note apparatus — where `\footnote` is refused by
+  name (W0374). -/
+  face : Bool := false
   /-- The class numbers its unstarred headings (article; classes.dtx
   §Sectioning). Slides and card headings never number, so a deck renders
   exactly as before. -/
@@ -215,6 +219,12 @@ structure ESt where
   /-- The equation counter, per document (amsmath's `\numberwithin` is not
   modelled; a document that declares it keeps the per-document numbers). -/
   eqNum : Nat := 0
+  /-- The footnote counter, per document, stepped by `Ir.footnoteMark`:
+  `\footnote[n]` overrides without stepping, so
+  `Ir.footnote_numbers_gapless` is the numbering this fold realizes.
+  Per-chapter numbering waits for a real report class (a `ClassRecord`
+  field then). -/
+  fnNum : Nat := 0
   /-- The number of the nearest preceding numbered thing — what a `\label`
   declared here binds to. A heading sets it for the flow after it. A
   captioned float never writes here: its number exists only after
@@ -2004,6 +2014,106 @@ seal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
 seal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
 seal String.Slice.dropWhile String.Slice.dropEndWhile String.Slice.skipPrefixWhile
 
+/-- The bracketed number of `\footnote[num]{...}`: the raws between the
+brackets as text, read as a number. `none` when no bracket argument stands
+there or its text is not a number. Outside the knot (and sealed for it):
+its string machinery is data, never proof material. -/
+private def footnoteOverride (ctx : Ctx) (raws : Array Raw) (i : Nat)
+    (pos : Pos) : Option Nat :=
+  match scanBracketArg raws i pos with
+  | .took k =>
+    (argText ctx (raws.extract (skipSpaces raws i + 1) (k - 1)))
+      |>.trimAscii.toString.toNat?
+  | _ => none
+
+/-- Does a group's body carry a paragraph break at its top level? The
+W0371 test, outside the knot. -/
+private def hasParRaw (body : Array Raw) : Bool :=
+  body.any (fun r => r matches .par _)
+
+/-- W0371, outside the knot: the arm calls one sealed action. -/
+private def footnoteWarnPar (ctx : Ctx) (pos : Pos) : EM Unit :=
+  warnOnce ctx "footnote:par" .W0371
+    "a paragraph break inside '\\footnote' is set as a space" pos
+    (help := "a footnote is one paragraph; split a long note into \
+two \\footnote calls")
+
+/-- W0374, outside the knot: one face of display text has no note
+apparatus, so the text stays inline where it stands, named. -/
+private def footnoteWarnFace (ctx : Ctx) (pos : Pos) : EM Unit :=
+  warnOnce ctx "footnote:face" .W0374
+    "a footnote on this card is kept inline; a card face has no \
+note apparatus" pos
+    (help := "write the aside in the running text, or declare \
+\\documentclass{article} to give notes a page foot")
+
+/-- W0373, outside the knot: fnsymbol marks and the title-foot placement
+are owed, so the content stays inline in the title block, named. -/
+private def thanksWarn (ctx : Ctx) (pos : Pos) : EM Unit :=
+  warnOnce ctx "ctrl:thanks" .W0373
+    "'\\thanks' content is kept inline in the title block" pos
+    (help := "a plain \\footnote in the body text renders as a page footnote")
+
+/-- Step the footnote counter through `Ir.footnoteMark` and return the
+mark's number: an override is itself and steps nothing. -/
+private def footnoteStepNum (override : Option Nat) : EM Nat := do
+  let k0 := (← get).fnNum
+  let (num, fn) := Ir.footnoteMark k0 override
+  modify fun st => { st with fnNum := fn }
+  return num
+
+/-- The missing-group diagnostic the two note arms share, outside the knot. -/
+private def noteNeedsGroup (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
+  diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
+
+/-- The unknown-command warning, with the one named exception: the
+`\footnotemark`/`\footnotetext` pair is pending (W0370, cross-command
+state — a minipage's notes too), never "unknown". Outside the knot. -/
+private def warnUnknownCmd (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
+  if name == "footnotemark" || name == "footnotetext" then
+    warnOnce ctx ("ctrl:" ++ name) .W0370
+      s!"'\\{name}' is not paired with its partner yet; its text is kept in place" pos
+      (help := "\\footnote{...} where the mark should stand sets the note \
+at the page foot")
+  else
+    warnOnce ctx ("ctrl:" ++ name) .W0301
+      s!"unknown command '\\{name}'; its \{...} arguments were kept as text" pos
+      (help := "\\define \\name(...) {body} declares it")
+      (demote := Compat.styInternal ctx.file name)
+
+/-- The misplaced-declaration diagnostics (E0347 for running content,
+W0346 for configuration), outside the knot: the arm calls one sealed
+action, as `warnUnknownCmd` does. -/
+private def warnMisplacedDecl (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
+  if runningCtrl.contains name then
+    diag ctx .E0347 s!"'\\{name}' in the body is dropped with its content" pos
+      (help := "declare it in the preamble, before '\\begin{document}'")
+  else
+    warnOnce ctx ("ctrl:" ++ name) .W0346
+      s!"'\\{name}' is a declaration; inside inline content it is ignored" pos
+      (help := if name == "palette" || name == "tokens" then
+          s!"write '\\{name}' between paragraphs, after a blank line; there it applies \
+from where it stands"
+        else "declare it in the preamble, before '\\begin{document}'")
+
+/-- The reserved-control skip warning, outside the knot. -/
+private def warnReservedCtrl (ctx : Ctx) (name : String) (code : DiagCode)
+    (pos : Pos) : EM Unit :=
+  warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
+
+/-- The option-run-went-with-the-command warning (W0341), outside the knot. -/
+private def warnOptionRun (ctx : Ctx) (run : String) (name : String)
+    (pos : Pos) : EM Unit :=
+  diag ctx .W0341
+    s!"'{run}' went with unknown command '\\{name}'; an option run is not content" pos
+    (help := "content, not options? start the '[' on the next line")
+
+seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
+seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd
+seal warnMisplacedDecl warnReservedCtrl warnOptionRun
+seal argText skipBracketRun bracketRunSrc
+seal warnUnclosed warnDroppedArgs
+
 seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 seal theCounterLevel? sectionLevel String.toInt? String.toNat?
 
@@ -2927,8 +3037,54 @@ a side channel, never slide content" pos
       "'\\centering' centres nothing inside an argument; content stays left-aligned" pos
       (help := "move '\\centering' to the start of the group or environment body")
     elabInlinesFrom ctx raws (i + 1) acc sb
+  else if name == "footnote" then
+    -- `\footnote[num]{text}`: the mark takes the next counter value, or
+    -- the override without stepping (`footnoteStepNum`; the sourcing lives
+    -- on `Ir.footnoteMark`, the contract on `Ir.footnote_numbers_gapless`).
+    let override : Option Nat := footnoteOverride ctx raws (i + 1) pos
+    let (⟨j1, hj1⟩, _, _) ← skipOptArg ctx name raws (i + 1) pos
+    let j := skipSpaces raws j1
+    have hjge := skipSpaces_ge raws j1
+    match hj : raws[j]? with
+    | some (.group body _) =>
+      have hjlt := getElem?_lt hj
+      have hw : rawWeightList body.toList < sliceWeight raws i :=
+        body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
+      -- A note is one paragraph by design: a break inside it is a space.
+      if hasParRaw body then
+        footnoteWarnPar ctx pos
+      let acc := flushText acc sb
+      let inner ← elabInlines ctx body
+      have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+        sliceWeight_lt raws h (by omega)
+      if ctx.face then
+        footnoteWarnFace ctx pos
+        elabInlinesFrom ctx raws (j + 1) (acc ++ inner) ""
+      else
+        let num ← footnoteStepNum override
+        elabInlinesFrom ctx raws (j + 1) (acc.push (.footnote (some num) inner)) ""
+    | _ =>
+      noteNeedsGroup ctx "footnote" pos
+      elabInlinesFrom ctx raws (i + 1) acc sb
+  else if name == "thanks" then
+    thanksWarn ctx pos
+    let j := skipSpaces raws (i + 1)
+    have hjge := skipSpaces_ge raws (i + 1)
+    match hj : raws[j]? with
+    | some (.group body _) =>
+      have hjlt := getElem?_lt hj
+      have hw : rawWeightList body.toList < sliceWeight raws i :=
+        body_lt_slice hj (by simp only [rawWeight]; omega) (by omega)
+      let acc := flushText acc sb
+      let inner ← elabInlines ctx body
+      have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
+        sliceWeight_lt raws h (by omega)
+      elabInlinesFrom ctx raws (j + 1) (acc ++ inner) ""
+    | _ =>
+      noteNeedsGroup ctx "thanks" pos
+      elabInlinesFrom ctx raws (i + 1) acc sb
   else if let some code := reservedCtrl.lookup name then
-    warnOnce ctx ("ctrl:" ++ name) code s!"'\\{name}' is not implemented yet; skipped" pos
+    warnReservedCtrl ctx name code pos
     let jr := skipReservedArgs raws (i + 1) pos
     if let some bpos := jr.2 then
       warnUnclosed ctx s!"'\\{name}'" bpos
@@ -2941,17 +3097,8 @@ a side channel, never slide content" pos
     -- misplaced — never "unknown": its arguments address the engine,
     -- not the sentence, so they go with the declaration. A running
     -- declaration carries content, so skipping it is a drop (E0347);
-    -- the key/value rest is configuration (W0346).
-    if runningCtrl.contains name then
-      diag ctx .E0347 s!"'\\{name}' in the body is dropped with its content" pos
-        (help := "declare it in the preamble, before '\\begin{document}'")
-    else
-      warnOnce ctx ("ctrl:" ++ name) .W0346
-        s!"'\\{name}' is a declaration; inside inline content it is ignored" pos
-        (help := if name == "palette" || name == "tokens" then
-            s!"write '\\{name}' between paragraphs, after a blank line; there it applies \
-from where it stands"
-          else "declare it in the preamble, before '\\begin{document}'")
+    -- the key/value rest is configuration (W0346) — `warnMisplacedDecl`.
+    warnMisplacedDecl ctx name pos
     let jr := skipReservedArgs raws (i + 1) pos (maxGroups := 2)
     if let some bpos := jr.2 then
       warnUnclosed ctx s!"'\\{name}'" bpos
@@ -2967,10 +3114,9 @@ from where it stands"
   else
     -- Best effort: the {...} arguments are content, and content is
     -- never dropped for want of a command. Only the formatting is lost.
-    warnOnce ctx ("ctrl:" ++ name) .W0301
-      s!"unknown command '\\{name}'; its \{...} arguments were kept as text" pos
-      (help := "\\define \\name(...) {body} declares it")
-      (demote := Compat.styInternal ctx.file name)
+    -- (The one named exception, `warnUnknownCmd`: the \footnotemark pair
+    -- is pending, W0370, never "unknown".)
+    warnUnknownCmd ctx name pos
     let j0 := skipSpaces raws (i + 1)
     have hj0 := skipSpaces_ge raws (i + 1)
     -- A starred form's `*` belongs to the command, not to the text.
@@ -2983,9 +3129,7 @@ from where it stands"
     have hjr : j1 ≤ jr.1 := skipOptionRuns_ge raws j1 pos
     if jr.1 > j1 then
       let run := (Parse.rawSrc (raws.extract j1 jr.1)).trimAscii.toString
-      diag ctx .W0341
-        s!"'{run}' went with unknown command '\\{name}'; an option run is not content" pos
-        (help := "content, not options? start the '[' on the next line")
+      warnOptionRun ctx run name pos
     if let some bpos := jr.2 then
       warnUnclosed ctx s!"'\\{name}'" bpos
     let j2 := skipSpaces raws jr.1
@@ -3000,13 +3144,19 @@ from where it stands"
     have hadv : sliceWeight raws j3 < sliceWeight raws i :=
       sliceWeight_lt raws h (by omega)
     elabInlinesFrom ctx raws j3 acc2 sbF
-termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 0)
+termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 1)
 decreasing_by all_goals knot_dec
+
 
 end
 
 unseal String.trimAscii Parse.rawSrc Parse.rawSrcOne Decl.splitEntries
 unseal Decl.splitEntry Decl.parseValue Decl.parseDecimal smartPunct
+unseal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
+unseal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd
+unseal warnMisplacedDecl warnReservedCtrl warnOptionRun
+unseal argText skipBracketRun bracketRunSrc
+unseal warnUnclosed warnDroppedArgs
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 unseal theCounterLevel? sectionLevel String.toInt? String.toNat?
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
@@ -8823,6 +8973,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   if output.md.isNone then
     output := { output with md := record.mdName }
   ctx := { ctx with slides := record.model == .frame
+                    face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
                     page := page
                     engineTokens := engineLengthTokensOfPage page }

@@ -320,6 +320,8 @@ private def markerTextInto (acc : String) : List Inline → Option String
   | .ref _ _ _ _ :: _ => none
   -- a citation resolves to links, which no ::marker can carry
   | .cite _ _ :: _ => none
+  -- a footnote's mark is a link, which no ::marker can carry
+  | .footnote _ _ :: _ => none
 
 mutual
 
@@ -355,6 +357,7 @@ def markerCssOne (decls : Array String) : Inline → Option MarkerCss
   | .label _ => none
   | .ref _ _ _ _ => none
   | .cite _ _ => none
+  | .footnote _ _ => none
 
 def markerCssList (decls : Array String) : List Inline → Option MarkerCss
   | [x] => markerCssOne decls x
@@ -1667,6 +1670,9 @@ height: auto"
   -- this node with the style's linked inlines, and the diagnostic that let
   -- it through already named the gap.
   | .cite _ keys => acc.push (Html.text (Ir.citeMarks keys))
+  -- Interim, until the endnotes section lands: the note body sets inline.
+  | .footnote _ body =>
+    acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList))
   -- Page furniture has no meaning in a continuous document.
   | .pageNumber => acc
   | .pageCount => acc

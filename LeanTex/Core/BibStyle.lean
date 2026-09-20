@@ -609,6 +609,8 @@ private def resolveInline (style : CiteStyle) (find : Resolver)
   | .link u body => out.push (.link u (resolveInlines style find #[] body.toList))
   | .underline body => out.push (.underline (resolveInlines style find #[] body.toList))
   | .step n last body => out.push (.step n last (resolveInlines style find #[] body.toList))
+  -- a citation inside a note resolves like any other
+  | .footnote n body => out.push (.footnote n (resolveInlines style find #[] body.toList))
   | .text s => out.push (.text s)
   | .math d src => out.push (.math d src)
   | .formula d src body => out.push (.formula d src body)
@@ -644,6 +646,7 @@ def citeFreeOne : Ir.Inline → Bool
   | .link _ body => citeFreeList body.toList
   | .underline body => citeFreeList body.toList
   | .step _ _ body => citeFreeList body.toList
+  | .footnote _ body => citeFreeList body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
   | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => true
@@ -669,7 +672,7 @@ where
     match x with
     | .cite t keys => simp [resolveInline]
     | .styled _ body | .colored _ _ body | .role _ body | .link _ body
-    | .underline body | .step _ _ body => simp [resolveInline]
+    | .underline body | .step _ _ body | .footnote _ body => simp [resolveInline]
     | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
     | .label _ | .ref _ _ _ _
     | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ =>
@@ -702,6 +705,9 @@ theorem resolveInline_id (style : CiteStyle) (find : Resolver)
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id style find body.toList h]
   | .step n last body =>
+    rw [citeFreeOne] at h
+    rw [resolveInline, resolveInlines_id style find body.toList h]
+  | .footnote n body =>
     rw [citeFreeOne] at h
     rw [resolveInline, resolveInlines_id style find body.toList h]
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _

@@ -84,6 +84,8 @@ private def inlineInto (acc : String) : Inline → String
     -- bound first: the append is one-off, not a walk (the cost gate's shape)
     let marks := Ir.citeMarks keys
     acc ++ marks
+  -- Interim, until the [^k] definitions land: the note body sets inline.
+  | .footnote _ body => inlinesInto acc body.toList
   | .linebreak _ => acc ++ "\\\n"
 
 private def inlinesInto (acc : String) : List Inline → String

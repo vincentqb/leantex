@@ -1175,6 +1175,17 @@ inductive Inline where
   undefined citation, and W0351 or the missing-file diagnostic has already
   said why. `textual` marks `\citet`'s in-sentence form. -/
   | cite (textual : Bool) (keys : Array String)
+  /-- `\footnote{...}`: a note set at the foot of the page its mark lands
+  on. `num` is the resolved mark number — elaboration assigns it in flow
+  order through `footnoteMark` (`\footnote[n]` overrides without stepping
+  the counter, LaTeX's own semantics; `footnote_numbers_gapless` is the
+  numbering contract). The body is inline content only: a paragraph break
+  inside a note is set as a space, named (W0371) — a block body would put
+  an Inline→Block edge into the elaboration termination knot and grow
+  every Inline-only walk a Block companion. The body is document text and
+  survives every walk (`footnoteWrap_text`); the mark digit is generated ink,
+  excluded from the census as `citeMark` is. -/
+  | footnote (num : Option Nat) (body : Array Inline)
   deriving Repr, BEq, Inhabited
 
 /-- The anchor a reference-list entry carries in HTML and its citations
@@ -1191,6 +1202,15 @@ separated — `\cite{a,b}` with no bibliography shows `?, ?`, one visible
 gap per promised entry. -/
 def citeMarks (keys : Array String) : String :=
   String.intercalate ", " (keys.toList.map fun _ => citeMark)
+
+/-- How far a footnote mark's baseline stands above its line's, per mille
+of the surrounding size, the mark itself set at the `scriptsize` step of
+`sizeScale`. The authority this constant stands in for is the face's own
+OS/2 `ySuperscriptYOffset` (OpenType spec, OS/2 table): `Font` does not
+parse it yet — it reads sCapHeight and sxHeight only — so one named value,
+a third of an em, holds the raise until it does (PLAN § Owed obligations
+records the parse). -/
+def markRaise : Nat := 333
 
 /-- How a frame distributes its leftover vertical space: beamer's frame
 options `[t]`/`[c]`/`[b]` on `\begin{frame}`. `center` is beamer's default
@@ -1890,6 +1910,42 @@ theorem numbersFrom_length (k : Nat) (bs : List Bool) :
   induction bs generalizing k with
   | nil => rfl
   | cons b rest ih => cases b <;> simp [numbersFrom, ih]
+
+/-- One footnote mark's number against the counter: an override
+(`\footnote[n]{...}`) is itself and steps nothing — LaTeX's own semantics,
+where the optional argument sets the mark without `\stepcounter` (source2e,
+ltmiscen.dtx `\@xfootnote`) — and an ordinary mark takes the next value.
+The elaborator's per-mark step; `footnoteMarksFrom` is its fold and
+`footnote_numbers_gapless` its contract. -/
+def footnoteMark (k : Nat) (override : Option Nat) : Nat × Nat :=
+  match override with
+  | some n => (n, k)
+  | none => (k + 1, k + 1)
+
+/-- The footnote numbering fold: `footnoteMark` over the marks' overrides
+in flow order — what running the elaborator's step over a whole document
+assigns. -/
+def footnoteMarksFrom (k : Nat) : List (Option Nat) → List Nat
+  | [] => []
+  | o :: rest => (footnoteMark k o).1 :: footnoteMarksFrom (footnoteMark k o).2 rest
+
+/-- Footnote marks in flow order are gapless: over any override pattern,
+the unoverridden marks number `k+1, k+2, …` exactly — `numbers_gapless`
+instantiated at the footnote counter's step. An override never steps, so
+`\footnote{a}\footnote[7]{b}\footnote{c}` numbers 1, 7, 2. -/
+theorem footnote_numbers_gapless (k : Nat) (os : List (Option Nat)) :
+    ((os.zip (footnoteMarksFrom k os)).filterMap fun p =>
+        if p.1.isSome then none else some p.2) =
+      List.range' (k + 1) (countTrue (os.map (·.isNone))) := by
+  have h : ∀ k, ((os.zip (footnoteMarksFrom k os)).filterMap fun p =>
+      if p.1.isSome then none else some p.2) =
+    (numbersFrom k (os.map (·.isNone))).filterMap id := by
+    induction os with
+    | nil => intro k; rfl
+    | cons o rest ih =>
+      intro k
+      cases o <;> simp [footnoteMarksFrom, footnoteMark, numbersFrom, ih]
+  rw [h, numbers_gapless]
 
 /-- The countable mask of a document body: the fold's instantiation. -/
 def frameMask (body : Array Block) : List Bool :=
@@ -2825,6 +2881,8 @@ def fillOne (content : Array Inline) : Inline → Inline
   | .linebreak e => .linebreak e
   -- a citation carries no inline body: it cannot hold the template's hole
   | .cite t ks => .cite t ks
+  -- a footnote's body is the note's own text, never a template hole
+  | .footnote n body => .footnote n body
 
 def fillList (content : Array Inline) : List Inline → List Inline
   | [] => []
@@ -3155,6 +3213,9 @@ def plainTextOne (x : Inline) : String :=
   | .ref _ _ text _ => text
   -- a citation is worth the number it shows (or LaTeX's ? unresolved)
   | .cite _ keys => citeMarks keys
+  -- the note body is document text; its mark digit is generated ink,
+  -- excluded as a citation's mark is
+  | .footnote _ body => plainTextList body.toList
   | .linebreak _ => " "
 
 end
@@ -3343,6 +3404,8 @@ def navLinkInline (out : Array (String × String)) : Inline → Array (String ×
   | .step _ _ body => navLinkInlineList out body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
+  -- a footnote's links are the note's own, never navigation entries
+  | .footnote _ _
   | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => out
 
 end
@@ -3501,6 +3564,11 @@ def dumpInline (ind : String) (x : Inline) : String :=
   | .cite textual keys =>
     let form := if textual then "citet" else "cite"
     s!"{ind}{form} {String.intercalate " " (keys.toList.map (·.quote))}\n"
+  | .footnote num body =>
+    let tag := match num with
+      | some n => s!" {n}"
+      | none => ""
+    s!"{ind}footnote{tag}\n" ++ dumpInlines (ind ++ "  ") body
   | .linebreak extra =>
     if extra == ({} : SymGlue) then s!"{ind}linebreak\n"
     else s!"{ind}linebreak {dumpGlue extra}\n"
@@ -3964,6 +4032,7 @@ def maxStepInline : Inline → Nat
   | .role _ body => maxStepInlineList body.toList
   | .link _ body => maxStepInlineList body.toList
   | .underline body => maxStepInlineList body.toList
+  | .footnote _ body => maxStepInlineList body.toList
   | .step n last body => max (max n (last.getD n)) (maxStepInlineList body.toList)
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _
@@ -4121,6 +4190,8 @@ def dimInline (cover : Cover) (k : Nat) (pending : Bool) : Inline → Inline
   -- a citation dims with its paragraph's cover, like bare text: no colour
   -- of its own, so the walk leaves it whole
   | .cite t keys => .cite t keys
+  -- a note's body dims like any content: recoloured inside, never removed
+  | .footnote n body => .footnote n (dimInlineList cover k pending #[] body.toList)
 
 end
 
@@ -4218,6 +4289,17 @@ near-definitional because the census ignores style wrappers. -/
 theorem langWrap_text (tag : String) :
     Conserves plainText (langWrap tag) := fun xs => by
   simp [langWrap, plainText, plainTextList, plainTextOne]
+
+/-- Wrap inline content as a footnote's body: what `\footnote` becomes. -/
+def footnoteWrap (num : Option Nat) (xs : Array Inline) : Array Inline :=
+  #[.footnote num xs]
+
+/-- The note body is document text: marking content as a footnote ships
+exactly the text census the content already had. The mark digit is
+generated ink, excluded as `citeMark` is. -/
+theorem footnoteWrap_text (num : Option Nat) :
+    Conserves plainText (footnoteWrap num) := fun xs => by
+  simp [footnoteWrap, plainText, plainTextList, plainTextOne]
 
 -- Nothing vanishes: dimming recolours, never removes. The text of a frame's
 -- body is identical on every handout page, so the union of what the steps
@@ -4474,6 +4556,99 @@ def headingLevelColumns (out : Array Nat) : List (Option Nat × Array Block) →
 
 end
 
+mutual
+
+/-- Every footnote in document order, with its resolved mark number: the
+one flow the backends' endnote sections read (the HTML `doc-endnotes`
+section, the markdown `[^k]` definitions). The accumulator threads
+through, as every walk here does. -/
+-- conserves: none — a projection of the notes alone: nothing is rewritten,
+-- and the census the notes owe is `footnoteWrap_text` at the wrap site.
+def footnotesOf (xs : Array Block) : Array (Option Nat × Array Inline) :=
+  footnoteBlockList #[] xs.toList
+
+def footnoteBlockList (out : Array (Option Nat × Array Inline)) :
+    List Block → Array (Option Nat × Array Inline)
+  | [] => out
+  | b :: rest => footnoteBlockList (footnoteBlockOne out b) rest
+
+def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
+    Block → Array (Option Nat × Array Inline)
+  | .para content => footnoteInlineList out content.toList
+  | .equation _ content => footnoteInlineList out content.toList
+  | .section _ _ _ title => footnoteInlineList out title.toList
+  | .list _ items => footnoteItems out items.toList
+  | .center body => footnoteBlockList out body.toList
+  | .quote body => footnoteBlockList out body.toList
+  | .abstract body => footnoteBlockList out body.toList
+  | .titled _ title body =>
+    footnoteBlockList (footnoteInlineList out title.toList) body.toList
+  | .role _ body => footnoteBlockList out body.toList
+  | .spaced _ body => footnoteBlockList out body.toList
+  | .columns cols => footnoteColumns out cols.toList
+  | .step _ _ body => footnoteBlockList out body.toList
+  | .only _ body => footnoteBlockList out body.toList
+  | .nav _ body => footnoteBlockList out body.toList
+  | .frame title _ _ body =>
+    footnoteBlockList (footnoteInlineList out title.toList) body.toList
+  -- a speaker note is a side channel; its text never ships on a page
+  | .note _ => out
+  | .verbatim _ _ => out
+  | .framefoot _ => out
+  | .setPalette _ => out
+  | .setTokens _ => out
+  | .pagebreak => out
+  | .logo _ => out
+  | .rule _ _ _ => out
+  | .picture _ => out
+  | .table _ _ _ rows _ => footnoteTableRows out rows.toList
+  -- the caption counts with its float, before the body, as its text does
+  | .float _ _ _ body caption =>
+    footnoteBlockList (footnoteInlineList out caption.toList) body.toList
+  | .bibliography _ _ _ => out
+
+def footnoteTableRows (out : Array (Option Nat × Array Inline)) :
+    List (Array (Array Inline)) → Array (Option Nat × Array Inline)
+  | [] => out
+  | row :: rest => footnoteTableRows (footnoteTableCells out row.toList) rest
+
+def footnoteTableCells (out : Array (Option Nat × Array Inline)) :
+    List (Array Inline) → Array (Option Nat × Array Inline)
+  | [] => out
+  | cell :: rest => footnoteTableCells (footnoteInlineList out cell.toList) rest
+
+def footnoteItems (out : Array (Option Nat × Array Inline)) :
+    List (Array Block) → Array (Option Nat × Array Inline)
+  | [] => out
+  | item :: rest => footnoteItems (footnoteBlockList out item.toList) rest
+
+def footnoteColumns (out : Array (Option Nat × Array Inline)) :
+    List (Option Nat × Array Block) → Array (Option Nat × Array Inline)
+  | [] => out
+  | (_, body) :: rest => footnoteColumns (footnoteBlockList out body.toList) rest
+
+def footnoteInlineList (out : Array (Option Nat × Array Inline)) :
+    List Inline → Array (Option Nat × Array Inline)
+  | [] => out
+  | x :: rest => footnoteInlineList (footnoteInlineOne out x) rest
+
+def footnoteInlineOne (out : Array (Option Nat × Array Inline)) :
+    Inline → Array (Option Nat × Array Inline)
+  | .footnote num body =>
+    -- flow order: a note nested in another note's body follows its host
+    footnoteInlineList (out.push (num, body)) body.toList
+  | .styled _ body => footnoteInlineList out body.toList
+  | .colored _ _ body => footnoteInlineList out body.toList
+  | .role _ body => footnoteInlineList out body.toList
+  | .link _ body => footnoteInlineList out body.toList
+  | .underline body => footnoteInlineList out body.toList
+  | .step _ _ body => footnoteInlineList out body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _
+  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => out
+
+end
+
 /-- A heading level in the author's own vocabulary. -/
 private def levelName : Nat → String
   | 0 => "the title"
@@ -4550,6 +4725,8 @@ def hasPhysicalPageOne : Inline → Bool
   | .linebreak _ => false
   -- a citation shows its own number, never the page's
   | .cite _ _ => false
+  -- a note's body can carry a placeholder like any inline content
+  | .footnote _ body => hasPhysicalPageList body.toList
 
 def hasPhysicalPageList : List Inline → Bool
   | [] => false
@@ -4673,6 +4850,9 @@ theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : Inline) :
     plainTextOne (dimInline cover k pending x) = plainTextOne x := by
   match x with
   | .styled st body =>
+    rw [dimInline]
+    simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
+  | .footnote n body =>
     rw [dimInline]
     simp [plainTextOne, dimInlineList_text cover k pending body.toList #[], plainTextList]
   | .colored c nm body =>
@@ -6024,6 +6204,7 @@ def foldInline (fi : α → Inline → α) (acc : α) (x : Inline) : α :=
   | .link _ body => foldInlineList fi (fi acc x) body.toList
   | .underline body => foldInlineList fi (fi acc x) body.toList
   | .step _ _ body => foldInlineList fi (fi acc x) body.toList
+  | .footnote _ body => foldInlineList fi (fi acc x) body.toList
   | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
   | .label _ | .ref _ _ _ _ | .cite _ _
   | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => fi acc x
@@ -6285,6 +6466,8 @@ def resolveRefInline (table : RefTable) : Inline → Inline
   | .icon s l => .icon s l
   | .label k => .label k
   | .cite tx keys => .cite tx keys
+  -- a reference inside a note resolves like any other
+  | .footnote n body => .footnote n (resolveRefInlineList table #[] body.toList)
   | .fill => .fill
   | .strut h => .strut h
   | .pageNumber => .pageNumber
