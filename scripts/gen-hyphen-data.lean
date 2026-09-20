@@ -47,6 +47,21 @@ copyright: Copyright (C) 1994-2002 Daniel Flipo, Bernard Gaulle,
 licence: MIT (https://opensource.org/licenses/MIT)
 hyphenmins: left 2, right 3
 -/
+" },
+   { lang := "de"
+     source := "hyph-de-1996.tex"
+     output := "LeanTex/Core/HyphenDataDe.lean"
+     ns := "LeanTex.Core.HyphenDataDe"
+     notice := "/-
+Generated from hyph-de-1996.tex (hyph-utf8); do not edit by hand.
+Regenerate with: lake env lean --run scripts/gen-hyphen-data.lean --lang de
+
+title: Hyphenation patterns for German, reformed orthography
+copyright: Copyright (C) 2013-2023 Stephan Hennig, Werner Lemberg,
+Guenter Milde et al. (dehyph-exptl)
+licence: MIT (https://opensource.org/licenses/MIT)
+hyphenmins: left 2, right 2
+-/
 " }]
 
 def die (msg : String) : IO α := do

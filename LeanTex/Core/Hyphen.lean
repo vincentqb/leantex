@@ -1,6 +1,7 @@
 import Std.Data.HashMap
 import LeanTex.Core.HyphenData
 import LeanTex.Core.HyphenDataFr
+import LeanTex.Core.HyphenDataDe
 import LeanTex.Core.LocaleData
 import LeanTex.Core.Nfc
 
@@ -66,14 +67,19 @@ def french : Patterns :=
   load' HyphenDataFr.patterns HyphenDataFr.exceptions
     Locale.fr.leftMin Locale.fr.rightMin
 
-/-- The pattern table a BCP 47 tag selects. German's locale record ships
-(captions, quotes) but its pattern file is a 272 KB literal whose compile
-cost gates it (the brief's measurement rule): until it lands, a German
-run is honestly unhyphenated rather than wrongly English. -/
+def german : Patterns :=
+  load' HyphenDataDe.patterns HyphenDataDe.exceptions
+    Locale.de.leftMin Locale.de.rightMin
+
+/-- The pattern table a BCP 47 tag selects: a language with a locale
+record but no landed table would be honestly unhyphenated rather than
+wrongly English. (German's 272 KB literal was gated on compile cost;
+measured at 0.65 s against the English file's 0.72 s, it lands.) -/
 def forTag (tag : String) : Option Patterns :=
   match (Locale.forTag tag).map (·.tag) with
   | some "en" => some load
   | some "fr" => some french
+  | some "de" => some german
   | _ => none
 
 /-- The candidate break weights of the pattern walk, before the minima

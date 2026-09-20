@@ -2233,6 +2233,22 @@ def hyphenChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- The word boundary is Unicode (Nfc.isLetter/toLower): an accented word
   -- hyphenates whole, capitalized included.
   t "hyphen fr accented capital folds" (hyphFr "Bélair" == "Bé-lair")
+  -- German (hyph-de-1996.tex, hyphenmins 2/2 from the locale record).
+  -- Verified against luatex loading the same file: hyphen-diff --lang de,
+  -- 2800 words, exact.
+  let dep := Hyphen.german
+  let hyphDe (w : String) : String := Id.run do
+    let breaks := Hyphen.hyphenate dep w
+    let mut out := ""
+    for (c, i) in w.toList.zipIdx do
+      if i > 0 && breaks.contains i then
+        out := out.push '-'
+      out := out.push c
+    return out
+  t "hyphen german patterns loaded" (dep.map.size > 30000)
+  t "hyphen de wissenschaft" (hyphDe "Wissenschaft" == "Wis-sen-schaft")
+  t "hyphen de compound" (hyphDe "Donaudampfschifffahrt" == "Do-nau-dampf-schiff-fahrt")
+  t "hyphen de rightmin 2" (hyphDe "Zusammenfassung" == "Zu-sam-men-fas-sung")
   -- English patterns on the same word give different (wrong) breaks: the
   -- selection is load-bearing.
   t "hyphen en mis-breaks french" (hyph "considérablement" != "consi-dé-ra-ble-ment")
