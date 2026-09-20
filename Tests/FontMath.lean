@@ -737,6 +737,56 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       t "classify is total over truncations"
         (((List.range 64).map fun k =>
           (Font.classify (fontData.extract 0 (fontData.size * k / 64))).isOk).length == 64)
+      -- Parse totality alone leaves the lazy readers unfuzzed. On the
+      -- feature-rich faces (Source Serif: GPOS kern, GSUB, format-12 cmap;
+      -- Fira Math: MATH), every truncation whose parse succeeds also forces
+      -- the deferred readers -- kern pairs, underline ink, ink extents, the
+      -- x ink top, the MATH variant and accent reads -- so a short table
+      -- obstructs there too, never aborts. Reaching the assertion is the
+      -- property; acc only forces the reads, its value is face data.
+      for name in ["SourceSerifPro-Regular.otf", "FiraMath-Regular.otf"] do
+        let rich ← IO.FS.readBinFile (testFonts ++ "/" ++ name)
+        let mut forced := 0
+        let mut acc : Int := 0
+        for k in [0:65] do
+          match Font.parse (rich.extract 0 (rich.size * k / 64)) with
+          | .error _ => pure ()
+          | .ok f =>
+            forced := forced + 1
+            for g in [0:min f.numGlyphs 24] do
+              acc := acc + f.kernAdv g (g + 1)
+              acc := acc + (f.inkAt g).size
+              acc := acc + ((f.yExtent g).map (·.2)).getD 0
+              acc := acc + (f.vertVariants g).size + (f.horizVariants g).size
+              acc := acc + f.topAccentX g
+            acc := acc + (f.xInkTop.get.getD 0)
+        t s!"truncated lazy readers are total ({name})"
+          (forced ≥ 1 && acc - acc == 0)
+      -- A format-12 cmap whose group count claims ~2M groups: the count is
+      -- the one file-derived loop bound with no structural limit, and it
+      -- must be clamped by the bytes actually present, never trusted -- a
+      -- malformed installed face otherwise demands gigabytes of pushes at
+      -- every resolve.
+      let ssp ← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf")
+      let cmap12Off : Option Nat := Id.run do
+        let some ct := Ink.findTable ssp "cmap" | return none
+        let n := Ink.u16 ssp (ct.offset + 2)
+        for k in [0:n] do
+          let entry := ct.offset + 4 + 8 * k
+          let sub := ct.offset + Ink.u32 ssp (entry + 4)
+          if Ink.u16 ssp sub == 12 then
+            return some sub
+        return none
+      match cmap12Off with
+      | none => failures ref "font: SourceSerifPro-Regular.otf lost its format-12 cmap"
+      | some off =>
+        let doctored := (((ssp.set! (off + 12) 0x00).set! (off + 13) 0x20).set!
+          (off + 14) 0x00).set! (off + 15) 0x00
+        match Font.parse doctored with
+        | .error e => failures ref s!"font: a lying cmap-12 count should still parse: {e}"
+        | .ok f =>
+          t "a lying cmap-12 group count is clamped by the bytes present"
+            (f.cmap.size ≤ doctored.size / 12)
 
       -- A one-face set: every slot and variant maps to index 0.
       let oneFace := oneFaceOf font

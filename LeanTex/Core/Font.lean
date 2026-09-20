@@ -117,6 +117,10 @@ private def parseCoverage (b : ByteArray) (off : Nat) : Array Nat := Id.run do
   | 2 =>
     let n := u16 b (off + 2)
     for i in [0:n] do
+      -- Total cap: the per-range clamp still lets n overlapping garbage
+      -- ranges push n·0x10000 entries; no coverage lists more glyphs than
+      -- the 16-bit glyph space holds.
+      if out.size ≥ 0x10000 then break
       let s := u16 b (off + 4 + 6 * i)
       let e := u16 b (off + 6 + 6 * i)
       -- Bounded: a malformed range never expands past the glyph space.
@@ -180,6 +184,17 @@ private def parseTopAccent (b : ByteArray) : Array (Nat × Int) := Id.run do
     let some cov := covered[i]? | break
     out := out.push (cov, i16 b (ta + 4 + 4 * i))
   return out
+
+/-- Sort a file-derived table by a `Nat` key in worst-case `n·log n`.
+`Array.qsort` degrades to quadratic when many keys compare equal, and a
+malformed font manufactures exactly that input: a lying cmap-12 group
+count reading zeros past the end of its file yields a run of identical
+groups, and the quadratic sort — not the bounded reads — turned one
+doctored 2M-group face into an hour-long parse. Every sort over bytes a
+file claims goes through here, so parse cost stays `n·log n` in the bytes
+present whatever they say. Stable, so equal keys keep file order. -/
+private def sortByKey (xs : Array α) (key : α → Nat) : Array α :=
+  (xs.toList.mergeSort fun x y => key x ≤ key y).toArray
 
 /-- A 4-byte OpenType tag as a string, for script and feature records. -/
 private def tag4 (b : ByteArray) (off : Nat) : String :=
@@ -286,7 +301,7 @@ private def singleSubMap (b : ByteArray) (lookupList lookupIdx : Nat) :
         if i < n then
           out := out.push (g, u16 b (so + 6 + 2 * i))
     | _ => pure ()
-  return out.qsort fun a c => a.1 < c.1
+  return sortByKey out (·.1)
 
 /-- The small-caps substitution a face offers: whether GSUB carries `smcp`
 (lowercase to small capitals) and `c2sc` (capitals to small capitals) for
@@ -309,7 +324,7 @@ private def parseGsubSmallCaps (b : ByteArray) : Bool × Bool × Array (Nat × N
   let hasC2sc := !c2scLookups.isEmpty
   unless hasSmcp && hasC2sc do return (hasSmcp, hasC2sc, #[])
   let dedup (xs : Array Nat) : Array Nat :=
-    (xs.qsort (· < ·)).foldl
+    (sortByKey xs id).foldl
       (fun acc i => if acc.back? == some i then acc else acc.push i) #[]
   let lookups := dedup (smcpLookups ++ c2scLookups)
   let maps := lookups.map (singleSubMap b lookupList)
@@ -338,6 +353,9 @@ private def parseClassDef (b : ByteArray) (off : Nat) : Array (Nat × Nat) := Id
   | 2 =>
     let n := u16 b (off + 2)
     for i in [0:n] do
+      -- Total cap: as in `parseCoverage`, overlapping garbage ranges must
+      -- not multiply the per-range clamp by the range count.
+      if out.size ≥ 0x10000 then break
       let s := u16 b (off + 4 + 6 * i)
       let e := u16 b (off + 6 + 6 * i)
       let cls := u16 b (off + 8 + 6 * i)
@@ -345,7 +363,7 @@ private def parseClassDef (b : ByteArray) (off : Nat) : Array (Nat × Nat) := Id
       for g in [s : min (e + 1) 0x10000] do
         out := out.push (g, cls)
   | _ => pure ()
-  return out.qsort fun a c => a.1 < c.1
+  return sortByKey out (·.1)
 
 /-- Binary search over sorted `(gid, v)` pairs: the value, or `none`. -/
 private def sortedFind (pairs : Array (Nat × Nat)) (g : Nat) : Option Nat :=
@@ -444,7 +462,7 @@ private def parseLegacyKern (b : ByteArray) : Array (Nat × Int) := Id.run do
         if v != 0 then
           out := out.push (u16 b r * 0x10000 + u16 b (r + 2), v)
     off := off + max len 6
-  return (out.qsort fun a c => a.1 < c.1).foldl
+  return (sortByKey out (·.1)).foldl
     (fun acc p => if acc.back?.map (·.1) == some p.1 then acc else acc.push p) #[]
 
 /-- A parsed sfnt font: the metrics the layout engine needs, the char→glyph
@@ -572,7 +590,11 @@ private def parseCmap4 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × 
   return out
 
 private def parseCmap12 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × UInt32) := Id.run do
-  let n := u32 b (off + 12)
+  -- The group count is the one file-derived loop bound with no structural
+  -- limit; clamp it by the bytes actually present, never trust it — a
+  -- malformed installed face otherwise demands gigabytes of pushes (and a
+  -- mass of identical past-the-end zero groups) at every resolve.
+  let n := min (u32 b (off + 12)) ((b.size - off) / 12)
   let mut out : Array (UInt32 × UInt32 × UInt32) := #[]
   for k in [0:n] do
     let g := off + 16 + 12 * k
@@ -788,7 +810,7 @@ def parse (data : ByteArray) : Except String Font := do
       w := w.push last
     return w
   let cmap := parseCmap data cmapT
-  let cmap := cmap.qsort fun a b => a.1 < b.1
+  let cmap := sortByKey cmap (·.1.toNat)
   let cls ← classify data
   let psName := cls.psName
   let family := cls.family
@@ -953,7 +975,7 @@ rest of it: what the per-glyph fallback scan asks of a candidate face is only
 "has it the glyph". Empty when the image has no readable cmap. -/
 def cmapRanges (data : ByteArray) : Array (UInt32 × UInt32 × UInt32) :=
   match findTable data "cmap" with
-  | some t => if fits data t then (parseCmap data t).qsort (fun a b => a.1 < b.1) else #[]
+  | some t => if fits data t then sortByKey (parseCmap data t) (·.1.toNat) else #[]
   | none => #[]
 
 /-- Advance width of a scalar in font units (0 when the glyph is missing). -/
