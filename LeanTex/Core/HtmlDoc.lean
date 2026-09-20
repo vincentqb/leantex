@@ -1161,25 +1161,35 @@ theorem deckEntryCss_guarded : ∃ rule, deckEntryCss = rule ++ deckMotionGuard 
 /-- The reduced-motion guard for the steps' uncover: under the reader's
 reduce preference no step animates — everything stands at full colour,
 the handout state (WCAG 2.2 SC 2.3.3, technique C39; CSS Media Queries 5
-§12.1). As `deckMotionGuard`, the guard travels with the declaration. -/
+§12.1). The from-state now moves (the come-in offset), and SC 2.3.3 asks
+for the *motion* to be removable — a colour fade is not motion — but the
+base stylesheet's global reduce block already removes every animation
+with `!important`, so keeping the fade here would demand unwinding that
+contract for one effect; the criterion permits removing more than the
+motion, and the static floor is the handout state either way. As
+`deckMotionGuard`, the guard travels with the declaration. -/
 def deckStepGuard : String :=
   "@media (prefers-reduced-motion: reduce) { .step { animation: none; } }\n"
 
-/-- The steps' reveal in place: a `.step` starts *covered* — the caller
-passes the same oklab `color-mix` shade the PDF handout dims pending
-content to (dim, never hide; no reflow) — and uncovers to full colour,
-each step delayed by its own `--step` index times the stagger token. Two
-declarative triggers, best available first, each under `@supports`:
+/-- The steps' come-in reveal: a `.step` starts *covered* — dimmed to the
+same oklab `color-mix` shade the PDF handout dims pending content to (the
+caller passes it; dim, never hide) and offset by `--motiondistance` in
+the direction of travel — and moves to place at full colour, each step
+delayed by its own `--step` index times the stagger token. Colour and
+transform only: neither reflows, so the frame's layout is fixed from the
+first paint and a step's arrival moves nothing else (CSS Transforms 1
+§3: transforms do not affect layout). Two declarative triggers, best
+available first, each under `@supports`:
 
 - Scroll-state container queries (CSS Conditional 5, `scroll-state()`):
   the slide is its own scroll-state container, and when it is the snapped
-  one its steps uncover in sequence. Support (caniuse
+  one its steps come in, in sequence. Support (caniuse
   `mdn-css_at-rules_container_scroll-state_queries_snapped`, read
   2026-09-20): Chromium 133+ (Feb 2025) only, ≈71% global — no Safari,
   no Firefox.
-- Where those are unsupported, the `view()` timeline the entry motion
-  already uses (Scroll-driven Animations 1): the steps uncover together
-  as the frame scrolls in. Support (caniuse
+- Where those are unsupported, the `view(x)` timeline the entry motion
+  already uses (Scroll-driven Animations 1): the steps come in together
+  as the frame scrolls in along the row. Support (caniuse
   `wf-scroll-driven-animations`, read 2026-09-20): Chromium 115+,
   Safari 26, Firefox behind a flag — ≈84% global.
 
@@ -1195,7 +1205,8 @@ animations (Duration & easing, 150–200 ms): 150 ms. Both are var()
 doors a bundle or reader overrides. Reduced motion: no animation, full
 colour — the guard rides by construction (`deckStepCss_guarded`). -/
 def deckStepCss (covered : String) : String :=
-  s!"@keyframes ltx-uncover \{ from \{ color: {covered} } }\n" ++
+  s!"@keyframes ltx-uncover \{ from \{ color: {covered}; \
+transform: translateX(var(--motiondistance, 1rem)) } }\n" ++
   "@supports (container-type: scroll-state) {\n" ++
   "section.slide { container-type: scroll-state; }\n" ++
   "@container scroll-state(snapped: x) {\n" ++

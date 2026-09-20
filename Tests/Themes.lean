@@ -1944,8 +1944,9 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   t "the uncover staggers by the step's own index through the tokens"
     (count "animation: ltx-uncover var(--motionduration, 400ms) both" == 1 &&
      count "animation-delay: calc((var(--step, 1) - 1) * var(--motionstagger, 150ms))" == 1)
-  t "the pre-reveal state is the design's own covered mix"
-    (count "@keyframes ltx-uncover { from { color: color-mix(in oklab, currentColor 31%" == 1)
+  t "the pre-reveal state is the design's own covered mix, offset in the direction of travel"
+    (count "@keyframes ltx-uncover { from { color: color-mix(in oklab, currentColor 31%" == 1 &&
+     count ")); transform: translateX(var(--motiondistance, 1rem)) } }" == 1)
   t "reduced motion shows every step at full colour"
     (count "@media (prefers-reduced-motion: reduce) { .step { animation: none; } }" == 1)
   t "print shows every step uncovered"
