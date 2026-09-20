@@ -238,7 +238,7 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
   let runs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   t "the icon glyph ships from the covering face"
     (runs.any fun s => match s with
-      | .run 1 _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '\uF09B')
+      | .run 1 _ _ _ glyphs _ _ _ _ => glyphs.any (·.2 == '\uF09B')
       | _ => false)
   t "a deliberate icon face is not a substitution warning"
     (!out.diags.any (·.code == "W0009"))
@@ -322,7 +322,7 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
     (bodyLines (layoutOf fs (Elab.run "t" src).1 geom)).flatMap
       (·.segs.filterMap fun s =>
         match s with
-        | .run _ _ _ _ glyphs size _ _ => some (glyphs, size)
+        | .run _ _ _ _ glyphs size _ _ _ => some (glyphs, size)
         | _ => none)
   let ink (rs : Array (Array (Nat × Char) × Dim.Sp)) : Array (Nat × Dim.Sp) :=
     rs.flatMap fun (glyphs, size) => glyphs.map fun (g, _) => (g, size)
@@ -404,7 +404,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   let runs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   t "fallback sets the glyph from the mapped face"
     (runs.any fun s => match s with
-      | .run 1 _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '∀')
+      | .run 1 _ _ _ glyphs _ _ _ _ => glyphs.any (·.2 == '∀')
       | _ => false)
   t "fallback reports once per family+glyph, naming both faces"
     ((out.diags.filter (·.code == "W0009")).map (·.message) ==
@@ -446,7 +446,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   let accOut := layoutOf mapped accDoc geom
   let accGlyphs := ((accOut.pages.flatMap (·.lines)).flatMap (·.segs)).flatMap
     fun s => match s with
-      | .run _ _ _ _ glyphs _ _ _ => glyphs.map (·.2)
+      | .run _ _ _ _ glyphs _ _ _ _ => glyphs.map (·.2)
       | _ => #[]
   t "a combining sequence ships composed, no mark machinery"
     (accGlyphs.contains 'é' && !accGlyphs.contains '\u0301' &&
@@ -508,7 +508,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   let taOut := layoutOf sspSet taDoc ({} : Layout.Geom)
   let taRun := ((taOut.pages.flatMap (·.lines)).flatMap (·.segs)).findSome?
     fun s => match s with
-      | .run _ _ _ w glyphs _ _ _ =>
+      | .run _ _ _ w glyphs _ _ _ _ =>
         if (glyphs.map (·.2)) == #['T', 'a'] then some (w, glyphs) else none
       | _ => none
   t "kern: the run width is the advances plus the pair value"
@@ -834,7 +834,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hyOut := layoutOf oneFace hyDoc narrow (some pats)
       let hyphenRendered := hyOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '-')
+          | .run _ _ _ _ glyphs _ _ _ _ => glyphs.any (·.2 == '-')
           | .gap _ | .rule .. | .image .. => false
       t "layout chosen hyphen renders" (hyOut.pages[0]!.lines.size > 1 && hyphenRendered)
       -- Display type never hyphenates (Butterick, "Hyphenation"): the same
@@ -843,7 +843,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let hyphens (doc : Ir.Doc) : Bool :=
         (layoutOf oneFace doc narrow (some pats)).pages.any fun p =>
           p.lines.any fun l => l.segs.any fun s => match s with
-            | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '-')
+            | .run _ _ _ _ glyphs _ _ _ _ => glyphs.any (·.2 == '-')
             | .gap _ | .rule .. | .image .. => false
       t "a heading never hyphenates"
         (!hyphens (Elab.run "t" "\\section{incomprehensibility}").1)
@@ -881,7 +881,7 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
         p.lines.any (·.size == Layout.sectionSize ({} : Layout.Geom) 1)
       let hasListMarker := visualOut.pages.any fun p => p.lines.any fun l =>
         l.segs.any fun s => match s with
-          | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '•')
+          | .run _ _ _ _ glyphs _ _ _ _ => glyphs.any (·.2 == '•')
           | .gap _ | .rule .. | .image .. => false
       t "layout section size" hasSectionSize
       t "layout list marker" hasListMarker
@@ -1024,7 +1024,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       adv mbase '𝑥' + adv scriptSize '2' + konst mbase 41)
   let supRuns (src : String) : Array (Dim.Sp × Dim.Sp) :=
     (lineOf src).segs.filterMap fun s => match s with
-      | .run _ _ _ _ glyphs sz _ raise =>
+      | .run _ _ _ _ glyphs sz _ raise _ =>
         if raise != 0 && !glyphs.isEmpty then some (sz, raise) else none
       | _ => none
   t "superscript raise is superscriptShiftUp at the base size"
@@ -1051,7 +1051,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- TeXbook ch. 18): x maps to U+1D465, sin and 2 stay ASCII.
   let glyphChars (src : String) : Array Char :=
     (lineOf src).segs.flatMap fun s => match s with
-      | .run _ _ _ _ glyphs _ _ _ => glyphs.map (·.2)
+      | .run _ _ _ _ glyphs _ _ _ _ => glyphs.map (·.2)
       | _ => #[]
   t "variables italic, functions and digits upright"
     (glyphChars "$\\sin 2x$" == #['s', 'i', 'n', '2', '𝑥'])
@@ -1078,7 +1078,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
       (cOut.diags.filter (·.code == "W0009")).map (·.message) ==
         #["'Fira Math' has no glyph for '₿' (U+20BF); set from 'Source Serif Pro'"] &&
       ((cOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
-        | .run 0 _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '₿')
+        | .run 0 _ _ _ glyphs _ _ _ _ => glyphs.any (·.2 == '₿')
         | _ => false))
   -- No math face: one W0003 for the document, formulas set as their source.
   let bare : Font.FontSet := { fonts := #[serif], index := allSlots }
@@ -1087,7 +1087,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "no math face warns W0003 once" ((nOut.diags.filter (·.code == "W0003")).size == 1)
   t "no math face sets the source text"
     ((nOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
-      | .run 0 _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '^')
+      | .run 0 _ _ _ glyphs _ _ _ _ => glyphs.any (·.2 == '^')
       | _ => false)
   -- Elaboration shapes: display math is its own centred block; \(..\) is
   -- inline; equation* renders; align and \frac stay warned source.
@@ -1118,7 +1118,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     let mut x : Dim.Sp := 0
     for s in l.segs do
       match s with
-      | .run _ _ _ w glyphs _ _ _ =>
+      | .run _ _ _ w glyphs _ _ _ _ =>
         if pick glyphs then return some x
         x := x + w
       | .gap w => x := x + w
@@ -1233,7 +1233,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((bfOut.diags.filter (·.code == "N0018")).map (·.message) ==
       #["'Fira Math' has no bold 'A' (U+1D400); set bold from 'Source Serif Pro'"] &&
       ((bfOut.pages.flatMap (·.lines)).flatMap (·.segs) |>.any fun s => match s with
-        | .run 0 _ _ _ glyphs _ _ _ => glyphs.any (·.2 == 'A')
+        | .run 0 _ _ _ glyphs _ _ _ _ => glyphs.any (·.2 == 'A')
         | _ => false))
   -- The alignment family renders as grids now; the numbered forms warn
   -- W0014 (numbers are owed, the mathematics is not), a ragged row is
@@ -1261,7 +1261,7 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
           | .gap w => x := x + w
           | .rule w _ _ _ => x := x + w
           | .image _ w _ => x := x + w
-          | .run _ _ _ w glyphs sz _ raise =>
+          | .run _ _ _ w glyphs sz _ raise _ =>
             let mut gx := x
             for (g, c) in glyphs do
               let a := (fira.widths[g]?.getD 0 : Int) * sz / upem

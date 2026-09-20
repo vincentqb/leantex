@@ -108,13 +108,12 @@ list.
   became total; blocked on the proof's elaboration budget, not the
   statement.
 - `contrast_judged_complete` — the contrast judge's completeness over the
-  shipped pages: every glyph run `Layout.run` ships, with its colour and
-  the ground recovered under it (the last fill containing its baseline
-  midpoint, else the effective page), lands in `Contrast.judgedPairs` —
-  no pairing outside the judged set. Blocked on `Layout.Out` carrying no
-  declared per-run ground (the geometric recovery below is the measure,
-  the judge's grounds are declarative) and on the collect-walk induction
-  behind the `Acc` split.
+  shipped pages, `judged_pair_is_shipped`'s converse: every glyph run
+  `Layout.run` ships, with its colour and the ground its resolving site
+  declared onto it (`Seg.run.ground`, written where the palette epoch,
+  the frame-title bar, and the standout inversion are resolved), lands in
+  `Contrast.judgedPairs`. The geometric recovery is gone with refactor 2;
+  what remains is the collect-walk induction behind the `Acc` split.
 
 ### Log
 

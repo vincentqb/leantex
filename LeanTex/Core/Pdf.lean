@@ -99,7 +99,7 @@ private def usedGlyphs (fontIdx numGlyphs : Nat) (pages : Array PageOut) :
   for p in pages do
     for l in p.lines do
       for s in l.segs do
-        if let .run idx _ _ _ glyphs _ _ _ := s then
+        if let .run idx _ _ _ glyphs _ _ _ _ := s then
           if idx == fontIdx then
             for (g, c) in glyphs do
               if h : g < seen.size then
@@ -278,7 +278,7 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
         x := x + w
       | .gap w =>
         x := x + w
-      | .run idx color _ w glyphs segSize _ raise =>
+      | .run idx color _ w glyphs segSize _ raise _ =>
         if glyphs.isEmpty then
           -- A kern: width, no glyphs. It moves the layout position like a gap.
           x := x + w
@@ -361,7 +361,7 @@ private def linkRects (geom : Geom) (page : PageOut) :
     let pad := l.size
     for seg in l.segs do
       match seg with
-      | .run _ _ link w _ segSize _ _ =>
+      | .run _ _ link w _ segSize _ _ _ =>
         let size := if segSize == 0 then l.size else segSize
         let y0 := geom.bleed + geom.pageH - l.y - size / 4
         let y1 := geom.bleed + geom.pageH - l.y + size * 4 / 5

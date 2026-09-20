@@ -13,7 +13,7 @@ def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
   let mut items : Array Layout.Item := #[]
   for p in ps do
     match p with
-    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10) false 0)
+    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10) false 0 none)
     | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
     | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true 0 Ir.Color.black #[])
     | .B =>
@@ -92,7 +92,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (bodyLines out, out.diags)
   let markerOf (l : Layout.LineOut) : String :=
     match l.segs[0]? with
-    | some (Layout.Seg.run _ _ _ _ glyphs _ _ _) => String.ofList (glyphs.toList.map (·.2))
+    | some (Layout.Seg.run _ _ _ _ glyphs _ _ _ _) => String.ofList (glyphs.toList.map (·.2))
     | _ => ""
   -- The numbering functions and their decoders (`\labelenum*`, classes.dtx).
   t "enum labels match the class defaults"
@@ -142,7 +142,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- the second item is covered, marker included.
   let markerColor (l : Layout.LineOut) : Option Ir.Color :=
     match l.segs[0]? with
-    | some (Layout.Seg.run _ c _ _ _ _ _ _) => some c
+    | some (Layout.Seg.run _ c _ _ _ _ _ _ _) => some c
     | _ => none
   t "a covered item's marker dims with it"
     (markerColor stepLines[1]! == some (Ir.Design.ofDoc {}).cover.plain &&
@@ -219,7 +219,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   let scOut := layoutOf oneFace (Elab.run "t" "\\scshape aB").1 geom
   let scRuns := (bodyLines scOut).flatMap (·.segs.filterMap fun s =>
     match s with
-    | .run _ _ _ _ glyphs size _ _ => some (glyphs.map (·.2), size)
+    | .run _ _ _ _ glyphs size _ _ _ => some (glyphs.map (·.2), size)
     | _ => none)
   t "synthesised small caps carry no lowercase form"
     (!scRuns.isEmpty && scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
@@ -897,7 +897,7 @@ def linkSignalChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (Elab.run "t" "see \\href{https://example.org/}{the example} here").1 geom
   let segs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   let linkRuns := segs.filterMap fun s => match s with
-    | .run _ _ (some _) _ _ _ ul _ => some ul
+    | .run _ _ (some _) _ _ _ ul _ _ => some ul
     | _ => none
   t "pdf link runs exist" (!linkRuns.isEmpty)
   t "pdf link runs are underlined" (linkRuns.all (· == true))
@@ -1055,7 +1055,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
             let lines := ((outOf mixedSet src).pages.flatMap (·.lines))
             let runW := ((lines[0]?.map (·.segs)).getD #[]).filterMap fun s =>
               match s with
-              | .run _ _ _ w _ _ _ _ => some w
+              | .run _ _ _ w _ _ _ _ _ => some w
               | _ => none
             let ruleW := ((lines[1]?.map (·.segs)).getD #[]).filterMap fun s =>
               match s with
@@ -1823,7 +1823,7 @@ def scopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     out.pages.flatMap fun p => p.lines.map fun l =>
       (lineText l,
        (l.segs.findSome? fun seg => match seg with
-        | .run _ color _ _ _ _ _ _ => some color
+        | .run _ color _ _ _ _ _ _ _ => some color
         | _ => none).getD Ir.Color.black)
   let colorOf (runs : Array (String × Ir.Color)) (needle : String) : Option Ir.Color :=
     (runs.find? fun (text, _) => hasStr text needle).map (·.2)
@@ -1997,7 +1997,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let pageTexts (out : Layout.Out) : Array String :=
     out.pages.map fun p => String.join (p.lines.toList.map fun l =>
       String.join (l.segs.toList.map fun s => match s with
-        | .run _ _ _ _ glyphs _ _ _ => String.ofList (glyphs.toList.map (·.2))
+        | .run _ _ _ _ glyphs _ _ _ _ => String.ofList (glyphs.toList.map (·.2))
         | _ => " "))
   let samePage (src : String) (marks : List String) : Bool :=
     let texts := pageTexts (layoutOut src)
@@ -2193,7 +2193,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
             acc := acc.push (x, w)
             x := x + w
           | .gap g => x := x + g
-          | .run _ _ _ w _ _ _ _ => x := x + w
+          | .run _ _ _ w _ _ _ _ _ => x := x + w
           | .image _ w _ => x := x + w
     return acc
   t "the three rules ship" (ruleSegs.size == 3)
@@ -2448,7 +2448,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let out := layoutOf oneFace doc (pats := some pats)
     out.pages.any fun p => p.lines.any fun l =>
       l.segs.any fun s => match s with
-        | .run _ _ _ _ glyphs _ _ _ => glyphs.any (·.2 == '-')
+        | .run _ _ _ _ glyphs _ _ _ _ => glyphs.any (·.2 == '-')
         | .gap _ | .rule .. | .image .. => false
   let narrowPage := "\\page{ width = 90pt, height = 400pt, margin = 10pt }\n"
   let word := "incomprehensibility incomprehensibility"
@@ -2627,7 +2627,7 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       match (p.lines.filter (!·.furniture)).toList with
       | [l] =>
         (match l.segs.toList with
-         | [Layout.Seg.run _ _ _ _ glyphs _ _ _] =>
+         | [Layout.Seg.run _ _ _ _ glyphs _ _ _ _] =>
            String.ofList (glyphs.toList.map (·.2)) == "7"
          | _ => false)
         && l.x + l.setWidth / 2 == geom.hmargin + Dim.pt 10
@@ -2687,7 +2687,7 @@ def roleLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     let (d, _) := elabStr src
     (layoutOf oneFace d geom).pages.flatMap fun p =>
       p.lines.map fun l => (l.segs.foldl (fun s seg => match seg with
-        | .run _ _ _ _ glyphs _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
+        | .run _ _ _ _ glyphs _ _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
         | .gap _ => s.push ' '
         | _ => s) "", l.y)
   let doc (pre body : String) : String :=
@@ -2834,11 +2834,11 @@ def bodyColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let charcoal : Ir.Color := { r := 0x18, g := 0x18, b := 0x1B }
   t "the declared body colour reaches the shipped runs"
     ((out.pages.flatMap (·.lines)).any fun l => l.segs.any fun s => match s with
-      | .run _ c _ _ glyphs _ _ _ => c == charcoal && !glyphs.isEmpty
+      | .run _ c _ _ glyphs _ _ _ _ => c == charcoal && !glyphs.isEmpty
       | _ => false)
   t "no body run stayed silently pure black"
     ((bodyLines out).all fun l => l.segs.all fun s => match s with
-      | .run _ c _ _ glyphs _ _ _ => glyphs.isEmpty || c != Ir.Color.black
+      | .run _ c _ _ glyphs _ _ _ _ => glyphs.isEmpty || c != Ir.Color.black
       | _ => true)
 
 /-- The page-1 fix, judged on shipped pages, never on the IR dump: the
@@ -2852,7 +2852,7 @@ def footnoteLayoutChecks (ref : IO.Ref (List String))
   let t := check ref
   let hasMarkRun (geom : Layout.Geom) (l : Layout.LineOut) : Bool :=
     l.segs.any fun s => match s with
-      | .run _ _ _ _ _ sz _ raise => raise > 0 && sz > 0 && sz < geom.fontSize
+      | .run _ _ _ _ _ sz _ raise _ => raise > 0 && sz > 0 && sz < geom.fontSize
       | _ => false
   let src := dvDoc "" "A first sentence\\footnote{a note body} continues here."
   let (doc, _) := elabStr src
