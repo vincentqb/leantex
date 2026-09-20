@@ -11,6 +11,15 @@ namespace LeanTex.Core.Layout
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font LeanTex.Core.Ir
 
+/-- Per-level list indent as a function of the base size: 1.5 em — the
+15 pt the engine shipped at the 10 pt base where it was picked, now
+following the type, as classes.dtx derives its own leftmargin stack in
+ems of the class base. Frozen at 15 pt, an enumerate marker plus its
+`\labelsep` (together about 1.45 em) hung left past the print margin at
+any base over about 21 pt — the poster's 31 pt body put its "1." 30 pt
+into the trim. -/
+def listIndentFor (base : Sp) : Sp := base * 3 / 2
+
 structure Geom where
   pageW : Sp := pt 612
   pageH : Sp := pt 792
@@ -21,13 +30,13 @@ structure Geom where
   (`Ir.parskipDefault`, one rhythm quantum); a document declares its own
   through `\page{ parskip = ... }`. -/
   parskip : SymGlue := Ir.parskipDefault Ir.baseFontSize
-  /-- Per-level list indent. The default is the engine's own choice — 1.5 em
-  at the 10 pt base, shallower than classes.dtx's 2.5/2.2/1.87 em stack,
-  which reads deep at this engine's narrower default measure; no external
-  authority settles it. A document owns the choice through
+  /-- Per-level list indent. The default is the engine's own choice —
+  `listIndentFor`'s 1.5 em, shallower than classes.dtx's 2.5/2.2/1.87 em
+  stack, which reads deep at this engine's narrower default measure; no
+  external authority settles the ratio. A document owns the choice through
   `\style{itemize}{ indent = ... }` (the declared override this default
   yields to). -/
-  listIndent : Sp := pt 15
+  listIndent : Sp := listIndentFor Ir.baseFontSize
   leading : Nat := 1000
   /-- Whether paragraphs may hyphenate; the class default resolved. Layout
   owns the gate so every caller — build, tests, oracles — obeys it. -/
@@ -275,6 +284,7 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     hmargin := spec.hmargin
     vmargin := spec.vmargin
     fontSize := spec.fontSize
+    listIndent := listIndentFor spec.fontSize
     leading := spec.leading
     parskip := spec.parskip.getD (Ir.parskipDefault spec.fontSize)
     hyphenate := spec.hyphenate.getD base.hyphenate

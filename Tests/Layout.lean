@@ -2615,6 +2615,14 @@ def posterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
     -- fontsize fold, not this contract's to fix.
     ((judge (poster "\\page{ fontsize = 11pt }\n" "An unscaled article body.")).any
       fun d => (d.message.splitOn "text.xheight").length == 2)
+  -- The list indent follows the type (`listIndentFor`): frozen at the
+  -- 10pt base's 15pt, an enumerate marker plus its \labelsep hung left
+  -- past the print margin at the poster's base — the A0 poster's own
+  -- text.in_area failure once images fit their columns. Judged through
+  -- the class's shipped-ink contract, the judge the build runs.
+  t "an enumerate at poster size keeps its marker inside the print margin"
+    ((judge (poster "" "\\begin{enumerate}\n\\item one\n\\item two\n\\end{enumerate}")).all
+      fun d => (d.message.splitOn "text.in_area").length == 1)
 
 /-- The picture block through layout: shapes land as fills and label runs
 through one `Pic.Place` transform. The transform and bounding-box facts are
