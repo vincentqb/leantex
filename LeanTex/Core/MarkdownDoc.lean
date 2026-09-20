@@ -290,10 +290,6 @@ casing — since `\scshape` renders uniform small capitals, the source
 carries the reading form and the twin is correct as typed (the retired
 W0344 named the loss back when uniform required a lowercase workaround).
 The metadata renders as the llms.txt preamble — the title as the one `#`
-  | .bibliography _ _ items => scBibItems acc items.toList
-private def scBibItems (acc : Array String) : List Ir.BibItem → Array String
-  | item :: rest => scBibItems (scInlines acc item.content.toList) rest
-  | .cite _ _ => acc
 heading, the subject as the summary blockquote — and the summary's place
 is fixed by the convention, not by its source: immediately after the title
 line, wherever that line comes from. A body that carries its own level-0
