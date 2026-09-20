@@ -623,6 +623,19 @@ private def isSpaceOrPar : Raw → Bool
   | .par _ => true
   | _ => false
 
+/-- Content between `column`s that is real stray content, deciding whether
+the run flushes the accumulated columns row: space never is, and neither
+is `\hfill` — beamer's own columns row opens with `\hbox{}\hfill` and
+closes every column with one (beamerbaseframecomponents.sty,
+`beamer@colentrycode` and `beamer@columnenv`'s end code), so a fill
+standing between columns is glue in the row: the gutter the columns
+layout already distributes, never a paragraph. Treating it as stray
+content flushed the row and stacked each column in its own `.columns`
+block — the A0 poster's four-page spill. A fill inside real stray
+content still rides with that content into its paragraph. -/
+private def isColumnStray (r : Raw) : Bool :=
+  !isSpaceOrPar r && !(r matches .ctrl "hfill" _)
+
 /-- The one forward walk over sibling raws: the index past the run
 satisfying `p`. Every scan here — spaces, the junk after a malformed
 argument, an edge trim — is this walk; a caller's intent is its predicate,
@@ -5352,6 +5365,7 @@ seal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
 seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? overlayFrom
 seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
+seal isColumnStray
 seal scanBracketArg Parse.inputEnvFile?
 
 -- The block knot: the spine (`elabBlocksGo`), its two dispatch arms, the
@@ -5681,7 +5695,7 @@ private def columnsGo (ctx : Ctx) (body : Array Raw) (j : Nat)
       have hep' : rawParsList cbody.toList ≤ slicePars body j := by
         simp only [nestedPars] at hep; omega
       let (cols, blocks) ←
-        if strayRaws.any (!isSpaceOrPar ·) then do
+        if strayRaws.any isColumnStray then do
           let blocks := if cols.isEmpty then blocks
             else blocks.push (.columns cols)
           have hs0 : sliceWeight strayRaws 0
@@ -5734,7 +5748,7 @@ the column shares the leftover" cpos
           rw [nestedParsList_push]; omega)
   else do
     let blocks := if cols.isEmpty then blocks else blocks.push (.columns cols)
-    if strayRaws.any (!isSpaceOrPar ·) then
+    if strayRaws.any isColumnStray then
       have hs0 : sliceWeight strayRaws 0 = rawWeightList strayRaws.toList :=
         sliceWeight_zero _
       have hs1 : slicePars strayRaws 0 = nestedParsList strayRaws.toList :=
@@ -7039,6 +7053,7 @@ unseal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
 unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? overlayFrom
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
+unseal isColumnStray
 unseal scanBracketArg Parse.inputEnvFile?
 
 /-- A declared value as its author would rewrite it: what W0343 quotes back

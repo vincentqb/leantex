@@ -114,6 +114,31 @@ def columnsChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      (match aDoc.body with
       | #[.frame _ _ _ #[.columns cols]] => cols.map (·.1) == #[none, some 500]
       | _ => false))
+  -- `\hfill` between `column`s is the gutter, never a paragraph: beamer's
+  -- own row opens with `\hbox{}\hfill` and closes every column with
+  -- `\hfill` (beamerbaseframecomponents.sty, `beamer@colentrycode` /
+  -- `beamer@columnenv`'s end code). Judged over `Layout.Out`: the
+  -- fill-separated spelling keeps the side-by-side geometry — treating the
+  -- fill as stray content once stacked each column in its own row.
+  let sepSrc (sep : String) := deck169Frame ("\\begin{columns}[T]\n" ++ sep ++
+    "\n\\begin{column}{0.6\\textwidth}\nleft\n\\end{column}\n" ++ sep ++
+    "\n\\begin{column}{0.4\\textwidth}\nright\n\\end{column}\n" ++ sep ++ "\n\\end{columns}")
+  let hOut := layoutOf oneFace (elabStr (sepSrc "\\hfill")).1
+  t "hfill-separated columns still stand side by side"
+    (hOut.pages.size == 1 &&
+     (match (hOut.pages[0]?.map (·.lines)).getD #[] with
+      | #[l, r] => l.y == r.y && r.x ≥ l.x + l.setWidth
+      | _ => false))
+  t "an hfill inside stray column content stays ordinary content"
+    (let (sDoc, _) := elabStr (deck169Frame
+      ("\\begin{columns}\nstray \\hfill words\n\\begin{column}{0.5\\textwidth}\n" ++
+       "left\n\\end{column}\n\\end{columns}"))
+     match sDoc.body with
+     | #[.frame _ _ _ body] =>
+       body.any fun b => match b with
+         | .para xs => xs.any (fun x => x matches .fill)
+         | _ => false
+     | _ => false)
 
 /-- Overlays, dim-not-hide (PLAN M5): steps ride the IR, the PDF handout
 gets one page per step with pending content dimmed and no reflow, HTML
