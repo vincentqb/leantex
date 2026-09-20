@@ -15,10 +15,13 @@ open LeanTex.Core LeanTex.Core.Ir
 
 /-- Escape the characters that would read as markup. `#` and `-` are left
 alone: they mark up only at line starts, where the emitter itself decides
-what a line starts with. -/
+what a line starts with. `|` is not line-anchored — anywhere in a pipe
+table's row it splits the cell — and `\|` is a valid CommonMark escape
+everywhere (§2.4: any ASCII punctuation), so it escapes globally. -/
 private def escapeText (s : String) : String :=
   s.foldl (init := "") fun acc c =>
-    if c == '\\' || c == '`' || c == '*' || c == '_' || c == '[' || c == ']' then
+    if c == '\\' || c == '`' || c == '*' || c == '_' || c == '[' || c == ']'
+        || c == '|' then
       (acc.push '\\').push c
     else acc.push c
 

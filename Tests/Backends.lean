@@ -521,6 +521,14 @@ def mdPreambleChecks (ref : IO.Ref (List String)) : IO Unit := do
     "{\\scshape PhD}\\end{document}")
   t "the twin of a mixed-case small-caps run carries the authored casing"
     ((MarkdownDoc.emit sc) == "PhD\n")
+  -- A `|` in prose is `\|` in the twin — CommonMark §2.4 escapes any ASCII
+  -- punctuation — so a table cell containing one keeps its row instead of
+  -- splitting it at the pipe.
+  let pipe : Ir.Doc := {
+    body := #[.table #[default, default] false false
+      #[#[#[.text "a|b"], #[.text "c"]]] #[]] }
+  t "a cell containing a pipe keeps its row"
+    (((MarkdownDoc.emit pipe).splitOn "| a\\|b | c |").length == 2)
 
 /-- One fact, three renderings, at every level: a heading's `#` count and
 its `h` number are both projections of the one shared rank,
