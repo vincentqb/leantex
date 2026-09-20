@@ -119,6 +119,42 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — theorems layered: IR facts first, artifact theorems as
+projections (impl-layers).
+
+- The layer map (theorem-layers' census at 06b4253: 645 theorems and
+  `Conserves` instances): L0 kernel arithmetic 95 (Dim, Oklab, Math,
+  Image, ListMark, Picture, fonts — format-free); L1 the document's
+  meaning 252 (Ir 177, Theme 41, Contrast 16, BibStyle 10, Diag 5,
+  LocaleData 3); L1-mech surface→IR 124 (Elab 119, Compat 4, Parse 1);
+  L2 artifact 174 (PDF: Layout 81 + Pdf 3; HTML: HtmlDoc 33 + Html 13 +
+  MathMl 16; Markdown 27; Tests/Backends 1). The rule this slice adds to
+  AGENTS § Conventions: a fact both artifacts must honour is one theorem
+  on the IR, each backend a projection corollary; a resisting proof is a
+  factorization finding, staged in `Obligations/` as the refactor it
+  names.
+- Landed under the rule: `Ir.VAlign.shares` (vdist table once,
+  `VDist.of`/`vdistShares` rfl projections, the deckStructureChecks pin
+  now `vdist_shares_agree`); `pdf_lang_declared` over `Pdf.catalogDict`
+  (the twin of `emit_lang_declared`); W0377 + `links_judged_complete`
+  (empty link text judged, `alt_judged_complete`'s shape);
+  `track_snaps_exact` (the HTML step count over `Ir.maxStepBlocks`);
+  `Ir.headingRank` beside the outline walk (MarkdownDoc's import of Html
+  gone). Refactors 1–2: `PageOut.frame` written at `finishPage` (the
+  page-counting obligations restate as `pages_partition_frames` and a
+  per-page `frame_pages_footed`) and a declared `ground` on `Seg.run`
+  written at the resolving sites (`contrast_judged_complete` is field
+  equality now — `judged_pair_is_shipped`'s converse). References
+  byte-identical throughout; bench flat.
+- The covered-shade divergence, recorded as an honest non-theorem: the
+  PDF dims pending overlay content by mixing in the engine's own Oklab
+  (`Design.cover`, `labMix`), the HTML deck by emitting
+  `color-mix(in oklab, …)` — the browser's mix, not the engine's — and
+  the uncover animation composites opacity in sRGB besides. One declared
+  fraction, three blends: the shared fact is the declaration, and no
+  cross-backend equality is true to state. A backend theorem here would
+  name a fact of the artifact, which is the honest layer for it.
+
 2026-09-20 — a role names a hue; the contract chooses its lightness on
 each ground (brand-palette).
 

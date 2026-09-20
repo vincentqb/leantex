@@ -87,6 +87,23 @@ in this repo; refer to the private reference corpus abstractly.
   | a document class | sourced defaults, and its contract as implied assertions |
   | a `nativePackages` entry | `tests/compat-index/<pkg>.txt` covering the package's *documented* command list — the manual section named in its header, one row per command, `impl` proved by no W0301/W0302 and `refuse:<code>` by the code firing (`lake test` probes every row; the hook rejects an entry without its file) |
 
+- Theorems are stated on the IR first. A fact both artifacts must honour
+  (structure, numbering, census, palette, language, alternatives) is one
+  theorem over `Ir`/`Theme`/`Design`, and each backend's version is a
+  projection corollary over the one IR value both artifacts read —
+  `html_fonts_cover_pdf`, `backend_gaps_agree`, `footBand_projects` are the
+  shape. A backend theorem with no IR statement behind it either names a
+  fact genuinely of the artifact (placement, escaping, xref) or is
+  mis-layered — say which in its docstring.
+
+- A proof that resists is a factorization finding, not a tactic problem:
+  case analysis the statement never mentions, a private state the
+  statement cannot name, a heartbeat wall. Write it as the refactor it
+  needs — a field the statement can read, a state split, an equation
+  pack — and stage the statement in `Obligations/` meanwhile. Never work
+  around it with fuel, `decide` over samples, or a test in a theorem's
+  clothes.
+
 - The **kernel** owns the page models (flow / frame / face — three today,
   `report`'s chapter-page a candidate fourth). A **document class** is a
   named bundle *over* a page model: defaults, furniture semantics, implied
