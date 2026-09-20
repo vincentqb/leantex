@@ -1,4 +1,5 @@
 import LeanTex.Core.Html
+import LeanTex.Core.MathMl
 import LeanTex.Core.Ir
 import LeanTex.Core.Dim
 import LeanTex.Core.Contrast
@@ -1577,9 +1578,16 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   s!"  font-size: {scaleSize "Large" "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
   sizeRules ++
-  -- The math face the document resolved, through its token; the stack
-  -- behind the var is the degraded state for a page with no shipped face.
-  ".math { font-family: var(--font-math, \"Latin Modern Math\", \"STIX Two Math\", math); }\n" ++
+  -- The math face the document resolved, through its token — the `math`
+  -- element selector reaches native MathML, whose engine default is the
+  -- `math` generic family (MathML Core, user agent stylesheet); Chromium's
+  -- MathML Core reads the web font's MATH table. The stack behind the var
+  -- is the degraded state for a page with no shipped face.
+  "math, .math { font-family: var(--font-math, \"Latin Modern Math\", \"STIX Two Math\", math); }\n" ++
+  -- Display math opens the page's own block rhythm above and below — the
+  -- declared peer multiple, the boundary a paragraph pays — no new
+  -- constant.
+  s!".math-display \{ margin: {quantaRem (gapK "peer")} 0; }\n" ++
   -- The numbered display: the formula's box takes the measure and centres
   -- its own text; the tag sits on the right edge, vertically centred on
   -- the formula (amsmath's equation shape).
@@ -1710,14 +1718,17 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     acc.push (Html.elem tag #[Html.text src]
       #[("class", if display then "math math-display" else "math"),
         ("data-tex", src)])
-  | .formula display src _ =>
-    -- The HTML backend is unchanged by the M6 PDF slice: an elaborated
-    -- formula still ships its source for the `--math-boundary` renderer.
-    -- Native MathML from the parsed atoms is what M6 still owes here.
-    let tag := if display then "div" else "span"
-    acc.push (Html.elem tag #[Html.text src]
+  | .formula display src body =>
+    -- Native MathML Core from the parsed atoms — the same math AST the PDF
+    -- lays out; the census theorem (MathMl.mathml_glyphs_agree) holds the
+    -- element's leaf text to the formula's glyph text. The TeX source
+    -- still rides in data-tex so the opt-in --math-boundary client
+    -- renderer can find and replace the element; without the tool the
+    -- MathML itself is the rendering — MathML Core is in every current
+    -- engine (caniuse.com/mathml, 2026: Chromium 109+, Firefox, Safari).
+    acc.push (MathMl.formula display
       #[("class", if display then "math math-display" else "math"),
-        ("data-tex", src)])
+        ("data-tex", src)] body)
   | .styled st body =>
     let kids := inlineNodesInto cfg #[] body.toList
     match st with
