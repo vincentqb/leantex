@@ -4008,20 +4008,219 @@ end
 -- above — with no declared style both rhythm matches are `none` and the
 -- body collects unwrapped).
 
+/-- Pass 1's merge postcondition, the shape pass 2's subtraction needs to
+be provably correct: intervals sorted, pairwise disjoint (half-open
+reading), each nonempty. -/
+def Chained : List (Int × Int) → Prop
+  | [] => True
+  | (lo, hi) :: rest => lo ≤ hi ∧ (∀ o ∈ rest, hi ≤ o.1) ∧ Chained rest
+
+/-- The sub-intervals of `[cur, hi)` not covered by the chained
+obstruction list: pass 2's interval walk, pure — closed-form geometry the
+underline theorems range over. The clearance is already dilated into the
+obstructions (pass 1). -/
+def subtract (cur hi : Int) : List (Int × Int) → List (Int × Int)
+  | [] => if cur < hi then [(cur, hi)] else []
+  | (olo, ohi) :: rest =>
+    if cur < min olo hi then (cur, min olo hi) :: subtract (max cur ohi) hi rest
+    else subtract (max cur ohi) hi rest
+
+/-- Every emitted interval is nonempty and inside `[cur, hi)`. -/
+theorem subtract_bounds (obs : List (Int × Int)) (cur hi : Int) :
+    ∀ s ∈ subtract cur hi obs, cur ≤ s.1 ∧ s.1 < s.2 ∧ s.2 ≤ hi := by
+  induction obs generalizing cur with
+  | nil =>
+    intro s hs
+    simp only [subtract] at hs
+    split at hs <;> simp_all <;> omega
+  | cons o rest ih =>
+    intro s hs
+    simp only [subtract] at hs
+    split at hs
+    · rcases List.mem_cons.mp hs with rfl | hs'
+      · dsimp only
+        omega
+      · have := ih (max cur o.2) s hs'
+        omega
+    · have := ih (max cur o.2) s hs
+      omega
+
+/-- `underline_skips_ink`, the geometric core of the skip-ink underline
+(CSS Text Decoration 4 §2.10.5): no emitted rule interval meets any
+obstruction — the drawn rule crosses no glyph ink dilated by its
+clearance. -/
+theorem underline_skips_ink (obs : List (Int × Int)) (cur hi : Int)
+    (hch : Chained obs) :
+    ∀ s ∈ subtract cur hi obs, ∀ o ∈ obs, s.2 ≤ o.1 ∨ o.2 ≤ s.1 := by
+  induction obs generalizing cur with
+  | nil => intro s _ o ho; cases ho
+  | cons a rest ih =>
+    obtain ⟨hne, hsep, hrest⟩ := hch
+    intro s hs o ho
+    simp only [subtract] at hs
+    split at hs
+    · rcases List.mem_cons.mp hs with rfl | hs'
+      · rcases List.mem_cons.mp ho with rfl | ho'
+        · left
+          dsimp only
+          omega
+        · have := hsep o ho'
+          left
+          dsimp only
+          omega
+      · have hb := subtract_bounds rest (max cur a.2) hi s hs'
+        rcases List.mem_cons.mp ho with rfl | ho'
+        · right
+          omega
+        · exact ih (max cur a.2) hrest s hs' o ho'
+    · have hb := subtract_bounds rest (max cur a.2) hi s hs
+      rcases List.mem_cons.mp ho with rfl | ho'
+      · right
+        omega
+      · exact ih (max cur a.2) hrest s hs o ho'
+
+/-- `underline_covers_gaps`, the other half: every uncovered x in
+`[cur, hi)` lies under an emitted rule interval — the underline is
+interrupted only at ink, never silently dropped. -/
+theorem underline_covers_gaps (obs : List (Int × Int)) (cur hi x : Int)
+    (hch : Chained obs) (hx : cur ≤ x ∧ x < hi)
+    (hout : ∀ o ∈ obs, x < o.1 ∨ o.2 ≤ x) :
+    ∃ s ∈ subtract cur hi obs, s.1 ≤ x ∧ x < s.2 := by
+  induction obs generalizing cur with
+  | nil =>
+    refine ⟨(cur, hi), ?_, by omega⟩
+    simp only [subtract]
+    split
+    · simp
+    · exfalso
+      omega
+  | cons a rest ih =>
+    obtain ⟨hne, hsep, hrest⟩ := hch
+    rcases hout a (List.mem_cons_self ..) with hlt | hge
+    · refine ⟨(cur, min a.1 hi), ?_, by dsimp only; omega⟩
+      simp only [subtract]
+      split
+      · exact List.mem_cons_self ..
+      · exact absurd (by omega : cur < min a.1 hi) ‹¬_›
+    · obtain ⟨s, hs, hcov⟩ := ih (max cur a.2) hrest ⟨by omega, hx.2⟩
+        (fun o ho => hout o (List.mem_cons_of_mem _ ho))
+      refine ⟨s, ?_, hcov⟩
+      simp only [subtract]
+      split
+      · exact List.mem_cons_of_mem _ hs
+      · exact hs
+
+/-- Merge a sorted run of intervals into a chained list: `cur` is the
+interval being grown; an input that reaches back into it fuses (the fold
+never needs `min` — sorted input keeps `cur.1` least), and one that
+stands clear emits `cur` and starts the next. Pass 1's merge, pure. -/
+def mergeChained (cur : Int × Int) : List (Int × Int) → List (Int × Int)
+  | [] => [cur]
+  | (lo, hi) :: rest =>
+    if lo ≤ cur.2 then mergeChained (cur.1, max cur.2 hi) rest
+    else cur :: mergeChained (lo, hi) rest
+
+/-- Every merged interval starts at or after the growing interval's own
+start, given sorted input at or after it. -/
+theorem mergeChained_lb (cur : Int × Int) (l : List (Int × Int))
+    (hs : l.Pairwise (fun a b => a.1 ≤ b.1)) (hcl : ∀ o ∈ l, cur.1 ≤ o.1) :
+    ∀ s ∈ mergeChained cur l, cur.1 ≤ s.1 := by
+  induction l generalizing cur with
+  | nil =>
+    intro s hs'
+    simp only [mergeChained, List.mem_singleton] at hs'
+    subst hs'
+    omega
+  | cons a rest ih =>
+    obtain ⟨hhd, hrest⟩ := List.pairwise_cons.mp hs
+    intro s hmem
+    simp only [mergeChained] at hmem
+    split at hmem
+    · exact ih (cur.1, max cur.2 a.2) hrest
+        (fun o ho => by have := hcl o (List.mem_cons_of_mem _ ho); exact this) s hmem
+    · rcases List.mem_cons.mp hmem with rfl | hmem'
+      · omega
+      · have ha := hcl a (List.mem_cons_self ..)
+        have := ih a hrest (fun o ho => hhd o ho) s hmem'
+        omega
+
+/-- The merge postcondition, proved: sorted nonempty input in, `Chained`
+out — what `underline_skips_ink` and `underline_covers_gaps` consume. -/
+theorem mergeChained_chained (cur : Int × Int) (l : List (Int × Int))
+    (hc : cur.1 ≤ cur.2) (hne : ∀ o ∈ l, o.1 ≤ o.2)
+    (hs : l.Pairwise (fun a b => a.1 ≤ b.1)) (hcl : ∀ o ∈ l, cur.1 ≤ o.1) :
+    Chained (mergeChained cur l) := by
+  induction l generalizing cur with
+  | nil =>
+    simp [mergeChained, Chained, hc]
+  | cons a rest ih =>
+    obtain ⟨hhd, hrest⟩ := List.pairwise_cons.mp hs
+    simp only [mergeChained]
+    split
+    · exact ih (cur.1, max cur.2 a.2) (by dsimp only; omega)
+        (fun o ho => hne o (List.mem_cons_of_mem _ ho)) hrest
+        (fun o ho => hcl o (List.mem_cons_of_mem _ ho))
+    · refine ⟨hc, fun o ho => ?_, ?_⟩
+      · have := mergeChained_lb a rest hrest (fun o ho => hhd o ho) o ho
+        omega
+      · exact ih a (hne a (List.mem_cons_self ..))
+          (fun o ho => hne o (List.mem_cons_of_mem _ ho)) hrest
+          (fun o ho => hhd o ho)
+
+/-- Pass 1's merge over the collected obstructions: sort by the low
+bound, then fuse overlapping and touching intervals. The result is
+`Chained` (`mergeIntervals_chained`), which is exactly what makes the
+subtraction's skip and cover theorems apply to the drawn rules. -/
+def mergeIntervals (obs : Array (Int × Int)) : List (Int × Int) :=
+  match (obs.mergeSort fun a b => decide (a.1 ≤ b.1)).toList with
+  | [] => []
+  | x :: rest => mergeChained x rest
+
+/-- Obstructions with nonempty extents merge into a chained list. -/
+theorem mergeIntervals_chained (obs : Array (Int × Int))
+    (hne : ∀ o ∈ obs, o.1 ≤ o.2) : Chained (mergeIntervals obs) := by
+  unfold mergeIntervals
+  split
+  · trivial
+  · rename_i x rest heq
+    have hp : ((obs.mergeSort fun a b => decide (a.1 ≤ b.1)).toList).Pairwise
+        (fun a b => a.1 ≤ b.1) := by
+      have := Array.pairwise_mergeSort (le := fun a b => decide (a.1 ≤ b.1))
+        (xs := obs) (fun a b c hab hbc => by
+          simp only [decide_eq_true_eq] at *; omega)
+        (fun a b => by simp only [Bool.or_eq_true, decide_eq_true_eq]; omega)
+      exact this.imp (by simp)
+    have hmem : ∀ o ∈ (obs.mergeSort fun a b => decide (a.1 ≤ b.1)).toList,
+        o.1 ≤ o.2 := by
+      intro o ho
+      exact hne o (by simpa [Array.mem_mergeSort] using ho)
+    rw [heq] at hp hmem
+    obtain ⟨hhd, hrest⟩ := List.pairwise_cons.mp hp
+    exact mergeChained_chained x rest (hmem x (List.mem_cons_self ..))
+      (fun o ho => hmem o (List.mem_cons_of_mem _ ho)) hrest
+      (fun o ho => hhd o ho)
+
 /-- Underline rules for one set line: a second walk over its segs, aligned by
 gaps, so it can ride as its own `LineOut` at the same baseline — the PDF
 writer's x-tracking stays linear and link rectangles see no extra runs. Each
 rule sits at its run's own normalized `post` metrics (`Font.band`) and is
 interrupted where glyph ink crosses the band — `Font.inkAt`, from the
-outline — with a gap of twice the owning run's rule thickness on each side.
+outline — with a gap of twice the owning run's rule thickness on each side:
+CSS Text Decoration 4 §2.10.5 requires skipping "a small distance to either
+side of the glyph outline" and leaves the distance UA-defined, so twice the
+thickness is this engine's stated choice — it scales with the rule (Hochuli,
+Detail in Typography: a rule's weight relates to the stroke it meets) and
+absorbs the small band differences between adjacent faces.
 Obstructions are collected in line coordinates across the whole line first,
 every glyph run contributing whether or not it is underlined, so ink that
 reaches over a run boundary — a negative-sidebearing italic descender, or a
 descender's clearance spilling past its own advance — clears the
 neighbouring rule too. An obstruction is judged against the band of the run
-that owns the glyph; the clearance dilation absorbs the small band
-differences between adjacent faces. Empty when the line has no underlined
-run, so the common case allocates nothing. -/
+that owns the glyph. The merged obstructions are `Chained`
+(`mergeIntervals_chained`) and each run's rules are `subtract` of its span,
+so `underline_skips_ink` and `underline_covers_gaps` hold of what ships.
+Empty when the line has no underlined run, so the common case allocates
+nothing. -/
 private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     Array Seg := Id.run do
   unless segs.any (fun s => match s with
@@ -4049,16 +4248,8 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
             gx + ihi * sz / upem + 2 * thick)
         gx := gx + scaledAt sz font (font.widths[g]?.getD 0)
       x := x + w
-  -- Merge: sorted by the low bound, `min`/`max` so no ordering assumption
-  -- survives into the result.
-  let sorted := obs.qsort fun a b => a.1 < b.1
-  let mut merged : Array (Sp × Sp) := #[]
-  for (lo, hi) in sorted do
-    match merged.back? with
-    | some (plo, phi) =>
-      if lo ≤ phi then merged := merged.pop.push (min plo lo, max phi hi)
-      else merged := merged.push (lo, hi)
-    | none => merged := merged.push (lo, hi)
+  -- Merge into the chained obstruction list the theorems consume.
+  let merged := mergeIntervals obs
   -- Pass 2: rules under the underlined runs, minus the obstructions.
   let mut out : Array Seg := #[]
   x := 0
@@ -4085,16 +4276,13 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
         let thick := bandThick * sz / upem
         let raise := top - thick
         let mut cur : Sp := x
-        for (olo, ohi) in merged do
-          let lo := max olo x
-          let hi := min ohi (x + w)
-          if lo < hi then
-            if lo > cur then
-              out := out.push (.rule (lo - cur) thick raise color)
-            out := out.push (.gap (hi - max lo cur))
-            cur := hi
+        for (plo, phi) in subtract x (x + w) merged do
+          if plo > cur then
+            out := out.push (.gap (plo - cur))
+          out := out.push (.rule (phi - plo) thick raise color)
+          cur := phi
         if x + w > cur then
-          out := out.push (.rule (x + w - cur) thick raise color)
+          out := out.push (.gap (x + w - cur))
       x := x + w
   return out
 
@@ -4175,6 +4363,22 @@ private def placeParaTrailer (fs : FontSet) (j : ParaJob) (brk : Nat)
   simp only [placeParaTrailer]
   repeat' split
   all_goals first | rfl | simp
+
+/-- `underline_no_growth`: the underline rules ride a sibling line at the
+same baseline and feed nothing back into placement — the trailer leaves
+the builder's vertical state (baseline, ink depth, leaded below, page
+need) exactly what the text line's own extent set, so an underline can
+never move a baseline or grow a line box. Its rules stay inside the
+descent band the box already reserves (`Font.underlineBand`). -/
+private theorem underline_no_growth (fs : FontSet) (j : ParaJob)
+    (brk : Nat) (segs : Array Seg) (b : B) :
+    (placeParaTrailer fs j brk segs b).y = b.y ∧
+      (placeParaTrailer fs j brk segs b).prevDepth = b.prevDepth ∧
+      (placeParaTrailer fs j brk segs b).prevBelow = b.prevBelow ∧
+      (placeParaTrailer fs j brk segs b).needed = b.needed := by
+  simp only [placeParaTrailer]
+  repeat' split
+  all_goals exact ⟨rfl, rfl, rfl, rfl⟩
 
 /-- One break of a paragraph placed: the fold step `placePara` runs over
 `breaks`. The threaded state is (builder, previous break, first line).

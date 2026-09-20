@@ -4665,6 +4665,14 @@ theorem unwrapItemSteps_text : Conserves blocksText unwrapItemSteps := fun xs =>
   simp [blocksText, unwrapItemSteps, unwrapItemStepList_text xs.toList #[] "",
     blockTextList]
 
+/-- An underline is a drawn decoration, never content: the text census
+reads straight through the wrap, so `\underline` can neither add nor hide
+a character — the conservation half of the underline convention (its
+rules ride a sibling line; `underline_no_growth` in Layout is the metric
+half). -/
+theorem underline_text : Conserves plainText (fun xs => #[Inline.underline xs]) :=
+  fun xs => by simp [plainText, plainTextList, plainTextOne]
+
 -- Float numbering conserves the census: the pass writes the `num` field
 -- and nothing else, so no caption and no body content moves. Same
 -- accumulator-lemma-then-mutual-induction shape as the walks above.
