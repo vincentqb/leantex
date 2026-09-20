@@ -101,6 +101,49 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — the deck pages sideways: the row, rubber image sizes, and
+the come-in reveal. Supersedes the scroll-snap entry's `y mandatory` and
+the reveal entry's `snapped: y`.
+
+- Horizontal paging (ratified): most frames share a band structure with
+  the title at the top, so advancing sideways keeps that band in place
+  while the next frame's content arrives from the side — vertical paging
+  scrolled the whole structure away on every step. `main` is the row
+  (flex, one 100vw × 100dvh section per page), `html` snaps on
+  `x mandatory`, and every scroll-driven timeline reads the same axis:
+  the progress hairline `scroll(root x)`, the entry motion and the
+  uncover fallback `view(x)`, the uncover trigger
+  `scroll-state(snapped: x)`. A section page is one full page of the
+  row, centred both axes (vertical flow could scroll past it as a band;
+  a mandatory x-snap row has no between-pages place). Print stays the
+  vertical handout; deep links still snap; a spill frame grows the row
+  rather than clipping.
+- Rubber image sizes: the stage is the viewport, so a deck image
+  dimension ships as its share of the stage — `deckStageMilli`, the one
+  projection deck type already rode, now generalized — in `vw`/`dvh`
+  for absolute lengths, `\textheight` fractions and bare scales, and a
+  picture's whole SVG box (the "very small image" was a tikzpicture). A
+  `pt` length sized against CSS's 96 dpi ruler instead (5 cm of a
+  160 mm stage: 31% of the PDF width, ≈15% of a 1280 px slide), and a
+  `\textheight` fraction emitted nothing at all. `\textwidth` fractions
+  stay percentages: both backends resolve them against the local
+  measure (`Layout.collectPara`, minipage semantics).
+  `image_share_agrees` states the cross-backend ratio over
+  `Image.resolveSize` — Layout's own box — in the `backend_gaps_agree`
+  mold; `deckImageChecks` holds the invariant that the deck's HTML
+  carries no `pt` image or picture dimension, and that flow classes
+  keep `pt`: paper is paper.
+- The come-in reveal: a covered step sits dimmed (the handout's oklab
+  mix, the floor and the print state) and offset `--motiondistance`
+  along the row's axis; on snap it moves to place and takes full
+  colour, staggered as before. Colour and transform only — neither
+  reflows, so a page that differs by a step differs by nothing else
+  (the user's ask). Reduced motion: static full colour, because the
+  base sheet's global reduce block removes every animation with
+  `!important`; a colour fade kept under reduce (SC 2.3.3 removes
+  motion, not fades) would mean unwinding that contract for one effect
+  — declined, and the why stands on `deckStepGuard`.
+
 2026-09-20 — backend quality pass (q-backends): the writers call the
 functions their theorems name, motion guards ride by construction, one
 heading-rank site.
