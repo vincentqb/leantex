@@ -55,6 +55,25 @@ base rhythm). A document declares its own through
 def parskipDefault (size : Sp) : SymGlue :=
   { width := Dim.Length.ofSp (rhythmQuantum size) }
 
+/-- The rhythm quantum is positive at any body size of at least 1pt: the
+one key fact every default-gap theorem consumes, proved once over the
+arithmetic (`omega` over bare `Int`, the `slides_lines_survive_bands`
+pattern) instead of once per consumer. -/
+theorem rhythmQuantum_pos (size : Int) (h : Dim.pt 1 ≤ size) :
+    0 < rhythmQuantum size := by
+  have hx : (65536 : Int) ≤ size := h
+  show 0 < size * 1200 / 1000 * 1000 / 1000 / 2
+  omega
+
+/-- The comparison twin: the half-unit is strictly under the full unit, so
+`≤` and `<` orderings between quantum multiples both read off this pair. -/
+theorem rhythmQuantum_lt_double (size : Int) (h : Dim.pt 1 ≤ size) :
+    rhythmQuantum size < 2 * rhythmQuantum size := by
+  have hx : (65536 : Int) ≤ size := h
+  show size * 1200 / 1000 * 1000 / 1000 / 2
+    < 2 * (size * 1200 / 1000 * 1000 / 1000 / 2)
+  omega
+
 /-- Page geometry, as declared by `\page`. -/
 structure PageSpec where
   width : Sp := pt 612
@@ -513,26 +532,18 @@ def headingAfterDefault (size : Sp) : SymGlue :=
   { width := { sp := rhythmQuantum size } }
 
 /-- A heading binds to the text it introduces: its default space above is
-at least — here exactly twice — its space below (Hochuli, Detail in
-Typography, on section openings: more space above the heading than below
-it; article.cls's 3.5ex/2.3ex is the same ordering at 1.52), both on the
-rhythm, and neither zero. W0202 is the declared-values half of the same
-rule; this is the defaults' half, and an edit that inverts them fails the
-build here. -/
+at least its space below (Hochuli, Detail in Typography, on section
+openings: more space above the heading than below it; article.cls's
+3.5ex/2.3ex is the same ordering at 1.52), both on the rhythm, and neither
+zero. That the space above is exactly twice the quantum is
+`rhythm_table_exact`'s heading row, stated once there. W0202 is the
+declared-values half of the same rule; this is the defaults' half, and an
+edit that inverts them fails the build here. -/
 theorem heading_space_above_ge_below (size : Int) (h : Dim.pt 1 ≤ size) :
     (headingAfterDefault size).width.sp ≤ (headingBeforeDefault size).width.sp ∧
-    (headingBeforeDefault size).width.sp = 2 * rhythmQuantum size ∧
     (headingAfterDefault size).width.sp = rhythmQuantum size ∧
-    0 < (headingAfterDefault size).width.sp := by
-  -- The key facts over bare `Int` binders: omega does not see through
-  -- the `Sp` abbreviation (the `slides_lines_survive_bands` pattern).
-  have key : ∀ x : Int, 65536 ≤ x →
-      x * 1200 / 1000 * 1000 / 1000 / 2
-          ≤ 2 * (x * 1200 / 1000 * 1000 / 1000 / 2) ∧
-      0 < x * 1200 / 1000 * 1000 / 1000 / 2 := by
-    intro x hx
-    omega
-  exact ⟨(key size h).1, rfl, rfl, (key size h).2⟩
+    0 < (headingAfterDefault size).width.sp :=
+  ⟨Int.le_of_lt (rhythmQuantum_lt_double size h), rfl, rhythmQuantum_pos size h⟩
 
 /-- The default vertical rhythm is one system, not three numbers: the peer
 gap (`parskipDefault`, 6pt at the 10pt base) is the rhythm quantum — half
@@ -546,12 +557,8 @@ realize these gaps: the PDF's placement and the HTML base stylesheet each
 owe the theorem that what they ship equals what this layer declares. -/
 theorem default_rhythm_multiples (size : Int) (h : Dim.pt 1 ≤ size) :
     (parskipDefault size).width.sp = rhythmQuantum size ∧
-    0 < (parskipDefault size).width.sp := by
-  have key : ∀ x : Int, 65536 ≤ x →
-      0 < x * 1200 / 1000 * 1000 / 1000 / 2 := by
-    intro x hx
-    omega
-  exact ⟨rfl, key size h⟩
+    0 < (parskipDefault size).width.sp :=
+  ⟨rfl, rhythmQuantum_pos size h⟩
 
 /-- The anchor, `rfl` by derivation at every base: the peer gap IS the
 rhythm quantum, because it is defined as it — no absolute constant
@@ -583,19 +590,19 @@ contract, stated over the values the engine ships. -/
 theorem caption_gaps_rhythm (size : Int) (h : Dim.pt 1 ≤ size) :
     (captionSepDefault size).width.sp = rhythmQuantum size ∧
     (floatSepDefault size).width.sp = 2 * rhythmQuantum size ∧
-    (captionSepDefault size).width.sp < (floatSepDefault size).width.sp := by
-  have key : ∀ x : Int, 65536 ≤ x →
-      x * 1200 / 1000 * 1000 / 1000 / 2
-        < 2 * (x * 1200 / 1000 * 1000 / 1000 / 2) := by
-    intro x hx
-    omega
-  exact ⟨rfl, rfl, key size h⟩
+    (captionSepDefault size).width.sp < (floatSepDefault size).width.sp :=
+  ⟨rfl, rfl, rhythmQuantum_lt_double size h⟩
 
 /-- The title block's author strut: two rhythm units of line box for the
 author's name. The NeurIPS-lineage `.sty` sets `\rule{\z@}{24\p@}` in the
 author `tabular` — and 24pt at the 10pt body *is* exactly 2u, a rhythm
 multiple already, so the engine's value coincides with the venue's there.
-Spelled in em so it re-derives from the body size, as the rhythm does. -/
+Spelled in em so it re-derives from the body size, as the rhythm does —
+but em-resolution floors, so the general equality with quantum multiples
+is FALSE off the shipped bases: at size = 65538 sp the em-resolved value
+and `4 * rhythmQuantum` differ (by ≤ 3 sp, whenever `size·1200/1000` is
+odd). The exactness theorems below stay per-base `decide` for that
+reason; the derivation is universal, the equality is not. -/
 def titleAuthorStrut : SymGlue := { width := { em := 2 * leadingMilli } }
 
 /-- The gap after the whole title block, before the abstract or the text:
@@ -614,7 +621,7 @@ visible gaps by definition (Hochuli, *Detail in Typography*, "Rules": a
 rule relates to the type it cuts; Bringhurst §2.2.2 for the unit). The
 venue contributes only the bars' weights; a document declares its own
 asymmetry through `\style{titlepage}{ rule-above-gap = … }`. Spelled in
-em so it re-derives from the body size, as the rhythm does. -/
+em, with `titleAuthorStrut`'s rounding caveat: exactness is per-base. -/
 def titleBarGap : SymGlue := { width := { em := 3 * leadingMilli / 2 } }
 
 /-- The skip outside a title bar — above the top one, below the bottom
@@ -625,7 +632,9 @@ def titleBarSkip : SymGlue := { width := { em := leadingMilli / 2 } }
 the strut and the post-block gap are half-unit multiples of the body
 leading — four quanta each, the gap's shrink one — so the title block
 stays the engine's typography while the venue chooses only that the
-furniture exists (and the author's weight). -/
+furniture exists (and the author's weight). Per-base `decide`, and it must
+stay so: em-resolution floors, so this equality is false at general sizes
+(65538 sp is a counterexample; `titleAuthorStrut`'s caveat). -/
 theorem title_author_rhythm :
     titleAuthorStrut.width.resolve baseFontSize 0 = 4 * rhythmQuantum baseFontSize ∧
     titleBlockAfter.width.resolve baseFontSize 0 = 4 * rhythmQuantum baseFontSize ∧
@@ -635,7 +644,9 @@ theorem title_author_rhythm :
 /-- The title bars join the rhythm too (`default_rhythm_multiples`'
 family): the gap either side of a bar is three quanta, the skip outside
 it one — every default around the title block is a half-unit multiple,
-and an edit that moves a token off its multiple fails the build here. -/
+and an edit that moves a token off its multiple fails the build here.
+Per-base `decide`, as `title_author_rhythm`: the general equality is
+false off-base (em-resolution floors). -/
 theorem title_bar_rhythm :
     titleBarGap.width.resolve baseFontSize 0 = 3 * rhythmQuantum baseFontSize ∧
     titleBarSkip.width.resolve baseFontSize 0 = rhythmQuantum baseFontSize := by
