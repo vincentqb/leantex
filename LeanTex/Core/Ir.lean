@@ -3276,6 +3276,109 @@ straight through it, so no annotation can add or hide a character. -/
 theorem role_plaintext (n : String) (body : Array Inline) :
     plainTextOne (.role n body) = plainTextList body.toList := rfl
 
+mutual
+
+/-- One leaf-parameterised fold hosts every collect walk over the tree:
+`fi` reads each inline node — applied to the node itself, never to
+children, so the recursion below stays explicit and the checker sees it.
+Document order, a node before its content. -/
+def foldInline (fi : α → Inline → α) (acc : α) (x : Inline) : α :=
+  match x with
+  | .styled _ body => foldInlineList fi (fi acc x) body.toList
+  | .colored _ _ body => foldInlineList fi (fi acc x) body.toList
+  | .role _ body => foldInlineList fi (fi acc x) body.toList
+  | .link _ body => foldInlineList fi (fi acc x) body.toList
+  | .underline body => foldInlineList fi (fi acc x) body.toList
+  | .step _ _ body => foldInlineList fi (fi acc x) body.toList
+  | .footnote _ body => foldInlineList fi (fi acc x) body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _
+  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => fi acc x
+
+def foldInlineList (fi : α → Inline → α) (acc : α) : List Inline → α
+  | [] => acc
+  | x :: rest => foldInlineList fi (foldInline fi acc x) rest
+
+end
+
+/-- `foldInline` over an inline tree, the collectors' entry. -/
+def foldInlines (fi : α → Inline → α) (acc : α) (xs : Array Inline) : α :=
+  foldInlineList fi acc xs.toList
+
+def foldTableCells (fi : α → Inline → α) (acc : α) : List (Array Inline) → α
+  | [] => acc
+  | cell :: rest => foldTableCells fi (foldInlineList fi acc cell.toList) rest
+
+def foldTableRows (fi : α → Inline → α) (acc : α) :
+    List (Array (Array Inline)) → α
+  | [] => acc
+  | row :: rest => foldTableRows fi (foldTableCells fi acc row.toList) rest
+
+mutual
+
+/-- The block face of the fold: `fb` reads each block, `fi` each inline —
+the node first, a frame's title and a float's caption before their bodies,
+as the collectors this fold hosts always read them. A `.bibliography`'s
+items are formatted renderings, not authored content, so the fold reads
+the marker itself and does not descend into them. -/
+def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) (b : Block) : α :=
+  match b with
+  | .para content => foldInlineList fi (fb acc b) content.toList
+  | .equation _ content => foldInlineList fi (fb acc b) content.toList
+  | .section _ _ _ title => foldInlineList fi (fb acc b) title.toList
+  | .list _ items => foldBlockItems fb fi (fb acc b) items.toList
+  | .center body => foldBlockList fb fi (fb acc b) body.toList
+  | .quote body => foldBlockList fb fi (fb acc b) body.toList
+  | .abstract body => foldBlockList fb fi (fb acc b) body.toList
+  | .titled _ title body =>
+    foldBlockList fb fi (foldInlineList fi (fb acc b) title.toList) body.toList
+  | .role _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .spaced _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .columns cols => foldBlockCols fb fi (fb acc b) cols.toList
+  | .step _ _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .only _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .nav _ body => foldBlockList fb fi (fb acc b) body.toList
+  | .note body => foldBlockList fb fi (fb acc b) body.toList
+  | .frame title _ _ body =>
+    foldBlockList fb fi (foldInlineList fi (fb acc b) title.toList) body.toList
+  | .framefoot content => foldInlineList fi (fb acc b) content.toList
+  | .float _ _ _ body caption =>
+    foldBlockList fb fi (foldInlineList fi (fb acc b) caption.toList) body.toList
+  | .table _ _ _ rows _ => foldTableRows fi (fb acc b) rows.toList
+  | .logo content => foldInlineList fi (fb acc b) content.toList
+  | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .rule _ _ _ | .picture _ | .bibliography _ _ _ => fb acc b
+
+def foldBlockList (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
+    List Block → α
+  | [] => acc
+  | b :: rest => foldBlockList fb fi (foldBlock fb fi acc b) rest
+
+def foldBlockItems (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
+    List (Array Block) → α
+  | [] => acc
+  | item :: rest => foldBlockItems fb fi (foldBlockList fb fi acc item.toList) rest
+
+def foldBlockCols (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
+    List (Option Nat × Array Block) → α
+  | [] => acc
+  | (_, body) :: rest => foldBlockCols fb fi (foldBlockList fb fi acc body.toList) rest
+
+end
+
+/-- `foldBlock` over a block tree: `bibRefs`, `bibStyleName`, and
+`BibStyle.citedKeys` are leaf projections of this one traversal. -/
+def foldBlocks (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (xs : Array Block) : α :=
+  foldBlockList fb fi acc xs.toList
+
+/-- Does any node of the inline content satisfy `p`? The Bool face of the
+fold — the trigger census the conditional-identity schema
+(`mapInlines_id`) and `hasPhysicalPage` read. -/
+def anyInline (p : Inline → Bool) (xs : Array Inline) : Bool :=
+  foldInlines (fun b x => b || p x) false xs
+
+
 /-- Unicode `White_Space` (PropList.txt, maintained under UAX #44): the
 closed set 0009–000D, 0020, 0085, 00A0, 1680, 2000–200A, 2028, 2029, 202F,
 205F, 3000. HTML forbids only ASCII whitespace in an id (§3.2.6), a subset
@@ -4746,47 +4849,22 @@ outline starts at its top"))
     prev := some l
   return out
 
-mutual
-
-/-- Does this inline content carry a physical-page placeholder
-(`\pagenumber` / `\pagecount`)? The physical sequence's only spellings —
-what `Layout.substPage` resolves, and what the frame sequence must never be
-mixed with silently (`footerSequenceDiags`). Explicit arms: a new `Inline`
-constructor must answer here (the obligation table; no wildcard). -/
-def hasPhysicalPageOne : Inline → Bool
+/-- Is this node a physical-page placeholder (`\pagenumber` /
+`\pagecount`)? The physical sequence's only spellings — what
+`Layout.substPage` resolves, and what the frame sequence must never be
+mixed with silently (`footerSequenceDiags`). The descent that carries the
+question over content is the fold's, declared once (`hasPhysicalPage`);
+this leaf answers for one node, and any constructor that is not one of
+the two spellings is not a placeholder. -/
+def isPhysicalPage : Inline → Bool
   | .pageNumber => true
   | .pageCount => true
-  | .styled _ body => hasPhysicalPageList body.toList
-  | .colored _ _ body => hasPhysicalPageList body.toList
-  | .role _ body => hasPhysicalPageList body.toList
-  | .link _ body => hasPhysicalPageList body.toList
-  | .underline body => hasPhysicalPageList body.toList
-  | .step _ _ body => hasPhysicalPageList body.toList
-  | .label _ => false
-  | .ref _ _ _ _ => false
-  | .text _ => false
-  | .icon _ _ => false
-  | .math _ _ => false
-  -- a formula's body is math atoms and an image carries no inline body:
-  -- neither can hold a page-number placeholder
-  | .formula _ _ _ => false
-  | .image _ _ _ => false
-  | .fill => false
-  | .strut _ => false
-  | .linebreak _ => false
-  -- a citation shows its own number, never the page's
-  | .cite _ _ => false
-  -- a note's body can carry a placeholder like any inline content
-  | .footnote _ body => hasPhysicalPageList body.toList
+  | _ => false
 
-def hasPhysicalPageList : List Inline → Bool
-  | [] => false
-  | x :: rest => hasPhysicalPageOne x || hasPhysicalPageList rest
-
-end
-
+/-- Does this inline content carry a physical-page placeholder anywhere?
+`anyInline` over the one leaf predicate. -/
 def hasPhysicalPage (xs : Array Inline) : Bool :=
-  hasPhysicalPageList xs.toList
+  anyInline isPhysicalPage xs
 
 /-- Is this slot the frame sequence's? The counting model keeps two distinct
 sequences: the frame numbering (`Ir.frameNumbers`, rendered only by
@@ -4836,11 +4914,11 @@ theorem frame_sequence_carries_no_physical (s : ChromeSlot)
   cases s with
   | sectionTitle => simp [ChromeSlot.isFrameSequence] at hs
   | frameNumber =>
-    simp [ChromeSlot.render, hasPhysicalPage, hasPhysicalPageList,
-      hasPhysicalPageOne]
+    simp [ChromeSlot.render, hasPhysicalPage, anyInline, foldInlines,
+      foldInlineList, foldInline, isPhysicalPage]
   | frameFraction =>
-    simp [ChromeSlot.render, hasPhysicalPage, hasPhysicalPageList,
-      hasPhysicalPageOne]
+    simp [ChromeSlot.render, hasPhysicalPage, anyInline, foldInlines,
+      foldInlineList, foldInline, isPhysicalPage]
 
 private theorem plainTextList_append (l1 l2 : List Inline) :
     plainTextList (l1 ++ l2) = plainTextList l1 ++ plainTextList l2 := by
@@ -6141,102 +6219,6 @@ theorem keepFor_id (t : String) (xs : Array Block) (h : onlyFree xs = true) :
   rw [keepFor, keepForList_id t xs.toList h]
 
 
-mutual
-
-/-- One leaf-parameterised fold hosts every collect walk over the tree:
-`fi` reads each inline node — applied to the node itself, never to
-children, so the recursion below stays explicit and the checker sees it.
-Document order, a node before its content. -/
-def foldInline (fi : α → Inline → α) (acc : α) (x : Inline) : α :=
-  match x with
-  | .styled _ body => foldInlineList fi (fi acc x) body.toList
-  | .colored _ _ body => foldInlineList fi (fi acc x) body.toList
-  | .role _ body => foldInlineList fi (fi acc x) body.toList
-  | .link _ body => foldInlineList fi (fi acc x) body.toList
-  | .underline body => foldInlineList fi (fi acc x) body.toList
-  | .step _ _ body => foldInlineList fi (fi acc x) body.toList
-  | .footnote _ body => foldInlineList fi (fi acc x) body.toList
-  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
-  | .label _ | .ref _ _ _ _ | .cite _ _
-  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => fi acc x
-
-def foldInlineList (fi : α → Inline → α) (acc : α) : List Inline → α
-  | [] => acc
-  | x :: rest => foldInlineList fi (foldInline fi acc x) rest
-
-end
-
-/-- `foldInline` over an inline tree, the collectors' entry. -/
-def foldInlines (fi : α → Inline → α) (acc : α) (xs : Array Inline) : α :=
-  foldInlineList fi acc xs.toList
-
-def foldTableCells (fi : α → Inline → α) (acc : α) : List (Array Inline) → α
-  | [] => acc
-  | cell :: rest => foldTableCells fi (foldInlineList fi acc cell.toList) rest
-
-def foldTableRows (fi : α → Inline → α) (acc : α) :
-    List (Array (Array Inline)) → α
-  | [] => acc
-  | row :: rest => foldTableRows fi (foldTableCells fi acc row.toList) rest
-
-mutual
-
-/-- The block face of the fold: `fb` reads each block, `fi` each inline —
-the node first, a frame's title and a float's caption before their bodies,
-as the collectors this fold hosts always read them. A `.bibliography`'s
-items are formatted renderings, not authored content, so the fold reads
-the marker itself and does not descend into them. -/
-def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) (b : Block) : α :=
-  match b with
-  | .para content => foldInlineList fi (fb acc b) content.toList
-  | .equation _ content => foldInlineList fi (fb acc b) content.toList
-  | .section _ _ _ title => foldInlineList fi (fb acc b) title.toList
-  | .list _ items => foldBlockItems fb fi (fb acc b) items.toList
-  | .center body => foldBlockList fb fi (fb acc b) body.toList
-  | .quote body => foldBlockList fb fi (fb acc b) body.toList
-  | .abstract body => foldBlockList fb fi (fb acc b) body.toList
-  | .titled _ title body =>
-    foldBlockList fb fi (foldInlineList fi (fb acc b) title.toList) body.toList
-  | .role _ body => foldBlockList fb fi (fb acc b) body.toList
-  | .spaced _ body => foldBlockList fb fi (fb acc b) body.toList
-  | .columns cols => foldBlockCols fb fi (fb acc b) cols.toList
-  | .step _ _ body => foldBlockList fb fi (fb acc b) body.toList
-  | .only _ body => foldBlockList fb fi (fb acc b) body.toList
-  | .nav _ body => foldBlockList fb fi (fb acc b) body.toList
-  | .note body => foldBlockList fb fi (fb acc b) body.toList
-  | .frame title _ _ body =>
-    foldBlockList fb fi (foldInlineList fi (fb acc b) title.toList) body.toList
-  | .framefoot content => foldInlineList fi (fb acc b) content.toList
-  | .float _ _ _ body caption =>
-    foldBlockList fb fi (foldInlineList fi (fb acc b) caption.toList) body.toList
-  | .table _ _ _ rows _ => foldTableRows fi (fb acc b) rows.toList
-  | .logo content => foldInlineList fi (fb acc b) content.toList
-  | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
-  | .rule _ _ _ | .picture _ | .bibliography _ _ _ => fb acc b
-
-def foldBlockList (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
-    List Block → α
-  | [] => acc
-  | b :: rest => foldBlockList fb fi (foldBlock fb fi acc b) rest
-
-def foldBlockItems (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
-    List (Array Block) → α
-  | [] => acc
-  | item :: rest => foldBlockItems fb fi (foldBlockList fb fi acc item.toList) rest
-
-def foldBlockCols (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
-    List (Option Nat × Array Block) → α
-  | [] => acc
-  | (_, body) :: rest => foldBlockCols fb fi (foldBlockList fb fi acc body.toList) rest
-
-end
-
-/-- `foldBlock` over a block tree: `bibRefs`, `bibStyleName`, and
-`BibStyle.citedKeys` are leaf projections of this one traversal. -/
-def foldBlocks (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
-    (xs : Array Block) : α :=
-  foldBlockList fb fi acc xs.toList
-
 /-- Every `.bib` source the document's `\bibliography` markers name, in
 document order, deduplicated: the request value the CLI driver fulfils by
 reading each file beside the document and handing its text to `Bib.apply`.
@@ -6479,6 +6461,128 @@ theorem mapInlines_text (f : Inline → Inline)
   show plainTextList (mapInlineList f #[] xs.toList).toList = _
   rw [mapInlineList_text f hf xs.toList #[]]
   simp [plainTextList, plainText]
+
+mutual
+
+/-- The Bool fold un-threads: the accumulator rides outside as one `||`,
+which is what lets `anyInline p = false` decompose per node below. -/
+theorem foldInline_or (p : Inline → Bool) (b : Bool) (x : Inline) :
+    foldInline (fun a y => a || p y) b x
+      = (b || foldInline (fun a y => a || p y) false x) := by
+  match x with
+  | .styled st body =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
+    simp [Bool.or_assoc]
+  | .colored c n body =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
+    simp [Bool.or_assoc]
+  | .role n body =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
+    simp [Bool.or_assoc]
+  | .link u body =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
+    simp [Bool.or_assoc]
+  | .underline body =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
+    simp [Bool.or_assoc]
+  | .step n l body =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
+    simp [Bool.or_assoc]
+  | .footnote n body =>
+    rw [foldInline, foldInline, foldInlineList_or, foldInlineList_or p (false || p _)]
+    simp [Bool.or_assoc]
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .strut _
+  | .pageNumber | .pageCount | .linebreak _ => simp [foldInline]
+
+theorem foldInlineList_or (p : Inline → Bool) (b : Bool) (xs : List Inline) :
+    foldInlineList (fun a y => a || p y) b xs
+      = (b || foldInlineList (fun a y => a || p y) false xs) := by
+  match xs with
+  | [] => simp [foldInlineList]
+  | x :: rest =>
+    rw [foldInlineList, foldInlineList,
+      foldInlineList_or p (foldInline (fun a y => a || p y) b x),
+      foldInlineList_or p (foldInline (fun a y => a || p y) false x),
+      foldInline_or p b x]
+    simp [Bool.or_assoc]
+
+end
+
+mutual
+
+/-- Conditional identity, per node: where the trigger census `p` reads
+false everywhere and the leaf function fixes every `p`-false node, the map
+leaves the node exactly as it stood. -/
+theorem mapInline_id (f : Inline → Inline) (p : Inline → Bool)
+    (hf : ∀ x, p x = false → f x = x) (x : Inline)
+    (h : foldInline (fun a y => a || p y) false x = false) :
+    mapInline f x = x := by
+  match x with
+  | .styled st body =>
+    rw [foldInline, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .colored c n body =>
+    rw [foldInline, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .role n body =>
+    rw [foldInline, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .link u body =>
+    rw [foldInline, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .underline body =>
+    rw [foldInline, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .step n l body =>
+    rw [foldInline, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .footnote n body =>
+    rw [foldInline, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨-, h2⟩
+    rw [mapInline, mapInlineList_id f p hf body.toList #[] h2]
+    simp
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .strut _
+  | .pageNumber | .pageCount | .linebreak _ =>
+    exact hf _ (by simpa [foldInline] using h)
+
+theorem mapInlineList_id (f : Inline → Inline) (p : Inline → Bool)
+    (hf : ∀ x, p x = false → f x = x) (xs : List Inline) (out : Array Inline)
+    (h : foldInlineList (fun a y => a || p y) false xs = false) :
+    mapInlineList f out xs = out ++ xs.toArray := by
+  match xs with
+  | [] => simp [mapInlineList]
+  | x :: rest =>
+    rw [foldInlineList, foldInlineList_or] at h
+    rcases Bool.or_eq_false_iff.mp h with ⟨h1, h2⟩
+    rw [mapInlineList, mapInline_id f p hf x h1,
+      mapInlineList_id f p hf rest (out.push x) h2]
+    simp
+
+end
+
+/-- The conditional-identity schema over the generic map (`_id`): content
+carrying no `p`-node survives the pass whole, whenever the leaf function
+fixes every `p`-false node. `Layout.substPage_id` is its instance, with
+`hasPhysicalPage` (= `anyInline isPhysicalPage`) as the trigger census. -/
+theorem mapInlines_id (f : Inline → Inline) (p : Inline → Bool)
+    (hf : ∀ x, p x = false → f x = x) (xs : Array Inline)
+    (h : anyInline p xs = false) : mapInlines f xs = xs := by
+  rw [mapInlines, mapInlineList_id f p hf xs.toList #[] h]
+  simp
 
 private theorem blockTextBibItems_chain (l1 l2 : List BibItem) (acc : String) :
     blockTextBibItems acc (l1 ++ l2)

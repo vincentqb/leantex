@@ -5333,98 +5333,32 @@ private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) 
   (breaks.foldl (placeParaLine fs j)
     ({ b with diags := b.diags ++ j.diags }, 0, true)).1
 
-mutual
-
-/-- Replace `\pagenumber` / `\pagecount` with literal text. Running content
-is laid out after the body, so both numbers are known by then — no second
-pass over the document and no aux file. -/
-def substPage (n total : Nat) (xs : Array Inline) : Array Inline :=
-  (substPageList n total xs.toList).toArray
-
-def substPageOne (n total : Nat) : Inline → Inline
+/-- The one rewrite of the physical pass: `\pagenumber` / `\pagecount`
+become literal text. Running content is laid out after the body, so both
+numbers are known by then — no second pass over the document and no aux
+file. -/
+private def substPageLeaf (n total : Nat)
+    (x : Ir.Inline) : Ir.Inline :=
+  match x with
   | .pageNumber => .text (toString n)
   | .pageCount => .text (toString total)
-  | .styled st body => .styled st (substPageList n total body.toList).toArray
-  | .colored c nm body => .colored c nm (substPageList n total body.toList).toArray
-  | .role nm body => .role nm (substPageList n total body.toList).toArray
-  | .link u body => .link u (substPageList n total body.toList).toArray
-  | .underline body => .underline (substPageList n total body.toList).toArray
-  | .step s last body => .step s last (substPageList n total body.toList).toArray
-  | .text s => .text s
-  | .math d src => .math d src
-  -- a formula's body is math atoms and an image carries no inline body:
-  -- neither can hold a page-number placeholder
-  | .formula d src body => .formula d src body
-  | .image src size alt => .image src size alt
-  | .icon s l => .icon s l
-  | .label k => .label k
-  | .ref k p t tg => .ref k p t tg
-  | .fill => .fill
-  | .strut h => .strut h
-  | .linebreak e => .linebreak e
-  -- a citation's keys are not content: no placeholder can hide in one
-  | .cite t keys => .cite t keys
-  -- a note's body can carry a placeholder like any inline content
-  | .footnote k body => .footnote k (substPageList n total body.toList).toArray
+  | _ => x
 
-def substPageList (n total : Nat) : List Inline → List Inline
-  | [] => []
-  | x :: rest => substPageOne n total x :: substPageList n total rest
+/-- Replace `\pagenumber` / `\pagecount` with literal text, over the
+generic map — the descent is `Ir.mapInline`'s, declared once.
+`substPage_id` below is its census statement. -/
+def substPage (n total : Nat) (xs : Array Ir.Inline) : Array Ir.Inline :=
+  Ir.mapInlines (substPageLeaf n total) xs
 
-end
-
-mutual
-
-/-- The physical pass rewrites exactly the physical placeholders: content
-carrying none is untouched. This is the substitution half of "the two
-sequences stay distinct" — `Ir.frame_sequence_carries_no_physical` is the
-rendering half. -/
-theorem substPageOne_id (n total : Nat) (x : Inline)
-    (h : Ir.hasPhysicalPageOne x = false) : substPageOne n total x = x := by
-  match x with
-  | .pageNumber => simp [Ir.hasPhysicalPageOne] at h
-  | .pageCount => simp [Ir.hasPhysicalPageOne] at h
-  | .styled st body =>
-    rw [Ir.hasPhysicalPageOne] at h
-    rw [substPageOne, substPageList_id n total body.toList h]
-  | .footnote k body =>
-    rw [Ir.hasPhysicalPageOne] at h
-    rw [substPageOne, substPageList_id n total body.toList h]
-  | .colored c nm body =>
-    rw [Ir.hasPhysicalPageOne] at h
-    rw [substPageOne, substPageList_id n total body.toList h]
-  | .role nm body =>
-    rw [Ir.hasPhysicalPageOne] at h
-    rw [substPageOne, substPageList_id n total body.toList h]
-  | .link u body =>
-    rw [Ir.hasPhysicalPageOne] at h
-    rw [substPageOne, substPageList_id n total body.toList h]
-  | .underline body =>
-    rw [Ir.hasPhysicalPageOne] at h
-    rw [substPageOne, substPageList_id n total body.toList h]
-  | .step s last body =>
-    rw [Ir.hasPhysicalPageOne] at h
-    rw [substPageOne, substPageList_id n total body.toList h]
-  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _ | .fill
-  | .strut _ | .label _ | .ref _ _ _ _
-  | .linebreak _ | .cite _ _ => rw [substPageOne]
-
-theorem substPageList_id (n total : Nat) (xs : List Inline)
-    (h : Ir.hasPhysicalPageList xs = false) :
-    substPageList n total xs = xs := by
-  match xs with
-  | [] => rw [substPageList]
-  | x :: rest =>
-    rw [Ir.hasPhysicalPageList, Bool.or_eq_false_iff] at h
-    rw [substPageList, substPageOne_id n total x h.1,
-      substPageList_id n total rest h.2]
-
-end
-
-/-- Content with no physical placeholder survives the physical pass whole. -/
-theorem substPage_id (n total : Nat) (xs : Array Inline)
-    (h : Ir.hasPhysicalPage xs = false) : substPage n total xs = xs := by
-  rw [substPage, substPageList_id n total xs.toList h]
+/-- Content with no physical placeholder survives the physical pass whole:
+the substitution half of "the two sequences stay distinct" —
+`Ir.frame_sequence_carries_no_physical` is the rendering half. One
+instance of the map's conditional-identity schema, with
+`Ir.hasPhysicalPage` as the trigger census. -/
+theorem substPage_id (n total : Nat) (xs : Array Ir.Inline)
+    (h : Ir.hasPhysicalPage xs = false) : substPage n total xs = xs :=
+  Ir.mapInlines_id (substPageLeaf n total) Ir.isPhysicalPage
+    (fun x hx => by cases x <;> simp_all [Ir.isPhysicalPage, substPageLeaf]) xs h
 
 /-- The two sequences cannot quietly fuse: the physical pass leaves a frame
 slot's rendering exactly as the frame numbering rendered it, on every page —
