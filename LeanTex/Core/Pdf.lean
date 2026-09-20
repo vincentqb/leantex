@@ -1,5 +1,6 @@
 import LeanTex.Core.Dim
 import LeanTex.Core.Font
+import LeanTex.Core.HtmlDoc
 import LeanTex.Core.Layout
 
 namespace LeanTex.Core.Pdf
@@ -109,6 +110,48 @@ private def usedGlyphs (fontIdx numGlyphs : Nat) (pages : Array PageOut) :
     if let some c := c? then
       out := out.push (g, c)
   return out
+
+/-- The keep set over a per-face used-glyph census: the faces the file
+embeds. Only faces that actually contribute glyphs are kept — a declared
+but unused face would otherwise cost a megabyte of font file — and face 0
+stands in when nothing set text: a PDF's page resources still name a font. -/
+def keepOf (used : Array (Array (Nat × Char))) : Array Nat :=
+  let keep := (Array.range used.size).filter fun k => !((used[k]?.getD #[]).isEmpty)
+  if keep.isEmpty then #[0] else keep
+
+/-- The faces `write` embeds for these pages, named so the cross-backend
+contract below can quantify over the writer's own decision, not a copy. -/
+def keepFaces (fs : FontSet) (pages : Array PageOut) : Array Nat :=
+  keepOf ((Array.range fs.fonts.size).map fun k =>
+    usedGlyphs k (fs.get k).numGlyphs pages)
+
+theorem keepFaces_lt (fs : FontSet) (pages : Array PageOut)
+    (h : 0 < fs.fonts.size) : ∀ k ∈ keepFaces fs pages, k < fs.fonts.size := by
+  intro k hk
+  unfold keepFaces keepOf at hk
+  dsimp only at hk
+  rw [Array.size_map, Array.size_range] at hk
+  split at hk
+  · simp only [Array.mem_singleton] at hk
+    omega
+  · have := (Array.mem_filter.mp hk).1
+    simpa using this
+
+/-- **The HTML ships the faces the PDF embeds: one `FontSet`, two
+projections.** Every face this writer would embed for these pages
+(`keepFaces`) is declared by a `@font-face` in the HTML emission built
+from the same set (`HtmlDoc.shipFaces`, which `fontFaceCss` renders one
+rule per entry and whose files `fontAssets` requests of the driver,
+`HtmlDoc.shipFaces_src_shipped`). Stated as the superset the HTML can
+honestly promise: it never sees layout's used-glyph data, so it declares
+every face of the set, and the embedded subset is covered a fortiori. The
+convention is AGENTS': the artifact is a function of the document and the
+font environment — a viewer without the document's faces installed must
+not read it in a stand-in. -/
+theorem html_fonts_cover_pdf (fs : FontSet) (pages : Array PageOut)
+    (h : 0 < fs.fonts.size) :
+    ∀ k ∈ keepFaces fs pages, ∃ ff ∈ HtmlDoc.shipFaces fs, ff.index = k :=
+  fun k hk => HtmlDoc.shipFaces_covers fs (keepFaces_lt fs pages h k hk)
 
 /-- One page's content stream. Glyph runs are written as `TJ` arrays; the
 pen's position is tracked against the layout's, and only a glyph run moves
@@ -470,13 +513,11 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
     (outline : Array OutlineEntry := #[]) : ByteArray := Id.run do
   let np := pages.size
-  -- Only faces that actually contribute glyphs are embedded; a declared but
-  -- unused face would otherwise cost a megabyte of font file.
+  -- Only faces that actually contribute glyphs are embedded (`keepOf`,
+  -- shared with `keepFaces` so the contract quantifies over this choice).
   let allUsed : Array (Array (Nat × Char)) :=
     (Array.range fs.fonts.size).map fun k => usedGlyphs k (fs.get k).numGlyphs pages
-  let keep : Array Nat :=
-    (Array.range fs.fonts.size).filter fun k => !(allUsed[k]!).isEmpty
-  let keep := if keep.isEmpty then #[0] else keep
+  let keep : Array Nat := keepOf allUsed
   let remap : Array Nat := Id.run do
     let mut r : Array Nat := Array.replicate fs.fonts.size 0
     for (old, new) in keep.zipIdx do
