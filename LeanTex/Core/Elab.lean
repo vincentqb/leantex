@@ -2823,7 +2823,7 @@ elaborator's budget for one definition. Same measure, same step shape. -/
 def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) (name : String) (pos : Pos)
     (h : i < raws.size)
-    (_hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
+    (hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
     EM (Array Inline) := do
   if name == "includegraphics" then
     -- graphicx's command, native. The keys that size figures in real
@@ -2925,7 +2925,7 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
       diag ctx .E0304 "'\\textcolor' needs {name} and {content}" pos
       elabInlinesFrom ctx raws (i + 1) acc sb
   else
-    elabInlinesCtrl2 ctx raws i acc sb name pos h _hadv1
+    elabInlinesCtrl2 ctx raws i acc sb name pos h hadv1
 termination_by (ctx.envLimit, ctx.limit, sliceWeight raws i, 2)
 decreasing_by all_goals knot_dec
 
@@ -2934,6 +2934,10 @@ recovery arms. Same measure, same step shape. -/
 def elabInlinesCtrl2 (ctx : Ctx) (raws : Array Raw) (i : Nat)
     (acc : Array Inline) (sb : String) (name : String) (pos : Pos)
     (h : i < raws.size)
+    -- Load-bearing despite the underscore (judged by deletion+rebuild):
+    -- knot_dec's trailing `assumption` consumes it on the fall-through
+    -- edges. The linter cannot see that use, so the name must stay
+    -- underscore-prefixed.
     (_hadv1 : sliceWeight raws (i + 1) < sliceWeight raws i) :
     EM (Array Inline) := do
   -- `\color{n}`'s marker: inline it reads exactly as the bare name.
