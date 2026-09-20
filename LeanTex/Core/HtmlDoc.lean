@@ -1082,6 +1082,39 @@ theorem smoothScrollCss_guarded (sel : String) :
     ∃ rule, smoothScrollCss sel = rule ++ scrollMotionGuard sel :=
   ⟨_, rfl⟩
 
+/-- The reduced-motion guard for the deck's entry animation: under the
+reader's reduce preference a slide's content simply stands, fully
+visible (WCAG 2.2 SC 2.3.3, technique C39; CSS Media Queries 5 §12.1).
+The base sheet's global reduce block already covers `animation`, but the
+guard travels with the declaration itself — `motionCss`'s rule — so the
+deck's one animation cannot be re-shipped anywhere without it. -/
+def deckMotionGuard : String :=
+  "@media (prefers-reduced-motion: reduce) \
+{ section.slide > * { animation: none; } }\n"
+
+/-- The deck's entry motion: a slide's content fades and rises as the
+slide scrolls in — scrubbed by the scroll itself (`view()`, Scroll-driven
+Animations 1; the range ends at `entry`'s end, the snap point, so
+content is whole exactly when the slide is). The rise distance is the
+`motiondistance` token; no authority fixes it, so the default is 1rem —
+about one line's travel, the engine's stated convention, overridable
+like any token. Floor as `revealCss`: without the feature the rules
+never apply and every slide is simply visible. There is deliberately no
+duration token: a scroll-scrubbed timeline has none. -/
+def deckEntryCss : String :=
+  "@supports (animation-timeline: view()) {\n" ++
+  "@keyframes ltx-enter { from { opacity: 0; \
+transform: translateY(var(--motiondistance, 1rem)) } }\n" ++
+  "section.slide > * { animation: ltx-enter linear both;\n" ++
+  "  animation-timeline: view(); animation-range: entry; }\n" ++
+  "}\n" ++
+    deckMotionGuard
+
+/-- The entry motion carries its reduced-motion form by construction:
+definitionally the animation rules followed by the guard. -/
+theorem deckEntryCss_guarded : ∃ rule, deckEntryCss = rule ++ deckMotionGuard :=
+  ⟨_, rfl⟩
+
 /-- The slide sections' stylesheet, split by class. A deck (the `slides`
 class) is one tree with two media renderings: on screen a paged
 full-viewport deck whose paging is the browser's own — CSS Scroll Snap 1:
@@ -1109,6 +1142,7 @@ private def slideCss (doc : Doc) : String :=
     "section.slide { min-height: 100dvh; scroll-snap-align: start;\n" ++
     "  scroll-snap-stop: always; display: flex; flex-direction: column;\n" ++
     s!"  padding: {slidePadV} {slidePadH}; }\n" ++
+    deckEntryCss ++
     "}\n" ++
     "@media print {\n" ++ handout ++
     "section.slide { break-after: page; }\n" ++

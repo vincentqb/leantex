@@ -794,6 +794,12 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has deckPage "@media print" &&
      has deckPage "break-inside: avoid" &&
      has deckPage "section.slide { break-after: page; }")
+  t "entry motion is scroll-scrubbed under supports, guard attached"
+    (has deckPage "@supports (animation-timeline: view())" &&
+     has deckPage "animation-timeline: view(); animation-range: entry;" &&
+     has deckPage "translateY(var(--motiondistance, 1rem))" &&
+     has deckPage ("@media (prefers-reduced-motion: reduce) " ++
+       "{ section.slide > * { animation: none; } }"))
   -- The gate, both directions: no deck rule outside the slides class.
   for (name, src) in [
       ("article", "\\documentclass{article}\\begin{document}x\\end{document}"),
