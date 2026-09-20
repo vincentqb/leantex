@@ -27,7 +27,8 @@ meta author "Pat Placeholder"
 frame golden
   section* 0
     text "Slide Chrome"
-  rule separator 0.5pt
+  block before 800/1000em
+    rule separator 0.5pt
   block before 800/1000em
     para
       text "Pat Placeholder"

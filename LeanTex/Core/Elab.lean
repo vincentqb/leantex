@@ -3720,7 +3720,14 @@ private def titleBlocks (ctx : Ctx) (st : ESt) : Array Block := Id.run do
       -- token names one.
       let th := (ctx.tokens.find? "separatorheight").getD
         { width := Dim.Length.ofSp (Dim.pt 1 / 2) }
-      inner := push inner none (.rule c nm th)
+      -- The separator stands its declared gap on both sides — the one
+      -- `separatorgap` token, above the rule here and below it through
+      -- `pending`: under the rule convention (`Layout.interlineFor`) the
+      -- gap runs from the title matter's baseline to the rule's top edge
+      -- and from its bottom edge to the author's cap line, so one token
+      -- means equal visible gaps. It used to stand on the rule line's
+      -- phantom body strut, which the convention removed.
+      inner := push inner (ctx.tokens.find? "separatorgap") (.rule c nm th)
       pending := ctx.tokens.find? "separatorgap"
   if let some xs := part st.author then
     -- The declared author styling: the font template wraps the name (the

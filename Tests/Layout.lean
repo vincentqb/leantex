@@ -1515,8 +1515,11 @@ def vdistChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "a left title page is ragged and carries the separator"
     (match (elabStr styledSrc).1.body with
      | #[.frame _ _ .golden inner] =>
+       -- The separator stands inside its declared-gap wrapper
+       -- (`separatorgap` above it, the rule convention's gap).
        inner.size ≥ 2 && inner.any (fun b => match b with
          | .rule _ (some "sep") _ => true
+         | .spaced _ #[.rule _ (some "sep") _] => true
          | _ => false) && !inner.any (fun b => match b with
          | .center _ => true
          | _ => false)
