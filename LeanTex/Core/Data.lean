@@ -22,6 +22,10 @@ namespace LeanTex.Core.Data
 
 open LeanTex.Core Parse
 
+/-- A `\data` file request resolves by the bibliography's own rule:
+records live in `.bib` files. -/
+abbrev sourceName := Bib.sourceName
+
 /-- What a `\data{…}` group declares: `.inl name` for `file = "name"`,
 `.inr text` for inline `@kind{…}` records, `none` when it is neither. -/
 def dataDecl? (body : Array Raw) : Option (String ⊕ String) :=

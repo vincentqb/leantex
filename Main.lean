@@ -350,7 +350,7 @@ def resolveBibliography (file : String) (doc : Ir.Doc) :
   let mut sources : Array (String × String) := #[]
   let mut diags : Array Diag := #[]
   for src in requested do
-    let name := if src.endsWith ".bib" then src else src ++ ".bib"
+    let name := Bib.sourceName src
     let path := if (System.FilePath.mk name).isAbsolute then System.FilePath.mk name
       else dir / name
     if ← path.pathExists then
@@ -374,7 +374,7 @@ def resolveData (file : String) (raws : Array Parse.Raw) :
   let mut sources : Array (String × String) := #[]
   let mut diags : Array Diag := #[]
   for (src, pos) in requested do
-    let name := if src.endsWith ".bib" then src else src ++ ".bib"
+    let name := Data.sourceName src
     let path := if (System.FilePath.mk name).isAbsolute then System.FilePath.mk name
       else dir / name
     if ← path.pathExists then

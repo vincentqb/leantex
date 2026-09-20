@@ -11,6 +11,14 @@ definition. Reading the file is the driver's effect (`Ir.bibRefs`, the
 
 namespace LeanTex.Core.Bib
 
+/-- The file a bibliography (or data) request names: `.bib` is the one
+extension, appended when the source does not spell it. Every fulfiller of
+the request — the driver's `resolveBibliography`/`resolveData`, the test
+harness's `elabFixture` — resolves through this def, so what the tests
+fulfil cannot drift from what the driver fulfils. -/
+def sourceName (src : String) : String :=
+  if src.endsWith ".bib" then src else src ++ ".bib"
+
 /-- One parsed entry: `@kind{key, fields}`. Kind and field names are
 lowercased (BibTeX is case-insensitive there, btxdoc §Odds and Ends); the
 key keeps its case (keys are case-sensitive in practice: `\cite` must spell

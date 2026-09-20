@@ -178,7 +178,7 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
   let (raws, parseDiags) := Parse.parse file toks
   let mut dataSources : Array (String × String) := #[]
   for (srcName, _) in Data.fileRefs raws do
-    let name := if srcName.endsWith ".bib" then srcName else srcName ++ ".bib"
+    let name := Data.sourceName srcName
     let path := s!"tests/corpus/{name}"
     if ← System.FilePath.pathExists path then
       dataSources := dataSources.push (srcName, ← IO.FS.readFile path)
@@ -188,7 +188,7 @@ def elabFixture (n src : String) : IO (Ir.Doc × Array Diag) := do
   if requested.isEmpty then return (doc, diags)
   let mut sources : Array (String × String) := #[]
   for srcName in requested do
-    let name := if srcName.endsWith ".bib" then srcName else srcName ++ ".bib"
+    let name := Bib.sourceName srcName
     let path := s!"tests/corpus/{name}"
     if ← System.FilePath.pathExists path then
       sources := sources.push (srcName, ← IO.FS.readFile path)
