@@ -533,21 +533,34 @@ where
     | none => acc
   | c :: rest =>
     let c := if c == .bin && binBefore pending then .ord else c
-    let pending := match pending with
-      | some .bin =>
-        if c == .rel || c == .closing || c == .punct then some .ord else some .bin
-      | p => p
     match pending with
-    | some p => go (acc.push p) (some c) rest
     | none => go acc (some c) rest
+    | some p =>
+      let p :=
+        if p == .bin && (c == .rel || c == .closing || c == .punct) then .ord else p
+      go (acc.push p) (some c) rest
 
 /-- A Bin with nothing to bind on its left is an Ord: `$-x$` sets tight. -/
 theorem bin_leading_degrades : degrade [.bin, .ord] = [.ord, .ord] := by decide
 
-/-- Degradation changes classes, never the count or the order. -/
-theorem degrade_length : ∀ cs ∈ [[MathClass.ord], [.bin, .bin], [.ord, .bin, .rel],
-    [.opening, .bin, .ord, .bin], [.op, .bin, .op]],
-    (degrade cs).length = cs.length := by decide
+/-- The pass's size ledger: `go` emits exactly one atom per input atom, plus
+the pending one. Induction over the input with the accumulator and pending
+slot generalized — the match in `go`'s step maps a `some` pending to `some`
+and leaves `none` alone, so each step moves one atom from input to output. -/
+theorem degrade_go_length (cs : List MathClass) (acc : Array MathClass)
+    (pending : Option MathClass) :
+    (degrade.go acc pending cs).size
+      = acc.size + (if pending.isSome then 1 else 0) + cs.length := by
+  fun_induction degrade.go acc pending cs
+  all_goals simp_all
+  all_goals omega
+
+/-- Degradation changes classes, never the count or the order — for every
+list: the degraded class list is walked positionally beside the atom list,
+so a length change would mis-pair every following space. -/
+theorem degrade_length (cs : List MathClass) :
+    (degrade cs).length = cs.length := by
+  simp [degrade, degrade_go_length]
 
 /-- What luatex inserts between the two probe atoms of
 `$\mathord{z}\math<l>{x}\math<r>{y}\mathord{w}$`, read out of `\showbox`
