@@ -1,5 +1,6 @@
 import Std.Data.HashMap
 import LeanTex.Core.HyphenData
+import LeanTex.Core.Nfc
 
 namespace LeanTex.Core.Hyphen
 
@@ -53,7 +54,9 @@ def load : Patterns := Id.run do
 /-- Break positions (letters before the break) for a lowercase-folded word.
 Only positions respecting leftMin/rightMin are returned. -/
 def hyphenate (pats : Patterns) (word : String) : Array Nat := Id.run do
-  let lower := String.ofList (word.toList.map Char.toLower)
+  -- Unicode fold, not `Char.toLower`: French and German patterns spell
+  -- their letters lowercase, and an ASCII-only fold leaves É beside é.
+  let lower := String.ofList (word.toList.map Nfc.toLower)
   let n := lower.length
   if n < pats.leftMin + pats.rightMin then
     return #[]

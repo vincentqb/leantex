@@ -870,12 +870,12 @@ private def wordItems (pats : Option Hyphen.Patterns) (size : Sp) (fontIdx : Nat
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
       let c := chars[i]
-      if c.isAlpha then
+      if Nfc.isLetter c then
         let mut j := i
         let mut run : Array Char := #[]
         for _ in [i:chars.size] do
           if h' : j < chars.size then
-            if chars[j].isAlpha then
+            if Nfc.isLetter chars[j] then
               run := run.push chars[j]
               j := j + 1
             else

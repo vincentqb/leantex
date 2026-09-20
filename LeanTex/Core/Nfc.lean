@@ -24,6 +24,9 @@ structure Tables where
   ccc : HashMap UInt32 Nat
   decomp : HashMap UInt32 (Array Char)
   comp : HashMap UInt64 Char
+  /-- Merged codepoint ranges of general category L*, sorted. -/
+  letters : Array (UInt32 × UInt32)
+  lower : HashMap UInt32 Char
 
 def load : Tables := Id.run do
   let mut ccc : HashMap UInt32 Nat := {}
@@ -43,7 +46,17 @@ def load : Tables := Id.run do
         let key := UInt64.ofNat (a.toNat?.getD 0) * 0x100000000
           + UInt64.ofNat (b.toNat?.getD 0)
         comp := comp.insert key (Char.ofNat (v.toNat?.getD 0))
-  return { ccc, decomp, comp }
+  let mut letters : Array (UInt32 × UInt32) := #[]
+  for entry in NfcData.letters.splitOn " " do
+    if let [a, b] := entry.splitOn ":" then
+      letters := letters.push
+        (UInt32.ofNat (a.toNat?.getD 0), UInt32.ofNat (b.toNat?.getD 0))
+  let mut lower : HashMap UInt32 Char := {}
+  for entry in NfcData.lower.splitOn " " do
+    if let [a, b] := entry.splitOn ":" then
+      lower := lower.insert (UInt32.ofNat (a.toNat?.getD 0))
+        (Char.ofNat (b.toNat?.getD 0))
+  return { ccc, decomp, comp, letters, lower }
 
 /-- The tables, built once per process. -/
 def tables : Tables := load
@@ -159,5 +172,33 @@ def normalize (s : String) : String := Id.run do
   for c in out do
     r := r.push c
   return r
+
+/-- A letter by Unicode's general category (L*), by binary search over the
+generated ranges. `Char.isAlpha` is ASCII-only: under it a word boundary
+excludes é, so an accented word neither hyphenates nor stays one box.
+ASCII answers without the search. -/
+def isLetter (c : Char) : Bool := Id.run do
+  if c.toNat < 0x80 then
+    return c.isAlpha
+  let rs := tables.letters
+  let mut lo := 0
+  let mut hi := rs.size
+  for _ in [0:rs.size + 1] do
+    if h : lo < hi ∧ hi ≤ rs.size then
+      let mid := (lo + hi) / 2
+      let (a, b) := rs[mid]'(by omega)
+      if c.val < a then hi := mid
+      else if b < c.val then lo := mid + 1
+      else return true
+    else
+      break
+  return false
+
+/-- Unicode simple lowercase (UnicodeData field 13): what pattern matching
+against lowercase hyphenation patterns needs — `Char.toLower` is
+ASCII-only and leaves É beside é. -/
+def toLower (c : Char) : Char :=
+  if c.toNat < 0x80 then c.toLower
+  else tables.lower.getD c.val c
 
 end LeanTex.Core.Nfc

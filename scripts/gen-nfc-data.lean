@@ -13,13 +13,16 @@ def notice : String := "/-
 Generated from UnicodeData.txt (Unicode Character Database); do not edit
 by hand. Regenerate with: lake env lean --run scripts/gen-nfc-data.lean
 
-The three tables are what canonical normalization (UAX #15, NFC) needs:
-combining classes, fully-expanded canonical decompositions, and primary
-composites (canonical pairs minus the composition exclusions of UAX #15
-§5 and Unicode's CompositionExclusions.txt, whose listed script-specific
-set is embedded in the generator; singleton and non-starter exclusions
-are derived from the data). Hangul is algorithmic (Unicode §3.12) and
-appears in no table.
+The first three tables are what canonical normalization (UAX #15, NFC)
+needs: combining classes, fully-expanded canonical decompositions, and
+primary composites (canonical pairs minus the composition exclusions of
+UAX #15 §5 and Unicode's CompositionExclusions.txt, whose listed
+script-specific set is embedded in the generator; singleton and
+non-starter exclusions are derived from the data). Hangul is algorithmic
+(Unicode §3.12) and appears in no table. The last two are the general
+categories' letter ranges (L*) and the simple lowercase mappings —
+`Char.isAlpha`/`Char.toLower` are ASCII-only, and a word boundary that
+excludes é neither hyphenates an accented word nor keeps it one box.
 
 licence: UNICODE LICENSE V3 (Unicode data files); see
 https://www.unicode.org/license.txt
@@ -94,12 +97,30 @@ def main (args : List String) : IO UInt32 := do
   let text ← IO.FS.readFile sourcePath
   let mut ccc : Array (Nat × Nat) := #[]
   let mut canon : Std.HashMap Nat (List Nat) := {}
+  let mut letters : Array (Nat × Nat) := #[]   -- merged L* ranges
+  let mut lower : Array (Nat × Nat) := #[]
+  let mut rangeFirst : Option Nat := none
   for line in text.splitOn "\n" do
     let fields := line.splitOn ";"
     match fields with
-    | code :: _name :: _cat :: cccF :: _bidi :: decompF :: _ =>
+    | code :: name :: cat :: cccF :: _bidi :: decompF :: tailFields =>
       let cp := hexToNat code
       if cp == 0 then continue
+      if cat.startsWith "L" then
+        if name.endsWith ", First>" then
+          rangeFirst := some cp
+        else
+          let lo := if name.endsWith ", Last>" then rangeFirst.getD cp else cp
+          rangeFirst := none
+          match letters.back? with
+          | some (a, b) =>
+            if lo == b + 1 then letters := letters.pop.push (a, cp)
+            else letters := letters.push (lo, cp)
+          | none => letters := letters.push (lo, cp)
+      if let some lc := tailFields[7]? then  -- field 13: simple lowercase
+        let lc := lc.trimAscii.toString
+        if !lc.isEmpty then
+          lower := lower.push (cp, hexToNat lc)
       let c := cccF.toNat?.getD 0
       if c != 0 then
         ccc := ccc.push (cp, c)
@@ -129,6 +150,8 @@ def main (args : List String) : IO UInt32 := do
     s!"{cp}:{",".intercalate (parts.map toString)}")
   let compStr := " ".intercalate (compEntries.toList.map fun (a, b, cp) =>
     s!"{a},{b}:{cp}")
+  let lettersStr := " ".intercalate (letters.toList.map fun (a, b) => s!"{a}:{b}")
+  let lowerStr := " ".intercalate (lower.toList.map fun (a, b) => s!"{a}:{b}")
   let content := notice
     ++ "namespace LeanTex.Core.NfcData\n\n"
     ++ "/-- `cp:ccc` for every character of nonzero canonical combining class. -/\n"
@@ -137,7 +160,12 @@ def main (args : List String) : IO UInt32 := do
     ++ s!"def decomp : String := \"{decompStr}\"\n\n"
     ++ "/-- `a,b:cp` — the primary composites of canonical composition. -/\n"
     ++ s!"def comp : String := \"{compStr}\"\n\n"
+    ++ "/-- `lo:hi` — the merged codepoint ranges of general category L*. -/\n"
+    ++ s!"def letters : String := \"{lettersStr}\"\n\n"
+    ++ "/-- `cp:lower` — the simple lowercase mappings. -/\n"
+    ++ s!"def lower : String := \"{lowerStr}\"\n\n"
     ++ "end LeanTex.Core.NfcData\n"
   IO.FS.writeFile output content
-  IO.println s!"wrote {output}: {ccc.size} ccc, {decompEntries.size} decomps, {compEntries.size} composites"
+  IO.println s!"wrote {output}: {ccc.size} ccc, {decompEntries.size} decomps, \
+{compEntries.size} composites, {letters.size} letter ranges, {lower.size} lowercase"
   return 0

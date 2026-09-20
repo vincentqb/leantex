@@ -1590,6 +1590,15 @@ def nfcChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "nfc idempotent" (Nfc.normalize (Nfc.normalize "e\u0301\u0327 ơ\u0323")
     == Nfc.normalize "e\u0301\u0327 ơ\u0323")
   t "nfc hangul composes" (Nfc.normalize "\u1100\u1161\u11A8" == "\uAC01")
+  -- The word boundary reads these, not the ASCII-only Char.isAlpha /
+  -- Char.toLower: é is a letter of a hyphenatable word, and É folds to é
+  -- for pattern matching (the fr/de patterns spell letters lowercase).
+  t "isLetter covers Latin beyond ASCII"
+    (Nfc.isLetter 'é' && Nfc.isLetter 'ß' && Nfc.isLetter 'Ω' &&
+      !Nfc.isLetter '×' && !Nfc.isLetter '÷' && !Nfc.isLetter '1' &&
+      Nfc.isLetter 'a' && !Nfc.isLetter '-')
+  t "toLower folds beyond ASCII"
+    (Nfc.toLower 'É' == 'é' && Nfc.toLower 'A' == 'a' && Nfc.toLower 'ß' == 'ß')
   -- The lexer feeds normalized text to everything downstream.
   t "lex normalizes to NFC" (toks "Be\u0301lair" == [.word "Bélair"])
 
