@@ -56,6 +56,31 @@ private def boldFont (size : String) : ElementStyle :=
 
 private def pt1 : Dim.SymGlue := { width := Length.ofSp (Dim.pt 1) }
 
+/-- The moloch lineage's furniture weights and title-page gaps, one named
+dtx-sourced table: a 1pt progress bar (`progressbar linewidth`,
+beamerouterthememoloch.dtx, `\moloch@outer@setdefaults`), a 0.5pt hairline
+separator (its default linewidth), and the title page's inter-part gaps
+from beamerinnerthememoloch.dtx — 0.3em above the subtitle, 0.8em below
+the separator, 0.5em below the author, 1em below the institute. `moloch`
+installs it because these are its own source's values; `daylight` installs
+the same table because its rhythm is deliberately the lineage's, not a
+knob of its own — one edit site for a dtx correction. -/
+private def lineageTokens : Tokens := { entries := #[
+  ("progressheight", pt1),
+  ("separatorheight", { width := Length.ofSp (Dim.pt 1 / 2) }),
+  ("subtitlegap", { width := { em := 300 } }),
+  ("separatorgap", { width := { em := 800 } }),
+  ("authorgap", { width := { em := 500 } }),
+  ("institutegap", { width := { em := 1000 } })] }
+
+/-- The footline every shipped bundle declares, read as data from the
+metropolis lineage (beamerouterthememoloch.dtx, footline template): the
+section title keeps the reader placed, the frame number says how far
+along. One value, three installs. -/
+private def builtinChrome : Chrome :=
+  { footerLeft := some .sectionTitle
+    footerRight := some .frameNumber }
+
 /-- The Metropolis lineage as a token bundle: an inverted frame-title bar,
 one warm accent, a near-white page. Values map the moloch beamer theme's
 light preset onto the semantic keys, mixes evaluated (the original xcolor
@@ -93,19 +118,7 @@ def moloch : Theme :=
       -- is the largest fraction where every text role clears it
       -- (Contrast.builtin_designs_covered is the kernel check).
       coveredFraction := some 31 }
-    -- The title page's inter-part spacing, from the moloch source
-    -- (beamerinnerthememoloch.dtx): 0.3em above the subtitle, 0.8em below
-    -- the separator (its default linewidth is 0.5pt), 0.5em below the
-    -- author, 1em below the institute.
-    -- progressheight is moloch's `progressbar linewidth=1pt` default
-    -- (beamerouterthememoloch.dtx, \moloch@outer@setdefaults).
-    tokens := { entries := #[
-      ("progressheight", pt1),
-      ("separatorheight", { width := Length.ofSp (Dim.pt 1 / 2) }),  -- 0.5pt
-      ("subtitlegap", { width := { em := 300 } }),                   -- 0.3em
-      ("separatorgap", { width := { em := 800 } }),                  -- 0.8em
-      ("authorgap", { width := { em := 500 } }),                     -- 0.5em
-      ("institutegap", { width := { em := 1000 } })] }               -- 1em
+    tokens := lineageTokens
     styles := { entries := #[
       ("frametitle", boldFont "large"),
       ("sectionpage", boldFont "Large"),
@@ -116,12 +129,7 @@ def moloch : Theme :=
       -- what `separator = separator` resolved to at install time).
       ("titlepage", { align := some "left"
                       separator := some (progressfg, some "separator") })] }
-    -- The footline of the lineage read as data: metropolis puts the frame
-    -- number in the footline and a `frame footer` template beside it; here
-    -- the section title keeps the reader placed and the frame number says
-    -- how far along (beamerouterthememoloch.dtx, footline template).
-    chrome := { footerLeft := some .sectionTitle
-                footerRight := some .frameNumber } }
+    chrome := builtinChrome }
 
 /-- A quieter default: near-black ink on white, one restrained accent, no
 title bar — frame titles set as plain bold headings because the bar key is
@@ -149,8 +157,7 @@ def plain : Theme :=
     styles := { entries := #[
       ("sectionpage", boldFont "Large"),
       ("standout", boldFont "Large")] }
-    chrome := { footerLeft := some .sectionTitle
-                footerRight := some .frameNumber } }
+    chrome := builtinChrome }
 
 /-- A bright, warm default for decks: warm paper, warm near-black ink, one
 azure accent — quiet chrome, no title bar (the bar key is deliberately
@@ -178,16 +185,9 @@ def daylight : Theme :=
         ("separator", accent),
         ("standoutfg", bg), ("standoutbg", accent)]
       coveredFraction := some 38 }
-    -- The furniture weights are moloch's dtx-sourced tokens (a 1pt
-    -- progress bar, a 0.5pt hairline separator) and the title-page gaps
-    -- its em values: the lineage's rhythm, not this bundle's own knob.
-    tokens := { entries := #[
-      ("progressheight", pt1),
-      ("separatorheight", { width := Length.ofSp (Dim.pt 1 / 2) }),
-      ("subtitlegap", { width := { em := 300 } }),
-      ("separatorgap", { width := { em := 800 } }),
-      ("authorgap", { width := { em := 500 } }),
-      ("institutegap", { width := { em := 1000 } })] }
+    -- The lineage's rhythm, not this bundle's own knob: the shared table
+    -- makes the docstring's claim true in code.
+    tokens := lineageTokens
     styles := { entries := #[
       -- No frametitle bar: the title sets as a plain bold heading in the
       -- ink (the absent `frametitlebg` key is the declaration).
@@ -196,8 +196,7 @@ def daylight : Theme :=
       ("standout", boldFont "Large"),
       ("titlepage", { align := some "left"
                       separator := some (accent, some "separator") })] }
-    chrome := { footerLeft := some .sectionTitle
-                footerRight := some .frameNumber } }
+    chrome := builtinChrome }
 
 def builtin : List Theme := [moloch, plain, daylight]
 
