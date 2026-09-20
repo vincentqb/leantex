@@ -677,7 +677,7 @@ def hyphenate (ui : Ui) (words : List String) (file : Option String) : IO UInt32
     all := all ++ (contents.splitOn "\n").filterMap fun line =>
       let w := line.trimAscii.toString
       if w.isEmpty then none else some w
-  let pats := Hyphen.load
+  let pats := Hyphen.english.get
   for w in all do
     IO.println (showHyphens pats w)
   return 0

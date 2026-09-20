@@ -37,7 +37,7 @@ fontSuiteChecks used to carry these calls in its parse-success arm — it
 still owns reporting a missing or unparsable font, so failure here only
 skips. -/
 def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let pats := Hyphen.load
+  let pats := Hyphen.english.get
   let some fontData ← findFont | return ()
   let .ok font := Font.parse fontData | return ()
   let oneFace := oneFaceOf font

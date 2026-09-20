@@ -59,15 +59,20 @@ def load' (patternData exceptionData : String) (leftMin rightMin : Nat) :
       exceptions := exceptions.insert word breaks
   return { map, exceptions, maxLen, leftMin, rightMin }
 
-def load : Patterns :=
+-- Each language's table is a `Thunk` (call-by-need): a zero-argument
+-- constant is computed at process start, and parsing three pattern sets
+-- there cost every run ~40 ms whichever language it used. Only the
+-- selected table builds, once.
+
+def english : Thunk Patterns := Thunk.mk fun _ =>
   load' HyphenData.patterns HyphenData.exceptions
     Locale.en.leftMin Locale.en.rightMin
 
-def french : Patterns :=
+def french : Thunk Patterns := Thunk.mk fun _ =>
   load' HyphenDataFr.patterns HyphenDataFr.exceptions
     Locale.fr.leftMin Locale.fr.rightMin
 
-def german : Patterns :=
+def german : Thunk Patterns := Thunk.mk fun _ =>
   load' HyphenDataDe.patterns HyphenDataDe.exceptions
     Locale.de.leftMin Locale.de.rightMin
 
@@ -77,9 +82,9 @@ wrongly English. (German's 272 KB literal was gated on compile cost;
 measured at 0.65 s against the English file's 0.72 s, it lands.) -/
 def forTag (tag : String) : Option Patterns :=
   match (Locale.forTag tag).map (·.tag) with
-  | some "en" => some load
-  | some "fr" => some french
-  | some "de" => some german
+  | some "en" => some english.get
+  | some "fr" => some french.get
+  | some "de" => some german.get
   | _ => none
 
 /-- The candidate break weights of the pattern walk, before the minima

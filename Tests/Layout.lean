@@ -2188,7 +2188,7 @@ def hyphenChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- plain lualatex is a different oracle because TeX Live maps `english` to
   -- hyphen.tex, Knuth's frozen subset. \showhyphens lists every admissible
   -- break, not one chosen rendering. Full 552-word check: scripts/hyphen-diff.lean
-  let pats := Hyphen.load
+  let pats := Hyphen.english.get
   let hyph (w : String) : String := Id.run do
     let breaks := Hyphen.hyphenate pats w
     let mut out := ""
@@ -2217,7 +2217,7 @@ def hyphenChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- French (hyph-fr.tex, selected per language: patsOf). Expectations are
   -- lualatex \showhyphens output under [french]{babel} on this host, the
   -- same oracle as the English rows.
-  let frp := Hyphen.french
+  let frp := Hyphen.french.get
   let hyphFr (w : String) : String := Id.run do
     let breaks := Hyphen.hyphenate frp w
     let mut out := ""
@@ -2236,7 +2236,7 @@ def hyphenChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- German (hyph-de-1996.tex, hyphenmins 2/2 from the locale record).
   -- Verified against luatex loading the same file: hyphen-diff --lang de,
   -- 2800 words, exact.
-  let dep := Hyphen.german
+  let dep := Hyphen.german.get
   let hyphDe (w : String) : String := Id.run do
     let breaks := Hyphen.hyphenate dep w
     let mut out := ""

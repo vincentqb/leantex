@@ -58,8 +58,10 @@ def load : Tables := Id.run do
         (Char.ofNat (b.toNat?.getD 0))
   return { ccc, decomp, comp, letters, lower }
 
-/-- The tables, built once per process. -/
-def tables : Tables := load
+/-- The tables, built once per process, on first use (`Thunk`: a
+zero-argument constant would build them at process start, ASCII
+documents included). -/
+def tables : Thunk Tables := Thunk.mk fun _ => load
 
 -- Hangul syllable composition is arithmetic (Unicode §3.12).
 private def sBase : Nat := 0xAC00
@@ -158,7 +160,7 @@ has nothing to decompose, reorder, or compose, and passes through whole. -/
 def normalizeChars (cs : Array Char) : Array Char := Id.run do
   if cs.all (·.toNat < 0xC0) then
     return cs
-  let t := tables
+  let t := tables.get
   let mut work : Array Char := Array.mkEmpty cs.size
   for c in cs do
     work := decomposeInto t work c
@@ -180,7 +182,7 @@ ASCII answers without the search. -/
 def isLetter (c : Char) : Bool := Id.run do
   if c.toNat < 0x80 then
     return c.isAlpha
-  let rs := tables.letters
+  let rs := tables.get.letters
   let mut lo := 0
   let mut hi := rs.size
   for _ in [0:rs.size + 1] do
@@ -199,6 +201,6 @@ against lowercase hyphenation patterns needs — `Char.toLower` is
 ASCII-only and leaves É beside é. -/
 def toLower (c : Char) : Char :=
   if c.toNat < 0x80 then c.toLower
-  else tables.lower.getD c.val c
+  else tables.get.lower.getD c.val c
 
 end LeanTex.Core.Nfc

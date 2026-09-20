@@ -498,7 +498,7 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "kern: an unkerned pair answers 0" (ssp.kernAdv sspA sspA == 0)
   let osans ← load "OpenSans-Regular.ttf"
   t "kern: a face with no pairs answers 0 for every pair"
-    (osans.kernSubs.isEmpty && osans.kernPairs.isEmpty &&
+    ((osans.kernData.get).1.isEmpty && (osans.kernData.get).2.isEmpty &&
       osans.kernAdv ((osans.gid 'T').getD 0) ((osans.gid 'a').getD 0) == 0)
   -- The applied value reaches the box: a "Ta" word's width is the two
   -- advances plus the (negative) kern, exactly
@@ -680,7 +680,7 @@ def fontsDeclChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
-  let pats := Hyphen.load
+  let pats := Hyphen.english.get
   -- font parsing on the system font
   match ← findFont with
   | none =>

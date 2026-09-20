@@ -524,14 +524,14 @@ structure Font where
   Empty unless the face carries both features (see `parseGsubSmallCaps`);
   empty means the layout synthesises small caps instead. -/
   smallCaps : Array (Nat × Nat)
-  /-- GPOS `kern` PairPos subtables, parsed to their skeletons and
-  queried per pair (`Font.kernAdv`): the class matrices stay in `data`.
-  Empty for a face with no GPOS kern — Open Sans, and every monospace
-  done right (Source Code Pro). -/
-  kernSubs : Array KernSub
-  /-- The legacy `kern` table pairs, HarfBuzz's own fallback rule
-  (F_GLOBAL_HAS_FALLBACK): read only when `kernSubs` is empty. -/
-  kernPairs : Array (Nat × Int)
+  /-- Pair kerning, lazily (`Thunk` is call-by-need, so a loaded-but-
+  unused variant face never pays the ClassDef walk): the GPOS `kern`
+  PairPos subtables parsed to their skeletons and queried per pair
+  (`Font.kernAdv`, the class matrices staying in `data`), and the legacy
+  `kern` table pairs read only when GPOS carries none — HarfBuzz's own
+  fallback rule (F_GLOBAL_HAS_FALLBACK). Both empty for a face with
+  neither: Open Sans, and every monospace done right (Source Code Pro). -/
+  kernData : Thunk (Array KernSub × Array (Nat × Int))
   deriving Inhabited
 
 private def parseCmap4 (b : ByteArray) (off : Nat) : Array (UInt32 × UInt32 × UInt32) := Id.run do
@@ -838,7 +838,6 @@ def parse (data : ByteArray) : Except String Font := do
       ext := ext.push (Thunk.mk fun _ => src.yExtentAt g)
     return ext
   let sc := parseGsubSmallCaps data
-  let kernSubs := parseKernSubs data
   return {
     data := data
     isCff := isCff
@@ -872,8 +871,9 @@ def parse (data : ByteArray) : Except String Font := do
     hasSmcp := sc.1
     hasC2sc := sc.2.1
     smallCaps := sc.2.2
-    kernSubs := kernSubs
-    kernPairs := if kernSubs.isEmpty then parseLegacyKern data else #[]
+    kernData := Thunk.mk fun _ =>
+      let subs := parseKernSubs data
+      (subs, if subs.isEmpty then parseLegacyKern data else #[])
   }
 
 /-- Glyph id for a scalar, or `none` (missing glyph). -/
@@ -893,7 +893,8 @@ matrix), else the legacy pairs, else 0 — including for every pair of a
 face with no kern data at all. -/
 def Font.kernAdv (f : Font) (g1 g2 : Nat) : Int := Id.run do
   let b := f.data
-  for sub in f.kernSubs do
+  let (subs, pairs) := f.kernData.get
+  for sub in subs do
     match covIndex sub.cov g1 with
     | none => pure ()
     | some ci =>
@@ -917,12 +918,12 @@ def Font.kernAdv (f : Font) (g1 g2 : Nat) : Int := Id.run do
   -- legacy pairs, binary search
   let key := g1 * 0x10000 + g2
   let mut lo := 0
-  let mut hi := f.kernPairs.size
+  let mut hi := pairs.size
   for _ in [0:34] do
     if lo ≥ hi then
       break
     let mid := (lo + hi) / 2
-    match f.kernPairs[mid]? with
+    match pairs[mid]? with
     | none => break
     | some (k, v) =>
       if key < k then

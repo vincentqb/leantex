@@ -64,11 +64,11 @@ def main (args : List String) : IO UInt32 := do
     | _ => "en"
   let args := args.filter (fun a => a != "--lang" && a != lang)
   let some dl := (match lang with
-    | "en" => some { input := "hyph-en-us", pats := Hyphen.load
+    | "en" => some { input := "hyph-en-us", pats := Hyphen.english.get
                      leftMin := Locale.en.leftMin, rightMin := Locale.en.rightMin : DiffLang }
-    | "fr" => some { input := "hyph-fr", pats := Hyphen.french
+    | "fr" => some { input := "hyph-fr", pats := Hyphen.french.get
                      leftMin := Locale.fr.leftMin, rightMin := Locale.fr.rightMin : DiffLang }
-    | "de" => some { input := "hyph-de-1996", pats := Hyphen.german
+    | "de" => some { input := "hyph-de-1996", pats := Hyphen.german.get
                      leftMin := Locale.de.leftMin, rightMin := Locale.de.rightMin : DiffLang }
     | _ => none)
     | return (← die 2 s!"no pattern table for '{lang}'")
