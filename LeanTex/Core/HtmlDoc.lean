@@ -1321,7 +1321,11 @@ private def slideCss (doc : Doc) : String :=
     -- step included, scales from the stage; the heading retakes its
     -- scale step in em to ride the same base.
     "body { padding: 0; }\n" ++
-    "main { max-width: none; margin: 0; display: flex;\n" ++
+    -- align-items flex-start: a slide is its own height (its min-height,
+    -- the viewport), never stretched to a spilling neighbour's — under
+    -- the default stretch one spill frame made every frame's vdist
+    -- distribute a taller-than-viewport box, pushing content off screen.
+    "main { max-width: none; margin: 0; display: flex; align-items: flex-start;\n" ++
     s!"  font-size: {milliFactor (deckStageMilli doc.page.fontSize doc.page.height).toNat}vh; }\n" ++
     "section.slide, section.section-page { width: 100vw; flex: 0 0 100vw;\n" ++
     "  min-height: 100dvh; scroll-snap-align: start;\n" ++
@@ -2182,7 +2186,14 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- The picture as inline SVG: the same evaluated shapes the PDF paints,
     -- through the typed tree so every label passes the escaper. SVG's y
     -- grows downward, so the transform is the PDF path's: flip against the
-    -- box's top. Lengths are pt, the unit the viewBox declares.
+    -- box's top. Lengths are pt, the unit the viewBox declares — and in
+    -- flow classes the element's own size too: paper is paper. On the
+    -- paged deck the stage is the viewport, so the box ships as its
+    -- share of the stage instead (`deckStageMilli`, as images do): a pt
+    -- box against CSS's 96 dpi ruler was the same "very small picture"
+    -- defect. Both shares are stated and the viewBox's own ratio
+    -- letterboxes inside them (SVG 2 §8.7, `meet`), so a viewport of
+    -- another ratio never distorts the ink.
     let ((px0, py0), (px1, py1)) := pic.bbox
     let w := px1 - px0
     let h := py1 - py0
@@ -2265,12 +2276,15 @@ L {px t.x3} {py t.y3} Z"),
           | none => #[]
         Html.elem "g" (#[Html.elem "path" #[] ((#[("d", d)] : Array (String × String))
           ++ paint (some st) none)] ++ tipNodes) #[]
-    Html.elem "svg" kids #[
-      ("viewBox", s!"0 0 {w.toPtString} {h.toPtString}"),
-      ("width", s!"{w.toPtString}pt"),
-      ("height", s!"{h.toPtString}pt"),
+    Html.elem "svg" kids (#[
+      ("viewBox", s!"0 0 {w.toPtString} {h.toPtString}")] ++
+      (if cfg.deck then
+        #[("style", s!"width: {decMilli (deckStageMilli w cfg.page.width)}vw; \
+height: {decMilli (deckStageMilli h cfg.page.height)}dvh")]
+       else
+        #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")]) ++ #[
       ("role", "img"),
-      ("class", "picture")]
+      ("class", "picture")])
   -- booktabs' formal table. Rules land as border classes on the row they
   -- precede (`-below` on the last row for a rule written after it), and
   -- the stylesheet draws each class at the sourced weight with its

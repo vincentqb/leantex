@@ -837,8 +837,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has deckPage "html { scroll-snap-type: x mandatory; }" &&
      has deckPage "scroll-snap-align: start" &&
      has deckPage "scroll-snap-stop: always")
-  t "the deck is a row: each section one viewport of it"
-    (has deckPage "main { max-width: none; margin: 0; display: flex;" &&
+  t "the deck is a row: each section one viewport of it, its own height"
+    (has deckPage "main { max-width: none; margin: 0; display: flex; align-items: flex-start;" &&
      has deckPage "section.slide, section.section-page { width: 100vw; flex: 0 0 100vw;")
   t "the deck glide ships with its reduced-motion guard"
     (has deckPage "html { scroll-behavior: smooth; }" &&
@@ -920,7 +920,8 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
   let imgs := "\\includegraphics[width=0.5\\textwidth]{a.png}\n\n" ++
     "\\includegraphics[height=0.4\\textheight]{a.png}\n\n" ++
     "\\includegraphics[width=5cm]{a.png}\n\n" ++
-    "\\includegraphics[scale=0.5]{a.png}"
+    "\\includegraphics[scale=0.5]{a.png}\n\n" ++
+    "\\begin{tikzpicture}\n\\fill (0,0) rectangle (2,1);\n\\end{tikzpicture}"
   -- 144 px at the default density is 144 pt intrinsic width.
   let info : Image.Info := { format := .png
                              pxW := 144
@@ -942,6 +943,10 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the deck carries no pt image dimension"
     (((html.splitOn "<img").drop 1).all fun s =>
       (((s.splitOn ">").headD "").splitOn "pt").length == 1)
+  t "a picture's box is its share of the stage, no pt dimension"
+    ((((html.splitOn "<svg").drop 1).all fun s =>
+        (((s.splitOn ">").headD "").splitOn "pt").length == 1) &&
+     has "vw; height:" && has "dvh\"")
   -- The flow reading, untouched: pt for the absolute length and the
   -- scale, % for the fraction, the intrinsic size for the textheight
   -- fraction (no CSS analog on paper).
@@ -954,6 +959,8 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
      hasA "pt; height: auto" &&
      hasA "width: 72pt; height: auto" &&
      !hasA "dvh" && !hasA "vw")
+  t "a flow picture keeps its pt box"
+    (hasA "pt\" height=\"" || hasA "pt\" role=\"img\"")
 
 /-- The paged deck's structure: a frame's declared vertical distribution
 reaches the artifact as flex spacers carrying the PDF's own ratios — the
