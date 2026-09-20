@@ -530,6 +530,15 @@ when a site closes; a new entry is a deliberate decision, not a mirror
 miss. -/
 def sealAllow : List String := ["noteDefs"]
 
+/-- The size-step formula re-spelled outside Ir (asked by q-layout, live
+once `Ir.scaleStep` landed): `sizeScale.lookup … getD` is `scaleStep`'s
+body, and nine copies of it once diverged on the default (`getD 700` vs
+`getD 1000` — both dead, still drift). A bare `match` on the lookup is not
+the shape: an unknown size name must stay an `Option`. -/
+def scaleStepRespell (l : String) : Bool :=
+  let t := stripLineComment (stripStrings l)
+  containsSub t "sizeScale.lookup" && containsSub t ".getD"
+
 /-- One staged-diff check: which files it reads, the line predicate, the
 headline naming the file, and the fix paragraph. The stanzas `main` used
 to spell one by one differed only in these four fields. -/
@@ -669,6 +678,15 @@ def gates : List Gate := [
   defects once passed a fully green suite that way (AGENTS.md, Conventions).
   Fix: assert over Layout.Out or the typed HTML tree; an IR-tier fact that
   is not a page claim says so on the line: `{irTierMark} <why>`." },
+  { applies := fun f => f.startsWith "LeanTex/" && f != "LeanTex/Core/Ir.lean"
+    flag := scaleStepRespell
+    what := fun f => s!"the size-step formula re-spelled (`sizeScale.lookup … getD`) in {f}"
+    help := "  Ir.scaleStep is the one resolving site for a named step of the size
+  scale; the getD re-spelling is how markBox's default drifted to 700
+  while every other site said 1000.
+  Fix: read Ir.scaleStep base name; a genuine Option need (an unknown
+  name must stay none) matches on the lookup without getD, and a theorem
+  naming a raw table value lives beside the table in Ir.lean." },
   { applies := fun f => (f == "Tests.lean" || f.startsWith "Tests/")
       && f != "Tests/Support.lean"
     flag := splitOnIdiom
@@ -708,6 +726,16 @@ def selftest : IO UInt32 := do
     for (line, want) in cases do
       if p line != want then
         fails.modify (s!"{name} {if want then "missed" else "fired on"}: {line}" :: ·)
+
+  expect "scaleStepRespell" scaleStepRespell [
+    -- the drift shapes the collapse deleted, default divergence included
+    ("  let markSize := around * ((Ir.sizeScale.lookup \"scriptsize\").getD 700) / 1000", true),
+    ("  milliFactor ((Ir.sizeScale.lookup name).getD 1000) ++ unit", true),
+    -- an Option-shaped match, the shared def, comments and strings stay legal
+    ("  | .size n => match Ir.sizeScale.lookup n with", false),
+    ("  let s := Ir.scaleStep base n", false),
+    ("  -- sizeScale.lookup … .getD quoted in a comment", false),
+    ("  say s!\"a message naming sizeScale.lookup and .getD\"", false)]
 
   expect "splitOnIdiom" splitOnIdiom [
     -- the copies the audit deleted, both count spellings and the
