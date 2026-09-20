@@ -185,6 +185,44 @@ script.
   not a default. Remote stepping and auto-advance are likewise
   script-only and stay asks.
 
+2026-09-20 — footnotes: the note lands on the page of its mark, by
+construction and by theorem.
+
+- `\footnote` is a modelled node (`Inline.footnote`, inline body only —
+  a paragraph break inside a note is a space, W0371), numbered at
+  elaboration through `Ir.footnoteMark`: document-wide, `[num]` overrides
+  unstepped (ltmiscen.dtx `\@xfootnote`), and
+  `footnote_numbers_gapless` instantiates `numbers_gapless` over the
+  step. The body is document text (`footnoteWrap_text`, a `Conserves`
+  instance); the mark digit is generated ink, as `citeMark` is.
+- Layout: the mark is a raised scriptsize run (`Ir.markRaise`, one named
+  constant standing in for OS/2 `ySuperscript*`); each note is its own
+  pre-broken block at footnotesize on the full measure, attached to the
+  page when its mark's line commits and flushed bottom-anchored in
+  `finishPage` before the vertical distribution — flush or centred
+  bottoms never move a note, which is also what lands a deck's note at
+  the frame foot. `\skip\footins` is the rhythm-quantized `footins`
+  token (`footins_within_glue`: two quanta, inside the source glue's own
+  rubber); `\footnoterule` and `\footnotesep` are sourced constants
+  written where they stand. Whole-or-move: `placeLine_note_with_mark`,
+  `footnote_with_mark`, and `note_whole` are theorems over the builder
+  (the `float_whole` `PagesExtend` shape); a note taller than the text
+  block ships whole with W0372 naming the overrun, never split (TeX's
+  split insertions refused by design).
+- HTML: `doc-noteref` marks, one `doc-endnotes` section with
+  `doc-backlink`s (W3C DPUB-ARIA 1.1), no script; markdown sets `[^k]`
+  with definitions after the body. Refusals named: W0370
+  `\footnotemark`/`\footnotetext` pending, W0373 `\thanks` kept inline
+  in the title block, W0374 a card face has no note apparatus.
+- Named remainders: parsing OS/2 `ySuperscript*` (the mark raise's real
+  authority); per-chapter numbering with a real `report` class (a
+  `ClassRecord` field then); `\thanks` as a title-foot note with
+  fnsymbol marks; note splitting across pages (a `runFloat`-class
+  rework); `footmisc` (unfunded compat-index obligation); the markdown
+  *reader*'s `[^k]`; per-frame renumbering on decks; underline siblings
+  for links inside PDF notes; footnotes inside captions, table cells,
+  and headings stay inline (no diagnostic yet).
+
 2026-09-20 — the vertical convention lands: the line box is the leaded
 metric extent, and everything against a line measures from metric lines.
 
