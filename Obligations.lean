@@ -183,4 +183,56 @@ theorem elab_inlines_option_run_dropped (w kept : String) (st : Elab.ESt) :
         #[.ctrl "zzz" ⟨1, 1⟩, .group #[.word kept ⟨1, 9⟩] ⟨1, 8⟩]).run st).1 := by
   sorry
 
+/-- The colour a shipped run stands on, recovered geometrically: the last
+fill of its page whose rectangle contains the run's baseline midpoint —
+fills paint in order, later on top — else the effective page surface. A
+measure over public `Layout.Out` types; the judge's own grounds are
+declarative (palette epochs, the frame-title bar), and relating the two
+readings is this obligation's content. -/
+def groundUnder (defaultBg : Ir.Color) (p : PageOut) (l : LineOut)
+    (x0 w : Int) : Ir.Color := Id.run do
+  let mx : Int := x0 + w / 2
+  let mut ground := defaultBg
+  for f in p.fills do
+    if f.x ≤ mx && mx ≤ f.x + f.w && f.y ≤ l.y && l.y ≤ f.y + f.h then
+      ground := f.color
+  return ground
+
+/-- Every (colour, ground) pair a page's glyph runs ship, ground recovered
+by `groundUnder`: the enumeration the completeness statement compares to
+the judge's. -/
+def runPairs (defaultBg : Ir.Color) (p : PageOut) :
+    Array (Ir.Color × Ir.Color) := Id.run do
+  let mut out : Array (Ir.Color × Ir.Color) := #[]
+  for l in p.lines do
+    let mut x := l.x
+    for s in l.segs do
+      match s with
+      | .run _ color _ w glyphs _ _ _ =>
+        unless glyphs.isEmpty do
+          out := out.push (color, groundUnder defaultBg p l x w)
+        x := x + w
+      | .gap w => x := x + w
+      | .rule w _ _ _ => x := x + w
+      | .image _ w _ => x := x + w
+  return out
+
+-- owed: contrast_judged_complete
+-- owner: LeanTex.Core.Contrast
+-- source: the a11y-contract slice (the user's ask: weak accessibility in any document is proven, never suspected) — the completeness half of the W0315/W0345 judge, whose per-bundle contracts are already theorems
+-- blocker: Layout.Out carries no declared per-run ground, so the statement recovers it geometrically (groundUnder) while the judge's grounds are declarative (palette epochs, the frame-title bar, the standout inversion); relating the two needs a ground written onto `Seg.run`/`LineOut` at the resolving site (the handoff named in the slice report), and then the collect-walk induction that blocks emission_conservation_paras equally (the `Acc` split, arch-provable R3).
+-- goldens: no
+/-- The contrast judge is complete over the shipped pages: every glyph run
+`Layout.run` ships, paired with the ground recovered under it, is a pair
+`Contrast.judgedPairs` enumerates — so a colour pairing the reader sees
+that the judge never weighed does not exist, and weak contrast anywhere is
+a warning, never a discovery. -/
+theorem contrast_judged_complete
+    (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Ir.Doc) :
+    ∀ p ∈ (Layout.run geom fs pats doc).pages,
+      ∀ pr ∈ runPairs (Contrast.effectivePair doc).bg p,
+        (Contrast.judgedPairs doc).contains pr = true := by
+  sorry
+
 end Obligations

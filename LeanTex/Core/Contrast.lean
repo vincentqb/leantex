@@ -830,4 +830,45 @@ theorem builtin_palette_contract_engine :
       coveredContract (Theme.apply t {}).palette) = true := by
   decide +kernel
 
+/-- The (ink, ground) pairs the document-level contrast judge enumerates,
+as data: the effective pair, each body epoch's effective pair, every
+coloured use on the surface it stood on (the running head and foot and
+the chrome footer's muted key included, exactly as `docDiags`' walk reads
+them), and the resolved design-site pairs per epoch that ships one — the
+frame-title bar, the standout inversion, the titled blocks.
+`contrast_judged_complete` (Obligations) ranges over this projection: a
+shipped glyph run whose (colour, ground) pair falls outside this set
+would be a run the judge never saw, and the obligation is that no such
+run exists. -/
+def judgedPairs (doc : Doc) : Array (Color × Color) := Id.run do
+  let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
+  let walk := usesBlocks base { pal := doc.palette } doc.body.toList
+  let mut acc := { walk with pal := doc.palette }
+  if doc.docClass.record.chrome && doc.chrome.hasFooter && doc.foot.isNone then
+    if let some muted := doc.palette.find? "muted" then
+      acc := acc.use base (some "muted") muted
+  for run in [doc.head, doc.foot] do
+    if let some content := run then
+      acc := usesInlines base acc content.toList
+  let d0 := Design.ofDoc doc
+  let bg0 := (effectivePair doc).bg
+  let mut out : Array (Color × Color) := #[((effectivePair doc).fg, bg0)]
+  out := out.push (d0.fg, bg0)
+  out := out.push (d0.muted, bg0)
+  for pal in walk.epochs do
+    out := out.push ((pal.find? "fg").getD Color.black, surfaceOf pal)
+  for u in acc.uses do
+    out := out.push (u.color, u.surface)
+  for (kind, pal) in walk.blockPals do
+    let look := titledLook pal kind
+    out := out.push (look.fg, look.bar.getD ((pal.find? "bg").getD Color.white))
+  for pal in walk.titledPals do
+    let d := Design.ofDoc { doc with palette := pal }
+    if let some p := d.frametitle then
+      out := out.push (p.fg, p.bg)
+  for pal in walk.standoutPals do
+    let d := Design.ofDoc { doc with palette := pal }
+    out := out.push (d.standout.fg, d.standout.bg)
+  return out
+
 end LeanTex.Core.Contrast

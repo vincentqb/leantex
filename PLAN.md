@@ -96,6 +96,14 @@ list.
   run agree, whatever the run's text. Statable since the inline knot
   became total; blocked on the proof's elaboration budget, not the
   statement.
+- `contrast_judged_complete` — the contrast judge's completeness over the
+  shipped pages: every glyph run `Layout.run` ships, with its colour and
+  the ground recovered under it (the last fill containing its baseline
+  midpoint, else the effective page), lands in `Contrast.judgedPairs` —
+  no pairing outside the judged set. Blocked on `Layout.Out` carrying no
+  declared per-run ground (the geometric recovery below is the measure,
+  the judge's grounds are declarative) and on the collect-walk induction
+  behind the `Acc` split.
 
 ### Log
 
