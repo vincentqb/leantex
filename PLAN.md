@@ -101,6 +101,36 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — backend quality pass (q-backends): the writers call the
+functions their theorems name, motion guards ride by construction, one
+heading-rank site.
+
+- `Pdf.pdfTextString`'s non-ASCII branch and `Pdf.xmlEscape` were
+  byte-identical private twins of `utf16Hex` and `Html.escapeText`;
+  both deleted, the XMP inherits `escapeText_no_lt`. `Pdf.write` now
+  computes its keep set as `keepFaces` itself, the function
+  `html_fonts_cover_pdf` quantifies over, instead of an inline twin an
+  edit could silently detach.
+- `revealCss` was the one animation site shipping unguarded under
+  `css = none`/`bulma`; it now ends in `revealMotionGuard`
+  definitionally (`revealCss_guarded`), and `motionSiteChecks` extends
+  to `animation:` — every emission definition ends in its guard, spells
+  the guard query, or is allowlisted with its reason.
+- `Html.headingRank` is the one heading-rank site both text backends
+  project; `heading_renderings_agree` now quantifies over every level
+  (it was a `decide` over four constants). The rank belongs in `Ir`;
+  handed off. Markdown escapes `|`, so a pipe-table cell containing one
+  keeps its row (CommonMark §2.4).
+- Honest non-theorems, named rather than dressed up: the UTF-8
+  "round-trip" claim in Certification is *oracle-backed* —
+  `utf8FuzzChecks`, a fuzz oracle against `String.fromUTF8?` — evidence,
+  not a theorem; the round-trip theorem is owed. And the covered-step
+  shade diverges by construction: the PDF mixes in the engine's own
+  Oklab, the HTML delegates to the browser's `color-mix(in oklab)` —
+  same declared fraction and space from one `Design`, but nothing ties
+  the two mix implementations, so the agreement is a test-level fact,
+  not a statable theorem over the engine's functions.
+
 2026-09-20 — the text reveals itself: one HTML section per frame, steps
 uncover in place. Supersedes the 2026-09-20 scroll-snap entry's
 "steps are pages" item.
