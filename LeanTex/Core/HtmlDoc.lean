@@ -104,7 +104,8 @@ def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up",
    "section-number", "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
-   "bt-light-above", "centered", "column", "columns", "content", "entry",
+   "bt-light-above", "centered", "column", "columns", "content",
+   "deck-progress", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
@@ -728,7 +729,25 @@ def themeCss (doc : Doc) : String :=
     ".progress { background: var(--progressbg, var(--rule));\n" ++
     "  height: var(--progressheight, 1pt);\n" ++
     s!"  width: 60%; margin: {quantaRem 1} auto 0; }\n" ++
-    ".progress > div { background: var(--progressfg); height: 100%; }\n" else "") ++
+    ".progress > div { background: var(--progressfg); height: 100%; }\n" ++
+    -- The paged deck's own progress: a hairline across the viewport top,
+    -- scaled by how far the reader has paged — declarative where the
+    -- platform has scroll-driven animations (`scroll(root)`, Scroll-driven
+    -- Animations 1), the same tokens as the section-page bar, and the
+    -- same floor as `revealCss`: without the feature the rules never
+    -- apply and the deck is fully navigable without its bar. Screen only:
+    -- a printed handout has no scroll to report.
+    (if doc.docClass == .slides then
+      "@media screen { @supports (animation-timeline: scroll()) {\n" ++
+      ".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
+      "  height: var(--progressheight, 1pt); background: var(--progressfg);\n" ++
+      "  transform-origin: 0 50%;\n" ++
+      "  animation: ltx-deck-progress linear both;\n" ++
+      "  animation-timeline: scroll(root); }\n" ++
+      "@keyframes ltx-deck-progress { from { transform: scaleX(0) } \
+to { transform: scaleX(1) } }\n" ++
+      "} }\n"
+     else "") else "") ++
   -- The chrome footer: colour from the muted key, size from the shared
   -- scale (`size-small` on the element), positions fixed by the declared
   -- side — each slot pinned to its edge, as `Layout.bandSlotX` pins the
@@ -2469,6 +2488,12 @@ first; retitle one frame, or link to '#{id}'"))
   let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]
     else #[("class", bodyClass)])
   let mut body : Array Node := #[main]
+  -- The deck's progress hairline, emitted exactly when the deck draws
+  -- progress at all (`themedSections`, the section-page gate): an inert
+  -- marker div the class-gated stylesheet scales by scroll position.
+  if themedSections then
+    body := body.push (Html.elem "div" #[]
+      #[("class", "deck-progress"), ("aria-hidden", "true")])
   if let some tool := cfg.mathBoundary then
     body := body.push (Html.elem "script" #[]
       #[("data-math-boundary", tool), ("src", tool)])

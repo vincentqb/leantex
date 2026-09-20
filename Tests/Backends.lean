@@ -317,7 +317,8 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html themed fixture elaborates clean"
     (themedDs.all fun d => d.severity == .note)
   t "html progress height reads the token the PDF reads"
-    ((themedPage.splitOn "height: var(--progressheight, 1pt);").length == 2)
+    ((themedPage.splitOn (".progress { background: var(--progressbg, var(--rule));\n" ++
+      "  height: var(--progressheight, 1pt);")).length == 2)
   t "html themed sheet has one gap owner per boundary"
     ((themedPage.splitOn "margin-bottom").length == 2)
 
@@ -839,6 +840,34 @@ def deckStructureChecks (ref : IO.Ref (List String)) : IO Unit := do
     (!linkDs.any (·.code == "W0326") &&
      (linkHtml.splitOn "id=\"a-b\"").length == 2 &&
      (linkHtml.splitOn "id=\"a-b-2\"").length == 2)
+
+/-- The deck's progress hairline: emitted exactly when the deck draws
+progress at all, scaled by the root scroll under `@supports` (Scroll-driven
+Animations 1), reading the same two tokens the PDF's section-page bar
+reads. The emission census a backend emission owes — asserted on the
+emitted page, the HTML face of the `censusTable` obligation. -/
+def deckProgressChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr (deck169 "\\theme{moloch}"
+    "\\section{S}\n\\begin{frame}{T}\nx\n\\end{frame}")
+  let html := (HtmlDoc.emit {} doc).1
+  let has (page s : String) : Bool := (page.splitOn s).length ≥ 2
+  t "progress deck elaborates clean" (ds.all fun d => d.severity == .note)
+  t "the themed deck ships its progress hairline"
+    (has html "class=\"deck-progress\"")
+  t "the hairline scales by the root scroll under supports"
+    (has html "@supports (animation-timeline: scroll())" &&
+     has html "animation-timeline: scroll(root)")
+  t "the hairline reads the tokens the PDF's bar reads"
+    (has html (".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
+      "  height: var(--progressheight, 1pt); background: var(--progressfg);"))
+  let (bareDoc, _) := elabStr (deck169 "\\theme{default}"
+    "\\begin{frame}{T}\nx\n\\end{frame}")
+  t "a deck that draws no progress ships no hairline"
+    (!has (HtmlDoc.emit {} bareDoc).1 "deck-progress")
+  let (artDoc, _) := elabStr "\\documentclass{article}\\begin{document}x\\end{document}"
+  t "no other class ships the hairline"
+    (!has (HtmlDoc.emit {} artDoc).1 "deck-progress")
 
 /-- Declared once, derived everywhere: every metadata fact lives in the one
 `Ir.Meta` record and each surface derives its own rendering of it — the HTML
