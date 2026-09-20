@@ -119,6 +119,67 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — the deck stacks vertically; the motion stays horizontal
+(slides-vertical). Supersedes the horizontal row's axis and the entry
+fade; the step-uncover construction rotates with it.
+
+- The decision: without script a key does what the browser's scroller
+  does with it, so the axis of the scroll space decides the keyboard. A
+  vertical root scroller natively pages on Space, Shift+Space,
+  PageDown/PageUp, ArrowDown/ArrowUp, Home/End, the wheel, swipe, and
+  presenter remotes; the horizontal row answered only ArrowLeft/Right,
+  and no declaration adds the rest to an x-scroller. The deck's scroll
+  space is now `y mandatory` on the root — one snap page per frame and
+  per overlay step — and Scroll Snap 1 §6.2's "a scroll with only an
+  intended direction must always ignore the starting snap position"
+  is the sentence that retires the several-presses defect (probed: one
+  ArrowDown / PageDown / Space each moved exactly one 720 px page on
+  the dev Chromium, plain and stepped frames alike).
+- The motion: every frame rides a `.slide-track` in the stack as a
+  sticky stage (`top: 0`); the track's `::after` extends its sticky
+  travel exactly one page past its last snap, so the outgoing frame
+  stays pinned through the whole transition. The incoming frame scrubs
+  `ltx-push` — `translate(100vw, -100dvh) → none` — over its own
+  `view(y)` entry range: the `-100dvh` leg cancels the scroll's
+  vertical travel exactly (ranges ignore transforms and account for
+  positioning, Scroll-driven Animations 1 §3.1, so the animation
+  cannot feed its own timeline), leaving pure horizontal arrival —
+  Keynote's push; the title band's y never moves (probed mid-glide: at
+  scroll 557/720 the computed transform was `translate(289.8, -163)`,
+  the exact cancellation). Frames pin their height to the viewport in
+  this path; spill content stays reachable through the frame's own
+  scrollbar, the visible control.
+- Two invariants, by construction: snap areas live on static `.snap`
+  spacers, never the sticky stage — a snap area is the *transformed*
+  border box at its offset position (Scroll Snap 1 §5.1), so a pinned
+  stage would define a snap position at every offset and paging would
+  never correct. And the previous frame cannot paint over the next:
+  sections are positioned boxes painted in tree order — the old
+  stage-over-neighbour defect has no expression in this layout. Frame
+  anchors move onto the track (a pinned section reads as "in view", so
+  a backward fragment jump onto it would never scroll).
+- The uncover rotates: `view-timeline: --frame y`; the track's border
+  box is one viewport taller than its N pages, so `contain` spans N
+  viewports and step n's range becomes `(n−2)/N → (n−1)/N` (probed:
+  step-2 opacity 0.31 at snap 1, 1.0 at snap 2).
+- The floor grows navigation: without `view()` timelines the deck is
+  the plain vertical snap stack (all keys work, no motion) and covered
+  steps stay covered — uncovered by the new always-visible `‹ k / N ›`
+  control (`nav.step-nav`, one cluster per step over `:has(:target)`,
+  numeric rules per step, no `calc()`; `:target` matches a hidden
+  spacer's fragment, so the uncover fires in place without scrolling;
+  keyboardable by Tab + Enter). Under the timeline path the control's
+  links also scroll; its shown number follows the fragment, not the
+  scroll — the declarative remainder. Reduced motion reverts the whole
+  geometry to the static stack at full colour (`deckPushCss_guarded`,
+  `deckStepCss_guarded`); print is the unchanged handout and hides the
+  control.
+- Verified: gates green; four reference PDFs and the webpage fixture
+  HTML byte-identical against main's binary; the reference deck 62
+  pages / 10 warnings / 0 errors; bench themed 80/82 ms pdf/html,
+  paper 151/145 (medians of 5, same session) — at the previous
+  session's numbers.
+
 2026-09-20 — theorems layered: IR facts first, artifact theorems as
 projections (impl-layers).
 
