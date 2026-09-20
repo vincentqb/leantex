@@ -1111,48 +1111,22 @@ def displayItems (target : Sp) (items : Array Item) : Array Item :=
 
 -- The document's scalars, for the driver's per-glyph fallback ------------------
 
-mutual
-
 /-- The scalars a run's leaves ask a face for beyond its plain text: the
 Mathematical Alphanumeric code points elaboration mapped formula variables
 to, and each icon's glyph (its plain text is its text alternative) — neither
 lives in the plain text, so the census must walk the bodies themselves. One
-walk, both leaf kinds: `icons` collects `.icon` glyphs, `math` the formula
-scalars, so the two censuses cannot drift apart arm by arm. -/
-private def leafScalarsList (icons math : Array Char) :
-    List Ir.Inline → Array Char × Array Char
-  | [] => (icons, math)
-  | x :: rest =>
-    let (icons, math) := leafScalarsOne icons math x
-    leafScalarsList icons math rest
-
-private def leafScalarsOne (icons math : Array Char) :
-    Ir.Inline → Array Char × Array Char
-  | .formula _ _ body => (icons, Math.MList.scalarsList math body)
-  | .icon c _ => (icons.push c, math)
-  -- an anchor ships no glyphs; a reference's number is plain text, which
-  -- `textAndMath` already carries through `plainText`
-  | .label _ => (icons, math)
-  | .ref _ _ _ _ => (icons, math)
-  | .styled _ body => leafScalarsList icons math body.toList
-  | .colored _ _ body => leafScalarsList icons math body.toList
-  | .role _ body => leafScalarsList icons math body.toList
-  | .link _ body => leafScalarsList icons math body.toList
-  | .underline body => leafScalarsList icons math body.toList
-  | .step _ _ body => leafScalarsList icons math body.toList
-  | .text _ => (icons, math)
-  | .math _ _ => (icons, math)
-  | .image _ _ _ => (icons, math)
-  | .linebreak _ => (icons, math)
-  | .fill => (icons, math)
-  | .strut _ => (icons, math)
-  | .pageNumber => (icons, math)
-  | .pageCount => (icons, math)
-  | .cite _ _ => (icons, math)
-  -- a note's body ships glyphs like any inline content
-  | .footnote _ body => leafScalarsList icons math body.toList
-
-end
+`Ir.foldInlines` projection, both leaf kinds: `.icon` glyphs join `icons`,
+formula scalars join `math`, so the two censuses cannot drift apart arm by
+arm. An anchor ships no glyphs; a reference's number is plain text, which
+`textAndMath` already carries through `plainText`; a note's body ships
+glyphs like any inline content — the fold walks every wrapper. -/
+private def leafScalars (icons math : Array Char) (xs : Array Ir.Inline) :
+    Array Char × Array Char :=
+  Ir.foldInlines (fun acc x =>
+    match x with
+    | .formula _ _ body => (acc.1, Math.MList.scalarsList acc.2 body)
+    | .icon c _ => (acc.1.push c, acc.2)
+    | _ => acc) (icons, math) xs
 
 /-- The census accumulator: the plain texts a document's faces will be
 asked for, and — separately — the scalars its formulas ask the math face
@@ -1169,7 +1143,7 @@ private structure ScalarAcc where
 scalars: what keeps the per-scalar fallback one mechanism — a math or icon
 scalar enters the same precompute a text scalar does. -/
 private def textAndMath (out : ScalarAcc) (xs : Array Ir.Inline) : ScalarAcc :=
-  let (icons, math) := leafScalarsList #[] out.math xs.toList
+  let (icons, math) := leafScalars #[] out.math xs
   { out with
     texts := (out.texts.push (Ir.plainText xs)).push
       (String.ofList icons.toList)
