@@ -2834,11 +2834,6 @@ private structure B where
   on the page: a later column rewound to a fresh page's start must place
   its first line where the first column placed its. -/
   freshStart : Bool := false
-  /-- The last thing placed was a table rule: the next line stacks flush
-  under it — its ink height plus pending skips, no leading — as
-  TeX marks `\prevdepth` ignored after an `\hrule` so the box after a rule
-  takes exactly the explicit glue. booktabs' rule padding depends on it. -/
-  noInterline : Bool := false
   /-- A float group is being replayed on the page that holds it whole
   (`runFloat`): a line that would not fit commits anyway instead of
   breaking, because the group's one legal position has already been
@@ -3219,7 +3214,6 @@ private def B.commit (b : B) (line : LineOut) (depth below : Sp)
            needed := max b.needed overflow
            y := line.y
            freshStart := false
-           noInterline := false
            prevDepth := depth
            prevBelow := below
            prevRuleOnly := ruleLine
@@ -3386,7 +3380,11 @@ at `headingRuleWeight`; Bringhurst §2.2.2 for the unit the default gap is
 spelled in). So against a rule-only neighbour the terms are
 ink-referenced: an upper rule contributes its ink depth and the lower
 line its cap line (`inkAbove`); an upper line of text contributes its
-baseline (zero) and a lower rule its top edge. Cap height and baseline
+baseline (zero) and a lower rule its top edge. A table rule commits with
+zero depth and its baseline at the band's bottom, so the line under it
+stacks flush by this same rule — its ink height plus pending skips, no
+leading — as TeX marks `\prevdepth` ignored after an `\hrule`; booktabs'
+rule padding depends on it. Cap height and baseline
 are font metrics, so the artifact stays content-free; the accepted cost,
 written once here: a descender-free last line's gap below is not larger —
 that is the point — and an accented capital's accent rises into the upper
@@ -3455,10 +3453,7 @@ glyph-free, with no collision term at all. The HTML backend already ships
 this convention (`line-height`); this is what unifies the backends'
 baselines. Against a rule-only line the terms are ink-referenced
 (`interlineFor`): a full-measure rule stands its gap from the type's
-body — the cap line above the text, the baseline below it. Flush under a
-table rule (`noInterline`) stacks by ink instead — the convention's
-sanctioned clearance reading — as TeX ignores `\prevdepth` after an
-`\hrule`; booktabs' rule padding depends on it.
+body — the cap line above the text, the baseline below it.
 
 A page fills at natural glue until a line's ink will not fit even with
 every skip above it fully shrunk; then the page closes (shrunk to fit if
@@ -3490,8 +3485,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
     ((b.commit (mk firstY) box.inkBelow box.below rl 0 0).attachNotes
       notes).warnNoteOverrun firstY box.inkBelow
   else
-    let interline := if b.noInterline then box.inkAbove
-      else interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box
+    let interline := interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box
     let y := b.y + b.skip.width + interline
     let overflow := y + box.inkBelow - bottom
     let above := b.pageShrink + b.skip.shrink
@@ -3512,8 +3506,8 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
           (b.y + interlineFor b.prevRuleOnly b.prevDepth b.prevBelow rl box) box.inkBelow
 
 /-- The realization theorem's placement step: a line placed on the same
-page (the fit condition holds), under interline spacing (not flush under a
-table rule, neither neighbour bare rule ink — a rule's realized gap is
+page (the fit condition holds), under interline spacing (neither neighbour
+bare rule ink — a rule's realized gap is
 `title_bars_symmetric`'s statement), lands exactly the pending skip's
 natural width plus the
 metric interline — the previous line's leaded below plus this line's
@@ -3531,7 +3525,6 @@ plus exactly one rhythm quantum (`Ir.default_rhythm_multiples`). -/
 private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int)
     (hcur : b.cur.lines.isEmpty = false) (hfresh : b.freshStart = false)
-    (hni : b.noInterline = false)
     (hpr : b.prevRuleOnly = false) (hrl : ruleOnly segs = false)
     (hnn : b.notesH = 0)
     (hfit : b.y + b.skip.width
@@ -3551,7 +3544,7 @@ private theorem placeLine_gap_exact (fs : FontSet) (b : B) (x size : Sp)
   unfold B.placeLine
   rw [hle]
   dsimp only
-  simp only [hcur, hfresh, hni, hpr, hrl, interlineFor, hnn, noteFloor,
+  simp only [hcur, hfresh, hpr, hrl, interlineFor, hnn, noteFloor,
     Array.isEmpty_empty, Bool.or_self, Bool.false_eq_true, ite_false,
     ite_true, Int.add_zero, beq_self_eq_true]
   simp only [hfit, true_or, ite_true, B.commit, B.attachNotes,
@@ -3671,8 +3664,9 @@ private inductive Op where
   | hrule (color : Ir.Color) (thickness : Sp)
   /-- A table rule row, already set: rule (and gap) segs starting at `x`,
   covering `w`. Placed at exactly the pending skip below the previous ink —
-  booktabs' padding is the declared seps and nothing else — and it marks
-  the builder `noInterline`, so the row below stacks flush too. -/
+  booktabs' padding is the declared seps and nothing else — and it commits
+  with zero depth as a rule line, so the row below stacks flush too
+  (`interlineFor`). -/
   | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
   /-- Content placed so far on the open page is chrome pinned to the page
   top — the frame title and its bar: the page's vertical distribution
@@ -5476,9 +5470,6 @@ private structure ColSave where
   prevRule : Bool
   skip : Glue
   fresh : Bool
-  /-- The `noInterline` state at the open: every cell of a row under a
-  table rule stacks flush, not only the first. -/
-  flush : Bool
   bottomY : Sp
   bottomDepth : Sp
   bottomBelow : Sp
@@ -5540,7 +5531,6 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       y := b.y, prevDepth := b.prevDepth, prevBelow := b.prevBelow
       prevRule := b.prevRuleOnly, skip := b.skip
       fresh := b.cur.lines.isEmpty || b.freshStart
-      flush := b.noInterline
       bottomY := b.y, bottomDepth := b.prevDepth, bottomBelow := b.prevBelow
       bottomRule := b.prevRuleOnly }
   | .colNext =>
@@ -5553,7 +5543,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       b := { b with y := save.y, prevDepth := save.prevDepth
                     prevBelow := save.prevBelow, prevRuleOnly := save.prevRule
                     skip := save.skip
-                    freshStart := save.fresh, noInterline := save.flush }
+                    freshStart := save.fresh }
   | .colClose =>
     if let some save := colSaves.back? then
       colSaves := colSaves.pop
@@ -5563,7 +5553,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       b := { b with y := bottomY, prevDepth := bottomDepth
                     prevBelow := bottomBelow, prevRuleOnly := bottomRule
                     skip := {}
-                    freshStart := false, noInterline := false }
+                    freshStart := false }
   | .titleBar color pad =>
     -- The bar sits behind the line just placed: full page width, page
     -- top to `pad` below the line's depth.
@@ -5596,23 +5586,23 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- leading: the rule's padding is booktabs' declared seps and nothing
     -- else. The seg's ink stands `th` above its baseline, so the
     -- baseline is the band's bottom; `commit` then owes zero depth, and
-    -- `noInterline` makes the next line stack flush, as TeX ignores
-    -- `\prevdepth` after an `\hrule`.
+    -- the interline convention makes the next line stack flush, as TeX
+    -- ignores `\prevdepth` after an `\hrule`.
     let mk (y : Sp) : LineOut := { x := x, y := y, size := 0, segs := segs, setWidth := w }
     if b.cur.lines.isEmpty || b.freshStart then
-      b := { b.commit (mk (b.geom.vmargin + th)) 0 0 true 0 0 with noInterline := true }
+      b := b.commit (mk (b.geom.vmargin + th)) 0 0 true 0 0
     else
       let y := b.y + b.prevDepth + b.skip.width + th
       let overflow := y - b.geom.bodyBottom
       let above := b.pageShrink + b.skip.shrink
       if overflow ≤ above ∨ b.noBreak then
-        b := { b.commit (mk y) 0 0 true above (min overflow above) with noInterline := true }
+        b := b.commit (mk y) 0 0 true above (min overflow above)
       else
         b := b.spillPage
         if b.cur.lines.isEmpty then
-          b := { b.commit (mk (b.geom.vmargin + th)) 0 0 true 0 0 with noInterline := true }
+          b := b.commit (mk (b.geom.vmargin + th)) 0 0 true 0 0
         else
-          b := { b.commit (mk (b.y + b.prevDepth + th)) 0 0 true 0 0 with noInterline := true }
+          b := b.commit (mk (b.y + b.prevDepth + th)) 0 0 true 0 0
   | .progress num den fg bg thick x w =>
     -- Half a line under the last baseline: the track, then the elapsed
     -- share over it. The bar joins the page's depth so following content
