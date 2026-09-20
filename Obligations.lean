@@ -116,38 +116,42 @@ def framedDeck (doc : Ir.Doc) : Prop :=
     b = Ir.Block.frame title false valign body ∧ valign ≠ Ir.VAlign.golden ∧
       Ir.plainText title ≠ ""
 
--- owed: pages_count_frame_steps
+-- owed: pages_partition_frames
 -- owner: LeanTex.Core.Layout
--- source: audit-numbering, whose refactor 1 has since LANDED (its model: a frame yields ≥1 pages — steps, spills; this is the page-count face of it); arch-provable I4's page side
--- blocker: partly cleared under us. `framesSeen`/`framesTotal` are gone and `Ir.frameNumbers`/`Ir.frameCount` are public, so the counting side is statable directly and audit-numbering's T2–T4 are proved there. What this weak form still owes is the page side — that the page count equals the summed overlay steps — which needs the collect walk's induction, i.e. the Acc split (arch-provable R3). Restate over frameNumbers when discharging.
+-- source: audit-numbering's model, restated as a partition over `PageOut.frame` when refactor 1 (the frame id on `PageOut`, written at `finishPage`) landed — supersedes pages_count_frame_steps, whose count is this statement summed over the frames; arch-provable I4's page side
+-- blocker: the page side needs the collect walk's induction — the `Acc` split (arch-provable R3); the counting side is already proved on the IR (`frameNumbers_gapless`, `frameNumbers_last_is_count`), and the attribution now travels with the footer through the one `.foot` op.
 -- goldens: no
-/-- Numbered pages are exactly the countable ones, weak form: a deck of
-titled countable frames ships one page per overlay step, `frameSteps` many
-in total, when no diagnostic reported a dropped glyph. -/
-theorem pages_count_frame_steps
+/-- Numbered pages partition by frame: in a deck of titled countable
+frames, every shipped page is attributed to a frame (the `_covers` half),
+and frame k's pages number exactly its overlay steps — the page count of
+the superseded weak form is this statement summed over the body. -/
+theorem pages_partition_frames
     (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (hclass : doc.docClass = .slides)
     (hframes : framedDeck doc)
     (hclean : dropped (Layout.run geom fs pats doc) = false) :
-    (Layout.run geom fs pats doc).pages.size
-      = doc.body.foldl (fun n b => n + frameSteps b) 0 := by
+    (∀ p ∈ (Layout.run geom fs pats doc).pages, p.frame.isSome = true) ∧
+    (∀ i, (h : i < doc.body.size) →
+      ((Layout.run geom fs pats doc).pages.filter
+          (fun p => p.frame == some (i + 1))).size
+        = frameSteps doc.body[i]) := by
   sorry
 
 -- owed: frame_pages_footed
 -- owner: LeanTex.Core.Layout
--- source: audit-numbering T2's page face, whose refactor 1 has since LANDED: its countable predicate (non-standout, non-golden) is why framedDeck excludes the title page — a golden frame's pages bear no footer, and this statement stays true across that landing; the chrome-footer slice (PLAN 2026-09-17)
--- blocker: the density half is discharged elsewhere — `frameNumbers_gapless` and `frameNumbers_last_is_count` are theorems now, and footer presence is `frameNum.isSome`, so a non-countable frame provably has no number to show. What remains is page-to-frame attribution, which `Out` still does not carry: publicly statable only as “every page of a footed countable-frame deck is footed”.
+-- source: audit-numbering T2's page face; the chrome-footer slice (PLAN 2026-09-17); restated as a per-page fold over `PageOut.frame` when refactor 1 landed
+-- blocker: `PageOut.frame` and `PageOut.foot` are written together at `finishPage` from the one `.foot` op a frame's opening pushes (content is some exactly when the frame bears a number, given the chrome), so the implication is definitional at the write site; what remains is the collect-walk induction connecting `doc.chrome` to the op stream — the `Acc` split (arch-provable R3).
 -- goldens: no
-/-- One numbering, weak form: in a deck with a chrome footer and no
-`\runningfoot` override, every shipped page of a titled non-standout frame
-carries a chrome foot. -/
+/-- One numbering, per page: in a deck with a chrome footer and no
+`\runningfoot` override, every page attributed to a countable frame
+carries a chrome foot — a fold over the shipped pages, reading the
+attribution `finishPage` writes beside the footer it judges. -/
 theorem frame_pages_footed
     (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (hclass : doc.docClass = .slides)
-    (hfoot : doc.foot = none) (hchrome : doc.chrome.hasFooter = true)
-    (hframes : framedDeck doc)
-    (hclean : dropped (Layout.run geom fs pats doc) = false) :
-    ∀ p ∈ (Layout.run geom fs pats doc).pages, p.foot.isSome = true := by
+    (hfoot : doc.foot = none) (hchrome : doc.chrome.hasFooter = true) :
+    ∀ p ∈ (Layout.run geom fs pats doc).pages,
+      p.frame.isSome = true → p.foot.isSome = true := by
   sorry
 
 /-- The document the engine itself elaborates from a minimal deck that

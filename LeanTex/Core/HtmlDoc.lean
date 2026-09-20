@@ -2569,7 +2569,7 @@ private theorem snapWalk_count (id text : String) :
 stepped frame's track carries exactly `maxStepBlocks fb` snap spacers
 over its one sticky stage — the count `deckStepCss` reads back as
 `--steps` and the very count the PDF handout paginates the frame by
-(its half is the owed `pages_count_frame_steps`). -/
+(its half is the owed `pages_partition_frames`). -/
 private theorem track_snaps_exact (id text : String) (stage : Node)
     (taken : Array (String × String)) (diags : Array Diag)
     (fb : Array Ir.Block) :

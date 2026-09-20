@@ -91,14 +91,17 @@ list.
 - `page_background_survives` — weak observable form of arch-provable I5
   (page conservation); the fill-vanishing `B.commit` bug was its
   counterexample.
-- `pages_count_frame_steps` — numbering, page-count face of
-  audit-numbering's model: one page per overlay step of a titled countable
-  frame. `Ir.frameNumbers` landed and the counting side is proved there
-  (`frameNumbers_gapless`, `frameNumbers_last_is_count`); what this record
-  still owes is the page side, blocked on the collect walk's `Acc` split.
-- `frame_pages_footed` — numbering: every page of a footed countable-frame
-  deck is footed (audit-numbering T2's page face; excludes the golden
-  title frame so the statement survives its refactor 1).
+- `pages_partition_frames` — numbering as a partition over the page→frame
+  attribution `PageOut.frame` now carries (written at `finishPage`): every
+  page of a framed deck is attributed, and frame k's pages number exactly
+  its overlay steps. Supersedes `pages_count_frame_steps`, whose count is
+  this statement summed; the counting side is proved on the IR
+  (`frameNumbers_gapless`, `frameNumbers_last_is_count`), the page side
+  waits on the collect walk's `Acc` split.
+- `frame_pages_footed` — numbering, per page: a page attributed to a
+  countable frame carries the chrome foot (audit-numbering T2's page face,
+  restated as a per-page fold over `PageOut.frame` — the attribution and
+  the footer are written together at `finishPage`).
 - `elab_inlines_option_run_dropped` — the W0341 arm's content claim as a
   commutation: elaboration with and without an unknown command's option
   run agree, whatever the run's text. Statable since the inline knot

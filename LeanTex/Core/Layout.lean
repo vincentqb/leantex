@@ -574,6 +574,13 @@ structure PageOut where
   pass lays into the margin once the page count is known. `none` on section
   pages, standout frames, and every page of an unthemed document. -/
   foot : Option (Array Ir.BandSlot) := none
+  /-- The countable frame this page belongs to — its `Ir.frameNumbers`
+  number, written at `finishPage` from the same `.foot` op that carries
+  the footer, so a stepped or spilling frame's pages all bear it. `none`
+  on section pages, the title page, standout frames, and every page of a
+  flow-class document: the page→frame attribution the partition statement
+  `pages_partition_frames` (Obligations) ranges over. -/
+  frame : Option Nat := none
   deriving Repr, Inhabited
 
 /-- One entry of the PDF document outline (ISO 32000-2 §12.3.3): a link of
@@ -2807,6 +2814,10 @@ private structure B where
   filsAbove : Array Nat := #[]
   /-- The chrome footer for pages closed from here on, from `.foot` ops. -/
   curFoot : Option (Array Ir.BandSlot) := none
+  /-- The countable frame owning pages closed from here on, from the same
+  `.foot` ops: written onto each closing page (`finishPage`), so the
+  attribution and the footer can only move together. -/
+  curFrame : Option Nat := none
   /-- Lines and fills already on the page when `.pin` arrived: page-top
   chrome (the frame title and its bar) the distribution never moves. -/
   pinnedLines : Nat := 0
@@ -3039,7 +3050,8 @@ private def B.finishPage (b : B) : B :=
   -- the page after the vertical distribution moved the body lines, so
   -- the distribution can never move a note.
   { b with pages := b.pages.push { lines := lines ++ b.noteLines, fills := fills,
-                                   paths := paths, foot := b.curFoot },
+                                   paths := paths, foot := b.curFoot,
+                                   frame := b.curFrame },
            cur := {},
            shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
@@ -3645,10 +3657,11 @@ private inductive Op where
   /-- A progress bar under the line just placed: `bg` across `w` from `x`,
   `fg` over the leading `num/den` of it, `thick` tall. -/
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
-  /-- The chrome footer for pages closed from here on: a frame sets it (its
-  own number, the section in force), a section page or standout frame
-  clears it, and a spill page inherits its frame's. -/
-  | foot (content : Option (Array Ir.BandSlot))
+  /-- The chrome footer for pages closed from here on, with the number of
+  the countable frame the pages belong to: a frame sets both (its own
+  number, the section in force), a section page or standout frame clears
+  them, and a spill page inherits its frame's. -/
+  | foot (content : Option (Array Ir.BandSlot)) (frame : Option Nat)
   /-- The logo state changes here: pages from this point carry `content`
   (empty clears). Applied by the furniture pass, keyed to page indexes. -/
   | setLogo (content : Array Ir.Inline)
@@ -4544,7 +4557,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       let a := a.pageBreak
       -- A divider carries no footer; the break above closed the previous
       -- page with its own.
-      let a := if a.footAllowed then { a with ops := a.ops.push (.foot none) } else a
+      let a := if a.footAllowed then { a with ops := a.ops.push (.foot none none) } else a
       let a := { a with ops := a.ops.push (.pageStyle none VDist.center) }
       -- The centred measure the title and the bar share: moloch's own
       -- 0.7875 of the line width (beamerinnerthememoloch.dtx, section page
@@ -4581,7 +4594,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- than a heading dropped onto the bottom of the previous slide.
     let a := if a.slides then a.pageBreak else a
     let a := if a.footAllowed then
-        { a with ops := a.ops.push (.foot none) } else a
+        { a with ops := a.ops.push (.foot none none) } else a
     let element := match level with
       | 1 => "section" | 2 => "subsection" | _ => "subsubsection"
     let st := a.style element
@@ -4867,7 +4880,7 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
     -- both plain (beamerinnerthememoloch.dtx:314-320, 777-778), and a
     -- number slot with no number has nothing true to show.
     let a := if a.footAllowed then
-        { a with ops := a.ops.push (.foot (if a.frameNum.isNone then none else a.chromeFoot)) }
+        { a with ops := a.ops.push (.foot (if a.frameNum.isNone then none else a.chromeFoot) a.frameNum) }
       else a
     -- Every frame declares its distribution (beamer's default is centring,
     -- user guide §8.1); only the article page and a continuation page keep
@@ -5378,7 +5391,7 @@ private inductive StagedOp where
   | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
   | pin
   | progress (num den : Nat) (fg bg : Ir.Color) (thick x w : Sp)
-  | foot (content : Option (Array Ir.BandSlot))
+  | foot (content : Option (Array Ir.BandSlot)) (frame : Option Nat)
   | para (j : ParaJob) (t : Task (Array Nat))
   | colOpen
   | colNext
@@ -5442,7 +5455,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       b := { b with pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
                     pinnedLines := 0, pinnedFills := 0, chrome := none }
   | .pageStyle bg d => b := { b with pageBg := bg, vdist := d }
-  | .foot c => b := { b with curFoot := c }
+  | .foot c fr => b := { b with curFoot := c, curFrame := fr }
   | .pin =>
     -- The resume depth clears the chrome's ink: the title bar (the last
     -- pinned fill) reaches `pad` below the title's depth, and a spill
@@ -6095,7 +6108,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .tableRule th x w segs => .tableRule th x w segs
     | .pin => .pin
     | .progress num den fg bg thick x w => .progress num den fg bg thick x w
-    | .foot c => .foot c
+    | .foot c fr => .foot c fr
     | .para j => .para j (Task.spawn fun _ =>
         kpTwoPass j.items j.target (j.protrude && j.justify && !j.center)
           (j.expand && j.justify && !j.center))
