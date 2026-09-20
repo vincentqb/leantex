@@ -108,12 +108,6 @@ theorem page_background_survives
         f.x = 0 ∧ f.y = 0 ∧ f.w = geom.pageW ∧ f.h = geom.pageH := by
   sorry
 
-/-- The handout pages one block owes: one per overlay step of a frame,
-none for anything else. The measure of the numbering statements. -/
-def frameSteps : Ir.Block → Nat
-  | .frame _ _ _ body => max 1 (Ir.maxStepBlocks body)
-  | _ => 0
-
 /-- A deck whose top level is only countable frames in audit-numbering's
 sense: non-standout, not the golden-valign title page, visibly titled.
 What the numbering statements range over. -/

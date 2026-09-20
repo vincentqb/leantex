@@ -2020,9 +2020,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let frames := doc.body.foldl (fun n b => match b with
     | Ir.Block.frame _ _ _ _ => n + 1
     | _ => n) 0
-  let stepDup := doc.body.foldl (fun n b => n + match b with
-    | Ir.Block.frame _ _ _ fb => max 1 (Ir.maxStepBlocks fb) - 1
-    | _ => 0) 0
+  let stepDup := doc.body.foldl (fun n b => n + (Ir.frameSteps b - 1)) 0
   t "frames_sections: one section per frame, the PDF's page count less step duplicates"
     (slideSections == frames &&
      slideSections + stepDup + count "<section class=\"section-page\"" == out.pages.size)

@@ -4214,6 +4214,15 @@ def maxStepInline : Inline → Nat
 
 end
 
+/-- The handout pages one top-level block owes: one per overlay step of a
+frame, none for anything else. A frame projection, not a measure walk —
+only a frame opens handout duplicates, whatever block kinds arrive later —
+and the `frames_sections` census (deckStepChecks) holds it to the shipped
+page count. The page-count obligation (`pages_count_frame_steps`,
+Obligations.lean) states its theorem over this def. -/
+def frameSteps (b : Block) : Nat :=
+  if let .frame _ _ _ body := b then max 1 (maxStepBlocks body) else 0
+
 mutual
 
 /-- One overlay walk, two modes, selected by `pending`. Off, it is the dim
