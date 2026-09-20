@@ -1937,8 +1937,8 @@ Outside after.")
   -- A use whose epoch declares a dark page is judged on that page.
   let dsDark := codesOf (doc
     "\\palette{ bg = #202020, dim = #333333 }\n\n\\textcolor{dim}{dim words} here.")
-  t "a use inside a dark-page epoch is judged on that page"
-    (dsDark.any fun d => d.code == "W0315" && hasStr d.message "#202020")
+  t "a use inside a dark-page epoch is judged on that page, and realizes there"
+    (dsDark.any fun d => d.code == "N0022" && hasStr d.message "#202020")
   -- A body epoch that declares a page and leaves the ink defaulted is the
   -- W0330 defect wherever it is declared.
   t "a body epoch's defaulted ink on its declared page is W0330"
@@ -1950,7 +1950,7 @@ Outside after.")
 \\textcolor{q}{quiet before} stays exempt.\n\n\\palette{ q = #BBBBBB }\n\n\
 \\textcolor{q}{loud after} is judged.\n\\end{document}")
   t "a plain body redeclaration removes the decorative exemption from here on"
-    (dsRedecl.any fun d => d.code == "W0315" && hasStr d.message "'q'")
+    (dsRedecl.any fun d => d.code == "N0022" && hasStr d.message "'q'")
   -- The resolved-design judge (W0345) is per epoch: a bad frame-title
   -- pair declared before a frame is judged for it; declared after the
   -- last frame, it styles nothing and stays silent.
@@ -1958,28 +1958,28 @@ Outside after.")
     "\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
 \\begin{frame}{A}\none\n\\end{frame}\n\n" ++ mid ++
     "\\begin{frame}{B}\ntwo\n\\end{frame}\n\n" ++ tail ++ "\\end{document}"
-  t "a bad frame-title pair declared before a frame is judged for it"
+  t "a bad frame-title pair declared before a frame is judged for it, and realizes"
     ((codesOf (deckDoc "\\palette{ frametitlebg = #F2F2F0 }\n\n" "")).any
-      (·.code == "W0345"))
+      fun d => d.code == "N0022" && hasStr d.message "'frametitlefg'")
   t "a bad frame-title pair declared after the last frame styles nothing"
     ((codesOf (deckDoc "" "\\palette{ frametitlebg = #F2F2F0 }\n\n")).all
-      (·.code != "W0345"))
+      fun d => d.code != "W0345" && d.code != "N0022")
   -- Per (fg, bg) pair, not per token: moloch's darkened alert passes on
   -- the light page and fails on the dark frame-title bar — the same
   -- colour, two grounds, judged where each sits.
   let deckAlert (title body : String) : String :=
     "\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
 \\begin{frame}{" ++ title ++ "}\n" ++ body ++ "\n\\end{frame}\n\\end{document}"
-  t "an accent inside the frame title is judged on the bar, and fails there"
+  t "an accent inside the frame title is judged on the bar, and realizes there"
     ((codesOf (deckAlert "An \\alert{urgent} word" "plain body")).any
-      fun d => d.code == "W0315" && hasStr d.message "the frame-title bar")
+      fun d => d.code == "N0022" && hasStr d.message "the frame-title bar")
   t "the same accent in the body is judged on the page, and passes there"
     ((codesOf (deckAlert "A title" "an \\alert{urgent} word")).all
-      (·.code != "W0315"))
-  t "an accent inside a standout frame is judged on the inversion"
+      fun d => d.code != "W0315" && d.code != "N0022")
+  t "an accent inside a standout frame is judged on the inversion, and realizes"
     ((codesOf ("\\documentclass{slides}\\theme{moloch}\\begin{document}\n\
 \\begin{frame}[standout]\nan \\alert{urgent} word\n\\end{frame}\n\\end{document}")).any
-      fun d => d.code == "W0315" && hasStr d.message "the standout frame")
+      fun d => d.code == "N0022" && hasStr d.message "the standout frame")
 
 /-- Tables and floats: the too-wide diagnostic, the caption's source side,
 and the rule extents on the shipped page — a rule claim is judged from
@@ -2551,12 +2551,13 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- Contrast is the colour slice's contract, reused rather than restated:
   -- the pairing warning and its declared-intent silence reach a card
   -- through the same docDiags walk as every other class.
-  t "an illegible card pairing earns the colour contract's W0315"
-    ((warnCodes (card "" "\\textcolor{washed}{faint}"
-      "\\palette{ washed = #DDDDDD }\n")).contains "W0315")
+  t "an illegible card pairing realizes through the colour contract (N0022)"
+    ((noteCodes (card "" "\\textcolor{washed}{faint}"
+      "\\palette{ washed = #DDDDDD }\n")).contains "N0022")
   t "declared decorative intent silences it on a card too"
-    (!(warnCodes (card "" "\\textcolor{washed}{faint}"
-      "\\palette[decorative]{ washed = #DDDDDD }\n")).contains "W0315")
+    (let src := card "" "\\textcolor{washed}{faint}"
+      "\\palette[decorative]{ washed = #DDDDDD }\n"
+     !(warnCodes src).contains "W0315" && !(noteCodes src).contains "N0022")
 
 /-- The poster's legibility floor, judged over the shipped pages. The floor
 is derived from the calibration the class already sources — beamerposter's

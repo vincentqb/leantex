@@ -1261,15 +1261,15 @@ def paletteChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- A palette name binds a following group as its argument. It used to colour
   -- everything to the end of the group, so `\primary{Alex} Doe` painted Doe too.
   let palSrc (body : String) : Ir.Doc :=
-    (Elab.run "t" ("\\documentclass{article}\\palette{mut = #888888}" ++
+    (Elab.run "t" ("\\documentclass{article}\\palette{mut = #666666}" ++
       "\\begin{document}" ++ body ++ "\\end{document}")).1
   t "palette name takes its group as an argument"
     ((palSrc "\\mut{in} out").body == #[.para #[
-      .colored { r := 0x88, g := 0x88, b := 0x88 } (some "mut") #[.text "in"],
+      .colored { r := 0x66, g := 0x66, b := 0x66 } (some "mut") #[.text "in"],
       .text " out"]])
   t "palette name with no group runs to the end of the group"
     ((palSrc "{\\mut in} out").body == #[.para #[
-      .colored { r := 0x88, g := 0x88, b := 0x88 } (some "mut") #[.text "in"],
+      .colored { r := 0x66, g := 0x66, b := 0x66 } (some "mut") #[.text "in"],
       .text " out"]])
   t "palette covered fraction declares" (
     (elabStr ("\\documentclass{article}\\palette{covered = 21\\%}" ++
@@ -1396,22 +1396,23 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- fg is judged against a declared bg directly.
   let pale := "\\documentclass{article}\\palette{ washed = #DDDDDD }" ++
     "\\begin{document}\\textcolor{washed}{faint}\\end{document}"
-  t "pale text pairing warns with ratio and threshold"
-    ((elabStr pale).2.any fun d => d.code == "W0315" &&
-      (d.message.splitOn "1.30:1").length == 2 &&
+  t "a pale role pairing realizes, the note naming role and requirement"
+    ((elabStr pale).2.any fun d => d.code == "N0022" &&
+      (d.message.splitOn "'washed'").length == 2 &&
       (d.message.splitOn "4.50:1").length == 2)
-  t "declared intent silences the pairing warning"
-    (!(warnCodes ("\\documentclass{article}" ++
+  t "declared intent silences the pairing judge whole"
+    (let src := "\\documentclass{article}" ++
       "\\palette[decorative]{ washed = #DDDDDD }" ++
-      "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "W0315")
+      "\\begin{document}\\textcolor{washed}{faint}\\end{document}"
+     !(warnCodes src).contains "W0315" && !(noteCodes src).contains "N0022")
   -- The decorative exemption is a property of the declaration, not of the
   -- key: a plain redeclaration replaces the excused value, so it restores
   -- the contrast check; only redeclaring with the opt-out keeps it.
   t "a plain redeclaration drops the decorative exemption"
-    ((warnCodes ("\\documentclass{article}" ++
+    ((noteCodes ("\\documentclass{article}" ++
       "\\palette[decorative]{ washed = #DDDDDD }" ++
       "\\palette{ washed = #DDDDDD }" ++
-      "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "W0315")
+      "\\begin{document}\\textcolor{washed}{faint}\\end{document}")).contains "N0022")
   t "a decorative redeclaration keeps the exemption"
     (!(warnCodes ("\\documentclass{article}" ++
       "\\palette{ washed = #DDDDDD }" ++
@@ -1442,9 +1443,9 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- element ships. p5's archetype: moloch + a near-white frametitlebg
   -- shipped frame titles at 1.07:1 with zero diagnostics.
   let titled := "\\begin{frame}{T}x\\end{frame}"
-  t "an overridden frame-title pair warns with its ratio"
+  t "an overridden frame-title pair realizes, the note naming the requirement"
     ((elabStr (dvDeck "\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" titled)).2.any
-      fun d => d.code == "W0345" && (d.message.splitOn "1.07:1").length == 2 &&
+      fun d => d.code == "N0022" && (d.message.splitOn "'frametitlefg'").length == 2 &&
         (d.message.splitOn "4.50:1").length == 2)
   t "the untouched bundle's frame-title pair is silent"
     (!(warnCodes (dvDeck "\\theme{moloch}" titled)).contains "W0345")
@@ -1454,10 +1455,11 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "declared decorative intent silences the frame-title pair"
     (!(warnCodes (dvDeck ("\\theme{moloch}\\palette{ frametitlebg = #F2F2F0 }" ++
       "\\palette[decorative]{ frametitlefg = #FAFAF9 }") titled)).contains "W0345")
-  t "an overridden standout pair warns at the large-scale threshold"
+  t "an overridden standout pair realizes at the large-scale threshold"
     ((elabStr (dvDeck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
       "\\begin{frame}[standout]S\\end{frame}")).2.any
-      fun d => d.code == "W0345" && (d.message.splitOn "3.00:1").length == 2)
+      fun d => d.code == "N0022" && (d.message.splitOn "'standoutfg'").length == 2 &&
+        (d.message.splitOn "3.00:1").length == 2)
   t "an illegible standout pair without a standout frame is silent"
     (!(warnCodes (dvDeck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }"
       titled)).contains "W0345")
@@ -1475,8 +1477,8 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- body text it warns, as Huge (24.9pt) large-scale text it passes.
   let grey (body : String) := "\\documentclass{article}" ++
     "\\palette{ grey = #767676 }\\begin{document}" ++ body ++ "\\end{document}"
-  t "borderline grey warns as body text"
-    ((warnCodes (grey "\\textcolor{grey}{x}")).contains "W0315")
+  t "borderline grey realizes as body text"
+    ((noteCodes (grey "\\textcolor{grey}{x}")).contains "N0022")
   t "borderline grey passes as large-scale text"
     (!(warnCodes (grey "{\\Huge \\textcolor{grey}{x}}")).contains "W0315")
   -- The judge reads the layout's own scale (contrast_judges_what_layout_sets):
@@ -1489,13 +1491,16 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\page{ fontsize = " ++ size ++ " }\\palette{ grey = #767676 }" ++
     "\\begin{document}\\section{\\textcolor{grey}{Head}}x\\end{document}"
   t "a 9pt-base section title is judged at the size the layout sets"
-    ((warnCodes (sizedSection "9pt")).contains "W0315")
+    ((noteCodes (sizedSection "9pt")).contains "N0022")
   t "a 10pt-base section title stays large-scale, judge and page agreeing"
-    (!(warnCodes (sizedSection "10pt")).contains "W0315")
-  t "a declared fg is judged against the declared bg"
-    ((warnCodes ("\\documentclass{article}" ++
+    (!(warnCodes (sizedSection "10pt")).contains "W0315" &&
+     !(noteCodes (sizedSection "10pt")).contains "N0022")
+  t "a declared fg is judged against the declared bg, and realizes there"
+    ((elabStr ("\\documentclass{article}" ++
       "\\palette{ fg = #999999, bg = #888888 }" ++
-      "\\begin{document}x\\end{document}")).contains "W0315")
+      "\\begin{document}x\\end{document}")).2.any fun d =>
+        d.code == "N0022" && (d.message.splitOn "'fg'").length == 2 &&
+          (d.message.splitOn "#888888").length == 2)
   -- The effective pair (F3): the contract judges the pair the page ships,
   -- not only the pair the document spelled. A declared dark page with the
   -- ink left defaulted is black-on-dark in both backends — its own code
@@ -1520,7 +1525,7 @@ def contrastChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((((elabStr ("\\documentclass{article}" ++
       "\\palette{ fg = #999999, bg = #888888 }" ++
       "\\begin{document}\\textcolor{fg}{x}\\end{document}")).2.filter
-        fun d => d.code == "W0315" || d.code == "W0330").size) == 1)
+        fun d => d.code == "N0022" || d.code == "W0315" || d.code == "W0330").size) == 1)
   t "the built-in themes raise no pairing warning"
     (!(warnCodes ("\\documentclass{slides}\\theme{moloch}\\begin{document}" ++
       "\\begin{frame}x\\end{frame}\\end{document}")).contains "W0315")
@@ -1771,14 +1776,20 @@ def roleInvocationChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   for th in Theme.builtin do
     for (key, c) in th.palette.entries do
-      let (doc, _) := elabStr ("\\documentclass{article}\\theme{" ++ th.name ++
+      let (doc, ds) := elabStr ("\\documentclass{article}\\theme{" ++ th.name ++
         s!"}\\begin\{document}\\{key}\{x}\\end\{document}")
       -- `\alert` is a compat idiom (colour and bold, W3C SC 1.4.1): the
-      -- role must reach the words, whatever wrapper the idiom adds.
+      -- role must reach the words, whatever wrapper the idiom adds. A
+      -- structural role invoked as body text (bg, standoutfg) fails the
+      -- page pairing and realizes: the run then carries the realized
+      -- value, and the note names the key — invocability is the name
+      -- reaching the palette arm either way.
       t s!"role '{key}' of '{th.name}' is invocable"
         (match doc.body with
          | #[.para #[.colored c' (some n) inner]] =>
-           c' == c && n == key && Ir.plainText inner == "x"
+           n == key && Ir.plainText inner == "x" &&
+             (c' == c || ds.any fun d => d.code == "N0022" &&
+               (d.message.splitOn s!"'{key}'").length == 2)
          | _ => false)
   -- The two halves of palette-dependence meet on the real page: the use
   -- references the token (role_use_names_its_token) and :root declares it

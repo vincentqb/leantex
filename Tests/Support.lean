@@ -44,6 +44,9 @@ def errCodes (s : String) : List String :=
 def warnCodes (s : String) : List String :=
   ((elabStr s).2.filter (·.severity == .warning)).toList.map (·.code)
 
+def noteCodes (s : String) : List String :=
+  ((elabStr s).2.filter (·.severity == .note)).toList.map (·.code)
+
 def dvDoc (pre body : String) : String :=
   "\\documentclass{article}\n" ++ pre ++ "\\begin{document}\n" ++ body ++ "\n\\end{document}"
 

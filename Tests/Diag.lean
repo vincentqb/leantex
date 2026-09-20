@@ -137,6 +137,10 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
     let ds := (Elab.runRaws "t" raws).2
     spliced.map fun (s, src, p) => Compat.styRead (src.getD "t") s p ds
   | .N0021 => dvL one (dvDoc "\\page{ headsep = 20pt, footskip = 30pt }\n" "x")
+  -- moloch's alert passes on its page and fails on its own frame-title
+  -- bar: the pair realizes there (lighter, same hue), the note says so.
+  | .N0022 => dvE (dvDeck "\\theme{moloch}\n"
+      "\\begin{frame}{An \\alert{urgent} word}\nx\n\\end{frame}")
   | .W0368 => dvE (dvDoc "\\usepackage[klingon]{babel}\n" "x") ++
       dvE (dvDoc "\\pdfmeta{ language = \"xx\" }\n" "x")
   | .W0369 => dvE (dvDoc "\\babelfont[french]{rm}{Demo Serif}\n" "x")
@@ -208,7 +212,9 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0312 => dvE "\\title[never closes\n\\begin{document}\nx\n\\end{document}"
   | .W0314 => dvE (dvDeck "" ("\\begin{frame}{T}\\begin{columns}\n" ++
       "\\begin{column}{banana}\nx\n\\end{column}\n\\end{columns}\\end{frame}"))
-  | .W0315 => dvE (dvDoc "\\palette{ washed = #DDDDDD }\n" "\\textcolor{washed}{faint}")
+  -- An anonymous mix is not a role, so it never realizes: the pairing
+  -- warning is its own (a role-named failing pair realizes and is N0022).
+  | .W0315 => dvE (dvDoc "" "\\textcolor{black!20}{faint}")
   | .W0316 => dvE (dvDoc "\\palette[dark]{ a = #101010 }\n" "x")
   | .W0317 => dvE ("\\documentclass{card}\n\\runninghead{name}\n" ++
       "\\begin{document}\nx\n\\end{document}")
@@ -263,11 +269,10 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0343 =>
     dvE (dvDoc "\\page{ margin = 20pt }\n\\page{ margin = 30pt }\n" "x") ++
     dvE (dvDoc "\\runningfoot{one}\n\\runningfoot{two}\n" "x")
+  -- The text pairs (frame title, standout) now realize (N0022 carries
+  -- them); the covering judge has no lightness to choose — a cover is a
+  -- relation between two states — so it keeps W0345.
   | .W0345 =>
-    dvE (dvDeck "\\theme{moloch}\n\\palette{ frametitlebg = #F2F2F0 }\n"
-      "\\begin{frame}{T}\nx\n\\end{frame}") ++
-    dvE (dvDeck "\\palette{ standoutfg = #DDDDDD, standoutbg = #FAFAFA }\n"
-      "\\begin{frame}[standout]\nS\n\\end{frame}") ++
     dvE (dvDeck "\\palette{ covered = #000000 }\n"
       "\\begin{frame}{T}\n\\uncover<2>{x}\n\\end{frame}")
   | .W0346 =>

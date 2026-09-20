@@ -9056,7 +9056,11 @@ def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag :=
   let (raws, compatDiags) := Compat.rewrite file raws
   let (doc, st) := (elabDoc file raws).run {}
-  let contrast := Contrast.docDiags doc
+  -- The realization pass rewrites the document where a (role, ground)
+  -- pair fails and the solver can meet it (Core/Contrast.lean): both
+  -- backends then read the realized values, and the diagnostics carry
+  -- N0022 where a pair realized, the pairing warnings where none could.
+  let (doc, contrast) := Contrast.realizeDoc doc
   let outline := Ir.outlineDiags doc
   let alt := Ir.altDiags doc
   let sequences := Ir.footerSequenceDiags doc

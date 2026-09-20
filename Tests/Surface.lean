@@ -881,9 +881,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre "\\palette{ p = #7C3AED }")).1.palette.find? "p" == some { r := 0x7C, g := 0x3A, b := 0xED })
   -- Body-side idioms.
   t "compat color is the declaration form"
-    ((elabStr ("\\documentclass{article}\\palette{m = #888888}\\begin{document}" ++
+    ((elabStr ("\\documentclass{article}\\palette{m = #666666}\\begin{document}" ++
       "a {\\color{m}b} c\\end{document}")).1.body ==
-      #[.para #[.text "a ", .colored { r := 0x88, g := 0x88, b := 0x88 } (some "m") #[.text "b"], .text " c"]])
+      #[.para #[.text "a ", .colored { r := 0x66, g := 0x66, b := 0x66 } (some "m") #[.text "b"], .text " c"]])
   -- `\color`'s argument is a palette *expression*: the `!`-mix grammar lives
   -- once, in `Palette.resolve`, and the bare-name arm routes through it.
   -- Before, `\color{m!50!black}` minted '\m!50!black' as a control word and
@@ -891,9 +891,9 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- wrong output). A computed mix carries no CSS var name, as `\textcolor`
   -- already holds.
   t "compat color mix routes through the palette resolver"
-    ((elabStr ("\\documentclass{article}\\palette{m = #888888}\\begin{document}" ++
+    ((elabStr ("\\documentclass{article}\\palette{m = #666666}\\begin{document}" ++
       "a {\\color{m!50!black}b} c\\end{document}")).1.body ==
-      #[.para #[.text "a ", .colored { r := 0x44, g := 0x44, b := 0x44 } none #[.text "b"],
+      #[.para #[.text "a ", .colored { r := 0x33, g := 0x33, b := 0x33 } none #[.text "b"],
         .text " c"]])
   t "compat color black needs no declaration"
     ((elabStr ("\\documentclass{article}\\begin{document}" ++

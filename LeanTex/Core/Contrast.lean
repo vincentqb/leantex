@@ -228,6 +228,10 @@ nothing does — the declared colour then stands and the pairing diagnostic
 fires as before. -/
 def realize (req : Nat) (ground c : Color) : Option Color :=
   if req ≤ contrastMilli c ground then some c
+  -- A colour carrying a print model is declared in DeviceCMYK: realizing
+  -- it would repaint the declaration in sRGB and silently drop the
+  -- declared components, so the pair keeps its warning instead.
+  else if c.cmyk.isSome then none
   else
     (([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
         realizeAt req ground (Oklab.labOf c) f).bind fun cand =>
@@ -243,14 +247,17 @@ theorem realize_meets_contract {req : Nat} {ground c c' : Color}
   split at h
   next hp => cases h; exact hp
   next =>
-    match hb : ([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
-        realizeAt req ground (Oklab.labOf c) f with
-    | none => rw [hb] at h; cases h
-    | some cand =>
-      rw [hb, Option.bind_some] at h
-      split at h
-      next hp => cases h; exact hp
-      next => cases h
+    split at h
+    next => cases h
+    next =>
+      match hb : ([100, 75, 50, 25, 0] : List Nat).findSome? fun f =>
+          realizeAt req ground (Oklab.labOf c) f with
+      | none => rw [hb] at h; cases h
+      | some cand =>
+        rw [hb, Option.bind_some] at h
+        split at h
+        next hp => cases h; exact hp
+        next => cases h
 
 /-- A pair that already passes is unchanged: realization is the identity
 on every legible pairing, so a passing document's artifact cannot move. -/
@@ -262,6 +269,43 @@ theorem realize_id_of_passing {req : Nat} {ground c : Color}
 
 private def hexOf (c : Color) : String :=
   s!"#{Color.hexByte c.r}{Color.hexByte c.g}{Color.hexByte c.b}"
+
+/-- One palette-entry realization: applied to the palette equal to `pal`
+wherever it stands (the document's or a `.setPalette`'s), so every reader
+of the key — both backends through `Design.ofDoc`, the layout's per-epoch
+reads — resolves the realized value. -/
+private structure PalWrite where
+  pal : Palette
+  key : String
+  value : Color
+  deriving Repr, BEq
+
+/-- One run-level realization: a role-named colour on the ground the judge
+read it against, and the value that ships there. -/
+private structure RunWrite where
+  role : String
+  declared : Color
+  ground : Color
+  value : Color
+  deriving Repr, BEq
+
+/-- What one judge produces: its diagnostics — an N0022 note where a
+failing pair realized, the pairing warning where none could — and the
+realization plan `realizeDoc` applies. -/
+private structure Judged where
+  diags : Array Diag := #[]
+  palWrites : Array PalWrite := #[]
+  runWrites : Array RunWrite := #[]
+
+/-- The N0022 note: the role kept its hue and chroma; the engine chose its
+lightness on this ground (`realize`, whose sources the docstring above
+names). -/
+private def realizedNote (role : String) (ground : Color)
+    (groundName : Option String) (c c' : Color) (req : Nat) : Diag :=
+  let dir := if luminance c' ≥ luminance c then "lighter" else "darker"
+  Diag.of .N0022
+    (s!"'{role}' is realized {dir} ({hexOf c'}) on {groundName.getD "the page"} " ++
+      s!"({hexOf ground}) to meet {ratioString req}")
 
 /-- One coloured text occurrence: the name it was used under when it had
 one, the colour, whether it stood as large-scale text (≥ 18pt, or bold
@@ -284,6 +328,9 @@ private structure Use where
   /-- Exempt where it stood: `covered`, a name the epoch's decorative set
   carries, or an anonymous value a decorative entry names. -/
   exempt : Bool
+  /-- The palette in force at the use: what a realization of this pairing
+  is keyed by, and where a matching entry is rewritten. -/
+  pal : Palette
   deriving BEq
 
 /-- The walk's fold state: the palette in force (epoch), the uses with
@@ -351,7 +398,8 @@ private def UseAcc.use (acc : UseAcc) (cx : UseCx) (nm : Option String)
                    large := cx.large
                    surface := cx.ground.getD (surfaceOf acc.pal)
                    groundName := cx.groundName
-                   exempt := exempt }
+                   exempt := exempt
+                   pal := acc.pal }
   { acc with uses := acc.uses.push u }
 
 /-- Pending overlay content: a step whose range starts (or ends) past the
@@ -551,62 +599,85 @@ def effectivePair (doc : Doc) : ColorPair :=
 /-- The effective ink judged against the effective page, first and
 unconditionally — the straight-line half of `docDiags`, so
 `defaulted_ink_cannot_escape` can range over every document. A declared
-pair keeps W0315's spelling and its decorative escape; a defaulted ink on
+pair realizes first (N0022) and keeps W0315's spelling where realization
+cannot reach, with the decorative escape before either; a defaulted ink on
 a declared page is its own code (W0330), because its remedy is different:
 declare the ink, not the intent. -/
-def effectivePairDiags (doc : Doc) : Array Diag :=
-  if doc.palette.decorative.contains "fg" then #[]
+def effectivePairJudged (doc : Doc) : Judged :=
+  if doc.palette.decorative.contains "fg" then {}
   else
     let p := effectivePair doc
     let milli := contrastMilli p.fg p.bg
     if milli < aaText then
       if (Design.ofDoc doc).fgDeclared then
-        #[Diag.of .W0315
-          (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
-            s!"on the page ({hexOf p.bg}), below the {ratioString aaText} " ++
-            "WCAG 2.2 asks of text (SC 1.4.3)")
-          (help := some ("deliberate low contrast is declared, not defaulted: " ++
-            "\\palette[decorative]{ " ++ s!"fg = {hexOf p.fg} " ++ "}"))]
+        -- A declared ink is a role: realize its lightness on its page
+        -- (hue and chroma kept) before warning; only an unreachable pair
+        -- keeps W0315, so poor contrast is never silent and never stands
+        -- where the engine can meet the contract.
+        match realize aaText p.bg p.fg with
+        | some c' =>
+          { diags := #[realizedNote "fg" p.bg none p.fg c' aaText]
+            palWrites := #[{ pal := doc.palette, key := "fg", value := c' }] }
+        | none =>
+          { diags := #[Diag.of .W0315
+              (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
+                s!"on the page ({hexOf p.bg}), below the {ratioString aaText} " ++
+                "WCAG 2.2 asks of text (SC 1.4.3)")
+              (help := some ("deliberate low contrast is declared, not defaulted: " ++
+                "\\palette[decorative]{ " ++ s!"fg = {hexOf p.fg} " ++ "}"))] }
       else
-        #[Diag.of .W0330
-          (s!"declared page {hexOf p.bg} keeps the defaulted {hexOf p.fg} ink: " ++
-            s!"{ratioString milli}, below the " ++
-            s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
-          (help := some ("a declared surface chooses its ink: declare " ++
-            "\\palette{ fg = ... }" ++ " beside bg"))]
-    else #[]
+        -- A defaulted ink was never declared: there is no hue to keep, so
+        -- nothing realizes — the remedy is the declaration (W0330 stands).
+        { diags := #[Diag.of .W0330
+            (s!"declared page {hexOf p.bg} keeps the defaulted {hexOf p.fg} ink: " ++
+              s!"{ratioString milli}, below the " ++
+              s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
+            (help := some ("a declared surface chooses its ink: declare " ++
+              "\\palette{ fg = ... }" ++ " beside bg"))] }
+    else {}
 
 /-- Each body epoch's effective pair, judged as epoch 0's is
 (`effectivePairDiags`): a `\palette` mid-document that leaves its ink
 illegible on its page is the same defect wherever it is declared, and it
 is judged against the state in force from that point — never the
 document's final state. A pair already judged is silent. -/
-private def epochPairDiags (doc : Doc) (epochs : Array Palette) : Array Diag := Id.run do
+private def epochPairJudged (doc : Doc) (epochs : Array Palette) : Judged := Id.run do
   let d0 := Design.ofDoc doc
-  let mut out : Array Diag := #[]
+  let mut j : Judged := {}
   let mut done : Array ColorPair := #[{ fg := d0.fg, bg := (effectivePair doc).bg }]
   for pal in epochs do
     if pal.decorative.contains "fg" then continue
     let p : ColorPair := { fg := (pal.find? "fg").getD Color.black, bg := surfaceOf pal }
-    if done.contains p then continue
+    -- The palette write lands per epoch even when the pair's diagnostic is
+    -- already reported: two epochs declaring the same failing pair are two
+    -- palettes to rewrite, one message to read.
+    let dup := done.contains p
     done := done.push p
     let milli := contrastMilli p.fg p.bg
     if milli < aaText then
       if (pal.find? "fg").isSome then
-        out := out.push (Diag.of .W0315
-          (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
-            s!"on the page ({hexOf p.bg}), below the {ratioString aaText} " ++
-            "WCAG 2.2 asks of text (SC 1.4.3)")
-          (help := some ("deliberate low contrast is declared, not defaulted: " ++
-            "\\palette[decorative]{ " ++ s!"fg = {hexOf p.fg} " ++ "}")))
+        match realize aaText p.bg p.fg with
+        | some c' =>
+          j := { j with palWrites := j.palWrites.push { pal := pal, key := "fg", value := c' } }
+          unless dup do
+            j := { j with diags := j.diags.push (realizedNote "fg" p.bg none p.fg c' aaText) }
+        | none =>
+          unless dup do
+            j := { j with diags := j.diags.push (Diag.of .W0315
+              (s!"text coloured 'fg' ({hexOf p.fg}) reads at {ratioString milli} " ++
+                s!"on the page ({hexOf p.bg}), below the {ratioString aaText} " ++
+                "WCAG 2.2 asks of text (SC 1.4.3)")
+              (help := some ("deliberate low contrast is declared, not defaulted: " ++
+                "\\palette[decorative]{ " ++ s!"fg = {hexOf p.fg} " ++ "}"))) }
       else
-        out := out.push (Diag.of .W0330
-          (s!"declared page {hexOf p.bg} keeps the defaulted {hexOf p.fg} ink: " ++
-            s!"{ratioString milli}, below the " ++
-            s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
-          (help := some ("a declared surface chooses its ink: declare " ++
-            "\\palette{ fg = ... }" ++ " beside bg")))
-  return out
+        unless dup do
+          j := { j with diags := j.diags.push (Diag.of .W0330
+            (s!"declared page {hexOf p.bg} keeps the defaulted {hexOf p.fg} ink: " ++
+              s!"{ratioString milli}, below the " ++
+              s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
+            (help := some ("a declared surface chooses its ink: declare " ++
+              "\\palette{ fg = ... }" ++ " beside bg"))) }
+  return j
 
 /-- The resolved design's own pairs, judged for the document that ships
 them — the pairs `Design.ofDoc` creates out of declared and defaulted keys
@@ -623,48 +694,72 @@ standout frame, or pending overlay content, so a body `\palette` before a
 frame is judged for that frame and a declaration after it is not. The
 shipped bundles are proved (`builtin_designs_legible`,
 `builtin_designs_covered`), so only a document's own override can fire
-this; the decorative escape is the same one the per-use walk honours, on
+this; a failing pair realizes before it warns, and the decorative escape is the same one the per-use walk honours, on
 the pair's ink key. -/
-private def resolvedPairDiagsAt (doc : Doc)
+private def resolvedPairJudged (doc : Doc)
     (titled standout pending : Array Palette)
-    (blocks : Array (TitledKind × Palette)) : Array Diag := Id.run do
-  let mut out : Array Diag := #[]
+    (blocks : Array (TitledKind × Palette)) : Judged := Id.run do
+  let mut j : Judged := {}
   for (kind, pal) in blocks do
     -- The block title sets bold at the body size — under WCAG 2.2's
     -- large-scale sizes, so SC 1.4.3's 4.5:1 — on the bar when the
     -- palette declares one, on the page otherwise (`titledLook`, the one
-    -- resolving site).
+    -- resolving site). A failing pair realizes before it warns.
     let look := titledLook pal kind
     let ground := look.bar.getD ((pal.find? "bg").getD Color.white)
     let milli := contrastMilli look.fg ground
     if milli < aaText && !pal.decorative.contains s!"{kind.name}titlefg" then
-      out := out.push (Diag.of .W0345
-        (s!"the {kind.name} block title pairs {hexOf look.fg} on " ++
-          s!"{hexOf ground} at {ratioString milli}, below the " ++
-          s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
-        (help := some ("deliberate low contrast is declared, not defaulted: " ++
-          "\\palette[decorative]{ " ++ s!"{kind.name}titlefg = {hexOf look.fg} " ++ "}")))
+      match realize aaText ground look.fg with
+      | some c' =>
+        j := { j with
+          diags := j.diags.push (realizedNote s!"{kind.name}titlefg" ground
+            (look.bar.map fun _ => "the block-title bar") look.fg c' aaText)
+          palWrites := j.palWrites.push
+            { pal := pal, key := s!"{kind.name}titlefg", value := c' } }
+      | none =>
+        j := { j with diags := j.diags.push (Diag.of .W0345
+          (s!"the {kind.name} block title pairs {hexOf look.fg} on " ++
+            s!"{hexOf ground} at {ratioString milli}, below the " ++
+            s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
+          (help := some ("deliberate low contrast is declared, not defaulted: " ++
+            "\\palette[decorative]{ " ++ s!"{kind.name}titlefg = {hexOf look.fg} " ++ "}"))) }
   for pal in titled do
     let d := Design.ofDoc { doc with palette := pal }
     if let some p := d.frametitle then
       let milli := contrastMilli p.fg p.bg
       if milli < aaText && !pal.decorative.contains "frametitlefg" then
-        out := out.push (Diag.of .W0345
-          (s!"the frame-title bar pairs {hexOf p.fg} on {hexOf p.bg} at " ++
-            s!"{ratioString milli}, below the {ratioString aaText} " ++
-            "WCAG 2.2 asks of text (SC 1.4.3)")
-          (help := some ("deliberate low contrast is declared, not defaulted: " ++
-            "\\palette[decorative]{ " ++ s!"frametitlefg = {hexOf p.fg} " ++ "}")))
+        match realize aaText p.bg p.fg with
+        | some c' =>
+          j := { j with
+            diags := j.diags.push (realizedNote "frametitlefg" p.bg
+              (some "the frame-title bar") p.fg c' aaText)
+            palWrites := j.palWrites.push
+              { pal := pal, key := "frametitlefg", value := c' } }
+        | none =>
+          j := { j with diags := j.diags.push (Diag.of .W0345
+            (s!"the frame-title bar pairs {hexOf p.fg} on {hexOf p.bg} at " ++
+              s!"{ratioString milli}, below the {ratioString aaText} " ++
+              "WCAG 2.2 asks of text (SC 1.4.3)")
+            (help := some ("deliberate low contrast is declared, not defaulted: " ++
+              "\\palette[decorative]{ " ++ s!"frametitlefg = {hexOf p.fg} " ++ "}"))) }
   for pal in standout do
     let d := Design.ofDoc { doc with palette := pal }
     let milli := contrastMilli d.standout.fg d.standout.bg
     if milli < aaLargeText && !pal.decorative.contains "standoutfg" then
-      out := out.push (Diag.of .W0345
-        (s!"the standout frame pairs {hexOf d.standout.fg} on " ++
-          s!"{hexOf d.standout.bg} at {ratioString milli}, below the " ++
-          s!"{ratioString aaLargeText} WCAG 2.2 asks of large-scale text (SC 1.4.3)")
-        (help := some ("deliberate low contrast is declared, not defaulted: " ++
-          "\\palette[decorative]{ " ++ s!"standoutfg = {hexOf d.standout.fg} " ++ "}")))
+      match realize aaLargeText d.standout.bg d.standout.fg with
+      | some c' =>
+        j := { j with
+          diags := j.diags.push (realizedNote "standoutfg" d.standout.bg
+            (some "the standout frame") d.standout.fg c' aaLargeText)
+          palWrites := j.palWrites.push
+            { pal := pal, key := "standoutfg", value := c' } }
+      | none =>
+        j := { j with diags := j.diags.push (Diag.of .W0345
+          (s!"the standout frame pairs {hexOf d.standout.fg} on " ++
+            s!"{hexOf d.standout.bg} at {ratioString milli}, below the " ++
+            s!"{ratioString aaLargeText} WCAG 2.2 asks of large-scale text (SC 1.4.3)")
+          (help := some ("deliberate low contrast is declared, not defaulted: " ++
+            "\\palette[decorative]{ " ++ s!"standoutfg = {hexOf d.standout.fg} " ++ "}"))) }
   for pal in pending do
     if pal.decorative.contains "covered" then continue
     let d := Design.ofDoc { doc with palette := pal }
@@ -687,16 +782,16 @@ private def resolvedPairDiagsAt (doc : Doc)
               "WCAG 2.2 asks of a state change (SC 1.4.11)")
             (help := coverHelp)]
         else #[]
-    out := out ++ judge "fg" d.fg (cov.of d.fg)
+    j := { j with diags := j.diags ++ judge "fg" d.fg (cov.of d.fg) }
     -- A declared constant cover stands for the plain runs itself: judged
     -- under the key that declared it (undeclared, the plain cover IS the
     -- fg cover just judged).
     if d.covered.isSome then
-      out := out ++ judge "covered" d.fg cov.plain
+      j := { j with diags := j.diags ++ judge "covered" d.fg cov.plain }
     for role in ["alert", "example"] do
       if let some c := pal.find? role then
-        out := out ++ judge role c (cov.of c)
-  return out
+        j := { j with diags := j.diags ++ judge role c (cov.of c) }
+  return j
 
 /-- The pairings a document's own colours create, judged: every colour the
 document puts on text is paired with the page by the engine, so each is
@@ -710,7 +805,7 @@ dimmed overlay content is deliberately quiet — and so is anything the
 palette in force at the use declared under `\palette[decorative]{...}`:
 the warning names that spelling, so poor contrast is a choice a document
 states, never a silent default. -/
-private def declaredUseDiags (doc : Doc) (walk : UseAcc) : Array Diag := Id.run do
+private def declaredUseJudged (doc : Doc) (walk : UseAcc) : Judged := Id.run do
   let d := Design.ofDoc doc
   let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
   -- Page furniture is document state, not flow content: the chrome
@@ -723,10 +818,10 @@ private def declaredUseDiags (doc : Doc) (walk : UseAcc) : Array Diag := Id.run 
   for run in [doc.head, doc.foot] do
     if let some content := run then
       acc := usesInlines base acc content.toList
-  let mut out : Array Diag := #[]
-  -- The effective pair is judged in `effectivePairDiags` (and per epoch in
-  -- `epochPairDiags`); a body use of the same pairing must not report it
-  -- twice.
+  let mut j : Judged := {}
+  -- The effective pair is judged in `effectivePairJudged` (and per epoch
+  -- in `epochPairJudged`); a body use of the same pairing must not report
+  -- it twice.
   let mut done : Array (Option String × Color × Color) :=
     #[(some "fg", d.fg, (effectivePair doc).bg)]
   for u in acc.uses do
@@ -735,36 +830,113 @@ private def declaredUseDiags (doc : Doc) (walk : UseAcc) : Array Diag := Id.run 
     -- would be judged under.
     if u.exempt then continue
     let key := (u.name, u.color, u.surface)
-    if done.contains key then continue
+    let dup := done.contains key
     done := done.push key
     let allLarge := acc.uses.all fun v => (v.name, v.color, v.surface) != key || v.large
     let threshold := if allLarge then aaLargeText else aaText
     let milli := contrastMilli u.color u.surface
     if milli < threshold then
-      let label := match u.name with
-        | some n => s!"'{n}' ({hexOf u.color})"
-        | none => hexOf u.color
-      out := out.push (Diag.of .W0315
-        (s!"text coloured {label} reads at {ratioString milli} " ++
-          s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
-          s!"below the {ratioString threshold} " ++
-          s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
-        (help := some ("deliberate low contrast is declared, not defaulted: " ++
-          "\\palette[decorative]{ " ++
-          s!"{(u.name.getD "quiet")} = {hexOf u.color} " ++ "}")))
-  return out
+      -- A role-named use realizes: the hue is the declaration's, the
+      -- lightness the ground's choice — normalised at the text threshold
+      -- (4.5:1 covers the large-scale 3:1, and one value per (role,
+      -- ground) pair is what both backends can agree on). A colour with
+      -- no role name was written inline by the author and is never
+      -- re-realized — only warned, as before.
+      match u.name with
+      | some role =>
+        match realize aaText u.surface u.color with
+        | some c' =>
+          -- The entry rewrite follows the value: when the epoch's palette
+          -- carries this role at this colour and the ground is its own
+          -- page, the entry realizes too, so furniture and custom
+          -- properties read the same value the runs ship. Per epoch, even
+          -- when the note is already reported.
+          if u.pal.find? role == some u.color && u.surface == surfaceOf u.pal then
+            let w : PalWrite := { pal := u.pal, key := role, value := c' }
+            unless j.palWrites.contains w do
+              j := { j with palWrites := j.palWrites.push w }
+          unless dup do
+            j := { j with
+              runWrites := j.runWrites.push
+                { role := role, declared := u.color, ground := u.surface, value := c' }
+              diags := j.diags.push
+                (realizedNote role u.surface u.groundName u.color c' aaText) }
+        | none =>
+          unless dup do
+            j := { j with diags := j.diags.push (Diag.of .W0315
+              (s!"text coloured '{role}' ({hexOf u.color}) reads at {ratioString milli} " ++
+                s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
+                s!"below the {ratioString threshold} " ++
+                s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
+              (help := some ("deliberate low contrast is declared, not defaulted: " ++
+                "\\palette[decorative]{ " ++
+                s!"{role} = {hexOf u.color} " ++ "}"))) }
+      | none =>
+        unless dup do
+          j := { j with diags := j.diags.push (Diag.of .W0315
+            (s!"text coloured {hexOf u.color} reads at {ratioString milli} " ++
+              s!"on {u.groundName.getD "the page"} ({hexOf u.surface}), " ++
+              s!"below the {ratioString threshold} " ++
+              s!"WCAG 2.2 asks of {if allLarge then "large-scale text" else "text"} (SC 1.4.3)")
+            (help := some ("deliberate low contrast is declared, not defaulted: " ++
+              "\\palette[decorative]{ " ++
+              s!"quiet = {hexOf u.color} " ++ "}"))) }
+  return j
 
 /-- The whole document-level contrast contract, one walk: the uses with
 their epochs, the design sites per epoch, and the epoch boundaries are
 read off `doc.body` once; then each half judges against the palette in
-force where the pairing ships. -/
-def docDiags (doc : Doc) : Array Diag :=
+force where the pairing ships — realizing a failing role pair (N0022 +
+the plan) before it warns, warning as before where realization cannot
+reach or the colour has no role. -/
+private def realizePlan (doc : Doc) : Judged :=
   let base : UseCx := { base := doc.page.fontSize, size := doc.page.fontSize }
   let walk := usesBlocks base { pal := doc.palette } doc.body.toList
-  let declared := declaredUseDiags doc walk
-  let resolved := resolvedPairDiagsAt doc walk.titledPals walk.standoutPals
+  let jE := effectivePairJudged doc
+  let jP := epochPairJudged doc walk.epochs
+  let jU := declaredUseJudged doc walk
+  let jR := resolvedPairJudged doc walk.titledPals walk.standoutPals
     walk.pendingPals walk.blockPals
-  effectivePairDiags doc ++ epochPairDiags doc walk.epochs ++ declared ++ resolved
+  { diags := jE.diags ++ jP.diags ++ jU.diags ++ jR.diags
+    palWrites := jE.palWrites ++ jP.palWrites ++ jU.palWrites ++ jR.palWrites
+    runWrites := jU.runWrites }
+
+/-- The document-level contrast diagnostics: `realizePlan`'s message half. -/
+def docDiags (doc : Doc) : Array Diag := (realizePlan doc).diags
+
+/-- The realization pass: judge every (role, ground) pair the document
+ships, realize the failing role pairs (`realize` — hue and chroma kept,
+lightness chosen per ground), and rewrite the document so both backends
+read the realized values — palette entries where the pair is the palette's
+own (the frame-title bar, a titled bar, the standout inversion, `fg` and
+the content colours on their page), role-named runs where a use sits on a
+local ground. A document whose pairs all pass is returned untouched
+(`realize_id_of_passing` upstream: the plan is empty), so a legible
+document's artifact cannot move. Diagnostics are the judges' own: N0022
+where a pair realized, the pairing warnings where none could. -/
+def realizeDoc (doc : Doc) : Doc × Array Diag :=
+  let j := realizePlan doc
+  if j.palWrites.isEmpty && j.runWrites.isEmpty then (doc, j.diags)
+  else
+    let repal : Palette → Palette := fun p =>
+      j.palWrites.foldl (fun q w => if w.pal == p then q.declare w.key w.value else q) p
+    let recolor : RoleRecolor := fun pal ground nm c =>
+      match nm with
+      | some role =>
+        let surface := ground.getD (surfaceOf pal)
+        match j.runWrites.find? fun w =>
+            w.role == role && w.declared == c && w.ground == surface with
+        | some w => w.value
+        | none => c
+      | none => c
+    ({ doc with
+        palette := repal doc.palette
+        head := doc.head.map fun xs =>
+          recolorRolesInlines recolor doc.palette none #[] xs.toList
+        foot := doc.foot.map fun xs =>
+          recolorRolesInlines recolor doc.palette none #[] xs.toList
+        body := recolorRoles repal recolor doc.palette doc.body },
+      j.diags)
 
 /-- The judged pair is the shipped pair: what `effectivePairDiags` judges is
 the resolved design's own ink — the field `Layout.run` colours every
@@ -788,12 +960,14 @@ theorem defaulted_ink_cannot_escape (doc : Doc)
     (hdec : doc.palette.decorative.contains "fg" = false)
     (hfail : contrastMilli (effectivePair doc).fg (effectivePair doc).bg < aaText) :
     0 < (docDiags doc).size := by
-  have h1 : 0 < (effectivePairDiags doc).size := by
-    unfold effectivePairDiags
+  have h1 : 0 < (effectivePairJudged doc).diags.size := by
+    unfold effectivePairJudged
     rw [hdec]
     simp only [Bool.false_eq_true, ite_false, hfail, ite_true]
-    split <;> simp
-  simp only [docDiags, Array.size_append]
+    split
+    · split <;> simp
+    · simp
+  simp only [docDiags, realizePlan, Array.size_append]
   omega
 
 -- The built-in theme bundles, held to the same contract.
