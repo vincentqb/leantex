@@ -938,10 +938,15 @@ def baseCss (doc : Doc) : String :=
   "ol ol ol ol > li::marker { content: counter(list-item, upper-alpha) \".  \"; }\n" ++
   -- A link inherits the document's colour, as it does in the PDF: the anchor
   -- imposes nothing, the underline and focus outline carry the affordance.
-  "a { color: inherit; text-decoration-thickness: 1px;\n" ++
-  "    text-decoration-skip-ink: auto; text-underline-offset: 0.15em; }\n" ++
+  -- The underline band comes from the font's own post metrics, as the PDF
+  -- draws it (Font.band): CSS Text Decoration 4 §2.4.1 and §2.8.2 bind
+  -- `from-font` to the face's declared thickness and position ("must"),
+  -- so both backends declare the same band source. The old 0.15em offset
+  -- and 1px thickness were neither sourced nor the font's.
+  "a { color: inherit; text-decoration-thickness: from-font;\n" ++
+  "    text-underline-position: from-font; text-decoration-skip-ink: auto; }\n" ++
   "u { text-decoration: underline; text-decoration-skip-ink: auto;\n" ++
-  "    text-underline-offset: 0.15em; }\n" ++
+  "    text-decoration-thickness: from-font; text-underline-position: from-font; }\n" ++
   "a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }\n" ++
   "code, pre { font-family: var(--font-mono); font-size: 0.925em; }\n" ++
   s!"pre \{ background: var(--tint); padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++

@@ -255,6 +255,15 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html heading rule lifts half the heading's own ex"
     (((HtmlDoc.emit {} ruledDoc).1.splitOn
       "transform: translateY(-0.5ex)").length == 2)
+  -- Both backends declare the same underline band source — the font's own
+  -- post metrics: CSS Text Decoration 4 §2.4.1 and §2.8.2 bind `from-font`
+  -- to the face's declared thickness and position, which are what
+  -- `Font.band` reads for the PDF. No unsourced offset survives.
+  let fromFontPage := (HtmlDoc.emit {} ruledDoc).1
+  t "html u and a underline from the font's own band"
+    ((fromFontPage.splitOn "text-decoration-thickness: from-font").length == 3 &&
+     (fromFontPage.splitOn "text-underline-position: from-font").length == 3 &&
+     (fromFontPage.splitOn "text-underline-offset").length == 1)
 
 /-- The HTML rhythm realization, censused over emitted sheets: every default
 vertical gap is one emission — the below element's `margin-top`, computed
