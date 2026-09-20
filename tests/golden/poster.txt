@@ -1,0 +1,23 @@
+class poster
+page 3370.394x2383.937 vmargin 28.346 hmargin 28.346 fontsize 24.88 hyphenate off justify off
+assert pages <= 1
+assert text.in_area
+assert text.xheight >= 14.882pt
+frame
+  title
+    text "An Invented Poster Probe"
+  columns
+    column 480/1000
+      titled block
+        title
+          text "First Invented Panel"
+        para
+          text "Body text in the first column, entirely synthetic."
+    column 480/1000
+      titled block
+        title
+          text "Second Invented Panel"
+        para
+          text "Body text in the second column, likewise synthetic."
+-- diagnostics
+(none)

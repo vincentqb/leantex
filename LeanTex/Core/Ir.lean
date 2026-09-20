@@ -177,6 +177,19 @@ theorem vmargin_on_rhythm :
 in Legge & Bigelow 2011. The class implies `text.xheight >=` this;
 `card_floor_within_scale` ties it to the size scale. -/
 def cardXHeightFloor : Sp := Dim.mm100 140
+/-- The poster class's body size: beamerposter's scale-1 normalsize,
+24.88 pt — the size10.clo ladder magnified for its A0 calibration
+(beamerposter.sty v1.13, the fontscale table's base row). `scale=` and
+the named sizes multiply it through `\page{ fontsize }`. -/
+def posterFontSize : Sp := Dim.pt 2488 / 100
+
+/-- The poster class's legibility floor: the same 3.5 mrad angular
+x-height bound as the card's (the fluent-reading range, Legge & Bigelow
+2011), at a 1.5 m viewing distance — 5.25 mm. No authority fixes how far
+a reader stands from a poster; 1.5 m is this engine's stated convention
+(the failure help says so), and a document's own
+`\assert{ text.xheight >= ... }` takes control. -/
+def posterXHeightFloor : Sp := Dim.mm100 525
 
 /-- An sRGB colour — and, when the document declared it in CMYK, the
 declared components ride along so the PDF can honour the declared model.
@@ -2820,6 +2833,16 @@ structure ClassRecord where
   inkInArea : Option String := none
   /-- `minXHeight` implied: the floor and its failure guidance. -/
   xHeightFloor : Option (Sp × String) := none
+  /-- The face's trade trim size (width × height), when the class fixes
+  one: a face is trimmed to a declared physical size, and the default is
+  the trade's, never a guess — the card's ISO/IEC 7810 ID-1, the
+  poster's ISO 216 A0. A declared `\page` geometry overrides. -/
+  trimDefault : Option (Sp × Sp) := none
+  /-- The face's print safe zone: the default margins, inside which a
+  drifting trim cannot cut. Print-shop guidance asks 3–5 mm on a card
+  (the engine takes the conservative 5); beamerposter sets 1 cm side
+  margins on a poster (`\geometry{hmargin=1cm}`). -/
+  safeMargin : Option Sp := none
   /-- Build intent when the document's `\output` names no formats. -/
   formats : Array String := #[]
   /-- The markdown twin's default file name, when the class has one
@@ -2829,7 +2852,7 @@ structure ClassRecord where
   deriving Repr, BEq
 
 /-- The document's class, closed: `article`, `slides`, `card`, `resume`,
-or `webpage`. A class an `ofString?` does not answer is E0309 at the one
+`webpage`, or `poster`. A class an `ofString?` does not answer is E0309 at the one
 parse site and never enters the IR, so every class-dependent decision
 downstream is a total decision over this type — a misspelled class in
 engine code is a compile error, and a new class does not build until
@@ -2846,6 +2869,13 @@ inductive DocClass where
   /-- Structurally an article; HTML-primary, the PDF the print
   stylesheet's analogue. Declares its own build intent (html + md). -/
   | webpage
+  /-- One fixed, printed, trimmed surface at a large base — the face
+  model's second class. beamerposter's own mechanics decided the model:
+  the package sets a real paper size and replaces the size ladder with
+  absolute values; nothing frame-model survives (no overlays on a printed
+  sheet, no stage, no per-frame pagination). Column and block vocabulary
+  is content structure, shared with decks, orthogonal to the model. -/
+  | poster
   deriving Repr, BEq, DecidableEq, Inhabited
 
 /-- The class's one spelling — the `\documentclass` argument and the dump
@@ -2856,6 +2886,7 @@ def DocClass.name : DocClass → String
   | .card => "card"
   | .resume => "resume"
   | .webpage => "webpage"
+  | .poster => "poster"
 
 /-- The class a `\documentclass` argument names, if any: the inverse of
 `name`, and the one door a class enters the IR through. -/
@@ -2865,6 +2896,7 @@ def DocClass.ofString? : String → Option DocClass
   | "card" => some .card
   | "resume" => some .resume
   | "webpage" => some .webpage
+  | "poster" => some .poster
   | _ => none
 
 theorem DocClass.ofString?_name (c : DocClass) : ofString? c.name = some c := by
@@ -2898,7 +2930,9 @@ def DocClass.record : DocClass → ClassRecord
 the trim; declare \\assert{ text.in_area } to take control"
       xHeightFloor := some (cardXHeightFloor,
         "1.4mm x-height is the fluent-reading floor at hand-held \
-distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control") }
+distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take control")
+      trimDefault := some (Dim.mm100 8560, Dim.mm100 5398)
+      safeMargin := some (Dim.mm 5) }
   | .resume =>
     { model := .flow
       measureBand := true
@@ -2916,6 +2950,26 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
       measureBand := true
       formats := #["html", "md"]
       mdName := some "llms.txt" }
+  | .poster =>
+    { model := .face
+      fontSize := some posterFontSize
+      pagesBound := some .faces
+      inkInArea := some "the margins are the print safe zone: ink past them risks \
+the trim; declare \\assert{ text.in_area } to take control"
+      xHeightFloor := some (posterXHeightFloor,
+        "5.25mm x-height is the fluent-reading floor at a 1.5m viewing \
+distance, this engine's stated convention (Legge & Bigelow 2011 gives the \
+angular floor; no authority fixes the distance); declare \
+\\assert{ text.xheight >= ... } to take control")
+      -- ISO 216 A0, landscape: beamerposter's default board. The measure
+      -- band stays off as an honest gap: its judge reads the page text
+      -- width, and a poster's column is the real measure.
+      trimDefault := some (Dim.mm 1189, Dim.mm 841)
+      safeMargin := some (Dim.mm 10) }
+
+/-- The class fixes the page model: a poster is a face — one fixed,
+printed, trimmed surface — by the record, definitionally. -/
+theorem poster_model_face : (DocClass.poster).record.model = .face := rfl
 
 structure Doc where
   docClass : DocClass := .article

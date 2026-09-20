@@ -77,7 +77,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .E0304 => dvE (dvDoc "\\page\n" "x")
   | .E0305 => dvE (dvDoc "\\define \\role(who: text) {\\textbf{\\who}}\n" "\\role{$x$}")
   | .E0306 => dvE (dvDoc "\\define \\x(a?: text) {\\ifgiven{\\b}{y}}\n" "\\x{z}")
-  | .E0309 => dvE "\\documentclass{poster}\n\\begin{document}\nx\n\\end{document}"
+  | .E0309 => dvE "\\documentclass{proseplate}\n\\begin{document}\nx\n\\end{document}"
   | .E0310 => dvE (dvDoc "" "\\begin{itemize}\nstray\n\\item x\n\\end{itemize}")
   | .E0311 => dvE "a & b"
   | .E0312 => dvE "\\textbf{\\section{x}}"

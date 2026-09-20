@@ -117,6 +117,29 @@ def censusTable :
       (c[0]?.map (·.fills)).getD 0 == 1),
     ("a title stands on the measure",
       lineXOf c 0 "A Plain Statement" == some geom.hmargin)]),
+  ("poster", fun geom c => [
+    -- The class's implied faces bound: the one declared frame is one
+    -- face, and every glyph ships on it.
+    ("one face ships as one page", c.size == 1),
+    ("the board is the record's A0 landscape trim",
+      geom.pageW == Dim.mm 1189 && geom.pageH == Dim.mm 841),
+    ("the margins are the record's 1cm safe zone",
+      geom.hmargin == Dim.mm 10 && geom.vmargin == Dim.mm 10),
+    ("the body sets at beamerposter's 24.88pt normalsize",
+      lineSizeOf c 0 "Body text in the first column" == some (Dim.pt 2488 / 100)),
+    ("the poster title ships", hasStr (censusText c) "An Invented Poster Probe"),
+    ("both panels ship their titles and bodies",
+      hasStr (censusText c) "First Invented Panel" &&
+      hasStr (censusText c) "Second Invented Panel" &&
+      hasStr (censusText c) "entirely synthetic" &&
+      hasStr (censusText c) "likewise synthetic"),
+    ("the columns stand side by side",
+      ((lineXOf c 0 "Body text in the first column").bind fun x1 =>
+        (lineXOf c 0 "Body text in the second column").map fun x2 =>
+          decide (x1 < x2)).getD false),
+    ("no page number ships on a poster",
+      ((c[0]?.bind fun p => p.lines.back?).map
+        (·.text.trimAscii.toString != "1")).getD false)]),
   ("titlebars", fun geom c =>
     let bars := pageRuleSegs c 0
     let titleY := (lineYOf c 0 "Bars Probe Title").getD 0

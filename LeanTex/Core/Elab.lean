@@ -8496,7 +8496,7 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   -- the omission is that surface's grammar, never noted.
   if !sawClass && file.endsWith ".tex" then
     diag ctx .N0017 "no '\\documentclass'; the article page model is assumed" none
-      (help := "declare \\documentclass{article} (or slides, card, resume, webpage) to choose it")
+      (help := "declare \\documentclass{article} (or slides, card, resume, webpage, poster) to choose it")
   let record := docClass.record
   -- The body size: `\page{ fontsize = ... }` wins, else the class option
   -- (`fontsize=11pt`, KOMA's spelling, or the standard classes' bare
@@ -8569,29 +8569,30 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
       page := { page with hmargin := Ir.slidesHMargin }
     if page.vmargin == dflt.vmargin then
       page := { page with vmargin := Ir.slidesVMargin }
-  -- A card is trimmed from a sheet, so its defaults are the print trade's,
-  -- not a guess: ISO/IEC 7810 ID-1 (85.60 × 53.98 mm, the credit-card size)
-  -- unless the class option names the US (3.5 × 2 in) or Japanese
-  -- (91 × 55 mm) trade size; margins are the print safe zone, inside which
-  -- a drifting trim cannot cut — no single specification names the zone,
-  -- and print-shop guidance asks 3-5 mm; the engine takes the conservative
-  -- end, 5 mm, and a document declares its own to override. No
-  -- hyphenation and no running furniture:
-  -- a card is one face of display text, not a page of a run — which is
+  -- A face is trimmed from a sheet, so its defaults are the print
+  -- trade's, not a guess, and they live on the class record
+  -- (`ClassRecord.trimDefault`/`safeMargin`): the card's ISO/IEC 7810
+  -- ID-1 with the 5 mm safe zone, the poster's ISO 216 A0 with
+  -- beamerposter's 1 cm — unless the class option names the US
+  -- (3.5 × 2 in) or Japanese (91 × 55 mm) card trade size. No
+  -- hyphenation: a face is display text, not a page of a run — which is
   -- also why the prose measure band (W0201) does not apply to it.
   else if record.model == .face then
     let dflt : PageSpec := {}
     let opts := (classOptions.splitOn ",").map (·.trimAscii.toString)
     if page.width == dflt.width && page.height == dflt.height then
-      let (w, h) :=
-        if opts.contains "us" then (Dim.pt 252, Dim.pt 144)
-        else if opts.contains "jis" then (Dim.mm 91, Dim.mm 55)
-        else (Dim.mm100 8560, Dim.mm100 5398)
-      page := { page with width := w, height := h }
-    if page.hmargin == dflt.hmargin then
-      page := { page with hmargin := Dim.mm 5 }
-    if page.vmargin == dflt.vmargin then
-      page := { page with vmargin := Dim.mm 5 }
+      let named :=
+        if opts.contains "us" then some (Dim.pt 252, Dim.pt 144)
+        else if opts.contains "jis" then some (Dim.mm 91, Dim.mm 55)
+        else none
+      match named.orElse (fun _ => record.trimDefault) with
+      | some (w, h) => page := { page with width := w, height := h }
+      | none => pure ()
+    if let some m := record.safeMargin then
+      if page.hmargin == dflt.hmargin then
+        page := { page with hmargin := m }
+      if page.vmargin == dflt.vmargin then
+        page := { page with vmargin := m }
     if page.hyphenate.isNone then
       page := { page with hyphenate := some false }
     -- Below the 40-character working minimum for justified text

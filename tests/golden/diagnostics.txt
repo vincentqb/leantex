@@ -32,7 +32,7 @@ error[E0305]: parameter 'who' of '\role' expects text
 ── E0306 (dropped) unknown parameter reference in a definition body
 error[E0306]: unknown parameter '\b'
 ── E0309 (dropped) unknown document class
-error[E0309]: unknown document class 'poster'
+error[E0309]: unknown document class 'proseplate'
   help: classes: article, slides, card, resume, webpage
 ── E0310 (dropped) content before the first \item in a list
 error[E0310]: content before the first '\item'
@@ -137,7 +137,7 @@ note[N0016]: math is set in 'Fira Math', the first installed face with an OpenTy
   help: \fonts{ math = "..." } chooses a face yourself; `leantex fonts` lists the installed families
 ── N0017 (info) no document class declared; the article page model is assumed
 note[N0017]: no '\documentclass'; the article page model is assumed
-  help: declare \documentclass{article} (or slides, card, resume, webpage) to choose it
+  help: declare \documentclass{article} (or slides, card, resume, webpage, poster) to choose it
 ── N0018 (info) math alphabet glyph missing everywhere; a stand-in letter sets, the styling difference named
 note[N0018]: 'Fira Math' has no calligraphic 'L' (U+2112); the plain letter stands in
   help: declare a math face that carries it: \fonts{ math = ... }
