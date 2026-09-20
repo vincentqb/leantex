@@ -2929,7 +2929,7 @@ theorem take_args_consumes_forward
 def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "document", "frame", "columns", "figure",
    "figure*", "table", "table*", "quote", "quotation", "abstract", "ifbackend",
-   "nav", "minipage"]
+   "nav", "minipage", "block", "alertblock", "exampleblock"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
@@ -5766,6 +5766,36 @@ the box takes the whole measure" pos
     blocks := blocks.push
       (.columns #[(width, ← elabBlocksGo ctx (body.extract m2 body.size) 0
         #[] #[] (← get).flowGen)])
+  else if n == "block" || n == "alertblock" || n == "exampleblock" then
+    -- beamer's titled blocks (user guide §12.3): the {title} group on
+    -- the `\begin` line is the title — beamer's own mandatory argument,
+    -- so an empty group is the documented untitled block (no title bar)
+    -- and a missing group is named (E0304). A paragraph break before a
+    -- group makes it content, as the frame's title rule reads it.
+    let kind : Ir.TitledKind :=
+      if n == "alertblock" then .alert
+      else if n == "exampleblock" then .example
+      else .block
+    let k := skipSpaces body 0
+    let mut title : Array Inline := #[]
+    let mut m := 0
+    match body[k]? with
+    | some (.group t _) =>
+      title ← elabInlines ctx t
+      m := k + 1
+    | _ =>
+      diag ctx .E0304 s!"'\\begin\{{n}}' needs a \{title} group" pos
+        (help := "an empty group is an untitled block")
+    have hxw : rawWeightList (body.extract m body.size).toList
+        ≤ rawWeightList body.toList := extract_weight_le ..
+    have hxp : nestedParsList (body.extract m body.size).toList
+        ≤ nestedParsList body.toList := extract_nested_le ..
+    have hx0 : sliceWeight (body.extract m body.size) 0
+        = rawWeightList (body.extract m body.size).toList := sliceWeight_zero _
+    have hx1 : slicePars (body.extract m body.size) 0
+        = nestedParsList (body.extract m body.size).toList := slicePars_zero _
+    blocks := blocks.push (.titled kind title
+      (← elabBlocksGo ctx (body.extract m body.size) 0 #[] #[] (← get).flowGen))
   else if n == "quote" || n == "quotation" then
     -- One node for both: they differ only in \listparindent
     -- (quotation indents each paragraph's first line), and the

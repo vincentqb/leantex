@@ -664,6 +664,25 @@ def themeCss (doc : Doc) : String :=
   let d := Design.ofDoc doc
   (if d.bgDeclared then "body { background: var(--bg); }\n" else "") ++
   (if d.fgDeclared then "body { color: var(--fg); }\n" else "") ++
+  -- The titled block: its header bold, the bar behind it when the design
+  -- declares one — `Ir.titledLook` is the one resolving site, mirrored
+  -- here as var() fallbacks under the resolved condition, exactly the
+  -- frame-title rule. Padding is the rhythm's own quantum, this backend's
+  -- realization of the PDF bar's half-body pad.
+  "section.block > header { font-weight: bold; }\n" ++
+  (String.join ([Ir.TitledKind.block, .alert, .example].map fun kind =>
+    match (Ir.titledLook doc.palette kind).bar with
+    | some _ =>
+      s!"section.block-{kind.name} > header \{ background: var(--{kind.name}titlebg);\n" ++
+      s!"  color: var(--{kind.name}titlefg, var(--bg, #fff));\n" ++
+      s!"  padding: {quantaRem 1} {quantaRem 2}; }\n"
+    | none =>
+      match kind with
+      | .block => ""
+      | .alert =>
+        "section.block-alert > header { color: var(--alerttitlefg, var(--alert)); }\n"
+      | .example =>
+        "section.block-example > header { color: var(--exampletitlefg, var(--example)); }\n")) ++
   (if d.frametitle.isSome then
     "section.slide > header { background: var(--frametitlebg);\n" ++
     "  color: var(--frametitlefg, var(--bg, #fff));\n" ++
@@ -1433,6 +1452,15 @@ def blockNode (cfg : Config) (b : Block) : Node :=
   -- set-off semantics that the PDF path expresses as margins.
   | .quote body =>
     Html.elem "blockquote" (blockNodesInto cfg.into #[] body.toList)
+  -- beamer's titled block: a <section> with its header, through the typed
+  -- tree and the escaper; the kind rides as a class so the stylesheet (a
+  -- reader's own included) can address each. An untitled block keeps its
+  -- section and drops the header, as the PDF drops the bar.
+  | .titled kind title body =>
+    let head : Array Html.Node := if title.isEmpty then #[] else
+      #[Html.elem "header" (inlines cfg title) #[]]
+    Html.elem "section" (head ++ blockNodesInto cfg.into #[] body.toList)
+      #[("class", s!"block block-{kind.name}")]
   -- The equation's number is a structural element beside the formula,
   -- never text glued into it: a flex row whose math child takes the
   -- measure and whose tag sits right, the amsmath shape.

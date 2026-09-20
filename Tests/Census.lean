@@ -95,6 +95,28 @@ def censusTable :
       !hasStr (censusText c) "venuetitlebox"),
     ("the runnable redefinition ships its own body",
       hasStr (censusText c) "The runnable body wins.")]),
+  ("blocks", fun geom c => [
+    ("one page", c.size == 1),
+    ("each block ships its title",
+      hasStr (censusText c) "A Plain Statement" &&
+      hasStr (censusText c) "A Loud Statement" &&
+      hasStr (censusText c) "A Worked Instance"),
+    ("each body ships under its title",
+      ((lineYOf c 0 "A Plain Statement").bind fun ty =>
+        (lineYOf c 0 "The body of the plain block").map fun by_ =>
+          decide (ty < by_)).getD false &&
+      hasStr (censusText c) "The alert body stands under its own title." &&
+      hasStr (censusText c) "The example body stands under its own title."),
+    ("the untitled block ships its body alone",
+      hasStr (censusText c) "An untitled block keeps its body and draws no bar."),
+    -- Only `blocktitlebg` is declared, so exactly the plain titled
+    -- block draws a bar: alert and example take their content colours
+    -- barless, and the untitled block and the bare default theme add
+    -- no fill.
+    ("the one declared title bar ships as a fill",
+      (c[0]?.map (·.fills)).getD 0 == 1),
+    ("a title stands on the measure",
+      lineXOf c 0 "A Plain Statement" == some geom.hmargin)]),
   ("titlebars", fun geom c =>
     let bars := pageRuleSegs c 0
     let titleY := (lineYOf c 0 "Bars Probe Title").getD 0

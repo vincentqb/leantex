@@ -154,6 +154,11 @@ private def blockInto (summary ind acc : String) : Block → String
   -- (article.cls's \abstractname), generated here as in both backends.
   | .abstract body =>
     blocksInto summary ind (acc ++ (ind ++ "## Abstract\n\n")) body.toList
+  -- The titled block mirrors the HTML <section> and its header: the
+  -- title as its own bold line, then the body plain.
+  | .titled _ title body =>
+    let head := if title.isEmpty then "" else ind ++ "**" ++ inlineText title ++ "**\n\n"
+    blocksInto summary ind (acc ++ head) body.toList
   -- the role's class is a web styling hook; the twin keeps the content
   | .role _ body => blocksInto summary ind acc body.toList
   | .verbatim _ s =>
@@ -374,6 +379,10 @@ private theorem blockInto_extends (summary ind acc : String) :
   | .abstract body =>
     extends_comp ⟨_, rfl⟩ (blocksInto_extends summary ind
       (acc ++ (ind ++ "## Abstract\n\n")) body.toList)
+  | .titled _ title body =>
+    extends_comp ⟨_, rfl⟩ (blocksInto_extends summary ind
+      (acc ++ if title.isEmpty then "" else ind ++ "**" ++ inlineText title ++ "**\n\n")
+      body.toList)
   | .spaced _ body => blocksInto_extends summary ind acc body.toList
   | .bibliography _ _ items => ⟨bibItemsText ind items, rfl⟩
   | .role _ body => blocksInto_extends summary ind acc body.toList
@@ -620,6 +629,7 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .center body, out, h => headingLevelList_mem x body.toList out h
   | .quote body, out, h => headingLevelList_mem x body.toList out h
   | .abstract body, out, h => headingLevelList_mem x body.toList out h
+  | .titled _ _ body, out, h => headingLevelList_mem x body.toList out h
   | .role _ body, out, h => headingLevelList_mem x body.toList out h
   | .spaced _ body, out, h => headingLevelList_mem x body.toList out h
   | .columns cols, out, h => headingLevelColumns_mem x cols.toList out h

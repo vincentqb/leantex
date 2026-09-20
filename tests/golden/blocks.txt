@@ -1,0 +1,29 @@
+class slides
+page 362.835x272.126 vmargin 26.4 hmargin 28.346 fontsize 11
+palette blocktitlebg #23373B
+palette blocktitlefg #FAFAFA
+palette alert #B3261E
+palette example #205E3B
+frame
+  title
+    text "Invented Blocks Probe"
+  titled block
+    title
+      text "A Plain Statement"
+    para
+      text "The body of the plain block, entirely invented."
+  titled alert
+    title
+      text "A Loud Statement"
+    para
+      text "The alert body stands under its own title."
+  titled example
+    title
+      text "A Worked Instance"
+    para
+      text "The example body stands under its own title."
+  titled block
+    para
+      text "An untitled block keeps its body and draws no bar."
+-- diagnostics
+(none)

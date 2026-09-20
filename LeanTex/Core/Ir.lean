@@ -1496,6 +1496,24 @@ structure BibItem where
   content : Array Inline
   deriving Repr, BEq, Inhabited
 
+/-- The titled block's kind, closed: beamer's three block environments
+(`{block}`, `{alertblock}`, `{exampleblock}` — beamer user guide §12.3,
+"Highlighting"). The kind selects the role pair the title resolves
+through (`titledLook`); nothing else about the node differs per kind —
+a poster and a deck set the same node at different base sizes. -/
+inductive TitledKind where
+  | block
+  | alert
+  | example
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The kind's one spelling: the HTML class suffix and the role-key stem
+(`alerttitlefg`), one naming site for both backends. -/
+def TitledKind.name : TitledKind → String
+  | .block => "block"
+  | .alert => "alert"
+  | .example => "example"
+
 inductive Block where
   | para (content : Array Inline)
   /-- A heading. `number` is the section's resolved number ("2", "2.1",
@@ -1533,6 +1551,16 @@ inductive Block where
   heading — exactly the region a reader's tooling looks for — while the PDF
   keeps the class's quotation shape. -/
   | abstract (body : Array Block)
+  /-- beamer's titled block (`{block}`/`{alertblock}`/`{exampleblock}`,
+  user guide §12.3): the `{title}` group on the `\begin` line, block
+  content under it. An empty title is beamer's untitled block — no title
+  bar, the body alone. The title's colours resolve through the kind's
+  role pair (`titledLook`, following beamer's own parent chain:
+  beamercolorthemedefault.sty defines `block title` on structure,
+  `block title alerted` on alerted text, `block title example` on
+  example text, `block body` empty); a declared `<kind>titlebg` turns
+  the title into a colour bar, exactly the frame-title rule. -/
+  | titled (kind : TitledKind) (title : Array Inline) (body : Array Block)
   /-- A numbered display equation: `{equation}` under amsmath's numbering
   conventions (amsldoc §3 — `equation` numbers, `equation*` and `\[` do
   not, `\nonumber`/`\notag` opts a numbered form out). `number` is the
@@ -1836,6 +1864,9 @@ def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .abstract body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .abstract body2)
+  | .titled kind title body =>
+    let (c2, body2) := numberFloatList c #[] body.toList
+    (c2, .titled kind title body2)
   | .role n body =>
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .role n body2)
@@ -1915,6 +1946,7 @@ def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .center body => floatNumsList k out body.toList
   | .quote body => floatNumsList k out body.toList
   | .abstract body => floatNumsList k out body.toList
+  | .titled _ _ body => floatNumsList k out body.toList
   | .role _ body => floatNumsList k out body.toList
   | .spaced _ body => floatNumsList k out body.toList
   | .columns cols => floatNumsCols k out cols.toList
@@ -2018,6 +2050,10 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
   | .abstract body =>
+    obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
+    exact ⟨n, by simpa [numberFloatOne] using hc,
+      by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
+  | .titled _ _ body =>
     obtain ⟨n, hc, hn⟩ := numberFloatList_exact k c #[] out body.toList
     exact ⟨n, by simpa [numberFloatOne] using hc,
       by simpa [numberFloatOne, floatNumsOne, floatNumsList] using hn⟩
@@ -3071,6 +3107,7 @@ def navLinkOne (out : Array (String × String)) : Block → Array (String × Str
   | .center body => navLinkList out body.toList
   | .quote body => navLinkList out body.toList
   | .abstract body => navLinkList out body.toList
+  | .titled _ title body => navLinkList (navLinkInlineList out title.toList) body.toList
   | .role _ body => navLinkList out body.toList
   | .spaced _ body => navLinkList out body.toList
   | .columns cols => navLinkColumns out cols.toList
@@ -3366,6 +3403,11 @@ def dumpBlock (ind : String) (b : Block) : String :=
   | .center body => s!"{ind}center\n" ++ dumpBlocks (ind ++ "  ") body
   | .quote body => s!"{ind}quote\n" ++ dumpBlocks (ind ++ "  ") body
   | .abstract body => s!"{ind}abstract\n" ++ dumpBlocks (ind ++ "  ") body
+  | .titled kind title body =>
+    s!"{ind}titled {kind.name}\n" ++
+    (if title.isEmpty then ""
+     else s!"{ind}  title\n" ++ dumpInlines (ind ++ "    ") title) ++
+    dumpBlocks (ind ++ "  ") body
   | .role n body => s!"{ind}role {n}\n" ++ dumpBlocks (ind ++ "  ") body
   | .columns cols => s!"{ind}columns\n" ++ dumpColumns (ind ++ "  ") cols.toList
   | .step n last body =>
@@ -3501,6 +3543,44 @@ structure ColorPair where
   bg : Color
   deriving Repr, BEq
 
+/-- A titled block's resolved look: the title's ink, and the bar behind it
+when the palette declares one — no bar key, no bar, exactly the
+frame-title rule. -/
+structure TitledLook where
+  fg : Color
+  bar : Option Color
+  deriving Repr, BEq
+
+/-- The one resolving site for the titled block's roles, per kind —
+beamer's own parent chain (beamercolorthemedefault.sty: `block title` on
+structure, `block title alerted` on `alerted text`, `block title example`
+on `example text`), read onto the engine's keys: a bare title takes the
+kind's content colour (`alert`, `example`; the ink for `block`), and a
+declared `<kind>titlebg` turns the title into a colour bar whose default
+ink is the page colour, as the frame-title bar's is. Layout reads it with
+the palette in force at the block; `Design.ofDoc` reads it for the
+contrast contract. -/
+def titledLook (pal : Palette) : TitledKind → TitledLook
+  | .block =>
+    let bar := pal.find? "blocktitlebg"
+    { fg := (pal.find? "blocktitlefg").getD
+        (if bar.isSome then (pal.find? "bg").getD Color.white
+         else (pal.find? "fg").getD Color.black)
+      bar := bar }
+  | .alert =>
+    let bar := pal.find? "alerttitlebg"
+    { fg := (pal.find? "alerttitlefg").getD
+        (if bar.isSome then (pal.find? "bg").getD Color.white
+         else (pal.find? "alert").getD ((pal.find? "fg").getD Color.black))
+      bar := bar }
+  | .example =>
+    let bar := pal.find? "exampletitlebg"
+    { fg := (pal.find? "exampletitlefg").getD
+        (if bar.isSome then (pal.find? "bg").getD Color.white
+         else (pal.find? "example").getD ((pal.find? "fg").getD Color.black))
+      bar := bar }
+
+
 /-- The document's resolved design: every semantic role the backends read,
 with every default applied here and nowhere else — the type is the totality
 claim, so a consumer can never invent a per-site fallback for a missing
@@ -3529,6 +3609,12 @@ structure Design where
   muted : Color
   /-- The frame-title bar, when the design has one. -/
   frametitle : Option ColorPair
+  /-- The titled block's title look, one per kind (`titledLook`, the one
+  resolving site). Total: an undeclared palette pairs the kind's content
+  colour with no bar. -/
+  blockTitle : TitledLook
+  alertTitle : TitledLook
+  exampleTitle : TitledLook
   /-- The themed section page and its progress bar, when the design has one. -/
   progress : Option ColorPair
   /-- A `[standout]` frame's pair — total: without the keys it inverts the
@@ -3560,6 +3646,9 @@ def Design.ofDoc (doc : Doc) : Design :=
     frametitle := (pal.find? "frametitlebg").map fun barBg =>
       { fg := (pal.find? "frametitlefg").getD bg
         bg := barBg }
+    blockTitle := titledLook pal .block
+    alertTitle := titledLook pal .alert
+    exampleTitle := titledLook pal .example
     progress := (pal.find? "progressfg").map fun barFg =>
       { fg := barFg
         bg := (pal.find? "progressbg").getD bg }
@@ -3587,6 +3676,9 @@ def Design.consumedRoles : List String :=
    "covered",                         -- Layout.run's overlay dimming
    "muted",                           -- Layout.run's chrome footer, HtmlDoc.themeCss
    "frametitlefg", "frametitlebg",    -- Layout.collectBlock, HtmlDoc.themeCss
+   "blocktitlefg", "blocktitlebg",    -- Layout.collectBlock titled arm,
+   "alerttitlefg", "alerttitlebg",    --   HtmlDoc.themeCss (titledLook is
+   "exampletitlefg", "exampletitlebg",--   the one resolving site)
    "progressfg", "progressbg",        -- Layout.collectBlock, HtmlDoc.themeCss
    "standoutfg", "standoutbg",        -- Layout.collectBlock frame arm
    "separator"]                       -- the title-page rule (Elab.titleBlocks
@@ -3633,6 +3725,9 @@ def maxStepBlock : Block → Nat
   | .center body => maxStepBlockList body.toList
   | .quote body => maxStepBlockList body.toList
   | .abstract body => maxStepBlockList body.toList
+  -- The title is furniture and does not multiply pages, as a frame
+  -- title does not; the body's own steps take theirs.
+  | .titled _ _ body => maxStepBlockList body.toList
   | .role _ body => maxStepBlockList body.toList
   | .spaced _ body => maxStepBlockList body.toList
   | .columns cols => maxStepColumns cols.toList
@@ -3729,6 +3824,13 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
   | .center body => .center (dimBlockList cover k pending #[] body.toList)
   | .quote body => .quote (dimBlockList cover k pending #[] body.toList)
   | .abstract body => .abstract (dimBlockList cover k pending #[] body.toList)
+  | .titled kind title body =>
+    .titled kind
+      (if pending then
+        if title.isEmpty then title
+        else #[.colored cover.plain none (dimInlineList cover k true #[] title.toList)]
+       else dimInlineList cover k false #[] title.toList)
+      (dimBlockList cover k pending #[] body.toList)
   | .role n body => .role n (dimBlockList cover k pending #[] body.toList)
   | .spaced g body => .spaced g (dimBlockList cover k pending #[] body.toList)
   | .columns cols => .columns (dimColumns cover k pending #[] cols.toList)
@@ -3873,6 +3975,7 @@ def unwrapItemStep : Block → Block
   | .center body => .center (unwrapItemStepList #[] body.toList)
   | .quote body => .quote (unwrapItemStepList #[] body.toList)
   | .abstract body => .abstract (unwrapItemStepList #[] body.toList)
+  | .titled kind title body => .titled kind title (unwrapItemStepList #[] body.toList)
   | .role n body => .role n (unwrapItemStepList #[] body.toList)
   | .spaced g body => .spaced g (unwrapItemStepList #[] body.toList)
   | .columns cols => .columns (unwrapItemStepCols #[] cols.toList)
@@ -3957,6 +4060,9 @@ def blockTextOne (acc : String) : Block → String
   -- A quotation's text is real census content, exactly as a paragraph's.
   | .quote body => blockTextList acc body.toList
   | .abstract body => blockTextList acc body.toList
+  -- The title counts with its block, before the body, as a frame's does;
+  -- the bar and background are decorative ink and ship no characters.
+  | .titled _ title body => blockTextList (acc ++ plainText title) body.toList
   | .role _ body => blockTextList acc body.toList
   | .spaced _ body => blockTextList acc body.toList
   | .columns cols => blockTextColumns acc cols.toList
@@ -4016,6 +4122,15 @@ theorem blockTextList_append (a b : List Block) (acc : String) :
   induction a generalizing acc with
   | nil => simp [blockTextList]
   | cons x xs ih => simp [blockTextList, ih]
+
+/-- Blocks are content-free furniture: a titled block's census is its
+title's text then its body's, onto whatever came before — the bar and the
+background ship no characters. Definitional (`rfl`), the frame arm's own
+shape, so an edit that made the furniture ship text fails this build. -/
+theorem titled_text (acc : String) (kind : TitledKind) (title : Array Inline)
+    (body : Array Block) :
+    blockTextOne acc (.titled kind title body)
+      = blockTextList (acc ++ plainText title) body.toList := rfl
 
 /-- A declared vertical skip standing on its own, as `\vskip` does: glue
 the next placed line pays, no content. `none` declares nothing. -/
@@ -4130,6 +4245,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .center body => headingLevelList out body.toList
   | .quote body => headingLevelList out body.toList
   | .abstract body => headingLevelList out body.toList
+  | .titled _ _ body => headingLevelList out body.toList
   | .role _ body => headingLevelList out body.toList
   | .spaced _ body => headingLevelList out body.toList
   | .columns cols => headingLevelColumns out cols.toList
@@ -4472,6 +4588,18 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
   | .abstract body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
+  | .titled kind title body =>
+    rw [dimBlock]
+    by_cases h : pending = true
+    · by_cases ht : title.isEmpty
+      · simp [h, ht, blockTextOne,
+          dimBlockList_text cover k true body.toList #[] _, blockTextList]
+      · simp [h, ht, blockTextOne, plainText, plainTextList, plainTextOne,
+          dimInlineList_text cover k true title.toList #[],
+          dimBlockList_text cover k true body.toList #[] _, blockTextList]
+    · simp [h, blockTextOne, plainText,
+        dimInlineList_text cover k false title.toList #[], plainTextList,
+        dimBlockList_text cover k false body.toList #[] _, blockTextList]
   | .role n body =>
     rw [dimBlock]
     simp [blockTextOne, dimBlockList_text cover k pending body.toList #[] acc, blockTextList]
@@ -4609,6 +4737,10 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
       blockTextList]
+  | .titled kind title body =>
+    rw [unwrapItemStep]
+    simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
+      blockTextList]
   | .role n body =>
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] acc,
@@ -4725,6 +4857,9 @@ theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
   | .abstract body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
+  | .titled kind title body =>
+    simp [numberFloatOne, blockTextOne,
+      numberFloatList_text c #[] body.toList, blockTextList]
   | .role _ body =>
     simp [numberFloatOne, blockTextOne,
       numberFloatList_text c #[] body.toList, blockTextList]
@@ -4802,6 +4937,7 @@ def keptBy (t : String) : Block → Bool
   | .only targets _ => targets.contains t
   | .para _ | .equation _ _ | .section _ _ _ _ | .list _ _ | .center _ | .quote _ | .abstract _
   | .role _ _
+  | .titled _ _ _
   | .spaced _ _
   | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
   | .frame _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
@@ -4823,6 +4959,7 @@ def keepForOne (t : String) : Block → Block
   | .center body => .center (keepForList t body.toList).toArray
   | .quote body => .quote (keepForList t body.toList).toArray
   | .abstract body => .abstract (keepForList t body.toList).toArray
+  | .titled kind title body => .titled kind title (keepForList t body.toList).toArray
   | .role n body => .role n (keepForList t body.toList).toArray
   | .spaced g body => .spaced g (keepForList t body.toList).toArray
   | .columns cols => .columns (keepForColumns t cols.toList).toArray
@@ -4896,6 +5033,7 @@ def textLeavesOne (acc : List String) : Block → List String
   | .center body => textLeavesList acc body.toList
   | .quote body => textLeavesList acc body.toList
   | .abstract body => textLeavesList acc body.toList
+  | .titled _ title body => textLeavesList (plainText title :: acc) body.toList
   | .role _ body => textLeavesList acc body.toList
   | .spaced _ body => textLeavesList acc body.toList
   | .columns cols => textLeavesColumns acc cols.toList
@@ -4966,6 +5104,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .center body => orphanFreeList avail body.toList
   | .quote body => orphanFreeList avail body.toList
   | .abstract body => orphanFreeList avail body.toList
+  | .titled _ _ body => orphanFreeList avail body.toList
   | .role _ body => orphanFreeList avail body.toList
   | .spaced _ body => orphanFreeList avail body.toList
   | .columns cols => orphanFreeColumns avail cols.toList
@@ -5058,6 +5197,11 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .abstract body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
+  | .titled k t body =>
+    rw [textLeavesOne, textLeavesOne,
+      textLeavesList_acc (plainText t :: acc) body.toList,
+      textLeavesList_acc [plainText t] body.toList]
+    simp
   | .role n body =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesList_acc acc body.toList
@@ -5251,6 +5395,24 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     rw [textLeavesOne] at hs
     obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hs
     exact ⟨t, ht, rfl, by simpa [keepForOne, textLeavesOne] using hmem⟩
+  | .titled k ti body =>
+    intro s hs
+    rw [textLeavesOne, textLeavesList_acc [plainText ti] body.toList,
+      List.mem_append] at hs
+    cases hs with
+    | inr hcap =>
+      refine ⟨t0, h0, rfl, ?_⟩
+      rw [keepForOne, textLeavesOne,
+        textLeavesList_acc [plainText ti]
+          ((keepForList t0 body.toList).toArray.toList)]
+      exact List.mem_append.mpr (.inr hcap)
+    | inl hbody =>
+      obtain ⟨t, ht, hmem⟩ := keepForList_covers avail t0 h0 body.toList h s hbody
+      refine ⟨t, ht, rfl, ?_⟩
+      rw [keepForOne, textLeavesOne,
+        textLeavesList_acc [plainText ti]
+          ((keepForList t body.toList).toArray.toList)]
+      exact List.mem_append.mpr (.inl (by simpa using hmem))
   | .abstract body =>
     intro s hs
     rw [textLeavesOne] at hs
@@ -5421,6 +5583,7 @@ def onlyFreeOne : Block → Bool
   | .center body => onlyFreeList body.toList
   | .quote body => onlyFreeList body.toList
   | .abstract body => onlyFreeList body.toList
+  | .titled _ _ body => onlyFreeList body.toList
   | .role _ body => onlyFreeList body.toList
   | .spaced _ body => onlyFreeList body.toList
   | .columns cols => onlyFreeColumns cols.toList
@@ -5487,6 +5650,9 @@ theorem keepForOne_id (t : String) (b : Block)
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
   | .abstract body =>
+    rw [onlyFreeOne] at h
+    simp [keepForOne, keepForList_id t body.toList h]
+  | .titled kind title body =>
     rw [onlyFreeOne] at h
     simp [keepForOne, keepForList_id t body.toList h]
   | .role n body =>
@@ -5590,6 +5756,7 @@ def imageSrcsBlock (out : Array String) : Block → Array String
   | .center body => imageSrcsBlockList out body.toList
   | .quote body => imageSrcsBlockList out body.toList
   | .abstract body => imageSrcsBlockList out body.toList
+  | .titled _ title body => imageSrcsBlockList (imageSrcsInlines out title) body.toList
   | .role _ body => imageSrcsBlockList out body.toList
   | .spaced _ body => imageSrcsBlockList out body.toList
   | .columns cols => imageSrcsColumns out cols.toList
@@ -5700,6 +5867,8 @@ def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) 
   | .center body => foldBlockList fb fi (fb acc b) body.toList
   | .quote body => foldBlockList fb fi (fb acc b) body.toList
   | .abstract body => foldBlockList fb fi (fb acc b) body.toList
+  | .titled _ title body =>
+    foldBlockList fb fi (foldInlineList fi (fb acc b) title.toList) body.toList
   | .role _ body => foldBlockList fb fi (fb acc b) body.toList
   | .spaced _ body => foldBlockList fb fi (fb acc b) body.toList
   | .columns cols => foldBlockCols fb fi (fb acc b) cols.toList
@@ -5947,6 +6116,9 @@ def resolveRefBlock (table : RefTable) : Block → Block
   | .center body => .center (resolveRefBlockList table #[] body.toList)
   | .quote body => .quote (resolveRefBlockList table #[] body.toList)
   | .abstract body => .abstract (resolveRefBlockList table #[] body.toList)
+  | .titled kind title body =>
+    .titled kind (resolveRefInlines table title)
+      (resolveRefBlockList table #[] body.toList)
   | .spaced g body => .spaced g (resolveRefBlockList table #[] body.toList)
   | .role n body => .role n (resolveRefBlockList table #[] body.toList)
   | .columns cols => .columns (resolveRefColumns table #[] cols.toList)
@@ -6080,6 +6252,9 @@ def floatLabelOne (float : Option String) (out : Array (String × Option String)
   | .center body => floatLabelList float out body.toList
   | .quote body => floatLabelList float out body.toList
   | .abstract body => floatLabelList float out body.toList
+  | .titled _ title body =>
+    floatLabelList float (foldInlineList (floatLabelPush float) out title.toList)
+      body.toList
   | .role _ body => floatLabelList float out body.toList
   | .spaced _ body => floatLabelList float out body.toList
   | .columns cols => floatLabelCols float out cols.toList

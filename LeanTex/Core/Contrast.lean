@@ -187,10 +187,13 @@ private structure UseAcc where
   effective ink/page pair is judged beside epoch 0's. -/
   epochs : Array Palette := #[]
   titledPals : Array Palette := #[]
+  /-- Epochs that shipped a titled block, per kind: the kind's resolved
+  title pair is judged against the palette in force at the block. -/
+  blockPals : Array (TitledKind × Palette) := #[]
   standoutPals : Array Palette := #[]
   pendingPals : Array Palette := #[]
 
-private def pushUnique (xs : Array Palette) (p : Palette) : Array Palette :=
+private def pushUnique [BEq α] (xs : Array α) (p : α) : Array α :=
   if xs.contains p then xs else xs.push p
 
 /-- The effective page of a palette: its `bg`, else the shipped light
@@ -335,6 +338,19 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   | .center body => usesBlocks cx acc body.toList
   | .quote body => usesBlocks cx acc body.toList
   | .abstract body => usesBlocks cx acc body.toList
+  | .titled kind title body =>
+    -- The block is a design site of its epoch: the kind's resolved title
+    -- pair is judged against the palette in force here. The title's own
+    -- runs are judged on the ground Layout paints under them — the bar
+    -- when the palette declares one, the page otherwise.
+    let acc := if title.isEmpty then acc else
+      { acc with blockPals := pushUnique acc.blockPals (kind, acc.pal) }
+    let look := titledLook acc.pal kind
+    let titleCx := { cx with
+      bold := true
+      ground := look.bar
+      groundName := look.bar.map (fun _ => "the block-title bar") }
+    usesBlocks cx (usesInlines titleCx acc title.toList) body.toList
   | .role _ body => usesBlocks cx acc body.toList
   | .spaced _ body => usesBlocks cx acc body.toList
   | .columns cols => usesColumns cx acc cols.toList
@@ -497,8 +513,24 @@ shipped bundles are proved (`builtin_designs_legible`,
 this; the decorative escape is the same one the per-use walk honours, on
 the pair's ink key. -/
 private def resolvedPairDiagsAt (doc : Doc)
-    (titled standout pending : Array Palette) : Array Diag := Id.run do
+    (titled standout pending : Array Palette)
+    (blocks : Array (TitledKind × Palette)) : Array Diag := Id.run do
   let mut out : Array Diag := #[]
+  for (kind, pal) in blocks do
+    -- The block title sets bold at the body size — under WCAG 2.2's
+    -- large-scale sizes, so SC 1.4.3's 4.5:1 — on the bar when the
+    -- palette declares one, on the page otherwise (`titledLook`, the one
+    -- resolving site).
+    let look := titledLook pal kind
+    let ground := look.bar.getD ((pal.find? "bg").getD Color.white)
+    let milli := contrastMilli look.fg ground
+    if milli < aaText && !pal.decorative.contains s!"{kind.name}titlefg" then
+      out := out.push (Diag.of .W0345
+        (s!"the {kind.name} block title pairs {hexOf look.fg} on " ++
+          s!"{hexOf ground} at {ratioString milli}, below the " ++
+          s!"{ratioString aaText} WCAG 2.2 asks of text (SC 1.4.3)")
+        (help := some ("deliberate low contrast is declared, not defaulted: " ++
+          "\\palette[decorative]{ " ++ s!"{kind.name}titlefg = {hexOf look.fg} " ++ "}")))
   for pal in titled do
     let d := Design.ofDoc { doc with palette := pal }
     if let some p := d.frametitle then
@@ -618,7 +650,7 @@ def docDiags (doc : Doc) : Array Diag :=
   let walk := usesBlocks base { pal := doc.palette } doc.body.toList
   let declared := declaredUseDiags doc walk
   let resolved := resolvedPairDiagsAt doc walk.titledPals walk.standoutPals
-    walk.pendingPals
+    walk.pendingPals walk.blockPals
   effectivePairDiags doc ++ epochPairDiags doc walk.epochs ++ declared ++ resolved
 
 /-- The judged pair is the shipped pair: what `effectivePairDiags` judges is
@@ -671,6 +703,12 @@ def designContract (d : Design) : Bool :=
     && (match d.frametitle with
         | some p => contrastMilli p.fg p.bg ≥ aaText
         | none => true)
+    -- The titled block's pairs, total as the standout's: the title sets
+    -- bold at the body size (under WCAG's large-scale sizes, so 4.5:1)
+    -- on the bar when the design has one, on the page otherwise.
+    && contrastMilli d.blockTitle.fg (d.blockTitle.bar.getD d.bg) ≥ aaText
+    && contrastMilli d.alertTitle.fg (d.alertTitle.bar.getD d.bg) ≥ aaText
+    && contrastMilli d.exampleTitle.fg (d.exampleTitle.bar.getD d.bg) ≥ aaText
     && contrastMilli d.standout.fg d.standout.bg ≥ aaLargeText
 
 /-- A palette's whole contract: `alert` and `example` colour body text on

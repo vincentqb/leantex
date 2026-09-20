@@ -1,0 +1,32 @@
+% Invented text. beamer's titled blocks on a slide: block, alertblock,
+% exampleblock — the {title} group on the \begin line, an empty group the
+% documented untitled block. The declared blocktitlebg draws the title bar;
+% alert and example titles take their content colours, undeclared.
+\documentclass{slides}
+\theme{default}
+
+\palette{
+  blocktitlebg = #23373B,
+  blocktitlefg = #FAFAFA,
+  alert   = #B3261E,
+  example = #205E3B,
+}
+
+\begin{document}
+
+\begin{frame}{Invented Blocks Probe}
+\begin{block}{A Plain Statement}
+The body of the plain block, entirely invented.
+\end{block}
+\begin{alertblock}{A Loud Statement}
+The alert body stands under its own title.
+\end{alertblock}
+\begin{exampleblock}{A Worked Instance}
+The example body stands under its own title.
+\end{exampleblock}
+\begin{block}{}
+An untitled block keeps its body and draws no bar.
+\end{block}
+\end{frame}
+
+\end{document}

@@ -1107,6 +1107,9 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   -- its glyphs are asked for like any other text.
   | .abstract body =>
     scalarTextList { out with texts := out.texts.push "Abstract" } itemD enumD body.toList
+  -- The block's title is set in the bold face at the body size; its
+  -- glyphs are asked for like a heading's.
+  | .titled _ title body => scalarTextList (textAndMath out title) itemD enumD body.toList
   | .role _ body => scalarTextList out itemD enumD body.toList
   | .spaced _ body => scalarTextList out itemD enumD body.toList
   | .columns cols => scalarTextCols out itemD enumD cols.toList
@@ -3117,6 +3120,11 @@ private inductive Op where
   /-- A colour bar behind the line just placed — the frame title. Full page
   width, from the page top to `pad` below the line's depth. -/
   | titleBar (color : Ir.Color) (pad : Sp)
+  /-- A colour bar behind the line just placed — a titled block's title.
+  Unlike the frame's bar it stands mid-page: `x` across `w` (the measure
+  in force where the block stands), one `pad` above the line's ink top to
+  one below its depth. -/
+  | blockBar (color : Ir.Color) (pad x w : Sp)
   /-- A full-measure horizontal rule as its own line: the title page's
   separator. Placed through `placeLine`, so it spaces, breaks pages, and
   distributes exactly as a line of text does. -/
@@ -4067,6 +4075,27 @@ private def collectBlock (a : Acc) (pats : Option Hyphen.Patterns) (fs : FontSet
       measure := some ((a.measure.getD a.geom.textWidth) - a.geom.listIndent) }
     let sub := collectBlocks sub pats fs body (indent + a.geom.listIndent)
     { sub with measure := saved }
+  | .titled kind title body =>
+    -- beamer's titled block: the title line in the kind's role pair
+    -- (`Ir.titledLook`, the one resolving site — read with the palette in
+    -- force at the block, as the frame title is), bold at the body size,
+    -- with a colour bar behind it when the palette declares one — the
+    -- frame-title rule. The bar's pad is half the body size, the frame
+    -- bar's own derivation; the title-to-body gap is the default rhythm.
+    let look := Ir.titledLook a.pal kind
+    let a := if title.isEmpty then a else
+      let saved := a.fg
+      let a := { a with fg := look.fg }
+      let a := collectDisplay a fs title indent false a.geom.fontSize
+        (baseStyle := { bold := true })
+      let a := match look.bar with
+        | some barBg =>
+          { a with ops := a.ops.push (.blockBar barBg (a.geom.fontSize / 2)
+              (a.geom.hmargin + indent)
+              ((a.measure.getD a.geom.textWidth) - indent)) }
+        | none => a
+      { a with fg := saved }.wantGap
+    collectBlocks a pats fs body indent
   | .abstract body =>
     -- article.cls §abstract: `\small`, a centred `{\bfseries\abstractname}`
     -- heading, then the body on quotation margins. The heading word is
@@ -4800,6 +4829,7 @@ private inductive StagedOp where
   | brk
   | pageStyle (bg : Option Ir.Color) (vdist : VDist)
   | titleBar (color : Ir.Color) (pad : Sp)
+  | blockBar (color : Ir.Color) (pad x w : Sp)
   | hrule (color : Ir.Color) (thickness : Sp)
   | tableRule (thickness : Sp) (x w : Sp) (segs : Array Seg)
   | pin
@@ -4913,6 +4943,18 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       | some l =>
         let fill : Fill := { x := 0, y := 0, w := b.geom.pageW,
                              h := l.y + b.prevDepth + pad, color := color }
+        { b with cur := { b.cur with fills := b.cur.fills.push fill } }
+      | none => b
+  | .blockBar color pad x w =>
+    -- The bar sits behind the line just placed: the measure across, one
+    -- `pad` above the line's ink top (the body ascent at the line's own
+    -- size) to one below its depth. Fills paint before every glyph run,
+    -- so the title's ink stays on top.
+    b := match b.cur.lines.back? with
+      | some l =>
+        let asc := b.ascent * l.size / b.geom.fontSize
+        let fill : Fill := { x := x, y := l.y - asc - pad, w := w,
+                             h := asc + b.prevDepth + 2 * pad, color := color }
         { b with cur := { b.cur with fills := b.cur.fills.push fill } }
       | none => b
   | .hrule color th =>
@@ -5443,6 +5485,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .brk => .brk
     | .pageStyle bg c => .pageStyle bg c
     | .titleBar color pad => .titleBar color pad
+    | .blockBar color pad x w => .blockBar color pad x w
     | .hrule color th => .hrule color th
     | .tableRule th x w segs => .tableRule th x w segs
     | .pin => .pin

@@ -75,7 +75,7 @@ def goldenNames : List String :=
    "diagram", "diagram-overflow", "diagram-refused", "diagram-scm",
    "tables", "tables-ragged", "subfigures", "float-center",
    "math-companion", "math-first", "abstract", "crossref", "eqnum",
-   "redefine", "titlebars", "daylight"]
+   "redefine", "titlebars", "daylight", "blocks"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
