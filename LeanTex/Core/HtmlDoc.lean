@@ -1125,226 +1125,994 @@ private def sizeRules : String :=
   String.join (Ir.sizeScale.map fun (name, k) =>
     s!".size-{name} \{ font-size: {milliFactor k}em; }\n")
 
-/-- The reduced-motion guard for smooth scrolling: under the reader's
-reduce preference the deck pages jump instead of gliding. The base
+/-! ### The deck stylesheet, as typed rules
+
+The engine cannot prove what a browser does; it can prove what it emits,
+and emit so that correctness does not depend on which features a browser
+has. Each deck rule is a value (`DeckRule`) carrying its selector, its
+declarations, its feature gate and its media partition; one grouping
+emitter (`emitDeckRules`) realizes the `@supports` blocks, the
+reduced-motion partition and the print partition; and the guarantees are
+theorems quantified over the rule set — `deck_css_partition`,
+`floor_is_baseline`, `floor_hides_nothing` with `floor_opacity_mem`,
+`guards_by_construction`, `fallback_uncovers_every_step`,
+`snap_pages_partition_frames`, `deck_text_path_free` — so a new rule is
+in every contract the moment it is written. Minimal changes by
+construction: adding or dropping a feature dependency is one `requires`
+field; adding a browser fact is one `Feature` row; nothing else moves.
+
+What stays measured, never proved: Chromium's directional snapping on
+key presses, Firefox's lack of scroll-driven timelines, the page-scroll
+fraction. Those are browser facts, held by the dated Playwright probes
+recorded in PLAN's vertical-deck entry — the oracle, not a theorem. -/
+
+/-- A browser feature the deck's stylesheet gates on. Each constructor
+carries its `@supports` test (`Feature.test`), a sourced support note
+(`Feature.support`), and the property names and selector fragments whose
+meaning depends on it (`Feature.dependsOn`) — the table
+`deck_css_partition` is stated over. Registering a feature is one
+constructor and one arm in each of the three tables; `all_complete` and
+`all_nodup` make a miscount a build failure in both directions. -/
+inductive Feature where
+  /-- Scroll-driven animations' view progress timelines
+  (`animation-timeline: view()`, Scroll-driven Animations 1 §3.1): the
+  push and the scrubbed step uncover ride them. -/
+  | viewTimeline
+  /-- Scroll-state container queries (CSS Conditional 5,
+  `container-type: scroll-state`): no rule uses it today; the row stands
+  so a rule adopting `scroll-state()` is in the partition contract the
+  moment it is written. -/
+  | scrollState
+  /-- The relational selector `:has()` (Selectors 4 §4.5): the floor's
+  fragment-driven step uncover and the step control's cluster switch. -/
+  | has
+  deriving Repr, DecidableEq
+
+/-- The `@supports` condition that detects the feature. The `has` test is
+`selector()` (CSS Conditional 4 §6.1), itself universal since 2020 —
+Chromium 83+, Firefox 69+, Safari 14.1+ (caniuse
+`mdn-css_at-rules_supports_selector`, read 2026-09-20) — so an engine old
+enough to lack it drops the gated block exactly as it would have dropped
+the unparseable selector. -/
+def Feature.test : Feature → String
+  | .viewTimeline => "(animation-timeline: view())"
+  | .scrollState => "(container-type: scroll-state)"
+  | .has => "selector(:has(a))"
+
+/-- The sourced support note: engine, version, date — caniuse/MDN, read
+2026-09-20. A browser fact lives here, nowhere else. -/
+def Feature.support : Feature → String
+  | .viewTimeline =>
+    "Chromium 115+ (Jul 2023), Safari 26, Firefox 159+ — caniuse \
+mdn-css_properties_animation-timeline_view, read 2026-09-20"
+  | .scrollState =>
+    "Chromium 133+ (Feb 2025), no Firefox, no Safari — MDN scroll-state \
+container queries / caniuse, read 2026-09-20"
+  | .has =>
+    "Chromium 105+ (Aug 2022), Firefox 121+ (Dec 2023), Safari 15.4+ \
+(Mar 2022) — caniuse css-has, read 2026-09-20"
+
+/-- The exact property names whose meaning depends on the feature. A
+capability enters a rule through the property that carries it
+(`animation-timeline`, never bare `view(y)`): a value rides its
+property, so the scan reads names, not values. -/
+def Feature.dependsOnProps : Feature → List String
+  | .viewTimeline => ["animation-timeline", "view-timeline", "animation-range"]
+  | .scrollState => []
+  | .has => []
+
+/-- The selector fragments whose meaning depends on the feature. Every
+fragment is digit-free, so it lives whole inside one literal selector
+chunk (`SelChunk.lits`). -/
+def Feature.dependsOnSel : Feature → List String
+  | .viewTimeline => []
+  | .scrollState => ["scroll-state("]
+  | .has => [":has("]
+
+/-- Every feature, in emission order for the `@supports` blocks. -/
+def Feature.all : List Feature := [.viewTimeline, .scrollState, .has]
+
+theorem Feature.all_complete : ∀ f : Feature, f ∈ Feature.all := by
+  intro f; cases f <;> simp [Feature.all]
+
+theorem Feature.all_nodup : Feature.all.Nodup := by decide
+
+/-- Does `s` contain `frag`? Spelled over the character list so the
+partition proofs evaluate it definitionally. -/
+def hasFragAux (pat : List Char) : List Char → Bool
+  | [] => pat.isEmpty
+  | l@(_ :: t) => pat.isPrefixOf l || hasFragAux pat t
+
+def hasFrag (s frag : String) : Bool := hasFragAux frag.toList s.toList
+
+/-- One chunk of a deck selector: literal syntax, an interpolated
+ordinal, or the uncovered-step alternatives of the floor's `:is()`.
+Ordinals stay apart from the syntax so the feature scan reads syntax and
+never a numeral: every fragment in `Feature.dependsOn` is digit-free and
+each syntactic token lives whole in one literal, so scanning
+`SelChunk.lits` is scanning the rendered selector. -/
+inductive SelChunk where
+  | lit (s : String)
+  | num (n : Nat)
+  /-- The uncovered-step alternatives `.step[data-step="j"], …`: the
+  list is the data (`fallback_uncovers_every_step` reads it), the
+  template renders it. -/
+  | stepAlts (js : List Nat)
+  deriving Repr, DecidableEq
+
+/-- The literal syntax a chunk renders, ordinals excluded. -/
+def SelChunk.lits : SelChunk → List String
+  | .lit s => [s]
+  | .num _ => []
+  | .stepAlts _ => [".step[data-step=\"", "\"], "]
+
+def SelChunk.render : SelChunk → String
+  | .lit s => s
+  | .num n => toString n
+  | .stepAlts js =>
+    String.intercalate ", " (js.map fun j => s!".step[data-step=\"{j}\"]")
+
+def renderSel (sel : List SelChunk) : String :=
+  String.join (sel.map SelChunk.render)
+
+/-- Where a rule stands in the feature partition: the ungated base, a
+feature's `@supports` block, or its `@supports not` block. -/
+inductive Gate where
+  | base
+  | supported (f : Feature)
+  | unsupported (f : Feature)
+  deriving Repr, DecidableEq
+
+/-- The media partition a rule is emitted into: the screen deck, the
+screen deck under `prefers-reduced-motion: reduce` (CSS Media Queries 5
+§12.1), or the printed handout. -/
+inductive Part where
+  | screen
+  | reduce
+  | print
+  deriving Repr, DecidableEq
+
+/-- One deck rule — what a string concatenation used to spell, as a
+value the deck theorems quantify over. -/
+structure DeckRule where
+  selector : List SelChunk
+  decls : List (String × String)
+  requires : Gate := .base
+  part : Part := .screen
+  deriving Repr, DecidableEq
+
+/-- Does the rule's syntax use something whose meaning depends on `f`?
+The scan reads the declared property names by equality
+(`Feature.dependsOnProps`) and the selector's literal chunks by
+substring (`Feature.dependsOnSel`); a value rides its property. -/
+def DeckRule.uses (r : DeckRule) (f : Feature) : Bool :=
+  r.decls.any (fun d => f.dependsOnProps.contains d.1) ||
+    f.dependsOnSel.any fun frag =>
+      (r.selector.flatMap SelChunk.lits).any fun s => hasFrag s frag
+
+/-- One rule's CSS text: `sel { p: v; … }`. A selector that opens blocks
+of its own (the keyframes chunks) closes them all. -/
+def DeckRule.render (r : DeckRule) : String :=
+  let sel := renderSel r.selector
+  sel ++ " { " ++
+    String.join (r.decls.map fun d => d.1 ++ ": " ++ d.2 ++ "; ") ++
+    "}" ++ String.join (List.replicate (sel.toList.count '{') " }") ++ "\n"
+
+/-- One partition's rules grouped by gate — the one grouping function all
+three partitions ride: the base in order, then one `@supports` block per
+feature, then the `@supports not` blocks. An empty group emits no block. -/
+def emitGates (rules : List DeckRule) : String :=
+  let group (g : Gate) := rules.filter (fun r => r.requires == g)
+  let block (test : String) (rs : List DeckRule) : String :=
+    if rs.isEmpty then "" else
+      "@supports " ++ test ++ " {\n" ++
+        String.join (rs.map DeckRule.render) ++ "}\n"
+  String.join ((group .base).map DeckRule.render) ++
+    String.join (Feature.all.map fun f => block f.test (group (.supported f))) ++
+    String.join (Feature.all.map fun f =>
+      block ("not " ++ f.test) (group (.unsupported f)))
+
+/-- The deck stylesheet from its typed rules: the screen partition with
+its gates, then the reduced-motion partition *after* the blocks it
+reverts (equal specificity, source order decides — CSS Cascade 5 §6.4),
+then the print partition. Every rule is emitted exactly once, in its
+declared partition and gate; the Tests deck block pins the declaration
+multiset against the typed set. -/
+def emitDeckRules (rules : List DeckRule) : String :=
+  let part (p : Part) := rules.filter (fun r => r.part == p)
+  "@media screen {\n" ++
+    emitGates (part .screen) ++
+    "@media (prefers-reduced-motion: reduce) {\n" ++
+      emitGates (part .reduce) ++ "}\n" ++
+    "}\n" ++
+  "@media print {\n" ++ emitGates (part .print) ++ "}\n"
+
+/-- The floor's own snap, on the stage: without `view()` timelines the
+sections are the snap pages (the spacers hide). A frame taller than the
+viewport (the PDF's spill) grows past its min-height in the floor and
+stays readable (Scroll Snap 1 §5.2.2). -/
+def deckStageRule : DeckRule :=
+  { selector := [.lit "section.slide, section.section-page"]
+    decls := [("min-height", "100dvh"), ("scroll-snap-align", "start"),
+      ("scroll-snap-stop", "always"), ("display", "flex"),
+      ("flex-direction", "column"), ("padding", safeareaVar)] }
+
+/-- The deck glides between snap pages; `guards_by_construction` holds
+its reduced-motion counterpart (`deckGlideGuard`) to it — the base
 stylesheet's global reduce block covers `animation` and `transition`
-only; `scroll-behavior` is neither, so the glide needs its own guard
-(WCAG 2.2 SC 2.3.3; the query is CSS Media Queries 5 §12.1). -/
-def scrollMotionGuard (sel : String) : String :=
-  s!"@media (prefers-reduced-motion: reduce) \{ {sel} \{ scroll-behavior: auto; } }\n"
+only, and `scroll-behavior` is neither (WCAG 2.2 SC 2.3.3, technique
+C39). -/
+def deckGlideRule : DeckRule :=
+  { selector := [.lit "html"], decls := [("scroll-behavior", "smooth")] }
 
-/-- Smooth snap-paging carries its reduced-motion form by construction —
-`motionCss`'s shape: the emitted CSS is definitionally the smooth-scroll
-rule followed by the guard for the same selector, so no deck can ship a
-gliding page without the opt-out (`smoothScrollCss_guarded`). -/
-def smoothScrollCss (sel : String) : String :=
-  s!"{sel} \{ scroll-behavior: smooth; }\n" ++
-    scrollMotionGuard sel
+/-- The deck's base screen rules — the floor every browser gets. The
+scroll space is vertical and snaps mandatorily on the root (`html`
+carries `scroll-snap-type`, which UAs apply to the viewport — Scroll
+Snap 1 §4.1), so every native "next" key pages it without focus: Space,
+Shift+Space, PageDown/PageUp, ArrowDown/ArrowUp, Home/End, the wheel, a
+swipe, a presenter remote (§6.1–6.2: paging and arrow scrolls carry an
+intended direction and must ignore the starting snap position, so one
+press lands one page; `scroll-snap-stop: always` keeps a fling from
+skipping one). The deck fills the viewport: type is set on `main` in
+`vh` — the PDF's own fontSize/stage-height ratio
+(`deck_type_is_stage_ratio`) — so every slide scales from the stage, and
+the headings retake their scale steps in `em` to ride the same base. A
+section page owns a whole page of the deck, its title and bar centred on
+both axes (its own rule: a frame's children must keep the full slide
+width). -/
+def deckBase (bodyVh : String) : List DeckRule :=
+  [ { selector := [.lit "html"], decls := [("scroll-snap-type", "y mandatory")] },
+    deckGlideRule,
+    { selector := [.lit "body"], decls := [("padding", "0")] },
+    { selector := [.lit "main"]
+      decls := [("max-width", "none"), ("margin", "0"), ("font-size", bodyVh)] },
+    deckStageRule,
+    { selector := [.lit "section.section-page"]
+      decls := [("justify-content", "center"), ("align-items", "center")] },
+    { selector := [.lit "h1"], decls := [("font-size", scaleSize "LARGE" "em")] },
+    { selector := [.lit "h2"], decls := [("font-size", scaleSize "Large" "em")] },
+    { selector := [.lit "h3"], decls := [("font-size", scaleSize "large" "em")] },
+    { selector := [.lit "section.slide > header"]
+      decls := [("max-height", titlebandVar)] },
+    { selector := [.lit "section.slide > header h2"]
+      decls := [("font-size", scaleSize "Large" "em")] } ]
 
-theorem smoothScrollCss_guarded (sel : String) :
-    ∃ rule, smoothScrollCss sel = rule ++ scrollMotionGuard sel :=
-  ⟨_, rfl⟩
+/-- The push's motion rule: the frame section is a sticky stage (CSS
+Positioned Layout 3 §3.4) that arrives from the side over the stuck
+previous frame — `ltx-push` scrubs `translate(100vw, -100dvh) → none`
+over the section's own `view(y)` entry range; the `-100dvh` leg cancels
+the scroll's vertical travel exactly (Scroll-driven Animations 1 §3.1:
+the range calculation ignores transforms while accounting for
+positioning, so the animation cannot feed its own timeline), leaving
+pure horizontal arrival. Stage height is pinned to the viewport so the
+cancellation is exact for every frame; a frame whose content spills
+keeps it reachable through its own scroll (`overflow-y: auto` — the
+scrollbar is the visible control, the honest floor). -/
+def deckPushMotion : DeckRule :=
+  { selector := [.lit "section.slide, section.section-page"]
+    decls := [("position", "sticky"), ("top", "0"), ("height", "100dvh"),
+      ("overflow-y", "auto"), ("background", "var(--surface)"),
+      ("scroll-snap-align", "none"), ("animation", "ltx-push linear both"),
+      ("animation-timeline", "view(y)"), ("animation-range", "entry")]
+    requires := .supported .viewTimeline }
 
-/-- The reduced-motion floor for the deck's motion: under the reader's
-reduce preference the push and the sticky pinning come off together and
-the deck is the plain vertical snap stack — every frame a static page
-snapping on its own box, the track geometry reverted, the spacers
-collapsed (WCAG 2.2 SC 2.3.3, technique C39; CSS Media Queries 5
-§12.1). Static, not a kept fade or slide: the base sheet's global
-reduce block strips every animation with `!important` (the standing
-contract, decided on the step uncover — see `deckStepGuard`'s history
-in PLAN), and SC 2.3.3 permits removing more than the motion. The guard
-travels with the declaration and stands after the `@supports` block it
-reverts: equal specificity, source order decides (CSS Cascade 5 §6.4).
--/
-def deckPushGuard : String :=
-  "@media (prefers-reduced-motion: reduce) {\n" ++
-  "  section.slide, section.section-page { animation: none; \
-position: static;\n" ++
-  "    height: auto; overflow-y: visible; scroll-snap-align: start; }\n" ++
-  "  .slide-track + .slide-track { margin-top: 0; }\n" ++
-  "  .slide-track::after { content: none; }\n" ++
-  "  .snap { display: none; } }\n"
+/-- The timeline path's snap carrier: snap areas live on the static
+`.snap` spacers, never the sticky stage — a snap area is the
+*transformed* border box in its offset position (CSS Scroll Snap 1
+§5.1), so a pinned or pushed stage would put a snap position at every
+offset and paging would never correct. -/
+def deckSnapRule : DeckRule :=
+  { selector := [.lit ".snap"]
+    decls := [("height", "100dvh"), ("scroll-snap-align", "start"),
+      ("scroll-snap-stop", "always")]
+    requires := .supported .viewTimeline }
 
-/-- The deck's motion: the scroll space is vertical, the motion stays
-horizontal — Keynote's push. Every frame rides a `.slide-track` in one
-vertical stack; the frame section is a sticky stage (`position: sticky;
-top: 0` — CSS Positioned Layout 3 §3.4: the box keeps its inset within
-its containing block, the track, whose `::after` extends the stage's
-travel exactly one viewport past its last snap so the outgoing frame
-stays pinned through the incoming frame's whole entry and never moves
-on its own). The incoming frame slides in from the right over the stuck
-one: `ltx-push` scrubs `translate(100vw → 0, -100dvh → 0)` over the
-section's own `view(y)` `entry` range — the `-100dvh` leg cancels the
-scroll's vertical travel exactly (entry spans one stage height:
-Scroll-driven Animations 1 §3.1, and §3.1's calculation rule ignores
-transforms while accounting for positioning, so the animation cannot
-feed back into its own timeline), leaving pure horizontal arrival: the
-title band's y never moves. Stage height is pinned to the viewport
-(`height: 100dvh`) so the cancellation is exact for every frame; a
-frame whose content spills keeps it reachable through its own scroll
-(`overflow-y: auto` — the scrollbar is the visible control, the honest
-floor). Snap areas live on the static `.snap` spacers, never the
-sticky stage: a snap area is the *transformed* border box in its offset
-position (CSS Scroll Snap 1 §5.1), so a pinned or pushed stage would
-put a snap position at every offset and paging would never correct.
-The from-state's `100vw` shift would otherwise widen the scrollable
-overflow, so the root clips x (`overflow-x: clip`, CSS Overflow 3
-§3.1). Floors: without `view()` timelines none of this applies and the
-spacers hide — the deck is the plain vertical snap stack, every frame
-its own snap page, spill frames growing naturally (Scroll Snap 1
-§5.2.2: an area taller than the snapport scrolls through). Print never
-sees these screen-gated rules. Reduced motion is `deckPushGuard`,
-riding definitionally (`deckPushCss_guarded`). -/
-def deckPushCss : String :=
-  "@supports (animation-timeline: view()) {\n" ++
-  "html { overflow-x: clip; }\n" ++
-  "@keyframes ltx-push { from { transform: translate(100vw, -100dvh) } }\n" ++
-  "section.slide, section.section-page { position: sticky; top: 0;\n" ++
-  "  height: 100dvh; overflow-y: auto;\n" ++
-  "  background: var(--surface); scroll-snap-align: none;\n" ++
-  "  animation: ltx-push linear both;\n" ++
-  "  animation-timeline: view(y); animation-range: entry; }\n" ++
-  -- The pull-ups spelled as `margin-top` (the boundary's owner in this
-  -- stylesheet — the gap census counts `margin-bottom` spellings): the
-  -- first spacer starts under the stage, and each track overlaps the
-  -- previous one's travel extension. The last track's extension trails
-  -- unpaired: it is past every snap position, so mandatory snapping
-  -- never rests on it.
-  ".slide-track > .snap:first-of-type { margin-top: -100dvh; }\n" ++
-  ".slide-track + .slide-track { margin-top: -100dvh; }\n" ++
-  ".slide-track::after { content: \"\"; display: block; height: 100dvh; }\n" ++
-  ".snap { height: 100dvh; scroll-snap-align: start; \
-scroll-snap-stop: always; }\n" ++
-  "}\n" ++
-  "@supports not (animation-timeline: view()) { .snap { display: none; } }\n" ++
-  deckPushGuard
+/-- The deck's motion, gated on `view()` timelines (`Feature.support`):
+the scroll space is vertical, the motion stays horizontal — Keynote's
+push (`deckPushMotion`). Every frame rides a `.slide-track` whose
+`::after` extends the stage's travel exactly one viewport past its last
+snap, so the outgoing frame stays pinned through the incoming frame's
+whole entry; the pull-ups are spelled `margin-top` (the boundary's owner
+in this stylesheet — the gap census counts `margin-bottom` spellings),
+and the last track's extension trails unpaired, past every snap
+position, where mandatory snapping never rests. The from-state's `100vw`
+shift would widen the scrollable overflow, so the root clips x
+(`overflow-x: clip`, CSS Overflow 3 §3.1). -/
+def deckView : List DeckRule :=
+  [ { selector := [.lit "html"], decls := [("overflow-x", "clip")]
+      requires := .supported .viewTimeline },
+    { selector := [.lit "@keyframes ltx-push { from"]
+      decls := [("transform", "translate(100vw, -100dvh)")]
+      requires := .supported .viewTimeline },
+    deckPushMotion,
+    { selector := [.lit ".slide-track > .snap:first-of-type"]
+      decls := [("margin-top", "-100dvh")]
+      requires := .supported .viewTimeline },
+    { selector := [.lit ".slide-track + .slide-track"]
+      decls := [("margin-top", "-100dvh")]
+      requires := .supported .viewTimeline },
+    { selector := [.lit ".slide-track::after"]
+      decls := [("content", "\"\""), ("display", "block"), ("height", "100dvh")]
+      requires := .supported .viewTimeline },
+    deckSnapRule ]
 
-/-- The push carries its reduced-motion form by construction:
-definitionally the motion rules followed by the guard. -/
-theorem deckPushCss_guarded : ∃ rule, deckPushCss = rule ++ deckPushGuard :=
-  ⟨_, rfl⟩
+/-- The floor's spacer collapse: without `view()` timelines none of the
+track geometry applies and the spacers hide — the deck is the plain
+vertical snap stack, every frame its own snap page
+(`snap_pages_partition_frames`). -/
+def deckSnapHide : DeckRule :=
+  { selector := [.lit ".snap"], decls := [("display", "none")]
+    requires := .unsupported .viewTimeline }
 
-/-- The reduced-motion guard for the steps' uncover: under the reader's
-reduce preference no step animates — every step stands at full colour
-(WCAG 2.2 SC 2.3.3, technique C39; CSS Media Queries 5 §12.1). SC 2.3.3
-asks for the *motion* to be removable, and the scroll-scrubbed fade
-alone is arguably not motion — but the base stylesheet's global reduce
-block already removes every animation with `!important`, so keeping the
-fade under reduce would demand unwinding that contract for one effect;
-the criterion permits removing more than the motion. The snap-point
-collapse rides `deckPushGuard`, which reverts the whole track geometry.
-As there, the guard travels with the declaration. -/
-def deckStepGuard : String :=
-  "@media (prefers-reduced-motion: reduce) { .step { animation: none; } }\n"
+def deckFloor : List DeckRule := [deckSnapHide]
 
-/-- The fallback's uncover rules, numeric per step anchor: navigating to
-a stepped frame's spacer `k` (`:target` matches its fragment even while
-the spacer's box is hidden — Selectors 4 §9.4 matches the indicated
-element, not a rendered box) uncovers every step `j ≤ k` of that frame,
-and only that frame's (`:has()` scopes to the track). Both selectors
-are in every current engine (caniuse `css-has`, `:target`: Chromium
-105+, Firefox 121+, Safari 15.4+; read 2026-09-20). Emission knows the
-deck's maximum step count, so the rules are spelled numerically — no
-`calc()`, nothing for a fallback engine to resolve. -/
-private def stepTargetRules (maxSteps : Nat) : String :=
-  String.join ((List.range (maxSteps - 1)).map fun i =>
-    let k := i + 2
-    let uncovered := String.intercalate ", " ((List.range (k - 1)).map fun j =>
-      s!".step[data-step=\"{j + 2}\"]")
-    s!".slide-track:has(.snap:nth-of-type({k}):target) \
-:is({uncovered}) \{ opacity: 100%; }\n")
+/-- `deckGlideRule`'s reduced-motion counterpart: the deck pages jump
+instead of gliding. -/
+def deckGlideGuard : DeckRule :=
+  { selector := [.lit "html"], decls := [("scroll-behavior", "auto")]
+    part := .reduce }
 
-/-- The step control's visibility rules: one `‹ k / N ›` cluster per
-step (`stepNav` emits them), the current one selected by the same
-`:has(:target)` door the fallback uncover uses — cluster 1 by default,
-cluster `k` while spacer `k` is the fragment. Shared by both paths (in
-a timeline engine the links also scroll, the spacers being real snap
-pages there), so the rules stand outside the `@supports` split. The
-show rule outranks the hide (its `nth-child` adds a class-level), the
-hide outranks the defaults (`:has()` carries its argument's
-specificity, Selectors 4 §17). -/
-private def stepNavRules (maxSteps : Nat) : String :=
-  ".step-nav { display: block; text-align: center; color: var(--muted); }\n" ++
-  ".step-nav a { color: inherit; }\n" ++
-  ".step-nav > .cluster { display: none; }\n" ++
-  ".step-nav > .cluster:first-child { display: inline; }\n" ++
-  String.join ((List.range maxSteps).map fun i =>
-    let k := i + 1
-    s!".slide-track:has(.snap:nth-of-type({k}):target) \
-.step-nav > .cluster \{ display: none; }\n" ++
-    s!".slide-track:has(.snap:nth-of-type({k}):target) \
-.step-nav > .cluster:nth-child({k}) \{ display: inline; }\n")
+/-- The reduced-motion partition for the deck's geometry: under the
+reader's reduce preference the push and the sticky pinning come off
+together and the deck is the plain vertical snap stack — every frame a
+static page snapping on its own box, the track geometry reverted, the
+spacers collapsed (WCAG 2.2 SC 2.3.3, technique C39; CSS Media Queries 5
+§12.1). Static, not a kept fade or slide: the base sheet's global reduce
+block strips every animation with `!important` (the standing contract,
+decided on the step uncover — see the PLAN entry), and SC 2.3.3 permits
+removing more than the motion. The partition is emitted after the
+`@supports` blocks it reverts: equal specificity, source order decides
+(CSS Cascade 5 §6.4). `deckPushGuardRule` is `deckPushMotion`'s
+counterpart: the push and the sticky pinning come off together
+(`guards_by_construction` holds the pair). -/
+def deckPushGuardRule : DeckRule :=
+  { selector := [.lit "section.slide, section.section-page"]
+    decls := [("animation", "none"), ("position", "static"),
+      ("height", "auto"), ("overflow-y", "visible"),
+      ("scroll-snap-align", "start")]
+    part := .reduce }
+
+def deckReduce : List DeckRule :=
+  [ deckPushGuardRule,
+    { selector := [.lit ".slide-track + .slide-track"]
+      decls := [("margin-top", "0")]
+      part := .reduce },
+    { selector := [.lit ".slide-track::after"]
+      decls := [("content", "none")]
+      part := .reduce },
+    { selector := [.lit ".snap"], decls := [("display", "none")]
+      part := .reduce },
+    deckGlideGuard ]
+
+/-- The uncover's keyframes: a covered step stands at the design's
+covered fraction as an opacity (dim, never hide; the whole step
+including its own coloured runs, as the PDF's per-run cover dims every
+ink), offset by `--motiondistance` in the direction of travel. Opacity
+and transform only: neither reflows, so the frame's layout is fixed from
+the first paint (CSS Transforms 1 §3). Not
+`color: color-mix(… currentColor …)`: inside a keyframe, Chromium
+resolves `currentColor` for the `color` property against the element's
+own colour, so that from-state equals the to-state and nothing dims — a
+rendered probe showed it. Opacity composites in sRGB where the PDF mixes
+in Oklab; the same declared fraction, two blends — the divergence PLAN
+already names for the covered shade. -/
+def stepKeyframes (coveredPct : Nat) : DeckRule :=
+  { selector := [.lit "@keyframes ltx-uncover { from"]
+    decls := [("opacity", s!"{coveredPct}%"),
+      ("transform", "translateX(var(--motiondistance, 1rem))")] }
 
 /-- The steps' uncover, paced by the reader's own paging key: a stepped
 frame with N overlay steps (`Ir.maxStepBlocks`) is one sticky stage over
-N snap points — its track carries one `.snap` spacer per step, stacked
-in the deck's vertical scroll space (`deckPushCss` owns the geometry).
-A paging press advances one snap point — the stage does not move; the
-scroll offset does.
-
-The track declares the timeline: `view-timeline: --frame y`
-(Scroll-driven Animations 1 §3.4, a named view progress timeline;
+N snap points. The track declares the timeline: `view-timeline: --frame
+y` (Scroll-driven Animations 1 §3.4, a named view progress timeline;
 §4.2: descendants find the name, and the steps are descendants). A
-`.step` (`--step: n`, the track `--steps: N`) starts *covered* — at the
-design's covered fraction as an opacity (dim, never hide; the whole step
-including its own coloured runs, as the PDF's per-run cover dims every
-ink), offset by `--motiondistance` in the direction of travel — and
-animates to place at full opacity over
+`.step` (`--step: n`, the track `--steps: N`) animates to place over
 `animation-range: contain (n−2)/N → contain (n−1)/N` (§3.1: the track's
 border box is one viewport taller than its N snap pages — the travel
-extension `deckPushCss` adds — so `contain` spans N viewports and snap k
+extension `deckView` adds — so `contain` spans N viewports and snap k
 sits at (k−1)/N; the appendix's `animation-range` takes
 `<length-percentage>`, explicitly including `calc()`, and the
 unitless-custom-property calc is verified against this engine's
 Chromium). So item n fades in *during* the smooth scroll from snap n−1
 to snap n and holds (fill-mode both). Step 1 items are never covered
-(`:not([data-step="1"])`). Opacity and transform only: neither reflows,
-so the frame's layout is fixed from the first paint (CSS Transforms 1
-§3). Not `color: color-mix(… currentColor …)`: inside a keyframe,
-Chromium resolves `currentColor` for the `color` property against the
-element's own colour, so that from-state equals the to-state and nothing
-dims — a rendered probe showed it (the static mix dims, the keyframed
-one does not). Opacity composites in sRGB where the PDF mixes in Oklab;
-the same declared fraction, two blends — the divergence PLAN already
-names for the covered shade. Support (caniuse
-`mdn-css_properties_animation-timeline_view`, read 2026-09-20):
-Chromium 115+ (Jul 2023), Safari 26, Firefox 159+.
+(`:not([data-step="1"])`). -/
+def stepUncoverRule : DeckRule :=
+  { selector := [.lit ".step:not([data-step=\"1\"])"]
+    decls := [("animation", "ltx-uncover linear both"),
+      ("animation-timeline", "--frame"),
+      ("animation-range",
+        "contain calc((var(--step) - 2) / var(--steps) * 100%) \
+contain calc((var(--step) - 1) / var(--steps) * 100%)")]
+    requires := .supported .viewTimeline }
 
-Floors, by construction: without `view()` timelines the spacers hide
-(`deckPushCss`) and the fallback block here takes over — covered steps
-stay covered, and the `‹ k / N ›` control's fragment links uncover them
-(`stepTargetRules`), the design slides-floor ratified: an honest floor
-is a control that is always visible, never a reveal that silently
-cannot fire. Print (the handout) never sees these screen-gated rules
-and hides the control; every step prints at full colour. Reduced
-motion strips the fade, the guard riding definitionally
-(`deckStepCss_guarded`); the snap collapse rides `deckPushGuard`. The
-deck's progress hairline reads `scroll(root y)`, so a stepped frame
-advances it N times — its snap points are the PDF handout's
-pagination. -/
-def deckStepCss (coveredPct maxSteps : Nat) : String :=
-  s!"@keyframes ltx-uncover \{ from \{ opacity: {coveredPct}%; \
-transform: translateX(var(--motiondistance, 1rem)) } }\n" ++
-  "@supports (animation-timeline: view()) {\n" ++
-  ".slide-track { view-timeline: --frame y; }\n" ++
-  ".step:not([data-step=\"1\"]) { animation: ltx-uncover linear both;\n" ++
-  "  animation-timeline: --frame;\n" ++
-  "  animation-range: contain calc((var(--step) - 2) / var(--steps) * 100%) \
-contain calc((var(--step) - 1) / var(--steps) * 100%); }\n" ++
-  "}\n" ++
-  "@supports not (animation-timeline: view()) {\n" ++
-  s!".step:not([data-step=\"1\"]) \{ opacity: {coveredPct}%; }\n" ++
-  stepTargetRules maxSteps ++
-  "}\n" ++
-  stepNavRules maxSteps ++
-  deckStepGuard
+def stepView : List DeckRule :=
+  [ { selector := [.lit ".slide-track"]
+      decls := [("view-timeline", "--frame y")]
+      requires := .supported .viewTimeline },
+    stepUncoverRule ]
 
-/-- The uncover carries its reduced-motion form by construction:
-definitionally the trigger rules followed by the guard. -/
-theorem deckStepCss_guarded (coveredPct maxSteps : Nat) :
-    ∃ rule, deckStepCss coveredPct maxSteps = rule ++ deckStepGuard :=
-  ⟨_, rfl⟩
+/-- The floor's covered default: without `view()` timelines the steps
+stand at the design's covered fraction — the very fraction the PDF's
+cover mixes by (`Ir.Design.cover`) — and uncover through the fragment
+rules (`stepTargetRule`), never by scroll they cannot see. -/
+def stepFloorCovered (coveredPct : Nat) : DeckRule :=
+  { selector := [.lit ".step:not([data-step=\"1\"])"]
+    decls := [("opacity", s!"{coveredPct}%")]
+    requires := .unsupported .viewTimeline }
+
+/-- The steps a floor target `k` uncovers: every step `2..k` (step 1 is
+never covered). The list is the selector's own data — the `:is()`
+alternatives render from it — so `fallback_uncovers_every_step` reads
+the uncover set the browser reads. -/
+def uncoveredBy (k : Nat) : List Nat := (List.range (k - 1)).map (· + 2)
+
+/-- The fallback's uncover rule for target `k`, numeric per step anchor:
+navigating to a stepped frame's spacer `k` (`:target` matches its
+fragment even while the spacer's box is hidden — Selectors 4 §9.4
+matches the indicated element, not a rendered box) uncovers every step
+`j ≤ k` of that frame, and only that frame's (`:has()` scopes to the
+track). Emission knows the deck's maximum step count, so the rules are
+spelled numerically — no `calc()`, nothing for a fallback engine to
+resolve. Gated on `:has()` itself (`Feature.has`, Baseline since 2023):
+in a timeline engine the rules also apply and are inert — the uncover
+animation owns `opacity`, and animation declarations override normal
+ones (CSS Cascade 5 §6.1 origin order) — and an engine without `:has()`
+drops the block exactly as it dropped the unparseable selector before. -/
+def stepTargetRule (k : Nat) : DeckRule :=
+  { selector := [.lit ".slide-track:has(.snap:nth-of-type(", .num k,
+      .lit "):target) :is(", .stepAlts (uncoveredBy k), .lit ")"]
+    decls := [("opacity", "100%")]
+    requires := .supported .has }
+
+/-- The step control's shared visibility rules: one `‹ k / N ›` cluster
+per step (`stepNav` emits them), cluster 1 shown by default. Shared by
+both paths — in a timeline engine the control's links also scroll, the
+spacers being real snap pages there. -/
+def stepNavBase : List DeckRule :=
+  [ { selector := [.lit ".step-nav"]
+      decls := [("display", "block"), ("text-align", "center"),
+        ("color", "var(--muted)")] },
+    { selector := [.lit ".step-nav a"], decls := [("color", "inherit")] },
+    { selector := [.lit ".step-nav > .cluster"], decls := [("display", "none")] },
+    { selector := [.lit ".step-nav > .cluster:first-child"]
+      decls := [("display", "inline")] } ]
+
+/-- The cluster switch for target `k`, through the same `:has(:target)`
+door the fallback uncover uses. The show rule outranks the hide (its
+`nth-child` adds a class-level), the hide outranks the defaults
+(`:has()` carries its argument's specificity, Selectors 4 §17), so the
+gate grouping moves no outcome: every pairing is specificity-decided,
+never order-decided. -/
+def stepNavHideRule (k : Nat) : DeckRule :=
+  { selector := [.lit ".slide-track:has(.snap:nth-of-type(", .num k,
+      .lit "):target) .step-nav > .cluster"]
+    decls := [("display", "none")]
+    requires := .supported .has }
+
+def stepNavShowRule (k : Nat) : DeckRule :=
+  { selector := [.lit ".slide-track:has(.snap:nth-of-type(", .num k,
+      .lit "):target) .step-nav > .cluster:nth-child(", .num k, .lit ")"]
+    decls := [("display", "inline")]
+    requires := .supported .has }
+
+/-- The steps' reduced-motion guard: no step animates — every step
+stands at full colour (WCAG 2.2 SC 2.3.3; the fade alone is arguably not
+motion, but the base sheet's global reduce block strips every animation
+with `!important`, and the criterion permits removing more than the
+motion). The snap collapse rides `deckReduce`. -/
+def stepGuard : DeckRule :=
+  { selector := [.lit ".step"], decls := [("animation", "none")]
+    part := .reduce }
+
+def stepTargets (maxSteps : Nat) : List DeckRule :=
+  (List.range (maxSteps - 1)).map fun i => stepTargetRule (i + 2)
+
+def stepNavSwitch (maxSteps : Nat) : List DeckRule :=
+  (List.range maxSteps).flatMap fun i =>
+    [stepNavHideRule (i + 1), stepNavShowRule (i + 1)]
+
+/-- Every rule the steps add: the uncover and its floor, shipped exactly
+when the deck has steps — a stepless deck has nothing to reveal. -/
+def stepRules (coveredPct maxSteps : Nat) : List DeckRule :=
+  stepKeyframes coveredPct :: stepView ++
+    stepFloorCovered coveredPct :: stepTargets maxSteps ++
+    stepNavBase ++ stepNavSwitch maxSteps ++ [stepGuard]
+
+/-- The print partition: the handout, one bordered card per frame
+(Tufte: the handout is the document) — the snap spacers hide, the
+wrapper takes the card gap its section can no longer claim as
+`* + section.slide` (it is the wrapper's first child), and the step
+control disappears (every step prints at full colour). -/
+def deckPrint (maxSteps : Nat) : List DeckRule :=
+  [ { selector := [.lit "section.slide"]
+      decls := [("border", s!"{slideBorderPx}px solid var(--rule)"),
+        ("border-radius", s!"{slideRadiusPx}px"),
+        ("padding", s!"{slidePadV} {slidePadH}"),
+        ("margin", "0"), ("break-inside", "avoid")]
+      part := .print },
+    { selector := [.lit "* + section.slide"]
+      decls := [("margin-top", slidePadV)]
+      part := .print },
+    { selector := [.lit "section.slide"]
+      decls := [("break-after", "page")]
+      part := .print },
+    { selector := [.lit ".snap"], decls := [("display", "none")]
+      part := .print },
+    { selector := [.lit "* + .slide-track"]
+      decls := [("margin-top", slidePadV)]
+      part := .print } ] ++
+    (if 2 ≤ maxSteps then
+      [ { selector := [.lit ".step-nav"], decls := [("display", "none")]
+          part := .print } ]
+     else [])
+
+/-- Every rule of the deck's stylesheet, in emission order. The
+parameters are the whole document-dependence: the stage-ratio type size,
+the design's covered fraction, and the deck's maximum step count. -/
+def deckRules (bodyVh : String) (coveredPct maxSteps : Nat) : List DeckRule :=
+  deckBase bodyVh ++ deckView ++ deckFloor ++ deckReduce ++
+    (if 2 ≤ maxSteps then stepRules coveredPct maxSteps else []) ++
+    deckPrint maxSteps
+
+/-- The one case split over the deck's rule set: every deck theorem
+below quantifies over `deckRules` through this. A new rule family is a
+new hypothesis here — the compiler names every theorem it now owes. The
+step hypotheses receive the fact that the steps shipped (`2 ≤ ms`), so a
+theorem may cite a step guard's membership. -/
+private theorem deckRules_forall {P : DeckRule → Prop} {v : String} {cp ms : Nat}
+    (hbase : ∀ r ∈ deckBase v, P r)
+    (hview : ∀ r ∈ deckView, P r)
+    (hfloor : ∀ r ∈ deckFloor, P r)
+    (hreduce : ∀ r ∈ deckReduce, P r)
+    (hkey : 2 ≤ ms → P (stepKeyframes cp))
+    (hsview : 2 ≤ ms → ∀ r ∈ stepView, P r)
+    (hcov : 2 ≤ ms → P (stepFloorCovered cp))
+    (htgt : 2 ≤ ms → ∀ k, P (stepTargetRule k))
+    (hnav : 2 ≤ ms → ∀ r ∈ stepNavBase, P r)
+    (hhide : 2 ≤ ms → ∀ k, P (stepNavHideRule k))
+    (hshow : 2 ≤ ms → ∀ k, P (stepNavShowRule k))
+    (hguard : 2 ≤ ms → P stepGuard)
+    (hprint : ∀ r ∈ deckPrint ms, P r) :
+    ∀ r ∈ deckRules v cp ms, P r := by
+  intro r hr
+  simp only [deckRules, List.mem_append] at hr
+  rcases hr with ((((h | h) | h) | h) | h) | h
+  · exact hbase r h
+  · exact hview r h
+  · exact hfloor r h
+  · exact hreduce r h
+  · split at h
+    case isTrue hms =>
+      simp only [stepRules, stepTargets, stepNavSwitch, List.mem_append,
+        List.mem_cons, List.mem_map, List.mem_flatMap, List.mem_range,
+        List.not_mem_nil, or_false] at h
+      rcases h with ((((rfl | h) | rfl | ⟨i, -, rfl⟩) | h) | ⟨i, -, rfl | rfl⟩) | rfl
+      · exact hkey hms
+      · exact hsview hms r h
+      · exact hcov hms
+      · exact htgt hms _
+      · exact hnav hms r h
+      · exact hhide hms _
+      · exact hshow hms _
+      · exact hguard hms
+    case isFalse => cases h
+  · exact hprint r h
+
+/-- Family memberships, spelled once against the append spine. -/
+private theorem mem_deckRules_base {r : DeckRule} {v : String} {cp ms : Nat}
+    (h : r ∈ deckBase v) : r ∈ deckRules v cp ms := by
+  simp only [deckRules, List.mem_append]
+  exact Or.inl (Or.inl (Or.inl (Or.inl (Or.inl h))))
+
+private theorem mem_deckRules_view {r : DeckRule} {v : String} {cp ms : Nat}
+    (h : r ∈ deckView) : r ∈ deckRules v cp ms := by
+  simp only [deckRules, List.mem_append]
+  exact Or.inl (Or.inl (Or.inl (Or.inl (Or.inr h))))
+
+private theorem mem_deckRules_floor {r : DeckRule} {v : String} {cp ms : Nat}
+    (h : r ∈ deckFloor) : r ∈ deckRules v cp ms := by
+  simp only [deckRules, List.mem_append]
+  exact Or.inl (Or.inl (Or.inl (Or.inr h)))
+
+private theorem mem_deckRules_reduce {r : DeckRule} {v : String} {cp ms : Nat}
+    (h : r ∈ deckReduce) : r ∈ deckRules v cp ms := by
+  simp only [deckRules, List.mem_append]
+  exact Or.inl (Or.inl (Or.inr h))
+
+private theorem mem_deckRules_step {r : DeckRule} {v : String} {cp ms : Nat}
+    (hms : 2 ≤ ms) (h : r ∈ stepRules cp ms) : r ∈ deckRules v cp ms := by
+  simp only [deckRules, List.mem_append]
+  refine Or.inl (Or.inr ?_)
+  split
+  · exact h
+  · omega
+
+/-- The print partition of a stepless deck is contained in the stepped
+one, so a decidable per-rule fact is checked once, on `deckPrint 2`. -/
+private theorem deckPrint_subset {ms : Nat} : ∀ r ∈ deckPrint ms, r ∈ deckPrint 2 := by
+  intro r hr
+  simp only [deckPrint, List.mem_append] at hr ⊢
+  rcases hr with h | h
+  · exact Or.inl h
+  · refine Or.inr ?_
+    split at h
+    · simpa using h
+    · cases h
+
+/-- Discharge a decidable per-rule fact over every rule family at once:
+the closed families by `decide`, the parameter-carrying ones by `rfl` —
+their checks never read a parameter (values are compared by name
+equality only; ordinal chunks carry no syntax). -/
+private theorem deckRules_check {p : DeckRule → Bool} (v : String) (cp ms : Nat)
+    (hbase : ∀ r ∈ deckBase v, p r = true)
+    (hview : ∀ r ∈ deckView, p r = true)
+    (hfloor : ∀ r ∈ deckFloor, p r = true)
+    (hreduce : ∀ r ∈ deckReduce, p r = true)
+    (hkey : p (stepKeyframes cp) = true)
+    (hsview : ∀ r ∈ stepView, p r = true)
+    (hcov : p (stepFloorCovered cp) = true)
+    (htgt : ∀ k, p (stepTargetRule k) = true)
+    (hnav : ∀ r ∈ stepNavBase, p r = true)
+    (hhide : ∀ k, p (stepNavHideRule k) = true)
+    (hshow : ∀ k, p (stepNavShowRule k) = true)
+    (hguard : p stepGuard = true)
+    (hprint : ∀ r ∈ deckPrint 2, p r = true) :
+    ∀ r ∈ deckRules v cp ms, p r = true :=
+  deckRules_forall hbase hview hfloor hreduce (fun _ => hkey)
+    (fun _ => hsview) (fun _ => hcov) (fun _ _ => htgt _) (fun _ => hnav)
+    (fun _ _ => hhide _) (fun _ _ => hshow _) (fun _ => hguard)
+    (fun r hr => hprint r (deckPrint_subset r hr))
+
+/-- Membership in the base family, for the rules with a parametric
+value: the check is discharged by `rfl` after the case split. -/
+private theorem deckBase_cases {P : DeckRule → Prop} {v : String}
+    (h1 : P { selector := [.lit "html"], decls := [("scroll-snap-type", "y mandatory")] })
+    (h2 : P deckGlideRule)
+    (h3 : P { selector := [.lit "body"], decls := [("padding", "0")] })
+    (h4 : P { selector := [.lit "main"]
+              decls := [("max-width", "none"), ("margin", "0"), ("font-size", v)] })
+    (h5 : P deckStageRule)
+    (h6 : P { selector := [.lit "section.section-page"]
+              decls := [("justify-content", "center"), ("align-items", "center")] })
+    (h7 : P { selector := [.lit "h1"], decls := [("font-size", scaleSize "LARGE" "em")] })
+    (h8 : P { selector := [.lit "h2"], decls := [("font-size", scaleSize "Large" "em")] })
+    (h9 : P { selector := [.lit "h3"], decls := [("font-size", scaleSize "large" "em")] })
+    (h10 : P { selector := [.lit "section.slide > header"]
+               decls := [("max-height", titlebandVar)] })
+    (h11 : P { selector := [.lit "section.slide > header h2"]
+               decls := [("font-size", scaleSize "Large" "em")] }) :
+    ∀ r ∈ deckBase v, P r := by
+  intro r hr
+  simp only [deckBase, List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    assumption
+
+/-- `deck_css_partition`'s per-rule check: a rule whose syntax uses a
+fragment depending on feature `F` is gated `supported F`. -/
+def gateRespects (r : DeckRule) : Bool :=
+  Feature.all.all fun f => r.requires == Gate.supported f || !(r.uses f)
+
+/-- Every rule using a property or selector fragment whose meaning
+depends on a feature (`Feature.dependsOnProps`, `Feature.dependsOnSel`)
+is emitted inside that feature's supported block, and — contrapositively
+— no rule inside a feature's unsupported block or the base uses one. So
+a browser lacking F never parses a rule that needs it, and never loses a
+rule that does not. `_covers`'s grade, over the whole rule set: a new
+rule enters the contract the moment it is written. -/
+theorem deck_css_partition (v : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v cp ms, gateRespects r = true :=
+  deckRules_check v cp ms
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (by decide) (by decide) (by decide)
+    rfl (by decide) rfl (fun _ => rfl) (by decide) (fun _ => rfl) (fun _ => rfl)
+    rfl (by decide)
+
+/-- The Baseline floor: the property names the base, the `@supports not`
+blocks, the reduced-motion partition and the print handout may use.
+Every entry is universal across current engines (caniuse, read
+2026-09-20): scroll snap (`scroll-snap-*`: Chromium 69+, Firefox 68+,
+Safari 11+), `scroll-behavior` (Chromium 61+, Firefox 36+, Safari
+15.4+), flex and the box properties (universal since 2017), custom
+properties (Chromium 49+, Firefox 31+, Safari 9.1+), `@supports` itself
+(Chromium 28+, Firefox 22+, Safari 9+), animations, transforms,
+opacity, and the fragmentation properties print engines honour
+(`break-*`). The `dvh` unit rides several values (Chromium 108+,
+Firefox 101+, Safari 15.4+; 2022). The selector side of the floor is
+`deck_css_partition`: the one non-universal selector feature the deck
+uses, `:has()`, is gated. -/
+def baselineProps : List String :=
+  ["scroll-snap-type", "scroll-snap-align", "scroll-snap-stop",
+   "scroll-behavior", "padding", "margin", "margin-top", "max-width",
+   "min-height", "max-height", "height", "font-size", "color",
+   "text-align", "opacity", "transform", "display", "flex-direction",
+   "justify-content", "align-items", "position", "overflow-y", "content",
+   "animation", "border", "border-radius", "break-inside", "break-after"]
+
+/-- Is the rule part of the floor — the CSS every engine applies? The
+base and every `@supports not` block, in every media partition. -/
+def onFloor (r : DeckRule) : Bool :=
+  match r.requires with
+  | .base => true
+  | .unsupported _ => true
+  | .supported _ => false
+
+/-- "Works in Firefox", in the only form the engine can state it: every
+property the floor uses is in the declared, sourced `baselineProps` — a
+browser with no gated feature at all still understands every rule it is
+given. `_mem`'s grade: each floor property is drawn from the declared
+set. -/
+theorem floor_is_baseline (v : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v cp ms,
+      (!(onFloor r) || r.decls.all fun d => baselineProps.contains d.1) = true :=
+  deckRules_check v cp ms
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (by decide) (by decide) (by decide)
+    rfl (by decide) rfl (fun _ => rfl) (by decide) (fun _ => rfl) (fun _ => rfl)
+    rfl (by decide)
+
+/-- Content, as the floor theorems see it: the frame stages and the
+steps — the fragments that address what the deck *shows*. `.step-nav` is
+the control, not content: it matches neither `.step[` nor `.step:`. -/
+def contentFrags : List String :=
+  ["section.slide", "section.section-page", ".step[", ".step:"]
+
+def targetsContent (r : DeckRule) : Bool :=
+  contentFrags.any fun frag =>
+    (r.selector.flatMap SelChunk.lits).any fun s => hasFrag s frag
+
+/-- The floor is visible by theorem, not by review: no deck rule — in
+*any* partition, stronger than the ratified base-and-`not`-blocks form —
+sets `display: none` or `visibility: hidden` on content
+(`contentFrags`). What the guards and the print handout hide is only the
+spacers and the step control. `floor_opacity_mem` is the dimming half. -/
+theorem floor_hides_nothing (v : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v cp ms,
+      (!(targetsContent r) ||
+        (!(r.decls.contains ("display", "none")) &&
+         !(r.decls.contains ("visibility", "hidden")))) = true :=
+  deckRules_check v cp ms
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (by decide) (by decide) (by decide)
+    rfl (by decide) rfl (fun _ => rfl) (by decide) (fun _ => rfl) (fun _ => rfl)
+    rfl (by decide)
+
+/-- The opacity values a rule sets. -/
+def opacityValues (r : DeckRule) : List String :=
+  r.decls.filterMap fun d => if d.1 == "opacity" then some d.2 else none
+
+/-- The dimming half of the visible floor: every opacity any deck rule
+sets is full or the design's own covered fraction — never below it, and
+never a hide wearing a dim's clothes. `_mem`'s grade: each value is
+drawn from the two the design allows. -/
+theorem floor_opacity_mem (v : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v cp ms, ∀ o ∈ opacityValues r,
+      o = "100%" ∨ o = s!"{cp}%" := by
+  refine deckRules_forall ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
+  · exact deckBase_cases (fun o ho => nomatch ho) (fun o ho => nomatch ho)
+      (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
+      (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
+      (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
+  · intro r hr
+    simp only [deckView, deckPushMotion, deckSnapRule, List.mem_cons,
+      List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+      exact fun o ho => nomatch ho
+  · intro r hr
+    simp only [deckFloor, deckSnapHide, List.mem_cons, List.not_mem_nil,
+      or_false] at hr
+    rcases hr with rfl
+    exact fun o ho => nomatch ho
+  · intro r hr
+    simp only [deckReduce, deckPushGuardRule, deckGlideGuard, List.mem_cons,
+      List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl | rfl <;>
+      exact fun o ho => nomatch ho
+  · exact fun _ o ho => Or.inr (List.mem_singleton.mp ho)
+  · intro _ r hr
+    simp only [stepView, stepUncoverRule, List.mem_cons, List.not_mem_nil,
+      or_false] at hr
+    rcases hr with rfl | rfl <;> exact fun o ho => nomatch ho
+  · exact fun _ o ho => Or.inr (List.mem_singleton.mp ho)
+  · exact fun _ k o ho => Or.inl (List.mem_singleton.mp ho)
+  · intro _ r hr
+    simp only [stepNavBase, List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl <;> exact fun o ho => nomatch ho
+  · exact fun _ k o ho => nomatch ho
+  · exact fun _ k o ho => nomatch ho
+  · exact fun _ o ho => nomatch ho
+  · intro r hr
+    have hr2 := deckPrint_subset r hr
+    simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
+      or_false] at hr2
+    rcases hr2 with (rfl | rfl | rfl | rfl | rfl) | h2
+    · exact fun o ho => nomatch ho
+    · exact fun o ho => nomatch ho
+    · exact fun o ho => nomatch ho
+    · exact fun o ho => nomatch ho
+    · exact fun o ho => nomatch ho
+    · split at h2
+      · obtain rfl := List.mem_singleton.mp h2
+        exact fun o ho => nomatch ho
+      · cases h2
+
+/-- The motion properties the reduced-motion contract covers: the base
+sheet's global reduce block strips `animation` and `transition`;
+`scroll-behavior` is neither and needs the declared guard (WCAG 2.2
+SC 2.3.3, technique C39; CSS Media Queries 5 §12.1). -/
+def motionProps : List String := ["animation", "transition", "scroll-behavior"]
+
+/-- The static value a guard must set a motion property back to. -/
+def motionOff : String → String
+  | "scroll-behavior" => "auto"
+  | _ => "none"
+
+/-- Does reduce-partition rule `g` cover `r`'s selector? Equal
+selectors, or `g`'s compound extended by a pseudo-class (`.step` guards
+`.step:not(…)`): everything `r` matches, `g` matches. The prefix test is
+spelled over the character lists so the proofs evaluate it. -/
+def guardCovers (g r : DeckRule) : Bool :=
+  g.part == Part.reduce &&
+    (renderSel g.selector == renderSel r.selector ||
+      (renderSel g.selector ++ ":").toList.isPrefixOf
+        (renderSel r.selector).toList)
+
+/-- Is every motion property the rule declares guarded by some rule of
+the searched set's reduce partition? -/
+def motionGuarded (rules : List DeckRule) (r : DeckRule) : Bool :=
+  r.part != Part.screen ||
+    r.decls.all fun d =>
+      !(motionProps.contains d.1) ||
+        rules.any fun g => guardCovers g r && g.decls.contains (d.1, motionOff d.1)
+
+/-- `motionGuarded` from one named witness. -/
+private theorem motionGuarded_of_guard {rules : List DeckRule} {r g : DeckRule}
+    (hg : g ∈ rules)
+    (hchk : ∀ d ∈ r.decls, motionProps.contains d.1 = true →
+      (guardCovers g r && g.decls.contains (d.1, motionOff d.1)) = true) :
+    motionGuarded rules r = true := by
+  unfold motionGuarded
+  cases hpart : (r.part != Part.screen)
+  · rw [Bool.false_or, List.all_eq_true]
+    intro d hd
+    cases hmp : motionProps.contains d.1
+    · rw [Bool.not_false, Bool.true_or]
+    · rw [Bool.not_true, Bool.false_or]
+      exact List.any_eq_true.mpr ⟨g, hg, hchk d hd hmp⟩
+  · rw [Bool.true_or]
+
+/-- Every rule that sets a motion property (`motionProps`) has a
+reduced-motion counterpart *in the same emitted rule set*, covering its
+selector and setting the property back to its static value. This
+replaces the per-definition `⟨_, rfl⟩` guard lemmas
+(`deckPushCss_guarded`, `deckStepCss_guarded`, `smoothScrollCss_guarded`
+of the string era) with one statement over the typed set: a guard is not
+a suffix a definition happens to end with; it is a rule the reduce
+partition must contain, and the partition is emitted after the blocks it
+reverts (`emitDeckRules`; CSS Cascade 5 §6.4). `_contract`'s grade. -/
+theorem guards_by_construction (v : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v cp ms, motionGuarded (deckRules v cp ms) r = true := by
+  refine deckRules_forall ?_ ?_ ?_ ?_ (fun _ => rfl) ?_ (fun _ => rfl)
+    (fun _ _ => rfl) ?_ (fun _ _ => rfl) (fun _ _ => rfl)
+    (fun _ => rfl) ?_
+  · exact deckBase_cases rfl
+      (motionGuarded_of_guard (g := deckGlideGuard)
+        (mem_deckRules_reduce (by decide)) (by decide))
+      rfl rfl rfl rfl rfl rfl rfl rfl rfl
+  · intro r hr
+    simp only [deckView, deckPushMotion, deckSnapRule, List.mem_cons,
+      List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    case inr.inr.inl =>
+      exact motionGuarded_of_guard (g := deckPushGuardRule)
+        (mem_deckRules_reduce (by decide)) (by decide)
+    all_goals rfl
+  · intro r hr
+    simp only [deckFloor, deckSnapHide, List.mem_cons, List.not_mem_nil,
+      or_false] at hr
+    rcases hr with rfl
+    rfl
+  · intro r hr
+    simp only [deckReduce, deckPushGuardRule, deckGlideGuard, List.mem_cons,
+      List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl | rfl <;> rfl
+  · intro hms r hr
+    simp only [stepView, stepUncoverRule, List.mem_cons, List.not_mem_nil,
+      or_false] at hr
+    have hstep : stepGuard ∈ deckRules v cp ms :=
+      mem_deckRules_step hms (by
+        simp only [stepRules, List.mem_append, List.mem_cons,
+          List.not_mem_nil, or_false]
+        exact Or.inr trivial)
+    rcases hr with rfl | rfl
+    · rfl
+    · exact motionGuarded_of_guard hstep (by decide)
+  · intro _ r hr
+    simp only [stepNavBase, List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl <;> rfl
+  · intro r hr
+    have hr2 := deckPrint_subset r hr
+    simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
+      or_false] at hr2
+    rcases hr2 with (rfl | rfl | rfl | rfl | rfl) | h2
+    · rfl
+    · rfl
+    · rfl
+    · rfl
+    · rfl
+    · split at h2
+      · obtain rfl := List.mem_singleton.mp h2
+        rfl
+      · cases h2
+
+/-- Every step of every stepped frame is reachable in the floor: for
+each step `n` of a deck whose maximum step count is `ms`
+(`Ir.maxStepBlocks`; step 1 is never covered), the emitted rules contain
+an uncover rule whose target is a spacer `k ≥ n` uncovering `n` —
+concretely `k = n`, the spacer the `‹ k / N ›` control's links name. The
+uncover set `uncoveredBy k` is the selector's own data: the `:is()`
+alternatives render from it (`SelChunk.stepAlts`). The links name the
+*claimed* anchor ids, unique by the shared claim walk (W0327 fires on a
+collision), so each control link resolves to exactly one spacer.
+`_covers`'s grade. -/
+theorem fallback_uncovers_every_step (v : String) (cp ms n : Nat)
+    (h2 : 2 ≤ n) (hn : n ≤ ms) :
+    ∃ k, n ≤ k ∧ stepTargetRule k ∈ deckRules v cp ms ∧ n ∈ uncoveredBy k := by
+  refine ⟨n, Nat.le_refl n, ?_, ?_⟩
+  · refine mem_deckRules_step (Nat.le_trans h2 hn) ?_
+    simp only [stepRules, stepTargets, List.mem_append, List.mem_cons,
+      List.mem_map, List.mem_range, List.not_mem_nil, or_false]
+    refine Or.inl (Or.inl (Or.inl (Or.inr (Or.inr ⟨n - 2, by omega, ?_⟩))))
+    rw [Nat.sub_add_cancel h2]
+  · simp only [uncoveredBy, List.mem_map, List.mem_range]
+    exact ⟨n - 2, by omega, by omega⟩
+
+/-- The snap partition, from the typed rules — the CSS half of "every
+frame is reachable by paging in every engine". In the floor the frames
+are the snap points: the base gives every stage `scroll-snap-align:
+start` (`deckStageRule`) and the `not` block hides the spacers
+(`deckSnapHide`) — one snap point per frame. In a timeline engine the
+spacers are: the view block moves the snap onto them (`deckSnapRule`)
+and takes the stages' own away (`deckPushMotion`'s `none`) — and the
+tree carries exactly `Ir.maxStepBlocks` spacers per frame
+(`track_snaps_exact` below), so the snap points count one per frame plus
+one per additional step: the PDF handout's own pagination
+(`pages_count_frame_steps`, the owed PDF half, is this count's twin).
+`_covers`'s grade over the partition: each fact is the membership of the
+rule that carries it, in the gate that scopes it. -/
+theorem snap_pages_partition_frames (v : String) (cp ms : Nat) :
+    (deckStageRule ∈ deckRules v cp ms ∧ deckStageRule.requires = .base ∧
+      ("scroll-snap-align", "start") ∈ deckStageRule.decls) ∧
+    (deckSnapHide ∈ deckRules v cp ms ∧
+      deckSnapHide.requires = .unsupported .viewTimeline ∧
+      ("display", "none") ∈ deckSnapHide.decls) ∧
+    (deckSnapRule ∈ deckRules v cp ms ∧
+      deckSnapRule.requires = .supported .viewTimeline ∧
+      ("scroll-snap-align", "start") ∈ deckSnapRule.decls) ∧
+    (deckPushMotion ∈ deckRules v cp ms ∧
+      deckPushMotion.requires = .supported .viewTimeline ∧
+      ("scroll-snap-align", "none") ∈ deckPushMotion.decls) :=
+  ⟨⟨mem_deckRules_base (by simp [deckBase]), rfl, by decide⟩,
+   ⟨mem_deckRules_floor (by decide), rfl, by decide⟩,
+   ⟨mem_deckRules_view (by decide), rfl, by decide⟩,
+   ⟨mem_deckRules_view (by decide), rfl, by decide⟩⟩
+
+/-- The text census does not depend on which path a browser takes:
+trivially, since the stylesheet ships no text — no deck rule sets a
+non-empty `content` (the track's travel extension is `""`, the reduce
+guard's `none`) — and the tree is one, whichever `@supports` branch an
+engine parses; its census against the IR is the emission conservation
+the census checks pin (`censusTable` in Tests). Stated as the projection
+statement the theorem-layers rule asks for; `_text`'s grade, the census
+contribution being empty. -/
+theorem deck_text_path_free (v : String) (cp ms : Nat) :
+    ∀ r ∈ deckRules v cp ms,
+      (r.decls.all fun d =>
+        d.1 != "content" || (d.2 == "\"\"" || d.2 == "none")) = true :=
+  deckRules_check v cp ms
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (by decide) (by decide) (by decide)
+    rfl (by decide) rfl (fun _ => rfl) (by decide) (fun _ => rfl) (fun _ => rfl)
+    rfl (by decide)
 
 /-- A length's share of the deck stage, in milli-percent: the one
 projection every deck emission rides when it states a PDF stage length
@@ -1436,68 +2204,17 @@ private def slideCss (doc : Doc) : String :=
   -- screen override below can stand after it and win the cascade.
   let headerH2 :=
     s!"section.slide > header h2 \{ margin: 0; font-size: {scaleSize "Large" "rem"}; }\n"
-  let hasSteps := doc.body.any (fun b => match b with
-    | .frame _ _ _ fb => Ir.maxStepBlocks fb > 1
-    | _ => false)
   if doc.docClass == .slides then
-    headerH2 ++
-    "@media screen {\n" ++
-    "html { scroll-snap-type: y mandatory; }\n" ++
-    smoothScrollCss "html" ++
-    -- The deck fills the viewport: the article measure and the reading
-    -- padding are the continuous page's, not the stage's. `main` is the
-    -- stack the root scroller pages through; each section is one
-    -- viewport of it. Type is set on main in vh — the PDF's own
-    -- fontSize/stage-height ratio (`deck_type_is_stage_ratio`) — so
-    -- every slide, the standout's em step included, scales from the
-    -- stage; the heading retakes its scale step in em to ride the same
-    -- base.
-    "body { padding: 0; }\n" ++
-    "main { max-width: none; margin: 0;\n" ++
-    s!"  font-size: {milliFactor (deckStageMilli doc.page.fontSize doc.page.height).toNat}vh; }\n" ++
-    -- The floor's own snap: without view() timelines the sections are
-    -- the snap pages (the spacers hide); with them `deckPushCss` moves
-    -- the snap onto the spacers and pins the section. A frame taller
-    -- than the viewport (the PDF's spill) grows past its min-height in
-    -- the floor and stays readable (Scroll Snap 1 §5.2.2).
-    "section.slide, section.section-page { min-height: 100dvh;\n" ++
-    "  scroll-snap-align: start; scroll-snap-stop: always;\n" ++
-    "  display: flex; flex-direction: column;\n" ++
-    s!"  padding: {safeareaVar}; }\n" ++
-    -- A section page owns a whole page of the deck; its title and bar
-    -- centre on both axes (its own rule: a frame's children must keep
-    -- the full slide width).
-    "section.section-page { justify-content: center; align-items: center; }\n" ++
-    -- Headings retake their scale steps in em: the base sheet's rem steps
-    -- size from the reader's root, which the stage-ratio base above
-    -- deliberately leaves behind.
-    s!"h1 \{ font-size: {scaleSize "LARGE" "em"}; }\n" ++
-    s!"h2 \{ font-size: {scaleSize "Large" "em"}; }\n" ++
-    s!"h3 \{ font-size: {scaleSize "large" "em"}; }\n" ++
-    s!"section.slide > header \{ max-height: {titlebandVar}; }\n" ++
-    s!"section.slide > header h2 \{ font-size: {scaleSize "Large" "em"}; }\n" ++
-    deckPushCss ++
-    -- The pre-reveal shade, spelled from the resolved design: the very
+    let maxSteps := doc.body.foldl (fun n b => max n (Ir.frameSteps b)) 1
+    -- The pre-reveal shade is spelled from the resolved design: the very
     -- fraction the PDF's cover mixes by (`Ir.Design.cover`, Core/Oklab),
-    -- now the uncover's from-state. Shipped exactly when the deck has
-    -- steps — a stepless deck has nothing to reveal. Screen only: print
-    -- is the handout, every step at full colour.
-    (if hasSteps then
-      let d := Design.ofDoc doc
-      deckStepCss d.coveredFraction
-        (doc.body.foldl (fun n b => max n (Ir.frameSteps b)) 1)
-     else "") ++
-    "}\n" ++
-    "@media print {\n" ++ handout ++
-    "section.slide { break-after: page; }\n" ++
-    -- The print floor: the handout, one bordered card per frame — the
-    -- snap spacers hide, the wrapper takes the card gap its section can
-    -- no longer claim as `* + section.slide` (it is the wrapper's first
-    -- child), and the step control disappears (every step prints).
-    ".snap { display: none; }\n" ++
-    s!"* + .slide-track \{ margin-top: {slidePadV}; }\n" ++
-    (if hasSteps then ".step-nav { display: none; }\n" else "") ++
-    "}\n"
+    -- as the uncover's from-state and the floor's covered default. The
+    -- type size on `main` is the PDF's own fontSize/stage-height ratio
+    -- (`deck_type_is_stage_ratio`), printed in vh.
+    headerH2 ++
+      emitDeckRules (deckRules
+        s!"{milliFactor (deckStageMilli doc.page.fontSize doc.page.height).toNat}vh"
+        (Design.ofDoc doc).coveredFraction maxSteps)
   else handout ++ headerH2
 
 /-- The base stylesheet. Small on purpose: a generated document should not
@@ -2551,7 +3268,7 @@ end
 /-- The stepped frame's always-visible step control, `‹ k / N ›`: one
 cluster per step, each linking its neighbours' claimed snap anchors (the
 *claimed* ids, so a renamed anchor is still reached), shown one at a time
-by `stepNavRules`' `:has(:target)` door. It is the floor's navigation —
+by `stepNavHideRule`/`stepNavShowRule`'s `:has(:target)` door. It is the floor's navigation —
 in a browser without view() timelines the covered steps uncover only
 through these links (Tab reaches them, Enter follows) — a touch target
 everywhere, and honesty about which frames step at all. A plain

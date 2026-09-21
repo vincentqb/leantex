@@ -2074,14 +2074,14 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
        "contain calc((var(--step) - 1) / var(--steps) * 100%)") == 1)
   t "the stage is sticky at the top and pushed in sideways; the spacers carry the snaps"
     (count "section.slide, section.section-page { position: sticky; top: 0;" == 1 &&
-     count "@keyframes ltx-push { from { transform: translate(100vw, -100dvh) } }" == 1 &&
+     count "@keyframes ltx-push { from { transform: translate(100vw, -100dvh); } }" == 1 &&
      count "animation-timeline: view(y); animation-range: entry;" == 1 &&
      count ".snap { height: 100dvh; scroll-snap-align: start; scroll-snap-stop: always; }" == 1 &&
      count ".slide-track::after { content: \"\"; display: block; height: 100dvh; }" == 1)
   t "the pre-reveal state is the design's own covered mix, offset in the direction of travel"
-    (count "@keyframes ltx-uncover { from { opacity: 31%; transform: translateX(var(--motiondistance, 1rem)) } }" == 1)
+    (count "@keyframes ltx-uncover { from { opacity: 31%; transform: translateX(var(--motiondistance, 1rem)); } }" == 1)
   t "without view() timelines the spacers collapse and the fragment fallback uncovers"
-    (count "@supports not (animation-timeline: view()) { .snap { display: none; } }" == 1 &&
+    (count "@supports not (animation-timeline: view()) {\n.snap { display: none; }" == 1 &&
      count ".step:not([data-step=\"1\"]) { opacity: 31%; }" == 1 &&
      count (".slide-track:has(.snap:nth-of-type(2):target) " ++
        ":is(.step[data-step=\"2\"]) { opacity: 100%; }") == 1 &&
@@ -2091,7 +2091,7 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count (".slide-track:has(.snap:nth-of-type(3):target) " ++
        ".step-nav > .cluster:nth-child(3) { display: inline; }") == 1)
   t "reduced motion is the plain snap stack at full colour"
-    (count "@media (prefers-reduced-motion: reduce) { .step { animation: none; } }" == 1 &&
+    (count ".step { animation: none; }" == 1 &&
      count "section.slide, section.section-page { animation: none; position: static;" == 1 &&
      count ".slide-track::after { content: none; }" == 1)
   t "print shows every step uncovered on one card, spacers hidden"

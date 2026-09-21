@@ -892,7 +892,8 @@ states; the scan is the same shape as `diagChecks`'.
 The `animation:` half of the same convention: only HtmlDoc.lean may spell
 an animation into emitted styles, and every definition there that does
 ends in its own reduced-motion guard (the guard travels with the
-declaration — `revealCss`, `deckPushCss`, `deckStepCss`), spells the
+declaration — `revealCss`; the deck's typed rules carry theirs by
+`guards_by_construction` and spell no `animation:` in source), spells the
 guard query itself (the base stylesheet's global block and the guards),
 or is named on the allowlist with its reason (`themeCss`'s deck progress
 bar ships only under the theme's own stylesheet, whose global reduce
@@ -941,9 +942,9 @@ def motionSiteChecks (ref : IO.Ref (List String)) : IO Unit := do
 
 /-- The paged deck's stylesheet is the slides class's own: snap paging on
 screen, the handout card in print, and no other class ships a deck rule —
-which is what keeps the site port's webpage output unchanged. The smooth
-glide carries its reduced-motion guard by construction
-(`HtmlDoc.smoothScrollCss_guarded`); this pins the emitted page. -/
+which is what keeps the site port's webpage output unchanged. Every motion
+rule carries its reduced-motion counterpart by theorem
+(`HtmlDoc.guards_by_construction`); this pins the emitted page. -/
 def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let (deckDoc, deckDs) := elabStr (deck169 "" "\\begin{frame}{T}\nx\n\\end{frame}")
@@ -960,8 +961,8 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      has deckPage "section.slide, section.section-page { min-height: 100dvh;")
   t "the deck glide ships with its reduced-motion guard"
     (has deckPage "html { scroll-behavior: smooth; }" &&
-     has deckPage ("@media (prefers-reduced-motion: reduce) " ++
-       "{ html { scroll-behavior: auto; } }"))
+     has deckPage "@media (prefers-reduced-motion: reduce) {" &&
+     has deckPage "html { scroll-behavior: auto; }")
   t "the deck slide fills the viewport as a column"
     (has deckPage "min-height: 100dvh" &&
      has deckPage "display: flex; flex-direction: column;")
@@ -971,12 +972,12 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      has deckPage "section.slide { break-after: page; }")
   t "the push pins the stage and arrives sideways, guard attached"
     (has deckPage "@supports (animation-timeline: view())" &&
-     has deckPage "@keyframes ltx-push { from { transform: translate(100vw, -100dvh) } }" &&
+     has deckPage "@keyframes ltx-push { from { transform: translate(100vw, -100dvh); } }" &&
      has deckPage "section.slide, section.section-page { position: sticky; top: 0;" &&
      has deckPage "animation-timeline: view(y); animation-range: entry;" &&
      has deckPage "html { overflow-x: clip; }" &&
      has deckPage ("@media (prefers-reduced-motion: reduce) {\n" ++
-       "  section.slide, section.section-page { animation: none; \
+       "section.slide, section.section-page { animation: none; \
 position: static;"))
   t "the deck keeps the safe area and caps the title band"
     (has deckPage "padding: var(--safearea, 6vmin); }" &&
@@ -1031,6 +1032,24 @@ position: static;"))
        !has page "scroll-state" && !has page "ltx-uncover" &&
        !has page "slide-track" &&
        has page "section.slide { border:")
+
+  -- Every typed rule survives emission: the declaration multiset of the
+  -- emitted stylesheet equals the typed set's — `emitDeckRules` drops and
+  -- duplicates nothing on its way through the gate grouping. Each rule
+  -- renders on one line, so the parse is line-local: the body between a
+  -- line's last `{` and first `}`.
+  let rules := HtmlDoc.deckRules "4.311vh" 38 3
+  let typed := rules.flatMap fun r => r.decls.map fun d => d.1 ++ ": " ++ d.2
+  let emitted := ((HtmlDoc.emitDeckRules rules).splitOn "\n").flatMap fun l =>
+    if (l.splitOn "{").length ≥ 2 && (l.splitOn "}").length ≥ 2 then
+      let body := ((((l.splitOn "{").getLast?.getD "").splitOn "}").headD "")
+      (body.splitOn ";").filterMap fun d =>
+        let d := d.trimAscii.toString
+        if d.isEmpty then none else some d
+    else []
+  t "every typed deck declaration survives emission, exactly once"
+    (typed.length == emitted.length &&
+     typed.all fun d => typed.count d == emitted.count d)
 
 /-- Rubber image sizes in the deck: the stage is the viewport, so every
 stage-resolved image dimension ships as its share of the stage
