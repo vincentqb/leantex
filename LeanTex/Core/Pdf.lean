@@ -196,10 +196,13 @@ private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Opt
     (page : PageOut) : String := Id.run do
   let mut s := ""
   -- Fills paint first, in order: the page background, then any bars, then
-  -- the text over them.
+  -- the text over them. The bleed shifts fills exactly as it shifts lines
+  -- and paths below — layout speaks trim coordinates and the trim box sits
+  -- `bleed` in from the medium's corner — so a fill placed against a trim
+  -- line (a cut mark) and the declared TrimBox cannot drift apart.
   for f in page.fills do
-    s := s ++ s!"q {f.color.pdfFill} {f.x.toPtString} \
-{(geom.pageH - f.y - f.h).toPtString} {f.w.toPtString} {f.h.toPtString} re f Q\n"
+    s := s ++ s!"q {f.color.pdfFill} {(geom.bleed + f.x).toPtString} \
+{(geom.bleed + geom.pageH - f.y - f.h).toPtString} {f.w.toPtString} {f.h.toPtString} re f Q\n"
   -- Picture paths — node outlines, later edges — paint after the fills
   -- and before the text, so a node's own fill sits under its label. The
   -- painting operators are ISO 32000-2 §8.5.3 (S stroke, f fill, B fill

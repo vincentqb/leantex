@@ -53,6 +53,15 @@ structure Geom where
   /-- Bleed past the trim edge, for the PDF writer: layout works in trim
   coordinates and never sees it. -/
   bleed : Sp := 0
+  /-- Whether the pages ship printer's cut marks (`cutMarks`): derived
+  from the trim and bleed, drawn on every face. Off by default. -/
+  marks : Bool := false
+  /-- The cut marks' declared trim clearance (`Ir.cutMarkGap` holds the
+  default and its source). -/
+  markGap : Sp := Ir.cutMarkGap
+  /-- The cut marks' declared thickness (`Ir.cutMarkThickness` holds the
+  default and its source). -/
+  markThick : Sp := Ir.cutMarkThickness
   /-- The band a page footer reserves above the bottom margin: what its ink
   and body-side gap need beyond the margin. Zero when there is no footer or
   the margin already holds it, so an undeclared page is unchanged.
@@ -291,7 +300,10 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     justify := spec.justify.getD base.justify
     protrude := spec.protrude.getD base.protrude
     expand := spec.expand.getD base.expand
-    bleed := spec.bleed }
+    bleed := spec.bleed
+    marks := spec.marks
+    markGap := spec.markGap
+    markThick := spec.markThickness }
 
 /-- The slides stage carries a readable number of text lines. Tantau's rule
 for presentations is lines, not points: "between 10 and 20 lines should fit
@@ -540,6 +552,154 @@ structure Fill where
   h : Sp
   color : Ir.Color
   deriving Repr, Inhabited
+
+/-- The eight printer's cut marks a page ships under `\page{ marks = cut }`:
+a pure function of the trim box (`W × H`), the bleed, the gap, and the
+thickness — derived, never placed by hand, so the drawn marks and the
+declared TrimBox cannot drift apart. Each mark is a hairline inside the
+bleed strip, anchored at a medium edge and running inward along a trim
+line, stopping `gap` short of the trim line it approaches: the strip it
+occupies is the strip the cutter discards. Coordinates are layout (trim)
+space, y down — the medium spans `−bleed … W+bleed` — and the painted
+thickness is `2·(thick/2)`: the odd sp (1/65536 pt, far below any press's
+resolution) is dropped so the mark centres exactly on its trim line
+(`cutmarks_on_trim_exact`) and the duplex flip maps marks onto marks
+exactly (`cutmarks_symmetric_mem`). -/
+def cutMarks (trimW trimH bleed gap thick : Sp) (color : Ir.Color) : Array Fill :=
+  let hw := thick / 2
+  let len := bleed - gap
+  #[-- vertical, along the left and right trim lines, from the top and
+    -- bottom medium edges
+    ⟨-hw, -bleed, 2 * hw, len, color⟩,
+    ⟨-hw, trimH + gap, 2 * hw, len, color⟩,
+    ⟨trimW - hw, -bleed, 2 * hw, len, color⟩,
+    ⟨trimW - hw, trimH + gap, 2 * hw, len, color⟩,
+    -- horizontal, along the top and bottom trim lines, from the left and
+    -- right medium edges
+    ⟨-bleed, -hw, len, 2 * hw, color⟩,
+    ⟨trimW + gap, -hw, len, 2 * hw, color⟩,
+    ⟨-bleed, trimH - hw, len, 2 * hw, color⟩,
+    ⟨trimW + gap, trimH - hw, len, 2 * hw, color⟩]
+
+/-- The centre-line arithmetic behind `cutmarks_on_trim_exact`, over bare
+`Int` binders: omega reads the bare spelling only, and the `Sp`-typed
+mark components are silently invisible to it (the `furn_reserves`
+pattern). -/
+private theorem cutmarks_trim_arith (W H t : Int) :
+    2 * -(t / 2) + 2 * (t / 2) = 0 ∧
+    2 * (W - t / 2) + 2 * (t / 2) = 2 * W ∧
+    2 * (H - t / 2) + 2 * (t / 2) = 2 * H := by omega
+
+/-- Each mark's centre line lies exactly on a trim line — the card
+source's own argument made a theorem: positions derive from the same
+lengths as the page boxes, so the drawn marks and the declared TrimBox
+cannot drift apart. Spelled doubled (`2x + w = 2·trim`) so the statement
+needs no division and no parity hypothesis. -/
+theorem cutmarks_on_trim_exact (W H b g t : Int) (c : Ir.Color) :
+    ∀ f ∈ cutMarks W H b g t c,
+      2 * f.x + f.w = 0 ∨ 2 * f.x + f.w = 2 * W ∨
+      2 * f.y + f.h = 0 ∨ 2 * f.y + f.h = 2 * H := by
+  intro f hf
+  have h := cutmarks_trim_arith W H t
+  simp only [cutMarks, List.mem_toArray, List.mem_cons, List.not_mem_nil,
+    or_false] at hf
+  rcases hf with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  · exact Or.inl h.1
+  · exact Or.inl h.1
+  · exact Or.inr (Or.inl h.2.1)
+  · exact Or.inr (Or.inl h.2.1)
+  · exact Or.inr (Or.inr (Or.inl h.1))
+  · exact Or.inr (Or.inr (Or.inl h.1))
+  · exact Or.inr (Or.inr (Or.inr h.2.2))
+  · exact Or.inr (Or.inr (Or.inr h.2.2))
+
+/-- The bounds behind `cutmarks_in_bleed_covers`, over bare `Int`
+binders, one pack per mark: its four medium bounds and its trim
+disjointness fact. -/
+private theorem cutmarks_bleed_arith (W H b g t : Int)
+    (hW : 0 ≤ W) (hH : 0 ≤ H) (hg : 0 ≤ g) (hgb : g ≤ b) (htg : t ≤ 2 * g) :
+    ((-b ≤ -(t / 2) ∧ -(t / 2) + 2 * (t / 2) ≤ W + b ∧
+      -b ≤ -b ∧ -b + (b - g) ≤ H + b) ∧ -b + (b - g) ≤ 0) ∧
+    ((-b ≤ -(t / 2) ∧ -(t / 2) + 2 * (t / 2) ≤ W + b ∧
+      -b ≤ H + g ∧ H + g + (b - g) ≤ H + b) ∧ H ≤ H + g) ∧
+    ((-b ≤ W - t / 2 ∧ W - t / 2 + 2 * (t / 2) ≤ W + b ∧
+      -b ≤ -b ∧ -b + (b - g) ≤ H + b) ∧ -b + (b - g) ≤ 0) ∧
+    ((-b ≤ W - t / 2 ∧ W - t / 2 + 2 * (t / 2) ≤ W + b ∧
+      -b ≤ H + g ∧ H + g + (b - g) ≤ H + b) ∧ H ≤ H + g) ∧
+    ((-b ≤ -b ∧ -b + (b - g) ≤ W + b ∧
+      -b ≤ -(t / 2) ∧ -(t / 2) + 2 * (t / 2) ≤ H + b) ∧ -b + (b - g) ≤ 0) ∧
+    ((-b ≤ W + g ∧ W + g + (b - g) ≤ W + b ∧
+      -b ≤ -(t / 2) ∧ -(t / 2) + 2 * (t / 2) ≤ H + b) ∧ W ≤ W + g) ∧
+    ((-b ≤ -b ∧ -b + (b - g) ≤ W + b ∧
+      -b ≤ H - t / 2 ∧ H - t / 2 + 2 * (t / 2) ≤ H + b) ∧ -b + (b - g) ≤ 0) ∧
+    ((-b ≤ W + g ∧ W + g + (b - g) ≤ W + b ∧
+      -b ≤ H - t / 2 ∧ H - t / 2 + 2 * (t / 2) ≤ H + b) ∧ W ≤ W + g) := by
+  omega
+
+/-- The bleed strip covers every mark: no mark ink inside the TrimBox and
+none outside the MediaBox — the marks live entirely in the strip the
+cutter discards. The hypotheses are the geometry that makes marks
+drawable at all: a gap inside the bleed, and a hairline no wider than
+twice the gap (so a mark cannot reach the trim corner either). -/
+theorem cutmarks_in_bleed_covers (W H b g t : Int) (c : Ir.Color)
+    (hW : 0 ≤ W) (hH : 0 ≤ H) (hg : 0 ≤ g) (hgb : g ≤ b) (htg : t ≤ 2 * g) :
+    ∀ f ∈ cutMarks W H b g t c,
+      (-b ≤ f.x ∧ f.x + f.w ≤ W + b ∧ -b ≤ f.y ∧ f.y + f.h ≤ H + b) ∧
+      (f.x + f.w ≤ 0 ∨ W ≤ f.x ∨ f.y + f.h ≤ 0 ∨ H ≤ f.y) := by
+  intro f hf
+  have h := cutmarks_bleed_arith W H b g t hW hH hg hgb htg
+  simp only [cutMarks, List.mem_toArray, List.mem_cons, List.not_mem_nil,
+    or_false] at hf
+  rcases hf with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  · exact ⟨h.1.1, Or.inr (Or.inr (Or.inl h.1.2))⟩
+  · exact ⟨h.2.1.1, Or.inr (Or.inr (Or.inr h.2.1.2))⟩
+  · exact ⟨h.2.2.1.1, Or.inr (Or.inr (Or.inl h.2.2.1.2))⟩
+  · exact ⟨h.2.2.2.1.1, Or.inr (Or.inr (Or.inr h.2.2.2.1.2))⟩
+  · exact ⟨h.2.2.2.2.1.1, Or.inl h.2.2.2.2.1.2⟩
+  · exact ⟨h.2.2.2.2.2.1.1, Or.inr (Or.inl h.2.2.2.2.2.1.2)⟩
+  · exact ⟨h.2.2.2.2.2.2.1.1, Or.inl h.2.2.2.2.2.2.1.2⟩
+  · exact ⟨h.2.2.2.2.2.2.2.1, Or.inr (Or.inl h.2.2.2.2.2.2.2.2)⟩
+
+/-- The flip arithmetic behind `cutmarks_symmetric_mem`, over bare `Int`
+binders with the half-thickness as one atom: omega reads the bare
+spelling only (the `furn_reserves` pattern). -/
+private theorem cutmarks_flip_arith (W b g d : Int) :
+    W - d = W - -d - 2 * d ∧ -d = W - (W - d) - 2 * d ∧
+    W + g = W - -b - (b - g) ∧ -b = W - (W + g) - (b - g) := by
+  omega
+
+/-- The duplex fact: under the horizontal flip `x ↦ W − x` the mark set
+maps onto itself — for every mark, some mark stands exactly at its
+flipped rectangle — so the sheet turned for its back face lands marks on
+marks and the two faces cut as one. -/
+theorem cutmarks_symmetric_mem (W H b g t : Int) (c : Ir.Color) :
+    ∀ f ∈ cutMarks W H b g t c,
+      ∃ f' ∈ cutMarks W H b g t c,
+        f'.x = W - f.x - f.w ∧ f'.y = f.y ∧ f'.w = f.w ∧ f'.h = f.h := by
+  intro f hf
+  have h := cutmarks_flip_arith W b g (t / 2)
+  simp only [cutMarks, List.mem_toArray, List.mem_cons, List.not_mem_nil,
+    or_false] at hf
+  simp only [cutMarks]
+  rcases hf with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+  · exact ⟨_, List.mem_toArray.mpr (.tail _ (.tail _ (.head _))),
+      h.1, rfl, rfl, rfl⟩
+  · exact ⟨_, List.mem_toArray.mpr (.tail _ (.tail _ (.tail _ (.head _)))),
+      h.1, rfl, rfl, rfl⟩
+  · exact ⟨_, List.mem_toArray.mpr (.head _), h.2.1, rfl, rfl, rfl⟩
+  · exact ⟨_, List.mem_toArray.mpr (.tail _ (.head _)), h.2.1, rfl, rfl, rfl⟩
+  · exact ⟨_, List.mem_toArray.mpr
+      (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.head _)))))),
+      h.2.2.1, rfl, rfl, rfl⟩
+  · exact ⟨_, List.mem_toArray.mpr
+      (.tail _ (.tail _ (.tail _ (.tail _ (.head _))))),
+      h.2.2.2, rfl, rfl, rfl⟩
+  · exact ⟨_, List.mem_toArray.mpr
+      (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.head _)))))))),
+      h.2.2.1, rfl, rfl, rfl⟩
+  · exact ⟨_, List.mem_toArray.mpr
+      (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.tail _ (.head _))))))),
+      h.2.2.2, rfl, rfl, rfl⟩
 
 /-- A path on the page, in layout coordinates (y down): what a picture's
 node outlines — and, as the subset grows, its edges — become. The
@@ -6745,10 +6905,38 @@ private theorem runPost_pages (sh : Shipped) :
   dsimp only [Id.run, bind, pure, Id] at hp
   exact furnishFrom_keeps _ _ _ _ p hp
 
-/-- Typeset a document body into positioned pages. Geometry is resolved by
-the caller via `Geom.ofPage`, so layout has one source of truth. -/
-def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
-    (imgs : Image.Store := {}) :
+/-- The marks step, the one seam after the furniture pass: every shipped
+page takes the derived cut-mark fills, appended after its own fills so
+the marks paint over any background. -/
+def addMarks (out : Out) (m : Array Fill) : Out :=
+  { out with pages := out.pages.map fun p => { p with fills := p.fills ++ m } }
+
+/-- What the marks step does to a shipped page, read backwards: every
+page of `addMarks` is a pre-marks page with the mark fills appended —
+the seam `page_background_survives` crosses. -/
+theorem addMarks_mem (out : Out) (m : Array Fill) (p : PageOut)
+    (hp : p ∈ (addMarks out m).pages) :
+    ∃ q ∈ out.pages, p.fills = q.fills ++ m := by
+  obtain ⟨q, hq, rfl⟩ := Array.mem_map.mp hp
+  exact ⟨q, hq, rfl⟩
+
+/-- The mark fills a document's pages take: the derived eight when marks
+are declared and the declared gap fits inside the bleed (`cutMarks`),
+nothing otherwise. Painted in the registration reading
+(`Ir.Color.registration`): CMYK 1,1,1,1 when the document declares print
+colours, black otherwise. -/
+private def markFillsOf (geom : Geom) (doc : Doc) : Array Fill :=
+  if geom.marks && geom.markGap < geom.bleed && 0 < geom.markThick then
+    cutMarks geom.pageW geom.pageH geom.bleed geom.markGap geom.markThick
+      (Ir.Color.registration (doc.palette.entries.any (·.2.cmyk.isSome)))
+  else #[]
+
+/-- The whole pipeline up to the marks seam: placement, the close, and
+the furniture pass. `run` is this plus `addMarks`; the split keeps each
+half's proof (`runCore_bg`, `addMarks_mem`) inside its own elaboration
+budget — the giant term is crossed once per theorem, not twice in one. -/
+private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Doc) (imgs : Image.Store := {}) :
     Out := Id.run do
   -- The PDF's view of the document: backend conditionals resolve here, at
   -- the backend's entry, so no later pass can see content another backend
@@ -6979,39 +7167,46 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
         else b.diags
       else b.diags
     else b.diags
-  runPost { b := b
-            diags := shipDiags
-            doc := doc
-            geom := geom
-            xHeight := xHeight
-            pats := pats
-            fs := fs
-            imgs := imgs
-            hyphCache := acc.hyphCache
-            navEntries := acc.navEntries
-            logoSpans := logoSpans
-            plainFoot := plainFoot
-            footSize := footSize
-            headY := furnHeadY headFurn (scale font.ascent)
-            footY := furnFootY footFurn geom.pageH (scale (-font.descent))
-            chromeFootY := furnFootY chromeFurn geom.pageH
-              (chromeScale (-font.descent))
-            muted := design.muted }
+  runPost {
+    b := b
+    diags := shipDiags
+    doc := doc
+    geom := geom
+    xHeight := xHeight
+    pats := pats
+    fs := fs
+    imgs := imgs
+    hyphCache := acc.hyphCache
+    navEntries := acc.navEntries
+    logoSpans := logoSpans
+    plainFoot := plainFoot
+    footSize := footSize
+    headY := furnHeadY headFurn (scale font.ascent)
+    footY := furnFootY footFurn geom.pageH (scale (-font.descent))
+    chromeFootY := furnFootY chromeFurn geom.pageH
+      (chromeScale (-font.descent))
+    muted := design.muted }
 
-/-- Every page of a document that declares a `bg` palette entry ships a
-full-page fill: what the walk attaches to a page survives to that page's
-output, observed at the page background. Discharged from `Obligations`
-(arch-provable I5; the fill-vanishing bug — `B.commit` once rebuilt the
-page with only its lines, PLAN 2026-09-16 — is its counterexample). The
-proof is three seams: `finishPage_bg` (the one shipping door prepends
-the fill whole), `bgStep_placeFrom` (every placement step preserves the
+/-- Typeset a document body into positioned pages. Geometry is resolved by
+the caller via `Geom.ofPage`, so layout has one source of truth. Printer's
+cut marks, when declared, join every shipped face here — the marks seam
+(`addMarks`) after the furniture pass, so spilled, stepped, and chrome
+pages alike carry the same eight, painted over any background. -/
+def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
+    (imgs : Image.Store := {}) : Out :=
+  addMarks (runCore geom fs pats doc imgs) (markFillsOf geom doc)
+
+/-- The background fact over the pre-marks pipeline: every page `runCore`
+ships under a declared `bg` carries the full-page fill. The proof is
+three seams: `finishPage_bg` (the one shipping door prepends the fill
+whole), `bgStep_placeFrom` (every placement step preserves the
 invariant), and `runPost_pages` (the furniture pass cannot touch
 fills). -/
-theorem page_background_survives
+private theorem runCore_bg
     (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     (doc : Ir.Doc) (imgs : Image.Store)
     (hbg : (doc.palette.find? "bg").isSome = true) :
-    ∀ p ∈ (run geom fs pats doc imgs).pages,
+    ∀ p ∈ (runCore geom fs pats doc imgs).pages,
       ∃ f ∈ p.fills.toList,
         f.x = 0 ∧ f.y = 0 ∧ f.w = geom.pageW ∧ f.h = geom.pageH := by
   have key : ∀ (b0 c : B), BgStep b0 c →
@@ -7023,7 +7218,7 @@ theorem page_background_survives
       simp at h
     · exact h
   intro p hp
-  unfold run at hp
+  unfold runCore at hp
   dsimp only [Id.run, bind, pure, Id] at hp
   obtain ⟨q, hq, hfills, -, -, -⟩ := runPost_pages _ p hp
   have fin : ∀ (b0 : B), bgFilled b0.geom q →
@@ -7049,5 +7244,29 @@ theorem page_background_survives
     | (try dsimp only
        repeat' split
        all_goals rfl)
+
+/-- Every page of a document that declares a `bg` palette entry ships a
+full-page fill: what the walk attaches to a page survives to that page's
+output, observed at the page background. Discharged from `Obligations`
+(arch-provable I5; the fill-vanishing bug — `B.commit` once rebuilt the
+page with only its lines, PLAN 2026-09-16 — is its counterexample).
+`runCore_bg` carries the pipeline's three seams; the marks step is the
+fourth and only appends (`addMarks_mem`), so the fill rides through. -/
+theorem page_background_survives
+    (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Ir.Doc) (imgs : Image.Store)
+    (hbg : (doc.palette.find? "bg").isSome = true) :
+    ∀ p ∈ (run geom fs pats doc imgs).pages,
+      ∃ f ∈ p.fills.toList,
+        f.x = 0 ∧ f.y = 0 ∧ f.w = geom.pageW ∧ f.h = geom.pageH := by
+  intro p hp
+  unfold run at hp
+  obtain ⟨p0, hp0, hpf⟩ := addMarks_mem _ _ _ hp
+  obtain ⟨f, hf, hx, hy, hw, hh⟩ := runCore_bg geom fs pats doc imgs hbg p0 hp0
+  have hf0 : f ∈ p0.fills := Array.mem_toList_iff.mp hf
+  have hfp : f ∈ p.fills.toList := by
+    rw [hpf, Array.mem_toList_iff]
+    exact Array.mem_append.mpr (Or.inl hf0)
+  exact ⟨f, hfp, hx, hy, hw, hh⟩
 
 end LeanTex.Core.Layout

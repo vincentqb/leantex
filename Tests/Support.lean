@@ -259,6 +259,10 @@ structure CensusPage where
   declared weight, above or below the title's line). -/
   ruleSegs : Array (Dim.Sp × Dim.Sp) := #[]
   fills : Nat
+  /-- Every fill rectangle shipped on the page, in paint order — what the
+  cut-mark facts read (marks inside the bleed strip, none in the gap,
+  duplex-symmetric). -/
+  fillRects : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
   /-- Picture paths shipped on the page: node outlines and edges. -/
   paths : Nat
 
@@ -319,6 +323,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
                           rules := rules
                           ruleSegs := ruleSegs
                           fills := p.fills.size
+                          fillRects := p.fills.map fun f => (f.x, f.y, f.w, f.h)
                           paths := p.paths.size }
   return pages
 

@@ -657,10 +657,30 @@ def censusTable :
     ("pages", c.size == 4),
     ("the title ships", pageHas c 0 "Cardamom Press"),
     ("the divider draws the section rule", (c[2]?.map (·.rules == 1)).getD false)]),
-  ("trio-card", fun _ c => [
+  ("trio-card", fun geom c => [
     ("two faces, two pages", c.size == 2),
     ("the front ships the name", pageHas c 0 "Pat Placeholder"),
-    ("the back ships the contact", pageHas c 1 "press@example.org")])]
+    ("the back ships the contact", pageHas c 1 "press@example.org"),
+    -- The declared cut marks, judged from the shipped fills: ink exactly
+    -- on the eight marks and none in the gap or on the trim corner —
+    -- the print-shop check, now the engine's.
+    ("each face ships exactly the eight cut marks and no other fill",
+      c.all fun p => p.fills == 8),
+    ("every mark stands in the bleed strip: outside the trim, inside the medium",
+      c.all fun p => p.fillRects.all fun r =>
+        decide (-geom.bleed ≤ r.1 ∧ r.1 + r.2.2.1 ≤ geom.pageW + geom.bleed ∧
+          -geom.bleed ≤ r.2.1 ∧ r.2.1 + r.2.2.2 ≤ geom.pageH + geom.bleed) &&
+        decide (r.1 + r.2.2.1 ≤ 0 ∨ geom.pageW ≤ r.1 ∨
+          r.2.1 + r.2.2.2 ≤ 0 ∨ geom.pageH ≤ r.2.1)),
+    ("no mark ink within the declared gap of a trim corner",
+      c.all fun p => p.fillRects.all fun r =>
+        ([(0, 0), (geom.pageW, 0), (0, geom.pageH), (geom.pageW, geom.pageH)] :
+            List (Dim.Sp × Dim.Sp)).all fun cc =>
+          decide ¬(r.1 < cc.1 + geom.markGap ∧ cc.1 - geom.markGap < r.1 + r.2.2.1 ∧
+            r.2.1 < cc.2 + geom.markGap ∧ cc.2 - geom.markGap < r.2.1 + r.2.2.2)),
+    ("the marks are duplex-symmetric: the horizontal flip maps each onto a mark",
+      c.all fun p => p.fillRects.all fun r =>
+        p.fillRects.contains (geom.pageW - r.1 - r.2.2.1, r.2.1, r.2.2.1, r.2.2.2))])]
 
 /-- The outline tier of the census: the PDF document outline is backend
 emission (an unpinned nav's paged rendering, ISO 32000-2 §12.3.3), so a

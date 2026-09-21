@@ -1,5 +1,5 @@
 class card
-page 242.646x153.014 vmargin 14.173 hmargin 14.173 bleed 8.504 hyphenate off justify off
+page 242.646x153.014 vmargin 14.173 hmargin 14.173 bleed 8.504 marks cut hyphenate off justify off
 font dir "fonts"
 font body "Source Serif Pro"
 font sans "Open Sans"

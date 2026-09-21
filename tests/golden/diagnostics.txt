@@ -53,7 +53,7 @@ error[E0320]: 'oops' in '\page' has no value
 error[E0321]: 'scale' needs a number, got "big"
 ── E0322 (dropped) unknown key in a declaration block
 error[E0322]: '\page' has no key 'zoom'
-  help: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, furnituregap
+  help: known keys: size, width, height, margin, vmargin, hmargin, leading, parskip, measure, fontsize, bleed, hyphenate, justify, protrusion, expansion, numbers, marks, furnituregap
 ── E0323 (dropped) declaration key value has the wrong type
 error[E0323]: 'vmargin' in '\page' expects a dimension, got a string
 ── E0324 (dropped) unknown page size name

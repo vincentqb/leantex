@@ -74,6 +74,21 @@ theorem rhythmQuantum_lt_double (size : Int) (h : Dim.pt 1 ≤ size) :
     < 2 * (size * 1200 / 1000 * 1000 / 1000 / 2)
   omega
 
+/-- The default clearance between a cut mark's inward end and the trim
+line it stops short of: 0.075 in. The industry guillotine tolerance is
+1/32–1/16 in (PrintNinja's pre-press guide and Smartpress's cutting
+tolerance both publish the 1/16 in outer bound), so 0.075 in beats a
+spec-limit drift with 0.0125 in to spare — the mirror of the 1/8 in safe
+zone type keeps inside the trim. `\page{ mark-gap = ... }` overrides. -/
+def cutMarkGap : Sp := inch 3 / 40
+
+/-- The default cut-mark thickness: 0.5 bp, a print shop's floor for a
+hairline that prints legibly on digital stock and twice the 0.25 bp
+offset floor, so the mark survives either process. This engine reads
+`bp` as `pt` (`Decl.unitScaleBase`), so the value is 0.5 pt in sp.
+`\page{ mark-thickness = ... }` overrides. -/
+def cutMarkThickness : Sp := pt 1 / 2
+
 /-- Page geometry, as declared by `\page`. -/
 structure PageSpec where
   width : Sp := pt 612
@@ -106,6 +121,18 @@ structure PageSpec where
   here; only the PDF writer grows the medium and records the trim box.
   The print convention is 3 mm per edge (0.125 in at US shops). -/
   bleed : Sp := 0
+  /-- Whether the pages ship printer's cut marks (`\page{ marks = cut }`):
+  eight hairlines inside the bleed strip, derived from the trim and bleed
+  (`Layout.cutMarks`), never placed by hand. Off by default — a print
+  shop that wants only the declared page boxes gets only boxes. -/
+  marks : Bool := false
+  /-- The clearance between a cut mark's inward end and the trim line it
+  stops short of (`\page{ mark-gap = ... }`); `cutMarkGap` holds the
+  default and its source. -/
+  markGap : Sp := cutMarkGap
+  /-- The cut marks' stroke thickness (`\page{ mark-thickness = ... }`);
+  `cutMarkThickness` holds the default and its source. -/
+  markThickness : Sp := cutMarkThickness
   /-- Whether paragraphs may hyphenate; `none` takes the class default —
   on for `article` and `slides`, off for `card`, where a two-line name
   broken with a hyphen is never what anyone means. -/
@@ -328,6 +355,17 @@ theorem Color.cmyk_components_kept (c m y k : Nat) :
     (Color.ofCmyk c m y k).pdfFill
       = s!"{pdfMilli c} {pdfMilli m} {pdfMilli y} {pdfMilli k} k" := by
   exact ⟨rfl, rfl⟩
+
+/-- The colour printer's marks paint in. ISO 32000-2 §8.6.6.4 names the
+special colorant `All` — "useful for purposes such as painting
+registration targets", ink on every separation — and DeviceCMYK 1,1,1,1
+is its device spelling when the document declares print colours: the
+marks then render on all four plates, as ISO 12647-conforming proofs
+expect of registration marks. A document that declares no CMYK colour
+has no separations to register, so its honest mark colour is plain
+black. -/
+def Color.registration (printModel : Bool) : Color :=
+  if printModel then Color.ofCmyk 1000 1000 1000 1000 else Color.black
 
 /-- Named lengths declared by `\tokens`, in declaration order so a later
 token may be defined in terms of an earlier one. -/
@@ -8090,6 +8128,11 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
       | some g => s!" parskip {dumpGlue g}"
       | none => "") ++
     (if doc.page.bleed != 0 then s!" bleed {doc.page.bleed.toPtString}" else "") ++
+    (if doc.page.marks then " marks cut" else "") ++
+    (if doc.page.markGap != cutMarkGap
+      then s!" mark-gap {doc.page.markGap.toPtString}" else "") ++
+    (if doc.page.markThickness != cutMarkThickness
+      then s!" mark-thickness {doc.page.markThickness.toPtString}" else "") ++
     (match doc.page.hyphenate with
       | some b => s!" hyphenate {if b then "on" else "off"}"
       | none => "") ++

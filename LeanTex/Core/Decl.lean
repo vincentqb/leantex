@@ -693,7 +693,9 @@ def parseBlock (file : String) (src : String) (pos : Pos) (what : String)
     | key :: rest =>
       let key := key.trimAscii.toString
       let valueSrc := String.intercalate "=" rest |>.trimAscii.toString
-      if key.isEmpty || !key.toList.all isIdentChar then
+      -- Keys admit '-' beyond the ident alphabet (`mark-gap`); values do
+      -- not — there '-' is subtraction, and the expression parser owns it.
+      if key.isEmpty || !key.toList.all (fun c => isIdentChar c || c == '-') then
         diags := diags.push (Diag.of .E0320
           s!"invalid key in '\\{what}': {entry.quote}" (some ⟨file, pos⟩)
           (help := "entries look like: key = value"))

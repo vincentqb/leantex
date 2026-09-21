@@ -2558,6 +2558,47 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       "\\palette[decorative]{ washed = #DDDDDD }\n"
      !(warnCodes src).contains "W0315" && !(noteCodes src).contains "N0022")
 
+/-- Printer's cut marks, wired: the `\page` keys parse into the spec, the
+declared faces ship exactly the eight derived fills, off means none, and
+the ink follows the registration reading. The geometry itself is theorem
+country (`Layout.cutmarks_on_trim_exact`, `cutmarks_in_bleed_covers`,
+`cutmarks_symmetric_mem`); the census row over trio-card judges the
+shipped card. -/
+def cutMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src (page : String) (pre : String := "") : String :=
+    s!"\\documentclass\{card}{pre}\\page\{ {page} }\\begin\{document}x\\end\{document}"
+  let pageOf (page : String) : Ir.PageSpec := (elabStr (src page)).1.page
+  t "marks = cut declares the marks" ((pageOf "marks = cut").marks == true)
+  t "marks stay off undeclared" ((pageOf "bleed = 3mm").marks == false)
+  t "marks = none declares the way back" ((pageOf "marks = cut, marks = none").marks == false)
+  t "mark-gap and mark-thickness are declared dimensions"
+    (let p := pageOf "marks = cut, mark-gap = 0.1in, mark-thickness = 1pt"
+     p.markGap == Dim.inch 1 / 10 && p.markThickness == Dim.pt 1)
+  t "an unknown marks value is refused by name"
+    (errCodes (src "marks = frame") == ["E0323"])
+  t "the defaults are the sourced tokens"
+    (({} : Ir.PageSpec).markGap == Ir.cutMarkGap &&
+     ({} : Ir.PageSpec).markThickness == Ir.cutMarkThickness)
+  let outOf (page : String) (pre : String := "") : Layout.Out :=
+    layoutOf oneFace (elabStr (src page pre)).1
+  t "a declared bleed ships the eight marks on every face"
+    (let out := outOf "bleed = 3mm, marks = cut"
+     out.pages.size ≥ 1 && out.pages.all fun p => p.fills.size == 8)
+  t "marks without a bleed to stand in ship nothing"
+    ((outOf "marks = cut").pages.all fun p => p.fills.isEmpty)
+  t "no marks ship undeclared"
+    ((outOf "bleed = 3mm").pages.all fun p => p.fills.isEmpty)
+  t "registration ink follows the document's colour model"
+    (Ir.Color.registration true == Ir.Color.ofCmyk 1000 1000 1000 1000 &&
+     Ir.Color.registration false == Ir.Color.black)
+  t "an RGB document's marks paint plain black"
+    ((outOf "bleed = 3mm, marks = cut").pages.all fun p =>
+      p.fills.all fun f => f.color == Ir.Color.black)
+  t "a print document's marks paint in DeviceCMYK registration"
+    ((outOf "bleed = 3mm, marks = cut" "\\palette{ spot = cmyk(1, 0, 0, 0) }").pages.all
+      fun p => p.fills.all fun f => f.color.cmyk == some (1000, 1000, 1000, 1000))
+
 /-- The poster's legibility floor, judged over the shipped pages. The floor
 is derived from the calibration the class already sources — beamerposter's
 scale-1 normalsize at the 3.5 mrad fluent-reading bound (Legge & Bigelow

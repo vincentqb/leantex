@@ -1,7 +1,8 @@
 % One design, three artefacts (3/3): the card. Same declaration blocks as
 % trio-page.tex and trio-deck.tex. ISO/IEC 7810 ID-1 trim by class default,
-% two faces as two frames, 3 mm bleed for the print shop. The card class
-% itself asserts the contract: content fits both faces, ink stays inside
+% two faces as two frames, 3 mm bleed and derived cut marks for the print
+% shop. The card class itself asserts the contract: content fits both
+% faces, ink stays inside
 % the safe margin, and no type drops below the legible floor. Invented
 % identity: placeholder name, example.org.
 \documentclass{card}
@@ -23,7 +24,7 @@
 \style{section}{ font = {\sffamily\bfseries\primary}, before = rhythm, rule = quiet }
 \style{itemize}{ gap = 0.25 * rhythm }
 
-\page{ bleed = 3mm }
+\page{ bleed = 3mm, marks = cut }
 \pdfmeta{ title = "Cardamom Press — card", author = "Pat Placeholder" }
 \assert{ fonts.all_embedded }
 

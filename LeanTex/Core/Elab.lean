@@ -385,7 +385,7 @@ def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin",
    "textwidth", "textheight", "leading", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion",
-   "expansion", "numbers",
+   "expansion", "numbers", "marks", "mark-gap", "mark-thickness",
    "furnituregap", "headsep", "footskip"]
 
 /-- The `\page` keys that declare the page's physical extent. Exactly these
@@ -2264,6 +2264,17 @@ private def footnoteStepNum (override : Option Nat) : EM Nat := do
 private def noteNeedsGroup (ctx : Ctx) (name : String) (pos : Pos) : EM Unit :=
   diag ctx .E0304 s!"'\\{name}' needs a \{...} group" pos
 
+/-- The help an unknown command's warning points at: the generic
+declaration route, except where the engine knows what the construct is
+usually for and can name the native key instead — `\AddToHook`'s shipout
+hooks are how a LaTeX document draws its own printer's marks, and those
+are a declared key here. -/
+private def unknownCmdHelp (name : String) : String :=
+  if name == "AddToHook" || name == "AddToHookNext" then
+    "a hook body cannot be interpreted; \\page{ marks = cut } declares \
+printer's cut marks, derived from the trim and bleed"
+  else "\\define \\name(...) {body} declares it"
+
 /-- The unknown-command warning, with the one named exception: the
 `\footnotemark`/`\footnotetext` pair is pending (W0370, cross-command
 state — a minipage's notes too), never "unknown". Outside the knot. -/
@@ -2276,7 +2287,7 @@ at the page foot")
   else
     warnOnce ctx ("ctrl:" ++ name) .W0301
       s!"unknown command '\\{name}'; its \{...} arguments were kept as text" pos
-      (help := "\\define \\name(...) {body} declares it")
+      (help := unknownCmdHelp name)
       (demote := Compat.styInternal ctx.file name)
 
 /-- The misplaced-declaration diagnostics (E0347 for running content,
@@ -7655,6 +7666,25 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
     | "bleed", v =>
       if let some d := asDim v then spec := { spec with bleed := d }
       else evs := evs.push (.say (Decl.wrongType ctx.file "page" "bleed" "a dimension" v pos))
+    -- Printer's cut marks, a declared feature of the page: `cut` draws
+    -- the eight derived hairlines (`Layout.cutMarks`), `none` is the
+    -- default — a shop that wants only the declared boxes gets only
+    -- boxes. The marks need a bleed to stand in: they occupy the strip
+    -- the cutter discards, `mark-gap` short of the trim.
+    | "marks", .ident v =>
+      match v with
+      | "cut" => spec := { spec with marks := true }
+      | "none" | "off" => spec := { spec with marks := false }
+      | _ =>
+        evs := say evs .E0323 s!"'marks' in '\\page' expects 'cut' or 'none', got '{v}'"
+    | "mark-gap", v =>
+      if let some d := asDim v then spec := { spec with markGap := d }
+      else evs := evs.push (.say (Decl.wrongType ctx.file "page" "mark-gap" "a dimension" v pos))
+    | "mark-thickness", v =>
+      if let some d := asDim v then spec := { spec with markThickness := d }
+      else
+        evs := evs.push
+          (.say (Decl.wrongType ctx.file "page" "mark-thickness" "a dimension" v pos))
     | "hyphenate", .ident v =>
       match v with
       | "on" | "true" => spec := { spec with hyphenate := some true }
@@ -7707,6 +7737,7 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       else if pageKeys.contains key then
         let expected := if key == "size" then "a page size name"
           else if key == "measure" then "'checked' or 'free'"
+          else if key == "marks" then "'cut' or 'none'"
           else if key == "hyphenate" || key == "justify" || key == "protrusion"
             || key == "expansion" || key == "numbers" then "on or off"
           else "a dimension"
@@ -7714,13 +7745,15 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       else
         -- The help names the native surface; `headsep`/`footskip` stay
         -- accepted as the LaTeX spellings of `furnituregap` (read through
-        -- the baseline-to-ink correction), and `textwidth`/`textheight`
+        -- the baseline-to-ink correction), `textwidth`/`textheight`
         -- as geometry's spellings of the block size the native
-        -- width/height + margin surface already covers — accepted, not
-        -- advertised beside it.
+        -- width/height + margin surface already covers, and the
+        -- `mark-gap`/`mark-thickness` riders are learned from `marks`,
+        -- the key that owns them — accepted, not advertised beside it.
         evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
           (pageKeys.filter
-            (!["headsep", "footskip", "textwidth", "textheight"].contains ·)) pos))
+            (!["headsep", "footskip", "textwidth", "textheight",
+               "mark-gap", "mark-thickness"].contains ·)) pos))
     -- Every failing arm above records a diagnostic, so a clean count means
     -- the entry applied: record it, and warn if it overwrote (W0343).
     if evs.size == before then
@@ -8877,7 +8910,7 @@ its declared layout" pos
     -- arguments are skipped with them, never elaborated as stray text.
     warnOnce s.ctx ("ctrl:" ++ name) .W0301
       s!"unknown command '\\{name}' in the preamble; skipped" pos
-      (help := "\\define \\name(...) {body} declares it")
+      (help := unknownCmdHelp name)
       (demote := Compat.styInternal s.ctx.file name)
     if let some bpos := unclosed then
       warnUnclosed s.ctx s!"'\\{name}'" bpos
