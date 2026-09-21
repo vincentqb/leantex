@@ -36,10 +36,12 @@ against lualatex's 674 ms; a generated 129 KB / 30 pages in 339 ms against
 (tex primary, markdown as sugar) and **two backends** (PDF and HTML,
 including slides).
 
-**Immediately next.** M5's deck HTML landed without the planned ≈3 KB
-controller: scroll-snap pages the deck, steps uncover in place, both with
-zero script (the 2026-09-20 entries), and `--emit reveal` died with
-`--emit` — the document declares what to build (`\output{ formats = … }`).
+**Immediately next.** M5's deck HTML pages by scroll-snap on a horizontal
+row, steps uncover in place, and the slides class ships one constant
+keyboard/uncover script (`deckScript`, the 2026-09-21 entry: a closed
+literal, class-gated, the deck degrading to the pure-CSS pager without
+it); `--emit reveal` died with `--emit` — the document declares what to
+build (`\output{ formats = … }`).
 What remains of the controller ask is the speaker view alone
 (notes/timer/next-slide), a user decision behind a named `\output` key and
 a design discussion, not a default; remote stepping and auto-advance are
@@ -115,6 +117,89 @@ list.
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-21 — the deck is a horizontal row again, → is next, and the
+slides class ships one constant script (slides-floor). Supersedes the
+slides-vertical entry (2026-09-20, the axis and its push construction)
+and this entry's own predecessors' "no controller"/"script being off the
+table" lines; the deck-css-typed rule/theorem architecture stands and is
+what the change was expressed in.
+
+- The user, in their words: "wtf now you flipped to arrow down (vertical)
+  instead of horizontal. i preferred arrow right to go next. also
+  '1 / 2 ›' this is dumb and visually bad. i prefer no transparency
+  instead!" — and, offered a pure-CSS floor or a small constant script
+  when "home and end are not moving me to beginning and end rn", chose
+  the script ("alright i guess i prefer you stick to the best practices
+  with chromium"). The reasoning that lets the no-script rule bend: the
+  script is a constant, so every cost the rule guards against —
+  document data flowing into markup, an escaping obligation, a rule
+  that holds only approximately — is discharged by construction; and
+  the deck without it is still the whole pure-CSS pager, so the floor
+  is not hostage to scripting.
+- The axis: frames are `100vw` pages of a horizontal row
+  (`x mandatory` on the root), the scroll itself the motion — the push
+  animation, its `-100dvh` cancellation and the travel extension die
+  with the axis; the title band holds still because every frame's band
+  sits at the same y. The root clips y so no scrollbar can steal width
+  from `100vw`: a snap area wider than the scrollport never lands
+  flush, the invariant behind the old row's "several taps, partial
+  slides" defect. Probed (Chromium 1280×720, the reference deck): every
+  bound key moves exactly 1280 px — ArrowRight/Down, PageDown, Space
+  forward; ArrowLeft/Up, PageUp, Shift+Space back; End 0→67 840
+  (53 × 1280), Home back to 0; on the 4-step frame each press is one
+  1280 px snap with the title band at x = 0 on all four snaps
+  (the old last-snap ~56 px shift has no expression: the stage is
+  sticky within its own track and no snap area shares an offset), and
+  a mid-glide shot shows the two frames abutting exactly — sections at
+  −659 and 621, both 1280 wide, no overlap (nothing transforms; the
+  seam is the boundary of two opaque surfaces).
+- The step control (`‹ k / N ›`) and the `:has(:target)` fallback are
+  deleted, `fallback_uncovers_every_step` with them — a theorem about a
+  deleted surface is not owed. Deep-link ids stay on the spacers.
+- One snap door: every snap point carries `data-snap` at emission and
+  `[data-snap]` is the deck's only snap-align rule
+  (`snap_pages_partition_frames` restates over it: timeline path one
+  snap per step plus one per stepless frame; floor one per frame). The
+  script queries the same selector — the stylesheet and the script
+  cannot name different snap points.
+- The script (`deckScript`, ≈50 lines, emitted as a raw-text node of
+  the typed tree under the `</script` guard): keys, `scrollIntoView`
+  honouring reduced motion, and the Firefox floor's uncover — where
+  `view()` timelines are missing it writes `data-snapped="k"` on the
+  stepped track and numeric rules uncover steps 2..k
+  (`snapped_uncovers_every_step`). Covered-on-the-floor exists only
+  under `html[data-deck-script]`, the marker the script sets at
+  startup: `floor_covered_script_gated` states that no floor rule dims
+  without it — nothing may be dimmed that nothing can restore. The
+  theorems that make the constant auditable: `deck_script_constant`
+  (the literal is pinned; an interpolation entering the definition
+  stops the build) and `deck_script_gated` (slides class only).
+  Probed with the `@supports` condition renamed in a copy: spacers
+  hidden, → uncovers step 2 in place (opacity 0.31 → 1.0, scroll
+  unmoved), Home/End page the floor; with scripting off, every step
+  computes opacity 1 and no marker is set — full colour, no control.
+- Kept from the user's own commits (5817fcd, eafe49e, reachable at
+  `wt/slides-floor@{1..2}`): `background: var(--surface)` on every
+  section as an ungated rule (opaque on every path), the explicit
+  `ltx-uncover` `to { opacity: 100%; transform: none }` endpoint,
+  reduced-motion and print at full step colour, and the corrected
+  Firefox support note (release unsupported; preview builds only;
+  ESR 140 reports the feature false) in the `Feature` table. Not
+  ported: the 101vw push and its `--muted` leading edge — the push
+  died with the axis, and the seam the edge marked is now the honest
+  boundary between two static frames.
+- Verified: `lake build --wfail`, `lake test`, Obligations, precommit
+  `--selftest`, `owed --check` green after rebase onto 589a55a; four
+  reference PDFs and the webpage fixture HTML byte-identical, main's
+  binary vs this branch's, on identical inputs (deck 62 pages /
+  9 warnings / 0 errors); bench themed 81/85 ms pdf/html, paper
+  152/147 (medians of 5, same session) — at baseline. One honest gap:
+  the width-steal mechanism itself could not be re-produced on this
+  host (headless Chromium uses overlay scrollbars, which steal no
+  width), so `overflow-y: clip` is defence for the classic-scrollbar
+  platforms the suspect names, held by the geometry probe, not by a
+  reproduced failure.
 
 2026-09-20 — the deck stylesheet is typed rules; the browser floors are
 theorems (deck-css-typed). The user's charge: theorems that the deck

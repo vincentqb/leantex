@@ -178,9 +178,14 @@ in this repo; refer to the private reference corpus abstractly.
   is unevenly supported, the honest floor is the degraded state (a control
   that is always visible, not one that is permanently hidden), and shipping a
   shim instead buys a small effect at the cost of a permanent escaping
-  obligation and a rule that then holds only approximately. `--math-boundary`
-  remains the one script path, for genuinely computational behaviour a
-  document asks for by name.
+  obligation and a rule that then holds only approximately. Two script paths
+  stand: `--math-boundary`, for genuinely computational behaviour a document
+  asks for by name, and the slides class's constant keyboard/uncover script —
+  permitted because it is a constant (no escaping obligation,
+  `deck_script_constant` pins the literal), gated on the class
+  (`deck_script_gated`), and the deck degrades to the pure-CSS pager when
+  scripting is off (`floor_covered_script_gated`). A third path needs the
+  same three properties or a design discussion.
 - Design tokens are the styling API for both backends: a new visual knob is a
   token, not a hard-coded constant in a backend.
 - Hot paths use `Array`/`ByteArray`/packed `UInt32`; no `List`. A structural
