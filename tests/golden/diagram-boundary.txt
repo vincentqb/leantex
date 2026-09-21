@@ -1,0 +1,14 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+section 1 number "1"
+  text "A boundary diagram"
+para
+  text "The picture below reaches outside the rendered subset and routes to the boundary by default."
+para
+  image "leantex-pic:16ff97dfbf2a0bb2dad81f50abfd8dfc"
+para
+  text "Text follows the requested picture."
+-- diagnostics
+note[N0023] 19:1 this picture is drawn by lualatex at the boundary; its text is not in the document's census | help: the box is measured and placed by the engine; \caption or alt text names it for assistive technology

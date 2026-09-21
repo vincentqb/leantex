@@ -593,8 +593,14 @@ def censusTable :
     ("one page", c.size == 1),
     ("the band ships as a fill", (c[0]?.map (·.fills == 1)).getD false),
     ("its label ships", hasStr (censusText c) "wide band")]),
-  ("diagram-refused", fun _ c => [
+  ("diagram-boundary", fun _ c => [
     ("one page", c.size == 1),
+    ("the boundary request ships as one image box where the picture stood",
+      (c[0]?.map (·.images == 1)).getD false),
+    ("the prose around the requested picture ships",
+      hasStr (censusText c) "routes to the" &&
+        hasStr (censusText c) "Text follows the requested picture")]),
+  ("diagram-refused", fun _ c => [    ("one page", c.size == 1),
     ("the placeholder outline ships as four fills",
       (c[0]?.map (·.fills == 4)).getD false),
     ("the diagnostic code ships inside the box", hasStr (censusText c) "W0362"),

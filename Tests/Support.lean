@@ -75,7 +75,7 @@ def goldenNames : List String :=
    "webpage", "quotes", "quote-deck", "outline", "outline-gap", "webnav",
    "bibliography", "resume-data",
    "icons",
-   "diagram", "diagram-overflow", "diagram-refused", "diagram-scm",
+   "diagram", "diagram-boundary", "diagram-overflow", "diagram-refused", "diagram-scm",
    "tables", "tables-ragged", "subfigures", "float-center",
    "math-companion", "math-first", "abstract", "crossref", "eqnum", "footnotes",
    "redefine", "titlebars", "daylight", "blocks", "poster", "listings",
@@ -273,6 +273,10 @@ structure CensusPage where
   fillRects : Array (Dim.Sp × Dim.Sp × Dim.Sp × Dim.Sp) := #[]
   /-- Picture paths shipped on the page: node outlines and edges. -/
   paths : Nat
+  /-- Image boxes shipped on the page: an embedded figure, or a boundary
+  request's box (fulfilled or placeholder) — what the diagram-boundary
+  row reads to pin that the request ships ink where the picture stood. -/
+  images : Nat := 0
 
 def CensusPage.text (p : CensusPage) : String :=
   String.intercalate " " (p.lines.toList.map (·.text))
@@ -297,6 +301,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
     let mut covered := ""
     let mut rules := 0
     let mut ruleSegs : Array (Dim.Sp × Dim.Sp) := #[]
+    let mut images := 0
     for l in p.lines do
       let mut chars := ""
       let mut runSize : Dim.Sp := 0
@@ -319,7 +324,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
           rules := rules + 1
           ruleSegs := ruleSegs.push (l.y, th)
         -- an image is decorative ink to the text census, like a rule
-        | .image .. => pure ()
+        | .image .. => images := images + 1
       -- The census asks where the text block stands, so a protruded
       -- line reports its measure edge: the ink deliberately hangs
       -- `l.hang` left of it (`Layout.protrudeLeft`).
@@ -333,7 +338,8 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
                           ruleSegs := ruleSegs
                           fills := p.fills.size
                           fillRects := p.fills.map fun f => (f.x, f.y, f.w, f.h)
-                          paths := p.paths.size }
+                          paths := p.paths.size
+                          images := images }
   return pages
 
 def hasStr (hay needle : String) : Bool := (hay.splitOn needle).length > 1

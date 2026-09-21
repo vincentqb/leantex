@@ -1,0 +1,25 @@
+% Synthetic fixture: the boundary default. A picture outside the rendered
+% subset states a boundary request with no declaration at all — the tool
+% belongs to the build environment, as fonts do. Elaboration records the
+% request (N0023, the trust label) and ships an image node; the test
+% harness runs no TeX, so layout places the request's placeholder box —
+% what a machine with no tool and a cold cache shows, named W0379 by the
+% driver there. Invented content and design.
+\documentclass{article}
+
+\fonts{ dir = "fonts", body = "Source Serif Pro" }
+
+\begin{document}
+
+\section{A boundary diagram}
+
+The picture below reaches outside the rendered subset and routes to the
+boundary by default.
+
+\begin{tikzpicture}
+  \shade (0,0) rectangle (2,1);
+\end{tikzpicture}
+
+Text follows the requested picture.
+
+\end{document}
