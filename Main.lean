@@ -197,15 +197,23 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
   let slides := doc.docClass == Ir.DocClass.slides
   let resolveName (slot : Nat) : Option String :=
     match slot with
-    | 0 => if slides then spec.sans.orElse fun _ => spec.body else spec.body
+    -- A document that names a sans family and no body family reads its
+    -- text in that face. This was already the shipped behaviour — with no
+    -- slot-0 entry every text lookup fell through to font 0, the sans
+    -- regular — but as an accident of load order that no weight or
+    -- variant could refine; naming it makes the sans's declared faces
+    -- (its Medium upright, its Light) reach the text the card sets.
+    | 0 => if slides then spec.sans.orElse fun _ => spec.body
+      else spec.body.orElse fun _ => spec.sans
     | 1 => spec.sans.orElse fun _ => spec.body
     | _ => spec.mono.orElse fun _ => spec.body
   -- A slot's declared faces live under its *effective* slot: the one its
-  -- family resolution reads (a deck's body follows the sans declaration).
+  -- family resolution reads (a deck's body — or a sans-only document's —
+  -- follows the sans declaration).
   let effectiveOf (slot : Nat) : Nat := match slot with
     | 1 => if spec.sans.isSome then 1 else 0
     | 2 => if spec.mono.isSome then 2 else 0
-    | _ => if slides && spec.sans.isSome then 1 else 0
+    | _ => if (slides || spec.body.isNone) && spec.sans.isSome then 1 else 0
   let declaredFace (slot : Nat) (weight : Nat) (italic : Bool) : Option String :=
     spec.faceFor (effectiveOf slot) weight italic
   -- The off-corner keys this document can ask the index for: the weights
