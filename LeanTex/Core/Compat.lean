@@ -110,15 +110,9 @@ what changed, never silently: they used to sit in the silent list under a
 comment claiming they say nothing about the document, and they do. Each
 entry: arguments consumed, the message, the help. -/
 def configSkip : List (String × Nat × String × Option String) :=
-  [("raggedright", 0,
-    "'\\raggedright' asks for unjustified setting; the document stays justified",
-    some "declare \\page{ justify = false }"),
-   -- The alignment declarations (every LaTeX environment is also a command
-   -- pair, so `\flushleft` is a legal spelling): a block alignment axis is
-   -- owed (the `align` obligation row); until it lands each names its loss.
-   ("flushleft", 0,
-    "'\\flushleft' asks for left-aligned unjustified setting; the declared justification stands",
-    some "declare \\page{ justify = false }"),
+  [-- \flushleft and \raggedright are not here: the block walk gives the
+   -- rest of the scope ragged-left setting (Ir.Block.ragged). The right
+   -- pair still names its loss: line placement knows no right origin.
    ("flushright", 0,
     "'\\flushright' asks for right-aligned setting; content keeps its alignment",
     none),

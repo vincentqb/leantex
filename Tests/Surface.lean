@@ -1108,9 +1108,10 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr "a\\noindent\\relax b").2.isEmpty)
   -- The silent list is only for constructs that change nothing the engine
   -- models; one that does (justification, hyphenation language, furniture)
-  -- must name its loss instead of vanishing.
-  t "compat raggedright names its loss instead of vanishing"
-    ((elabStr "a\\raggedright b").2.any (·.code == "W0104"))
+  -- must name its loss instead of vanishing — or, once implemented, map.
+  t "compat raggedright maps mid-flow instead of naming a loss"
+    ((elabStr "a\\raggedright b").1.body ==
+      #[.para #[.text "a"], .ragged #[.para #[.text "b"]]])
   t "compat pagestyle names its loss and eats its argument"
     (let (doc, ds) := elabStr "\\pagestyle{headings}a"
      ds.any (·.code == "W0104") && doc.body == #[.para #[.text "a"]])
@@ -1198,6 +1199,23 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "alignment declarations name their loss instead of W0301"
     (let ds := (elabStr "{\\flushleft a} {\\raggedleft b} {\\flushright c}").2
      ds.all (fun d => d.code != "W0301") && ds.any (fun d => d.code == "W0104"))
+  -- \flushleft/\raggedright as commands map onto the alignment their
+  -- environment sets (ltmiscen.dtx: {flushleft} is a trivlist under
+  -- \raggedright), scoped by the group exactly as \centering is.
+  t "flushleft as a command sets the rest of its scope ragged"
+    (let (doc, ds) := elabStr "{\\flushleft one} two"
+     doc.body == #[.ragged #[.para #[.text "one"]], .para #[.text "two"]] &&
+       ds.all (fun d => d.code != "W0104" && d.code != "W0301"))
+  t "raggedright maps as flushleft does"
+    ((elabStr "{\\raggedright a}").1.body == #[.ragged #[.para #[.text "a"]]])
+  t "the flushleft environment sets the same block"
+    (let (doc, ds) := elabStr "\\begin{flushleft}a\\end{flushleft}"
+     doc.body == #[.ragged #[.para #[.text "a"]]] &&
+       ds.all (fun d => d.code != "W0302"))
+  t "flushleft inside an argument aligns nothing, named W0108"
+    ((warnCodes "\\textbf{\\flushleft a}").contains "W0108")
+  t "ragged text is census content"
+    (Ir.blockTextList "" [.ragged #[.para #[.text "a b"]]] == "a b")
   t "compat newenvironment defines; its titlegraphic content is a dropped loss"
     (let src := pre "\\newenvironment{wrap}[1]{\\titlegraphic{#1}}{\\titlegraphic{}}"
      errCodes src == ["E0112"] && warnCodes src == ["W0104"])

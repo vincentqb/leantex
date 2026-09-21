@@ -110,7 +110,7 @@ def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up",
    "section-number", "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
-   "bt-light-above", "centered", "column", "columns", "content",
+   "bt-light-above", "centered", "ragged", "column", "columns", "content",
    "deck-progress", "entry",
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
@@ -2505,6 +2505,7 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
     "  user-select: none; }\n"
    else "") ++
   ".centered { text-align: center; }\n" ++
+  ".ragged { text-align: left; }\n" ++
   ".fill { flex: 1 1 auto; }\n" ++
   s!".spaced \{ margin-top: var(--sep, {slidePadV}); }\n" ++
   -- General rows keep the prior flex behavior. An exact pair switches to a
@@ -3062,6 +3063,10 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     Html.elem tag (listItemsInto cfg.into #[] items.toList)
   | .center body =>
     Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "centered")]
+  -- Ragged-left is HTML text's resting state; the class re-declares it so
+  -- the setting survives a centred ancestor (text-align inherits).
+  | .ragged body =>
+    Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "ragged")]
   -- The block half of the class hook: the authored name as a class on a
   -- generic flow container, through the typed tree and the escaper.
   | .role n body =>

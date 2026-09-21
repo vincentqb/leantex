@@ -1397,6 +1397,7 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
     let level := min (if ordered then enumD else itemD) 4
     scalarTextItems { out with texts := out.texts.push (ListMark.scalars ordered level) } itemD enumD items.toList
   | .center body => scalarTextList out itemD enumD body.toList
+  | .ragged body => scalarTextList out itemD enumD body.toList
   | .quote body => scalarTextList out itemD enumD body.toList
   -- The abstract's heading word is class furniture set in the bold face;
   -- its glyphs are asked for like any other text.
@@ -1600,6 +1601,7 @@ private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
   | .section _ _ _ title => weightKeysInlineList acc {} title.toList
   | .list _ items => weightKeysBlockItems acc items.toList
   | .center body => weightKeysBlockList acc body.toList
+  | .ragged body => weightKeysBlockList acc body.toList
   | .quote body => weightKeysBlockList acc body.toList
   | .abstract body => weightKeysBlockList acc body.toList
   | .titled _ title body =>
@@ -5126,6 +5128,12 @@ private def collectBlock (r : Rd) (a : Acc)
     | none => a
   | .center body =>
     collectCentered r a body.toList indent
+  -- Ragged-left setting for the scope: the sub-walk reads the same
+  -- geometry with justification off (raggedItems' free-fil line ends,
+  -- TeXbook ch. 14), the reader flip the ragged title door already uses.
+  -- Lines keep the left origin, so `.ragged` needs no placement change.
+  | .ragged body =>
+    collectBlocks { r with geom := { r.geom with justify := false } } a body indent
   -- A role is a name for the class hook; undeclared, the body collects
   -- exactly as it would unwrapped (roleLayoutChecks pins the zero-byte
   -- claim). A declared `\style{<role>}` gives the role its own rhythm —

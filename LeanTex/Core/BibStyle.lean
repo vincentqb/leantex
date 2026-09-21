@@ -771,6 +771,7 @@ private def resolveBlock (style : Style) (find : Resolver)
   | .abstract body => out.push (.abstract (resolveBlocks style find items #[] body.toList))
   | .list ordered its => out.push (.list ordered (resolveItems style find items #[] its.toList))
   | .center body => out.push (.center (resolveBlocks style find items #[] body.toList))
+  | .ragged body => out.push (.ragged (resolveBlocks style find items #[] body.toList))
   | .quote body => out.push (.quote (resolveBlocks style find items #[] body.toList))
   | .titled kind title body =>
     out.push (.titled kind (resolveArr style.cite find title)

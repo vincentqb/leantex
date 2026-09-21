@@ -211,8 +211,6 @@ warning[W0103]: package 'pgfplots' is not supported; skipped
 ── W0104 (config) unsupported TeX construct skipped
 warning[W0104]: '\directlua' is Lua code for luatex; the engine does not run Lua, so it is skipped
   help: \allow{W0104} accepts the skip
-warning[W0104]: '\raggedright' asks for unjustified setting; the document stays justified
-  help: declare \page{ justify = false }
 warning[W0104]: '\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps its own and an overfull line warns by itself
 warning[W0104]: '\pagestyle{headings}' names running furniture the engine does not model; ignored
   help: plain, empty, and fancy are modelled; \runninghead / \runningfoot declare the furniture directly
