@@ -40,7 +40,8 @@ def nativePackages : List String :=
    "caption", "subcaption", "nicefrac", "multirow",
    "appendixnumberbeamer", "natbib",
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
-   "libertine", "carlito", "xspace", "float", "biblatex", "appendix"]
+   "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
+   "cleveref"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=
@@ -1152,6 +1153,21 @@ private def simpleNative : List (String × String) :=
    ("onehalfspacing", "\\page{ leading = 1.25 }"),
    ("doublespacing", "\\page{ leading = 1.667 }")]
 
+/-- cleveref's range form (manual v0.21.4 §2, `\crefrange{key1}{key2}`):
+desugared to the pair the resolver renders — the first key carries the
+plural name and the range conjunction (`@crefrange`), the second the
+label format alone (`labelcref`). The marker is unforgeable (`@` never
+lexes into a control word). Outside the dispatcher halves, which sit at
+their LCNF compile budgets. -/
+private def crefRangeArm (name : String) (pos : Pos) (raws : Array Raw)
+    (start : Nat) : M (Option (Array Raw × Nat)) := do
+  let (args, k) := takeGroups raws start 2
+  if h : args.size = 2 then
+    became s!"\\{name}" "the range pair: plural name, both numbers" pos
+    return some (#[.ctrl ("@" ++ name) pos, .group args[0] pos,
+      .ctrl "labelcref" pos, .group args[1] pos], k)
+  else return none
+
 /-- The later half of `rewriteCtrl`'s dispatch, split out so neither
 half's `match` exhausts the LCNF compiler's heartbeat budget — one
 logical dispatcher, two compilation units. `rewriteCtrl`'s own match
@@ -1226,6 +1242,10 @@ were dropped: {o}" pos
     | none =>
       became "\\printbibliography" "nothing: no \\addbibresource declared a file" pos
       return some (#[], k)
+  | "crefrange" | "Crefrange" =>
+    -- cleveref's range form: desugared by `crefRangeArm` (its docstring
+    -- carries the shape and the source).
+    crefRangeArm name pos raws start
   | "selectlanguage" =>
     -- babel's mid-document switch: from here on, in flow order (babel
     -- manual §1.5). The marker is unforgeable (`@` never lexes into a

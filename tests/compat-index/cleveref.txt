@@ -1,0 +1,36 @@
+# source: the cleveref manual (v0.21.4, 2018/03/27), §2 "Typesetting
+# Cross-References" for the reference commands and §8 "Customising the
+# Reference Format" for the configuration commands. The implemented forms
+# resolve through the label table with the kind's locale name
+# (Ir.refText; names from the package's own language blocks under its
+# default options). Recorded gaps, pinned below where a row can spell
+# them: a comma list is read as one unknown key (W0349 names it); the
+# page-reference family needs page numbers at resolution, which the
+# single-pass table does not carry; \label's optional [type] argument is
+# not scanned (E0304 where it stands); the format/name configuration
+# commands would override locale data the engine owns, refused by name.
+body impl \section{A}\label{s}\cref{s}
+body impl \section{A}\label{s}\Cref{s}
+body impl \section{A}\label{s}x\subsection{B}\label{t}\crefrange{s}{t}
+body impl \section{A}\label{s}x\subsection{B}\label{t}\Crefrange{s}{t}
+body impl \section{A}\label{s}\labelcref{s}
+body impl \section{A}\label{s}\namecref{s}
+body impl \section{A}\label{s}\nameCref{s}
+body refuse:W0349 \section{A}\label{a}\subsection{B}\label{b}\cref{a,b}
+body refuse:E0304 \label[section]{k}
+body refuse:W0301 \cpageref{s}
+body refuse:W0301 \Cpageref{s}
+body refuse:W0301 \cpagerefrange{s}{t}
+body refuse:W0301 \Cpagerefrange{s}{t}
+body refuse:W0301 \labelcpageref{s}
+body refuse:W0301 \namecrefs{s}
+body refuse:W0301 \nameCrefs{s}
+body refuse:W0301 \lcnamecref{s}
+body refuse:W0301 \lcnamecrefs{s}
+pre refuse:W0301 \crefname{figure}{fig.}{figs.}
+pre refuse:W0301 \Crefname{figure}{Figure}{Figures}
+pre refuse:W0301 \creflabelformat{equation}{#2#1#3}
+pre refuse:W0301 \crefdefaultlabelformat{#2#1#3}
+pre refuse:W0301 \crefformat{equation}{eq. #2#1#3}
+pre refuse:W0301 \Crefformat{equation}{Equation #2#1#3}
+pre refuse:W0301 \crefalias{theorem}{lemma}

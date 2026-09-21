@@ -23,7 +23,9 @@ hand-owned LocaleContract.lean.
 
 licence: the babel locale ini files are released under the LaTeX Project
 Public License (LPPL 1.3); their data derives from the Unicode CLDR
-(UNICODE LICENSE V3, https://www.unicode.org/license.txt).
+(UNICODE LICENSE V3, https://www.unicode.org/license.txt). The cref name
+fields are read from cleveref.sty v0.21.4 (2018/03/27), also LPPL 1.3;
+the generator carries that table, cited beside it.
 -/
 "
 
@@ -83,13 +85,64 @@ def parseIni (text : String) : IniLocale := Id.run do
 def leanStr (s : String) : String :=
   "\"" ++ ((s.replace "\\" "\\\\").replace "\"" "\\\"") ++ "\""
 
+/-- One kind's four cleveref name forms: `\crefname{k}{one}{many}` and
+`\Crefname{k}{capOne}{capMany}`. -/
+structure CrefGen where
+  one : String
+  many : String
+  capOne : String
+  capMany : String
+
+/-- cleveref's names per language, read from cleveref.sty v0.21.4
+(2018/03/27): the `\cref@addlanguagedefs{english}` block and the `german`
+and `french` option blocks, under the package's own defaults — `abbrev`
+on (`\@cref@abbrevtrue`), `capitalise` off (`\@cref@capitalisefalse`).
+This is package data, not babel ini data, so the table lives here and
+regenerates with the rest. Order per language: section, equation,
+figure, table, then `\crefrangeconjunction`'s word. -/
+def crefData : List (String × (CrefGen × CrefGen × CrefGen × CrefGen × String)) :=
+  [("en", ({ one := "section", many := "sections",
+             capOne := "Section", capMany := "Sections" },
+           { one := "eq.", many := "eqs.",
+             capOne := "Equation", capMany := "Equations" },
+           { one := "fig.", many := "figs.",
+             capOne := "Figure", capMany := "Figures" },
+           { one := "table", many := "tables",
+             capOne := "Table", capMany := "Tables" }, "to")),
+   ("fr", ({ one := "section", many := "sections",
+             capOne := "Section", capMany := "Sections" },
+           { one := "équation", many := "équations",
+             capOne := "Équation", capMany := "Équations" },
+           { one := "figure", many := "figures",
+             capOne := "Figure", capMany := "Figures" },
+           { one := "tableau", many := "tableaux",
+             capOne := "Tableau", capMany := "Tableaux" }, "à")),
+   ("de", ({ one := "Abschnitt", many := "Abschnitte",
+             capOne := "Abschnitt", capMany := "Abschnitte" },
+           { one := "Gleichung", many := "Gleichungen",
+             capOne := "Gleichung", capMany := "Gleichungen" },
+           { one := "Abb.", many := "Abb.",
+             capOne := "Abbildung", capMany := "Abbildungen" },
+           { one := "Tabelle", many := "Tabellen",
+             capOne := "Tabelle", capMany := "Tabellen" }, "bis"))]
+
+def emitCref (c : CrefGen) : String :=
+  s!"\{ one := {leanStr c.one}, many := {leanStr c.many}, " ++
+  s!"capOne := {leanStr c.capOne}, capMany := {leanStr c.capMany} }"
+
 def quoteAt (s : String) (i : Nat) : String :=
   match s.toList[i]? with
   | some c => String.ofList [c]
   | none => ""
 
 def emit (name : String) (l : IniLocale) : String :=
-  s!"/-- {name}: babel-{l.tag}.ini. -/
+  let cref := (crefData.lookup l.tag).getD
+    ({ one := "", many := "", capOne := "", capMany := "" },
+     { one := "", many := "", capOne := "", capMany := "" },
+     { one := "", many := "", capOne := "", capMany := "" },
+     { one := "", many := "", capOne := "", capMany := "" }, "")
+  let (sec, eq, fig, tab, to) := cref
+  s!"/-- {name}: babel-{l.tag}.ini; cref names from cleveref.sty v0.21.4. -/
 def {name} : Locale := \{
   tag := {leanStr l.tag}
   figure := {leanStr l.figure}
@@ -102,7 +155,12 @@ def {name} : Locale := \{
   quoteInnerOpen := {leanStr (quoteAt l.quotes 2)}
   quoteInnerClose := {leanStr (quoteAt l.quotes 3)}
   leftMin := {l.leftMin}
-  rightMin := {l.rightMin} }
+  rightMin := {l.rightMin}
+  crefSection := {emitCref sec}
+  crefEquation := {emitCref eq}
+  crefFigure := {emitCref fig}
+  crefTable := {emitCref tab}
+  crefRangeTo := {leanStr to} }
 
 "
 
@@ -116,6 +174,8 @@ def main (args : List String) : IO UInt32 := do
     let loc := parseIni text
     if loc.months.size != 12 then
       die s!"babel-{lang}.ini: {loc.months.size} months"
+    if (crefData.lookup loc.tag).isNone then
+      die s!"no cref names for '{loc.tag}': add its cleveref.sty language block to crefData"
     body := body ++ emit lang loc
   let content := notice
     ++ "import LeanTex.Core.Locale\n\n"

@@ -1161,6 +1161,23 @@ def Style.label : Style → String
   | .size n => s!"size:{n}"
   | .lang tag => s!"lang:{tag}"
 
+/-- What a resolved cross-reference renders (`refText`): LaTeX's bare
+number (`\ref`) and parenthesised equation number (`\eqref`), and
+cleveref's forms (cleveref manual v0.21.4 §2) — the kind's locale name
+before the number (`\cref`/`\Cref` — `cap` picks the capitalised name,
+which English also unabbreviates), the first key of a `\crefrange` pair
+(plural name, number, the range conjunction), the label format alone
+(`\labelcref`, also the range pair's second key), and the name alone
+(`\namecref`/`\nameCref`). -/
+inductive RefForm where
+  | plain
+  | paren
+  | cref (cap : Bool)
+  | crefRange (cap : Bool)
+  | labelOnly
+  | name (cap : Bool)
+  deriving Repr, BEq
+
 inductive Inline where
   | text (s : String)
   | math (display : Bool) (src : String)
@@ -1192,12 +1209,14 @@ inductive Inline where
   anchor element whose id is `labelAnchor key`, every other consumer passes
   it through. -/
   | label (key : String)
-  /-- `\ref{key}` / `\eqref{key}`: a cross-reference. Elaboration emits it
-  unresolved — `text = "??"`, LaTeX's own spelling, `target = none` — and
-  `resolveRefs` fills the number and the anchor once the whole document's
-  labels are known, so backends only render: PDF sets `text`, HTML links it
-  to `target`. `paren` is `\eqref`'s parentheses, applied at resolution. -/
-  | ref (key : String) (paren : Bool) (text : String) (target : Option String)
+  /-- `\ref{key}` / `\eqref{key}` / cleveref's family: a cross-reference.
+  Elaboration emits it unresolved — `text = "??"`, LaTeX's own spelling,
+  `target = none` — and `resolveRefs` fills the text and the anchor once
+  the whole document's labels are known, so backends only render: PDF sets
+  `text`, HTML links it to `target`. `form` is what resolution renders
+  (`refText`): the bare number, `\eqref`'s parentheses, or a cleveref
+  form carrying the target kind's locale name. -/
+  | ref (key : String) (form : RefForm) (text : String) (target : Option String)
   /-- `\underline{...}`: a drawn decoration, not a face change, so it is not a
   `Style`. Both backends interrupt the rule where a descender crosses it. -/
   | underline (body : Array Inline)
@@ -3739,8 +3758,17 @@ def dumpInline (ind : String) (x : Inline) : String :=
   | .fill => s!"{ind}fill\n"
   | .strut _ => s!"{ind}strut\n"
   | .label key => s!"{ind}label {key.quote}\n"
-  | .ref key paren text target =>
-    let form := if paren then "eqref" else "ref"
+  | .ref key form text target =>
+    let form := match form with
+      | .plain => "ref"
+      | .paren => "eqref"
+      | .cref false => "cref"
+      | .cref true => "Cref"
+      | .crefRange false => "crefrange"
+      | .crefRange true => "Crefrange"
+      | .labelOnly => "labelcref"
+      | .name false => "namecref"
+      | .name true => "nameCref"
     let tgt := match target with
       | some a => s!" -> #{a}"
       | none => ""
@@ -7680,47 +7708,114 @@ that resolves every reference against it, so no backend re-scans for
 labels. -/
 abbrev RefTable := Array (String × Option RefBinding)
 
+/-- cleveref's name for a kind: the one resolving site both `refText`
+readers use, so `\cref` and `\namecref` cannot disagree on a kind's name.
+Every heading level takes the section name, as cleveref's subsection
+names are the section's own (its english block). -/
+def crefNameOf (loc : Locale) : RefKind → CrefName
+  | .heading => loc.crefSection
+  | .equation => loc.crefEquation
+  | .figure => loc.crefFigure
+  | .table => loc.crefTable
+
+/-- Every kind, for the coverage contract: an added constructor fails
+`all_complete` until it is listed, and listed is covered
+(`crefNameOf_covers`) — the DiagCode registry's shape. -/
+def RefKind.all : List RefKind := [.heading, .equation, .figure, .table]
+
+theorem RefKind.all_complete (k : RefKind) : RefKind.all.contains k := by
+  cases k <;> rfl
+
+/-- Every label kind the engine assigns has its cleveref names, all four
+forms, in every shipped locale — with the range conjunction beside them.
+Quantified over `Locale.builtin` (adding a locale is entering the
+contract) and `RefKind.all` (complete by `RefKind.all_complete`): the
+statement behind `\cref` never printing an empty name. -/
+theorem crefNameOf_covers :
+    (Locale.builtin.all fun l =>
+      (RefKind.all.all fun k =>
+        !(crefNameOf l k).one.isEmpty && !(crefNameOf l k).many.isEmpty &&
+        !(crefNameOf l k).capOne.isEmpty && !(crefNameOf l k).capMany.isEmpty)
+      && !l.crefRangeTo.isEmpty) = true := by decide +kernel
+
+/-- A cref-form number: equation numbers keep their parentheses in every
+cleveref form (cleveref.sty `\creflabelformat{equation}{...\textup{(#1)}}`);
+every other kind shows the bare number. -/
+def crefNum (b : RefBinding) : String :=
+  if b.kind == some .equation then "(" ++ b.num ++ ")" else b.num
+
+/-- The text one resolved reference shows, the one rendering site
+(`resolveOneRef` and its theorems read it): `\ref`'s bare number,
+`\eqref`'s parentheses, and cleveref's forms over the binding's kind —
+name and number joined by the package's own no-break space. A kindless
+binding (a bare `\refstepcounter`) sets the plain number under every
+cleveref form, and W0349's judge names it (W0380). -/
+def refText (loc : Locale) (form : RefForm) (b : RefBinding) : String :=
+  let numText := crefNum b
+  match form with
+  | .plain => b.num
+  | .paren => "(" ++ b.num ++ ")"
+  | .labelOnly => numText
+  | .cref cap =>
+    match b.kind with
+    | some k =>
+      (if cap then (crefNameOf loc k).capOne else (crefNameOf loc k).one)
+        ++ "\u00a0" ++ numText
+    | none => b.num
+  | .crefRange cap =>
+    (match b.kind with
+     | some k =>
+       (if cap then (crefNameOf loc k).capMany else (crefNameOf loc k).many)
+         ++ "\u00a0" ++ numText
+     | none => b.num)
+      ++ " " ++ loc.crefRangeTo ++ "\u00a0"
+  | .name cap =>
+    match b.kind with
+    | some k => if cap then (crefNameOf loc k).capOne else (crefNameOf loc k).one
+    | none => b.num
+
 /-- One reference against the table. A key bound to a number takes exactly
-that number — parenthesised for `\eqref` — and the label's anchor; a key
+its form's text over the binding (`refText`) and the label's anchor; a key
 the table cannot number keeps LaTeX's own `??` and no target (the
 elaborator has already named it, W0349). -/
-def resolveOneRef (table : RefTable) (key : String) (paren : Bool) : Inline :=
+def resolveOneRef (loc : Locale) (table : RefTable) (key : String)
+    (form : RefForm) : Inline :=
   match table.find? (·.1 == key) with
   | some (_, some b) =>
-    .ref key paren (if paren then "(" ++ b.num ++ ")" else b.num)
-      (some (labelAnchor key))
-  | _ => .ref key paren "??" none
+    .ref key form (refText loc form b) (some (labelAnchor key))
+  | _ => .ref key form "??" none
 
 /-- Resolution's one rewrite: every `.ref` is rewritten from the table
 (`resolveOneRef_exact` is its statement), everything else keeps its shape
 and is walked by the generic map. -/
-private def resolveRefLeaf (table : RefTable)
+private def resolveRefLeaf (loc : Locale) (table : RefTable)
     (x : Inline) : Inline :=
   match x with
-  | .ref key paren _ _ => resolveOneRef table key paren
+  | .ref key form _ _ => resolveOneRef loc table key form
   | _ => x
 
 -- conserves: none — resolution rewrites a ref's placeholder text to its
 -- number, which is the pass's whole point; `resolveOneRef_exact` is its
 -- statement.
-def resolveRefInline (table : RefTable) (x : Inline) : Inline :=
-  mapInline (resolveRefLeaf table) x
+def resolveRefInline (loc : Locale) (table : RefTable) (x : Inline) : Inline :=
+  mapInline (resolveRefLeaf loc table) x
 
 -- conserves: none — the block face of resolveRefInline, same reason.
-def resolveRefs (table : RefTable) (xs : Array Block) : Array Block :=
-  mapBlocks (resolveRefLeaf table) xs
+def resolveRefs (loc : Locale) (table : RefTable) (xs : Array Block) : Array Block :=
+  mapBlocks (resolveRefLeaf loc table) xs
 
 /-- References resolve to what they name: when the table binds `key` to
-number `n` — elaboration binds a key declared exactly once to the numbered
+binding `b` — elaboration binds a key declared exactly once to the numbered
 node in force where its `\label` stood — the resolved reference shows
-exactly `n` (parenthesised for `\eqref`) and targets exactly that label's
-anchor. The `\ref` and the `\label` cannot disagree, because both read
-this one entry. -/
-theorem resolveOneRef_exact (table : RefTable) (key : String) (paren : Bool)
+exactly its form's text over `b` (`refText`) and targets exactly that
+label's anchor. The `\ref` and the `\label` cannot disagree, because both
+read this one entry. -/
+theorem resolveOneRef_exact (loc : Locale) (table : RefTable) (key : String)
+    (form : RefForm)
     (b : RefBinding) (h : ∃ e ∈ table, e.1 = key ∧ e.2 = some b)
     (huniq : ∀ e ∈ table, e.1 = key → e.2 = some b) :
-    resolveOneRef table key paren =
-      .ref key paren (if paren then "(" ++ b.num ++ ")" else b.num)
+    resolveOneRef loc table key form =
+      .ref key form (refText loc form b)
         (some (labelAnchor key)) := by
   unfold resolveOneRef
   obtain ⟨e, hmem, hkey, hval⟩ := h
@@ -7743,9 +7838,9 @@ theorem resolveOneRef_exact (table : RefTable) (key : String) (paren : Bool)
 /-- An unreferencable key resolves to LaTeX's own `??`, never silently to
 a number: the reader sees that something stands unresolved, and W0349 has
 already named the key. -/
-theorem resolveOneRef_missing (table : RefTable) (key : String) (paren : Bool)
-    (h : ∀ e ∈ table, e.1 ≠ key) :
-    resolveOneRef table key paren = .ref key paren "??" none := by
+theorem resolveOneRef_missing (loc : Locale) (table : RefTable) (key : String)
+    (form : RefForm) (h : ∀ e ∈ table, e.1 ≠ key) :
+    resolveOneRef loc table key form = .ref key form "??" none := by
   unfold resolveOneRef
   have hfind : table.find? (·.1 == key) = none := by
     rw [Array.find?_eq_none]
@@ -7889,17 +7984,17 @@ a float shows exactly the number the float node carries, and targets the
 label's anchor. Before this pipeline, elaboration *predicted* the number
 and nothing related predictor to assigner; now there is no predictor, and
 the agreement is this theorem, stated over the engine's own functions. -/
-theorem refs_agree_with_numbering (labels : RefTable) (xs : Array Block)
-    (key : String) (b : RefBinding) (paren : Bool) (t : String) (a : Option String)
+theorem refs_agree_with_numbering (loc : Locale) (labels : RefTable) (xs : Array Block)
+    (key : String) (b : RefBinding) (form : RefForm) (t : String) (a : Option String)
     (hrow : (floatLabelRows (numberFloats xs)).find? (·.1 == key)
       = some (key, some b))
     (hkey : (labels.find? (·.1 == key)).isSome) :
-    resolveRefInline (withFloatRows labels (floatLabelRows (numberFloats xs)))
-        (.ref key paren t a)
-      = .ref key paren (if paren then "(" ++ b.num ++ ")" else b.num)
+    resolveRefInline loc (withFloatRows labels (floatLabelRows (numberFloats xs)))
+        (.ref key form t a)
+      = .ref key form (refText loc form b)
         (some (labelAnchor key)) := by
   have h := withFloatRows_finds labels _ key b hrow hkey
-  show resolveOneRef _ key paren = _
+  show resolveOneRef _ _ key form = _
   unfold resolveOneRef
   rw [h]
 

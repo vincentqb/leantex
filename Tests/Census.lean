@@ -758,7 +758,7 @@ def floatRefAgreementChecks (ref : IO.Ref (List String)) : IO Unit := do
     let (doc, _) ← elabFixture n src
     let refs := Ir.foldBlocks (fun out _ => out)
       (fun out x => match x with
-        | .ref key paren text _ => out.push (key, paren, text)
+        | .ref key form text _ => out.push (key, form, text)
         | _ => out) #[] doc.body
     for (kind, num, body, caption) in floatsIn doc.body do
       if kind != Ir.FloatKind.sub then
@@ -766,9 +766,10 @@ def floatRefAgreementChecks (ref : IO.Ref (List String)) : IO Unit := do
           let nested := (floatsIn body).flatMap fun (_, _, nb, nc) => labelsIn nb nc
           let direct := (labelsIn body caption).filter (!nested.contains ·)
           for key in direct do
-            for (k, paren, text) in refs do
+            for (k, form, text) in refs do
               if k == key then
-                let expect := if paren then s!"({nnum})" else toString nnum
+                let expect := if form == Ir.RefForm.paren then s!"({nnum})"
+                  else toString nnum
                 check ref
                   s!"float ref agreement {n}: '{key}' resolves to the number its float carries"
                   (text == expect)

@@ -12,10 +12,24 @@ figure is unrepresentable. The shipped records live in `LocaleData.lean`
 contracts quantify over `Locale.builtin`, never per language.
 -/
 
+/-- One kind's cleveref names, the four forms its language blocks declare
+(cleveref.sty v0.21.4, 2018/03/27): `\crefname{<kind>}{one}{many}` gives
+the lowercase pair `\cref`/`\crefrange` read, `\Crefname` the capitalised
+pair `\Cref` reads — independent strings, not a case fold: English
+abbreviates `\cref{eq}` to "eq." while `\Cref` spells "Equation"
+(the package's own defaults, `abbrev` on and `capitalise` off). -/
+structure CrefName where
+  one : String
+  many : String
+  capOne : String
+  capMany : String
+  deriving Repr, BEq
+
 /-- One language's reader-visible data, keyed by its BCP 47 tag. Every
 field is a value the engine reads at a named site: captions at
 `Ir.captionPrefix` and the abstract/references furniture, months in the
-bibliography, quotes at `\enquote`, hyphenmins at pattern selection. -/
+bibliography, quotes at `\enquote`, hyphenmins at pattern selection,
+cleveref names and the range conjunction at `Ir.refText`. -/
 structure Locale where
   /-- BCP 47 language tag (`tag.bcp47` in the ini). -/
   tag : String
@@ -35,6 +49,18 @@ structure Locale where
   fragment a break may leave on each side. -/
   leftMin : Nat
   rightMin : Nat
+  /-- cleveref's names per referencable kind (cleveref.sty v0.21.4
+  language blocks — english, german, french — under the package's default
+  options; not babel data, so the generator carries the table itself,
+  cited there). `crefSection` serves every heading level, as cleveref's
+  subsection names are the section's. -/
+  crefSection : CrefName
+  crefEquation : CrefName
+  crefFigure : CrefName
+  crefTable : CrefName
+  /-- `\crefrange`'s conjunction word (`\crefrangeconjunction` without its
+  no-break space: "to", "bis", "à"). -/
+  crefRangeTo : String
   deriving Repr, BEq
 
 namespace Locale

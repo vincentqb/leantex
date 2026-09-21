@@ -11,13 +11,15 @@ hand-owned LocaleContract.lean.
 
 licence: the babel locale ini files are released under the LaTeX Project
 Public License (LPPL 1.3); their data derives from the Unicode CLDR
-(UNICODE LICENSE V3, https://www.unicode.org/license.txt).
+(UNICODE LICENSE V3, https://www.unicode.org/license.txt). The cref name
+fields are read from cleveref.sty v0.21.4 (2018/03/27), also LPPL 1.3;
+the generator carries that table, cited beside it.
 -/
 import LeanTex.Core.Locale
 
 namespace LeanTex.Core.Locale
 
-/-- en: babel-en.ini. -/
+/-- en: babel-en.ini; cref names from cleveref.sty v0.21.4. -/
 def en : Locale := {
   tag := "en"
   figure := "Figure"
@@ -30,9 +32,14 @@ def en : Locale := {
   quoteInnerOpen := "‘"
   quoteInnerClose := "’"
   leftMin := 2
-  rightMin := 3 }
+  rightMin := 3
+  crefSection := { one := "section", many := "sections", capOne := "Section", capMany := "Sections" }
+  crefEquation := { one := "eq.", many := "eqs.", capOne := "Equation", capMany := "Equations" }
+  crefFigure := { one := "fig.", many := "figs.", capOne := "Figure", capMany := "Figures" }
+  crefTable := { one := "table", many := "tables", capOne := "Table", capMany := "Tables" }
+  crefRangeTo := "to" }
 
-/-- fr: babel-fr.ini. -/
+/-- fr: babel-fr.ini; cref names from cleveref.sty v0.21.4. -/
 def fr : Locale := {
   tag := "fr"
   figure := "Figure"
@@ -45,9 +52,14 @@ def fr : Locale := {
   quoteInnerOpen := "«"
   quoteInnerClose := "»"
   leftMin := 2
-  rightMin := 3 }
+  rightMin := 3
+  crefSection := { one := "section", many := "sections", capOne := "Section", capMany := "Sections" }
+  crefEquation := { one := "équation", many := "équations", capOne := "Équation", capMany := "Équations" }
+  crefFigure := { one := "figure", many := "figures", capOne := "Figure", capMany := "Figures" }
+  crefTable := { one := "tableau", many := "tableaux", capOne := "Tableau", capMany := "Tableaux" }
+  crefRangeTo := "à" }
 
-/-- de: babel-de.ini. -/
+/-- de: babel-de.ini; cref names from cleveref.sty v0.21.4. -/
 def de : Locale := {
   tag := "de"
   figure := "Abbildung"
@@ -60,7 +72,12 @@ def de : Locale := {
   quoteInnerOpen := "‚"
   quoteInnerClose := "‘"
   leftMin := 2
-  rightMin := 2 }
+  rightMin := 2
+  crefSection := { one := "Abschnitt", many := "Abschnitte", capOne := "Abschnitt", capMany := "Abschnitte" }
+  crefEquation := { one := "Gleichung", many := "Gleichungen", capOne := "Gleichung", capMany := "Gleichungen" }
+  crefFigure := { one := "Abb.", many := "Abb.", capOne := "Abbildung", capMany := "Abbildungen" }
+  crefTable := { one := "Tabelle", many := "Tabellen", capOne := "Tabelle", capMany := "Tabellen" }
+  crefRangeTo := "bis" }
 
 /-- The shipped locales. Contracts quantify over this list — adding
 a locale is entering the contract (the `Theme.builtin` pattern). -/

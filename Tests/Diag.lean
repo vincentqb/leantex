@@ -300,6 +300,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       DriverDiag.boundarySvgMissing "not found (error code: 2)"]
   | .W0349 => dvE "\\ref{nowhere}"
   | .W0350 => dvE "\\section{A}\\label{twice}\\label{twice}"
+  | .W0380 => dvE "\\refstepcounter{section}\n\\label{stepped} see \\cref{stepped}"
   | .W0356 =>
     dvE "\\documentclass[twocolumn]{article}\n\\begin{document}\nx\n\\end{document}" ++
     dvE "\\documentclass[draft]{article}\n\\begin{document}\nx\n\\end{document}"

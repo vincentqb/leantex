@@ -328,6 +328,50 @@ def headingNumberChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a number never moves the section anchor"
     ((((HtmlDoc.emit {} doc).1).splitOn "<section id=\"introduction\">").length == 2)
 
+/-- cleveref resolves through the one label table with the kind's locale
+name (`Ir.refText`; names from cleveref.sty v0.21.4's language blocks):
+the reference forms, the equation parentheses, the locale switch, and
+W0380's judge. -/
+def crefChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let wrap (pre body : String) : String :=
+    s!"\\documentclass\{article}{pre}\\begin\{document}\n{body}\n\\end\{document}"
+  let refTexts (src : String) : List String :=
+    (Ir.foldBlocks (fun a _ => a)
+      (fun a x => match x with | .ref _ _ t _ => a.push t | _ => a)
+      #[] (elabStr src).1.body).toList
+  let secs := "\\section{A}\\label{s}x\\subsection{B}\\label{t}\n\n"
+  t "cref and Cref set the section name from the locale"
+    (refTexts (wrap "" (secs ++ "\\cref{s} \\Cref{s}")) ==
+      ["section\u00A01", "Section\u00A01"])
+  t "an equation keeps its parentheses in every cleveref form, bare under \\ref"
+    (refTexts (wrap "" ("\\begin{equation}\\label{e}x=1\\end{equation}\n\n" ++
+        "\\cref{e} \\labelcref{e} \\ref{e} \\eqref{e}")) ==
+      ["eq.\u00A0(1)", "(1)", "1", "(1)"])
+  t "crefrange sets the plural, the conjunction, and the pair's numbers"
+    (refTexts (wrap "" (secs ++ "\\crefrange{s}{t}")) ==
+      ["sections\u00A01 to\u00A0", "1.1"])
+  t "namecref sets the name alone"
+    (refTexts (wrap "" (secs ++ "\\namecref{s} \\nameCref{t}")) ==
+      ["section", "Section"])
+  t "the document language picks the cref names (cleveref's german block)"
+    (refTexts (wrap "\\usepackage[ngerman]{babel}" (secs ++ "\\cref{s}")) ==
+      ["Abschnitt\u00A01"])
+  t "the french equation name keeps its accent, capitalised under \\Cref"
+    (refTexts (wrap "\\usepackage[french]{babel}"
+        ("\\begin{equation}\\label{e}x=1\\end{equation}\n\n\\cref{e} \\Cref{e}")) ==
+      ["équation\u00A0(1)", "Équation\u00A0(1)"])
+  -- W0380: a bare counter step numbers no node, so its kind is unknowable
+  -- — the cref-form reference degrades to the plain number, named; the
+  -- same document under \ref is silent, and a heading-bound cref is too.
+  let stepped := wrap "" "\\refstepcounter{section}\n\\label{k} \\cref{k}"
+  t "a cref to a bare counter step fires W0380 and sets the plain number"
+    ((warnCodes stepped).contains "W0380" && refTexts stepped == ["1"])
+  t "\\ref to the same binding stays silent"
+    (!(warnCodes (wrap "" "\\refstepcounter{section}\n\\label{k} \\ref{k}")).contains "W0380")
+  t "a heading-bound cref never fires W0380"
+    (!(warnCodes (wrap "" (secs ++ "\\cref{s}"))).contains "W0380")
+
 /-- A user command's argument is the caller's token list: a reserved
 character in it is content where the definition places it — a `\label` key
 reads it verbatim — never an error at the binding. Dropping it there

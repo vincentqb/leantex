@@ -250,9 +250,10 @@ structure ESt where
   The first declaration of a key wins (LaTeX's behaviour); a second is
   W0350 at its own position. -/
   labels : Array (String × Option Ir.RefBinding) := #[]
-  /-- Every `\ref`/`\eqref` site, for W0349 once the whole table is known:
-  a reference may point forward, so it cannot be judged where it stands. -/
-  refSites : Array (String × Pos) := #[]
+  /-- Every reference site with its form, for W0349 and W0380 once the
+  whole table is known: a reference may point forward, so it cannot be
+  judged where it stands. -/
+  refSites : Array (String × Ir.RefForm × Pos) := #[]
 
 abbrev EM := StateM ESt
 
@@ -493,6 +494,7 @@ the built-in's output (W0361), which is how a venue's `\renewcommand
 def renderedBuiltins : List String :=
   ["maketitle", "titlepage", "logo", "appendix", "note", "pause",
    "centering", "alt", "hfill", "ensuremath", "label", "ref", "eqref",
+   "cref", "Cref", "crefrange", "Crefrange", "labelcref", "namecref", "nameCref",
    "paragraph", "subparagraph", "href", "link", "url", "cite", "citep",
    "citet", "includegraphics", "faIcon", "pagenumber", "pagecount",
    "bibliography", "bibliographystyle", "textcolor",
@@ -2289,12 +2291,31 @@ alternatives on every step" pos
     (help := "write a numbered spec: <2>, <2->, or <2-3>; incremental \
 specs are not modelled")
 
+/-- The reference commands and the form each resolves with: LaTeX's
+`\ref`/`\eqref` and cleveref's family (manual v0.21.4 §2) — one key
+group each; the `\crefrange` pair arrives desugared to its two halves
+(`@crefrange` + `labelcref`, Compat's rewrite). Outside the knot: the
+inline dispatch reads one lookup where it read two name tests. -/
+private def refCtrlForm? (name : String) : Option Ir.RefForm :=
+  [("ref", Ir.RefForm.plain), ("eqref", .paren),
+   ("cref", .cref false), ("Cref", .cref true),
+   ("labelcref", .labelOnly),
+   ("namecref", .name false), ("nameCref", .name true),
+   ("@crefrange", .crefRange false), ("@Crefrange", .crefRange true)].lookup name
+
+/-- The forms whose rendering needs the target's kind — a kindless
+binding under one of these is W0380's case. -/
+def refFormNeedsKind : Ir.RefForm → Bool
+  | .cref _ | .crefRange _ | .name _ => true
+  | .plain | .paren | .labelOnly => false
+
 seal footnoteOverride hasParRaw footnoteWarnPar footnoteWarnFace
 seal thanksWarn footnoteStepNum noteNeedsGroup warnUnknownCmd
 seal warnMisplacedDecl warnReservedCtrl warnOptionRun
 seal warnPaletteMiss warnOverlaySpec warnAltSpec
 seal argText skipBracketRun bracketRunSrc
 seal warnUnclosed warnDroppedArgs
+seal refCtrlForm? refFormNeedsKind
 
 seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 seal theCounterLevel? sectionLevel String.toInt? String.toNat?
@@ -2728,7 +2749,8 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           | _ =>
             diag ctx .E0304 s!"'\\label' needs a \{key} group" pos
             elabInlinesFrom ctx raws (i + 1) acc sb
-        else if name == "ref" || name == "eqref" then
+        else if hform : (refCtrlForm? name).isSome then
+          let form := (refCtrlForm? name).get hform
           let j := skipSpaces raws (i + 1)
           have hjge := skipSpaces_ge raws (i + 1)
           match hj : raws[j]? with
@@ -2738,8 +2760,8 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             -- Unresolved until the whole document's labels are known:
             -- `resolveRefs` fills the number at the end of elaboration, so
             -- a forward reference costs no second pass over the source.
-            let acc := (flushText acc sb).push (.ref key (name == "eqref") "??" none)
-            modify fun st => { st with refSites := st.refSites.push (key, pos) }
+            let acc := (flushText acc sb).push (.ref key form "??" none)
+            modify fun st => { st with refSites := st.refSites.push (key, form, pos) }
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1) acc ""
@@ -3327,6 +3349,7 @@ unseal warnMisplacedDecl warnReservedCtrl warnOptionRun
 unseal warnPaletteMiss warnOverlaySpec warnAltSpec
 unseal argText skipBracketRun bracketRunSrc
 unseal warnUnclosed warnDroppedArgs
+unseal refCtrlForm? refFormNeedsKind
 unseal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 unseal theCounterLevel? sectionLevel String.toInt? String.toNat?
 unseal String.Slice.trimAscii String.Slice.trimAsciiStart String.Slice.trimAsciiEnd
@@ -9122,12 +9145,21 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
   let table := if stRefs.labels.isEmpty then stRefs.labels
     else Ir.withFloatRows stRefs.labels (Ir.floatLabelRows blocks)
   let blocks := if stRefs.refSites.isEmpty then blocks
-    else Ir.resolveRefs table blocks
+    else Ir.resolveRefs ctx.locale table blocks
   let mut warnedRefs : Array String := #[]
-  for (key, rpos) in stRefs.refSites do
+  for (key, form, rpos) in stRefs.refSites do
     unless warnedRefs.contains key do
       match table.find? (·.1 == key) with
-      | some (_, some _) => pure ()
+      | some (_, some b) =>
+        -- The binding is numbered but kindless (a bare \refstepcounter):
+        -- a form that must name what the label names has no name to use,
+        -- so the plain number stands (refText), named here.
+        if b.kind.isNone && refFormNeedsKind form then
+          warnedRefs := warnedRefs.push key
+          diag ctx .W0380
+            s!"'{key}' names a bare counter step, not a heading, equation, or float; the plain number is set"
+            (some rpos)
+            (help := "reference it with \\ref, or move the \\label after the numbered thing it should name")
       | some (_, none) =>
         warnedRefs := warnedRefs.push key
         diag ctx .W0349 s!"'{key}' is \\label'ed where nothing is numbered; set as '??'"

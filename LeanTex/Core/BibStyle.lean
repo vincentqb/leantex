@@ -617,7 +617,7 @@ private def resolveInline (style : CiteStyle) (find : Resolver)
   | .image src size alt => out.push (.image src size alt)
   | .icon c label => out.push (.icon c label)
   | .label k => out.push (.label k)
-  | .ref k paren text anchor => out.push (.ref k paren text anchor)
+  | .ref k form text anchor => out.push (.ref k form text anchor)
   | .fill => out.push .fill
   | .strut h => out.push (.strut h)
   | .pageNumber => out.push .pageNumber
