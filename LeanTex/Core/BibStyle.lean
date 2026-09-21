@@ -769,7 +769,7 @@ private def resolveBlock (style : Style) (find : Resolver)
     out.push (.table cols pl pr
       (rows.map fun row => row.map (resolveArr style.cite find)) rules)
   | .logo content => out.push (.logo (resolveArr style.cite find content))
-  | .verbatim c s => out.push (.verbatim c s)
+  | .verbatim c s sp => out.push (.verbatim c s sp)
   | .setPalette p => out.push (.setPalette p)
   | .setTokens tk => out.push (.setTokens tk)
   | .pagebreak => out.push .pagebreak

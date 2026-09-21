@@ -570,7 +570,11 @@ private def usesBlock (cx : UseCx) (acc : UseAcc) : Block → UseAcc
   -- the page, so judging them against the page surface would be judging
   -- the wrong pairing; the label-on-fill contract is still owed (recorded
   -- in the slice report).
-  | .note _ | .verbatim _ _ | .rule _ _ _ | .logo _ | .picture _
+  | .verbatim _ _ spec =>
+    match spec.caption with
+    | some (_, cap) => usesInlines cx acc cap.toList
+    | none => acc
+  | .note _ | .rule _ _ _ | .logo _ | .picture _
   | .pagebreak => acc
 
 private def usesItems (cx : UseCx) (acc : UseAcc) :

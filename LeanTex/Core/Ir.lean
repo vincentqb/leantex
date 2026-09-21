@@ -1773,6 +1773,23 @@ def TitledKind.name : TitledKind → String
   | .alert => "alert"
   | .example => "example"
 
+/-- What a code listing declares beside its content — the delta between
+`{verbatim}` and listings' `{lstlisting}` / minted's `{minted}` (listings
+manual: the `caption` key, lstmisc's `numbers` key; minted's `linenos`).
+`caption` carries the resolved number with the declared text: every
+captioned listing numbers, assigned at elaboration in flow order exactly
+as equation numbers are (listings steps `\thelstlisting` per captioned
+listing); a captionless listing is `none`, unnumbered. The number rides
+beside the declared text, never inside it — the "Listing n: " prefix is
+backend furniture spelled at `Ir.listingCaption`, one site for both
+artifacts. `numbers` is `numbers=left` / `linenos`: each line's number as
+furniture beside it, generated ink outside the census as a list's markers
+are. A bare `{verbatim}` is the default value everywhere. -/
+structure ListingSpec where
+  caption : Option (Nat × Array Inline) := none
+  numbers : Bool := false
+  deriving Repr, BEq, Inhabited
+
 inductive Block where
   | para (content : Array Inline)
   /-- A heading. `number` is the section's resolved number ("2", "2.1",
@@ -1833,8 +1850,10 @@ inductive Block where
   /-- `{verbatim}` content, kept literally: lines, spaces, and all. Both
   backends set it in the mono face and neither reflows it. `covered` is the
   dim colour painted by the overlay shade — code pending its step must read
-  as covered like any other text; `none` everywhere else. -/
-  | verbatim (covered : Option Color) (content : String)
+  as covered like any other text; `none` everywhere else. `spec` is what a
+  listing environment declares beside the content (`ListingSpec`): the
+  numbered caption and the line-number flag. -/
+  | verbatim (covered : Option Color) (content : String) (spec : ListingSpec)
   /-- Side-by-side columns (`{columns}`/`{column}`): each column carries its
   declared width as per mille of the text width, or `none` to share the
   leftover equally. Columns are top-aligned; the alignment options and
@@ -2184,7 +2203,7 @@ def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
     let (c2, body2) := numberFloatList c #[] body.toList
     (c2, .frame t s v body2)
   | .note body => (c, .note body)
-  | .verbatim k s => (c, .verbatim k s)
+  | .verbatim k s sp => (c, .verbatim k s sp)
   | .logo content => (c, .logo content)
   | .framefoot content => (c, .framefoot content)
   | .setPalette p => (c, .setPalette p)
@@ -2250,7 +2269,7 @@ def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .nav _ body => floatNumsList k out body.toList
   | .frame _ _ _ body => floatNumsList k out body.toList
   | .note _ => out
-  | .verbatim _ _ => out
+  | .verbatim _ _ _ => out
   | .logo _ => out
   | .framefoot _ => out
   | .setPalette _ => out
@@ -2327,7 +2346,7 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
       floatNumsOne k out (numberFloatOne c b).2
         = out ++ List.range' (c.get k + 1) n := by
   match b with
-  | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ | .logo _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
   | .bibliography _ _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ =>
@@ -2608,6 +2627,18 @@ def numberedCaption (loc : Locale) (kind : FloatKind) (num : Option Nat)
   match captionPrefix loc kind num with
   | some p => (Inline.text p :: caption.toList).toArray
   | none => caption
+
+/-- A listing caption with its number prefix set in front: the
+figure-caption shape (`captionPrefix`'s own spelling, classes.dtx
+§\@makecaption) with the locale's listing word — "Listing 1: text" —
+the one site both backends spell a listing's number from, so the PDF and
+the HTML cannot drift. The prefix is furniture the backend adds, exactly
+as `numberedCaption`'s is: the IR keeps the declared text alone. -/
+-- conserves: none — the prefix is furniture the backend adds at emission,
+-- never a rewrite of the stored document: the IR's caption census stays
+-- the declared text alone, exactly as `numberedCaption`'s does.
+def listingCaption (loc : Locale) (n : Nat) (caption : Array Inline) : Array Inline :=
+  (Inline.text s!"{loc.listing} {n}: " :: caption.toList).toArray
 
 /-- Verbatim content, line-split: the newline after `\begin{verbatim}` and
 the blank tail before `\end{verbatim}` delimit — every trailing blank line
@@ -3413,7 +3444,7 @@ def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) 
     foldBlockList fb fi (foldInlineList fi (fb acc b) caption.toList) body.toList
   | .table _ _ _ rows _ => foldTableRows fi (fb acc b) rows.toList
   | .logo content => foldInlineList fi (fb acc b) content.toList
-  | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .bibliography _ _ _ => fb acc b
 
 def foldBlockList (fb : α → Block → α) (fi : α → Inline → α) (acc : α) :
@@ -3558,7 +3589,7 @@ def navLinkOne (out : Array (String × String)) : Block → Array (String × Str
   | .para content => navLinkInlineList out content.toList
   | .equation _ content => navLinkInlineList out content.toList
   | .section _ _ _ title => navLinkInlineList out title.toList
-  | .verbatim _ _ => out
+  | .verbatim _ _ _ => out
   | .logo _ => out
   | .framefoot _ => out
   | .setPalette _ => out
@@ -3914,8 +3945,15 @@ def dumpBlock (ind : String) (b : Block) : String :=
     else s!"{ind}logo\n" ++ dumpInlines (ind ++ "  ") content
   | .spaced before body =>
     s!"{ind}block before {dumpGlue before}\n" ++ dumpBlocks (ind ++ "  ") body
-  | .verbatim covered s =>
-    s!"{ind}verbatim{if covered.isSome then " covered" else ""}\n" ++
+  | .verbatim covered s spec =>
+    s!"{ind}verbatim{if covered.isSome then " covered" else ""}\
+{if spec.numbers then " numbers" else ""}" ++
+    (match spec.caption with
+      | some (n, _) => s!" listing {n}"
+      | none => "") ++ "\n" ++
+    (match spec.caption with
+      | some (_, cap) => s!"{ind}  caption\n" ++ dumpInlines (ind ++ "    ") cap
+      | none => "") ++
     String.join ((verbatimLines s).toList.map
       fun l => s!"{ind}  {l.quote}\n")
   | .frame title standout valign body =>
@@ -4216,7 +4254,7 @@ def maxStepBlock : Block → Nat
   | .only _ body => maxStepBlockList body.toList
   | .nav _ body => maxStepBlockList body.toList
   | .section _ _ _ _ => 1
-  | .verbatim _ _ => 1
+  | .verbatim _ _ _ => 1
   | .note _ => 1
   | .frame _ _ _ _ => 1
   | .framefoot _ => 1
@@ -4331,7 +4369,10 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
   | .only targets body => .only targets (dimBlockList cover k pending #[] body.toList)
   | .nav spec body => .nav spec (dimBlockList cover k pending #[] body.toList)
   | .section l st num title => .section l st num title
-  | .verbatim c s => .verbatim (if pending then some cover.plain else c) s
+  | .verbatim c s spec =>
+    .verbatim (if pending then some cover.plain else c) s
+      { spec with caption := spec.caption.map fun (n, cap) =>
+          (n, dimInlineList cover k pending #[] cap.toList) }
   | .note body => .note body
   | .frame t st v body => .frame t st v body
   | .framefoot content => .framefoot content
@@ -4477,7 +4518,7 @@ def unwrapItemStep : Block → Block
   | .para content => .para content
   | .equation n content => .equation n content
   | .section l st num title => .section l st num title
-  | .verbatim c s => .verbatim c s
+  | .verbatim c s sp => .verbatim c s sp
   | .note body => .note body
   | .framefoot content => .framefoot content
   | .setPalette pal => .setPalette pal
@@ -4557,6 +4598,14 @@ theorem footnoteWrap_text (num : Option Nat) :
 -- recursion; a step function that dropped or reordered content would fail
 -- these equalities.
 
+/-- A listing caption's census text: the declared characters, `""` when
+none is declared. The number prefix is backend furniture, excluded as a
+float's `captionPrefix` is. -/
+def ListingSpec.capText (spec : ListingSpec) : String :=
+  match spec.caption with
+  | some (_, cap) => plainText cap
+  | none => ""
+
 mutual
 
 /-- The characters of block content with every mark stripped: the block
@@ -4597,7 +4646,7 @@ def blockTextOne (acc : String) : Block → String
   | .only _ body => blockTextList acc body.toList
   | .nav _ body => blockTextList acc body.toList
   | .note body => blockTextList acc body.toList
-  | .verbatim _ s => acc ++ s
+  | .verbatim _ s spec => acc ++ spec.capText ++ s
   | .logo content => acc ++ plainText content
   | .frame title _ _ body => blockTextList (acc ++ plainText title) body.toList
   | .framefoot content => acc ++ plainText content
@@ -4781,7 +4830,7 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .nav _ body => headingLevelList out body.toList
   | .frame _ _ _ body => headingLevelList out body.toList
   | .note _ => out
-  | .verbatim _ _ => out
+  | .verbatim _ _ _ => out
   | .framefoot _ => out
   | .setPalette _ => out
   | .setTokens _ => out
@@ -4842,7 +4891,7 @@ def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
     footnoteBlockList (footnoteInlineList out title.toList) body.toList
   -- a speaker note is a side channel; its text never ships on a page
   | .note _ => out
-  | .verbatim _ _ => out
+  | .verbatim _ _ _ => out
   | .framefoot _ => out
   | .setPalette _ => out
   | .setTokens _ => out
@@ -5320,7 +5369,16 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
   -- verbatim recolour and the picture recolour keep their text census by
   -- construction: neither constructor's census reads a colour.
   | .logo _ => rfl
-  | .verbatim _ _ | .section _ _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
+  -- The verbatim body's census reads no colour; the caption dims as a
+  -- float's does, and dimming conserves its text.
+  | .verbatim c s spec =>
+    rw [dimBlock]
+    cases hc : spec.caption with
+    | none => simp [blockTextOne, ListingSpec.capText, hc]
+    | some p =>
+      simp [blockTextOne, ListingSpec.capText, hc, plainText, plainTextList,
+        dimInlineList_text cover k pending p.2.toList #[]]
+  | .section _ _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
   | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .pagebreak | .bibliography _ _ _ => rfl
   | .table cols pl pr rows rules =>
@@ -5467,7 +5525,7 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
     rw [unwrapItemStep]
     simp [blockTextOne, unwrapItemStepList_text body.toList #[] _,
       blockTextList]
-  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .note _ | .framefoot _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .note _ | .framefoot _
   | .pagebreak
   | .setPalette _ | .setTokens _
   | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _
@@ -5535,7 +5593,7 @@ theorem numberFloatList_text (c : FloatCtr) (acc : Array Block)
 theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
     blockTextOne s (numberFloatOne c b).2 = blockTextOne s b := by
   match b with
-  | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ | .logo _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
   | .bibliography _ _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
@@ -5713,7 +5771,7 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
   -- runs, a logo is furniture, a rule is decorative ink: the judge reads
   -- none of them, so the walk leaves each whole.
   | .note body => (.note body, pal)
-  | .verbatim c s => (.verbatim c s, pal)
+  | .verbatim c s sp => (.verbatim c s sp, pal)
   | .logo content => (.logo content, pal)
   | .rule c nm th => (.rule c nm th, pal)
   | .picture p => (.picture p, pal)
@@ -5998,7 +6056,7 @@ theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleReco
     rw [recolorRolesBlock]
     simp [blockTextOne, plainText,
       recolorRolesInlines_text recolor pal ground content.toList #[], plainTextList]
-  | .setPalette _ | .setTokens _ | .pagebreak | .note _ | .verbatim _ _
+  | .setPalette _ | .setTokens _ | .pagebreak | .note _ | .verbatim _ _ _
   | .logo _ | .rule _ _ _ | .picture _ => rfl
   | .table cols pl pr rows rules =>
     rw [recolorRolesBlock]
@@ -6072,7 +6130,7 @@ def keptBy (t : String) : Block → Bool
   | .role _ _
   | .titled _ _ _
   | .spaced _ _
-  | .verbatim _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
+  | .verbatim _ _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
   | .frame _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
   | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak
   | .table _ _ _ _ _ | .float _ _ _ _ _ | .bibliography _ _ _ => true
@@ -6102,7 +6160,7 @@ def keepForOne (t : String) : Block → Block
   | .para c => .para c
   | .equation n c => .equation n c
   | .section l st num title => .section l st num title
-  | .verbatim c s => .verbatim c s
+  | .verbatim c s sp => .verbatim c s sp
   | .logo c => .logo c
   | .framefoot c => .framefoot c
   | .setPalette pal => .setPalette pal
@@ -6155,7 +6213,10 @@ def textLeavesOne (acc : List String) : Block → List String
   | .para content => plainText content :: acc
   | .equation _ content => plainText content :: acc
   | .section _ _ _ title => plainText title :: acc
-  | .verbatim _ s => s :: acc
+  | .verbatim _ s spec =>
+    match spec.caption with
+    | some (_, cap) => s :: plainText cap :: acc
+    | none => s :: acc
   | .logo content => plainText content :: acc
   | .framefoot content => plainText content :: acc
   -- A stateful declaration carries no text leaf.
@@ -6245,7 +6306,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .note body => orphanFreeList avail body.toList
   | .nav _ body => orphanFreeList avail body.toList
   | .frame _ _ _ body => orphanFreeList avail body.toList
-  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak
   | .bibliography _ _ _ => true
@@ -6310,7 +6371,7 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .para c => simp [textLeavesOne]
   | .equation _ c => simp [textLeavesOne]
   | .section l st num title => simp [textLeavesOne]
-  | .verbatim c s => simp [textLeavesOne]
+  | .verbatim c s sp => cases hc : sp.caption <;> simp [textLeavesOne, hc]
   | .logo c => simp [textLeavesOne]
   | .framefoot c => simp [textLeavesOne]
   | .setPalette pal => simp [textLeavesOne]
@@ -6468,7 +6529,7 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
   | .section l st num title =>
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
-  | .verbatim c str =>
+  | .verbatim c str sp =>
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
   | .logo c =>
@@ -6725,7 +6786,7 @@ def onlyFreeOne : Block → Bool
   | .nav _ body => onlyFreeList body.toList
   | .frame _ _ _ body => onlyFreeList body.toList
   | .float _ _ _ body _ => onlyFreeList body.toList
-  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ | .logo _ | .framefoot _
+  | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _ | .framefoot _
   | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _
   | .table _ _ _ _ _ | .pagebreak | .bibliography _ _ _ => true
 
@@ -6763,7 +6824,7 @@ theorem keepForOne_id (t : String) (b : Block)
   | .para c => rfl
   | .equation n c => rfl
   | .section l st num title => rfl
-  | .verbatim c s => rfl
+  | .verbatim c s sp => rfl
   | .logo c => rfl
   | .framefoot c => rfl
   | .setPalette pal => rfl
@@ -7228,7 +7289,9 @@ def mapBlock (f : Inline → Inline) : Block → Block
   | .logo content => .logo (mapInlines f content)
   | .bibliography src style items =>
     .bibliography src style (mapBibItems f #[] items.toList)
-  | .verbatim c s => .verbatim c s
+  | .verbatim c s spec =>
+    .verbatim c s { spec with caption := spec.caption.map fun (n, cap) =>
+      (n, mapInlines f cap) }
   | .setPalette pal => .setPalette pal
   | .setTokens tk => .setTokens tk
   | .pagebreak => .pagebreak
@@ -7555,7 +7618,15 @@ theorem mapBlock_text (f : Inline → Inline)
     show blockTextBibItems acc (mapBibItems f #[] items.toList).toList = _
     rw [mapBibItems_text f hf items.toList #[]]
     rfl
-  | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
+  -- The listing caption maps as a float's does, and the leaf rewrite
+  -- conserves its text; the body is one opaque string.
+  | .verbatim _ _ spec =>
+    cases hc : spec.caption with
+    | none => simp [mapBlock, blockTextOne, ListingSpec.capText, hc]
+    | some p =>
+      simp [mapBlock, blockTextOne, ListingSpec.capText, hc,
+        mapInlines_text f hf p.2]
+  | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ => rfl
 
 theorem mapBlockList_text (f : Inline → Inline)
@@ -7915,7 +7986,7 @@ def floatLabelOne (float : Option RefBinding) (out : Array (String × Option Ref
       body.toList
   | .table _ _ _ rows _ => foldTableRows (floatLabelPush float) out rows.toList
   | .logo content => foldInlineList (floatLabelPush float) out content.toList
-  | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .bibliography _ _ _ => out
 
 def floatLabelList (float : Option RefBinding) (out : Array (String × Option RefBinding)) :

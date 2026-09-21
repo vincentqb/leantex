@@ -2343,6 +2343,15 @@ private def slideCss (doc : Doc) : String :=
         (Design.ofDoc doc).coveredFraction maxSteps)
   else handout ++ headerH2
 
+/-- Whether the document carries a listing whose apparatus the stylesheet
+must draw — a caption or line numbers: the gate on the listing CSS, so a
+document without one ships exactly the stylesheet it shipped before. -/
+private def docHasListing (doc : Doc) : Bool :=
+  Ir.foldBlocks (fun b bl => b || match bl with
+      | .verbatim _ _ spec => spec.caption.isSome || spec.numbers
+      | _ => false)
+    (fun b _ => b) false doc.body
+
 /-- The base stylesheet. Small on purpose: a generated document should not
 ship a framework to use four of its rules. Dark mode is a variant of the same
 token set, not an inversion hack. The typography with an authority behind it
@@ -2483,6 +2492,20 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "code, pre { font-family: var(--font-mono); font-size: 0.925em; }\n" ++
   s!"pre \{ background: var(--tint); padding: {quantaRem 1} 1rem; overflow-x: auto;\n" ++
   "      border-radius: 4px; }\n" ++
+  -- A captioned listing wears the figure-caption shape, caption above
+  -- (listings' captionpos default); declared line numbers are a CSS
+  -- counter the stylesheet draws before each line — furniture, outside
+  -- the reader's selection and copy, no script. Emitted only when the
+  -- document carries a listing that needs it.
+  (if docHasListing doc then
+    "figure.listing { margin: 0; }\n" ++
+    s!"figure.listing > figcaption \{ text-align: center; margin-bottom: {quantaRem 1}; }\n" ++
+    "pre.numbered { counter-reset: listing-line; }\n" ++
+    "pre.numbered .line::before { counter-increment: listing-line;\n" ++
+    "  content: counter(listing-line); display: inline-block; width: 2.25em;\n" ++
+    "  padding-right: 1em; text-align: right; color: var(--muted);\n" ++
+    "  user-select: none; }\n"
+   else "") ++
   ".centered { text-align: center; }\n" ++
   ".fill { flex: 1 1 auto; }\n" ++
   s!".spaced \{ margin-top: var(--sep, {slidePadV}); }\n" ++
@@ -3080,15 +3103,35 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let style := s!"margin-top: {cssLength before.width}"
     Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
       #[("class", "spaced"), ("style", style)]
-  | .verbatim covered s =>
+  | .verbatim covered s spec =>
     -- `<pre>` preserves the raw lines; the escaper makes the content inert.
     -- The covered shade never reaches HTML (dimming is the PDF handout's;
     -- the HTML deck keeps every step visible), but honesty if it ever does.
-    Html.elem "pre" #[Html.elem "code"
-      #[Html.text (String.intercalate "\n" (verbatimLines s).toList)]]
-      (match covered with
-       | some c => #[("style", s!"color: {cssColor c}")]
-       | none => #[])
+    -- Declared line numbers are a CSS counter on per-line elements — the
+    -- numbers are generated furniture the stylesheet draws, so a reader's
+    -- copy takes the code alone; nothing is scripted. A declared caption
+    -- wraps the block in the figure-caption shape, the caption above
+    -- (listings.sty: `\lst@Key{captionpos}{t}` — above is the default),
+    -- numbered from the one site both backends read (`Ir.listingCaption`).
+    let lines := (verbatimLines s).toList
+    let code :=
+      if spec.numbers then
+        Html.elem "code" ((lines.map fun l =>
+          Html.elem "span" #[Html.text (l ++ "\n")] #[("class", "line")]).toArray)
+      else
+        Html.elem "code" #[Html.text (String.intercalate "\n" lines)]
+    let pre := Html.elem "pre" #[code]
+      ((if spec.numbers then #[("class", "numbered")] else #[]) ++
+       (match covered with
+        | some c => #[("style", s!"color: {cssColor c}")]
+        | none => #[]))
+    match spec.caption with
+    | some (n, cap) =>
+      Html.elem "figure"
+        #[Html.elem "figcaption" (inlines cfg (Ir.listingCaption cfg.locale n cap)),
+          pre]
+        #[("class", "listing")]
+    | none => pre
   | .rule color name thickness =>
     -- The title page's separator: an <hr> carrying the palette variable,
     -- so a host page can override it as it can any colour.

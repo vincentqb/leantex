@@ -1461,7 +1461,7 @@ def envBoundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a verbatim inside an unknown environment stays a block"
     (match (elabStr
         "\\begin{gizmo}\n\\begin{verbatim}\nliteral line one\n\\end{verbatim}\n\\end{gizmo}").1.body with
-     | #[.verbatim none s] => s.trimAscii.toString == "literal line one"
+     | #[.verbatim none s _] => s.trimAscii.toString == "literal line one"
      | _ => false)
   -- ...and the judgment descends into scope groups: block content one
   -- group deeper is still block content
@@ -2172,7 +2172,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- verbatim: lexically blind content, kept literally as its own block.
   let verbSrc := "\\begin{verbatim}\ndef f(n):\n    return n\n\nf(2)  # two spaces\n\\end{verbatim}"
   t "elab verbatim is a block, content untouched"
-    ((elabStr verbSrc).1.body == #[.verbatim none "\ndef f(n):\n    return n\n\nf(2)  # two spaces\n"] &&
+    ((elabStr verbSrc).1.body == #[.verbatim none "\ndef f(n):\n    return n\n\nf(2)  # two spaces\n" {}] &&
      (elabStr verbSrc).2.isEmpty)
   t "verbatim lines trim the delimiters, keep blanks and indentation"
     (Ir.verbatimLines "\nabc\n  in\n\nz\n  " == #["abc", "  in", "", "z"])

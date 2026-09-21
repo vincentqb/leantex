@@ -6866,7 +6866,7 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
     | .verb s _ =>
       let blocks ← flushPara ctx' blocks cur
-      elabBlocksGo ctx' raws (i + 1) (blocks.push (.verbatim none s)) #[] gen'
+      elabBlocksGo ctx' raws (i + 1) (blocks.push (.verbatim none s {})) #[] gen'
     | .math display body mpos =>
       if display then
         -- A display formula: one centred block of its own, so it

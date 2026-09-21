@@ -1211,7 +1211,18 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   -- for.
   | .note _ => out
   | .logo content => textAndMath out content
-  | .verbatim _ s => { out with texts := out.texts.push s }
+  -- The listing word and the caption's digits are furniture set in the
+  -- body face beside the declared caption text; line-number digits are
+  -- furniture in the mono face. Each is asked of the faces here, before
+  -- layout asks for the glyph.
+  | .verbatim _ s spec =>
+    let out := { out with texts := out.texts.push s }
+    let out := if spec.numbers then
+        { out with texts := out.texts.push "0123456789\u00a0" } else out
+    match spec.caption with
+    | some (n, cap) =>
+      textAndMath { out with texts := out.texts.push s!"{out.locale.listing} {n}: " } cap
+    | none => out
   -- A rule has no glyphs.
   | .rule _ _ _ => out
   -- A page boundary ships no ink.
@@ -4886,13 +4897,51 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A stateful declaration: the pages from here on carry this content at
     -- their corner. No lines, no gap; placement reads the spans.
     { a with ops := a.ops.push (.setLogo content) }
-  | .verbatim covered s =>
+  | .verbatim covered s spec =>
     -- Code lines, kept literally, at the scale's own \footnotesize (the
     -- code-frame convention) — derived from the table, not a loose decimal.
     -- No hyphenation patterns: the engine must never invent a hyphen inside
     -- an identifier. A pending overlay's shade rides in `covered`: code
     -- must read as covered like any other text.
-    let inner : Array Ir.Inline := #[.styled .mono (Ir.verbatimInlines s)]
+    -- A declared caption sets above the code (listings.sty:
+    -- `\lst@Key{captionpos}{t}` — above is the default), in the
+    -- figure-caption shape: numbered from the one site both backends read
+    -- (`Ir.listingCaption`), centred when it fits one line
+    -- (classes.dtx §\@makecaption), bound `captionsep` from the code.
+    let a := match spec.caption with
+      | some (n, cap) =>
+        let caption := Ir.listingCaption r.locale n cap
+        let avail := (a.measure.getD r.geom.textWidth) - indent
+        let (items, _, cache, _) :=
+          itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs
+            { color := a.fg, ground := a.ground } caption
+            a.hyphCache r.imgs avail r.geom.textHeight
+        let a := { a with hyphCache := cache }
+        let fits := itemsNaturalWidth items ≤ avail
+        let a := collectPara r a caption indent fits r.geom.fontSize
+        a.addvspace (r.resolve ((a.tokens.find? "captionsep").getD
+          (Ir.captionSepDefault r.geom.fontSize)))
+      | none => a
+    -- Declared line numbers are furniture beside each line — generated
+    -- ink, like a list's markers: right-aligned digits in the mono face,
+    -- held to their line by no-break spaces.
+    let inner : Array Ir.Inline :=
+      if spec.numbers then Id.run do
+        let lines := Ir.verbatimLines s
+        let w := (toString lines.size).length
+        let mut out : Array Ir.Inline := #[]
+        let mut i := 0
+        for line in lines do
+          i := i + 1
+          unless out.isEmpty do
+            out := out.push (.linebreak {})
+          let numStr := toString i
+          let pad := String.ofList (List.replicate (w - numStr.length) '\u00a0')
+          let kept := line.foldl
+            (fun acc c => acc.push (if c == ' ' then '\u00a0' else c)) ""
+          out := out.push (.text (pad ++ numStr ++ "\u00a0\u00a0" ++ kept))
+        pure #[.styled .mono out]
+      else #[.styled .mono (Ir.verbatimInlines s)]
     let inner := match covered with
       | some c => #[.colored c none inner]
       | none => inner

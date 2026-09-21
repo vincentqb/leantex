@@ -166,9 +166,15 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
     blocksInto loc summary ind (acc ++ head) body.toList
   -- the role's class is a web styling hook; the twin keeps the content
   | .role _ body => blocksInto loc summary ind acc body.toList
-  | .verbatim _ s =>
+  | .verbatim _ s spec =>
     let lines := String.intercalate "\n" (verbatimLines s).toList
-    acc ++ "```\n" ++ lines ++ "\n```\n\n"
+    -- The numbered caption leads the fence, as the twin sets a float's
+    -- caption; line numbers are page furniture a text stream cannot carry.
+    let cap := match spec.caption with
+      | some (n, c) =>
+        ind ++ inlineText (Ir.listingCaption loc n c) ++ "\n\n"
+      | none => ""
+    acc ++ cap ++ "```\n" ++ lines ++ "\n```\n\n"
   | .columns cols => columnsInto loc summary ind acc cols.toList
   | .step _ _ body => blocksInto loc summary ind acc body.toList
   -- `emit` already kept this node for markdown (`Ir.keepFor "md"`): by here
@@ -405,9 +411,9 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
   | .spaced _ body => blocksInto_extends loc summary ind acc body.toList
   | .bibliography _ _ items => ⟨bibItemsText ind items, rfl⟩
   | .role _ body => blocksInto_extends loc summary ind acc body.toList
-  | .verbatim _ _ => by
+  | .verbatim _ _ spec => by
     simp only [blockInto]
-    exact append_chain₃ _ _ _ _
+    cases spec.caption <;> exact append_chain₄ _ _ _ _ _
   | .columns cols => columnsInto_extends loc summary ind acc cols.toList
   | .step _ _ body => blocksInto_extends loc summary ind acc body.toList
   | .only _ body => blocksInto_extends loc summary ind acc body.toList
@@ -657,7 +663,7 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .nav _ body, out, h => headingLevelList_mem x body.toList out h
   | .frame _ _ _ body, out, h => headingLevelList_mem x body.toList out h
   | .note _, _, h => h
-  | .verbatim _ _, _, h => h
+  | .verbatim _ _ _, _, h => h
   | .bibliography _ _ _, _, h => h
   | .framefoot _, _, h => h
   | .setPalette _, _, h => h
