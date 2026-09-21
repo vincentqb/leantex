@@ -541,6 +541,22 @@ def scaleStepRespell (l : String) : Bool :=
   let t := stripLineComment (stripStrings l)
   containsSub t "sizeScale.lookup" && containsSub t ".getD"
 
+/-- A bare state mutation in Compat: a statement opening with `modify` or
+`set`, the two spellings the file uses. Legal only inside the declared
+doors (`compatStateDoors`): the rewrite dispatcher's silence guard reads
+`diags.size` and the `writes` counter (`rewriteCtrl_accounts`), and a
+mutation outside `say`/`write` is invisible to both — the arm would look
+silent and draw a false W0387. Statement-initial only: a mutation hidden
+mid-line is a stated line-scanner blind spot, like `ioInCore`'s, and
+docstring prose using the words stays legal. -/
+def bareStateMutation (l : String) : Bool :=
+  let t := (((stripLineComment (stripStrings l)).trimAscii).toString.takeWhile isWordChar).toString
+  t == "modify" || t == "set"
+
+/-- The doors a `modify`/`set` may live in, in Compat: `say` pushes the
+diagnostic, `write` counts the mutation, `account` is the guard itself. -/
+def compatStateDoors : List String := ["say", "write", "account"]
+
 /-- One staged-diff check: which files it reads, the line predicate, the
 headline naming the file, and the fix paragraph. The stanzas `main` used
 to spell one by one differed only in these four fields. -/
@@ -740,6 +756,21 @@ def selftest : IO UInt32 := do
     ("  let s := Ir.scaleStep base n", false),
     ("  -- sizeScale.lookup … .getD quoted in a comment", false),
     ("  say s!\"a message naming sizeScale.lookup and .getD\"", false)]
+
+  expect "bareStateMutation" bareStateMutation [
+    -- the mutations the door rule routes: statement-initial modify/set
+    ("  modify fun st => { st with themed := true }", true),
+    ("    modify fun st => { st with file := f }", true),
+    ("      set { st with diags := st.diags.push d }", true),
+    -- the doors' own calls, comments, strings, docstring prose, and
+    -- word-boundary neighbours stay legal
+    ("  write fun st => { st with themed := true }", false),
+    ("  -- modify in a comment is prose", false),
+    ("`palatino` set rm/sf/tt whole, `helvet` one slot,", false),
+    ("  say .W0104 s!\"'x' would set the page\" pos", false),
+    ("  let offset := 3", false),
+    ("  (\"setspace\", 0)", false),
+    ("  setlist := true", false)]
 
   expect "splitOnIdiom" splitOnIdiom [
     -- the copies the audit deleted, both count spellings and the
@@ -1253,6 +1284,28 @@ def main (args : List String) : IO UInt32 := do
   Every name a knot seals is unsealed right after it (Elab.lean's pairs
   are the shape); a deliberately module-final seal is allowlisted in
   sealAllow (scripts/precommit.lean) with its reason where it stands."
+
+  -- The state-door gate (the accounts slice), whole tree over Compat:
+  -- every modify/set lives in a declared door, or the dispatcher's
+  -- silence guard cannot see the mutation. Whole tree, not the diff:
+  -- the mutation and its door may land in different hunks.
+  for (f, lines) in coreTexts do
+    if f == "LeanTex/Core/Compat.lean" then
+      let mut cur := ""
+      for i in [0:lines.size] do
+        let l := lines[i]!
+        let t := stripLineComment l
+        if t.startsWith "def " || t.startsWith "private def " then
+          let rest := (if t.startsWith "private def " then t.drop 12 else t.drop 4).toString
+          cur := (rest.takeWhile isWordChar).toString
+        if bareStateMutation l && !compatStateDoors.contains cur then
+          say s!"pre-commit: bare state mutation outside a door, in `{cur}` ({f}:{i + 1}):
+  {l.trimAscii}
+  The dispatcher's silence guard reads diags.size and the writes counter
+  (rewriteCtrl_accounts), and a modify/set outside the declared doors
+  (compatStateDoors, scripts/precommit.lean) is invisible to both: the
+  arm would look silent and draw a false W0387.
+  Fix: mutate through `write` (it counts); diagnostics go through `say`."
 
   -- The arm gate (handed by impl-shapes), whole tree over LeanTex/Core:
   -- a pass-through catch-all in a def whose signature takes IR is the
