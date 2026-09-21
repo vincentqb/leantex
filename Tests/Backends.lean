@@ -2887,3 +2887,39 @@ def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       | some (_, want) =>
         t s!"pdf census row {n}: {repr row}" (row == want)
       | none => pure ()
+  -- The driver, end to end: the gate reads the census of the bytes it is
+  -- about to write, and a failing document writes nothing — not the page,
+  -- not the `-o` directory. The binary is this tree's own build; the
+  -- fixture ships its face from the corpus, so no host font enters.
+  let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
+  t s!"leantex builds:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
+  if build.exitCode == 0 then
+    let dir ← IO.FS.createTempDir
+    IO.FS.createDirAll (dir / "fonts")
+    IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
+      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
+    IO.FS.writeBinFile (dir / "probe.pdf") probe
+    let pre := "\\documentclass{article}\n\\usepackage{graphicx}\n\
+\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n"
+    let body := "\\begin{document}\nA probe.\n\n\
+\\includegraphics[width=50pt, alt={A copied page}]{probe.pdf}\n\\end{document}\n"
+    let run (name decl : String) : IO (UInt32 × String × Bool) := do
+      IO.FS.writeFile (dir / s!"{name}.tex") (pre ++ decl ++ body)
+      let outDir := dir / s!"out-{name}"
+      let r ← IO.Process.output {
+        cmd := ".lake/build/bin/leantex"
+        args := #[(dir / s!"{name}.tex").toString, "-o", outDir.toString ++ "/"] }
+      return (r.exitCode, r.stdout ++ r.stderr, ← outDir.pathExists)
+    let (code, log, dirExists) ← run "control" ""
+    t s!"driver control builds the probe document: {log}" (code == 0 && dirExists)
+    t "driver control ships the copied unembedded face"
+      ((pdfCensusOf (← IO.FS.readBinFile (dir / "out-control" / "control.pdf"))).map
+        (·.fontsEmbedded) == .ok false)
+    let (code, log, dirExists) ← run "embed" "\\assert{ fonts.all_embedded }\n"
+    t s!"driver: fonts.all_embedded fails on the copied face (E0330): {log}"
+      (code != 0 && hasStr log "E0330" && hasStr log "fonts.all_embedded")
+    t "driver: the failing assertion wrote nothing, not even the -o directory" (!dirExists)
+    let (code, _, dirExists) ← run "both"
+      "\\output{ formats = pdf, html }\n\\assert{ pages == 99 }\n"
+    t "driver: pdf+html with a failing assertion writes nothing" (code != 0 && !dirExists)
+    IO.FS.removeDirAll dir
