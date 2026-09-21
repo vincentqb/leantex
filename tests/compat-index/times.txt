@@ -1,0 +1,5 @@
+# source: psnfss documentation ("Using common PostScript fonts with LaTeX"),
+# §2 table 1: times selects Times/Helvetica/Courier for the rm/sf/tt
+# families and defines no user commands. The families land as their TeX
+# Gyre successors (tex-gyre README: Termes, Heros, Cursor).
+pre impl \usepackage{times}

@@ -1,0 +1,5 @@
+# source: psnfss documentation §2 table 2: helvet selects Helvetica for the
+# sf family only; its `scaled=` option is a face adjustment the engine does
+# not model, dropped named (W0101). No user commands. Lands as TeX Gyre
+# Heros (tex-gyre README).
+pre impl \usepackage{helvet}

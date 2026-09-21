@@ -1,0 +1,4 @@
+# source: psnfss documentation §4 ("mathptmx"): Times as the roman family
+# and for the math alphabets; no user commands. Lands as TeX Gyre Termes
+# with TeX Gyre Termes Math (tex-gyre README).
+pre impl \usepackage{mathptmx}

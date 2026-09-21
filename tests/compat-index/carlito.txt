@@ -1,0 +1,4 @@
+# source: carlito package README (CTAN): Carlito as the sans family, and
+# with [sfdefault] as the default text family; no user commands.
+pre impl \usepackage{carlito}
+pre impl \usepackage[sfdefault]{carlito}

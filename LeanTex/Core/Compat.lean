@@ -37,7 +37,9 @@ def nativePackages : List String :=
    "textcomp", "csquotes", "polyglossia", "graphicx", "booktabs", "array",
    "calc", "etoolbox", "xparse", "kvoptions", "setspace", "soul", "tikz",
    "caption", "subcaption", "nicefrac", "multirow",
-   "appendixnumberbeamer", "natbib"]
+   "appendixnumberbeamer", "natbib",
+   "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
+   "libertine", "carlito"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=
@@ -48,6 +50,26 @@ def articleClasses : List String :=
 onto `slides`. -/
 def resumeClasses : List String :=
   ["moderncv", "res"]
+
+/-- Font-selection packages: each package's whole documented effect is
+naming families for the generic slots — psnfss documentation ("Using
+common PostScript fonts with LaTeX", §2, tables 1 and 2: `times` and
+`palatino` set rm/sf/tt whole, `helvet` and `courier` one slot each,
+`mathptmx`/`mathpazo` set rm and the math alphabet); the carlito and
+libertine package READMEs name their families the same way. The faces
+land as their TeX Gyre successors (tex-gyre README: Termes for Times,
+Heros for Helvetica, Cursor for Courier, Pagella for Palatino) — the
+OpenType faces a TeX Live tree actually carries — and the math packages
+take the matching TeX Gyre math face. -/
+def fontPackages : List (String × String) :=
+  [("times", "body = \"TeX Gyre Termes\", sans = \"TeX Gyre Heros\", mono = \"TeX Gyre Cursor\""),
+   ("mathptmx", "body = \"TeX Gyre Termes\", math = \"TeX Gyre Termes Math\""),
+   ("palatino", "body = \"TeX Gyre Pagella\", sans = \"TeX Gyre Heros\", mono = \"TeX Gyre Cursor\""),
+   ("mathpazo", "body = \"TeX Gyre Pagella\", math = \"TeX Gyre Pagella Math\""),
+   ("helvet", "sans = \"TeX Gyre Heros\""),
+   ("courier", "mono = \"TeX Gyre Cursor\""),
+   ("libertine", "body = \"Linux Libertine O\", sans = \"Linux Biolinum O\""),
+   ("carlito", "sans = \"Carlito\"")]
 
 /-- Commands that configure TeX's own machinery and change nothing this
 engine models — the test every entry must pass to earn silence; a construct
@@ -1693,6 +1715,22 @@ captions and patterns stand in" pos
               (help := "the engine ships locale records for: en, fr, de")
         | none =>
           became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
+      else if let some spec := fontPackages.lookup p then
+        -- carlito's `sfdefault` promotes its sans face to the body slot
+        -- (carlito README); every other option (psnfss's `scaled=`) asks
+        -- for a face adjustment the engine does not model and is dropped
+        -- by name.
+        let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+          |>.filter (!·.isEmpty)
+        let sfdefault := p == "carlito" && opts.contains "sfdefault"
+        let spec := if sfdefault then spec ++ ", body = \"Carlito\"" else spec
+        let dropped := opts.filter (· != "sfdefault")
+        unless dropped.isEmpty do
+          say .W0101 s!"'{p}' options without a native equivalent were \
+dropped: {String.intercalate ", " dropped}" pos
+        let native := s!"\\fonts\{ {spec} }"
+        became s!"\\usepackage\{{p}}" native pos
+        out := out ++ (← synthAt native pos)
       else if nativePackages.contains p then
         became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
       else

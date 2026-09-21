@@ -1,0 +1,4 @@
+# source: psnfss documentation §4 ("mathpazo"): Palatino as the roman
+# family and for the math alphabets; no user commands. Lands as TeX Gyre
+# Pagella with TeX Gyre Pagella Math (tex-gyre README).
+pre impl \usepackage{mathpazo}

@@ -1,0 +1,4 @@
+# source: psnfss documentation §2 table 2: courier selects Courier for the
+# tt family only; no user commands. Lands as TeX Gyre Cursor (tex-gyre
+# README).
+pre impl \usepackage{courier}

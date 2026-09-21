@@ -1,0 +1,4 @@
+# source: psnfss documentation §2 table 1: palatino selects
+# Palatino/Helvetica/Courier for rm/sf/tt; no user commands. Lands as TeX
+# Gyre Pagella, Heros, Cursor (tex-gyre README).
+pre impl \usepackage{palatino}

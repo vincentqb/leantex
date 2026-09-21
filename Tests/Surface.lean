@@ -491,6 +491,24 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\documentclass{article}\n\\begin{document}\n\\nointerlineskip x\n\\end{document}"
   t "compat nointerlineskip is meaning-free: no warning, no content"
     (onlyX nisDoc && nisDs.all (fun d => d.code != "W0301" && d.code != "W0104"))
+  -- The font-selection packages: each names families for the generic
+  -- slots (psnfss §2; carlito README), landing on \fonts — the same door
+  -- \setmainfont uses. carlito's sfdefault promotes sans to body; a
+  -- psnfss scale option is a dropped loss, named.
+  let fontsOf (decls : String) : Ir.FontSpec := (elabStr (pre decls)).1.fonts
+  t "compat times fills all three slots"
+    (fontsOf "\\usepackage{times}" ==
+      { body := some "TeX Gyre Termes", sans := some "TeX Gyre Heros",
+        mono := some "TeX Gyre Cursor" })
+  t "compat mathptmx carries the matching math face"
+    ((fontsOf "\\usepackage{mathptmx}").math == some "TeX Gyre Termes Math")
+  t "compat carlito is the sans face, sfdefault promotes it to body"
+    ((fontsOf "\\usepackage{carlito}") ==
+      { sans := some "Carlito" } &&
+     (fontsOf "\\usepackage[sfdefault]{carlito}").body == some "Carlito")
+  t "compat helvet names its dropped scale option"
+    ((elabStr (pre "\\usepackage[scaled=0.9]{helvet}")).2.any fun d =>
+      d.code == "W0101" && hasStr d.message "scaled")
   -- The picture subset renders, so loading tikz loses nothing at the load:
   -- a shape outside the subset is named where it is drawn (W0334, E0333),
   -- never at the `\usepackage` line.
