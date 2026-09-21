@@ -4090,6 +4090,15 @@ private theorem finishPage_shift_uniform (b : B)
 private def B.warnOverfull (b : B) : B :=
   { b with diags := b.diags.push (Diag.of .W0005 "overfull line; no feasible break") }
 
+/-- A heading's declared rule as the line builder reads it: weight,
+position against the baseline, and colour — the print reading of
+`Ir.ElementStyle`'s `rule`, `ruleThickness`, `rulePosition`. -/
+structure HeadingRule where
+  thickness : Sp
+  position : Ir.RulePosition
+  color : Ir.Color
+  deriving Repr, Inhabited
+
 /-- One paragraph, measured and ready to break: everything `kp` and line
 placement need, gathered during the block walk so the breaking runs can
 happen in parallel between the walk and placement. -/
@@ -4116,7 +4125,7 @@ private structure ParaJob where
   marker off the indent, the list-bullet shape. -/
   markerIndent : Option Sp := none
   /-- A rule filling the first line after the content. -/
-  rule : Option (Sp × Ir.Color) := none
+  rule : Option HeadingRule := none
   /-- The paragraph's footnotes, pre-broken: each with the item index of
   its mark's box, so placement can hand a line exactly the notes whose
   marks it carries. -/
@@ -4477,7 +4486,7 @@ private def collectPara (r : Rd) (a : Acc)
     (baseStyle : TextStyle := {})
     (marker : Option (Array Inline) := none)
     (markerIndent : Option Sp := none)
-    (rule : Option (Sp × Ir.Color) := none)
+    (rule : Option HeadingRule := none)
     (display : Bool := false)
     (leaf : Option Nat := none) (span : Nat := 0) : Acc :=
   let a := a.flushGap r
@@ -4669,7 +4678,7 @@ signature. -/
 private def collectDisplay (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
-    (rule : Option (Sp × Ir.Color) := none)
+    (rule : Option HeadingRule := none)
     (leaf : Option Nat := none) (span : Nat := 0) : Acc :=
   collectPara { r with pats := none, geom := { r.geom with justify := false } }
     a inlines indent center size (baseStyle := baseStyle) (rule := rule)
@@ -5265,17 +5274,21 @@ private def collectBlock (r : Rd) (a : Acc)
       (if two.width > hb.width then two else hb))
     -- A declared font template wraps the title; without one, headings set in
     -- the bold face of the body family at the level's size.
+    -- The rule's weight is the declared thickness, else the engine's
+    -- em-relative default; its position is the declared one, else the
+    -- x-height raise — both facts travel to the line as one record.
+    let rule : Option HeadingRule := st.rule.map fun (rc : Ir.Color × Option String) =>
+      { thickness := (st.ruleThickness.map fun g => (r.resolve g).width).getD
+          (headingRuleWeight r.geom.fontSize)
+        position := st.rulePosition.getD .xHeight
+        color := rc.1 }
     let a := match st.font with
       | some tpl =>
         collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
-          (rule := st.rule.map fun (rc : Ir.Color × Option String) =>
-            (headingRuleWeight r.geom.fontSize, rc.1))
-          (leaf := leaf) (span := span)
+          (rule := rule) (leaf := leaf) (span := span)
       | none =>
         collectDisplay r a title indent false (sectionSize r.geom level)
-          (baseStyle := { weight := .b })
-          (rule := st.rule.map fun (rc : Ir.Color × Option String) =>
-            (headingRuleWeight r.geom.fontSize, rc.1))
+          (baseStyle := { weight := .b }) (rule := rule)
           (leaf := leaf) (span := span)
     let ha := r.resolve (Ir.headingAfterDefault r.geom.fontSize)
     let a := a.vskip ((st.after.map r.resolve).getD
@@ -6076,27 +6089,30 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
       | none => (segs0, x0, w0)
     else (segs0, x0, w0)
   -- The rule fills what the heading left of its line, a word-space away
-  -- from the text, sitting at half the x-height of the heading's own face
-  -- at its own size, like a dash — Hochuli, Detail in Typography: a rule
-  -- relates to the type it cuts. The x-height is the measured ink 'x'
-  -- (`xHeightOptical`) because OS/2 sxHeight lies in some fonts — the
-  -- trust order the math size match already uses.
+  -- from the text, where its declared position puts it against the
+  -- heading's own face at its own size (`Ir.RulePosition.raise`): half
+  -- the x-height up, like a dash — Hochuli, Detail in Typography: a rule
+  -- relates to the type it cuts — or on the baseline, as TeX's `\hrule`.
+  -- The x-height is the measured ink 'x' (`xHeightOptical`) because OS/2
+  -- sxHeight lies in some fonts — the trust order the math size match
+  -- already uses.
   let (segs2, w2) :=
     if first then
       match j.rule with
-      | some (thickness, color) =>
+      | some rule =>
         let gap := j.size / 2
         let ruleW := width - w1 - gap
         if ruleW > 0 then
-          let raise := match segs1.find? (fun s => match s with
+          let xHeight := match segs1.find? (fun s => match s with
             | .run .. => true
             | _ => false) with
             | some (.run idx _ _ _ _ sz _ _ _) =>
               let font := fs.get idx
               let sz := if sz == 0 then j.size else sz
-              scaledAt sz font font.xHeightOptical / 2
-            | _ => b.xHeight / 2
-          (segs1 ++ #[Seg.gap gap, Seg.rule ruleW thickness raise color], width)
+              scaledAt sz font font.xHeightOptical
+            | _ => b.xHeight
+          let raise := rule.position.raise xHeight
+          (segs1 ++ #[Seg.gap gap, Seg.rule ruleW rule.thickness raise rule.color], width)
         else (segs1, w1)
       | none => (segs1, w1)
     else (segs1, w1)

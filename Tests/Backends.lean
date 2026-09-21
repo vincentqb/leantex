@@ -363,6 +363,18 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html heading rule lifts half the heading's own ex"
     (((HtmlDoc.emit {} ruledDoc).1.splitOn
       "transform: translateY(-0.5ex)").length == 2)
+  -- A baseline rule is the flex baseline itself: the empty `::after` box's
+  -- synthesised baseline is its bottom border edge (CSS Flexbox §8.5), so
+  -- no translate, and its border weight is the declared thickness — the
+  -- HTML projection of the one IR fact the PDF raise projects.
+  let (baselineDoc, _) := elabStr ("\\documentclass{article}\\palette{ ink = #112233 }" ++
+    "\\style{section}{ rule = ink, rule-position = baseline, rule-thickness = 2pt }" ++
+    "\\begin{document}\\section{H}\\end{document}")
+  t "html baseline heading rule drops the translate and takes its thickness"
+    (((HtmlDoc.emit {} baselineDoc).1.splitOn
+      "h2.ruled::after { transform: none; border-top-width: 2pt; }").length == 2)
+  t "html x-height heading rule emits no per-element override"
+    (((HtmlDoc.emit {} ruledDoc).1.splitOn "h2.ruled::after").length == 1)
   -- Both backends declare the same underline band source — the font's own
   -- post metrics: CSS Text Decoration 4 §2.4.1 and §2.8.2 bind `from-font`
   -- to the face's declared thickness and position, which are what

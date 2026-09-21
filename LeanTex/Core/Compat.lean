@@ -1298,28 +1298,49 @@ private def color (model value : String) (pos : Pos) : M (Option String) := do
 /-- KOMA's `\\sectionlinesformat` is a hook for drawing after a heading. The one
 idiom worth reading is a rule in a colour, `\\textcolor{X}{\\leaders\\hrule …}`;
 any other non-empty body is a dropped loss and says so — an empty body asks
-for no decoration, which is what an unstyled section already draws. -/
+for no decoration, which is what an unstyled section already draws. The
+rule's geometry is read with its colour: `\\hrule` has zero depth, so its
+bottom edge is the heading's baseline (`rule-position = baseline`), and
+its `height` — TeX's 0.4 pt when none is written (TeXbook p. 221) — is the
+thickness. The height reaches `\\style` as written (`\\p@` spelled `pt`), so
+an unreadable one is E0321 there, never a silent default; a `depth` or
+`width` is not the idiom. -/
 private def sectionRule (src : String) (pos : Pos) : M (Array Raw) := do
-  let dropped : M (Array Raw) := do
+  let dropped (why : String) : M (Array Raw) := do
     if src.trimAscii.toString.isEmpty then
       -- An empty body asks for no decoration: deliberate, and said so —
       -- the silence guard (W0387) takes wordless consumption for a drop.
       became "\\sectionlinesformat" "nothing: an empty body asks for no decoration" pos
     else
-      say .E0113
-        "'\\sectionlinesformat' body is not the rule idiom; it is dropped" pos
+      say .E0113 s!"'\\sectionlinesformat' body is not the rule idiom{why}; it is dropped" pos
         (help := "\\style{section}{ rule = <colour> } declares the section \
 rule; \\allow{E0113} accepts the loss")
     return #[]
   match (src.splitOn "\\textcolor {")[1]? with
   | some rest =>
     let color := ((rest.splitOn "}").headD "").trimAscii.toString
-    if (src.splitOn "hrule").length > 1 && !color.isEmpty then
-      let native := s!"\\style\{section}\{ rule = {color} }"
-      became "\\sectionlinesformat" native pos
-      synthAt native pos
-    else dropped
-  | none => dropped
+    match (rest.splitOn "hrule")[1]? with
+    | some afterRule =>
+      if color.isEmpty then dropped "" else
+      -- The rule's own words end at the next control sequence (`\\hfill`,
+      -- `\\kern`); `\\p@` is TeX's own point, spelled for the length grammar.
+      let spec := ((afterRule.replace "\\p@" "pt").replace "\\z@" "0pt").splitOn "\\"
+        |>.headD "" |>.trimAscii.toString
+      let height? : Option String :=
+        if spec.isEmpty then some "0.4pt"
+        else if spec.startsWith "height" then
+          let h := (spec.drop 6).trimAscii.toString
+          if (h.splitOn " ").any (fun w => w == "depth" || w == "width") then none
+          else some (if h.startsWith "." then "0" ++ h else h)
+        else none
+      match height? with
+      | some h =>
+        let native := s!"\\style\{section}\{ rule = {color}, rule-position = baseline, rule-thickness = {h} }"
+        became "\\sectionlinesformat" native pos
+        synthAt native pos
+      | none => dropped s!" (rule dimensions '{spec}' other than a height)"
+    | none => dropped ""
+  | none => dropped ""
 
 /-- LaTeX's documented sectioning idiom (ltsect.dtx; clsguide, "Defining
 new sectioning commands"): a definer whose whole body is one

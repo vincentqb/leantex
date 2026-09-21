@@ -536,12 +536,25 @@ an overlay step does not"))
       (st.focus.map fun (c, n) =>
         s!"{iSel}:focus-visible \{ outline-color: {tokenColor c n}; }\n").toList ++
       (st.motion.map fun ms => motionCss iSel ms).toList
+    -- The rule's own geometry, where the document declares it: a baseline
+    -- rule drops the x-height translate (`.ruled::after`) — the empty
+    -- flex item's synthesised baseline is its bottom border edge (CSS
+    -- Flexbox §8.5), which is where TeX's zero-depth `\hrule` ends — and
+    -- a declared thickness is the border weight, the same IR fact the PDF
+    -- raise and weight project (`Ir.RulePosition.raise`).
+    let ruleDecls : List String := if st.rule.isNone then [] else
+      (match st.rulePosition with
+        | some .baseline => ["transform: none;"]
+        | some .xHeight | none => []) ++
+      (st.ruleThickness.map fun g => s!"border-top-width: {cssLength g.width};").toList
+    let ruleCss := if ruleDecls.isEmpty then "" else
+      s!"{tag}.ruled::after \{ {String.intercalate " " ruleDecls} }\n"
     let own := if decls.isEmpty then "" else s!"{tag} \{ {String.intercalate " " decls} }\n"
     -- Bound first: appending a call's result directly is the shape the
     -- cost gate rejects; a name makes the one-off append visible as one.
     let liCss := String.join liDecls
     let interCss := String.join interDecls
-    css := css ++ own ++ liCss ++ interCss
+    css := css ++ own ++ ruleCss ++ liCss ++ interCss
   return (css, diags)
 
 /-- A per-mille factor as CSS text: 1440 → `1.440`. -/
@@ -2580,7 +2593,8 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   ".ruled::after { content: \"\"; flex: 1; border-top: 1px solid var(--rule-color);\n" ++
   -- Half the x-height up from the baseline, in the rule's own inherited
   -- ex — the heading's face — where the PDF draws it (Layout.paraLineGeom;
-  -- Hochuli: a rule relates to the type it cuts).
+  -- Hochuli: a rule relates to the type it cuts). A heading declaring
+  -- `rule-position = baseline` overrides this per element (`styleRules`).
   "  transform: translateY(-0.5ex); }\n" ++
   -- Uniform small caps (CSS Fonts 4 §font-variant-caps: `all-small-caps`
   -- asks for c2sc + smcp), so mixed-case source sets at one height and the

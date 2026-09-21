@@ -3768,6 +3768,30 @@ def verbatimInlines (s : String) : Array Inline := Id.run do
     out := out.push (.text (if kept.isEmpty then "\u00a0" else kept))
   return out
 
+/-- Where a heading rule stands against the heading's baseline. `xHeight`
+is the engine's own placement — raised half the heading face's measured
+x-height at its size, like a dash (Hochuli, Detail in Typography: a rule
+relates to the type it cuts). `baseline` is TeX's `\hrule`: zero depth,
+bottom edge on the baseline — what a `\sectionlinesformat` rule draws. -/
+inductive RulePosition where
+  | xHeight
+  | baseline
+  deriving Repr, BEq, Inhabited, DecidableEq
+
+/-- How far above the baseline a heading rule's bottom edge stands, from
+its position and the heading face's x-height at the heading's size. The
+one resolving site: `Layout` reads it into `Seg.rule`'s raise and the
+HTML stylesheet's translate is its other projection. -/
+def RulePosition.raise : RulePosition → Sp → Sp
+  | .xHeight, xh => xh / 2
+  | .baseline, _ => 0
+
+/-- The two positions are exact: a baseline rule is raised by nothing, an
+x-height rule by half the x-height — the statement both backends project. -/
+theorem heading_rule_position_exact (xh : Int) :
+    RulePosition.raise .baseline xh = 0 ∧ RulePosition.raise .xHeight xh = xh / 2 :=
+  ⟨rfl, rfl⟩
+
 /-- How an element kind looks, from `\style{element}{...}`. Every field a
 backend used to hard-code is here instead, so a design lives in the document.
 `font` is a template: the inline wrappers a declaration like
@@ -3779,6 +3803,11 @@ structure ElementStyle where
   after : Option SymGlue := none
   /-- A rule filling the rest of the heading's line, in this palette colour. -/
   rule : Option (Color × Option String) := none
+  /-- Where `rule` stands against the baseline; undeclared, `xHeight`. -/
+  rulePosition : Option RulePosition := none
+  /-- `rule`'s thickness; undeclared, the engine's em-relative weight
+  (`Layout.headingRuleWeight`) in print and one device pixel on screen. -/
+  ruleThickness : Option SymGlue := none
   /-- List marker content, replacing the level's class-default marker. -/
   marker : Option (Array Inline) := none
   indent : Option SymGlue := none

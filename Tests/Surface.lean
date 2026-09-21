@@ -1450,6 +1450,27 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat koma section spacing"
     (((koma.1.styles.find? "section").bind (·.before)).map (·.width) == some { sp := Dim.pt 6 })
   t "compat koma section rule" (((koma.1.styles.find? "section").bind (·.rule)).map (·.2) == some (some "ink"))
+  -- The TeX rule's own geometry rides along: `\hrule` has zero depth, so
+  -- the reading is a baseline rule, and its `height` is the thickness —
+  -- TeX's 0.4 pt default when none is written (TeXbook p. 221). A height
+  -- the length grammar cannot read is said (E0321), never defaulted.
+  t "compat koma section rule is a baseline rule at TeX's default height"
+    ((koma.1.styles.find? "section").map (fun st => (st.rulePosition, st.ruleThickness.map (·.width.sp)))
+      == some (some .baseline, some (Dim.pt 4 / 10)))
+  let ruleH (h : String) := elabStr (pre ("\\definecolor{ink}{HTML}{112233}\\makeatletter" ++
+    s!"\\renewcommand\\sectionlinesformat[4]\{#3#4 \\textcolor\{ink}\{\\leaders\\hrule{h}\\hfill\\kern\\z@}}\\makeatother"))
+  let thickOf (d : Ir.Doc × Array Diag) : Option Int :=
+    ((d.1.styles.find? "section").bind (·.ruleThickness)).map (·.width.sp)
+  t "compat koma section rule reads its declared height"
+    (thickOf (ruleH " height 1.5pt") == some (Dim.pt 3 / 2))
+  t "compat koma section rule reads a \\p@ height"
+    (thickOf (ruleH " height .6\\p@") == some (Dim.pt 6 / 10))
+  t "compat koma section rule with an unreadable height is said, colour kept"
+    ((ruleH " height 0.6zz").2.any (·.code == "E0321") &&
+      (((ruleH " height 0.6zz").1.styles.find? "section").bind (·.rule)).isSome)
+  t "compat koma section rule with a depth is not the idiom"
+    (errCodes (pre ("\\definecolor{ink}{HTML}{112233}\\makeatletter\\renewcommand\\sectionlinesformat[4]" ++
+      "{#3#4 \\textcolor{ink}{\\leaders\\hrule height 1pt depth 1pt\\hfill}}\\makeatother")) == ["E0113"])
   t "compat enumitem list" (((koma.1.styles.find? "itemize").bind (·.gap)).map (·.width) == some { sp := Dim.pt 3 } &&
     ((koma.1.styles.find? "itemize").bind (·.marker)).isSome)
   t "compat thispagestyle empty starts running content on page 2" (koma.1.headFrom == 2)

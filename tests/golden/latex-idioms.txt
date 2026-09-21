@@ -109,7 +109,7 @@ note[N0100] 37:1 '\colorlet' → \palette{ bulletcolor = muted }
 note[N0100] 40:1 '\setkomafont{section}' → \style{section}{ font = {...} }
 note[N0100] 41:1 '\RedeclareSectionCommand{section}' → \style{section}{ before = 3 * sepunit, after = 1 * sepunit }
 note[N0100] 42:1 '\makeatletter' → nothing: @-names are always readable here
-note[N0100] 43:1 '\sectionlinesformat' → \style{section}{ rule = rulecolor }
+note[N0100] 43:1 '\sectionlinesformat' → \style{section}{ rule = rulecolor, rule-position = baseline, rule-thickness = 0.6pt }
 note[N0100] 44:1 '\makeatother' → nothing: @-names are always readable here
 note[N0100] 45:1 '\setlist[itemize]' → \style{itemize}{ indent = 1.2em, before = sepunit, gap = sepunit, marker = {\textcolor {bulletcolor}{\small \textendash}} }
 note[N0100] 46:1 '\thispagestyle{empty}' → \runninghead[from = 2]{...}

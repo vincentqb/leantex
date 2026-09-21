@@ -8678,7 +8678,7 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
   return (spec, evs)
 
 def styleKeys : List String :=
-  ["font", "before", "after", "rule", "marker", "indent", "gap",
+  ["font", "before", "after", "rule", "rule-position", "rule-thickness", "marker", "indent", "gap",
    "align", "separator", "rule-above", "rule-above-skip", "rule-above-gap",
    "rule-below", "rule-below-gap", "rule-below-skip", "author-font",
    "author-strut", "hover", "focus", "motion"]
@@ -8760,6 +8760,13 @@ list levels: itemize2..4, enumerate2..4")
       | "author-strut" => st := { st with authorStrut := ← asLength }
       | "rule" =>
         if let some v ← asColor then st := { st with rule := some v }
+      | "rule-thickness" => st := { st with ruleThickness := ← asLength }
+      | "rule-position" =>
+        match valueSrc.trimAscii.toString with
+        | "baseline" => st := { st with rulePosition := some .baseline }
+        | "xheight" => st := { st with rulePosition := some .xHeight }
+        | v =>
+          diag ctx .E0323 s!"'rule-position' in '\\style' expects baseline or xheight, got '{v}'" pos
       | "separator" =>
         if let some v ← asColor then st := { st with separator := some v }
       | "align" =>

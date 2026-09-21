@@ -1325,6 +1325,46 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   t "the heading rule sits at half the heading's own x-height"
     (ruleRaises ==
       #[(font.xHeightOptical : Int) * Layout.sectionSize geom 1 / font.unitsPerEm / 2])
+  -- TeX's `\leaders\hrule height h` has zero depth: its bottom edge is the
+  -- heading's baseline and `h` is its thickness. Position and thickness
+  -- are one IR fact (`Ir.RulePosition`, `heading_rule_position_exact`);
+  -- `Seg.rule`'s raise is its projection, so a baseline rule is raise 0
+  -- and the native `rule = c` keeps exactly the x-height raise above.
+  let firstRule (d : Ir.Doc) : Array (Int × Int) :=
+    ((layoutOf oneFace d geom).pages.flatMap (·.lines)).filterMap
+      fun l => if l.furniture then none else
+        l.segs.findSome? fun s => match s with
+          | .rule _ th raise _ => some (th, raise)
+          | _ => none
+  let komaRule := (Elab.run "t" ("\\documentclass{scrartcl}\\definecolor{ink}{HTML}{112233}" ++
+    "\\makeatletter\\renewcommand\\sectionlinesformat[4]{#3#4 \\textcolor{ink}{\\leaders\\hrule height 2pt\\hfill}}\\makeatother" ++
+    "\\begin{document}\\section{S}x\\end{document}")).1
+  t "a TeX hrule heading rule sits on the baseline at its declared height"
+    (firstRule komaRule == #[(Dim.pt 2, 0)])
+  let nativeBaseline := (Elab.run "t" ("\\documentclass{article}\\palette{ ink = #112233 }" ++
+    "\\style{section}{ rule = ink, rule-position = baseline, rule-thickness = 2pt }" ++
+    "\\begin{document}\\section{S}x\\end{document}")).1
+  t "a native baseline rule is the same Layout.Out fact"
+    (firstRule nativeBaseline == firstRule komaRule)
+  -- The synthetic résumé shape: a huge centred title, a two-line contact
+  -- block, a ruled section and its first entry. The rule's bottom is the
+  -- section title's baseline, and the section's declared `before` stays
+  -- above the title block's declared gap in the placed baselines.
+  let heroDoc := (Elab.run "t" ("\\documentclass{scrartcl}\\definecolor{ink}{HTML}{112233}" ++
+    "\\makeatletter\\renewcommand\\sectionlinesformat[4]{#3#4 \\textcolor{ink}{\\leaders\\hrule height 1pt\\hfill}}\\makeatother" ++
+    "\\begin{document}\\begin{center}{\\Huge\\bfseries Placeholder Person}\\\\[2ex]" ++
+    "one@example.org\\\\ example.org\\end{center}" ++
+    "\\section{Experience}Entry title\\end{document}")).1
+  let heroLines := ((layoutOf oneFace heroDoc geom).pages.flatMap (·.lines)).filter (!·.furniture)
+  let ruledLine := heroLines.find? fun l => l.segs.any fun s => match s with
+    | .rule .. => true | _ => false
+  t "the synthetic hero page draws its section rule on the section baseline"
+    ((ruledLine.bind fun l => l.segs.findSome? fun s => match s with
+        | .rule _ th raise _ => some (th, raise)
+        | _ => none) == some (Dim.pt 1, 0))
+  t "the synthetic hero page sets title, two contact lines, section, entry"
+    (heroLines.size == 5 && (heroLines.zip (heroLines.extract 1 heroLines.size)).all
+      fun (a, b) => a.y < b.y)
   -- Gaps: `\vspace` is the gap in place of parskip and adds to other declared
   -- glue; an element's own space (a list's topsep, a heading's before) takes
   -- the larger against what is owed, as LaTeX's `\addvspace` does.
