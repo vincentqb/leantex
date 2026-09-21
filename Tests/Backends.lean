@@ -3161,8 +3161,9 @@ def contentOpsBleedExpected : String :=
 
 /-- The stream with its marked-content lines removed: what the artifact
 acceptance strips from the file, spelled on the string. `Pdf.stripMarks`
-is the same operation on the typed line list; `stripEqualsInk` below is
-the bridge between them, judged on every page. -/
+is the same operation on the typed line list; the per-page row "stripping
+the marked-content lines of the file is stripping the typed lines" in
+`artifactMarkChecks` is the bridge between them. -/
 def stripMarkLines (s : String) : String :=
   "\n".intercalate ((s.splitOn "\n").filter fun l =>
     !(l == "EMC" || l.endsWith " BDC" || l.endsWith " BMC"))
