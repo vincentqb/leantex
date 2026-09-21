@@ -240,7 +240,7 @@ object and cross-reference streams — now rides compressed when that is
 smaller. An alpha PNG's decoded planes are Up-filtered and really
 deflated (Predictor 15 declared on both the image and its SMask), so the
 one deck whose 4575×4575 RGBA figure used to ship as 84 MB of stored
-blocks writes a 2.2 MB PDF (85,340,066 → 2,221,643 bytes); the paper
+blocks writes a 2.2 MB PDF (85,340,066 → 2,226,785 bytes); the paper
 drops 1,149,515 → ~643 KB, the résumé 1,617,002 → ~1,032 KB, the card
 1,234,712 → ~519 KB. The round trip is the engine's own to prove —
 deflate emits only symbols inflate's tables decode — and is owed as
