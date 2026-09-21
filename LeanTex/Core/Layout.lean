@@ -1997,11 +1997,156 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp) (num : Nat) :
     | none => miss := miss.push (idx, c)
   return (.box w idx sty.color sty.link gs markSize sty.underline raise sty.ground, miss)
 
-/-- Flatten inlines into Knuth-Plass items. The fourth component maps the
-index of a forced-break penalty to extra vertical space the document asked for
-there (`\\[1ex]`); it rides beside the items because the line breaker has no
-use for it, and putting it in `Item` would make every pattern carry a field
-only the page builder reads. -/
+/-- The token fold's state: what the walk has built, and what it has
+lost beside it. `dropped` is the never-silent ledger — a (face, char)
+pair no face covers lands here and nowhere else, and `itemsOfInlines`
+renders every entry as its E0405, so dropped ink is always named to the
+user. `substs` (W0009) and `unstyled` (N0018) are the reported
+substitutions: set from another face, never lost. -/
+private structure ItemsAcc where
+  items : Array Item := #[]
+  notes : Array (Nat × Nat × Array Inline) := #[]
+  dropped : Array (Nat × Char) := #[]
+  substs : Array (Nat × Char × Nat) := #[]
+  unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
+  extras : Std.HashMap Nat Sp := {}
+  cache : Std.HashMap String (Array Nat) := {}
+
+/-- One flatten token into the accumulator — the fold step of
+`itemsOfInlines`, named so a conservation statement can induct over it:
+every token's ink becomes items, an entry in `dropped`, or a note body
+carried whole, and nothing else. -/
+private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
+    (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
+    (acc : ItemsAcc) (tk : Tk) : ItemsAcc :=
+  match tk with
+  | .word sty chars =>
+    let idx := fs.lookup sty.slot sty.bold sty.italic
+    let font := fs.get idx
+    -- Small caps: the face's own `smcp`+`c2sc` when it carries them — the
+    -- word stays as typed and the gids substitute in `wordItems` — and
+    -- uniform synthesis otherwise. One meaning, two mechanisms.
+    let useGsub := sty.smallcaps && !font.smallCaps.isEmpty
+    let (sty, chars) :=
+      if sty.smallcaps && !useGsub then
+        smallCapSynth (smallCapScaleFor font) sty chars
+      else (sty, chars)
+    let sz := size * sty.scale / 1000
+    let (ws, m, s, c') :=
+      wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz idx sty.color
+        sty.ground sty.link sty.underline useGsub fs font chars
+        acc.dropped acc.substs acc.cache
+    { acc with items := acc.items ++ ws, dropped := m, substs := s, cache := c' }
+  | .icon sty c =>
+    -- The styled face first (an icon font declared as the body face is
+    -- legal), then the fallback chain; either hit is the icon's own face
+    -- by design. Only total absence is a loss (E0405, rendered by the
+    -- caller from `dropped`).
+    let idx := fs.lookup sty.slot sty.bold sty.italic
+    let sz := size * sty.scale / 1000
+    let hit :=
+      match glyphOf sz (fs.get idx) c with
+      | some g => some (idx, g)
+      | none =>
+        fs.fallbackFor c |>.bind fun fb =>
+          (glyphOf sz (fs.get fb) c).map (fb, ·)
+    match hit with
+    | some (fb, g) =>
+      let box : Item := .box g.2.2 fb sty.color sty.link #[g] sz sty.underline 0
+        sty.ground
+      { acc with items := acc.items.push box }
+    | none =>
+      if acc.dropped.contains (idx, c) then acc
+      else { acc with dropped := acc.dropped.push (idx, c) }
+  | .note num sty body =>
+    let (mk, miss) := markBox fs sty (size * sty.scale / 1000) num
+    let acc := miss.foldl (fun acc m =>
+      if acc.dropped.contains m then acc
+      else { acc with dropped := acc.dropped.push m }) acc
+    { acc with notes := acc.notes.push (acc.items.size, num, body)
+               items := acc.items.push mk }
+  | .formula display sty body =>
+    -- The flatten pass pushes a formula token only when a math face with
+    -- constants is present.
+    match fs.mathFont? with
+    | some (idx, font, consts) =>
+      -- The math face sets at the size that makes its x-height the
+      -- surrounding face's — fontspec's `Scale=MatchLowercase`, the rule
+      -- `Math.mathSize` states and its agreement theorems bound to the sp.
+      let around := fs.get (fs.lookup sty.slot sty.bold sty.italic)
+      let runSize := size * sty.scale / 1000
+      let e : MathEnv := {
+        idx, font, consts, fs
+        color := sty.color
+        link := sty.link
+        underline := sty.underline
+        ground := sty.ground
+        base := (Math.mathSize runSize.toNat around.xHeightOptical
+          around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
+      let (ms, m) := mathItems e display body acc.dropped
+      -- The substitutions the chain made, named like text's (W0009):
+      -- a scalar the math face lacks that a fallback face set. One the
+      -- assembly paths recorded missing was never substituted — a grown
+      -- construction is one face — so `m` excludes it here. A math
+      -- alphabet's scalar no face covers rendered as its stand-in base
+      -- letter (`layMathNucleus`): N0018 names the styling difference.
+      let acc := (Math.MList.scalarsList #[] body).foldl (fun acc c =>
+        if (font.gid c).isNone && !m.contains (idx, c) then
+          match fs.fallbackFor c with
+          | some fb =>
+            if ((fs.get fb).gid c).isSome && !acc.substs.contains (idx, c, fb) then
+              { acc with substs := acc.substs.push (idx, c, fb) }
+            else acc
+          | none =>
+            match Math.MathAlphabet.unapply c with
+            | some (a, base) =>
+              if acc.unstyled.any (·.2.1 == c) then acc
+              else { acc with unstyled := acc.unstyled.push (idx, c, a, base) }
+            | none => acc
+        else acc) acc
+      { acc with dropped := m, items := acc.items ++ ms }
+    | none => acc
+  | .space sty =>
+    let idx := fs.lookup sty.slot sty.bold sty.italic
+    let g : Item := .glue (interword (size * sty.scale / 1000) (fs.get idx))
+    { acc with items := acc.items.push g }
+  | .fill =>
+    -- Stretchable but not a legal breakpoint on its own.
+    { acc with items := acc.items.push (.glue { fil := true }) }
+  | .strut g =>
+    -- Zero width, declared height: raises the line box, ships no ink.
+    let strut : Item := .rule 0 (max 0 (g.width.resolve size xHeight)) 0
+      Ir.Color.black
+    { acc with items := acc.items.push strut }
+  | .img src spec =>
+    -- The request resolves against the store the driver filled. An entry
+    -- that did not load (the driver has said why) keeps the requested
+    -- size around a default 1 in square, so the document still compiles
+    -- and the placeholder shows where the figure would stand.
+    let idx? := imgs.find? src
+    let (iW, iH) := match idx?.bind fun k => (imgs.get? k).bind (·.info) with
+      | some inf => (inf.width, inf.height)
+      | none => (Dim.inch 1, Dim.inch 1) -- the placeholder square: a stated default (comment above), not a design token — the driver already named the load failure
+    let (w, h) := Image.resolveSize spec iW iH textW textH
+    { acc with items := acc.items.push (.img idx? (max 0 w) (max 0 h)) }
+  | .brk extra =>
+    let items := acc.items.push (.glue { fil := true, parfill := true })
+    let extras :=
+      let sp := extra.width.resolve size xHeight
+      if sp != 0 then acc.extras.insert items.size sp else acc.extras
+    { acc with items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
+               extras := extras }
+
+/-- Inlines to breakable items: one fold of `itemsOfTok` over the flatten
+tokens, then every loss the fold ledgered rendered as its diagnostic —
+the never-silent contract: no character leaves this function silently,
+it is in the items, in a note body, or named by an E0405 (with W0009 and
+N0018 naming the substitutions that kept ink at the cost of its face).
+The fourth returned component maps the index of a forced-break penalty
+to extra vertical space the document asked for there (`\\[1ex]`); it
+rides beside the items because the line breaker has no use for it, and
+putting it in `Item` would make every pattern carry a field only the
+page builder reads. -/
 private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (imgs : Image.Store := {})
@@ -2009,123 +2154,9 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
       Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline) := Id.run do
   let st := flatten (fs.mathFont?.isSome) noteOk {} baseStyle xs
-  let mut items : Array Item := #[]
-  let mut notes : Array (Nat × Nat × Array Inline) := #[]
-  let mut missing : Array (Nat × Char) := #[]
-  let mut substs : Array (Nat × Char × Nat) := #[]
-  let mut unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
-  let mut extras : Std.HashMap Nat Sp := {}
-  let mut cache := cache
-  for tk in st.toks do
-    match tk with
-    | .word sty chars =>
-      let idx := fs.lookup sty.slot sty.bold sty.italic
-      let font := fs.get idx
-      -- Small caps: the face's own `smcp`+`c2sc` when it carries them — the
-      -- word stays as typed and the gids substitute in `wordItems` — and
-      -- uniform synthesis otherwise. One meaning, two mechanisms.
-      let useGsub := sty.smallcaps && !font.smallCaps.isEmpty
-      let (sty, chars) :=
-        if sty.smallcaps && !useGsub then
-          smallCapSynth (smallCapScaleFor font) sty chars
-        else (sty, chars)
-      let sz := size * sty.scale / 1000
-      let (ws, m, s, c') :=
-        wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz idx sty.color
-          sty.ground sty.link sty.underline useGsub fs font chars
-          missing substs cache
-      missing := m
-      substs := s
-      cache := c'
-      items := items ++ ws
-    | .icon sty c =>
-      -- The styled face first (an icon font declared as the body face is
-      -- legal), then the fallback chain; either hit is the icon's own face
-      -- by design. Only total absence is a loss (E0405, below).
-      let idx := fs.lookup sty.slot sty.bold sty.italic
-      let sz := size * sty.scale / 1000
-      let hit :=
-        match glyphOf sz (fs.get idx) c with
-        | some g => some (idx, g)
-        | none =>
-          fs.fallbackFor c |>.bind fun fb =>
-            (glyphOf sz (fs.get fb) c).map (fb, ·)
-      match hit with
-      | some (fb, g) =>
-        items := items.push (.box g.2.2 fb sty.color sty.link #[g] sz sty.underline 0 sty.ground)
-      | none =>
-        unless missing.contains (idx, c) do
-          missing := missing.push (idx, c)
-    | .note num sty body =>
-      let (mk, miss) := markBox fs sty (size * sty.scale / 1000) num
-      for m in miss do
-        unless missing.contains m do
-          missing := missing.push m
-      notes := notes.push (items.size, num, body)
-      items := items.push mk
-    | .formula display sty body =>
-      -- The flatten pass pushes a formula token only when a math face with
-      -- constants is present.
-      match fs.mathFont? with
-      | some (idx, font, consts) =>
-        -- The math face sets at the size that makes its x-height the
-        -- surrounding face's — fontspec's `Scale=MatchLowercase`, the rule
-        -- `Math.mathSize` states and its agreement theorems bound to the sp.
-        let around := fs.get (fs.lookup sty.slot sty.bold sty.italic)
-        let runSize := size * sty.scale / 1000
-        let e : MathEnv := {
-          idx, font, consts, fs
-          color := sty.color
-          link := sty.link
-          underline := sty.underline
-          ground := sty.ground
-          base := (Math.mathSize runSize.toNat around.xHeightOptical
-            around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
-        let (ms, m) := mathItems e display body missing
-        -- The substitutions the chain made, named like text's (W0009):
-        -- a scalar the math face lacks that a fallback face set. One the
-        -- assembly paths recorded missing was never substituted — a grown
-        -- construction is one face — so `m` excludes it here. A math
-        -- alphabet's scalar no face covers rendered as its stand-in base
-        -- letter (`layMathNucleus`): N0018 names the styling difference.
-        for c in Math.MList.scalarsList #[] body do
-          if (font.gid c).isNone && !m.contains (idx, c) then
-            if let some fb := fs.fallbackFor c then
-              if ((fs.get fb).gid c).isSome && !substs.contains (idx, c, fb) then
-                substs := substs.push (idx, c, fb)
-            else if let some (a, base) := Math.MathAlphabet.unapply c then
-              unless unstyled.any (·.2.1 == c) do
-                unstyled := unstyled.push (idx, c, a, base)
-        missing := m
-        items := items ++ ms
-      | none => pure ()
-    | .space sty =>
-      let idx := fs.lookup sty.slot sty.bold sty.italic
-      items := items.push (.glue (interword (size * sty.scale / 1000) (fs.get idx)))
-    | .fill =>
-      -- Stretchable but not a legal breakpoint on its own.
-      items := items.push (.glue { fil := true })
-    | .strut g =>
-      -- Zero width, declared height: raises the line box, ships no ink.
-      items := items.push (.rule 0 (max 0 (g.width.resolve size xHeight)) 0
-        Ir.Color.black)
-    | .img src spec =>
-      -- The request resolves against the store the driver filled. An entry
-      -- that did not load (the driver has said why) keeps the requested
-      -- size around a default 1 in square, so the document still compiles
-      -- and the placeholder shows where the figure would stand.
-      let idx? := imgs.find? src
-      let (iW, iH) := match idx?.bind fun k => (imgs.get? k).bind (·.info) with
-        | some inf => (inf.width, inf.height)
-        | none => (Dim.inch 1, Dim.inch 1)
-      let (w, h) := Image.resolveSize spec iW iH textW textH
-      items := items.push (.img idx? (max 0 w) (max 0 h))
-    | .brk extra =>
-      items := items.push (.glue { fil := true, parfill := true })
-      let sp := extra.width.resolve size xHeight
-      if sp != 0 then
-        extras := extras.insert items.size sp
-      items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
+  let acc := st.toks.foldl (itemsOfTok pats size xHeight fs imgs textW textH)
+    { cache := cache }
+  let mut items := acc.items
   -- A paragraph that already ends in a forced break needs no second one: an
   -- empty final line has no feasible predecessor, and the breaker would
   -- return no lines at all -- the whole paragraph, silently gone.
@@ -2136,16 +2167,16 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     items := items.push (.glue { fil := true, parfill := true })
     items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
   let mut diags := st.diags
-  for (idx, c) in missing do
+  for (idx, c) in acc.dropped do
     diags := diags.push (Diag.of .E0405
       s!"'{(fs.get idx).family}' has no glyph for '{c}' (U+{hex c.toNat}); dropped"
       (help := "declare a face that covers it in \\fonts, or accept the loss \
 with \\allow{E0405}"))
-  for (idx, c, fb) in substs do
+  for (idx, c, fb) in acc.substs do
     diags := diags.push (Diag.of .W0009
       s!"'{(fs.get idx).family}' has no glyph for '{c}' \
         (U+{hex c.toNat}); set from '{(fs.get fb).family}'")
-  for (idx, c, a, base) in unstyled do
+  for (idx, c, a, base) in acc.unstyled do
     let (bold, italic) := a.synthStyle
     if bold || italic then
       diags := diags.push (Diag.of .N0018
@@ -2157,7 +2188,7 @@ with \\allow{E0405}"))
         s!"'{(fs.get idx).family}' has no {a.styleLabel} '{base}' \
 (U+{hex c.toNat}); the plain letter stands in"
         (help := "declare a math face that carries it: \\fonts{ math = ... }"))
-  return (items, diags, cache, extras, notes)
+  return (items, diags, acc.cache, acc.extras, acc.notes)
 where
   hex (n : Nat) : String := Id.run do
     let ds := "0123456789ABCDEF".toList
