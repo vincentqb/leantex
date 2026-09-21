@@ -225,6 +225,44 @@ keyed synthetics (exact mask, or refusal) and mutates them: 44339 inputs,
 no crash, no lie. Unlocks `image-plan-factor` (the first `Source` fact the
 `Plan` must carry now exists as a field and a pure function).
 
+2026-09-21 — a content stream is typed operators, and the bytes are one
+serializer's spelling (pdf-contentops, M7-06; refactor — every corpus PDF
+byte-identical). `Pdf.contentStream` was a 190-line string builder: the
+loop that decided pen moves, `TJ` arrays and graphics-state changes was
+the loop that spelled them, and no theorem could read an equation off it
+— which is why tagging's `mark_ink_exact` could only be stated over a
+string. Now `LeanTex/Core/PdfContent.lean` holds the operator vocabulary
+(`ContentOp`: fill, path, text, image, imageMissing; `TextOp`: scale,
+move, font, color, show; `TextItem`: glyphs, adjust; `PathOp`: moveTo,
+lineTo, curveTo, close, rect — every operator the writer emits, and the
+painting operator derived from which paints a path declares, so `B`
+without a stroke is unrepresentable), `contentOps` (the layout walk as a
+functional state machine — `TextSt.toPen`, `setFace`, `closeTJ`, one
+`stepSeg` — the open `TJ` array being the state's `items`, so a run can
+only join it or close it), and `render` (spelling alone). The writer's
+stream is `render (contentOps …)`; `pageStreams` and the deflate cache
+read the same bytes. Proved: `content_render_exact` — the accumulating
+`render` equals the structural `renderList` — with `text_`, `show_`,
+`glyphs_` and `path_render_exact` for each fold, so a fact about the
+bytes is a fact about the array; `contentOps_text` — the glyph census of
+the operators (`runsOf`) is the page's run census (`pageRuns`): no run
+dropped, invented or reordered, stated as the census equality because
+the walk changes type (PageOut → ContentOp), as `structTree_text` is;
+`gidHex_inj`/`glyphs_inj` — a glyph string determines its ids below
+65536; and `render_not_inj` — the stream is not injective (a page fill
+and a fill-only rectangle path spell the same `re f`), so nothing may
+read an operator array back from bytes. Marked content is not added: no
+caller exists until M7-19, and it lands as `marked (tag) (body)` on
+`TextOp`/`ContentOp` where every exhaustive match here breaks the build
+until it is handled — the operation boundary is typed for it. The red
+test is the synthetic operator page in Tests/Backends (every operator,
+the recorded pre-slice spelling), observed failing against a stub; the
+byte witness is 72 corpus PDFs identical to main's at the same base;
+bench neutral within host noise (paper 161–164 → 164 ms, underline
+459–467 → 460–472). The hook's backend list gains the module, so a
+surface reach-in there is refused like Pdf.lean's. Unlocks M7-12,
+M7-18, M7-20.
+
 2026-09-21 — table header rows: one IR fact, `<thead>`/`<th>` in HTML
 (M7-08, `table-header-ir`). booktabs' head was knowable at elaboration
 — the rows before the first `\midrule` — and recorded nowhere, so the
