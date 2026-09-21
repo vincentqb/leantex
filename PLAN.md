@@ -263,6 +263,77 @@ bench neutral within host noise (paper 161–164 → 164 ms, underline
 surface reach-in there is refused like Pdf.lean's. Unlocks M7-12,
 M7-18, M7-20.
 
+2026-09-21 — what a browser makes of every corpus page is a matrix, not a
+sentence (M7-10, `html-oracle`; test infrastructure, no artifact changed).
+The HTML backend had theorems over what it emits and dated Playwright
+probes in this log, and nothing between them: no check in the tree ever
+loaded a shipped page. `scripts/html-oracle.lean` is the deep oracle the
+tier needed — it builds every `tests/corpus/*.tex` to HTML in a scratch
+copy of the corpus (a page beside the files it names, as `leantex doc.tex`
+leaves it), drives the host's cached Playwright Chromium over each page,
+and is the sole writer of `tests/oracles/html-reader-matrix.txt`: a
+`target:` line naming the readers the run exercised, `tools:` and `date:`
+(data, never gated), a `[feature]` section keyed by (feature, reader) and
+a `[fixture]` section keyed by (fixture, reader), cells
+`pass | fail:<key> | untested` with each failure's reason in a `#` line
+beneath. No dependency enters: the module and browser are found where
+`npx playwright install` leaves them (or `LEANTEX_PLAYWRIGHT` names one),
+and a reader that cannot start is `untested`, never `pass` — a run with no
+launchable Chromium writes an all-`untested` column and the check fails.
+Eleven rows, each read from the live page and never from the source:
+load (readyState complete, no page error, no failed request the engine
+emitted — a stylesheet or icon the document names by URL is the author's
+file), images (every `img` complete, natural size nonzero and equal to the
+`width`/`height` the engine wrote), fonts (every shipped `FontFace` loads
+and `document.fonts.check` holds for each family), mathml (every `math` in
+its namespace with a nonzero box), lang, landmarks (one `main`, at most
+one `h1`), snaps (a deck's `[data-snap]` count equals the elements the
+browser computes `scroll-snap-align: start` on, and the scroll space is
+one viewport per snap), color-scheme (body text on body surface ≥ 4.5:1
+in both schemes, and the stylesheet's own contract: default tokens flip
+to the dark set, declared colours hold), reduced-motion (no running
+animation, every step at full opacity, no smooth scroll), print (the
+deck partition: spacers hidden, steps uncovered, one frame per page; a
+body reading the default tokens black on white), no-script (scripting
+off: a non-deck page has no executable script; a deck sets no marker and
+the pure-CSS pager uncovers every step at the end of the scroll). The
+engine's own `Contrast.light`/`dark` ink and surface are passed in, so
+the oracle judges against the token set the theorems cover. `--check`
+reads the file and demands `pass` in every target column; `--selftest`
+runs it against hand-written matrices (green passes; one target cell
+`untested` or `fail:` fails; a non-target cell gates nothing; a target
+reader without a column is an offence).
+- Measured (Chromium 151.0.7922.34 through Playwright 1.62.0, 72 fixtures
+  built, `theme-modern` does not build; Firefox `untested` — the cached
+  build cannot start on this host's libstdc++, so the column is recorded
+  data and no Firefox claim is made): nine of eleven rows pass on every
+  fixture that exercises them, including the snap census on every deck
+  and the no-script floor. Two rows fail, on five fixtures, and the
+  matrix is committed red on exactly those seven cells — the file records
+  the artifact, and the check stays red until the owning slices land:
+  (i) **color-scheme**: a document that declares `ink` without `surface`
+  (`palette`, `resume`, `diagram`) reads its declared ink on the
+  scheme-default dark surface — 1.00:1 and 1.04:1; the dark render of the
+  palette page shows only its coloured spans. The contract "a declared key
+  is the document's value in both schemes" is right per key and wrong per
+  pair; the invariant owed at the resolving site is that body ink and
+  surface are pinned together or flipped together, with a regression test
+  over the emitted stylesheet. (ii) **images**: `figures` ships a PDF
+  graphic as `<img src="…pdf">`, which no browser decodes (natural 0×0)
+  and no diagnostic names — an `_accounts` gap for the HTML image path;
+  and the boundary SVG in `diagram-boundary` carries its point size in the
+  pixel-valued `width`/`height` attributes (56×28 written, 76×38 natural),
+  so the browser shows it at 74 % — a backend disagreement of the
+  `_agree` shape. Recorded, not judged: a themed deck keeps its declared
+  body colours under print emulation, because the theme's body rules
+  follow the print reset in source order.
+- Not done, by scope: no validator (vnu) or accessibility engine (axe) —
+  both would be dependencies; the matrix certifies nothing semantic about
+  accessibility. Named next: the matrix parser moves beside the PDF
+  conformance gate so `lake test` reads both files; the AGENTS deep-oracle
+  list gains this script; Firefox becomes a target when a build that runs
+  here exists.
+
 2026-09-21 — table header rows: one IR fact, `<thead>`/`<th>` in HTML
 (M7-08, `table-header-ir`). booktabs' head was knowable at elaboration
 — the rows before the first `\midrule` — and recorded nowhere, so the
@@ -4703,9 +4774,13 @@ is evidence, not a theorem.
   `tests/corpus/`; the M3/M5 acceptance bars run locally against the private
   corpus and never enter CI.
 - A third tier, external readers and validators as data (M11):
-  `scripts/pdf-oracles.lean` and its HTML twin `scripts/html-oracle.lean`
-  regenerate `tests/oracles/reader-matrix.txt` — the script is the file's
-  only writer — and `lake test` reads the file the way it reads a golden.
+  `scripts/pdf-oracles.lean` regenerates `tests/oracles/reader-matrix.txt`
+  and its HTML twin `scripts/html-oracle.lean` regenerates
+  `tests/oracles/html-reader-matrix.txt` (`[feature]` and `[fixture]`
+  sections; HTML has no profile claim) — each script is its file's only
+  writer — and `lake test` reads the file the way it reads a golden (the
+  HTML file's gate is the script's own `--check` until the matrix parser
+  is shared with the PDF gate).
   Two sections, because the two judgements have different keys:
   `[feature]` rows keyed by (feature, reader) and `[profile]` rows keyed
   by (profile, fixture); cells `pass | fail:<reason> | untested`; a header
