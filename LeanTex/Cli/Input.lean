@@ -18,7 +18,7 @@ namespace LeanTex.Cli.Input
 
 open LeanTex.Core
 
-def readInput (dir : System.FilePath) (name : String) (pos : Pos) :
+def readInput (dir : System.FilePath) (file name : String) (pos : Pos) :
     IO (Array Parse.Raw × Array Diag) := do
   let name := if name.endsWith ".tex" then name else name ++ ".tex"
   let path := dir / name
@@ -30,30 +30,38 @@ def readInput (dir : System.FilePath) (name : String) (pos : Pos) :
     -- file, and the wrapper is what carries that name to the elaborator.
     return (#[.env (Parse.inputEnv path.toString) sub pos], lexDs ++ parseDs)
   else
-    let d := DriverDiag.inputMissing name (some ⟨dir.toString, pos⟩)
+    -- The span names `file`, the file the `\input` sits in — the reader
+    -- goes to that line to fix it, and a directory has no line 5.
+    let d := DriverDiag.inputMissing name (some ⟨file, pos⟩)
     return (#[], #[d])
 
 mutual
 
 /-- One splicing pass. `out` accumulates so the walk is linear: prepending to
-the recursive result would copy it at every element. -/
-def spliceList (dir : System.FilePath) (out : Array Parse.Raw) (ds : Array Diag) (hit : Bool) :
+the recursive result would copy it at every element. `file` is the file the
+raws under scrutiny were parsed from — the top-level document, or the
+spliced file whose `inputEnv` wrapper we descended into — so a missing
+`\input` is reported at the file and line that wrote it. -/
+def spliceList (dir : System.FilePath) (file : String)
+    (out : Array Parse.Raw) (ds : Array Diag) (hit : Bool) :
     List Parse.Raw → IO (Array Parse.Raw × Array Diag × Bool)
   | [] => pure (out, ds, hit)
   | .ctrl "input" pos :: .group nameRaws _ :: rest
   | .ctrl "include" pos :: .group nameRaws _ :: rest => do
-    let (sub, ds') ← readInput dir (Parse.rawSrc nameRaws) pos
-    spliceList dir (out ++ sub) (ds ++ ds') true rest
+    let (sub, ds') ← readInput dir file (Parse.rawSrc nameRaws) pos
+    spliceList dir file (out ++ sub) (ds ++ ds') true rest
   | r :: rest => do
-    let (r', ds', hit') ← spliceOne dir r
-    spliceList dir (out.push r') (ds ++ ds') (hit || hit') rest
+    let (r', ds', hit') ← spliceOne dir file r
+    spliceList dir file (out.push r') (ds ++ ds') (hit || hit') rest
 
-def spliceOne (dir : System.FilePath) : Parse.Raw → IO (Parse.Raw × Array Diag × Bool)
+def spliceOne (dir : System.FilePath) (file : String) :
+    Parse.Raw → IO (Parse.Raw × Array Diag × Bool)
   | .env n body p => do
-    let (body', ds, hit) ← spliceList dir #[] #[] false body.toList
+    let (body', ds, hit) ← spliceList dir ((Parse.inputEnvFile? n).getD file)
+      #[] #[] false body.toList
     return (.env n body' p, ds, hit)
   | .group body p => do
-    let (body', ds, hit) ← spliceList dir #[] #[] false body.toList
+    let (body', ds, hit) ← spliceList dir file #[] #[] false body.toList
     return (.group body' p, ds, hit)
   | r => pure (r, #[], false)
 
@@ -100,14 +108,14 @@ def expandInputs (file : String) (raws : Array Parse.Raw) :
   let mut diags : Array Diag := #[]
   let mut spliced : Array (String × Option String × Pos) := #[]
   for _ in [0:8] do
-    let (raws', ds, hitInput) ← spliceList dir #[] #[] false raws.toList
+    let (raws', ds, hitInput) ← spliceList dir file #[] #[] false raws.toList
     let (raws'', sp) ← expandLocalSty dir raws'
     raws := raws''
     diags := diags ++ ds
     spliced := spliced ++ sp
     unless hitInput || !sp.isEmpty do
       return (raws, diags, spliced)
-  let (_, _, stillInput) ← spliceList dir #[] #[] false raws.toList
+  let (_, _, stillInput) ← spliceList dir file #[] #[] false raws.toList
   let (_, stillSty) ← expandLocalSty dir raws
   if stillInput || !stillSty.isEmpty then
     diags := diags.push DriverDiag.inputTooDeep

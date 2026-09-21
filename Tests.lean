@@ -200,6 +200,7 @@ def main (args : List String) : IO UInt32 := do
   listingChecks ref
   posterCompatChecks ref
   styParityChecks ref
+  missingFileSpanChecks ref
   surfaceSuiteChecks ref
   backendSuiteChecks ref
   themeSuiteChecks ref

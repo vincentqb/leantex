@@ -215,6 +215,9 @@ structure ESt where
   before the .aux is written; here the `\bibliography` marker met later
   carries it, so the declared name reaches resolution with the block. -/
   bibStyle : Option String := none
+  /-- Where each `\bibliography` marker stands: delivered beside the `Doc`
+  (`ReqSpans.bib`), so the driver's E0503 names the line that asked. -/
+  bibSpans : Array (String × Span) := #[]
   /-- The palette in force in flow order — the last body `\palette` state,
   written by the declaration arm and read back at the top of every
   `elabBlocks` iteration, so a declaration inside a nested scope reaches
@@ -8118,6 +8121,7 @@ a side channel, never slide content" cpos
         | some (.group body _) =>
           let src := (rawSrc body).trimAscii.toString
           let style := (← get).bibStyle
+          modify fun st => { st with bibSpans := st.bibSpans.push (src, ⟨ctx'.file, cpos⟩) }
           -- \refname is locale data (babel ini captions): the heading is
           -- worded in the document's declared language.
           let blocks := blocks.push
@@ -10336,10 +10340,22 @@ declare \\assert\{ pages <= N } to take control" }
     body := blocks
   }
 
+/-- Where the requests a document states were declared — reporting metadata
+the driver reads to place its missing-file diagnostics. Delivered beside
+the `Doc`, never in it: two spellings of one document elaborate to one
+`Doc` (the compat conservation oracle holds them equal), while their
+marker positions differ. -/
+structure ReqSpans where
+  /-- Each `\bibliography` marker's span, keyed by its named source: the
+  line E0503 names when the driver finds no file. -/
+  bib : Array (String × Span) := #[]
+  deriving Repr, BEq, Inhabited
+
 /-- Elaborate parsed input. LaTeX idioms are rewritten first, so a document
-written for another engine compiles as written. -/
-def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
-    Doc × Array Diag :=
+written for another engine compiles as written. Returns the request spans
+too, for the driver's missing-file diagnostics. -/
+def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
+    Doc × Array Diag × ReqSpans :=
   let picPre := Compat.boundaryDecls raws
   let (raws, compatDiags) :=
     Compat.rewrite file raws (provideKeeps := renderedBuiltins ++ structuralNames)
@@ -10355,7 +10371,15 @@ def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
   let alt := Ir.altDiags doc
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
-  (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences)
+  (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences,
+    { bib := st.bibSpans })
+
+/-- The span-free face: what every caller that fulfils no file requests
+reads. -/
+def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
+    Doc × Array Diag :=
+  let (doc, diags, _) := runRawsSpanned file raws earlier
+  (doc, diags)
 
 def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input

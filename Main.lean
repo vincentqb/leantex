@@ -365,7 +365,8 @@ and its text goes to the pure core (`Bib.apply`) — parsing, ordering,
 formatting, and the citation rewrite all happen there. A missing file is
 E0503 naming the path; the marker stays empty and the citations' `?`
 marks say so on the page. -/
-def resolveBibliography (file : String) (doc : Ir.Doc) :
+def resolveBibliography (file : String) (doc : Ir.Doc)
+    (bibSpans : Array (String × Span) := #[]) :
     IO (Ir.Doc × Array Diag) := do
   let requested := Ir.bibRefs doc
   if requested.isEmpty then return (doc, #[])
@@ -379,7 +380,8 @@ def resolveBibliography (file : String) (doc : Ir.Doc) :
     if ← path.pathExists then
       sources := sources.push (src, ← IO.FS.readFile path)
     else
-      diags := diags.push (DriverDiag.bibMissing src path.toString none)
+      diags := diags.push (DriverDiag.bibMissing src path.toString
+        ((bibSpans.find? (·.1 == src)).map (·.2)))
   let (doc, applyDiags) := Bib.apply sources doc
   return (doc, diags ++ applyDiags)
 
@@ -672,7 +674,7 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := d
     let t ← IO.monoMsNow
     let (raws, inputDiags, spliced) ← Input.expandInputs file raws
     let (raws, dataDiags) ← resolveData file raws
-    let (doc, elabDiags) := Elab.runRaws file raws
+    let (doc, elabDiags, reqSpans) := Elab.runRawsSpanned file raws
       (lexDiags ++ parseDiags ++ inputDiags ++ dataDiags)
     -- N0020 says a `.sty` was read and how much of it took; its counts
     -- are read off the elaborated diagnostics, so it is built after them.
@@ -683,7 +685,7 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := d
         Compat.styRead (src.getD file) sty pos elabDiags
     ui.phase "elab" s!"{doc.body.size} blocks" (← since t)
     let t ← IO.monoMsNow
-    let (doc, bibDiags) ← resolveBibliography file doc
+    let (doc, bibDiags) ← resolveBibliography file doc reqSpans.bib
     unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty do
       ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
     return some (doc, elabDiags ++ bibDiags)

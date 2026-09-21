@@ -3100,6 +3100,36 @@ def styParityChecks (ref : IO.Ref (List String)) : IO Unit := do
      Compat.styInternal "venue.sty" "begingroup" &&
      !Compat.styInternal "main.tex" "begingroup")
 
+/-- E0502/E0503 name the file and line of the reference that failed. The
+invariant: a missing-file diagnostic points at the file containing the
+reference, never at a directory — `--> .:5:1` sent the reader to a
+directory's line 5. Fixtures in tests/corpus/input-missing, synthetic. -/
+def missingFileSpanChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let run (name : String) : IO (Array Diag) := do
+    let path := s!"tests/corpus/input-missing/{name}.tex"
+    let src ← IO.FS.readFile path
+    let (raws, _) := Parse.parse path (Lex.lex path src).1
+    let (_, ds, _) ← Input.expandInputs path raws
+    return ds
+  let dsM ← run "m"
+  t "E0502 renders the including file and line, never its directory"
+    (dsM.any fun d => d.code == "E0502" &&
+      ((Render.human false d).splitOn
+        "--> tests/corpus/input-missing/m.tex:4:1").length == 2)
+  let dsN ← run "outer"
+  t "a nested input's E0502 names the input file it sits in"
+    (dsN.any fun d => d.code == "E0502" &&
+      d.span.any fun sp => sp.file.endsWith "inner.tex" && sp.pos == ⟨2, 1⟩)
+  -- E0503's half: the marker's span is delivered beside the Doc
+  -- (`Elab.ReqSpans`), so the driver's missing-file diagnostic can name
+  -- the `\bibliography` line — and the Doc itself stays span-free (the
+  -- compat conservation oracle compares Docs across spellings).
+  let srcB := dvDoc "" "x \\cite{k}\n\\bibliography{refs}"
+  let (_, _, reqsB) := Elab.runRawsSpanned "t" (Parse.parse "t" (Lex.lex "t" srcB).1).1
+  t "the bibliography marker records its span for E0503"
+    (reqsB.bib.any fun (s, sp) => s == "refs" && sp.file == "t" && sp.pos.col == 1)
+
 /-- Elaboration terminates — checked under a wall clock, because the
 guarantee once lived only as prose and broke silently: the body-`\define`
 arm of cffb141 (2026-09-19 01:56) re-exposed a command being expanded to
