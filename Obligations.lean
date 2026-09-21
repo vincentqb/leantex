@@ -255,4 +255,23 @@ theorem write_fonts_embedded (geom : Layout.Geom) (fs : Font.FontSet)
       = .ok true := by
   sorry
 
+-- owed: write_readXref_exact
+-- owner: LeanTex.Core.Pdf
+-- source: the pdf-conformance-gate slice (modern output, wave 1 S3; pdf-validation F/gap 1–2, S3 red 1–2): the engine's own reader accepts every file the engine writes — today the executable witness is the reference walk over every corpus PDF in Tests/PdfConformance (`walkPdf`) and the six mutants it refuses by name.
+-- blocker: `write` is one `Id.run` with a mutable `Wr` and a `locs` table it fills as it goes, so no equation connects the offsets it wrote into the cross-reference stream to the positions `readXref` parses them back from; the size it computed (`xrefId + 1`) is a local of that block, which is why the statement reads the trailer's `/Size` instead. The factorization: the layout/serialize split — an `ObjTable` of typed objects with their ids (M7-12 begins it) and a later `serialize : ObjTable → … → ByteArray × Array Loc` whose offsets are the table's by construction; then `readXref ∘ serialize` is a fold over the rows and `/Size` is the table's length plus one.
+-- goldens: no
+/-- The writer and the engine's reader agree on the cross-reference
+(`_exact`, artifact-specific: a fact of the file's own bookkeeping, with
+no IR statement behind it): `readXref` follows `startxref` in every file
+`Pdf.write` emits, finds the catalog at object 1, and the trailer's
+`/Size` is exactly the listed objects plus the free object 0 — the count
+`write` computed for its `/Index [0 size]`, read back from the bytes. -/
+theorem write_readXref_exact (geom : Layout.Geom) (fs : Font.FontSet)
+    (pages : Array PageOut) (info : Ir.Meta) (imgs : Image.Store)
+    (outline : Array OutlineEntry) (streams : Array (ByteArray × Option ByteArray)) :
+    ∃ x, PdfRead.readXref (Pdf.write geom fs pages info imgs outline streams) = .ok x ∧
+      x.root = some 1 ∧
+      (x.trailer.bind (·.get? "Size")).bind PdfRead.Obj.int? = some (x.locs.size + 1) := by
+  sorry
+
 end Obligations

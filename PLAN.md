@@ -136,6 +136,16 @@ list.
   sites as `PdfRead.Obj` plus one `Obj.render` with `parseVal_render_id`.
   The in-suite witness is the written-PDF census row in Tests/Backends,
   the oracle `pdffonts` over the corpus.
+- `write_readXref_exact` — the writer and the engine's reader agree on the
+  cross-reference: `readXref` follows every file `Pdf.write` emits to a
+  catalog at object 1 and a trailer `/Size` equal to the listed objects
+  plus one (the `/Index [0 size]` the writer computed, read back).
+  Artifact-specific (`_exact`), no IR statement behind it. Blocked on
+  `write` being one `Id.run` over a mutable writer whose size and offsets
+  are locals; the factorization is the layout/serialize split
+  (`ObjTable`, then `serialize` with offsets by construction). The
+  executable witness is the reference walk in Tests/PdfConformance over
+  every corpus PDF and its six mutants.
 
 ### Log
 
