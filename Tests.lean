@@ -7,6 +7,7 @@ import Tests.Diag
 import Tests.Themes
 import Tests.FontMath
 import Tests.Struct
+import Tests.PdfConformance
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -118,6 +119,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   pdfFormChecks ref oneFace
   pdfCensusChecks ref oneFace
   objTableChecks ref oneFace
+  pdfConformanceChecks ref oneFace
 
 /-- The surface-and-math suite: the dispatcher for the compat, class,
 bibliography, and math elaboration blocks, so an added block lands here and
