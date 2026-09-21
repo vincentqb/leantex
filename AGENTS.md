@@ -125,7 +125,10 @@ in this repo; refer to the private reference corpus abstractly.
   shape), `_named` (every element of a census has a diagnostic whose
   `subject` is its key — `pending_named` is the shape; the census is a
   fold, the judge reads the same fold, and matching is the structured
-  `Diag.subject`, never the message text). A new property instantiates a
+  `Diag.subject`, never the message text), `_projects` (a backend value
+  is the projection of one IR value — `footBand_projects` is the shape),
+  `_agree` (two projections of one IR value agree — `backend_gaps_agree`
+  is the shape). A new property instantiates a
   suffix, or the review says why
   it is a new shape; the first three are what the hook's walk gate looks
   for. `_in_measure` is not a shape: `kern_symmetric_in_measure` is an
