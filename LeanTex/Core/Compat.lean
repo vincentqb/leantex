@@ -203,6 +203,11 @@ private structure St where
   synthesizes — the style is read anywhere before the list, and the
   preamble elaborator does not take it. -/
   bibStyle : Option String := none
+  /-- Names the caller declares the engine renders or reserves: what
+  `\providecommand`'s keep-existing policy reads for commands this
+  document did not bind — every one of them *is* defined, in LaTeX and
+  here, so a provide of one is LaTeX's documented no-op. -/
+  provideKeeps : List String := []
 
 private abbrev M := StateM St
 
@@ -2395,6 +2400,16 @@ leading = {milliStr factor} }"
       became s!"\\providecommand\{\\{cmd}}"
         s!"nothing: '\\{cmd}' is already defined and the existing definition is kept" pos
       return some (#[], k)
+    -- `\providecommand` of a name the engine itself defines: the command
+    -- exists, so LaTeX's provide keeps it (usrguide, "Defining commands").
+    -- Without this the venue shim `\providecommand{\section}{}` reached the
+    -- definition gate as an empty redefinition and earned a W0361 for a
+    -- construct LaTeX defines to be a no-op.
+    if name == "providecommand" && (← get).provideKeeps.contains cmd then
+      let (_, k) := takeGroups raws j 1
+      became s!"\\providecommand\{\\{cmd}}"
+        s!"nothing: '\\{cmd}' is built in and the built-in stands" pos
+      return some (#[], k)
     modify fun st => { st with
       bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
     let native := s!"\\define \\{cmd}({spec})"
@@ -2625,7 +2640,8 @@ private def flushRunning : M (Array Raw) := do
 
 /-- Rewrite a whole parsed document. The gathered running content lands just
 before `\begin{document}`, where a declaration belongs. -/
-def rewrite (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
+def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []) :
+    Array Raw × Array Diag :=
   let go : M (Array Raw) := do
     let raws ← condList raws #[] [] raws.toList 0
     -- After the conditionals: only live `\AtBeginDocument` bodies unwrap.
@@ -2639,7 +2655,7 @@ def rewrite (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
     return match out.findIdx? isBody with
       | some i => out.extract 0 i ++ running ++ out.extract i out.size
       | none => out ++ running
-  let (out, st) := go.run { file := file }
+  let (out, st) := go.run { file := file, provideKeeps := provideKeeps }
   (out, st.diags)
 
 /-! `\\usepackage{p}` where `p.sty` exists beside the document is LaTeX's

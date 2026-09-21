@@ -955,11 +955,28 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr winner).2.all (·.severity == .note) &&
      (elabStr winner).1.body == #[.para #[.styled .bold #[.text "T-wins"]]])
   let emptied := "\\documentclass{article}\\title{Kept Probe}" ++
-    "\\providecommand{\\maketitle}{}" ++
+    "\\renewcommand{\\maketitle}{}" ++
     "\\begin{document}\\maketitle Body.\\end{document}"
   t "an empty maketitle redefinition renders nothing and is refused"
     (warnCodes emptied == ["W0361"] &&
      Ir.headingLevels (elabStr emptied).1.body == #[0])
+  -- `\providecommand` of a built-in is LaTeX's documented no-op (usrguide,
+  -- "Defining commands": provide keeps an existing definition, and every
+  -- rendered built-in exists): the built-in stands silently — the venue
+  -- shim `\providecommand{\section}{}` is a guarantee of renewability,
+  -- never an erasure — and a non-empty provide body never wins either.
+  let provided := "\\documentclass{article}\\title{Kept Probe}" ++
+    "\\providecommand{\\maketitle}{}" ++
+    "\\begin{document}\\maketitle Body.\\end{document}"
+  t "a providecommand of a built-in keeps the built-in without a warning"
+    (warnCodes provided == [] &&
+     Ir.headingLevels (elabStr provided).1.body == #[0])
+  let providedBody := "\\documentclass{article}" ++
+    "\\providecommand{\\section}{\\textbf{not a heading}}" ++
+    "\\begin{document}\\section{Kept}\\end{document}"
+  t "a non-empty providecommand of a built-in still keeps the built-in"
+    (warnCodes providedBody == [] &&
+     Ir.headingLevels (elabStr providedBody).1.body == #[1])
   -- The author block's styling joins the refused-body scan: the lineage's
   -- tabular — \bf, a zero-width \rule strut, \@author — lands the venue's
   -- weight and the engine's rhythm strut on the built-in author line, and

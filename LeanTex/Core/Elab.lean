@@ -10245,7 +10245,8 @@ written for another engine compiles as written. -/
 def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag :=
   let picPre := Compat.boundaryDecls raws
-  let (raws, compatDiags) := Compat.rewrite file raws
+  let (raws, compatDiags) :=
+    Compat.rewrite file raws (provideKeeps := renderedBuiltins ++ structuralNames)
   let (raws, textDiags) := Compat.rewriteText file raws
   let compatDiags := compatDiags ++ textDiags
   let (doc, st) := (elabDoc file raws picPre).run {}
