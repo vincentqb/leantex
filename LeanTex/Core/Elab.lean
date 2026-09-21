@@ -2382,6 +2382,42 @@ seal secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 seal theCounterLevel? sectionLevel String.toInt? String.toNat?
 
 mutual
+/-- A pure declaration chain: an inline that is nothing but nested style
+wrappers around emptiness — what a 0-ary definition whose body *ends* in
+declarations (`\newcommand{\cardlight}{\fontseries{l}\selectfont}`,
+`\newcommand{\strong}{\bfseries}`) elaborates to in isolation. Outermost
+style first. `none` when any real content is present. -/
+-- conserves: none — a census, not a rewrite: it reads a shape and returns
+-- the styles it is made of; the tree is reassembled by the caller.
+private def declChainOne : Ir.Inline → Option (Array Ir.Style)
+  | .styled st inner => (declChainList inner.toList).map (#[st] ++ ·)
+  | _ => none
+
+private def declChainList : List Ir.Inline → Option (Array Ir.Style)
+  | [] => some #[]
+  | [x] => declChainOne x
+  -- Two or more elements carry content beside any style wrapper: no chain.
+  | _ => none
+end
+
+/-- Split a 0-ary expansion into its content and the declaration chain it
+ends with, if any. Expansion is token replacement, so a trailing
+declaration must style the rest of the *enclosing* group, exactly as the
+same declaration written directly would — elaborating the body in
+isolation had it styling the empty rest of the body instead, and the
+card's `{\cardlight …}` runs rendered in the upright face while an empty
+`<strong></strong>` marked where the style went. The chain is outermost
+style first. -/
+private def splitTrailingDecls (xs : Array Ir.Inline) :
+    Array Ir.Inline × Array Ir.Style :=
+  match xs.back? with
+  | some x =>
+    match declChainOne x with
+    | some styles => if styles.isEmpty then (xs, #[]) else (xs.pop, styles)
+    | none => (xs, #[])
+  | none => (xs, #[])
+
+mutual
 
 /-- One parameter binding at a time — `takeArgs`' recursion spelled so the
 measure can read it: each parameter either consumes tokens (the slice from
@@ -2675,11 +2711,30 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
           -- command is a spelling and splices transparently: arity reads
           -- the definition, not the use, so one name gets one treatment
           -- document-wide, with no new syntax and no body inspection.
-          let acc := if cmd.params.isEmpty then acc ++ expanded
-            else acc.push (.role cmd.name expanded)
-          have hadv : sliceWeight raws j < sliceWeight raws i :=
-            Nat.lt_of_le_of_lt (sliceWeight_le raws hj) hadv1
-          elabInlinesFrom ctx raws j acc ""
+          if cmd.params.isEmpty then
+            -- A spelling is token replacement, so a declaration chain its
+            -- body ends with styles the rest of the enclosing group — the
+            -- same scope the declaration written directly takes below.
+            let (expanded, decls) := splitTrailingDecls expanded
+            let acc := acc ++ expanded
+            if decls.isEmpty then
+              have hadv : sliceWeight raws j < sliceWeight raws i :=
+                Nat.lt_of_le_of_lt (sliceWeight_le raws hj) hadv1
+              elabInlinesFrom ctx raws j acc ""
+            else
+              have hw : rawWeightList (raws.extract j raws.size).toList
+                  < sliceWeight raws i :=
+                extract_lt_slice raws.size h (Nat.lt_of_lt_of_le (Nat.lt_succ_self i) hj)
+              let rest ← elabInlines ctx (raws.extract j raws.size)
+              let acc := acc ++ decls.foldr (fun st inner => #[Ir.Inline.styled st inner]) rest
+              have hadv : sliceWeight raws raws.size < sliceWeight raws i :=
+                sliceWeight_lt raws h h
+              elabInlinesFrom ctx raws raws.size acc ""
+          else
+            let acc := acc.push (.role cmd.name expanded)
+            have hadv : sliceWeight raws j < sliceWeight raws i :=
+              Nat.lt_of_le_of_lt (sliceWeight_le raws hj) hadv1
+            elabInlinesFrom ctx raws j acc ""
         | none =>
         if name == "hfill" then
           let acc := flushText acc sb

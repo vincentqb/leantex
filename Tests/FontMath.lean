@@ -152,6 +152,25 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a FontFace shape off the model is named"
     ((elabStr (pre ++ "\\setmainfont{Alpha Sans}[FontFace={l}{sc}{*-Light}]" ++ post)).2.map
       (·.code) |>.contains "W0104")
+  -- A 0-ary definition ending in a declaration styles the rest of the
+  -- enclosing group — expansion is token replacement, so the declaration
+  -- must take the same scope written directly. The invariant whose absence
+  -- was the card defect: the body elaborated in isolation left the style
+  -- wrapping the empty rest of the body, and every {\cardlight …} run
+  -- rendered upright beside an empty styled node.
+  let seriesText (doc : Ir.Doc) : List String :=
+    doc.body.toList.flatMap fun b => match b with
+      | .para content =>
+        Ir.foldInlines (fun acc x => match x with
+          | .styled (.series _) body =>
+            acc ++ [(Ir.plainTextList body.toList).trimAscii.toString]
+          | _ => acc) [] content
+      | _ => []
+  let (spellDoc, _) := elabStr (pre ++
+    "\\newcommand{\\quiet}{\\fontseries{l}\\selectfont}" ++
+    "\\begin{document}{\\quiet x} y\\end{document}")
+  t "a spelling's trailing declaration styles the rest of its group"
+    (seriesText spellDoc == ["x"])
 
 /-- fontspec's per-variant face options (`BoldFont=` and siblings) reach the
 font spec and win over the family's own variant; a declared face the host
