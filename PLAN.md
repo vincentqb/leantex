@@ -118,6 +118,52 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — the graphics boundary is live (tikz-boundary): heavy TikZ
+runs in real TeX at the edge; the engine places a measured vector box.
+
+- The asset half first, native: `\includegraphics{x.pdf}` embeds page 1
+  as a form XObject through a new pure reader (`Core/PdfRead.lean`) —
+  classic xref tables *and* xref/object streams, page-1 box
+  (CropBox-else-MediaBox, pdfTeX's inclusion rule), content streams
+  decoded and concatenated, and the `/Resources` object graph copied
+  whole, font programs verbatim, renumbered through typed holes.
+  `resources_closed` (`_covers`, carried by the reader's subtype: no
+  returned form dangles a reference) and `form_bbox_exact` (`_exact`: the
+  normalizing `/Matrix` composed with the image path's `cm` lands the box
+  corners on the requested rectangle, exactly in the rationals both
+  render from). Totality over arbitrary bytes rides `scripts/img-fuzz.lean`
+  (truncations, mutants, blobs; the fixture is the engine's own output,
+  so the reader is tested against the writer).
+- The boundary itself: one declared door — `\pictures{ tool = lualatex }`,
+  or TikZ's `\tikzexternalize`, which sets the same declaration — and a
+  tikzpicture the rendered subset refuses runs whole under the pinned
+  tool as `\documentclass{standalone}` plus the preamble's closed list
+  (non-native `\usepackage` lines, `\usetikzlibrary`, `\tikzset`,
+  `\gtrset`, `\pgfplotsset`, `\definecolor`, the declared body family).
+  The request rides the IR (`Ir.pictureRefs`, the `bibRefs` shape:
+  content hash of the wrapped source — deterministic by purity); the
+  driver fulfils it under a wall-clock budget and caches the PDF beside
+  the font cache, keyed by hash and tool version, so a warm cache needs
+  no TeX installed. The tool name is drawn from the engine's allowlist,
+  never the document's own spelling: the driver executes it. Inventory
+  per picture in `-v` and the porcelain phases: tool, version, hash,
+  size. HTML converts the same cached PDF once, by pinned
+  `pdftocairo -svg`, into `<stem>.assets/<hash>.svg` (the font-shipping
+  shape). Codes: N0023 (drawn at the boundary; its text is not in the
+  census — the trust label as a note), W0378 (tool failed; placeholder,
+  the tool's last words in the help), W0379 (refused picture, door
+  closed; the help names the declaration). The genealogy acceptance
+  document builds with its tree drawn by the real genealogytree, 0
+  errors, N0023 once.
+- Absorption stays the recorded later option: audit-tree sized a native
+  tree DSL (semantic `Diagram` value, contour-packed certified layout,
+  census over node texts) at ≈1.4k LOC for genealogytree alone — the
+  boundary covers pgfplots, circuitikz, and every picture outside the
+  subset for ~350 lines of driver and routing, so isolation lands first
+  and absorption is per-package, when it pays (trust is monotone:
+  absorbing swaps the tool for a native implementation behind the same
+  request type, and documents never notice).
+
 2026-09-21 — the deck is a horizontal row again, → is next, and the
 slides class ships one constant script (slides-floor). Supersedes the
 slides-vertical entry (2026-09-20, the axis and its push construction)
