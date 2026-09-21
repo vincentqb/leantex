@@ -146,10 +146,84 @@ list.
   (`ObjTable`, then `serialize` with offsets by construction). The
   executable witness is the reference walk in Tests/PdfConformance over
   every corpus PDF and its six mutants.
+- `lines_attributed_covers` — the attribution channel covers the ink, weak
+  public form: in a document of plain text paragraphs, every non-furniture
+  line that ships ink names a structure leaf (`LineOut.leaf`), an index
+  into `Struct.leaves (Struct.ofDoc (Layout.pdfView doc))`. The
+  unrestricted form is false by design (generated ink the tree does not
+  census — the abstract heading, the headline band, an `\item` with no
+  text — ships lines with no leaf). Blocked on the collect-walk induction:
+  the claim sites (`Acc.leafRange`) stand inside `collectBlock`'s one
+  giant match, the `emission_conservation_paras` wall; the per-arm split
+  is the factorization. The placement half is `placeLine_leaf_exact`; the
+  in-suite witness is `leafAttributionChecks` over every golden fixture.
+- `lines_attributed_text` — attribution is a census, weak public form: in
+  a document of plain text paragraphs set without hyphenation and dropping
+  no glyph, the ink of the lines attributed to leaf `k` is exactly the ink
+  of the leaves of the block opening at `k`, and nothing is attributed to a
+  leaf no block opens at. Same blocker plus the per-paragraph half of
+  `emission_conservation_paras`; the witness is the exact-equality row of
+  `leafAttributionChecks` over plain paragraphs, cells and titles.
 
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-21 — every body line knows the structure leaf it paints
+(tag-layout-attribution, M7-18a, W2.8's block half). `LineOut.leaf :
+Option Nat` and `ParaJob.leaf` name the preorder index into
+`Struct.leaves (Struct.ofDoc (Layout.pdfView doc))` — `pdfView` is the
+`keepFor "pdf"` view `runCore` already walked, now a def the statements
+can read — of the first leaf of the block the line sets; the walk carries
+`Acc.leafNext` and claims a range per block through `Acc.leafRange`, the
+count from `Struct`'s own walk (`leafCount`, `Struct.inlinesRaw` under
+`Struct.leaves`), so the order and the count are the projection's by
+construction and the walk decides only where a block's range begins.
+What the tree's shape forced (struct-tree-ir made a leaf per inline
+atom, not per block, so the brief's one-leaf-per-`ParaJob` became
+first-leaf-of-the-block): a footnote's lines name the note node's first
+leaf (`noteLeafStarts`, the content's shape numbered from the block's
+start, decoration the walk prepended shifted back by the leaves past the
+block's `span`, a note the tree flattened — a bibliography entry, a
+listing caption — `none`); a picture's label lines name its `.picture`
+leaf (census empty, `image-alt-policy`'s gap); generated ink rides the
+block it decorates (section numbers, list markers, caption prefixes,
+algorithm keywords — a keyword-only `end` line rides the algorithm's first
+leaf) and is `none` when it is a line by itself (the abstract heading,
+the headline band, an `\item` with no text). Three order divergences,
+written beside the counter: a float's caption is numbered first whatever
+`capAbove` says (the tree's decision, so the claim precedes the plan); a
+stepped frame is collected once per step and numbered once (the counter
+rewinds per step); `.logo`/`.framefoot`/`.nav`/speaker-`.note` leaves are
+stepped over — the page ships no attributable ink for them. Layout.lean
+grew ~180 lines net against the brief's ≤ 30: the per-inline leaf shape
+puts a claim at every block site instead of one inside `collectPara` —
+each one `leafRange` line plus two named arguments — and the counting and
+note-start helpers carry their reasons as docstrings. Theorems:
+`placeLine_leaf_exact` closed (the `mk` closure copies the leaf, on the
+fresh-page branch as `first_baseline_declared` is stated);
+`lines_attributed_covers` and `lines_attributed_text` staged in
+Obligations over the plain-paragraph fragment `emission_conservation_paras`
+ranges over — the unrestricted `_covers` is false (generated-only lines),
+and the record says so; § Owed obligations grows by exactly these two
+rows. Evidence: `leafAttributionChecks` (Tests/Layout.lean) over every
+golden fixture — every non-furniture inked line names a leaf below the
+array's size (the two `none` exceptions enumerated by text), every leaf's
+ink stands in order inside its block's lines (exclusions enumerated:
+formula leaves are source not rendering, picture and image leaves have no
+census, `.aside`/`.nav`/`.artifact` ship no ink, an icon's leaf is its
+alternative, a numbered verbatim interleaves numbers, a standout title is
+not set), exact ink equality on plain paragraphs, cells and titles (~300
+groups), every inked leaf attributed or an exception, furniture `none`,
+note lines on note leaves, and the synthetic [section, paragraph with a
+footnote] at 0/1/2 — 148 rows red with the field present and unwired,
+green wired; three mutations (no per-step rewind, a table cell's counter
+not handed back, a float claiming its caption after its body) fail 88, 2
+and 8 rows. Artifact: `censusOf` byte-identical on the corpus, goldens
+unchanged, every corpus PDF and HTML `cmp`-identical to main's binary
+(no backend reads the field yet; M7-19b does). Not in this slice: the
+per-arm `collectBlock` split that discharges the two rows; the run
+channel (18b) that names markers, hyphens and note marks apart.
 
 2026-09-21 — every object id is one typed table, and no cross-reference
 row is a default (pdf-objtable, M7-12; refactor — every corpus PDF and

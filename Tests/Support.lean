@@ -645,6 +645,56 @@ def layoutOf (fonts : Font.FontSet) (doc : Ir.Doc)
     (imgs : Image.Store := {}) : Layout.Out :=
   Layout.run geom fonts pats doc imgs
 
+/-- The font set a golden fixture lays out under in the suite: `oneFace`,
+plus the math face a build would resolve — `mathSet` (the shipped Fira
+Math) when the fixture declares a math face, else `FontDb.pickMathFace`
+over the shipped corpus faces when the document reaches math — plus a
+fallback face per Private Use Area scalar an icon needs, found the way a
+build finds it (the scan over the shipped corpus). Everything else keeps
+the deliberately minimal set: the stand-in degradations are themselves
+under test (`listChecks`), and a broader map would silently upgrade them.
+The census and the attribution checks both lay out the corpus through
+this one resolution. -/
+def fixtureFontSet (oneFace mathSet : Font.FontSet) (shipped : Array FontDb.Face)
+    (doc : Ir.Doc) : IO Font.FontSet := do
+  let fs ← if doc.fonts.math.isSome then pure mathSet
+    else if (Layout.docMathScalars doc).isEmpty then pure oneFace
+    else do
+      match ← FontDb.pickMathFace shipped (doc.fonts.body.getD "") with
+      | some (face, _) =>
+        match Font.parse (← IO.FS.readBinFile face.path) with
+        | .ok f => pure { oneFace with
+            fonts := oneFace.fonts.push f
+            math := some oneFace.fonts.size }
+        | .error _ => pure oneFace
+      | none => pure oneFace
+  let uncovered := (Layout.docScalars doc).filter fun ch =>
+    0xE000 ≤ ch.toNat && ch.toNat ≤ 0xF8FF &&
+      fs.fonts.all fun f => (f.gid ch).isNone
+  if uncovered.isEmpty then return fs
+  let mut fs := fs
+  for (ch, path) in ← FontDb.fallbackPicks shipped uncovered do
+    match Font.parse (← IO.FS.readBinFile path) with
+    | .ok f =>
+      let idx := match fs.fonts.zipIdx.find? (fun p => p.1.family == f.family) with
+        | some (_, i) => i
+        | none => fs.fonts.size
+      let fs' := if idx == fs.fonts.size then
+          { fs with fonts := fs.fonts.push f } else fs
+      fs := { fs' with fallback := fs'.fallback.push (ch, idx) }
+    | .error _ => pure ()
+  return fs
+
+/-- The shipped Fira Math beside `oneFace` in the math slot: what a fixture
+that declares a math face lays out under. -/
+def mathSetOf (oneFace : Font.FontSet) : IO Font.FontSet := do
+  let fira ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraMath-Regular.otf")) with
+    | .ok f => pure f
+    | .error e => throw (IO.userError s!"fixture fonts: FiraMath unparsable: {e}")
+  return { oneFace with
+    fonts := oneFace.fonts.push fira
+    math := some oneFace.fonts.size }
+
 /-- Every shipped line, furniture included, in page order: what a claim
 about absolute placement (a fil sandwich, a frame's vertical distribution)
 reads. `bodyLines` is this with the furniture filtered out. -/

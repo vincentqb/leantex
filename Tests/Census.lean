@@ -846,12 +846,7 @@ Fira Math in the math slot — the assertions over fraction bars and grown
 glyphs are exactly what `oneFace` alone could never witness. -/
 def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
-  let fira ← match Font.parse (← IO.FS.readBinFile (testFonts ++ "/FiraMath-Regular.otf")) with
-    | .ok f => pure f
-    | .error e => throw (IO.userError s!"census: FiraMath unparsable: {e}")
-  let mathSet : Font.FontSet := { oneFace with
-    fonts := oneFace.fonts.push fira
-    math := some oneFace.fonts.size }
+  let mathSet ← mathSetOf oneFace
   for n in goldenNames do
     check ref s!"census covers {n}" (censusTable.any (·.1 == n))
   for (n, _) in censusTable do
@@ -864,41 +859,7 @@ def censusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
-    let fs ← if doc.fonts.math.isSome then pure mathSet
-      else if (Layout.docMathScalars doc).isEmpty then pure oneFace
-      else do
-        match ← FontDb.pickMathFace shipped (doc.fonts.body.getD "") with
-        | some (face, _) =>
-          match Font.parse (← IO.FS.readBinFile face.path) with
-          | .ok f => pure { oneFace with
-              fonts := oneFace.fonts.push f
-              math := some oneFace.fonts.size }
-          | .error _ => pure oneFace
-        | none => pure oneFace
-    -- The driver's per-scalar precompute, mirrored for the Private Use
-    -- Area only: an icon glyph has no stand-in and no meaning outside its
-    -- face, so the census finds its face the way a build does (the scan
-    -- over the shipped corpus). Everything else keeps the deliberately
-    -- minimal census set — the stand-in degradations are themselves under
-    -- test (`listChecks`), and a broader map would silently upgrade them.
-    let uncovered := (Layout.docScalars doc).filter fun ch =>
-      0xE000 ≤ ch.toNat && ch.toNat ≤ 0xF8FF &&
-        fs.fonts.all fun f => (f.gid ch).isNone
-    let fs ← do
-      if uncovered.isEmpty then pure fs
-      else do
-        let mut fs := fs
-        for (ch, path) in ← FontDb.fallbackPicks shipped uncovered do
-          match Font.parse (← IO.FS.readBinFile path) with
-          | .ok f =>
-            let idx := match fs.fonts.zipIdx.find? (fun p => p.1.family == f.family) with
-              | some (_, i) => i
-              | none => fs.fonts.size
-            let fs' := if idx == fs.fonts.size then
-                { fs with fonts := fs.fonts.push f } else fs
-            fs := { fs' with fallback := fs'.fallback.push (ch, idx) }
-          | .error _ => pure ()
-        pure fs
+    let fs ← fixtureFontSet oneFace mathSet shipped doc
     let out := layoutOf fs doc geom (some pats)
     let c := censusOf (coveredColorsOf doc) out
     for (label, ok) in facts geom c do

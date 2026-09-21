@@ -3091,3 +3091,238 @@ def footnoteLayoutChecks (ref : IO.Ref (List String))
     (match gapOf "", gapOf "\\tokens{ footins = 60pt }\n" with
      | some g1, some g2 => g2 > g1
      | _, _ => false)
+
+/-! ## Leaf attribution (M7-18a)
+
+The invariant: for every page of `Layout.run … doc` and every line `l` on
+it, `¬ l.furniture ∧ l.segs` carries a glyph run `→ l.leaf = some k` with
+`k < (Struct.leaves (Struct.ofDoc (Layout.pdfView doc))).size`, `k` the
+first leaf of the block whose text the line sets (a footnote's lines name
+the note's first leaf), and the ink of every leaf the block owns stands, in
+preorder, inside the ink its lines paint — gaps read as spaces, a line-end
+hyphen joined away, the no-break space and soft hyphen outside the measure
+(`Obligations.inkChars`) — with equality where the block carries no
+generated ink. Generated ink the tree does not census (the abstract
+heading, the headline band) is `none`; decoration of a block (a section
+number, a list marker, a caption prefix, a bibliography marker) rides the
+block's leaf. The owed statements are `lines_attributed_covers` and
+`lines_attributed_text` (Obligations.lean); these rows are their executable
+witness over the corpus, and the exceptions are enumerated, never a
+wildcard:
+- `.formula` leaves: the leaf is the source, the page paints the rendering
+  (M7-24 owns the run channel);
+- `.picture` leaves: census empty by `Struct`'s named gap (`image-alt-policy`);
+  the picture's label lines carry its leaf;
+- `.aside`, `.nav`, `.artifact` leaves: no ink on the PDF path (a speaker
+  note, the outline, furniture the furniture pass lays and flags);
+- an icon's leaf is its text alternative, its ink a glyph (M7-22a);
+- a numbered verbatim block interleaves generated numbers with its one leaf;
+- a standout frame's title has leaves and no line. -/
+
+/-- A leaf of the projected tree with its ancestors' kinds, root first,
+and whether it stands in the first paragraph of a list item (the one
+whose first line carries the marker). -/
+structure LeafRow where
+  id : Nat
+  leaf : Struct.Leaf
+  path : List Struct.Kind
+  marked : Bool
+
+mutual
+
+def leafRowsList (path : List Struct.Kind) (first inMarked : Bool) (acc : Array LeafRow) :
+    List Struct.Node → Array LeafRow
+  | [] => acc
+  | n :: rest => leafRowsList path false inMarked (leafRowsOne path first inMarked acc n) rest
+
+def leafRowsOne (path : List Struct.Kind) (first inMarked : Bool) (acc : Array LeafRow) :
+    Struct.Node → Array LeafRow
+  | .leaf id l => acc.push { id := id, leaf := l, path := path.reverse, marked := inMarked }
+  | .node k kids =>
+    leafRowsList (k :: path) (k == .body) (inMarked || (first && k == .paragraph)) acc
+      kids.toList
+
+end
+
+def leafRows (t : Struct.Tree) : Array LeafRow :=
+  leafRowsList [] false false #[] t.children.toList
+
+/-- The ink the comparison reads: `Obligations.inkChars`'s exclusions plus
+every fixed-space character (a kern, no glyph) and the hyphen — an
+authored hyphen at a line end is indistinguishable from the breaker's
+until 18b's `.hyphen` run names it — case-folded, since a declared case
+transform repaints a leaf's letters in another case. -/
+def attrInk (s : String) : Array Char :=
+  (s.toList.toArray.filter fun c =>
+    !(c.isWhitespace || c == '\u00a0' || c == '\u00ad' || c == '-'
+      || (Layout.fixedSpace c).isSome)).map Char.toLower
+
+/-- The glyph text of one line for the attribution census: a raised run is
+skipped — a footnote mark (generated ink) or a math script (a formula group
+is compared by containment only). -/
+def attrLineText (l : Layout.LineOut) : String :=
+  l.segs.foldl (fun s seg => match seg with
+    | .run _ _ _ _ glyphs _ _ raise _ =>
+      if raise != 0 then s else glyphs.foldl (fun s (_, c) => s.push c) s
+    | .gap _ => s.push ' '
+    | _ => s) ""
+
+def hasGlyphRun (l : Layout.LineOut) : Bool :=
+  l.segs.any fun s => match s with
+    | .run _ _ _ _ glyphs _ _ _ _ => !glyphs.isEmpty
+    | _ => false
+
+/-- The text of a block's lines, in page order: gaps as spaces, a line-end
+hyphen joined away. -/
+def joinAttributed (ls : Array Layout.LineOut) : String :=
+  ls.foldl (fun acc l =>
+    let t := attrLineText l
+    if acc.isEmpty then t
+    else if acc.endsWith "-" then (acc.dropEnd 1).toString ++ t
+    else acc ++ " " ++ t) ""
+
+/-- The first index at or past `start` where `needle` occurs in `hay`. -/
+def findFrom (hay needle : Array Char) (start : Nat) : Option Nat := Id.run do
+  if needle.isEmpty then return some start
+  if hay.size < needle.size then return none
+  for i in [start:hay.size - needle.size + 1] do
+    let mut ok := true
+    for j in [0:needle.size] do
+      if hay[i + j]! != needle[j]! then
+        ok := false
+        break
+    if ok then return some i
+  return none
+
+/-- The kinds that own set text: the nearest of these above a leaf is the
+block a line attributes to. -/
+def ownerKind : Struct.Kind → Bool
+  | .paragraph | .heading _ | .title | .cell | .caption | .code | .bibEntry
+  | .artifact | .note | .formula | .label => true
+  | .document | .section | .list _ | .item | .body | .table | .row | .figure
+  | .quote | .aside | .nav | .link _ | .span _ | .reference _ => false
+
+def ownerOf (r : LeafRow) : Option Struct.Kind := (r.path.filter ownerKind).getLast?
+
+/-- A leaf the PDF path deliberately ships no text for, by kind. -/
+def unshippedKind (r : LeafRow) : Bool :=
+  r.path.any (fun k => k matches .aside | .nav | .artifact | .formula)
+    || (r.leaf matches .picture | .image _ _ | .linebreak)
+
+def leafAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (pats : Hyphen.Patterns) : IO Unit := do
+  let t := check ref
+  let mathSet ← mathSetOf oneFace
+  let shipped ← FontDb.scanRoots [testFonts]
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc0, _) ← elabFixture n src
+    let doc := Layout.pdfView doc0
+    let fs ← fixtureFontSet oneFace mathSet shipped doc
+    let out := layoutOf fs doc (Layout.Geom.ofPage doc.page) (some pats)
+    let tree := Struct.ofDoc doc
+    let rows := leafRows tree
+    let size := rows.size
+    -- the generated lines the tree does not census, by their text
+    let generated : Array String := #[doc.info.locale.abstract] ++
+      (match doc.headline with
+        | some hl => #[Ir.plainText hl.title, Ir.plainText hl.author, Ir.plainText hl.institute]
+        | none => #[])
+    -- leaves whose text the page paints otherwise, from the IR
+    let iconAlts := Ir.foldBlocks (fun out _ => out) (fun out x => match x with
+      | .icon _ label => out.push label
+      | _ => out) (#[] : Array String) doc.body
+    let numberedCode := Ir.foldBlocks (fun out b => match b with
+      | .verbatim _ s spec => if spec.numbers then out.push s else out
+      | _ => out) (fun out _ => out) (#[] : Array String) doc.body
+    let standoutTitles := Ir.foldBlocks (fun out b => match b with
+      | .frame title true _ _ => out.push (Ir.plainText title)
+      | _ => out) (fun out _ => out) (#[] : Array String) doc.body
+    let excluded (r : LeafRow) : Bool :=
+      unshippedKind r || (match r.leaf with
+        | .text s => iconAlts.contains s || numberedCode.contains s || standoutTitles.contains s
+        | _ => false)
+    -- a glyph no face covers is dropped and named (E0405): only covered
+    -- characters are compared
+    let covered (c : Char) : Bool := fs.fonts.any fun f => (f.gid c).isSome
+    let lines := allLines out
+    let body := lines.filter fun l => !l.furniture && hasGlyphRun l
+    -- 1. every non-furniture glyph line names a leaf below the array's size
+    let mut noneLines : Array String := #[]
+    for l in body do
+      match l.leaf with
+      | some k => t s!"leaf {n}: index {k} is below {size}" (k < size)
+      | none =>
+        let txt := attrInk (lineText l)
+        unless generated.any (fun g => attrInk g == txt) do
+          noneLines := noneLines.push (lineText l)
+    t s!"leaf {n}: every body line names a leaf ({noneLines.toList.take 3})" noneLines.isEmpty
+    -- 5. furniture never names a leaf; a note line names a note leaf
+    t s!"leaf {n}: furniture lines carry none" (lines.all fun l => !l.furniture || l.leaf.isNone)
+    t s!"leaf {n}: note lines name a note leaf" (body.all fun l => !l.note ||
+      (match l.leaf with
+        | some k => (rows[k]?.map fun r => r.path.contains .note).getD false
+        | none => false))
+    -- 2. the ink of every leaf stands, in order, inside its block's lines
+    let named := (body.filterMap (·.leaf)).qsort (· < ·) |>.foldl
+      (fun (acc : Array Nat) k => if acc.back? == some k then acc else acc.push k) #[]
+    let underNote (k : Nat) : Bool := (rows[k]?.map fun r => r.path.contains .note).getD false
+    let ownerGroup (r : LeafRow) : Option Nat :=
+      (named.filter fun k => k ≤ r.id && underNote k == r.path.contains .note).back?
+    let mut mismatch : Option String := none
+    let mut exactFail : Option String := none
+    let mut uncovered : Array String := #[]
+    for k in named do
+      -- the block's lines per page: a stepped frame sets its blocks once per
+      -- step page, a flow paragraph may split across two pages
+      let parts := out.pages.filterMap fun p =>
+        let ls := p.lines.filter fun l => !l.furniture && hasGlyphRun l && l.leaf == some k
+        if ls.isEmpty then none else some (attrInk (joinAttributed ls))
+      let actual := parts.flatten
+      let owned := rows.filter fun r => ownerGroup r == some k
+      let mine := owned.filter (!excluded ·)
+      let mut pos := 0
+      let mut expected : Array Char := #[]
+      for r in mine do
+        let ink := (attrInk r.leaf.census).filter covered
+        expected := expected ++ ink
+        match findFrom actual ink pos with
+        | some i => pos := i + ink.size
+        | none =>
+          if mismatch.isNone then
+            mismatch := some s!"{n} leaf {r.id} in group {k}: {r.leaf.census.quote} not in \
+{(String.ofList actual.toList).quote}"
+      -- exact where the block carries no generated ink: a plain paragraph
+      -- (not the marker-bearing first paragraph of an item), a cell, a title,
+      -- none of its leaves excluded above
+      let exact := owned.all fun r => !excluded r && !r.marked &&
+        (match ownerOf r with
+          | some .paragraph | some .cell | some .title => true
+          | _ => false)
+      let repeated := parts.all (· == expected)
+      if exact && !mine.isEmpty && expected != actual && !repeated && exactFail.isNone then
+        exactFail := some s!"{n} group {k}: expected {(String.ofList expected.toList).quote} \
+got {(String.ofList actual.toList).quote}"
+    t s!"leaf {n}: every leaf's ink stands in its block's lines ({mismatch.getD ""})"
+      mismatch.isNone
+    t s!"leaf {n}: a plain block's lines are exactly its leaves ({exactFail.getD ""})"
+      exactFail.isNone
+    -- 3. every inked leaf is attributed or an enumerated exception
+    for r in rows do
+      unless excluded r || (attrInk r.leaf.census).isEmpty || (ownerGroup r).isSome do
+        uncovered := uncovered.push s!"{r.id}:{r.leaf.census.quote}"
+    t s!"leaf {n}: every inked leaf is attributed ({uncovered.toList.take 3})" uncovered.isEmpty
+  -- 6. the indices, concretely: [heading, paragraph with a footnote] numbers
+  -- heading 0, paragraph text 1, note body 2, continuation 3 — the heading's
+  -- line names 0, the paragraph's 1, the note's 2.
+  let (sdoc, _) := elabStr (dvDoc ""
+    "\\section{Head}\n\nText\\footnote{note body} more words here.")
+  let sout := layoutOf oneFace sdoc
+  let slines := (allLines sout).filter fun l => !l.furniture && hasGlyphRun l
+  let leafOf (needle : String) : Option Nat :=
+    (slines.find? fun l => hasStr (lineText l) needle).bind (·.leaf)
+  t "leaf synthetic: heading names leaf 0" (leafOf "Head" == some 0)
+  t "leaf synthetic: paragraph names leaf 1" (leafOf "Text" == some 1)
+  t "leaf synthetic: note names leaf 2" (leafOf "note body" == some 2)
+  t "leaf synthetic: the tree has four leaves"
+    ((Struct.ofDoc (Layout.pdfView sdoc)).leaves.size == 4)

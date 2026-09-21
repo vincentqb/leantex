@@ -78,6 +78,62 @@ that emitted none of them dropped nothing it did not report. -/
 def dropped (o : Out) : Bool :=
   o.diags.any fun d => d.code == "E0405" || d.code == "W0009"
 
+/-- The ink the lines attributed to structure leaf `k` ship, in page order
+(`LineOut.leaf`, the attribution channel). -/
+def attributedInk (o : Out) (k : Nat) : List Char :=
+  o.pages.toList.flatMap fun p =>
+    (p.lines.toList.filter (·.leaf == some k)).flatMap lineInk
+
+/-- The ink of the top-level block whose first leaf is `k`: every leaf of
+the root child opening at `k`, as `Struct.leavesOne` enumerates them;
+empty when no block opens there. -/
+def blockLeafInk (t : Struct.Tree) (k : Nat) : List Char :=
+  (t.children.toList.filterMap fun n =>
+    let ls := Struct.leavesOne #[] n
+    match ls[0]? with
+    | some (id, _) =>
+      if id == k then some (ls.toList.flatMap fun (_, l) => inkChars l.census) else none
+    | none => none).flatten
+
+-- owed: lines_attributed_covers
+-- owner: LeanTex.Core.Layout
+-- source: pdf-tagging audit "theorems (owed)"; SYNTHESIS §e W2.8 (the attribution channel indexes the structure tree's leaf array); PLAN 2026-09-21 modern-output entry, wave 2's named owed statements
+-- blocker: the collect-walk induction — the claim sites are `Acc.leafRange` calls inside `collectBlock`'s one giant match, whose equation-lemma generation exhausts whnf whatever the budget (the `emission_conservation_paras` blocker); the per-constructor arm split is the named factorization, and this channel is what it pays for. The placement half is definitional: `placeLine`'s `mk` closure copies `ParaJob.leaf` onto every line it commits (`placeLine_leaf_exact`), and the count comes from `Struct`'s own walk (`leafCount`), so what remains is that the walk's claims run over the body in `Struct.blocksRaw`'s order.
+-- goldens: no
+/-- Attribution covers the ink, weak public form: in a document of plain
+text paragraphs, every line that is not furniture and ships ink names a
+structure leaf, and the leaf is an index into the tree of the document
+the pages set (`Struct.leaves (Struct.ofDoc (Layout.pdfView doc))`, the
+array `structTree_leaves_id` numbers). The unrestricted form is false:
+generated ink the tree does not census (the abstract heading, the
+headline band, an `\item` with no text) ships lines with no leaf. -/
+theorem lines_attributed_covers
+    (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns) (doc : Ir.Doc)
+    (hplain : ∀ b ∈ doc.body, plainPara b) :
+    ∀ p ∈ (Layout.run geom fs pats doc).pages, ∀ l ∈ p.lines,
+      l.furniture = false → lineInk l ≠ [] →
+        ∃ k, l.leaf = some k ∧
+          k < (Struct.ofDoc (Layout.pdfView doc)).leaves.size := by
+  sorry
+
+-- owed: lines_attributed_text
+-- owner: LeanTex.Core.Layout
+-- source: pdf-tagging audit "theorems (owed)"; SYNTHESIS §e W2.8; PLAN 2026-09-21 modern-output entry, wave 2's named owed statements
+-- blocker: as `lines_attributed_covers` (the collect-walk induction behind `collectBlock`'s arm split), plus the per-paragraph half of `emission_conservation_paras`: a paragraph's lines ship exactly its declared ink, which is exactly its node's leaf census (`structTree_text` per block).
+-- goldens: no
+/-- Attribution is a census, weak public form: in a document of plain text
+paragraphs, set without hyphenation and dropping no glyph, the ink of the
+lines attributed to leaf `k`, in page order, is exactly the ink of the
+leaves of the block that opens at `k` — and nothing is attributed to a leaf
+no block opens at. -/
+theorem lines_attributed_text
+    (geom : Geom) (fs : Font.FontSet) (doc : Ir.Doc)
+    (hplain : ∀ b ∈ doc.body, plainPara b)
+    (hclean : dropped (Layout.run geom fs none doc) = false) :
+    ∀ k, attributedInk (Layout.run geom fs none doc) k
+      = blockLeafInk (Struct.ofDoc (Layout.pdfView doc)) k := by
+  sorry
+
 -- owed: emission_conservation_paras
 -- owner: LeanTex.Core.Layout
 -- source: arch-provable I4 (the theorem whose absence let six user-visible defects ship); arch-faithful refactor 3

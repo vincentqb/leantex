@@ -6,6 +6,7 @@ import LeanTex.Core.Ir
 import LeanTex.Core.Oklab
 import LeanTex.Core.ListMark
 import LeanTex.Core.Diag
+import LeanTex.Core.Struct
 
 namespace LeanTex.Core.Layout
 
@@ -559,6 +560,15 @@ structure LineOut where
   floated box, not galley lines), footnotes (insertions), bare rule ink,
   picture labels and furniture are not counted. -/
   counted : Bool := false
+  /-- The preorder index of the `Struct.leaves (Struct.ofDoc (pdfView doc))`
+  entry whose text this line paints — the first leaf of the block the line
+  sets (a footnote's lines name the note's first leaf; a picture's label
+  lines its picture leaf). `none` on furniture, rules-only lines, and
+  generated ink the structure tree does not census (the abstract heading,
+  the headline band). Decoration the walk adds to a block — a section
+  number, a list marker, a caption prefix — rides the block's leaf; 18b's
+  run channel names it apart. -/
+  leaf : Option Nat := none
   deriving Repr, Inhabited
 
 /-- A filled rectangle behind a page's text: the page background, a frame
@@ -3936,7 +3946,8 @@ discarded as TeX discards glue at the top of a page. Glue is never
 stretched: the bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
     (w : Sp) (hang : Sp := 0) (expand : Int := 0)
-    (notes : Array NoteBlock := #[]) (counted : Bool := false) : B :=
+    (notes : Array NoteBlock := #[]) (counted : Bool := false)
+    (leaf : Option Nat := none) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   let rl := ruleOnly segs
@@ -3953,7 +3964,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   let bottom := noteFloor b.geom b.footins (b.notesH + need)
   let mk (y : Sp) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
-      hang := hang, expand := expand, counted := counted }
+      hang := hang, expand := expand, counted := counted, leaf := leaf }
   -- The first baseline is the body top plus the larger of the body's
   -- metric ascent and the line's own leaded above (`first_baseline_declared`).
   b.fitCommit mk
@@ -4022,6 +4033,21 @@ private theorem first_baseline_declared (fs : FontSet) (b : B) (x size : Sp)
       some (b.geom.bodyTop + max b.ascent
         (lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
           b.geom.leading size segs).above) := by
+  rcases hle : lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
+    b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
+  unfold B.placeLine B.fitCommit
+  rw [hle]
+  dsimp only
+  simp [hcur, B.commit, B.attachNotes, Array.back?_push]
+
+/-- **The line names the leaf it was given** (`_exact`): the `LineOut`
+`placeLine` commits carries `leaf` unchanged — the `mk` closure copies it,
+so a later edit cannot drop the attribution channel between the paragraph
+job and the page silently. Stated on the fresh-page branch, as
+`first_baseline_declared` is; every branch commits the same `mk`. -/
+private theorem placeLine_leaf_exact (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w : Sp) (lf : Option Nat) (hcur : b.cur.lines.isEmpty = true) :
+    (b.placeLine fs x size segs w (leaf := lf)).cur.lines.back?.map (·.leaf) = some lf := by
   rcases hle : lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs with ⟨ht, bl, ia, dp⟩
   unfold B.placeLine B.fitCommit
@@ -4099,6 +4125,9 @@ private structure ParaJob where
   galley lines, and the line-number census must not count them
   (`LineOut.counted`). -/
   inFloat : Bool := false
+  /-- The first `Struct` leaf of the block this paragraph sets — what every
+  line placed from it names (`LineOut.leaf`). `none` for generated ink. -/
+  leaf : Option Nat := none
 
 /-- The block walk emits vertical skips and paragraph jobs; placement replays
 them in document order, so the page builder stays sequential and the output
@@ -4155,8 +4184,9 @@ private inductive Op where
   | setLogo (content : Array Ir.Inline)
   /-- An elaborated picture placed with its left edge at page x — fills and
   label lines through one `Pic.Place` transform, fitted vertically the way
-  a line of the picture's height is. -/
-  | picture (x : Sp) (pic : Ir.Pic.Picture)
+  a line of the picture's height is. `leaf` is its `.picture` leaf, what
+  the label lines name. -/
+  | picture (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat)
   /-- A float's extent: everything between `floatOpen` and its matching
   `floatClose` — caption, gap, and object — is one unbreakable box, as
   LaTeX floats are (a float is a `\vbox`: placed whole or deferred, never
@@ -4266,6 +4296,65 @@ private structure Acc where
   /-- Links of the unpinned navigation landmarks met so far, in document
   order, as (text, target): the entries the document outline resolves. -/
   navEntries : Array (String × String) := #[]
+  /-- The next structure leaf the walk will attribute: the preorder index
+  into `Struct.leaves (Struct.ofDoc (pdfView doc))`, advanced through
+  `leafRange` at exactly the sites `Struct.blockRaw` enumerates leaves, in
+  its order. The counts come from `Struct`'s own walk (`leafCount`), so the
+  channel indexes the array the tagger reads by construction; the walk
+  decides only where a block's range starts. -/
+  leafNext : Nat := 0
+
+/-- The leaves `Struct` gives an inline sequence: the count the walk claims
+for one block of set text. Counted by the projection's own walk, never a
+second enumeration of the inline arms. -/
+private def leafCount (xs : Array Inline) : Nat :=
+  (Struct.leaves (Struct.inlinesRaw #[] xs.toList)).size
+
+/-- The leaves `Struct` gives a block sequence the page ships no ink for (a
+speaker note, an unpinned nav), so the counter steps over them. -/
+private def blockLeafCount (bs : Array Block) : Nat :=
+  (Struct.leaves (Struct.blocksRaw #[] bs.toList)).size
+
+/-- Claim the next `n` leaves for one block of set text: the block's first
+leaf (what its lines name) — `none` when it owns no leaf: generated ink the
+tree does not census — and the counter past them. -/
+private def Acc.leafRange (a : Acc) (n : Nat) : Acc × Option Nat :=
+  ({ a with leafNext := a.leafNext + n }, if n == 0 then none else some a.leafNext)
+
+mutual
+
+private def noteStartsList (out : Array (Option Nat)) :
+    List Struct.Node → Array (Option Nat)
+  | [] => out
+  | n :: rest => noteStartsList (noteStartsOne out n) rest
+
+/-- Each `.note` node's first leaf id, in preorder; a note is not entered
+(a note inside a note is the outer note's text to the page). -/
+private def noteStartsOne (out : Array (Option Nat)) : Struct.Node → Array (Option Nat)
+  | .leaf _ _ => out
+  | .node kind kids =>
+    match kind with
+    | .note => out.push ((Struct.leaves kids)[0]?.map (·.1))
+    | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label
+    | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote
+    | .aside | .nav | .bibEntry | .link _ | .span _ | .reference _ | .artifact =>
+      noteStartsList out kids.toList
+
+end
+
+/-- The first leaf of every footnote in a block's content, in the order the
+flatten meets them: the content's shape numbered from `k`, each `.note`
+node's first leaf. Decoration the walk prepended to the content — a section
+number, a caption prefix, a bibliography marker — is not in the tree, so the
+ids shift back by the leaves the content carries beyond its `span`; a note
+whose leaf then falls outside `[k, k + span)` has no node of its own (the
+tree flattened its block: a bibliography entry, a listing caption) and gets
+`none`. -/
+private def noteLeafStarts (k span : Nat) (inlines : Array Inline) : Array (Option Nat) :=
+  let shape := Struct.number k (Struct.inlinesRaw #[] inlines.toList)
+  let extra := (Struct.leaves shape).size - span
+  (noteStartsList #[] shape.toList).map fun s =>
+    s.bind fun s => if k + extra ≤ s && s - extra < k + span then some (s - extra) else none
 
 /-- A declared length with its rubber: `1.8ex plus 0.8ex minus 0.4ex` keeps
 all three parts, so a page can take up the slack the author allowed. -/
@@ -4389,7 +4478,8 @@ private def collectPara (r : Rd) (a : Acc)
     (marker : Option (Array Inline) := none)
     (markerIndent : Option Sp := none)
     (rule : Option (Sp × Ir.Color) := none)
-    (display : Bool := false) : Acc :=
+    (display : Bool := false)
+    (leaf : Option Nat := none) (span : Nat := 0) : Acc :=
   let a := a.flushGap r
   -- The measure the paragraph sets against — and what a fraction-of-
   -- `\textwidth` image size resolves against: inside a `column` the
@@ -4429,7 +4519,13 @@ private def collectPara (r : Rd) (a : Acc)
     let bodyFont := r.fs.get (r.fs.lookup 0 400 false)
     let scaleB (v : Int) : Sp := v * r.geom.fontSize / bodyFont.unitsPerEm
     let target := r.geom.textWidth
+    let noteLeaves := match leaf with
+      | some k => noteLeafStarts k span inlines
+      | none => #[]
+    let mut i := 0
     for (markIdx, num, body) in rawNotes do
+      let noteLeaf := (noteLeaves[i]?).getD none
+      i := i + 1
       let (nitems0, nds, cache2, _, _) :=
         itemsOfInlines r.pats noteSize r.xHeight r.fs { color := a.fg, ground := a.ground } body
           cache r.imgs r.geom.textWidth r.geom.textHeight (ladder := r.geom.scale)
@@ -4459,7 +4555,7 @@ private def collectPara (r : Rd) (a : Acc)
           r.geom.leading noteSize lsegs
         let y := if first then max box.above sep else yPrev + belowPrev + box.above
         lines := lines.push { x := r.geom.hmargin, y := y, size := noteSize,
-                              segs := lsegs, setWidth := lw, note := true }
+                              segs := lsegs, setWidth := lw, note := true, leaf := noteLeaf }
         hgt := y + box.inkBelow
         yPrev := y
         belowPrev := box.below
@@ -4489,7 +4585,8 @@ private def collectPara (r : Rd) (a : Acc)
       expand := r.geom.expand
       markerSegs := markerSegs, markerIndent := markerIndent, rule := rule
       notes := noteBlocks
-      inFloat := r.inFloat }) }
+      inFloat := r.inFloat
+      leaf := leaf }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base — the
 0.6 pt the engine shipped at the 10 pt base where it was picked, now
@@ -4572,10 +4669,11 @@ signature. -/
 private def collectDisplay (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
-    (rule : Option (Sp × Ir.Color) := none) : Acc :=
+    (rule : Option (Sp × Ir.Color) := none)
+    (leaf : Option Nat := none) (span : Nat := 0) : Acc :=
   collectPara { r with pats := none, geom := { r.geom with justify := false } }
     a inlines indent center size (baseStyle := baseStyle) (rule := rule)
-    (display := true)
+    (display := true) (leaf := leaf) (span := span)
 
 /-- The natural (unstretched, unshrunk) width of a set of items: what the
 cell takes when nothing bends. Penalties add nothing — a pen's width is
@@ -4595,13 +4693,15 @@ undeclared it takes display type at the scale's LARGE step in the bold
 face (classes.dtx's \@maketitle sets {\LARGE \@title \par}). -/
 private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
     (indent : Sp) (center : Bool) : Acc :=
+  let (a, leaf) := a.leafRange (leafCount title)
   match (r.style "titlepage").font with
   | some tpl =>
     collectDisplay r a (Ir.fillTemplate tpl title) indent center r.geom.fontSize
+      (leaf := leaf) (span := leafCount title)
   | none =>
     collectDisplay r a title indent center
       (Ir.scaleStep r.geom.fontSize "LARGE")
-      (baseStyle := { weight := .b })
+      (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
 
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
 fraction of the measure (or their widest cell), separated by `2·tabcolsep`
@@ -4778,16 +4878,20 @@ private def collectTable (r : Rd) (a0 : Acc)
             ops := #[]
             wantDefault := false
             owed := #[] }
+          let (sub, leaf) := sub.leafRange (leafCount cell)
+          let span := leafCount cell
           let sub := match spec.align with
-            | .center => collectPara r sub cell x true size
+            | .center => collectPara r sub cell x true size (leaf := leaf) (span := span)
             | .right =>
               let nat := ((nats[i]?).bind (·[j]?)).getD 0
               collectPara r sub cell (x + max 0 (wj - nat)) false size
-            | .left => collectPara r sub cell x false size
+                (leaf := leaf) (span := span)
+            | .left => collectPara r sub cell x false size (leaf := leaf) (span := span)
           a := { a with
             ops := a.ops ++ sub.ops
             hyphCache := sub.hyphCache
-            diags := sub.diags }
+            diags := sub.diags
+            leafNext := sub.leafNext }
         let closer : Op := if j + 1 == row.size then .colClose else .colNext
         a := { a with ops := a.ops.push closer }
       if row.isEmpty then
@@ -4823,7 +4927,9 @@ the page")
     else a
   let x := if center then indent + max 0 ((avail - w) / 2) else indent
   let a := a.flushGap r
-  { a with ops := a.ops.push (.picture (r.geom.hmargin + x) pic) }
+  -- The picture's one `.picture` leaf: its label lines name it.
+  let (a, leaf) := a.leafRange 1
+  { a with ops := a.ops.push (.picture (r.geom.hmargin + x) pic leaf) }
 
 /-- What a captioned float stacks, top to bottom. Position decides where
 the caption and the object stand, never which gaps are paid — that is the
@@ -4919,8 +5025,9 @@ private def collectItem (r : Rd) (a : Acc)
         let marker := match content with
           | #[.colored c none _] => #[Ir.Inline.colored c none marker]
           | _ => marker
+        let (a, leaf) := a.leafRange (leafCount content)
         collectPara r a content indent false r.geom.fontSize
-          (marker := some marker)
+          (marker := some marker) (leaf := leaf) (span := leafCount content)
       | _, _ => collectBlock r a blk indent
     collectItem r a rest indent false marker
 
@@ -4952,7 +5059,10 @@ private def collectCentered (r : Rd) (a : Acc)
   | [] => a
   | blk :: rest =>
     let a := match blk with
-      | .para content => collectPara r a content indent true r.geom.fontSize
+      | .para content =>
+        let (a, leaf) := a.leafRange (leafCount content)
+        collectPara r a content indent true r.geom.fontSize
+          (leaf := leaf) (span := leafCount content)
       -- The centred title block: the level-0 heading centres with the
       -- furniture around it, through the same title door as the uncentred
       -- path.
@@ -4988,7 +5098,8 @@ private def collectColumns (r : Rd) (a : Acc)
     let sub := collectBlocks r sub body x0
     let a := { a with
       ops := a.ops ++ sub.ops ++ (if rest.isEmpty then #[] else #[Op.colNext])
-      hyphCache := sub.hyphCache }
+      hyphCache := sub.hyphCache
+      leafNext := sub.leafNext }
     collectColumns r a rest (x0 + wi + gutter) shareW gutter total
 
 /-- A standout frame's content: paragraphs centre and set Large bold, in
@@ -5001,12 +5112,14 @@ private def collectStandout (r : Rd) (a : Acc)
   | blk :: rest =>
     let a := match blk with
       | .para content =>
+        let (a, leaf) := a.leafRange (leafCount content)
         match (r.style "standout").font with
         | some tpl =>
           collectDisplay r a (Ir.fillTemplate tpl content) indent true r.geom.fontSize
+            (leaf := leaf) (span := leafCount content)
         | none =>
           collectDisplay r a content indent true (r.geom.fontSize * 1440 / 1000)
-            (baseStyle := { weight := .b })
+            (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount content)
       | _ => collectBlock r a blk indent
     collectStandout r (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
       rest indent
@@ -5018,7 +5131,10 @@ private def collectBlock (r : Rd) (a : Acc)
     -- A paragraph holding only label anchors ships no ink: no line and no
     -- gap, or a \label on its own source line would open a blank line.
     if !content.isEmpty && content.all (fun x => x matches .label _) then a
-    else collectPara r a content indent false r.geom.fontSize
+    else
+      let (a, leaf) := a.leafRange (leafCount content)
+      collectPara r a content indent false r.geom.fontSize
+        (leaf := leaf) (span := leafCount content)
   | .equation num content => Id.run do
     -- A numbered display: the formula centred on the measure, the tag
     -- right-aligned on its baseline (amsmath's equation shape). The line
@@ -5030,6 +5146,8 @@ private def collectBlock (r : Rd) (a : Acc)
     -- number down in the same overlap). Justified whatever the page
     -- declares: the fils are the alignment.
     let a := a.flushGap r
+    -- The formula's leaves, then the number's `.label` leaf (`Struct`'s shape).
+    let (a, leaf) := a.leafRange (leafCount content + 1)
     let baseStyle : TextStyle := { color := a.fg, ground := a.ground }
     -- Image fractions resolve against the current measure, as collectPara's.
     let target := (a.measure.getD r.geom.textWidth) - indent
@@ -5059,7 +5177,8 @@ private def collectBlock (r : Rd) (a : Acc)
         target := target
         indent := indent, center := false, size := r.geom.fontSize
         justify := true
-        markerSegs := none, rule := none }) }
+        markerSegs := none, rule := none
+        leaf := leaf }) }
   | .section level _ num title =>
     if level == 0 then
       -- The document title, a heading at level 0, through the one title
@@ -5076,6 +5195,10 @@ private def collectBlock (r : Rd) (a : Acc)
         { a with curSection := title
                  ops := a.ops.push (.anchor (Ir.slug title)) }
       else a
+    -- The heading's leaves are the title's alone: the number the walk sets
+    -- before it is generated ink (`Struct`'s `.section` arm reads no number).
+    let span := leafCount title
+    let (a, leaf) := a.leafRange span
     if r.slides && level == 1 && (a.pal.find? "progressfg").isSome then
       -- The themed section page: its own page, vertically centred, the
       -- title ragged-left in a centred measure with the deck position
@@ -5094,9 +5217,10 @@ private def collectBlock (r : Rd) (a : Acc)
       let a := match st.font with
         | some tpl =>
           collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
+            (leaf := leaf) (span := span)
         | none =>
           collectDisplay r a title indent false (r.geom.fontSize * 1440 / 1000)
-            (baseStyle := { weight := .b })
+            (baseStyle := { weight := .b }) (leaf := leaf) (span := span)
       let fgC := (a.pal.find? "progressfg").getD a.fg
       let bgC := (a.pal.find? "progressbg").getD ((a.pal.find? "bg").getD Ir.Color.white)
       -- The fallback is moloch's own default, `progressbar linewidth=1pt`
@@ -5146,11 +5270,13 @@ private def collectBlock (r : Rd) (a : Acc)
         collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
           (rule := st.rule.map fun (rc : Ir.Color × Option String) =>
             (headingRuleWeight r.geom.fontSize, rc.1))
+          (leaf := leaf) (span := span)
       | none =>
         collectDisplay r a title indent false (sectionSize r.geom level)
           (baseStyle := { weight := .b })
           (rule := st.rule.map fun (rc : Ir.Color × Option String) =>
             (headingRuleWeight r.geom.fontSize, rc.1))
+          (leaf := leaf) (span := span)
     let ha := r.resolve (Ir.headingAfterDefault r.geom.fontSize)
     let a := a.vskip ((st.after.map r.resolve).getD
       (if r.parskip.width > ha.width then r.parskip else ha))
@@ -5229,8 +5355,9 @@ private def collectBlock (r : Rd) (a : Acc)
       let saved := (a.fg, a.ground)
       let a := { a with fg := look.fg
                         ground := look.bar.orElse fun _ => a.ground }
+      let (a, leaf) := a.leafRange (leafCount title)
       let a := collectDisplay r a title indent false r.geom.fontSize
-        (baseStyle := { weight := .b })
+        (baseStyle := { weight := .b }) (leaf := leaf) (span := leafCount title)
       let a := match look.bar with
         | some barBg =>
           { a with ops := a.ops.push (.blockBar barBg (r.geom.fontSize / 2)
@@ -5290,7 +5417,9 @@ private def collectBlock (r : Rd) (a : Acc)
       let content := match item.marker with
         | some m => #[Ir.Inline.text s!"[{m}] "] ++ item.content
         | none => item.content
-      let a := collectPara r a content indent false r.geom.fontSize
+      -- one leaf per entry, its whole text (`Struct.bibRaw`), the marker generated
+      let (a, leaf) := a.leafRange 1
+      let a := collectPara r a content indent false r.geom.fontSize (leaf := leaf) (span := 1)
       a.wantGap
   | .spaced before body =>
     -- Declared space above the block, resolved against the body font: the
@@ -5312,18 +5441,25 @@ private def collectBlock (r : Rd) (a : Acc)
     -- its body ships no ink. A pinned nav is viewport furniture with no
     -- page analogue, dropped exactly as `.note` is not handout content.
     -- HTML keeps the `<nav>` landmark element.
+    -- Its leaves are numbered whether or not the page sets them: the
+    -- counter steps over them so what follows keeps its index.
+    let a := (a.leafRange (blockLeafCount body)).1
     if spec.pin.isSome then a
     else { a with navEntries := a.navEntries ++ Ir.navLinks body }
-  | .note _ =>
-    -- A speaker note is not handout content: no lines, no gap.
-    a
+  | .note body =>
+    -- A speaker note is not handout content: no lines, no gap. Its leaves
+    -- (an `.aside` in the tree) are stepped over, never attributed.
+    (a.leafRange (blockLeafCount body)).1
   | .pagebreak =>
     -- The declared boundary: the builder closes only pages holding
     -- something, so adjacent breaks never make a blank page.
     a.pageBreak
   | .logo content =>
     -- A stateful declaration: the pages from here on carry this content at
-    -- their corner. No lines, no gap; placement reads the spans.
+    -- their corner. No lines, no gap; placement reads the spans. Its
+    -- `.artifact` leaves are stepped over: the furniture pass lays them
+    -- flagged, never attributed.
+    let a := (a.leafRange (leafCount content)).1
     { a with ops := a.ops.push (.setLogo content) }
   | .verbatim covered s spec =>
     -- Code lines, kept literally, at the scale's own \footnotesize (the
@@ -5346,7 +5482,9 @@ private def collectBlock (r : Rd) (a : Acc)
             a.hyphCache r.imgs avail r.geom.textHeight (ladder := r.geom.scale)
         let a := { a with hyphCache := cache }
         let fits := itemsNaturalWidth items ≤ avail
-        let a := collectPara r a caption indent fits r.geom.fontSize
+        -- one flat caption leaf (`Struct`'s listing shape), the prefix generated
+        let (a, leaf) := a.leafRange 1
+        let a := collectPara r a caption indent fits r.geom.fontSize (leaf := leaf) (span := 1)
         a.addvspace (r.resolve ((a.tokens.find? "captionsep").getD
           (Ir.captionSepDefault r.geom.fontSize)))
       | none => a
@@ -5373,8 +5511,10 @@ private def collectBlock (r : Rd) (a : Acc)
     let inner := match covered with
       | some c => #[.colored c none inner]
       | none => inner
+    -- the code is one leaf, its whole content; line numbers are generated
+    let (a, leaf) := a.leafRange 1
     collectPara { r with pats := none } a inner indent false
-      (Ir.scaleStep r.geom.fontSize "footnotesize")
+      (Ir.scaleStep r.geom.fontSize "footnotesize") (leaf := leaf) (span := 1)
   | .algorithm numbered semis lines =>
     -- Pseudocode: each line one display-type paragraph at the body size —
     -- never hyphenated (the engine must not invent a hyphen inside an
@@ -5393,18 +5533,30 @@ private def collectBlock (r : Rd) (a : Acc)
     let stepInd := (r.resolve ((a.tokens.find? "algindent").getD
       { width := { em := 1500 } })).width
     let rAlg := { r with pats := none, geom := { r.geom with justify := false } }
+    -- One `.code` node holds every line's leaves (`Struct.algRaw`): a line
+    -- names its own first leaf; a keyword-only line (`end`, `else`) is
+    -- generated ink that rides the block's first leaf.
+    let codeLeaf : Option Nat :=
+      if lines.any (fun l => leafCount l.content + leafCount (l.comment.getD #[]) > 0)
+      then some a.leafNext else none
     (lines.foldl (fun (ai : Acc × Nat) l =>
       let (a, i) := ai
       let content := Ir.AlgLine.rendered words semis muted l
       let marker : Option (Array Ir.Inline) := if numbered then
           some #[Ir.Inline.colored muted (some "muted") #[.text s!"{i}"]]
         else none
+      -- the line's leaves: its content's, then its comment's (`Struct.algRaw`)
+      let span := leafCount l.content + leafCount (l.comment.getD #[])
+      let (a, leaf) := a.leafRange span
       (collectPara rAlg a content (indent + stepInd * (l.depth : Int)) false
-        r.geom.fontSize (marker := marker) (markerIndent := some indent),
+        r.geom.fontSize (marker := marker) (markerIndent := some indent)
+        (leaf := leaf <|> codeLeaf) (span := span),
         i + 1)) (a, 1)).1
   | .framefoot content =>
     -- Not a line, a state change: the note the following frames' footers
-    -- carry. Empty clears back to the chrome default.
+    -- carry. Empty clears back to the chrome default. Its `.artifact`
+    -- leaves are stepped over, as the logo's are.
+    let a := (a.leafRange (leafCount content)).1
     { a with frameFoot := if content.isEmpty then none else some content }
   | .setPalette p =>
     -- A stateful declaration, like `.logo`: the palette in force from here
@@ -5441,6 +5593,13 @@ private def collectBlock (r : Rd) (a : Acc)
     -- `Ir.numberedCaption`, the one site both backends spell a float's
     -- number from. Everything between `floatOpen` and `floatClose` ships
     -- on one page (`runFloat`): a float is unbreakable, as LaTeX's are.
+    -- The tree numbers the caption's leaves first whatever `capAbove` says
+    -- (`Struct.blockRaw`'s float arm: census order is `blocksText`'s); the
+    -- page places it where `capAbove` says. So the caption's range is
+    -- claimed here, before the plan runs, and the body's begins past it.
+    -- Counted on the declared caption: the number prefix is generated.
+    let capSpan := leafCount caption
+    let (a, capLeaf) := a.leafRange capSpan
     let caption := Ir.numberedCaption r.locale kind num caption
     let floatSep := r.resolve ((a.tokens.find? "floatsep").getD
       (Ir.floatSepDefault r.geom.fontSize))
@@ -5469,6 +5628,7 @@ private def collectBlock (r : Rd) (a : Acc)
       let saved := a.measure
       let a := { a with measure := some ((a.measure.getD r.geom.textWidth) - cmargin) }
       let a := collectPara rf a caption (indent + cmargin) fits r.geom.fontSize
+        (leaf := capLeaf) (span := capSpan)
       { a with measure := saved }
     let a := (floatPlan capAbove (!caption.isEmpty) floatSep capSep).foldl
       (fun a slot => match slot with
@@ -5494,6 +5654,11 @@ private def collectBlock (r : Rd) (a : Acc)
     -- Every frame declares its distribution (beamer's default is centring,
     -- user guide §8.1); only the article page and a continuation page keep
     -- the builder's top-flush default.
+    -- The frame's `.title` node stands first in the tree whether or not the
+    -- page sets it: a standout frame shows its body alone, so its title's
+    -- leaves are stepped over.
+    let titleSpan := leafCount title
+    let (a, titleLeaf) := a.leafRange titleSpan
     if standout then
       -- Inverted, centred, Large bold. The palette's standout keys
       -- override; without them the frame inverts the page's own colours.
@@ -5564,9 +5729,10 @@ private def collectBlock (r : Rd) (a : Acc)
         let a := match st.font with
           | some tpl =>
             collectDisplay r a (Ir.fillTemplate tpl title) 0 false r.geom.fontSize
+              (leaf := titleLeaf) (span := titleSpan)
           | none =>
             collectDisplay r a title 0 false (sectionSize r.geom 1)
-              (baseStyle := { weight := .b })
+              (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
         -- The title itself is inline content: no `.setPalette` can stand
         -- in it, so the saved ink is the epoch's own.
         let a := { a with fg := saved.1
@@ -5575,7 +5741,7 @@ private def collectBlock (r : Rd) (a : Acc)
         { a with wantDefault := true }
       | none =>
         let a := collectDisplay r a title 0 false (sectionSize r.geom 1)
-          (baseStyle := { weight := .b })
+          (baseStyle := { weight := .b }) (leaf := titleLeaf) (span := titleSpan)
         { a with wantDefault := true }
     -- The title just placed is page-top chrome: the frame's distribution
     -- moves the body below it, never the title (beamer's frametitle).
@@ -5999,7 +6165,7 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
     (j.notes.filter fun n => (st.2.2 || st.2.1 < n.1) && n.1 < brk).map (·.2)
   (placeParaTrailer fs j brk g.1
     (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns
-      (counted := !j.inFloat)), brk, false)
+      (counted := !j.inFloat) (leaf := j.leaf)), brk, false)
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
   (breaks.foldl (placeParaLine fs j)
@@ -6058,7 +6224,7 @@ private inductive StagedOp where
   | colNext
   | colClose
   | setLogo (content : Array Ir.Inline)
-  | picture (x : Sp) (pic : Ir.Pic.Picture)
+  | picture (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat)
   | floatOpen
   | floatClose
   | anchor (slug : String)
@@ -6094,7 +6260,7 @@ fills and paths as riders, label lines riding the picture's own shrink
 case analysis stays inside the elaboration budget and the page facts
 (`placePicture_extends`, `bgStep_placePicture`) cost one unfold each. -/
 private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
-    (x : Sp) (pic : Ir.Pic.Picture) : B := Id.run do
+    (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) : B := Id.run do
   let mut b := b0
   -- Fit the picture's box the way `placeLine` fits a line of height
   -- `h` and no depth: at the top of a fresh page, else below the last
@@ -6196,7 +6362,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
         -- above it, so a page set short moves the diagram as one
         -- (pushed below through `pushLabels`, the rider door).
         lines := lines.push { x := x, y := y,
-                              size := size, segs := segs, setWidth := w }
+                              size := size, segs := segs, setWidth := w, leaf := leaf }
   b := (b.pushSibling (fills := fills) (paths := paths)).pushLabels lines above
   b := { b with
     pageShrink := above
@@ -6340,8 +6506,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
         j.markerSegs.isNone && j.rule.isNone then
       prose := max prose breaks.size
     b := placePara fs b j breaks
-  | .picture x pic =>
-    b := placePicture fs imgs b x pic
+  | .picture x pic leaf =>
+    b := placePicture fs imgs b x pic leaf
   return { b := b, colSaves := colSaves, logoSpans := logoSpans, prose := prose }
 
 /-- Place a float group whole: a float is unbreakable, as LaTeX's floats
@@ -6567,8 +6733,8 @@ private theorem fitCommit_note_with_mark (b : B) (mk : Sp → LineOut)
     | exact attachNotes_mem _ ns nb hnb l hl
 
 private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) :
-    PagesExtend b (placePicture fs imgs b x pic) := by
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
+    PagesExtend b (placePicture fs imgs b x pic leaf) := by
   simp only [placePicture, Id.run, Id, pure, bind]
   repeat' split
   all_goals first
@@ -6582,9 +6748,9 @@ private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
        done)
 
 private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (h : b.noBreak = true) :
-    (placePicture fs imgs b x pic).pages = b.pages ∧
-      (placePicture fs imgs b x pic).noBreak = true := by
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) (h : b.noBreak = true) :
+    (placePicture fs imgs b x pic leaf).pages = b.pages ∧
+      (placePicture fs imgs b x pic leaf).noBreak = true := by
   simp only [placePicture, Id.run, Id, pure, bind]
   repeat' split
   all_goals first
@@ -6593,8 +6759,9 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
        done)
 
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool) :
-    PagesExtend b (b.placeLine fs x size segs w hang ex ns c) := by
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) :
+    PagesExtend b (b.placeLine fs x size segs w hang ex ns c lf) := by
   simp only [B.placeLine]
   exact fitCommit_extends ..
 
@@ -6602,15 +6769,15 @@ private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
 the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c).pages = b.pages := by
+    (lf : Option Nat) (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang ex ns c lf).pages = b.pages := by
   simp only [B.placeLine]
   exact fitCommit_pages_noBreak (h := h) ..
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns c).noBreak = true := by
+    (lf : Option Nat) (h : b.noBreak = true) :
+    (b.placeLine fs x size segs w hang ex ns c lf).noBreak = true := by
   simp only [B.placeLine]
   exact fitCommit_keeps_noBreak (h := h) ..
 
@@ -6618,8 +6785,8 @@ private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
 `placeLine`'s band. -/
 private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
-    (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
-    ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c).pendingNotes,
+    (lf : Option Nat) (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
+    ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c lf).pendingNotes,
       l'.segs = l.segs := by
   simp only [B.placeLine]
   exact fitCommit_note_with_mark (hnb := hnb) (hl := hl) ..
@@ -6628,8 +6795,8 @@ private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
 extends `b0`'s shipped pages. -/
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
-    (ex : Int) (ns : Array NoteBlock) (c : Bool) :
-    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns c) :=
+    (ex : Int) (ns : Array NoteBlock) (c : Bool) (lf : Option Nat) :
+    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns c lf) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
@@ -6700,10 +6867,10 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
     | exact ⟨fitCommit_pages_noBreak (h := h) ..,
         fitCommit_keeps_noBreak (h := h) ..⟩
-    | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ _ _ _ h,
-        placeLine_keeps_noBreak _ _ _ _ _ _ _ _ _ h⟩
+    | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ _ _ _ _ h,
+        placeLine_keeps_noBreak _ _ _ _ _ _ _ _ _ _ h⟩
     | exact placePara_noBreak _ _ _ _ h
-    | exact placePicture_noBreak _ _ _ _ _ h
+    | exact placePicture_noBreak _ _ _ _ _ _ h
     | (refine ⟨?_, ?_⟩ <;> simp [h]; done)
 
 private theorem foldSteps_extends (fs : FontSet) (imgs : Image.Store)
@@ -6802,14 +6969,15 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
        done)
 
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool) :
-    BgStep b (b.placeLine fs x size segs w hang ex ns c) := by
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
+    (lf : Option Nat) :
+    BgStep b (b.placeLine fs x size segs w hang ex ns c lf) := by
   simp only [B.placeLine]
   exact bgStep_fitCommit ..
 
 private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
-    (b : B) (x : Sp) (pic : Ir.Pic.Picture) :
-    BgStep b (placePicture fs imgs b x pic) := by
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (leaf : Option Nat) :
+    BgStep b (placePicture fs imgs b x pic leaf) := by
   simp only [placePicture, Id.run, Id, pure, bind]
   repeat' split
   all_goals first
@@ -7358,6 +7526,13 @@ private def markFillsOf (geom : Geom) (doc : Doc) : Array Fill :=
       (Ir.Color.registration (doc.palette.entries.any (·.2.cmyk.isSome)))
   else #[]
 
+/-- The document as the paged backend reads it: backend conditionals
+resolved at the entry (`Ir.keepFor_covers` is why dropping here cannot
+lose content). The structure tree the attribution channel indexes is
+`Struct.ofDoc (pdfView doc)` — the tree of exactly the content the pages
+set. -/
+def pdfView (doc : Doc) : Doc := { doc with body := Ir.keepFor "pdf" doc.body }
+
 /-- The whole pipeline up to the marks seam: placement, the close, and
 the furniture pass. `run` is this plus `addMarks`; the split keeps each
 half's proof (`runCore_bg`, `addMarks_mem`) inside its own elaboration
@@ -7367,8 +7542,8 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     Out := Id.run do
   -- The PDF's view of the document: backend conditionals resolve here, at
   -- the backend's entry, so no later pass can see content another backend
-  -- owns (`Ir.keepFor_covers` is why dropping here cannot lose content).
-  let doc := { doc with body := Ir.keepFor "pdf" doc.body }
+  -- owns.
+  let doc := pdfView doc
   -- The geometry decides whether patterns apply at all: a card never
   -- hyphenates, whoever loaded the patterns.
   let pats := if geom.hyphenate then pats else none
@@ -7474,8 +7649,12 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
         acc := collectBlock rd acc
           (.frame title standout valign (Ir.unwrapItemSteps body)) 0
       else
+        -- The tree numbers the frame once; every step's pages name the same
+        -- leaves, so the counter rewinds to the frame's start per step
+        -- (dimming recolours and unwrapping splices: neither moves a leaf).
+        let leafStart := acc.leafNext
         for k in [1:steps + 1] do
-          acc := collectBlock rd acc
+          acc := collectBlock rd { acc with leafNext := leafStart }
             (.frame title standout valign (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
     | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
   -- Trailing fil glue stretches on the page it ends (a \vfill nothing
@@ -7506,7 +7685,7 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
     | .colNext => .colNext
     | .colClose => .colClose
     | .setLogo c => .setLogo c
-    | .picture x pic => .picture x pic
+    | .picture x pic leaf => .picture x pic leaf
     | .floatOpen => .floatOpen
     | .floatClose => .floatClose
     | .anchor sl => .anchor sl
@@ -7667,7 +7846,7 @@ private theorem runCore_bg
   refine fin _ (key _ _ (bgStep_close _ _ _ (bgStep_placeFrom ..)) ?_ rfl q hq)
     ?_ ?_
   all_goals first
-    | (simp [Ir.Design.ofDoc, hbg]
+    | (simp [Ir.Design.ofDoc, pdfView, hbg]
        done)
     | (try dsimp only
        repeat' split
