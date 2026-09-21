@@ -13,4 +13,5 @@ pre refuse:W0301 \rehead{x}
 pre impl \clearpairofpagestyles
 pre impl \pagestyle{scrheadings}
 pre impl \setkomafont{section}{\bfseries}
+pre impl \setkomafont{disposition}{\bfseries}
 pre refuse:W0301 \addtokomafont{section}{\itshape}

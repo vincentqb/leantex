@@ -1251,6 +1251,20 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\thispagestyle{empty}\\ihead{L}"))
   t "compat koma section font" ((koma.1.styles.find? "section").bind (·.font) ==
     some #[.styled (.size "large") #[.styled .sans #[.colored { r := 0x11, g := 0x22, b := 0x33 } (some "ink") #[]]]])
+  -- KOMA's disposition element is every sectioning level's font at once
+  -- (KOMA-Script manual ch. 4): one declaration fans out to the heading
+  -- elements the engine draws; a later per-level \setkomafont wins per
+  -- key, the engine's replace-on-redeclare.
+  let dispo := elabStr (pre ("\\setkomafont{disposition}{\\bfseries}" ++
+    "\\setkomafont{section}{\\sffamily}"))
+  t "compat koma disposition styles every heading level"
+    (((dispo.1.styles.find? "subsection").bind (·.font) ==
+        some #[.styled .bold #[]]) &&
+      ((dispo.1.styles.find? "subsubsection").bind (·.font) ==
+        some #[.styled .bold #[]]) &&
+      ((dispo.1.styles.find? "section").bind (·.font) ==
+        some #[.styled .sans #[]]) &&
+      dispo.2.all (·.code != "W0111"))
   t "compat koma section spacing"
     (((koma.1.styles.find? "section").bind (·.before)).map (·.width) == some { sp := Dim.pt 6 })
   t "compat koma section rule" (((koma.1.styles.find? "section").bind (·.rule)).map (·.2) == some (some "ink"))

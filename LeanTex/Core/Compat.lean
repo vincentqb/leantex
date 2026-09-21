@@ -1553,7 +1553,23 @@ clock, so nothing is inserted" pos
     let (args, k) := takeGroups raws start 2
     if h : args.size = 2 then
       let element := rawSrc args[0]
-      if Ir.styleableElements.contains element then
+      if element == "disposition" then
+        -- KOMA's `disposition` is the base font of every sectioning level
+        -- at once (KOMA-Script manual ch. 4, element `disposition`: used
+        -- by all the disposition levels, each level's own element applied
+        -- after it). One declaration fans out to each heading element the
+        -- engine draws; a later \setkomafont{section} then wins per key,
+        -- the engine's own replace-on-redeclare — KOMA composes the two
+        -- font lists instead, a divergence this arm accepts.
+        let native := "\\style{section}{ font = {...} }, per heading level"
+        became "\\setkomafont{disposition}" native pos
+        let mut out : Array Raw := #[]
+        for lvl in ["section", "subsection", "subsubsection"] do
+          let font : Raw := .group #[.word "font" pos, .space, .sym '=' pos, .space,
+            .group args[1] pos] pos
+          out := out ++ (← synthAt s!"\\style\{{lvl}}" pos).push font
+        return some (out, k)
+      else if Ir.styleableElements.contains element then
         -- The font spec is inline content and travels as a group, not text,
         -- so its own idioms (\\color{x}) are still rewritten by the walk.
         let native := s!"\\style\{{element}}"
