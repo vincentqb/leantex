@@ -8028,18 +8028,17 @@ ink). A figure's caption has already become its image's `alt` by
 elaboration (`setAltBlocks`), so a captioned figure is not counted — and a
 logo's images are not counted either: a logo is decorative furniture by
 role (`logoImageSrcs`), so its missing alternative is the conforming state,
-never a defect. A boundary picture (`picSrcPrefix`) is not counted here:
-its absent alternative is the one fact its trust label already reports —
-N0023 says the picture's text is not in the document's census and its help
-names the same fix (a caption or alt) — and the route was the engine's
-default, not a declared image; one loss, one diagnostic. A caption or alt
-still propagates and satisfies both. -/
+never a defect. A boundary picture (`picSrcPrefix`) *is* counted — the
+route being the engine's default changes who drew the box, not what a
+reader of the accessibility tree gets — but judged by its own face after
+fulfilment (`picAltDiags`, the driver's), never here (`altDiags` leaves
+it): the two faces partition this census (`alt_judged_complete`).
+N0023 is the picture's trust note and names no loss. -/
 def imagesSansAlt (doc : Doc) : Array String :=
   let out := foldBlocks (fun out _ => out) sansAltStep #[] doc.body
   let out := match doc.head with | some h => foldInlines sansAltStep out h | none => out
   let out := match doc.foot with | some f => foldInlines sansAltStep out f | none => out
-  out.filter (fun src => !(logoImageSrcs doc).contains src &&
-    !src.startsWith picSrcPrefix)
+  out.filter (fun src => !(logoImageSrcs doc).contains src)
 
 /-- The text-alternative judge's file-image face (WCAG 2.2 SC 1.1.1,
 Non-text Content: non-text content has a text alternative that serves the

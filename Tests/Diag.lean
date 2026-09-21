@@ -650,14 +650,14 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((dvE (dvDoc "" ("\\begin{figure}\\includegraphics{chart.png}" ++
         "\\caption{A synthetic chart}\\end{figure}"))).any
       (·.code == "W0376")) == false)
-  -- A boundary picture's absent alternative is the trust label's fact:
-  -- N0023 already says its text is not in the census and its help names
-  -- the same fix (a caption or alt), and the route was the engine's
-  -- default, not a declared image — one loss, one diagnostic.
+  -- A boundary picture routed by the open default is in the census — the
+  -- default route changes who drew the box, not what the accessibility
+  -- tree gets — carries its trust note, and is left to the driver's face
+  -- (`picAltDiags`, judged once shipped), never named at elaboration.
   let (routed, routedDs) := elabStr (dvDoc ""
     "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
-  t "a boundary picture is N0023's fact, not W0376's"
-    ((Ir.imagesSansAlt routed).isEmpty &&
+  t "a default-routed boundary picture is counted, noted, and left to the driver's judge"
+    ((Ir.imagesSansAlt routed).size == 1 &&
      routedDs.all (·.code != "W0376") && routedDs.any (·.code == "N0023"))
   -- The theorem's executable face: the judge and the census agree on the
   -- offender.
