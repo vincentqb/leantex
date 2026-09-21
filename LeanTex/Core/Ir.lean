@@ -133,6 +133,10 @@ structure PageSpec where
   /-- The cut marks' stroke thickness (`\page{ mark-thickness = ... }`);
   `cutMarkThickness` holds the default and its source. -/
   markThickness : Sp := cutMarkThickness
+  /-- The document's size ladder, when a venue's refused size
+  redefinitions were read out (per-mille of the body, `setStep`'s door;
+  `PageSpec.scale` resolves). `none` is the engine's `sizeScale`. -/
+  sizes : Option (List (String × Nat)) := none
   /-- Whether paragraphs may hyphenate; `none` takes the class default —
   on for `article` and `slides`, off for `card`, where a two-line name
   broken with a hyphen is never what anyone means. -/
@@ -1296,6 +1300,86 @@ pasted in unscaled from an article) is what the assertion exists to catch. -/
 theorem poster_floor_within_scale :
     ∀ p ∈ sizeScale, 800 ≤ p.2 →
       posterFontSize * (p.2 : Int) / 1000 / 2 ≥ posterXHeightFloor := by decide
+
+/-- Whether a ladder never decreases in its named order — what the size
+read-out door demands of a venue's ladder. Non-strict where the engine's
+own scale is strict (`sizeScale_monotone`): a venue may set two
+neighbouring sizes equal (the NeurIPS lineage sets `\footnotesize` =
+`\small` = 9 pt), and what the door refuses is disorder — a larger name
+set smaller. `sizeScale` itself is ordered (`sizeScale_stepsOrdered`),
+and `size_ladder_monotone` extends the property to every ladder the door
+accepts. -/
+def stepsOrdered (scale : List (String × Nat)) : Bool :=
+  ((scale.map (·.2)).zip (scale.map (·.2)).tail).all fun p => p.1 ≤ p.2
+
+theorem sizeScale_stepsOrdered : stepsOrdered sizeScale = true := by decide
+
+/-- Replace one named step of a ladder — the door a venue's refused
+`\@setfontsize` size commands are read through, per-mille of the body.
+`none` when the name is off the ladder or the replaced ladder would no
+longer be ordered: LaTeX's own scale is ordered by design (size10.clo's
+values), and the engine's size comparisons assume it, so a venue step
+that breaks the order keeps the built-in instead, named. -/
+def setStep (scale : List (String × Nat)) (name : String) (f : Nat) :
+    Option (List (String × Nat)) :=
+  if (scale.lookup name).isNone then none
+  else
+    let s' := scale.map fun p => if p.1 == name then (p.1, f) else p
+    if stepsOrdered s' then some s' else none
+
+/-- Every ladder `setStep` accepts is ordered in the named order: the
+read-out cannot admit a venue that sets `\small` larger than
+`\normalsize` — that step keeps the built-in (W0361 names it). -/
+theorem size_ladder_monotone (scale : List (String × Nat)) (name : String)
+    (f : Nat) (s' : List (String × Nat)) (h : setStep scale name f = some s') :
+    stepsOrdered s' = true := by
+  unfold setStep at h
+  split at h
+  · exact absurd h (by simp)
+  · dsimp only at h
+    split at h
+    next hm => injection h with h'; subst h'; exact hm
+    next => exact absurd h (by simp)
+
+/-- Replace several named steps at once, judged as one ladder — the door a
+venue's whole read-out goes through first: per-step application through
+`setStep` depends on the order the venue wrote its redefinitions in (a
+ladder shrunk from `\small` down is refused at `\small` against the
+engine's still-standing `\footnotesize`), and a venue's ladder is one
+declaration, not a sequence. `none` when the replaced ladder disorders;
+the caller then salvages step by step and the offenders are named. -/
+def setStepsAll (scale : List (String × Nat)) (steps : List (String × Nat)) :
+    Option (List (String × Nat)) :=
+  let s' := scale.map fun q => match steps.lookup q.1 with
+    | some f => (q.1, f)
+    | none => q
+  if stepsOrdered s' then some s' else none
+
+/-- The batch door's half of `size_ladder_monotone`: a venue ladder
+accepted whole is ordered whole. -/
+theorem size_ladder_monotone_all (scale steps : List (String × Nat))
+    (s' : List (String × Nat)) (h : setStepsAll scale steps = some s') :
+    stepsOrdered s' = true := by
+  unfold setStepsAll at h
+  dsimp only at h
+  split at h
+  next hm => injection h with h'; subst h'; exact hm
+  next => exact absurd h (by simp)
+
+/-- The size ladder in force for a document: its own, read from a venue's
+size commands, or the engine's scale. The one resolving site — a consumer
+of a named size step reads the ladder from here (or the `Geom` copy of
+it), never `sizeScale` directly, now that a document may own the ladder. -/
+def PageSpec.scale (p : PageSpec) : List (String × Nat) :=
+  p.sizes.getD sizeScale
+
+/-- `scaleStep` over a document's ladder: the same integer arithmetic, the
+scale a parameter. A name off the ladder is the base itself. -/
+def scaleStepIn (scale : List (String × Nat)) (base : Sp) (name : String) : Sp :=
+  base * ((scale.lookup name).getD 1000) / 1000
+
+theorem scaleStepIn_default (base : Sp) (name : String) :
+    scaleStepIn sizeScale base name = scaleStep base name := rfl
 
 def Style.label : Style → String
   | .bold => "bold"
@@ -8915,6 +8999,10 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
     s!"vmargin {doc.page.vmargin.toPtString} hmargin {doc.page.hmargin.toPtString}" ++
     (if doc.page.fontSize != baseFontSize
       then s!" fontsize {doc.page.fontSize.toPtString}" else "") ++
+    (match doc.page.sizes with
+      | some sc => String.join ((sc.filter fun p =>
+          sizeScale.lookup p.1 != some p.2).map fun p => s!" size {p.1} {p.2}")
+      | none => "") ++
     (match doc.page.parskip with
       | some g => s!" parskip {dumpGlue g}"
       | none => "") ++

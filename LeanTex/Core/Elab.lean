@@ -194,6 +194,11 @@ structure ESt where
   names (`\@maketitle`, `\@toptitlebar`) are all defined — for the
   declarative title styling it may carry (`applyRefusedTitleStyle`). -/
   refusedTitleBody : Option (Array Raw) := none
+  /-- The bodies of refused size-command redefinitions (rule (b), W0361),
+  in document order: read once more at the preamble's end for the
+  `\@setfontsize` ladder they may declare (`applyRefusedSizeLadder`), as
+  `refusedTitleBody` is for `\maketitle`'s styling. -/
+  refusedSizeBodies : Array (String × Array Raw × Span) := #[]
   /-- Speaker-note bodies met inside inline content, where a block cannot
   stand, each with its `\note`'s position: the enclosing frame drains them
   to its end, so a mid-sentence `\note` neither splits its paragraph nor
@@ -6621,6 +6626,11 @@ private def gateRedefB (ctx : Ctx) (cmd : UserCmd) : EM Bool := do
     refuseRedef cmd (.refused d)
     if cmd.name == "maketitle" then
       modify fun st => { st with refusedTitleBody := some cmd.body }
+    -- A refused size command may still declare its step (`\@setfontsize`):
+    -- stashed for the preamble's-end read-out, the title-body shape.
+    if sizeCtrlNames.contains cmd.name && cmd.name != "normalsize" then
+      modify fun st => { st with refusedSizeBodies :=
+        st.refusedSizeBodies.push (cmd.name, cmd.body, cmd.span) }
     return false
   | none =>
     if nonEmpty then return true
@@ -9937,6 +9947,86 @@ private def applyRefusedTitleStyle (s : PreState) : EM PreState := do
     return { st with diags := diags, refusedTitleBody := none }
   return { s with styles := s.styles.declare "titlepage" merged }
 
+/-- Rule (b)'s remainder for the size ladder: a refused size-command
+redefinition whose body opens with `\@setfontsize\X<size><leading>`
+(fntguide §"\@setfontsize") still *declares* `\X` — the size read as a
+per-mille step of the body in force, exactly as a class's `\normalsize`
+already declares the body size itself (the Compat size idiom). Read at
+the preamble's end in document order, as one declaration: the whole read
+ladder through `Ir.setStepsAll`'s ordered door, or — only when the venue's
+own ladder disorders — step by step through `Ir.setStep`, the offenders
+named (`Ir.size_ladder_monotone`, `Ir.size_ladder_monotone_all`). A landed
+step drops its W0361 and notes what it became (N0100); a step that would
+disorder the named sizes keeps the built-in, its W0361 gaining the clause
+saying why; a body whose head is not the idiom keeps plain rule (b). The
+declared leading is not read:
+the engine's leading is one page-level factor (`Ir.leadingFor`), already
+the venue's own through `\normalsize`'s read-out, and no per-step leading
+exists to declare. A redefinition that later won extracts nothing. -/
+private def applyRefusedSizeLadder (s : PreState) : EM PreState := do
+  let stash := (← get).refusedSizeBodies
+  if stash.isEmpty then return s
+  modify fun st => { st with refusedSizeBodies := #[] }
+  -- Each stashed body's readable step, in document order — later wins.
+  let mut steps : Array (String × Nat × Span) := #[]
+  for (name, body, span) in stash do
+    if (lookupUser s.ctx name).isSome then continue
+    let b := skipSpaces body 0
+    unless body[b]? matches some (.ctrl "@setfontsize" _) do continue
+    let (fsArgs, _) := Compat.takeGroups body (b + 1) 3
+    if fsArgs.size < 3 then continue
+    let some a1 := fsArgs[1]? | continue
+    let some sz := Compat.ptMacroArg a1 | continue
+    let bodySp := s.page.fontSize
+    if sz == 0 || bodySp ≤ 0 then continue
+    -- `sz` is milli-points, so `Dim.pt sz` is a thousand times the size in
+    -- sp: dividing by the body straight off gives the per-mille step.
+    let factor : Nat := ((Dim.pt (Int.ofNat sz) + bodySp / 2) / bodySp).toNat
+    steps := (steps.filter (·.1 != name)).push (name, factor, span)
+  if steps.isEmpty then return s
+  let land (name : String) (factor : Nat) (span : Span) : EM Unit :=
+    modify fun st => { st with
+      diags := (st.diags.filter fun d =>
+        !(d.code == DiagCode.W0361.code
+          && (d.message.splitOn s!"'\\{name}'").length > 1)).push
+        (Diag.of .N0100
+          s!"the refused '\\{name}' → the size ladder step \
+{Compat.milliStr factor} of the body"
+          (some span)) }
+  let refuse (name : String) (factor : Nat) : EM Unit :=
+    modify fun st => { st with
+      diags := st.diags.map fun d =>
+        if d.code == DiagCode.W0361.code
+            && (d.message.splitOn s!"'\\{name}'").length > 1 then
+          { d with message := d.message ++ s!"; its size \
+({Compat.milliStr factor} of the body) would put the named sizes out of \
+order, so it is not read" }
+        else d }
+  -- The venue's steps are one declaration: judged whole first, and only a
+  -- ladder that disorders whole is salvaged step by step, the offenders
+  -- named — both doors ordered by construction (`Ir.size_ladder_monotone`,
+  -- `Ir.size_ladder_monotone_all`).
+  match Ir.setStepsAll s.page.scale (steps.toList.map fun q => (q.1, q.2.1)) with
+  | some ladder =>
+    for (name, factor, span) in steps do
+      land name factor span
+    return { s with page := { s.page with sizes := some ladder } }
+  | none =>
+    let mut ladder := s.page.scale
+    let mut moved := false
+    for (name, factor, span) in steps do
+      match Ir.setStep ladder name factor with
+      | some l' =>
+        ladder := l'
+        moved := true
+        land name factor span
+      | none =>
+        refuse name factor
+    if moved then
+      return { s with page := { s.page with sizes := some ladder } }
+    else
+      return s
+
 /-- Elaborate the whole document: split preamble and body around the
 `document` environment, process declarations, then the body. -/
 def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
@@ -9977,6 +10067,8 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
   -- What a refused `\maketitle` redefinition still declares, applied once
   -- the fold has bound everything its body names.
   let s ← applyRefusedTitleStyle s
+  -- What refused size redefinitions still declare: the document's ladder.
+  let s ← applyRefusedSizeLadder s
   let mut ctx := s.ctx
   let docClass := s.docClass
   let sawClass := s.sawClass

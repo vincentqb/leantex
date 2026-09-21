@@ -426,7 +426,7 @@ private def takeOpt (raws : Array Raw) (i : Nat) : Option String × Nat := Id.ru
 
 /-- Up to `n` brace groups. A bare control word or single word counts as a
 group too, as in TeX: `\newcommand\x` and `\textbf x` are legal. -/
-private def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.run do
+def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.run do
   let mut out : Array (Array Raw) := #[]
   let mut j := i
   for _ in [0:n] do
@@ -559,14 +559,14 @@ line numbers here always run from 1" pos
 /-- The kernel's point-size macros at the values size10.clo–size12.clo and
 ltplain give them, in milli-points: `\@xpt` is 10 pt, `\@xipt` 10.95 —
 what `\@setfontsize` is called with. -/
-private def ptMacros : List (String × Nat) :=
+def ptMacros : List (String × Nat) :=
   [("@vpt", 5000), ("@vipt", 6000), ("@viipt", 7000), ("@viiipt", 8000),
    ("@ixpt", 9000), ("@xpt", 10000), ("@xipt", 10950), ("@xiipt", 12000),
    ("@xivpt", 14400), ("@xviipt", 17280), ("@xxpt", 20740), ("@xxvpt", 24880)]
 
 /-- One `\@setfontsize` argument in milli-points: a kernel size macro, or
 a literal number (`{14}`, `{10.95}`). -/
-private def ptMacroArg (r : Array Raw) : Option Nat :=
+def ptMacroArg (r : Array Raw) : Option Nat :=
   match r.toList with
   | [.ctrl n _] => ptMacros.lookup n
   | _ =>
@@ -575,7 +575,7 @@ private def ptMacroArg (r : Array Raw) : Option Nat :=
 
 /-- A milli value as its shortest decimal spelling: 10000 is "10",
 10950 "10.95", 913 "0.913". -/
-private def milliStr (m : Nat) : String :=
+def milliStr (m : Nat) : String :=
   let i := m / 1000
   let f := m % 1000
   if f == 0 then toString i else

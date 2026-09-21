@@ -851,6 +851,51 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre
       "\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize{12}{14.5}}")).1.page.leading
       == 1007)
+  -- Rule (b) extended to the ladder: every other refused size command's
+  -- \@setfontsize is a declaration too, read at the preamble's end as a
+  -- per-mille step of the body in force — the venue's own normalsize —
+  -- through Ir.setStep's ordered door. A landed step drops its W0361;
+  -- a step that would disorder the named sizes keeps the built-in, named.
+  let ladderPre (decls : String) : String :=
+    pre ("\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize\\@xpt\\@xipt}" ++ decls)
+  t "a refused size command's @setfontsize lands as the ladder step"
+    (let (d, ds) := elabStr (ladderPre
+      "\\renewcommand{\\footnotesize}{\\@setfontsize\\footnotesize\\@ixpt\\@xpt}")
+     (d.page.scale.lookup "footnotesize") == some 900 &&
+       ds.all (·.severity != .warning))
+  t "the ladder step is relative to the venue's own normalsize"
+    (let d := (elabStr (pre
+      ("\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize\\@xiipt{14}}" ++
+       "\\renewcommand{\\small}{\\@setfontsize\\small\\@xipt{12}}"))).1
+     (d.page.scale.lookup "small") == some 913)
+  t "equal neighbouring sizes are the lineage's own and land"
+    (let d := (elabStr (ladderPre
+      ("\\renewcommand{\\small}{\\@setfontsize\\small\\@ixpt\\@xpt}" ++
+       "\\renewcommand{\\footnotesize}{\\@setfontsize\\footnotesize\\@ixpt\\@xpt}"))).1
+     (d.page.scale.lookup "small") == some 900 &&
+       (d.page.scale.lookup "footnotesize") == some 900)
+  t "a size step that disorders the named sizes keeps the built-in, named"
+    (let (d, ds) := elabStr (ladderPre
+      "\\renewcommand{\\small}{\\@setfontsize\\small\\@xiipt{14}}")
+     (d.page.scale.lookup "small") == some 900 &&
+       ds.any fun dg => dg.code == "W0361" &&
+         (dg.message.splitOn "out of order").length > 1)
+  -- The venue's ladder is one declaration: steps that only order against
+  -- *each other* — a shrink written top-down would fail any one-at-a-time
+  -- reading against the engine's still-standing neighbours — land whole.
+  t "a venue ladder ordered against itself lands whole"
+    (let d := (elabStr (ladderPre
+      ("\\renewcommand{\\small}{\\@setfontsize\\small{7.5}{9}}" ++
+       "\\renewcommand{\\footnotesize}{\\@setfontsize\\footnotesize{7}{8}}" ++
+       "\\renewcommand{\\scriptsize}{\\@setfontsize\\scriptsize{6}{7}}"))).1
+     (d.page.scale.lookup "small") == some 750 &&
+       (d.page.scale.lookup "footnotesize") == some 700 &&
+       (d.page.scale.lookup "scriptsize") == some 600)
+  t "the display-skip tail after @setfontsize does not block the read"
+    (let d := (elabStr (ladderPre
+      ("\\renewcommand{\\small}{\\@setfontsize\\small\\@ixpt\\@xpt " ++
+       "\\abovedisplayskip 6\\p@ \\@plus 1.5\\p@}"))).1
+     (d.page.scale.lookup "small") == some 900)
   t "compat heads become one running head"
     ((elabStr (pre "\\ihead{L}\\ohead{\\thepage}")).1.head.map (·.any (· == .pageNumber)) == some true)
   -- fancyhdr's primary interface: [places] cross L/C/R with E/O; the slots
