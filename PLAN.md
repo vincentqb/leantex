@@ -132,6 +132,41 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — a listing's language is one IR fact both text artifacts
+project (listing-language-ir, M7-11). `Ir.ListingSpec` carried a caption
+and a line-number flag; listings' `language=` key and minted's mandatory
+`{language}` argument were read and dropped, so the HTML `code` element
+and the markdown fence both stood bare while the source named the
+language. Now `ListingSpec.language` holds it, minted once at elaboration
+through `Ir.listingLang?` — trimmed, ASCII-lowercased (listings' own key
+is case-insensitive), and admitted only under a small identifier grammar
+(`listingLangOk`: a lowercase letter, then lowercase letters, digits,
+`+`, `#`, `-`, `.` — `python`, `c++`, `c#`, `objective-c`). The field's
+type is the subtype `ListingLang`, so the IR cannot hold a spelling the
+grammar rejects: the guarantee that no raw attribute text reaches an
+artifact is by construction, not by a check at each emission. A spelling
+outside the grammar — listings' `[LaTeX]TeX` dialect form, `Python 3` —
+is named W0110 (the listing-key code that already exists) and the
+listing carries no language; the `\lstset{language=…}` head reaches the
+listings that follow as every `\lstset` key does. Two projections live on
+the IR beside the fact and are the only sites the backends read:
+`ListingSpec.htmlClass` (`language-<token>`, the HTML standard's own
+convention for `code`, §4.5.15) and `ListingSpec.fenceInfo` (the
+CommonMark §4.5 info string). `listing_language_agree` is the statement
+— a declared token reaches both, an absent one reaches neither — proved
+over the IR, with the HTML class landing through the typed tree's
+attribute escaper as every attribute does and the fence through the
+twin's `blockInto_extends` arm unchanged in shape. The PDF names no
+language (the engine colours nothing by it) and is byte-identical on the
+corpus; every listing without a language emits exactly what it did
+(HTML and markdown of the language-less fixtures byte-identical). The
+dump shows ` language <token>` so the golden witnesses elaboration;
+the compat index gains the `C++` spellings as `impl` and the dialect and
+spaced spellings as `refuse:W0110`. Not done, by scope: no highlighting,
+no script, no stylesheet framework, no inference of a language from
+content; listings' dialect syntax stays a named refusal until a dialect
+has somewhere to land.
+
 2026-09-21 — modern output: one contract, one census, oracles as data
 (the decision entry; wave 1 launches from it, and nothing here is code).
 The campaign's audits disagreed on one thing that decides the rest: where
