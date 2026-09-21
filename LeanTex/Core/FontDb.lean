@@ -420,9 +420,12 @@ plain face over one carrying an extra descriptor ("Condensed Bold"), because
 condensed faces commonly share the typographic family name. A remaining tie
 (the same family installed twice, e.g. a system copy and a TeX Live copy)
 goes to the earlier face in scan order — the property `scan`'s ordered join
-exists to provide — so the first search directory that holds a family owns it. -/
+exists to provide — so the first search directory that holds a family owns it.
+A fold-min, not a sort: only the best face is wanted, an earlier face
+survives every tie by never being replaced, and the head of a nonempty
+fold is a fact the totality theorem below can state. -/
 private def pickWeighted (cands : Array Face) (target : Nat) : Option Face :=
-  let sorted := cands.zipIdx.qsort fun (a, ia) (b, ib) =>
+  let better (a b : Face) : Bool :=
     let da := weightDist target a
     let db := weightDist target b
     if da != db then da < db
@@ -430,10 +433,17 @@ private def pickWeighted (cands : Array Face) (target : Nat) : Option Face :=
       let ca := if canonicalSubfamily a.subfamily then 0 else 1
       let cb := if canonicalSubfamily b.subfamily then 0 else 1
       if ca != cb then ca < cb
-      else if a.subfamily.length != b.subfamily.length then
-        a.subfamily.length < b.subfamily.length
-      else ia < ib
-  sorted[0]?.map (·.1)
+      else a.subfamily.length < b.subfamily.length
+  cands[0]?.map fun first =>
+    cands.foldl (init := first) fun best c => if better c best then c else best
+
+/-- The nearest rule is total: any candidates at all yield a face,
+whatever weight was asked — the resolution half of `FontSet.index_total`,
+so a family that exists never answers a weight request empty-handed. -/
+theorem pickWeighted_total (cands : Array Face) (target : Nat)
+    (h : 0 < cands.size) : (pickWeighted cands target).isSome := by
+  unfold pickWeighted
+  simp [h]
 
 /-- The family a name denotes. A family name denotes itself. A font file name
 (`LibertinusSerif-Regular.otf`) — fontspec's way of naming a font that ships
@@ -583,6 +593,40 @@ def resolveVariant (faces : Array Face) (family : String) (declared : Option Str
       (resolveWeightName faces family v).map fun (face, req) =>
         (face, if face.weight == req then none
           else some (.weight family req face))
+
+/-- `resolveVariant` lifted onto the weight axis: the face for one
+`(weight, italic)` key of a family. The corners LaTeX names — regular 400
+and bold 700, whose naming conventions and satisfaction rules predate the
+axis — go through `resolveVariant` unchanged; any other weight resolves
+by nearest `usWeightClass` distance among the family's slant-matching
+faces (italic stays categorical, never substituted silently), W0366 when
+the answer's weight differs from the ask. A face the document declared
+for the key (`FontFace={l}{n}{...}`, `\fonts{ body.l = ... }`) is met by
+definition; a declared face the host lacks degrades through the same
+nearest rule, saying so. -/
+def resolveWeight (faces : Array Face) (family : String)
+    (declared : Option String) (weight : Nat) (italic : Bool) :
+    Option (Face × Option Substituted) :=
+  if weight == 400 || weight == 700 then
+    resolveVariant faces family declared { bold := weight == 700, italic }
+  else
+    let pick : Option (Face × Option Substituted) :=
+      let target := (norm (familyOf faces family)).toList.toArray
+      let byFamily := faces.filter fun f => normEq f.family target
+      let matchingSlant := byFamily.filter fun f => f.italic == italic
+      let pool := if matchingSlant.isEmpty then byFamily else matchingSlant
+      (pickWeighted pool weight).map fun face =>
+        (face, if face.weight == weight then none
+          else some (.weight family weight face))
+    match declared with
+    | some name =>
+      match resolveNamed faces name with
+      | some face => some (face, none)
+      | none => pick.map fun (face, _) =>
+          (face, some (.variant s!"'{family}' declares '{name}' as its \
+weight-{weight} face, which is not installed; \
+'{face.family} {face.subfamily}' substitutes"))
+    | none => pick
 
 /-- The documented candidate order every scan-derived pick shares
 (`fallbackPicks`, `pickCompanion`, `firstMathFace`): family name

@@ -76,6 +76,63 @@ def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a real family name still resolves its regular"
     ((FontDb.resolve faces "Alpha Sans" {}).map (·.1.subfamily) == some "Regular")
 
+/-- The weight axis below the driver: series spellings in `\fonts`, exact
+resolution for an installed weight, the nearest-with-W0366 substitution
+for a missing one, categorical italic, and the declared-face override —
+plus `docWeightKeys`, the precompute contract that tells the driver which
+off-corner keys a document's styles can ask for. -/
+def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pre := "\\documentclass{article}"
+  let post := "\\begin{document}x\\end{document}"
+  let d := (elabStr (pre ++ "\\fonts{ body = \"X\", body.l = \"X Light\", " ++
+    "body.sb.italic = \"X SemiBold Italic\" }" ++ post)).1.fonts
+  t "fonts body.l names the Light face" (d.faceFor 0 300 false == some "X Light")
+  t "fonts body.sb.italic names the semibold italic"
+    (d.faceFor 0 600 true == some "X SemiBold Italic")
+  t "a width half stays an unknown key"
+    (errCodes (pre ++ "\\fonts{ body.bx = \"Y\" }" ++ post) == ["E0322"])
+  -- Resolution on the axis, over synthetic faces.
+  let subMsg : Option FontDb.Substituted → Option String
+    | some s => some (DriverDiag.substituted s).message
+    | none => none
+  let light : FontDb.Face := { synthFace "Alpha Sans" "/x/as-l.otf" with
+    subfamily := "Light", weight := 300 }
+  let lightIt : FontDb.Face := { light with
+    path := "/x/as-li.otf", subfamily := "Light Italic", italic := true }
+  let faces := #[synthFace "Alpha Sans", light, lightIt]
+  t "an installed weight resolves exactly and silently"
+    ((FontDb.resolveWeight faces "Alpha Sans" none 300 false).map
+      (fun r => (r.1.subfamily, subMsg r.2)) == some ("Light", none))
+  t "italic is categorical on the axis"
+    ((FontDb.resolveWeight faces "Alpha Sans" none 300 true).map
+      (fun r => (r.1.subfamily, subMsg r.2)) == some ("Light Italic", none))
+  t "a missing weight takes the nearest and says both numbers"
+    ((FontDb.resolveWeight faces "Alpha Sans" none 200 false).map
+      (fun r => (r.1.subfamily,
+        (subMsg r.2).getD "" |>.startsWith "'Alpha Sans' asks for weight 200")) ==
+      some ("Light", true))
+  t "a declared face for a weight key is met exactly"
+    ((FontDb.resolveWeight faces "Alpha Sans" (some "Alpha Sans Light") 300 false).map
+      (fun r => (r.1.subfamily, subMsg r.2)) == some ("Light", none))
+  t "a declared face the host lacks degrades and says so"
+    (((FontDb.resolveWeight faces "Alpha Sans" (some "Nope Light") 300 false).map
+      (fun r => (subMsg r.2).getD "")).getD "" |>.startsWith
+      "'Alpha Sans' declares 'Nope Light' as its weight-300 face")
+  t "the 400 and 700 corners stay resolveVariant's"
+    ((FontDb.resolveWeight faces "Alpha Sans" none 700 false).map
+        (fun r => (r.1.subfamily, subMsg r.2)) ==
+      (FontDb.resolveVariant faces "Alpha Sans" none { bold := true }).map
+        (fun r => (r.1.subfamily, subMsg r.2)))
+  -- The key census: exactly the off-corner keys the styled ancestry
+  -- reaches, with slot and italic applied as layout will apply them.
+  let doc : Ir.Doc := { body := #[.para #[.styled (.series .l)
+    #[.text "x", .styled .italic #[.text "y"]]]] }
+  t "docWeightKeys folds the styled ancestry"
+    (Layout.docWeightKeys doc == #[(0, 300, false), (0, 300, true)])
+  let corner : Ir.Doc := { body := #[.para #[.styled .bold #[.text "x"]]] }
+  t "corner weights collect no extra keys" ((Layout.docWeightKeys corner).isEmpty)
+
 /-- fontspec's per-variant face options (`BoldFont=` and siblings) reach the
 font spec and win over the family's own variant; a declared face the host
 lacks degrades with a message that says the declaration could not be met and
@@ -836,6 +893,14 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
       let oneFace := oneFaceOf font
       t "fontset lookup body" (oneFace.lookup 0 400 false == 0)
       t "fontset lookup falls back" (oneFace.lookup 2 700 true == 0)
+      -- Two faces on one slot's weight axis: the declared weight answers,
+      -- an unindexed weight falls to the slot's regular.
+      let twoWeights : Font.FontSet := {
+        fonts := #[font, font]
+        index := #[((0, 400, false), 0), ((0, 300, false), 1)] }
+      t "lookup selects the indexed weight" (twoWeights.lookup 0 300 false == 1)
+      t "an unindexed weight falls to the slot regular"
+        (twoWeights.lookup 0 600 false == 0)
 
       -- layout: hyphenation is materialized only at a chosen break; headings
       -- and list markers carry visual structure into the positioned page.

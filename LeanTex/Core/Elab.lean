@@ -605,13 +605,18 @@ def escapeOf (name : String) : Option String :=
   | some lit => some lit
   | none => (Bib.charCommands.find? (·.1 == name)).map (·.2)
 
-/-- The declaration styles by name, plus the language marker (`@lang:fr`
-→ `Style.lang "fr"` — Compat's rewrite of `\selectlanguage`, unforgeable
-since `@` never lexes into a control word): both apply to the rest of
-the scope, so one dispatch arm serves both. -/
+/-- The declaration styles by name, plus two unforgeable markers (`@` never
+lexes into a control word): `@lang:fr` → `Style.lang "fr"` (Compat's
+rewrite of `\selectlanguage`) and `@series:l` → `Style.series .l`
+(Compat's rewrite of `\fontseries`, already validated there — an
+unparsable code never becomes a marker). All apply to the rest of the
+scope, so one dispatch arm serves them all. -/
 def declStyleOf (name : String) : Option Ir.Style :=
   if name.startsWith "@lang:" then
     some (.lang ((name.drop "@lang:".length).toString))
+  else if name.startsWith "@series:" then
+    (Ir.Weight.parseSeries ((name.drop "@series:".length).toString)).map
+      fun (w, _) => .series w
   else declStyles.lookup name
 
 /-- The block form of the language switch: the flow state update, outside

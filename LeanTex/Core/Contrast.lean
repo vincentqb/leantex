@@ -382,6 +382,9 @@ private def UseCx.large (cx : UseCx) : Bool :=
 private def UseCx.style (cx : UseCx) : Style → UseCx
   | .bold => { cx with bold := true }
   | .medium => { cx with bold := false }
+  -- WCAG 2.2's large-text criterion says "bold"; the registry boundary
+  -- `Weight.isBold` (700) is where a series starts counting as that.
+  | .series w => { cx with bold := w.isBold }
   | .normal => { cx with size := cx.base, bold := false }
   | .size n => match sizeScale.lookup n with
     | some k => { cx with size := cx.base * k / 1000 }

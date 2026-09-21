@@ -285,6 +285,7 @@ private def markerStyleDecls : Style → Option (Array String)
   | .smallcaps => some #["font-variant-caps: all-small-caps;"]
   | .roman => some #["font-family: var(--font-body);"]
   | .medium => some #["font-weight: 400;"]
+  | .series w => some #[s!"font-weight: {w.css};"]
   | .upright => some #["font-style: normal;", "font-variant-caps: normal;"]
   | .normal => some #[]
   | .size name => (Ir.sizeScale.lookup name).map fun k =>
@@ -2612,6 +2613,9 @@ private def styleClass : Style → String
   | .normal => "normal"
   | .roman => "rm"
   | .medium => "md"
+  -- unused: the styled arm emits `.series` as a per-run numeric
+  -- `font-weight`, the value CSS matches faces by, never a class
+  | .series w => s!"w{w.css}"
   | .upright => "up"
   | .size n => "size-" ++ n
   -- unused: the styled arm emits `.lang` as a `lang` attribute, the
@@ -2729,6 +2733,12 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     | .emph => acc.push (Html.elem "em" kids)
     | .mono => acc.push (Html.elem "code" kids)
     | .normal => acc ++ kids
+    -- A series is the numeric weight per run (CSS Fonts 4 §2.2): the
+    -- browser matches it against the `@font-face` weights the emission
+    -- ships, the same `(slot, weight, italic)` selection the PDF resolves
+    -- through `FontSet.lookup` (`Layout.weight_agree`).
+    | .series w =>
+      acc.push (Html.elem "span" kids #[("style", s!"font-weight: {w.css}")])
     -- The language of a run is a declaration, not a style: the span
     -- carries `lang` (HTML §3.2.6.2; WCAG 2.2 SC 3.1.2), which CSS
     -- `hyphens: auto` and assistive technology both read.

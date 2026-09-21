@@ -200,17 +200,32 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     | 0 => if slides then spec.sans.orElse fun _ => spec.body else spec.body
     | 1 => spec.sans.orElse fun _ => spec.body
     | _ => spec.mono.orElse fun _ => spec.body
+  -- A slot's declared faces live under its *effective* slot: the one its
+  -- family resolution reads (a deck's body follows the sans declaration).
+  let effectiveOf (slot : Nat) : Nat := match slot with
+    | 1 => if spec.sans.isSome then 1 else 0
+    | 2 => if spec.mono.isSome then 2 else 0
+    | _ => if slides && spec.sans.isSome then 1 else 0
   let declaredFace (slot : Nat) (weight : Nat) (italic : Bool) : Option String :=
-    let effective := match slot with
-      | 1 => if spec.sans.isSome then 1 else 0
-      | 2 => if spec.mono.isSome then 2 else 0
-      | _ => if slides && spec.sans.isSome then 1 else 0
-    spec.faceFor effective weight italic
+    spec.faceFor (effectiveOf slot) weight italic
+  -- The off-corner keys this document can ask the index for: the weights
+  -- its styles really use (`docWeightKeys`, exact so W0366 never fires
+  -- for a weight nobody asked), plus every declared face's own key — a
+  -- declaration is a request to load, as fontspec's is, so a declared
+  -- Light ships in the HTML set even before a run selects it.
+  let standard : List (Nat × Bool) :=
+    [(400, false), (700, false), (400, true), (700, true)]
+  let extraKeysFor (slot : Nat) : List (Nat × Bool) :=
+    ((Layout.docWeightKeys doc).toList.filterMap fun (s, w, i) =>
+      if s == slot then some (w, i) else none) ++
+    (spec.faces.toList.filterMap fun ((s, w, i), _) =>
+      if s == effectiveOf slot && !(standard.contains (w, i)) then some (w, i)
+      else none)
   for (slot, _) in slots do
     let some family := resolveName slot | continue
-    for (weight, italic) in [(400, false), (700, false), (400, true), (700, true)] do
-      match FontDb.resolveVariant faces family (declaredFace slot weight italic)
-          { bold := weight == 700, italic := italic } with
+    for (weight, italic) in standard ++ (extraKeysFor slot).eraseDups do
+      match FontDb.resolveWeight faces family (declaredFace slot weight italic)
+          weight italic with
       | none =>
         unless missing.contains family do
           missing := missing.push family

@@ -1198,6 +1198,12 @@ inductive Style where
   /-- The medium series: `\mdseries`/`\textmd` turns bold off without
   touching family or shape. -/
   | medium
+  /-- A series off the bold/medium corners: `\fontseries{l}` and the runs
+  a `FontFace={series}{shape}` declaration is selected for. `.bold` and
+  `.medium` stay their own constructors — they are the two spellings LaTeX
+  gives names to — and `Style.weight?` is the one map all three project
+  through, so the backends cannot disagree on what a series means. -/
+  | series (w : Weight)
   /-- The upright shape: `\upshape`/`\textup`. NFSS shapes are exclusive
   (fntguide §2.2: upright, italic, slanted, small caps are one axis), so
   selecting upright clears italic and small caps both. -/
@@ -1289,9 +1295,11 @@ def Style.label : Style → String
   | .normal => "normal"
   | .roman => "roman"
   | .medium => "medium"
+  | .series w => s!"series:{w.series}"
   | .upright => "upright"
   | .size n => s!"size:{n}"
   | .lang tag => s!"lang:{tag}"
+
 
 /-- What a resolved cross-reference renders (`refText`): LaTeX's bare
 number (`\ref`) and parenthesised equation number (`\eqref`), and
@@ -1309,6 +1317,18 @@ inductive RefForm where
   | labelOnly
   | name (cap : Bool)
   deriving Repr, BEq
+
+/-- The weight a style selects, when it touches the axis: the one map
+`.bold`, `.medium`, `.series`, and `.normal`'s reset project through.
+Layout's `applyStyle` follows it exactly (`weight_agree` in Layout.lean),
+and the HTML emission reads the same `w` its `.series` arm carries — so
+the face a run selects is one function of the style in both backends. -/
+def Style.weight? : Style → Option Weight
+  | .bold => some .b
+  | .medium => some .m
+  | .series w => some w
+  | .normal => some .m
+  | _ => none
 
 inductive Inline where
   | text (s : String)

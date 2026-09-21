@@ -912,6 +912,7 @@ private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
   | .smallcaps => { sty with smallcaps := true }
   | .roman => { sty with slot := 0 }
   | .medium => { sty with weight := .m }
+  | .series w => { sty with weight := w }
   -- NFSS shapes are exclusive (fntguide §2.2): upright clears both.
   | .upright => { sty with italic := false, smallcaps := false }
   | .normal => {}
@@ -919,6 +920,17 @@ private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
   | .size n => match Ir.sizeScale.lookup n with
     | some k => { sty with scale := k }
     | none => sty
+
+/-- `weight_agree`: the weight a style leaves in force is exactly
+`Ir.Style.weight?` — the one projection the HTML emission also reads —
+so the face a run selects is one function of `(slot, weight, italic)`
+in both backends: the PDF resolves it through `FontSet.lookup`, the
+HTML emits `weight.css` and ships each face under its own
+`font-weight` (`html_fonts_cover_pdf` carries the coverage half). -/
+theorem weight_agree (sty : TextStyle) (s : Ir.Style) :
+    (applyStyle sty s).weight = (s.weight?).getD sty.weight := by
+  cases s <;> simp [applyStyle, Ir.Style.weight?]
+  case size n => cases Ir.sizeScale.lookup n <;> simp
 
 mutual
 
@@ -1493,6 +1505,123 @@ def docScalars (doc : Doc) : Array Char := Id.run do
     if ascii[n]! then
       out := out.push (Char.ofNat n)
   return out ++ set.toArray.qsort (· < ·)
+
+-- Weight keys ------------------------------------------------------------------
+
+/-- Push the face key a styled context resolves to, when its weight is off
+the standard corners the driver always loads (regular 400 and bold 700). -/
+private def pushWeightKey (acc : Array (Nat × Nat × Bool)) (sty : TextStyle) :
+    Array (Nat × Nat × Bool) :=
+  let w := sty.weight.css
+  if w == 400 || w == 700 then acc
+  else
+    let key := (sty.slot, w, sty.italic)
+    if acc.contains key then acc else acc.push key
+
+mutual
+-- conserves: none — a key census, not a tree rewrite: the walk reads and
+-- collects, ships no ink, and returns no tree. Hand-rolled rather than a
+-- `foldInlines` leaf because the key is a function of the styled
+-- *ancestry* (`applyStyle` folded down the spine), which a context-free
+-- leaf fold cannot see.
+private def weightKeysInline (acc : Array (Nat × Nat × Bool)) (sty : TextStyle) :
+    Ir.Inline → Array (Nat × Nat × Bool)
+  | .styled st body =>
+    let sty := applyStyle sty st
+    weightKeysInlineList (pushWeightKey acc sty) sty body.toList
+  | .colored _ _ body => weightKeysInlineList acc sty body.toList
+  | .role _ body => weightKeysInlineList acc sty body.toList
+  | .link _ body => weightKeysInlineList acc sty body.toList
+  | .underline body => weightKeysInlineList acc sty body.toList
+  | .step _ _ body => weightKeysInlineList acc sty body.toList
+  -- A note body sets at the page foot in the base style, not the mark's.
+  | .footnote _ body => weightKeysInlineList acc {} body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _
+  | .fill | .strut _ | .pageNumber | .pageCount | .linebreak _ => acc
+
+private def weightKeysInlineList (acc : Array (Nat × Nat × Bool))
+    (sty : TextStyle) : List Ir.Inline → Array (Nat × Nat × Bool)
+  | [] => acc
+  | x :: rest => weightKeysInlineList (weightKeysInline acc sty x) sty rest
+end
+
+mutual
+private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
+    Ir.Block → Array (Nat × Nat × Bool)
+  | .para content => weightKeysInlineList acc {} content.toList
+  | .equation _ content => weightKeysInlineList acc {} content.toList
+  | .section _ _ _ title => weightKeysInlineList acc {} title.toList
+  | .list _ items => weightKeysBlockItems acc items.toList
+  | .center body => weightKeysBlockList acc body.toList
+  | .quote body => weightKeysBlockList acc body.toList
+  | .abstract body => weightKeysBlockList acc body.toList
+  | .titled _ title body =>
+    weightKeysBlockList (weightKeysInlineList acc {} title.toList) body.toList
+  | .role _ body => weightKeysBlockList acc body.toList
+  | .spaced _ body => weightKeysBlockList acc body.toList
+  | .columns cols => weightKeysBlockCols acc cols.toList
+  | .step _ _ body => weightKeysBlockList acc body.toList
+  | .only _ body => weightKeysBlockList acc body.toList
+  | .nav _ body => weightKeysBlockList acc body.toList
+  | .note body => weightKeysBlockList acc body.toList
+  | .frame title _ _ body =>
+    weightKeysBlockList (weightKeysInlineList acc {} title.toList) body.toList
+  | .framefoot content => weightKeysInlineList acc {} content.toList
+  | .float _ _ _ body caption =>
+    weightKeysBlockList (weightKeysInlineList acc {} caption.toList) body.toList
+  | .table _ _ _ rows _ => weightKeysTableRows acc rows.toList
+  | .logo content => weightKeysInlineList acc {} content.toList
+  | .picture pic =>
+    pic.labelContents.foldl (fun a c => weightKeysInlineList a {} c.toList) acc
+  | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .rule _ _ _ | .bibliography _ _ _ => acc
+
+private def weightKeysBlockList (acc : Array (Nat × Nat × Bool)) :
+    List Ir.Block → Array (Nat × Nat × Bool)
+  | [] => acc
+  | b :: rest => weightKeysBlockList (weightKeysBlock acc b) rest
+
+private def weightKeysBlockItems (acc : Array (Nat × Nat × Bool)) :
+    List (Array Ir.Block) → Array (Nat × Nat × Bool)
+  | [] => acc
+  | item :: rest => weightKeysBlockItems (weightKeysBlockList acc item.toList) rest
+
+private def weightKeysBlockCols (acc : Array (Nat × Nat × Bool)) :
+    List (Option Nat × Array Ir.Block) → Array (Nat × Nat × Bool)
+  | [] => acc
+  | (_, body) :: rest => weightKeysBlockCols (weightKeysBlockList acc body.toList) rest
+
+private def weightKeysTableRows (acc : Array (Nat × Nat × Bool)) :
+    List (Array (Array Ir.Inline)) → Array (Nat × Nat × Bool)
+  | [] => acc
+  | row :: rest =>
+    weightKeysTableRows (row.foldl
+      (fun a cell => weightKeysInlineList a {} cell.toList) acc) rest
+end
+
+/-- Every off-corner face key the document's styles can ask
+`FontSet.lookup` for: `(slot, weight, italic)` with the styled ancestry
+applied exactly as layout will apply it (`applyStyle` folds the spine
+here and there alike, so the two cannot drift). The driver resolves an
+index entry per key before layout begins — the same precompute contract
+as `docScalars` — which is what keeps a `\fontseries{l}` run from
+silently falling back to the regular face, and keeps the never-silent
+substitution warning (W0366) firing only for weights the document
+really uses. Style templates (`\style{...}{ font = ... }`) join at the
+base style, as their elaboration does. -/
+def docWeightKeys (doc : Doc) : Array (Nat × Nat × Bool) := Id.run do
+  let mut acc := weightKeysBlockList #[] doc.body.toList
+  if let some h := doc.head then
+    acc := weightKeysInlineList acc {} h.toList
+  if let some f := doc.foot then
+    acc := weightKeysInlineList acc {} f.toList
+  for (_, st) in doc.styles.entries do
+    if let some tpl := st.font then
+      acc := weightKeysInlineList acc {} tpl.toList
+    if let some tpl := st.authorFont then
+      acc := weightKeysInlineList acc {} tpl.toList
+  return acc
 
 -- Math -------------------------------------------------------------------------
 
