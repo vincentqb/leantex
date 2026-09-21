@@ -128,6 +128,29 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — the guard's reference-document findings, repaid as effects
+(fix-column slice). beamer's command-form `\column{w}` is the environment
+form with its close implicit (user guide §12.7; both openers run
+`\beamer@colclose`), and the engine now reads it so: a whole-tree pass
+before the rewrite walk (`splitColumnsList`, its own pass because the walk
+is structural on Raw) makes each `{columns}` body's boundaries explicit,
+so both spellings elaborate to one document (whole-Doc equality is the
+test) and one deck slide that had stacked its three columns since its
+first build now sets them side by side — the claim from the raster and the
+census on the extended `columns` fixture, never the golden. A `\column`
+anywhere else (outside `{columns}`, or nested in a group) keeps its named
+refusal. `\noindent` moves from the guard's W0387 to agreement: no
+paragraph here carries a first-line indent in any class, so the ask is
+met before it is made (the N0100 note says so); the premise is asserted
+over Layout.Out, the test that turns red the day an indent lands and this
+entry must become an arm. `\urlstyle{same}` keeps its refusal — a URL is
+not a styleable element — with the help naming the door that exists
+(`\href`'s text half is the running face); the general door is `url` as a
+styleable element with `\urlstyle{X}` mapping onto its `font` template.
+tests/compat-index gains `beamer.txt` through a `frame` place (a class
+loads by `\documentclass`). Deck moved on that one page only; résumé
+byte-identical; bench flat.
+
 2026-09-21 — silence is fidelity, the surface layer (accounts slice): a
 construct the rewrite dispatcher consumed either has an effect or is
 named — `rewriteCtrl_accounts` (Compat.lean, the `_accounts` shape's
