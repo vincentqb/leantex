@@ -1157,11 +1157,178 @@ theorem FontSpec.faceFor_last_declared (s : FontSpec) (v : Nat × Nat × Bool)
   rw [Array.find?_push, hnone]
   simp
 
+/-- What the reader must be able to reach in place of a non-text element:
+`judged` is today's rule — the alt judges name a missing alternative and
+`accessibility = AA` reads them; `required` asks the artifact itself to
+carry the alternative as reader-visible structure, which only an artifact
+with an alternative channel can honour. -/
+inductive AltPolicy where
+  | judged
+  | required
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The colour the reader is meant to see: `device` leaves the numbers to
+the reader's device, today's rule; `srgb` asks that the artifact define
+its colours as sRGB. -/
+inductive ColorIntent where
+  | device
+  | srgb
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- Whether the artifact carries the faces it was set in: `embedded`, the
+faces travel with the artifact (embedded in the PDF, shipped beside the
+page); `none`, the document accepts that something else owns them — a
+site's stylesheet. -/
+inductive FontPolicy where
+  | embedded
+  | none
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The semantic output contract: facts about the artifact the reader must
+get, declared once in `\output` and read by every backend against its own
+realization record. Every default is today's behaviour, so an undeclared
+document builds exactly as before. `fonts` is the one field with no
+default of its own: undeclared, `Doc.fontPolicy` derives it from the
+stylesheet story the document told. -/
+structure OutputContract where
+  alternatives : AltPolicy := .judged
+  color : ColorIntent := .device
+  fonts : Option FontPolicy := none
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- How a backend carries alternatives: `none` (the PDF today: alt text has
+no channel until the artifact is tagged), `attribute` (HTML's `alt`). -/
+inductive AltReal where
+  | none
+  | attribute
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- How a backend carries colour: `device` (the PDF writes device colour
+with no output intent), `srgbByDefinition` (CSS colours are sRGB by the
+specification, so the HTML meets `srgb` with nothing to do). -/
+inductive ColorReal where
+  | device
+  | srgbByDefinition
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- How a backend carries faces: `embeds` (in the file), `ships` (beside
+the page, when the document's policy asks). -/
+inductive FontReal where
+  | embeds
+  | ships
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- How a backend uses script: `never`; `constantGated` (one constant
+script, gated on a class, with a declared floor when scripting is off). -/
+inductive ScriptReal where
+  | never
+  | constantGated
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- How a backend carries mathematics: `layout` (glyphs placed by the
+engine), `mathmlCore` (MathML Core, the browser lays out). -/
+inductive MathReal where
+  | layout
+  | mathmlCore
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- One backend's realization record: values only, the `ClassRecord`
+discipline. The values are backend vocabulary living here because both
+backends must read one type and this module cannot import a backend;
+each constant lives in its own backend (`Pdf.profile`, `HtmlDoc.profile`).
+`scripting` and `math` are recorded but no contract key reads them yet. -/
+structure Realization where
+  alternatives : AltReal
+  color : ColorReal
+  fonts : FontReal
+  scripting : ScriptReal
+  math : MathReal
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- A declared contract fact an artifact does not realize: the fact's key,
+what was declared, what the artifact does instead. -/
+structure Unmet where
+  fact : String
+  declared : String
+  realized : String
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- The closed key list of the contract — the facts `unmet` can name and
+the keys `\output` accepts for them. -/
+def OutputContract.facts : List String := ["alternatives", "color", "fonts"]
+
+/-- One fact judged: unmet when the realization cannot honour the
+declaration. Written as one door so `unmet_covers` reads the fact key off
+the call, never off the message. -/
+private def OutputContract.judge (fact declared realized : String) (met : Bool) :
+    Option Unmet :=
+  if met then none else some { fact, declared, realized }
+
+private theorem OutputContract.judge_fact {fact declared realized : String} {met : Bool}
+    {u : Unmet} (h : OutputContract.judge fact declared realized met = some u) :
+    u.fact = fact := by
+  unfold judge at h
+  split at h
+  · exact absurd h (by simp)
+  · cases h; rfl
+
+/-- The facts this artifact does not realize, one entry per unmet key.
+`alternatives = required` needs an alternative channel; `color = srgb`
+needs colours defined as sRGB; `fonts = embedded` is met by either way of
+carrying faces, so it is unmet by no realization recorded today — the
+markdown twin's record, when it exists, is where that arm fires.
+`fonts = none` and every default ask nothing. -/
+def OutputContract.unmet (c : OutputContract) (r : Realization) : Array Unmet :=
+  #[judge "alternatives" "required" "no alternative channel"
+      (match c.alternatives, r.alternatives with
+        | .judged, _ => true
+        | .required, .attribute => true
+        | .required, .none => false),
+    judge "color" "srgb" "device colour"
+      (match c.color, r.color with
+        | .device, _ => true
+        | .srgb, .srgbByDefinition => true
+        | .srgb, .device => false),
+    judge "fonts" "embedded" "no faces carried"
+      (match c.fonts, r.fonts with
+        | none, _ => true
+        | some .none, _ => true
+        | some .embedded, .embeds => true
+        | some .embedded, .ships => true)].filterMap id
+
+/-- Every unmet fact names a key of the closed list (`_covers`): a
+diagnostic's `subject` is always one of the keys `\output` accepts. -/
+theorem OutputContract.unmet_covers (c : OutputContract) (r : Realization) :
+    ∀ u ∈ c.unmet r, u.fact ∈ OutputContract.facts := by
+  intro u hu
+  simp only [unmet, Array.mem_filterMap, id] at hu
+  obtain ⟨j, hj, hju⟩ := hu
+  simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hj
+  rcases hj with rfl | rfl | rfl <;> rw [judge_fact hju] <;> simp [facts]
+
+/-- Each unmet fact is one W0701 whose `subject` is the fact's key: the
+warning is per artifact and per fact, never merged, so a document that
+declares two facts a backend lacks is told twice, once each. -/
+def contractDiags (us : Array Unmet) : Array Diag :=
+  us.map fun u =>
+    Diag.of .W0701
+      s!"output contract: '{u.fact} = {u.declared}' is declared and this artifact carries {u.realized}"
+      (help := some s!"drop '{u.fact} = {u.declared}' from '\\output', or build a format that carries it")
+      (subject := some u.fact)
+
+/-- One diagnostic per unmet fact (`_accounts`): the census of unmet facts
+and the warnings reporting them are the same count. -/
+theorem contract_accounts (us : Array Unmet) : (contractDiags us).size = us.size :=
+  Array.size_map ..
+
 /-- What to build, as declared by `\output`: the document carries its own
 build intent, the way `\documentclass` already does. Names stay strings here
 so the core does not know the CLI's option types. -/
 structure OutputSpec where
   formats : Array String := #[]
+  /-- The semantic contract the artifacts are held to (`OutputContract`);
+  every key defaults to today's behaviour. -/
+  contract : OutputContract := {}
   css : Option String := none
   /-- A stylesheet the HTML page links, resolved by the browser relative to
   the page. `css = none` promised "bring your own stylesheet" but gave the
@@ -1300,6 +1467,36 @@ def AssertKind.source : AssertKind → String
   | .textInArea => "text.in_area"
   | .minXHeight m => s!"text.xheight >= {m.toPtString}pt"
   | .accessibilityAA => "accessibility = AA"
+
+/-- The emitted artifacts an assertion is judged on, in `OutputSpec.formats`'
+own vocabulary (`"pdf"`, `"html"`, `"md"`; strings, so the core learns no
+CLI type). Empty means the assertion reads no artifact:
+
+| kind | reads | judged on |
+|---|---|---|
+| `pages`, `textInArea`, `minXHeight` | none | the layout, whatever is emitted — facts of `Layout.run`, which runs unconditionally and is a function of the document |
+| `accessibilityAA` | none | the document and its judged diagnostics, neither per artifact |
+| `fontsAllEmbedded` | `pdf`, `html` | each emitted artifact: the PDF by the census of its bytes, the HTML by the faces it ships beside the page |
+
+The driver judges a non-empty `reads` against what the run emits, and a
+run emitting none of them fails the assertion loud rather than passing it
+vacuously (`assert_reads_shipped`). No class implies `fontsAllEmbedded`, so
+that failure is reachable only from a document that asked. -/
+def AssertKind.reads : AssertKind → Array String
+  | .pages _ _ => #[]
+  | .fontsAllEmbedded => #["pdf", "html"]
+  | .textInArea => #[]
+  | .minXHeight _ => #[]
+  | .accessibilityAA => #[]
+
+/-- The one assertion whose subject is bytes is the one that reads
+artifacts, and it reads exactly the two that carry faces (`_accounts`
+shape: the per-artifact judgement is paid for by a named artifact list). -/
+theorem assert_reads_shipped :
+    (∀ k : AssertKind, k.reads ≠ #[] ↔ k = .fontsAllEmbedded) ∧
+    AssertKind.reads .fontsAllEmbedded = #["pdf", "html"] := by
+  refine ⟨fun k => ?_, rfl⟩
+  cases k <;> simp [AssertKind.reads]
 
 structure Assertion where
   kind : AssertKind
@@ -4244,6 +4441,24 @@ def Doc.frameNumbers (doc : Doc) : Array (Option Nat) :=
 /-- The numbering's denominator for the document. -/
 def Doc.frameCount (doc : Doc) : Nat :=
   Ir.frameCount doc.body
+
+/-- Whether the artifacts carry the document's faces — the one resolving
+site the HTML's font shipment and the PDF's embedding read. A declared
+`fonts =` wins; undeclared, the rule is the one the driver always had: a
+document that told no stylesheet story (`css` unset) ships its faces, one
+that did (`css = own`, the site whose stylesheet owns fonts) ships none.
+Declaring `fonts = embedded` beside `css = own` is how such a site opts
+back in. -/
+def Doc.fontPolicy (doc : Doc) : FontPolicy :=
+  match doc.output.contract.fonts with
+  | some p => p
+  | none => if doc.output.css.isNone then .embedded else .none
+
+/-- Undeclared, the policy is exactly the stylesheet rule (`_exact`): the
+refactor that made `shipFonts` a value changed no document's shipment. -/
+theorem Doc.fontPolicy_exact (doc : Doc) (h : doc.output.contract.fonts = none) :
+    doc.fontPolicy = (if doc.output.css.isNone then .embedded else .none) := by
+  simp [fontPolicy, h]
 
 /-- Whether this document's pages carry the plain page number: the
 document's own `\page{ numbers = ... }` wins; an undeclared document takes

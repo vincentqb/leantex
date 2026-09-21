@@ -925,8 +925,24 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       -- The artifact ships the faces the document resolved, as the PDF
       -- embeds them — unless the document declared its `css =` story
       -- (the site port's `css = own`): then its stylesheet owns fonts
-      -- and nothing ships.
-      let shipFonts := doc.output.css.isNone
+      -- and nothing ships. `Doc.fontPolicy` is that rule as a value, and
+      -- a declared `fonts =` overrides it (`Pdf.fontPolicy_projects`).
+      let shipFonts := doc.fontPolicy == .embedded
+      -- The declared contract, held against each emitted artifact's
+      -- realization record: a fact the artifact cannot yet realize is one
+      -- W0701 per artifact, per fact — warnings, resolved before the gate
+      -- and never gating (`Ir.contract_accounts`).
+      let mut contractWarnings : Array Diag := #[]
+      if emit.contains .pdf then
+        contractWarnings := contractWarnings ++
+          Ir.contractDiags (doc.output.contract.unmet Pdf.profile)
+      if emit.contains .html then
+        contractWarnings := contractWarnings ++
+          Ir.contractDiags (doc.output.contract.unmet HtmlDoc.profile)
+      let rC ← ui.resolve doc.allow allowAll contractWarnings
+      fired := fired ++ rC.fired
+      accepted := accepted ++ rC.accepted
+      warnings := warnings + rC.warnings
       let mut htmlBuilt : Option (String × Array Publication) := none
       if emit.contains .html then
         let t ← IO.monoMsNow
@@ -1009,6 +1025,16 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           { shipped with a11y := Check.a11ySummary doc (diags ++ imgDiags) }
         else shipped
       let failures := Check.all shipped doc.asserts
+      -- An assertion whose subject is bytes is judged on the bytes this run
+      -- emits (`AssertKind.reads`); a run emitting none of them cannot
+      -- judge it, and says so instead of passing vacuously — the
+      -- `formats = md` document that asserts embedded fonts fails here.
+      -- Layout assertions read no artifact and never reach this.
+      let failures := failures ++ doc.asserts.filterMap fun a =>
+        if a.kind.reads.isEmpty || emit.any (fun e => a.kind.reads.contains e.ext) then none
+        else some (Diag.of .E0330
+          s!"assertion failed: {a.kind.source} (actual: no emitted artifact carries this measurement)"
+          a.span (help := some (a.help.getD "add pdf or html to '\\output{ formats = ... }'")))
       unless doc.asserts.isEmpty do
         ui.phase "assert"
           s!"{doc.asserts.size - failures.size}/{doc.asserts.size} held" (← since t)

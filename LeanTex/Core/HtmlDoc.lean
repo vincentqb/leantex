@@ -1056,6 +1056,24 @@ def fontAssets (fs : Font.FontSet) : Array FontAsset :=
   (Array.range fs.fonts.size).map fun i =>
     { file := fontFileName i (fs.get i), data := (fs.get i).data }
 
+/-- What this emitter realizes of the output contract, as values the driver
+holds against the document's declaration (`Ir.OutputContract.unmet`):
+alternatives as the `alt` attribute, colours sRGB by CSS's definition,
+faces shipped beside the page when the document's policy asks
+(`shipFaces`), one constant class-gated script, mathematics as MathML
+Core. Nothing in `emit` reads this record. -/
+def profile : Ir.Realization :=
+  { alternatives := .attribute
+    color := .srgbByDefinition
+    fonts := .ships
+    scripting := .constantGated
+    math := .mathmlCore }
+
+/-- The undeclared contract is met by this emitter (`_exact`): a document
+that declares no contract key gets no W0701 from its page. -/
+theorem html_default_contract_exact : ({} : Ir.OutputContract).unmet profile = #[] := by
+  decide
+
 /-- Every `src:` the styling names is a file the driver is asked to write:
 rules and requests are projections of one enumeration, so the page cannot
 reference a face whose bytes were never requested. -/

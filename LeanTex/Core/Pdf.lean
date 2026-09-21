@@ -152,6 +152,24 @@ theorem keepFaces_lt (fs : FontSet) (pages : Array PageOut)
   · have := (Array.mem_filter.mp hk).1
     simpa using this
 
+/-- What this writer realizes of the output contract, as values the driver
+holds against the document's declaration (`Ir.OutputContract.unmet`): no
+alternative channel until the file is tagged, device colour with no output
+intent, faces embedded (`keepFaces`), no script, mathematics as placed
+glyphs. Nothing in `write` reads this record; it describes the bytes, it
+does not shape them. -/
+def profile : Ir.Realization :=
+  { alternatives := .none
+    color := .device
+    fonts := .embeds
+    scripting := .never
+    math := .layout }
+
+/-- The undeclared contract is met by this writer (`_exact`): a document
+that declares no contract key gets no W0701 from its PDF. -/
+theorem pdf_default_contract_exact : ({} : Ir.OutputContract).unmet profile = #[] := by
+  decide
+
 /-- **The HTML ships the faces the PDF embeds: one `FontSet`, two
 projections.** Every face this writer would embed for these pages
 (`keepFaces`) is declared by a `@font-face` in the HTML emission built
@@ -167,6 +185,22 @@ theorem html_fonts_cover_pdf (fs : FontSet) (pages : Array PageOut)
     (h : 0 < fs.fonts.size) :
     ∀ k ∈ keepFaces fs pages, ∃ ff ∈ HtmlDoc.shipFaces fs, ff.index = k :=
   fun k hk => HtmlDoc.shipFaces_covers fs (keepFaces_lt fs pages h k hk)
+
+/-- **Both artifacts' font decisions are projections of one policy value**
+(`_projects`). `Doc.fontPolicy` is the one resolving site; the driver's
+`shipFonts` is the spelling `doc.fontPolicy == .embedded`, and the HTML's
+shipment is `shipFaces` under it and nothing otherwise — the `if` here is
+that gate, written out. Under `.embedded` the shipment covers every face
+this writer embeds (`html_fonts_cover_pdf` is the body); under `.none` the
+document declared that its stylesheet owns the faces, and the PDF still
+embeds its own, as `profile.fonts = .embeds` records. -/
+theorem fontPolicy_projects (doc : Ir.Doc) (fs : FontSet) (pages : Array PageOut)
+    (h : 0 < fs.fonts.size) (hp : doc.fontPolicy == .embedded) :
+    ∀ k ∈ keepFaces fs pages,
+      ∃ ff ∈ (if doc.fontPolicy == .embedded then HtmlDoc.shipFaces fs else #[]),
+        ff.index = k := by
+  rw [ite_eq_left hp]
+  exact html_fonts_cover_pdf fs pages h
 
 /-- One page's content stream: the typed operators (`contentOps`)
 rendered (`render`). The construction decides pen moves, `TJ` arrays and

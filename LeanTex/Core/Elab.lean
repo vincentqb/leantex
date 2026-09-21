@@ -8909,10 +8909,51 @@ private def applyOutput (ctx : Ctx) (o0 : OutputSpec) (src : String) (pos : Pos)
         else v
       o := { o with md := some v }
       evs := evs.push (.scalar "output" "md" v pos)
+    -- The contract keys: each a closed enumeration, last wins, and each
+    -- an apply site the commutation oracle sees through its event.
+    | some ("alternatives", v) =>
+      inFormats := false
+      let pol : Option AltPolicy := match v with
+        | "judged" => some .judged
+        | "required" => some .required
+        | _ => none
+      match pol with
+      | some p =>
+        o := { o with contract := { o.contract with alternatives := p } }
+        evs := evs.push (.scalar "output" "alternatives" v pos)
+      | none =>
+        evs := say evs .E0321 s!"'{v}' is not an alternatives policy"
+          (help := "alternatives: judged, required")
+    | some ("color", v) =>
+      inFormats := false
+      let intent : Option ColorIntent := match v with
+        | "device" => some .device
+        | "srgb" => some .srgb
+        | _ => none
+      match intent with
+      | some c =>
+        o := { o with contract := { o.contract with color := c } }
+        evs := evs.push (.scalar "output" "color" v pos)
+      | none =>
+        evs := say evs .E0321 s!"'{v}' is not a colour intent"
+          (help := "color: device, srgb")
+    | some ("fonts", v) =>
+      inFormats := false
+      let pol : Option FontPolicy := match v with
+        | "embedded" => some .embedded
+        | "none" => some .none
+        | _ => none
+      match pol with
+      | some p =>
+        o := { o with contract := { o.contract with fonts := some p } }
+        evs := evs.push (.scalar "output" "fonts" v pos)
+      | none =>
+        evs := say evs .E0321 s!"'{v}' is not a font policy"
+          (help := "fonts: embedded, none")
     | some (key, _) =>
       inFormats := false
       evs := evs.push (.say (Decl.unknownKey ctx.file "output" key
-        ["formats", "css", "stylesheet", "md"] pos))
+        (["formats", "css", "stylesheet", "md"] ++ OutputContract.facts) pos))
     | none =>
       if inFormats then
         let (o', evs') := addFormat o evs entry

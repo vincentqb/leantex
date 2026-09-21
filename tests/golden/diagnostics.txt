@@ -468,3 +468,6 @@ warning[W0601]: cannot read image 'figures/plot.png': permission denied (error c
 ── W0602 (degraded) image format unusable; placeholder box placed
 warning[W0602]: cannot use image 'figures/plot.gif': not a PNG, JPEG, or PDF file; a placeholder box holds its place
   help: PNG, JPEG, and PDF embed natively: re-export the image as one
+── W0701 (pending) an output contract fact this artifact does not yet realize
+warning[W0701]: output contract: 'alternatives = required' is declared and this artifact carries no alternative channel
+  help: drop 'alternatives = required' from '\output', or build a format that carries it

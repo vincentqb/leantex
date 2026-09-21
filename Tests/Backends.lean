@@ -3185,3 +3185,137 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let streams := Pdf.pageStreams geom twoFace #[contentOpsTextPage, contentOpsPathPage] store
   t "content ops: pageStreams is the typed render"
     (streams.map (String.fromUTF8! ·) == #[contentOpsTextExpected, contentOpsPathExpected])
+
+/-- The output contract: declared facts held against each artifact's
+realization record (one W0701 per unmet fact per artifact), the font
+policy's one resolving site, and the byte-reading assertion judged on the
+bytes the run emits — failing loud when it emits none of them. -/
+def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let out (decl : String) : Ir.Doc × Array Diag := elabStr (dvDoc s!"\\output\{ {decl} }\n" "x")
+  let w0701 (c : Ir.OutputContract) (r : Ir.Realization) : Array Diag :=
+    Ir.contractDiags (c.unmet r)
+  -- Red 1: the alternatives fact, declared and held against each record.
+  let (d1, ds1) := out "formats = pdf, alternatives = required"
+  t "contract: 'alternatives = required' is a known key"
+    (!ds1.any fun d => d.code == "E0322" || d.code == "E0321")
+  t "contract: 'alternatives = required' lands in the contract"
+    (d1.output.contract.alternatives == .required)
+  t "contract: the PDF realizes no alternative channel → one W0701 naming it"
+    (match w0701 d1.output.contract Pdf.profile with
+     | #[w] => w.code == "W0701" && w.subject == some "alternatives"
+     | _ => false)
+  t "contract: the HTML carries alt → no W0701"
+    ((w0701 d1.output.contract HtmlDoc.profile).isEmpty)
+  -- Red 2: the colour fact.
+  let (d2, ds2) := out "formats = pdf, color = srgb"
+  t "contract: 'color = srgb' is a known key" (!ds2.any (·.code == "E0322"))
+  t "contract: device colour in the PDF → one W0701 naming color"
+    (match w0701 d2.output.contract Pdf.profile with
+     | #[w] => w.subject == some "color"
+     | _ => false)
+  t "contract: CSS colour is sRGB by definition → no W0701"
+    ((w0701 d2.output.contract HtmlDoc.profile).isEmpty)
+  -- Two unmet facts are two warnings, never one.
+  let (d12, _) := out "formats = pdf, alternatives = required, color = srgb"
+  t "contract: two unmet facts are two W0701s"
+    ((w0701 d12.output.contract Pdf.profile).size == 2)
+  -- A bad value is E0321 in the existing style; the key is still known.
+  t "contract: an unknown alternatives value is E0321"
+    ((out "alternatives = maybe").2.any fun d =>
+      d.code == "E0321" && hasStr d.message "maybe")
+  t "contract: an unknown colour intent is E0321"
+    ((out "color = cmyk").2.any (·.code == "E0321"))
+  t "contract: an unknown font policy is E0321"
+    ((out "fonts = subset").2.any (·.code == "E0321"))
+  -- The defaults meet every artifact (the theorems say so; this is the
+  -- executable face of the same fact over the elaborated default).
+  let (d0, _) := out "formats = pdf, html"
+  t "contract: an undeclared contract is met by both records"
+    ((d0.output.contract.unmet Pdf.profile).isEmpty &&
+     (d0.output.contract.unmet HtmlDoc.profile).isEmpty)
+  -- The font policy's one resolving site: declared wins, else the css rule.
+  t "font policy: undeclared with no css story ships faces"
+    (d0.fontPolicy == .embedded)
+  t "font policy: undeclared with css = own ships none"
+    ((out "formats = html, css = own").1.fontPolicy == .none)
+  t "font policy: 'fonts = embedded' beside css = own opts back in"
+    ((out "formats = html, css = own, fonts = embedded").1.fontPolicy == .embedded)
+  t "font policy: 'fonts = none' with no css story ships none"
+    ((out "formats = html, fonts = none").1.fontPolicy == .none)
+  let (dLast, _) := elabStr (dvDoc "\\output{ fonts = none }\n\\output{ fonts = embedded }\n" "x")
+  t "font policy: the later declaration wins" (dLast.fontPolicy == .embedded)
+  -- `reads`: the closed table, executable.
+  t "reads: layout assertions read no artifact"
+    ((Ir.AssertKind.pages .eq 1).reads.isEmpty && Ir.AssertKind.textInArea.reads.isEmpty &&
+     (Ir.AssertKind.minXHeight 0).reads.isEmpty && Ir.AssertKind.accessibilityAA.reads.isEmpty)
+  t "reads: fonts.all_embedded reads the two artifacts that carry faces"
+    (Ir.AssertKind.fontsAllEmbedded.reads == #["pdf", "html"])
+  -- The driver, end to end, on this tree's own binary and the corpus face.
+  let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
+  t s!"leantex builds for the contract checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
+  if build.exitCode == 0 then
+    let dir ← IO.FS.createTempDir
+    IO.FS.createDirAll (dir / "fonts")
+    IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
+      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
+    let pre (cls : String) := s!"\\documentclass\{{cls}}\n\
+\\fonts\{ dir = \"fonts\", body = \"Source Serif Pro\" }\n"
+    let one := "\\begin{document}\nA probe.\n\\end{document}\n"
+    let three := "\\begin{document}\nA.\n\\pagebreak\nB.\n\\pagebreak\nC.\n\\end{document}\n"
+    let run (name cls decl body : String) : IO (UInt32 × String × System.FilePath) := do
+      IO.FS.writeFile (dir / s!"{name}.tex") (pre cls ++ decl ++ body)
+      let outDir := dir / s!"out-{name}"
+      let r ← IO.Process.output {
+        cmd := ".lake/build/bin/leantex"
+        args := #[(dir / s!"{name}.tex").toString, "-o", outDir.toString ++ "/"] }
+      return (r.exitCode, r.stdout ++ r.stderr, outDir)
+    let count (log needle : String) : Nat := (log.splitOn needle).length - 1
+    -- Red 1 and 2 through the driver: one W0701 per artifact that lacks the fact.
+    let (code, log, _) ← run "alt-pdf" "article"
+      "\\output{ formats = pdf, alternatives = required }\n" one
+    t s!"driver: pdf + alternatives = required builds with one W0701: {log}"
+      (code == 0 && count log "warning[W0701]" == 1 && hasStr log "alternatives = required")
+    let (code, log, _) ← run "alt-html" "article"
+      "\\output{ formats = html, alternatives = required }\n" one
+    t "driver: html + alternatives = required builds with no W0701"
+      (code == 0 && count log "W0701" == 0)
+    let (code, log, _) ← run "alt-both" "article"
+      "\\output{ formats = pdf, html, alternatives = required }\n" one
+    t "driver: pdf+html + alternatives = required warns once, for the PDF"
+      (code == 0 && count log "warning[W0701]" == 1)
+    let (code, log, _) ← run "srgb-pdf" "article" "\\output{ formats = pdf, color = srgb }\n" one
+    t "driver: pdf + color = srgb builds with one W0701"
+      (code == 0 && count log "warning[W0701]" == 1 && hasStr log "color = srgb")
+    let (code, log, _) ← run "srgb-html" "article" "\\output{ formats = html, color = srgb }\n" one
+    t "driver: html + color = srgb builds with no W0701" (code == 0 && count log "W0701" == 0)
+    -- Red 3: css = own ships no face, so the assertion fails; `fonts =
+    -- embedded` is the opt-in that ships `.fonts/` and passes it.
+    let (code, log, outDir) ← run "own" "article"
+      "\\output{ formats = html, css = own }\n\\assert{ fonts.all_embedded }\n" one
+    t s!"driver: css = own + fonts.all_embedded is E0330: {log}"
+      (code != 0 && hasStr log "E0330" && !(← outDir.pathExists))
+    let (code, log, outDir) ← run "optin" "article"
+      "\\output{ formats = html, css = own, fonts = embedded }\n\\assert{ fonts.all_embedded }\n" one
+    t s!"driver: css = own + fonts = embedded passes the assertion: {log}" (code == 0)
+    t "driver: fonts = embedded publishes the face beside the page"
+      ((← (outDir / "optin.fonts").isDir) &&
+       !(← (outDir / "optin.fonts").readDir).isEmpty)
+    let (code, _, outDir) ← run "optout" "article" "\\output{ formats = html, fonts = none }\n" one
+    t "driver: fonts = none with no css story ships no faces"
+      (code == 0 && !(← (outDir / "optout.fonts").pathExists))
+    -- Red 4: layout assertions judge the layout whatever is emitted.
+    let (code, log, _) ← run "three" "article" "\\output{ formats = html }\n\\assert{ pages == 3 }\n" three
+    t s!"driver: html-only pages == 3 holds on a three-page layout: {log}" (code == 0)
+    let (code, log, _) ← run "one" "article" "\\output{ formats = html }\n\\assert{ pages == 3 }\n" one
+    t "driver: html-only pages == 3 fails on one page with the layout's actual"
+      (code != 0 && hasStr log "E0330" && hasStr log "(actual: 1)")
+    let (code, log, _) ← run "resume" "resume" "\\output{ formats = html }\n" one
+    t s!"driver: an html-only résumé builds clean under its implied assertions: {log}" (code == 0)
+    -- Red 5: the one fail-loud case — a byte-reading assertion with no
+    -- artifact to read.
+    let (code, log, outDir) ← run "md" "article" "\\output{ formats = md }\n\\assert{ fonts.all_embedded }\n" one
+    t s!"driver: md-only fonts.all_embedded fails loud (E0330): {log}"
+      (code != 0 && hasStr log "E0330" && hasStr log "no emitted artifact carries this measurement" &&
+       !(← outDir.pathExists))
+    IO.FS.removeDirAll dir

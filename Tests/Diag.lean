@@ -302,6 +302,11 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0383 => dvE (dvDoc ""
       "\\begin{algorithm}\n\\lIf{$x < 0$}{negate $x$}\\;\n\\end{algorithm}")
   | .W0387 => dvE (dvDoc "\\thispagestyle{plain}\n" "x")
+  -- W0701 is the driver's: the declared contract held against the
+  -- realization record of each artifact the run emits.
+  | .W0701 =>
+    let (doc, _) := elabStr (dvDoc "\\output{ formats = pdf, alternatives = required }\n" "x")
+    Ir.contractDiags (doc.output.contract.unmet Pdf.profile)
   -- W0379 is the driver's: a stated request no available tool can fulfil.
   | .W0379 => #[DriverDiag.boundaryToolUnavailable "lualatex"]
   | .W0378 => #[DriverDiag.boundaryFailed "lualatex"
