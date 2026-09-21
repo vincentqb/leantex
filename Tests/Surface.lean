@@ -1087,10 +1087,26 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
        some { ex := 2000 })
   t "the style group's plain forms spell out; alignment is not font"
     (((secDoc.styles.find? "section").bind (·.font)).isSome)
-  t "a negative afterskip is a run-in heading: named, skipped, built-in stands"
-    (warnCodes ("\\documentclass{article}\\renewcommand{\\paragraph}{" ++
+  -- A negative afterskip declares a run-in heading (ltsect.dtx). The
+  -- engine's \paragraph *is* one — bold at the body size, an em quad —
+  -- so a redefinition asking for exactly that is a declaration of what
+  -- already renders (N0100, no warning); a foreign font or a run-in at a
+  -- display level stays named and skipped.
+  t "a run-in paragraph redefinition in the built-in's own font is satisfied"
+    (let src := "\\documentclass{article}\\renewcommand{\\paragraph}{" ++
       "\\@startsection{paragraph}{4}{\\z@}{1.5ex}{-1em}{\\normalsize\\bf}}" ++
+      "\\begin{document}\\paragraph{P}\nx\\end{document}"
+     warnCodes src == [] &&
+       (elabStr src).1.body ==
+         #[.para #[.styled .bold #[.text "P"], .text "\u2003x"]])
+  t "a run-in redefinition in a foreign font is named, skipped"
+    (warnCodes ("\\documentclass{article}\\renewcommand{\\paragraph}{" ++
+      "\\@startsection{paragraph}{4}{\\z@}{1.5ex}{-1em}{\\normalsize\\it}}" ++
       "\\begin{document}\\paragraph{P}\nx\\end{document}") == ["W0104"])
+  t "a run-in section is not modelled at a display level: named, skipped"
+    (warnCodes ("\\documentclass{article}\\renewcommand{\\section}{" ++
+      "\\@startsection{section}{1}{\\z@}{1.5ex}{-1em}{\\normalsize\\bf}}" ++
+      "\\begin{document}\\section{S}\nx\\end{document}") == ["W0104"])
   -- LaTeX classes space paragraphs by indent: their parskip is zero unless
   -- KOMA's option or the parskip package says otherwise.
   t "compat koma class declares parskip zero"

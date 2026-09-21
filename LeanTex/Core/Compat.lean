@@ -1257,9 +1257,32 @@ private def startSection? (cmd : String) (body : Array Raw) (pos : Pos) :
       let element := (rawSrc args[0]).trimAscii.toString
       let after := lengthSrc args[4]
       if after.startsWith "-" then
-        sayOnce ("ctrl:runin:" ++ cmd) .W0104
-          s!"'\\{cmd}' would be a run-in heading (negative \\@startsection \
-afterskip), which is not modelled; the redefinition is skipped" pos
+        -- A negative afterskip declares a run-in heading (ltsect.dtx).
+        -- `\paragraph` and `\subparagraph` *are* run-in here — bold at
+        -- the body size, an em quad to the text, classes.dtx's own shape
+        -- (the elaborator's paragraph arm) — so a redefinition asking for
+        -- that under the built-in's own font declares what already
+        -- renders. One asking a font the run-in title does not set, or a
+        -- run-in at a display level, stays named and skipped.
+        let runinBuiltin := cmd == "paragraph" || cmd == "subparagraph"
+        let ownFont := args[5].all fun r => match r with
+          | .ctrl n _ => ["bf", "bfseries", "normalsize", "raggedright"].contains n
+          | .space => true
+          | _ => false
+        if runinBuiltin && ownFont then
+          became s!"\\{cmd} = \\@startsection\{{cmd}}"
+            "the built-in run-in heading: bold at the body size, an em \
+quad to the text" pos
+        else
+          sayOnce ("ctrl:runin:" ++ cmd) .W0104
+            (if runinBuiltin then
+              s!"'\\{cmd}' is already a run-in heading, and the \
+redefinition's font is not one the run-in title sets; the redefinition \
+is skipped"
+            else
+              s!"'\\{cmd}' would be a run-in heading (negative \
+\\@startsection afterskip), which is not modelled at this level; the \
+redefinition is skipped") pos
         return some #[]
       if element != cmd || !Ir.styleableElements.contains element then
         return none
