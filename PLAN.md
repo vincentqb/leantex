@@ -174,6 +174,53 @@ reference venue paper: W0361 16 → 1 (the surviving one is `\maketitle`'s,
 genuinely refused and styled), byte-identical output, as are the four
 reference documents.
 
+2026-09-21 — the graphics boundary opens by default (boundary-default):
+a picture the rendered subset refuses routes whole to the boundary with
+no declaration at all — the boundary tool belongs to the build
+environment exactly as fonts do, and a warm cache needs no tool.
+`\pictures{ tool = ... }` now *pins* a tool (a no-op for the default;
+`\tikzexternalize` still spells the pin) and `tool = none` is the
+declared refusal, restoring the subset's own named diagnostics — W0334
+per construct, W0362's placeholder, W0301 for the set lines, W0103 for a
+picture package's load — with no door warning, because the declaration
+is the acceptance.
+
+- Fulfilment stays the driver's alone. The request is a pure function of
+  the document: `boundary_request_env_free` (Ir.lean) pins that
+  repinning the tool field leaves `pictureRefs` untouched, the routing
+  reads only the door's presence (a declaration value), and the
+  executable half — the pinned and undeclared spellings elaborate to the
+  identical `Doc` — runs in `boundaryChecks`. The driver runs the tool,
+  serves the warm cache (with no tool at all, any cached render of the
+  same content serves — the version half of the key only forces a
+  re-render on upgrade), or says W0379.
+- W0379's one meaning moved with the policy: no longer "no boundary tool
+  declared" (Elab) but "no boundary tool available for a picture outside
+  the rendered subset; a placeholder box marks each picture" — a driver
+  diagnostic (`boundaryToolUnavailable`, loss `degraded`: the placeholder
+  ships), fired once per run, help naming the install and the `tool =
+  none` acceptance. W0378 keeps its two remaining meanings (tool ran and
+  failed; converter missing). N0023 stays on every routed picture, and
+  the porcelain inventory row stands.
+- Two absorptions the default made load-bearing (both were tikz-boundary
+  named-next items): a boundary picture's absent text alternative is
+  N0023's fact, not W0376's — the trust label already reports the census
+  loss and names the caption/alt fix, and the route was the engine's
+  default, not a declared image (one loss, one diagnostic;
+  `imagesSansAlt` excludes `picSrcPrefix`, a caption still propagates) —
+  and an unsized boundary picture wider than the measure fits it exactly
+  (Layout's `.img` arm: the box is the engine's to measure and place,
+  the form is vector, no author size is overridden; an ordinary image
+  keeps its natural size and LaTeX's honest W0005).
+- `Compat.boundaryPkgs` (genealogytree, pgfplots, circuitikz — closed
+  list, picture-only packages): their loads ride the boundary standalone
+  (as `boundaryDecls` always carried them) instead of W0103, gated on
+  the door (`Compat.boundaryRefused` reads the refusal order-free, the
+  `picTool0` shape). The genealogy acceptance document now builds with 0
+  warnings and N0023 once, its tree drawn by the real genealogytree with
+  its `\gtrset` highlight style applied; the four reference documents
+  and the poster are byte-identical.
+
 2026-09-21 — ragged looseness is priced, never free (fix-firstline): body
 ragged setting (`raggedItems`) now gives interword glue finite stretch —
 `displayItems`' six-times-its-width pricing, one scale for both ragged
@@ -640,7 +687,6 @@ each ground (brand-palette).
   standout frame with no standout keys); HTML scoped realization covers
   the content colours (`alert`, `example`) — an arbitrary role inside a
   frame title keeps its `:root` value in HTML while the PDF realizes it.
-
 
 2026-09-20 — the harness reads what the wave landed: shared helpers, one
 measure per fact, gates that police the new invariants.
@@ -2269,7 +2315,6 @@ reinventing (status as of this entry):
   overlay walks). Exists as the house pattern; the hook rejects the
   quadratic spelling and, now, the wildcard one.
 
-
 2026-09-17 — one frame numbering, and the model stated. The engine now has
 exactly **two** number sequences, each with one definition site, never mixed
 implicitly:
@@ -3001,7 +3046,6 @@ theming and font workers or M5b), one tikzpicture (W0307, M8), one table
 degradation (W0308, M8), one colour-mix key (W0304, M5b). Bench, medians
 of 5 in one session against the base commit built in a scratch clone:
 paragraphs 75 → 77 ms, lorem 275 → 277 ms, underline 377 → 379 ms.
-
 
 2026-09-17 — fonts honour the faces a document names, and a missing glyph
 is set from another face instead of dropped. Three fixes in one area, each
