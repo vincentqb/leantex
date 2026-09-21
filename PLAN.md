@@ -272,6 +272,32 @@ runs in real TeX at the edge; the engine places a measured vector box.
   absorbing swaps the tool for a native implementation behind the same
   request type, and documents never notice).
 
+2026-09-21 — margin line numbers land as a declared page feature
+(pkg-lineno, audit-packages candidate 2, the submission requirement).
+`\page{ linenumbers = on }` numbers every counted body line consecutively
+across pages from 1; `modulo = n` prints only multiples while counting
+every line. Compat maps `\usepackage{lineno}` + `\linenumbers`,
+`\nolinenumbers`, `\runninglinenumbers`, and `\modulolinenumbers[n]` onto
+the keys; the `\linenomath` pair is accepted inert and the pagewise
+option family refused named (W0101) — continuous numbering is lineno's
+default and the one mode shipped. Which lines count is sourced from the
+lineno manual (line numbers on paragraphs, attached by the output
+routine): galley paragraph lines including headings, list items, and
+display math — numbered like every line here, where lineno's default
+linenomath does not; the recorded divergence — never a float's caption
+or body, footnotes, rule ink, picture labels, or furniture. The mark is
+`Layout.LineOut.counted` (set at `placeLine`, off inside floats through
+the reader); the numbers are furniture laid by the furniture pass at each
+counted line's own baseline, muted at the footnotesize step, right-aligned
+left of the measure (a declared `furnituregap` exact, the undeclared
+column hanging from half the margin, `furnEdge`'s convention turned
+sideways). The shipped-page contract is a census row over `Layout.Out`
+(`linenoCensus`/`linenoModuloCensus`, two golden fixtures). HTML emits
+nothing: line numbers are a paged-media fact and the twin has no fixed
+lines — recorded on `Ir.PageSpec.linenumbers` and in
+tests/compat-index/lineno.txt; no declarative per-line CSS construct
+exists to argue for.
+
 2026-09-21 — the deck is a horizontal row again, → is next, and the
 slides class ships one constant script (slides-floor). Supersedes the
 slides-vertical entry (2026-09-20, the axis and its push construction)
