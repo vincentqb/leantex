@@ -9617,11 +9617,13 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     -- wherever the source puts it, so those declarations already
     -- hold. `skip` is that gap's own value (caption manual §2.2:
     -- `skip=` sets `\abovecaptionskip`, the object-side skip), so a
-    -- literal length declares the `captionsep` token. Every other
-    -- key — and a `skip` whose value is a TeX length register the
-    -- engine does not resolve — is named and ignored (W0354), one
-    -- warning per key. The `[float type]` scope changes nothing in
-    -- that judgment, so it is skipped.
+    -- literal length declares the `captionsep` token; `margin` is the
+    -- caption's own both-side margin (§2.4), the `captionmargin`
+    -- token. Every other key — and an honoured key whose value the
+    -- length parser cannot carry (a register, a {left,right} pair) —
+    -- is named and ignored (W0354), one warning per key. The
+    -- `[float type]` scope changes nothing in that judgment, so it is
+    -- skipped.
     if let some bpos := unclosed then
       warnUnclosed s.ctx "'\\captionsetup'" bpos
     match body with
@@ -9631,18 +9633,25 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
         let parts := entry.splitOn "="
         let key := (parts.headD "").trimAscii.toString
         if key.isEmpty then continue
-        let honouredSkip ← do
-          if key == "skip" then
+        let honouredToken ← do
+          -- skip= is the object-side gap (\abovecaptionskip); margin= the
+          -- caption's own both-side margin (caption manual §2.2, §2.4).
+          -- Each honoured key is one token, the styling door both
+          -- backends read; a value the length parser cannot carry (a
+          -- register, a {left,right} pair) falls through to W0354.
+          let tokenOf := [("skip", "captionsep"), ("margin", "captionmargin")]
+          match tokenOf.lookup key with
+          | some tok =>
             let value := (String.intercalate "=" (parts.drop 1)).trimAscii.toString
             match Decl.parseGlue value with
             | some g =>
-              let tokens := s.tokens.declare "captionsep" g
+              let tokens := s.tokens.declare tok g
               s := { s with tokens := tokens, ctx := { s.ctx with tokens := tokens } }
-              noteDeclared s.ctx "tokens" "captionsep"
+              noteDeclared s.ctx "tokens" tok
               pure true
             | none => pure false
-          else pure false
-        unless honouredSkip ||
+          | none => pure false
+        unless honouredToken ||
             ["position", "tableposition", "figureposition"].contains key do
           warnOnce s.ctx ("captionsetup:" ++ key) .W0354
             s!"'\\captionsetup' key '{key}' is not honoured; the caption keeps \

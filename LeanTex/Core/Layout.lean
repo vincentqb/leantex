@@ -5398,13 +5398,21 @@ private def collectBlock (r : Rd) (a : Acc)
     -- longer one sets as an ordinary paragraph.
     let setCaption (a : Acc) : Acc :=
       if caption.isEmpty then a else
-      let avail := (a.measure.getD r.geom.textWidth) - indent
+      -- A declared caption margin (caption manual §2.4, \captionsetup{
+      -- margin = ... }) moves both caption edges in, the abstract's
+      -- narrower-measure shape; undeclared, the full measure as before.
+      let cmargin := ((a.tokens.find? "captionmargin").map
+        (fun g => (r.resolve g).width)).getD 0
+      let avail := (a.measure.getD r.geom.textWidth) - indent - 2 * cmargin
       let (items, _, cache, _) :=
         itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs { color := a.fg, ground := a.ground } caption
           a.hyphCache r.imgs avail r.geom.textHeight
       let a := { a with hyphCache := cache }
       let fits := itemsNaturalWidth items ≤ avail
-      collectPara rf a caption indent fits r.geom.fontSize
+      let saved := a.measure
+      let a := { a with measure := some ((a.measure.getD r.geom.textWidth) - cmargin) }
+      let a := collectPara rf a caption (indent + cmargin) fits r.geom.fontSize
+      { a with measure := saved }
     let a := (floatPlan capAbove (!caption.isEmpty) floatSep capSep).foldl
       (fun a slot => match slot with
         | .gap g => a.addvspace g

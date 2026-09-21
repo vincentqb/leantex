@@ -667,6 +667,17 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre "\\captionsetup[table]{skip=10pt}")).1.tokens.find? "captionsep"
         == some { width := { sp := Dim.pt 10 } } &&
      (elabStr (pre "\\captionsetup[table]{skip=10pt}")).2.all (·.severity == .note))
+  -- margin= is the caption's both-side margin (caption manual §2.4): one
+  -- token, read by the float caption's measure and the HTML figcaption
+  -- padding alike; the package-option spelling routes through the same
+  -- arm. A {left,right} pair is not one length and stays named.
+  t "compat captionsetup margin declares the caption margin"
+    ((elabStr (pre "\\captionsetup{margin=12pt}")).1.tokens.find? "captionmargin"
+        == some { width := { sp := Dim.pt 12 } } &&
+     (elabStr (pre "\\captionsetup{margin=12pt}")).2.all (·.severity == .note) &&
+     (elabStr (pre "\\usepackage[margin=12pt]{caption}")).1.tokens.find? "captionmargin"
+        == some { width := { sp := Dim.pt 12 } } &&
+     (warnCodes (pre "\\captionsetup{margin={1em,2em}}")).contains "W0354")
   -- The geometry text-block spelling: `textwidth`/`textheight` size the
   -- body (geometry manual §5.2) and the engine centres it, whichever of
   -- the three spellings (package options, \geometry, \newgeometry)

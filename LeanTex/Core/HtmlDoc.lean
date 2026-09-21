@@ -2582,6 +2582,7 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
   "figure.float > img { display: block; margin: 0 auto; }\n" ++
   s!"figure.float > figcaption \{ margin-top: var(--captionsep, {quantaRem (gapK "caption")});\n" ++
+  "  padding: 0 var(--captionmargin, 0px);\n" ++
   "  text-align: center; text-wrap: balance; }\n" ++
   s!"figure.float > figcaption:first-child \{ margin-top: 0;\n" ++
   s!"  margin-bottom: var(--captionsep, {quantaRem (gapK "caption")}); }\n" ++

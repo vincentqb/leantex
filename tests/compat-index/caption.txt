@@ -2,5 +2,7 @@
 # An option the engine does not honour is W0354, named and ignored.
 body impl \begin{figure}\caption{x}\end{figure}
 pre refuse:W0354 \captionsetup{font=small}
+pre impl \captionsetup{margin=0.33in}
+pre impl \captionsetup{skip=6pt}
 body refuse:W0301 \captionof{figure}{x}
 pre refuse:W0301 \DeclareCaptionFormat{zz}{#3}
