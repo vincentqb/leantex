@@ -230,14 +230,21 @@ def inflate (data : ByteArray) (maxOut : Nat) : Except String ByteArray := Id.ru
       return .ok out
   return .error "deflate: no final block"
 
-/-- Adler-32 (RFC 1950 §8.2). -/
+/-- Adler-32 (RFC 1950 §8.2). Both sums ride in one `UInt64` — `s2` in
+the high word, `s1` in the low — and reduce modulo 65521 once per 5552
+bytes, zlib's `NMAX`: the longest run after which both still fit their
+words. The byte loop then divides nothing and carries one scalar. -/
 def adler32 (data : ByteArray) : Nat := Id.run do
-  let mut s1 := 1
-  let mut s2 := 0
-  for b in data do
-    s1 := (s1 + b.toNat) % 65521
-    s2 := (s2 + s1) % 65521
-  return s2 * 65536 + s1
+  let mut s : UInt64 := 1
+  let mut i := 0
+  for _ in [0:data.size / 5552 + 1] do
+    let stop := min data.size (i + 5552)
+    for k in [i:stop] do
+      let s1 := (s &&& 0xFFFFFFFF) + (data[k]?.getD 0).toUInt64
+      s := (((s >>> 32) + s1) <<< 32) ||| s1
+    s := (((s >>> 32) % 65521) <<< 32) ||| ((s &&& 0xFFFFFFFF) % 65521)
+    i := stop
+  return ((s >>> 32) * 65536 + (s &&& 0xFFFFFFFF)).toNat
 
 /-- A zlib stream of stored blocks: bytes back into a shape `/FlateDecode`
 accepts, without owning a compressor. -/
@@ -429,19 +436,24 @@ private def matchToken (len dist : Nat) : UInt32 :=
 
 /-- The three-byte rolling hash: Knuth's multiplicative constant over the
 window the next match must open with. `UInt64` arithmetic — the product
-stays under 2⁵⁶ — for the same reason as `Bw`. -/
+stays under 2⁵⁶ — for the same reason as `Bw`; one bounds check covers
+the three reads. Callers only ask where the window is whole. -/
 private def hash3 (raw : ByteArray) (mask i : Nat) : Nat :=
-  (((((raw[i]?.getD 0).toUInt64 <<< 16) ^^^ ((raw[i + 1]?.getD 0).toUInt64 <<< 8) ^^^
-    (raw[i + 2]?.getD 0).toUInt64) * 2654435761) >>> 17 &&& mask.toUInt64).toNat
+  if h : i + 2 < raw.size then
+    (((((raw[i]'(by omega)).toUInt64 <<< 16) ^^^ ((raw[i + 1]'(by omega)).toUInt64 <<< 8) ^^^
+      raw[i + 2].toUInt64) * 2654435761) >>> 17 &&& mask.toUInt64).toNat
+  else 0
 
 /-- Longest common run at `c`/`i`, `fuel` the caller's bound (`limit ≤
 258`, in range by the caller's `c < i` and `limit ≤ raw.size - i`). Tail
 recursion: the byte loop carries no boxed loop state — this is the
-innermost loop of the compressor. -/
-private def matchLen (raw : ByteArray) (c i : Nat) : Nat → Nat → Nat
+innermost loop of the compressor — and `c < i` makes one bounds check
+serve both reads. -/
+private def matchLen (raw : ByteArray) (c i : Nat) (hci : c < i) : Nat → Nat → Nat
   | 0, l => l
   | fuel + 1, l =>
-    if raw[c + l]?.getD 0 == raw[i + l]?.getD 1 then matchLen raw c i fuel (l + 1)
+    if h : i + l < raw.size then
+      if raw[c + l]'(by omega) == raw[i + l] then matchLen raw c i hci fuel (l + 1) else l
     else l
 
 /-- The hash tables as one array: `head` in the first `mask + 1` slots,
@@ -461,15 +473,19 @@ private def bestMatch (raw : ByteArray) (tab : Array Nat) (mask i limit : Nat) :
     Nat → Nat → Nat → Nat → UInt64
   | 0, _, best, bestDist => packMatch best bestDist
   | fuel + 1, c, best, bestDist =>
-    if c ≥ i || i - c > 32768 || best ≥ 64 || best == limit then packMatch best bestDist
-    else
-      -- A longer match must extend past `best`: one compare rejects most.
-      let next := tab[prevSlot mask c]?.getD i
-      if raw[c + best]?.getD 0 == raw[i + best]?.getD 0 then
-        let l := matchLen raw c i limit 0
-        if l > best then bestMatch raw tab mask i limit fuel next l (i - c)
+    if hci : c < i then
+      if i - c > 32768 || best ≥ 64 || best == limit then packMatch best bestDist
+      else
+        -- A longer match must extend past `best`: one compare rejects most.
+        let next := tab[prevSlot mask c]?.getD i
+        let longer := if h : i + best < raw.size then raw[c + best]'(by omega) == raw[i + best]
+          else false
+        if longer then
+          let l := matchLen raw c i hci limit 0
+          if l > best then bestMatch raw tab mask i limit fuel next l (i - c)
+          else bestMatch raw tab mask i limit fuel next best bestDist
         else bestMatch raw tab mask i limit fuel next best bestDist
-      else bestMatch raw tab mask i limit fuel next best bestDist
+    else packMatch best bestDist
 
 /-- Enter positions `j, j+1, …` (`fuel` many) into the hash tables. -/
 private def insertHashes (raw : ByteArray) (mask : Nat) : Nat → Nat → Array Nat → Array Nat
