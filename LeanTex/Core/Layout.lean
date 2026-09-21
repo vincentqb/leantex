@@ -3999,6 +3999,11 @@ private structure ParaJob where
   expand : Bool := true
   /-- Marker content set as its own items and placed before the first line. -/
   markerSegs : Option (Array Seg × Sp) := none
+  /-- Where the marker's column stands: right-aligned against this offset
+  from the margin instead of the line's own indent — an algorithm's line
+  numbers keep one column whatever each line's depth. `none` hangs the
+  marker off the indent, the list-bullet shape. -/
+  markerIndent : Option Sp := none
   /-- A rule filling the first line after the content. -/
   rule : Option (Sp × Ir.Color) := none
   /-- The paragraph's footnotes, pre-broken: each with the item index of
@@ -4285,6 +4290,7 @@ private def collectPara (r : Rd) (a : Acc)
     (inlines : Array Inline) (indent : Sp) (center : Bool) (size : Sp)
     (baseStyle : TextStyle := {})
     (marker : Option (Array Inline) := none)
+    (markerIndent : Option Sp := none)
     (rule : Option (Sp × Ir.Color) := none)
     (display : Bool := false) : Acc :=
   let a := a.flushGap r
@@ -4384,7 +4390,7 @@ private def collectPara (r : Rd) (a : Acc)
       justify := r.geom.justify
       protrude := r.geom.protrude
       expand := r.geom.expand
-      markerSegs := markerSegs, rule := rule
+      markerSegs := markerSegs, markerIndent := markerIndent, rule := rule
       notes := noteBlocks }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base — the
@@ -5281,7 +5287,8 @@ private def collectBlock (r : Rd) (a : Acc)
           some #[Ir.Inline.colored muted (some "muted") #[.text s!"{i}"]]
         else none
       (collectPara rAlg a content (indent + stepInd * (l.depth : Int)) false
-        r.geom.fontSize (marker := marker), i + 1)) (a, 1)).1
+        r.geom.fontSize (marker := marker) (markerIndent := some indent),
+        i + 1)) (a, 1)).1
   | .framefoot content =>
     -- Not a line, a state change: the note the following frames' footers
     -- carry. Empty clears back to the chrome default.
@@ -5723,7 +5730,15 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
   let (segs1, x1, w1) :=
     if first then
       match j.markerSegs with
-      | some (ms, mw) => (ms ++ #[Seg.gap sep] ++ segs0, x0 - mw - sep, w0 + mw + sep)
+      | some (ms, mw) =>
+        match j.markerIndent with
+        | some mi =>
+          -- One marker column for the whole block: the gap absorbs the
+          -- line's own depth indent on top of `\labelsep`.
+          let base := b.geom.hmargin + mi
+          let x1 := base - mw - sep
+          (ms ++ #[Seg.gap (x0 - base + sep)] ++ segs0, x1, w0 + (x0 - x1))
+        | none => (ms ++ #[Seg.gap sep] ++ segs0, x0 - mw - sep, w0 + mw + sep)
       | none => (segs0, x0, w0)
     else (segs0, x0, w0)
   -- The rule fills what the heading left of its line, a word-space away

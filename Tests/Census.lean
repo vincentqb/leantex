@@ -104,6 +104,28 @@ def censusTable :
     ("the abstract heading centres in the measure",
       ((lineXOf c 0 "Abstract").map fun x =>
         decide (x > geom.hmargin)).getD false)]),
+  ("algorithm", fun _ c => [
+    ("the caption ships numbered with the locale word",
+      hasStr (censusText c) "Algorithm 1: Exchange sort of an invented list."),
+    ("the second algorithm takes the next number",
+      hasStr (censusText c) "Algorithm 2: The same exchange sort, algorithmicx spelling."),
+    ("the io lines ship their generated labels",
+      hasStr (censusText c) "Input:" && hasStr (censusText c) "Output:"),
+    ("the generated keywords ship around the declared content",
+      hasStr (censusText c) "for" && hasStr (censusText c) "do"
+        && hasStr (censusText c) "end"),
+    ("the declared statement ships", hasStr (censusText c) "swap"),
+    ("the comment ships between its fences",
+      hasStr (censusText c) "/* one pass floats the heaviest weight to the end */"),
+    ("the else branch ships its keyword and body",
+      hasStr (censusText c) "else" && hasStr (censusText c) "keep the pair as it stands"),
+    ("the reference resolves to the float's number",
+      hasStr (censusText c) "Algorithm1 is restated"),
+    ("the line numbers keep one left column whatever the depth",
+      ((lineXOf c 0 "swap").bind fun sx =>
+        (lineXOf c 0 "keep the pair").bind fun kx =>
+        (lineXOf c 0 "Input:").map fun ix =>
+          decide (sx = kx ∧ kx = ix)).getD false)]),
   ("paragraphs", fun _ c => [
     ("one page", c.size == 1),
     ("the opening sentence ships", hasStr (censusText c) "Typesetting is the arrangement of type"),

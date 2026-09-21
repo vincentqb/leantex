@@ -2565,12 +2565,18 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   -- furniture, never content.
   "ol.algorithm { list-style: none; padding-left: 0; counter-reset: algline; }\n" ++
   "ol.algorithm ol { list-style: none; padding-left: var(--algindent, 1.5em); }\n" ++
-  "ol.algorithm.numbered { padding-left: 2em; }\n" ++
+  -- the class-default enumerate markers set ::marker content per level;
+  -- pseudocode lists are not enumerates, so the content resets too
+  "ol.algorithm li::marker, ol.algorithm ol > li::marker,\n" ++
+  "ol.algorithm ol ol > li::marker, ol.algorithm ol ol ol > li::marker {\n" ++
+  "  content: none; }\n" ++
+  "ol.algorithm.numbered { padding-left: 2em; position: relative; }\n" ++
   "ol.algorithm.numbered li { counter-increment: algline; }\n" ++
+  -- one number column at the block's own left edge, whatever the line's
+  -- depth — the PDF's marker column (`markerIndent`), the same shape
   "ol.algorithm.numbered li::before { content: counter(algline);\n" ++
   "  color: var(--muted); font-size: 0.8em; width: 1.5em;\n" ++
-  "  margin-left: -2em; margin-right: 0.5em;\n" ++
-  "  display: inline-block; text-align: right; }\n" ++
+  "  position: absolute; left: 0; text-align: right; }\n" ++
   "figure.float { margin: 0 auto; }\n" ++
   "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
   "figure.float > img { display: block; margin: 0 auto; }\n" ++
@@ -3159,54 +3165,42 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- <li>, through the shared rendering `Ir.AlgLine.rendered`, the site
     -- the PDF paragraphs read too (`algorithm_lines_agree`): keywords
     -- bold, the comment in the muted role. Native list semantics carry
-    -- the structure; no role attribute is needed.
+    -- the structure; no role attribute is needed. The build is driven by
+    -- each line's own depth — the parse's truth — so an else standing at
+    -- its if's level nests exactly once: a deeper line opens levels under
+    -- the last item, a shallower one closes them back into it, and the
+    -- final unwind makes the builder total (never a lost line).
     let words := Ir.algWords cfg.locale.tag
     let muted := Ir.mutedOf cfg.pal
-    let liOf (l : Ir.AlgLine) : Node :=
-      Html.elem "li" (inlines cfg (Ir.AlgLine.rendered words semis muted l)) #[]
-    -- One pass with a stack of open levels: an opener starts a level, its
-    -- closer pops the finished <ol> into the opener's own <li> and the
-    -- closer line follows at the opener's level. The parser balances
-    -- openers and closers by construction; the final unwind makes the
-    -- builder total anyway (never a lost line).
     Id.run do
-      let mut levels : Array (Array Node) := #[#[]]
-      let mut openers : Array (Array Node) := #[]
-      let close (levels : Array (Array Node)) (openers : Array (Array Node))
-          (closerLi : Option Node) :
-          Array (Array Node) × Array (Array Node) := Id.run do
-        let inner := levels.back?.getD #[]
-        let mut levels := levels.pop
-        let opener := openers.back?.getD #[]
-        let openers := openers.pop
-        let li := Html.elem "li"
-          (opener.push (Html.elem "ol" inner #[])) #[]
-        let mut top := (levels.back?.getD #[]).push li
-        if let some c := closerLi then
-          top := top.push c
-        levels := levels.pop.push top
-        return (levels, openers)
+      let mut stack : Array (Array Node) := #[#[]]
+      let closeOne (stack : Array (Array Node)) : Array (Array Node) := Id.run do
+        let inner := stack.back?.getD #[]
+        let stack := stack.pop
+        let top := stack.back?.getD #[]
+        let ol := Html.elem "ol" inner #[]
+        let top := match top.back? with
+          | some (.elem "li" attrs kids) =>
+            (top.pop).push (.elem "li" attrs (kids.push ol))
+          | _ => top.push (Html.elem "li" #[ol] #[])
+        return (stack.pop).push top
       for l in lines do
-        match l.kind with
-        | .opener _ =>
-          openers := openers.push
-            (inlines cfg (Ir.AlgLine.rendered words semis muted l))
-          levels := levels.push #[]
-        | .closer _ =>
-          if levels.size > 1 then
-            let (ls, os) := close levels openers (some (liOf l))
-            levels := ls
-            openers := os
-          else
-            levels := levels.pop.push ((levels.back?.getD #[]).push (liOf l))
-        | _ =>
-          levels := levels.pop.push ((levels.back?.getD #[]).push (liOf l))
-      for _ in [0:levels.size] do
-        if levels.size > 1 then
-          let (ls, os) := close levels openers none
-          levels := ls
-          openers := os
-      return Html.elem "ol" (levels.back?.getD #[])
+        for _ in [0:stack.size + 1] do
+          if stack.size > l.depth + 1 then
+            stack := closeOne stack
+          else break
+        for _ in [0:l.depth + 1] do
+          if stack.size < l.depth + 1 then
+            stack := stack.push #[]
+          else break
+        let li := Html.elem "li"
+          (inlines cfg (Ir.AlgLine.rendered words semis muted l)) #[]
+        stack := (stack.pop).push ((stack.back?.getD #[]).push li)
+      for _ in [0:stack.size + 1] do
+        if stack.size > 1 then
+          stack := closeOne stack
+        else break
+      return Html.elem "ol" (stack.back?.getD #[])
         #[("class", if numbered then "algorithm numbered" else "algorithm")]
   | .rule color name thickness =>
     -- The title page's separator: an <hr> carrying the palette variable,

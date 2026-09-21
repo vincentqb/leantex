@@ -456,6 +456,8 @@ warning[W0380]: 'stepped' names a bare counter step, not a heading, equation, or
 ── W0381 (degraded) a unit outside the siunitx table; set as its ASCII spelling
 warning[W0381]: no unit symbol for '\banana'; set as its ASCII spelling
   help: write the symbol as literal text in the unit braces: \qty{1}{kPa}
+── W0383 (pending) algorithm construct outside the modeled subset; kept as a plain line
+warning[W0383]: '\lIf' is an algorithm construct outside the modeled subset; its content is kept as plain lines
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg added

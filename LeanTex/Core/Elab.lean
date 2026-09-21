@@ -146,6 +146,19 @@ inductive SecPart where
   | the (level : Nat)
   deriving Repr, BEq
 
+/-- A document-defined algorithm keyword (`\SetKw`, `\SetKwInOut`,
+`\SetKwInput`, `\SetKwFunction`, `\SetKwData` — algorithm2e §10.3):
+what the defined control sequence means when it is met inside an
+algorithm. The word/function/data payloads stay raws so accents in the
+declared text still elaborate; an io label is rendered text, the line
+kind's own word. -/
+inductive AlgKwDef where
+  | word (body : Array Raw)
+  | io (label : String)
+  | func (name : Array Raw)
+  | data (name : Array Raw)
+  deriving Repr, BEq
+
 structure ESt where
   diags : Array Diag := #[]
   /-- Warn-once keys already fired: a macro used forty times is one problem,
@@ -258,6 +271,10 @@ structure ESt where
   whole table is known: a reference may point forward, so it cannot be
   judged where it stands. -/
   refSites : Array (String × Ir.RefForm × Pos) := #[]
+  /-- Algorithm keywords the preamble declared (`\SetKw` and family met
+  before `\begin{document}`): every algorithm environment reads them, as
+  algorithm2e's own definitions are document-global. -/
+  algKws : Array (String × AlgKwDef) := #[]
 
 /-- The mandatory `{language}` head of a `{minted}` body, after any option
 head: the language text and the index past the `}`, `none` when the group
@@ -3512,7 +3529,8 @@ def blockEnvs : List String :=
 `builtinNames`: everything the engine gives a meaning of its own. -/
 def builtinEnvNames : List String :=
   blockEnvs ++ (alignEnvs.map (·.1)) ++ (displayMathEnvs.map (·.1)) ++
-  ["verbatim", "tabular", "tabular*", "column", "array"] ++
+  ["verbatim", "tabular", "tabular*", "column", "array",
+   "algorithm", "algorithm*", "algorithm2e", "algorithmic"] ++
   reservedEnv
 
 /-- The text-block width the page yields: `width − 2·hmargin`, spelled
@@ -3637,6 +3655,8 @@ def bodyIsBlockOne : Raw → Bool
     else
       blockEnvs.contains n || isMathEnv n
         || n == "tabular" || n == "tabular*"
+        || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
+        || n == "algorithmic"
         || reservedEnv.contains n || bodyIsBlockList body.toList
   | .group body _ => bodyIsBlockList body.toList
   | _ => false
@@ -5918,6 +5938,610 @@ seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
 seal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? overlayFrom
 seal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 seal isColumnStray
+
+-- ===== Pseudocode environments: algorithm2e and algorithmicx ============
+--
+-- Both surfaces parse onto the one `Ir.Block.algorithm` value: lines of
+-- rich text with depth from nesting, keywords generated from the locale
+-- table at the backends. algorithm2e's grammar is grouped
+-- (`\For{cond}{body}`, `\;` the line terminator — algorithm2e.sty's own
+-- macro definitions and the manual's block forms); algorithmicx's is flat
+-- (`\For{cond}` … `\EndFor` — algorithmicx manual §2). No recursion into
+-- the block walk, so the whole family lives outside the knot, as
+-- `tabularArm` does.
+
+/-- One parsed pseudocode line, still raw: elaboration to `Ir.AlgLine`
+happens per segment, after the structural walk. -/
+private structure AlgSeg where
+  depth : Nat
+  kind : Ir.AlgKind
+  content : Array Raw
+  comment : Option (Array Raw)
+
+/-- The structural walk's work items: a source raw, or a virtual marker a
+block form's expansion leaves behind — `close` ends a nested body
+(repeat's carries its until-condition), `mid` is `\eIf`'s else at the
+opener's level, `dedent` closes a `\uIf`-style block that prints no
+end. -/
+private inductive AlgTok where
+  | raw (r : Raw)
+  | close (o : Ir.AlgOpen) (cond : Array Raw)
+  | mid (o : Ir.AlgOpen)
+  | dedent
+
+/-- algorithm2e's `{cond}{body}` block openers, each with its opener kind
+and whether it prints an end line (`\SetKwFor`/`\SetKwIF` defaults; the
+`u` forms are the if-chain links that print none). -/
+private def algA2eBlocks : List (String × Ir.AlgOpen × Bool) :=
+  [("For", (.forLoop, true)), ("ForEach", (.forEach, true)),
+   ("ForAll", (.forEach, true)), ("While", (.whileLoop, true)),
+   ("If", (.ifThen, true)), ("uIf", (.ifThen, false)),
+   ("ElseIf", (.elseIf, true)), ("uElseIf", (.elseIf, false))]
+
+/-- algorithm2e's io-line commands (`\SetKwInput` defaults). -/
+private def algA2eIo : List (String × Ir.AlgIo) :=
+  [("KwIn", .input), ("KwOut", .output), ("KwData", .data),
+   ("KwResult", .result)]
+
+/-- algorithm2e display settings the engine does not model, each with the
+group count it consumes: named and ignored (N0102), never silent — the
+engine keeps its own display (vertical block lines included, until the
+layout grows a vertical-rule op). -/
+private def algA2eSettings : List (String × Nat) :=
+  [("SetAlgoLined", 0), ("SetAlgoNoLine", 0), ("SetAlgoVlined", 0),
+   ("SetLine", 0), ("SetNoline", 0), ("SetVline", 0),
+   ("SetAlgoNoEnd", 0), ("SetAlgoShortEnd", 0), ("SetAlgoLongEnd", 0),
+   ("SetInd", 2), ("SetVlineSkip", 1), ("SetAlgoSkip", 1),
+   ("SetAlgoInsideSkip", 1), ("RestyleAlgo", 1), ("SetAlCapSkip", 1),
+   ("SetAlCapHSkip", 1), ("NoCaptionOfAlgo", 0), ("SetAlgorithmName", 3),
+   ("IncMargin", 1), ("DecMargin", 1), ("SetKwSty", 1), ("SetFuncSty", 1),
+   ("SetArgSty", 1), ("SetCommentSty", 1), ("SetDataSty", 1),
+   ("SetProcNameSty", 1), ("SetProcArgSty", 1), ("SetTitleSty", 2),
+   ("SetAlFnt", 1), ("SetAlCapFnt", 1), ("SetAlCapNameFnt", 1),
+   ("BlankLine", 0), ("Indp", 0), ("Indm", 0), ("SetSideCommentLeft", 0),
+   ("SetSideCommentRight", 0), ("LinesNumberedHidden", 0),
+   ("SetNlSty", 3), ("SetAlgoNlRelativeSize", 1)]
+
+/-- algorithm2e constructs outside the modeled subset, each with its
+group count: W0383 names the construct and the groups' contents splice
+back into the stream, so the text is kept as plain lines, never
+dropped. -/
+private def algA2eRefused : List (String × Nat) :=
+  [("Begin", 1), ("lIf", 2), ("lElseIf", 2), ("lElse", 1), ("lFor", 2),
+   ("lForEach", 2), ("lForAll", 2), ("lWhile", 2), ("lRepeat", 2),
+   ("Switch", 3), ("Case", 2), ("uCase", 2), ("lCase", 2), ("Other", 1),
+   ("lOther", 1), ("ForPar", 2), ("KwHData", 1), ("nlset", 1), ("nl", 0),
+   ("ShowLn", 0), ("ShowLnLabel", 1)]
+
+/-- algorithmicx's flat block openers, one `{cond}` group each. -/
+private def algAcxBlocks : List (String × Ir.AlgOpen) :=
+  [("For", .forLoop), ("ForAll", .forEach), ("While", .whileLoop),
+   ("If", .ifThen)]
+
+/-- algorithmicx's end commands, each naming the opener it closes (the
+kind only selects the generated word: every non-repeat block ends on
+`end`). -/
+private def algAcxEnds : List (String × Ir.AlgOpen) :=
+  [("EndFor", .forLoop), ("EndWhile", .whileLoop), ("EndIf", .ifThen),
+   ("EndFunction", .function), ("EndProcedure", .procedure)]
+
+/-- algorithmicx constructs outside the modeled subset: W0383 names each;
+none carries a content group, so nothing needs keeping. -/
+private def algAcxRefused : List String := ["Loop", "EndLoop"]
+
+/-- Rewrite document-defined algorithm keywords inside content raws, so a
+`\KwTo` in a `\For` condition or a `\SetKwFunction` name in a statement
+reaches `elabInlines` as the styled text algorithm2e prints: a keyword
+bold (`\KwSty`'s default), a function name in small caps with its `(args)`
+(`\FuncSty`), a data name in sans (`\DataSty`). An io keyword met inline
+renders as its bold label. Anything else passes through; groups are
+rewritten inside. -/
+private def algSubstList (kws : Array (String × AlgKwDef)) (out : Array Raw) :
+    List Raw → Array Raw
+  | [] => out
+  | .group body p :: rest =>
+    algSubstList kws (out.push (.group (algSubstList kws #[] body.toList) p)) rest
+  | .ctrl n p :: rest =>
+    match ((kws.find? (·.1 == n)).map (·.2) : Option AlgKwDef) with
+    | some (.word w) =>
+      -- the space TeX ate after the control word returns beside the word
+      algSubstList kws
+        (((out.push (.ctrl "textbf" p)).push (.group w p)).push .space) rest
+    | some (.io label) =>
+      algSubstList kws
+        ((out.push (.ctrl "textbf" p)).push (.group #[.word (label ++ ":") p] p)) rest
+    | some (.data name) =>
+      algSubstList kws
+        ((out.push (.ctrl "textsf" p)).push (.group name p)) rest
+    | some (.func name) =>
+      let out := (out.push (.ctrl "textsc" p)).push (.group name p)
+      match rest with
+      | .group args gp :: rest2 =>
+        let out := out.push (.word "(" gp)
+        let out := algSubstList kws out args.toList
+        algSubstList kws (out.push (.word ")" gp)) rest2
+      | other => algSubstList kws out other
+    | none => algSubstList kws (out.push (.ctrl n p)) rest
+  | r :: rest => algSubstList kws (out.push r) rest
+termination_by l => rawWeightList l
+decreasing_by all_goals first
+  | (simp_all [rawWeightList, rawWeight]; omega)
+  | (simp only [rawWeightList]; have := rawWeight_pos r; omega)
+  | simp_all [rawWeightList, rawWeight]
+
+/-- Flush the accumulated line, skipping an empty statement (a stray `\;`,
+whitespace between structure commands); a non-statement kind always
+emits — `\Return\;` is a real line. -/
+private def algFlush (segs : Array AlgSeg) (depth : Nat) (kind : Ir.AlgKind)
+    (cur : Array Raw) (comment : Option (Array Raw)) : Array AlgSeg :=
+  if (kind matches Ir.AlgKind.statement) && cur.all isSpaceOrPar
+      && comment.isNone then segs
+  else segs.push { depth := depth
+                   kind := kind
+                   content := trimRawEdges cur
+                   comment := comment }
+
+/-- Pop the next `{...}` group off the walk's stack, skipping spaces. -/
+private def algPopGroup (stack : Array AlgTok) :
+    Option (Array Raw × Pos) × Array AlgTok := Id.run do
+  let mut stack := stack
+  for _ in [0:stack.size + 1] do
+    match stack.back? with
+    | some (.raw .space) => stack := stack.pop
+    | some (.raw (.par _)) => stack := stack.pop
+    | some (.raw (.group g gp)) => return (some (g, gp), stack.pop)
+    | _ => return (none, stack)
+  return (none, stack)
+
+/-- The structural walk: one dialect flag, one bounded pass over a work
+stack — a block form's body group is expanded onto the stack behind its
+virtual closer, so nesting costs no recursion and the weight bound makes
+the loop total. Returns the elaborated lines with the `\LinesNumbered`
+and `\DontPrintSemicolon` flags met on the way. -/
+private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
+    (pos : Pos) : EM (Array Ir.AlgLine × Bool × Bool) := do
+  let mut kws : Array (String × AlgKwDef) := (← get).algKws
+  -- The one built-in inline keyword (`\SetKw{KwTo}{to}`, the sty's own
+  -- default); the io and block keywords are line kinds, not inline text.
+  kws := kws.push ("KwTo", .word #[.word "to" pos])
+  let mut stack : Array AlgTok := body.reverse.map AlgTok.raw
+  let mut segs : Array AlgSeg := #[]
+  let mut depth : Nat := 0
+  let mut cur : Array Raw := #[]
+  let mut curKind : Ir.AlgKind := .statement
+  let mut curComment : Option (Array Raw) := none
+  let mut numbered := false
+  let mut semis := true
+  for _ in [0:2 * rawWeightList body.toList + body.size + 2] do
+    match stack.back? with
+    | none => break
+    | some tok =>
+      stack := stack.pop
+      match tok with
+      | .mid o =>
+        segs := algFlush segs depth curKind cur curComment
+        cur := #[]; curKind := .statement; curComment := none
+        segs := segs.push { depth := depth - 1
+                            kind := .opener o
+                            content := #[]
+                            comment := none }
+      | .close o cond =>
+        segs := algFlush segs depth curKind cur curComment
+        cur := #[]; curKind := .statement; curComment := none
+        depth := depth - 1
+        segs := segs.push { depth := depth
+                            kind := .closer o
+                            content := trimRawEdges cond
+                            comment := none }
+      | .dedent =>
+        segs := algFlush segs depth curKind cur curComment
+        cur := #[]; curKind := .statement; curComment := none
+        depth := depth - 1
+      | .raw (.ctrl ";" _) =>
+        segs := algFlush segs depth curKind cur curComment
+        cur := #[]; curKind := .statement; curComment := none
+      | .raw (.par _) =>
+        -- a paragraph break between lines is whitespace, as in a table
+        pure ()
+      | .raw (.ctrl name p) =>
+        if name == "SetKw" || name == "SetKwInOut" || name == "SetKwInput"
+            || name == "SetKwFunction" || name == "SetKwData" then
+          let (g1, st1) := algPopGroup stack
+          let (g2, st2) := algPopGroup st1
+          stack := st2
+          match g1, g2 with
+          | some (nm, _), some (val, _) =>
+            let key := (Parse.rawSrc nm).trimAscii.toString
+            if name == "SetKw" then kws := kws.push (key, .word val)
+            else if name == "SetKwFunction" then kws := kws.push (key, .func val)
+            else if name == "SetKwData" then kws := kws.push (key, .data val)
+            else kws := kws.push (key, .io (Ir.plainText (← elabInlines ctx val)))
+          | _, _ =>
+            diag ctx .E0304 s!"'\\{name}' needs its \{name}\{text} groups" p
+        else if let some (o, hasEnd) :=
+            (if acx then none else algA2eBlocks.lookup name) then
+          let (g1, st1) := algPopGroup stack
+          let (g2, st2) := algPopGroup st1
+          stack := st2
+          match g1, g2 with
+          | some (cond, _), some (b, _) =>
+            segs := algFlush segs depth curKind cur curComment
+            cur := #[]; curKind := .statement; curComment := none
+            segs := segs.push { depth := depth
+                                kind := .opener o
+                                content := trimRawEdges cond
+                                comment := none }
+            depth := depth + 1
+            stack := stack.push (if hasEnd then .close o #[] else .dedent)
+            stack := stack ++ b.reverse.map AlgTok.raw
+          | _, _ =>
+            diag ctx .E0304 s!"'\\{name}' needs its \{condition}\{body} groups" p
+        else if !acx && name == "eIf" then
+          let (g1, st1) := algPopGroup stack
+          let (g2, st2) := algPopGroup st1
+          let (g3, st3) := algPopGroup st2
+          stack := st3
+          match g1, g2, g3 with
+          | some (cond, _), some (tb, _), some (eb, _) =>
+            segs := algFlush segs depth curKind cur curComment
+            cur := #[]; curKind := .statement; curComment := none
+            segs := segs.push { depth := depth
+                                kind := .opener .ifThen
+                                content := trimRawEdges cond
+                                comment := none }
+            depth := depth + 1
+            stack := stack.push (.close .elseBranch #[])
+            stack := stack ++ eb.reverse.map AlgTok.raw
+            stack := stack.push (.mid .elseBranch)
+            stack := stack ++ tb.reverse.map AlgTok.raw
+          | _, _, _ =>
+            diag ctx .E0304 "'\\eIf' needs its {condition}{then}{else} groups" p
+        else if !acx && (name == "Else" || name == "uElse") then
+          let (g1, st1) := algPopGroup stack
+          stack := st1
+          match g1 with
+          | some (b, _) =>
+            segs := algFlush segs depth curKind cur curComment
+            cur := #[]; curKind := .statement; curComment := none
+            segs := segs.push { depth := depth
+                                kind := .opener .elseBranch
+                                content := #[]
+                                comment := none }
+            depth := depth + 1
+            stack := stack.push
+              (if name == "Else" then .close .elseBranch #[] else .dedent)
+            stack := stack ++ b.reverse.map AlgTok.raw
+          | none =>
+            diag ctx .E0304 s!"'\\{name}' needs its \{body} group" p
+        else if !acx && name == "Repeat" then
+          let (g1, st1) := algPopGroup stack
+          let (g2, st2) := algPopGroup st1
+          stack := st2
+          match g1, g2 with
+          | some (cond, _), some (b, _) =>
+            segs := algFlush segs depth curKind cur curComment
+            cur := #[]; curKind := .statement; curComment := none
+            segs := segs.push { depth := depth
+                                kind := .opener .repeatLoop
+                                content := #[]
+                                comment := none }
+            depth := depth + 1
+            stack := stack.push (.close .repeatLoop cond)
+            stack := stack ++ b.reverse.map AlgTok.raw
+          | _, _ =>
+            diag ctx .E0304 "'\\Repeat' needs its {condition}{body} groups" p
+        else if let some k :=
+            (if acx then none else algA2eIo.lookup name) then
+          let (g1, st1) := algPopGroup stack
+          stack := st1
+          match g1 with
+          | some (g, _) =>
+            segs := algFlush segs depth curKind cur curComment
+            cur := #[]; curKind := .statement; curComment := none
+            segs := segs.push { depth := depth
+                                kind := .io k
+                                content := trimRawEdges g
+                                comment := none }
+          | none =>
+            diag ctx .E0304 s!"'\\{name}' needs its \{text} group" p
+        else if name == "Return" || name == "KwRet" then
+          segs := algFlush segs depth curKind cur curComment
+          cur := #[]; curComment := none
+          curKind := .ret
+        else if !acx && (name == "tcc" || name == "tcp") then
+          if let some (.raw (.sym '*' _)) := stack.back? then
+            stack := stack.pop
+          if let some (.raw (.sym '[' _)) := stack.back? then
+            for _ in [0:stack.size + 1] do
+              match stack.back? with
+              | some (.raw (.sym ']' _)) => stack := stack.pop; break
+              | some _ => stack := stack.pop
+              | none => break
+          let (g1, st1) := algPopGroup stack
+          stack := st1
+          match g1 with
+          | some (c, _) =>
+            if cur.all isSpaceOrPar && curComment.isNone
+                && (curKind matches Ir.AlgKind.statement) then
+              segs := segs.push { depth := depth
+                                  kind := .statement
+                                  content := #[]
+                                  comment := some c }
+              cur := #[]
+            else
+              curComment := some ((curComment.getD #[]) ++ c)
+          | none =>
+            diag ctx .E0304 s!"'\\{name}' needs its \{comment} group" p
+        else if !acx && name == "LinesNumbered" then
+          numbered := true
+        else if !acx && name == "DontPrintSemicolon" then
+          semis := false
+        else if !acx && name == "PrintSemicolon" then
+          semis := true
+        else if let some k :=
+            (if acx then none else algA2eSettings.lookup name) then
+          warnOnce ctx ("alg:set:" ++ name) .N0102
+            s!"'\\{name}' is not modelled; the algorithm keeps the \
+engine's own display" p
+          for _ in [0:k] do
+            let (_, st1) := algPopGroup stack
+            stack := st1
+        else if let some k :=
+            (if acx then none else algA2eRefused.lookup name) then
+          warnOnce ctx ("alg:refused:" ++ name) .W0383
+            s!"'\\{name}' is an algorithm construct outside the modeled \
+subset; its content is kept as plain lines" p
+          let mut gs : Array (Array Raw) := #[]
+          for _ in [0:k] do
+            match algPopGroup stack with
+            | (some (g, _), st1) =>
+              stack := st1
+              gs := gs.push g
+            | (none, st1) => stack := st1
+          for i in [0:gs.size] do
+            if let some g := gs[gs.size - 1 - i]? then
+              stack := stack ++ g.reverse.map AlgTok.raw
+        else if acx && (name == "State" || name == "Statex") then
+          segs := algFlush segs depth curKind cur curComment
+          cur := #[]; curKind := .statement; curComment := none
+        else if let some o :=
+            (if acx then algAcxBlocks.lookup name else none) then
+          let (g1, st1) := algPopGroup stack
+          stack := st1
+          segs := algFlush segs depth curKind cur curComment
+          cur := #[]; curKind := .statement; curComment := none
+          segs := segs.push { depth := depth
+                              kind := .opener o
+                              content := trimRawEdges ((g1.map (·.1)).getD #[])
+                              comment := none }
+          depth := depth + 1
+        else if acx && name == "ElsIf" then
+          let (g1, st1) := algPopGroup stack
+          stack := st1
+          segs := algFlush segs depth curKind cur curComment
+          cur := #[]; curKind := .statement; curComment := none
+          segs := segs.push { depth := depth - 1
+                              kind := .opener .elseIf
+                              content := trimRawEdges ((g1.map (·.1)).getD #[])
+                              comment := none }
+        else if acx && name == "Else" then
+          segs := algFlush segs depth curKind cur curComment
+          cur := #[]; curKind := .statement; curComment := none
+          segs := segs.push { depth := depth - 1
+                              kind := .opener .elseBranch
+                              content := #[]
+                              comment := none }
+        else if let some o :=
+            (if acx then algAcxEnds.lookup name else none) then
+          segs := algFlush segs depth curKind cur curComment
+          cur := #[]; curKind := .statement; curComment := none
+          depth := depth - 1
+          segs := segs.push { depth := depth
+                              kind := .closer o
+                              content := #[]
+                              comment := none }
+        else if acx && name == "Repeat" then
+          segs := algFlush segs depth curKind cur curComment
+          cur := #[]; curKind := .statement; curComment := none
+          segs := segs.push { depth := depth
+                              kind := .opener .repeatLoop
+                              content := #[]
+                              comment := none }
+          depth := depth + 1
+        else if acx && name == "Until" then
+          let (g1, st1) := algPopGroup stack
+          stack := st1
+          segs := algFlush segs depth curKind cur curComment
+          cur := #[]; curKind := .statement; curComment := none
+          depth := depth - 1
+          segs := segs.push { depth := depth
+                              kind := .closer .repeatLoop
+                              content := trimRawEdges ((g1.map (·.1)).getD #[])
+                              comment := none }
+        else if acx && (name == "Function" || name == "Procedure") then
+          let (g1, st1) := algPopGroup stack
+          let (g2, st2) := algPopGroup st1
+          stack := st2
+          segs := algFlush segs depth curKind cur curComment
+          cur := #[]; curKind := .statement; curComment := none
+          let o : Ir.AlgOpen :=
+            if name == "Function" then .function else .procedure
+          let nm := (g1.map (·.1)).getD #[]
+          let content := match g2 with
+            | some (args, gp) =>
+              ((#[Raw.ctrl "textsc" p, .group nm p, .word "(" gp]
+                : Array Raw) ++ args).push (.word ")" gp)
+            | none => #[Raw.ctrl "textsc" p, .group nm p]
+          segs := segs.push { depth := depth
+                              kind := .opener o
+                              content := content
+                              comment := none }
+          depth := depth + 1
+        else if acx && name == "Require" then
+          segs := algFlush segs depth curKind cur curComment
+          cur := #[]; curComment := none
+          curKind := .io .input
+        else if acx && name == "Ensure" then
+          segs := algFlush segs depth curKind cur curComment
+          cur := #[]; curComment := none
+          curKind := .io .output
+        else if acx && name == "Comment" then
+          let (g1, st1) := algPopGroup stack
+          stack := st1
+          match g1 with
+          | some (c, _) => curComment := some ((curComment.getD #[]) ++ c)
+          | none => diag ctx .E0304 "'\\Comment' needs its {text} group" p
+        else if acx && name == "Call" then
+          let (g1, st1) := algPopGroup stack
+          let (g2, st2) := algPopGroup st1
+          stack := st2
+          let nm := (g1.map (·.1)).getD #[]
+          cur := (cur.push (Raw.ctrl "textsc" p)).push (.group nm p)
+          if let some (args, gp) := g2 then
+            cur := ((cur.push (.word "(" gp)) ++ args).push (.word ")" gp)
+        else if acx && algAcxRefused.contains name then
+          warnOnce ctx ("alg:refused:" ++ name) .W0383
+            s!"'\\{name}' is an algorithm construct outside the modeled \
+subset; its content is kept as plain lines" p
+        else
+          -- an unknown command is line content: `elabInlines` judges it
+          -- (a document-defined keyword substitutes at elaboration below)
+          cur := cur.push (Raw.ctrl name p)
+      | .raw r =>
+        cur := cur.push r
+  segs := algFlush segs depth curKind cur curComment
+  let mut lines : Array Ir.AlgLine := #[]
+  for seg in segs do
+    let content ← elabInlines ctx (algSubstList kws #[] seg.content.toList)
+    let comment ← match seg.comment with
+      | some c => some <$> elabInlines ctx (algSubstList kws #[] c.toList)
+      | none => pure none
+    lines := lines.push { depth := seg.depth
+                          kind := seg.kind
+                          content := content
+                          comment := comment }
+  return (lines, numbered, semis)
+
+/-- The bare `{algorithmic}` arm (algorithmicx/algpseudocode): `[n]`
+numbers the lines, the body parses in the flat dialect, and the node
+stands alone — uncaptioned, unnumbered, exactly where written. Inside an
+`{algorithm}` float the wrapper's arm takes it instead. -/
+private def algorithmicArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
+    (blocks : Array Block) : EM (Array Block) := do
+  let mut k := 0
+  let mut numbered := false
+  match scanBracketArg body 0 pos with
+  | .took k' =>
+    numbered := true
+    let inner := (Parse.rawSrc (body.extract 1 (k' - 1))).trimAscii.toString
+    unless inner == "1" do
+      warnOnce ctx "algorithmic:step" .N0102
+        s!"'[{inner}]' line-number stepping is not modelled; every line \
+is numbered" pos
+    k := k'
+  | .unclosed bpos => warnUnclosed ctx "'\\begin{algorithmic}'" bpos
+  | .content => pure ()
+  let (lines, n2, semis) ←
+    algorithmLines ctx true (body.extract k body.size) pos
+  return blocks.push (.algorithm (numbered || n2) semis lines)
+
+/-- The `{algorithm}`/`{algorithm2e}` arm: a float of the algorithm kind.
+`[placement]` is noted and ignored (floats stand where written);
+`\caption` fills the float's caption — set above the lines, algorithm2e's
+own default position — and `numberFloats` assigns the number afterwards.
+A nested `{algorithmic}` body parses in the flat dialect; otherwise the
+body is algorithm2e's own grouped grammar. -/
+private def algorithmArm (ctx : Ctx) (n : String) (body : Array Raw)
+    (pos : Pos) (blocks : Array Block) : EM (Array Block) := do
+  let mut k := 0
+  for _ in [0:body.size] do
+    match scanBracketArg body k pos with
+    | .took k' =>
+      warnOnce ctx "algorithm:placement" .N0102
+        s!"'\{{n}}' [placement] is ignored: a single-pass engine has \
+nowhere for a float to float" pos
+      k := k'
+    | .unclosed bpos =>
+      warnUnclosed ctx s!"'\\begin\{{n}}'" bpos
+      break
+    | .content => break
+  let mut caption : Array Inline := #[]
+  let mut anchors : Array Inline := #[]
+  let mut rest : Array Raw := #[]
+  let mut acxBody : Option (Array Raw × Pos) := none
+  let mut j := k
+  for _ in [k:body.size] do
+    if h : j < body.size then
+      match body[j] with
+      | .ctrl "label" lpos =>
+        -- The float's own anchor (`\caption{…}\label{alg:…}`): it rides
+        -- with the caption, never as a numbered line of pseudocode.
+        let j2 := skipSpaces body (j + 1)
+        match body[j2]? with
+        | some (.group g _) =>
+          anchors := anchors ++ (← elabInlines ctx #[.ctrl "label" lpos, .group g lpos])
+          j := j2 + 1
+        | _ =>
+          rest := rest.push body[j]
+          j := j + 1
+      | .ctrl "caption" cpos =>
+        let (⟨j2, _⟩, _, _) ← skipOptArg ctx "caption" body (j + 1) cpos
+        let j3 := skipSpaces body j2
+        match body[j3]? with
+        | some (.group t _) =>
+          unless caption.isEmpty do
+            diag ctx .W0311
+              s!"this '\\caption' replaces the {n}'s earlier caption"
+              (some cpos)
+              (help := "the last one wins; remove the other '\\caption'")
+          caption ← elabInlines ctx t
+          j := j3 + 1
+        | _ =>
+          diag ctx .E0304 "'\\caption' needs a {text} group" cpos
+          j := j3
+      | .env "algorithmic" abody apos =>
+        acxBody := some (abody, apos)
+        j := j + 1
+      | r =>
+        rest := rest.push r
+        j := j + 1
+    else break
+  let (lines, numbered, semis) ← match acxBody with
+    | some (abody, apos) =>
+      let mut m := 0
+      let mut numbered := false
+      match scanBracketArg abody 0 apos with
+      | .took m' =>
+        numbered := true
+        let inner := (Parse.rawSrc (abody.extract 1 (m' - 1))).trimAscii.toString
+        unless inner == "1" do
+          warnOnce ctx "algorithmic:step" .N0102
+            s!"'[{inner}]' line-number stepping is not modelled; every \
+line is numbered" apos
+        m := m'
+      | .unclosed bpos => warnUnclosed ctx "'\\begin{algorithmic}'" bpos
+      | .content => pure ()
+      let (lines, n2, semis) ←
+        algorithmLines ctx true (abody.extract m abody.size) apos
+      pure (lines, numbered || n2, semis)
+    | none => algorithmLines ctx false rest pos
+  -- Anchors bind to the float's number wherever they can: inside the
+  -- caption when there is one, on the first line otherwise.
+  let mut lines := lines
+  if !anchors.isEmpty then
+    if !caption.isEmpty then
+      caption := anchors ++ caption
+    else if h : 0 < lines.size then
+      lines := lines.set 0 { lines[0] with content := anchors ++ lines[0].content }
+    else
+      lines := #[{ depth := 0
+                   kind := .statement
+                   content := anchors
+                   comment := none }]
+  let blk : Block := .algorithm numbered semis lines
+  return blocks.push (.float .algorithm none true #[blk] caption)
+
+
 seal scanBracketArg Parse.inputEnvFile?
 
 -- The block knot: the spine (`elabBlocksGo`), its two dispatch arms, the
@@ -6580,6 +7204,10 @@ has nowhere for a float to float" pos
       have := slicePars_le fbody (Nat.zero_le k); omega
     blocks ← figureGo ctx n kind fbody pos k #[] #[] #[] #[] false blocks
       (by simp [rawWeightList]; omega) (by simp [nestedParsList]; omega)
+  else if n == "algorithm" || n == "algorithm*" || n == "algorithm2e" then
+    blocks ← algorithmArm ctx n body pos blocks
+  else if n == "algorithmic" then
+    blocks ← algorithmicArm ctx body pos blocks
   else if n == "columns" then
     -- `[T]`-and-friends alignment options are ignored with a note:
     -- columns are top-aligned (PLAN, M5). A column's width is its
@@ -7100,6 +7728,8 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         else
           blockEnvs.contains n || isMathEnv n
             || n == "tabular" || n == "tabular*"
+            || n == "algorithm" || n == "algorithm*" || n == "algorithm2e"
+            || n == "algorithmic"
             || reservedEnv.contains n
             || (match lookupUserEnv ctx' n with
                 | some (_, env) =>

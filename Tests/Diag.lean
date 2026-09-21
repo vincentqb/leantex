@@ -293,6 +293,8 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       "not a PNG, JPEG, or PDF file"]
   | .N0023 => dvE (dvDoc "\\pictures{ tool = lualatex }\n"
       "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
+  | .W0383 => dvE (dvDoc ""
+      "\\begin{algorithm}\n\\lIf{$x < 0$}{negate $x$}\\;\n\\end{algorithm}")
   | .W0379 => dvE (dvDoc ""
       "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
   | .W0378 => #[DriverDiag.boundaryToolMissing "lualatex" "not found",

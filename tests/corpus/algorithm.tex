@@ -1,0 +1,42 @@
+\documentclass{article}
+\begin{document}
+\section{Sorting by repeated exchange}
+
+\begin{algorithm}
+\caption{Exchange sort of an invented list.}
+\label{alg:exchange}
+\LinesNumbered
+\KwIn{a list $L$ of $n$ invented weights}
+\KwOut{the same list, lightest first}
+\For{$i \gets 1$ \KwTo $n$}{
+  \tcc{one pass floats the heaviest weight to the end}
+  \For{$j \gets 1$ \KwTo $n - i$}{
+    \eIf{$L_j > L_{j+1}$}{
+      swap $L_j$ and $L_{j+1}$\;
+    }{
+      keep the pair as it stands\;
+    }
+  }
+}
+\Return{$L$}\;
+\end{algorithm}
+
+Algorithm~\ref{alg:exchange} is restated below in the algorithmicx
+spelling; both spellings parse onto the same lines.
+
+\begin{algorithm}
+\caption{The same exchange sort, algorithmicx spelling.}
+\begin{algorithmic}[1]
+\Require a list $L$ of $n$ invented weights
+\Ensure the same list, lightest first
+\For{$i = 1, \dots, n$}
+  \For{$j = 1, \dots, n - i$}
+    \If{$L_j > L_{j+1}$}
+      \State swap $L_j$ and $L_{j+1}$ \Comment{exchange the pair}
+    \EndIf
+  \EndFor
+\EndFor
+\State \Return $L$
+\end{algorithmic}
+\end{algorithm}
+\end{document}

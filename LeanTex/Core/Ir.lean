@@ -2031,7 +2031,9 @@ def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
   match l.kind with
   | .statement =>
     out := l.content
-    semi := true
+    -- A statement whose content is only anchors (a `\label` line under
+    -- the caption) shows no stray semicolon: the anchor ships, invisibly.
+    semi := !l.content.all (· matches Inline.label _)
   | .io k =>
     out := #[bold (k.word w ++ ":"), .text " "] ++ l.content
     semi := true

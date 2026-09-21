@@ -1,0 +1,103 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+section 1 number "1"
+  text "Sorting by repeated exchange"
+float algorithm 1 caption-above
+  caption
+    label "alg:exchange"
+    text "Exchange sort of an invented list."
+  algorithm numbered
+    line 0 io input
+      text "a list "
+      formula inline "L"
+        ord:𝐿
+      text " of "
+      formula inline "n"
+        ord:𝑛
+      text " invented weights"
+    line 0 io output
+      text "the same list, lightest first"
+    line 0 open for
+      formula inline "i \\gets 1"
+        ord:𝑖 rel:← ord:1
+      text " "
+      styled bold
+        text "to"
+      text " "
+      formula inline "n"
+        ord:𝑛
+    line 1 statement
+      comment
+        text "one pass floats the heaviest weight to the end"
+    line 1 open for
+      formula inline "j \\gets 1"
+        ord:𝑗 rel:← ord:1
+      text " "
+      styled bold
+        text "to"
+      text " "
+      formula inline "n - i"
+        ord:𝑛 bin:− ord:𝑖
+    line 2 open if
+      formula inline "L_j > L_{j+1}"
+        ord:𝐿_{ord:𝑗} rel:> ord:𝐿_{ord:𝑗 bin:+ ord:1}
+    line 3 statement
+      text "swap "
+      formula inline "L_j"
+        ord:𝐿_{ord:𝑗}
+      text " and "
+      formula inline "L_{j+1}"
+        ord:𝐿_{ord:𝑗 bin:+ ord:1}
+    line 2 open else
+    line 3 statement
+      text "keep the pair as it stands"
+    line 2 close else
+    line 1 close for
+    line 0 close for
+    line 0 return
+      formula inline "L"
+        ord:𝐿
+para
+  text "Algorithm "
+  ref "alg:exchange" shows "1" -> #alg:exchange
+  text " is restated below in the algorithmicx spelling; both spellings parse onto the same lines."
+float algorithm 2 caption-above
+  caption
+    text "The same exchange sort, algorithmicx spelling."
+  algorithm numbered
+    line 0 io input
+      text "a list "
+      formula inline "L"
+        ord:𝐿
+      text " of "
+      formula inline "n"
+        ord:𝑛
+      text " invented weights"
+    line 0 io output
+      text "the same list, lightest first"
+    line 0 open for
+      formula inline "i = 1, \\dots , n"
+        ord:𝑖 rel:= ord:1 punct:, inner:… punct:, ord:𝑛
+    line 1 open for
+      formula inline "j = 1, \\dots , n - i"
+        ord:𝑗 rel:= ord:1 punct:, inner:… punct:, ord:𝑛 bin:− ord:𝑖
+    line 2 open if
+      formula inline "L_j > L_{j+1}"
+        ord:𝐿_{ord:𝑗} rel:> ord:𝐿_{ord:𝑗 bin:+ ord:1}
+    line 3 statement
+      text "swap "
+      formula inline "L_j"
+        ord:𝐿_{ord:𝑗}
+      text " and "
+      formula inline "L_{j+1}"
+        ord:𝐿_{ord:𝑗 bin:+ ord:1}
+      comment
+        text "exchange the pair"
+    line 2 close if
+    line 1 close for
+    line 0 close for
+    line 0 return
+      formula inline "L"
+        ord:𝐿
+-- diagnostics
+(none)
