@@ -86,11 +86,10 @@ interline glue that is never accumulated here; lineno's `linenomath`
 pair wraps displays that are numbered like every galley line already
 (the recorded divergence in tests/compat-index/lineno.txt);
 `selectfont` commits NFSS declarations that apply where they stand here.
-An entry whose drop is NOT its full meaning — `noindent` (a first-line
-indent ask), `urlstyle`, `KOMAoptions`, `raggedbottom`/`flushbottom`
-(the vertical-distribution ask the page-opening `vdist` obligation will
-own, AGENTS table), `column` — carries `none`: it stays consumed, and
-the dispatcher's guard names it (W0387, `\allow`-acceptable) instead of
+An entry whose drop is NOT its full meaning carries `none` — `noindent`
+(a first-line indent ask, the paragraph model's to answer when a
+first-line indent exists to suppress): it stays consumed, and the
+dispatcher's guard names it (W0387, `\allow`-acceptable) instead of
 this table earning it silence it has not paid for. Table rules
 (`midrule`, `toprule`, …) are NOT here: they are the table elaborator's
 vocabulary and must reach it. -/
@@ -101,16 +100,11 @@ def meaningFree : List (String × Nat × Option String) :=
    ("noindent", 0, none),
    ("nointerlineskip", 0,
     some "vertical space is declared per block, never accumulated interline glue"),
-   ("urlstyle", 1, none),
-   ("KOMAoptions", 1, none),
    ("frenchspacing", 0, some "inter-sentence space is uniform here either way"),
    ("nonfrenchspacing", 0, some "inter-sentence space is uniform here either way"),
-   ("raggedbottom", 0, none),
-   ("flushbottom", 0, none),
    ("selectfont", 0, some "font declarations apply where they stand"),
    ("linenomath", 0, some "display math lines are numbered like every galley line"),
-   ("endlinenomath", 0, some "display math lines are numbered like every galley line"),
-   ("column", 1, none)]
+   ("endlinenomath", 0, some "display math lines are numbered like every galley line")]
 
 /-- Declarations whose loss is real — justification, breaking tolerance,
 hyphenation language, page furniture — skipped with a warning that names
@@ -129,7 +123,15 @@ def configSkip : List (String × Nat × String × Option String) :=
     none),
    ("sloppy", 0,
     "'\\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps \
-its own and an overfull line warns by itself", none)]
+its own and an overfull line warns by itself", none),
+   -- The vertical-distribution pair: a page-opening ask the `vdist`
+   -- obligation will own (AGENTS table), named until it lands.
+   ("raggedbottom", 0,
+    "'\\raggedbottom' picks a vertical distribution; pages keep their declared distribution",
+    none),
+   ("flushbottom", 0,
+    "'\\flushbottom' picks a vertical distribution; pages keep their declared distribution",
+    none)]
 
 /-- Beamer configuration commands: how many `{...}` arguments each carries.
 The engine has no beamer templating layer, so each is skipped whole — the
@@ -2001,6 +2003,54 @@ dims (dim-not-hide), it is never hidden" pos
         (help := "\\palette{ covered = <n>% } sets the covered fraction; 'transparent' \
 and 'transparent=<n>' are understood")
       return some (#[], k)
+  | "urlstyle" =>
+    -- url.sty's face selector. The engine's `\url` is set mono — url.sty's
+    -- own tt default (url package documentation, \urlstyle) — so `tt` is
+    -- agreement said as a note, and any other style asks for a face
+    -- change the URL setting does not take.
+    let (args, k) := takeGroups raws start 1
+    let v := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    if v == "tt" then
+      became "\\urlstyle{tt}" "nothing: URLs are set mono already" pos
+    else
+      sayOnce "ctrl:urlstyle" .W0104
+        s!"'\\urlstyle\{{v}}' asks for a URL face; URLs are set mono here \
+(url.sty's own default)" pos
+    return some (#[], k)
+  | "KOMAoptions" =>
+    -- KOMA's runtime option setter (KOMA-Script manual, \KOMAoptions;
+    -- switches take true/on/yes and false/off/no). headsepline and
+    -- footsepline off ask for no separation rule, the only state the
+    -- engine draws — agreement; every other entry is a dropped option,
+    -- named (W0101's shape). An empty argument is the guard's W0387.
+    let (args, k) := takeGroups raws start 1
+    let entries := (Decl.splitEntries (rawSrc (args.getD 0 #[]))).map
+      (·.trimAscii.toString) |>.filter (!·.isEmpty)
+    let satisfied (e : String) : Bool :=
+      match (e.splitOn "=").map (·.trimAscii.toString) with
+      | [key, v] => (key == "headsepline" || key == "footsepline")
+          && (v == "false" || v == "off" || v == "no")
+      | _ => false
+    let dropped := entries.filter (!satisfied ·)
+    if dropped.isEmpty then
+      unless entries.isEmpty do
+        became "\\KOMAoptions" "nothing: no head or foot separation rule is drawn" pos
+    else
+      say .W0101 s!"'\\KOMAoptions' entries without a native equivalent were \
+dropped: {String.intercalate ", " dropped}" pos
+    return some (#[], k)
+  | "column" =>
+    -- beamer's command form: `\column{width}` splits a columns body where
+    -- it stands (beamer user guide, the columns environment). The engine
+    -- models the environment form; the command form's split is not
+    -- performed, so the content flows as one column — named, with the
+    -- modeled spelling as the help.
+    let (_, k) := takeGroups raws start 1
+    sayOnce "ctrl:column" .W0104
+      "'\\column' (the command form) does not split columns here; content \
+flows as one column" pos
+      (help := "\\begin{column}{width} ... \\end{column} inside {columns} is modeled")
+    return some (#[], k)
   | _ =>
     match beamerConfig.lookup name with
     | some n =>

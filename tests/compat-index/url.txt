@@ -4,3 +4,4 @@ body impl \url{https://example.org}
 pre impl \urlstyle{tt}
 pre refuse:W0301 \urldef\myurl\url{https://example.org}
 pre refuse:W0301 \DeclareUrlCommand\myp{\urlstyle{tt}}
+pre refuse:W0104 \urlstyle{same}
