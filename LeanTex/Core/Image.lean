@@ -1,3 +1,4 @@
+import LeanTex.Core.Diag
 import LeanTex.Core.Dim
 import LeanTex.Core.Flate
 import LeanTex.Core.PdfRead
@@ -427,6 +428,146 @@ def Store.find? (s : Store) (src : String) : Option Nat :=
 
 def Store.get? (s : Store) (i : Nat) : Option Loaded :=
   s.entries[i]?
+
+/-- The decoded image behind a source, when the driver loaded one: the one
+resolving question a consumer asks of the store — `none` is the placeholder
+box, whatever the reason (`Ir.pending` counts exactly these). -/
+def Store.info? (s : Store) (src : String) : Option Info :=
+  (s.entries.find? (·.src == src)).bind (·.info)
+
+/-! ## Fulfilment: the decision half of the image effect
+
+The driver reads files; deciding what each read means — an entry with a
+payload, or a placeholder box with the diagnostic that names it — is a
+pure function here, so the naming is a theorem (`fulfil_named`) and the
+store's coverage another (`fulfil_covers`), not a convention of the
+driver's loop. -/
+
+/-- W0601: the image file exists but reading it failed. -/
+def imageUnreadable (src err : String) : Diag :=
+  Diag.of .W0601 s!"cannot read image '{src}': {err}; a placeholder box holds its place"
+    (subject := some src)
+
+/-- W0601: no file answers the image source. -/
+def imageMissing (src looked : String) : Diag :=
+  Diag.of .W0601 s!"image file not found: '{src}'; a placeholder box holds its place"
+    (help := s!"looked at: {looked}, also with .pdf/.png/.jpg/.jpeg added")
+    (subject := some src)
+
+/-- W0602: the image bytes are not a format the engine embeds. -/
+def imageUndecodable (src err : String) : Diag :=
+  Diag.of .W0602 s!"cannot use image '{src}': {err}; a placeholder box holds its place"
+    (help := "PNG, JPEG, and PDF embed natively: re-export the image as one")
+    (subject := some src)
+
+/-- What the driver found for one image source, before the pure decision
+names it: a file (or a boundary picture's drawn PDF) decoded — through the
+driver's content cache, which equals the pure decode
+(`decodeBin_encodeBin_id`) — with the relative path an HTML link needs; no
+file; a file that would not read; or a boundary picture nothing drew,
+carrying the boundary's own diagnostic (W0378, W0379), whose subject
+`fulfil` sets so the refusal names the picture whatever words it chose. -/
+inductive Fetch where
+  | decoded (href : String) (res : Except String Info)
+  | missing (looked : String)
+  | unreadable (err : String)
+  | refused (why : Diag)
+
+/-- One source's decision: its store entry, and the diagnostic naming the
+gap when there is one. Every arm that leaves `info := none` also returns
+a diagnostic whose subject is the source — `fulfilOne_named`. -/
+def fulfilOne (src : String) : Fetch → Loaded × Option Diag
+  | .decoded href (.ok info) => ({ src, href, info := some info }, none)
+  | .decoded href (.error e) => ({ src, href }, some (imageUndecodable src e))
+  | .missing looked => ({ src }, some (imageMissing src looked))
+  | .unreadable err => ({ src }, some (imageUnreadable src err))
+  | .refused why => ({ src }, some { why with subject := some src })
+
+def fulfilList (entries : Array Loaded) (diags : Array Diag) :
+    List (String × Fetch) → Store × Array Diag
+  | [] => ({ entries }, diags)
+  | (src, f) :: rest =>
+    fulfilList (entries.push (fulfilOne src f).1)
+      (match (fulfilOne src f).2 with | some d => diags.push d | none => diags) rest
+
+/-- The store and the diagnostics one run's reads decide, in the order the
+document requested them (`Ir.imageRefs`, the driver's loop). -/
+def fulfil (fetched : Array (String × Fetch)) : Store × Array Diag :=
+  fulfilList #[] #[] fetched.toList
+
+/-- A gap is named: whenever the decision leaves no payload, it also returns
+a diagnostic whose subject is the source. -/
+theorem fulfilOne_named (src : String) (f : Fetch) (h : (fulfilOne src f).1.info = none) :
+    ∃ d, (fulfilOne src f).2 = some d ∧ d.subject = some src := by
+  cases f with
+  | decoded href res =>
+    cases res with
+    | ok info => simp [fulfilOne] at h
+    | error e => exact ⟨_, rfl, rfl⟩
+  | missing looked => exact ⟨_, rfl, rfl⟩
+  | unreadable err => exact ⟨_, rfl, rfl⟩
+  | refused why => exact ⟨_, rfl, rfl⟩
+
+/-- Every entry the decision writes is the fetched source's, in order. -/
+theorem fulfilOne_src (src : String) (f : Fetch) : (fulfilOne src f).1.src = src := by
+  cases f with
+  | decoded href res => cases res <;> rfl
+  | missing _ | unreadable _ | refused _ => rfl
+
+private theorem fulfilList_named (entries : Array Loaded) (diags : Array Diag)
+    (hacc : ∀ en ∈ entries, en.info = none → ∃ d ∈ diags, d.subject = some en.src) :
+    ∀ (fs : List (String × Fetch)) (en : Loaded),
+      en ∈ (fulfilList entries diags fs).1.entries → en.info = none →
+      ∃ d ∈ (fulfilList entries diags fs).2, d.subject = some en.src := by
+  intro fs
+  induction fs generalizing entries diags with
+  | nil => intro en hmem hnone; exact hacc en hmem hnone
+  | cons p rest ih =>
+    intro en hmem hnone
+    obtain ⟨src, f⟩ := p
+    simp only [fulfilList] at hmem ⊢
+    refine ih _ _ ?_ en hmem hnone
+    intro en' hmem' hnone'
+    rw [Array.mem_push] at hmem'
+    rcases hmem' with hold | heq
+    · obtain ⟨d, hd, hs⟩ := hacc en' hold hnone'
+      refine ⟨d, ?_, hs⟩
+      split <;> simp [hd]
+    · subst heq
+      obtain ⟨d, hd, hs⟩ := fulfilOne_named src f hnone'
+      refine ⟨d, ?_, by rw [hs, fulfilOne_src]⟩
+      rw [hd]
+      simp
+
+/-- **Every gap in the store is named.** An entry with no payload — the
+placeholder box every consumer places — has a diagnostic in the same
+run's output whose subject is its source. The image half of the
+resolution gate (`pending_named`). -/
+theorem fulfil_named (fetched : Array (String × Fetch)) :
+    ∀ en ∈ (fulfil fetched).1.entries, en.info = none →
+      ∃ d ∈ (fulfil fetched).2, d.subject = some en.src :=
+  fulfilList_named #[] #[] (fun _ h => by simp at h) fetched.toList
+
+private theorem fulfilList_covers (entries : Array Loaded) (diags : Array Diag) :
+    ∀ fs : List (String × Fetch),
+      ((fulfilList entries diags fs).1.entries.map (·.src)).toList =
+        (entries.map (·.src)).toList ++ fs.map (·.1) := by
+  intro fs
+  induction fs generalizing entries diags with
+  | nil => simp [fulfilList]
+  | cons p rest ih =>
+    obtain ⟨src, f⟩ := p
+    simp only [fulfilList]
+    rw [ih]
+    simp [Array.toList_map, Array.toList_push, fulfilOne_src]
+
+/-- **The store covers the request.** The entries are the fetched sources,
+one each, in order: the driver fetches `Ir.imageRefs doc`, so every source
+the document names has an entry to read. -/
+theorem fulfil_covers (fetched : Array (String × Fetch)) :
+    (fulfil fetched).1.entries.map (·.src) = fetched.map (·.1) := by
+  rw [← Array.toList_inj, fulfil, fulfilList_covers]
+  simp [Array.toList_map]
 
 /-! ## Sizing
 

@@ -447,8 +447,8 @@ warning[W0378]: 'lualatex' failed on a picture; a placeholder box marks its plac
   help: lualatex says: ! Undefined control sequence. · l.7 \nope
 warning[W0378]: cannot run 'pdftocairo' to convert boundary pictures for the HTML artifact: not found (error code: 2)
   help: install poppler's pdftocairo, or \allow{W0378} accepts the loss; the PDF artifact is unaffected
-── W0379 (degraded) no boundary tool available for a picture outside the rendered subset; a placeholder box marks each picture
-warning[W0379]: no boundary tool is available for a picture outside the rendered subset; a placeholder box marks each picture
+── W0379 (degraded) no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture
+warning[W0379]: no boundary tool is available for this picture outside the rendered subset; a placeholder box marks its place
   help: install lualatex, or \pictures{ tool = none } accepts the placeholder; a warm cache needs no tool
 ── W0380 (degraded) a \cref target of unknown kind; the plain number is set
 warning[W0380]: 'stepped' names a bare counter step, not a heading, equation, or float; the plain number is set

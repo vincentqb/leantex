@@ -84,27 +84,15 @@ OpenType MATH table"
     (help := "\\fonts{ math = \"...\" } chooses a face yourself; \
 `leantex fonts` lists the installed families")
 
-/-- W0601: the image file exists but reading it failed. -/
-def imageUnreadable (src err : String) : Diag :=
-  Diag.of .W0601 s!"cannot read image '{src}': {err}; a placeholder box holds its place"
-
-/-- W0601: no file answers the image source. -/
-def imageMissing (src looked : String) : Diag :=
-  Diag.of .W0601 s!"image file not found: '{src}'; a placeholder box holds its place"
-    (help := s!"looked at: {looked}, also with .pdf/.png/.jpg/.jpeg added")
-
-/-- W0602: the image bytes are not a format the engine embeds. -/
-def imageUndecodable (src err : String) : Diag :=
-  Diag.of .W0602 s!"cannot use image '{src}': {err}; a placeholder box holds its place"
-    (help := "PNG, JPEG, and PDF embed natively: re-export the image as one")
-
 /-- W0379: a picture outside the rendered subset states a boundary request,
 and no tool on this machine can fulfil it — nothing pinned is runnable and
-the cache holds no earlier render. The placeholder box ships. -/
-def boundaryToolUnavailable (tool : String) : Diag :=
+the cache holds no earlier render. The placeholder box ships; one per
+picture, at its span, so the census gate can match each to its loss. -/
+def boundaryToolUnavailable (tool : String) (span : Option Span := none) : Diag :=
   Diag.of .W0379
-    s!"no boundary tool is available for a picture outside the rendered \
-subset; a placeholder box marks each picture"
+    s!"no boundary tool is available for this picture outside the rendered \
+subset; a placeholder box marks its place"
+    span
     (help := s!"install {tool}, or \\pictures\{ tool = none } accepts the \
 placeholder; a warm cache needs no tool")
 

@@ -164,6 +164,57 @@ lands in AGENTS' hot-path bullet; the cache's growth under `--watch`
 `scripts/flate-fuzz.lean` now also re-deflates every stream the writer
 emits for the underline document.
 
+2026-09-21 — nothing unresolved reaches a backend unnamed, the theorem
+(pending-named slice): the user's ask was "a warning per misunderstood
+thing"; `accounts` stated it for the surface (a construct read had an
+effect or is named), and this layer states it for resolution — a node
+the engine could not resolve never reaches a backend without a
+diagnostic naming it. `Ir.pending doc store` is the census (a `foldDoc`
+leaf: every `.ref` still without a target, every `.cite`, every image
+source the store holds no payload for); `Diag.subject` is the structured
+key a resolver's diagnostic names, and `Diag.mentions` the match — a
+lookup, never a search of the message. `pending_named` (Pending.lean) is
+the gate over the pipeline's pure tail — `Bib.apply`'s output, the
+`Ir.refDiags` judge over it, `Image.fulfil` over one read per
+`Ir.imageRefs` source — assembled from one lemma per resolver:
+`Ir.refDiags_named` (the judge maps over the same census), `Bib.apply_no_cite`
+(a 50-arm mutual induction over the citation rewrite against the census
+fold, `renderCite_plain` its leaf), `Image.fulfil_named` and
+`Image.fulfil_covers`. Nothing staged in Obligations/.
+
+- Resolvers are total and name what they leave. `Bib.apply` runs on every
+  document (with no `\bibliography` there are no sources and every key
+  is `[?]`, LaTeX's own rendering; the elaborator's site-level W0351 has
+  already named each, so `apply` says nothing there) and rewrites every
+  region `foldDoc` reads (`Ir.mapDoc`, the rewrite face of the one region
+  list `furnitureInlines`), so a `\cite` in a running head resolves like
+  one in the body — the backends' `.cite` arms stay explicit and are dead
+  by theorem. Reference resolution moved to the assembled `Doc` (same
+  regions) and W0349 became a census judge (`Ir.refDiags`, read off the
+  resolved IR with the site span and the table's cause) run by the driver
+  after the bibliography resolves, and by `runRaws` — the span-free face
+  fulfils nothing, so it judges itself; `ReqSpans` carries the ref sites
+  and the label table out of elaboration for that. W0380 stays a
+  site-judge: a kindless binding is a fact of the table, not of the node.
+- The image effect split: `Image.Fetch` is what the driver found for one
+  source (decoded through the content cache, no file, unreadable, or a
+  boundary picture nothing drew — carrying the boundary's own W0378/W0379),
+  and `Image.fulfil` decides, purely, what each read means; the refusal's
+  `subject` is set at the decision, so the gate's match cannot depend on
+  the words the boundary chose. W0379 is now per picture, at its span
+  (it was once per run), because the census is per picture.
+- Measured: the seven reference documents byte-identical against a main
+  build (artifacts and diagnostic sets); the synthetic gate document
+  (`pendingChecks`) renders W0349, W0351, W0601, W0378 each with its
+  subject.
+- Named next: `Store.info?` is the store's one resolving question; Layout,
+  HtmlDoc, and Pdf still spell the lookup by hand (three sites, owned
+  elsewhere). Furniture regions get citation and reference resolution
+  now; the `\cite`-in-title case has no golden. `Bib.apply`'s W0351 (a
+  key missing from a real `.bib`) still carries no `-->` — `ReqSpans`
+  could carry cite spans into `analyse` the way bib and image spans
+  travel.
+
 2026-09-21 — the guard's reference-document findings, repaid as effects
 (fix-column slice). beamer's command-form `\column{w}` is the environment
 form with its close implicit (user guide §12.7; both openers run

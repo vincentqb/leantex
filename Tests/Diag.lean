@@ -289,11 +289,11 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
     dvE (dvDoc "" "\\textbf{\\runningfoot{Y} z}")
   | .E0359 => dvE (dvDeck ""
       "\\note{\\begin{frame}{Carried}\nspoken \\note{never carried} words\n\\end{frame}}")
-  | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
-      DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
+  | .W0601 => #[Image.imageMissing "figures/plot.png" "/documents/figures/plot.png",
+      Image.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
   | .W0362 => dvE (dvDoc "\\pictures{ tool = none }\n" ("\\begin{tikzpicture}\n" ++
       "\\shade (0,0) rectangle (1,1);\n\\end{tikzpicture}"))
-  | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
+  | .W0602 => #[Image.imageUndecodable "figures/plot.gif"
       "not a PNG, JPEG, or PDF file"]
   -- The boundary is open by default: no declaration, and the picture
   -- routes; the trust label names it.
@@ -733,3 +733,62 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     "plain text")
   t "AA fails without a declared language"
     (!(Check.all (shippedOf nolang nds) nolang.asserts).isEmpty)
+
+/-- The resolution gate, run: a document with one of each unresolved kind —
+a `\ref` no label numbers, a `\cite` with no bibliography (and, in a
+second document, one with a bibliography the key is absent from), an
+`\includegraphics` no file answers, and a boundary picture the tool failed
+on. `Ir.pending` lists what a backend would ship as `??`, `?`, or a
+placeholder box; every element has a diagnostic whose subject names it
+(`pending_named`, executed), no `.cite` survives `Bib.apply`
+(`apply_no_cite`, executed), and the store covers every requested source
+(`fulfil_covers`). The synthetic document's rendered diagnostics are the
+renders in the slice report. -/
+def pendingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pic := "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}"
+  let body := "See \\ref{none} and \\cite{none}.\n\n\\includegraphics{absent.png}\n\n" ++ pic
+  let (doc, ds) := elabStr (dvDoc "\\usepackage{pgfplots}\n" body)
+  let named (ds : Array Diag) (ps : Array Ir.Pending) : Bool :=
+    ps.all fun p => ds.any (·.mentions p)
+  -- Before resolution the census lists the citation too, named at its site.
+  t "pending: the elaborated document lists the ref and the cite"
+    ((Ir.pendingNodes doc).contains (.ref "none") &&
+     (Ir.pendingNodes doc).contains (.cite "none"))
+  t "pending: elaboration names both, by subject (W0349, W0351)"
+    (named ds ((Ir.pendingNodes doc).map .node) &&
+     (ds.filter fun d => d.code == "W0349" && d.subject == some "none").size == 1 &&
+     (ds.filter fun d => d.code == "W0351" && d.subject == some "none").size == 1)
+  -- The bibliography resolver leaves no citation node, with or without sources.
+  let (doc', bibDs) := Bib.apply #[] doc
+  t "apply_no_cite: no .cite node survives resolution (no bibliography)"
+    (bibDs.isEmpty && (Ir.pendingNodes doc').all (!·.isCite) &&
+     (Ir.pendingNodes doc').contains (.ref "none"))
+  let withBib := Bib.apply #[("refs", "@misc{other, year = 2024}")]
+    { doc with body := doc.body.push (.bibliography "refs" none #[]) }
+  t "apply_no_cite: no .cite node survives resolution (a bibliography without the key)"
+    ((Ir.pendingNodes withBib.1).all (!·.isCite) &&
+     (withBib.2.filter fun d => d.code == "W0351" && d.subject == some "none").size == 1)
+  -- The driver's reads, decided purely: no file, and a picture the tool failed on.
+  let picSrc := (Ir.imageRefs doc').find? (·.startsWith Ir.picSrcPrefix)
+  t "pending: the picture's request stands in the image refs" picSrc.isSome
+  let fetched : Array (String × Image.Fetch) := (Ir.imageRefs doc').map fun src =>
+    if src.startsWith Ir.picSrcPrefix then
+      (src, .refused (DriverDiag.boundaryFailed "lualatex" "! Undefined control sequence."))
+    else (src, .missing s!"/documents/{src}")
+  let (store, imgDs) := Image.fulfil fetched
+  t "fulfil_covers: one entry per requested source, in order"
+    (store.entries.map (·.src) == Ir.imageRefs doc')
+  let pend := Ir.pending doc' store
+  t "pending: the resolved document and store list the ref and both images"
+    (pend.size == 3 && pend.contains (.node (.ref "none")) && pend.contains (.image "absent.png") &&
+     (picSrc.map fun s => pend.contains (.image s)).getD false)
+  t "pending_named: every pending node has a diagnostic naming it"
+    (named (ds ++ bibDs ++ imgDs) pend)
+  t "pending_named: the refusal's subject is set at the decision, not by its words"
+    (imgDs.any fun d => d.code == "W0378" && (picSrc.map fun s => d.subject == some s).getD false)
+  -- A resolved document is pending-free: with the label, the file, and no
+  -- picture, the census is empty and nothing needs naming.
+  let (ok, okDs) := elabStr (dvDoc "" "\\section{A}\\label{a} See \\ref{a}.")
+  t "pending: a resolved reference is not pending, and W0349 stays silent"
+    ((Ir.pending ok { entries := #[] }).isEmpty && okDs.all (·.code != "W0349"))

@@ -10149,7 +10149,7 @@ order, so it is not read" }
 /-- Elaborate the whole document: split preamble and body around the
 `document` environment, process declarations, then the body. -/
 def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
-    EM Doc := do
+    EM (Doc × Ir.RefTable) := do
   let docIdx := raws.findIdx? fun r =>
     match r with
     | .env "document" _ _ => true
@@ -10321,24 +10321,20 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
   -- number in document order (`numberFloats_exact` is the fact `\ref`
   -- will resolve against), once, before any backend reads the body.
   let blocks := Ir.numberFloats (← elabBlocks ctx body)
-  -- Cross-references resolve here, once, against the whole document's
-  -- labels: the float rows are read off the numbered IR it just produced
-  -- (`Ir.floatLabelRows`), so a label under a captioned float binds to the
-  -- number the node carries — one numbering, `Ir.refs_agree_with_numbering`
-  -- the statement — and `Ir.resolveRefs` is a pure pass over the IR, so no
-  -- backend re-scans for labels and a forward reference costs nothing. The
-  -- diagnostics are judged from the recorded sites — a reference cannot be
-  -- judged where it stands, because its label may follow it.
+  -- The label table, complete: the float rows are read off the numbered IR
+  -- just produced (`Ir.floatLabelRows`), so a label under a captioned
+  -- float binds to the number the node carries — one numbering,
+  -- `Ir.refs_agree_with_numbering` the statement. References resolve
+  -- against it once the document is assembled below; W0380 is judged here
+  -- from the recorded sites, because a kindless binding is a fact of the
+  -- table, not of the resolved node.
   let stRefs ← get
   let table := if stRefs.labels.isEmpty then stRefs.labels
     else Ir.withFloatRows stRefs.labels (Ir.floatLabelRows blocks)
-  let blocks := if stRefs.refSites.isEmpty then blocks
-    else Ir.resolveRefs ctx.locale table blocks
   let mut warnedRefs : Array String := #[]
   for (key, form, rpos) in stRefs.refSites do
     unless warnedRefs.contains key do
-      match table.find? (·.1 == key) with
-      | some (_, some b) =>
+      if let some (_, some b) := table.find? (·.1 == key) then
         -- The binding is numbered but kindless (a bare \refstepcounter):
         -- a form that must name what the label names has no name to use,
         -- so the plain number stands (refText), named here.
@@ -10348,15 +10344,6 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
             s!"'{key}' names a bare counter step, not a heading, equation, or float; the plain number is set"
             (some rpos)
             (help := "reference it with \\ref, or move the \\label after the numbered thing it should name")
-      | some (_, none) =>
-        warnedRefs := warnedRefs.push key
-        diag ctx .W0349 s!"'{key}' is \\label'ed where nothing is numbered; set as '??'"
-          (some rpos)
-          (help := "move the \\label after a numbered heading, a captioned float, or into an equation")
-      | none =>
-        warnedRefs := warnedRefs.push key
-        diag ctx .W0349 s!"no \\label\{{key}} in the document; set as '??'" (some rpos)
-          (help := s!"declare \\label\{{key}} after the numbered thing it names")
   -- A citation with no bibliography anywhere: `Bib.apply` never runs
   -- (`Ir.bibRefs` stays empty — nothing requests a file), the
   -- missing-file diagnostic has no file to miss, and the mark ships '?'
@@ -10369,7 +10356,8 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
         s!"citation '{key}' has no bibliography to resolve against; it shows as '?'"
         (some span)
         (help := "the document declares no bibliography; \\bibliography{file} \
-names the .bib file")) }
+names the .bib file")
+        (subject := some key)) }
   -- Body declarations do NOT displace the document state: `doc.palette`
   -- and `doc.tokens` stay the preamble+theme state — epoch 0 — and each
   -- body declaration rides its own `.setPalette`/`.setTokens` block, so a
@@ -10474,7 +10462,7 @@ declare \\assert\{ pages <= N } to take control" }
   info := { info with
     title := fallback info.title st.title
     author := fallback info.author st.author }
-  return {
+  let doc : Doc := {
     docClass := docClass
     classOptions := classOptions
     page := page
@@ -10500,6 +10488,17 @@ declare \\assert\{ pages <= N } to take control" }
     pictureSrcs := (← get).pictures
     body := blocks
   }
+  -- Cross-references resolve here, once, against the whole document's
+  -- labels — every region a backend reads (`Ir.mapDoc`), so a `\ref` in a
+  -- running head resolves as one in the body does, and `Ir.resolveRefs` is
+  -- a pure pass over the IR: no backend re-scans for labels and a forward
+  -- reference costs nothing. What stays `??` is named by `Ir.refDiags`,
+  -- read off the resolved census (`runRaws`, and the driver after the
+  -- bibliography resolves), never from the sites: a reference cannot be
+  -- judged where it stands, because its label may follow it.
+  let doc := if stRefs.refSites.isEmpty then doc
+    else Ir.mapDoc (Ir.resolveRefInlines ctx.locale table) (Ir.resolveRefs ctx.locale table) doc
+  return (doc, table)
 
 /-- Where the requests a document states were declared — reporting metadata
 the driver reads to place its missing-file diagnostics. Delivered beside
@@ -10513,11 +10512,19 @@ structure ReqSpans where
   /-- Each image source's first span — file images and boundary pictures
   alike: where the driver's per-picture W0376 and W0378 point. -/
   images : Array (String × Span) := #[]
+  /-- Each reference key's first site: where W0349 points. -/
+  refs : Array (String × Span) := #[]
+  /-- The label table resolution spent, for W0349's cause (`Ir.refDiags`). -/
+  labels : Ir.RefTable := #[]
   deriving Repr, BEq, Inhabited
 
 /-- Elaborate parsed input. LaTeX idioms are rewritten first, so a document
 written for another engine compiles as written. Returns the request spans
-too, for the driver's missing-file and per-picture diagnostics. -/
+too, for the driver's missing-file and per-picture diagnostics. The
+unresolved-reference judge (`Ir.refDiags`) is not run here: the driver
+runs it after `Bib.apply`, over the very document the backends read, so
+the resolution gate (`pending_named`) is one statement over that tail;
+`runRaws`, the face that fulfils nothing, runs it itself. -/
 def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag × ReqSpans :=
   let picPre := Compat.boundaryDecls raws
@@ -10525,7 +10532,7 @@ def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #
     Compat.rewrite file raws (provideKeeps := renderedBuiltins ++ structuralNames)
   let (raws, textDiags) := Compat.rewriteText file raws
   let compatDiags := compatDiags ++ textDiags
-  let (doc, st) := (elabDoc file raws picPre).run {}
+  let ((doc, table), st) := (elabDoc file raws picPre).run {}
   -- The realization pass rewrites the document where a (role, ground)
   -- pair fails and the solver can meet it (Core/Contrast.lean): both
   -- backends then read the realized values, and the diagnostics carry
@@ -10538,14 +10545,23 @@ def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
   (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences,
-    { bib := st.spans.bib, images := st.spans.images })
+    { bib := st.spans.bib
+      images := st.spans.images
+      refs := st.refSites.foldl (init := #[]) fun out (key, _, pos) =>
+        if out.any (·.1 == key) then out else out.push (key, ⟨file, pos⟩)
+      labels := table })
+
+/-- The span a reporting record holds for a key, for the judges. -/
+def ReqSpans.spanOf (rs : Array (String × Span)) (key : String) : Option Span :=
+  (rs.find? (·.1 == key)).map (·.2)
 
 /-- The span-free face: what every caller that fulfils no file requests
-reads. -/
+reads — with the unresolved-reference judge run over the elaborated
+document, since no bibliography resolution follows here. -/
 def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag :=
-  let (doc, diags, _) := runRawsSpanned file raws earlier
-  (doc, diags)
+  let (doc, diags, rs) := runRawsSpanned file raws earlier
+  (doc, diags ++ Ir.refDiags rs.labels (ReqSpans.spanOf rs.refs) doc)
 
 def run (file input : String) : Doc × Array Diag :=
   let (toks, lexDiags) := Lex.lex file input

@@ -7852,25 +7852,106 @@ the fold's refusal to descend them loses nothing. -/
 def imageSrcsBlocks (out : Array String) (xs : Array Block) : Array String :=
   foldBlocks (fun out _ => out) imageSrcPush out xs
 
+/-- Every inline region a backend sets beside the body — the running head
+and foot, the logo state, the headline band, the corner logos, and each
+style's font template and marker — as one list, so a walk over "the whole
+document" is declared once: `foldDoc` reads these, `mapDoc` rewrites them,
+and a resolver and a census cannot disagree on what the document is. -/
+def furnitureInlines (doc : Doc) : Array (Array Inline) :=
+  optRegion doc.head ++ optRegion doc.foot ++ optRegion doc.logo ++
+    (match doc.headline with
+      | some hl => #[hl.title, hl.author, hl.institute]
+      | none => #[]) ++
+    optRegion doc.logoLeft ++ optRegion doc.logoRight ++
+    doc.styles.entries.flatMap fun (_, st) => optRegion st.font ++ optRegion st.marker
+where
+  /-- An optional region as zero or one entries. -/
+  optRegion : Option (Array Inline) → Array (Array Inline)
+    | some r => #[r]
+    | none => #[]
+
+/-- `foldInlines` over the whole document: the body through `foldBlocks`,
+then every furniture region, in `furnitureInlines`' order. -/
+def foldDoc (fi : α → Inline → α) (acc : α) (doc : Doc) : α :=
+  (furnitureInlines doc).foldl (fun acc r => foldInlines fi acc r)
+    (foldBlocks (fun acc _ => acc) fi acc doc.body)
+
+/-- The rewrite face of `foldDoc`: `fb` rewrites the body, `fi` each
+furniture region — the same regions, so a resolver that runs through here
+reaches every node a census through `foldDoc` counts. -/
+def mapDoc (fi : Array Inline → Array Inline) (fb : Array Block → Array Block)
+    (doc : Doc) : Doc :=
+  { doc with
+    body := fb doc.body
+    head := doc.head.map fi
+    foot := doc.foot.map fi
+    logo := doc.logo.map fi
+    headline := doc.headline.map fun hl =>
+      { title := fi hl.title, author := fi hl.author, institute := fi hl.institute }
+    logoLeft := doc.logoLeft.map fi
+    logoRight := doc.logoRight.map fi
+    styles := { doc.styles with entries := doc.styles.entries.map fun (nm, st) =>
+      (nm, { st with font := st.font.map fi, marker := st.marker.map fi }) } }
+
+private theorem optRegion_map (fi : Array Inline → Array Inline) (o : Option (Array Inline)) :
+    furnitureInlines.optRegion (o.map fi) = (furnitureInlines.optRegion o).map fi := by
+  cases o <;> simp [furnitureInlines.optRegion]
+
+/-- `mapDoc` rewrites exactly the regions `foldDoc` reads: the furniture of
+the mapped document is the furniture of the original, each region through
+`fi`. What lets a resolver through `mapDoc` discharge a census through
+`foldDoc` (`Bib.apply_no_cite`). -/
+theorem furnitureInlines_mapDoc (fi : Array Inline → Array Inline)
+    (fb : Array Block → Array Block) (doc : Doc) :
+    furnitureInlines (mapDoc fi fb doc) = (furnitureInlines doc).map fi := by
+  unfold furnitureInlines mapDoc
+  rw [← Array.toList_inj]
+  cases doc.headline <;>
+    simp [optRegion_map, Array.toList_append, Array.toList_map, Array.toList_flatMap,
+      List.flatMap_map, List.map_flatMap, List.map_append]
+
+/-- The list fold over an appended list folds the halves in turn. -/
+theorem foldInlineList_append (fi : α → Inline → α) (acc : α) (l₁ l₂ : List Inline) :
+    foldInlineList fi acc (l₁ ++ l₂) = foldInlineList fi (foldInlineList fi acc l₁) l₂ := by
+  induction l₁ generalizing acc with
+  | nil => rfl
+  | cons x rest ih => rw [List.cons_append, foldInlineList, foldInlineList, ih]
+
+theorem foldBlockList_append (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (l₁ l₂ : List Block) :
+    foldBlockList fb fi acc (l₁ ++ l₂) = foldBlockList fb fi (foldBlockList fb fi acc l₁) l₂ := by
+  induction l₁ generalizing acc with
+  | nil => rfl
+  | cons b rest ih => rw [List.cons_append, foldBlockList, foldBlockList, ih]
+
+theorem foldBlockItems_append (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (l₁ l₂ : List (Array Block)) :
+    foldBlockItems fb fi acc (l₁ ++ l₂) = foldBlockItems fb fi (foldBlockItems fb fi acc l₁) l₂ := by
+  induction l₁ generalizing acc with
+  | nil => rfl
+  | cons b rest ih => rw [List.cons_append, foldBlockItems, foldBlockItems, ih]
+
+theorem foldBlockCols_append (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (l₁ l₂ : List (Option Nat × Array Block)) :
+    foldBlockCols fb fi acc (l₁ ++ l₂) = foldBlockCols fb fi (foldBlockCols fb fi acc l₁) l₂ := by
+  induction l₁ generalizing acc with
+  | nil => rfl
+  | cons b rest ih =>
+    obtain ⟨w, body⟩ := b
+    rw [List.cons_append, foldBlockCols, foldBlockCols, ih]
+
+/-- Folding a pushed block: the array first, then the block. -/
+theorem foldBlockList_push (fb : α → Block → α) (fi : α → Inline → α) (acc : α)
+    (out : Array Block) (b : Block) :
+    foldBlockList fb fi acc (out.push b).toList = foldBlock fb fi (foldBlockList fb fi acc out.toList) b := by
+  rw [Array.toList_push, foldBlockList_append]
+  rfl
+
 /-- Every image the document references, deduplicated, in document order:
 the request value the CLI driver fulfils by reading and decoding each file
 into the `Image.Store` layout and the backends consume. Files are effects,
 so the core never opens one — the same shape as fonts. -/
-def imageRefs (doc : Doc) : Array String := Id.run do
-  let mut out := imageSrcsBlocks #[] doc.body
-  if let some h := doc.head then out := imageSrcsInlines out h
-  if let some f := doc.foot then out := imageSrcsInlines out f
-  if let some l := doc.logo then out := imageSrcsInlines out l
-  if let some hl := doc.headline then
-    out := imageSrcsInlines out hl.title
-    out := imageSrcsInlines out hl.author
-    out := imageSrcsInlines out hl.institute
-  if let some l := doc.logoLeft then out := imageSrcsInlines out l
-  if let some r := doc.logoRight then out := imageSrcsInlines out r
-  for (_, st) in doc.styles.entries do
-    if let some tpl := st.font then out := imageSrcsInlines out tpl
-    if let some m := st.marker then out := imageSrcsInlines out m
-  return out
+def imageRefs (doc : Doc) : Array String := foldDoc imageSrcPush #[] doc
 
 /-- The image-source spelling of a boundary picture: an `.image` whose
 source is this prefix plus the request's content hash. The driver fulfils
@@ -8925,6 +9006,163 @@ theorem resolveOneRef_missing (loc : Locale) (table : RefTable) (key : String)
     intro e hmem
     simp [h e hmem]
   rw [hfind]
+
+/-- The inline face of `resolveRefs`, for the furniture regions `mapDoc`
+hands it: the same leaf, so a `\ref` in a running head resolves as one in
+the body does. -/
+-- conserves: none — the inline-region face of resolveRefs, same reason.
+def resolveRefInlines (loc : Locale) (table : RefTable) (xs : Array Inline) :
+    Array Inline :=
+  mapInlines (resolveRefLeaf loc table) xs
+
+/-! ## The pending census
+
+What the engine could not resolve and a backend would otherwise ship
+unnamed: a `\ref` no label numbers, a `\cite` no bibliography answered, an
+image no file or tool produced. Each resolver names what it leaves — W0349,
+W0351, W0601/W0602/W0378/W0379 — and `pending_named` (Pending.lean) holds
+the census to those diagnostics, so "a warning per misunderstood thing" is
+a theorem over the pipeline's pure tail, not a convention each resolver
+keeps by hand. The silent `\cite` with no bibliography was that convention
+failing. -/
+
+/-- One unresolved node the IR itself carries, by the key a diagnostic can
+be matched to. -/
+inductive Unresolved where
+  | ref (key : String)
+  | cite (key : String)
+  deriving Repr, BEq, DecidableEq
+
+def Unresolved.isCite : Unresolved → Bool
+  | .cite _ => true
+  | .ref _ => false
+
+/-- One pending thing a backend would ship unnamed: a node of the IR, or an
+image source the store holds no payload for. -/
+inductive Pending where
+  | node (u : Unresolved)
+  | image (src : String)
+  deriving Repr, BEq, DecidableEq
+
+def Pending.key : Pending → String
+  | .node (.ref k) => k
+  | .node (.cite k) => k
+  | .image s => s
+
+/-- A diagnostic names a pending node when its structured subject is the
+node's key: a lookup, never a search of the message text. -/
+def _root_.LeanTex.Core.Diag.mentions (d : Diag) (p : Pending) : Bool :=
+  d.subject == some p.key
+
+/-- One node's contribution: a `.ref` still carrying no target is
+unresolved (`resolveOneRef` sets a target for every key it numbers); a
+`.cite` is unresolved by existence — `Bib.apply` replaces every one. Nodes
+are listed, not deduplicated: the census counts occurrences, the judges
+name keys. -/
+def pendingLeaf : Inline → Array Unresolved
+  | .ref key _ _ none => #[.ref key]
+  | .cite _ keys => keys.map .cite
+  | _ => #[]
+
+/-- The fold step of the census: each node's leaf appended. -/
+def pendingStep (acc : Array Unresolved) (x : Inline) : Array Unresolved :=
+  let leaf := pendingLeaf x
+  acc ++ leaf
+
+/-- Every unresolved reference and citation the document's regions carry,
+in document order — a `foldDoc` leaf, so the descent is the fold's. -/
+def pendingNodes (doc : Doc) : Array Unresolved :=
+  foldDoc pendingStep #[] doc
+
+/-- Every image source the document names that the store holds no payload
+for — the placeholder boxes every consumer places. -/
+def pendingImages (doc : Doc) (store : Image.Store) : Array Pending :=
+  ((imageRefs doc).filter fun src => (store.info? src).isNone).map .image
+
+/-- The census: everything a backend would ship as `??`, `?`, or a
+placeholder box, over the document and the store the backends read. -/
+def pending (doc : Doc) (store : Image.Store) : Array Pending :=
+  let images := pendingImages doc store
+  (pendingNodes doc).map .node ++ images
+
+/-- The distinct keys of the unresolved references, first occurrence
+first: what W0349 names, once per key. -/
+def pendingRefKeys (doc : Doc) : Array String :=
+  (pendingNodes doc).foldl (init := #[]) fun out p =>
+    match p with
+    | .ref k => if out.contains k then out else out.push k
+    | _ => out
+
+/-- W0349's judge, read off the resolved IR: every distinct key a `\ref`
+still shows `??` for, named at its first site (`spanOf`) with the cause
+the table knows — a `\label` that stood where nothing numbers, or no
+`\label` at all. It reads the census the gate quantifies over, so a
+reference cannot escape it without escaping the fold whose arms are all
+explicit (`refDiags_named`). -/
+def refDiags (table : RefTable) (spanOf : String → Option Span) (doc : Doc) :
+    Array Diag :=
+  (pendingRefKeys doc).map fun key =>
+    match table.find? (·.1 == key) with
+    | some (_, none) =>
+      Diag.of .W0349 s!"'{key}' is \\label'ed where nothing is numbered; set as '??'"
+        (spanOf key)
+        (help := "move the \\label after a numbered heading, a captioned float, or into an equation")
+        (subject := some key)
+    | _ =>
+      Diag.of .W0349 s!"no \\label\{{key}} in the document; set as '??'" (spanOf key)
+        (help := s!"declare \\label\{{key}} after the numbered thing it names")
+        (subject := some key)
+
+/-- The key fold only grows its accumulator. -/
+private theorem pendingRefKeys_grow (l : List Unresolved) :
+    ∀ (out : Array String) (k : String), k ∈ out →
+      k ∈ l.foldl (init := out) fun out p => match p with
+        | .ref k => if out.contains k then out else out.push k
+        | _ => out := by
+  induction l with
+  | nil => intro out k hk; simpa using hk
+  | cons p rest ih =>
+    intro out k hk
+    simp only [List.foldl_cons]
+    apply ih
+    cases p with
+    | ref k' =>
+      show k ∈ (if out.contains k' = true then out else out.push k')
+      split <;> simp [hk]
+    | cite _ => exact hk
+
+private theorem pendingRefKeys_mem (doc : Doc) (key : String)
+    (h : Unresolved.ref key ∈ pendingNodes doc) : key ∈ pendingRefKeys doc := by
+  unfold pendingRefKeys
+  rw [← Array.foldl_toList]
+  rw [Array.mem_def] at h
+  generalize (pendingNodes doc).toList = l at h ⊢
+  generalize (#[] : Array String) = out
+  induction l generalizing out with
+  | nil => simp at h
+  | cons p rest ih =>
+    simp only [List.foldl_cons]
+    rcases List.mem_cons.mp h with rfl | hrest
+    · apply pendingRefKeys_grow
+      show key ∈ (if out.contains key = true then out else out.push key)
+      split
+      · rename_i hc; exact Array.contains_iff_mem.mp hc
+      · simp
+    · exact ih hrest _
+
+/-- **Every unresolved reference is named**: a `.ref` the census lists has
+a W0349 in the judge's output whose subject is its key. -/
+theorem refDiags_named (table : RefTable) (spanOf : String → Option Span) (doc : Doc)
+    (key : String) (h : Unresolved.ref key ∈ pendingNodes doc) :
+    ∃ d ∈ refDiags table spanOf doc, d.mentions (.node (.ref key)) = true := by
+  have hk := pendingRefKeys_mem doc key h
+  unfold refDiags
+  refine ⟨_, Array.mem_map_of_mem hk, ?_⟩
+  cases hf : table.find? (·.1 == key) with
+  | none => simp [Diag.mentions, Diag.of, Pending.key]
+  | some e =>
+    obtain ⟨_, b⟩ := e
+    cases b <;> simp [Diag.mentions, Diag.of, Pending.key]
 
 -- Float label rows. Elaboration cannot know a float's number — `numberFloats`
 -- assigns it once the whole body exists — so the table's float rows are read

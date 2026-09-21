@@ -3086,9 +3086,12 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
   let (_, dsM) := run (some "mystery")
   t "apply: an unknown style warns W0353 and falls back to the record"
     (dsM.map (·.code) == #["W0353"])
-  t "apply: a document with no bibliography marker is untouched"
-    (Bib.apply #[("refs", bib)] { body := #[.para #[.cite false #["a"]]] } ==
-      ({ body := #[.para #[.cite false #["a"]]] }, #[]))
+  -- No marker, no sources: the mark still resolves — to LaTeX's `[?]` — and
+  -- no `.cite` node survives; the elaborator named the loss at the site
+  -- (W0351, the no-bibliography cause), so `apply` says nothing here.
+  let (outN, dsN) := Bib.apply #[] { body := #[.para #[.cite false #["a"]]] }
+  t "apply: a document with no bibliography marker resolves every mark to [?], silently"
+    (dsN == #[] && paraText outN 0 == "[?]" && (Ir.pendingNodes outN).isEmpty)
 
 /-- The `\input`-parity cases for the local `.sty` splice: the splice runs
 inside the driver's own fixpoint (`Input.expandInputs`), so a

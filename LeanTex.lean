@@ -12,6 +12,7 @@ import LeanTex.Core.MathParse
 import LeanTex.Core.Ir
 import LeanTex.Core.Bib
 import LeanTex.Core.BibStyle
+import LeanTex.Core.Pending
 import LeanTex.Core.Data
 import LeanTex.Core.ListMark
 import LeanTex.Core.Theme

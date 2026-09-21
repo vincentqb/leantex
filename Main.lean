@@ -392,14 +392,14 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
 /-- The bibliography request an elaborated document states (`Ir.bibRefs`),
 fulfilled: each named `.bib` resolves beside the document, like `\input`,
 and its text goes to the pure core (`Bib.apply`) — parsing, ordering,
-formatting, and the citation rewrite all happen there. A missing file is
+formatting, and the citation rewrite all happen there, on every document
+(`Bib.apply_no_cite`: no `.cite` node reaches a backend). A missing file is
 E0503 naming the path; the marker stays empty and the citations' `?`
 marks say so on the page. -/
 def resolveBibliography (file : String) (doc : Ir.Doc)
     (bibSpans : Array (String × Span) := #[]) :
     IO (Ir.Doc × Array Diag) := do
   let requested := Ir.bibRefs doc
-  if requested.isEmpty then return (doc, #[])
   let dir := (System.FilePath.mk file).parent.getD "."
   let mut sources : Array (String × String) := #[]
   let mut diags : Array Diag := #[]
@@ -506,14 +506,16 @@ drawn PDF lands in the cache beside the font cache, keyed by the content
 hash *and the tool's version string* — an upgraded TeX re-renders, an
 unchanged picture never re-runs, and a warm cache needs no TeX installed:
 with no tool at all, any earlier render of the same content serves. A
-request nothing can fulfil is W0379, once; each such picture then ships as
-the placeholder box the diagnostic names. Failures of a tool that ran are
-W0378 with the tool's own last words. The inventory (`-v` and the
-porcelain phases) says per picture what came through the boundary: tool,
-version, hash, size. -/
+request nothing can fulfil is W0379, per picture; each such picture then
+ships as the placeholder box the diagnostic names. Failures of a tool that
+ran are W0378 with the tool's own last words. Refusals are returned keyed
+by the picture's image source, for `Image.fulfil` to name (the subject is
+set there, so the gate's match cannot depend on the words chosen here).
+The inventory (`-v` and the porcelain phases) says per picture what came
+through the boundary: tool, version, hash, size. -/
 def resolvePictures (ui : Ui) (doc : Ir.Doc)
     (imageSpans : Array (String × Span) := #[]) :
-    IO (Array PicResult × Array Diag) := do
+    IO (Array PicResult × Array (String × Diag)) := do
   let refs := Ir.pictureRefs doc
   if refs.isEmpty then return (#[], #[])
   let spanFor (hash : String) : Option Span :=
@@ -530,8 +532,7 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
   let picDir := (cacheRoot.getD "/tmp") / "pics"
   IO.FS.createDirAll picDir
   let mut results : Array PicResult := #[]
-  let mut diags : Array Diag := #[]
-  let mut saidUnavailable := false
+  let mut refused : Array (String × Diag) := #[]
   for (hash, wrapped) in refs do
     let src := Ir.picSrcPrefix ++ hash
     -- The cache: exact hash+version with a tool present; with none, any
@@ -558,9 +559,7 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
       continue
     match version? with
     | none =>
-      unless saidUnavailable do
-        diags := diags.push (DriverDiag.boundaryToolUnavailable tool)
-        saidUnavailable := true
+      refused := refused.push (src, DriverDiag.boundaryToolUnavailable tool (spanFor hash))
     | some version =>
       let cached := picDir / (hash ++ "-" ++ Ir.picHash version ++ ".pdf")
       let work := picDir / s!"work-{hash}"
@@ -581,16 +580,16 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
           ui.phase "boundary"
             s!"{tool} ({version}), {hash.take 16}, {bytes.size} bytes" (← since t0)
         else
-          diags := diags.push (DriverDiag.boundaryFailed tool "no PDF was produced"
+          refused := refused.push (src, DriverDiag.boundaryFailed tool "no PDF was produced"
             (spanFor hash))
       | .error err =>
         let log ← try IO.FS.readFile (work / "pic.log") catch _ => pure ""
         let tail := logTail log
-        diags := diags.push (DriverDiag.boundaryFailed tool
+        refused := refused.push (src, DriverDiag.boundaryFailed tool
           (if tail.isEmpty then err else tail) (spanFor hash))
       -- The scratch directory is per-content and spent either way.
       try IO.FS.removeDirAll work catch _ => pure ()
-  return (results, diags)
+  return (results, refused)
 
 /-- Where the image cache files a decoded object: beside the font and
 boundary caches, keyed by the *content* (so a re-exported file under the
@@ -623,71 +622,61 @@ def decodeImageCached (bytes : ByteArray) : IO (Except String Image.Info × Bool
       catch _ => pure ()
   return (res, false)
 
+/-- One image source's read — the effect half of `Image.fulfil`: a boundary
+picture's source (`Ir.picSrcPrefix`) is answered from the resolved
+boundary results, a path resolves against the document's own directory,
+like `\input`, then through graphicx's extension resolution (a deck says
+`figures/plot` and means the `figures/plot.png` beside it), and decodes in
+the pure core through the content-hash cache when the decode is the
+expensive kind. Returns whether the cache answered, for the phase line. -/
+def fetchImage (dir : System.FilePath) (pics : Array PicResult)
+    (refused : Array (String × Diag)) (src : String) : IO (Image.Fetch × Bool) := do
+  if src.startsWith Ir.picSrcPrefix then
+    match pics.find? (·.src == src) with
+    | some r => return (.decoded "" (Image.decode r.bytes), false)
+    | none =>
+      match refused.find? (·.1 == src) with
+      | some (_, why) => return (.refused why, false)
+      | none => return (.missing "the boundary cache (no picture declares this source)", false)
+  let mut hit : Option (String × System.FilePath) := none
+  for cand in Image.sourceCandidates src do
+    let p := if (System.FilePath.mk cand).isAbsolute then System.FilePath.mk cand
+      else dir / cand
+    if ← p.pathExists then
+      hit := some (cand, p)
+      break
+  match hit with
+  | none =>
+    let p := if (System.FilePath.mk src).isAbsolute then System.FilePath.mk src
+      else dir / src
+    return (.missing p.toString, false)
+  | some (cand, p) =>
+    let bytes : Except String ByteArray ← try pure (.ok (← IO.FS.readBinFile p))
+      catch e => pure (.error (toString e))
+    match bytes with
+    | .error e => return (.unreadable e, false)
+    | .ok bytes =>
+      let (res, fromCache) ← decodeImageCached bytes
+      return (.decoded (if cand == src then "" else cand) res, fromCache)
+
 /-- The image request an elaborated document states (`Ir.imageRefs`),
-fulfilled: each path resolves against the document's own directory, like
-`\input`, and decodes in the pure core — through the content-hash cache
-when the decode is the expensive kind. A boundary picture's source
-(`Ir.picSrcPrefix`) is fulfilled from the resolved boundary results
-instead of the filesystem. A file that is missing or refuses
-to decode keeps its entry with no payload — layout places a placeholder box
-of the requested size, so the document still compiles and the diagnostic
-here says why the figure is a box. The `Nat` returned is the cache-hit
-count, for the phase line. -/
-def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[]) :
+fulfilled: the driver reads each source (`fetchImage`) and the pure core
+decides what each read means (`Image.fulfil`) — an entry with a payload,
+or a placeholder box with the diagnostic that names it (`fulfil_named`),
+one entry per requested source (`fulfil_covers`). The `Nat` returned is
+the cache-hit count, for the phase line. -/
+def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
+    (refused : Array (String × Diag) := #[]) :
     IO (Image.Store × Array Diag × Nat) := do
   let dir := (System.FilePath.mk file).parent.getD "."
-  let mut entries : Array Image.Loaded := #[]
-  let mut diags : Array Diag := #[]
+  let mut fetched : Array (String × Image.Fetch) := #[]
   let mut hits := 0
   for src in Ir.imageRefs doc do
-    if src.startsWith Ir.picSrcPrefix then
-      -- A boundary picture: the driver has already run (or refused) the
-      -- tool, and W0378 has spoken for any failure — an empty entry here
-      -- is the placeholder box that diagnostic named.
-      match pics.find? (·.src == src) with
-      | some r =>
-        match Image.decode r.bytes with
-        | .ok info => entries := entries.push { src, info := some info }
-        | .error e =>
-          entries := entries.push { src }
-          diags := diags.push (DriverDiag.imageUndecodable src (toString e))
-      | none => entries := entries.push { src }
-      continue
-    -- The name as written, then graphicx's extension resolution: a deck
-    -- says `figures/plot` and means the `figures/plot.png` beside it.
-    let mut hit : Option (String × System.FilePath) := none
-    for cand in Image.sourceCandidates src do
-      let p := if (System.FilePath.mk cand).isAbsolute then System.FilePath.mk cand
-        else dir / cand
-      if ← p.pathExists then
-        hit := some (cand, p)
-        break
-    let bytes? ← do
-      match hit with
-      | some (_, p) =>
-        try pure (some (← IO.FS.readBinFile p))
-        catch e =>
-          diags := diags.push (DriverDiag.imageUnreadable src (toString e))
-          pure none
-      | none =>
-        let p := if (System.FilePath.mk src).isAbsolute then System.FilePath.mk src
-          else dir / src
-        diags := diags.push (DriverDiag.imageMissing src p.toString)
-        pure none
-    let href := match hit with
-      | some (cand, _) => if cand == src then "" else cand
-      | none => ""
-    match bytes? with
-    | none => entries := entries.push { src, href }
-    | some bytes =>
-      let (res, fromCache) ← decodeImageCached bytes
-      if fromCache then hits := hits + 1
-      match res with
-      | .ok info => entries := entries.push { src, href, info := some info }
-      | .error e =>
-        entries := entries.push { src, href }
-        diags := diags.push (DriverDiag.imageUndecodable src (toString e))
-  return ({ entries := entries }, diags, hits)
+    let (f, fromCache) ← fetchImage dir pics refused src
+    if fromCache then hits := hits + 1
+    fetched := fetched.push (src, f)
+  let (store, diags) := Image.fulfil fetched
+  return (store, diags, hits)
 
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
@@ -778,7 +767,11 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag × Ela
     let (doc, bibDiags) ← resolveBibliography file doc reqSpans.bib
     unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty do
       ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
-    return some (doc, elabDiags ++ bibDiags, reqSpans)
+    -- The unresolved-reference judge, over the document the backends read
+    -- (`Ir.refDiags`): with the images fulfilled below, this is the tail
+    -- `pending_named` quantifies over.
+    let refDiags := Ir.refDiags reqSpans.labels (Elab.ReqSpans.spanOf reqSpans.refs) doc
+    return some (doc, elabDiags ++ bibDiags ++ refDiags, reqSpans)
 
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
@@ -819,12 +812,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.phase "font" s!"{names} ({paths})" (← since t)
       let t ← IO.monoMsNow
-      let (pics, picDiags) ← resolvePictures ui doc reqSpans.images
-      let rB ← ui.resolve doc.allow allowAll picDiags
-      fired := fired ++ rB.fired
-      accepted := accepted ++ rB.accepted
-      warnings := warnings + rB.warnings
-      let (imgs, imgDiags, imgHits) ← loadImages file doc pics
+      let (pics, refused) ← resolvePictures ui doc reqSpans.images
+      let (imgs, imgDiags, imgHits) ← loadImages file doc pics refused
       -- The alt judge's picture face, after fulfilment: a picture the
       -- tool failed on ships a placeholder box, not an image, and W0378
       -- has named that loss — one loss, named once.
@@ -872,7 +861,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       -- pre-\allow stream through that batch: accepting a warning quiets
       -- the report, never the fact.
       let shipped := if doc.asserts.any (·.kind == .accessibilityAA) then
-          { shipped with a11y := Check.a11ySummary doc (diags ++ picDiags ++ imgDiags) }
+          { shipped with a11y := Check.a11ySummary doc (diags ++ imgDiags) }
         else shipped
       let failures := Check.all shipped doc.asserts
       unless doc.asserts.isEmpty do

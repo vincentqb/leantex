@@ -122,7 +122,10 @@ in this repo; refer to the private reference corpus abstractly.
   `_set_eq`, `_between` (a value inside two named bounds), `_mem` (the
   result is drawn from the input set), `_accounts` (an empty result is
   paid for by a diagnostic or a write — `rewriteCtrl_accounts` is the
-  shape). A new property instantiates a
+  shape), `_named` (every element of a census has a diagnostic whose
+  `subject` is its key — `pending_named` is the shape; the census is a
+  fold, the judge reads the same fold, and matching is the structured
+  `Diag.subject`, never the message text). A new property instantiates a
   suffix, or the review says why
   it is a new shape; the first three are what the hook's walk gate looks
   for. `_in_measure` is not a shape: `kern_symmetric_in_measure` is an

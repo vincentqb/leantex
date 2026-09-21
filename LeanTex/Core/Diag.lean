@@ -293,7 +293,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0377 => ("0377", .degraded, "a link carries no text to name its purpose (WCAG 2.2)")
   | .N0023 => ("0023", .info, "a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census")
   | .W0378 => ("0378", .degraded, "the boundary tool failed; a placeholder box marks the picture")
-  | .W0379 => ("0379", .degraded, "no boundary tool available for a picture outside the rendered subset; a placeholder box marks each picture")
+  | .W0379 => ("0379", .degraded, "no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture")
   | .W0380 => ("0380", .degraded, "a \\cref target of unknown kind; the plain number is set")
   | .W0381 => ("0381", .degraded, "a unit outside the siunitx table; set as its ASCII spelling")
   | .W0383 => ("0383", .pending, "algorithm construct outside the modeled subset; kept as a plain line")
@@ -345,13 +345,18 @@ rendered code string and the severity are its projections — no free
 severity or code field exists, so a diagnostic disagreeing with its
 code's declared `Loss` is unrepresentable rather than merely
 unconstructed. `demoted` is the one policy bit (`accept`/`demote`): an
-accepted or demoted diagnostic delivers as a note, whatever its loss. -/
+accepted or demoted diagnostic delivers as a note, whatever its loss.
+`subject` is the key or source of the unresolved node a diagnostic names —
+a `\ref` key, a `\cite` key, an image source — structured so that "this
+loss is named" is a lookup, never a search of the message text
+(`Ir.Diag.mentions`, the resolution gate `pending_named`). -/
 structure Diag where
   kind : DiagCode
   message : String
   span : Option Span := none
   help : Option String := none
   demoted : Bool := false
+  subject : Option String := none
   deriving Repr, BEq
 
 /-- The rendered code string: the kind's own spelling, derived. -/
@@ -366,26 +371,27 @@ def Diag.severity (d : Diag) : Severity :=
 
 /-- The one door a diagnostic is made through. -/
 def Diag.of (c : DiagCode) (message : String) (span : Option Span := none)
-    (help : Option String := none) : Diag :=
+    (help : Option String := none) (subject : Option String := none) : Diag :=
   { kind := c
     message := message
     span := span
-    help := help }
+    help := help
+    subject := subject }
 
 /-- Severity derives from the declared loss — structurally now: `severity`
 is a projection of the stored `kind`, so this is `rfl` and a call site
 cannot make it false anywhere, not only at construction. -/
 theorem Diag.of_severity (c : DiagCode) (message : String) (span : Option Span)
-    (help : Option String) :
-    (Diag.of c message span help).severity = c.loss.severity := rfl
+    (help : Option String) (subject : Option String) :
+    (Diag.of c message span help subject).severity = c.loss.severity := rfl
 
 /-- The whole rendered prefix is one declaration: the severity label and the
 code letter of a constructed diagnostic both come from the code's `Loss`,
 so `error[W…]` and `warning[E…]` cannot be constructed. -/
 theorem Diag.of_code_letter (c : DiagCode) (message : String) (span : Option Span)
-    (help : Option String) :
-    (Diag.of c message span help).code.front =
-      (Diag.of c message span help).severity.letter :=
+    (help : Option String) (subject : Option String) :
+    (Diag.of c message span help subject).code.front =
+      (Diag.of c message span help subject).severity.letter :=
   c.code_letter
 
 /-- The escape hatch: `\allow{W0307, ...}` in a document's preamble accepts

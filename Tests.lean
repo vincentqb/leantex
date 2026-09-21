@@ -193,6 +193,7 @@ def main (args : List String) : IO UInt32 := do
   hyphenChecks ref
   walkChecks ref
   diagChecks ref
+  pendingChecks ref
   pictureElabChecks ref
   diagVoiceChecks ref update
   allowChecks ref
