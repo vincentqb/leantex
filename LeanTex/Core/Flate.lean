@@ -657,22 +657,6 @@ def deflate (raw : ByteArray) : ByteArray := Id.run do
   out := out.push (UInt8.ofNat (a % 256))
   return out
 
-/-- Apply the PNG Up filter (type 2, ISO/IEC 15948 §9.2) to every row:
-each byte becomes its difference from the byte above, and each row opens
-with its filter type — the shape `pngUnfilter` inverts and a PDF reader's
-Predictor 15 undoes (ISO 32000-2 §7.4.4.4). Re-encoded image planes go
-through this before `deflate`: sample deltas compress far better than
-samples. -/
-def upFilter (px : ByteArray) (pxH rowBytes : Nat) : ByteArray := Id.run do
-  let mut out := ByteArray.emptyWithCapacity (px.size + pxH)
-  for r in [0:pxH] do
-    out := out.push 2
-    for k in [0:rowBytes] do
-      let x := (px[r * rowBytes + k]?.getD 0).toNat
-      let up := if r == 0 then 0 else (px[(r - 1) * rowBytes + k]?.getD 0).toNat
-      out := out.push (UInt8.ofNat ((x + 256 - up) % 256))
-  return out
-
 /-- FNV-1a over bytes: the content hash the PDF trailer ID and the
 driver's content-keyed caches share. Not cryptographic — a fingerprint
 for change detection, as ISO 32000-2 §14.4 asks of the file ID. -/
@@ -697,47 +681,141 @@ content-addressed cache files a value under — 32 filename-safe chars. -/
 def contentKey (b : ByteArray) : String :=
   hex16 (fnv64 14695981039346656037 b) ++ hex16 (fnv64 1099511628211 b)
 
+/-! ## A byte array as one equation
+
+`build n f` is the `n`-byte array whose byte `j` is `f` of the `j` bytes
+before it. Every derived plane below is spelled this way so that it *is*
+a statement — `getElem?_build` reads byte `j` off the definition, no loop
+to unroll — while the run stays one tail-recursive push per byte into a
+uniquely owned, pre-sized array. -/
+
+@[specialize] def build (n : Nat) (f : ByteArray → UInt8) : ByteArray :=
+  go (ByteArray.emptyWithCapacity n)
+where
+  @[specialize] go (out : ByteArray) : ByteArray :=
+    if _ : out.size < n then go (out.push (f out)) else out
+  termination_by n - out.size
+  decreasing_by simp only [ByteArray.size_push]; omega
+
+theorem build.go_of_le (n : Nat) (f : ByteArray → UInt8) (out : ByteArray)
+    (h : n ≤ out.size) : build.go n f out = out := by
+  rw [build.go]
+  simp [Nat.not_lt.mpr h]
+
+theorem build.go_succ (n : Nat) (f : ByteArray → UInt8) (out : ByteArray)
+    (h : out.size ≤ n) :
+    build.go (n + 1) f out = (build.go n f out).push (f (build.go n f out)) := by
+  rw [build.go]
+  simp only [show out.size < n + 1 by omega, ↓reduceDIte]
+  by_cases hlt : out.size < n
+  · rw [build.go_succ n f (out.push (f out)) (by simp only [ByteArray.size_push]; omega)]
+    conv => rhs; rw [build.go]
+    simp [hlt]
+  · have heq : n ≤ out.size := Nat.not_lt.mp hlt
+    rw [build.go_of_le (n + 1) f _ (by simp only [ByteArray.size_push]; omega),
+      build.go_of_le n f out heq]
+termination_by n - out.size
+decreasing_by simp only [ByteArray.size_push]; omega
+
+theorem build_zero (f : ByteArray → UInt8) : build 0 f = ByteArray.empty :=
+  build.go_of_le 0 f _ (Nat.zero_le _)
+
+theorem build_succ (n : Nat) (f : ByteArray → UInt8) :
+    build (n + 1) f = (build n f).push (f (build n f)) :=
+  build.go_succ n f (ByteArray.emptyWithCapacity (n + 1)) (Nat.zero_le _)
+
+theorem size_build (n : Nat) (f : ByteArray → UInt8) : (build n f).size = n := by
+  induction n with
+  | zero => rw [build_zero]; rfl
+  | succ n ih => rw [build_succ, ByteArray.size_push, ih]
+
+theorem getElem?_push (a : ByteArray) (b : UInt8) (i : Nat) :
+    (a.push b)[i]? = if i < a.size then a[i]? else if i = a.size then some b else none := by
+  by_cases h1 : i < a.size
+  · rw [getElem?_pos (a.push b) i (by rw [ByteArray.size_push]; omega), getElem?_pos a i h1]
+    simp only [h1, ↓reduceIte, ByteArray.getElem_eq_getElem_data, ByteArray.data_push]
+    exact congrArg some (Array.getElem_push_lt h1)
+  · simp only [h1, ↓reduceIte]
+    by_cases h2 : i = a.size
+    · subst h2
+      rw [getElem?_pos (a.push b) a.size (by rw [ByteArray.size_push]; omega)]
+      simp [ByteArray.getElem_eq_getElem_data, ByteArray.data_push, Array.getElem_push]
+    · simp only [h2, ↓reduceIte]
+      exact getElem?_neg (a.push b) i (by rw [ByteArray.size_push]; omega)
+
+/-- Byte `j` of `build n f` is `f` of the `j` bytes before it: the equation
+the whole array is. -/
+theorem getElem?_build (n : Nat) (f : ByteArray → UInt8) (j : Nat) (hj : j < n) :
+    (build n f)[j]? = some (f (build j f)) := by
+  induction n with
+  | zero => omega
+  | succ n ih =>
+    rw [build_succ, getElem?_push, size_build]
+    by_cases h : j < n
+    · simp [h, ih h]
+    · have : j = n := by omega
+      subst this
+      simp
+
+/-- One reconstructed byte (ISO/IEC 15948 §9.2, the five filter types): the
+raw byte plus its prediction from the left, upper, and upper-left
+neighbours, modulo 256. Types above 4 predict as Paeth here and are
+refused before this is reached (`pngUnfilter`). -/
+def predict (f x left up upLeft : Nat) : Nat :=
+  (x + (if f == 0 then 0 else if f == 1 then left else if f == 2 then up
+    else if f == 3 then (left + up) / 2
+    else
+      -- Paeth: the neighbour closest to the linear estimate.
+      let p : Int := (left : Int) + up - upLeft
+      let pa := (p - left).natAbs
+      let pb := (p - up).natAbs
+      let pc := (p - upLeft).natAbs
+      if pa ≤ pb && pa ≤ pc then left else if pb ≤ pc then up else upLeft)) % 256
+
+/-- Byte `out.size` of the plane whose first `out.size` bytes are `out`:
+row `j / rowBytes`, column `j % rowBytes`, predicted from the plane's own
+earlier bytes `bpp` to the left and `rowBytes` above (ISO/IEC 15948 §9).
+Total over any bytes — a missing input byte reads as 0. -/
+def unfilterByte (raw : ByteArray) (rowBytes bpp : Nat) (out : ByteArray) : UInt8 :=
+  let j := out.size
+  let r := j / rowBytes
+  let i := j % rowBytes
+  let f := (raw[r * (1 + rowBytes)]?.getD 0).toNat
+  let x := (raw[r * (1 + rowBytes) + 1 + i]?.getD 0).toNat
+  let left := if bpp ≤ i then (out[j - bpp]?.getD 0).toNat else 0
+  let up := if rowBytes ≤ j then (out[j - rowBytes]?.getD 0).toNat else 0
+  let upLeft := if rowBytes ≤ j ∧ bpp ≤ i then (out[j - rowBytes - bpp]?.getD 0).toNat
+    else 0
+  UInt8.ofNat (predict f x left up upLeft)
+
+/-- Every reconstructed sample of a predicted stream, as one equation
+(`unfilterByte`); `pngUnfilter` is the checked door in front of it. -/
+def unfilterAll (raw : ByteArray) (pxH rowBytes bpp : Nat) : ByteArray :=
+  build (pxH * rowBytes) (unfilterByte raw rowBytes bpp)
+
+/-- Two byte arrays agreeing at every index are one. -/
+theorem ext_of_getElem? (a b : ByteArray) (hs : a.size = b.size)
+    (h : ∀ i, i < a.size → a[i]? = b[i]?) : a = b := by
+  apply ByteArray.ext_getElem hs
+  intro i hi hi'
+  have := h i hi
+  rw [getElem?_pos a i hi, getElem?_pos b i hi'] at this
+  exact Option.some.inj this
+
 /-- Reverse the per-scanline PNG filters (ISO/IEC 15948 §9): each row opens
 with its filter type, predicting from the left, above, and above-left bytes
-at `bpp` distance. Total: bounds-checked reads, loops bounded by the
-declared geometry. Two consumers share it: PNG sample planes that must
-really decode (`Image.decodePng`) and PDF streams whose `/DecodeParms`
-declare a PNG predictor — cross-reference streams routinely do
-(ISO 32000-2 §7.4.4.4, Predictor 10–15). -/
+at `bpp` distance. Total: the geometry is checked against the input once,
+then `unfilterAll` is the plane. Two consumers share it: the image tests'
+semantic route, and PDF streams whose `/DecodeParms` declare a PNG
+predictor — cross-reference streams routinely do (ISO 32000-2 §7.4.4.4,
+Predictor 10–15). -/
 def pngUnfilter (raw : ByteArray) (pxH rowBytes bpp : Nat) :
-    Except String ByteArray := Id.run do
-  let mut out := ByteArray.empty
-  let mut pos := 0
-  for _ in [0:pxH] do
-    let some ft := raw[pos]? | return .error "corrupt PNG: truncated scanlines"
-    pos := pos + 1
-    if pos + rowBytes > raw.size then
-      return .error "corrupt PNG: truncated scanlines"
-    let f := ft.toNat
-    if f > 4 then
-      return .error s!"corrupt PNG: filter type {f}"
-    let rowStart := out.size
-    for i in [0:rowBytes] do
-      let x := (raw[pos + i]?.getD 0).toNat
-      let left := if i ≥ bpp then (out[rowStart + i - bpp]?.getD 0).toNat else 0
-      let up := if rowStart ≥ rowBytes then
-          (out[rowStart + i - rowBytes]?.getD 0).toNat else 0
-      let upLeft := if rowStart ≥ rowBytes && i ≥ bpp then
-          (out[rowStart + i - rowBytes - bpp]?.getD 0).toNat else 0
-      let v :=
-        if f == 0 then x
-        else if f == 1 then x + left
-        else if f == 2 then x + up
-        else if f == 3 then x + (left + up) / 2
-        else
-          -- Paeth: the neighbour closest to the linear estimate.
-          let p : Int := (left : Int) + up - upLeft
-          let pa := (p - left).natAbs
-          let pb := (p - up).natAbs
-          let pc := (p - upLeft).natAbs
-          x + (if pa ≤ pb && pa ≤ pc then left else if pb ≤ pc then up else upLeft)
-      out := out.push (UInt8.ofNat (v % 256))
-    pos := pos + rowBytes
-  return .ok out
+    Except String ByteArray :=
+  if raw.size < pxH * (1 + rowBytes) then
+    .error "corrupt PNG: truncated scanlines"
+  else if ∀ r < pxH, (raw[r * (1 + rowBytes)]?.getD 0).toNat ≤ 4 then
+    .ok (unfilterAll raw pxH rowBytes bpp)
+  else
+    .error "corrupt PNG: a scanline filter type above 4"
 
 end LeanTex.Core.Flate

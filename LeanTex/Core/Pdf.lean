@@ -862,8 +862,8 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         w := w'
         locs := locs.set! (imgId n) (1, off)
         if let some mid := smaskIds[n]?.getD none then
-          -- The alpha plane is Up-filtered before its deflate
-          -- (`Image.decodePng`), so the mask declares the same PNG
+          -- The alpha plane is the source's own filtered rows, deinterleaved
+          -- (`Image.splitPredictedAlpha`), so the mask declares the same PNG
           -- predictor its colour plane does (ISO 32000-2 §7.4.4.4).
           let mdict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
 /Height {inf.pxH} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode \

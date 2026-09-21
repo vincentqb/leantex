@@ -10,8 +10,7 @@ every stream the PDF writer emits for the bench's underline document
 (needs `lake build` first: the built binary produces them).
 Two graders judge every stream: the engine's `inflate`, and a foreign
 inflater (python3's zlib) so a defect the engine's decoder happens to
-forgive is still caught. Also checks `pngUnfilter` inverts `upFilter`
-over random geometries. An executable oracle, not a theorem: it witnesses
+forgive is still caught. An executable oracle, not a theorem: it witnesses
 the round trip on megabytes of input, it does not prove it.
 -/
 import LeanTex
@@ -142,22 +141,5 @@ def main : IO Unit := do
       s := s3
       arr := arr.push (UInt8.ofNat v)
     check dir s!"mixed #{k}" (ByteArray.mk arr)
-  -- upFilter/pngUnfilter round trip over random geometries.
-  for k in [0:30] do
-    let (h, s1) := rand s 40
-    let (rb, s2) := rand s1 200
-    s := s2
-    let h := h + 1
-    let rb := rb + 1
-    let mut arr : Array UInt8 := Array.mkEmpty (h * rb)
-    for _ in [0:h * rb] do
-      let (v, s3) := rand s 256
-      s := s3
-      arr := arr.push (UInt8.ofNat v)
-    let px := ByteArray.mk arr
-    match Flate.pngUnfilter (Flate.upFilter px h rb) h rb 1 with
-    | .ok back =>
-      unless back == px do die s!"upFilter #{k}: pngUnfilter did not invert ({h}×{rb})"
-    | .error e => die s!"upFilter #{k}: pngUnfilter refused: {e}"
   IO.FS.removeDirAll dir
   IO.println "flate-fuzz: all passed"

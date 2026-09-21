@@ -15,9 +15,13 @@ the file is the driver's effect; everything here is a total function over a
 crash and never a wrong number. The decoders read only what placement and
 embedding need: the pixel dimensions, the declared physical density, and
 enough of the header to hand the compressed data to the PDF writer
-(`/FlateDecode` with PNG prediction, `/DCTDecode`). Nothing inflates or
-re-encodes; a PNG form whose samples cannot pass through untouched (alpha,
-interlacing) is refused with a reason the driver can show. -/
+(`/FlateDecode` with PNG prediction, `/DCTDecode`). Opaque and indexed PNGs
+pass their IDAT through untouched; a PNG with an alpha channel inflates
+once and deinterleaves its filtered rows into a colour stream and a
+soft-mask stream — never its pixels — since a PDF image holds exactly its
+colour space's samples and carries opacity as a separate `/SMask` image.
+Interlaced and 16-bit-alpha PNGs are refused with a reason the driver can
+show. -/
 
 /-- Both specs can leave the physical size undeclared — PNG's pHYs is
 optional and "the physical size of each pixel is unknown" without it
@@ -57,12 +61,13 @@ structure Info where
   palette : ByteArray := ByteArray.empty
   data : ByteArray := ByteArray.empty
   /-- PNG only: `data` is PNG-predicted zlib — a pass-through IDAT
-  stream, or a re-encoded plane the engine Up-filtered before deflating —
-  and the PDF dictionary must declare the predictor. -/
+  stream, or the colour plane deinterleaved from an alpha PNG's filtered
+  rows and deflated again — and the PDF dictionary must declare the
+  predictor. -/
   predictor : Bool := false
-  /-- An alpha channel, as its own Up-filtered, zlib-compressed 8-bit
-  gray plane: the PDF soft mask, Predictor 15 declared. Empty when the
-  image is opaque. -/
+  /-- An alpha channel, as its own zlib-compressed 8-bit gray plane under
+  the source rows' own filters: the PDF soft mask, Predictor 15 declared.
+  Empty when the image is opaque. -/
   smask : ByteArray := ByteArray.empty
   /-- A PDF page read as a form XObject (`format == .pdf`): the box, the
   content, and the copied resource graph. The `wf` witness rides with it —
@@ -123,26 +128,321 @@ zlib stream (possibly split across chunks). Greyscale (0), truecolour (2),
 and indexed (3) samples pass through to a PDF `/FlateDecode` image XObject
 with the PNG predictor declared — their scanlines are pure sample runs after
 the per-row filter byte, which is exactly what the predictor describes. An
-alpha channel (types 4 and 6, 8-bit) interleaves samples PDF has no colour
-space for, so those really decode: inflate, unfilter, split into a colour
-plane and an SMask, re-encode. Adam7 interlacing and 16-bit alpha are
-refused with the reason. -/
+alpha channel (types 4 and 6, 8-bit) interleaves samples a PDF colour space
+cannot hold: ISO 32000-2 §8.9.5 gives an image exactly `/Colors` samples per
+pixel, and per-pixel opacity is a separate gray image named by `/SMask`
+(§11.6.5.3). So those inflate and deinterleave — the filtered residuals as
+they stand, each row's filter byte kept, never the pixels — into two
+predicted planes that deflate again (`splitPredictedAlpha`). Adam7
+interlacing and 16-bit alpha are refused with the reason. -/
 
 private def pngSig : List Nat := [137, 80, 78, 71, 13, 10, 26, 10]
 
-/-- Split interleaved pixels into the colour plane and the alpha plane:
-`channels` is 4 (RGBA) or 2 (grey + alpha), the alpha always last. -/
-private def splitAlpha (px : ByteArray) (channels : Nat) :
-    ByteArray × ByteArray := Id.run do
-  let colorCh := channels - 1
-  let n := px.size / channels
-  let mut color := ByteArray.empty
-  let mut alpha := ByteArray.empty
-  for p in [0:n] do
-    for c in [0:colorCh] do
-      color := color.push (px[p * channels + c]?.getD 0)
-    alpha := alpha.push (px[p * channels + colorCh]?.getD 0)
-  return (color, alpha)
+/-! ### Channel projection commutes with the row filters
+
+The five row filters predict each byte from the byte `bpp` to its left, the
+byte above, and the byte above-left (ISO/IEC 15948 §9.2; a PDF reader's
+Predictor 15 undoes the same five, ISO 32000-2 §7.4.4.4). Keeping `k` of a
+`chs`-sample pixel's samples sends byte `j` of a projected run to byte
+`j / k * chs + sel (j % k)` of the source run, and that map carries
+neighbours to neighbours: one projected pixel back is one source pixel back.
+So the filtered residuals deinterleave as they stand, and the two planes
+unfilter to the two projections of the source pixels — `splitPredictedAlpha_exact`.
+Stated over the artifact's encoding, not the IR: what a PDF reader
+reconstructs from the two streams the writer emits is a fact of the
+artifact, with no IR value behind it. -/
+
+/-- Source byte of byte `j` of a projected run of pixels. -/
+@[inline] def embPlane (chs k : Nat) (sel : Nat → Nat) (j : Nat) : Nat :=
+  j / k * chs + sel (j % k)
+
+/-- Keep `k` samples of every `chs`-sample pixel, chosen by `sel`. -/
+@[specialize] def project (px : ByteArray) (chs k : Nat) (sel : Nat → Nat) : ByteArray :=
+  Flate.build (px.size / chs * k) fun out => px[embPlane chs k sel out.size]?.getD 0
+
+/-- Split decoded pixels into the colour plane and the alpha plane:
+`chs` is 4 (RGBA) or 2 (grey + alpha), the alpha always last. The semantic
+route — what the fast path is proved to equal, and the tests' oracle; the
+engine itself never reconstructs the pixels. -/
+def splitAlpha (px : ByteArray) (chs : Nat) : ByteArray × ByteArray :=
+  (project px chs (chs - 1) id, project px chs 1 fun _ => chs - 1)
+
+/-- Source byte of byte `j` of a projected *predicted* stream: rows of
+`1 + W * k` bytes, each opening with the filter byte its source row (of
+`1 + W * chs` bytes) opens with. -/
+@[inline] def embPred (W chs k : Nat) (sel : Nat → Nat) (j : Nat) : Nat :=
+  let r := j / (1 + W * k)
+  let t := j % (1 + W * k)
+  if t = 0 then r * (1 + W * chs) else r * (1 + W * chs) + 1 + embPlane chs k sel (t - 1)
+
+/-- Project a predicted stream of `pxH` rows, `W` pixels of `chs` samples
+each, onto `k` samples per pixel — one read and one write per output byte. -/
+@[specialize] def projectPred (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat) :
+    ByteArray :=
+  Flate.build (pxH * (1 + W * k)) fun out => raw[embPred W chs k sel out.size]?.getD 0
+
+/-- The inflated IDAT of an alpha PNG (`chs` 4 or 2) as two predicted
+planes, colour and alpha, each row's filter byte preserved — what the PDF
+writer deflates and declares Predictor 15 on. -/
+def splitPredictedAlpha (raw : ByteArray) (pxH W chs : Nat) : ByteArray × ByteArray :=
+  (projectPred raw pxH W chs (chs - 1) id, projectPred raw pxH W chs 1 fun _ => chs - 1)
+
+theorem getElem?_project (px : ByteArray) (chs k : Nat) (sel : Nat → Nat) (j : Nat)
+    (hj : j < px.size / chs * k) :
+    (project px chs k sel)[j]? = some (px[embPlane chs k sel j]?.getD 0) := by
+  rw [project, Flate.getElem?_build _ _ j hj, Flate.size_build]
+
+theorem projectPred_filter (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat)
+    (r : Nat) (hr : r < pxH) :
+    (projectPred raw pxH W chs k sel)[r * (1 + W * k)]? =
+      some (raw[r * (1 + W * chs)]?.getD 0) := by
+  have hL : 0 < 1 + W * k := by omega
+  rw [projectPred, Flate.getElem?_build _ _ _ (Nat.mul_lt_mul_of_pos_right hr hL),
+    Flate.size_build, embPred]
+  simp [Nat.mul_div_cancel _ hL, Nat.mul_mod_left]
+
+theorem projectPred_sample (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat)
+    (r i : Nat) (hr : r < pxH) (hi : i < W * k) :
+    (projectPred raw pxH W chs k sel)[r * (1 + W * k) + 1 + i]? =
+      some (raw[r * (1 + W * chs) + 1 + embPlane chs k sel i]?.getD 0) := by
+  have hL : 0 < 1 + W * k := by omega
+  have hlt : r * (1 + W * k) + 1 + i < pxH * (1 + W * k) := by
+    have : (r + 1) * (1 + W * k) ≤ pxH * (1 + W * k) := Nat.mul_le_mul_right _ hr
+    rw [Nat.add_mul, Nat.one_mul] at this
+    omega
+  rw [projectPred, Flate.getElem?_build _ _ _ hlt, Flate.size_build, embPred]
+  have hq : (r * (1 + W * k) + 1 + i) / (1 + W * k) = r := by
+    rw [Nat.add_assoc, Nat.mul_comm r, Nat.mul_add_div hL, Nat.div_eq_of_lt (by omega)]
+    rfl
+  have hm : (r * (1 + W * k) + 1 + i) % (1 + W * k) = 1 + i := by
+    rw [Nat.add_assoc, Nat.mul_comm r, Nat.mul_add_mod, Nat.mod_eq_of_lt (by omega)]
+  simp [hq, hm]
+
+/-- Projection is an embedding of pixel runs: byte `j` of the projection is
+`j / (W * k)` rows down and `embPlane (j % (W * k))` into the source row —
+and that offset stays inside the row. -/
+theorem embPlane_row (chs k W : Nat) (sel : Nat → Nat) (hk : 0 < k)
+    (hsel : ∀ c < k, sel c < chs) (hW : 0 < W) (j : Nat) :
+    embPlane chs k sel j = j / (W * k) * (W * chs) + embPlane chs k sel (j % (W * k)) ∧
+    embPlane chs k sel (j % (W * k)) < W * chs := by
+  have hWk : 0 < W * k := Nat.mul_pos hW hk
+  have hi := Nat.mod_lt j hWk
+  have hdiv : j % (W * k) / k < W := (Nat.div_lt_iff_lt_mul hk).mpr hi
+  have hs := hsel (j % (W * k) % k) (Nat.mod_lt _ hk)
+  constructor
+  · have hj := Nat.div_add_mod j (W * k)
+    conv => lhs; rw [← hj]
+    unfold embPlane
+    rw [show W * k * (j / (W * k)) = k * (W * (j / (W * k))) by ac_rfl,
+      Nat.mul_add_div hk, Nat.mul_add_mod, Nat.add_mul]
+    ac_rfl
+  · unfold embPlane
+    have : (j % (W * k) / k + 1) * chs ≤ W * chs := Nat.mul_le_mul_right _ hdiv
+    rw [Nat.add_mul, Nat.one_mul] at this
+    omega
+
+/-- One projected pixel back is one source pixel back: subtracting `m`
+projected pixels from `j` subtracts `m` source pixels from its source byte. -/
+theorem embPlane_sub (chs k : Nat) (sel : Nat → Nat) (hk : 0 < k) (j m : Nat)
+    (h : k * m ≤ j) :
+    embPlane chs k sel (j - k * m) = embPlane chs k sel j - m * chs ∧
+    m * chs ≤ embPlane chs k sel j := by
+  have hq : m ≤ j / k := (Nat.le_div_iff_mul_le hk).mpr (by rw [Nat.mul_comm]; exact h)
+  have hmc : m * chs ≤ j / k * chs := Nat.mul_le_mul_right _ hq
+  unfold embPlane
+  rw [Nat.sub_mul_div_of_le _ _ _ h, Nat.sub_mul_mod h, Nat.sub_mul]
+  omega
+
+/-- A projected byte has a left neighbour exactly when its source byte does. -/
+theorem embPlane_ge_iff (chs k : Nat) (sel : Nat → Nat) (hk : 0 < k)
+    (hsel : ∀ c < k, sel c < chs) (j : Nat) :
+    chs ≤ embPlane chs k sel j ↔ k ≤ j := by
+  constructor
+  · intro h
+    rcases Nat.lt_or_ge j k with hlt | hge
+    · unfold embPlane at h
+      rw [Nat.div_eq_of_lt hlt, Nat.mod_eq_of_lt hlt, Nat.zero_mul, Nat.zero_add] at h
+      exact absurd (hsel j hlt) (Nat.not_lt.mpr h)
+    · exact hge
+  · intro h
+    have := (embPlane_sub chs k sel hk j 1 (by omega)).2
+    rwa [Nat.one_mul] at this
+
+/-- The heart of `splitPredictedAlpha_exact`: byte `j` of the unfiltered
+projected plane is byte `embPlane j` of the unfiltered source plane, by
+strong induction along the plane — each byte's three neighbours are earlier
+bytes whose sources are the source byte's three neighbours (`embPlane_sub`),
+and the residual and filter byte are the same bytes (`projectPred_sample`,
+`projectPred_filter`). -/
+theorem unfilterByte_project (raw : ByteArray) (pxH W chs k : Nat) (sel : Nat → Nat)
+    (hk : 0 < k) (hsel : ∀ c < k, sel c < chs) (hW : 0 < W) :
+    ∀ j, j < pxH * (W * k) →
+      Flate.unfilterByte (projectPred raw pxH W chs k sel) (W * k) k
+          (Flate.build j (Flate.unfilterByte (projectPred raw pxH W chs k sel) (W * k) k)) =
+        Flate.unfilterByte raw (W * chs) chs
+          (Flate.build (embPlane chs k sel j) (Flate.unfilterByte raw (W * chs) chs)) := by
+  intro j
+  induction j using Nat.strongRecOn with
+  | ind j ih =>
+    intro hj
+    have hWk : 0 < W * k := Nat.mul_pos hW hk
+    have hchs : 0 < chs := Nat.lt_of_le_of_lt (Nat.zero_le _) (hsel 0 hk)
+    have hWc : 0 < W * chs := Nat.mul_pos hW hchs
+    obtain ⟨hrow, hsmall⟩ := embPlane_row chs k W sel hk hsel hW j
+    have hr : j / (W * k) < pxH := (Nat.div_lt_iff_lt_mul hWk).mpr hj
+    have hi := Nat.mod_lt j hWk
+    -- The source byte's row and column.
+    have hJr : embPlane chs k sel j / (W * chs) = j / (W * k) := by
+      rw [hrow, Nat.mul_comm (j / (W * k)), Nat.mul_add_div hWc, Nat.div_eq_of_lt hsmall]
+      rfl
+    have hJi : embPlane chs k sel j % (W * chs) = embPlane chs k sel (j % (W * k)) := by
+      rw [hrow, Nat.mul_comm (j / (W * k)), Nat.mul_add_mod_self_left, Nat.mod_eq_of_lt hsmall]
+    -- Neighbours: one pixel left, one row up, both.
+    have hleft := embPlane_sub chs k sel hk j 1
+    have hup := embPlane_sub chs k sel hk j W
+    have hboth := embPlane_sub chs k sel hk j (W + 1)
+    have hcond := embPlane_ge_iff chs k sel hk hsel (j % (W * k))
+    have hmodle := Nat.mod_le j (W * k)
+    -- Each neighbour read, when it happens, is an earlier byte of the same
+    -- plane, and the induction hypothesis carries it across.
+    have hread : ∀ m, k * m ≤ j → m * chs ≤ embPlane chs k sel j →
+        (Flate.build j (Flate.unfilterByte (projectPred raw pxH W chs k sel) (W * k) k))[j - k * m]?
+          = (Flate.build (embPlane chs k sel j)
+              (Flate.unfilterByte raw (W * chs) chs))[embPlane chs k sel j - m * chs]? := by
+      intro m hm hmc
+      by_cases hm0 : m = 0
+      · subst hm0
+        simp only [Nat.mul_zero, Nat.sub_zero, Nat.zero_mul]
+        rw [getElem?_neg _ _ (by rw [Flate.size_build]; omega),
+          getElem?_neg _ _ (by rw [Flate.size_build]; omega)]
+      · have hmk : 0 < k * m := Nat.mul_pos hk (Nat.pos_of_ne_zero hm0)
+        have hmc0 : 0 < m * chs := Nat.mul_pos (Nat.pos_of_ne_zero hm0) hchs
+        rw [Flate.getElem?_build _ _ _ (by omega),
+          Flate.getElem?_build _ _ _ (by omega),
+          ih (j - k * m) (by omega) (by omega), (embPlane_sub chs k sel hk j m hm).1]
+    have h1 : k ≤ j % (W * k) ↔ chs ≤ embPlane chs k sel (j % (W * k)) := hcond.symm
+    have h2 : W * k ≤ j ↔ W * chs ≤ embPlane chs k sel j := by
+      constructor
+      · intro h
+        exact (hup (by rw [Nat.mul_comm]; exact h)).2
+      · intro h
+        rcases Nat.lt_or_ge j (W * k) with hlt | hge
+        · rw [Nat.div_eq_of_lt hlt, Nat.zero_mul, Nat.zero_add] at hrow
+          omega
+        · exact hge
+    -- The three neighbour terms, in the shape the unfolded byte reads them.
+    have hL : (if k ≤ j % (W * k) then
+          ((Flate.build j (Flate.unfilterByte (projectPred raw pxH W chs k sel) (W * k) k))[j - k]?.getD
+            0).toNat else 0) =
+        (if chs ≤ embPlane chs k sel (j % (W * k)) then
+          ((Flate.build (embPlane chs k sel j) (Flate.unfilterByte raw (W * chs) chs))[embPlane chs k sel j
+            - chs]?.getD 0).toNat else 0) := by
+      by_cases hl : k ≤ j % (W * k)
+      · have hkj : k * 1 ≤ j := by rw [Nat.mul_one]; omega
+        have := hread 1 hkj (hleft hkj).2
+        rw [Nat.mul_one, Nat.one_mul] at this
+        rw [ite_eq_left hl, ite_eq_left (h1.mp hl), this]
+      · rw [ite_eq_right hl, ite_eq_right (fun h => hl (h1.mpr h))]
+    have hU : (if W * k ≤ j then
+          ((Flate.build j (Flate.unfilterByte (projectPred raw pxH W chs k sel) (W * k) k))[j - W * k]?.getD
+            0).toNat else 0) =
+        (if W * chs ≤ embPlane chs k sel j then
+          ((Flate.build (embPlane chs k sel j) (Flate.unfilterByte raw (W * chs) chs))[embPlane chs k sel j
+            - W * chs]?.getD 0).toNat else 0) := by
+      by_cases hu : W * k ≤ j
+      · have hkW : k * W ≤ j := by rw [Nat.mul_comm]; exact hu
+        have := hread W hkW (hup hkW).2
+        rw [Nat.mul_comm k W] at this
+        rw [ite_eq_left hu, ite_eq_left (h2.mp hu), this]
+      · rw [ite_eq_right hu, ite_eq_right (fun h => hu (h2.mpr h))]
+    have hUL : (if W * k ≤ j ∧ k ≤ j % (W * k) then
+          ((Flate.build j (Flate.unfilterByte (projectPred raw pxH W chs k sel) (W * k) k))[j - W * k
+            - k]?.getD 0).toNat else 0) =
+        (if W * chs ≤ embPlane chs k sel j ∧ chs ≤ embPlane chs k sel (j % (W * k)) then
+          ((Flate.build (embPlane chs k sel j) (Flate.unfilterByte raw (W * chs) chs))[embPlane chs k sel j
+            - W * chs - chs]?.getD 0).toNat else 0) := by
+      by_cases hb : W * k ≤ j ∧ k ≤ j % (W * k)
+      · have hkW1 : k * (W + 1) ≤ j := by
+          have hj' := Nat.div_add_mod j (W * k)
+          have hq1 : 1 ≤ j / (W * k) := (Nat.le_div_iff_mul_le hWk).mpr (by omega)
+          have : W * k ≤ W * k * (j / (W * k)) := Nat.le_mul_of_pos_right _ hq1
+          rw [Nat.mul_add, Nat.mul_one, Nat.mul_comm k W]
+          omega
+        have := hread (W + 1) hkW1 (hboth hkW1).2
+        rw [Nat.mul_add, Nat.mul_one, Nat.mul_comm k W, Nat.add_mul, Nat.one_mul, ← Nat.sub_sub,
+          ← Nat.sub_sub] at this
+        rw [ite_eq_left hb, ite_eq_left ⟨h2.mp hb.1, h1.mp hb.2⟩, this]
+      · rw [ite_eq_right hb, ite_eq_right (fun h => hb ⟨h2.mpr h.1, h1.mpr h.2⟩)]
+    rw [Flate.unfilterByte, Flate.unfilterByte]
+    simp only [Flate.size_build, hJr, hJi, projectPred_filter raw pxH W chs k sel _ hr,
+      projectPred_sample raw pxH W chs k sel _ _ hr hi, Option.getD_some]
+    rw [hL, hU, hUL]
+
+/-- Deinterleaving the *filtered* residuals is exact: unfiltering the colour
+and alpha planes `splitPredictedAlpha` writes yields exactly the colour and
+alpha projections (`splitAlpha`) of unfiltering the original — for every
+predicted stream the engine's unfilter accepts, at every width and height,
+under every mix of the five row filters. The PDF reader's Predictor 15
+reconstructs what the pixel route would have shipped, and the engine never
+materializes the pixels. Stated over the artifact's encoding, not the IR
+(see the section note). -/
+theorem splitPredictedAlpha_exact (raw : ByteArray) (pxH W chs : Nat) (h2 : 2 ≤ chs)
+    (hW : 0 < W) (px : ByteArray)
+    (h : Flate.pngUnfilter raw pxH (W * chs) chs = .ok px) :
+    Flate.pngUnfilter (splitPredictedAlpha raw pxH W chs).1 pxH (W * (chs - 1)) (chs - 1) =
+        .ok (splitAlpha px chs).1 ∧
+      Flate.pngUnfilter (splitPredictedAlpha raw pxH W chs).2 pxH W 1 =
+        .ok (splitAlpha px chs).2 := by
+  have hchs : 0 < chs := by omega
+  -- What the hypothesis says: the source stream is long enough, its filter
+  -- bytes are legal, and `px` is its plane.
+  unfold Flate.pngUnfilter at h
+  split at h
+  · exact absurd h (by simp)
+  split at h
+  · next _ hft =>
+    have hpx : px = Flate.unfilterAll raw pxH (W * chs) chs := (Except.ok.inj h).symm
+    subst hpx
+    -- One projection at a time, both instances of the same fact.
+    have core : ∀ k (sel : Nat → Nat), 0 < k → (∀ c < k, sel c < chs) →
+        Flate.pngUnfilter (projectPred raw pxH W chs k sel) pxH (W * k) k =
+          .ok (project (Flate.unfilterAll raw pxH (W * chs) chs) chs k sel) := by
+      intro k sel hk hsel
+      unfold Flate.pngUnfilter
+      have hsz : (projectPred raw pxH W chs k sel).size = pxH * (1 + W * k) := by
+        rw [projectPred, Flate.size_build]
+      have hall : ∀ r < pxH, ((projectPred raw pxH W chs k sel)[r * (1 + W * k)]?.getD 0).toNat
+          ≤ 4 := by
+        intro r hr
+        rw [projectPred_filter raw pxH W chs k sel r hr, Option.getD_some]
+        exact hft r hr
+      have hdiv : pxH * (W * chs) / chs = pxH * W := by
+        rw [← Nat.mul_assoc]; exact Nat.mul_div_cancel _ hchs
+      simp only [hsz, Nat.lt_irrefl, ↓reduceIte]
+      rw [ite_eq_left hall]
+      congr 1
+      apply Flate.ext_of_getElem?
+      · rw [Flate.unfilterAll, Flate.size_build, project, Flate.size_build, Flate.unfilterAll,
+          Flate.size_build, hdiv, Nat.mul_assoc]
+      · intro j hj
+        rw [Flate.unfilterAll, Flate.size_build] at hj
+        rw [Flate.unfilterAll, Flate.getElem?_build _ _ j hj,
+          unfilterByte_project raw pxH W chs k sel hk hsel hW j hj,
+          getElem?_project _ _ _ _ _ (by
+            rw [Flate.unfilterAll, Flate.size_build, hdiv, Nat.mul_assoc]; exact hj),
+          Flate.unfilterAll, Flate.getElem?_build _ _ _ (by
+            rw [(embPlane_row chs k W sel hk hsel hW j).1]
+            have hr : j / (W * k) < pxH := (Nat.div_lt_iff_lt_mul (Nat.mul_pos hW hk)).mpr hj
+            have : (j / (W * k) + 1) * (W * chs) ≤ pxH * (W * chs) := Nat.mul_le_mul_right _ hr
+            rw [Nat.add_mul, Nat.one_mul] at this
+            have := (embPlane_row chs k W sel hk hsel hW j).2
+            omega),
+          Option.getD_some]
+    refine ⟨?_, ?_⟩
+    · exact core (chs - 1) id (by omega) (fun c hc => by simp only [id]; omega)
+    · have := core 1 (fun _ => chs - 1) Nat.one_pos (fun _ _ => by omega)
+      rwa [Nat.mul_one] at this
+  · exact absurd h (by simp)
 
 def decodePng (b : ByteArray) : Except String Info := do
   unless sliceEq b 0 pngSig do
@@ -218,20 +518,21 @@ re-export at 8 bits or flatten it"
     return { format := .png, pxW, pxH, dpiX, dpiY, bitDepth, space, palette,
              data := idat, predictor := true }
   | some channels =>
-    -- The samples cannot pass through: inflate against the size the
-    -- geometry declares, unfilter, split — then each plane is Up-filtered
-    -- and really compressed, so the embedded object costs on the order of
-    -- what the source cost, never what the raw samples weigh.
+    -- The samples cannot pass through as one stream: inflate against the
+    -- size the geometry declares, then deinterleave the filtered residuals
+    -- into the colour plane and the alpha plane — each row's own filter
+    -- kept, no pixel ever reconstructed (`splitPredictedAlpha_exact`) —
+    -- and deflate each, so the embedded object costs on the order of what
+    -- the source cost, never what the raw samples weigh.
     let rowBytes := pxW * channels
     let raw ← Flate.inflate idat (pxH * (1 + rowBytes))
     if raw.size != pxH * (1 + rowBytes) then
       throw "corrupt PNG: sample data does not match the declared size"
-    let px ← Flate.pngUnfilter raw pxH rowBytes channels
-    let (color, alphaPlane) := splitAlpha px channels
+    let (color, alphaPlane) := splitPredictedAlpha raw pxH pxW channels
     return { format := .png, pxW, pxH, dpiX, dpiY, bitDepth := 8, space,
-             data := Flate.deflate (Flate.upFilter color pxH (pxW * (channels - 1)))
+             data := Flate.deflate color
              predictor := true
-             smask := Flate.deflate (Flate.upFilter alphaPlane pxH pxW) }
+             smask := Flate.deflate alphaPlane }
 
 /-! ## JPEG
 

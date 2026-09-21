@@ -1627,6 +1627,51 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "thin space escape" ((elabStr "a\\,b").1.body ==
     #[.para #[.text "a b"]])
 
+/-- `splitPredictedAlpha_exact`, executed: over seeded random pixels with a
+random filter type per row, for grey+alpha and RGBA at several geometries
+(one-pixel rows, one-row images, wide rows), unfiltering the two residual
+planes equals projecting the unfiltered pixels, and the split keeps every
+row's filter byte. Alongside, the unfilter inverts the forward filter of
+every type. -/
+def alphaSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let mut s : UInt64 := 0x2545F4914F6CDD1D
+  let mut n := 0
+  let mut allExact := true
+  let mut allKeepFilter := true
+  let mut allInvert := true
+  let mut sawFilter : Array Bool := Array.replicate 5 false
+  for (pxH, w, chs) in [(1, 1, 4), (1, 1, 2), (1, 7, 4), (3, 1, 2), (2, 2, 4), (5, 9, 4),
+      (4, 6, 2), (7, 3, 4)] do
+    for _ in [0:6] do
+      let rowBytes := w * chs
+      let mut px := ByteArray.emptyWithCapacity (pxH * rowBytes)
+      for _ in [0:pxH * rowBytes] do
+        let (v, s') := rand s 256
+        s := s'
+        px := px.push (UInt8.ofNat v)
+      let mut fts : Array Nat := #[]
+      for _ in [0:pxH] do
+        let (f, s') := rand s 5
+        s := s'
+        fts := fts.push f
+        sawFilter := sawFilter.setIfInBounds f true
+      let ft (r : Nat) : Nat := fts[r]?.getD 0
+      let raw := pngFilter px pxH rowBytes chs ft
+      unless Flate.pngUnfilter raw pxH rowBytes chs == .ok px do allInvert := false
+      let (color, alpha) := Image.splitPredictedAlpha raw pxH w chs
+      let (colorPx, alphaPx) := Image.splitAlpha px chs
+      unless Flate.pngUnfilter color pxH (w * (chs - 1)) (chs - 1) == .ok colorPx &&
+          Flate.pngUnfilter alpha pxH w 1 == .ok alphaPx do allExact := false
+      for r in [0:pxH] do
+        unless color[r * (1 + w * (chs - 1))]? == some (UInt8.ofNat (ft r)) &&
+            alpha[r * (1 + w)]? == some (UInt8.ofNat (ft r)) do allKeepFilter := false
+      n := n + 1
+  t s!"residual split unfilters to the pixel projections ({n} cases)" allExact
+  t "residual split keeps every row's filter byte" allKeepFilter
+  t "pngUnfilter inverts the forward filter of every type" allInvert
+  t "the random rows exercised all five filter types" (sawFilter.all id)
+
 /-- Images: the decoders' verdicts over synthetic bytes and the shipped
 fixtures, the sizing contract on placed pages, the placeholder path, the PDF
 embedding, and the HTML emit. Decoder totality over truncations and random
@@ -1664,8 +1709,8 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      | .ok inf => inf.dpiX == 150 && inf.width == Dim.pt 64 * 72 / 150
      | .error _ => false)
   -- Refusals and the decode path, each with its reason: 16-bit alpha and
-  -- interlace refuse; 8-bit alpha really decodes — inflate, unfilter,
-  -- split — and the alpha plane comes back as an SMask.
+  -- interlace refuse; 8-bit alpha inflates and splits its filtered rows —
+  -- never its pixels — and the alpha plane comes back as an SMask.
   t "png 16-bit alpha refused"
     (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 16 6 0) ++
       chunk "IDAT" [0] ++ chunk "IEND" [])) with
@@ -1685,6 +1730,14 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
          .ok (bytes [10, 20, 30, 40, 50, 60, 5, 5, 5, 6, 7, 8]) &&
        ((Flate.inflate inf.smask 6).bind fun rows =>
          Flate.pngUnfilter rows 2 2 1) == .ok (bytes [255, 128, 7, 16])
+     | .error _ => false)
+  -- The planes are the source's residuals under the source's own filters
+  -- (None, then Sub), not a re-filtering: the split never saw a pixel.
+  t "png alpha planes keep the source rows' filter bytes"
+    (match Image.decodePng rgbaPng with
+     | .ok inf =>
+       Flate.inflate inf.data 14 == .ok (bytes [0, 10, 20, 30, 40, 50, 60, 1, 5, 5, 5, 1, 2, 3]) &&
+       Flate.inflate inf.smask 6 == .ok (bytes [0, 255, 128, 1, 7, 9])
      | .error _ => false)
   -- The inflate under it round-trips its own stored encoder, and reads a
   -- real compressor's stream: rects.png's IDAT is zlib at level 9, and its

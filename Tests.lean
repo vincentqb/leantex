@@ -35,6 +35,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   fontShipChecks ref
   deckCssChecks ref
   deckImageChecks ref
+  alphaSplitChecks ref
   deckStructureChecks ref
   deckProgressChecks ref
   mathmlChecks ref

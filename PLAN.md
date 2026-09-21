@@ -132,6 +132,41 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — an alpha PNG's transcode never reconstructs its pixels
+(alpha-transcode slice). Why an RGBA PNG cannot pass through: a PDF image
+XObject holds exactly its colour space's samples per pixel (ISO 32000-2
+§8.9.5; `/FlateDecode` is a filter, not a fourth component), and per-pixel
+opacity is a separate gray image named by `/SMask` (§11.6.5.3) — so the
+two-stream output was and is correct, and JPX would be a new codec, not a
+pass-through. What was avoidable was ours: inflate → unfilter (84 MB of
+pixels) → split → Up-filter both planes → deflate both. The five row
+filters are component-separable under channel projection — keeping `k` of
+`chs` samples sends projected byte `j` to source byte
+`j / k * chs + sel (j % k)`, and one projected pixel back is one source
+pixel back — so the inflated IDAT's *residuals* now deinterleave as they
+stand, each row's filter byte kept (`Image.splitPredictedAlpha`), and the
+two planes deflate again. The statement is `splitPredictedAlpha_exact`:
+for every predicted stream `Flate.pngUnfilter` accepts, unfiltering the
+two planes equals projecting (`Image.splitAlpha`, now the semantic route
+and the tests' oracle) the unfiltered original — proved, not staged. The
+factorization the proof forced: a byte array built by one equation
+(`Flate.build`, with `getElem?_build : (build n f)[j]? = some (f (build j f))`)
+so a plane *is* its index equation and no loop is unrolled; `pngUnfilter`
+restated as a checked door over `unfilterAll = build … unfilterByte`, and
+the theorem a strong induction along the plane whose three neighbour
+reads are `embPlane_sub` at one pixel, one row, and both. `Flate.upFilter`
+and the imperative `splitAlpha` are gone. Measured on the 4575² RGBA
+deck asset (the theorem's real instance; `pdfimages` puts it at ~6512 ppi
+as placed — downsampling at source is the document's own, lossy call and
+was not made): cold image phase 6063 → 3929 ms median (inflate 1.56 s,
+split 0.87 s, deflate 1.47 s), PDF 2,226,899 → 2,182,614 bytes, RGB stream
+864 → 850 KiB, SMask 531 → 502 KiB, warm total unchanged (~185 ms); the
+four pages that place it raster pixel-identical, the extracted image and
+mask equal the source's channels byte for byte under a foreign decoder,
+and the résumé, card and paper are byte-identical. `Flate.build`'s inner
+loop must be `@[specialize]`d itself, not only its wrapper: a closure call
+per byte cost 1047 ms over 84 MB against 223 ms specialized.
+
 2026-09-21 — the compressor pays for itself (deflate-fast slice): the
 build-cache landing had put a 2.3× regression on the bench's underline
 row (443 → 1040 ms), and profiling the document's 45 content streams
@@ -215,6 +250,7 @@ fold, `renderCite_plain` its leaf), `Image.fulfil_named` and
   could carry cite spans into `analyse` the way bib and image spans
   travel.
 
+||||||| parent of e1a3b0b (Deinterleave an alpha PNG's filtered rows instead of its pixels)
 2026-09-21 — the guard's reference-document findings, repaid as effects
 (fix-column slice). beamer's command-form `\column{w}` is the environment
 form with its close implicit (user guide §12.7; both openers run

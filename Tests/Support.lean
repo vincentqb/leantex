@@ -16,6 +16,32 @@ def check (ref : IO.Ref (List String)) (name : String) (ok : Bool) : IO Unit := 
 
 def bytes (l : List UInt8) : ByteArray := ⟨l.toArray⟩
 
+/-- The PNG row filters forward (ISO/IEC 15948 §9.2), one type per row via
+`ft`: the synthesizer that hands the engine's unfilter and residual split
+every filter, every geometry, so their statements can be exercised on
+inputs the engine never wrote itself. -/
+def pngFilter (px : ByteArray) (pxH rowBytes bpp : Nat) (ft : Nat → Nat) : ByteArray := Id.run do
+  let sample (r i : Nat) : Nat := (px[r * rowBytes + i]?.getD 0).toNat
+  let mut out := ByteArray.emptyWithCapacity (px.size + pxH)
+  for r in [0:pxH] do
+    let f := ft r
+    out := out.push (UInt8.ofNat f)
+    for i in [0:rowBytes] do
+      let left := if bpp ≤ i then sample r (i - bpp) else 0
+      let up := if 1 ≤ r then sample (r - 1) i else 0
+      let upLeft := if 1 ≤ r ∧ bpp ≤ i then sample (r - 1) (i - bpp) else 0
+      let pred :=
+        if f == 0 then 0 else if f == 1 then left else if f == 2 then up
+        else if f == 3 then (left + up) / 2
+        else
+          let p : Int := (left : Int) + up - upLeft
+          let pa := (p - left).natAbs
+          let pb := (p - up).natAbs
+          let pc := (p - upLeft).natAbs
+          if pa ≤ pb && pa ≤ pc then left else if pb ≤ pc then up else upLeft
+      out := out.push (UInt8.ofNat ((sample r i + 256 - pred) % 256))
+  return out
+
 /-- xorshift64*: deterministic, dependency-free (as in scripts/kp-fuzz.lean).
 Returns the new state and the output value. -/
 def nextRand (s : UInt64) : UInt64 × UInt64 :=
