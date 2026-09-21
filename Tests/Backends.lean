@@ -1925,10 +1925,11 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (blOut.pages.size == 2 && pageHasImage blOut.pages[0]! &&
      !pageHasImage blOut.pages[1]!)
   -- A bare graphicx name gains the extension the file on disk has; the
-  -- candidate order tries the name as written first.
+  -- candidate order tries the name as written first, then `.pdf` —
+  -- graphicx's own order under pdfTeX.
   t "source candidates try the written name first"
-    ((Image.sourceCandidates "figures/plot").take 2 ==
-      ["figures/plot", "figures/plot.png"])
+    ((Image.sourceCandidates "figures/plot").take 3 ==
+      ["figures/plot", "figures/plot.pdf", "figures/plot.png"])
   t "html names the resolved file, not the bare spelling"
     (let store2 : Image.Store := { entries := #[
       { src := "figures/plot", href := "figures/plot.png", info := pngInfo.toOption }] }
@@ -2063,3 +2064,74 @@ def footnoteBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "md: an unnoted document is unchanged in shape"
     (let md0 := MarkdownDoc.emit (elabStr (dvDoc "" "plain words")).1
      md0.endsWith "\n" && !(md0.endsWith "\n\n") && !((md0.splitOn "[^").length ≥ 2))
+
+/-- The PDF-figure path (PLAN's asset half of the graphics boundary):
+`\includegraphics{x.pdf}` embeds page 1 as a form XObject. The fixture is
+the engine's own output (`tests/corpus/figures/box.tex` is its committed
+generator), so the reader is exercised against the writer — xref stream,
+object stream, embedded font program and all — and the roundtrip below
+reads back the file this test writes. -/
+def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let pdfData ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
+  let inf? := Image.decode pdfData
+  t "shipped pdf decodes as a form"
+    (match inf? with
+     | .ok inf => inf.format == .pdf && inf.form.isSome
+     | .error _ => false)
+  -- The intrinsic size is the page box (`form_bbox_exact`'s other half):
+  -- the card declared 90 × 54 mm, and the writer's `Sp.toPtString`
+  -- rounded each edge once at the thousandth of a point — so the read
+  -- box stands within one thousandth-pt unit of the declared size.
+  t "pdf intrinsic size is the page box"
+    (match inf? with
+     | .ok inf =>
+       (Dim.mm 90 - inf.width).natAbs ≤ 66 &&
+       (Dim.mm 54 - inf.height).natAbs ≤ 66
+     | .error _ => false)
+  -- The copied graph: the fixture embeds a font, so its resource closure
+  -- is non-trivial; `resources_closed` rides in the subtype the decoder
+  -- stored, so a dangling hole is unrepresentable here.
+  t "pdf resources graph copied with the page"
+    (match inf? with
+     | .ok inf =>
+       (inf.form.map fun f =>
+         f.val.objects.size > 0 && !f.val.content.isEmpty).getD false
+     | .error _ => false)
+  -- Totality over truncations, as fonts: a verdict for every prefix, the
+  -- full sweep living in scripts/img-fuzz.lean.
+  t "pdf decode total over truncations"
+    (((List.range 64).map fun k =>
+      (Image.decode (pdfData.extract 0 (pdfData.size * k / 64))).isOk).length == 64)
+  t "pdf decode rejects a headerless tail"
+    ((Image.decode (pdfData.extract 4 pdfData.size)).isOk == false)
+  -- Write → read: place the fixture at a declared size, write the PDF,
+  -- and the file carries the form XObject, its xref verifies, and this
+  -- engine's own reader follows the produced file back to a form.
+  let store : Image.Store := { entries := #[
+    { src := "box.pdf", info := inf?.toOption }] }
+  let (doc, _) := Elab.run "t"
+    "\\includegraphics[width=100pt, alt={An embedded synthetic card}]{box.pdf}"
+  let out := layoutOf oneFace doc {} none store
+  let pdf := Pdf.write {} oneFace out.pages (imgs := store)
+  t "written pdf carries the form XObject" (bytesContain pdf "/Subtype /Form")
+  t "written pdf carries the normalizing matrix" (bytesContain pdf "/Matrix")
+  t "written pdf xref verifies over the copied graph" ((checkXref pdf).isOk)
+  t "written pdf reads back: forms within forms"
+    (match PdfRead.readForm pdf with
+     | .ok f => !f.val.content.isEmpty
+     | .error _ => false)
+  -- The placed segment takes the declared width, and the height follows
+  -- the box's own ratio, as every image does (`resolveSize`).
+  let segs := Id.run do
+    let mut acc : Array (Option Nat × Dim.Sp × Dim.Sp) := #[]
+    for p in out.pages do
+      for l in p.lines do
+        for s in l.segs do
+          if let .image idx w h := s then acc := acc.push (idx, w, h)
+    return acc
+  t "pdf figure places at the declared width"
+    (match inf?, segs with
+     | .ok inf, #[(some 0, w, h)] =>
+       w == Dim.pt 100 && h == Dim.pt 100 * inf.height / inf.width
+     | _, _ => false)

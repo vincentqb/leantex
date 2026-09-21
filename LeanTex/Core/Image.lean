@@ -1,5 +1,6 @@
 import LeanTex.Core.Dim
 import LeanTex.Core.Flate
+import LeanTex.Core.PdfRead
 
 namespace LeanTex.Core.Image
 
@@ -27,6 +28,8 @@ def defaultDpi : Nat := 72
 inductive Format where
   | png
   | jpeg
+  /-- Page 1 of a PDF, embedded as a form XObject: vector stays vector. -/
+  | pdf
   deriving Repr, BEq, Inhabited
 
 /-- The colour interpretation the PDF image dictionary needs. -/
@@ -58,6 +61,11 @@ structure Info where
   /-- An alpha channel, as its own zlib-compressed 8-bit gray plane: the PDF
   soft mask. Empty when the image is opaque. -/
   smask : ByteArray := ByteArray.empty
+  /-- A PDF page read as a form XObject (`format == .pdf`): the box, the
+  content, and the copied resource graph. The `wf` witness rides with it —
+  `PdfRead.resources_closed` — so the writer never meets a dangling
+  reference. -/
+  form : Option { f : PdfRead.Form // f.wf } := none
   deriving Inhabited
 
 /-- Samples per pixel, for `/DecodeParms /Colors`. -/
@@ -66,12 +74,18 @@ def Space.components : Space → Nat
   | .rgb => 3
   | .indexed => 1
 
-/-- Intrinsic physical width: pixels over density, in sp. -/
+/-- Intrinsic physical width: pixels over density, in sp — and for a PDF
+page, its box, exact to the sp (the `form_bbox_exact` half of the story:
+the intrinsic size *is* the page box). -/
 def Info.width (i : Info) : Sp :=
-  (i.pxW : Int) * 72 * spPerPt / max i.dpiX 1
+  match i.form with
+  | some f => f.val.w
+  | none => (i.pxW : Int) * 72 * spPerPt / max i.dpiX 1
 
 def Info.height (i : Info) : Sp :=
-  (i.pxH : Int) * 72 * spPerPt / max i.dpiY 1
+  match i.form with
+  | some f => f.val.h
+  | none => (i.pxH : Int) * 72 * spPerPt / max i.dpiY 1
 
 /-- At the default density one pixel is one point: the convention is not
 just a comment, it is what `Info.width` computes. -/
@@ -112,46 +126,6 @@ plane and an SMask, re-encode. Adam7 interlacing and 16-bit alpha are
 refused with the reason. -/
 
 private def pngSig : List Nat := [137, 80, 78, 71, 13, 10, 26, 10]
-
-/-- Reverse the per-scanline PNG filters (ISO/IEC 15948 §9): each row opens
-with its filter type, predicting from the left, above, and above-left bytes
-at `bpp` distance. Total: bounds-checked reads, loops bounded by the
-declared geometry. -/
-private def unfilter (raw : ByteArray) (pxH rowBytes bpp : Nat) :
-    Except String ByteArray := Id.run do
-  let mut out := ByteArray.empty
-  let mut pos := 0
-  for _ in [0:pxH] do
-    let some ft := raw[pos]? | return .error "corrupt PNG: truncated scanlines"
-    pos := pos + 1
-    if pos + rowBytes > raw.size then
-      return .error "corrupt PNG: truncated scanlines"
-    let f := ft.toNat
-    if f > 4 then
-      return .error s!"corrupt PNG: filter type {f}"
-    let rowStart := out.size
-    for i in [0:rowBytes] do
-      let x := (raw[pos + i]?.getD 0).toNat
-      let left := if i ≥ bpp then (out[rowStart + i - bpp]?.getD 0).toNat else 0
-      let up := if rowStart ≥ rowBytes then
-          (out[rowStart + i - rowBytes]?.getD 0).toNat else 0
-      let upLeft := if rowStart ≥ rowBytes && i ≥ bpp then
-          (out[rowStart + i - rowBytes - bpp]?.getD 0).toNat else 0
-      let v :=
-        if f == 0 then x
-        else if f == 1 then x + left
-        else if f == 2 then x + up
-        else if f == 3 then x + (left + up) / 2
-        else
-          -- Paeth: the neighbour closest to the linear estimate.
-          let p : Int := (left : Int) + up - upLeft
-          let pa := (p - left).natAbs
-          let pb := (p - up).natAbs
-          let pc := (p - upLeft).natAbs
-          x + (if pa ≤ pb && pa ≤ pc then left else if pb ≤ pc then up else upLeft)
-      out := out.push (UInt8.ofNat (v % 256))
-    pos := pos + rowBytes
-  return .ok out
 
 /-- Split interleaved pixels into the colour plane and the alpha plane:
 `channels` is 4 (RGBA) or 2 (grey + alpha), the alpha always last. -/
@@ -247,7 +221,7 @@ re-export at 8 bits or flatten it"
     let raw ← Flate.inflate idat (pxH * (1 + rowBytes))
     if raw.size != pxH * (1 + rowBytes) then
       throw "corrupt PNG: sample data does not match the declared size"
-    let px ← unfilter raw pxH rowBytes channels
+    let px ← Flate.pngUnfilter raw pxH rowBytes channels
     let (color, alphaPlane) := splitAlpha px channels
     return { format := .png, pxW, pxH, dpiX, dpiY, bitDepth := 8, space,
              data := Flate.deflateStored color
@@ -325,11 +299,20 @@ def decodeJpeg (b : ByteArray) : Except String Info := do
   return { format := .jpeg, pxW, pxH, dpiX, dpiY, bitDepth := 8, space,
            data := b }
 
-/-- Decode either format, told apart by signature. -/
+/-- Decode any embeddable asset, told apart by signature: PNG, JPEG, or a
+PDF whose page 1 embeds as a form XObject. -/
 def decode (b : ByteArray) : Except String Info :=
   if sliceEq b 0 pngSig then decodePng b
   else if sliceEq b 0 [0xFF, 0xD8] then decodeJpeg b
-  else .error "not a PNG or JPEG file (unrecognised signature)"
+  else if sliceEq b 0 [0x25, 0x50, 0x44, 0x46] then do
+    let f ← PdfRead.readForm b
+    -- The pixel fields are the box rounded to whole points: only the dump
+    -- and the placeholder read them; placement reads the box exactly.
+    return { format := .pdf
+             pxW := (max 0 f.val.w / spPerPt).toNat
+             pxH := (max 0 f.val.h / spPerPt).toNat
+             form := some f }
+  else .error "not a PNG, JPEG, or PDF file (unrecognised signature)"
 
 /-! ## The store: effects as data
 
@@ -349,11 +332,11 @@ structure Loaded where
   deriving Inhabited
 
 /-- graphicx resolves an extensionless name against its extension list; the
-same convention here, over the formats that embed. The candidates are tried
-in order, the name as written first. -/
+same convention here, over the formats that embed — `.pdf` first past the
+name as written, graphicx's own order under pdfTeX. -/
 def sourceCandidates (src : String) : List String :=
-  [src, src ++ ".png", src ++ ".jpg", src ++ ".jpeg", src ++ ".PNG",
-   src ++ ".JPG", src ++ ".JPEG"]
+  [src, src ++ ".pdf", src ++ ".png", src ++ ".jpg", src ++ ".jpeg",
+   src ++ ".PDF", src ++ ".PNG", src ++ ".JPG", src ++ ".JPEG"]
 
 structure Store where
   entries : Array Loaded := #[]

@@ -1,0 +1,17 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Open Sans"
+section 1 number "1"
+  text "A vector figure"
+para
+  text "Before the figure."
+center
+  para
+    image "figures/box.pdf" width 600/1000tw alt "A synthetic card page, embedded as vectors"
+para
+  text "And extensionless: "
+  image "figures/box" height 20pt alt "The same card, small"
+  text "."
+-- diagnostics
+note[N0100] 2:1 '\usepackage{graphicx}' → nothing: the engine does this itself

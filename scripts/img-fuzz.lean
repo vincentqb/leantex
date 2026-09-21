@@ -31,6 +31,7 @@ def die (msg : String) : IO Unit := do
 def main : IO Unit := do
   let png ← IO.FS.readBinFile "tests/corpus/rects.png"
   let jpg ← IO.FS.readBinFile "tests/corpus/rects.jpg"
+  let pdf ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
   -- The anchor: the pristine files decode to the sizes images-note.md
   -- records. A fuzzer that cannot tell a lie from a verdict tests nothing.
   match Image.decode png with
@@ -43,16 +44,32 @@ def main : IO Unit := do
     unless inf.pxW == 64 && inf.pxH == 40 && inf.format == .jpeg do
       die s!"jpg decoded to {inf.pxW}x{inf.pxH}"
   | .error e => die s!"pristine jpg refused: {e}"
+  -- The PDF fixture is the engine's own output (figures/box.tex): a 90x54mm
+  -- card, 255x153 whole points.
+  match Image.decode pdf with
+  | .ok inf =>
+    unless inf.pxW == 255 && inf.pxH == 153 && inf.format == .pdf do
+      die s!"pdf decoded to {inf.pxW}x{inf.pxH}"
+  | .error e => die s!"pristine pdf refused: {e}"
   let mut verdicts := 0
   let mut oks := 0
-  -- Every truncation length of both fixtures.
+  -- Every truncation length of both raster fixtures.
   for base in [png, jpg] do
     for n in [0:base.size + 1] do
       if (Image.decode (base.extract 0 n)).isOk then oks := oks + 1
       verdicts := verdicts + 1
+  -- The PDF fixture is ~100 KB, so its truncations are strided: every
+  -- length below 512, then 2048 evenly spaced cuts across the rest.
+  for n in [0:512] do
+    if (Image.decode (pdf.extract 0 n)).isOk then oks := oks + 1
+    verdicts := verdicts + 1
+  for k in [0:2048] do
+    let n := 512 + (pdf.size - 512) * k / 2048
+    if (Image.decode (pdf.extract 0 n)).isOk then oks := oks + 1
+    verdicts := verdicts + 1
   -- Single-byte mutants at seeded random offsets, all 256 values at some.
   let mut s : UInt64 := 88172645463325252
-  for base in [png, jpg] do
+  for base in [png, jpg, pdf] do
     for _ in [0:4000] do
       let (i, s') := rand s base.size
       let (v, s'') := rand s' 256
@@ -71,7 +88,7 @@ def main : IO Unit := do
       blob := blob.push (UInt8.ofNat v)
     s := st
     for prefix_ in [ByteArray.empty, ⟨#[137, 80, 78, 71, 13, 10, 26, 10]⟩,
-        ⟨#[0xFF, 0xD8]⟩] do
+        ⟨#[0xFF, 0xD8]⟩, ⟨#[0x25, 0x50, 0x44, 0x46, 0x2D]⟩] do
       if (Image.decode (prefix_ ++ blob)).isOk then oks := oks + 1
       verdicts := verdicts + 1
   IO.println s!"img-fuzz: {verdicts} inputs, {oks} decoded, rest refused, no crash, no lie"

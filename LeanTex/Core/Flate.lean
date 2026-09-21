@@ -264,4 +264,47 @@ def deflateStored (raw : ByteArray) : ByteArray := Id.run do
   out := out.push (UInt8.ofNat (a % 256))
   return out
 
+/-- Reverse the per-scanline PNG filters (ISO/IEC 15948 §9): each row opens
+with its filter type, predicting from the left, above, and above-left bytes
+at `bpp` distance. Total: bounds-checked reads, loops bounded by the
+declared geometry. Two consumers share it: PNG sample planes that must
+really decode (`Image.decodePng`) and PDF streams whose `/DecodeParms`
+declare a PNG predictor — cross-reference streams routinely do
+(ISO 32000-2 §7.4.4.4, Predictor 10–15). -/
+def pngUnfilter (raw : ByteArray) (pxH rowBytes bpp : Nat) :
+    Except String ByteArray := Id.run do
+  let mut out := ByteArray.empty
+  let mut pos := 0
+  for _ in [0:pxH] do
+    let some ft := raw[pos]? | return .error "corrupt PNG: truncated scanlines"
+    pos := pos + 1
+    if pos + rowBytes > raw.size then
+      return .error "corrupt PNG: truncated scanlines"
+    let f := ft.toNat
+    if f > 4 then
+      return .error s!"corrupt PNG: filter type {f}"
+    let rowStart := out.size
+    for i in [0:rowBytes] do
+      let x := (raw[pos + i]?.getD 0).toNat
+      let left := if i ≥ bpp then (out[rowStart + i - bpp]?.getD 0).toNat else 0
+      let up := if rowStart ≥ rowBytes then
+          (out[rowStart + i - rowBytes]?.getD 0).toNat else 0
+      let upLeft := if rowStart ≥ rowBytes && i ≥ bpp then
+          (out[rowStart + i - rowBytes - bpp]?.getD 0).toNat else 0
+      let v :=
+        if f == 0 then x
+        else if f == 1 then x + left
+        else if f == 2 then x + up
+        else if f == 3 then x + (left + up) / 2
+        else
+          -- Paeth: the neighbour closest to the linear estimate.
+          let p : Int := (left : Int) + up - upLeft
+          let pa := (p - left).natAbs
+          let pb := (p - up).natAbs
+          let pc := (p - upLeft).natAbs
+          x + (if pa ≤ pb && pa ≤ pc then left else if pb ≤ pc then up else upLeft)
+      out := out.push (UInt8.ofNat (v % 256))
+    pos := pos + rowBytes
+  return .ok out
+
 end LeanTex.Core.Flate

@@ -444,6 +444,12 @@ def censusTable :
     ("the sentence around the inline image ships",
       hasStr (censusText c) "sits in the line"),
     ("the figure caption ships with its number", hasStr (censusText c) "Figure 1: Three rectangles, fitted")]),
+  ("figures", fun _ c => [
+    ("one page", c.size == 1),
+    ("the prose around the embedded PDF ships",
+      hasStr (censusText c) "Before the figure"),
+    ("the inline sentence ships around its embedded page",
+      hasStr (censusText c) "And extensionless")]),
   ("webpage", fun _ c => [
     ("one page", c.size == 1),
     ("the name ships", hasStr (censusText c) "Doe"),

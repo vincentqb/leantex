@@ -1,0 +1,918 @@
+import LeanTex.Core.Dim
+import LeanTex.Core.Flate
+import Std.Data.HashMap
+
+namespace LeanTex.Core.PdfRead
+
+open LeanTex.Core.Dim
+
+/-! # Reading a PDF page as a form XObject
+
+The asset half of PLAN's graphics boundary: `\includegraphics{file.pdf}` —
+and every boundary result — embeds page 1 of an existing PDF as a form
+XObject, so vector stays vector. This module is the pure reader: a total
+function over a `ByteArray` that follows the cross-reference (classic
+tables *and* xref streams with object streams — modern lualatex output
+uses the streams), finds page 1, takes its box, concatenates its decoded
+content streams, and copies its `/Resources` dictionary with the whole
+object graph behind it — fonts, XObjects, ExtGState — renumbered into a
+local space the writer offsets. Stream payloads (font programs above all)
+are copied verbatim, never re-parsed. A PDF the reader cannot follow is a
+named error value, never a crash: every read is bounds-checked and every
+loop bounded by the input's size (the `Ink` reader discipline).
+
+The trust label: the engine claims the *box* — placement and measurement
+from the file's own page box — never the contents of the copied streams.
+Structure and section references are ISO 32000-2. -/
+
+/-- Decompressed streams are capped: a hostile deflate stream can claim a
+1000× expansion, and a reader that honours it is a memory bomb. 64 MiB
+holds any figure this engine should meet; past it the file is refused by
+name. -/
+def maxDecoded : Nat := 1 <<< 26
+
+-- ## The byte vocabulary (bounded reads, ISO 32000-2 §7.2)
+
+private def isWs (c : Nat) : Bool :=
+  c == 0 || c == 9 || c == 10 || c == 12 || c == 13 || c == 32
+
+private def isDelim (c : Nat) : Bool :=
+  c == 40 || c == 41 || c == 60 || c == 62 || c == 91 || c == 93 ||
+  c == 123 || c == 125 || c == 47 || c == 37
+
+private def at? (b : ByteArray) (i : Nat) : Nat :=
+  (b[i]?.map (·.toNat)).getD 256
+
+/-- Skip whitespace and `%` comments (§7.2.3–4). -/
+private def skipWs (b : ByteArray) (i0 : Nat) : Nat := Id.run do
+  let mut i := i0
+  for _ in [0:b.size + 1] do
+    let c := at? b i
+    if isWs c then
+      i := i + 1
+    else if c == 37 then
+      for _ in [0:b.size + 1] do
+        let d := at? b i
+        if d == 10 || d == 13 || d == 256 then break
+        i := i + 1
+    else
+      break
+  return i
+
+/-- A run of digits as a `Nat`, or `none` when none stand at `i`. -/
+private def parseUInt (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) := Id.run do
+  let mut i := i0
+  let mut v := 0
+  let mut any := false
+  for _ in [0:b.size + 1] do
+    let c := at? b i
+    if 48 ≤ c && c ≤ 57 then
+      v := v * 10 + (c - 48)
+      i := i + 1
+      any := true
+    else
+      break
+  return if any then some (v, i) else none
+
+/-- Does the keyword stand at `i`, ended by whitespace, a delimiter, or the
+file's end? Returns the position after it. -/
+private def keywordAt (b : ByteArray) (i : Nat) (kw : String) : Option Nat := Id.run do
+  let bytes := kw.toUTF8
+  for k in [0:bytes.size] do
+    if at? b (i + k) != (bytes[k]?.getD 0).toNat then
+      return none
+  let after := at? b (i + bytes.size)
+  if after == 256 || isWs after || isDelim after then
+    return some (i + bytes.size)
+  return none
+
+private def hexVal (c : Nat) : Option Nat :=
+  if 48 ≤ c && c ≤ 57 then some (c - 48)
+  else if 65 ≤ c && c ≤ 70 then some (c - 55)
+  else if 97 ≤ c && c ≤ 102 then some (c - 87)
+  else none
+
+-- ## Objects (§7.3)
+
+/-- A parsed PDF object. Strings keep their verbatim bytes, delimiters
+included, so copying one back out cannot change it; reals keep their raw
+spelling for the same reason, read numerically only where a box needs a
+value. -/
+inductive Obj where
+  | null
+  | bool (v : Bool)
+  | int (n : Int)
+  /-- A real number, raw spelling kept. -/
+  | real (raw : String)
+  /-- A string, literal `(…)` or hex `<…>`, verbatim bytes with delimiters. -/
+  | str (raw : ByteArray)
+  | name (n : String)
+  | arr (xs : Array Obj)
+  | dict (es : Array (String × Obj))
+  | ref (num : Nat) (gen : Nat)
+  deriving Inhabited
+
+def Obj.get? (o : Obj) (k : String) : Option Obj :=
+  match o with
+  | .dict es => (es.find? (·.1 == k)).map (·.2)
+  | _ => none
+
+def Obj.int? (o : Obj) : Option Int :=
+  match o with
+  | .int n => some n
+  | _ => none
+
+/-- A numeric object in sp: `72` or `595.276`, exact to the sp. -/
+def Obj.sp? (o : Obj) : Option Sp :=
+  match o with
+  | .int n => some (n * spPerPt)
+  | .real raw => Id.run do
+    let s := raw.toList
+    let (neg, s) := match s with
+      | '-' :: rest => (true, rest)
+      | '+' :: rest => (false, rest)
+      | _ => (false, s)
+    let mut ip : Nat := 0
+    let mut seen := false
+    let mut rest := s
+    for _ in [0:raw.length + 1] do
+      match rest with
+      | c :: tl =>
+        if c.isDigit then
+          ip := ip * 10 + (c.toNat - 48)
+          seen := true
+          rest := tl
+        else
+          break
+      | [] => break
+    let mut num : Nat := 0
+    let mut den : Nat := 1
+    match rest with
+    | '.' :: tl =>
+      rest := tl
+      for _ in [0:raw.length + 1] do
+        match rest with
+        | c :: tl =>
+          if c.isDigit && den < 1000000000 then
+            num := num * 10 + (c.toNat - 48)
+            den := den * 10
+            seen := true
+            rest := tl
+          else if c.isDigit then
+            rest := tl
+          else
+            break
+        | [] => break
+    | _ => pure ()
+    if !seen || !rest.isEmpty then
+      return none
+    let v : Int := ip * 65536 + ((num * 65536 + den / 2) / den : Nat)
+    return some (if neg then -v else v)
+  | _ => none
+
+/-- Scan a literal string `(…)` (§7.3.4.2): parentheses balance, and a
+backslash escapes the next byte. Returns the position after the closing
+parenthesis. -/
+private def scanLitString (b : ByteArray) (i0 : Nat) : Option Nat := Id.run do
+  let mut i := i0 + 1
+  let mut depth := 1
+  for _ in [0:b.size + 1] do
+    let c := at? b i
+    if c == 256 then
+      return none
+    else if c == 92 then
+      i := i + 2
+    else if c == 40 then
+      depth := depth + 1
+      i := i + 1
+    else if c == 41 then
+      depth := depth - 1
+      i := i + 1
+      if depth == 0 then
+        return some i
+    else
+      i := i + 1
+  return none
+
+/-- A name after its solidus (§7.3.5), `#`-escapes decoded. -/
+private def parseName (b : ByteArray) (i0 : Nat) : String × Nat := Id.run do
+  let mut i := i0 + 1
+  let mut out := ""
+  for _ in [0:b.size + 1] do
+    let c := at? b i
+    if c == 256 || isWs c || isDelim c then
+      break
+    if c == 35 then
+      match hexVal (at? b (i + 1)), hexVal (at? b (i + 2)) with
+      | some h, some l =>
+        out := out.push (Char.ofNat (h * 16 + l))
+        i := i + 3
+      | _, _ =>
+        out := out.push '#'
+        i := i + 1
+    else
+      out := out.push (Char.ofNat c)
+      i := i + 1
+  return (out, i)
+
+/-- The characters a number token is made of. -/
+private def numByte (c : Nat) : Bool :=
+  (48 ≤ c && c ≤ 57) || c == 43 || c == 45 || c == 46
+
+private def scanNumber (b : ByteArray) (i0 : Nat) : String × Nat := Id.run do
+  let mut i := i0
+  let mut out := ""
+  for _ in [0:b.size + 1] do
+    let c := at? b i
+    if numByte c then
+      out := out.push (Char.ofNat c)
+      i := i + 1
+    else
+      break
+  return (out, i)
+
+/-- After a non-negative integer, does ` gen R` follow (§7.3.10)? The
+two-token lookahead an indirect reference needs. -/
+private def tryRef (b : ByteArray) (i0 : Nat) : Option (Nat × Nat) := do
+  let (gen, j) ← parseUInt b (skipWs b i0)
+  let k := skipWs b j
+  if at? b k == 82 then  -- 'R'
+    let after := at? b (k + 1)
+    if after == 256 || isWs after || isDelim after then
+      return (gen, k + 1)
+  none
+
+private inductive Frame where
+  | arr (xs : Array Obj)
+  | dct (es : Array (String × Obj)) (key : Option String)
+
+/-- Parse one object at `i0` (§7.3): an explicit frame stack instead of
+recursion, so the loop is bounded by the byte count and totality is by
+construction. Every iteration consumes at least one byte. -/
+def parseVal (b : ByteArray) (i0 : Nat) : Except String (Obj × Nat) := Id.run do
+  let mut stack : Array Frame := #[]
+  let mut i := i0
+  for _ in [0:b.size + 2] do
+    i := skipWs b i
+    let c := at? b i
+    if c == 256 then
+      return .error "truncated PDF: an object ends mid-file"
+    let mut v? : Option Obj := none
+    if c == 91 then  -- [
+      stack := stack.push (.arr #[])
+      i := i + 1
+    else if c == 93 then  -- ]
+      match stack.back? with
+      | some (.arr xs) =>
+        stack := stack.pop
+        v? := some (.arr xs)
+        i := i + 1
+      | _ => return .error "malformed PDF: unbalanced ']'"
+    else if c == 60 && at? b (i + 1) == 60 then  -- <<
+      stack := stack.push (.dct #[] none)
+      i := i + 2
+    else if c == 62 && at? b (i + 1) == 62 then  -- >>
+      match stack.back? with
+      | some (.dct es none) =>
+        stack := stack.pop
+        v? := some (.dict es)
+        i := i + 2
+      | some (.dct _ (some k)) =>
+        return .error s!"malformed PDF: dictionary key /{k} has no value"
+      | _ => return .error "malformed PDF: unbalanced '>>'"
+    else if c == 60 then  -- <hex string>
+      let mut j := i + 1
+      for _ in [0:b.size + 1] do
+        let d := at? b j
+        if d == 62 || d == 256 then break
+        j := j + 1
+      if at? b j != 62 then
+        return .error "truncated PDF: a hex string never closes"
+      v? := some (.str (b.extract i (j + 1)))
+      i := j + 1
+    else if c == 40 then  -- (literal string)
+      match scanLitString b i with
+      | some j =>
+        v? := some (.str (b.extract i j))
+        i := j
+      | none => return .error "truncated PDF: a string never closes"
+    else if c == 47 then  -- /name
+      let (nm, j) := parseName b i
+      v? := some (.name nm)
+      i := j
+    else if numByte c then
+      let (raw, j) := scanNumber b i
+      if raw.contains '.' then
+        v? := some (.real raw)
+        i := j
+      else
+        match raw.toInt? with
+        | none => return .error s!"malformed PDF: unreadable number '{raw}'"
+        | some n =>
+          if n ≥ 0 then
+            match tryRef b j with
+            | some (gen, k) =>
+              v? := some (.ref n.toNat gen)
+              i := k
+            | none =>
+              v? := some (.int n)
+              i := j
+          else
+            v? := some (.int n)
+            i := j
+    else if let some j := keywordAt b i "true" then
+      v? := some (.bool true)
+      i := j
+    else if let some j := keywordAt b i "false" then
+      v? := some (.bool false)
+      i := j
+    else if let some j := keywordAt b i "null" then
+      v? := some .null
+      i := j
+    else
+      return .error s!"malformed PDF: unexpected byte {c} in an object"
+    if let some v := v? then
+      match stack.back? with
+      | none => return .ok (v, i)
+      | some (.arr xs) =>
+        stack := stack.set! (stack.size - 1) (.arr (xs.push v))
+      | some (.dct es key) =>
+        match key, v with
+        | none, .name k => stack := stack.set! (stack.size - 1) (.dct es (some k))
+        | none, _ => return .error "malformed PDF: a dictionary key is not a name"
+        | some k, _ => stack := stack.set! (stack.size - 1) (.dct (es.push (k, v)) none)
+  return .error "malformed PDF: an object nests deeper than the file is long"
+
+-- ## The cross-reference (§7.5)
+
+/-- Where an object lives: at a byte offset, or inside an object stream. -/
+inductive Loc where
+  | direct (off : Nat)
+  | inStm (stm : Nat) (idx : Nat)
+  deriving Inhabited
+
+/-- `num gen obj <value>` at a byte offset (§7.3.10). Returns the value and
+the position after it, where `stream` may follow. -/
+private def parseIndirectAt (b : ByteArray) (off : Nat) :
+    Except String (Obj × Nat) := do
+  let some (_, i) := parseUInt b (skipWs b off)
+    | throw "malformed PDF: no object number at a cross-referenced offset"
+  let some (_, j) := parseUInt b (skipWs b i)
+    | throw "malformed PDF: no generation number at a cross-referenced offset"
+  let some k := keywordAt b (skipWs b j) "obj"
+    | throw "malformed PDF: 'obj' missing at a cross-referenced offset"
+  parseVal b k
+
+/-- Decode one stream's data by its declared filter: none, or
+`/FlateDecode`, with a PNG predictor honoured when `/DecodeParms` declares
+one (§7.4.4). Any other filter is a refusal naming it. -/
+def decodeStream (dict : Obj) (raw : ByteArray) : Except String ByteArray := do
+  let filter := dict.get? "Filter"
+  let parms := (dict.get? "DecodeParms").bind fun d =>
+    match d with
+    | .arr xs => xs[0]?
+    | _ => some d
+  let flate ← match filter with
+    | none => return raw
+    | some (.name "FlateDecode") => pure true
+    | some (.arr #[.name "FlateDecode"]) => pure true
+    | some (.name f) => throw s!"PDF stream filter /{f} is not supported"
+    | some _ => throw "PDF stream filter chains are not supported"
+  let _ := flate
+  let cap := match (dict.get? "DL").bind Obj.int? with
+    | some n => if 0 ≤ n && n.toNat ≤ maxDecoded then n.toNat else maxDecoded
+    | none => maxDecoded
+  let data ← Flate.inflate raw cap
+  match parms.bind (·.get? "Predictor") |>.bind Obj.int? with
+  | some p =>
+    if p ≥ 10 then
+      let columns := (((parms.bind (·.get? "Columns")).bind Obj.int?).getD 1).toNat
+      let colors := (((parms.bind (·.get? "Colors")).bind Obj.int?).getD 1).toNat
+      let bpc := (((parms.bind (·.get? "BitsPerComponent")).bind Obj.int?).getD 8).toNat
+      let bpp := max 1 (colors * bpc / 8)
+      let rowBytes := max 1 (columns * colors * bpc / 8)
+      let rows := data.size / (rowBytes + 1)
+      Flate.pngUnfilter data rows rowBytes bpp
+    else if p ≤ 1 then
+      return data
+    else
+      throw s!"PDF stream predictor {p} is not supported"
+  | none => return data
+
+/-- A big-endian field of `w` bytes at `i`; a zero-width field reads 0. -/
+private def beField (data : ByteArray) (i w : Nat) : Nat := Id.run do
+  let mut v := 0
+  for k in [0:w] do
+    v := v * 256 + (data[i + k]?.getD 0).toNat
+  return v
+
+private structure Xref where
+  locs : Std.HashMap Nat Loc := {}
+  root : Option Nat := none
+
+private def Xref.add (x : Xref) (num : Nat) (l : Loc) : Xref :=
+  if x.locs.contains num then x else { x with locs := x.locs.insert num l }
+
+/-- One classic xref section (§7.5.4) at `off`: subsections of 20-byte
+entries, then the trailer dictionary. Returns the updated table and the
+`/Prev` and `/XRefStm` offsets, if declared. -/
+private def readClassicSection (b : ByteArray) (off : Nat) (x0 : Xref) :
+    Except String (Xref × Option Nat × Option Nat) := Id.run do
+  let mut x := x0
+  let some i0 := keywordAt b (skipWs b off) "xref"
+    | return .error "malformed PDF: no 'xref' at the startxref offset"
+  let mut i := i0
+  for _ in [0:b.size + 1] do
+    i := skipWs b i
+    if (keywordAt b i "trailer").isSome then
+      break
+    let some (start, j) := parseUInt b i
+      | return .error "malformed PDF: unreadable xref subsection header"
+    let some (count, k) := parseUInt b (skipWs b j)
+      | return .error "malformed PDF: unreadable xref subsection header"
+    i := k
+    for e in [0:count] do
+      i := skipWs b i
+      let some (v1, j1) := parseUInt b i
+        | return .error "malformed PDF: unreadable xref entry"
+      let some (_, j2) := parseUInt b (skipWs b j1)
+        | return .error "malformed PDF: unreadable xref entry"
+      let j3 := skipWs b j2
+      let kind := at? b j3
+      if kind == 110 then  -- n
+        x := x.add (start + e) (.direct v1)
+      else if kind != 102 then  -- f
+        return .error "malformed PDF: xref entry is neither in use nor free"
+      i := j3 + 1
+  let some t := keywordAt b (skipWs b i) "trailer"
+    | return .error "malformed PDF: xref table without a trailer"
+  match parseVal b t with
+  | .error e => return .error e
+  | .ok (trailer, _) =>
+    if x.root.isNone then
+      if let some (.ref r _) := trailer.get? "Root" then
+        x := { x with root := some r }
+    let prev := ((trailer.get? "Prev").bind Obj.int?).map (·.toNat)
+    let xstm := ((trailer.get? "XRefStm").bind Obj.int?).map (·.toNat)
+    return .ok (x, prev, xstm)
+
+/-- One cross-reference stream (§7.5.8) at `off`. -/
+private def readStreamSection (b : ByteArray) (off : Nat) (x0 : Xref) :
+    Except String (Xref × Option Nat) := do
+  let (dict, j) ← parseIndirectAt b off
+  let some k := keywordAt b (skipWs b j) "stream"
+    | throw "malformed PDF: a cross-reference stream has no stream"
+  let dataStart := if at? b k == 13 && at? b (k + 1) == 10 then k + 2
+    else if at? b k == 10 then k + 1 else k
+  let some len := (dict.get? "Length").bind Obj.int?
+    | throw "malformed PDF: a cross-reference stream has no direct /Length"
+  if len < 0 || dataStart + len.toNat > b.size then
+    throw "truncated PDF: a cross-reference stream overruns the file"
+  let data ← decodeStream dict (b.extract dataStart (dataStart + len.toNat))
+  let some (.arr ws) := dict.get? "W"
+    | throw "malformed PDF: a cross-reference stream has no /W"
+  let w0 := ((ws[0]?.bind Obj.int?).getD 1).toNat
+  let w1 := ((ws[1]?.bind Obj.int?).getD 0).toNat
+  let w2 := ((ws[2]?.bind Obj.int?).getD 0).toNat
+  let rowW := w0 + w1 + w2
+  if rowW == 0 then
+    throw "malformed PDF: a cross-reference stream declares empty rows"
+  let some size := (dict.get? "Size").bind Obj.int?
+    | throw "malformed PDF: a cross-reference stream has no /Size"
+  let index : Array Int := match dict.get? "Index" with
+    | some (.arr xs) => xs.filterMap Obj.int?
+    | _ => #[0, size]
+  let mut x := x0
+  if x.root.isNone then
+    if let some (.ref r _) := dict.get? "Root" then
+      x := { x with root := some r }
+  let mut row := 0
+  for p in [0:index.size / 2] do
+    let start := ((index[2 * p]?).getD 0).toNat
+    let count := ((index[2 * p + 1]?).getD 0).toNat
+    for e in [0:count] do
+      let base := row * rowW
+      if base + rowW ≤ data.size then
+        let f1 := if w0 == 0 then 1 else beField data base w0
+        let f2 := beField data (base + w0) w1
+        let f3 := beField data (base + w0 + w1) w2
+        if f1 == 1 then
+          x := x.add (start + e) (.direct f2)
+        else if f1 == 2 then
+          x := x.add (start + e) (.inStm f2 f3)
+      row := row + 1
+  let prev := ((dict.get? "Prev").bind Obj.int?).map (·.toNat)
+  return (x, prev)
+
+/-- Follow `startxref` and the `/Prev` chain over every cross-reference
+section, classic or stream (a hybrid file's `/XRefStm` too). Newest
+section first: an entry already seen is never overridden. -/
+def readXref (b : ByteArray) : Except String Xref := Id.run do
+  -- Find the last 'startxref' in the tail of the file (§7.5.5).
+  let lo := b.size - min b.size 2048
+  let mut sx : Option Nat := none
+  for k in [lo:b.size] do
+    let i := lo + (b.size - 1 - k)  -- scan backwards
+    if (keywordAt b i "startxref").isSome then
+      sx := some i
+      break
+  let some sxPos := sx
+    | return .error "malformed PDF: no startxref"
+  let some (off0, _) := parseUInt b (skipWs b (sxPos + 9))
+    | return .error "malformed PDF: unreadable startxref offset"
+  let mut work : Array Nat := #[off0]
+  let mut seen : Array Nat := #[]
+  let mut x : Xref := {}
+  for _ in [0:64] do
+    let some off := work.back? | break
+    work := work.pop
+    if seen.contains off then
+      continue
+    seen := seen.push off
+    if (keywordAt b (skipWs b off) "xref").isSome then
+      match readClassicSection b off x with
+      | .error e => return .error e
+      | .ok (x', prev, xstm) =>
+        x := x'
+        if let some p := prev then work := work.push p
+        if let some p := xstm then work := work.push p
+    else
+      match readStreamSection b off x with
+      | .error e => return .error e
+      | .ok (x', prev) =>
+        x := x'
+        if let some p := prev then work := work.push p
+  if !work.isEmpty then
+    return .error "malformed PDF: the cross-reference chain is longer than 64 sections"
+  return .ok x
+
+-- ## Fetching objects
+
+private structure Reader where
+  b : ByteArray
+  locs : Std.HashMap Nat Loc
+
+/-- A direct integer object, for an indirect `/Length` (§7.3.8.2 allows
+one): a single extra hop, never a chain. -/
+private def Reader.intAt (r : Reader) (num : Nat) : Option Int := do
+  if let some (.direct off) := r.locs.get? num then
+    if let .ok (.int n, _) := parseIndirectAt r.b off then
+      return n
+  none
+
+/-- Fetch object `num`: its value, and its raw (still encoded) stream bytes
+when it carries a stream. An object the table does not list is the null
+object (§7.3.10). -/
+private def Reader.get (r : Reader) (num : Nat) :
+    Except String (Obj × Option ByteArray) := do
+  match r.locs.get? num with
+  | none => return (.null, none)
+  | some (.direct off) =>
+    let (v, j) ← parseIndirectAt r.b off
+    let k := skipWs r.b j
+    match keywordAt r.b k "stream" with
+    | none => return (v, none)
+    | some m =>
+      let dataStart := if at? r.b m == 13 && at? r.b (m + 1) == 10 then m + 2
+        else if at? r.b m == 10 then m + 1 else m
+      let len ← match (v.get? "Length") with
+        | some (.int n) => pure n
+        | some (.ref ln _) =>
+          match r.intAt ln with
+          | some n => pure n
+          | none => throw "malformed PDF: an indirect /Length does not resolve"
+        | _ => throw "malformed PDF: a stream has no /Length"
+      if len < 0 || dataStart + len.toNat > r.b.size then
+        throw "truncated PDF: a stream overruns the file"
+      return (v, some (r.b.extract dataStart (dataStart + len.toNat)))
+  | some (.inStm stm idx) =>
+    let (sd, raw?) ← do
+      match r.locs.get? stm with
+      | some (.direct off) =>
+        let (v, j) ← parseIndirectAt r.b off
+        let k := skipWs r.b j
+        match keywordAt r.b k "stream" with
+        | none => throw "malformed PDF: an object stream has no stream"
+        | some m =>
+          let dataStart := if at? r.b m == 13 && at? r.b (m + 1) == 10 then m + 2
+            else if at? r.b m == 10 then m + 1 else m
+          let len ← match v.get? "Length" with
+            | some (.int n) => pure n
+            | some (.ref ln _) =>
+              match r.intAt ln with
+              | some n => pure n
+              | none => throw "malformed PDF: an indirect /Length does not resolve"
+            | _ => throw "malformed PDF: an object stream has no /Length"
+          if len < 0 || dataStart + len.toNat > r.b.size then
+            throw "truncated PDF: an object stream overruns the file"
+          pure (v, some (r.b.extract dataStart (dataStart + len.toNat)))
+      | _ => throw "malformed PDF: an object stream is not at a direct offset"
+    let some raw := raw?
+      | throw "malformed PDF: an object stream has no data"
+    let data ← decodeStream sd raw
+    let some n := (sd.get? "N").bind Obj.int?
+      | throw "malformed PDF: an object stream has no /N"
+    let some first := (sd.get? "First").bind Obj.int?
+      | throw "malformed PDF: an object stream has no /First"
+    if idx ≥ n.toNat then
+      throw "malformed PDF: an object stream index is out of range"
+    -- The header: N pairs of `objnum offset`.
+    let mut i := 0
+    let mut objOff : Option Nat := none
+    for k in [0:n.toNat] do
+      let some (onum, j1) := parseUInt data (skipWs data i)
+        | throw "malformed PDF: unreadable object stream header"
+      let some (ooff, j2) := parseUInt data (skipWs data j1)
+        | throw "malformed PDF: unreadable object stream header"
+      i := j2
+      if k == idx then
+        let _ := onum
+        objOff := some ooff
+    let some ooff := objOff
+      | throw "malformed PDF: unreadable object stream header"
+    let (v, _) ← parseVal data (first.toNat + ooff)
+    return (v, none)
+
+/-- One level of indirection: a `ref` fetched, anything else unchanged. -/
+private def Reader.deref (r : Reader) (o : Obj) : Except String Obj := do
+  match o with
+  | .ref n _ => return (← r.get n).1
+  | _ => return o
+
+-- ## Page 1 (§7.7.3)
+
+private structure Page where
+  node : Obj
+  mediaBox : Option Obj
+  cropBox : Option Obj
+  resources : Option Obj
+
+/-- Walk the page tree depth-first to the first `/Type /Page`, carrying the
+inheritable attributes (§7.7.3.4): `/MediaBox`, `/CropBox`, `/Resources`. -/
+private def firstPage (r : Reader) (root : Nat) : Except String Page := do
+  let (catalog, _) ← r.get root
+  let some pagesRef := catalog.get? "Pages"
+    | throw "malformed PDF: the catalog has no /Pages"
+  let mut work : Array (Obj × Option Obj × Option Obj × Option Obj) :=
+    #[(pagesRef, none, none, none)]
+  for _ in [0:r.locs.size + 2] do
+    let some (nodeRef, mb, cb, res) := work.back? | break
+    work := work.pop
+    let node ← r.deref nodeRef
+    let mb := (node.get? "MediaBox").or mb
+    let cb := (node.get? "CropBox").or cb
+    let res := (node.get? "Resources").or res
+    if node.get? "Type" matches some (.name "Page") then
+      return { node, mediaBox := mb, cropBox := cb, resources := res }
+    match node.get? "Kids" with
+    | some (.arr kids) =>
+      -- Depth-first: the first kid is visited first, so it is pushed last.
+      for k in [0:kids.size] do
+        if let some kid := kids[kids.size - 1 - k]? then
+          work := work.push (kid, mb, cb, res)
+    | _ => throw "malformed PDF: a page tree node has neither /Type /Page nor /Kids"
+  throw "malformed PDF: no page found in the page tree"
+
+-- ## The copied graph, renumbered
+
+/-- A fragment of a serialized object: raw bytes, or a hole naming a copied
+object by its local index — the writer fills each hole with its own object
+number. Holes are only ever created beside an enqueued target, and `wf`
+below re-checks the closure so the guarantee is carried by the type. -/
+inductive Chunk where
+  | bytes (b : ByteArray)
+  | ref (l : Nat)
+  deriving Inhabited
+
+/-- One copied object: its serialized value, and its verbatim (still
+encoded) stream payload when it has one — a font program is bytes in,
+bytes out, never re-parsed. -/
+structure XObjOut where
+  chunks : Array Chunk
+  stream : Option ByteArray := none
+  deriving Inhabited
+
+private structure SerSt where
+  assign : Std.HashMap Nat Nat := {}
+  queue : Array Nat := #[]
+
+private def SerSt.localOf (st : SerSt) (num : Nat) : SerSt × Nat :=
+  match st.assign.get? num with
+  | some l => (st, l)
+  | none =>
+    let l := st.queue.size
+    ({ assign := st.assign.insert num l, queue := st.queue.push num }, l)
+
+private def pushStr (out : Array Chunk) (s : String) : Array Chunk :=
+  out.push (.bytes s.toUTF8)
+
+/-- Re-escape a name on the way out (§7.3.5): regular characters ride,
+everything else is `#`-coded. -/
+private def nameOut (n : String) : String := Id.run do
+  let hexDigit (v : Nat) : Char := ("0123456789ABCDEF".toList[v % 16]?).getD '0'
+  let mut out := "/"
+  for c in n.toList do
+    let v := c.toNat
+    if 33 ≤ v && v ≤ 126 && !isDelim v && v != 35 then
+      out := out.push c
+    else
+      out := out ++ String.ofList ['#', hexDigit (v / 16), hexDigit v]
+  return out
+
+mutual
+/-- Serialize an object into chunks, references becoming holes and their
+targets enqueued: the one place a `Chunk.ref` is made. -/
+private def serObj (st : SerSt) (out : Array Chunk) : Obj → SerSt × Array Chunk
+  | .null => (st, pushStr out "null")
+  | .bool true => (st, pushStr out "true")
+  | .bool false => (st, pushStr out "false")
+  | .int n => (st, pushStr out (toString n))
+  | .real raw => (st, pushStr out raw)
+  | .str raw => (st, out.push (.bytes raw))
+  | .name n => (st, pushStr out (nameOut n))
+  | .arr xs =>
+    let (st, out) := serList st (pushStr out "[ ") xs.toList
+    (st, pushStr out "]")
+  | .dict es =>
+    let (st, out) := serPairs st (pushStr out "<< ") es.toList
+    (st, pushStr out ">>")
+  | .ref num _ =>
+    let (st, l) := st.localOf num
+    (st, out.push (.ref l))
+
+private def serList (st : SerSt) (out : Array Chunk) :
+    List Obj → SerSt × Array Chunk
+  | [] => (st, out)
+  | x :: rest =>
+    let (st, out) := serObj st out x
+    serList st (pushStr out " ") rest
+
+private def serPairs (st : SerSt) (out : Array Chunk) :
+    List (String × Obj) → SerSt × Array Chunk
+  | [] => (st, out)
+  | (k, v) :: rest =>
+    let (st, out) := serObj st (pushStr (pushStr out (nameOut k)) " ") v
+    serPairs st (pushStr out " ") rest
+end
+
+-- ## The result
+
+/-- Page 1 of a read PDF, ready to embed: the page box in sp, the decoded
+content, and the `/Resources` graph renumbered into `objects`' local
+space. The engine claims the box; the copied streams stay opaque. -/
+structure Form where
+  x0 : Sp
+  y0 : Sp
+  x1 : Sp
+  y1 : Sp
+  content : ByteArray
+  resources : Array Chunk
+  objects : Array XObjOut
+  deriving Inhabited
+
+def Form.w (f : Form) : Sp := f.x1 - f.x0
+
+def Form.h (f : Form) : Sp := f.y1 - f.y0
+
+private def chunksWf (n : Nat) (cs : Array Chunk) : Bool :=
+  cs.all fun c => match c with
+    | .ref l => l < n
+    | .bytes _ => true
+
+/-- Every hole in the copied graph points into `objects`: the writer can
+renumber the whole graph without meeting a dangling reference. -/
+def Form.wf (f : Form) : Bool :=
+  chunksWf f.objects.size f.resources &&
+  f.objects.all (fun o => chunksWf f.objects.size o.chunks)
+
+/-- **`resources_closed`** (the `_covers` statement): a form the reader
+hands back never carries a dangling reference — every object the copied
+page references is copied, renumbered into the local space. This is what
+makes "vector stays vector" true in a viewer: a form whose `/Resources`
+named a font object the file did not carry would render blank or error.
+The reader returns the subtype, so the property is carried by the type:
+`readForm`'s one success path checks `wf` and refuses otherwise. -/
+theorem resources_closed (f : { f : Form // f.wf }) : f.val.wf = true :=
+  f.property
+
+/-- The composite placement map on one axis, as an exact rational
+`(numerator, denominator)`: the form's `/Matrix` normalizes its box
+`[lo, hi]` to `[0, 1]` (ISO 32000-2 §8.10.1: the matrix maps form space
+into the space the `Do` executes in) and the image path's
+`cm len 0 0 len' dst dst'` (§8.3.4) maps that to `[dst, dst + len]`.
+`placeX lo hi dst len p = ((p - lo) * len + dst * (hi - lo), hi - lo)`. -/
+def placeX (lo hi dst len p : Int) : Int × Int :=
+  ((p - lo) * len + dst * (hi - lo), hi - lo)
+
+/-- **`form_bbox_exact`**: the placed box is the page box scaled to the
+requested size, exactly, in the rational arithmetic the emitted `/Matrix`
+and `cm` render to decimals: the box's low edge lands on `dst` and its
+high edge on `dst + len` — `value * den = num` is the fraction read
+without dividing. The decimal rendering rounds each matrix entry once, at
+the ninth digit (`ratString` in the writer), the same one-unit story as
+every `Sp.toPtString`. -/
+theorem form_bbox_exact (lo hi dst len : Int) (h : lo < hi) :
+    (placeX lo hi dst len lo).1 = dst * (placeX lo hi dst len lo).2 ∧
+    (placeX lo hi dst len hi).1 = (dst + len) * (placeX lo hi dst len hi).2 ∧
+    0 < (placeX lo hi dst len lo).2 := by
+  refine ⟨by simp [placeX], ?_, by simp [placeX]; omega⟩
+  show (hi - lo) * len + dst * (hi - lo) = (dst + len) * (hi - lo)
+  rw [Int.add_mul, Int.mul_comm (hi - lo) len]
+  omega
+
+/-- Read page 1 of a PDF into an embeddable form: the box (CropBox when
+declared, else MediaBox — pdfTeX's rule for PDF inclusion), the decoded
+content streams concatenated, and the resources graph copied and
+renumbered. Total over arbitrary bytes; anything the reader cannot follow
+is a named error. -/
+def readForm (b : ByteArray) : Except String { f : Form // f.wf } := do
+  unless at? b 0 == 37 && at? b 1 == 80 && at? b 2 == 68 && at? b 3 == 70 do
+    throw "not a PDF file (no %PDF header)"
+  let x ← readXref b
+  let some root := x.root
+    | throw "malformed PDF: no /Root in any trailer"
+  let r : Reader := { b, locs := x.locs }
+  let page ← firstPage r root
+  -- The box: CropBox over MediaBox, elements resolved one level and read
+  -- as numbers, corners normalized.
+  let some boxObj := page.cropBox.or page.mediaBox
+    | throw "malformed PDF: page 1 has no /MediaBox"
+  let boxObj ← r.deref boxObj
+  let nums ← match boxObj with
+    | .arr xs =>
+      if xs.size != 4 then
+        throw "malformed PDF: the page box is not four numbers"
+      else
+        let mut out : Array Sp := #[]
+        for e in xs do
+          match (← r.deref e).sp? with
+          | some v => out := out.push v
+          | none => throw "malformed PDF: an unreadable number in the page box"
+        pure out
+    | _ => throw "malformed PDF: the page box is not an array"
+  let x0 := min (nums[0]?.getD 0) (nums[2]?.getD 0)
+  let x1 := max (nums[0]?.getD 0) (nums[2]?.getD 0)
+  let y0 := min (nums[1]?.getD 0) (nums[3]?.getD 0)
+  let y1 := max (nums[1]?.getD 0) (nums[3]?.getD 0)
+  if x0 == x1 || y0 == y1 then
+    throw "malformed PDF: the page box is empty"
+  match ((page.node.get? "Rotate").bind Obj.int?).getD 0 with
+  | 0 => pure ()
+  | rot => throw s!"PDF page /Rotate {rot} is not supported; re-export unrotated"
+  -- The content: one stream or an array, each decoded, joined by newlines
+  -- (§7.8.2: the division between streams occurs only between operators).
+  let mut content := ByteArray.empty
+  match page.node.get? "Contents" with
+  | none => pure ()
+  | some contents =>
+    let parts ← match contents with
+      | .arr xs => pure xs
+      | one => pure #[one]
+    for part in parts do
+      let num ← match part with
+        | .ref n _ => pure n
+        | _ => throw "malformed PDF: page contents are not references"
+      let (cd, raw?) ← r.get num
+      let some raw := raw?
+        | throw "malformed PDF: a content stream has no data"
+      let data ← decodeStream cd raw
+      content := content ++ data
+      content := content.push 10
+  -- The resources graph, copied whole and renumbered.
+  let mut st : SerSt := {}
+  let resObj := page.resources.getD (.dict #[])
+  let (st1, resChunks) := serObj st #[] resObj
+  st := st1
+  let mut objects : Array XObjOut := #[]
+  let mut qi := 0
+  for _ in [0:b.size + 2] do
+    if qi ≥ st.queue.size then
+      break
+    let some orig := st.queue[qi]? | break
+    qi := qi + 1
+    let (v, raw?) ← r.get orig
+    match raw? with
+    | none =>
+      let (st', chunks) := serObj st #[] v
+      st := st'
+      objects := objects.push { chunks }
+    | some raw =>
+      -- The dict re-serializes with its `/Length` made direct — the raw
+      -- bytes are already in hand — so an indirect length never needs a
+      -- copied integer object.
+      let es : Array (String × Obj) := match v with
+        | .dict es => es.filter (fun kv => kv.1 != "Length")
+        | _ => #[]
+      let (st', chunks) := serObj st #[]
+        (.dict (es.push ("Length", .int raw.size)))
+      st := st'
+      objects := objects.push { chunks, stream := some raw }
+  if qi < st.queue.size then
+    throw "malformed PDF: the resource graph is larger than the file"
+  let f : Form := { x0, y0, x1, y1, content, resources := resChunks, objects }
+  if h : f.wf then
+    return ⟨f, h⟩
+  else
+    throw "malformed PDF: the resource graph did not close"
+
+end LeanTex.Core.PdfRead

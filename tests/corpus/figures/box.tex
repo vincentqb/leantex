@@ -1,0 +1,16 @@
+% Generator for box.pdf, the vector-figure fixture beside this file:
+%
+%   ./.lake/build/bin/leantex tests/corpus/figures/box.tex
+%
+% run from the repository root regenerates it (the engine's own output is
+% the fixture, so the reader is tested against the writer — xref stream,
+% object stream, embedded font and all). Synthetic content, invented text;
+% the card page model keeps it one small page. It names a shipped corpus
+% face so regeneration is hermetic on any machine.
+\documentclass{card}
+\fonts{ dir = "../fonts", body = "Open Sans" }
+\page{ width = 90mm, height = 54mm }
+
+\begin{document}
+A box of placeholder text.
+\end{document}

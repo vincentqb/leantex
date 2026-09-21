@@ -83,6 +83,35 @@ private def fnv64 (seed : UInt64) (b : ByteArray) : UInt64 := Id.run do
     h := (h ^^^ byte.toUInt64) * 1099511628211
   return h
 
+/-- A rational `p / q` (`q > 0`) as a decimal, rounded once at the ninth
+digit: the precision a form's `/Matrix` needs — its scale entries are the
+reciprocal of a page box in points, and one rounding at 1e-9 lands the
+placed corner within a nanometre of `form_bbox_exact`'s rational. -/
+private def ratString (p q : Int) : String :=
+  let neg := p < 0
+  let v := (p.natAbs * 1000000000 + q.natAbs / 2) / max 1 q.natAbs
+  let ip := v / 1000000000
+  let fr := v % 1000000000
+  let sign := if neg && v != 0 then "-" else ""
+  if fr == 0 then
+    s!"{sign}{ip}"
+  else
+    let frs := toString fr
+    let frs := ("".pushn '0' (9 - frs.length)) ++ frs
+    let frs := (frs.dropEndWhile (· == '0')).toString
+    s!"{sign}{ip}.{frs}"
+
+/-- Copied-graph chunks rendered against the writer's numbering: each hole
+is `base + local`, and `resources_closed` is what makes every hole point
+at an object this file writes. -/
+private def renderChunks (base : Nat) (cs : Array PdfRead.Chunk) : ByteArray := Id.run do
+  let mut out := ByteArray.empty
+  for c in cs do
+    match c with
+    | .bytes bs => out := out ++ bs
+    | .ref l => out := out ++ (s!"{base + l} 0 R").toUTF8
+  return out
+
 private def hex16 (x : UInt64) : String := Id.run do
   let mut s := ""
   let mut v := x
@@ -559,22 +588,34 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let fileBase := fontBase + 4 * nf
   let fileId (k : Nat) := fileBase + k
   let imgBase := fileBase + nf
-  let (imgIds, smaskIds, pageBase) : Array Nat × Array (Option Nat) × Nat := Id.run do
+  let (imgIds, smaskIds, formBases, pageBase) :
+      Array Nat × Array (Option Nat) × Array (Option Nat) × Nat := Id.run do
     let mut ids : Array Nat := #[]
     let mut masks : Array (Option Nat) := #[]
+    let mut fbs : Array (Option Nat) := #[]
     let mut next := imgBase
     for k in usedImgs do
       ids := ids.push next
       next := next + 1
       match (imgs.get? k).bind (·.info) with
       | some inf =>
-        if inf.smask.isEmpty then
+        match inf.form with
+        | some f =>
+          -- A form brings its copied resource graph: one id per object.
           masks := masks.push none
-        else
-          masks := masks.push (some next)
-          next := next + 1
-      | none => masks := masks.push none
-    return (ids, masks, next)
+          fbs := fbs.push (some next)
+          next := next + f.val.objects.size
+        | none =>
+          fbs := fbs.push none
+          if inf.smask.isEmpty then
+            masks := masks.push none
+          else
+            masks := masks.push (some next)
+            next := next + 1
+      | none =>
+        masks := masks.push none
+        fbs := fbs.push none
+    return (ids, masks, fbs, next)
   let imgId (n : Nat) := imgIds[n]?.getD 0
   let pageId (i : Nat) := pageBase + 2 * i
   let contentId (i : Nat) := pageBase + 2 * i + 1
@@ -726,37 +767,77 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- XObject named by `/SMask`.
   for (k, n) in usedImgs.zipIdx do
     if let some inf := (imgs.get? k).bind (·.info) then
-      let colorSpace := match inf.space with
-        | .gray => "/DeviceGray"
-        | .rgb => "/DeviceRGB"
-        | .indexed => Id.run do
-          let mut hex := ""
-          for byte in inf.palette do
-            hex := hex.push (hexDigit (byte.toNat / 16))
-            hex := hex.push (hexDigit byte.toNat)
-          return s!"[/Indexed /DeviceRGB {inf.palette.size / 3 - 1} <{hex}>]"
-      let filter := match inf.format with
-        | .png =>
-          if inf.predictor then
-            s!"/Filter /FlateDecode /DecodeParms << /Predictor 15 \
+      match inf.form, formBases[n]?.getD none with
+      | some f, some base =>
+        -- A PDF page: a form XObject (ISO 32000-2 §8.10) whose /Matrix
+        -- normalizes the page box to the unit square, so the same
+        -- `cm w 0 0 h x y … Do` the raster path writes places it —
+        -- `form_bbox_exact` is the statement. The copied resource graph
+        -- follows, renumbered from `base`; `resources_closed` says no
+        -- hole dangles.
+        let fv := f.val
+        let bw := fv.w
+        let bh := fv.h
+        let bbox := s!"[{Sp.toPtString fv.x0} {Sp.toPtString fv.y0} \
+{Sp.toPtString fv.x1} {Sp.toPtString fv.y1}]"
+        let matrix := s!"[{ratString spPerPt bw} 0 0 {ratString spPerPt bh} \
+{ratString (-fv.x0) bw} {ratString (-fv.y0) bh}]"
+        let off := w.out.size
+        w := w.put s!"{imgId n} 0 obj\n<< /Type /XObject /Subtype /Form \
+/BBox {bbox} /Matrix {matrix} /Resources "
+        w := w.putB (renderChunks base fv.resources)
+        w := w.put s!" /Length {fv.content.size} >>\nstream\n"
+        w := w.putB fv.content
+        w := w.put "\nendstream\nendobj\n"
+        locs := locs.set! (imgId n) (1, off)
+        for (o, l) in fv.objects.zipIdx do
+          let ooff := w.out.size
+          w := w.put s!"{base + l} 0 obj\n"
+          w := w.putB (renderChunks base o.chunks)
+          match o.stream with
+          | some raw =>
+            w := w.put "\nstream\n"
+            w := w.putB raw
+            w := w.put "\nendstream\nendobj\n"
+          | none =>
+            w := w.put "\nendobj\n"
+          locs := locs.set! (base + l) (1, ooff)
+      | _, _ =>
+        let colorSpace := match inf.space with
+          | .gray => "/DeviceGray"
+          | .rgb => "/DeviceRGB"
+          | .indexed => Id.run do
+            let mut hex := ""
+            for byte in inf.palette do
+              hex := hex.push (hexDigit (byte.toNat / 16))
+              hex := hex.push (hexDigit byte.toNat)
+            return s!"[/Indexed /DeviceRGB {inf.palette.size / 3 - 1} <{hex}>]"
+        let filter := match inf.format with
+          | .png =>
+            if inf.predictor then
+              s!"/Filter /FlateDecode /DecodeParms << /Predictor 15 \
 /Colors {inf.space.components} /BitsPerComponent {inf.bitDepth} /Columns {inf.pxW} >>"
-          else "/Filter /FlateDecode"
-        | .jpeg => "/Filter /DCTDecode"
-      let smaskRef := match smaskIds[n]?.getD none with
-        | some mid => s!" /SMask {mid} 0 R"
-        | none => ""
-      let dict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
+            else "/Filter /FlateDecode"
+          | .jpeg => "/Filter /DCTDecode"
+          -- Unreachable through `Image.decode`: a `.pdf` Info carries its
+          -- form and takes the arm above. The raster dictionary it would
+          -- describe does not exist.
+          | .pdf => ""
+        let smaskRef := match smaskIds[n]?.getD none with
+          | some mid => s!" /SMask {mid} 0 R"
+          | none => ""
+        let dict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
 /Height {inf.pxH} /ColorSpace {colorSpace} /BitsPerComponent {inf.bitDepth}\
 {smaskRef} {filter}"
-      let (w', off) := putStream w (imgId n) dict inf.data
-      w := w'
-      locs := locs.set! (imgId n) (1, off)
-      if let some mid := smaskIds[n]?.getD none then
-        let mdict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
+        let (w', off) := putStream w (imgId n) dict inf.data
+        w := w'
+        locs := locs.set! (imgId n) (1, off)
+        if let some mid := smaskIds[n]?.getD none then
+          let mdict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
 /Height {inf.pxH} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode"
-        let (w'', moff) := putStream w mid mdict inf.smask
-        w := w''
-        locs := locs.set! mid (1, moff)
+          let (w'', moff) := putStream w mid mdict inf.smask
+          w := w''
+          locs := locs.set! mid (1, moff)
 
   for k in [0:nf] do
     let font := fs.get keep[k]!
