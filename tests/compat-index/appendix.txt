@@ -1,0 +1,19 @@
+# source: the appendix package manual (appendix.pdf v1.2c 2020/02/08),
+# §2 "The appendices environment" and the user-command list around it.
+# \appendix itself is classes.dtx's mark (the package extends it); the
+# environment scopes the mark and restores the counters after \end. The
+# page/toc apparatus (\appendixpage, \addappheadtotoc, the tocpagenum
+# switches) and the name macros are contents-page machinery the engine
+# does not model: refused by name where used. {subappendices} letters a
+# level below and stays refused with the environment diagnostic.
+body impl \appendix\section{A}x
+body impl \begin{appendices}\section{A}x\end{appendices}
+body refuse:W0302 \begin{subappendices}\section{A}x\end{subappendices}
+body refuse:W0301 \appendixpage
+body refuse:W0301 \addappheadtotoc
+pre refuse:W0301 \noappendicestocpagenum
+pre refuse:W0301 \appendicestocpagenum
+body refuse:W0301 \restoreapp
+body refuse:W0301 \appendixname
+body refuse:W0301 \setthesection
+body refuse:W0301 \setthesubsection

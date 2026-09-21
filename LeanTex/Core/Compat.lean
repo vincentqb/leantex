@@ -23,8 +23,9 @@ and parser, so it obeys exactly the rules hand-written input does. -/
 not a warning: nothing was lost at the `\usepackage` line — a construct one
 of these packages provides that the engine cannot render is named where it
 is used, never at the load (`tikzpicture` renders its subset and W0334 or
-E0333 names each shape outside it; `\appendix` is an unknown command and
-W0301 says so where it stands, and so do `\nicefrac` and `\multirow` when
+E0333 names each shape outside it; `appendix`'s mark and its environment
+are the sectioning walk's own, and its contents-page apparatus is W0301
+where it stands, as `\nicefrac` and `\multirow` are when
 a document actually uses them). `xurl` is `url` with better breaking;
 `amsfonts` is a subset of what `amssymb`/`unicode-math` already provide;
 `caption`/`subcaption` land on the caption path, their option interface
@@ -39,7 +40,7 @@ def nativePackages : List String :=
    "caption", "subcaption", "nicefrac", "multirow",
    "appendixnumberbeamer", "natbib",
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
-   "libertine", "carlito", "xspace", "float", "biblatex"]
+   "libertine", "carlito", "xspace", "float", "biblatex", "appendix"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=

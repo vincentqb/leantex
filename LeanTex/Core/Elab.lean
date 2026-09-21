@@ -1981,6 +1981,23 @@ private def defaultSecNum (nums : Nat × Nat × Nat) (inApp : Bool)
   | 2 => s!"{base}.{n2}"
   | _ => s!"{base}.{n2}.{n3}"
 
+/-- Appendix numbering is exactly the letter of the section counter:
+appendix.sty (v1.2c) `\@resets@pp` makes `\thesection` `\Alph{section}`,
+replacing the arabic form classes.dtx §Sectioning defines, and the deeper
+levels keep prefixing it — the class numbering contract continues under
+`\appendix` with the letter base, gapless because the counter stepping is
+untouched by the mark. -/
+theorem defaultSecNum_appendix_exact (n1 n2 n3 : Nat) :
+    defaultSecNum (n1, n2, n3) true 1 = ListMark.AlphN n1 := rfl
+
+/-- Distinct appendix sections render distinct letters: the letter
+assignment is injective on the counter, so the gapless counter is gapless
+in its rendered form too. -/
+theorem defaultSecNum_appendix_inj (m n : Nat × Nat × Nat)
+    (h : defaultSecNum m true 1 = defaultSecNum n true 1) : m.1 = n.1 :=
+  match m, n with
+  | (_, _, _), (_, _, _) => ListMark.letterN_inj (.inr rfl) h
+
 mutual
 /-- Render one level's heading number: the declared format when one
 stands (`ESt.secFmts`, last declaration wins), the class default
@@ -3340,7 +3357,7 @@ theorem take_args_consumes_forward
 def blockEnvs : List String :=
   ["itemize", "enumerate", "center", "document", "frame", "columns", "figure",
    "figure*", "table", "table*", "quote", "quotation", "abstract", "ifbackend",
-   "nav", "minipage", "block", "alertblock", "exampleblock"]
+   "nav", "minipage", "block", "alertblock", "exampleblock", "appendices"]
 
 /-- Environment names a document cannot redefine, the environment mirror of
 `builtinNames`: everything the engine gives a meaning of its own. -/
@@ -5618,6 +5635,50 @@ seal titleBlocks Picture.elabPicture MathParse.parseMath
 seal Decl.parseBlock Decl.parseLength Decl.parseGlue skipOptArg takeTitleDecl
 seal sectionNumber columnWidth cmidRange trimRawEdges
 seal recordLabel refuseRedef dropEnvArgs skipReservedArgs takeDefine
+/-- Enter appendix.sty's `{appendices}` scope when `b` (the environment's
+own arm shares its branch, so the flag): save the section counters and the
+mark, zero the counters, set the mark (`\@resets@pp`). Outside the block
+knot so the shared arm stays three lines. -/
+private def enterAppendicesIf (b : Bool) : EM (Option ((Nat × Nat × Nat) × Bool)) := do
+  if !b then return none
+  let st ← get
+  modify fun st => { st with inAppendix := true, secNums := (0, 0, 0) }
+  return some (st.secNums, st.inAppendix)
+
+/-- Leave the `{appendices}` scope: restore what `enterAppendicesIf` saved
+(`\@ppsavesec`/`\@pprestoresec`), so numbering after the environment
+continues where it left off. -/
+private def leaveAppendices (saved : Option ((Nat × Nat × Nat) × Bool)) : EM Unit :=
+  match saved with
+  | none => pure ()
+  | some s => modify fun st => { st with inAppendix := s.2, secNums := s.1 }
+
+/-- The node a block-sequence wrapper environment ships: `{quote}` and
+`{quotation}` are one node (they differ only in `\listparindent`, which
+nothing here binds to — the constructor's docstring), `{abstract}` is
+article's unnumbered titled block, and `{appendices}` wraps nothing — its
+meaning is the numbering scope `enterAppendicesIf` carries, so its blocks
+splice. One def outside the knot: the three environments share one branch
+and one recursion site there. -/
+def wrapScopedEnv (n : String) (blocks inner : Array Block) : Array Block :=
+  if n == "abstract" then blocks.push (.abstract inner)
+  else if n == "appendices" then blocks ++ inner
+  else blocks.push (.quote inner)
+
+/-- The wrapper node ships exactly its body's census: `{quote}` and
+`{abstract}` are body-transparent constructors (`blockTextOne` reads
+straight through both) and the `{appendices}` splice is the identity, so
+the shared environment arm conserves the text whatever the name. -/
+theorem wrapScopedEnv_text (n : String) :
+    Ir.Conserves Ir.blocksText (wrapScopedEnv n #[]) := fun inner => by
+  unfold wrapScopedEnv
+  split
+  · rfl
+  · split
+    · simp
+    · rfl
+
+seal enterAppendicesIf leaveAppendices wrapScopedEnv
 seal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 seal theCounterLevel? String.toInt? String.toNat?
 seal Ir.padTableRows Ir.setAltBlocks Ir.plainText
@@ -6235,19 +6296,17 @@ the box takes the whole measure" pos
         = nestedParsList (body.extract m body.size).toList := slicePars_zero _
     blocks := blocks.push (.titled kind title
       (← elabBlocksGo ctx (body.extract m body.size) 0 #[] #[] (← get).flowGen))
-  else if n == "quote" || n == "quotation" then
-    -- One node for both: they differ only in \listparindent
-    -- (quotation indents each paragraph's first line), and the
-    -- engine sets no paragraph indent anywhere yet — see the
-    -- constructor's docstring.
-    blocks := blocks.push (.quote
-      (← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen))
-  else if n == "abstract" then
-    -- article's unnumbered titled block: quotation-shaped with a
-    -- centred heading in the PDF, a <section> with a heading in
-    -- HTML — see the constructor's docstring for the split.
-    blocks := blocks.push (.abstract
-      (← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen))
+  else if n == "quote" || n == "quotation" || n == "abstract" || n == "appendices" then
+    -- Three same-shaped block-sequence wrappers, one branch and one
+    -- recursion site (the knot compiles as one LCNF unit; a branch per
+    -- wrapper is what its budget cannot afford): the node each ships is
+    -- `wrapScopedEnv`'s, and `{appendices}`'s meaning is the numbering
+    -- scope — appendix.sty's `\appendix` scoped to the body, counters
+    -- restored at `\end` (see `enterAppendicesIf`).
+    let saved ← enterAppendicesIf (n == "appendices")
+    let inner ← elabBlocksGo ctx body 0 #[] #[] (← get).flowGen
+    leaveAppendices saved
+    blocks := wrapScopedEnv n blocks inner
   else if n == "figure" || n == "figure*" || n == "table" || n == "table*" then
     -- A single-pass engine has nowhere for a float to float: the
     -- float stands where written as a `.float`, `[placement]`
@@ -7303,6 +7362,7 @@ unseal displayMathEnvs alignEnvs isMathEnv sectionLevel specWord? overlayFrom
 unseal lookupUser lookupUserEnv isArgument isCenteringRaw isParRaw splitAtPars
 unseal isColumnStray
 unseal scanBracketArg Parse.inputEnvFile?
+unseal enterAppendicesIf leaveAppendices wrapScopedEnv
 
 /-- A declared value as its author would rewrite it: what W0343 quotes back
 when a later declaration overwrites it. -/

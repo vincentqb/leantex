@@ -285,6 +285,12 @@ def headingNumberChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "appendix letters level 1 and restarts the counter"
     (nums (art "\\section{A}\\appendix\\section{B}\\subsection{C}\\section{D}") ==
       [some "1", some "A", some "A.1", some "B"])
+  -- appendix.sty scopes the mark to the environment and restores the
+  -- counter after (\@ppsavesec/\@pprestoresec): before this arm the
+  -- environment fired W0302 and its sections numbered 2, 2.1, 3.
+  t "the appendices environment scopes the mark and restores the counter"
+    (nums (art "\\section{A}\\begin{appendices}\\section{B}\\subsection{C}\\end{appendices}\\section{D}") ==
+      [some "1", some "A", some "A.1", some "2"])
   let deck := (elabStr ("\\documentclass{slides}\\begin{document}\\section{Only}\\begin{frame}x\\end{frame}\\end{document}")).1
   t "slides sections never number" (nums deck == [none])
   -- \the<counter> is the counter's printed format (classes.dtx
