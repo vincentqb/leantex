@@ -4604,6 +4604,15 @@ private def collectTable (r : Rd) (a0 : Acc)
   let trail : Sp := if padR then colsep else 0
   let innerGaps : Sp := 2 * colsep * ((cols.size : Int) - 1)
   let tableW : Sp := lead + widths.foldl (· + ·) 0 + innerGaps + trail
+  -- A table wider than the measure stays its declared width and is named,
+  -- never squeezed to fit: `\tabcolsep` is a rigid kern (classes.dtx sets
+  -- it as a dimen, no rubber), so TeX itself sets the same source overfull
+  -- and says so — the deck's `p{0.31}p{0.57}p{0.07}` tables are 4.09 pt
+  -- overfull under lualatex too. Shrinking the gaps would fit a box TeX
+  -- does not fit and silently change every gap to hide an error in the
+  -- declared column widths; the honest fix is the author's, and the help
+  -- names it. (The KP breaker's own rule is the same: shrink is spent only
+  -- where the glue declared some.)
   if tableW > total then
     a := { a with diags := a.diags.push (Diag.of .W0338
       (s!"the table is {(tableW - total).toPtString}pt wider than the measure")
