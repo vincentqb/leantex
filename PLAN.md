@@ -118,6 +118,28 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — weight is an axis, not a flag (font-weights slice): every
+font key is now `(slot, weight, italic)`, weight the CSS/OpenType number
+of an NFSS series (`Ir.Weight`, the nine LaTeX News 31 values; `m` = 400,
+`sl` = 350 — the two placements no single registry settles, said so in
+the docstring; `Weight.ofCss_css_id` is the bijection statement).
+`\fontseries` and fontspec's `FontFace={series}{shape}{font}` are native:
+the weight half honoured through the `@series:` marker and the
+`slot.<series>[.italic]` declaration keys, the width half warned by name.
+Resolution extends W0366's nearest-weight rule to the whole axis
+(`FontDb.resolveWeight`; `pickWeighted_total` and `FontSet.index_total`
+carry totality), the driver resolves exactly the keys a document's styled
+ancestry can ask for (`Layout.docWeightKeys`, the docScalars precompute
+shape), and both backends read one projection (`Ir.Style.weight?`,
+`weight_agree`) — HTML emits the numeric weight per run and one
+`@font-face` per face. Two defects fell out: a 0-ary definition's
+trailing declaration styled the empty rest of its own body instead of
+the rest of the enclosing group (`\newcommand{\x}{\bfseries}` produced
+an empty `<strong>`), and a sans-only document's text face was font-0
+fall-through rather than the sans declaration — both named, tested, and
+fixed. The card embeds Inter-Medium and Inter-Light again, exactly
+lualatex's set; deck, resume, paper byte-identical.
+
 2026-09-21 — appendix and cleveref are native (pkg-numbering, audit
 slices 3 and 4): `{appendices}` scopes the `\appendix` mark and restores
 the counters (appendix.sty v1.2c's save/restore), and the cleveref family
