@@ -5,5 +5,5 @@ body impl \textcolor{black}{x}
 body impl {\color{black} x}
 body refuse:W0301 \colorbox{black}{x}
 body refuse:W0301 \fcolorbox{black}{white}{x}
-pre refuse:W0301 \pagecolor{black}
+pre impl \pagecolor{black}
 body refuse:W0301 \nopagecolor

@@ -1248,6 +1248,24 @@ face serves every language, so the binding is dropped" pos
       became "\\colorlet" native pos
       return some (← synthAt native pos, k)
     else return none
+  | "pagecolor" =>
+    -- `\pagecolor{colour}` sets the page background from here on (xcolor
+    -- manual §2.6); the engine's page background is the palette's `bg`
+    -- role, the one resolving site both backends read, so the contrast
+    -- contracts judge text against the colour the page actually paints.
+    let (opt, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    if h : args.size = 1 then
+      let value ← match opt with
+        | some model => color model (rawSrc args[0]) pos
+        | none => pure (some (rawSrc args[0]))
+      match value with
+      | some v =>
+        let native := s!"\\palette\{ bg = {v} }"
+        became "\\pagecolor" native pos
+        return some (← synthAt native pos, k)
+      | none => return some (#[], k)
+    else return none
   | "geometry" | "newgeometry" =>
     -- The command forms: the same keys the package options carry
     -- (geometry manual §5: `\newgeometry` is `\geometry` restricted to

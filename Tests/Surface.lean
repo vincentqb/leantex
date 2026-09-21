@@ -1208,6 +1208,8 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
       wrap "\\palette{ c = #112233 }" "x"),
     ("colorlet", wrap "\\definecolor{c}{HTML}{112233}\\colorlet{d}{c}" "x",
       wrap "\\palette{ c = #112233 }\\palette{ d = c }" "x"),
+    ("pagecolor", wrap "\\pagecolor{white}" "x",
+      wrap "\\palette{ bg = white }" "x"),
     ("vspace", wrap "" "a\n\n\\vspace{3pt}\nb",
       wrap "" "a\n\n\\block[before = 3pt]{}\nb"),
     ("bigskip", wrap "" "a\n\n\\bigskip\nb",
