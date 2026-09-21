@@ -156,6 +156,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       "x\\footnote{an aside}\n\\end{document}")
   | .W0376 => dvE (dvDoc "" "\\includegraphics{chart.png}")
   | .W0377 => dvE (dvDoc "" "\\href{https://example.org/x}{}")
+  | .W0381 => dvE (dvDoc "" "\\qty{9.81}{\\banana}")
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
   | .W0003 => dvL one (dvDoc "" "$x^2$")
   | .W0005 => dvL one (dvDoc "\\page{ width = 60pt, margin = 10pt, justify = on }\n"

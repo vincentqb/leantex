@@ -259,36 +259,6 @@ structure ESt where
   judged where it stands. -/
   refSites : Array (String × Ir.RefForm × Pos) := #[]
 
-/-- The option head of a listing environment's blind-captured body:
-spaces and tabs, then `[...]` with `{}`-nesting respected (listings reads
-its per-environment keys there; a bracket on a later line is content, as
-in listings). Returns the option text and the index past the `]`, `none`
-when no head stands or the bracket never closes. -/
-private def listingOptHead (s : String) : Option (String × Nat) := Id.run do
-  let cs := s.toList.toArray
-  let mut i := 0
-  for _ in [0:cs.size] do
-    if h : i < cs.size then
-      if cs[i] == ' ' || cs[i] == '\t' then i := i + 1 else break
-    else break
-  if h : i < cs.size then
-    if cs[i] != '[' then return none
-    let mut depth : Nat := 0
-    let mut j := i + 1
-    let mut out := ""
-    for _ in [0:cs.size] do
-      if h2 : j < cs.size then
-        let c := cs[j]
-        if c == '{' then depth := depth + 1
-        else if c == '}' then depth := depth - 1
-        if c == ']' && depth == 0 then
-          return some (out, j + 1)
-        out := out.push c
-        j := j + 1
-      else break
-    return none
-  else return none
-
 /-- The mandatory `{language}` head of a `{minted}` body, after any option
 head: the language text and the index past the `}`, `none` when the group
 is missing. -/
@@ -317,7 +287,7 @@ private def mintedLangHead (s : String) (start : Nat) : Option (String × Nat) :
 `{minted}`, its language argument — the one index both the block arm and
 the inline degradation strip from. -/
 private def listingContentStart (env s : String) : Nat :=
-  let afterOpt := ((listingOptHead s).map (·.2)).getD 0
+  let afterOpt := ((Parse.listingOptHead s).map (·.2)).getD 0
   if env == "minted" then
     ((mintedLangHead s afterOpt).map (·.2)).getD afterOpt
   else afterOpt
@@ -5523,7 +5493,7 @@ is plain prose; markup inside one is out of the blind capture's reach. -/
 private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := do
   if env == "verbatim" then
     return .verbatim none s {}
-  let (opts, afterOpt) := (listingOptHead s).getD ("", 0)
+  let (opts, afterOpt) := (Parse.listingOptHead s).getD ("", 0)
   let mut content := s
   let mut caption : Option String := none
   let mut label : Option String := none
@@ -9431,6 +9401,8 @@ def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag :=
   let picPre := Compat.boundaryDecls raws
   let (raws, compatDiags) := Compat.rewrite file raws
+  let (raws, textDiags) := Compat.rewriteText file raws
+  let compatDiags := compatDiags ++ textDiags
   let (doc, st) := (elabDoc file raws picPre).run {}
   -- The realization pass rewrites the document where a (role, ground)
   -- pair fails and the solver can meet it (Core/Contrast.lean): both

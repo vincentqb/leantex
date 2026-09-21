@@ -2677,4 +2677,367 @@ def styRead (docFile sty : String) (pos : Pos) (diags : Array Diag) : Diag :=
      s!"honoured: {honoured}, named: {named}, TeX internals refused: {refused}")
     (some ⟨docFile, pos⟩)
 
+/-! # listings and siunitx (pkg-text's section)
+
+A second rewrite pass, run by `Elab.runRaws` right after `rewrite`: it
+lives at the file's end, in its own section, so the arms elsewhere in
+this file rebase clean around it.
+
+`\lstset{keys}` is listings' stateful configuration: the accepted entries
+travel into the option head of every following `{lstlisting}` capture,
+where the elaborator judges each key once (`Elab.listingBlock`) — one
+validation site, the environment's own keys overriding `\lstset`'s
+(listings' precedence; later entries win at elaboration, so the
+environment's stand last).
+
+The siunitx commands (`\num`, `\SI`/`\qty`, `\si`/`\unit`, `\ang`,
+`\numrange`/`\qtyrange`) spell their text natively: digit grouping and
+the decimal marker from the locale record, `e` exponents as ×10ⁿ with
+real superscript glyphs, unit symbols from the table below. A name a
+document `\define`s itself is left alone — the definition wins, as it
+does at elaboration. -/
+
+/-- The unit symbols, transcribed from siunitx's own declarations
+(`\siunitx_declare_unit:Nn`, siunitx.sty v3 — the implementation of the
+manual's unit tables: SI base and derived units, and the accepted
+non-SI units). Ω is spelled U+03A9: the input path NFC-normalizes, so
+one spelling reaches the fonts. `\kilogram` and `\decibel` carry their
+composed symbols. -/
+def siUnits : List (String × String) :=
+  [("kilogram", "kg"), ("metre", "m"), ("meter", "m"), ("mole", "mol"),
+   ("second", "s"), ("ampere", "A"), ("kelvin", "K"), ("candela", "cd"),
+   ("gram", "g"),
+   ("becquerel", "Bq"), ("degreeCelsius", "°C"), ("coulomb", "C"),
+   ("farad", "F"), ("gray", "Gy"), ("hertz", "Hz"), ("henry", "H"),
+   ("joule", "J"), ("katal", "kat"), ("lumen", "lm"), ("lux", "lx"),
+   ("newton", "N"), ("ohm", "Ω"), ("pascal", "Pa"), ("radian", "rad"),
+   ("siemens", "S"), ("sievert", "Sv"), ("steradian", "sr"),
+   ("tesla", "T"), ("volt", "V"), ("watt", "W"), ("weber", "Wb"),
+   ("astronomicalunit", "au"), ("bel", "B"), ("decibel", "dB"),
+   ("dalton", "Da"), ("day", "d"), ("electronvolt", "eV"),
+   ("hectare", "ha"), ("hour", "h"), ("litre", "L"), ("liter", "L"),
+   ("minute", "min"), ("neper", "Np"), ("tonne", "t"),
+   ("arcminute", "\u02B9"), ("arcsecond", "\u02BA"), ("degree", "°"),
+   ("percent", "%")]
+
+/-- The SI prefixes, from the same declarations
+(`\siunitx_declare_prefix:Nnn`, siunitx.sty v3): quecto through quetta.
+µ is U+03BC, siunitx's own scalar for `\micro`. -/
+def siPrefixes : List (String × String) :=
+  [("quecto", "q"), ("ronto", "r"), ("yocto", "y"), ("zepto", "z"),
+   ("atto", "a"), ("femto", "f"), ("pico", "p"), ("nano", "n"),
+   ("micro", "\u03BC"), ("milli", "m"), ("centi", "c"), ("deci", "d"),
+   ("deca", "da"), ("deka", "da"), ("hecto", "h"), ("kilo", "k"),
+   ("mega", "M"), ("giga", "G"), ("tera", "T"), ("peta", "P"),
+   ("exa", "E"), ("zetta", "Z"), ("yotta", "Y"), ("ronna", "R"),
+   ("quetta", "Q")]
+
+/-- A real superscript glyph per digit (U+2070–U+2079, with ¹²³ at their
+Latin-1 points) and the superscript minus U+207B: what exponents and
+unit powers render with. -/
+private def supChar : Char → Char
+  | '0' => '⁰' | '1' => '¹' | '2' => '²' | '3' => '³' | '4' => '⁴'
+  | '5' => '⁵' | '6' => '⁶' | '7' => '⁷' | '8' => '⁸' | '9' => '⁹'
+  | '-' => '⁻' | c => c
+
+private def toSup (s : String) : String :=
+  String.ofList (s.toList.map supChar)
+
+/-- Group a digit run in threes with the locale's separator, only when it
+carries five or more digits — siunitx's own thresholds
+(`group-minimum-digits = 5`, `group-digits = all`). `fromRight` is the
+integer part's direction; a fraction part groups from the left. -/
+private def groupDigits (loc : Locale) (ds : String) (fromRight : Bool) : String :=
+  if ds.length < 5 then ds else Id.run do
+    let cs := if fromRight then ds.toList.reverse else ds.toList
+    let mut out : List Char := []
+    let mut n := 0
+    for c in cs do
+      if n > 0 && n % 3 == 0 then
+        out := loc.group.toList.reverse ++ out
+      out := c :: out
+      n := n + 1
+    return String.ofList (if fromRight then out else out.reverse)
+
+/-- `\num`'s output for one plain number
+`[+-]digits[.digits][e[+-]digits]` (a `,` reads as the input decimal
+marker, as siunitx accepts): grouped digits, the locale's decimal marker,
+and the exponent as ×10ⁿ — `exponent-product`'s × between real
+superscript digits, `10ⁿ` alone when no significand stands before the
+`e`. Input outside that shape is kept exactly as written: a form the
+formatter cannot read must never be silently reshaped. -/
+private def fmtNum (loc : Locale) (src0 : String) : String := Id.run do
+  let src := String.ofList (src0.toList.filter (· != ' '))
+  let (mant, expPart) := match src.splitOn "e" with
+    | [m] =>
+      (match m.splitOn "E" with
+        | [m1] => (m1, none)
+        | [m1, e1] => (m1, some e1)
+        | _ => ("", none))
+    | [m, e] => (m, some e)
+    | _ => ("", none)
+  -- validate and split the significand
+  let (sign, rest) :=
+    if mant.startsWith "-" then ("\u2212", (mant.drop 1).toString)
+    else if mant.startsWith "+" then ("", (mant.drop 1).toString)
+    else ("", mant)
+  let parts := (rest.replace "," ".").splitOn "."
+  let ok (s : String) := s.toList.all (·.isDigit)
+  let mantOut : Option String := match parts with
+    | [i] => if ok i && !i.isEmpty then some (sign ++ groupDigits loc i true) else
+        if i.isEmpty && sign.isEmpty then some "" else none
+    | [i, f] => if ok i && ok f && !(i.isEmpty && f.isEmpty) then
+        some (sign ++ groupDigits loc i true ++ loc.decimal ++ groupDigits loc f false)
+      else none
+    | _ => none
+  let expOut : Option (Option String) := match expPart with
+    | none => some none
+    | some e =>
+      let e := if e.startsWith "+" then (e.drop 1).toString else e
+      let (es, ed) := if e.startsWith "-" then ("-", (e.drop 1).toString) else ("", e)
+      if ok ed && !ed.isEmpty then
+        let ed := String.ofList (ed.toList.dropWhile (· == '0'))
+        some (some (es ++ (if ed.isEmpty then "0" else ed)))
+      else none
+  match mantOut, expOut with
+  | some m, some none => if m.isEmpty then src0 else m
+  | some m, some (some e) =>
+    let es := toSup e
+    if m.isEmpty then "10" ++ es
+    else m ++ "\u2009×\u200910" ++ es
+  | _, _ => src0
+
+mutual
+
+/-- The group-flatten a unit argument needs: `{\kilo\metre}` and bare
+`\kilo\metre` read the same. -/
+-- conserves: none — a projection to the atoms a unit expression reads.
+private def unitAtoms (out : Array Raw) : List Raw → Array Raw
+  | [] => out
+  | r :: rest => unitAtoms (unitAtomOne out r) rest
+
+private def unitAtomOne (out : Array Raw) : Raw → Array Raw
+  | .group b _ => unitAtoms out b.toList
+  | r => out.push r
+
+end
+
+/-- One unit group's symbols. Prefixes glue to the unit they precede;
+`\per` negates the next unit's power, `\square`/`\cubic` set it and
+`\squared`/`\cubed` multiply the one before (siunitx's power syntax,
+default `per-mode = power`: m s⁻¹, never a slash); factors join by thin
+space. Literal text in the group is kept as written. A name outside the
+table is W0381, set as its ASCII spelling — degraded, never silent. -/
+private def fmtUnit (body : Array Raw) (pos : Pos) : M String := do
+  let atoms := unitAtoms #[] body.toList
+  let mut factors : Array (String × Int) := #[]
+  let mut pre := ""
+  let mut nextPow : Int := 1
+  let mut perNext := false
+  for r in atoms do
+    match r with
+    | .ctrl n _ =>
+      if let some g := siPrefixes.lookup n then
+        pre := pre ++ g
+      else if n == "per" then
+        perNext := true
+      else if n == "square" then
+        nextPow := 2
+      else if n == "cubic" then
+        nextPow := 3
+      else if n == "squared" || n == "cubed" then
+        let k : Int := if n == "squared" then 2 else 3
+        match factors.back? with
+        | some (g, p) => factors := factors.pop.push (g, p * k)
+        | none => pure ()
+      else
+        let g ← match siUnits.lookup n with
+          | some g => pure g
+          | none => do
+            say .W0381 s!"no unit symbol for '\\{n}'; set as its ASCII spelling" pos
+              (help := "write the symbol as literal text in the unit braces: \
+\\qty{1}{kPa}")
+            pure n
+        factors := factors.push (pre ++ g, nextPow * (if perNext then -1 else 1))
+        pre := ""
+        nextPow := 1
+        perNext := false
+    | .word w _ => factors := factors.push (w, 1)
+    | .sym c _ => factors := factors.push (String.ofList [c], 1)
+    | _ => pure ()
+  return String.intercalate "\u2009"
+    ((factors.map fun (g, p) =>
+      g ++ (if p == 1 then "" else toSup (toString p))).toList)
+
+/-- `\ang`'s degrees, arcminutes, arcseconds: the `;`-separated parts each
+take the angle symbols siunitx sets (`\degree`, `\arcminute`,
+`\arcsecond` — °, U+02B9, U+02BA). -/
+private def fmtAng (loc : Locale) (src : String) : String := Id.run do
+  let parts := src.splitOn ";"
+  let marks := ["°", "\u02B9", "\u02BA"]
+  let mut out := ""
+  let mut i := 0
+  for p in parts do
+    let p := p.trimAscii.toString
+    unless p.isEmpty do
+      out := out ++ fmtNum loc p ++ (marks[i]?.getD "")
+    i := i + 1
+  return out
+
+/-- The state the text pass threads in flow order. -/
+private structure TextSt where
+  /-- `\lstset` entries standing, injected ahead of every following
+  listing's own option head. -/
+  lstOpts : Array String := #[]
+  /-- Names the document defines; a defined `\num` is the document's. -/
+  defined : Array String := #[]
+
+/-- `\lstset`'s standing entries spliced ahead of a listing's option
+head: the environment's own entries stand last, so they win at
+elaboration — listings' own precedence. -/
+private def injectLstOpts (st : TextSt) (s : String) : String :=
+  if st.lstOpts.isEmpty then s else
+  let joined := String.intercalate "," st.lstOpts.toList
+  match Parse.listingOptHead s with
+  | some (o, past) => "[" ++ joined ++ "," ++ o ++ "]" ++ (s.drop past).toString
+  | none => "[" ++ joined ++ "]" ++ s
+
+/-- One siunitx command's replacement: the text raws standing in its
+place and the index past its arguments. Number and unit join by
+U+202F, a no-break thin space — siunitx's `quantity-product = \,` —
+inside one word, so a quantity never breaks across lines. A range takes
+siunitx's own default phrase (`range-phrase`, " to "), units repeated on
+both ends (`range-units = repeat`). Options on a command are named
+W0110, never silently dropped. -/
+private def siCtrl (loc : Locale) (n : String) (pos : Pos) (raws : Array Raw)
+    (start : Nat) : M (Array Raw × Nat) := do
+  sayOnce ("si:" ++ n) .N0100
+    s!"'\\{n}' spells its text natively: locale digits and unit symbols (siunitx)" pos
+  let (opt, j) := takeOpt raws start
+  if opt.isSome then
+    say .W0110 s!"'\\{n}' options are not honoured; ignored" pos
+  let word (s : String) : Raw := .word s pos
+  match n with
+  | "num" =>
+    let (args, k) := takeGroups raws j 1
+    return (#[word (fmtNum loc (rawSrc (args.getD 0 #[])))], k)
+  | "ang" =>
+    let (args, k) := takeGroups raws j 1
+    return (#[word (fmtAng loc (rawSrc (args.getD 0 #[])))], k)
+  | "si" | "unit" =>
+    let (args, k) := takeGroups raws j 1
+    return (#[word (← fmtUnit (args.getD 0 #[]) pos)], k)
+  | "SI" | "qty" =>
+    let (args, k) := takeGroups raws j 2
+    let num := fmtNum loc (rawSrc (args.getD 0 #[]))
+    let u ← fmtUnit (args.getD 1 #[]) pos
+    return (#[word (num ++ "\u202F" ++ u)], k)
+  | "numrange" =>
+    let (args, k) := takeGroups raws j 2
+    return (#[word (fmtNum loc (rawSrc (args.getD 0 #[]))), .space, word "to",
+      .space, word (fmtNum loc (rawSrc (args.getD 1 #[])))], k)
+  | "qtyrange" =>
+    let (args, k) := takeGroups raws j 3
+    let u ← fmtUnit (args.getD 2 #[]) pos
+    return (#[word (fmtNum loc (rawSrc (args.getD 0 #[])) ++ "\u202F" ++ u),
+      .space, word "to", .space,
+      word (fmtNum loc (rawSrc (args.getD 1 #[])) ++ "\u202F" ++ u)], k)
+  | _ => return (#[], j)
+
+/-- The siunitx command names this pass answers. -/
+private def siCtrls : List String :=
+  ["num", "ang", "si", "unit", "SI", "qty", "numrange", "qtyrange"]
+
+mutual
+
+/-- The listings/siunitx pass, `rewriteList`'s shape with the flow state
+threaded: the list drives the recursion, the array gives argument access,
+`skip` counts elements a replacement consumed. -/
+-- conserves: none — the rewrite spells siunitx constructs as their output
+-- text and consumes `\lstset` into the next listing's option head.
+private def textList (loc : Locale) (st : TextSt) (raws : Array Raw)
+    (out : Array Raw) : List Raw → Nat → Nat → M (Array Raw × TextSt)
+  | [], _, _ => return (out, st)
+  | _ :: rest, i, skip + 1 => textList loc st raws out rest (i + 1) skip
+  | .ctrl n pos :: rest, i, 0 => do
+    if n == "define" then
+      -- The definition wins: its name is the document's from here on.
+      let j := skipSpaces raws (i + 1)
+      let st := match raws[j]?.bind boundName with
+        | some b => { st with defined := st.defined.push b }
+        | none => st
+      textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
+    else if n == "lstset" && !st.defined.contains n then
+      let (args, k) := takeGroups raws (i + 1) 1
+      let entries := (Decl.splitEntries (rawSrc (args.getD 0 #[]))).filterMap
+        fun e => let e := e.trimAscii.toString
+          if e.isEmpty then none else some e
+      let st := { st with lstOpts := st.lstOpts ++ entries.toArray }
+      textList loc st raws out rest (i + 1) (k - (i + 1))
+    else if siCtrls.contains n && !st.defined.contains n then
+      let (repl, k) ← siCtrl loc n pos raws (i + 1)
+      textList loc st raws (out ++ repl) rest (i + 1) (k - (i + 1))
+    else
+      textList loc st raws (out.push (.ctrl n pos)) rest (i + 1) 0
+  | .verb env s vpos :: rest, i, 0 =>
+    let s := if env == "lstlisting" then injectLstOpts st s else s
+    textList loc st raws (out.push (.verb env s vpos)) rest (i + 1) 0
+  | r :: rest, i, 0 => do
+    let (r, st) ← textRaw loc st r
+    textList loc st raws (out.push r) rest (i + 1) 0
+
+/-- Descend into groups and environments: `\lstset` in the preamble of an
+`\input`ed file, or `\num` inside a cell, reads exactly as at top level.
+The state threads through in flow order and out again. -/
+private def textRaw (loc : Locale) (st : TextSt) : Raw → M (Raw × TextSt)
+  | .group body p => do
+    let (body, st) ← textList loc st body #[] body.toList 0 0
+    return (.group body p, st)
+  | .env n body p => do
+    let (body, st) ← textList loc st body #[] body.toList 0 0
+    return (.env n body p, st)
+  | r => return (r, st)
+
+end
+
+mutual
+
+/-- The document's declared language tag, for the number spellings: the
+`\pdfmeta{ language = "…" }` the babel arm rewrites to (or a document
+declares itself), found wherever it stands. -/
+private def declaredTagList : List Raw → Option String
+  | [] => none
+  | .ctrl "pdfmeta" _ :: rest =>
+    match (rest.dropWhile (· matches .space)).head? with
+    | some (.group g _) =>
+      match (Decl.splitEntries (rawSrc g)).findSome? (fun e =>
+          match Decl.splitEntry e with
+          | some ("language", v) =>
+            some (((v.replace "\"" "").trimAscii).toString)
+          | _ => none) with
+      | some tag => some tag
+      | none => declaredTagList rest
+    | _ => declaredTagList rest
+  | r :: rest =>
+    match declaredTagOne r with
+    | some t => some t
+    | none => declaredTagList rest
+
+private def declaredTagOne : Raw → Option String
+  | .env _ body _ => declaredTagList body.toList
+  | _ => none
+
+end
+
+/-- The listings/siunitx pass, run right after `rewrite`: `\lstset` folds
+into the listings that follow it, and the siunitx commands become their
+spelled text under the document's own locale. -/
+def rewriteText (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
+  let loc := ((declaredTagList raws.toList).bind Locale.forTag).getD Locale.en
+  let go : M (Array Raw) := do
+    let (out, _) ← textList loc {} raws #[] raws.toList 0 0
+    return out
+  let (out, st) := go.run { file := file }
+  (out, st.diags)
+
 end LeanTex.Core.Compat

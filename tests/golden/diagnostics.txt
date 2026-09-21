@@ -453,6 +453,9 @@ warning[W0379]: a picture reaches outside the rendered subset and no boundary to
 ── W0380 (degraded) a \cref target of unknown kind; the plain number is set
 warning[W0380]: 'stepped' names a bare counter step, not a heading, equation, or float; the plain number is set
   help: reference it with \ref, or move the \label after the numbered thing it should name
+── W0381 (degraded) a unit outside the siunitx table; set as its ASCII spelling
+warning[W0381]: no unit symbol for '\banana'; set as its ASCII spelling
+  help: write the symbol as literal text in the unit braces: \qty{1}{kPa}
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
   help: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg added

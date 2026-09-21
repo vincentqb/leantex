@@ -183,6 +183,36 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
   return (acc, diags)
 
 
+/-- The option head of a listing environment's blind-captured body:
+spaces and tabs, then `[...]` with `{}`-nesting respected (listings reads
+its per-environment keys there; a bracket on a later line is content, as
+in listings). Returns the option text and the index past the `]`, `none`
+when no head stands or the bracket never closes. -/
+def listingOptHead (s : String) : Option (String × Nat) := Id.run do
+  let cs := s.toList.toArray
+  let mut i := 0
+  for _ in [0:cs.size] do
+    if h : i < cs.size then
+      if cs[i] == ' ' || cs[i] == '\t' then i := i + 1 else break
+    else break
+  if h : i < cs.size then
+    if cs[i] != '[' then return none
+    let mut depth : Nat := 0
+    let mut j := i + 1
+    let mut out := ""
+    for _ in [0:cs.size] do
+      if h2 : j < cs.size then
+        let c := cs[j]
+        if c == '{' then depth := depth + 1
+        else if c == '}' then depth := depth - 1
+        if c == ']' && depth == 0 then
+          return some (out, j + 1)
+        out := out.push c
+        j := j + 1
+      else break
+    return none
+  else return none
+
 /-! `Raw` back to source text. Declaration blocks and lengths are parsed from
 this string, so it must round-trip what the lexer accepted. -/
 
