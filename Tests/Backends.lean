@@ -989,7 +989,7 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
      has deckPage "document.querySelectorAll(\"[data-snap]\")" &&
      has deckPage "scrollIntoView" && !has deckPage "/* removed */")
   t "the deck keeps the safe area and caps the title band"
-    (has deckPage "padding: var(--safearea, 6vmin); }" &&
+    (has deckPage "padding: var(--safearea, 6vmin); position: relative; }" &&
      has deckPage "max-height: var(--titleband, 12.5dvh)")
   -- 11pt over the 90mm stage (Ir.slidesFontSize / Ir.slidesStage169.2),
   -- truncated to the printed milli: deck_type_is_stage_ratio's bounds.

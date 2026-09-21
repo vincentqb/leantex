@@ -2095,3 +2095,69 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count ".step { opacity: 100%; }" == 1 &&
      (((html.splitOn "@media print").drop 1).all fun s =>
       (s.splitOn "ltx-uncover").length == 1))
+
+/-- The deck's logo is frame furniture in HTML too — the executable half
+of `logo_frames_agree`, over one deck: the frames whose HTML section
+carries the `.slide-logo` strip are exactly the pages whose `Layout.Out`
+carries the logo's furniture line, both read from the one declaration
+sequence (`Ir.logoInForce`). The strip is decorative by role — its images
+ship `alt=""` and the alt census counts them as decorative rather than
+missing — the deck's W0007 is gone, the flow classes keep it, and a
+declared alignment reaches both backends from the one resolving site
+(`Ir.logoAlign`). -/
+def deckLogoChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let mk (pre : String) := deck169 pre
+    ("\\begin{frame}{One}\na\n\\end{frame}\n" ++
+     "\\logo{LOGO}\n" ++
+     "\\begin{frame}{Two}\nb\n\\end{frame}\n" ++
+     "\\logo{}\n" ++
+     "\\begin{frame}{Three}\nc\n\\end{frame}")
+  let (doc, ds) := elabStr (mk "\\theme{default}")
+  t "logo deck elaborates clean" (ds.all fun d => d.severity == .note)
+  let out := layoutOf oneFace doc
+  t "logo census, PDF half: the furniture line stands on exactly the declared frame's page"
+    (out.pages.size == 3 &&
+     out.pages.map (fun p => p.lines.any (·.furniture)) == #[false, true, false])
+  let (html, hds) := HtmlDoc.emit {} doc
+  t "the deck ships the logo instead of naming a drop"
+    (!hds.any (·.code == "W0007"))
+  let secs := (html.splitOn "<section").toArray
+  let logoIn (i : Nat) : Bool := hasStr (secs.getD i "") "class=\"slide-logo\""
+  t "logo census, HTML half: the strip stands on frame Two's section alone"
+    (secs.size == 4 && !logoIn 1 && logoIn 2 && !logoIn 3)
+  t "the strip is decorative furniture at the default alignment, beamer's corner"
+    (hasStr html "class=\"slide-logo\" role=\"presentation\" aria-hidden=\"true\"" &&
+     hasStr html "justify-content: flex-end")
+  t "the stylesheet pins the strip to the stage's bottom band, in print too"
+    (hasStr html (".slide-logo { position: absolute; bottom: var(--safearea, 6vmin); " ++
+       "left: var(--safearea, 6vmin); right: var(--safearea, 6vmin); display: flex; }") &&
+     hasStr html (".slide-logo { position: absolute; bottom: 1.4rem; " ++
+       "left: 1.8rem; right: 1.8rem; display: flex; }"))
+  -- Alignment is one declared value, projected by each backend.
+  let (cdoc, cds) := elabStr (mk "\\theme{default}\\style{logo}{ align = center }")
+  let cout := layoutOf oneFace cdoc
+  let (chtml, _) := HtmlDoc.emit {} cdoc
+  let geom := Layout.Geom.ofPage cdoc.page
+  let logoLines := cout.pages.foldl
+    (fun acc p => acc ++ p.lines.filter (·.furniture)) #[]
+  t "a declared alignment reaches both backends from the one resolving site"
+    (cds.all (fun d => d.severity == .note) &&
+     hasStr chtml "justify-content: center" &&
+     logoLines.size == 1 &&
+     logoLines.all (fun l => l.x == (geom.pageW - l.setWidth) / 2))
+  -- A logo image is decorative: `alt=""` ships and the no-alternative
+  -- census stays silent for it, while a content image is still named.
+  let (idoc, _) := elabStr (deck169 "\\theme{default}"
+    ("\\logo{\\includegraphics[totalheight=.25\\textheight]{lg.png}}\n" ++
+     "\\begin{frame}{T}\n\\includegraphics{pic.png}\n\\end{frame}"))
+  let (ihtml, _) := HtmlDoc.emit {} idoc
+  t "a logo image ships an empty alt and escapes the no-alt census; content images do not"
+    (hasStr ihtml "src=\"lg.png\" alt " &&
+     Ir.imagesSansAlt idoc == #["pic.png"])
+  -- The flow classes keep W0007: an article's \logo stays paged-media
+  -- furniture with no HTML analogue.
+  let (adoc, _) := elabStr (dvDoc "\\logo{L}\n" "x")
+  let (_, ads) := HtmlDoc.emit {} adoc
+  t "an article's logo is still a named drop"
+    (ads.any (·.code == "W0007"))

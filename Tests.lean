@@ -89,6 +89,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   overlayChecks ref oneFace
   overlayBlockChecks ref oneFace
   deckStepChecks ref oneFace
+  deckLogoChecks ref oneFace
   noteChecks ref oneFace
   themeFurnitureChecks ref oneFace
   themeReconcileChecks ref oneFace

@@ -115,8 +115,8 @@ def engineClasses : List String :=
    "entry-pair", "entry-row", "entry-rows", "fill", "float", "group", "icon",
    "math", "math-display", "nopadl", "nopadr", "note", "picture", "progress",
    "reveal-scroll", "ruled", "section-page", "separator", "slide",
-   "slide-foot", "slide-track", "slides", "snap", "spaced", "standout",
-   "step", "table-float"] ++
+   "slide-foot", "slide-logo", "slide-track", "slides", "snap", "spaced",
+   "standout", "step", "table-float"] ++
   Ir.sizeScale.map (fun p => "size-" ++ p.1)
 
 private theorem engineClasses_no_u_prefix :
@@ -1355,19 +1355,36 @@ def deckSnapDoor : DeckRule :=
   { selector := [.lit "[data-snap]"]
     decls := [("scroll-snap-align", "start"), ("scroll-snap-stop", "always")] }
 
+/-- The frame's logo corner: `.slide-logo` spans the stage's safe-area
+content box, pinned to its bottom — the furniture band the PDF lays the
+logo into at the page's bottom margin — and distributes its content
+horizontally by the declared alignment, which rides the element's own
+inline style (`Ir.logoAlign`: `flex-end`, beamer's lower-right default,
+unless the document styles it). The stage anchors the strip
+(`deckStageRule`'s `position: relative`; a stepped track's sticky stage
+is a positioned box already), so the logo stands with its frame on every
+snap page, as the PDF repeats it on every page of the frame. -/
+def deckLogoRule : DeckRule :=
+  { selector := [.lit ".slide-logo"]
+    decls := [("position", "absolute"), ("bottom", safeareaVar),
+      ("left", safeareaVar), ("right", safeareaVar), ("display", "flex")] }
+
 /-- Every frame fills the viewport as one opaque column of the row:
 `100vw` wide (exactly the scrollport — the root clips y, so no scrollbar
 narrows the viewport under it), one stage tall, `background:
 var(--surface)` unconditionally — opaque on every path, the user's own
 rule — and content that spills the stage stays reachable through the
 frame's own scroll (`overflow-y: auto`; the scrollbar is the visible
-control, the honest floor). -/
+control, the honest floor). `position: relative` anchors the stage's own
+furniture (`deckLogoRule`); in a stepped track the sticky override
+(`stepStageRule`, higher specificity) is a positioned box already. -/
 def deckStageRule : DeckRule :=
   { selector := [.lit "section.slide, section.section-page"]
     decls := [("width", "100vw"), ("flex", "0 0 100vw"),
       ("height", "100dvh"), ("overflow-y", "auto"),
       ("background", "var(--surface)"), ("display", "flex"),
-      ("flex-direction", "column"), ("padding", safeareaVar)] }
+      ("flex-direction", "column"), ("padding", safeareaVar),
+      ("position", "relative")] }
 
 /-- The deck's base screen rules — the floor every browser gets, no
 feature gate anywhere. The scroll space is horizontal and snaps
@@ -1400,6 +1417,7 @@ def deckBase (bodyVh : String) : List DeckRule :=
         ("align-items", "flex-start"), ("font-size", bodyVh)] },
     deckStageRule,
     deckSnapDoor,
+    deckLogoRule,
     { selector := [.lit "section.section-page"]
       decls := [("justify-content", "center"), ("align-items", "center")] },
     { selector := [.lit "h1"], decls := [("font-size", scaleSize "LARGE" "em")] },
@@ -1605,7 +1623,10 @@ def stepRules (coveredPct maxSteps : Nat) : List DeckRule :=
     (stepFixed ++ stepSnapped maxSteps)
 
 /-- The print partition: the handout, one bordered card per frame
-(Tufte: the handout is the document) — and for a stepped deck the snap
+(Tufte: the handout is the document) — the logo prints with its card,
+absolute in the card's padding box as it is absolute in the stage's safe
+area (furniture on paper too, `position: relative` on the card anchors
+it) — and for a stepped deck the snap
 spacers hide, the wrapper takes the card gap its section can no longer
 claim as `* + section.slide` (it is the wrapper's first child), and
 every step prints at full colour: paper has no steps to reveal (the
@@ -1616,7 +1637,12 @@ def deckPrint (maxSteps : Nat) : List DeckRule :=
       decls := [("border", s!"{slideBorderPx}px solid var(--rule)"),
         ("border-radius", s!"{slideRadiusPx}px"),
         ("padding", s!"{slidePadV} {slidePadH}"),
-        ("margin", "0"), ("break-inside", "avoid")]
+        ("margin", "0"), ("break-inside", "avoid"),
+        ("position", "relative")]
+      part := .print },
+    { selector := [.lit ".slide-logo"]
+      decls := [("position", "absolute"), ("bottom", slidePadV),
+        ("left", slidePadH), ("right", slidePadH), ("display", "flex")]
       part := .print },
     { selector := [.lit "* + section.slide"]
       decls := [("margin-top", slidePadV)]
@@ -1739,6 +1765,7 @@ private theorem deckBase_cases {P : DeckRule → Prop} {v : String}
                 ("align-items", "flex-start"), ("font-size", v)] })
     (h5 : P deckStageRule)
     (h6 : P deckSnapDoor)
+    (h6a : P deckLogoRule)
     (h7 : P { selector := [.lit "section.section-page"]
               decls := [("justify-content", "center"), ("align-items", "center")] })
     (h8 : P { selector := [.lit "h1"], decls := [("font-size", scaleSize "LARGE" "em")] })
@@ -1751,7 +1778,7 @@ private theorem deckBase_cases {P : DeckRule → Prop} {v : String}
     ∀ r ∈ deckBase v, P r := by
   intro r hr
   simp only [deckBase, List.mem_cons, List.not_mem_nil, or_false] at hr
-  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
     assumption
 
 /-- `deck_css_partition`'s per-rule check: a rule whose syntax uses a
@@ -1769,7 +1796,7 @@ rule enters the contract the moment it is written. -/
 theorem deck_css_partition (v : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v cp ms, gateRespects r = true :=
   deckRules_check v cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl (by decide) (fun _ => rfl) (by decide)
 
 /-- The Baseline floor: the property names the base, the `@supports not`
@@ -1782,7 +1809,8 @@ properties (Chromium 49+, Firefox 31+, Safari 9.1+), `@supports` itself
 (Chromium 28+, Firefox 22+, Safari 9+), animations, transforms,
 opacity, and the fragmentation properties print engines honour
 (`break-*`). The `dvh` unit rides several values (Chromium 108+,
-Firefox 101+, Safari 15.4+; 2022). The selector side of the floor is
+Firefox 101+, Safari 15.4+; 2022). The box offset properties (`bottom`,
+`left`, `right`) are CSS 2. The selector side of the floor is
 `deck_css_partition`; attribute selectors (`[data-snap]`,
 `[data-deck-script]`) are CSS 2. -/
 def baselineProps : List String :=
@@ -1792,7 +1820,8 @@ def baselineProps : List String :=
    "min-height", "max-height", "height", "font-size", "color",
    "text-align", "opacity", "transform", "display", "flex-direction",
    "justify-content", "align-items", "position", "content",
-   "animation", "border", "border-radius", "break-inside", "break-after"]
+   "animation", "border", "border-radius", "break-inside", "break-after",
+   "bottom", "left", "right"]
 
 /-- Is the rule part of the floor — the CSS every engine applies? The
 base and every `@supports not` block, in every media partition. -/
@@ -1811,7 +1840,7 @@ theorem floor_is_baseline (v : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v cp ms,
       (!(onFloor r) || r.decls.all fun d => baselineProps.contains d.1) = true :=
   deckRules_check v cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl (by decide) (fun _ => rfl) (by decide)
 
 /-- Content, as the floor theorems see it: the frame stages and the
@@ -1834,7 +1863,7 @@ theorem floor_hides_nothing (v : String) (cp ms : Nat) :
         (!(r.decls.contains ("display", "none")) &&
          !(r.decls.contains ("visibility", "hidden")))) = true :=
   deckRules_check v cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl (by decide) (fun _ => rfl) (by decide)
 
 /-- The opacity values a rule sets. -/
@@ -1853,7 +1882,7 @@ theorem floor_opacity_mem (v : String) (cp ms : Nat) :
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
-      (fun o ho => nomatch ho)
+      (fun o ho => nomatch ho) (fun o ho => nomatch ho)
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -1872,7 +1901,8 @@ theorem floor_opacity_mem (v : String) (cp ms : Nat) :
     have hr2 := deckPrint_subset r hr
     simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
       or_false] at hr2
-    rcases hr2 with (rfl | rfl | rfl) | h2
+    rcases hr2 with (rfl | rfl | rfl | rfl) | h2
+    · exact fun o ho => nomatch ho
     · exact fun o ho => nomatch ho
     · exact fun o ho => nomatch ho
     · exact fun o ho => nomatch ho
@@ -1901,7 +1931,7 @@ theorem floor_covered_script_gated (v : String) (cp ms : Nat) :
       (!(onFloor r) || scriptGated r ||
         r.decls.all fun d => d.1 != "opacity" || d.2 == "100%") = true :=
   deckRules_check v cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl (by decide) (fun _ => rfl) (by decide)
 
 /-- The motion properties the reduced-motion contract covers: the base
@@ -1962,7 +1992,7 @@ theorem guards_by_construction (v : String) (cp ms : Nat) :
   · exact deckBase_cases rfl
       (motionGuarded_of_guard (g := deckGlideGuard)
         (mem_deckRules_reduce (by decide)) (by decide))
-      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
+      rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl
   · intro r hr
     simp only [deckReduce, deckGlideGuard, List.mem_cons, List.not_mem_nil,
       or_false] at hr
@@ -1980,7 +2010,8 @@ theorem guards_by_construction (v : String) (cp ms : Nat) :
     have hr2 := deckPrint_subset r hr
     simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
       or_false] at hr2
-    rcases hr2 with (rfl | rfl | rfl) | h2
+    rcases hr2 with (rfl | rfl | rfl | rfl) | h2
+    · rfl
     · rfl
     · rfl
     · rfl
@@ -2046,7 +2077,7 @@ theorem deck_text_path_free (v : String) (cp ms : Nat) :
       (r.decls.all fun d =>
         d.1 != "content" || (d.2 == "\"\"" || d.2 == "none")) = true :=
   deckRules_check v cp ms
-    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
+    (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
     (by decide) rfl rfl (by decide) (fun _ => rfl) (by decide)
 
 /-- A length's share of the deck stage, in milli-percent: the one
@@ -3131,8 +3162,10 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       | none => #[]
     Html.elem "nav" (blockNodesInto cfg.into #[] body.toList) (labelAttrs ++ pinAttrs)
   | .logo _ =>
-    -- Paged-media furniture; `blockNodesInto` skips it (and `emit` says
-    -- so), so this arm only closes the match.
+    -- A state change, not content: the deck's top-level walk reads it
+    -- (`attachLogo` ships the state as frame furniture), `blockNodesInto`
+    -- skips it, and `emitTree` names the drop in the classes that keep it
+    -- paged-media furniture (W0007). This arm only closes the match.
     Html.text ""
   | .picture pic =>
     -- The picture as inline SVG: the same evaluated shapes the PDF paints,
@@ -3533,6 +3566,40 @@ retitle one section, or link to '#{id}'"))
     | _ => cur := cur.push (withEpoch cfg.epochStyle (blockNode cfg b))
   return (close out cur openId, diags)
 
+/-- A frame's (or section page's) logo, attached as the section's own
+furniture: the logo in force at the deck position (`Ir.logoInForce`, the
+same resolving site the PDF's furniture pass reads per page) renders into
+the `.slide-logo` strip `deckLogoRule` pins to the stage's bottom band.
+The logo is decorative furniture by role, so every image inside ships
+`alt=""` and the strip is removed from the accessibility tree
+(`role="presentation"`, `aria-hidden`) — WCAG 2.2 SC 1.1.1: pure
+decoration is implemented so assistive technology can ignore it — the
+same judgement the alt census makes (`Ir.logoImageSrcs`). The declared
+alignment (`Ir.logoAlign`) rides as the strip's flex distribution, the
+projection of the PDF's x placement from the one declared value. -/
+private def attachLogo (cfg : Config) (node : Node)
+    (logo : Option (Array Inline)) : Node :=
+  match logo with
+  | none => node
+  | some content =>
+    if content.isEmpty then node else
+    match node with
+    | .elem tag attrs kids =>
+      let deco := Ir.mapInlines (fun x => match x with
+        | .image src size _ => .image src size ""
+        | x => x) content
+      let justify := match Ir.logoAlign cfg.styles with
+        | "left" => "flex-start"
+        | "center" => "center"
+        | _ => "flex-end"
+      Node.elem tag attrs (kids.push (Html.elem "div" (inlines cfg deco)
+        #[("class", "slide-logo"), ("role", "presentation"),
+          ("aria-hidden", "true"),
+          ("style", s!"justify-content: {justify}")]))
+    | .text s => .text s
+    | .style s => .style s
+    | .script attrs s => .script attrs s
+
 /-- Emit a document as its typed tree — head and body nodes — plus any
 diagnostics the backend itself raises; `emit` renders it. The tree is the
 page before serialization: what the cross-backend agreement census judges
@@ -3553,9 +3620,14 @@ def emitTree (cfg : Config) (doc : Doc) :
     diags := diags.push (Diag.of .W0007
       "running head/foot is paged-media furniture; omitted from HTML"
       (help := "body content reaches both backends: move the masthead there"))
-  if doc.logo.isSome || doc.body.any (fun b => match b with
-      | .logo c => !c.isEmpty
-      | _ => false) then
+  -- In the frame model a frame is a page and its logo is the frame's own
+  -- furniture, shipped below (`attachLogo`), exactly as the footer is. In
+  -- every other class the logo stays paged-media furniture with no HTML
+  -- analogue, and the drop is named.
+  if doc.docClass.record.model != .frame &&
+      (doc.logo.isSome || doc.body.any (fun b => match b with
+        | .logo c => !c.isEmpty
+        | _ => false)) then
     diags := diags.push (Diag.of .W0007
       "the \\logo is paged-media furniture; omitted from HTML"
       (help := "body content reaches both backends: move the image there"))
@@ -3692,6 +3764,12 @@ def emitTree (cfg : Config) (doc : Doc) :
       let mut done := 0
       let mut curSection : Array Inline := #[]
       let mut frameFoot : Option (Array Inline) := none
+      -- The body's `\logo` declarations, keyed by their position: the
+      -- HTML half of the one logo-state sequence, resolved per frame
+      -- through the same fold the PDF's furniture pass reads per page
+      -- (`Ir.logoInForce`; `logo_frames_agree` is why the two keyings
+      -- cannot disagree).
+      let mut logoSpans : Array (Nat × Array Inline) := #[]
       let mut acc : Array Node := #[]
       let mut walkDiags : Array Diag := #[]
       -- Each assigned frame id with the plain title that holds it: the
@@ -3709,6 +3787,11 @@ def emitTree (cfg : Config) (doc : Doc) :
         | .setTokens tk =>
           let style := joinStyles cfg.epochStyle (epochTokenStyle cfg.tokens tk)
           cfg := { cfg with tokens := tk, epochStyle := style }
+        | .logo c =>
+          -- A state change for this walk, not content (the PDF's
+          -- `.setLogo` twin): the frames from here on carry `c`, an
+          -- empty `c` clears.
+          logoSpans := logoSpans.push (i, c)
         | .framefoot xs =>
           frameFoot := if xs.isEmpty then none else some xs
           -- A continuous page has no physical page number: the placeholder
@@ -3783,6 +3866,11 @@ first; retitle one frame, or link to '#{id}'"))
                   #[("class", "slide-foot size-small")]))
               | _, other => other
             else node
+          -- The frame's logo: the state in force at this position, from
+          -- the shared fold — one strip inside the section, so a stepped
+          -- frame's sticky stage carries it on every snap page, as the
+          -- PDF's furniture pass repeats it on every page of the frame.
+          let node := attachLogo cfg node (Ir.logoInForce doc.logo logoSpans i)
           -- A stepped frame rides a `.slide-track`: the sticky stage
           -- over its snap spacers (`track_snaps_exact` counts them). The
           -- spacers — static boxes, never the sticky stage — carry the
@@ -3815,10 +3903,13 @@ first; retitle one frame, or link to '#{id}'"))
                 #[("class", "progress")])
             -- A section page is one snap page of the deck like any
             -- stepless frame: the section itself carries the
-            -- `[data-snap]` door.
+            -- `[data-snap]` door — and, being a page, the logo state in
+            -- force, as the PDF furnishes every page.
             acc := acc.push (withEpoch cfg.epochStyle
-              (Html.elem "section" kids
-                #[("class", "section-page"), ("data-snap", "")]))
+              (attachLogo cfg
+                (Html.elem "section" kids
+                  #[("class", "section-page"), ("data-snap", "")])
+                (Ir.logoInForce doc.logo logoSpans i)))
           else
             acc := acc.push (withEpoch cfg.epochStyle
               (blockNode cfg (.section 1 starred num title)))
