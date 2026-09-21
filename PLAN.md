@@ -118,6 +118,35 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — silence is fidelity, the surface layer (accounts slice): a
+construct the rewrite dispatcher consumed either has an effect or is
+named — `rewriteCtrl_accounts` (Compat.lean, the `_accounts` shape's
+first instance) holds it for every name and state by unfolding the
+dispatcher's silence guard alone, arms opaque, so no future arm can break
+it. The machinery: `St.writes`, a counter every state mutation bumps
+through the one `write` door (intent, not effect: idempotent writes
+count, no `BEq St`); the guard says **W0387** ("read and had no effect",
+loss `.config`, `\allow`-acceptable, once per name) when an empty arm
+result grew neither `diags` nor `writes`; the pre-commit hook rejects a
+bare `modify`/`set` in Compat outside `say`/`write`/`account`
+(`compatStateDoors`). First run of the guard over the corpus and the
+reference documents surfaced and repaid: the `\RedeclareSectionCommand`/
+`\setlist` silent drops (W0111 generalized, W0101 for unmapped entries),
+`\clearpairofpagestyles` (implemented: clears the gathered fields),
+`\urlstyle` (tt is agreement — `\url` is set mono, url.sty's default —
+else W0104), `\KOMAoptions` (sepline-off is agreement, else W0101),
+beamer's command-form `\column` (W0104, the environment form is the
+modeled spelling), `\raggedbottom`/`\flushbottom` (configSkip, the vdist
+ask), a bare `\note` in Elab (E0304), and the deliberate no-ops
+(`\relax`, `\makeatletter`, …) now carry their reason as the N0100 note.
+`\noindent` stays the guard's W0387 deliberately: whether a first-line
+indent exists to suppress is the paragraph model's question, and the
+guard's message stays true whichever way that lands. All reference
+documents byte-identical (cmp against the branch base); bench flat. The
+resolution layer — no unresolved `\cite`/`\ref`/image reaches a backend
+unnamed — is the next slice of the same theorem.
+
+
 2026-09-21 — a venue's refused redefinitions are declarations; read them
 out (sty-readout slice). Rule (b) extended twice, in the maketitle
 precedent's shape. The size ladder: a refused size command whose body
