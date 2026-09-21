@@ -146,7 +146,7 @@ the one argument each that asks for what the engine already does. -/
 def beamerConfig : List (String × Nat) :=
   [("usecolortheme", 1),
    ("addtobeamertemplate", 3),
-   ("setbeamerfont", 2), ("setbeamercolor", 2),
+   ("setbeamerfont", 2),
    ("beamertemplatenavigationsymbolsempty", 0)]
 
 /-- The native spelling a skipped beamer construct now has, named in its
@@ -1935,6 +1935,62 @@ the definition is skipped" pos
           (help := ((beamerNative.lookup "setbeamertemplate").getD "") ++
             "; \\allow{E0111} accepts the loss")
       return some (#[], k)
+  | "setbeamercolor" =>
+    -- The beamer colour elements the engine has a role for, mapped onto
+    -- the palette (each right side is `Ir.Design.consumedRoles`' own
+    -- vocabulary): `headline` is the poster lineage's title band, read
+    -- by the same `frametitle` pair the deck bar resolves
+    -- (beamerthemegemini.sty draws its headline in exactly these keys);
+    -- the block-title triple is beamer's own (beamercolorthemedefault.sty
+    -- names the elements); `alerted text`/`example text` colour content.
+    -- The value side rides verbatim into `\palette`, where names and `!`
+    -- mixes evaluate at the one resolving site (`Ir.Palette.resolve`).
+    -- An element with no role — page furniture, `structure`, body
+    -- backgrounds — keeps the configuration warning.
+    let j := skipStar raws start
+    let (args, k) := takeGroups raws j 2
+    if h : args.size = 2 then
+      let element := (rawSrc args[0]).trimAscii.toString
+      let roles : List (String × String × String) :=
+        [("normal text", "fg", "bg"),
+         ("headline", "frametitlefg", "frametitlebg"),
+         ("block title", "blocktitlefg", "blocktitlebg"),
+         ("block alerted title", "alerttitlefg", "alerttitlebg"),
+         ("block example title", "exampletitlefg", "exampletitlebg"),
+         ("alerted text", "alert", ""),
+         ("example text", "example", "")]
+      let entries : List String := match roles.lookup element with
+        | some (fgRole, bgRole) =>
+          ((rawSrc args[1]).splitOn ",").filterMap fun e =>
+            match e.splitOn "=" with
+            | [key, v] =>
+              let role := match key.trimAscii.toString with
+                | "fg" => fgRole
+                | "bg" => bgRole
+                | _ => ""
+              if role.isEmpty then none
+              else some s!"{role} = {v.trimAscii.toString}"
+            | _ => none
+        | none => []
+      if entries.isEmpty then
+        sayOnce "beamer:setbeamercolor" .W0104
+          "'\\setbeamercolor' is beamer configuration the engine does not have; skipped" pos
+          (help := beamerNative.lookup "setbeamercolor")
+        return some (#[], k)
+      else
+        let native := s!"\\palette\{ {String.intercalate ", " entries} }"
+        became s!"\\setbeamercolor\{{element}}" native pos
+        return some (← synthAt native pos, k)
+    else return none
+  | "footercontent" =>
+    -- The gemini poster lineage's footer declaration
+    -- (beamerthemegemini.sty, footline template: one centred line of the
+    -- author's content across the page bottom): the engine's running
+    -- foot is the same furniture slot, so the body group stays in the
+    -- stream and `\runningfoot` takes it — the
+    -- `\setbeamertemplate{frame footer}` shape.
+    became "\\footercontent" "\\runningfoot{...}" pos
+    return some (← synthAt "\\runningfoot" pos, start)
   | "usetheme" =>
     let (_, j) := takeOpt raws start
     let (args, k) := takeGroups raws j 1
@@ -2952,6 +3008,17 @@ private def styCandList (raws : Array Raw) (out : Array String) :
       if p.isEmpty || nativePackages.contains p || out.contains p then out
       else out.push p
     styCandList raws out rest (i + 1) (k - (i + 1))
+  | .ctrl "usecolortheme" _ :: rest, i, 0 =>
+    -- beamer's own file rule (beamerbasethemes.sty, `\usecolortheme{n}`
+    -- reads `beamercolorthemen.sty` from the input path): the prefixed
+    -- name is the candidate a colour theme beside the document answers.
+    let (_, j) := takeOpt raws (i + 1)
+    let (args, k) := takeGroups raws j 1
+    let nm := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    let out := if nm.isEmpty then out else
+      let p := "beamercolortheme" ++ nm
+      if out.contains p then out else out.push p
+    styCandList raws out rest (i + 1) (k - (i + 1))
   | r :: rest, i, 0 => styCandList raws (styCandRaw out r) rest (i + 1) 0
 
 /-- Descend into an `\\input` wrapper — a `\\usepackage` in an `\\input`'ed
@@ -3051,6 +3118,26 @@ private def spliceUse (stys : Array (String × Array Raw)) (raws : Array Raw)
     out := out.push (.group #[.word (String.intercalate "," keep.toList) pos] pos)
   return some (out ++ splice, recs, k)
 
+/-- The replacement for one `\\usecolortheme` at `i`: the colour theme's
+input fragment when the prefixed file was read (beamer's own file rule —
+the command reads `beamercolortheme<name>.sty`), `none` otherwise, leaving
+the command to the configuration warning. No option machinery: the sty's
+constructs are honoured or named by the same passes a document goes
+through, `\\setbeamercolor`'s role mapping first among them. -/
+private def spliceColorTheme (stys : Array (String × Array Raw)) (raws : Array Raw)
+    (pos : Pos) (i : Nat) :
+    Option (Array Raw × Array (String × Option String × Pos) × Nat) := Id.run do
+  if stys.isEmpty then return none
+  let (_, j) := takeOpt raws (i + 1)
+  let (args, k) := takeGroups raws j 1
+  if args.isEmpty then return none
+  let p := "beamercolortheme" ++ (rawSrc (args.getD 0 #[])).trimAscii.toString
+  match stys.find? (·.1 == p) with
+  | some (_, sraws) =>
+    return some (#[.env (Parse.inputEnv (p ++ ".sty")) (resolveStyOptions [] sraws) pos],
+      #[(p ++ ".sty", none, pos)], k)
+  | none => return none
+
 mutual
 
 /-- One level of the splice: the list drives the recursion, the array gives
@@ -3066,6 +3153,11 @@ private def applyStyList (stys : Array (String × Array Raw)) (raws : Array Raw)
   | .ctrl cn pos :: rest, i, 0 =>
     if cn == "usepackage" || cn == "RequirePackage" then
       match spliceUse stys raws cn pos i with
+      | some (repl, rs, k) =>
+        applyStyList stys raws (out ++ repl) (recs ++ rs) rest (i + 1) (k - (i + 1))
+      | none => applyStyList stys raws (out.push (.ctrl cn pos)) recs rest (i + 1) 0
+    else if cn == "usecolortheme" then
+      match spliceColorTheme stys raws pos i with
       | some (repl, rs, k) =>
         applyStyList stys raws (out ++ repl) (recs ++ rs) rest (i + 1) (k - (i + 1))
       | none => applyStyList stys raws (out.push (.ctrl cn pos)) recs rest (i + 1) 0
@@ -3109,6 +3201,9 @@ def applyLocalSty (raws : Array Raw) (stys : Array (String × Array Raw)) :
 private theorem spliceUse_empty (raws : Array Raw) (cn : String) (pos : Pos) (i : Nat) :
     spliceUse #[] raws cn pos i = none := rfl
 
+private theorem spliceColorTheme_empty (raws : Array Raw) (pos : Pos) (i : Nat) :
+    spliceColorTheme #[] raws pos i = none := rfl
+
 mutual
 
 private theorem applyStyList_empty :
@@ -3126,8 +3221,13 @@ private theorem applyStyList_empty :
         dsimp only
         rw [applyStyList_empty raws _ recs rest (i + 1)]
         simp
-      · rw [applyStyList_empty raws _ recs rest (i + 1)]
-        simp
+      · split
+        · rw [spliceColorTheme_empty]
+          dsimp only
+          rw [applyStyList_empty raws _ recs rest (i + 1)]
+          simp
+        · rw [applyStyList_empty raws _ recs rest (i + 1)]
+          simp
     | _ =>
       rw [applyStyList, applyStyRaw_empty]
       · dsimp only

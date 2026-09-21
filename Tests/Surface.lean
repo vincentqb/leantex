@@ -1253,7 +1253,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
      ((elabStr (slidesPre "\\usetheme{m}")).1.palette.find? "frametitlebg" |>.isSome) &&
      warnCodes (slidesPre "\\usetheme{metropolis}") == [])
   t "compat beamer warnings name the native spelling"
-    ((elabStr (pre "\\setbeamercolor{normal text}{fg=black}")).2.any fun d =>
+    ((elabStr (pre "\\setbeamercolor{structure}{fg=black}")).2.any fun d =>
       d.code == "W0104" && ((d.help.getD "").splitOn "\\palette").length == 2)
   t "compat ifdefined resolves instead of skipping; untaken branch is silent"
     (warnCodes (pre "\\ifdefined\\x\\usepackage{pgfpages}\\setbeameroption{notes}\\fi") == [])
@@ -3462,3 +3462,42 @@ def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
         | .image _ w _ => some w
         | _ => none)) == #[Dim.pt 2000] &&
      imgOut.diags.any (·.code == "W0005"))
+
+/-- The poster-chrome compat arms: `\setbeamercolor` maps the elements the
+engine has roles for onto the palette (and only those — an element with no
+role keeps the configuration warning), `\footercontent` is the running
+foot's own furniture slot (the gemini lineage's footer declaration), and
+`\usecolortheme{n}` reads `beamercolorthemen.sty` beside the document —
+beamer's own file rule — through the same splice `\usepackage` takes, its
+lines then honoured by the same passes a document goes through. Own
+function: `main`'s elaboration budget. -/
+def posterChromeCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pre (s : String) := "\\documentclass{poster}" ++ s ++
+    "\\begin{document}\\begin{frame}x\\end{frame}\\end{document}"
+  let (doc, ds) := elabStr (pre "\\setbeamercolor{headline}{fg=#F5F6FA,bg=#40739E}")
+  t "setbeamercolor headline maps to the frametitle pair"
+    (doc.palette.find? "frametitlebg" == some { r := 0x40, g := 0x73, b := 0x9E } &&
+     doc.palette.find? "frametitlefg" == some { r := 0xF5, g := 0xF6, b := 0xFA } &&
+     ds.all (·.severity == .note))
+  t "setbeamercolor of an element with no role keeps the configuration warning"
+    (warnCodes (pre "\\setbeamercolor{palette primary}{fg=#101010}") == ["W0104"])
+  let (fDoc, fDs) := elabStr (pre "\\footercontent{An Invented Venue 2099}")
+  t "footercontent is the running foot's slot"
+    (fDs.all (·.severity == .note) &&
+     (fDoc.foot.map Ir.plainText) == some "An Invented Venue 2099")
+  let parseRaws (file s : String) : Array Parse.Raw :=
+    (Parse.parse file (Lex.lex file s).1).1
+  let docRaws := parseRaws "t" (pre "\\theme{gemini}\\usecolortheme{invented}")
+  let ctSty := "\\definecolor{inkco}{HTML}{101010}\n\\setbeamercolor{headline}{bg=inkco}\n"
+  let (raws2, spliced) := Compat.applyLocalSty docRaws
+    #[("beamercolorthemeinvented", parseRaws "beamercolorthemeinvented.sty" ctSty)]
+  let (doc2, ds2) := Elab.runRaws "t" raws2
+  t "usecolortheme reads the colour theme beside the document"
+    (spliced.toList.map (·.1) == ["beamercolorthemeinvented.sty"] &&
+     doc2.palette.find? "frametitlebg" == some { r := 0x10, g := 0x10, b := 0x10 } &&
+     ds2.all (·.code != "W0104"))
+  t "usecolortheme names a candidate for the driver's read"
+    ((Compat.localStyCandidates docRaws).contains "beamercolorthemeinvented")
+  t "usecolortheme with no file beside the document keeps its warning"
+    (warnCodes (pre "\\usecolortheme{nothere}") == ["W0104"])
