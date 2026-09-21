@@ -295,6 +295,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
   | .W0383 => dvE (dvDoc ""
       "\\begin{algorithm}\n\\lIf{$x < 0$}{negate $x$}\\;\n\\end{algorithm}")
+  | .W0387 => dvE (dvDoc "\\thispagestyle{plain}\n" "x")
   | .W0379 => dvE (dvDoc ""
       "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
   | .W0378 => #[DriverDiag.boundaryToolMissing "lualatex" "not found",

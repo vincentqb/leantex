@@ -132,6 +132,7 @@ inductive DiagCode where
   | W0380
   | W0381
   | W0383
+  | W0387
   deriving Repr, BEq, DecidableEq
 
 /-- The registry: each code's digits, its declared `Loss`, and its one
@@ -183,7 +184,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .N0102 => ("0102", .info, "option ignored: it configures machinery the engine does not model")
   | .N0103 => ("0103", .info, "\\section short title unused: nothing consumes it yet")
   | .N0114 => ("0114", .info, "TeX '\\ifdefined' resolved from the document's own definitions")
-  | .W0111 => ("0111", .config, "\\setkomafont on a non-styleable element ignored")
+  | .W0111 => ("0111", .config, "a styling declaration names no styleable element; ignored")
   | .N0200 => ("0200", .info, "page set short: its skips gave their shrink")
   | .W0001 => ("0001", .config, "content after \\end{document} is ignored")
   | .W0003 => ("0003", .degraded, "no math face available; math set as plain text")
@@ -296,6 +297,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0380 => ("0380", .degraded, "a \\cref target of unknown kind; the plain number is set")
   | .W0381 => ("0381", .degraded, "a unit outside the siunitx table; set as its ASCII spelling")
   | .W0383 => ("0383", .pending, "algorithm construct outside the modeled subset; kept as a plain line")
+  | .W0387 => ("0387", .config, "a known construct was read and had no effect")
 
 def DiagCode.digits (c : DiagCode) : String := c.spec.1
 
@@ -320,7 +322,7 @@ theorem DiagCode.code_letter (c : DiagCode) :
 `all_complete` makes an undercount a build failure; `all_nodup` an
 overcount (`ofNat` clamps out of range, so an overcount duplicates the
 last constructor). -/
-def DiagCode.count : Nat := 156
+def DiagCode.count : Nat := 157
 
 /-- Every code, for the registry checks in Tests.lean — derived from the
 type through the `ofNat` that `deriving DecidableEq` synthesises, never

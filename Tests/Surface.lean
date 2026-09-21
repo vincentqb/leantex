@@ -1199,8 +1199,14 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       | _ => false)
   t "compat expl3 is skipped whole"
     (warnCodes (pre "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff") == ["W0106"])
-  t "compat inert commands vanish"
-    ((elabStr "a\\noindent\\relax b").2.isEmpty)
+  -- Inert commands vanish from the output but never wordlessly: a drop
+  -- that is the construct's whole meaning is a note (\relax), one the
+  -- engine simply does not act on is the guard's W0387 (\noindent) —
+  -- rewriteCtrl_accounts is the contract.
+  t "compat inert commands vanish, accounted"
+    (let ds := (elabStr "a\\noindent\\relax b").2
+     ds.all (fun d => d.code == "N0100" || d.code == "W0387") &&
+     ds.any (fun d => d.code == "W0387") && ds.any (fun d => d.code == "N0100"))
   -- The silent list is only for constructs that change nothing the engine
   -- models; one that does (justification, hyphenation language, furniture)
   -- must name its loss instead of vanishing — or, once implemented, map.
@@ -1368,6 +1374,25 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat empty sectionlinesformat body is deliberate silence"
     ((elabStr (pre "\\renewcommand\\sectionlinesformat[4]{}")).2.all
       (·.severity == .note))
+  -- Silence is fidelity (rewriteCtrl_accounts): a construct the dispatcher
+  -- consumed either has an effect or is named. The two once-silent drops
+  -- name their loss precisely; the generic residue is W0387, once per name.
+  t "compat setlist on a non-styleable element is named, never silent"
+    (warnCodes (pre "\\setlist[description]{leftmargin=2em}") == ["W0111"])
+  t "compat RedeclareSectionCommand on a non-styleable element is named"
+    (warnCodes (pre "\\RedeclareSectionCommand[beforeskip=1ex]{part}") == ["W0111"])
+  t "compat RedeclareSectionCommand with no mappable key names its drop"
+    (warnCodes (pre "\\RedeclareSectionCommand[font=\\large]{section}") == ["W0101"])
+  t "compat silence guard warns W0387 once per name"
+    (warnCodes ("\\documentclass{article}\\thispagestyle{plain}\\begin{document}" ++
+      "\\noindent a \\noindent b\\end{document}") == ["W0387", "W0387"])
+  t "compat relax and makeatletter earn their silence as notes"
+    (let ds := (elabStr (pre "\\makeatletter\\relax\\makeatother")).2
+     ds.all (·.severity != .warning) && (ds.filter (·.code == "N0100")).size ≥ 3)
+  t "compat clearpairofpagestyles clears the gathered fields"
+    ((elabStr (pre "\\ihead{L}\\clearpairofpagestyles")).1.head == none)
+  t "compat fields declared after clearpairofpagestyles apply"
+    ((elabStr (pre "\\clearpairofpagestyles\\ihead{L}")).1.head != none)
 
   -- A diagnostic inside an \input file names that file, not the including
   -- one, in the body and in the preamble both.

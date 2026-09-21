@@ -21,6 +21,7 @@ para
 -- diagnostics
 note[N0100] 15:1 '\renewcommand{\maketitle}' → \define \maketitle() {...}
 note[N0100] 15:38 '\thispagestyle{empty}' → \runninghead[from = 2]{...}
+note[N0100] 15:93 '\relax' → nothing: it means do nothing
 note[N0100] 16:1 '\newcommand{\@toptitlebar}' → \define \@toptitlebar() {...}
 note[N0100] 17:1 '\newcommand{\@bottomtitlebar}' → \define \@bottomtitlebar() {...}
 note[N0100] 18:1 '\providecommand{\@maketitle}' → \define \@maketitle() {...}

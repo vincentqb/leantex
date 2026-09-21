@@ -120,7 +120,9 @@ in this repo; refer to the private reference corpus abstractly.
   equality; state it as a `Conserves` instance), `_covers`, `_id`, `_inj`,
   `_rectangular`, `_exact`, `_monotone`, `_fixed_point`, `_contract`,
   `_set_eq`, `_between` (a value inside two named bounds), `_mem` (the
-  result is drawn from the input set). A new property instantiates a
+  result is drawn from the input set), `_accounts` (an empty result is
+  paid for by a diagnostic or a write — `rewriteCtrl_accounts` is the
+  shape). A new property instantiates a
   suffix, or the review says why
   it is a new shape; the first three are what the hook's walk gate looks
   for. `_in_measure` is not a shape: `kern_symmetric_in_measure` is an

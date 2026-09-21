@@ -75,34 +75,42 @@ def fontPackages : List (String × String) :=
    ("carlito", "sans = \"Carlito\"")]
 
 /-- Commands that configure TeX's own machinery and change nothing this
-engine models — the test every entry must pass to earn silence; a construct
-that fails it warns from `configSkip` instead. Defended entry by entry:
-catcode and register machinery has no counterpart here (`makeatletter`,
-`makeatother`, `relax`, `newlength`); `clearpairofpagestyles` resets KOMA
-furniture defaults to the empty state this engine starts from;
-`frenchspacing`/`nonfrenchspacing` toggle inter-sentence space the engine
-sets uniformly either way; `raggedbottom`/`flushbottom` pick a vertical
-distribution the page-opening `vdist` obligation will own (AGENTS table);
-`noindent` and `urlstyle` adjust detail the engine does not yet
-style; `nointerlineskip` suppresses the interline glue TeX inserts above
-the next box, and vertical space here is declared per block and per page
-opening, never accumulated interline glue, so there is nothing to
-suppress. Table rules (`midrule`, `toprule`, …) are NOT here: they are the
-table elaborator's vocabulary and must reach it. -/
-def meaningFree : List (String × Nat) :=
-  [("makeatletter", 0), ("makeatother", 0), ("relax", 0), ("noindent", 0),
-   ("nointerlineskip", 0),
-   ("clearpairofpagestyles", 0), ("urlstyle", 1),
-   ("KOMAoptions", 1), ("newlength", 1), ("frenchspacing", 0),
-   ("nonfrenchspacing", 0),
-   ("raggedbottom", 0), ("flushbottom", 0),
-   ("selectfont", 0),
-   -- lineno's display-math wrappers: here display math lines are numbered
-   -- like every galley line (the recorded divergence in
-   -- tests/compat-index/lineno.txt), so wrapping a display changes
-   -- nothing the engine models — the pair is accepted inert.
-   ("linenomath", 0), ("endlinenomath", 0),
-   ("column", 1)]
+engine models. An entry carries the reason its drop is the construct's
+full meaning here, emitted as the translation note (N0100, "→ nothing:
+why") — the accounting the silence guard reads, so an earned no-op is
+never wordless (`rewriteCtrl_accounts`). Defended entry by entry: catcode
+machinery has no counterpart here (`makeatletter`, `makeatother`,
+`relax`); `frenchspacing`/`nonfrenchspacing` toggle inter-sentence space
+the engine sets uniformly either way; `nointerlineskip` suppresses
+interline glue that is never accumulated here; lineno's `linenomath`
+pair wraps displays that are numbered like every galley line already
+(the recorded divergence in tests/compat-index/lineno.txt);
+`selectfont` commits NFSS declarations that apply where they stand here.
+An entry whose drop is NOT its full meaning — `noindent` (a first-line
+indent ask), `urlstyle`, `KOMAoptions`, `raggedbottom`/`flushbottom`
+(the vertical-distribution ask the page-opening `vdist` obligation will
+own, AGENTS table), `column` — carries `none`: it stays consumed, and
+the dispatcher's guard names it (W0387, `\allow`-acceptable) instead of
+this table earning it silence it has not paid for. Table rules
+(`midrule`, `toprule`, …) are NOT here: they are the table elaborator's
+vocabulary and must reach it. -/
+def meaningFree : List (String × Nat × Option String) :=
+  [("makeatletter", 0, some "@-names are always readable here"),
+   ("makeatother", 0, some "@-names are always readable here"),
+   ("relax", 0, some "it means do nothing"),
+   ("noindent", 0, none),
+   ("nointerlineskip", 0,
+    some "vertical space is declared per block, never accumulated interline glue"),
+   ("urlstyle", 1, none),
+   ("KOMAoptions", 1, none),
+   ("frenchspacing", 0, some "inter-sentence space is uniform here either way"),
+   ("nonfrenchspacing", 0, some "inter-sentence space is uniform here either way"),
+   ("raggedbottom", 0, none),
+   ("flushbottom", 0, none),
+   ("selectfont", 0, some "font declarations apply where they stand"),
+   ("linenomath", 0, some "display math lines are numbered like every galley line"),
+   ("endlinenomath", 0, some "display math lines are numbered like every galley line"),
+   ("column", 1, none)]
 
 /-- Declarations whose loss is real — justification, breaking tolerance,
 hyphenation language, page furniture — skipped with a warning that names
@@ -208,8 +216,22 @@ private structure St where
   document did not bind — every one of them *is* defined, in LaTeX and
   here, so a provide of one is LaTeX's documented no-op. -/
   provideKeeps : List String := []
+  /-- State mutations performed through `write`, counted: with `diags.size`,
+  what the dispatcher's silence guard reads (`account`, W0387) — a consumed
+  construct either produced tokens, said something, or wrote state. The
+  counter reads intent, not effect: an idempotent write (a header field set
+  to what it already held) still counts as understood, which is why no
+  `BEq St` is needed. Monotone: only `write` touches it, only upward. -/
+  writes : Nat := 0
 
 private abbrev M := StateM St
+
+/-- The one door for a state mutation: `f`, then the `writes` bump the
+dispatcher's silence guard reads. Every `modify`/`set` in this file outside
+`say`/`write`/`account` is rejected by the pre-commit hook, so an arm
+cannot mutate state invisibly to the guard. -/
+private def write (f : St → St) : M Unit :=
+  modify fun st => { f st with writes := st.writes + 1 }
 
 /-- The TeX82 primitive control words — a closed, documented list (Knuth,
 The TeXbook, Appendix I marks each primitive in its index; canonically the
@@ -293,6 +315,8 @@ they cannot, and N0020 already names that file once. -/
 def styInternal (file name : String) : Bool :=
   file.endsWith ".sty" && texInternal name
 
+/-- The one door a diagnostic lands through here: a push, never a write —
+the silence guard reads `diags.size` growth on its own. -/
 private def say (code : DiagCode) (msg : String) (pos : Pos) (help : Option String := none)
     (demote : Bool := false) : M Unit :=
   modify fun st => { st with
@@ -305,8 +329,14 @@ catch-all `beamer:` key set grows with `beamerConfig`, and a flat space would
 let a future entry claim a literal arm's key and silence it. -/
 private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
     (help : Option String := none) (demote : Bool := false) : M Unit := do
-  unless (← get).warned.contains key do
-    modify fun st => { st with warned := st.warned.push key }
+  if (← get).warned.contains key then
+    -- The construct was named at its first occurrence; the suppression is
+    -- that decision replayed, accounted as a write so the silence guard
+    -- (W0387) does not re-name per repeat what once-per-document
+    -- deliberately says once.
+    write id
+  else
+    write fun st => { st with warned := st.warned.push key }
     say code msg pos help demote
 
 /-- Every translation is one note in the same shape, so `-v` reads as a list
@@ -608,7 +638,7 @@ private def definesNext : List String :=
    "define", "defineenv"]
 
 private def recordDefined (n : String) : M Unit :=
-  modify fun st =>
+  write fun st =>
     if st.defined.contains n then st else { st with defined := st.defined.push n }
 
 /-- The control word a definer binds, read from the element after it. -/
@@ -722,7 +752,7 @@ private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
       condList raws out stack rest (i + 2)
     else if n.startsWith "if" && n.length > 2 then
       let x := (n.drop 2).toString
-      modify fun st => { st with
+      write fun st => { st with
         flags := (st.flags.filter (·.1 != x)).push (x, false) }
       recordDefined n
       recordDefined (x ++ "true")
@@ -736,7 +766,7 @@ private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
       condList raws out stack rest (i + 3)
     else if n.startsWith "if" && n.length > 2 then
       let x := (n.drop 2).toString
-      modify fun st => { st with
+      write fun st => { st with
         flags := (st.flags.filter (·.1 != x)).push (x, false) }
       recordDefined n
       recordDefined (x ++ "true")
@@ -771,13 +801,13 @@ private def condList (raws : Array Raw) (out : Array Raw) (stack : List Bool) :
         condList raws out stack rest (i + 1)
       else if n.endsWith "true" && flags.any (·.1 == (n.dropEnd 4).toString) then
         let x := (n.dropEnd 4).toString
-        modify fun st => { st with
+        write fun st => { st with
           flags := (st.flags.filter (·.1 != x)).push (x, true) }
         say .N0114 s!"'\\{n}': '\\if{x}' is true from here on" pos
         condList raws out stack rest (i + 1)
       else if n.endsWith "false" && flags.any (·.1 == (n.dropEnd 5).toString) then
         let x := (n.dropEnd 5).toString
-        modify fun st => { st with
+        write fun st => { st with
           flags := (st.flags.filter (·.1 != x)).push (x, false) }
         say .N0114 s!"'\\{n}': '\\if{x}' is false from here on" pos
         condList raws out stack rest (i + 1)
@@ -803,9 +833,9 @@ private def condOne : Raw → M Raw
     match Parse.inputEnvFile? n with
     | some f =>
       let saved := (← get).file
-      modify fun st => { st with file := f }
+      write fun st => { st with file := f }
       let body' ← condList body #[] [] body.toList 0
-      modify fun st => { st with file := saved }
+      write fun st => { st with file := saved }
       return .env n body' p
     | none =>
       return .env n (← condList body #[] [] body.toList 0) p
@@ -843,9 +873,9 @@ private def unwrapBeginHookOne : Raw → M Raw
     match Parse.inputEnvFile? n with
     | some f =>
       let saved := (← get).file
-      modify fun st => { st with file := f }
+      write fun st => { st with file := f }
       let body' ← unwrapBeginHookList #[] body.toList
-      modify fun st => { st with file := saved }
+      write fun st => { st with file := saved }
       return .env n body' p
     | none =>
       return .env n (← unwrapBeginHookList #[] body.toList) p
@@ -1218,7 +1248,11 @@ any other non-empty body is a dropped loss and says so — an empty body asks
 for no decoration, which is what an unstyled section already draws. -/
 private def sectionRule (src : String) (pos : Pos) : M (Array Raw) := do
   let dropped : M (Array Raw) := do
-    unless src.trimAscii.toString.isEmpty do
+    if src.trimAscii.toString.isEmpty then
+      -- An empty body asks for no decoration: deliberate, and said so —
+      -- the silence guard (W0387) takes wordless consumption for a drop.
+      became "\\sectionlinesformat" "nothing: an empty body asks for no decoration" pos
+    else
       say .E0113
         "'\\sectionlinesformat' body is not the rule idiom; it is dropped" pos
         (help := "\\style{section}{ rule = <colour> } declares the section \
@@ -1404,7 +1438,7 @@ private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
       let src := (rawSrc args[0]).trimAscii.toString
       let src := if src.endsWith ".bib" then (src.dropEnd 4).toString else src
       if (← get).bibResources.isEmpty then
-        modify fun st => { st with bibResources := st.bibResources.push src }
+        write fun st => { st with bibResources := st.bibResources.push src }
         became "\\addbibresource" s!"\\bibliography\{{src}}, at \\printbibliography" pos
       else
         say .W0104 s!"'\\addbibresource' names a second resource '{src}'; the \
@@ -1474,7 +1508,7 @@ the weight in force stands" pos
       say .W0368 s!"no locale for language '{lname}'; English captions \
 and patterns stand in" pos
         (help := "the engine ships locale records for: en, fr, de")
-    modify fun st => { st with mainLang := tag }
+    write fun st => { st with mainLang := tag }
     became s!"\\selectlanguage\{{lname}}" s!"the '{tag}' language attribute" pos
     return some (#[.ctrl ("@lang:" ++ tag) pos], k)
   | "foreignlanguage" =>
@@ -1620,7 +1654,20 @@ clock, so nothing is inserted" pos
       | ["beforeskip", v] => keys := keys.push s!"before = {lengthOfTeX v}"
       | ["afterskip", v] => keys := keys.push s!"after = {lengthOfTeX v}"
       | _ => pure ()
-    if keys.isEmpty || !Ir.styleableElements.contains element then return some (#[], k)
+    if !Ir.styleableElements.contains element then
+      say .W0111 s!"'\\RedeclareSectionCommand\{{element}}' names no styleable element; \
+ignored" pos
+        (help := "\\style{element}{ before = ..., after = ... } spaces the elements \
+the engine draws")
+      return some (#[], k)
+    if keys.isEmpty then
+      -- Recognized element, no mappable key: the declared entries are the
+      -- loss, named (W0101's shape); an empty option is the guard's W0387.
+      let dropped := (opt.getD "").trimAscii.toString
+      unless dropped.isEmpty do
+        say .W0101 s!"'\\RedeclareSectionCommand\{{element}}' entries without a \
+native equivalent were dropped: {dropped}" pos
+      return some (#[], k)
     let native := s!"\\style\{{element}}\{ {String.intercalate ", " keys.toList} }"
     became s!"\\RedeclareSectionCommand\{{element}}" native pos
     return some (← synthAt native pos, k)
@@ -1638,7 +1685,19 @@ clock, so nothing is inserted" pos
       | "label" :: v => marker := some (String.intercalate "=" v).trimAscii.toString
       | _ => pure ()
     if let some m := marker then keys := keys.push s!"marker = {m}"
-    if keys.isEmpty || !Ir.styleableElements.contains element then return some (#[], k)
+    if !Ir.styleableElements.contains element then
+      say .W0111 s!"'\\setlist[{element}]' names no styleable element; ignored" pos
+        (help := "\\style{element}{ indent = ..., gap = ... } styles the lists \
+the engine draws")
+      return some (#[], k)
+    if keys.isEmpty then
+      -- Recognized list, no mappable key: the declared entries are the
+      -- loss, named (W0101's shape); an empty argument is the guard's W0387.
+      let dropped := (rawSrc (args.getD 0 #[])).trimAscii.toString
+      unless dropped.isEmpty do
+        say .W0101 s!"'\\setlist[{element}]' entries without a native equivalent \
+were dropped: {dropped}" pos
+      return some (#[], k)
     let native := s!"\\style\{{element}}\{ {String.intercalate ", " keys.toList} }"
     became s!"\\setlist[{element}]" native pos
     return some (← synthAt native pos, k)
@@ -1719,11 +1778,11 @@ clock, so nothing is inserted" pos
       if found && !expanding && undelimited then
         let n := ps.size / 2
         let spec := String.ofList (List.replicate n 'm')
-        modify fun st => { st with
+        write fun st => { st with
           bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
         let native := s!"\\define \\{cmd}({signature spec})"
         became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
-        modify fun st => { st with bodyNext := 1 }
+        write fun st => { st with bodyNext := 1 }
         return some (← synthAt native pos, k)
       else
         -- Consume through the body group, so the definition never leaks
@@ -1760,7 +1819,7 @@ the definition is skipped" pos
       else String.ofList (List.replicate n 'm')
     let native := s!"\\defineenv\{{envName}}({signature spec})"
     became s!"\\{name}\{{envName}}" (native ++ " {begin} {end}") pos
-    modify fun st => { st with bodyNext := 2 }
+    write fun st => { st with bodyNext := 2 }
     return some (← synthAt native pos, j)
   | "ifdefined" | "ifcsname" | "ifx" =>
     -- A TeX conditional is configuration for machinery that is not here.
@@ -1781,7 +1840,7 @@ the definition is skipped" pos
     let (args, _) := takeGroups raws start 1
     let tname := (rawSrc (args.getD 0 #[])).trimAscii.toString
     if (Theme.find? tname).isSome then
-      modify fun st => { st with themed := true }
+      write fun st => { st with themed := true }
     return none
   | "alert" =>
     -- Themed, alert is the theme's colour AND bold: colour alone would be
@@ -1841,7 +1900,7 @@ the definition is skipped" pos
     -- unknown name leaves the document unthemed (W0314 says so), and
     -- \alert keeps its unthemed bold stand-in.
     if (Theme.find? tname).isSome then
-      modify fun st => { st with themed := true }
+      write fun st => { st with themed := true }
     return some (← synthAt native pos, k)
   | "titlegraphic" =>
     -- Declared visual content for the title page, not configuration: the
@@ -1961,18 +2020,51 @@ and \\tokens declare the design directly")
       return some (#[], k)
     | none =>
     match meaningFree.lookup name with
-    | some n =>
+    | some (n, note) =>
       let (_, k) := takeGroups raws start n
+      if let some why := note then
+        became s!"\\{name}" s!"nothing: {why}" pos
       return some (#[], k)
     | none => return none
 
+/-- The dispatcher's silence guard: an arm answered `some` with no
+replacement tokens — the construct is consumed — so the consumption must
+have been paid for against the entry snapshot `s0`: a diagnostic
+(`diags` grew) or a state write (`writes` grew). Neither grown is the
+class W0387 names — the engine knows this command and did nothing with
+what it read (distinct from W0301, unknown, and from W0104, a known
+refusal with its reason). Warned once per name (sayOnce's policy); a
+repeat is accounted as a write. Both branches land on the snapshot's
+values: under the guard's own condition the arm grew neither counter,
+and every arm only appends, so the snapshot is the live value — spelled
+this way, `rewriteCtrl_accounts` closes by unfolding the guard alone,
+with every arm opaque. State-explicit (no do-notation) for the same
+reason: the theorem reads it with no monad lemmas. -/
+private def account (name : String) (pos : Pos) (s0 : St) : M Unit := fun st =>
+  if st.diags.size > s0.diags.size ∨ st.writes > s0.writes then ((), st)
+  else if st.warned.contains ("silent:" ++ name) then
+    -- Named at its first occurrence: the repeat is accounted against the
+    -- snapshot — sayOnce's once-per-construct policy, the guard's way.
+    ((), { st with writes := s0.writes + 1 })
+  else
+    ((), { st with
+      warned := st.warned.push ("silent:" ++ name)
+      diags := s0.diags.push (Diag.of .W0387
+        s!"'\\{name}' was read and had no effect" (some ⟨st.file, pos⟩)
+        (help := "\\allow{W0387} accepts the skip")) })
+
 /-- Rewrite the control sequence `name` given what follows it. Returns the
 replacement and how many following elements it consumed, or `none` to leave
-the command alone. -/
+the command alone. An empty replacement passes the silence guard
+(`account`): the arms need not hand-account their no-ops, and a silent
+drop is unrepresentable (`rewriteCtrl_accounts`). State-explicit so the
+theorem unfolds it directly. -/
 private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
-    M (Option (Array Raw × Nat)) := do
-  let consumed ← rewriteCtrlAt name pos raws start
-  return consumed.map fun (repl, k) => (repl, k - start)
+    M (Option (Array Raw × Nat)) := fun s0 =>
+  match rewriteCtrlAt name pos raws start s0 with
+  | (none, s1) => (none, s1)
+  | (some (repl, k), s1) =>
+    (some (repl, k - start), if repl.isEmpty then (account name pos s0 s1).2 else s1)
 where
   rewriteCtrlAt (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
       M (Option (Array Raw × Nat)) := do
@@ -2038,7 +2130,7 @@ where
           if (Locale.forTag tag).isSome then
             let native := s!"\\pdfmeta\{ language = \"{tag}\" }"
             became s!"\\usepackage[{main}]\{babel}" native pos
-            modify fun st => { st with mainLang := tag }
+            write fun st => { st with mainLang := tag }
             out := out ++ (← synthAt native pos)
           else
             say .W0368 s!"no locale for language '{main}'; English \
@@ -2070,12 +2162,12 @@ captions and patterns stand in" pos
         | some s =>
           became s!"\\usepackage[style={style}]\{biblatex}"
             s!"\\bibliographystyle\{{s}}, at \\printbibliography" pos
-          modify fun st => { st with bibStyle := some s }
+          write fun st => { st with bibStyle := some s }
         | none =>
           say .W0353 s!"bibliography style '{style}' is not one the engine \
 knows; the reference list is set as 'unsrtnat'" pos
             (help := "styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv")
-          modify fun st => { st with bibStyle := some "unsrtnat" }
+          write fun st => { st with bibStyle := some "unsrtnat" }
       else if let some spec := fontPackages.lookup p then
         -- carlito's `sfdefault` promotes its sans face to the body slot
         -- (carlito README); every other option (psnfss's `scaled=`) asks
@@ -2433,11 +2525,11 @@ leading = {milliStr factor} }"
       became s!"\\providecommand\{\\{cmd}}"
         s!"nothing: '\\{cmd}' is built in and the built-in stands" pos
       return some (#[], k)
-    modify fun st => { st with
+    write fun st => { st with
       bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
     let native := s!"\\define \\{cmd}({spec})"
     became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
-    modify fun st => { st with bodyNext := 1 }
+    write fun st => { st with bodyNext := 1 }
     return some (← synthAt native pos, j)
   | "DeclareMathOperator" =>
     -- `\DeclareMathOperator{\f}{name}` declares an operator name: upright,
@@ -2463,7 +2555,7 @@ leading = {milliStr factor} }"
     let src := rawSrc (args.getD 0 #[])
     let slot := if name.startsWith "i" || name.startsWith "l" then 0
       else if name.startsWith "c" then 1 else 2
-    modify fun st =>
+    write fun st =>
       let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := pos } else st
       if name.endsWith "head" then
         { st with head := (st.head.filter (·.1 != slot)).push (slot, src) }
@@ -2495,7 +2587,7 @@ leading = {milliStr factor} }"
         "even and odd pages are one sequence here; the field applies to every page" pos
     let toHead := name != "fancyfoot"
     let toFoot := name != "fancyhead"
-    modify fun st =>
+    write fun st =>
       let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := pos } else st
       let put (parts : Array (Nat × String)) : Array (Nat × String) :=
         slots.foldl (init := parts) fun parts slot =>
@@ -2505,6 +2597,13 @@ leading = {milliStr factor} }"
         head := if toHead then put st.head else st.head
         foot := if toFoot then put st.foot else st.foot }
     return some (#[], k)
+  | "clearpairofpagestyles" =>
+    -- scrlayer-scrpage's field reset (KOMA-Script manual ch. 5): every
+    -- gathered head and foot field is cleared; fields declared after it
+    -- apply from scratch — the same store `\pagestyle{empty}` clears.
+    write fun st => { st with head := #[], foot := #[] }
+    became "\\clearpairofpagestyles" "no running fields; fields declared after apply" pos
+    return some (#[], start)
   | "pagestyle" =>
     let (args, k) := takeGroups raws start 1
     let v := (rawSrc (args.getD 0 #[])).trimAscii.toString
@@ -2525,7 +2624,7 @@ leading = {milliStr factor} }"
       became "\\pagestyle{plain}" "\\page{ numbers = on }" pos
       return some (← synthAt "\\page{ numbers = on }" pos, k)
     | "empty" =>
-      modify fun st => { st with head := #[], foot := #[] }
+      write fun st => { st with head := #[], foot := #[] }
       became "\\pagestyle{empty}" "\\page{ numbers = off }, and no running fields" pos
       return some (← synthAt "\\page{ numbers = off }" pos, k)
     | _ =>
@@ -2539,10 +2638,47 @@ declare the furniture directly")
     -- first line; anywhere else it would need a page model we do not have.
     let (args, k) := takeGroups raws start 1
     if rawSrc (args.getD 0 #[]) == "empty" then
-      modify fun st => { st with runFrom := 2 }
+      write fun st => { st with runFrom := 2 }
       became "\\thispagestyle{empty}" "\\runninghead[from = 2]{...}" pos
     return some (#[], k)
   | _ => rewriteCtrlLater name pos raws start
+
+/-- Silence is fidelity, the surface layer: a control word the dispatcher
+consumed with an empty replacement is paid for — the diagnostics grew or a
+state write happened — for *every* name, position, and state. Proved by
+unfolding the dispatcher's tail and the guard (`account`) alone; the arms
+(`rewriteCtrlAt` and everything under it) stay opaque, so no future arm
+can break the statement. `_accounts` is the registered shape (AGENTS.md,
+the suffix registry): an empty result is paid for by a diagnostic or a
+write. -/
+theorem rewriteCtrl_accounts (name : String) (pos : Pos) (raws : Array Raw)
+    (start : Nat) (s s' : St) (k : Nat)
+    (h : (rewriteCtrl name pos raws start).run s = (some (#[], k), s')) :
+    s'.diags.size > s.diags.size ∨ s'.writes > s.writes := by
+  have h' : rewriteCtrl name pos raws start s = (some (#[], k), s') := h
+  unfold rewriteCtrl at h'
+  split at h'
+  · injection h' with h1 h2
+    cases h1
+  · injection h' with h1 h2
+    injection h1 with h1
+    injection h1 with hrepl hk
+    subst hrepl
+    split at h2
+    · simp only [account] at h2
+      split at h2
+      · rename_i hc
+        subst h2
+        exact hc
+      · split at h2
+        · subst h2
+          right
+          simp
+        · subst h2
+          left
+          simp [Array.size_push]
+    · rename_i hne
+      exact absurd rfl hne
 
 mutual
 
@@ -2563,7 +2699,7 @@ private def rewriteList (inBody : Bool) (raws : Array Raw) (out : Array Raw) :
   | [], _, _ => pure out
   | _ :: rest, i, skip + 1 => rewriteList inBody raws out rest (i + 1) skip
   | .ctrl "define" pos :: rest, i, 0 => do
-    modify fun st => { st with bodyNext := 1 }
+    write fun st => { st with bodyNext := 1 }
     rewriteList inBody raws (out.push (.ctrl "define" pos)) rest (i + 1) 0
   | .ctrl name pos :: rest, i, 0 => do
     match ← rewriteCtrl name pos raws (i + 1) with
@@ -2593,18 +2729,18 @@ private def rewriteRaw (inBody : Bool) : Raw → M Raw
     -- definition inside the body manages its own following group without
     -- stealing `\newenvironment`'s second half.
     let saved := (← get).bodyNext
-    modify fun st => { st with bodyNext := 0 }
+    write fun st => { st with bodyNext := 0 }
     let body' ← rewriteList (inBody || saved > 0) body #[] body.toList 0 0
-    modify fun st => { st with bodyNext := saved - 1 }
+    write fun st => { st with bodyNext := saved - 1 }
     return .group body' p
   | .env n body p => do
     -- An `\input` wrapper switches the file its diagnostics name.
     match Parse.inputEnvFile? n with
     | some f =>
       let saved := (← get).file
-      modify fun st => { st with file := f }
+      write fun st => { st with file := f }
       let body' ← rewriteList inBody body #[] body.toList 0 0
-      modify fun st => { st with file := saved }
+      write fun st => { st with file := saved }
       return .env n body' p
     | none =>
       if n == "otherlanguage" || n == "otherlanguage*" then
@@ -2624,9 +2760,9 @@ and patterns stand in" p
       else if n == "document" then
         -- Inside the document environment a preamble declaration is a
         -- placement defect; the flag is what the `\usepackage` arm reads.
-        modify fun st => { st with inDoc := true }
+        write fun st => { st with inDoc := true }
         let body' ← rewriteList inBody body #[] body.toList 0 0
-        modify fun st => { st with inDoc := false }
+        write fun st => { st with inDoc := false }
         return .env n body' p
       else
         return .env n (← rewriteList inBody body #[] body.toList 0 0) p
