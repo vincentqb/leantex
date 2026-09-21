@@ -159,6 +159,17 @@ inductive AlgKwDef where
   | data (name : Array Raw)
   deriving Repr, BEq
 
+/-- The document-global algorithm state the preamble declares: keywords
+(`\SetKw` and family — algorithm2e's definitions are document-wide) and
+the display defaults every algorithm starts from (`\DontPrintSemicolon`,
+`\LinesNumbered`). One field on `ESt`, so the elaboration knot's state
+stays narrow. -/
+structure AlgSt where
+  kws : Array (String × AlgKwDef) := #[]
+  semis : Bool := true
+  numbered : Bool := false
+  deriving Repr, BEq
+
 structure ESt where
   diags : Array Diag := #[]
   /-- Warn-once keys already fired: a macro used forty times is one problem,
@@ -271,10 +282,8 @@ structure ESt where
   whole table is known: a reference may point forward, so it cannot be
   judged where it stands. -/
   refSites : Array (String × Ir.RefForm × Pos) := #[]
-  /-- Algorithm keywords the preamble declared (`\SetKw` and family met
-  before `\begin{document}`): every algorithm environment reads them, as
-  algorithm2e's own definitions are document-global. -/
-  algKws : Array (String × AlgKwDef) := #[]
+  /-- The document-global algorithm state the preamble declared. -/
+  alg : AlgSt := {}
 
 /-- The mandatory `{language}` head of a `{minted}` body, after any option
 head: the language text and the index past the `}`, `none` when the group
@@ -6100,7 +6109,7 @@ the loop total. Returns the elaborated lines with the `\LinesNumbered`
 and `\DontPrintSemicolon` flags met on the way. -/
 private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
     (pos : Pos) : EM (Array Ir.AlgLine × Bool × Bool) := do
-  let mut kws : Array (String × AlgKwDef) := (← get).algKws
+  let mut kws : Array (String × AlgKwDef) := (← get).alg.kws
   -- The one built-in inline keyword (`\SetKw{KwTo}{to}`, the sty's own
   -- default); the io and block keywords are line kinds, not inline text.
   kws := kws.push ("KwTo", .word #[.word "to" pos])
@@ -6110,8 +6119,8 @@ private def algorithmLines (ctx : Ctx) (acx : Bool) (body : Array Raw)
   let mut cur : Array Raw := #[]
   let mut curKind : Ir.AlgKind := .statement
   let mut curComment : Option (Array Raw) := none
-  let mut numbered := false
-  let mut semis := true
+  let mut numbered := (← get).alg.numbered
+  let mut semis := (← get).alg.semis
   for _ in [0:2 * rawWeightList body.toList + body.size + 2] do
     match stack.back? with
     | none => break
@@ -8882,6 +8891,16 @@ inductive PDecl where
       (body : Option (Array Raw)) (pos : Pos)
   | reserved (name : String) (code : DiagCode) (unclosed : Option Pos) (pos : Pos)
   | unknownCmd (name : String) (unclosed : Option Pos) (pos : Pos)
+  /-- `\SetKw` and family in the preamble: a document-global algorithm
+  keyword (algorithm2e §10.3), carried whole so the io label's accents
+  still elaborate. -/
+  | algKw (name : String) (args : Option (Array Raw × Array Raw)) (pos : Pos)
+  /-- `\DontPrintSemicolon`/`\LinesNumbered` in the preamble: the
+  document-wide display default every algorithm starts from. -/
+  | algFlag (name : String) (pos : Pos)
+  /-- An algorithm2e display setting outside the model, met in the
+  preamble: named and ignored, its groups consumed with it. -/
+  | algSetting (name : String) (pos : Pos)
   | stray
 
 /-- The preamble fold's threaded state: exactly the loop-local values the
@@ -9098,6 +9117,27 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
             out := out.push (.captionsetup unclosed (some (rawSrc gbody)) pos)
           | _ =>
             out := out.push (.captionsetup unclosed none pos)
+        else if name == "SetKw" || name == "SetKwInOut" || name == "SetKwInput"
+            || name == "SetKwFunction" || name == "SetKwData" then
+          let j := skipSpaces preamble i
+          let j2 := skipSpaces preamble (j + 1)
+          match preamble[j]?, preamble[j2]? with
+          | some (.group nm _), some (.group val _) =>
+            i := j2 + 1
+            out := out.push (.algKw name (some (nm, val)) pos)
+          | _, _ =>
+            out := out.push (.algKw name none pos)
+        else if name == "DontPrintSemicolon" || name == "PrintSemicolon"
+            || name == "LinesNumbered" then
+          out := out.push (.algFlag name pos)
+        else if let some k := algA2eSettings.lookup name then
+          let mut j := i
+          for _ in [0:k] do
+            let j2 := skipSpaces preamble j
+            if let some (.group _ _) := preamble[j2]? then
+              j := j2 + 1
+          i := j
+          out := out.push (.algSetting name pos)
         else if titleCtrls.contains name then
           let (j, recovered, _, unclosed) := scanOptArg preamble i pos
           match preamble[j]? with
@@ -9602,6 +9642,30 @@ its declared layout" pos
       -- next construct on it: the author's next declaration is never
       -- consumed here.
       warnUnclosed s.ctx s!"'\\{name}'" bpos
+    return s
+  | .algKw name args pos =>
+    match args with
+    | some (nm, val) =>
+      let key := (Parse.rawSrc nm).trimAscii.toString
+      let kd : AlgKwDef ←
+        if name == "SetKw" then pure (.word val)
+        else if name == "SetKwFunction" then pure (.func val)
+        else if name == "SetKwData" then pure (.data val)
+        else pure (.io (Ir.plainText (← elabInlines s.ctx val)))
+      modify fun st => { st with alg := { st.alg with kws := st.alg.kws.push (key, kd) } }
+      return s
+    | none =>
+      diag s.ctx .E0304 s!"'\\{name}' needs two groups: the name, then its text" pos
+      return s
+  | .algFlag name _ =>
+    modify fun st =>
+      if name == "DontPrintSemicolon" then { st with alg := { st.alg with semis := false } }
+      else if name == "PrintSemicolon" then { st with alg := { st.alg with semis := true } }
+      else { st with alg := { st.alg with numbered := true } }
+    return s
+  | .algSetting name pos =>
+    warnOnce s.ctx ("alg:set:" ++ name) .N0102
+      s!"'\\{name}' is not modelled; the algorithm keeps the engine's own display" pos
     return s
   | .unknownCmd name unclosed pos =>
     -- With the boundary door open, a tikz-family set line is not unknown:
