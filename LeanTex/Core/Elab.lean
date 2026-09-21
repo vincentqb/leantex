@@ -8464,10 +8464,13 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
         -- width/height + margin surface already covers, and the
         -- `mark-gap`/`mark-thickness` riders are learned from `marks`,
         -- the key that owns them — accepted, not advertised beside it.
+        -- `modulo` only qualifies `linenumbers` (named beside it in the
+        -- lineno translation notes), so it too is accepted without a
+        -- listing of its own.
         evs := evs.push (.say (Decl.unknownKey ctx.file "page" key
           (pageKeys.filter
             (!["headsep", "footskip", "textwidth", "textheight",
-               "mark-gap", "mark-thickness"].contains ·)) pos))
+               "mark-gap", "mark-thickness", "modulo"].contains ·)) pos))
     -- Every failing arm above records a diagnostic, so a clean count means
     -- the entry applied: record it, and warn if it overwrote (W0343).
     if evs.size == before then

@@ -1,0 +1,42 @@
+# source: lineno manual, the user-commands section (lineno.sty v5.7,
+# label s:UserCmds) — one row per documented user command — and the
+# package-options section (label s:Opts) for the pinned option rows.
+# The on/off/modulo commands map onto the native \page{ linenumbers,
+# modulo } keys; the mode-selection and reference commands are refused by
+# name. Options left, running, displaymath, and mathlines name the
+# shipped state: continuous running numbers in the left margin, and
+# display-math lines numbered like every galley line — mathlines' own
+# request, and a recorded divergence from lineno's default, whose
+# linenomath does not number the display (which is also why the
+# \linenomath pair is accepted inert). The pagewise family is refused by
+# name (W0101): continuous numbering is lineno's default and the one mode
+# shipped. \modulolinenumbers*'s first-line exception is not modelled:
+# the modulo lands, the star is consumed. HTML emits no line numbers — a
+# line is a paged-media fact and the twin has no fixed lines
+# (Ir.PageSpec.linenumbers carries the divergence too).
+pre impl \linenumbers
+pre impl \linenumbers*
+pre impl \linenumbers[1]
+pre refuse:W0101 \linenumbers[3]
+pre impl \nolinenumbers
+pre impl \runninglinenumbers
+pre impl \modulolinenumbers
+pre impl \modulolinenumbers[4]
+pre impl \modulolinenumbers*
+body impl \linenomath
+body impl \endlinenomath
+pre refuse:W0301 \pagewiselinenumbers
+pre refuse:W0301 \resetlinenumber
+pre refuse:W0301 \setrunninglinenumbers
+pre refuse:W0301 \setpagewiselinenumbers
+pre refuse:W0301 \switchlinenumbers
+pre refuse:W0301 \leftlinenumbers
+pre refuse:W0301 \rightlinenumbers
+pre refuse:W0301 \runningpagewiselinenumbers
+pre refuse:W0301 \realpagewiselinenumbers
+pre refuse:W0301 \firstlinenumber{2}
+pre refuse:W0301 \linenumberdisplaymath
+pre refuse:W0301 \nolinenumberdisplaymath
+body refuse:W0301 \linelabel{k}
+body refuse:W0302 \begin{linenomath}x\end{linenomath}
+pre refuse:W0101 \usepackage[pagewise]{lineno}

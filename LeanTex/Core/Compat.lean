@@ -42,7 +42,7 @@ def nativePackages : List String :=
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
    "cleveref", "listings", "minted", "siunitx",
-   "algorithm2e", "algorithmicx", "algpseudocode", "algorithm"]
+   "algorithm2e", "algorithmicx", "algpseudocode", "algorithm", "lineno"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=
@@ -97,6 +97,11 @@ def meaningFree : List (String × Nat) :=
    ("nonfrenchspacing", 0),
    ("raggedbottom", 0), ("flushbottom", 0),
    ("selectfont", 0),
+   -- lineno's display-math wrappers: here display math lines are numbered
+   -- like every galley line (the recorded divergence in
+   -- tests/compat-index/lineno.txt), so wrapping a display changes
+   -- nothing the engine models — the pair is accepted inert.
+   ("linenomath", 0), ("endlinenomath", 0),
    ("column", 1)]
 
 /-- Declarations whose loss is real — justification, breaking tolerance,
@@ -496,6 +501,61 @@ private def skipStar (raws : Array Raw) (i : Nat) : Nat :=
   match raws[i]? with
   | some (.word "*" _) => i + 1
   | _ => i
+
+/-- `\usepackage[...]{lineno}`'s options (lineno.sty, the package-options
+section). `left`, `running`, `displaymath`, and `mathlines` name the
+shipped state: continuous running numbers in the left margin, display-math
+lines numbered like every line. `modulo` is `\modulolinenumbers`' initial
+value five. The pagewise family (pagewise, switch, switch*, columnwise)
+selects per-page or margin-switched numbering — continuous numbering is
+lineno's own default and the one mode shipped, so each is named. -/
+private def linenoLoad (opt : String) (pos : Pos) : M (Array Raw) := do
+  let mut out : Array Raw := #[]
+  for o in (opt.splitOn ",").map (·.trimAscii.toString) do
+    if o.isEmpty || o == "left" || o == "running" || o == "displaymath"
+        || o == "mathlines" then
+      pure ()
+    else if o == "modulo" then
+      let native := "\\page{ modulo = 5 }"
+      became "\\usepackage[modulo]{lineno}" native pos
+      out := out ++ (← synthAt native pos)
+    else
+      say .W0101 s!"lineno option '{o}' selects a numbering mode the \
+engine does not have; continuous numbers in the left margin stand" pos
+  became "\\usepackage{lineno}" "nothing: \\page{ linenumbers = on } turns \
+line numbers on" pos
+  return out
+
+/-- lineno's switch and modulo commands (lineno.sty, the user-commands
+section), natively the declared page keys. `\linenumbers` and
+`\runninglinenumbers` turn running numbers on — the one mode shipped —
+and `\nolinenumbers` off. The starred on-forms only reset the count to 1,
+where numbering always runs from 1, so the star is consumed inert; the
+optional argument picks a first number, of which 1 is the shipped value
+and anything else is named (W0101). `\modulolinenumbers` prints only
+multiples of its argument while counting every line; without the argument
+the counter's initial five stands, and [1] turns filtering off. Its
+starred form's first-line exception (print the first number after
+`\linenumbers` whatever the modulo) is not modelled; the star is consumed
+so it cannot leak as content. -/
+private def linenoCtrl (name : String) (pos : Pos) (raws : Array Raw)
+    (start : Nat) : M (Option (Array Raw × Nat)) := do
+  let k := skipStar raws start
+  let (opt, k) := takeOpt raws k
+  if name == "modulolinenumbers" then
+    let n := (opt.bind (fun o => o.trimAscii.toString.toNat?)).getD 5
+    let native := s!"\\page\{ modulo = {max 1 n} }"
+    became "\\modulolinenumbers" native pos
+    return some (← synthAt native pos, k)
+  let on := name != "nolinenumbers"
+  if on then
+    if let some n := opt then
+      unless n.trimAscii.toString == "1" do
+        say .W0101 s!"'\\{name}[{n}]' asks to start numbering at {n}; \
+line numbers here always run from 1" pos
+  let native := s!"\\page\{ linenumbers = {if on then "on" else "off"} }"
+  became s!"\\{name}" native pos
+  return some (← synthAt native pos, k)
 
 /-- The kernel's point-size macros at the values size10.clo–size12.clo and
 ltplain give them, in milli-points: `\@xpt` is 10 pt, `\@xipt` 10.95 —
@@ -1367,6 +1427,9 @@ the engine has no width axis, so only the weight is honoured" pos
         s!"'\\fontseries\{{code}}' names no NFSS series; \
 the weight in force stands" pos
       return some (#[], k)
+  | "linenumbers" | "runninglinenumbers" | "nolinenumbers"
+  | "modulolinenumbers" =>
+    linenoCtrl name pos raws start
   | "selectlanguage" =>
     -- babel's mid-document switch: from here on, in flow order (babel
     -- manual §1.5). The marker is unforgeable (`@` never lexes into a
@@ -1982,6 +2045,8 @@ dropped: {String.intercalate ", " dropped}" pos
         let native := s!"\\fonts\{ {spec} }"
         became s!"\\usepackage\{{p}}" native pos
         out := out ++ (← synthAt native pos)
+      else if p == "lineno" && opt.isSome then
+        out := out ++ (← linenoLoad (opt.getD "") pos)
       else if nativePackages.contains p then
         became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
       else
