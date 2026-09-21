@@ -2164,7 +2164,8 @@ def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     (List.replicate 4 [0, 0, 1, 1, 0]).flatten)).toList)
   let rgbPng := png 8 2 [] [0, 10, 0, 20, 0, 30]
     (idat := (Flate.deflateStored (bytes (List.replicate (4 * 13) 0))).toList)
-  let plainPng := png 8 2 [] [] (idat := [1, 2, 3])
+  let plainPng := png 8 2 [] [] (idat := (Flate.deflateStored (bytes
+    (List.replicate (4 * 13) 0))).toList)
   let idxInfo := Image.decode idxPng
   let store : Image.Store := { entries := #[
     { src := "key-idx.png", info := idxInfo.toOption },
