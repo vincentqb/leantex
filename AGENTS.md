@@ -198,6 +198,11 @@ in this repo; refer to the private reference corpus abstractly.
   text is a call ending in a bare variable, whatever the left side spells.
   Appending to a `mut` string or array in a loop is fine: unique ownership
   appends in place (`Pdf.write` builds the whole file that way).
+  Bit-level work in a hot loop is `UInt64`/`UInt32`, never `Nat`: a `Nat`
+  shift (`<<<`) is an out-of-line bignum call with no small-number fast
+  path (~80 ns; `+`, `*`, `>>>`, `&&&` are inline), and two of them per
+  byte were three quarters of the compressor. A `Nat` loop variable that
+  only indexes is fine.
   `scripts/bench.lean` is the check; run it when touching any pass over the
   whole document.
 - Theorems only where they pay (parser totality, elaboration termination and

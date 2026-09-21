@@ -5,7 +5,9 @@ Fuzz the compressor. Run from the repository root:
 
 The claim under test is `inflate_deflate_id`'s statement — the engine's
 own inflate inverts its deflate on every input — witnessed here on random
-and adversarial byte strings, plus the shipped fixtures' decoded planes.
+and adversarial byte strings, the shipped fixtures' decoded planes, and
+every stream the PDF writer emits for the bench's underline document
+(needs `lake build` first: the built binary produces them).
 Two graders judge every stream: the engine's `inflate`, and a foreign
 inflater (python3's zlib) so a defect the engine's decoder happens to
 forgive is still caught. Also checks `pngUnfilter` inverts `upFilter`
@@ -52,6 +54,30 @@ def check (dir : System.FilePath) (label : String) (b : ByteArray) : IO Unit := 
   checkOwn label b
   checkForeign dir label b
 
+/-- Every `/FlateDecode` stream the engine's PDF writer emitted for a
+document, inflated back to the bytes it compressed: the writer's own
+spelling (`/Length n >>\nstream\n`) is the anchor. -/
+def pdfStreams (pdf : ByteArray) : IO (Array ByteArray) := do
+  let pat := " >>\nstream\n".toUTF8
+  let mut out : Array ByteArray := #[]
+  let mut i := 0
+  for _ in [0:pdf.size] do
+    if i + pat.size > pdf.size then break
+    if (pdf.extract i (i + pat.size)) != pat then
+      i := i + 1
+      continue
+    let head := String.ofList ((pdf.extract (i - min i 400) i).toList.map fun v =>
+      Char.ofNat (min v.toNat 127))
+    let dataOff := i + pat.size
+    let some len := ((head.splitOn " /Length ").getLast?.bind fun p =>
+        (p.splitOn " ").head?.bind (·.toNat?)) | i := i + 1; continue
+    if (head.splitOn "/FlateDecode").length ≥ 2 then
+      match Flate.inflate (pdf.extract dataOff (dataOff + len)) (len * 400 + 65536) with
+      | .ok plain => out := out.push plain
+      | .error e => die s!"stream at {dataOff}: {e}"
+    i := dataOff + len
+  return out
+
 def main : IO Unit := do
   let dir ← IO.FS.createTempDir
   -- Degenerate and adversarial shapes.
@@ -75,6 +101,18 @@ def main : IO Unit := do
       check dir "fixture alpha plane (filtered)" a
     | _, _ => die "fixture planes did not inflate"
   | .error e => die s!"fixture refused: {e}"
+  -- The bench's underline document: 45 pages of content streams, the
+  -- text-shaped input the compressor is tuned on — every stream the
+  -- writer emitted for it, re-deflated here and judged twice.
+  let pdfPath := dir / "underline.pdf"
+  let built ← IO.Process.output {
+    cmd := ".lake/build/bin/leantex"
+    args := #["-q", "build", "bench/underline.tex", "-o", pdfPath.toString] }
+  if built.exitCode != 0 then die s!"underline build failed: {built.stderr}"
+  let streams ← pdfStreams (← IO.FS.readBinFile pdfPath)
+  if streams.size < 45 then die s!"underline: {streams.size} flate streams, expected 45+"
+  for (b, k) in streams.zipIdx do
+    check dir s!"underline stream #{k} ({b.size} bytes)" b
   -- Random blobs, random sizes: incompressible input must survive too.
   let mut s : UInt64 := 0x9E3779B97F4A7C15
   for k in [0:40] do

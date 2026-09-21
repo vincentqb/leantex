@@ -117,7 +117,11 @@ list.
   input: the round trip the compressed PDF streams ride on, provable
   because the engine owns both halves. Blocked on the encoder's shape
   (imperative loops with no equational theory); the oracle meanwhile is
-  `scripts/flate-fuzz.lean`, with a foreign inflater as second judge.
+  `scripts/flate-fuzz.lean`, with a foreign inflater as second judge. The
+  deflate-fast rewrite left the shape imperative; what it did give the
+  proof is the bit writer's invariant (fewer than eight pending bits
+  between pushes, so `Bw.pushU` is a pure two-case function) — the base
+  of the writer/reader adjunction the record names.
 - `decodeBin_encodeBin_id` — the driver's image cache is transparent: its
   serialization inverts exactly, so a cache hit is the recomputation's
   value. Blocked on ByteArray equational coverage for the fixed-offset
@@ -127,6 +131,38 @@ list.
 ### Log
 
 Newest first. Entries are immutable; corrections are new entries.
+
+2026-09-21 — the compressor pays for itself (deflate-fast slice): the
+build-cache landing had put a 2.3× regression on the bench's underline
+row (443 → 1040 ms), and profiling the document's 45 content streams
+(2.9 MB) put 470 of the compressor's 584 ms in one place — `Nat`'s `<<<`
+is `lean_nat_shiftl`, an out-of-line runtime call with no small-number
+fast path (~80 ns a call, measured by substitution: `+`, `*`, `>>>`,
+`&&&` are inline), two per hashed byte in `hash3` and two per symbol in
+the bit writer. Fixed-width words throughout the hot path (`UInt64`
+hash, `UInt64` bit writer with the fewer-than-eight-pending invariant,
+packed `UInt64` match result, one hash-table array, `UInt32` token),
+Adler-32 as one word reduced per NMAX run, one proof-carrying bounds
+check per compared byte: 584 → 98 ms on the same input (30 MB/s from 5),
+tokens and codes unchanged, so every PDF is byte-identical. That is not
+the bar (every row within 5 % of the pre-compression engine), and the
+compressor's remaining cost is `Nat` indexing and refcounting around the
+hash table — zlib's 50–100 MB/s is not within a Lean rewrite's reach
+this slice — so the fallback the brief named is taken as a decision:
+content streams, one per page, deflate through the driver's content-hash
+cache exactly as font files do (`Pdf.pageStreams` exposes them,
+`deflateCached` files them, `write` takes them back as `streams`), and
+face files deflate only for the faces `keepFaces` embeds, at emission.
+Transparency is the invariant — a hit writes what a recomputation
+would — held by one decision site (`putZ`) and stated as the test "pdf
+with cached streams and faces is the pdf without". Interleaved A/B
+medians against the pre-compression binary: underline 431 → 439,
+lorem 304 → 308, paragraphs 83 → 88, themed 77 → 77, paper 152 → 154
+(compressed sizes unchanged from build-cache). The `Nat`-shift rule
+lands in AGENTS' hot-path bullet; the cache's growth under `--watch`
+(one deflated stream per changed page per rebuild) has no eviction yet.
+`scripts/flate-fuzz.lean` now also re-deflates every stream the writer
+emits for the underline document.
 
 2026-09-21 — the guard's reference-document findings, repaid as effects
 (fix-column slice). beamer's command-form `\column{w}` is the environment
