@@ -2156,16 +2156,16 @@ and 'transparent=<n>' are understood")
 dropped: {String.intercalate ", " dropped}" pos
     return some (#[], k)
   | "column" =>
-    -- beamer's command form: `\column{width}` splits a columns body where
-    -- it stands (beamer user guide, the columns environment). The engine
-    -- models the environment form; the command form's split is not
-    -- performed, so the content flows as one column — named, with the
-    -- modeled spelling as the help.
+    -- beamer's command form splits a `{columns}` body where it stands
+    -- (beamer user guide §12.7); at that body's top level `splitColumns`
+    -- has already made it the environment form, so a `\column` reaching
+    -- this arm is somewhere else — outside `{columns}`, or nested in a
+    -- group inside it — where beamer itself starts no column.
     let (_, k) := takeGroups raws start 1
     sayOnce "ctrl:column" .W0104
-      "'\\column' (the command form) does not split columns here; content \
-flows as one column" pos
-      (help := "\\begin{column}{width} ... \\end{column} inside {columns} is modeled")
+      "'\\column' is not at the top level of a {columns} body; it starts \
+no column there and is skipped" pos
+      (help := "\\column{width} splits the body of \\begin{columns} ... \\end{columns}")
     return some (#[], k)
   | _ =>
     match beamerConfig.lookup name with
@@ -2855,6 +2855,72 @@ theorem rewriteCtrl_accounts (name : String) (pos : Pos) (raws : Array Raw)
     · rename_i hne
       exact absurd rfl hne
 
+/-- beamer's command form of a column: at the top level of a `{columns}`
+body, `\column{width}` starts a column where it stands, running to the
+next `\column` or the body's end (beamer user guide §12.7, `\column`) —
+the environment form `\begin{column}{width} … \end{column}` with its
+close implicit. One pass makes the boundaries explicit, so the
+elaborator's one columns walk (`columnsGo`) reads both spellings and the
+width group lands where the environment form carries it: first in the
+column's body. Content before the first `\column` stays where it stands,
+as content between environment-form columns does (kept as ordinary
+blocks, never dropped) — the two spellings are one construct, so the
+stray-content rule is one too. -/
+private def splitColumns (body : Array Raw) : Array Raw := Id.run do
+  let flush (out : Array Raw) : Option (Array Raw × Pos) → Array Raw
+    | some (col, cpos) => out.push (.env "column" col cpos)
+    | none => out
+  let mut out : Array Raw := #[]
+  let mut col : Option (Array Raw × Pos) := none
+  let mut i : Nat := 0
+  for _ in [0:body.size + 1] do
+    match body[i]? with
+    | some (.ctrl "column" cpos) =>
+      let (args, k) := takeGroups body (i + 1) 1
+      out := flush out col
+      col := some (args.map (Raw.group · cpos), cpos)
+      i := k
+    | some (r@(.env "column" _ _)) =>
+      -- The environment form closes an open command-form column too
+      -- (beamerbaseframecomponents.sty: both openers run `\beamer@colclose`).
+      out := (flush out col).push r
+      col := none
+      i := i + 1
+    | some r =>
+      match col with
+      | some (c, cpos) => col := some (c.push r, cpos)
+      | none => out := out.push r
+      i := i + 1
+    | none => break
+  return flush out col
+
+mutual
+
+/-- The pass that makes every `{columns}` body's implicit column boundaries
+explicit, whole tree, before the rewrite walk: the walk is structural on
+`Raw`, so a body it descends into cannot be reshaped where it stands, and
+`\column` must have become `{column}` by the time the walk's ctrl arm
+could see it. Its own pass, like the conditional and hook passes before
+it. -/
+private def splitColumnsRaw : Raw → Raw
+  | .group body p => .group (splitColumnsList body.toList).toArray p
+  | .env n body p =>
+    let body := (splitColumnsList body.toList).toArray
+    .env n (if n == "columns" then splitColumns body else body) p
+  | .math d body p => .math d body p
+  | .word s p => .word s p
+  | .space => .space
+  | .par p => .par p
+  | .ctrl n p => .ctrl n p
+  | .sym c p => .sym c p
+  | .verb env s p => .verb env s p
+
+private def splitColumnsList : List Raw → List Raw
+  | [] => []
+  | r :: rest => splitColumnsRaw r :: splitColumnsList rest
+
+end
+
 mutual
 
 /-- Walk `raws`. The list is `raws` from index `i` on and only drives the
@@ -2980,6 +3046,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     let raws ← condList raws #[] [] raws.toList 0
     -- After the conditionals: only live `\AtBeginDocument` bodies unwrap.
     let raws ← unwrapBeginHookList #[] raws.toList
+    let raws := (splitColumnsList raws.toList).toArray
     let out ← rewriteList false raws #[] raws.toList 0 0
     let running ← flushRunning
     let running ← rewriteList false running #[] running.toList 0 0

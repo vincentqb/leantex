@@ -1,0 +1,10 @@
+# source: beamer user guide §12.7 (Splitting a Frame into Multiple Columns) —
+# the columns environment, the column environment, and the \column command
+# form. beamer is a class (it maps onto slides), so its rows probe a frame
+# body under \documentclass{beamer}: the `frame` place. Both column
+# spellings elaborate to the one columns row; a \column that is not at the
+# top level of a columns body starts no column and is refused by name.
+frame impl \begin{columns}[T]\begin{column}{0.5\textwidth}x\end{column}\begin{column}{0.5\textwidth}y\end{column}\end{columns}
+frame impl \begin{columns}[T,onlytextwidth]\column{0.5\textwidth}x\column{0.5\textwidth}y\end{columns}
+frame impl \begin{columns}\column{0.5\textwidth}x\begin{column}{0.5\textwidth}y\end{column}\end{columns}
+frame refuse:W0104 \column{0.5\textwidth}x

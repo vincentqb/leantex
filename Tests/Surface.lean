@@ -448,6 +448,40 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a body \\setlength resolves textwidth from the finished page"
     (!db.any (·.code == "E0321"))
 
+
+/-- beamer's two column spellings are one construct (user guide §12.7):
+`\column{w}` at the top level of a `{columns}` body starts a column where
+it stands, exactly as `\begin{column}{w}` does, so both reach the elaborator
+as the environment form and land in one `.columns` row. A `\column`
+anywhere else starts no column and is named, never dropped in silence. -/
+def columnFormChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let colsOf (src : String) : Option (Array (Option Nat × Array Ir.Block)) :=
+    (elabStr (deck169Frame src)).1.body.findSome? fun
+      | .frame _ _ _ body => body.findSome? fun
+        | .columns cols => some cols
+        | _ => none
+      | _ => none
+  let cmd := "\\begin{columns}[T,onlytextwidth]\n\\column{0.32\\textwidth}\nfirst\n" ++
+    "\\column{0.32\\textwidth}\nsecond\n\\column{0.32\\textwidth}\nthird\n\\end{columns}"
+  let env := "\\begin{columns}[T,onlytextwidth]\n\\begin{column}{0.32\\textwidth}\nfirst\n" ++
+    "\\end{column}\n\\begin{column}{0.32\\textwidth}\nsecond\n\\end{column}\n" ++
+    "\\begin{column}{0.32\\textwidth}\nthird\n\\end{column}\n\\end{columns}"
+  t "three command-form columns are one three-column row"
+    ((colsOf cmd).map (·.size) == some 3)
+  t "the command form elaborates to the environment form's document"
+    ((elabStr (deck169Frame cmd)).1 == (elabStr (deck169Frame env)).1)
+  t "the command form inside columns is no longer a refusal"
+    (!(warnCodes (deck169Frame cmd)).contains "W0104")
+  -- The two spellings mixed in one body: the command form's column runs
+  -- to the environment form's start, as beamer closes it there.
+  t "a mixed body keeps every column"
+    ((colsOf ("\\begin{columns}\\column{0.5\\textwidth}a\n" ++
+      "\\begin{column}{0.5\\textwidth}b\\end{column}\\end{columns}")).map (·.size) == some 2)
+  t "a \\column outside {columns} is named, its argument consumed"
+    (let ds := (elabStr (deck169Frame "\\column{0.5\\textwidth}\nx")).2
+     (ds.any fun d => d.code == "W0104" && hasStr d.message "top level") &&
+       !ds.any (·.code == "W0301") && !ds.any (·.code == "E0313"))
 /-- Listings apparatus and the siunitx spellings: \lstset propagation and
 precedence, listing numbering, minted's language argument, and the number
 and unit texts under each locale — including the digit-conservation
@@ -1501,7 +1535,9 @@ def linenoChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- The package-claim index: every package in `Compat.nativePackages` ships
 `tests/compat-index/<pkg>.txt`, its user-facing command surface as
 reviewable data — one line per command, `<place> <annotation> <call>`,
-place `pre` | `body`, annotation `impl` | `refuse:<code>`. An `impl` call
+place `pre` | `body` | `frame` (a `beamer` frame body, for the class's own
+surface — a class loads by `\documentclass`, never `\usepackage`),
+annotation `impl` | `refuse:<code>`. An `impl` call
 elaborates without W0301/W0302; a `refuse:` call fires exactly its named
 code, so a refusal that silently stops warning fails too. Adding a package
 to the list without its index file fails: the claim and its evidence
@@ -1526,10 +1562,12 @@ def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
       let call := (rest.drop ann.length).toString.trimAscii.toString
       let src := if place == "pre" then
           s!"\\documentclass\{article}\n\\usepackage\{{pkg}}\n{call}\n\\begin\{document}\nx\n\\end\{document}"
+        else if place == "frame" then
+          s!"\\documentclass\{{pkg}}\n\\begin\{document}\n\\begin\{frame}\n{call}\n\\end\{frame}\n\\end\{document}"
         else
           s!"\\documentclass\{article}\n\\usepackage\{{pkg}}\n\\begin\{document}\n{call}\n\\end\{document}"
       let codes := (elabStr src).2.map (·.code)
-      if place != "pre" && place != "body" then
+      if place != "pre" && place != "body" && place != "frame" then
         failures ref s!"compat index {pkg}: unreadable place in: {line}"
       else if ann == "impl" then
         check ref s!"compat index {pkg}: '{call}' is marked impl but warns unknown"

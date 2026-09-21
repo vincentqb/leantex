@@ -38,5 +38,18 @@ frame
     column
       para
         text "right half"
+frame
+  title
+    text "Three thirds"
+  columns
+    column 320/1000
+      para
+        text "First third, set beside its siblings."
+    column 320/1000
+      para
+        text "Second third, level with the first."
+    column 320/1000
+      para
+        text "Third third, level with both."
 -- diagnostics
 note[N0102] 9:1 'columns' alignment options are ignored: columns are top-aligned

@@ -202,6 +202,7 @@ def main (args : List String) : IO UInt32 := do
   compatChecks ref
   listingChecks ref
   posterCompatChecks ref
+  columnFormChecks ref
   styParityChecks ref
   missingFileSpanChecks ref
   citeNoBibChecks ref

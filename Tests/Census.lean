@@ -479,10 +479,22 @@ def censusTable :
     ("the standout line is centred",
       (lineXOf c 1 "Questions?").any fun x => decide (x > geom.hmargin))]),
   ("columns", fun geom c => [
-    ("two frames, two pages", c.size == 2),
+    ("three frames, three pages", c.size == 3),
     ("the narrow column sets right of the wide one",
       (lineXOf c 0 "A narrow aside.").any fun x => decide (x > geom.hmargin)),
-    ("both equal shares ship", pageHas c 1 "left half" && pageHas c 1 "right half")]),
+    ("both equal shares ship", pageHas c 1 "left half" && pageHas c 1 "right half"),
+    -- The command form: three `\column`s in one body ship as three
+    -- side-by-side columns, level at the top (`[T]`), never stacked.
+    ("the three command-form columns stand side by side",
+      ((lineXOf c 2 "First third").bind fun x1 =>
+        (lineXOf c 2 "Second third").bind fun x2 =>
+          (lineXOf c 2 "Third third").map fun x3 =>
+            decide (x1 < x2 && x2 < x3)).getD false),
+    ("the three command-form columns share their top line",
+      ((lineYOf c 2 "First third").bind fun y1 =>
+        (lineYOf c 2 "Second third").bind fun y2 =>
+          (lineYOf c 2 "Third third").map fun y3 =>
+            decide (y1 == y2 && y2 == y3)).getD false)]),
   ("overlays-blocks", fun _ c => [
     ("a page per step across all frames", c.size == 12),
     ("a list revealed whole is covered whole",
