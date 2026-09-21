@@ -268,6 +268,47 @@ per-fixture objects check sees, never a row at another object.
 within host noise (lorem 321 → 318 ms, underline 450 → 460, paper
 159 → 162). Unlocks M7-14, M7-17, M7-19, M7-20, M7-28, M7-30.
 
+2026-09-21 — a heading rule declares where it stands (resume-section-rhythm;
+bug fix + private-document tuning). KOMA's `\sectionlinesformat` rule
+idiom is `\leaders\hrule height h`, a zero-depth rule whose bottom edge is
+the heading baseline; the compat reading kept only its colour and both
+backends then raised it half the heading face's x-height (the 2026-09-20
+footnotes entry below: "the heading rule is raised half the x-height"), so
+the private résumé's rule floated mid-x-height under leantex and sat on
+the baseline under LuaLaTeX. Position and thickness are now one IR fact:
+`Ir.RulePosition` (`xHeight` | `baseline`) with `RulePosition.raise`, the
+one resolving site, and `ElementStyle.rulePosition`/`ruleThickness`
+behind the native keys `rule-position = baseline|xheight` and
+`rule-thickness = <length>` (public, because both backends consume
+them). `heading_rule_position_exact` closes on the IR (`_exact`: baseline
+is raise 0, x-height is xh/2); the PDF corollary is `Seg.rule`'s raise
+through `Layout.HeadingRule`, the HTML corollary a per-element
+`h2.ruled::after { transform: none; border-top-width: … }` over the
+unchanged `.ruled::after` translate — both asserted over `Layout.Out` and
+the emitted stylesheet, never the IR dump. Undeclared, `rule = c` is the
+x-height raise and the em-relative `headingRuleWeight`, byte-identical:
+every non-compat corpus PDF and HTML compares equal before and after; only
+`latex-idioms` (the idiom) moves, and its golden by the one synthesized
+line. Compat synthesizes the height through the length grammar (`\p@`
+spelled `pt`; TeX's 0.4 pt when none is written, TeXbook p. 221): an
+unreadable height is E0321 at the `\style` it became, a `depth`/`width` is
+E0113 — never a silent default. Rhythm finding, geometry only: on the
+private page the declared name→contact skip (2.16 ex) and contact→section
+skip (2.7 ex) *are* ordered in the resolved baselines (22.7 pt against
+26.6 pt), yet the ink gaps read 13.4 pt against 15.1 pt while LuaLaTeX
+shows 10.1 pt against 14.6 pt — the metric interline rule reserves the
+Huge line's descender room that its ink does not use, exactly the accepted
+cost written beside `lineExtent` ("a descender-less title keeps its metric
+depth"), where TeX's glyph-box `\lineskip` collapses it. Correct metric
+resolution, not a bug: no Layout change, no heuristic. The recommended
+source-only change is one explicit hero→body boundary after the centred
+contact block (`\vspace{2\rhythm}`, an existing token), which opens the
+contact→section ink gap to 18.8 pt and keeps one page with 0.4 pt of
+bottom margin; the alternative (name→contact at `2\bindunit`) reproduces
+LuaLaTeX's own gap in leantex and frees 3 pt but tightens LuaLaTeX's
+render to ~7 pt. Grid-snap after size changes stays the candidate
+declared behaviour it was.
+
 2026-09-21 — a colour expression keeps its model (color-model-exact, S1 of
 the modern-output wave 1). `Color.mix` mixed per sRGB channel whatever its
 operands were declared in, so a CMYK-first expression — `press!50!ink2`,
