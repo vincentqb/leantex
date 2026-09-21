@@ -79,7 +79,7 @@ def dropped (o : Out) : Bool :=
 -- owed: emission_conservation_paras
 -- owner: LeanTex.Core.Layout
 -- source: arch-provable I4 (the theorem whose absence let six user-visible defects ship); arch-faithful refactor 3
--- blocker: this is the weak public form. The strong form — #(renderable leaves of a block) = #(Op.para emitted by collectBlock) — is unstatable outside Layout.lean: `Acc`, `Op`, `collectBlock` are private, and `Acc` has grown to a 24-field record since this was written (arch-provable R3 splits it into reader/writer/state). Proving even this form needs `itemsOfInlines` refactored into folds returning (items, dropped) with dropped fully reported (arch-faithful R3) and `B`'s writers narrowed to commit/pushSibling/finishPage — then the collect-walk induction over roughly a dozen mutually threading collect* functions.
+-- blocker: the named refactors landed (2026-09-20: Rd/Acc reader split, B's writers the commit/pushSibling/finishPage trio, itemsOfInlines a fold of itemsOfTok with a first-class dropped ledger, the driver on placeFrom/runPost with page facts crossing at runPost_pages — page_background_survives discharged over them). What remains is the collect-walk induction, and its wall is not the state any more: equation-lemma generation for collectBlock's one giant match exhausts whnf whatever the budget (the `role_transparent_layout` blocker, confirmed again this session), so no `rw`/`induction` can open the walk. The next factorization: split collectBlock's match into per-constructor arm functions (the placePicture extraction is the shape — stepStaged's case analysis only fit the budget once the picture arm was its own def), so each arm's equation is one cheap unfold.
 -- goldens: no
 /-- Emission conservation, weak public form: a document of plain text
 paragraphs (no head, no foot, no hyphenation) ships exactly the ink it
@@ -103,7 +103,7 @@ def framedDeck (doc : Ir.Doc) : Prop :=
 -- owed: pages_partition_frames
 -- owner: LeanTex.Core.Layout
 -- source: audit-numbering's model, restated as a partition over `PageOut.frame` when refactor 1 (the frame id on `PageOut`, written at `finishPage`) landed — supersedes pages_count_frame_steps, whose count is this statement summed over the frames; arch-provable I4's page side
--- blocker: the page side needs the collect walk's induction — the `Acc` split (arch-provable R3); the counting side is already proved on the IR (`frameNumbers_gapless`, `frameNumbers_last_is_count`), and the attribution now travels with the footer through the one `.foot` op.
+-- blocker: the page side needs the collect walk's induction; the Acc split landed (2026-09-20) and the remaining wall is collectBlock's equation lemmas (see emission_conservation_paras) plus the placement half — a frame-attribution analogue of the BgStep pack over the `.foot`-op stream. The counting side is already proved on the IR (`frameNumbers_gapless`, `frameNumbers_last_is_count`), and the attribution travels with the footer through the one `.foot` op.
 -- goldens: no
 /-- Numbered pages partition by frame: in a deck of titled countable
 frames, every shipped page is attributed to a frame (the `_covers` half),
@@ -124,7 +124,7 @@ theorem pages_partition_frames
 -- owed: frame_pages_footed
 -- owner: LeanTex.Core.Layout
 -- source: audit-numbering T2's page face; the chrome-footer slice (PLAN 2026-09-17); restated as a per-page fold over `PageOut.frame` when refactor 1 landed
--- blocker: `PageOut.frame` and `PageOut.foot` are written together at `finishPage` from the one `.foot` op a frame's opening pushes (content is some exactly when the frame bears a number, given the chrome), so the implication is definitional at the write site; what remains is the collect-walk induction connecting `doc.chrome` to the op stream — the `Acc` split (arch-provable R3).
+-- blocker: `PageOut.frame` and `PageOut.foot` are written together at `finishPage` from the one `.foot` op a frame's opening pushes (content is some exactly when the frame bears a number, given the chrome), so the implication is definitional at the write site; what remains is the collect-walk induction connecting `doc.chrome` to the op stream — the Acc split landed (2026-09-20), the wall now collectBlock's equation lemmas (see emission_conservation_paras).
 -- goldens: no
 /-- One numbering, per page: in a deck with a chrome footer and no
 `\runningfoot` override, every page attributed to a countable frame
@@ -187,7 +187,7 @@ def runPairs (defaultBg : Ir.Color) (p : PageOut) :
 -- owed: contrast_judged_complete
 -- owner: LeanTex.Core.Contrast
 -- source: the a11y-contract slice (the user's ask: weak accessibility in any document is proven, never suspected) — the completeness half of the W0315/W0345 judge, whose per-bundle contracts are already theorems; restated over the declared ground when refactor 2 (`ground` on `Seg.run`, written at the resolving sites) landed
--- blocker: the geometric-recovery half is gone — the shipped pair is the declared pair, so this is `judged_pair_is_shipped`'s converse, statable at last: every pair the pages ship is a pair the judge weighed. What remains is the collect-walk induction relating the walk's ground writes to `judgedPairs`' enumeration — the `Acc` split (arch-provable R3), the same blocker as emission_conservation_paras.
+-- blocker: the geometric-recovery half is gone — the shipped pair is the declared pair, so this is `judged_pair_is_shipped`'s converse, statable at last: every pair the pages ship is a pair the judge weighed. What remains is the collect-walk induction relating the walk's ground writes to `judgedPairs`' enumeration — the Acc split landed (2026-09-20), the wall now collectBlock's equation lemmas (see emission_conservation_paras). The proof will also surface the judge's titled-bar default (white in Contrast.judgedPairs where the walk's surfaceOf reads light.surface) — the fix belongs to Contrast.lean's owner.
 -- goldens: no
 /-- The contrast judge is complete over the shipped pages —
 `judged_pair_is_shipped`'s converse: every glyph run `Layout.run` ships,
