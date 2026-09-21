@@ -461,9 +461,9 @@ def diagVoiceChecks (ref : IO.Ref (List String)) (update : Bool) : IO Unit := do
     | failures ref "diag voice: OpenSans-Regular.ttf missing"; return
   let some code ← load "SourceCodePro-Regular.otf"
     | failures ref "diag voice: SourceCodePro-Regular.otf missing"; return
-  let allVariants (slot idx : Nat) : List ((Nat × Bool × Bool) × Nat) :=
-    [((slot, false, false), idx), ((slot, true, false), idx),
-     ((slot, false, true), idx), ((slot, true, true), idx)]
+  let allVariants (slot idx : Nat) : List ((Nat × Nat × Bool) × Nat) :=
+    [((slot, 400, false), idx), ((slot, 700, false), idx),
+     ((slot, 400, true), idx), ((slot, 700, true), idx)]
   let one : Font.FontSet := {
     fonts := #[sans]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }

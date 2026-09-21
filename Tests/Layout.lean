@@ -1029,8 +1029,8 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       let serifSet : Font.FontSet := {
         fonts := #[serif]
         index := ((List.range 3).flatMap fun slot =>
-          [((slot, false, false), 0), ((slot, true, false), 0),
-           ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
+          [((slot, 400, false), 0), ((slot, 700, false), 0),
+           ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
       }
       let (cqRules, cqWidth) := coverage serifSet "\\underline{q}"
       t "cff underlined q keeps rule under its bowl"
@@ -1048,8 +1048,8 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
           let mixedSet : Font.FontSet := {
             fonts := #[serif, serifIt]
             index := ((List.range 3).flatMap fun slot =>
-              [((slot, false, false), 0), ((slot, true, false), 0),
-               ((slot, false, true), 1), ((slot, true, true), 1)]).toArray
+              [((slot, 400, false), 0), ((slot, 700, false), 0),
+               ((slot, 400, true), 1), ((slot, 700, true), 1)]).toArray
           }
           let firstRunAndRule (src : String) : Dim.Sp × Dim.Sp := Id.run do
             let lines := ((outOf mixedSet src).pages.flatMap (·.lines))
@@ -1170,8 +1170,8 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
       let badSet : Font.FontSet := {
         fonts := #[bad]
         index := ((List.range 3).flatMap fun slot =>
-          [((slot, false, false), 0), ((slot, true, false), 0),
-           ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
+          [((slot, 400, false), 0), ((slot, 700, false), 0),
+           ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
       }
       let badRules := ((outOf badSet "\\underline{ab}").pages.flatMap
         (·.lines)).flatMap (·.segs.filterMap fun s =>

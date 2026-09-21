@@ -768,7 +768,11 @@ structure Out where
 /-- A resolved text style: which family slot, and the bold/italic bits. -/
 structure TextStyle where
   slot : Nat := 0
-  bold : Bool := false
+  /-- The weight axis in force (`Ir.Weight`): `\fontseries`'s series, with
+  `\textbf` selecting `.b` and `\textmd` `.m` — `bold : Bool` grown into
+  the axis. The face a run sets in is
+  `FontSet.lookup (slot, weight.css, italic)`. -/
+  weight : Ir.Weight := .m
   italic : Bool := false
   color : Ir.Color := Ir.Color.black
   /-- Destination of the enclosing `\href`, if any. -/
@@ -900,14 +904,14 @@ private def pushText (st : FlattenSt) (sty : TextStyle) (s : String) : FlattenSt
 /-- Apply one markup style to the active text style. Size-only styles do not
 change the face; `\normalfont` resets to the body face. -/
 private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
-  | .bold => { sty with bold := true }
+  | .bold => { sty with weight := .b }
   | .italic => { sty with italic := true }
   | .emph => { sty with italic := !sty.italic }
   | .mono => { sty with slot := 2 }
   | .sans => { sty with slot := 1 }
   | .smallcaps => { sty with smallcaps := true }
   | .roman => { sty with slot := 0 }
-  | .medium => { sty with bold := false }
+  | .medium => { sty with weight := .m }
   -- NFSS shapes are exclusive (fntguide §2.2): upright clears both.
   | .upright => { sty with italic := false, smallcaps := false }
   | .normal => {}
@@ -2019,7 +2023,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
         let synth : Option (Nat × (Nat × Char × Sp)) := do
           let (a, base) ← Math.MathAlphabet.unapply c
           let (bold, italic) := a.synthStyle
-          let fi := if bold || italic then e.fs.lookup 0 bold italic else e.idx
+          let fi := if bold || italic then e.fs.lookup 0 (if bold then 700 else 400) italic else e.idx
           let g ← glyphOf size (e.fs.get fi) base
           return (fi, g)
         match synth with
@@ -2154,7 +2158,7 @@ part the mark from the word it follows. Digits the face lacks return
 beside the box for the caller's E0405. -/
 private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp) (num : Nat) :
     Item × Array (Nat × Char) := Id.run do
-  let idx := fs.lookup sty.slot sty.bold sty.italic
+  let idx := fs.lookup sty.slot sty.weight.css sty.italic
   let font := fs.get idx
   let markSize := Ir.scaleStep around "scriptsize"
   let raise := around * Ir.markRaise / 1000
@@ -2193,7 +2197,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (acc : ItemsAcc) (tk : Tk) : ItemsAcc :=
   match tk with
   | .word sty chars =>
-    let idx := fs.lookup sty.slot sty.bold sty.italic
+    let idx := fs.lookup sty.slot sty.weight.css sty.italic
     let font := fs.get idx
     -- Small caps: the face's own `smcp`+`c2sc` when it carries them — the
     -- word stays as typed and the gids substitute in `wordItems` — and
@@ -2214,7 +2218,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     -- legal), then the fallback chain; either hit is the icon's own face
     -- by design. Only total absence is a loss (E0405, rendered by the
     -- caller from `dropped`).
-    let idx := fs.lookup sty.slot sty.bold sty.italic
+    let idx := fs.lookup sty.slot sty.weight.css sty.italic
     let sz := size * sty.scale / 1000
     let hit :=
       match glyphOf sz (fs.get idx) c with
@@ -2245,7 +2249,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       -- The math face sets at the size that makes its x-height the
       -- surrounding face's — fontspec's `Scale=MatchLowercase`, the rule
       -- `Math.mathSize` states and its agreement theorems bound to the sp.
-      let around := fs.get (fs.lookup sty.slot sty.bold sty.italic)
+      let around := fs.get (fs.lookup sty.slot sty.weight.css sty.italic)
       let runSize := size * sty.scale / 1000
       let e : MathEnv := {
         idx, font, consts, fs
@@ -2279,7 +2283,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       { acc with dropped := m, items := acc.items ++ ms }
     | none => acc
   | .space sty =>
-    let idx := fs.lookup sty.slot sty.bold sty.italic
+    let idx := fs.lookup sty.slot sty.weight.css sty.italic
     let g : Item := .glue (interword (size * sty.scale / 1000) (fs.get idx))
     { acc with items := acc.items.push g }
   | .fill =>
@@ -2354,7 +2358,7 @@ with \\allow{E0405}"))
       diags := diags.push (Diag.of .N0018
         s!"'{(fs.get idx).family}' has no {a.styleLabel} '{base}' \
 (U+{hex c.toNat}); set {a.styleLabel} from \
-'{(fs.get (fs.lookup 0 bold italic)).family}'")
+'{(fs.get (fs.lookup 0 (if bold then 700 else 400) italic)).family}'")
     else
       diags := diags.push (Diag.of .N0018
         s!"'{(fs.get idx).family}' has no {a.styleLabel} '{base}' \
@@ -4175,7 +4179,7 @@ private def collectPara (r : Rd) (a : Acc)
     let mut cache := cache
     let noteSize := Ir.scaleStep r.geom.fontSize "footnotesize"
     let sep := r.geom.fontSize * 665 / 1000
-    let bodyFont := r.fs.get (r.fs.lookup 0 false false)
+    let bodyFont := r.fs.get (r.fs.lookup 0 400 false)
     let scaleB (v : Int) : Sp := v * r.geom.fontSize / bodyFont.unitsPerEm
     let target := r.geom.textWidth
     for (markIdx, num, body) in rawNotes do
@@ -4349,7 +4353,7 @@ private def collectTitle (r : Rd) (a : Acc) (title : Array Inline)
   | none =>
     collectDisplay r a title indent center
       (Ir.scaleStep r.geom.fontSize "LARGE")
-      (baseStyle := { bold := true })
+      (baseStyle := { weight := .b })
 
 /-- Lay out a `.table`: booktabs' formal table. Columns take their declared
 fraction of the measure (or their widest cell), separated by `2·tabcolsep`
@@ -4745,7 +4749,7 @@ private def collectStandout (r : Rd) (a : Acc)
           collectDisplay r a (Ir.fillTemplate tpl content) indent true r.geom.fontSize
         | none =>
           collectDisplay r a content indent true (r.geom.fontSize * 1440 / 1000)
-            (baseStyle := { bold := true })
+            (baseStyle := { weight := .b })
       | _ => collectBlock r a blk indent
     collectStandout r (if rest.isEmpty || statefulBlock blk then a else a.wantGap)
       rest indent
@@ -4835,7 +4839,7 @@ private def collectBlock (r : Rd) (a : Acc)
           collectDisplay r a (Ir.fillTemplate tpl title) indent false r.geom.fontSize
         | none =>
           collectDisplay r a title indent false (r.geom.fontSize * 1440 / 1000)
-            (baseStyle := { bold := true })
+            (baseStyle := { weight := .b })
       let fgC := (a.pal.find? "progressfg").getD a.fg
       let bgC := (a.pal.find? "progressbg").getD ((a.pal.find? "bg").getD Ir.Color.white)
       -- The fallback is moloch's own default, `progressbar linewidth=1pt`
@@ -4887,7 +4891,7 @@ private def collectBlock (r : Rd) (a : Acc)
             (headingRuleWeight r.geom.fontSize, rc.1))
       | none =>
         collectDisplay r a title indent false (sectionSize r.geom level)
-          (baseStyle := { bold := true })
+          (baseStyle := { weight := .b })
           (rule := st.rule.map fun (rc : Ir.Color × Option String) =>
             (headingRuleWeight r.geom.fontSize, rc.1))
     let ha := r.resolve (Ir.headingAfterDefault r.geom.fontSize)
@@ -4963,7 +4967,7 @@ private def collectBlock (r : Rd) (a : Acc)
       let a := { a with fg := look.fg
                         ground := look.bar.orElse fun _ => a.ground }
       let a := collectDisplay r a title indent false r.geom.fontSize
-        (baseStyle := { bold := true })
+        (baseStyle := { weight := .b })
       let a := match look.bar with
         | some barBg =>
           { a with ops := a.ops.push (.blockBar barBg (r.geom.fontSize / 2)
@@ -4990,7 +4994,7 @@ private def collectBlock (r : Rd) (a : Acc)
           hcenter r.geom.fontSize
       | none =>
         collectDisplay r a #[.text r.locale.abstract] indent hcenter small
-          (baseStyle := { bold := true })
+          (baseStyle := { weight := .b })
     let a := a.wantGap
     let saved := a.measure
     let sub := { a with
@@ -5217,7 +5221,7 @@ private def collectBlock (r : Rd) (a : Acc)
             collectDisplay r a (Ir.fillTemplate tpl title) 0 false r.geom.fontSize
           | none =>
             collectDisplay r a title 0 false (sectionSize r.geom 1)
-              (baseStyle := { bold := true })
+              (baseStyle := { weight := .b })
         -- The title itself is inline content: no `.setPalette` can stand
         -- in it, so the saved ink is the epoch's own.
         let a := { a with fg := saved.1
@@ -5226,7 +5230,7 @@ private def collectBlock (r : Rd) (a : Acc)
         { a with wantDefault := true }
       | none =>
         let a := collectDisplay r a title 0 false (sectionSize r.geom 1)
-          (baseStyle := { bold := true })
+          (baseStyle := { weight := .b })
         { a with wantDefault := true }
     -- The title just placed is page-top chrome: the frame's distribution
     -- moves the body below it, never the title (beamer's frametitle).

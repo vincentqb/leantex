@@ -602,7 +602,7 @@ def, so the two can never drift. -/
 def oneFaceOf (font : Font.Font) : Font.FontSet := {
   fonts := #[font]
   index := ((List.range 3).flatMap fun slot =>
-    [((slot, false, false), 0), ((slot, true, false), 0),
-     ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
+    [((slot, 400, false), 0), ((slot, 700, false), 0),
+     ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
 }
 

@@ -89,26 +89,26 @@ def declaredFaceChecks (ref : IO.Ref (List String)) : IO Unit := do
     "BoldFont={Alpha Sans}, BoldItalicFont={Alpha Sans Italic}]{Alpha Sans Light}" ++
     post)).1.fonts
   t "compat sans family" (d.sans == some "Alpha Sans Light")
-  t "compat BoldFont" (d.faceFor 1 true false == some "Alpha Sans")
-  t "compat ItalicFont" (d.faceFor 1 false true == some "Alpha Sans Light Italic")
-  t "compat BoldItalicFont" (d.faceFor 1 true true == some "Alpha Sans Italic")
-  t "compat no UprightFont declared" (d.faceFor 1 false false == none)
+  t "compat BoldFont" (d.faceFor 1 700 false == some "Alpha Sans")
+  t "compat ItalicFont" (d.faceFor 1 400 true == some "Alpha Sans Light Italic")
+  t "compat BoldItalicFont" (d.faceFor 1 700 true == some "Alpha Sans Italic")
+  t "compat no UprightFont declared" (d.faceFor 1 400 false == none)
   -- ...from either side of the name, a file name included.
   let d2 := (elabStr (pre ++
     "\\setsansfont{Open Sans}[Path = fonts/, BoldFont = OpenSans-Bold.ttf]" ++ post)).1.fonts
-  t "compat BoldFont after the name" (d2.faceFor 1 true false == some "OpenSans-Bold.ttf")
+  t "compat BoldFont after the name" (d2.faceFor 1 700 false == some "OpenSans-Bold.ttf")
   -- The native spelling.
   let d3 := (elabStr (pre ++ "\\fonts{ body = \"X\", body.bold = \"Y\", " ++
     "mono.upright = \"Z\" }" ++ post)).1.fonts
-  t "fonts body.bold" (d3.faceFor 0 true false == some "Y")
-  t "fonts mono.upright" (d3.faceFor 2 false false == some "Z")
+  t "fonts body.bold" (d3.faceFor 0 700 false == some "Y")
+  t "fonts mono.upright" (d3.faceFor 2 400 false == some "Z")
   t "fonts unknown variant key" (errCodes (pre ++ "\\fonts{ body.slanted = \"Y\" }" ++ post)
     == ["E0322"])
   t "fonts variant wrong type" (errCodes (pre ++ "\\fonts{ body.bold = 12 }" ++ post)
     == ["E0323"])
   -- fontspec's `*` in a per-variant name stands for the family name.
   let d4 := (elabStr (pre ++ "\\setsansfont[UprightFont=*-Medium]{Inter}" ++ post)).1.fonts
-  t "fontspec * expands to the family name" (d4.faceFor 1 false false == some "Inter-Medium")
+  t "fontspec * expands to the family name" (d4.faceFor 1 400 false == some "Inter-Medium")
   -- Resolution: the declared face wins over the family's own variant.
   let subMsg : Option FontDb.Substituted → Option String
     | some s => some (DriverDiag.substituted s).message
@@ -242,9 +242,9 @@ def iconChecks (ref : IO.Ref (List String)) : IO Unit := do
     { noSpace with cmap := noSpace.cmap.filter fun r => r.1 > dash || r.2.1 < dash }
   t "a face without space or em dash takes half the em"
     (noDash.advance '—' == 0 && noDash.spaceAdvance == noDash.unitsPerEm / 2)
-  let allVariants (slot idx : Nat) : List ((Nat × Bool × Bool) × Nat) :=
-    [((slot, false, false), idx), ((slot, true, false), idx),
-     ((slot, false, true), idx), ((slot, true, true), idx)]
+  let allVariants (slot idx : Nat) : List ((Nat × Nat × Bool) × Nat) :=
+    [((slot, 400, false), idx), ((slot, 700, false), idx),
+     ((slot, 400, true), idx), ((slot, 700, true), idx)]
   let bare : Font.FontSet := {
     fonts := #[sans, iconsFace]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
@@ -329,9 +329,9 @@ def smallCapsGsubChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- differs from the plain rendering. Both mechanisms are held to it: real
   -- substitution on the serif face, synthesis on the sans face.
   let geom : Layout.Geom := {}
-  let allVariants (slot idx : Nat) : List ((Nat × Bool × Bool) × Nat) :=
-    [((slot, false, false), idx), ((slot, true, false), idx),
-     ((slot, false, true), idx), ((slot, true, true), idx)]
+  let allVariants (slot idx : Nat) : List ((Nat × Nat × Bool) × Nat) :=
+    [((slot, 400, false), idx), ((slot, 700, false), idx),
+     ((slot, 400, true), idx), ((slot, 700, true), idx)]
   let set (f : Font.Font) : Font.FontSet := {
     fonts := #[f]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 0).toArray }
@@ -406,9 +406,9 @@ def fallbackChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "coverage premise: no shipped face has U+27E8"
     ((sans.gid '⟨').isNone && (code.gid '⟨').isNone)
   let geom : Layout.Geom := {}
-  let allVariants (slot idx : Nat) : List ((Nat × Bool × Bool) × Nat) :=
-    [((slot, false, false), idx), ((slot, true, false), idx),
-     ((slot, false, true), idx), ((slot, true, true), idx)]
+  let allVariants (slot idx : Nat) : List ((Nat × Nat × Bool) × Nat) :=
+    [((slot, 400, false), idx), ((slot, 700, false), idx),
+     ((slot, 400, true), idx), ((slot, 700, true), idx)]
   let bare : Font.FontSet := {
     fonts := #[sans, code]
     index := (allVariants 0 0 ++ allVariants 1 0 ++ allVariants 2 1).toArray
@@ -834,8 +834,8 @@ def fontSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
 
       -- A one-face set: every slot and variant maps to index 0.
       let oneFace := oneFaceOf font
-      t "fontset lookup body" (oneFace.lookup 0 false false == 0)
-      t "fontset lookup falls back" (oneFace.lookup 2 true true == 0)
+      t "fontset lookup body" (oneFace.lookup 0 400 false == 0)
+      t "fontset lookup falls back" (oneFace.lookup 2 700 true == 0)
 
       -- layout: hyphenation is materialized only at a chosen break; headings
       -- and list markers carry visual structure into the positioned page.
@@ -992,10 +992,10 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
     (match (fira.gid '.').bind fira.yExtent with
       | some (lo, hi) => lo ≥ -30 && lo ≤ 0 && hi > 0 && hi < 300
       | none => false)
-  let allSlots : Array ((Nat × Bool × Bool) × Nat) :=
+  let allSlots : Array ((Nat × Nat × Bool) × Nat) :=
     ((List.range 3).flatMap fun slot =>
-      [((slot, false, false), 0), ((slot, true, false), 0),
-       ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
+      [((slot, 400, false), 0), ((slot, 700, false), 0),
+       ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
   let mfs : Font.FontSet := {
     fonts := #[serif, fira]
     index := allSlots

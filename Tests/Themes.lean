@@ -1896,7 +1896,7 @@ def composeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let (fDoc, _) := elabStr
     (wrap "\\fonts{ body.bold = \"First Face\" }\n\\fonts{ body.bold = \"Second Face\" }\n")
   t "a redeclared variant face resolves to the second"
-    (fDoc.fonts.faceFor 0 true false == some "Second Face")
+    (fDoc.fonts.faceFor 0 700 false == some "Second Face")
   t "a redeclared variant face keeps one entry" (fDoc.fonts.faces.size == 1)
 
   -- \chrome slots merge across blocks exactly as within one block.

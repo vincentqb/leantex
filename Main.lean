@@ -76,10 +76,10 @@ def Ui.done (ui : Ui) (file output : String) (pages ms : Nat) (notes : Nat := 0)
     ui.errStream.putStrLn (Render.humanDone ui.color file output pages ms shown)
 
 /-- Every slot and variant mapped to one face: the shape of a single-font set. -/
-def singleFaceIndex : Array ((Nat × Bool × Bool) × Nat) :=
+def singleFaceIndex : Array ((Nat × Nat × Bool) × Nat) :=
   ((List.range 3).flatMap fun slot =>
-    [((slot, false, false), 0), ((slot, true, false), 0),
-     ((slot, false, true), 0), ((slot, true, true), 0)]).toArray
+    [((slot, 400, false), 0), ((slot, 700, false), 0),
+     ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
 
 /-- `LEANTEX_FONT` (a path) overrides the default face for a document that
 declares no `\fonts`: one face serves every slot and variant, no scan. -/
@@ -182,7 +182,7 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     else pure spec
   let mut fonts : Array Font.Font := #[]
   let mut paths : Array String := #[]
-  let mut index : Array ((Nat × Bool × Bool) × Nat) := #[]
+  let mut index : Array ((Nat × Nat × Bool) × Nat) := #[]
   let mut missing : Array String := #[]
   let slots : List (Nat × Option String) :=
     [(0, spec.body), (1, spec.sans), (2, spec.mono)]
@@ -200,17 +200,17 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     | 0 => if slides then spec.sans.orElse fun _ => spec.body else spec.body
     | 1 => spec.sans.orElse fun _ => spec.body
     | _ => spec.mono.orElse fun _ => spec.body
-  let declaredFace (slot : Nat) (bold italic : Bool) : Option String :=
+  let declaredFace (slot : Nat) (weight : Nat) (italic : Bool) : Option String :=
     let effective := match slot with
       | 1 => if spec.sans.isSome then 1 else 0
       | 2 => if spec.mono.isSome then 2 else 0
       | _ => if slides && spec.sans.isSome then 1 else 0
-    spec.faceFor effective bold italic
+    spec.faceFor effective weight italic
   for (slot, _) in slots do
     let some family := resolveName slot | continue
-    for (bold, italic) in [(false, false), (true, false), (false, true), (true, true)] do
-      match FontDb.resolveVariant faces family (declaredFace slot bold italic)
-          { bold := bold, italic := italic } with
+    for (weight, italic) in [(400, false), (700, false), (400, true), (700, true)] do
+      match FontDb.resolveVariant faces family (declaredFace slot weight italic)
+          { bold := weight == 700, italic := italic } with
       | none =>
         unless missing.contains family do
           missing := missing.push family
@@ -227,14 +227,14 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
           unless diags.any (·.message == d.message) do
             diags := diags.push d
         match paths.findIdx? (· == face.path) with
-        | some i => index := index.push ((slot, bold, italic), i)
+        | some i => index := index.push ((slot, weight, italic), i)
         | none =>
           let data ← IO.FS.readBinFile face.path
           match Font.parse data with
           | .error e =>
             diags := diags.push (DriverDiag.fontFileUnusable face.path e)
           | .ok f =>
-            index := index.push ((slot, bold, italic), fonts.size)
+            index := index.push ((slot, weight, italic), fonts.size)
             fonts := fonts.push f
             paths := paths.push face.path
   -- The math face: resolved like any named family, and installed only when

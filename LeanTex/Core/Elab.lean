@@ -7767,17 +7767,29 @@ private def fontSlot? (name : String) : Option Nat :=
   | "mono" | "tt" => some 2
   | _ => none
 
-/-- `body.bold`-style keys: `(slot, bold, italic)`. -/
-private def fontVariantKey? (key : String) : Option (Nat × Bool × Bool) :=
+/-- `body.bold`-style keys: `(slot, weight, italic)`. The four LaTeX-shaped
+spellings name the standard corners of the axis; a series code
+(`body.l`, `sans.sb.italic`) names any other weight — the native surface
+fontspec's `FontFace={series}{shape}{font}` rewrites into. -/
+private def fontVariantKey? (key : String) : Option (Nat × Nat × Bool) :=
+  let seriesKey (s : String) (italic : Bool) : Option (Nat × Bool) :=
+    match Ir.Weight.parseSeries s with
+    -- A width half names an axis the engine does not have; a key that
+    -- asks for one is unknown rather than quietly weight-only.
+    | some (w, "") => some (w.css, italic)
+    | _ => none
   match key.splitOn "." with
   | [slotName, variant] => do
     let slot ← fontSlot? slotName
     match variant with
-    | "upright" => some (slot, false, false)
-    | "bold" => some (slot, true, false)
-    | "italic" => some (slot, false, true)
-    | "bolditalic" => some (slot, true, true)
-    | _ => none
+    | "upright" => some (slot, 400, false)
+    | "bold" => some (slot, 700, false)
+    | "italic" => some (slot, 400, true)
+    | "bolditalic" => some (slot, 700, true)
+    | s => (seriesKey s false).map fun (w, i) => (slot, w, i)
+  | [slotName, series, "italic"] => do
+    let slot ← fontSlot? slotName
+    (seriesKey series true).map fun (w, i) => (slot, w, i)
   | _ => none
 
 /-- `\fonts{...}`: family names per slot, and `dir`, a directory of font
@@ -7813,7 +7825,8 @@ private def applyFonts (ctx : Ctx) (spec : FontSpec) (entries : Array Decl.Entry
           evs := evs.push (.say (Decl.wrongType ctx.file "fonts" key expected v pos))
         else
           evs := evs.push (.say (Decl.unknownKey ctx.file "fonts" key
-            (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic"]) pos))
+            (fontKeys ++ ["<slot>.upright/.bold/.italic/.bolditalic",
+              "<slot>.<series>[.italic] (series ul/el/l/sl/m/sb/b/eb/ub)"]) pos))
     -- A family slot is a scalar; `dir` is a list and a dotted face is
     -- fontspec's own replace idiom, so only the families report an
     -- overwrite. The aliases fold onto the slot they name: `rm` after

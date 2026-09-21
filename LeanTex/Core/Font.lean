@@ -1085,8 +1085,10 @@ def Font.band (f : Font) : Int × Int :=
 face; `Style` resolves to an index at layout time. -/
 structure FontSet where
   fonts : Array Font
-  /-- (family slot, bold, italic) → index into `fonts`. -/
-  index : Array ((Nat × Bool × Bool) × Nat) := #[]
+  /-- (family slot, weight, italic) → index into `fonts`. The weight is the
+  CSS/OpenType number of an NFSS series (`Ir.Weight.css`; 400 regular,
+  700 bold), spelled `Nat` here because this module sits below the IR. -/
+  index : Array ((Nat × Nat × Bool) × Nat) := #[]
   /-- Per-scalar fallback, precomputed by the driver from the document's own
   text: the font that sets a glyph when the styled face lacks it — the first
   declared face that covers the scalar, in declaration order, else the first
@@ -1112,14 +1114,35 @@ def mathFont? (fs : FontSet) : Option (Nat × Font × MathConsts) := do
   let c ← f.math
   pure (i, f, c)
 
-/-- Slot 0 = body/serif, 1 = sans, 2 = mono. -/
-def lookup (fs : FontSet) (slot : Nat) (bold italic : Bool) : Nat :=
-  match fs.index.find? fun e => e.1 == (slot, bold, italic) with
+/-- Slot 0 = body/serif, 1 = sans, 2 = mono; `weight` is the CSS number of
+the requested series. The driver resolves an index entry for every key the
+document can ask for (its declared faces and the weights its styles use),
+so the exact arm answers; a key it never saw falls to the slot's regular,
+then to face 0 — never a hole. -/
+def lookup (fs : FontSet) (slot : Nat) (weight : Nat) (italic : Bool) : Nat :=
+  match fs.index.find? fun e => e.1 == (slot, weight, italic) with
   | some (_, i) => i
   | none =>
-    match fs.index.find? fun e => e.1 == (slot, false, false) with
+    match fs.index.find? fun e => e.1 == (slot, 400, false) with
     | some (_, i) => i
     | none => 0
+
+/-- `index_total`: every `(slot, weight, italic)` resolves to some face —
+the fallback chain ends at face 0, so with a well-formed index (every
+entry in bounds, which `get`'s clamp also defends) the answer always
+names a font of the set. The nearest-weight half of totality lives in
+`FontDb.pickWeighted_total`: the driver's resolution never returns
+empty-handed for a family that has any face at all. -/
+theorem index_total (fs : FontSet) (h0 : 0 < fs.fonts.size)
+    (hwf : ∀ e ∈ fs.index, e.2 < fs.fonts.size) (slot weight : Nat)
+    (italic : Bool) : fs.lookup slot weight italic < fs.fonts.size := by
+  unfold lookup
+  split
+  next heq => exact hwf _ (Array.mem_of_find?_eq_some heq)
+  next =>
+    split
+    next heq => exact hwf _ (Array.mem_of_find?_eq_some heq)
+    next => exact h0
 
 /-- The font that sets a glyph the styled face lacks, if any face can. -/
 def fallbackFor (fs : FontSet) (c : Char) : Option Nat :=

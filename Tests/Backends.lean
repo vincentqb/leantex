@@ -1338,8 +1338,8 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     fonts := #[font, font]
     index := ((List.range 3).flatMap fun slot =>
       let idx := if slot == 1 then 1 else 0
-      [((slot, false, false), idx), ((slot, true, false), idx),
-       ((slot, false, true), idx), ((slot, true, true), idx)]).toArray
+      [((slot, 400, false), idx), ((slot, 700, false), idx),
+       ((slot, 400, true), idx), ((slot, 700, true), idx)]).toArray
   }
   let (bigDoc, bigDs) := Elab.run "t"
     "plain {\\sffamily other face} and {\\Huge big} and {\\small little}"
@@ -1970,10 +1970,10 @@ def fontShipChecks (ref : IO.Ref (List String)) : IO Unit := do
   let fs : Font.FontSet := {
     fonts := #[sans, code]
     index := ((List.range 2).flatMap fun slot =>
-      [((slot, false, false), 0), ((slot, true, false), 0),
-       ((slot, false, true), 0), ((slot, true, true), 0)]).toArray ++
-      #[((2, false, false), 1), ((2, true, false), 1),
-        ((2, false, true), 1), ((2, true, true), 1)] }
+      [((slot, 400, false), 0), ((slot, 700, false), 0),
+       ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray ++
+      #[((2, 400, false), 1), ((2, 700, false), 1),
+        ((2, 400, true), 1), ((2, 700, true), 1)] }
   let src ← IO.FS.readFile "tests/corpus/deck.tex"
   let (doc, _) ← elabFixture "deck" src
   let cfg : HtmlDoc.Config := { fonts := some fs, fontsDir := "deck.fonts" }

@@ -921,16 +921,13 @@ def slotName : Nat → String
   | 1 => "sans"
   | _ => "mono"
 
-/-- The four variant axes a slot resolves (`Font.FontSet.lookup`). -/
-def slotVariants : List (Bool × Bool) :=
-  [(false, false), (true, false), (false, true), (true, true)]
-
 /-- The synthetic families face `i` serves: one per slot any of whose
-variants resolves to it, plus `ltx-math` for the math face. Empty for a
-face only per-glyph fallback reaches. -/
+index entries — the standard corners and every declared or used weight —
+resolves to it, plus `ltx-math` for the math face. Empty for a face only
+per-glyph fallback reaches. -/
 def namedFamiliesOf (fs : Font.FontSet) (i : Nat) : List String :=
   ((List.range 3).filterMap fun s =>
-    if slotVariants.any (fun v => fs.lookup s v.1 v.2 == i) then
+    if fs.index.any (fun e => e.1.1 == s && e.2 == i) then
       some s!"ltx-{slotName s}"
     else none) ++
   (if fs.math == some i then ["ltx-math"] else [])
@@ -1060,7 +1057,7 @@ this line a title asking for 600 over a 300/400 family renders faux-bold
 where the PDF sets the family's real Regular. -/
 def fontCss (dir : String) (fs : Font.FontSet) : String :=
   fontFaceCss dir fs ++
-  s!"body \{ font-weight: {(fs.get (fs.lookup 0 false false)).weight}; " ++
+  s!"body \{ font-weight: {(fs.get (fs.lookup 0 400 false)).weight}; " ++
   "font-synthesis: small-caps; }\n"
 
 /-- The generic family closing a slot's stack — what a reader sees only if
@@ -1070,7 +1067,7 @@ serif classes — OpenType spec, OS/2 table, sFamilyClass), else the slot's
 declared kind, passed in by the caller who knows which declaration filled
 the slot — never a guess from the family name. -/
 def genericFor (fs : Font.FontSet) (slot : Nat) (declared : String) : String :=
-  let f := fs.get (fs.lookup slot false false)
+  let f := fs.get (fs.lookup slot 400 false)
   if f.isFixedPitch then "monospace"
   else if f.familyClass == 8 then "sans-serif"
   else if 1 ≤ f.familyClass && f.familyClass ≤ 7 then "serif"

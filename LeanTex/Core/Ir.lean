@@ -901,30 +901,31 @@ structure FontSpec where
   math : Option String := none
   dirs : Array String := #[]
   /-- Per-variant faces the document named (fontspec's `UprightFont=`,
-  `BoldFont=`, `ItalicFont=`, `BoldItalicFont=`): `(slot, bold, italic)` →
-  the face name, resolved like any other named face and winning over the
-  family's own variant. -/
-  faces : Array ((Nat × Bool × Bool) × String) := #[]
+  `BoldFont=`, `ItalicFont=`, `BoldItalicFont=`, `FontFace={series}{shape}`):
+  `(slot, weight, italic)` → the face name, resolved like any other named
+  face and winning over the family's own variant. The weight is a series's
+  CSS number (`Weight.css`). -/
+  faces : Array ((Nat × Nat × Bool) × String) := #[]
   deriving Repr, BEq, Inhabited
 
 /-- Replace-on-redeclare, the same door `Tokens.declare` and
 `Palette.declare` are: a later declaration of the same variant overrides,
-keeping one entry per `(slot, bold, italic)`. Sourced: fontspec (v2.9,
+keeping one entry per `(slot, weight, italic)`. Sourced: fontspec (v2.9,
 §"Choosing additional fonts") — each `\setmainfont`/`BoldFont=` call
 *replaces* the family's setup for that shape; the last one given is the one
 used. -/
-def FontSpec.declareFace (s : FontSpec) (variant : Nat × Bool × Bool)
+def FontSpec.declareFace (s : FontSpec) (variant : Nat × Nat × Bool)
     (face : String) : FontSpec :=
   { s with faces := (s.faces.filter (·.1 != variant)).push (variant, face) }
 
 /-- The face the document declared for one slot variant, if any. -/
-def FontSpec.faceFor (s : FontSpec) (slot : Nat) (bold italic : Bool) : Option String :=
-  (s.faces.find? (·.1 == (slot, bold, italic))).map (·.2)
+def FontSpec.faceFor (s : FontSpec) (slot weight : Nat) (italic : Bool) : Option String :=
+  (s.faces.find? (·.1 == (slot, weight, italic))).map (·.2)
 
 /-- The last-declared face is the one resolved (the fontspec rule above,
 mirroring `declare_overwrite` for tokens): redeclaring a variant is an
 override, never a silently first-wins accident. -/
-theorem FontSpec.faceFor_last_declared (s : FontSpec) (v : Nat × Bool × Bool)
+theorem FontSpec.faceFor_last_declared (s : FontSpec) (v : Nat × Nat × Bool)
     (f : String) : (s.declareFace v f).faceFor v.1 v.2.1 v.2.2 = some f := by
   have hnone : (s.faces.filter (·.1 != v)).find? (·.1 == (v.1, v.2.1, v.2.2)) = none := by
     rw [Array.find?_eq_none]
@@ -8245,11 +8246,12 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
     String.join (doc.fonts.dirs.toList.map fun d => fontLine "dir" (some d)) ++
     fontLine "body" doc.fonts.body ++ fontLine "sans" doc.fonts.sans ++
     fontLine "mono" doc.fonts.mono ++
-    String.join (doc.fonts.faces.toList.map fun ((slot, bold, italic), f) =>
+    String.join (doc.fonts.faces.toList.map fun ((slot, weight, italic), f) =>
       let slotName := match slot with | 0 => "body" | 1 => "sans" | _ => "mono"
-      let variant := match bold, italic with
-        | false, false => "upright" | true, false => "bold"
-        | false, true => "italic" | true, true => "bolditalic"
+      let variant := match weight, italic with
+        | 400, false => "upright" | 700, false => "bold"
+        | 400, true => "italic" | 700, true => "bolditalic"
+        | w, i => (Weight.ofCss w).series ++ (if i then ".italic" else "")
       fontLine s!"{slotName}.{variant}" (some f))
   let paletteLines := String.join (doc.palette.entries.toList.map fun (n, c) =>
     let mark := if doc.palette.decorative.contains n then " decorative" else ""
