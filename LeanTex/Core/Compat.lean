@@ -329,7 +329,7 @@ private def rebase (p : Pos) : Raw → Raw
   | .group body _ => .group (rebaseList p body.toList).toArray p
   | .math d body _ => .math d (rebaseList p body.toList).toArray p
   | .env n body _ => .env n (rebaseList p body.toList).toArray p
-  | .verb s _ => .verb s p
+  | .verb env s _ => .verb env s p
 
 private def rebaseList (p : Pos) : List Raw → List Raw
   | [] => []

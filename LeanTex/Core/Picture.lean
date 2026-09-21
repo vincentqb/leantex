@@ -117,7 +117,7 @@ def ofRawOne (acc : Array Tok) : Parse.Raw → Array Tok
   | .group body _ => acc.push (.group (ofRawList #[] body.toList).toList)
   | .math d body _ => acc.push (.math d body.toList)
   | .env n _ _ => acc.push (.other s!"environment '{n}'")
-  | .verb _ _ => acc.push (.other "verbatim")
+  | .verb _ _ _ => acc.push (.other "verbatim")
 
 end
 

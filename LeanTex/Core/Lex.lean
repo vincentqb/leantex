@@ -14,7 +14,7 @@ inductive Tok where
   | rbrace
   | math
   | sym (c : Char)
-  | verb (s : String)
+  | verb (env : String) (s : String)
   deriving Repr, BEq
 
 structure Token where
@@ -97,8 +97,15 @@ private def strFrom (cs : Array Char) (a b : Nat) : String := Id.run do
       s := s.push cs[j]
   return s
 
-private def verbatimOpen : Array Char := "{verbatim}".toList.toArray
-private def verbatimClose : Array Char := "\\end{verbatim}".toList.toArray
+/-- The lexically blind environments: their bodies are code, captured raw
+in one token — `{verbatim}`, and the listing environments that differ from
+it only by their declared apparatus (listings' `{lstlisting}`, minted's
+`{minted}`), whose option head the elaborator reads from the captured
+string. Each entry: the environment name, its `\begin` suffix, its whole
+closer. -/
+private def verbEnvs : List (String × Array Char × Array Char) :=
+  ["verbatim", "lstlisting", "minted"].map fun n =>
+    (n, s!"\{{n}}".toList.toArray, s!"\\end\{{n}}".toList.toArray)
 
 def lex (file : String) (input : String) : Array Token × Array Diag := Id.run do
   -- Folded straight into an array: `toList.toArray` builds and drops a cons
@@ -133,19 +140,24 @@ def lex (file : String) (input : String) : Array Token × Array Diag := Id.run d
           if nameChar c1 then
             let j := scanWhile cs (i + 1) nameChar
             let name := strFrom cs (i + 1) j
-            if name == "begin" && matchAt cs j verbatimOpen then
-              -- verbatim is lexically blind: capture raw content in one token
-              let start := j + verbatimOpen.size
-              match findSub cs start verbatimClose with
+            if name == "begin" &&
+                verbEnvs.any (fun e => matchAt cs j e.2.1) then
+              -- verbatim (and the listing environments) are lexically
+              -- blind: capture raw content in one token
+              let (env, opener, closer) :=
+                (verbEnvs.find? (fun e => matchAt cs j e.2.1)).getD
+                  ("verbatim", #[], #[])
+              let start := j + opener.size
+              match findSub cs start closer with
               | some k =>
-                let stop := k + verbatimClose.size
-                toks := toks.push ⟨.verb (strFrom cs start k), here⟩
+                let stop := k + closer.size
+                toks := toks.push ⟨.verb env (strFrom cs start k), here⟩
                 pos := posOver cs i stop pos
                 i := stop
               | none =>
                 diags := diags.push (Diag.of .E0102
-                  "unclosed verbatim: expected '\\end{verbatim}'" (some ⟨file, here⟩))
-                toks := toks.push ⟨.verb (strFrom cs start cs.size), here⟩
+                  s!"unclosed \{{env}}: expected '\\end\{{env}}'" (some ⟨file, here⟩))
+                toks := toks.push ⟨.verb env (strFrom cs start cs.size), here⟩
                 pos := posOver cs i cs.size pos
                 i := cs.size
             else

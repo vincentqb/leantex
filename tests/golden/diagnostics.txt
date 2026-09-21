@@ -6,7 +6,7 @@ error[E0002]: invalid UTF-8: invalid continuation byte 0x28 at byte offset 0
 ── E0101 (dropped) lone backslash at end of input
 error[E0101]: lone backslash at end of input
 ── E0102 (dropped) unclosed verbatim environment
-error[E0102]: unclosed verbatim: expected '\end{verbatim}'
+error[E0102]: unclosed {verbatim}: expected '\end{verbatim}'
 ── E0111 (dropped) beamer template body carrying content dropped
 error[E0111]: '\setbeamertemplate{footline}' is dropped with its template body, which carries content
   help: 'frame footer' translates to \framefoot{...}; \style{element}{...} styles elements; \runningfoot sets a document footer; \allow{E0111} accepts the loss

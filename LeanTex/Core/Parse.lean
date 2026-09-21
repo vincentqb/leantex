@@ -13,7 +13,7 @@ inductive Raw where
   | group (body : Array Raw) (pos : Pos)
   | math (display : Bool) (body : Array Raw) (pos : Pos)
   | env (name : String) (body : Array Raw) (pos : Pos)
-  | verb (s : String) (pos : Pos)
+  | verb (env : String) (s : String) (pos : Pos)
   deriving Repr, BEq, Inhabited
 
 /-- What closes an open frame. -/
@@ -170,7 +170,7 @@ def parse (file : String) (toks : Array Token) : Array Raw × Array Diag := Id.r
       | .space => acc := acc.push .space
       | .par => acc := acc.push (.par pos)
       | .sym c => acc := acc.push (.sym c pos)
-      | .verb s => acc := acc.push (.verb s pos)
+      | .verb env s => acc := acc.push (.verb env s pos)
   -- End of input: close what is still open, innermost first.
   for _ in [0:frames.size] do
     match frames.back? with
@@ -229,7 +229,7 @@ def rawSrcOne (r : Raw) : String :=
     let inner := rawSrc body
     if d then s!"\\[{inner}\\]" else s!"${inner}$"
   | .env n body _ => s!"\\begin\{{n}}" ++ rawSrc body ++ s!"\\end\{{n}}"
-  | .verb s _ => s!"\\begin\{verbatim}{s}\\end\{verbatim}"
+  | .verb env s _ => s!"\\begin\{{env}}{s}\\end\{{env}}"
 
 end
 

@@ -238,7 +238,7 @@ private inductive MTok where
 private def flattenErr : Parse.Raw → Option String
   | .math _ _ _ => some "nested math"
   | .env n _ _ => some s!"\\begin\{{n}}"
-  | .verb _ _ => some "verbatim"
+  | .verb _ _ _ => some "verbatim"
   | .par _ => some "a blank line"
   | .sym c _ =>
     if c == '^' || c == '_' || c == '[' || c == ']' || c == '&' then none

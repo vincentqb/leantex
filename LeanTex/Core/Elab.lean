@@ -232,6 +232,10 @@ structure ESt where
   /-- The equation counter, per document (amsmath's `\numberwithin` is not
   modelled; a document that declares it keeps the per-document numbers). -/
   eqNum : Nat := 0
+  /-- The listing counter, per document: every captioned listing takes the
+  next number in flow order, exactly the equation counter's fold
+  (listings steps `\thelstlisting` per captioned listing). -/
+  lstNum : Nat := 0
   /-- The footnote counter, per document, stepped by `Ir.footnoteMark`:
   `\footnote[n]` overrides without stepping, so
   `Ir.footnote_numbers_gapless` is the numbering this fold realizes.
@@ -254,6 +258,77 @@ structure ESt where
   whole table is known: a reference may point forward, so it cannot be
   judged where it stands. -/
   refSites : Array (String × Ir.RefForm × Pos) := #[]
+
+/-- The option head of a listing environment's blind-captured body:
+spaces and tabs, then `[...]` with `{}`-nesting respected (listings reads
+its per-environment keys there; a bracket on a later line is content, as
+in listings). Returns the option text and the index past the `]`, `none`
+when no head stands or the bracket never closes. -/
+private def listingOptHead (s : String) : Option (String × Nat) := Id.run do
+  let cs := s.toList.toArray
+  let mut i := 0
+  for _ in [0:cs.size] do
+    if h : i < cs.size then
+      if cs[i] == ' ' || cs[i] == '\t' then i := i + 1 else break
+    else break
+  if h : i < cs.size then
+    if cs[i] != '[' then return none
+    let mut depth : Nat := 0
+    let mut j := i + 1
+    let mut out := ""
+    for _ in [0:cs.size] do
+      if h2 : j < cs.size then
+        let c := cs[j]
+        if c == '{' then depth := depth + 1
+        else if c == '}' then depth := depth - 1
+        if c == ']' && depth == 0 then
+          return some (out, j + 1)
+        out := out.push c
+        j := j + 1
+      else break
+    return none
+  else return none
+
+/-- The mandatory `{language}` head of a `{minted}` body, after any option
+head: the language text and the index past the `}`, `none` when the group
+is missing. -/
+private def mintedLangHead (s : String) (start : Nat) : Option (String × Nat) := Id.run do
+  let cs := s.toList.toArray
+  let mut i := start
+  for _ in [0:cs.size] do
+    if h : i < cs.size then
+      if cs[i] == ' ' || cs[i] == '\t' then i := i + 1 else break
+    else break
+  if h : i < cs.size then
+    if cs[i] != '{' then return none
+    let mut j := i + 1
+    let mut out := ""
+    for _ in [0:cs.size] do
+      if h2 : j < cs.size then
+        let c := cs[j]
+        if c == '}' then return some (out, j + 1)
+        out := out.push c
+        j := j + 1
+      else break
+    return none
+  else return none
+
+/-- Where a listing body's content starts: past the option head and, for
+`{minted}`, its language argument — the one index both the block arm and
+the inline degradation strip from. -/
+private def listingContentStart (env s : String) : Nat :=
+  let afterOpt := ((listingOptHead s).map (·.2)).getD 0
+  if env == "minted" then
+    ((mintedLangHead s afterOpt).map (·.2)).getD afterOpt
+  else afterOpt
+
+/-- Strip the value's one surrounding brace group: `{An example}` reads as
+`An example`, as listings' keyval values do. -/
+private def listingVal (v : String) : String :=
+  let v := v.trimAscii.toString
+  if v.startsWith "{" && v.endsWith "}" && v.length ≥ 2 then
+    ((v.drop 1).dropEnd 1).toString.trimAscii.toString
+  else v
 
 abbrev EM := StateM ESt
 
@@ -2572,12 +2647,18 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             sliceWeight_splice h hr keptFrom
           elabInlinesFrom ctx (raws.extract 0 i ++ body.extract keptFrom body.size
             ++ raws.extract (i + 1) raws.size) i acc sb
-    | .verb s _ =>
+    | .verb env s vpos =>
       -- Verbatim inside inline content: kept as mono text, spaces held as
-      -- no-break spaces, lines separated by forced breaks.
+      -- no-break spaces, lines separated by forced breaks. A listing's
+      -- option head is a declaration a paragraph cannot carry — stripped
+      -- and named, never set as code text.
       let acc := flushText acc sb
+      let start := listingContentStart env s
+      if start > 0 then
+        warnOnce ctx ("verb-inline:" ++ env) .W0346
+          s!"a '\{{env}}' option head inside inline content is ignored" vpos
       elabInlinesFrom ctx raws (i + 1)
-        (acc.push (.styled .mono (Ir.verbatimInlines s))) ""
+        (acc.push (.styled .mono (Ir.verbatimInlines ((s.drop start).toString)))) ""
     | .ctrl name pos =>
       -- The document's own names come first: a parameter, then a defined
       -- command. Built-ins the document cannot redefine are exactly
@@ -3508,7 +3589,7 @@ def bodyIsBlockOne : Raw → Bool
       || n == "define" || counterCtrl n
       || ["section", "subsection", "subsubsection"].contains n
   | .par _ => true
-  | .verb _ _ => true
+  | .verb _ _ _ => true
   | .math display _ _ => display
   | .env n body _ =>
     if (Parse.inputEnvFile? n).isSome then bodyIsBlockList body.toList
@@ -4575,7 +4656,7 @@ private def barScanList (user : Array UserCmd) (bound : Nat) (st : BarSt)
   | .word w _ :: rest =>
     let events := if barWordTransparent w then events else events.push .content
     barScanList user bound st events rest
-  | .verb _ _ :: rest => barScanList user bound st (events.push .content) rest
+  | .verb _ _ _ :: rest => barScanList user bound st (events.push .content) rest
   | .math _ _ _ :: rest => barScanList user bound st (events.push .content) rest
   | .env _ body _ :: rest =>
     let (bold, strut, author) := authorScanList (false, false, false) body.toList
@@ -5426,6 +5507,82 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
   rows := Ir.padTableRows rows cols.size
   blocks := blocks.push (.table cols padL padR rows rules)
   return blocks
+
+/-- One listing block from a lexically blind capture. `{verbatim}` is the
+default spec, as always. `{lstlisting}` reads listings' per-environment
+keys from its option head, `{minted}` its option head and its mandatory
+language argument. Honoured keys: `caption` (numbered in flow order — the
+listing counter steps exactly as the equation counter does), `label`
+(bound to the caption's number), `numbers=left`/`none` and minted's
+`linenos`, `language` (named data the engine does not colour by), and a
+`basicstyle` at the engine's own listing step (mono at footnotesize —
+the code-frame convention Layout sets). Every other key, and a value
+asking for what the engine does not draw, is named W0110 — never a
+silent drop. The caption is kept as its literal text: a listing caption
+is plain prose; markup inside one is out of the blind capture's reach. -/
+private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := do
+  if env == "verbatim" then
+    return .verbatim none s {}
+  let (opts, afterOpt) := (listingOptHead s).getD ("", 0)
+  let mut content := s
+  let mut caption : Option String := none
+  let mut label : Option String := none
+  let mut numbers := false
+  for entry in Decl.splitEntries opts do
+    let bare := entry.trimAscii.toString
+    if bare.isEmpty then
+      continue
+    match Decl.splitEntry entry with
+    | some ("caption", v) =>
+      let v := listingVal v
+      caption := if v.isEmpty then none else some v
+    | some ("label", v) => label := some (listingVal v)
+    | some ("numbers", v) =>
+      let v := v.trimAscii.toString
+      if v == "left" then numbers := true
+      else if v == "none" then numbers := false
+      else
+        diag ctx .W0110 s!"'numbers={v}' asks for a numbering the engine \
+does not draw; lines keep no numbers" (some pos)
+          (help := "numbers=left draws them")
+    | some ("linenos", v) =>
+      numbers := v.trimAscii.toString != "false"
+    | some ("language", _) => pure ()
+    | some ("basicstyle", v) =>
+      match Ir.sizeScale.find? (fun p => p.1 != "footnotesize"
+          && (v.splitOn ("\\" ++ p.1)).length > 1) with
+      | some (nm, _) =>
+        diag ctx .W0110 s!"'basicstyle' asks for \\{nm}; listings set at \
+the engine's own step, mono at footnotesize" (some pos)
+      | none => pure ()
+    | some (k, _) =>
+      diag ctx .W0110 s!"listing key '{k}' is not honoured; ignored" (some pos)
+    | none =>
+      if bare == "linenos" then numbers := true
+      else diag ctx .W0110 s!"listing key '{bare}' is not honoured; ignored" (some pos)
+  if env == "minted" then
+    if (mintedLangHead s afterOpt).isNone then
+      diag ctx .E0304 s!"'\\begin\{minted}' needs its \{language} argument" (some pos)
+    content := (s.drop (listingContentStart env s)).toString
+  else
+    content := (s.drop afterOpt).toString
+  let spec : Ir.ListingSpec ← match caption with
+    | some cap => do
+      let num := (← get).lstNum + 1
+      modify fun st => { st with lstNum := num }
+      match label with
+      | some key =>
+        -- The anchor rides in the caption, as an equation's rides in its
+        -- content: the reference's target must ship on the page.
+        recordLabel ctx key (some (toString num)) pos
+        pure { caption := some (num, #[.label key, .text cap]), numbers := numbers }
+      | none =>
+        pure { caption := some (num, #[.text cap]), numbers := numbers }
+    | none => do
+      if let some key := label then
+        recordLabel ctx key (← get).refTarget pos
+      pure { numbers := numbers }
+  return .verbatim none content spec
 
 /-- A display-math environment, outside the knot to keep the pack small. -/
 private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos : Pos)
@@ -6864,9 +7021,10 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | .par _ =>
       let blocks ← flushPara ctx' blocks cur
       elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
-    | .verb s _ =>
+    | .verb env s vpos =>
       let blocks ← flushPara ctx' blocks cur
-      elabBlocksGo ctx' raws (i + 1) (blocks.push (.verbatim none s {})) #[] gen'
+      let b ← listingBlock ctx' env s vpos
+      elabBlocksGo ctx' raws (i + 1) (blocks.push b) #[] gen'
     | .math display body mpos =>
       if display then
         -- A display formula: one centred block of its own, so it
