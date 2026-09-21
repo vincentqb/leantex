@@ -37,6 +37,7 @@ import LeanTex.Core.HtmlDoc
 import LeanTex.Core.MarkdownDoc
 import LeanTex.Core.Layout
 import LeanTex.Core.Check
+import LeanTex.Core.PdfContent
 import LeanTex.Core.Pdf
 import LeanTex.Cli.Args
 import LeanTex.Cli.Render

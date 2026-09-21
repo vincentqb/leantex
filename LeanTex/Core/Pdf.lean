@@ -3,12 +3,11 @@ import LeanTex.Core.Flate
 import LeanTex.Core.Font
 import LeanTex.Core.HtmlDoc
 import LeanTex.Core.Layout
+import LeanTex.Core.PdfContent
 
 namespace LeanTex.Core.Pdf
 
 open LeanTex.Core LeanTex.Core.Dim LeanTex.Core.Font LeanTex.Core.Layout
-
-private def hexDigit (n : Nat) : Char := "0123456789ABCDEF".toList[n % 16]!
 
 /-- A rectangle in PDF user space: lower-left and upper-right corners.
 Fields are spelled `Int` (the same type `Sp` names) because `omega`
@@ -169,203 +168,12 @@ theorem html_fonts_cover_pdf (fs : FontSet) (pages : Array PageOut)
     ∀ k ∈ keepFaces fs pages, ∃ ff ∈ HtmlDoc.shipFaces fs, ff.index = k :=
   fun k hk => HtmlDoc.shipFaces_covers fs (keepFaces_lt fs pages h k hk)
 
-/-- One page's content stream. Glyph runs are written as `TJ` arrays; the
-pen's position is tracked against the layout's, and only a glyph run moves
-it — a gap, a kern or a rule advances the layout position and nothing is
-written until glyphs follow. Then the move is a `TJ` adjustment when it is
-small and the array is open, and an absolute `Tm` otherwise: an adjustment
-is thousandths of the live font size, and a viewer that keeps them in
-sixteen bits (macOS Preview drops the whole array past ±32767) never sees
-one that large. A rule-only line writes nothing here. A `TJ` array cannot
-switch fonts or colours mid-array, so a run in a different face or colour
-closes it, emits `Tf`/`rg`, and reopens it. -/
+/-- One page's content stream: the typed operators (`contentOps`)
+rendered (`render`). The construction decides pen moves, `TJ` arrays and
+graphics-state changes; the spelling is the renderer's alone. -/
 private def contentStream (geom : Geom) (remap : Array Nat) (imgMap : Array (Option Nat))
-    (page : PageOut) : String := Id.run do
-  let mut s := ""
-  -- Fills paint first, in order: the page background, then any bars, then
-  -- the text over them. The bleed shifts fills exactly as it shifts lines
-  -- and paths below — layout speaks trim coordinates and the trim box sits
-  -- `bleed` in from the medium's corner — so a fill placed against a trim
-  -- line (a cut mark) and the declared TrimBox cannot drift apart.
-  for f in page.fills do
-    s := s ++ s!"q {f.color.pdfFill} {(geom.bleed + f.x).toPtString} \
-{(geom.bleed + geom.pageH - f.y - f.h).toPtString} {f.w.toPtString} {f.h.toPtString} re f Q\n"
-  -- Picture paths — node outlines, later edges — paint after the fills
-  -- and before the text, so a node's own fill sits under its label. The
-  -- painting operators are ISO 32000-2 §8.5.3 (S stroke, f fill, B fill
-  -- then stroke); dash patterns §8.4.3.6 with pgf's rhythms (§15.3.2:
-  -- dashed on 3pt off 3pt, dotted on the line width off 1pt).
-  for p in page.paths do
-    let mut g := "q "
-    if let some fl := p.fill then
-      g := g ++ s!"{fl.pdfFill} "
-    if let some st := p.stroke then
-      let dashOp := match st.dash with
-        | .solid => ""
-        | .dashed => "[3 3] 0 d "
-        | .dotted => s!"[{st.width.toPtString} 1] 0 d "
-      g := g ++ s!"{st.color.pdfStroke} {st.width.toPtString} w " ++ dashOp
-    match p.path with
-    | .circle cx cy r =>
-      -- Four cubic Bézier arcs, the standard k = 4(√2−1)/3 ≈ 0.5523
-      -- magic-number circle approximation; c is §8.5.2.2.
-      let x := geom.bleed + cx
-      let y := geom.bleed + geom.pageH - cy
-      let k := r * 5523 / 10000
-      let pt := Sp.toPtString
-      g := g ++ s!"{pt (x + r)} {pt y} m " ++
-        s!"{pt (x + r)} {pt (y + k)} {pt (x + k)} {pt (y + r)} {pt x} {pt (y + r)} c " ++
-        s!"{pt (x - k)} {pt (y + r)} {pt (x - r)} {pt (y + k)} {pt (x - r)} {pt y} c " ++
-        s!"{pt (x - r)} {pt (y - k)} {pt (x - k)} {pt (y - r)} {pt x} {pt (y - r)} c " ++
-        s!"{pt (x + k)} {pt (y - r)} {pt (x + r)} {pt (y - k)} {pt (x + r)} {pt y} c h "
-    | .rect rx ry rw rh =>
-      let x := geom.bleed + rx
-      let y := geom.bleed + geom.pageH - ry - rh
-      g := g ++ s!"{x.toPtString} {y.toPtString} {rw.toPtString} {rh.toPtString} re "
-    | .segs segs =>
-      -- Segment endpoints are explicit, so each opens with its own move;
-      -- a chain of touching segments still strokes as one visual path.
-      let mut prev : Option (Sp × Sp) := none
-      for sg in segs do
-        match sg with
-        | .line x1 y1 x2 y2 =>
-          let a := (geom.bleed + x1, geom.bleed + geom.pageH - y1)
-          let b := (geom.bleed + x2, geom.bleed + geom.pageH - y2)
-          if prev != some a then
-            g := g ++ s!"{a.1.toPtString} {a.2.toPtString} m "
-          g := g ++ s!"{b.1.toPtString} {b.2.toPtString} l "
-          prev := some b
-        | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
-          let a := (geom.bleed + x1, geom.bleed + geom.pageH - y1)
-          let c1 := (geom.bleed + c1x, geom.bleed + geom.pageH - c1y)
-          let c2 := (geom.bleed + c2x, geom.bleed + geom.pageH - c2y)
-          let b := (geom.bleed + x2, geom.bleed + geom.pageH - y2)
-          if prev != some a then
-            g := g ++ s!"{a.1.toPtString} {a.2.toPtString} m "
-          g := g ++ s!"{c1.1.toPtString} {c1.2.toPtString} {c2.1.toPtString} \
-{c2.2.toPtString} {b.1.toPtString} {b.2.toPtString} c "
-          prev := some b
-    | .tri x1 y1 x2 y2 x3 y3 =>
-      let p (x y : Sp) : String :=
-        s!"{(geom.bleed + x).toPtString} {(geom.bleed + geom.pageH - y).toPtString}"
-      g := g ++ s!"{p x1 y1} m {p x2 y2} l {p x3 y3} l h "
-    let paint := match p.stroke, p.fill with
-      | some _, some _ => "B"
-      | some _, none => "S"
-      | none, some _ => "f"
-      | none, none => "n"
-    s := s ++ g ++ paint ++ " Q\n"
-  s := s ++ "BT\n"
-  let mut curFont : Int := -1
-  let mut curSize : Sp := -1
-  let mut curColor : Ir.Color := Ir.Color.black
-  -- The live horizontal text scale, per-mille delta from 100%: font
-  -- expansion's per-line factor. `Tz` (ISO 32000-2 §9.3.4) scales glyph
-  -- shapes and advances alike, which is exactly hz-style expansion — the
-  -- run widths layout emitted are already rescaled by the same factor,
-  -- so painted ink and measured metrics agree.
-  let mut curTz : Int := 0
-  -- Rules are path operators, which may not appear inside BT/ET, so they are
-  -- gathered here and drawn after the text. Images gather with them: `Do`
-  -- is likewise not a text-object operator.
-  let mut rules : Array (Sp × Sp × Sp × Sp × Ir.Color) := #[]
-  let mut images : Array (Sp × Sp × Sp × Sp × Option Nat) := #[]
-  for l in page.lines do
-    -- Bleed shifts everything: layout works in trim coordinates and the
-    -- trim box sits `bleed` in from the medium's corner.
-    let ypdf := geom.bleed + geom.pageH - l.y
-    if l.expand != curTz then
-      let tz := 1000 + l.expand
-      s := s ++ s!"{tz / 10}.{tz % 10} Tz\n"
-      curTz := l.expand
-    let mut inArray := false
-    let mut x := geom.bleed + l.x
-    -- Where the pen is, when it is known: a fresh line has no position until
-    -- its first glyph run sets one. A raised run (a math script) moves the
-    -- baseline too, so the pen is a point: a `TJ` adjustment can only move
-    -- x, and any vertical move is an absolute `Tm`.
-    let mut pen : Option (Sp × Sp) := none
-    for seg in l.segs do
-      match seg with
-      | .rule w thickness raise color =>
-        rules := rules.push (x, ypdf + raise, w, thickness, color)
-        x := x + w
-      | .image idx w h =>
-        -- Bottom on the baseline, `h` up: the `cm` maps the XObject's unit
-        -- square onto exactly the box layout measured.
-        images := images.push (x, ypdf, w, h, idx.bind fun k => imgMap[k]?.getD none)
-        x := x + w
-      | .gap w =>
-        x := x + w
-      | .run idx color _ w glyphs segSize _ raise _ =>
-        if glyphs.isEmpty then
-          -- A kern: width, no glyphs. It moves the layout position like a gap.
-          x := x + w
-        else
-        let runY := ypdf + raise
-        let size := if segSize == 0 then l.size else segSize
-        let changes := curFont != idx || curSize != size || curColor != color
-        -- Bring the pen to the run. Inside an open array with the face
-        -- unchanged, a small horizontal move is an adjustment in the live
-        -- size; any other move is absolute, and closes the array.
-        match pen with
-        | some (hx, hy) =>
-          if hx != x || hy != runY then
-            -- A TJ adjustment displaces by thousandths of the font size
-            -- *times the horizontal scale*, so under expansion the number
-            -- compensates by the inverse factor.
-            let v0 : Int := (x - hx) * 1000 / curSize
-            let v : Int := if curTz == 0 then v0 else v0 * 1000 / (1000 + curTz)
-            if inArray && !changes && hy == runY && v.natAbs ≤ 32000 then
-              s := s ++ s!"{-v}"
-            else
-              if inArray then
-                s := s ++ "] TJ\n"
-                inArray := false
-              s := s ++ s!"1 0 0 1 {x.toPtString} {runY.toPtString} Tm\n"
-        | none =>
-          s := s ++ s!"1 0 0 1 {x.toPtString} {runY.toPtString} Tm\n"
-        if changes then
-          if inArray then
-            s := s ++ "] TJ\n"
-            inArray := false
-          if curFont != idx || curSize != size then
-            s := s ++ s!"/F{(remap[idx]?.getD 0) + 1} {size.toPtString} Tf\n"
-            curFont := idx
-            curSize := size
-          if curColor != color then
-            s := s ++ s!"{color.pdfFill}\n"
-            curColor := color
-        unless inArray do
-          s := s.push '['
-          inArray := true
-        s := s.push '<'
-        for (g, _) in glyphs do
-          s := s.push (hexDigit (g / 4096))
-          s := s.push (hexDigit (g / 256))
-          s := s.push (hexDigit (g / 16))
-          s := s.push (hexDigit g)
-        s := s.push '>'
-        x := x + w
-        pen := some (x, runY)
-    if inArray then
-      s := s ++ "] TJ\n"
-  s := s ++ "ET"
-  for (ix, iy, iw, ih, res?) in images do
-    match res? with
-    | some n =>
-      s := s ++ s!"\nq {iw.toPtString} 0 0 {ih.toPtString} {ix.toPtString} \
-{iy.toPtString} cm /Im{n + 1} Do Q"
-    | none =>
-      -- The placeholder for an image that did not load: an outlined box of
-      -- the requested size, so the failure is visible where the figure
-      -- would stand and the diagnostic already said why.
-      s := s ++ s!"\nq 0.62 0.62 0.66 RG 0.75 w {ix.toPtString} {iy.toPtString} \
-{iw.toPtString} {ih.toPtString} re S Q"
-  for (rx, ry, rw, rh, color) in rules do
-    s := s ++ s!"\nq {color.pdfFill} {rx.toPtString} {ry.toPtString} \
-{rw.toPtString} {rh.toPtString} re f Q"
-  return s
+    (page : PageOut) : String :=
+  render (contentOps geom remap imgMap page)
 
 /-- Link rectangles for one page, in PDF user space. Adjacent runs with the
 same destination merge, so a hyphenated or multi-font link is one annotation

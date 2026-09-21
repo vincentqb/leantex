@@ -3048,3 +3048,140 @@ def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
       "\\output{ formats = pdf, html }\n\\assert{ pages == 99 }\n"
     t "driver: pdf+html with a failing assertion writes nothing" (code != 0 && !dirExists)
     IO.FS.removeDirAll dir
+
+/-- Synthetic pages exercising every content-stream operator the writer
+emits: glyph runs that join one `TJ` array, a gap as an adjustment, a face
+and colour change, a raised run, a CMYK colour, expansion (`Tz`) turned on
+and back off, a kern, a move too large for an adjustment, a rule and
+images (loaded, failed, and unnamed), page fills, and every picture path
+shape with every paint combination. -/
+def contentOpsRed : Ir.Color := { r := 200, g := 30, b := 30 }
+def contentOpsGrey : Ir.Color := { r := 240, g := 240, b := 240 }
+def contentOpsCyan : Ir.Color := Ir.Color.ofCmyk 1000 0 0 0
+
+def contentOpsRun (idx : Nat) (color : Ir.Color) (w : Dim.Sp) (glyphs : List (Nat × Char))
+    (size : Dim.Sp := 0) (raise : Dim.Sp := 0) : Layout.Seg :=
+  .run idx color none w glyphs.toArray size false raise none
+
+def contentOpsTextPage : Layout.PageOut := {
+  lines := #[
+    { x := Dim.pt 10, y := Dim.pt 20, size := Dim.pt 12, setWidth := Dim.pt 100, segs := #[
+        contentOpsRun 0 Ir.Color.black (Dim.pt 30) [(36, 'A'), (37, 'B')],
+        .gap (Dim.pt 5),
+        contentOpsRun 0 Ir.Color.black (Dim.pt 20) [(38, 'C')],
+        contentOpsRun 1 contentOpsRed (Dim.pt 20) [(39, 'D')] (Dim.pt 9) (Dim.pt 3),
+        contentOpsRun 1 contentOpsRed (Dim.pt 20) [(40, 'E')] (Dim.pt 9) (Dim.pt 3) ] },
+    { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 12, setWidth := Dim.pt 100, expand := 20, segs := #[
+        contentOpsRun 0 contentOpsCyan (Dim.pt 30) [(70000, 'x'), (4096, 'y')],
+        .gap (Dim.pt 5),
+        contentOpsRun 0 contentOpsCyan (Dim.pt 30) [(1, 'z')] ] },
+    { x := Dim.pt 10, y := Dim.pt 60, size := Dim.pt 12, setWidth := Dim.pt 100, segs := #[
+        contentOpsRun 0 Ir.Color.black (Dim.pt 2) [],
+        contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(50, 'a')],
+        .gap (Dim.pt 500),
+        contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(51, 'b')],
+        contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(52, 'c')] (Dim.pt 12) (Dim.pt (-3)),
+        contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(53, 'd')] (Dim.pt 12) (Dim.pt (-3)) ] },
+    { x := Dim.pt 10, y := Dim.pt 80, size := Dim.pt 12, setWidth := Dim.pt 100, segs := #[
+        .rule (Dim.pt 40) (Dim.pt 1) (Dim.pt 2) contentOpsRed,
+        .image (some 0) (Dim.pt 20) (Dim.pt 15),
+        .image (some 1) (Dim.pt 20) (Dim.pt 15),
+        .image none (Dim.pt 10) (Dim.pt 5),
+        contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(54, 'e')],
+        .rule (Dim.pt 10) (Dim.pt 2) 0 Ir.Color.black ] } ],
+  fills := #[{ x := 0, y := 0, w := Dim.pt 200, h := Dim.pt 100, color := contentOpsGrey },
+             { x := Dim.pt 5, y := Dim.pt 5, w := Dim.pt 50, h := Dim.pt 10, color := contentOpsCyan }] }
+
+def contentOpsPathPage : Layout.PageOut := {
+  paths := #[
+    { path := .circle (Dim.pt 50) (Dim.pt 50) (Dim.pt 20),
+      stroke := some { color := contentOpsRed, dash := .dashed } },
+    { path := .rect (Dim.pt 10) (Dim.pt 10) (Dim.pt 30) (Dim.pt 20), stroke := some { dash := .dotted, width := Dim.pt 1 },
+      fill := some contentOpsGrey },
+    { path := .segs #[.line (Dim.pt 1) (Dim.pt 2) (Dim.pt 3) (Dim.pt 4), .line (Dim.pt 3) (Dim.pt 4) (Dim.pt 5) (Dim.pt 6),
+        .cubic (Dim.pt 7) (Dim.pt 8) (Dim.pt 9) (Dim.pt 10) (Dim.pt 11) (Dim.pt 12) (Dim.pt 13) (Dim.pt 14),
+        .cubic (Dim.pt 13) (Dim.pt 14) (Dim.pt 1) (Dim.pt 1) (Dim.pt 2) (Dim.pt 2) (Dim.pt 3) (Dim.pt 3)],
+      stroke := some {} },
+    { path := .tri (Dim.pt 1) (Dim.pt 2) (Dim.pt 3) (Dim.pt 4) (Dim.pt 5) (Dim.pt 6), fill := some contentOpsRed },
+    { path := .rect (Dim.pt 1) (Dim.pt 1) (Dim.pt 2) (Dim.pt 2) } ] }
+
+/-- The streams the writer produced for these pages before the typed
+layer existed — captured from `Pdf.pageStreams`, and the spelling the
+typed operators must reproduce byte for byte. -/
+def contentOpsTextExpected : String :=
+  "q 0.941 0.941 0.941 rg 0 0 200 100 re f Q\n" ++
+  "q 1 0 0 0 k 5 85 50 10 re f Q\n" ++
+  "BT\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025>-416<0026>] TJ\n" ++
+  "1 0 0 1 65 83 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027><0028>] TJ\n" ++
+  "102.0 Tz\n1 0 0 1 10 60 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000>-407<0001>] TJ\n" ++
+  "100.0 Tz\n1 0 0 1 12 40 Tm\n0 0 0 rg\n[<0032>] TJ\n1 0 0 1 522 40 Tm\n[<0033>] TJ\n" ++
+  "1 0 0 1 532 37 Tm\n[<0034><0035>] TJ\n1 0 0 1 100 20 Tm\n[<0036>] TJ\nET\n" ++
+  "q 20 0 0 15 50 20 cm /Im1 Do Q\n" ++
+  "q 0.62 0.62 0.66 RG 0.75 w 70 20 20 15 re S Q\n" ++
+  "q 0.62 0.62 0.66 RG 0.75 w 90 20 10 5 re S Q\n" ++
+  "q 0.784 0.118 0.118 rg 10 22 40 1 re f Q\n" ++
+  "q 0 0 0 rg 110 20 10 2 re f Q"
+
+def contentOpsPathExpected : String :=
+  "q 0.784 0.118 0.118 RG 0.4 w [3 3] 0 d 70 50 m 70 61.046 61.046 70 50 70 c " ++
+  "38.954 70 30 61.046 30 50 c 30 38.954 38.954 30 50 30 c 61.046 30 70 38.954 70 50 c h S Q\n" ++
+  "q 0.941 0.941 0.941 rg 0 0 0 RG 1 w [1 1] 0 d 10 70 30 20 re B Q\n" ++
+  "q 0 0 0 RG 0.4 w 1 98 m 3 96 l 5 94 l 7 92 m 9 90 11 88 13 86 c 1 99 2 98 3 97 c S Q\n" ++
+  "q 0.784 0.118 0.118 rg 1 98 m 3 96 l 5 94 l h f Q\n" ++
+  "q 1 97 2 2 re n Q\n" ++
+  "BT\nET"
+
+/-- The same pages under a 3 pt bleed: every coordinate shifts by the
+bleed and nothing else changes. -/
+def contentOpsBleedExpected : String :=
+  "q 0.941 0.941 0.941 rg 3 3 200 100 re f Q\n" ++
+  "q 1 0 0 0 k 8 88 50 10 re f Q\n" ++
+  "BT\n1 0 0 1 13 83 Tm\n/F1 12 Tf\n[<00240025>-416<0026>] TJ\n" ++
+  "1 0 0 1 68 86 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027><0028>] TJ\n" ++
+  "102.0 Tz\n1 0 0 1 13 63 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000>-407<0001>] TJ\n" ++
+  "100.0 Tz\n1 0 0 1 15 43 Tm\n0 0 0 rg\n[<0032>] TJ\n1 0 0 1 525 43 Tm\n[<0033>] TJ\n" ++
+  "1 0 0 1 535 40 Tm\n[<0034><0035>] TJ\n1 0 0 1 103 23 Tm\n[<0036>] TJ\nET\n" ++
+  "q 20 0 0 15 53 23 cm /Im1 Do Q\n" ++
+  "q 0.62 0.62 0.66 RG 0.75 w 73 23 20 15 re S Q\n" ++
+  "q 0.62 0.62 0.66 RG 0.75 w 93 23 10 5 re S Q\n" ++
+  "q 0.784 0.118 0.118 rg 13 25 40 1 re f Q\n" ++
+  "q 0 0 0 rg 113 23 10 2 re f Q"
+
+/-- The typed content operators render byte for byte to the stream the
+writer wrote before they existed, on every operator (`contentOps_text`
+holds the glyph census; this block holds the spelling). -/
+def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := { pageW := Dim.pt 200, pageH := Dim.pt 100 }
+  let bleed : Layout.Geom := { geom with bleed := Dim.pt 3 }
+  let remap : Array Nat := #[0, 1]
+  let imgMap : Array (Option Nat) := #[some 0, none]
+  let stream (g : Layout.Geom) (p : Layout.PageOut) : String :=
+    Pdf.render (Pdf.contentOps g remap imgMap p)
+  t "content ops: text, fills, images and rules render to the recorded stream"
+    (stream geom contentOpsTextPage == contentOpsTextExpected)
+  t "content ops: every path shape and paint renders to the recorded stream"
+    (stream geom contentOpsPathPage == contentOpsPathExpected)
+  t "content ops: an empty page is one empty text object"
+    (stream geom {} == "BT\nET")
+  t "content ops: the bleed shifts every coordinate and nothing else"
+    (stream bleed contentOpsTextPage == contentOpsBleedExpected)
+  -- The executable twin of `contentOps_text`, on the synthetic pages.
+  t "content ops: the glyph census is the page's runs"
+    (Pdf.runsOf (Pdf.contentOps geom remap imgMap contentOpsTextPage)
+      == Pdf.pageRuns contentOpsTextPage)
+  -- Two spellings that coincide: the honest bound on injectivity.
+  t "content ops: a fill and a fill-only rectangle path spell the same"
+    (Pdf.render #[.fill contentOpsRed 1 2 3 4]
+      == Pdf.render #[.path (some contentOpsRed) none #[.rect 1 2 3 4]])
+  -- `write` and `pageStreams` read the typed layer: the public entry
+  -- yields the same bytes for the same pages.
+  let some fontData ← findFont | return ()
+  let .ok font := Font.parse fontData | return ()
+  let twoFace : Font.FontSet := { fonts := #[font, font] }
+  let png ← IO.FS.readBinFile "tests/corpus/rects.png"
+  let store : Image.Store := { entries := #[
+    { src := "a.png", info := (Image.decode png).toOption }, { src := "b.png" }] }
+  let streams := Pdf.pageStreams geom twoFace #[contentOpsTextPage, contentOpsPathPage] store
+  t "content ops: pageStreams is the typed render"
+    (streams.map (String.fromUTF8! ·) == #[contentOpsTextExpected, contentOpsPathExpected])
