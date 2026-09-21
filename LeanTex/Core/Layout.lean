@@ -6045,6 +6045,49 @@ private theorem foldSteps_noBreak (fs : FontSet) (imgs : Image.Store)
         (hg group[i] (Array.getElem_mem i.2))
       ⟨step.1.trans hacc.1, step.2⟩)
 
+/-- The index just past the ops of the float group opening before `j`:
+the position of the close that returns the nesting `depth` to zero, or
+`staged.size` when no close stands (the group then runs to the end).
+Never below `j`, which is the driver's termination measure
+(`matchingClose_ge`). -/
+private def matchingClose (staged : Array StagedOp) (j : Nat) (depth : Nat) : Nat :=
+  if h : j < staged.size then
+    match staged[j] with
+    | .floatOpen => matchingClose staged (j + 1) (depth + 1)
+    | .floatClose =>
+      if depth == 1 then j else matchingClose staged (j + 1) (depth - 1)
+    | _ => matchingClose staged (j + 1) depth
+  else j
+termination_by staged.size - j
+
+private theorem matchingClose_ge (staged : Array StagedOp) (j depth : Nat) :
+    j ≤ matchingClose staged j depth := by
+  induction j, depth using matchingClose.induct staged with
+  | _ =>
+    unfold matchingClose
+    simp_all only [dite_true, dite_false, ite_true]
+    try split
+    all_goals omega
+
+/-- Placement, one op at a time (`stepStaged`) — except a float's ops,
+which travel as one unbreakable group between `floatOpen` and its
+matching close (`runFloat`). Explicit index recursion (the elabBlocks
+knot), so page invariants fold over three named calls: `runFloat`,
+`stepStaged`, and the recursion itself. -/
+private def placeFrom (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (st : StepSt) (si : Nat) : StepSt :=
+  if h : si < staged.size then
+    match staged[si] with
+    | .floatOpen =>
+      let j := matchingClose staged (si + 1) 1
+      have hj : si + 1 ≤ j := matchingClose_ge staged (si + 1) 1
+      placeFrom fs imgs staged (runFloat fs imgs st (staged.extract (si + 1) j))
+        (j + 1)
+    | s => placeFrom fs imgs staged (stepStaged fs imgs st s) (si + 1)
+  else st
+termination_by staged.size - si
+decreasing_by all_goals omega
+
 theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     (group : Array StagedOp) (hg : ∀ s ∈ group, s ≠ StagedOp.brk) :
     (runFloat fs imgs st group).b.pages = st.b.pages ∨
@@ -6076,6 +6119,54 @@ theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     · right
       repeat' split
       all_goals simp_all
+
+/-- The furniture pass's spine: page `i` gains the running lines its
+step computes — and only lines. Everything else on the page (fills,
+paths, the foot band, the frame attribution) rides through untouched,
+which is what lets a page fact proved at `finishPage` survive to `Out`
+(`furnishFrom_keeps`). Explicit index recursion, the elabBlocks knot;
+`σ` threads the diagnostics and the hyphenation cache. -/
+private def furnishFrom {σ : Type}
+    (f : Nat → PageOut → σ → Array LineOut × σ)
+    (pages : Array PageOut) (s : σ) (i : Nat) : Array PageOut × σ :=
+  if h : i < pages.size then
+    let (ls, s') := f i pages[i] s
+    furnishFrom f (pages.set i { pages[i] with lines := ls }) s' (i + 1)
+  else (pages, s)
+termination_by pages.size - i
+decreasing_by simp only [Array.size_set]; omega
+
+/-- What the furniture pass cannot do: change anything on a page but its
+lines. Every page of the result carries the fills, paths, foot band, and
+frame attribution of a page of the input, so a page fact about any of
+those proved over the builder's shipped pages survives to `Out`. -/
+private theorem furnishFrom_keeps {σ : Type}
+    (f : Nat → PageOut → σ → Array LineOut × σ)
+    (pages : Array PageOut) (s : σ) (i : Nat) :
+    ∀ p ∈ (furnishFrom f pages s i).1, ∃ q ∈ pages,
+      p.fills = q.fills ∧ p.paths = q.paths ∧ p.foot = q.foot ∧
+        p.frame = q.frame := by
+  induction pages, s, i using furnishFrom.induct f with
+  | case1 pages s i h ls s' heq ih =>
+    intro p hp
+    rw [furnishFrom] at hp
+    simp only [h, reduceDIte, heq] at hp
+    obtain ⟨q, hq, hf⟩ := ih p hp
+    obtain ⟨j, hj, rfl⟩ := Array.mem_iff_getElem.mp hq
+    have hj' : j < pages.size := by simpa using hj
+    by_cases hij : i = j
+    · subst hij
+      exact ⟨pages[i], Array.getElem_mem hj', by
+        simp only [Array.getElem_set_self] at hf
+        exact hf⟩
+    · exact ⟨pages[j], Array.getElem_mem hj', by
+        simp only [Array.getElem_set, hij, reduceIte] at hf
+        exact hf⟩
+  | case2 pages s i h =>
+    intro p hp
+    rw [furnishFrom] at hp
+    simp only [h, reduceDIte] at hp
+    exact ⟨p, hp, rfl, rfl, rfl, rfl⟩
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. -/
@@ -6225,6 +6316,38 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     | .floatOpen => .floatOpen
     | .floatClose => .floatClose
     | .anchor sl => .anchor sl
+  -- A declared asymmetry that survives the reading is named: equal gaps
+  -- are the default, and a difference is exactly what the document asked
+  -- for — the hand-struck footskip patch made visible instead of doubled.
+  let preDiags := if let (some gt, some gb) := (gapTop, gapBot) then
+      if gt != gb then
+        acc.diags.push (Diag.of .N0021
+          (s!"header and footer gaps differ by " ++
+            s!"{(if gt > gb then gt - gb else gb - gt).toPtString}pt as declared; " ++
+            "equal gaps are the default"))
+      else acc.diags
+    else acc.diags
+  -- A heading binds to the text it introduces, so its space above must not
+  -- be the smaller of the two (the standard rule; Butterick, "space above
+  -- and below": the space below should be smaller so the heading sits
+  -- visually closer to what follows). Checked only when the document
+  -- declared both sides — the defaults satisfy it by theorem.
+  let preDiags := ["section", "subsection", "subsubsection"].foldl (fun ds element =>
+    match doc.styles.find? element with
+    | some st =>
+      match st.before, st.after with
+      | some before, some after =>
+        let up := (before.resolve geom.fontSize xHeight).width
+        let down := (after.resolve geom.fontSize xHeight).width
+        if down > up then
+          ds.push (Diag.of .W0202
+            (s!"'{element}' sets more space below the heading " ++
+              s!"({down.toPtString}pt) than above it ({up.toPtString}pt)")
+            (help := s!"a heading binds to the text it introduces: in " ++
+              s!"\\style\{{element}}\{...} keep 'after' at most 'before'"))
+        else ds
+      | _, _ => ds
+    | none => ds) preDiags
   let b0 : B := {
     geom := geom
     ascent := scale font.ascent
@@ -6235,70 +6358,20 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     footins := ((doc.tokens.find? "footins").getD
       (Ir.footinsDefault geom.fontSize)).resolve geom.fontSize xHeight |>.width
     noteInk := design.fg
-    diags := acc.diags
+    diags := preDiags
   }
-  let mut b := b0
-  let mut prose : Nat := 0
-  -- A declared asymmetry that survives the reading is named: equal gaps
-  -- are the default, and a difference is exactly what the document asked
-  -- for — the hand-struck footskip patch made visible instead of doubled.
-  if let (some gt, some gb) := (gapTop, gapBot) then
-    if gt != gb then
-      b := { b with diags := b.diags.push (Diag.of .N0021
-        (s!"header and footer gaps differ by " ++
-          s!"{(if gt > gb then gt - gb else gb - gt).toPtString}pt as declared; " ++
-          "equal gaps are the default")) }
-  -- A heading binds to the text it introduces, so its space above must not
-  -- be the smaller of the two (the standard rule; Butterick, "space above
-  -- and below": the space below should be smaller so the heading sits
-  -- visually closer to what follows). Checked only when the document
-  -- declared both sides — the defaults satisfy it by theorem.
-  for element in ["section", "subsection", "subsubsection"] do
-    if let some st := doc.styles.find? element then
-      if let (some before, some after) := (st.before, st.after) then
-        let up := (before.resolve geom.fontSize xHeight).width
-        let down := (after.resolve geom.fontSize xHeight).width
-        if down > up then
-          b := { b with diags := b.diags.push (Diag.of .W0202
-            (s!"'{element}' sets more space below the heading " ++
-              s!"({down.toPtString}pt) than above it ({up.toPtString}pt)")
-            (help := s!"a heading binds to the text it introduces: in " ++
-              s!"\\style\{{element}}\{...} keep 'after' at most 'before'")) }
-  let mut colSaves : Array ColSave := #[]
-  let mut logoSpans : Array (Nat × Array Inline) := #[]
   -- Placement, one op at a time (`stepStaged`) — except a float's ops,
   -- which travel as one unbreakable group between `floatOpen` and its
   -- matching close (`runFloat`).
-  let mut st : StepSt := { b := b }
-  let mut si := 0
-  for _ in [0:staged.size] do
-    if h : si < staged.size then
-      match staged[si] with
-      | .floatOpen =>
-        let mut j := si + 1
-        let mut depth : Nat := 1
-        for _ in [si+1:staged.size] do
-          if depth > 0 then
-            if h2 : j < staged.size then
-              match staged[j] with
-              | .floatOpen => depth := depth + 1
-              | .floatClose => depth := depth - 1
-              | _ => pure ()
-              if depth > 0 then
-                j := j + 1
-        st := runFloat fs imgs st (staged.extract (si + 1) j)
-        si := j + 1
-      | s =>
-        st := stepStaged fs imgs st s
-        si := si + 1
-  b := st.b
-  colSaves := st.colSaves
-  logoSpans := st.logoSpans
-  prose := st.prose
+  let st : StepSt := placeFrom fs imgs staged { b := b0 } 0
+  let logoSpans := st.logoSpans
+  let prose := st.prose
   -- The trailing boundary of a final frame has already closed its page; a
   -- document is never given an empty page for it.
-  if !b.cur.lines.isEmpty || !b.cur.fills.isEmpty || b.pages.isEmpty then
-    b := b.finishPage
+  let b := if !st.b.cur.lines.isEmpty || !st.b.cur.fills.isEmpty
+      || st.b.pages.isEmpty then
+      st.b.finishPage
+    else st.b
   -- The measure, checked against the readable band once the document has
   -- shown continuous text (a paragraph of four or more full-measure lines).
   -- Bringhurst: 45–75 characters is satisfactory for a single column of
@@ -6309,21 +6382,25 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- L₄₅ = 1.415α + 23.03 pt). Slides are display text, not continuous
   -- reading, and are out of the rule's own scope; `\page{ measure = free }`
   -- declares the document takes responsibility.
-  if doc.docClass.record.measureBand && doc.page.measureChecked
-      && prose ≥ 4 then
-    let alphabet := (List.range 26).foldl (fun acc k =>
-      acc + scaledAt geom.fontSize font (font.advance (Char.ofNat ('a'.toNat + k)))) 0
-    if alphabet > 0 then
-      let l45 := 1415 * alphabet / 1000 + 2303 * spPerPt / 100
-      let l65 := 2042 * alphabet / 1000 + 3341 * spPerPt / 100
-      let cpl10 := 450 + 200 * (geom.textWidth - l45) / (l65 - l45)
-      if cpl10 < 450 || cpl10 > 900 then
-        let dir := if cpl10 > 900 then "narrow" else "widen"
-        b := { b with diags := b.diags.push (Diag.of .W0201
-          (s!"the measure holds about {(cpl10 + 5) / 10} characters " ++
-            "per line, outside the readable 45\u201390 band")
-          (help := s!"{dir} the text block (\\page\{ hmargin = ... }; 66 characters " ++
-            "is the ideal) or declare \\page{ measure = free }")) }
+  let b :=
+    if doc.docClass.record.measureBand && doc.page.measureChecked
+        && prose ≥ 4 then
+      let alphabet := (List.range 26).foldl (fun acc k =>
+        acc + scaledAt geom.fontSize font (font.advance (Char.ofNat ('a'.toNat + k)))) 0
+      if alphabet > 0 then
+        let l45 := 1415 * alphabet / 1000 + 2303 * spPerPt / 100
+        let l65 := 2042 * alphabet / 1000 + 3341 * spPerPt / 100
+        let cpl10 := 450 + 200 * (geom.textWidth - l45) / (l65 - l45)
+        if cpl10 < 450 || cpl10 > 900 then
+          let dir := if cpl10 > 900 then "narrow" else "widen"
+          { b with diags := b.diags.push (Diag.of .W0201
+            (s!"the measure holds about {(cpl10 + 5) / 10} characters " ++
+              "per line, outside the readable 45\u201390 band")
+            (help := s!"{dir} the text block (\\page\{ hmargin = ... }; 66 characters " ++
+              "is the ideal) or declare \\page{ measure = free }")) }
+        else b
+      else b
+    else b
   let pages := b.pages
   -- Running content is laid out per page once the count is known, into the
   -- margin, so it never disturbs the body it annotates.
@@ -6391,9 +6468,6 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   let footY := furnFootY footFurn geom.pageH (scale (-font.descent))
   let chromeFootY := furnFootY chromeFurn geom.pageH (chromeScale (-font.descent))
   let mutedC := design.muted
-  let mut out := pages
-  let mut diags := b.diags
-  let mut cache := acc.hyphCache
   -- The logo: the preamble `\logo` is the initial state, and a `\logo`
   -- block in the body changes it for the pages from that point on — an
   -- empty one clears it, which is how a deck scopes a logo to one frame
@@ -6414,8 +6488,12 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
       (some { x := geom.pageW - geom.hmargin - w
               y := geom.pageH - geom.vmargin
               size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
-  for i in [0:out.size] do
-    let mut lines := out[i]!.lines
+  let furnishPage (i : Nat) (page : PageOut)
+      (st0 : Array Diag × Std.HashMap String (Array Nat)) :
+      Array LineOut × Array Diag × Std.HashMap String (Array Nat) := Id.run do
+    let mut diags := st0.1
+    let mut cache := st0.2
+    let mut lines := page.lines
     -- Pages before a declaration's own `from` carry none of it: an opening
     -- page reads as a title page, not as page one of a run. Each gate is
     -- the physical-page model's and each declaration's own
@@ -6455,7 +6533,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
     -- yields — painted first, so every higher slot paints over it — and the
     -- yield is reported by name (W0333). No box moves: yielding is by ink,
     -- never by position.
-    if let some band := out[i]!.foot then
+    if let some band := page.foot then
       let mut placed : Array (Ir.BandSlot × LineOut) := #[]
       for slot in band do
         let (l?, ds, c) := slotLine slot.side slot.content (i + 1) chromeFootY
@@ -6487,7 +6565,8 @@ slot yields in place: shorten the content or drop a slot"))
           diags := diags ++ ds
           cache := c
           if let some l := l? then lines := lines.push { l with furniture := true }
-    out := out.set! i { out[i]! with lines := lines }
+    return (lines, diags, cache)
+  let (out, diags, _) := furnishFrom furnishPage pages (b.diags, acc.hyphCache) 0
   -- One report per problem: the same missing glyph or overfull shape in
   -- thirty code blocks is one thing to fix, not thirty lines of console.
   -- W0005 is spanless and always the same words, so its collapse keeps the
