@@ -187,6 +187,15 @@ structure SpanRecords where
   cites : Array (String × Span) := #[]
   deriving Repr, BEq
 
+/-- beamer's `\logo` (`main`), a declaration legal in the preamble and the
+body alike, and the gemini lineage's `\logoleft`/`\logoright` — the
+headline band's corner slots; the last of each wins, as in beamer. -/
+structure Logos where
+  main : Option (Array Inline) := none
+  left : Option (Array Inline) := none
+  right : Option (Array Inline) := none
+  deriving Repr, BEq
+
 structure ESt where
   diags : Array Diag := #[]
   /-- Warn-once keys already fired: a macro used forty times is one problem,
@@ -221,13 +230,10 @@ structure ESt where
   to its end, so a mid-sentence `\note` neither splits its paragraph nor
   loses its words. -/
   pendingNotes : Array (Array Raw × Pos) := #[]
-  /-- beamer's `\logo`, a declaration legal in the preamble and the body
-  alike; the last one wins, as in beamer. -/
-  logo : Option (Array Inline) := none
-  /-- `\logoleft` / `\logoright`: the headline band's corner slots, the
-  gemini lineage's declarations; the last of each wins, as `\logo`'s does. -/
-  logoLeft : Option (Array Inline) := none
-  logoRight : Option (Array Inline) := none
+  /-- The logo declarations, one field: the knot state stays narrow (every
+  `{ st with … }` across the knots copies each field, and the knot's LCNF
+  compile scales with the count — the SpanRecords shape). -/
+  logos : Logos := {}
   /-- Boundary picture requests met in the body: content hash of each
   wrapped standalone source, with the source — deduplicated, so one
   picture repeated is one request. Assembled onto `Doc.pictureSrcs`. -/
@@ -9555,7 +9561,7 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     | some b =>
       let content ← elabInlines s.ctx b
       modify fun st => { st with
-        logo := if content.isEmpty then none else some content }
+        logos := { st.logos with main := if content.isEmpty then none else some content } }
       return s
     | none =>
       diag s.ctx .E0304 "'\\logo' needs one group of inline content" pos
@@ -9576,7 +9582,7 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       let content ← elabInlines ctx b
       let v := if content.isEmpty then none else some content
       modify fun st =>
-        if left then { st with logoLeft := v } else { st with logoRight := v }
+        { st with logos := if left then { st.logos with left := v } else { st.logos with right := v } }
       return s
     | none =>
       diag s.ctx .E0304 s!"'\\{cmd}' needs one group of inline content" pos
@@ -10390,7 +10396,7 @@ names the .bib file")) }
         (help := s!"drop the definition and '\\{cmd.name}' colours as declared; " ++
           s!"declared: {String.intercalate ", " (finalPalette.entries.toList.map (·.1))}")) }
   -- The logo may have been declared in either half; a card carries none.
-  let mut logo := (← get).logo
+  let mut logo := (← get).logos.main
   if !record.runningFurniture && logo.isSome then
     diag ctx .W0317
       "a card carries no logo; the declaration is dropped" none
@@ -10410,8 +10416,8 @@ names the .bib file")) }
           author := (nonEmpty stH.author).getD #[]
           institute := (nonEmpty stH.institute).getD #[] }
     else none
-  let mut logoLeft := stH.logoLeft
-  let mut logoRight := stH.logoRight
+  let mut logoLeft := stH.logos.left
+  let mut logoRight := stH.logos.right
   if logoLeft.isSome || logoRight.isSome then
     if !record.headline then
       diag ctx .W0317

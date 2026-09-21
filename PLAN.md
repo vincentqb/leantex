@@ -303,7 +303,6 @@ which `kp`'s `a ≤ j` gate refuses — is now refused by `seqCost` in
 kp-fuzz and Tests/Layout.lean too; the ragged-plus-protrusion shape the
 finite glue newly exposes holds at 1000 fuzz cases.
 
-||||||| parent of b7b5174 (Record the poster-chrome slice in the PLAN log)
 2026-09-21 — weight is an axis, not a flag (font-weights slice): every
 font key is now `(slot, weight, italic)`, weight the CSS/OpenType number
 of an NFSS series (`Ir.Weight`, the nine LaTeX News 31 values; `m` = 400,
