@@ -4,9 +4,11 @@ Fuzz the image decoders. Run from the repository root:
   lake env lean --run scripts/img-fuzz.lean
 
 Totality is the claim (never a crash, a verdict for every input) plus the
-anchor that the pristine fixtures decode to their known sizes (never a lie).
-Every truncation length of both shipped fixtures, single-byte mutants at
-seeded random offsets, and random blobs go through `Image.decode`. This is
+anchor that the pristine fixtures decode to their known sizes and the
+colour-keyed synthetics to their exact masks or their refusal (never a
+lie). Every truncation length of the shipped fixtures and the keyed
+synthetics, single-byte mutants at seeded random offsets, and random blobs
+go through `Image.decode`. This is
 an executable oracle, not a theorem: it witnesses totality on millions of
 bytes of input, it does not prove it.
 -/
@@ -28,12 +30,48 @@ def die (msg : String) : IO Unit := do
   IO.eprintln s!"img-fuzz: FAIL {msg}"
   IO.Process.exit 1
 
+-- Synthetic colour-keyed PNGs: the anchors for the tRNS path (structure
+-- only, CRCs zero; the decoder never checks them).
+def be32 (n : Nat) : List UInt8 :=
+  [UInt8.ofNat (n / 16777216), UInt8.ofNat (n / 65536 % 256),
+   UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]
+
+def chunk (tag : String) (data : List UInt8) : List UInt8 :=
+  be32 data.length ++ (tag.toList.map fun c => UInt8.ofNat c.toNat) ++ data ++ [0, 0, 0, 0]
+
+def keyedPng (bd ct : Nat) (plte trns : List UInt8) : ByteArray :=
+  ⟨([137, 80, 78, 71, 13, 10, 26, 10] ++
+    chunk "IHDR" (be32 4 ++ be32 4 ++ [UInt8.ofNat bd, UInt8.ofNat ct, 0, 0, 0]) ++
+    (if plte.isEmpty then [] else chunk "PLTE" plte) ++
+    chunk "tRNS" trns ++ chunk "IDAT" [0, 1, 2, 3] ++ chunk "IEND" []).toArray⟩
+
 def main : IO Unit := do
   let png ← IO.FS.readBinFile "tests/corpus/rects.png"
   let jpg ← IO.FS.readBinFile "tests/corpus/rects.jpg"
   let pdf ← IO.FS.readBinFile "tests/corpus/figures/box.pdf"
+  let keyedIdx := keyedPng 8 3 [0, 0, 0, 255, 255, 255, 255, 0, 0] [255, 0, 0]
+  let keyedRgb := keyedPng 8 2 [] [0, 1, 0, 2, 0, 3]
+  let keyed16 := keyedPng 16 2 [] [1, 0, 2, 0, 3, 0]
+  let keyedGray := keyedPng 4 0 [] [0, 15]
+  let partialIdx := keyedPng 8 3 [0, 0, 0, 255, 255, 255, 255, 0, 0] [0, 128, 255]
   -- The anchor: the pristine files decode to the sizes images-note.md
-  -- records. A fuzzer that cannot tell a lie from a verdict tests nothing.
+  -- records, and the keyed synthetics to their exact masks or their
+  -- refusal. A fuzzer that cannot tell a lie from a verdict tests nothing.
+  match Image.decode keyedIdx with
+  | .ok inf =>
+    unless inf.colorKey == #[1, 2] do die s!"keyed indexed png decoded to mask {inf.colorKey}"
+  | .error e => die s!"keyed indexed png refused: {e}"
+  match Image.decode keyedRgb with
+  | .ok inf =>
+    unless inf.colorKey == #[1, 1, 2, 2, 3, 3] do
+      die s!"keyed rgb png decoded to mask {inf.colorKey}"
+  | .error e => die s!"keyed rgb png refused: {e}"
+  match Image.decode keyedGray with
+  | .ok inf =>
+    unless inf.colorKey == #[15, 15] do die s!"keyed grey png decoded to mask {inf.colorKey}"
+  | .error e => die s!"keyed grey png refused: {e}"
+  if (Image.decode partialIdx).isOk then die "partial indexed transparency embedded opaque"
+  if (Image.decode keyed16).isOk then die "16-bit colour key embedded (readers drop it)"
   match Image.decode png with
   | .ok inf =>
     unless inf.pxW == 64 && inf.pxH == 40 && inf.format == .png do
@@ -53,8 +91,8 @@ def main : IO Unit := do
   | .error e => die s!"pristine pdf refused: {e}"
   let mut verdicts := 0
   let mut oks := 0
-  -- Every truncation length of both raster fixtures.
-  for base in [png, jpg] do
+  -- Every truncation length of both raster fixtures and the keyed synthetics.
+  for base in [png, jpg, keyedIdx, keyedRgb, keyedGray, partialIdx, keyed16] do
     for n in [0:base.size + 1] do
       if (Image.decode (base.extract 0 n)).isOk then oks := oks + 1
       verdicts := verdicts + 1
@@ -67,9 +105,10 @@ def main : IO Unit := do
     let n := 512 + (pdf.size - 512) * k / 2048
     if (Image.decode (pdf.extract 0 n)).isOk then oks := oks + 1
     verdicts := verdicts + 1
-  -- Single-byte mutants at seeded random offsets, all 256 values at some.
+  -- Single-byte mutants at seeded random offsets, all 256 values at some;
+  -- the keyed synthetics' mutants walk the tRNS arm with every payload.
   let mut s : UInt64 := 88172645463325252
-  for base in [png, jpg, pdf] do
+  for base in [png, jpg, pdf, keyedIdx, keyedRgb, keyedGray, partialIdx, keyed16] do
     for _ in [0:4000] do
       let (i, s') := rand s base.size
       let (v, s'') := rand s' 256

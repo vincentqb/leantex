@@ -20,6 +20,8 @@ pass their IDAT through untouched; a PNG with an alpha channel inflates
 once and deinterleaves its filtered rows into a colour stream and a
 soft-mask stream — never its pixels — since a PDF image holds exactly its
 colour space's samples and carries opacity as a separate `/SMask` image.
+A `tRNS` chunk on the pass-through types becomes the exact colour-key
+`/Mask`, or a refusal where no single range can carry it.
 Interlaced and 16-bit-alpha PNGs are refused with a reason the driver can
 show. -/
 
@@ -69,6 +71,11 @@ structure Info where
   the source rows' own filters: the PDF soft mask, Predictor 15 declared.
   Empty when the image is opaque. -/
   smask : ByteArray := ByteArray.empty
+  /-- Colour-key transparency (ISO 32000-2 §8.9.6.4): the `/Mask` ranges,
+  two per component in sample units at `bitDepth`, a pixel inside every
+  range not painted — a PNG `tRNS` chunk mapped exactly (`colorKeyRanges`).
+  Empty when no sample is keyed. -/
+  colorKey : Array Nat := #[]
   /-- A PDF page read as a form XObject (`format == .pdf`): the box, the
   content, and the copied resource graph. The `wf` witness rides with it —
   `PdfRead.resources_closed` — so the writer never meets a dangling
@@ -444,6 +451,392 @@ theorem splitPredictedAlpha_exact (raw : ByteArray) (pxH W chs : Nat) (h2 : 2 �
       rwa [Nat.mul_one] at this
   · exact absurd h (by simp)
 
+/-! ### Colour-key transparency
+
+A `tRNS` chunk on the pass-through colour types names transparency a PDF
+expresses without touching the samples: colour-key masking (ISO 32000-2
+§8.9.6.4), `/Mask [min₁ max₁ … minₙ maxₙ]` over the image's `n` components
+in sample units, a pixel whose every component falls inside its range not
+painted. Greyscale and truecolour tRNS name one fully transparent sample
+value (ISO/IEC 15948 §11.3.2.1), so the ranges are degenerate and the
+mapping exact. An indexed tRNS gives each palette entry an alpha; with
+`n = 1` the mask is a single index interval, so the mapping is exact when
+the transparent entries form one interval and every other entry is
+opaque — and anything else, a fractional alpha or two separated runs, is
+refused rather than approximated (a soft mask is the exact form; it is
+not this slice's). Entries past the chunk's length are opaque (§11.3.2.1),
+which the interval never reaches. -/
+
+/-- Sample `i` of a tRNS payload of two-byte big-endian samples. -/
+def trnsSample (trns : ByteArray) (i : Nat) : Nat :=
+  (trns[2 * i]?.getD 0).toNat * 256 + (trns[2 * i + 1]?.getD 0).toNat
+
+/-- Palette entry `i`'s alpha as the tRNS chunk states it. -/
+def trnsEntry (trns : ByteArray) (i : Nat) : Nat := (trns[i]?.getD 0).toNat
+
+/-- Where a left-to-right scan of an indexed tRNS stands: no transparent
+entry yet, inside the transparent run that opened at `lo`, or past the
+run `[lo, hi]`. -/
+inductive KeyState where
+  | before
+  | inside (lo : Nat)
+  | after (lo hi : Nat)
+  deriving Repr, BEq
+
+def partialAlphaMsg : String :=
+  "indexed PNG with partial transparency (tRNS alpha entries other than 0 and 255, or \
+separated transparent entries) is not supported; re-export with a full alpha channel or \
+flatten it"
+
+/-- One entry: opaque keeps or closes the run, transparent opens or
+continues it, and a second run or a fractional value is the refusal. -/
+def keyStep (st : KeyState) (i a : Nat) : Except String KeyState :=
+  if a = 255 then
+    match st with
+    | .before => .ok .before
+    | .inside lo => .ok (.after lo (i - 1))
+    | .after lo hi => .ok (.after lo hi)
+  else if a = 0 then
+    match st with
+    | .before => .ok (.inside i)
+    | .inside lo => .ok (.inside lo)
+    | .after _ _ => .error partialAlphaMsg
+  else .error partialAlphaMsg
+
+/-- The scan state after the first `n` entries. -/
+def keyScan (trns : ByteArray) : Nat → Except String KeyState
+  | 0 => .ok .before
+  | n + 1 =>
+    match keyScan trns n with
+    | .ok st => keyStep st n (trnsEntry trns n)
+    | .error e => .error e
+
+/-- The mask an indexed scan ends in: nothing, or the one interval. -/
+def indexedKey (trns : ByteArray) : Except String (Array Nat) :=
+  match keyScan trns trns.size with
+  | .ok .before => .ok #[]
+  | .ok (.inside lo) => .ok #[lo, trns.size - 1]
+  | .ok (.after lo hi) => .ok #[lo, hi]
+  | .error e => .error e
+
+/-- The `/Mask` ranges a tRNS chunk denotes for an image of `space` at
+`bitDepth` over `palette`, or the refusal: a malformed length, a sample
+past the bit depth, more entries than the palette or the depth allows,
+or indexed transparency no single interval can express. -/
+def colorKeyRanges (space : Space) (bitDepth : Nat) (trns palette : ByteArray) :
+    Except String (Array Nat) :=
+  match space with
+  | .gray =>
+    if trns.size ≠ 2 then .error "corrupt PNG: a greyscale tRNS chunk must hold one 2-byte sample"
+    else if 2 ^ bitDepth ≤ trnsSample trns 0 then
+      .error s!"corrupt PNG: tRNS sample exceeds the {bitDepth}-bit range"
+    else .ok #[trnsSample trns 0, trnsSample trns 0]
+  | .rgb =>
+    if trns.size ≠ 6 then
+      .error "corrupt PNG: a truecolour tRNS chunk must hold three 2-byte samples"
+    else if 2 ^ bitDepth ≤ trnsSample trns 0 ∨ 2 ^ bitDepth ≤ trnsSample trns 1 ∨
+        2 ^ bitDepth ≤ trnsSample trns 2 then
+      .error s!"corrupt PNG: tRNS sample exceeds the {bitDepth}-bit range"
+    else .ok #[trnsSample trns 0, trnsSample trns 0, trnsSample trns 1, trnsSample trns 1,
+      trnsSample trns 2, trnsSample trns 2]
+  | .indexed =>
+    if palette.size / 3 < trns.size then .error "corrupt PNG: tRNS has more entries than the palette"
+    else if 2 ^ bitDepth < trns.size then
+      .error "corrupt PNG: tRNS has more entries than the bit depth allows"
+    else indexedKey trns
+
+/-- Greyscale tRNS is exact: one sample, in range, is the degenerate range
+`[v v]`. -/
+theorem colorKeyRanges_gray_exact (bitDepth : Nat) (trns palette : ByteArray)
+    (hsz : trns.size = 2) (hv : trnsSample trns 0 < 2 ^ bitDepth) :
+    colorKeyRanges .gray bitDepth trns palette = .ok #[trnsSample trns 0, trnsSample trns 0] := by
+  simp [colorKeyRanges, hsz, Nat.not_le.mpr hv]
+
+/-- Truecolour tRNS is exact: three samples, in range, are the three
+degenerate ranges. -/
+theorem colorKeyRanges_rgb_exact (bitDepth : Nat) (trns palette : ByteArray)
+    (hsz : trns.size = 6) (h0 : trnsSample trns 0 < 2 ^ bitDepth)
+    (h1 : trnsSample trns 1 < 2 ^ bitDepth) (h2 : trnsSample trns 2 < 2 ^ bitDepth) :
+    colorKeyRanges .rgb bitDepth trns palette =
+      .ok #[trnsSample trns 0, trnsSample trns 0, trnsSample trns 1, trnsSample trns 1,
+        trnsSample trns 2, trnsSample trns 2] := by
+  simp [colorKeyRanges, hsz, Nat.not_le.mpr h0, Nat.not_le.mpr h1, Nat.not_le.mpr h2]
+
+/-- Is entry `i` inside the transparent run a scan state describes? -/
+def KeyState.keyed : KeyState → Nat → Bool
+  | .before, _ => false
+  | .inside lo, i => lo ≤ i
+  | .after lo hi, i => lo ≤ i && i ≤ hi
+
+/-- The run a state describes lies within the entries read. -/
+def KeyState.wf : KeyState → Nat → Prop
+  | .before, _ => True
+  | .inside lo, n => lo < n
+  | .after lo hi, n => lo ≤ hi ∧ hi < n
+
+/-- The scan invariant: a state reached after `n` entries is well formed,
+and every entry read is 0 exactly inside the run it describes and 255
+everywhere else — so a scan that completes has read only 0 and 255, and
+the run is the whole truth about the zeros. -/
+theorem keyScan_spec (trns : ByteArray) :
+    ∀ (n : Nat) (st : KeyState), keyScan trns n = .ok st →
+      st.wf n ∧ ∀ i < n, trnsEntry trns i = if st.keyed i then 0 else 255 := by
+  intro n
+  induction n with
+  | zero =>
+    intro st h
+    simp only [keyScan, Except.ok.injEq] at h
+    subst h
+    exact ⟨trivial, fun i hi => absurd hi (Nat.not_lt_zero i)⟩
+  | succ n ih =>
+    intro st' h
+    simp only [keyScan] at h
+    split at h
+    · next st hst =>
+      obtain ⟨hwf, hent⟩ := ih st hst
+      -- The new entry decides the step; each arm extends the invariant by
+      -- one index.
+      have hstep : ∀ i < n + 1, i < n ∨ i = n := fun i hi => by omega
+      unfold keyStep at h
+      split at h
+      · next ha =>
+        cases st with
+        | before =>
+          simp only [Except.ok.injEq] at h
+          subst h
+          refine ⟨trivial, fun i hi => ?_⟩
+          rcases hstep i hi with hlt | heq
+          · exact hent i hlt
+          · rw [heq]; simp [KeyState.keyed, ha]
+        | inside lo =>
+          simp only [Except.ok.injEq] at h
+          subst h
+          simp only [KeyState.wf] at hwf
+          refine ⟨⟨by omega, by omega⟩, fun i hi => ?_⟩
+          rcases hstep i hi with hlt | heq
+          · rw [hent i hlt]
+            simp [KeyState.keyed, show i ≤ n - 1 by omega]
+          · rw [heq]
+            simp [KeyState.keyed, ha, show ¬ n ≤ n - 1 by omega]
+        | after lo hi =>
+          simp only [Except.ok.injEq] at h
+          subst h
+          simp only [KeyState.wf] at hwf
+          refine ⟨⟨hwf.1, by omega⟩, fun i hi' => ?_⟩
+          rcases hstep i hi' with hlt | heq
+          · exact hent i hlt
+          · rw [heq]
+            simp [KeyState.keyed, ha, show ¬ n ≤ hi by omega]
+      · next ha =>
+        split at h
+        · next ha0 =>
+          cases st with
+          | before =>
+            simp only [Except.ok.injEq] at h
+            subst h
+            refine ⟨Nat.lt_succ_self n, fun i hi => ?_⟩
+            rcases hstep i hi with hlt | heq
+            · rw [hent i hlt]
+              simp [KeyState.keyed, show ¬ n ≤ i by omega]
+            · rw [heq]; simp [KeyState.keyed, ha0]
+          | inside lo =>
+            simp only [Except.ok.injEq] at h
+            subst h
+            simp only [KeyState.wf] at hwf
+            refine ⟨show lo < n + 1 by omega, fun i hi => ?_⟩
+            rcases hstep i hi with hlt | heq
+            · exact hent i hlt
+            · rw [heq]
+              simp [KeyState.keyed, ha0, show lo ≤ n by omega]
+          | after lo hi => exact absurd h (by simp)
+        · exact absurd h (by simp)
+    · exact absurd h (by simp)
+
+/-- **The interval is the whole truth about the transparent entries.** An
+indexed tRNS that maps to `/Mask [lo hi]` has entry `i` transparent
+exactly when `lo ≤ i ≤ hi` — over every index, the entries past the chunk
+being opaque by the PNG rule. -/
+theorem colorKeyRanges_indexed_covers (bitDepth : Nat) (trns palette : ByteArray) (lo hi : Nat)
+    (h : colorKeyRanges .indexed bitDepth trns palette = .ok #[lo, hi]) :
+    ∀ i, (i < trns.size ∧ trnsEntry trns i = 0) ↔ (lo ≤ i ∧ i ≤ hi) := by
+  simp only [colorKeyRanges] at h
+  split at h
+  · exact absurd h (by simp)
+  split at h
+  · exact absurd h (by simp)
+  next hpal hdepth =>
+  unfold indexedKey at h
+  split at h
+  · exact absurd h (by simp)
+  · next a hscan =>
+    obtain ⟨hwf, hent⟩ := keyScan_spec trns trns.size _ hscan
+    simp only [KeyState.wf] at hwf
+    simp only [Except.ok.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    intro i
+    constructor
+    · rintro ⟨hi, hz⟩
+      rw [hent i hi] at hz
+      by_cases hle : lo ≤ i
+      · exact ⟨hle, by omega⟩
+      · simp [KeyState.keyed, hle] at hz
+    · rintro ⟨hlo, hhi⟩
+      have hi : i < trns.size := by omega
+      refine ⟨hi, ?_⟩
+      rw [hent i hi]
+      simp [KeyState.keyed, hlo]
+  · next a b hscan =>
+    obtain ⟨hwf, hent⟩ := keyScan_spec trns trns.size _ hscan
+    simp only [KeyState.wf] at hwf
+    simp only [Except.ok.injEq] at h
+    obtain ⟨rfl, rfl⟩ := h
+    intro i
+    constructor
+    · rintro ⟨hi', hz⟩
+      rw [hent i hi'] at hz
+      by_cases h1 : lo ≤ i
+      · by_cases h2 : i ≤ hi
+        · exact ⟨h1, h2⟩
+        · simp [KeyState.keyed, h2] at hz
+      · simp [KeyState.keyed, h1] at hz
+    · rintro ⟨hlo, hhi⟩
+      have hi : i < trns.size := by omega
+      refine ⟨hi, ?_⟩
+      rw [hent i hi]
+      simp [KeyState.keyed, hlo, hhi]
+  · exact absurd h (by simp)
+
+/-- Every emitted range value is a legal sample at the bit depth: the
+`/Mask` array the dictionary writes is in range for its
+`/BitsPerComponent`. -/
+theorem colorKeyRanges_between (space : Space) (bitDepth : Nat) (trns palette : ByteArray)
+    (ks : Array Nat) (h : colorKeyRanges space bitDepth trns palette = .ok ks) :
+    ∀ v ∈ ks, v < 2 ^ bitDepth := by
+  cases space with
+  | gray =>
+    simp only [colorKeyRanges] at h
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · exact absurd h (by simp)
+    next hv =>
+    simp only [Except.ok.injEq] at h
+    subst h
+    intro v hv'
+    simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hv'
+    rcases hv' with rfl | rfl <;> omega
+  | rgb =>
+    simp only [colorKeyRanges] at h
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · exact absurd h (by simp)
+    next hv =>
+    simp only [Except.ok.injEq] at h
+    subst h
+    intro v hv'
+    simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hv'
+    rcases hv' with rfl | rfl | rfl | rfl | rfl | rfl <;> omega
+  | indexed =>
+    simp only [colorKeyRanges] at h
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · exact absurd h (by simp)
+    next hpal hdepth =>
+    unfold indexedKey at h
+    split at h
+    · simp only [Except.ok.injEq] at h
+      subst h
+      intro v hv
+      simp at hv
+    · next lo hscan =>
+      have hwf := (keyScan_spec trns trns.size _ hscan).1
+      simp only [KeyState.wf] at hwf
+      simp only [Except.ok.injEq] at h
+      subst h
+      intro v hv
+      simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hv
+      rcases hv with rfl | rfl <;> omega
+    · next lo hi hscan =>
+      have hwf := (keyScan_spec trns trns.size _ hscan).1
+      simp only [KeyState.wf] at hwf
+      simp only [Except.ok.injEq] at h
+      subst h
+      intro v hv
+      simp only [List.mem_toArray, List.mem_cons, List.not_mem_nil, or_false] at hv
+      rcases hv with rfl | rfl <;> omega
+    · exact absurd h (by simp)
+
+/-- **An empty mask is paid for.** For every tRNS shape, the mapping
+returns no ranges only for an indexed chunk whose every entry is opaque —
+there was no transparency to carry. Greyscale and truecolour tRNS never
+map to an empty mask: they are exact or refused. -/
+theorem colorKeyRanges_accounts (space : Space) (bitDepth : Nat) (trns palette : ByteArray)
+    (h : colorKeyRanges space bitDepth trns palette = .ok #[]) :
+    space = .indexed ∧ ∀ i < trns.size, trnsEntry trns i = 255 := by
+  cases space with
+  | gray =>
+    simp only [colorKeyRanges] at h
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · exact absurd h (by simp)
+    exact absurd h (by simp)
+  | rgb =>
+    simp only [colorKeyRanges] at h
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · exact absurd h (by simp)
+    exact absurd h (by simp)
+  | indexed =>
+    refine ⟨rfl, ?_⟩
+    simp only [colorKeyRanges] at h
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · exact absurd h (by simp)
+    unfold indexedKey at h
+    split at h
+    · next hscan =>
+      have hent := (keyScan_spec trns trns.size _ hscan).2
+      intro i hi
+      rw [hent i hi]
+      rfl
+    · exact absurd h (by simp)
+    · exact absurd h (by simp)
+    · exact absurd h (by simp)
+
+/-- **Lossy transparency is refused, never dropped.** An indexed tRNS
+carrying any alpha other than 0 or 255 maps to no ranges at all: the
+result is an error the driver names. -/
+theorem colorKeyRanges_partial_accounts (bitDepth : Nat) (trns palette : ByteArray)
+    (hpartial : ∃ i < trns.size, trnsEntry trns i ≠ 0 ∧ trnsEntry trns i ≠ 255) :
+    ∃ e, colorKeyRanges .indexed bitDepth trns palette = .error e := by
+  obtain ⟨i, hi, hz, ho⟩ := hpartial
+  match hres : colorKeyRanges .indexed bitDepth trns palette with
+  | .error e => exact ⟨e, rfl⟩
+  | .ok ks =>
+    exfalso
+    simp only [colorKeyRanges] at hres
+    split at hres
+    · exact absurd hres (by simp)
+    split at hres
+    · exact absurd hres (by simp)
+    unfold indexedKey at hres
+    have hscan : ∃ st, keyScan trns trns.size = .ok st := by
+      split at hres
+      · next hs => exact ⟨_, hs⟩
+      · next hs => exact ⟨_, hs⟩
+      · next hs => exact ⟨_, hs⟩
+      · exact absurd hres (by simp)
+    obtain ⟨st, hst⟩ := hscan
+    have hent := (keyScan_spec trns trns.size st hst).2 i hi
+    split at hent
+    · exact hz hent
+    · exact ho hent
+
 def decodePng (b : ByteArray) : Except String Info := do
   unless sliceEq b 0 pngSig do
     throw "not a PNG file (bad signature)"
@@ -480,6 +873,7 @@ re-export at 8 bits or flatten it"
   let mut dpiX := defaultDpi
   let mut dpiY := defaultDpi
   let mut palette := ByteArray.empty
+  let mut trns : Option ByteArray := none
   let mut idat := ByteArray.empty
   let mut sawEnd := false
   let mut i := 8
@@ -501,6 +895,20 @@ re-export at 8 bits or flatten it"
           dpiY := max 1 (ppmToDpi py)
     else if t0 == 80 && sliceEq b (i + 4) [80, 76, 84, 69] then  -- PLTE
       palette := b.extract (i + 8) (i + 8 + len)
+    else if t0 == 116 && sliceEq b (i + 4) [116, 82, 78, 83] then  -- tRNS
+      -- One chunk, after PLTE and before IDAT, never on an alpha type
+      -- (ISO/IEC 15948 §5.6, §11.3.2.1): the transparency it names is
+      -- carried exactly or refused, so the walk keeps the payload and
+      -- `colorKeyRanges` judges it once the geometry is known.
+      if trns.isSome then
+        throw "corrupt PNG: more than one tRNS chunk"
+      if !idat.isEmpty then
+        throw "corrupt PNG: tRNS after the image data"
+      if alpha.isSome then
+        throw "corrupt PNG: tRNS is not allowed with an alpha channel"
+      if space == .indexed && palette.isEmpty then
+        throw "corrupt PNG: tRNS before PLTE"
+      trns := some (b.extract (i + 8) (i + 8 + len))
     else if t0 == 73 && sliceEq b (i + 4) [73, 68, 65, 84] then  -- IDAT
       idat := idat ++ b.extract (i + 8) (i + 8 + len)
     else if t0 == 73 && sliceEq b (i + 4) [73, 69, 78, 68] then  -- IEND
@@ -515,8 +923,21 @@ re-export at 8 bits or flatten it"
     throw "corrupt PNG: indexed colour without a usable PLTE"
   match alpha with
   | none =>
+    let colorKey ← match trns with
+      | none => pure #[]
+      | some tr => colorKeyRanges space bitDepth tr palette
+    -- A 16-bit colour key is exact by the spec (`colorKeyRanges_rgb_exact`)
+    -- and ignored by two of the four target readers, measured: Poppler
+    -- and PDFium reduce the samples to 8 bits and compare the key
+    -- unscaled, so the keyed pixels paint. Ghostscript and pdf.js honour
+    -- it. A mask half the readers drop is the silent loss moved into the
+    -- reader, so it is refused until the reader matrix says otherwise or
+    -- the soft-mask arm carries it as an 8-bit `/SMask`.
+    if bitDepth == 16 && !colorKey.isEmpty then
+      throw "PNG with a 16-bit colour key (tRNS) is not shown transparent by common PDF \
+readers; re-export at 8 bits or with a full alpha channel"
     return { format := .png, pxW, pxH, dpiX, dpiY, bitDepth, space, palette,
-             data := idat, predictor := true }
+             data := idat, predictor := true, colorKey }
   | some channels =>
     -- The samples cannot pass through as one stream: inflate against the
     -- size the geometry declares, then deinterleave the filtered residuals
@@ -645,13 +1066,17 @@ private def pushU32 (b : ByteArray) (v : Nat) : ByteArray :=
     (UInt8.ofNat (v / 65536 % 256))).push
     (UInt8.ofNat (v / 256 % 256))).push (UInt8.ofNat (v % 256)))
 
-/-- `LTIMG1`, the magic-and-format-version the decoder checks. -/
-private def binMagic : List Nat := [76, 84, 73, 77, 71, 49]
+/-- `LTIMG2`, the magic-and-format-version the decoder checks: version 2
+added the colour-key ranges, so every `LTIMG1` entry is a miss. -/
+private def binMagic : List Nat := [76, 84, 73, 77, 71, 50]
 
 /-- Serialize a raster `Info` (`form` is dropped; the cache never holds
-one — `decodeRecodes` gates what is cached). -/
+one — `decodeRecodes` gates what is cached). Layout: magic, three tag
+bytes, nine u32 fields (the last the colour-key count), the key values as
+u32s, then the palette, data, and soft-mask bytes. -/
 def encodeBin (i : Info) : ByteArray := Id.run do
-  let mut out := ByteArray.emptyWithCapacity (41 + i.palette.size + i.data.size + i.smask.size)
+  let mut out := ByteArray.emptyWithCapacity
+    (45 + 4 * i.colorKey.size + i.palette.size + i.data.size + i.smask.size)
   for v in binMagic do
     out := out.push (UInt8.ofNat v)
   out := out.push (match i.format with | .png => 0 | .jpeg => 1 | .pdf => 2)
@@ -665,6 +1090,9 @@ def encodeBin (i : Info) : ByteArray := Id.run do
   out := pushU32 out i.palette.size
   out := pushU32 out i.data.size
   out := pushU32 out i.smask.size
+  out := pushU32 out i.colorKey.size
+  for v in i.colorKey do
+    out := pushU32 out v
   return out ++ i.palette ++ i.data ++ i.smask
 
 /-- Read `encodeBin`'s bytes back; `none` for anything else — a foreign,
@@ -689,12 +1117,19 @@ def decodeBin (b : ByteArray) : Option Info := do
   let pLen ← u32be? b 29
   let dLen ← u32be? b 33
   let sLen ← u32be? b 37
-  guard (b.size == 41 + pLen + dLen + sLen)
+  let kLen ← u32be? b 41
+  -- The size check first: it bounds the key loop below by the file.
+  guard (b.size == 45 + 4 * kLen + pLen + dLen + sLen)
+  let mut colorKey : Array Nat := Array.emptyWithCapacity kLen
+  for j in [0:kLen] do
+    colorKey := colorKey.push (← u32be? b (45 + 4 * j))
+  let base := 45 + 4 * kLen
   return { format, pxW, pxH, dpiX, dpiY, bitDepth, space
-           palette := b.extract 41 (41 + pLen)
-           data := b.extract (41 + pLen) (41 + pLen + dLen)
+           palette := b.extract base (base + pLen)
+           data := b.extract (base + pLen) (base + pLen + dLen)
            predictor := pr == 1
-           smask := b.extract (41 + pLen + dLen) (41 + pLen + dLen + sLen) }
+           smask := b.extract (base + pLen + dLen) (base + pLen + dLen + sLen)
+           colorKey }
 
 /-! ## The store: effects as data
 

@@ -1679,18 +1679,9 @@ bytes is fuzzed deeper in `scripts/img-fuzz.lean` (an oracle, not a
 theorem). -/
 def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
-  -- Synthetic PNGs, byte by byte. The decoder reads structure, not CRCs or
-  -- pixel data, so the CRC slots are zero and the IDAT payload arbitrary.
-  let be32 (n : Nat) : List UInt8 :=
-    [UInt8.ofNat (n / 16777216), UInt8.ofNat (n / 65536 % 256),
-     UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]
-  let chunk (tag : String) (data : List UInt8) : List UInt8 :=
-    be32 data.length ++ (tag.toList.map fun c => UInt8.ofNat c.toNat) ++ data ++
-      [0, 0, 0, 0]
-  let ihdr (w h bd ct interlace : Nat) : List UInt8 :=
-    be32 w ++ be32 h ++ [UInt8.ofNat bd, UInt8.ofNat ct, 0, 0, UInt8.ofNat interlace]
-  let pngSig : List UInt8 := [137, 80, 78, 71, 13, 10, 26, 10]
-  let mkPng (chunks : List UInt8) : ByteArray := bytes (pngSig ++ chunks)
+  -- Synthetic PNGs through the shared synthesizer (Tests/Support).
+  let chunk := pngChunk
+  let ihdr := pngIhdr
   let plain := mkPng (chunk "IHDR" (ihdr 64 40 8 2 0) ++ chunk "IDAT" [1, 2, 3] ++
     chunk "IEND" [])
   match Image.decodePng plain with
@@ -2001,16 +1992,6 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   | .error e => failures ref s!"pdf xref with images: {e}"
   -- The raw IDAT bytes must reach the file unchanged: the stream is the
   -- pass-through, not a re-encoding.
-  let containsBytes (hay needle : ByteArray) : Bool := Id.run do
-    if needle.size == 0 || hay.size < needle.size then return false
-    for i in [0:hay.size - needle.size + 1] do
-      let mut ok := true
-      for j in [0:needle.size] do
-        if hay[i + j]! != needle[j]! then
-          ok := false
-          break
-      if ok then return true
-    return false
   t "pdf carries the png stream verbatim"
     (match pngInfo with
      | .ok inf => containsBytes pdf inf.data
@@ -2086,6 +2067,149 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      let (h, _) := HtmlDoc.emit { imgs := store2 }
        ((Elab.run "t" "\\includegraphics{figures/plot}").1)
      (h.splitOn "<img src=\"figures/plot.png\"").length == 2)
+
+/-- Colour-key transparency: a PNG `tRNS` chunk on the pass-through colour
+types (greyscale, truecolour, indexed) is either exactly the PDF `/Mask`
+ranges in sample units or a refusal the driver names — never an opaque
+embed. Every bit depth, the indexed edge cases (interval, prefix, all
+opaque, fractional, scattered, over-long), chunk order and duplicates, the
+image dictionary, and the cache codec's new field. -/
+def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let chunk := pngChunk
+  let ihdr := pngIhdr
+  -- A PNG of colour type `ct` at bit depth `bd`, its PLTE and tRNS as given
+  -- (an empty list omits the chunk), IDAT arbitrary.
+  let png (bd ct : Nat) (plte trns : List UInt8) (idat : List UInt8 := [0]) : ByteArray :=
+    mkPng (chunk "IHDR" (ihdr 4 4 bd ct 0) ++
+      (if plte.isEmpty then [] else chunk "PLTE" plte) ++
+      (if trns.isEmpty then [] else chunk "tRNS" trns) ++
+      chunk "IDAT" idat ++ chunk "IEND" [])
+  let keyOf (b : ByteArray) : Option (Array Nat) :=
+    match Image.decodePng b with
+    | .ok inf => some inf.colorKey
+    | .error _ => none
+  let refusedNaming (b : ByteArray) (word : String) : Bool :=
+    match Image.decodePng b with
+    | .error e => (e.splitOn word).length == 2
+    | .ok _ => false
+  -- Greyscale: one two-byte sample, in range for the bit depth.
+  t "grey 8-bit key is the sample twice" (keyOf (png 8 0 [] [0, 7]) == some #[7, 7])
+  -- 16-bit keys: exact in the pure mapping, refused by the decoder — two of
+  -- the four target readers (Poppler, PDFium) paint the keyed pixels.
+  t "grey 16-bit key is exact in the mapping"
+    (Image.colorKeyRanges .gray 16 (bytes [1, 2]) ByteArray.empty == .ok #[258, 258])
+  t "grey 16-bit key refused by the decoder, naming the readers"
+    (refusedNaming (png 16 0 [] [1, 2]) "readers")
+  t "grey 4-bit key at the top value" (keyOf (png 4 0 [] [0, 15]) == some #[15, 15])
+  t "grey 2-bit key" (keyOf (png 2 0 [] [0, 3]) == some #[3, 3])
+  t "grey 1-bit key" (keyOf (png 1 0 [] [0, 1]) == some #[1, 1])
+  t "grey 4-bit key out of range refused" (refusedNaming (png 4 0 [] [0, 16]) "tRNS")
+  t "grey 8-bit key out of range refused" (refusedNaming (png 8 0 [] [1, 0]) "tRNS")
+  t "grey key of the wrong length refused"
+    (refusedNaming (png 8 0 [] [7]) "tRNS" && refusedNaming (png 8 0 [] [0, 7, 0]) "tRNS")
+  -- Truecolour: three two-byte samples.
+  t "rgb 8-bit key is each sample twice"
+    (keyOf (png 8 2 [] [0, 10, 0, 20, 0, 30]) == some #[10, 10, 20, 20, 30, 30])
+  t "rgb 16-bit key is exact in the mapping"
+    (Image.colorKeyRanges .rgb 16 (bytes [1, 0, 2, 0, 3, 0]) ByteArray.empty ==
+      .ok #[256, 256, 512, 512, 768, 768])
+  t "rgb 16-bit key refused by the decoder" (refusedNaming (png 16 2 [] [1, 0, 2, 0, 3, 0]) "16-bit")
+  t "rgb 16-bit without a key still passes through"
+    (keyOf (png 16 2 [] []) == some #[])
+  t "rgb 8-bit key out of range refused" (refusedNaming (png 8 2 [] [1, 0, 0, 0, 0, 0]) "tRNS")
+  t "rgb key of the wrong length refused" (refusedNaming (png 8 2 [] [0, 10]) "tRNS")
+  -- Indexed: the transparent entries one interval, the rest opaque.
+  let pal2 : List UInt8 := [0, 0, 0, 255, 255, 255]
+  let pal4 : List UInt8 := pal2 ++ [255, 0, 0, 0, 255, 0]
+  t "indexed key on entry 0" (keyOf (png 8 3 pal2 [0, 255]) == some #[0, 0])
+  t "indexed key on entry 1" (keyOf (png 8 3 pal2 [255, 0]) == some #[1, 1])
+  t "indexed key on an interior interval" (keyOf (png 8 3 pal4 [255, 0, 0, 255]) == some #[1, 2])
+  t "indexed key on a prefix interval" (keyOf (png 8 3 pal4 [0, 0]) == some #[0, 1])
+  t "indexed key reaching the last entry" (keyOf (png 8 3 pal4 [255, 255, 0, 0]) == some #[2, 3])
+  t "indexed all-opaque tRNS is no mask" (keyOf (png 8 3 pal4 [255, 255]) == some #[])
+  t "indexed at bit depth 1" (keyOf (png 1 3 pal2 [0]) == some #[0, 0])
+  t "indexed at bit depth 2" (keyOf (png 2 3 pal4 [255, 255, 255, 0]) == some #[3, 3])
+  t "indexed at bit depth 4" (keyOf (png 4 3 pal4 [0, 255]) == some #[0, 0])
+  t "indexed partial alpha refused" (refusedNaming (png 8 3 pal4 [0, 128, 255]) "partial")
+  t "indexed scattered transparency refused" (refusedNaming (png 8 3 pal4 [0, 255, 0]) "partial")
+  t "indexed tRNS longer than the palette refused"
+    (refusedNaming (png 8 3 pal2 [255, 255, 0]) "tRNS")
+  t "indexed tRNS beyond the bit depth refused"
+    (refusedNaming (png 1 3 pal4 [255, 255, 0]) "tRNS")
+  -- Order and multiplicity: one tRNS, after PLTE, before IDAT.
+  t "tRNS on an alpha type refused"
+    (refusedNaming (mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++ chunk "tRNS" [0, 0, 0, 0, 0, 0] ++
+      chunk "IDAT" (Flate.deflateStored (bytes (List.replicate 18 0))).toList ++
+      chunk "IEND" [])) "tRNS")
+  t "duplicate tRNS refused"
+    (refusedNaming (mkPng (chunk "IHDR" (ihdr 4 4 8 0 0) ++ chunk "tRNS" [0, 1] ++
+      chunk "tRNS" [0, 2] ++ chunk "IDAT" [0] ++ chunk "IEND" [])) "tRNS")
+  t "tRNS after IDAT refused"
+    (refusedNaming (mkPng (chunk "IHDR" (ihdr 4 4 8 0 0) ++ chunk "IDAT" [0] ++
+      chunk "tRNS" [0, 1] ++ chunk "IEND" [])) "tRNS")
+  t "indexed tRNS before PLTE refused"
+    (refusedNaming (mkPng (chunk "IHDR" (ihdr 4 4 8 3 0) ++ chunk "tRNS" [0] ++
+      chunk "PLTE" pal2 ++ chunk "IDAT" [0] ++ chunk "IEND" [])) "tRNS")
+  t "no tRNS is no key" (keyOf (png 8 2 [] []) == some #[])
+  -- The pure ranges, exercised beside their theorems on shapes the
+  -- decoder cannot reach (a tRNS array with no palette behind it).
+  t "colorKeyRanges: empty indexed tRNS is no mask"
+    (Image.colorKeyRanges .indexed 8 ByteArray.empty (bytes pal4) == .ok #[])
+  t "colorKeyRanges: grey ignores the palette"
+    (Image.colorKeyRanges .gray 8 (bytes [0, 9]) (bytes pal4) == .ok #[9, 9])
+  -- The PDF: the raster dictionary carries `/Mask` in sample units, the
+  -- IDAT still passes through verbatim, and an unkeyed image has no mask.
+  let idxPng := png 8 3 pal2 [0, 255] (idat := (Flate.deflateStored (bytes
+    (List.replicate 4 [0, 0, 1, 1, 0]).flatten)).toList)
+  let rgbPng := png 8 2 [] [0, 10, 0, 20, 0, 30]
+    (idat := (Flate.deflateStored (bytes (List.replicate (4 * 13) 0))).toList)
+  let plainPng := png 8 2 [] [] (idat := [1, 2, 3])
+  let idxInfo := Image.decode idxPng
+  let store : Image.Store := { entries := #[
+    { src := "key-idx.png", info := idxInfo.toOption },
+    { src := "key-rgb.png", info := (Image.decode rgbPng).toOption },
+    { src := "plain.png", info := (Image.decode plainPng).toOption }] }
+  t "keyed fixtures decode" (store.entries.all (·.info.isSome))
+  let geom : Layout.Geom := {}
+  let (doc, _) := Elab.run "t"
+    "\\includegraphics{key-idx.png} \\includegraphics{key-rgb.png} \\includegraphics{plain.png}"
+  let out := layoutOf oneFace doc geom none store
+  let pdfRaw := Pdf.write geom oneFace out.pages {} store
+  let pdf := pdfText pdfRaw
+  t "pdf indexed image carries its colour-key mask" (bytesContain pdf "/Mask [0 0]")
+  t "pdf rgb image carries its colour-key mask" (bytesContain pdf "/Mask [10 10 20 20 30 30]")
+  t "pdf keyed images stay pass-through"
+    (match idxInfo with
+     | .ok inf => containsBytes pdf inf.data && bytesContain pdf "/Predictor 15"
+     | .error _ => false)
+  t "pdf unkeyed image has no mask"
+    (bytesContain pdf "/BitsPerComponent 8 /Filter /FlateDecode")
+  match checkXref pdfRaw with
+  | .ok n => t "pdf xref valid with keyed images" (n > 0)
+  | .error e => failures ref s!"pdf xref with keyed images: {e}"
+  -- The cache codec: the key rides, the format version moved, and the
+  -- old magic is a miss.
+  match idxInfo with
+  | .error e => failures ref s!"keyed png decode: {e}"
+  | .ok inf =>
+    let blob := Image.encodeBin inf
+    t "image cache serialization round-trips the colour key"
+      (match Image.decodeBin blob with
+       | some back => back.colorKey == inf.colorKey && back.colorKey == #[0, 0] &&
+           back.palette == inf.palette && back.data == inf.data && back.space == .indexed &&
+           back.bitDepth == inf.bitDepth && back.pxW == 4 && back.pxH == 4
+       | none => false)
+    t "image cache magic is LTIMG2" (blob.extract 0 6 == "LTIMG2".toUTF8)
+    t "image cache rejects a stale LTIMG1 entry" ((Image.decodeBin (blob.set! 5 49)).isNone)
+    t "image cache rejects a lying key count"
+      ((Image.decodeBin (blob.set! 44 (blob[44]! + 1))).isNone)
+  -- A wide key (the truecolour ranges) round-trips too.
+  t "image cache round-trips a six-range key"
+    (match Image.decode rgbPng with
+     | .ok inf => (Image.decodeBin (Image.encodeBin inf)).map (·.colorKey) ==
+         some #[10, 10, 20, 20, 30, 30]
+     | .error _ => false)
 
 
 /-- The page ships the faces it names — the census of the `@font-face`

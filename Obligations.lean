@@ -221,19 +221,21 @@ theorem inflate_deflate_id (b : ByteArray) :
 -- owed: decodeBin_encodeBin_id
 -- owner: LeanTex.Core.Image
 -- source: the build-cache slice (2026-09-21 survey wave): the driver's image cache files `Image.encodeBin`'s bytes under the source's content key, and transparency — a cache hit *is* the recomputation's value, keeping the artifact a function of the document and the font environment — is exactly this inversion. The in-suite witnesses are the image-cache serialization rows in Tests/Backends (a real decoded alpha PNG round-trips; foreign and truncated bytes refuse).
--- blocker: the codec is fixed-offset field reads over `ByteArray.push`/`append`/`extract`, and the standard library's equational coverage for those (get-of-append, extract-of-append) is not yet enough to push the eleven field reads through; the statement also needs its honest side conditions spelled (each Nat field under 2³², `form = none`) before the per-field lemmas can compose.
+-- blocker: the codec is fixed-offset field reads over `ByteArray.push`/`append`/`extract`, and the standard library's equational coverage for those (get-of-append, extract-of-append) is not yet enough to push the twelve field reads and the key loop through; the statement also needs its honest side conditions spelled (each Nat field under 2³², every colour-key value under 2³², `form = none`) before the per-field lemmas can compose.
 -- goldens: no
 /-- The image cache's serialization inverts: reading back `encodeBin`'s
 bytes yields the decoded object itself, field for field, for every raster
-`Info` the cache can hold (`form = none`; every scalar field within the
-u32 the format spells — both true of everything `Image.decode` produces).
-A cache hit therefore equals a recomputation. -/
+`Info` the cache can hold (`form = none`; every scalar field and every
+colour-key range value within the u32 the format spells — all true of
+everything `Image.decode` produces, the ranges by
+`colorKeyRanges_between`). A cache hit therefore equals a recomputation. -/
 theorem decodeBin_encodeBin_id (i : Image.Info) (hf : i.form = none)
     (hw : i.pxW < 4294967296) (hh : i.pxH < 4294967296)
     (hx : i.dpiX < 4294967296) (hy : i.dpiY < 4294967296)
     (hb : i.bitDepth < 4294967296)
     (hp : i.palette.size < 4294967296) (hd : i.data.size < 4294967296)
-    (hs : i.smask.size < 4294967296) :
+    (hs : i.smask.size < 4294967296)
+    (hk : i.colorKey.size < 4294967296) (hkv : ∀ v ∈ i.colorKey, v < 4294967296) :
     Image.decodeBin (Image.encodeBin i) = some i := by
   sorry
 

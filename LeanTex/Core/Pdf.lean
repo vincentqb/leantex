@@ -855,9 +855,14 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         let smaskRef := match smaskIds[n]?.getD none with
           | some mid => s!" /SMask {mid} 0 R"
           | none => ""
+        -- Colour-key masking (ISO 32000-2 §8.9.6.4): the ranges in sample
+        -- units, a PNG tRNS carried exactly (`Image.colorKeyRanges_between`
+        -- keeps every value inside the bit depth).
+        let maskRef := if inf.colorKey.isEmpty then ""
+          else s!" /Mask [{" ".intercalate (inf.colorKey.toList.map toString)}]"
         let dict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
 /Height {inf.pxH} /ColorSpace {colorSpace} /BitsPerComponent {inf.bitDepth}\
-{smaskRef} {filter}"
+{smaskRef}{maskRef} {filter}"
         let (w', off) := putStream w (imgId n) dict inf.data
         w := w'
         locs := locs.set! (imgId n) (1, off)

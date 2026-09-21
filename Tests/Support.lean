@@ -42,6 +42,36 @@ def pngFilter (px : ByteArray) (pxH rowBytes bpp : Nat) (ft : Nat → Nat) : Byt
       out := out.push (UInt8.ofNat ((sample r i + 256 - pred) % 256))
   return out
 
+/-! Synthetic PNGs, byte by byte: the decoder reads structure, not CRCs or
+pixel data, so CRC slots are zero and an IDAT payload may be arbitrary. -/
+
+def be32 (n : Nat) : List UInt8 :=
+  [UInt8.ofNat (n / 16777216), UInt8.ofNat (n / 65536 % 256),
+   UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n % 256)]
+
+def pngChunk (tag : String) (data : List UInt8) : List UInt8 :=
+  be32 data.length ++ (tag.toList.map fun c => UInt8.ofNat c.toNat) ++ data ++ [0, 0, 0, 0]
+
+def pngIhdr (w h bd ct interlace : Nat) : List UInt8 :=
+  be32 w ++ be32 h ++ [UInt8.ofNat bd, UInt8.ofNat ct, 0, 0, UInt8.ofNat interlace]
+
+def pngSigBytes : List UInt8 := [137, 80, 78, 71, 13, 10, 26, 10]
+
+def mkPng (chunks : List UInt8) : ByteArray := bytes (pngSigBytes ++ chunks)
+
+/-- Does `needle` occur verbatim inside `hay`? The pass-through witness: a
+source stream reaching the artifact byte for byte. -/
+def containsBytes (hay needle : ByteArray) : Bool := Id.run do
+  if needle.size == 0 || hay.size < needle.size then return false
+  for i in [0:hay.size - needle.size + 1] do
+    let mut ok := true
+    for j in [0:needle.size] do
+      if hay[i + j]! != needle[j]! then
+        ok := false
+        break
+    if ok then return true
+  return false
+
 /-- xorshift64*: deterministic, dependency-free (as in scripts/kp-fuzz.lean).
 Returns the new state and the output value. -/
 def nextRand (s : UInt64) : UInt64 × UInt64 :=

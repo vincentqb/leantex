@@ -175,6 +175,56 @@ conversions, neither the `#008080` an `rg` repaint would give — while
 preview. Not in this slice: `Color.registration` still reads the palette,
 not shipped inks (W2.4 with `colorModels`).
 
+2026-09-21 — a PNG colour key is exact or refused, never opaque (image-trns
+slice, M11 wave 2's first image seam). The chunk walk matched four chunk
+types and skipped `tRNS`, so a greyscale, truecolour or indexed PNG with a
+transparent key embedded opaque with no diagnostic — while the HTML `<img>`
+showed the browser's transparent rendering, two projections of one IR node
+disagreeing. The invariant, stated before the fix: every well-formed tRNS
+on the pass-through types maps exactly to PDF transparency or fires W0602
+through the existing refusal path. The exact form is colour-key masking
+(ISO 32000-2 §8.9.6.4), `/Mask [min max …]` in sample units, two per
+component: a greyscale or truecolour tRNS names one fully transparent
+sample (ISO/IEC 15948 §11.3.2.1), so its ranges are degenerate
+(`colorKeyRanges_gray_exact`, `colorKeyRanges_rgb_exact`); an indexed
+tRNS gives each palette entry an alpha, and with one component the mask is
+one index interval, so it is exact when the transparent entries form one
+run and every other entry is 255 (`colorKeyRanges_indexed_covers`: entry
+`i` is transparent exactly when `lo ≤ i ≤ hi`, over every index — the
+entries past the chunk are opaque by the PNG rule and the interval never
+reaches them), and a partial alpha or two separated runs is refused
+(`colorKeyRanges_partial_accounts`), never approximated — the soft mask
+is the exact form for those and is the compositing arm's work. Every
+emitted value is under the bit depth (`colorKeyRanges_between`), an
+empty mask is paid for by an all-opaque chunk (`colorKeyRanges_accounts`,
+quantified over every space). The indexed mapping is written as the
+three-state scan (`keyScan`) whose invariant the induction reads: each
+entry read is 0 exactly inside the run the state names and 255 elsewhere.
+Malformed chunks — wrong length, a sample past the bit depth, more entries
+than the palette or the depth allows, a duplicate, one after IDAT, one
+before PLTE, one on an alpha type — are refused as corrupt. The `Info`
+gained `colorKey`, the image dictionary its ` /Mask` (six lines), and the
+cache codec moved to `LTIMG2` carrying the field, so every `LTIMG1` entry
+is a miss, never a misread; `decodeBin_encodeBin_id` gained the key's
+bounds and stays owed to the same blocker. Rendered evidence (a probe under
+`/tmp`, six synthetic keyed PNGs — indexed at 8 and 2 bits, truecolour 8,
+grey 8/4/1 — over a grey page, composited independently by ImageMagick):
+Ghostscript pixel-exact at 72 dpi, Poppler and pdf.js exact on every
+interior pixel at 4× (their resampling fringe differs on the plain
+unkeyed fixture too), PDFium's viewer showing the page through every
+keyed pixel by eye. The same probe found the one boundary this slice
+draws: a **16-bit** colour key is exact by the spec and ignored by Poppler
+and PDFium, both reducing samples to 8 bits and comparing the key
+unscaled, so the keyed pixels paint; Ghostscript and pdf.js honour it.
+Two of four target readers is not default-permitted, and a mask half the
+readers drop is the silent loss moved into the reader — so the decoder
+refuses a 16-bit key with a reason (the pure mapping and its theorems
+stay general) until the reader matrix says otherwise or the soft-mask arm
+carries it as an 8-bit `/SMask`. `scripts/img-fuzz.lean` anchors the
+keyed synthetics (exact mask, or refusal) and mutates them: 44339 inputs,
+no crash, no lie. Unlocks `image-plan-factor` (the first `Source` fact the
+`Plan` must carry now exists as a field and a pure function).
+
 2026-09-21 — table header rows: one IR fact, `<thead>`/`<th>` in HTML
 (M7-08, `table-header-ir`). booktabs' head was knowable at elaboration
 — the rows before the first `\midrule` — and recorded nowhere, so the
