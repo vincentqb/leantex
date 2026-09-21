@@ -151,6 +151,7 @@ fontSuiteChecks owns reporting a missing or unparsable font, so none of
 these may hide behind the layout suite's font gate. -/
 def fontFaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   fontDiagChecks ref
+  weightAxisChecks ref
   declaredFaceChecks ref
   fallbackChecks ref
   smallCapsGsubChecks ref

@@ -12,6 +12,23 @@ def synthFace (family : String) (path : String := "") : FontDb.Face :=
     fixedPitch := false
     weight := 400 }
 
+/-- The weight axis's string half, executable because String does not
+kernel-reduce (`Weight.ofCss_css_id` in Ir.lean carries the numeric half
+as a theorem): parsing inverts printing over every series, the NFSS
+combination rules hold, and a face's OS/2 500 reads as the `m` series —
+a Medium face serving as a document's regular. -/
+def weightAxisChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  t "every series round-trips through its NFSS spelling"
+    (Ir.Weight.all.all fun w => Ir.Weight.parseSeries w.series == some (w, ""))
+  t "bx is bold extended" (Ir.Weight.parseSeries "bx" == some (.b, "x"))
+  t "c is medium condensed" (Ir.Weight.parseSeries "c" == some (.m, "c"))
+  t "an unknown series value is refused" ((Ir.Weight.parseSeries "zz").isNone)
+  t "a weight code with a non-width remainder is refused"
+    ((Ir.Weight.parseSeries "bq").isNone)
+  t "OS/2 500 reads as the m series (ties to the lighter)"
+    (Ir.Weight.ofCss 500 == .m)
+
 /-- The font diagnostics: a missing family suggests its neighbours instead of
 dumping a thousand names, and `families` is linear in the face count. -/
 def fontDiagChecks (ref : IO.Ref (List String)) : IO Unit := do

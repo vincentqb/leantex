@@ -1090,6 +1090,99 @@ structure Assertion where
   help : Option String := none
   deriving Repr, BEq, Inhabited
 
+/-- The weight axis: the nine NFSS series values (LaTeX News 31, "Improved
+load-times for expl3 … New or improved commands": the standardised weight
+codes; fntguide §2.2's series axis) the surface can select —
+`\fontseries`, fontspec's `FontFace={series}{shape}{font}`. It lives in
+the IR because both backends read it: the PDF resolves a face per weight
+(`FontSet.lookup`), the HTML emits the numeric value per run. -/
+inductive Weight where
+  | ul | el | l | sl | m | sb | b | eb | ub
+  deriving Repr, BEq, DecidableEq
+
+instance : Inhabited Weight := ⟨.m⟩
+
+/-- The CSS/OpenType numeric value of each series (CSS Fonts 4 §2.2 /
+OpenType OS/2 `usWeightClass`, the same registry: 100 Thin, 200
+Extra-light, 300 Light, 400 Normal, 600 Semi-bold, 700 Bold, 800
+Extra-bold, 900 Black). `m` is NFSS's *default* series — the regular
+weight, 400, not the registry's 500 "Medium" — and `sl` (semi-light) has
+no slot in the nine-step table; 350 is DirectWrite's `SemI_LIGHT`, the
+one registry that names it. No single authority numbers all nine, so
+those two placements are this table's decision; the round-trip theorem
+below is what makes the assignment a bijection onto its image. -/
+def Weight.css : Weight → Nat
+  | .ul => 100
+  | .el => 200
+  | .l => 300
+  | .sl => 350
+  | .m => 400
+  | .sb => 600
+  | .b => 700
+  | .eb => 800
+  | .ub => 900
+
+/-- Every series, in weight order — what `ofCss` searches and the
+round-trip theorem quantifies over. -/
+def Weight.all : List Weight := [.ul, .el, .l, .sl, .m, .sb, .b, .eb, .ub]
+
+/-- The series nearest a numeric weight (a face's `usWeightClass`), ties
+to the lighter: the inverse direction of the bijection, total over every
+input. -/
+def Weight.ofCss (n : Nat) : Weight :=
+  (Weight.all.foldl (init := Weight.ul) fun best w =>
+    let d := fun v : Weight => max v.css n - min v.css n
+    if d w < d best then w else best)
+
+/-- The NFSS spelling of each series, `\fontseries`'s vocabulary. -/
+def Weight.series : Weight → String
+  | .ul => "ul"
+  | .el => "el"
+  | .l => "l"
+  | .sl => "sl"
+  | .m => "m"
+  | .sb => "sb"
+  | .b => "b"
+  | .eb => "eb"
+  | .ub => "ub"
+
+/-- The NFSS width codes (fntguide §2.2: the width half of a series
+value). The engine has no width axis; parsing names them so a
+`\fontseries{bx}` honours its weight and can say what the `x` asked for. -/
+def seriesWidthCodes : List String :=
+  ["uc", "ec", "sc", "c", "sx", "ex", "ux", "x"]
+
+/-- Parse an NFSS series value into its weight and width halves
+(fntguide §2.2: a series combines a weight code and a width code, each
+dropped when medium — `bx` is bold extended, `c` is medium condensed,
+`m` is both). Longest weight code first, so `sb` is semi-bold, never
+`s`+garbage. `none` when the string is no series value at all. -/
+def Weight.parseSeries (s : String) : Option (Weight × String) :=
+  if s == "m" then some (.m, "") else
+  let codes : List Weight := [.ul, .el, .sl, .sb, .eb, .ub, .l, .b]
+  match codes.find? fun w => s.startsWith w.series with
+  | some w =>
+    let rest := (s.drop w.series.length).toString
+    if rest.isEmpty || seriesWidthCodes.contains rest then some (w, rest)
+    else none
+  | none =>
+    -- No weight half: the whole value must be a width code at medium
+    -- weight (`c`, `x`, …).
+    if seriesWidthCodes.contains s then some (.m, s) else none
+
+/-- Bold, where a Bool is the question (WCAG 2.2's large-text criterion,
+`FontDb.resolve`'s satisfaction check): the registry's own boundary, 700. -/
+def Weight.isBold (w : Weight) : Bool := 700 ≤ w.css
+
+/-- The two directions of the series↔number map compose to the identity:
+each series is the nearest series to its own number, which is what makes
+`css` a bijection onto its image and `ofCss` its inverse there. The parse
+half — `parseSeries w.series = some (w, "")` — is String-typed, which the
+kernel cannot reduce, so it is pinned by an executable check in
+Tests/FontMath rather than stated here. -/
+theorem Weight.ofCss_css_id : ∀ w : Weight, ofCss w.css = w := by
+  intro w; cases w <;> rfl
+
 inductive Style where
   | bold
   | italic
