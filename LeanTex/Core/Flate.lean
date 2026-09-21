@@ -23,16 +23,18 @@ private def Br.bit (r : Br) : Option (Nat × Br) :=
   | none => none
   | some b => some ((b.toNat >>> (r.bitPos % 8)) &&& 1, { r with bitPos := r.bitPos + 1 })
 
+/-- Read `n ≤ 16` bits, LSB-first. The accumulator is a `UInt64`: a `Nat`
+shift has no scalar fast path in the runtime. -/
 private def Br.bits (r : Br) (n : Nat) : Option (Nat × Br) := Id.run do
   let mut r := r
-  let mut v := 0
+  let mut v : UInt64 := 0
   for k in [0:n] do
     match r.bit with
     | none => return none
     | some (b, r') =>
-      v := v ||| (b <<< k)
+      v := v ||| (b.toUInt64 <<< k.toUInt64)
       r := r'
-  return some (v, r)
+  return some (v.toNat, r)
 
 /-- A canonical Huffman table: `counts[len]` codes of each length, and the
 symbols in canonical order. The construction never fails; an over-subscribed
@@ -279,26 +281,34 @@ bounded by the input size or a table's length. -/
 /-- A bit writer, LSB-first within each byte (RFC 1951 §3.1.1: "bits of
 each byte starting with the least-significant"). Huffman codes arrive
 already bit-reversed (`canonCodes`), so one writer serves codes and extra
-bits alike. -/
+bits alike. Fewer than eight bits are pending between pushes, so a push
+of at most sixteen drains at most two bytes. Fixed-width arithmetic
+throughout: `Nat`'s shift is an out-of-line bignum call with no scalar
+fast path (measured at ~80 ns; it was three quarters of the compressor). -/
 private structure Bw where
   out : ByteArray
-  bits : Nat
-  nbits : Nat
+  bits : UInt64
+  nbits : UInt64
 
 /-- Append `n` bits of `v` (`n ≤ 16`). -/
-private def Bw.push (w : Bw) (v n : Nat) : Bw := Id.run do
-  let mut bits := w.bits ||| ((v &&& ((1 <<< n) - 1)) <<< w.nbits)
-  let mut nbits := w.nbits + n
-  let mut out := w.out
-  for _ in [0:4] do
-    if nbits ≥ 8 then
-      out := out.push (UInt8.ofNat (bits &&& 255))
+private def Bw.pushU (w : Bw) (v n : UInt64) : Bw :=
+  let bits := w.bits ||| ((v &&& ((1 <<< n) - 1)) <<< w.nbits)
+  let nbits := w.nbits + n
+  if nbits ≥ 16 then
+    { out := (w.out.push bits.toUInt8).push (bits >>> 8).toUInt8
+      bits := bits >>> 16
+      nbits := nbits - 16 }
+  else if nbits ≥ 8 then
+    { out := w.out.push bits.toUInt8
       bits := bits >>> 8
-      nbits := nbits - 8
-  return { out, bits, nbits }
+      nbits := nbits - 8 }
+  else
+    { w with bits, nbits }
+
+private def Bw.push (w : Bw) (v n : Nat) : Bw := w.pushU v.toUInt64 n.toUInt64
 
 private def Bw.flush (w : Bw) : ByteArray :=
-  if w.nbits == 0 then w.out else w.out.push (UInt8.ofNat (w.bits &&& 255))
+  if w.nbits == 0 then w.out else w.out.push w.bits.toUInt8
 
 /-- Optimal length-limited Huffman code lengths by boundary package-merge
 (Larmore & Hirschberg 1990): lengths ≤ `limit`, zero for a symbol never
@@ -372,7 +382,7 @@ private def canonCodes (lengths : Array Nat) : Array Nat := Id.run do
   let mut nextCode := Array.replicate 16 0
   let mut code := 0
   for b in [1:16] do
-    code := (code + blCount[b - 1]?.getD 0) <<< 1
+    code := (code + blCount[b - 1]?.getD 0) * 2
     nextCode := nextCode.set! b code
   let mut codes := Array.replicate lengths.size 0
   for s in [0:lengths.size] do
@@ -383,8 +393,8 @@ private def canonCodes (lengths : Array Nat) : Array Nat := Id.run do
       let mut rev := 0
       let mut v := c
       for _ in [0:l] do
-        rev := (rev <<< 1) ||| (v &&& 1)
-        v := v >>> 1
+        rev := rev * 2 + v % 2
+        v := v / 2
       codes := codes.set! s rev
   return codes
 
@@ -415,13 +425,14 @@ private def distSymTab2 : Array Nat := (Array.range 256).map fun k => distSymOf 
 /-- One LZ77 token: a literal byte, or bit 31 set with `(len-3) <<< 15`
 and `dist-1` packed beside it. -/
 private def matchToken (len dist : Nat) : UInt32 :=
-  UInt32.ofNat ((1 <<< 31) ||| ((len - 3) <<< 15) ||| (dist - 1))
+  (0x80000000 : UInt32) ||| ((len - 3).toUInt32 <<< 15) ||| (dist - 1).toUInt32
 
 /-- The three-byte rolling hash: Knuth's multiplicative constant over the
-window the next match must open with. -/
+window the next match must open with. `UInt64` arithmetic — the product
+stays under 2⁵⁶ — for the same reason as `Bw`. -/
 private def hash3 (raw : ByteArray) (mask i : Nat) : Nat :=
-  ((((raw[i]?.getD 0).toNat <<< 16) ^^^ ((raw[i + 1]?.getD 0).toNat <<< 8) ^^^
-    (raw[i + 2]?.getD 0).toNat) * 2654435761) >>> 17 &&& mask
+  (((((raw[i]?.getD 0).toUInt64 <<< 16) ^^^ ((raw[i + 1]?.getD 0).toUInt64 <<< 8) ^^^
+    (raw[i + 2]?.getD 0).toUInt64) * 2654435761) >>> 17 &&& mask.toUInt64).toNat
 
 /-- Longest common run at `c`/`i`, `fuel` the caller's bound (`limit ≤
 258`, in range by the caller's `c < i` and `limit ≤ raw.size - i`). Tail
@@ -433,69 +444,78 @@ private def matchLen (raw : ByteArray) (c i : Nat) : Nat → Nat → Nat
     if raw[c + l]?.getD 0 == raw[i + l]?.getD 1 then matchLen raw c i fuel (l + 1)
     else l
 
+/-- The hash tables as one array: `head` in the first `mask + 1` slots,
+the `prev` ring in the next — one value threads the walk, no pair to
+allocate per step. -/
+private def prevSlot (mask c : Nat) : Nat := mask + 1 + (c &&& mask)
+
+/-- A match packed for return: `len <<< 16 ||| dist`, a scalar. -/
+private def packMatch (len dist : Nat) : UInt64 :=
+  (len.toUInt64 <<< 16) ||| dist.toUInt64
+
 /-- Walk the hash chain for the best match at `i`: candidates verified
 byte-wise (a stale ring entry can only cost a candidate, never
 correctness), the walk cut short by a match of 64+ (zlib's `good_length`
 shape). -/
-private def bestMatch (raw : ByteArray) (prev : Array Nat) (mask i limit : Nat) :
-    Nat → Nat → Nat → Nat → Nat × Nat
-  | 0, _, best, bestDist => (best, bestDist)
+private def bestMatch (raw : ByteArray) (tab : Array Nat) (mask i limit : Nat) :
+    Nat → Nat → Nat → Nat → UInt64
+  | 0, _, best, bestDist => packMatch best bestDist
   | fuel + 1, c, best, bestDist =>
-    if c ≥ i || i - c > 32768 || best ≥ 64 || best == limit then (best, bestDist)
+    if c ≥ i || i - c > 32768 || best ≥ 64 || best == limit then packMatch best bestDist
     else
       -- A longer match must extend past `best`: one compare rejects most.
-      let next := prev[c &&& mask]?.getD i
+      let next := tab[prevSlot mask c]?.getD i
       if raw[c + best]?.getD 0 == raw[i + best]?.getD 0 then
         let l := matchLen raw c i limit 0
-        if l > best then bestMatch raw prev mask i limit fuel next l (i - c)
-        else bestMatch raw prev mask i limit fuel next best bestDist
-      else bestMatch raw prev mask i limit fuel next best bestDist
+        if l > best then bestMatch raw tab mask i limit fuel next l (i - c)
+        else bestMatch raw tab mask i limit fuel next best bestDist
+      else bestMatch raw tab mask i limit fuel next best bestDist
 
 /-- Enter positions `j, j+1, …` (`fuel` many) into the hash tables. -/
-private def insertHashes (raw : ByteArray) (mask : Nat) :
-    Nat → Nat → Array Nat → Array Nat → Array Nat × Array Nat
-  | 0, _, head, prev => (head, prev)
-  | fuel + 1, j, head, prev =>
+private def insertHashes (raw : ByteArray) (mask : Nat) : Nat → Nat → Array Nat → Array Nat
+  | 0, _, tab => tab
+  | fuel + 1, j, tab =>
     if j + 3 ≤ raw.size then
       let hj := hash3 raw mask j
-      let old := head[hj]?.getD j
-      insertHashes raw mask fuel (j + 1) (head.set! hj j) (prev.set! (j &&& mask) old)
+      let old := tab[hj]?.getD j
+      insertHashes raw mask fuel (j + 1) ((tab.set! hj j).set! (prevSlot mask j) old)
     else
-      (head, prev)
+      tab
 
 /-- One LZ77 step per call, `fuel` bounding the walk (every step advances
 `i` by at least one): greedy longest-match, and the interior positions of
 a long match left out of the table (zlib's fast strategy) so runs cost
 O(1) per match, not per byte. -/
 private def tokGo (raw : ByteArray) (mask : Nat) :
-    Nat → Nat → Array Nat → Array Nat → Array UInt32 → Array UInt32
-  | 0, _, _, _, tokens => tokens
-  | fuel + 1, i, head, prev, tokens =>
+    Nat → Nat → Array Nat → Array UInt32 → Array UInt32
+  | 0, _, _, tokens => tokens
+  | fuel + 1, i, tab, tokens =>
     let n := raw.size
     if i ≥ n then tokens
     else if i + 3 > n then
-      tokGo raw mask fuel (i + 1) head prev (tokens.push (raw[i]?.getD 0).toUInt32)
+      tokGo raw mask fuel (i + 1) tab (tokens.push (raw[i]?.getD 0).toUInt32)
     else
       let h := hash3 raw mask i
       let limit := min 258 (n - i)
-      let (best, bestDist) := bestMatch raw prev mask i limit 32 (head[h]?.getD i) 0 0
+      let m := bestMatch raw tab mask i limit 32 (tab[h]?.getD i) 0 0
+      let best := (m >>> 16).toNat
       if best ≥ 3 then
-        let (head, prev) := insertHashes raw mask (if best ≤ 32 then best else 1) i head prev
-        tokGo raw mask fuel (i + best) head prev (tokens.push (matchToken best bestDist))
+        let tab := insertHashes raw mask (if best ≤ 32 then best else 1) i tab
+        tokGo raw mask fuel (i + best) tab (tokens.push (matchToken best (m &&& 65535).toNat))
       else
-        let old := head[h]?.getD i
-        tokGo raw mask fuel (i + 1) (head.set! h i) (prev.set! (i &&& mask) old)
+        let old := tab[h]?.getD i
+        tokGo raw mask fuel (i + 1) ((tab.set! h i).set! (prevSlot mask i) old)
           (tokens.push (raw[i]?.getD 0).toUInt32)
 
-/-- LZ77 over a hash chain, chain bounded at 32 candidates. The tables
-scale with the input — allocating and zeroing two 32K-entry arrays is the
-whole cost of deflating a 2 KiB content stream — and a smaller ring only
-ever loses candidates, never correctness. `raw.size` is the sentinel: no
+/-- LZ77 over a hash chain, chain bounded at 32 candidates. The table
+scales with the input — allocating and zeroing 64K entries is the whole
+cost of deflating a 2 KiB content stream — and a smaller ring only ever
+loses candidates, never correctness. `raw.size` is the sentinel: no
 position yet under this hash. -/
 private def tokenize (raw : ByteArray) : Array UInt32 :=
   let n := raw.size
   let mask := if n ≥ 65536 then 32767 else 4095
-  tokGo raw mask n 0 (Array.replicate (mask + 1) n) (Array.replicate (mask + 1) n) #[]
+  tokGo raw mask n 0 (Array.replicate (2 * (mask + 1)) n) #[]
 
 /-- The code-length sequence's run-length form (RFC 1951 §3.2.7): symbols
 0–18 with each one's extra-bits payload. -/
