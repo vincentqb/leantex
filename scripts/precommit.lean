@@ -424,7 +424,7 @@ def bangBaseline : List (String × Nat) := [
   ("LeanTex/Core/Layout.lean", 41),
   ("LeanTex/Core/Lex.lean", 2),
   ("LeanTex/Core/MathParse.lean", 1),
-  ("LeanTex/Core/Pdf.lean", 10),
+  ("LeanTex/Core/Pdf.lean", 8),
   ("LeanTex/Core/Utf8.lean", 4)]
 
 /-- The line's string-literal contents, concatenated — `stripStrings`'

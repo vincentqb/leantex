@@ -3319,3 +3319,96 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
       (code != 0 && hasStr log "E0330" && hasStr log "no emitted artifact carries this measurement" &&
        !(← outDir.pathExists))
     IO.FS.removeDirAll dir
+
+/-- The allocation contract as one statement, from the two theorems the
+object table exists for: the ids are pairwise distinct (`objTable_inj`)
+and are exactly `[1, size)` (`objTable_covers` with `objTable_between`). -/
+theorem objTable_ids_set_eq (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+    (np nOut : Nat) :
+    (Pdf.objTable keep imgs usedImgs np nOut).ids.toList.Nodup ∧
+    ∀ id, id ∈ (Pdf.objTable keep imgs usedImgs np nOut).ids ↔
+      1 ≤ id ∧ id < (Pdf.objTable keep imgs usedImgs np nOut).size :=
+  ⟨Pdf.objTable_inj keep imgs usedImgs np nOut, fun id =>
+    ⟨Pdf.objTable_between keep imgs usedImgs np nOut id,
+     fun h => Pdf.objTable_covers keep imgs usedImgs np nOut id h.1 h.2⟩⟩
+
+/-- Every object id the writer's cross-reference lists is allocated by one
+table (`Pdf.objTable`), read back through the engine's own reader: the
+table's ids are exactly the objects the file carries, per corpus fixture,
+and the row kind of an id is `kindOf`'s answer, never a default. -/
+def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  -- One face, one page, nothing else: 1 catalog, 2 pages, four font ids,
+  -- the file, the page pair, then Info, XMP, the object stream, the xref.
+  let t0 := Pdf.objTable #[0] {} #[] 1 0
+  t "table: the font block is four ids then the file"
+    (Pdf.ObjTable.type0Id 0 == 3 && Pdf.ObjTable.cidId 0 == 4 && Pdf.ObjTable.fdId 0 == 5 &&
+     Pdf.ObjTable.toUniId 0 == 6 && t0.fileId 0 == 7)
+  t "table: one face, one page, no outline"
+    (t0.pageId 0 == 8 && t0.contentId 0 == 9 && t0.infoId == 10 && t0.xmpId == 11 &&
+     t0.objStmId == 12 && t0.xrefId == 13 && t0.size == 14 && t0.nf == 1 && t0.np == 1)
+  t "table: the conditional families allocate nothing yet"
+    (t0.outputIntent.isNone && t0.icc.isNone && t0.structTreeRoot.isNone &&
+     t0.parentTree.isNone)
+  -- Two faces, three pages, a two-item outline: the root then its items
+  -- sit between Info and XMP.
+  let t1 := Pdf.objTable #[0, 2] {} #[] 3 2
+  t "table: two faces, three pages, an outline"
+    (t1.fileId 1 == 12 && t1.pageId 2 == 17 && t1.contentId 2 == 18 && t1.infoId == 19 &&
+     t1.outlineRootId == 20 && t1.outlineItemId 1 == 22 && t1.xmpId == 23 &&
+     t1.xrefId == 25 && t1.size == 26)
+  -- Images: a plain raster is one id; an alpha raster brings its SMask; a
+  -- copied page brings its resource graph, one id per object; a placeholder
+  -- (no info) brings nothing beyond its own slot.
+  let png ← IO.FS.readBinFile "tests/corpus/rects.png"
+  let rgbaRaw := bytes ([0, 10, 20, 30, 255, 40, 50, 60, 128] ++ [1, 5, 5, 5, 7, 1, 2, 3, 9])
+  let rgbaPng := mkPng (pngChunk "IHDR" (pngIhdr 2 2 8 6 0) ++
+    pngChunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ pngChunk "IEND" [])
+  let store : Image.Store := { entries := #[
+    { src := "plain.png", info := (Image.decode png).toOption },
+    { src := "alpha.png", info := (Image.decode rgbaPng).toOption },
+    { src := "form.pdf", info := (Image.decode unembeddedProbePdf).toOption },
+    { src := "missing.png" }] }
+  let formN := match (store.get? 2).bind (·.info) with
+    | some inf => match inf.form with
+      | some f => f.val.objects.size
+      | none => 0
+    | none => 0
+  t "table: the copied page brings its font dictionary" (formN == 1)
+  let ti := Pdf.objTable #[0] store #[0, 1, 2, 3] 2 0
+  t "table: an XObject per image, then what it brings"
+    (ti.imgIds == #[8, 9, 11, 12 + formN] && ti.smaskIds == #[none, some 10, none, none] &&
+     ti.formBases == #[none, none, some 12, none] && ti.formSizes == #[0, 0, formN, 0] &&
+     ti.ni == 4)
+  t "table: the pages follow the last image block"
+    (ti.pageId 0 == 13 + formN && ti.contentId 1 == 16 + formN && ti.infoId == 17 + formN &&
+     ti.size == 21 + formN)
+  -- The executable twin of `objTable_ids_set_eq`, on the shapes above.
+  for (name, tb) in [("plain", t0), ("outline", t1), ("images", ti)] do
+    t s!"table {name}: the ids are exactly [1, size)"
+      (tb.ids.toList == List.range' 1 (tb.size - 1))
+  -- The row kind is a function of the table and the object stream's index.
+  let cidx : Nat → Option Nat := fun id => if id == 1 then some 0 else if id == 2 then some 1 else none
+  t "kindOf: xref, in-stream, direct — and none outside the table"
+    (ti.kindOf cidx ti.xrefId == some .xref && ti.kindOf cidx 1 == some (.inStream 0) &&
+     ti.kindOf cidx 2 == some (.inStream 1) && ti.kindOf cidx 8 == some .direct &&
+     ti.kindOf cidx 0 == none && ti.kindOf cidx ti.size == none)
+  -- Every corpus PDF, read back: the objects the file carries are the
+  -- table's ids, in order, and the trailer's /Size is the table's.
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, _) ← elabFixture n src
+    let geom := Layout.Geom.ofPage doc.page
+    let store ← corpusStore doc
+    let out := layoutOf oneFace doc geom none store
+    let tb := Pdf.tableOf oneFace out.pages store out.outline
+    t s!"table {n}: nodup, covering [1, size)"
+      (tb.ids.toList.Nodup && tb.ids.size + 1 == tb.size)
+    let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline
+    match PdfRead.objects pdf with
+    | .error e => t s!"table {n}: objects: {e}" false
+    | .ok es =>
+      t s!"table {n}: the file's objects are the table's ids" (es.val.map (·.num) == tb.ids)
+      t s!"table {n}: the trailer's /Size is the table's"
+        ((((PdfRead.trailer pdf).toOption.bind (·.get? "Size")).bind PdfRead.Obj.int?)
+          == some (tb.size : Int))

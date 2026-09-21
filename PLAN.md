@@ -141,6 +141,49 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — every object id is one typed table, and no cross-reference
+row is a default (pdf-objtable, M7-12; refactor — every corpus PDF and
+bench document byte-identical). `write` allocated ids in a hand-rolled
+block of `let`s plus an `Id.run` loop for the images, recorded each
+direct object's row in a mutable `locs : Array (Nat × Nat)` defaulting to
+`(0, 0)`, and the xref loop's `else` arm wrote a type-2 row for any id
+whose kind was still 0 — so an unassigned or unrecorded id became a row
+pointing into the object stream at the catalog. Observed on main by two
+targeted edits (one id past the last, one `locs.set!` dropped): the
+engine's own reader now refuses both (M7-02's header check names the
+object), but the driver exited 0 and shipped the file, and poppler opened
+it with the XMP object silently gone. Now `Pdf.ObjTable` is the one
+allocation: `objTable keep imgs usedImgs np nOut` computes every block
+from the counts that decide it (the per-image block is `blockStarts` over
+`ImgExtra.span` — plain, alpha, or a copied form's object count), `ids`
+spells every allocated id from its own slot function, `kindOf` answers
+direct / in-stream / xref for an id or `none` for one the table never
+allocated, and the xref loop iterates `t.ids`, writes row 0 once, and
+matches `kindOf` exhaustively — the `none` arm is `absurd` by
+`objTable_kindOf_some`, a build-time impossibility, not a fallback. The
+conditional families (`outputIntent`, `icc`, `structTreeRoot`,
+`parentTree`) are `Option Nat := none` slots, so the first conditional
+object (M7-14, M7-19) is a field filled, not a third hand-rolled id block.
+Proved: `objTable_ids_exact` — the ids are exactly `List.range' 1
+(size - 1)`, via `blockIds_exact` (consecutive blocks tile a range) and
+`flatMap_range_exact` (constant-size blocks tile a range), stated over the
+table's fields (`ObjTable.ids_exact`) so the proof never sees the
+structure literal; from it `objTable_inj` (`Nodup`), `objTable_covers`
+(every id in `[1, size)` is allocated), `objTable_between` (every
+allocated id is in `[1, size)`), `objTable_kindOf_some`. Executable twins
+in Tests/Backends (`objTableChecks`): the synthetic shapes — one face,
+an outline, four images (plain, alpha, copied page, placeholder) — and,
+per corpus fixture, `PdfRead.objects`' entry numbers equal `tableOf`'s
+ids and the trailer's `/Size` is the table's. What remains for
+`write_readXref_exact` is the serialize split — `Wr` threaded through
+`serialize : ObjTable → Array (Nat × Body) → ByteArray × Array Loc`, where
+an offset arrives with its object — named next; until then a direct id
+with no recorded offset is written as a free entry, an absence the
+per-fixture objects check sees, never a row at another object.
+`objectIds_inj`'s spelling is subsumed by `objTable_inj`. Bench neutral
+within host noise (lorem 321 → 318 ms, underline 450 → 460, paper
+159 → 162). Unlocks M7-14, M7-17, M7-19, M7-20, M7-28, M7-30.
+
 2026-09-21 — a colour expression keeps its model (color-model-exact, S1 of
 the modern-output wave 1). `Color.mix` mixed per sRGB channel whatever its
 operands were declared in, so a CMYK-first expression — `press!50!ink2`,

@@ -405,6 +405,292 @@ def pageStreams (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let imgMap := imgMapOf imgs (usedImagesOf imgs pages)
   pages.map fun p => (contentStream geom remap imgMap p).toUTF8
 
+-- ## The object table
+
+/-- What the cross-reference row of one object id says (ISO 32000-2
+§7.5.8.3, Table 18): the object is written at a byte offset (type 1), sits
+at an index inside the object stream (type 2), or is the cross-reference
+stream itself — type 1 too, at the offset the trailer's `startxref` names. -/
+inductive ObjKind where
+  | direct
+  | inStream (idx : Nat)
+  | xref
+  deriving Repr, BEq
+
+/-- What a placed image brings beyond its own XObject: nothing, an alpha
+plane's SMask, or a copied page's resource graph — one id per object. -/
+inductive ImgExtra where
+  | plain
+  | alpha
+  | form (objects : Nat)
+  deriving Repr
+
+/-- How many ids an image's block spans: its XObject plus what it brings. -/
+def ImgExtra.span : ImgExtra → Nat
+  | .plain => 1
+  | .alpha => 2
+  | .form n => n + 1
+
+/-- What image `k` of the store brings: a decoded page is a form, a raster
+with an alpha plane brings its SMask, anything else (a placeholder too)
+nothing. -/
+def imgExtraOf (imgs : Image.Store) (k : Nat) : ImgExtra :=
+  match (imgs.get? k).bind (·.info) with
+  | some inf =>
+    match inf.form with
+    | some f => .form f.val.objects.size
+    | none => if inf.smask.isEmpty then .plain else .alpha
+  | none => .plain
+
+/-- Where each of a run of consecutive blocks starts: `base`, then each
+start plus its own block's span. -/
+def blockStarts (base : Nat) : List Nat → List Nat
+  | [] => []
+  | n :: ns => base :: blockStarts (base + n) ns
+
+/-- Every object id one file allocates, computed once from the counts that
+decide it, in id order: 1 the catalog, 2 the page tree, four ids per kept
+face and then one file per face, per placed image its XObject followed by
+what it brings (`ImgExtra`), two per page, Info, the outline — root then
+items — when the layout carried one, XMP, the object stream, and the
+cross-reference stream last. `write` reads its ids here and nowhere else;
+the conditional families are slots no document fills yet. -/
+structure ObjTable where
+  nf : Nat
+  ni : Nat
+  np : Nat
+  nOut : Nat
+  imgIds : Array Nat
+  /-- Per image, the ids its block spans: its XObject plus what it brings. -/
+  imgSpans : Array Nat
+  smaskIds : Array (Option Nat)
+  formBases : Array (Option Nat)
+  /-- Objects a copied graph brings (0 when the image is not a form). -/
+  formSizes : Array Nat
+  pageBase : Nat
+  infoId : Nat
+  outlineRootId : Nat
+  xmpId : Nat
+  objStmId : Nat
+  xrefId : Nat
+  size : Nat
+  /-- OutputIntent and its ICC stream: filled by the colour plan. -/
+  outputIntent : Option Nat := none
+  icc : Option Nat := none
+  /-- The structure tree root and its parent tree: filled by the tag skeleton. -/
+  structTreeRoot : Option Nat := none
+  parentTree : Option Nat := none
+  deriving Repr
+
+namespace ObjTable
+
+def type0Id (k : Nat) : Nat := 3 + 4 * k
+def cidId (k : Nat) : Nat := 3 + 4 * k + 1
+def fdId (k : Nat) : Nat := 3 + 4 * k + 2
+def toUniId (k : Nat) : Nat := 3 + 4 * k + 3
+def fileId (t : ObjTable) (k : Nat) : Nat := 3 + 4 * t.nf + k
+def pageId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i
+def contentId (t : ObjTable) (i : Nat) : Nat := t.pageBase + 2 * i + 1
+def outlineItemId (t : ObjTable) (k : Nat) : Nat := t.infoId + 2 + k
+
+/-- Every allocated id, in emission order — each block spelled from its
+own slot function, so `objTable_inj` and `objTable_covers` are facts about
+the allocation and not about a range. -/
+def ids (t : ObjTable) : Array Nat :=
+  #[1, 2]
+  ++ (Array.range t.nf).flatMap (fun k => #[type0Id k, cidId k, fdId k, toUniId k])
+  ++ (Array.range t.nf).map t.fileId
+  ++ (t.imgIds.zip t.imgSpans).flatMap (fun (id, n) => Array.range' id n)
+  ++ (Array.range t.np).flatMap (fun i => #[t.pageId i, t.contentId i])
+  ++ #[t.infoId]
+  ++ (if t.nOut == 0 then #[]
+      else #[t.outlineRootId] ++ (Array.range t.nOut).map t.outlineItemId)
+  ++ #[t.xmpId, t.objStmId, t.xrefId]
+
+/-- The cross-reference row kind of an id, given where the object stream
+holds it (`compressedIdx`): a function of the table, so an id the table
+never allocated is `none` — and `objTable_kindOf_some` says that never
+happens on `ids`. -/
+def kindOf (t : ObjTable) (compressedIdx : Nat → Option Nat) (id : Nat) : Option ObjKind :=
+  if id == 0 || t.size ≤ id then none
+  else if id == t.xrefId then some .xref
+  else match compressedIdx id with
+    | some idx => some (.inStream idx)
+    | none => some .direct
+
+end ObjTable
+
+/-- The table for `keep` faces, the placed images `usedImgs` of `imgs`,
+`np` pages and `nOut` outline entries. -/
+def objTable (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+    (np nOut : Nat) : ObjTable :=
+  let nf := keep.size
+  let extras := usedImgs.map (imgExtraOf imgs)
+  let spans := extras.map ImgExtra.span
+  let imgIds := (blockStarts (3 + 5 * nf) spans.toList).toArray
+  let pageBase := 3 + 5 * nf + spans.toList.sum
+  let infoId := pageBase + 2 * np
+  let xmpId := if nOut == 0 then infoId + 1 else infoId + 2 + nOut
+  { nf, ni := usedImgs.size, np, nOut, imgIds, imgSpans := spans
+    smaskIds := (imgIds.zip extras).map fun (id, e) => match e with
+      | .alpha => some (id + 1)
+      | .plain => none
+      | .form _ => none
+    formBases := (imgIds.zip extras).map fun (id, e) => match e with
+      | .form _ => some (id + 1)
+      | .plain => none
+      | .alpha => none
+    formSizes := extras.map fun e => match e with
+      | .form n => n
+      | .plain => 0
+      | .alpha => 0
+    pageBase, infoId, outlineRootId := infoId + 1, xmpId
+    objStmId := xmpId + 1, xrefId := xmpId + 2, size := xmpId + 3 }
+
+/-- The table `write` reads for these inputs: the faces it embeds
+(`keepFaces`), the images it places (`usedImagesOf`), the page and outline
+counts. -/
+def tableOf (fs : FontSet) (pages : Array PageOut) (imgs : Image.Store)
+    (outline : Array OutlineEntry) : ObjTable :=
+  objTable (keepFaces fs pages) imgs (usedImagesOf imgs pages) pages.size outline.size
+
+/-- **`blockIds_exact`**: consecutive blocks laid out by `blockStarts` tile
+the range from `base` of the spans' total, exactly. -/
+theorem blockIds_exact (base : Nat) (spans : List Nat) :
+    ((blockStarts base spans).zip spans).flatMap (fun p => List.range' p.1 p.2)
+      = List.range' base spans.sum := by
+  induction spans generalizing base with
+  | nil => simp [blockStarts]
+  | cons n ns ih =>
+    rw [blockStarts, List.zip_cons_cons, List.flatMap_cons, ih, List.sum_cons]
+    have := @List.range'_append base n ns.sum 1
+    simp only [Nat.one_mul] at this
+    rw [this]
+
+/-- Constant-size blocks over `range n` tile `range' a (c * n)`. -/
+theorem flatMap_range_exact (a c n : Nat) (f : Nat → List Nat)
+    (hf : ∀ k, f k = List.range' (a + c * k) c) :
+    (List.range n).flatMap f = List.range' a (c * n) := by
+  induction n with
+  | zero => simp
+  | succ n ih =>
+    rw [List.range_succ, List.flatMap_append, ih, List.flatMap_singleton, hf]
+    have := @List.range'_append a (c * n) c 1
+    simp only [Nat.one_mul] at this
+    rw [this, Nat.mul_succ]
+
+/-- Two adjacent ranges are one, however the second's start is spelled. -/
+theorem range'_append_of (s m s' n : Nat) (h : s' = s + m) :
+    List.range' s m ++ List.range' s' n = List.range' s (m + n) := by
+  subst h
+  have := @List.range'_append s m n 1
+  simpa only [Nat.one_mul] using this
+
+/-- **`ObjTable.ids_exact`**: a table whose fields stand in the relations
+`objTable` writes has ids that tile `[1, size)` — each block, spelled from
+its slot function, is a range, and the ranges abut. Stated over the fields
+so the proof never sees the structure literal. -/
+theorem ObjTable.ids_exact (t : ObjTable) (spans : List Nat)
+    (himg : t.imgIds.toList = blockStarts (3 + 5 * t.nf) spans)
+    (hsp : t.imgSpans.toList = spans)
+    (hpb : t.pageBase = 3 + 5 * t.nf + spans.sum)
+    (hinfo : t.infoId = t.pageBase + 2 * t.np)
+    (hroot : t.outlineRootId = t.infoId + 1)
+    (hxmp : t.xmpId = if t.nOut == 0 then t.infoId + 1 else t.infoId + 2 + t.nOut)
+    (hstm : t.objStmId = t.xmpId + 1) (hxref : t.xrefId = t.xmpId + 2)
+    (hsize : t.size = t.xmpId + 3) :
+    t.ids.toList = List.range' 1 (t.size - 1) := by
+  have hfont : ∀ k, [ObjTable.type0Id k, ObjTable.cidId k, ObjTable.fdId k, ObjTable.toUniId k]
+      = List.range' (3 + 4 * k) 4 := fun _ => rfl
+  have hpage : ∀ i, [t.pageId i, t.contentId i] = List.range' (t.pageBase + 2 * i) 2 :=
+    fun _ => rfl
+  have hfile : List.map t.fileId (List.range t.nf) = List.range' (3 + 4 * t.nf) t.nf := by
+    rw [List.range'_eq_map_range]; rfl
+  have hitems : List.map t.outlineItemId (List.range t.nOut)
+      = List.range' (t.infoId + 2) t.nOut := by
+    rw [List.range'_eq_map_range]; rfl
+  have h12 : [1, 2] = List.range' 1 2 := rfl
+  have hinfo1 : [t.infoId] = List.range' t.infoId 1 := rfl
+  have htail : [t.xmpId, t.objStmId, t.xrefId] = List.range' t.xmpId 3 := by
+    rw [hstm, hxref]; rfl
+  simp only [ObjTable.ids, Array.toList_append, Array.toList_flatMap, Array.toList_map,
+    Array.toList_range, Array.toList_zip, Array.toList_range', himg, hsp]
+  rw [blockIds_exact, flatMap_range_exact 3 4 t.nf _ hfont,
+    flatMap_range_exact t.pageBase 2 t.np _ hpage, hfile, h12, hinfo1, htail]
+  by_cases h0 : t.nOut = 0
+  · simp only [h0, beq_self_eq_true, ite_true, Array.toList_empty, List.append_nil] at hxmp ⊢
+    simp (disch := omega) only [range'_append_of]
+    rw [hsize, hxmp, hinfo, hpb]
+    congr 1
+    omega
+  · have hne : (t.nOut == 0) = false := by simpa using h0
+    simp only [hne, Bool.false_eq_true, ite_false, Array.toList_append, Array.toList_map,
+      Array.toList_range, hitems] at hxmp ⊢
+    have hout : [t.outlineRootId] ++ List.range' (t.infoId + 2) t.nOut
+        = List.range' (t.infoId + 1) (1 + t.nOut) := by
+      rw [hroot]; exact range'_append_of _ 1 _ _ rfl
+    rw [hout]
+    simp (disch := omega) only [range'_append_of]
+    rw [hsize, hxmp, hinfo, hpb]
+    congr 1
+    omega
+
+/-- **`objTable_ids_exact`** (the `_exact` statement the two theorems below
+project): the table's ids, block by block from its slot functions, are the
+range `[1, size)` — the allocation is a tiling. -/
+theorem objTable_ids_exact (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+    (np nOut : Nat) :
+    (objTable keep imgs usedImgs np nOut).ids.toList
+      = List.range' 1 ((objTable keep imgs usedImgs np nOut).size - 1) :=
+  ObjTable.ids_exact _ ((usedImgs.map (imgExtraOf imgs)).map ImgExtra.span).toList
+    (List.toList_toArray) rfl rfl rfl rfl rfl rfl rfl rfl
+
+/-- **`objTable_inj`** (the `_inj` statement): no two slots of the table
+share an id — the allocation is injective. -/
+theorem objTable_inj (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+    (np nOut : Nat) : (objTable keep imgs usedImgs np nOut).ids.toList.Nodup := by
+  rw [objTable_ids_exact]
+  exact List.nodup_range' 1
+
+/-- **`objTable_covers`** (the `_covers` statement): every id below the
+trailer's `/Size`, other than the free-list head 0, is allocated — no row
+of the cross-reference is left to a default. -/
+theorem objTable_covers (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+    (np nOut : Nat) :
+    ∀ id, 1 ≤ id → id < (objTable keep imgs usedImgs np nOut).size →
+      id ∈ (objTable keep imgs usedImgs np nOut).ids := by
+  intro id h1 h2
+  rw [Array.mem_def, objTable_ids_exact, List.mem_range'_1]
+  omega
+
+/-- **`objTable_between`** (the `_between` statement): every allocated id
+lies in `[1, size)` — the converse of `objTable_covers`, and what makes
+`kindOf` answer on every id `write` iterates. -/
+theorem objTable_between (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+    (np nOut : Nat) :
+    ∀ id ∈ (objTable keep imgs usedImgs np nOut).ids,
+      1 ≤ id ∧ id < (objTable keep imgs usedImgs np nOut).size := by
+  intro id h
+  rw [Array.mem_def, objTable_ids_exact, List.mem_range'_1] at h
+  have : 3 ≤ (objTable keep imgs usedImgs np nOut).size := by
+    simp only [objTable]
+    omega
+  omega
+
+/-- `kindOf` is defined on every id the table allocates: the `none` arm of
+the match in `write` is dead by this theorem, not by a default. -/
+theorem objTable_kindOf_some (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
+    (np nOut : Nat) (compressedIdx : Nat → Option Nat) :
+    ∀ id ∈ (objTable keep imgs usedImgs np nOut).ids,
+      ((objTable keep imgs usedImgs np nOut).kindOf compressedIdx id).isSome = true := by
+  intro id h
+  have hb := objTable_between keep imgs usedImgs np nOut id h
+  unfold ObjTable.kindOf
+  rw [ite_eq_right (by simp only [Bool.or_eq_true, beq_iff_eq, decide_eq_true_eq]; omega)]
+  split
+  · rfl
+  · split <;> rfl
+
 /-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
 object streams, one Identity-H CID font per face actually used (fully
 embedded, with its own ToUnicode), image XObjects for every image actually
@@ -428,71 +714,21 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let usedImgs := usedImagesOf imgs pages
   let ni := usedImgs.size
   let imgMap := imgMapOf imgs usedImgs
-  -- Object ids are laid out in fixed blocks so the xref can be built without
-  -- a second pass: 1 catalog, 2 pages, then four ids per font, one file per
-  -- font, then per image an XObject plus an SMask when it has an alpha
-  -- plane, then two per page, then info, xmp, objstm, xref.
-  let fontBase := 3
-  let type0Id (k : Nat) := fontBase + 4 * k
-  let cidId (k : Nat) := fontBase + 4 * k + 1
-  let fdId (k : Nat) := fontBase + 4 * k + 2
-  let toUniId (k : Nat) := fontBase + 4 * k + 3
-  let fileBase := fontBase + 4 * nf
-  let fileId (k : Nat) := fileBase + k
-  let imgBase := fileBase + nf
-  let (imgIds, smaskIds, formBases, pageBase) :
-      Array Nat × Array (Option Nat) × Array (Option Nat) × Nat := Id.run do
-    let mut ids : Array Nat := #[]
-    let mut masks : Array (Option Nat) := #[]
-    let mut fbs : Array (Option Nat) := #[]
-    let mut next := imgBase
-    for k in usedImgs do
-      ids := ids.push next
-      next := next + 1
-      match (imgs.get? k).bind (·.info) with
-      | some inf =>
-        match inf.form with
-        | some f =>
-          -- A form brings its copied resource graph: one id per object.
-          masks := masks.push none
-          fbs := fbs.push (some next)
-          next := next + f.val.objects.size
-        | none =>
-          fbs := fbs.push none
-          if inf.smask.isEmpty then
-            masks := masks.push none
-          else
-            masks := masks.push (some next)
-            next := next + 1
-      | none =>
-        masks := masks.push none
-        fbs := fbs.push none
-    return (ids, masks, fbs, next)
-  let imgId (n : Nat) := imgIds[n]?.getD 0
-  let pageId (i : Nat) := pageBase + 2 * i
-  let contentId (i : Nat) := pageBase + 2 * i + 1
-  let infoId := pageBase + 2 * np
-  -- The document outline (ISO 32000-2 §12.3.3), when the layout carried
-  -- one: a root plus one item per entry, flat, in document order. With no
-  -- entries nothing is emitted and every object id below is unchanged —
-  -- an outline-free document stays byte-identical.
   let nOut := outline.size
-  let outlineRootId := infoId + 1
-  let outlineItemId (k : Nat) := infoId + 2 + k
-  let xmpId := if nOut == 0 then infoId + 1 else infoId + 2 + nOut
-  let objStmId := xmpId + 1
-  let xrefId := objStmId + 1
-  let size := xrefId + 1
+  -- Every object id, from the one table: `objTable_ids_exact` says its
+  -- ids tile `[1, size)`, so the cross-reference can be built without a
+  -- second pass and no row is left to a default.
+  let t := objTable keep imgs usedImgs np nOut
 
   -- compressed (non-stream) objects, serialized bare
-  let kids := String.intercalate " " ((List.range np).map fun i => s!"{pageId i} 0 R")
-  let outlinesRef := if nOut == 0 then "" else s!" /Outlines {outlineRootId} 0 R"
+  let kids := String.intercalate " " ((List.range np).map fun i => s!"{t.pageId i} 0 R")
+  let outlinesRef := if nOut == 0 then "" else s!" /Outlines {t.outlineRootId} 0 R"
   -- The catalog: `catalogDict`, whose `/Lang` is `pdf_lang_declared`'s
   -- statement — present exactly when the document declares a language.
-  let catalog := catalogDict outlinesRef xmpId info.language
+  let catalog := catalogDict outlinesRef t.xmpId info.language
   let pagesObj := s!"<< /Type /Pages /Kids [{kids}] /Count {np} >>"
   let fontResources := String.intercalate " "
-    ((List.range nf).map fun k => s!"/F{k + 1} {type0Id k} 0 R")
+    ((List.range nf).map fun k => s!"/F{k + 1} {ObjTable.type0Id k} 0 R")
   let fontObjs : List (Nat × String) := (List.range nf).flatMap fun k =>
     let font := fs.get keep[k]!
     let used := usedPerFont[k]!
@@ -517,12 +753,12 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     -- hinting data the parser does not keep), so these are the trade's
     -- usual values, not measurements.
     let stemV := if font.isBold then 140 else 80
-    [(type0Id k,
-      s!"<< /Type /Font /Subtype /Type0 /BaseFont /{baseFont} /Encoding /Identity-H /DescendantFonts [{cidId k} 0 R] /ToUnicode {toUniId k} 0 R >>"),
-     (cidId k,
-      s!"<< /Type /Font /Subtype /{cidSubtype} /BaseFont /{baseFont} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {fdId k} 0 R /DW 1000 /W {wArray font used}{cidToGid} >>"),
-     (fdId k,
-      s!"<< /Type /FontDescriptor /FontName /{baseFont} /Flags {flags} /FontBBox [-1000 {descent1000} 2000 {ascent1000}] /ItalicAngle {italicAngle} /Ascent {ascent1000} /Descent {descent1000} /CapHeight {capHeight1000} /StemV {stemV} /{fontFileKey} {fileId k} 0 R >>")]
+    [(ObjTable.type0Id k,
+      s!"<< /Type /Font /Subtype /Type0 /BaseFont /{baseFont} /Encoding /Identity-H /DescendantFonts [{ObjTable.cidId k} 0 R] /ToUnicode {ObjTable.toUniId k} 0 R >>"),
+     (ObjTable.cidId k,
+      s!"<< /Type /Font /Subtype /{cidSubtype} /BaseFont /{baseFont} /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity) /Supplement 0 >> /FontDescriptor {ObjTable.fdId k} 0 R /DW 1000 /W {wArray font used}{cidToGid} >>"),
+     (ObjTable.fdId k,
+      s!"<< /Type /FontDescriptor /FontName /{baseFont} /Flags {flags} /FontBBox [-1000 {descent1000} 2000 {ascent1000}] /ItalicAngle {italicAngle} /Ascent {ascent1000} /Descent {descent1000} /CapHeight {capHeight1000} /StemV {stemV} /{fontFileKey} {t.fileId k} 0 R >>")]
   let annots (i : Nat) : String :=
     let rects := linkRects geom pages[i]!
     if rects.isEmpty then "" else
@@ -546,8 +782,8 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       s!" /TrimBox {trim.render} /BleedBox {bleedBox.render} /ArtBox {trim.render}"
     let xobj := if ni == 0 then "" else
       " /XObject << " ++ String.intercalate " "
-        ((List.range ni).map fun n => s!"/Im{n + 1} {imgId n} 0 R") ++ " >>"
-    s!"<< /Type /Page /Parent 2 0 R /MediaBox {media.render}{boxes} /Resources << /Font << {fontResources} >>{xobj} >>{annots i} /Contents {contentId i} 0 R >>"
+        (t.imgIds.toList.zipIdx.map fun (id, n) => s!"/Im{n + 1} {id} 0 R") ++ " >>"
+    s!"<< /Type /Page /Parent 2 0 R /MediaBox {media.render}{boxes} /Resources << /Font << {fontResources} >>{xobj} >>{annots i} /Contents {t.contentId i} 0 R >>"
   -- Metadata is a *text string* (§7.9.2.2): ASCII literal, or UTF-16BE
   -- with the BOM past ASCII — never raw UTF-8 bytes, which a reader
   -- decodes as PDFDocEncoding.
@@ -566,20 +802,20 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- neither is a bare item — an outline item need carry no destination.
   let outlineObjs : List (Nat × String) :=
     if nOut == 0 then [] else
-      (outlineRootId,
-        s!"<< /Type /Outlines /First {outlineItemId 0} 0 R /Last {outlineItemId (nOut - 1)} 0 R /Count {nOut} >>") ::
+      (t.outlineRootId,
+        s!"<< /Type /Outlines /First {t.outlineItemId 0} 0 R /Last {t.outlineItemId (nOut - 1)} 0 R /Count {nOut} >>") ::
       outline.toList.zipIdx.map fun (e, k) =>
-        let prev := if k == 0 then "" else s!" /Prev {outlineItemId (k - 1)} 0 R"
-        let next := if k + 1 == nOut then "" else s!" /Next {outlineItemId (k + 1)} 0 R"
+        let prev := if k == 0 then "" else s!" /Prev {t.outlineItemId (k - 1)} 0 R"
+        let next := if k + 1 == nOut then "" else s!" /Next {t.outlineItemId (k + 1)} 0 R"
         let target := match e.page, e.url with
-          | some p, _ => s!" /Dest [{pageId p} 0 R /XYZ null null null]"
+          | some p, _ => s!" /Dest [{t.pageId p} 0 R /XYZ null null null]"
           | none, some u => s!" /A << /S /URI /URI ({pdfString u}) >>"
           | none, none => ""
-        (outlineItemId k,
-          s!"<< /Title {pdfTextString e.title} /Parent {outlineRootId} 0 R{prev}{next}{target} >>")
+        (t.outlineItemId k,
+          s!"<< /Title {pdfTextString e.title} /Parent {t.outlineRootId} 0 R{prev}{next}{target} >>")
   let compressed : List (Nat × String) :=
-    [(1, catalog), (2, pagesObj)] ++ fontObjs ++ [(infoId, infoDict)] ++ outlineObjs ++
-    (List.range np).map fun i => (pageId i, pageDict i)
+    [(1, catalog), (2, pagesObj)] ++ fontObjs ++ [(t.infoId, infoDict)] ++ outlineObjs ++
+    (List.range np).map fun i => (t.pageId i, pageDict i)
 
   -- object stream payload
   let mut header := ""
@@ -592,7 +828,9 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 
   -- assemble the file
   let mut w : Wr := {}
-  let mut locs : Array (Nat × Nat) := Array.replicate size (0, 0)  -- (kind, val): 1=direct
+  -- The byte offset of every object written directly, by id. The kind of
+  -- each row is `t.kindOf`'s, never read from here.
+  let mut offs : Array (Option Nat) := Array.replicate t.size none
   w := w.put "%PDF-2.0\n%"
   w := w.putB ⟨#[0xE2, 0xE3, 0xCF, 0xD3]⟩
   w := w.put "\n"
@@ -625,10 +863,10 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
       | some s => s
       | none => ((contentStream geom remap imgMap pages[i]!).toUTF8, none)
     let (w', off) := match z? with
-      | some z => putZ w (contentId i) "" data z
-      | none => putFlate w (contentId i) "" data
+      | some z => putZ w (t.contentId i) "" data z
+      | none => putFlate w (t.contentId i) "" data
     w := w'
-    locs := locs.set! (contentId i) (1, off)
+    offs := offs.set! (t.contentId i) (some off)
 
   -- Image XObjects. A PNG's raw IDAT stream passes through as
   -- `/FlateDecode` with the PNG predictor declared (ISO 32000-2 §7.4.4.4:
@@ -636,9 +874,9 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- scanlines); a decoded-and-re-encoded plane needs no predictor; a JPEG
   -- embeds whole as `/DCTDecode`. An alpha plane rides as its own gray
   -- XObject named by `/SMask`.
-  for (k, n) in usedImgs.zipIdx do
+  for ((k, imgId), n) in (usedImgs.zip t.imgIds).zipIdx do
     if let some inf := (imgs.get? k).bind (·.info) then
-      match inf.form, formBases[n]?.getD none with
+      match inf.form, (t.formBases[n]?).join with
       | some f, some base =>
         -- A PDF page: a form XObject (ISO 32000-2 §8.10) whose /Matrix
         -- normalizes the page box to the unit square, so the same
@@ -654,13 +892,13 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         let matrix := s!"[{ratString spPerPt bw} 0 0 {ratString spPerPt bh} \
 {ratString (-fv.x0) bw} {ratString (-fv.y0) bh}]"
         let off := w.out.size
-        w := w.put s!"{imgId n} 0 obj\n<< /Type /XObject /Subtype /Form \
+        w := w.put s!"{imgId} 0 obj\n<< /Type /XObject /Subtype /Form \
 /BBox {bbox} /Matrix {matrix} /Resources "
         w := w.putB (renderChunks base fv.resources)
         w := w.put s!" /Length {fv.content.size} >>\nstream\n"
         w := w.putB fv.content
         w := w.put "\nendstream\nendobj\n"
-        locs := locs.set! (imgId n) (1, off)
+        offs := offs.set! imgId (some off)
         for (o, l) in fv.objects.zipIdx do
           let ooff := w.out.size
           w := w.put s!"{base + l} 0 obj\n"
@@ -672,7 +910,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
             w := w.put "\nendstream\nendobj\n"
           | none =>
             w := w.put "\nendobj\n"
-          locs := locs.set! (base + l) (1, ooff)
+          offs := offs.set! (base + l) (some ooff)
       | _, _ =>
         let colorSpace := match inf.space with
           | .gray => "/DeviceGray"
@@ -694,7 +932,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
           -- form and takes the arm above. The raster dictionary it would
           -- describe does not exist.
           | .pdf => ""
-        let smaskRef := match smaskIds[n]?.getD none with
+        let smaskRef := match (t.smaskIds[n]?).join with
           | some mid => s!" /SMask {mid} 0 R"
           | none => ""
         -- Colour-key masking (ISO 32000-2 §8.9.6.4): the ranges in sample
@@ -705,10 +943,10 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         let dict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
 /Height {inf.pxH} /ColorSpace {colorSpace} /BitsPerComponent {inf.bitDepth}\
 {smaskRef}{maskRef} {filter}"
-        let (w', off) := putStream w (imgId n) dict inf.data
+        let (w', off) := putStream w imgId dict inf.data
         w := w'
-        locs := locs.set! (imgId n) (1, off)
-        if let some mid := smaskIds[n]?.getD none then
+        offs := offs.set! imgId (some off)
+        if let some mid := (t.smaskIds[n]?).join then
           -- The alpha plane is the source's own filtered rows, deinterleaved
           -- (`Image.splitPredictedAlpha`), so the mask declares the same PNG
           -- predictor its colour plane does (ISO 32000-2 §7.4.4.4).
@@ -717,63 +955,72 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
 /DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns {inf.pxW} >>"
           let (w'', moff) := putStream w mid mdict inf.smask
           w := w''
-          locs := locs.set! mid (1, moff)
+          offs := offs.set! mid (some moff)
 
   for k in [0:nf] do
     let font := fs.get keep[k]!
     let tuData := (toUnicode usedPerFont[k]!).toUTF8
-    let (w', tuOff) := putFlate w (toUniId k) "" tuData
+    let (w', tuOff) := putFlate w (ObjTable.toUniId k) "" tuData
     w := w'
-    locs := locs.set! (toUniId k) (1, tuOff)
+    offs := offs.set! (ObjTable.toUniId k) (some tuOff)
     let ffDict := if font.isCff then "/Subtype /OpenType" else s!"/Length1 {font.data.size}"
     -- The driver may have deflated this face already, through its
     -- content-hash cache; the writer then only picks the smaller spelling.
     let (w'', ffOff) := match fs.zdata[keep[k]!]?.getD none with
-      | some z => putZ w (fileId k) ffDict font.data z
-      | none => putFlate w (fileId k) ffDict font.data
+      | some z => putZ w (t.fileId k) ffDict font.data z
+      | none => putFlate w (t.fileId k) ffDict font.data
     w := w''
-    locs := locs.set! (fileId k) (1, ffOff)
+    offs := offs.set! (t.fileId k) (some ffOff)
 
-  let (wx, xmpOff) := putFlate w xmpId "/Type /Metadata /Subtype /XML"
+  let (wx, xmpOff) := putFlate w t.xmpId "/Type /Metadata /Subtype /XML"
     (xmpPacket info).toUTF8
   w := wx
-  locs := locs.set! xmpId (1, xmpOff)
+  offs := offs.set! t.xmpId (some xmpOff)
 
-  let (w3, osOff) := putFlate w objStmId
+  let (w3, osOff) := putFlate w t.objStmId
     s!"/Type /ObjStm /N {compressed.length} /First {first}" objStmData.toUTF8
   w := w3
-  locs := locs.set! objStmId (1, osOff)
-  for (idx, (id, _)) in compressed.zipIdx.map (fun (p, i) => (i, p)) do
-    locs := locs.set! id (2, idx)
+  offs := offs.set! t.objStmId (some osOff)
+  -- Where the object stream holds each compressed object, by id.
+  let mut stmIdx : Array (Option Nat) := Array.replicate t.size none
+  for ((id, _), idx) in compressed.zipIdx do
+    stmIdx := stmIdx.set! id (some idx)
+  let compressedIdx (id : Nat) : Option Nat := (stmIdx[id]?).join
 
-  -- cross-reference stream: W [1 4 2]
+  -- Cross-reference stream, W [1 4 2] (ISO 32000-2 §7.5.8.3): row 0 is the
+  -- free-list head, written once; then one row per id the table allocates,
+  -- in its order (`objTable_ids_exact`: exactly `[1, size)`), each row's
+  -- kind the table's answer.
   let xrefOff := w.out.size
-  let mut rows : ByteArray := ByteArray.empty
-  for id in [0:size] do
-    if id == 0 then
-      rows := rows ++ ⟨#[0, 0, 0, 0, 0, 0xFF, 0xFF]⟩
-    else if id == xrefId then
-      let off := xrefOff
-      rows := rows.push 1
-      rows := rows ++ ⟨#[UInt8.ofNat (off / 16777216), UInt8.ofNat (off / 65536 % 256),
-        UInt8.ofNat (off / 256 % 256), UInt8.ofNat (off % 256)]⟩
-      rows := rows ++ ⟨#[0, 0]⟩
-    else
-      let (kind, v) := locs[id]!
-      if kind == 1 then
-        rows := rows.push 1
-        rows := rows ++ ⟨#[UInt8.ofNat (v / 16777216), UInt8.ofNat (v / 65536 % 256),
-          UInt8.ofNat (v / 256 % 256), UInt8.ofNat (v % 256)]⟩
-        rows := rows ++ ⟨#[0, 0]⟩
-      else
-        rows := rows.push 2
-        rows := rows ++ ⟨#[UInt8.ofNat (objStmId / 16777216), UInt8.ofNat (objStmId / 65536 % 256),
-          UInt8.ofNat (objStmId / 256 % 256), UInt8.ofNat (objStmId % 256)]⟩
-        rows := rows ++ ⟨#[UInt8.ofNat (v / 256 % 256), UInt8.ofNat (v % 256)]⟩
+  let be4 (v : Nat) : List UInt8 :=
+    [UInt8.ofNat (v / 16777216), UInt8.ofNat (v / 65536 % 256),
+     UInt8.ofNat (v / 256 % 256), UInt8.ofNat (v % 256)]
+  let directRow (off : Nat) : ByteArray := ⟨(1 :: be4 off ++ [0, 0]).toArray⟩
+  let streamRow (idx : Nat) : ByteArray :=
+    ⟨(2 :: be4 t.objStmId ++ [UInt8.ofNat (idx / 256 % 256), UInt8.ofNat (idx % 256)]).toArray⟩
+  let mut rows : ByteArray := ⟨#[0, 0, 0, 0, 0, 0xFF, 0xFF]⟩
+  for h : id in t.ids do
+    match hk : t.kindOf compressedIdx id with
+    | some .xref => rows := rows ++ directRow xrefOff
+    | some (.inStream idx) => rows := rows ++ streamRow idx
+    | some .direct =>
+      match (offs[id]?).join with
+      | some off => rows := rows ++ directRow off
+      | none =>
+        -- A direct id whose object was never recorded is written free: the
+        -- file then says the object is absent, which the read-side census
+        -- sees (its objects are the table's ids, per fixture), instead of a
+        -- row pointing into the object stream at another object. Gone with
+        -- the serialize split, where the offset arrives with the object.
+        rows := rows ++ ⟨#[0, 0, 0, 0, 0, 0, 0]⟩
+    | none =>
+      have hs : (t.kindOf compressedIdx id).isSome = true :=
+        objTable_kindOf_some keep imgs usedImgs np nOut compressedIdx id h
+      rows := absurd hs (by rw [hk]; exact Bool.false_ne_true)
   let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 w.out)
   let idB := Flate.hex16 (Flate.fnv64 1099511628211 w.out)
-  let xrefDict := s!"/Type /XRef /Size {size} /W [1 4 2] /Index [0 {size}] /Root 1 0 R /Info {infoId} 0 R /ID [<{idA}> <{idB}>]"
-  let w4 := (putFlate w xrefId xrefDict rows).1
+  let xrefDict := s!"/Type /XRef /Size {t.size} /W [1 4 2] /Index [0 {t.size}] /Root 1 0 R /Info {t.infoId} 0 R /ID [<{idA}> <{idB}>]"
+  let w4 := (putFlate w t.xrefId xrefDict rows).1
   w := w4
   w := w.put s!"startxref\n{xrefOff}\n%%EOF\n"
   return w.out
