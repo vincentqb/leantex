@@ -218,6 +218,11 @@ structure ESt where
   /-- Where each `\bibliography` marker stands: delivered beside the `Doc`
   (`ReqSpans.bib`), so the driver's E0503 names the line that asked. -/
   bibSpans : Array (String × Span) := #[]
+  /-- Each image source's first span — file images and boundary pictures
+  alike: the alt judge's `-->`, and where the driver's per-picture
+  diagnostics point. Reporting metadata, delivered beside the `Doc`
+  (`ReqSpans.images`), never on it. -/
+  imageSpans : Array (String × Span) := #[]
   /-- The palette in force in flow order — the last body `\palette` state,
   written by the declaration arm and read back at the top of every
   `elabBlocks` iteration, so a declaration inside a nested scope reaches
@@ -3067,10 +3072,14 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     match hj : raws[j]? with
     | some (.group pathRaw _) =>
       have hjlt := getElem?_lt hj
+      let src := argText ctx pathRaw
+      modify fun st =>
+        if st.imageSpans.any (·.1 == src) then st
+        else { st with imageSpans := st.imageSpans.push (src, ⟨ctx.file, pos⟩) }
       have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
       elabInlinesFrom ctx raws (j + 1)
-        ((flushText acc sb).push (.image (argText ctx pathRaw) spec altText)) ""
+        ((flushText acc sb).push (.image src spec altText)) ""
     | _ =>
       diag ctx .E0304 "'\\includegraphics' needs a {file} group" pos
       elabInlinesFrom ctx raws (i + 1) acc sb
@@ -5761,8 +5770,11 @@ formula is set as source text")])
     let wrapped := Ir.wrapStandalone ctx.picPreamble (Parse.rawSrc body)
     let hash := Ir.picHash wrapped
     modify fun st =>
-      if st.pictures.any (fun p => p.1 == hash) then st
-      else { st with pictures := st.pictures.push (hash, wrapped) }
+      let st := if st.pictures.any (fun p => p.1 == hash) then st
+        else { st with pictures := st.pictures.push (hash, wrapped) }
+      let src := Ir.picSrcPrefix ++ hash
+      if st.imageSpans.any (·.1 == src) then st
+      else { st with imageSpans := st.imageSpans.push (src, ⟨ctx.file, pos⟩) }
     warnOnce ctx ("picture:boundary:" ++ hash) .N0023
       s!"this picture is drawn by {tool} at the boundary; its text is not \
 in the document's census" pos
@@ -10373,11 +10385,14 @@ structure ReqSpans where
   /-- Each `\bibliography` marker's span, keyed by its named source: the
   line E0503 names when the driver finds no file. -/
   bib : Array (String × Span) := #[]
+  /-- Each image source's first span — file images and boundary pictures
+  alike: where the driver's per-picture W0376 and W0378 point. -/
+  images : Array (String × Span) := #[]
   deriving Repr, BEq, Inhabited
 
 /-- Elaborate parsed input. LaTeX idioms are rewritten first, so a document
 written for another engine compiles as written. Returns the request spans
-too, for the driver's missing-file diagnostics. -/
+too, for the driver's missing-file and per-picture diagnostics. -/
 def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag × ReqSpans :=
   let picPre := Compat.boundaryDecls raws
@@ -10392,11 +10407,13 @@ def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #
   -- N0022 where a pair realized, the pairing warnings where none could.
   let (doc, contrast) := Contrast.realizeDoc doc
   let outline := Ir.outlineDiags doc
-  let alt := Ir.altDiags doc
+  -- The file-image face only: boundary pictures are judged by the driver
+  -- after fulfilment (`Ir.picAltDiags`), where W0378's outcome is known.
+  let alt := Ir.altDiags doc fun src => (st.imageSpans.find? (·.1 == src)).map (·.2)
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
   (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences,
-    { bib := st.bibSpans })
+    { bib := st.bibSpans, images := st.imageSpans })
 
 /-- The span-free face: what every caller that fulfils no file requests
 reads. -/

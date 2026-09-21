@@ -7979,28 +7979,71 @@ def imagesSansAlt (doc : Doc) : Array String :=
   let out := match doc.foot with | some f => foldInlines sansAltStep out f | none => out
   out.filter (fun src => !(logoImageSrcs doc).contains src)
 
-/-- The text-alternative judge (WCAG 2.2 SC 1.1.1, Non-text Content: non-text
-content has a text alternative that serves the equivalent purpose; sufficient
-technique G94/H37 — the `alt` attribute). One diagnostic per distinct source:
-an image a reader of the page sees and a reader of the accessibility tree
-does not is a per-image fact, and the source names which. -/
-def altDiags (doc : Doc) : Array Diag :=
-  (imagesSansAlt doc).map fun src =>
+/-- The text-alternative judge's file-image face (WCAG 2.2 SC 1.1.1,
+Non-text Content: non-text content has a text alternative that serves the
+equivalent purpose; sufficient technique G94/H37 — the `alt` attribute).
+One diagnostic per distinct source: an image a reader of the page sees and
+a reader of the accessibility tree does not is a per-image fact, and the
+source names which — with its span (`spanOf`, the elaborator's record), so
+the reader goes to the line. Boundary pictures are judged by
+`picAltDiags`, after the driver has fulfilled them. -/
+def altDiags (doc : Doc) (spanOf : String → Option Span := fun _ => none) :
+    Array Diag :=
+  ((imagesSansAlt doc).filter fun src => !src.startsWith picSrcPrefix).map fun src =>
     Diag.of .W0376
       (s!"image '{src}' ships no text alternative; assistive technology " ++
         "reads nothing in its place (WCAG 2.2 SC 1.1.1)")
+      (spanOf src)
       (help := some ("describe the image — \\includegraphics[alt={...}] — " ++
         "or caption its figure: the caption becomes the alternative"))
 
-/-- The judge is silent exactly when no shipped image lacks a text
-alternative: `altDiags` is a per-offender map over the census
-(`imagesSansAlt`, a leaf projection of the shared fold), so an image
-cannot escape it without escaping the fold — whose arms are all explicit.
-Weak accessibility of images is then a reported fact, never a discovery. -/
-theorem alt_judged_complete (doc : Doc) :
-    altDiags doc = #[] ↔ imagesSansAlt doc = #[] := by
-  rw [← Array.size_eq_zero_iff, ← Array.size_eq_zero_iff, altDiags,
-    Array.size_map]
+/-- The judge's boundary-picture face, read by the driver after fulfilment:
+`shipped` says whether the picture's drawn box embeds — a picture the tool
+failed on ships a placeholder box, not an image, and W0378 has named that
+loss, so naming it here too would name one loss twice. The message speaks
+of a picture in the author's words — the source spelling is the engine's
+cache key (`picSrcPrefix`), never a word the author wrote — and the help
+names the one door that exists: a captioned figure
+(`\includegraphics[alt=...]` does not apply to a picture, and a bare
+picture has no alt declaration). -/
+def picAltDiags (doc : Doc) (spanOf : String → Option Span)
+    (shipped : String → Bool) : Array Diag :=
+  ((imagesSansAlt doc).filter fun src =>
+      src.startsWith picSrcPrefix && shipped src).map fun src =>
+    Diag.of .W0376
+      ("this picture ships no text alternative; assistive technology " ++
+        "reads nothing in its place (WCAG 2.2 SC 1.1.1)")
+      (spanOf src)
+      (help := some ("caption a figure around the picture: the caption " ++
+        "becomes the alternative; a bare picture has no alt key"))
+
+private theorem length_filter_partition (p : α → Bool) :
+    ∀ l : List α, (l.filter p).length + (l.filter (fun a => !p a)).length = l.length
+  | [] => rfl
+  | a :: l => by
+    have ih := length_filter_partition p l
+    cases h : p a <;> simp [h] <;> omega
+
+private theorem size_filter_partition (p : α → Bool) (as : Array α) :
+    (as.filter (fun a => !p a)).size + (as.filter p).size = as.size := by
+  have h1 := congrArg List.length (Array.toList_filter (p := fun a => !p a) (xs := as))
+  have h2 := congrArg List.length (Array.toList_filter (p := p) (xs := as))
+  have h3 := length_filter_partition p as.toList
+  simp only [Array.length_toList] at h1 h2 h3
+  omega
+
+/-- The two faces judge exactly the census, together: every shipped image
+with no text alternative is named by the file-image face or the picture
+face (with every picture shipped), and by only one. An image cannot
+escape without escaping the fold whose arms are all explicit — weak
+accessibility of images is a reported fact, never a discovery. -/
+theorem alt_judged_complete (doc : Doc) (spanOf : String → Option Span) :
+    (altDiags doc spanOf).size + (picAltDiags doc spanOf (fun _ => true)).size =
+      (imagesSansAlt doc).size := by
+  rw [altDiags, picAltDiags, Array.size_map, Array.size_map]
+  simp only [Bool.and_true]
+  exact size_filter_partition (fun src => src.startsWith picSrcPrefix)
+    (imagesSansAlt doc)
 
 /-- The text a link's body offers the accessibility tree: its plain text
 (icon labels and reference texts included, as `plainTextOne` reads them)

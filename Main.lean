@@ -477,10 +477,13 @@ cache needs no TeX installed. Failures are W0378 with the tool's own last
 words; the picture then ships as the placeholder box the diagnostic names.
 The inventory (`-v` and the porcelain phases) says per picture what came
 through the boundary: tool, version, hash, size. -/
-def resolvePictures (ui : Ui) (doc : Ir.Doc) :
+def resolvePictures (ui : Ui) (doc : Ir.Doc)
+    (imageSpans : Array (String × Span) := #[]) :
     IO (Array PicResult × Array Diag) := do
   let refs := Ir.pictureRefs doc
   if refs.isEmpty then return (#[], #[])
+  let spanFor (hash : String) : Option Span :=
+    (imageSpans.find? (·.1 == Ir.picSrcPrefix ++ hash)).map (·.2)
   let tool := doc.pictureTool.getD "lualatex"
   let t0 ← IO.monoMsNow
   -- The tool's identity: first line of `--version`, part of the cache key.
@@ -528,12 +531,13 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc) :
           ui.phase "boundary"
             s!"{tool} ({version}), {hash.take 16}, {bytes.size} bytes" (← since t0)
         else
-          diags := diags.push (DriverDiag.boundaryFailed tool "no PDF was produced")
+          diags := diags.push (DriverDiag.boundaryFailed tool "no PDF was produced"
+            (spanFor hash))
       | .error err =>
         let log ← try IO.FS.readFile (work / "pic.log") catch _ => pure ""
         let tail := logTail log
         diags := diags.push (DriverDiag.boundaryFailed tool
-          (if tail.isEmpty then err else tail))
+          (if tail.isEmpty then err else tail) (spanFor hash))
       -- The scratch directory is per-content and spent either way.
       try IO.FS.removeDirAll work catch _ => pure ()
   return (results, diags)
@@ -648,7 +652,7 @@ def picsToSvg (ui : Ui) (htmlPath : String) (pics : Array PicResult)
 
 /-- Read and decode the file, then run the front end, reporting phases.
 Returns the document, all diagnostics, and whether reading itself failed. -/
-def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := do
+def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag × Elab.ReqSpans)) := do
   let t0 ← IO.monoMsNow
   let bytes ← try
     pure (some (← IO.FS.readBinFile file))
@@ -688,7 +692,7 @@ def frontend (ui : Ui) (file : String) : IO (Option (Ir.Doc × Array Diag)) := d
     let (doc, bibDiags) ← resolveBibliography file doc reqSpans.bib
     unless bibDiags.isEmpty && (Ir.bibRefs doc).isEmpty do
       ui.phase "bib" s!"{(Ir.bibRefs doc).size} sources" (← since t)
-    return some (doc, elabDiags ++ bibDiags)
+    return some (doc, elabDiags ++ bibDiags, reqSpans)
 
 def build (ui : Ui) (file : String) : IO UInt32 := do
   let t0 ← IO.monoMsNow
@@ -696,7 +700,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
   | none =>
     ui.summary file 1 (← since t0)
     return 1
-  | some (doc, diags) =>
+  | some (doc, diags, reqSpans) =>
     let allowAll := ui.cfg.bestEffort
     let mut fired : Array String := #[]
     let mut accepted : Array String := #[]
@@ -729,12 +733,18 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.phase "font" s!"{names} ({paths})" (← since t)
       let t ← IO.monoMsNow
-      let (pics, picDiags) ← resolvePictures ui doc
+      let (pics, picDiags) ← resolvePictures ui doc reqSpans.images
       let rB ← ui.resolve doc.allow allowAll picDiags
       fired := fired ++ rB.fired
       accepted := accepted ++ rB.accepted
       warnings := warnings + rB.warnings
       let (imgs, imgDiags) ← loadImages file doc pics
+      -- The alt judge's picture face, after fulfilment: a picture the
+      -- tool failed on ships a placeholder box, not an image, and W0378
+      -- has named that loss — one loss, named once.
+      let imgDiags := imgDiags ++ Ir.picAltDiags doc
+        (fun src => (reqSpans.images.find? (·.1 == src)).map (·.2))
+        (fun src => imgs.entries.any fun en => en.src == src && en.info.isSome)
       let r2 ← ui.resolve doc.allow allowAll imgDiags
       fired := fired ++ r2.fired
       accepted := accepted ++ r2.accepted
@@ -770,12 +780,12 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let shipped := if doc.asserts.isEmpty then
           { pages := out.pages.size, fontsEmbedded := true : Check.Shipped }
         else Check.Shipped.ofOut geom fs out (fontsEmbedded := true)
-      -- The AA rows read the document and its elaborated diagnostics —
-      -- the judges speak before layout — so the driver fills them here,
-      -- from the pre-\allow stream: accepting a warning quiets the
-      -- report, never the fact.
+      -- The AA rows read the document and its judged diagnostics — the
+      -- picture face speaks after fulfilment, so the driver reads the
+      -- pre-\allow stream through that batch: accepting a warning quiets
+      -- the report, never the fact.
       let shipped := if doc.asserts.any (·.kind == .accessibilityAA) then
-          { shipped with a11y := Check.a11ySummary doc diags }
+          { shipped with a11y := Check.a11ySummary doc (diags ++ picDiags ++ imgDiags) }
         else shipped
       let failures := Check.all shipped doc.asserts
       unless doc.asserts.isEmpty do
@@ -887,7 +897,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
 def dump (ui : Ui) (file : String) : IO UInt32 := do
   match ← frontend ui file with
   | none => return 1
-  | some (doc, diags) =>
+  | some (doc, diags, _) =>
     IO.print (Ir.dump doc diags)
     return (if countErrors diags > 0 then 1 else 0)
 

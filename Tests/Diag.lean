@@ -154,7 +154,10 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       "x\n\\maketitle")
   | .W0374 => dvE ("\\documentclass{card}\n\\begin{document}\n" ++
       "x\\footnote{an aside}\n\\end{document}")
-  | .W0376 => dvE (dvDoc "" "\\includegraphics{chart.png}")
+  | .W0376 => dvE (dvDoc "" "\\includegraphics{chart.png}") ++
+      Ir.picAltDiags (elabStr (dvDoc "\\pictures{ tool = lualatex }\n"
+          "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")).1
+        (fun _ => none) (fun _ => true)
   | .W0377 => dvE (dvDoc "" "\\href{https://example.org/x}{}")
   | .W0381 => dvE (dvDoc "" "\\qty{9.81}{\\banana}")
   | .W0001 => dvE (dvDoc "" "x\n\\end{document}\nleft over")
@@ -654,6 +657,27 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "alt_judged_complete's face: judge silent iff census empty"
     ((Ir.altDiags bare).isEmpty == (Ir.imagesSansAlt bare).isEmpty &&
       !(Ir.altDiags bare).isEmpty)
+  t "the judge names the image's own line"
+    ((dvE (dvDoc "" "\\includegraphics{chart.png}")).any fun d =>
+      d.code == "W0376" && d.span == some ⟨"t", ⟨3, 1⟩⟩)
+  -- The picture face: judged by the driver after fulfilment, in the
+  -- author's words (the source spelling is the engine's cache key).
+  let door := "\\pictures{ tool = lualatex }\n"
+  let pic := "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}"
+  let (picDoc, picDs) := elabStr (dvDoc door pic)
+  t "elaboration leaves a boundary picture to the driver's judge"
+    (picDs.all (·.code != "W0376"))
+  let firedPic := Ir.picAltDiags picDoc (fun _ => none) (fun _ => true)
+  t "a shipped picture with no alternative fires W0376 in the author's words"
+    (firedPic.size == 1 && firedPic.all fun d =>
+      (d.message.splitOn "picture").length == 2 &&
+      (d.message.splitOn Ir.picSrcPrefix).length == 1)
+  t "a picture the tool failed on is not double-named (W0378 spoke)"
+    ((Ir.picAltDiags picDoc (fun _ => none) (fun _ => false)).isEmpty)
+  t "a captioned figure around the picture silences the picture face"
+    ((Ir.picAltDiags (elabStr (dvDoc door ("\\begin{figure}" ++ pic ++
+        "\\caption{A synthetic diagram}\\end{figure}"))).1
+      (fun _ => none) (fun _ => true)).isEmpty)
   -- W0377 (WCAG 2.2 SC 2.4.4) fires on a link with no reading and is
   -- silenced by each escape: link text, or an image alternative inside.
   t "a link with no text fires W0377"

@@ -106,10 +106,11 @@ def boundaryToolMissing (tool err : String) : Diag :=
 cache needs no tool")
 
 /-- W0378: the boundary tool ran and failed on one picture; `logTail` is
-the tool's own last words. -/
-def boundaryFailed (tool : String) (logTail : String) : Diag :=
+the tool's own last words, and `span` is where the picture stands. -/
+def boundaryFailed (tool : String) (logTail : String) (span : Option Span := none) : Diag :=
   Diag.of .W0378
     s!"'{tool}' failed on a picture; a placeholder box marks its place"
+    span
     (help := if logTail.isEmpty then s!"{tool}'s log says nothing usable"
       else s!"{tool} says: {logTail}")
 
