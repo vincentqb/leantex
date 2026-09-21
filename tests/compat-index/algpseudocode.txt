@@ -1,0 +1,7 @@
+# source: algorithmicx manual §2.2 — algpseudocode is the algorithmicx
+# bundle's command layout; its documented surface is the algorithmic
+# environment's, probed row by row in algorithmicx.txt. These rows pin the
+# package name's own load and the layout's signature spellings.
+body impl \begin{algorithmic}[1]\State x\end{algorithmic}
+body impl \begin{algorithmic}\Require an invented list\Ensure the same list\end{algorithmic}
+body impl \begin{algorithmic}\Function{F}{$x$}\State \Return $x$\EndFunction\end{algorithmic}

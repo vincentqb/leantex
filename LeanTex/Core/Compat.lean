@@ -41,7 +41,8 @@ def nativePackages : List String :=
    "appendixnumberbeamer", "natbib",
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
-   "cleveref", "listings", "minted", "siunitx"]
+   "cleveref", "listings", "minted", "siunitx",
+   "algorithm2e", "algorithmicx", "algpseudocode", "algorithm"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=

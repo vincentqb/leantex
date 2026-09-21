@@ -1,0 +1,43 @@
+# source: algorithm2e manual (rel. 5.3) §5 (environments and basic commands),
+# §9 (predefined keywords: \KwIn, \For, \eIf, \Repeat, \Return, comments),
+# §6 (\SetKw and family), §7 (display options). A display setting outside
+# the model is N0102, named and ignored; a construct outside the modeled
+# subset is W0383, its content kept as plain lines.
+body impl \begin{algorithm}\caption{An invented pass.}x\;\end{algorithm}
+body impl \begin{algorithm}[H]x\;\end{algorithm}
+body impl \begin{algorithm2e}x\;\end{algorithm2e}
+body impl \begin{algorithm}\caption{c}\label{alg:probe}x\;\end{algorithm}
+body impl \begin{algorithm}\KwIn{an invented list}\end{algorithm}
+body impl \begin{algorithm}\KwOut{the same list}\end{algorithm}
+body impl \begin{algorithm}\KwData{a knob}\end{algorithm}
+body impl \begin{algorithm}\KwResult{a verdict}\end{algorithm}
+body impl \begin{algorithm}\For{$i$}{x\;}\end{algorithm}
+body impl \begin{algorithm}\For{$i \gets 1$ \KwTo $n$}{x\;}\end{algorithm}
+body impl \begin{algorithm}\ForEach{$e$}{x\;}\end{algorithm}
+body impl \begin{algorithm}\ForAll{$e$}{x\;}\end{algorithm}
+body impl \begin{algorithm}\While{$c$}{x\;}\end{algorithm}
+body impl \begin{algorithm}\If{$c$}{x\;}\end{algorithm}
+body impl \begin{algorithm}\eIf{$c$}{x\;}{y\;}\end{algorithm}
+body impl \begin{algorithm}\uIf{$c$}{x\;}\ElseIf{$d$}{y\;}\Else{z\;}\end{algorithm}
+body impl \begin{algorithm}\Repeat{$c$}{x\;}\end{algorithm}
+body impl \begin{algorithm}\Return{$r$}\;\end{algorithm}
+body impl \begin{algorithm}\tcc{an invented remark}x\;\end{algorithm}
+body impl \begin{algorithm}x\tcp*{an invented remark}\end{algorithm}
+body impl \begin{algorithm}\LinesNumbered x\;\end{algorithm}
+body impl \begin{algorithm}\DontPrintSemicolon x\;\end{algorithm}
+body impl \begin{algorithm}\SetKwInOut{Params}{params}\Params{a knob}\end{algorithm}
+pre impl \SetKw{KwGoal}{goal}
+pre impl \SetKwInOut{Params}{params}
+pre impl \SetKwInput{KwReq}{requires}
+pre impl \SetKwFunction{FMain}{Main}
+pre impl \SetKwData{DTot}{total}
+pre impl \DontPrintSemicolon
+pre impl \LinesNumbered
+pre refuse:N0102 \SetAlgoNoEnd
+pre refuse:N0102 \SetInd{0.5em}{1em}
+body refuse:N0102 \begin{algorithm}\SetAlgoLined x\;\end{algorithm}
+body refuse:N0102 \begin{algorithm}\SetAlgoVlined x\;\end{algorithm}
+body refuse:W0383 \begin{algorithm}\lIf{$a$}{x}\end{algorithm}
+body refuse:W0383 \begin{algorithm}\Begin{x\;}\end{algorithm}
+body refuse:W0383 \begin{algorithm}\Switch{$s$}{\Case{$1$}{x\;}\Other{y\;}}\end{algorithm}
+body refuse:W0301 \listofalgorithms

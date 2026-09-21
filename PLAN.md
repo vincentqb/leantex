@@ -194,6 +194,38 @@ is.
   byte-identical; the deck's page census and stylesheet theorems restated
   over the extended rule set.
 
+2026-09-21 — pseudocode as a value (pkg-algorithm): algorithm2e and
+algorithmicx parse onto one IR node.
+
+- `Block.algorithm` — lines of rich text (`AlgLine`: depth, closed
+  `AlgKind`, content, comment) inside the float machinery via
+  `FloatKind.algorithm`; the caption word joins the locale record for
+  en/fr/de, cited from algorithm2e's own `\algorithmcfname` options.
+  Keywords are generated text from the locale keyword table
+  (`Ir.algWords`, algorithm2e's `\SetKw…` defaults), rendered at the one
+  site both backends read (`AlgLine.rendered`); the census counts
+  content and comment only (`algorithm_text`). Every walk carries the
+  explicit arm per the obligation table; dim, map, number, recolor keep
+  their `_text` theorems through the new arms.
+- Two surfaces, one value: algorithm2e's grouped grammar (`\;`
+  terminator, `\For{c}{b}` block forms expanded on a bounded work
+  stack) and algorithmicx's flat `\For`…`\EndFor` both parse to the
+  same lines. `\SetKw`/`\SetKwInOut`/`\SetKwFunction`/`\SetKwData` are
+  document-global (preamble PDecl arms — compose-fuzz green) and
+  substitute inside content; display settings outside the model are
+  N0102 by name; a construct outside the subset is **W0383**
+  (`.pending`), its content kept as plain lines.
+- PDF: each line a display-type paragraph, depth × the `algindent`
+  token (algorithm2e's `\SetInd{0.5em}{1em}` + 0.4 pt ≈ 1.5 em), line
+  numbers as markers in the muted role held to one column
+  (`ParaJob.markerIndent`). HTML: nested `<ol>`s built depth-driven,
+  one CSS counter for the numbers — declarative, no script. The
+  HTML-vs-PDF line-census agreement is pinned by an executable oracle
+  (`algorithmBackendChecks`); the theorem form over a factored nesting
+  builder with a typed-tree text census is the named remainder.
+  Vertical block lines (`\SetAlgoLined`) are not drawn: named N0102
+  until layout grows a vertical-rule op.
+
 2026-09-21 — the graphics boundary is live (tikz-boundary): heavy TikZ
 runs in real TeX at the edge; the engine places a measured vector box.
 

@@ -1,0 +1,19 @@
+# source: algorithmicx manual §2 (the algorithmic environment, algpseudocode
+# layout): \State, the \For/\While/\If/\Repeat/\Function block forms with
+# their \End commands, \Require/\Ensure, \Return, \Comment, \Call. A
+# construct outside the modeled subset is W0383.
+body impl \begin{algorithmic}\State x\end{algorithmic}
+body impl \begin{algorithmic}[1]\State x\end{algorithmic}
+body impl \begin{algorithmic}\Require an invented list\end{algorithmic}
+body impl \begin{algorithmic}\Ensure the same list\end{algorithmic}
+body impl \begin{algorithmic}\For{$i$}\State x\EndFor\end{algorithmic}
+body impl \begin{algorithmic}\ForAll{$e$}\State x\EndFor\end{algorithmic}
+body impl \begin{algorithmic}\While{$c$}\State x\EndWhile\end{algorithmic}
+body impl \begin{algorithmic}\If{$c$}\State x\ElsIf{$d$}\State y\Else\State z\EndIf\end{algorithmic}
+body impl \begin{algorithmic}\Repeat\State x\Until{$c$}\end{algorithmic}
+body impl \begin{algorithmic}\Function{F}{$x$}\State y\EndFunction\end{algorithmic}
+body impl \begin{algorithmic}\Procedure{P}{$x$}\State y\EndProcedure\end{algorithmic}
+body impl \begin{algorithmic}\State \Return $r$\end{algorithmic}
+body impl \begin{algorithmic}\State x \Comment{an invented remark}\end{algorithmic}
+body impl \begin{algorithmic}\State \Call{F}{$x$}\end{algorithmic}
+body refuse:W0383 \begin{algorithmic}\Loop\State x\EndLoop\end{algorithmic}

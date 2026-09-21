@@ -1,0 +1,7 @@
+# source: the algorithms bundle manual (algorithm.sty) §3: the {algorithm}
+# float wrapper, its \caption, and \listofalgorithms. The float stands
+# where written (a single-pass engine has nowhere for a float to float);
+# the list of algorithms is refused by name.
+body impl \begin{algorithm}\caption{An invented pass.}\begin{algorithmic}\State x\end{algorithmic}\end{algorithm}
+body impl \begin{algorithm}[H]\begin{algorithmic}\State x\end{algorithmic}\end{algorithm}
+body refuse:W0301 \listofalgorithms
