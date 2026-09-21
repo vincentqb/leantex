@@ -201,7 +201,60 @@ def daylight : Theme :=
                       separator := some (accent, some "separator") })] }
     chrome := builtinChrome }
 
-def builtin : List Theme := [moloch, plain, daylight]
+/-- The Gemini poster lineage as a token bundle: a blue headline band with
+near-white text, blue block titles on the page, alert and example blocks
+carrying the band's pair. Values map beamercolorthemegemini.sty
+(github.com/anishathalye/gemini) onto the semantic keys, each entry's
+original spelling beside it; the poster class is the intended consumer
+(its headline band and titled blocks read exactly these roles), and the
+bundle deliberately declares no chrome and no slides furniture styles —
+the poster class never draws them (W0355 names an install that would be
+inert). -/
+def gemini : Theme :=
+  let blue : Color := { r := 0x40, g := 0x73, b := 0x9E }      -- blue, RGB 64,115,158
+  let lightgray : Color := { r := 0xF5, g := 0xF6, b := 0xFA } -- lightgray, RGB 245,246,250
+  let darkblue : Color := { r := 0x27, g := 0x3C, b := 0x75 }  -- darkblue, RGB 39,60,117
+  let fg := Color.black                                        -- palette primary fg=black
+  let bg := Color.white                                        -- palette primary bg=white
+  { name := "gemini"
+    palette := {
+      entries := #[
+        ("fg", fg), ("bg", bg),
+        -- The lineage leaves alerted/example text to beamer's defaults
+        -- (beamercolorthemedefault.sty: `alerted text` fg=red, `example
+        -- text` fg=green!50!black). red reads 4.00:1 on this page, under
+        -- the 4.5:1 WCAG 2.2 SC 1.4.3 asks of text; this is the same hue
+        -- at the lightness the realization rule chooses on this ground
+        -- (Contrast.realize; 4.53:1), moloch's alert precedent.
+        ("alert", { r := 0xEE, g := 0x00, b := 0x00 }),
+        ("example", { r := 0x00, g := 0x80, b := 0x00 }),      -- green!50!black
+        -- The same 70:30 ink-into-page muted rule the other bundles use
+        -- (8.45:1 here); gemini declares no muted step of its own.
+        ("muted", fg.mix 70 bg),                               -- fg!70!bg
+        ("frametitlefg", lightgray), ("frametitlebg", blue),   -- headline fg/bg
+        ("blocktitlefg", blue),                                -- block title fg=blue (bg=white: the page, no bar)
+        ("alerttitlefg", lightgray), ("alerttitlebg", blue),   -- block alerted title
+        ("exampletitlefg", blue), ("exampletitlebg", lightgray), -- block example title
+        ("standoutfg", bg), ("standoutbg", fg),                -- palette tertiary bg=black,fg=white
+        ("separator", darkblue)]                               -- headline rule bg=darkblue
+      -- Covered overlay content keeps each colour at 30% of itself over
+      -- the page, mixed in Oklab. At Material's 38% disabled-state
+      -- default this bundle's alert and example read at 2.70:1 and
+      -- 2.99:1 against their active forms — under the 3:1 WCAG 2.2
+      -- SC 1.4.11 asks of state-identifying information; 30% is the
+      -- largest fraction where every text role clears it
+      -- (Contrast.builtin_designs_covered is the kernel check).
+      coveredFraction := some 30 }
+    styles := { entries := #[
+      -- The headline band centres its title matter (beamerthemegemini.sty,
+      -- headline template: the logo columns keep space on both sides "to
+      -- keep title centered") — declared here, the alignment token the
+      -- band reads, never a hard-coded centring. The separator is the
+      -- lineage's headline rule, in its own colour.
+      ("titlepage", { align := some "center"
+                      separator := some (darkblue, some "separator") })] } }
+
+def builtin : List Theme := [moloch, plain, daylight, gemini]
 
 /-- A role resolves at one site: `Palette.find?` is the single reader of
 the entries, and `Palette.resolve` — the evaluator `\textcolor` and every

@@ -2161,3 +2161,31 @@ def deckLogoChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let (_, ads) := HtmlDoc.emit {} adoc
   t "an article's logo is still a named drop"
     (ads.any (·.code == "W0007"))
+
+/-- The gemini poster bundle: the lineage resolves by name (`\usetheme{gemini}`
+and the native `\theme{gemini}` both retire W0319), it installs nothing the
+poster class leaves inert (no W0355), and the titled blocks read the
+lineage's bars through the one resolving site (`Ir.titledLook`). Values are
+pinned by the kernel contracts over `Theme.builtin`; these checks pin the
+install reaching a poster document. Own function: `main`'s elaboration
+budget. -/
+def geminiChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let blue : Ir.Color := { r := 0x40, g := 0x73, b := 0x9E }
+  let poster (pre body : String) := "\\documentclass{poster}" ++ pre ++
+    "\\begin{document}\\begin{frame}" ++ body ++ "\\end{frame}\\end{document}"
+  let blocks := "\\begin{block}{Panel}x\\end{block}\\begin{alertblock}{Hot}y\\end{alertblock}"
+  let (doc, ds) := elabStr (poster "\\theme{gemini}" blocks)
+  t "gemini resolves by name" (!ds.any (·.code == "W0319"))
+  t "gemini installs nothing the poster class leaves inert"
+    (!ds.any (·.code == "W0355"))
+  t "gemini turns the frame-title band pair on"
+    ((Ir.Design.ofDoc doc).frametitle ==
+      some { fg := { r := 0xF5, g := 0xF6, b := 0xFA }, bg := blue })
+  t "gemini's alert block title is a bar in the band's pair"
+    ((Ir.titledLook doc.palette .alert).bar == some blue)
+  t "gemini's plain block title is barless in the lineage's blue"
+    (Ir.titledLook doc.palette .block ==
+      { fg := blue, bar := none })
+  t "usetheme gemini reaches the same bundle"
+    (!(elabStr (poster "\\usetheme{gemini}" blocks)).2.any (·.code == "W0319"))

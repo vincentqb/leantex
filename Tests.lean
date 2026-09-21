@@ -149,6 +149,7 @@ def themeSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   roleInvocationChecks ref
   realizedChecks ref
   roleShadowChecks ref
+  geminiChecks ref
 
 /-- The font-face blocks (Tests/FontMath.lean), run unconditionally:
 fontSuiteChecks owns reporting a missing or unparsable font, so none of
