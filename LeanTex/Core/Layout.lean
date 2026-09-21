@@ -1586,6 +1586,14 @@ private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
   | .float _ _ _ body caption =>
     weightKeysBlockList (weightKeysInlineList acc {} caption.toList) body.toList
   | .table _ _ _ rows _ => weightKeysTableRows acc rows.toList
+  -- A line's content and comment set at the base style; the generated
+  -- keyword bold is a corner face, not an off-corner key.
+  | .algorithm _ _ lines =>
+    lines.foldl (fun a l =>
+      let a := weightKeysInlineList a {} l.content.toList
+      match l.comment with
+      | some c => weightKeysInlineList a {} c.toList
+      | none => a) acc
   | .logo content => weightKeysInlineList acc {} content.toList
   | .picture pic =>
     pic.labelContents.foldl (fun a c => weightKeysInlineList a {} c.toList) acc
