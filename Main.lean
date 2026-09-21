@@ -134,6 +134,33 @@ def texFontDirs : IO (List String) := do
 /-- The scan produced nothing usable at all. -/
 def noFontDiag : Diag := DriverDiag.noFont
 
+/-- Deflate through the content-hash cache: the compressed stream the PDF
+embeds for these bytes, computed once per content and engine version. A
+font file's deflate costs ~300 ms/MB and its bytes never change between
+builds, so every build after the first reads a file instead. The cached
+value is `Flate.deflate`'s own output byte for byte — a hit equals a
+recomputation — and a file that does not open with the zlib header the
+compressor writes is a miss, never a corrupt embed. -/
+def deflateCached (bytes : ByteArray) : IO ByteArray := do
+  let some root ← FontDb.cacheDir | return Flate.deflate bytes
+  let path := root / "flate" / s!"{Flate.contentKey bytes}-{LeanTex.version}.z"
+  if let .ok z ← IO.FS.readBinFile path |>.toBaseIO then
+    if z[0]? == some 0x78 && z[1]? == some 0x9C then
+      return z
+  let z := Flate.deflate bytes
+  try
+    if let some parent := path.parent then IO.FS.createDirAll parent
+    IO.FS.writeBinFile path z
+  catch _ => pure ()
+  return z
+
+/-- The per-face deflated streams `Pdf.write` embeds, through the cache. -/
+def fontZdata (fonts : Array Font.Font) : IO (Array (Option ByteArray)) := do
+  let mut zdata : Array (Option ByteArray) := #[]
+  for f in fonts do
+    zdata := zdata.push (some (← deflateCached f.data))
+  return zdata
+
 /-- Every face a document can reach: the three family slots crossed with the
 four bold/italic variants, loaded once and deduplicated by path. Faces the
 document never uses are still loaded but not embedded — `usedGlyphs` decides
@@ -160,7 +187,8 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
       match ← loadOverride path with
       | .error d => return .error d
       | .ok (f, path) =>
-        return .ok ({ fonts := #[f], index := singleFaceIndex }, #[], path)
+        return .ok ({ fonts := #[f], index := singleFaceIndex
+                      zdata := ← fontZdata #[f] }, #[], path)
   let mut diags : Array Diag := #[]
   let mut docDirs : List String := []
   for d in spec.dirs do
@@ -327,7 +355,8 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
       match Font.parse data with
       | .error _ => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
       | .ok f =>
-        return .ok ({ fonts := #[f], index := singleFaceIndex }, diags, face.path)
+        return .ok ({ fonts := #[f], index := singleFaceIndex
+                      zdata := ← fontZdata #[f] }, diags, face.path)
   -- Per-glyph fallback: map every scalar the document uses to the first
   -- declared face covering it; scalars none covers go to the scan.
   let mut fallback : Array (Char × Nat) := #[]
@@ -356,7 +385,8 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     fonts := fonts
     index := index
     fallback := fallback
-    math := mathIdx }
+    math := mathIdx
+    zdata := ← fontZdata fonts }
   return .ok (set, diags, String.intercalate ", " paths.toList)
 
 /-- The bibliography request an elaborated document states (`Ir.bibRefs`),
@@ -562,19 +592,53 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
       try IO.FS.removeDirAll work catch _ => pure ()
   return (results, diags)
 
+/-- Where the image cache files a decoded object: beside the font and
+boundary caches, keyed by the *content* (so a re-exported file under the
+same name re-decodes and an unchanged one never does) and by the engine
+version (an upgraded decoder re-decodes; `Image.decodeBin`'s magic
+already orphans a format change). -/
+def imageCachePath (bytes : ByteArray) : IO (Option System.FilePath) := do
+  let some root ← FontDb.cacheDir | return none
+  return some (root / "imgs" / s!"{Flate.contentKey bytes}-{LeanTex.version}.img")
+
+/-- Decode through the image cache. Only the decode that does real work —
+an alpha PNG's inflate, unfilter, split, deflate (`Image.decodeRecodes`) —
+is worth a disk read; everything else decodes directly. The cached value
+is the pure decode's own output (`Image.encodeBin`), so a hit equals a
+recomputation — `decodeBin_encodeBin_id`, the transparency statement.
+Returns whether this was a hit, for the phase line. -/
+def decodeImageCached (bytes : ByteArray) : IO (Except String Image.Info × Bool) := do
+  unless Image.decodeRecodes bytes do return (Image.decode bytes, false)
+  let path? ← imageCachePath bytes
+  if let some path := path? then
+    if let .ok blob ← IO.FS.readBinFile path |>.toBaseIO then
+      if let some info := Image.decodeBin blob then
+        return (.ok info, true)
+  let res := Image.decode bytes
+  if let some path := path? then
+    if let .ok info := res then
+      try
+        if let some parent := path.parent then IO.FS.createDirAll parent
+        IO.FS.writeBinFile path (Image.encodeBin info)
+      catch _ => pure ()
+  return (res, false)
+
 /-- The image request an elaborated document states (`Ir.imageRefs`),
 fulfilled: each path resolves against the document's own directory, like
-`\input`, and decodes in the pure core. A boundary picture's source
+`\input`, and decodes in the pure core — through the content-hash cache
+when the decode is the expensive kind. A boundary picture's source
 (`Ir.picSrcPrefix`) is fulfilled from the resolved boundary results
 instead of the filesystem. A file that is missing or refuses
 to decode keeps its entry with no payload — layout places a placeholder box
 of the requested size, so the document still compiles and the diagnostic
-here says why the figure is a box. -/
+here says why the figure is a box. The `Nat` returned is the cache-hit
+count, for the phase line. -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[]) :
-    IO (Image.Store × Array Diag) := do
+    IO (Image.Store × Array Diag × Nat) := do
   let dir := (System.FilePath.mk file).parent.getD "."
   let mut entries : Array Image.Loaded := #[]
   let mut diags : Array Diag := #[]
+  let mut hits := 0
   for src in Ir.imageRefs doc do
     if src.startsWith Ir.picSrcPrefix then
       -- A boundary picture: the driver has already run (or refused) the
@@ -616,12 +680,14 @@ def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[]) :
     match bytes? with
     | none => entries := entries.push { src, href }
     | some bytes =>
-      match Image.decode bytes with
+      let (res, fromCache) ← decodeImageCached bytes
+      if fromCache then hits := hits + 1
+      match res with
       | .ok info => entries := entries.push { src, href, info := some info }
       | .error e =>
         entries := entries.push { src, href }
         diags := diags.push (DriverDiag.imageUndecodable src (toString e))
-  return ({ entries := entries }, diags)
+  return ({ entries := entries }, diags, hits)
 
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
@@ -758,7 +824,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       fired := fired ++ rB.fired
       accepted := accepted ++ rB.accepted
       warnings := warnings + rB.warnings
-      let (imgs, imgDiags) ← loadImages file doc pics
+      let (imgs, imgDiags, imgHits) ← loadImages file doc pics
       -- The alt judge's picture face, after fulfilment: a picture the
       -- tool failed on ships a placeholder box, not an image, and W0378
       -- has named that loss — one loss, named once.
@@ -770,7 +836,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       accepted := accepted ++ r2.accepted
       warnings := warnings + r2.warnings
       unless imgs.entries.isEmpty do
-        ui.phase "images" s!"{imgs.entries.size} files" (← since t)
+        let cached := if imgHits == 0 then "" else s!", {imgHits} cached"
+        ui.phase "images" s!"{imgs.entries.size} files{cached}" (← since t)
       let t ← IO.monoMsNow
       -- The main language's patterns; a language whose table has not
       -- landed is honestly unhyphenated (W0368 already named it).
