@@ -3,10 +3,13 @@
 % \pgfmathtruncatemacro arithmetic (max, *), labelled by \node with the
 % \k/\lbl pair form, the label colour picked by ifthenelse over a
 % comparison, under [scale=]. One construct outside the subset
-% (\draw ... circle) is deliberate: it must be diagnosed by name (W0330)
-% while every supported shape around it still draws. Invented content and
-% design.
+% (\draw ... circle) is deliberate: it must be diagnosed by name (W0334)
+% while every supported shape around it still draws. The boundary is open
+% by default and would route the whole picture, so the subset witness
+% declares the refusal. Invented content and design.
 \documentclass{article}
+
+\pictures{ tool = none }
 
 \fonts{ dir = "fonts", body = "Source Serif Pro" }
 

@@ -98,7 +98,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       { kind := .pages .eq 1, span := none }).toArray
   | .E0331 => dvE "\\includegraphics[width=banana]{x.png}"
   | .E0332 => dvE (dvDoc "\\palette{covered = 100\\%}\n" "x")
-  | .E0333 => dvE (dvDoc "" ("\\begin{tikzpicture}\n" ++
+  | .E0333 => dvE (dvDoc "\\pictures{ tool = none }\n" ("\\begin{tikzpicture}\n" ++
       "\\fill (\\nope,0) rectangle (1,1);\n\\end{tikzpicture}"))
   | .E0336 => dvE (dvDoc "" "\\begin{banner}{Logo}\nx\n\\end{banner}")
   | .E0340 => dvE "\\faIcon{no-such-icon}"
@@ -190,7 +190,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0015 => dvE "\\begin{align}a &= b\\end{align}"
   | .W0101 => dvE (dvDoc "\\usepackage[voffset=1in]{geometry}\n" "x")
   | .W0102 => dvE (dvDoc "\\definecolor{c}{hsb}{0.5,0.5,0.5}\n" "x")
-  | .W0103 => dvE (dvDoc "\\usepackage{pgfplots}\n" "x")
+  | .W0103 => dvE (dvDoc "\\usepackage{nosuchpkg}\n" "x")
   | .W0104 => dvE (dvDoc (String.intercalate "\n"
       ["\\directlua{tex.print('x')}", "\\raggedright",
        "\\sloppy", "\\selectlanguage{german}", "\\pagestyle{headings}",
@@ -255,7 +255,7 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0333 => dvL one (dvDeck "\\theme{moloch}\\title{T}\\author{A}\n"
       (s!"\\maketitle\n\\framefoot\{{String.ofList (List.replicate 100 '0')}}\n" ++
        "\\begin{frame}{F}\nx\n\\end{frame}"))
-  | .W0334 => dvE (dvDoc "" ("\\begin{tikzpicture}\n" ++
+  | .W0334 => dvE (dvDoc "\\pictures{ tool = none }\n" ("\\begin{tikzpicture}\n" ++
       "\\draw (0,0) circle (1);\n\\end{tikzpicture}"))
   | .W0335 => dvL one (dvDoc "" ("\\begin{tikzpicture}\n" ++
       "\\fill (0,0) rectangle (40,1);\n\\end{tikzpicture}"))
@@ -291,19 +291,20 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       "\\note{\\begin{frame}{Carried}\nspoken \\note{never carried} words\n\\end{frame}}")
   | .W0601 => #[DriverDiag.imageMissing "figures/plot.png" "/documents/figures/plot.png",
       DriverDiag.imageUnreadable "figures/plot.png" "permission denied (error code: 13)"]
-  | .W0362 => dvE (dvDoc "" ("\\begin{tikzpicture}\n" ++
+  | .W0362 => dvE (dvDoc "\\pictures{ tool = none }\n" ("\\begin{tikzpicture}\n" ++
       "\\shade (0,0) rectangle (1,1);\n\\end{tikzpicture}"))
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
       "not a PNG, JPEG, or PDF file"]
-  | .N0023 => dvE (dvDoc "\\pictures{ tool = lualatex }\n"
+  -- The boundary is open by default: no declaration, and the picture
+  -- routes; the trust label names it.
+  | .N0023 => dvE (dvDoc ""
       "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
   | .W0383 => dvE (dvDoc ""
       "\\begin{algorithm}\n\\lIf{$x < 0$}{negate $x$}\\;\n\\end{algorithm}")
   | .W0387 => dvE (dvDoc "\\thispagestyle{plain}\n" "x")
-  | .W0379 => dvE (dvDoc ""
-      "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
-  | .W0378 => #[DriverDiag.boundaryToolMissing "lualatex" "not found",
-      DriverDiag.boundaryFailed "lualatex"
+  -- W0379 is the driver's: a stated request no available tool can fulfil.
+  | .W0379 => #[DriverDiag.boundaryToolUnavailable "lualatex"]
+  | .W0378 => #[DriverDiag.boundaryFailed "lualatex"
         "! Undefined control sequence. · l.7 \\nope",
       DriverDiag.boundarySvgMissing "not found (error code: 2)"]
   | .W0349 => dvE "\\ref{nowhere}"
@@ -649,6 +650,15 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((dvE (dvDoc "" ("\\begin{figure}\\includegraphics{chart.png}" ++
         "\\caption{A synthetic chart}\\end{figure}"))).any
       (·.code == "W0376")) == false)
+  -- A boundary picture's absent alternative is the trust label's fact:
+  -- N0023 already says its text is not in the census and its help names
+  -- the same fix (a caption or alt), and the route was the engine's
+  -- default, not a declared image — one loss, one diagnostic.
+  let (routed, routedDs) := elabStr (dvDoc ""
+    "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
+  t "a boundary picture is N0023's fact, not W0376's"
+    ((Ir.imagesSansAlt routed).isEmpty &&
+     routedDs.all (·.code != "W0376") && routedDs.any (·.code == "N0023"))
   -- The theorem's executable face: the judge and the census agree on the
   -- offender.
   let (bare, _) := elabStr (dvDoc "" "\\includegraphics{chart.png}")

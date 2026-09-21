@@ -207,7 +207,7 @@ warning[W0101]: geometry keys without a native equivalent were dropped: voffset
 ── W0102 (degraded) unsupported colour model
 warning[W0102]: colour model 'hsb' is not supported; use HTML, rgb, or cmyk
 ── W0103 (config) unsupported package skipped
-warning[W0103]: package 'pgfplots' is not supported; skipped
+warning[W0103]: package 'nosuchpkg' is not supported; skipped
 ── W0104 (config) unsupported TeX construct skipped
 warning[W0104]: '\directlua' is Lua code for luatex; the engine does not run Lua, so it is skipped
   help: \allow{W0104} accepts the skip
@@ -443,15 +443,13 @@ warning[W0376]: this picture ships no text alternative; assistive technology rea
 warning[W0377]: link 'https://example.org/x' carries no text; assistive technology reads nothing to name its purpose (WCAG 2.2 SC 2.4.4)
   help: give the link visible text — \href{...}{words} — or an image with alt inside it
 ── W0378 (degraded) the boundary tool failed; a placeholder box marks the picture
-warning[W0378]: cannot run the boundary tool 'lualatex': not found; a placeholder box marks each picture
-  help: install lualatex, or remove the \pictures declaration; a warm cache needs no tool
 warning[W0378]: 'lualatex' failed on a picture; a placeholder box marks its place
   help: lualatex says: ! Undefined control sequence. · l.7 \nope
 warning[W0378]: cannot run 'pdftocairo' to convert boundary pictures for the HTML artifact: not found (error code: 2)
   help: install poppler's pdftocairo, or \allow{W0378} accepts the loss; the PDF artifact is unaffected
-── W0379 (config) no boundary tool declared for a picture outside the rendered subset
-warning[W0379]: a picture reaches outside the rendered subset and no boundary tool is declared
-  help: \pictures{ tool = lualatex } draws such pictures whole with a real TeX at the boundary
+── W0379 (degraded) no boundary tool available for a picture outside the rendered subset; a placeholder box marks each picture
+warning[W0379]: no boundary tool is available for a picture outside the rendered subset; a placeholder box marks each picture
+  help: install lualatex, or \pictures{ tool = none } accepts the placeholder; a warm cache needs no tool
 ── W0380 (degraded) a \cref target of unknown kind; the plain number is set
 warning[W0380]: 'stepped' names a bare counter step, not a heading, equation, or float; the plain number is set
   help: reference it with \ref, or move the \label after the numbered thing it should name

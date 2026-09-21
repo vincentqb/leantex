@@ -293,7 +293,7 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .W0377 => ("0377", .degraded, "a link carries no text to name its purpose (WCAG 2.2)")
   | .N0023 => ("0023", .info, "a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census")
   | .W0378 => ("0378", .degraded, "the boundary tool failed; a placeholder box marks the picture")
-  | .W0379 => ("0379", .config, "no boundary tool declared for a picture outside the rendered subset")
+  | .W0379 => ("0379", .degraded, "no boundary tool available for a picture outside the rendered subset; a placeholder box marks each picture")
   | .W0380 => ("0380", .degraded, "a \\cref target of unknown kind; the plain number is set")
   | .W0381 => ("0381", .degraded, "a unit outside the siunitx table; set as its ASCII spelling")
   | .W0383 => ("0383", .pending, "algorithm construct outside the modeled subset; kept as a plain line")

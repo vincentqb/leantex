@@ -2503,6 +2503,19 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
       | some inf => (inf.width, inf.height)
       | none => (Dim.inch 1, Dim.inch 1) -- the placeholder square: a stated default (comment above), not a design token — the driver already named the load failure
     let (w, h) := Image.resolveSize spec iW iH textW textH
+    -- A boundary picture wider than the measure fits it: the box is the
+    -- engine's to measure and place (N0023's claim), it is vector — the
+    -- form's `/Matrix` scales losslessly — and the document declared no
+    -- size to honour, so the only alternatives are an overrun off the
+    -- page or a warning about a route the engine chose by default. A
+    -- declared `\includegraphics` size is the author's and is never
+    -- touched, nor is any ordinary image (LaTeX's overfull, W0005, stays
+    -- honest there).
+    let (w, h) :=
+      if src.startsWith Ir.picSrcPrefix && spec.width.isNone &&
+          spec.height.isNone && w > textW && w > 0 then
+        (textW, textW * h / w)
+      else (w, h)
     { acc with items := acc.items.push (.img idx? (max 0 w) (max 0 h)) }
   | .brk extra =>
     let items := acc.items.push (.glue { fil := true, parfill := true })

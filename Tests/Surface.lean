@@ -565,7 +565,13 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
       d.code == "W0101" && d.severity == .warning && d.message.endsWith "voffset")
   t "compat known package is a note, unknown a warning"
     ((elabStr (pre "\\usepackage{hyperref}")).2.all (·.severity == .note) &&
-     warnCodes (pre "\\usepackage{pgfplots}") == ["W0103"])
+     warnCodes (pre "\\usepackage{nosuchpkg}") == ["W0103"])
+  -- A picture package's load is the boundary's while the door is open
+  -- (the default): the load rides each wrapped standalone, so W0103 would
+  -- misname a load the engine consumes. The declared refusal restores it.
+  t "compat a picture package's load rides the boundary, not W0103"
+    (warnCodes (pre "\\usepackage{pgfplots}") == [] &&
+     warnCodes (pre "\\pictures{ tool = none }\\usepackage{pgfplots}") == ["W0103"])
   -- A body-position \usepackage is LaTeX's own refusal ("\usepackage can
   -- be used only in preamble", ltclass.dtx \@onlypreamble): the placement
   -- is the defect, whatever the package's support — W0103 'not supported;
@@ -2329,21 +2335,32 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes "\\begin{external}x\\end{external}" == ["W0307"] &&
      (elabStr "\\begin{external}x\\end{external}").1.body == #[])
   -- The tikz subset narrowed W0307: a picture is elaborated, and what it
-  -- cannot render is named per construct instead of dropped whole; an
-  -- all-refused picture adds the placeholder's W0362.
-  t "elab tikzpicture no longer earns the blanket W0307"
-    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0379", "W0362"] &&
-     errCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["E0333"])
+  -- cannot render is named per construct instead of dropped whole. With
+  -- the boundary open (the default) a picture outside the subset routes
+  -- whole to the boundary (N0023); under the declared refusal the losses
+  -- are named where they stand and an all-refused picture adds the
+  -- placeholder's W0362 — and no door warning: the declaration is the
+  -- acceptance, and W0379 is the driver's, for a request no available
+  -- tool can fulfil.
+  t "elab tikzpicture routes to the boundary by default"
+    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == [] &&
+     noteCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["N0023"] &&
+     errCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == [])
+  t "elab tikzpicture under the refusal keeps the named losses, no W0379"
+    (warnCodes (dvDoc "\\pictures{ tool = none }\n"
+        "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}") == ["W0362"] &&
+     errCodes (dvDoc "\\pictures{ tool = none }\n"
+        "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}") == ["E0333"])
   -- The boundary is named, never silent — for the option bracket too: a
   -- picture option outside the subset is W0334, an unusable value inside
   -- it E0333, exactly as the statement walk already has it.
-  t "elab picture option outside the subset is named"
-    (warnCodes
-      "\\begin{tikzpicture}[banana]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}"
-      == ["W0334", "W0379"])
-  t "elab picture scale that cannot hold is named"
-    (errCodes
-      "\\begin{tikzpicture}[scale=0]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}"
+  t "elab picture option outside the subset is named under the refusal"
+    (warnCodes (dvDoc "\\pictures{ tool = none }\n"
+      "\\begin{tikzpicture}[banana]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
+      == ["W0334"])
+  t "elab picture scale that cannot hold is named under the refusal"
+    (errCodes (dvDoc "\\pictures{ tool = none }\n"
+      "\\begin{tikzpicture}[scale=0]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")
       == ["E0333"])
   -- Named option bundles (`name/.style={...}`) expand where used, so a
   -- loss inside a bundle is named by its real spelling, never the
@@ -2352,10 +2369,10 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr ("\\begin{document}\\begin{tikzpicture}[lbl/.style={font=\\small, text=black}]\n" ++
       "\\node[lbl] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.isEmpty)
   t "elab picture style bundle names its outside options, not itself"
-    (((elabStr ("\\begin{document}\\begin{tikzpicture}[b/.style={ellipse}]\n" ++
+    (((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[b/.style={ellipse}]\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
       (fun m => hasStr m "'ellipse'") &&
-     !((elabStr ("\\begin{document}\\begin{tikzpicture}[b/.style={ellipse}]\n" ++
+     !((elabStr ("\\pictures{ tool = none }\\begin{document}\\begin{tikzpicture}[b/.style={ellipse}]\n" ++
       "\\node[b] at (0,0) {x};\\end{tikzpicture}\\end{document}")).2.map (·.message)).any
       (fun m => hasStr m "'b'"))
   t "elab picture style bundle referencing an earlier bundle expands"
@@ -2566,12 +2583,16 @@ def smartChecks (ref : IO.Ref (List String)) : IO Unit := do
 /-- The picture subset's boundary is named, never silent: a construct
 outside the subset is W0334 naming it, an unreadable expression, range, or
 colour inside it is E0333 — and the supported shapes around either still
-elaborate (the nothing-silently-skipped contract, as a test). The unroll
-and arithmetic facts are checked through the IR the elaborator ships. -/
+elaborate (the nothing-silently-skipped contract, as a test). The wrap
+declares `tool = none`: the boundary is open by default, and these checks
+witness the subset's own diagnostics, which routing would consume. The
+unroll and arithmetic facts are checked through the IR the elaborator
+ships. -/
 def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let wrap (body : String) : String :=
-    "\\palette{ grid = #2A6F4E }\\begin{document}\\begin{tikzpicture}" ++
+    "\\pictures{ tool = none }\\palette{ grid = #2A6F4E }" ++
+    "\\begin{document}\\begin{tikzpicture}" ++
     body ++ "\\end{tikzpicture}\\end{document}"
   let picOf (src : String) : Option Ir.Pic.Picture :=
     (elabStr src).1.body.findSome? fun b => match b with
@@ -2605,7 +2626,7 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
       some #[.rect cm cm cm cm Ir.Color.black])
   t "a construct outside the subset is W0334, and the rest still draws"
     (warnCodes (wrap "\\draw (0,0) circle (1);\\fill (0,0) rectangle (1,1);") ==
-        ["W0334", "W0379"] &&
+        ["W0334"] &&
       (picOf (wrap "\\draw (0,0) circle (1);\\fill (0,0) rectangle (1,1);")).map
         (·.shapes.size) == some 1)
   t "a zero-step range is E0333, not a hang"
@@ -2625,7 +2646,7 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an unknown macro is E0333"
     (errCodes (wrap "\\fill (\\nope,0) rectangle (1,1);") == ["E0333"])
   t "an unsupported node option loses only the option"
-    (warnCodes (wrap "\\node[ellipse] at (1,1) {x};") == ["W0334", "W0379"] &&
+    (warnCodes (wrap "\\node[ellipse] at (1,1) {x};") == ["W0334"] &&
       (picOf (wrap "\\node[ellipse] at (1,1) {x};")).map (·.shapes.size) == some 1)
   -- Node outlines: circle/rectangle with draw/fill and a declared minimum
   -- (pgf manual §"Shapes": extent = max(minimum, text + 2·inner sep);
@@ -2648,7 +2669,7 @@ minimum width=10mm, minimum height=6mm] at (1,1) {x};")).map (·.shapes) ==
           (some Ir.Color.white),
         .label cm cm #[.text "x"] Ir.Color.black 1000 .center]))
   t "a drawn node without a minimum names the loss and keeps its label"
-    (warnCodes (wrap "\\node[circle, draw] at (0,0) {x};") == ["W0334", "W0379"] &&
+    (warnCodes (wrap "\\node[circle, draw] at (0,0) {x};") == ["W0334"] &&
       (picOf (wrap "\\node[circle, draw] at (0,0) {x};")).map (·.shapes.size) == some 1)
   t "a shape option without draw or fill draws nothing and warns nothing"
     ((elabStr (wrap "\\node[circle, minimum size=8mm] at (0,0) {x};")).2.isEmpty &&
@@ -2714,7 +2735,7 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
           | .edge segs _ _ => segs == #[.line 0 0 cm cm]
           | _ => false) == some true)
   t "a to with only one tangent names the loss and draws straight"
-    (warnCodes (wrap "\\draw (0,0) to[out=90] (1,1);") == ["W0334", "W0379"] &&
+    (warnCodes (wrap "\\draw (0,0) to[out=90] (1,1);") == ["W0334"] &&
       (picOf (wrap "\\draw (0,0) to[out=90] (1,1);")).map (·.shapes.size) == some 1)
   t "a mid-path node labels the segment at its midpoint"
     ((picOf (wrap "\\draw (0,0) -- node {mid} (2,0);")).map (fun p =>
@@ -2733,7 +2754,7 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
         | _ => false) == some true)
   t "one construct looped forty times is one diagnostic, not forty"
     (warnCodes (wrap "\\foreach \\x in {1,...,40}{\\draw (\\x,0) circle (1);}") ==
-      ["W0334", "W0379", "W0362"])
+      ["W0334", "W0362"])
   t "an empty tikzpicture ships no block and no diagnostic"
     ((elabStr (wrap "")).2.isEmpty && (picOf (wrap "")).isNone)
 
@@ -3326,22 +3347,28 @@ def footnoteChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a footnote in an article stays silent on W0374"
     ((dvE (dvDoc "" "x\\footnote{y}")).all (·.code != "W0374"))
 
-/-- The TikZ boundary's elaboration half: with a declared tool, a picture
-outside the rendered subset becomes a request on the IR (`Ir.pictureRefs`,
-the `bibRefs` shape) and an image node the driver fulfils; without one the
-constructs stay refused and W0379 names the door. The wrapped standalone
+/-- The TikZ boundary's elaboration half: a picture outside the rendered
+subset becomes a request on the IR (`Ir.pictureRefs`, the `bibRefs` shape)
+and an image node the driver fulfils — by default: the boundary tool is
+part of the build environment exactly as fonts are, and the driver alone
+decides fulfilment. `\pictures{ tool = ... }` pins a tool; `tool = none`
+is the declared refusal, keeping the subset's named diagnostics with no
+door warning (the declaration is the acceptance; W0379 is the driver's,
+for a stated request no available tool can fulfil). The wrapped standalone
 carries the preamble's closed list; the request is a pure function of the
 document (`boundary_request_deterministic` by that purity — checked here
-as bytewise agreement across two runs). -/
+as bytewise agreement across two runs — and `boundary_request_env_free`:
+the tool choice never shapes it, checked here as whole-`Doc` agreement
+between the pinned and the undeclared spellings). -/
 def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let pic := "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}"
-  let door := "\\pictures{ tool = lualatex }\n\\usetikzlibrary{arrows}\n" ++
+  let sets := "\\usetikzlibrary{arrows}\n" ++
     "\\tikzset{zz/.style={}}\n\\usepackage{pgfplots}\n"
-  let (doc, ds) := elabStr (dvDoc door pic)
-  t "the door opens: the declared tool rides the IR"
+  let (doc, ds) := elabStr (dvDoc sets pic)
+  t "the door is open by default: the default tool rides the IR"
     (doc.pictureTool == some "lualatex")
-  t "a refused picture becomes one request"
+  t "a refused picture becomes one request with no declaration"
     (doc.pictureSrcs.size == 1 && (Ir.pictureRefs doc).size == 1)
   t "the request's image node stands where the picture stood"
     ((Ir.imageRefs doc).any (·.startsWith Ir.picSrcPrefix))
@@ -3357,33 +3384,81 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
      | none => false)
   t "the set lines are the boundary's: no W0301 for them"
     (ds.all (·.code != "W0301"))
+  t "a picture package's load rides too: no W0103 for it"
+    (ds.all (·.code != "W0103"))
   -- Determinism by purity: two elaborations of one document state
   -- byte-identical requests, so the cache key means something.
   t "the request is deterministic"
-    (doc.pictureSrcs == (elabStr (dvDoc door pic)).1.pictureSrcs)
-  -- TikZ's own spelling opens the same door with the pinned default.
-  t "tikzexternalize is the LaTeX-shaped door"
+    (doc.pictureSrcs == (elabStr (dvDoc sets pic)).1.pictureSrcs)
+  -- Environment-freedom, the executable half (`boundary_request_env_free`
+  -- carries the IR statement): pinning the default tool is not an
+  -- argument to the artifact — the pinned and the undeclared spellings
+  -- elaborate to the identical Doc, request included.
+  t "pinning the default tool elaborates to the identical Doc"
+    ((elabStr (dvDoc ("\\pictures{ tool = lualatex }\n" ++ sets) pic)).1 ==
+      (elabStr (dvDoc ("% pinned by default\n" ++ sets) pic)).1)
+  -- TikZ's own spelling pins the same default.
+  t "tikzexternalize is the LaTeX-shaped pin"
     ((elabStr (dvDoc "\\usepackage{tikz}\\tikzexternalize\n" pic)).1.pictureTool
       == some "lualatex")
   -- A picture the subset draws whole stays native: the boundary is for
   -- what the subset refuses, never a detour for what the engine owns.
-  let native := (elabStr (dvDoc "\\pictures{ tool = lualatex }\n"
+  let native := (elabStr (dvDoc ""
     "\\begin{tikzpicture}\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")).1
   t "an in-subset picture never routes to the boundary"
     (native.pictureSrcs.isEmpty &&
      native.body.any fun b => match b with | .picture _ => true | _ => false)
-  -- The closed door: the constructs stay refused and W0379 names the one
-  -- declaration that would draw them.
-  let (closedDoc, closedDs) := elabStr (dvDoc "" pic)
-  t "door closed: W0334 stays and W0379 names the door"
-    (closedDs.any (·.code == "W0334") && closedDs.any (·.code == "W0379") &&
-     closedDoc.pictureSrcs.isEmpty)
+  -- The declared refusal: the constructs stay refused where they stand,
+  -- the placeholder is W0362's, and no W0379 — the declaration accepted
+  -- it. The set lines and the picture package's load are then unknown
+  -- and unsupported again, named.
+  let refuse := "\\pictures{ tool = none }\n"
+  let (closedDoc, closedDs) := elabStr (dvDoc (refuse ++ sets) pic)
+  t "tool = none refuses: W0334 stays, no request, no W0379"
+    (closedDs.any (·.code == "W0334") && closedDs.all (·.code != "W0379") &&
+     closedDoc.pictureSrcs.isEmpty && closedDoc.pictureTool.isNone)
+  t "tool = none makes the set lines and the picture load named losses again"
+    (closedDs.any (·.code == "W0301") && closedDs.any (·.code == "W0103"))
   -- An unpinned tool is refused: the driver executes the named binary, so
   -- the value is drawn from the engine's own list, never the document's.
+  -- The misread pin does not close the door: E0321 names the value, and
+  -- the default stands — the allowlist is what the driver runs either way.
   let (badDoc, badDs) := elabStr (dvDoc "\\pictures{ tool = rm }\n" pic)
-  t "an unpinned tool is refused by name and the door stays closed"
-    (badDs.any (·.code == "E0321") && badDoc.pictureTool.isNone)
+  t "an unpinned tool is refused by name and the default stands"
+    (badDs.any (·.code == "E0321") && badDoc.pictureTool == some "lualatex")
   -- A pruned picture asks for nothing: the request follows the tree, as a
   -- pruned bibliography's does.
   t "pictureRefs follows the shipped tree"
     ((Ir.pictureRefs { pictureSrcs := #[("h", "src")] } : Array _).isEmpty)
+
+/-- The boundary picture's measure fit, over `Layout.Out`: an unsized
+boundary picture wider than the measure lays out at exactly the measure —
+the box is the engine's to measure and place (N0023's claim), the form is
+vector, and the document declared no size to honour — with no W0005 for
+it. An ordinary image keeps its natural size and LaTeX's honest overfull. -/
+def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let (fitDoc, _) := elabStr (dvDoc ""
+    "\\begin{tikzpicture}\\draw (0,0) circle (40);\\end{tikzpicture}")
+  let fitSrc := ((Ir.imageRefs fitDoc).find? (·.startsWith Ir.picSrcPrefix)).getD ""
+  let wideInfo : Image.Info := { format := .png, pxW := 2000, pxH := 200 }
+  let store : Image.Store := { entries := #[{ src := fitSrc, info := some wideInfo }] }
+  let out := layoutOf oneFace fitDoc (imgs := store)
+  let geom := Layout.Geom.ofPage fitDoc.page
+  let widths := (allLines out).flatMap (·.segs.filterMap fun s => match s with
+    | .image _ w _ => some w
+    | _ => none)
+  t "an unsized boundary picture wider than the measure fits it exactly"
+    (widths == #[geom.textWidth])
+  t "the fit is silent: no W0005 for the routed box"
+    (out.diags.all (·.code != "W0005"))
+  let (imgDoc, _) := elabStr (dvDoc ""
+    "\\includegraphics[alt={A synthetic band}]{band.png}")
+  let imgStore : Image.Store :=
+    { entries := #[{ src := "band.png", info := some wideInfo }] }
+  let imgOut := layoutOf oneFace imgDoc (imgs := imgStore)
+  t "an ordinary wide image keeps its natural size and the overfull is named"
+    (((allLines imgOut).flatMap (·.segs.filterMap fun s => match s with
+        | .image _ w _ => some w
+        | _ => none)) == #[Dim.pt 2000] &&
+     imgOut.diags.any (·.code == "W0005"))

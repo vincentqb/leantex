@@ -469,14 +469,18 @@ def logTail (log : String) : String :=
   String.intercalate " · " (picked.map (·.trimAscii.toString))
 
 /-- The boundary requests an elaborated document states (`Ir.pictureRefs`),
-fulfilled: each wrapped standalone runs under the declared pinned tool in a
-scratch directory, and the drawn PDF lands in the cache beside the font
-cache, keyed by the content hash *and the tool's version string* — an
-upgraded TeX re-renders, an unchanged picture never re-runs, and a warm
-cache needs no TeX installed. Failures are W0378 with the tool's own last
-words; the picture then ships as the placeholder box the diagnostic names.
-The inventory (`-v` and the porcelain phases) says per picture what came
-through the boundary: tool, version, hash, size. -/
+fulfilled: each wrapped standalone runs under the pinned tool — or the
+default, the boundary being open by default (`boundary_request_env_free`:
+only fulfilment reads the environment) — in a scratch directory, and the
+drawn PDF lands in the cache beside the font cache, keyed by the content
+hash *and the tool's version string* — an upgraded TeX re-renders, an
+unchanged picture never re-runs, and a warm cache needs no TeX installed:
+with no tool at all, any earlier render of the same content serves. A
+request nothing can fulfil is W0379, once; each such picture then ships as
+the placeholder box the diagnostic names. Failures of a tool that ran are
+W0378 with the tool's own last words. The inventory (`-v` and the
+porcelain phases) says per picture what came through the boundary: tool,
+version, hash, size. -/
 def resolvePictures (ui : Ui) (doc : Ir.Doc)
     (imageSpans : Array (String × Span) := #[]) :
     IO (Array PicResult × Array Diag) := do
@@ -497,11 +501,25 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
   IO.FS.createDirAll picDir
   let mut results : Array PicResult := #[]
   let mut diags : Array Diag := #[]
+  let mut saidUnavailable := false
   for (hash, wrapped) in refs do
     let src := Ir.picSrcPrefix ++ hash
-    let key := hash ++ "-" ++ Ir.picHash (version?.getD "") ++ ".pdf"
-    let cached := picDir / key
-    if ← cached.pathExists then
+    -- The cache: exact hash+version with a tool present; with none, any
+    -- earlier render of this content serves — the content hash is the
+    -- request's meaning, and the version in the key only forces a
+    -- re-render on upgrade.
+    let cached? ← do
+      match version? with
+      | some version =>
+        let c := picDir / (hash ++ "-" ++ Ir.picHash version ++ ".pdf")
+        if ← c.pathExists then pure (some c) else pure (none : Option System.FilePath)
+      | none =>
+        let entries ← picDir.readDir
+        pure <| entries.findSome? fun e =>
+          if e.fileName.startsWith (hash ++ "-") && e.fileName.endsWith ".pdf" then
+            some e.path
+          else none
+    if let some cached := cached? then
       let bytes ← IO.FS.readBinFile cached
       results := results.push { src, bytes, cached }
       ui.phase "boundary"
@@ -510,9 +528,11 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
       continue
     match version? with
     | none =>
-      diags := diags.push (DriverDiag.boundaryToolMissing tool "not found")
-      break
+      unless saidUnavailable do
+        diags := diags.push (DriverDiag.boundaryToolUnavailable tool)
+        saidUnavailable := true
     | some version =>
+      let cached := picDir / (hash ++ "-" ++ Ir.picHash version ++ ".pdf")
       let work := picDir / s!"work-{hash}"
       IO.FS.createDirAll work
       IO.FS.writeFile (work / "pic.tex") wrapped

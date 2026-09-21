@@ -225,6 +225,12 @@ private structure St where
   to what it already held) still counts as understood, which is why no
   `BEq St` is needed. Monotone: only `write` touches it, only upward. -/
   writes : Nat := 0
+  /-- The boundary door as this document declares it: open (the default)
+  unless a `\pictures{ tool = none }` refusal stands. Read once at
+  `rewrite`'s entry (`boundaryRefused`); the `\usepackage` dispatch is the
+  consumer — a picture package's load rides to the boundary only through
+  an open door. -/
+  boundaryOpen : Bool := true
 
 private abbrev M := StateM St
 
@@ -469,11 +475,52 @@ def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.r
     | _ => break
   return (out, j)
 
-/-- The boundary's set-line vocabulary: with a declared boundary tool these
-preamble lines are the standalone's, collected as written and consumed
-silently — the real TikZ reads them where the engine's subset cannot. -/
+/-- The boundary's set-line vocabulary: with the boundary open (the
+default) these preamble lines are the standalone's, collected as written
+and consumed silently — the real TikZ reads them where the engine's subset
+cannot. A declared refusal (`\pictures{ tool = none }`) makes them unknown
+commands again. -/
 def boundaryCtrls : List String :=
   ["usetikzlibrary", "tikzset", "gtrset", "pgfplotsset", "definecolor"]
+
+/-- Picture packages, whose whole meaning is drawing: with the boundary
+open (the default), their loads belong to the boundary standalone's
+preamble (`boundaryDecls` carries each with its options) rather than being
+W0103's named loss — the real TeX at the edge is what reads them. A closed
+list, extended when a document brings the next one; a package with body
+commands outside pictures does not belong here. -/
+def boundaryPkgs : List String := ["genealogytree", "pgfplots", "circuitikz"]
+
+/-- The document refused the boundary: a `\pictures` block declaring
+`tool = none`. Read over the unrewritten preamble exactly as
+`boundaryDecls` reads its lines (order-free, `\input` wrappers spliced);
+the one consumer is the `\usepackage` dispatch, which must know whether a
+picture package's load rides to the boundary or is W0103's named loss.
+The elaborator reads the same declaration through `scanDecls`. -/
+def boundaryRefused (raws0 : Array Raw) : Bool := Id.run do
+  let mut raws := raws0
+  let mut i := 0
+  repeat
+    if h : i < raws.size then
+      match raws[i] with
+      | .env "document" _ _ => break
+      | .env n wrapped _ =>
+        if (Parse.inputEnvFile? n).isSome then
+          raws := raws.extract 0 i ++ wrapped ++ raws.extract (i + 1) raws.size
+        else
+          i := i + 1
+      | .ctrl "pictures" _ =>
+        let (args, k) := takeGroups raws (i + 1) 1
+        let refused := (Decl.splitEntries (rawSrc (args.getD 0 #[]))).any fun e =>
+          match Decl.splitEntry e with
+          | some ("tool", v) => v.trimAscii.toString == "none"
+          | _ => false
+        if refused then return true
+        i := max k (i + 1)
+      | _ => i := i + 1
+    else
+      break
+  return false
 
 /-- The preamble declarations a boundary standalone needs, collected from
 the *unrewritten* tree — the compat rewrite folds `\definecolor` into the
@@ -2238,6 +2285,15 @@ dropped: {String.intercalate ", " dropped}" pos
         out := out ++ (← linenoLoad (opt.getD "") pos)
       else if nativePackages.contains p then
         became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
+      else if boundaryPkgs.contains p && (← get).boundaryOpen then
+        -- A picture package's load is the boundary's: `boundaryDecls`
+        -- carried it, with its options, into every wrapped standalone,
+        -- where the real TeX reads it — W0103 would misname a load the
+        -- engine consumes. A declared refusal (`tool = none`) restores
+        -- the named loss.
+        became s!"\\{name}\{{p}}"
+          "the boundary standalone's preamble; each picture outside the \
+rendered subset is drawn whole at the boundary" pos
       else
         say .W0103 s!"package '{p}' is not supported; skipped" pos
     return some (out, k)
@@ -2864,7 +2920,7 @@ def rewrite (file : String) (raws : Array Raw) (provideKeeps : List String := []
     return match out.findIdx? isBody with
       | some i => out.extract 0 i ++ running ++ out.extract i out.size
       | none => out ++ running
-  let (out, st) := go.run { file := file, provideKeeps := provideKeeps }
+  let (out, st) := go.run { file := file, provideKeeps := provideKeeps, boundaryOpen := !boundaryRefused raws }
   (out, st.diags)
 
 /-! `\\usepackage{p}` where `p.sty` exists beside the document is LaTeX's

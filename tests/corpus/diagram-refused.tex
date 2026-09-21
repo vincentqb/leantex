@@ -1,9 +1,13 @@
 % Synthetic fixture: a tikzpicture whose every construct is outside the
-% rendered subset. The engine must not let the figure collapse to
-% whitespace: W0334 names each refused construct, W0362 says the whole
-% picture is outside the subset, and a placeholder box marks its place —
-% the image-placeholder precedent. Invented content and design.
+% rendered subset, under the declared refusal (`tool = none` — the
+% boundary is open by default and would draw it whole otherwise). The
+% engine must not let the figure collapse to whitespace: W0334 names each
+% refused construct, W0362 says the whole picture is outside the subset,
+% and a placeholder box marks its place — the image-placeholder precedent.
+% No W0379: the declaration is the acceptance. Invented content and design.
 \documentclass{article}
+
+\pictures{ tool = none }
 
 \fonts{ dir = "fonts", body = "Source Serif Pro" }
 

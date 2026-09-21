@@ -1,0 +1,13 @@
+# source: genealogytree manual (Sturm), part "Genealogy Tree Construction"
+# (\genealogytree inside tikzpicture) and "Option Setting" (\gtrset). The
+# package's whole meaning is picture drawing, so with the graphics
+# boundary open (the default) its load and \gtrset lines ride each
+# wrapped standalone (Compat.boundaryDecls, Compat.boundaryPkgs) and the
+# pictures are drawn whole by the real genealogytree at the boundary
+# (N0023, the trust label). Under \pictures{ tool = none } the load is
+# W0103's named loss and \gtrset is W0301's (Tests/Surface.lean's
+# boundaryChecks witnesses the refusal; a per-row preamble cannot be
+# spelled here).
+pre impl \usepackage[all]{genealogytree}
+pre impl \gtrset{template=formal graph}
+body impl \begin{tikzpicture}\genealogytree[template=formal graph]{parent{g[id=a]{x}}}\end{tikzpicture}

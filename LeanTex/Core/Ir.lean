@@ -3864,10 +3864,12 @@ structure Doc where
   accepts. The driver downgrades those errors to warnings and always prints
   the acceptance, so it is declared and visible, never ambient. -/
   allow : Array String := #[]
-  /-- The declared boundary tool (`\pictures{ tool = lualatex }`, or the
-  `\tikzexternalize` spelling): the pinned external TeX that draws pictures
-  outside the rendered subset. `none` keeps the boundary closed. -/
-  pictureTool : Option String := none
+  /-- The boundary tool in force: the external TeX the driver runs for
+  pictures outside the rendered subset — the document's pin
+  (`\pictures{ tool = lualatex }`, or the `\tikzexternalize` spelling) or
+  the engine default, the boundary being open by default. `none` is the
+  declared refusal (`tool = none`): nothing routes, so no request rides. -/
+  pictureTool : Option String := some "lualatex"
   /-- The boundary requests this document states: content hash of each
   wrapped standalone source, with the source itself — the `bibRefs` shape.
   The driver fulfils each by running the declared tool (cached under the
@@ -7875,6 +7877,20 @@ def pictureRefs (doc : Doc) : Array (String × String) :=
   let srcs := imageRefs doc
   doc.pictureSrcs.filter fun (h, _) => srcs.contains (picSrcPrefix ++ h)
 
+/-- **The boundary request is environment-free.** What a document requests
+at the boundary (`pictureRefs`) is a function of the document alone — the
+wrapped standalone sources and the shipped tree — never of the fulfilment
+side: repinning the tool field leaves every request untouched. The other
+half of the statement is structural, not provable here: the request is
+formed in the pure core (`Elab`'s picture arm routes on the door's
+presence — a declaration value — and `wrapStandalone`/`picHash` take no
+tool), which cannot read PATH, so whether a tool exists on the machine
+decides *fulfilment* only — run, serve from the warm cache, or W0379
+(`Main.resolvePictures`). The executable half — pinning the default tool
+elaborates to the identical `Doc` — runs in `boundaryChecks`. -/
+theorem boundary_request_env_free (doc : Doc) (t : Option String) :
+    pictureRefs { doc with pictureTool := t } = pictureRefs doc := rfl
+
 -- The logo: one resolving site for its state sequence and its alignment,
 -- read by both backends.
 
@@ -7972,12 +7988,18 @@ ink). A figure's caption has already become its image's `alt` by
 elaboration (`setAltBlocks`), so a captioned figure is not counted — and a
 logo's images are not counted either: a logo is decorative furniture by
 role (`logoImageSrcs`), so its missing alternative is the conforming state,
-never a defect. -/
+never a defect. A boundary picture (`picSrcPrefix`) is not counted here:
+its absent alternative is the one fact its trust label already reports —
+N0023 says the picture's text is not in the document's census and its help
+names the same fix (a caption or alt) — and the route was the engine's
+default, not a declared image; one loss, one diagnostic. A caption or alt
+still propagates and satisfies both. -/
 def imagesSansAlt (doc : Doc) : Array String :=
   let out := foldBlocks (fun out _ => out) sansAltStep #[] doc.body
   let out := match doc.head with | some h => foldInlines sansAltStep out h | none => out
   let out := match doc.foot with | some f => foldInlines sansAltStep out f | none => out
-  out.filter (fun src => !(logoImageSrcs doc).contains src)
+  out.filter (fun src => !(logoImageSrcs doc).contains src &&
+    !src.startsWith picSrcPrefix)
 
 /-- The text-alternative judge's file-image face (WCAG 2.2 SC 1.1.1,
 Non-text Content: non-text content has a text alternative that serves the

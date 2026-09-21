@@ -113,11 +113,14 @@ structure Ctx where
   way in, so a nested conditional that empties the set is diagnosed where
   it stands (E0334) — the same walk `Ir.orphanFree` performs. -/
   backendTargets : List String := Ir.backendNames
-  /-- The declared boundary tool (`\pictures{ tool = lualatex }`, or
-  TikZ's own `\tikzexternalize` spelling): the pinned external TeX that
-  draws pictures outside the rendered subset. `none` keeps the boundary
-  closed. -/
-  picTool : Option String := none
+  /-- The boundary tool in force: the external TeX that draws pictures
+  outside the rendered subset. Open by default — the tool belongs to the
+  build environment exactly as fonts do, and the driver alone decides
+  fulfilment (`boundary_request_env_free`) — so the declaration
+  (`\pictures{ tool = lualatex }`, or TikZ's own `\tikzexternalize`
+  spelling) *pins* a tool, and `\pictures{ tool = none }` refuses the
+  boundary: `none` here is the declared refusal. -/
+  picTool : Option String := some "lualatex"
   /-- The preamble declarations a boundary standalone needs — non-native
   package loads and the tikz-family set lines, as written
   (`Compat.boundaryDecls`), plus the document's declared body family. -/
@@ -5780,14 +5783,17 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
         #[(.W0012, s!"math with {what} is not rendered yet; the \
 formula is set as source text")])
   let (pic, pdiags) := Picture.elabPicture ctx.palette body mathOf
-  -- The boundary: with a declared tool, a picture the rendered subset
-  -- cannot fully draw runs whole under the real TikZ at the edge and
-  -- comes back as an opaque measured box (PLAN, Heavy machinery: isolate,
-  -- then absorb). The request rides the IR — content hash of the wrapped
-  -- standalone source — and the driver fulfils it, cached by content, so
-  -- a warm cache needs no TeX installed. The trust label: the engine
-  -- claims placement and measurement of the returned box, never its
-  -- contents.
+  -- The boundary: open by default, a picture the rendered subset cannot
+  -- fully draw runs whole under the real TikZ at the edge and comes back
+  -- as an opaque measured box (PLAN, Heavy machinery: isolate, then
+  -- absorb). The tool is the build environment's, exactly as fonts are:
+  -- the request rides the IR — content hash of the wrapped standalone
+  -- source — and the driver fulfils it, cached by content, so a warm
+  -- cache needs no TeX installed and a machine with none gets the
+  -- driver's W0379 with the placeholder. `\pictures{ tool = none }` is
+  -- the declared refusal that keeps the subset's named diagnostics
+  -- instead. The trust label: the engine claims placement and measurement
+  -- of the returned box, never its contents.
   if ctx.picTool.isSome && !body.isEmpty &&
       (!pdiags.isEmpty || pic.shapes.isEmpty) then
     let tool := ctx.picTool.getD "lualatex"
@@ -5807,14 +5813,9 @@ alt text names it for assistive technology")
     warnOnce ctx ("picture:" ++ msg) code msg pos
       (help := "the rendered subset is \\fill...rectangle, \\node at, \
 \\foreach, and \\pgfmath(truncate)setmacro")
-  -- A construct the subset refused stays refused only while no boundary
-  -- tool is declared: the door is one declaration, named here.
-  if ctx.picTool.isNone && !pdiags.isEmpty then
-    warnOnce ctx "picture:door" .W0379
-      "a picture reaches outside the rendered subset and no boundary tool \
-is declared" pos
-      (help := "\\pictures{ tool = lualatex } draws such pictures whole \
-with a real TeX at the boundary")
+  -- A refused boundary (`tool = none`) keeps the subset's diagnostics and
+  -- no door warning: the declaration is the acceptance. W0379 is the
+  -- driver's, for a stated request no available tool can fulfil.
   unless pic.shapes.isEmpty do
     blocks := blocks.push (.picture pic)
   -- An all-refused picture still owes the reader its place: the
@@ -9647,19 +9648,24 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
     match body with
     | some src =>
       -- The boundary door: which pinned tool draws pictures outside the
-      -- rendered subset. The value is drawn from `picTools`, never an
-      -- arbitrary binary (the driver executes it).
+      -- rendered subset, or `tool = none`, the declared refusal. The
+      -- boundary is open by default, so the block pins or refuses; a
+      -- pinned value is drawn from `picTools`, never an arbitrary binary
+      -- (the driver executes it).
       let mut s := s
       for e in Decl.splitEntries src do
         match Decl.splitEntry e with
         | some ("tool", v) =>
           let v := v.trimAscii.toString
-          if picTools.contains v then
+          if v == "none" then
+            s := { s with ctx := { s.ctx with picTool := none } }
+          else if picTools.contains v then
             s := { s with ctx := { s.ctx with picTool := some v } }
           else
             diag s.ctx .E0321
               s!"cannot read a boundary tool for 'tool' in 'pictures': '{v}'" pos
-              (help := "the engine runs only the tools it pins: lualatex")
+              (help := "the engine runs only the tools it pins: lualatex; \
+tool = none refuses the boundary")
         | some (key, _) =>
           let d := Decl.unknownKey s.ctx.file "pictures" key ["tool"] pos
           modify fun st => { st with diags := st.diags.push d }
@@ -9773,9 +9779,10 @@ its declared layout" pos
       s!"'\\{name}' is not modelled; the algorithm keeps the engine's own display" pos
     return s
   | .unknownCmd name unclosed pos =>
-    -- With the boundary door open, a tikz-family set line is not unknown:
-    -- it rides into every wrapped standalone (`Compat.boundaryDecls`
-    -- collected it), where the real TikZ reads it.
+    -- With the boundary open (the default), a tikz-family set line is not
+    -- unknown: it rides into every wrapped standalone
+    -- (`Compat.boundaryDecls` collected it), where the real TikZ reads
+    -- it. A declared refusal (`tool = none`) makes it unknown again.
     if s.ctx.picTool.isSome && Compat.boundaryCtrls.contains name then
       return s
     -- Unknown preamble commands are configuration, not content: their
@@ -10101,20 +10108,24 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
   -- quantifies over exactly these values; everything after the fold is a
   -- function of the fold's result.
   let decls := scanDecls file preamble
-  -- The boundary door opens before the fold: a `\tikzset` above the
-  -- `\pictures` line is already the boundary's to keep, so the door is
-  -- read off the scanned declarations first, order-free. The apply arm
-  -- still owns every diagnostic for the block's contents.
-  let picTool0 := decls.findSome? fun d =>
-    match d with
-    | .pictures (some src) _ =>
-      (Decl.splitEntries src).findSome? fun e =>
-        match Decl.splitEntry e with
-        | some ("tool", v) =>
-          let v := v.trimAscii.toString
-          if picTools.contains v then some v else none
-        | _ => none
-    | _ => none
+  -- The boundary door is read before the fold: a `\tikzset` above the
+  -- `\pictures` line is already the boundary's to keep (or W0301's, above
+  -- a refusal), so the door is read off the scanned declarations first,
+  -- order-free. Open by default; a `\pictures` block pins a tool or
+  -- refuses (`tool = none`). The apply arm still owns every diagnostic
+  -- for the block's contents.
+  let picTool0 : Option String :=
+    (decls.findSome? fun d =>
+      match d with
+      | .pictures (some src) _ =>
+        (Decl.splitEntries src).findSome? fun e =>
+          match Decl.splitEntry e with
+          | some ("tool", v) =>
+            let v := v.trimAscii.toString
+            if v == "none" then some none
+            else if picTools.contains v then some (some v) else none
+          | _ => none
+      | _ => none).getD (some "lualatex")
   let s ← decls.foldlM applyDecl
     { ctx := { file := file, picTool := picTool0, picPreamble := picPre } }
   -- What a refused `\maketitle` redefinition still declares, applied once

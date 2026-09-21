@@ -2,9 +2,17 @@
 # §12.4.2 (\tikzset), §12.2.1 (\usetikzlibrary), §17 (nodes; §17.2.2
 # minimum size, §17.2.3 draw/fill on the node's shape), §15.3.1-2 (line
 # width and dash patterns), §14 paths (\draw, the -- line-to, §14.13 to
-# paths with out=/in=; the circle path operation stays refused), part V shape borders (\pgfpointshapeborder),
-# pgflibraryarrows (the latex tip). tikzpicture renders its subset; a path
-# construct outside it is W0334 where it stands.
+# paths with out=/in=; the circle path operation is outside the subset),
+# part V shape borders (\pgfpointshapeborder), pgflibraryarrows (the latex
+# tip). tikzpicture renders its subset natively; a picture with a
+# construct outside it routes whole to the graphics boundary (§53's
+# externalization, open by default): real TeX draws it, back as an opaque
+# measured vector box (N0023 says so) — so those rows are impl here, and
+# the set lines belong to the boundary's standalone, consumed silently.
+# Under the declared refusal \pictures{ tool = none } the subset's own
+# diagnostics stand instead: W0334 per construct, W0362 for an all-refused
+# picture, W0301 for the set lines (witnessed in Tests/Surface.lean's
+# pictureElabChecks — a per-row preamble cannot be spelled here).
 body impl \begin{tikzpicture}\fill (0,0) rectangle (1,1);\end{tikzpicture}
 body impl \begin{tikzpicture}\draw (0,0) -- (1,1);\end{tikzpicture}
 body impl \begin{tikzpicture}\node at (0,0) {x};\end{tikzpicture}
@@ -12,20 +20,16 @@ body impl \begin{tikzpicture}\node at (0,0) {$x$};\end{tikzpicture}
 body impl \begin{tikzpicture}\node[circle, draw, minimum size=8mm, inner sep=1pt] at (0,0) {x};\end{tikzpicture}
 body impl \begin{tikzpicture}\node[rectangle, draw=blue, fill=yellow!15, minimum width=10mm, minimum height=7mm] at (0,0) {x};\end{tikzpicture}
 body impl \begin{tikzpicture}\node[circle, draw, dashed, thick, minimum size=8mm] at (0,0) {x};\end{tikzpicture}
-body refuse:W0334 \begin{tikzpicture}\node[ellipse, draw, minimum size=8mm] at (0,0) {x};\end{tikzpicture}
+body impl \begin{tikzpicture}\node[ellipse, draw, minimum size=8mm] at (0,0) {x};\end{tikzpicture}
 body impl \begin{tikzpicture}\node[circle, draw, minimum size=8mm] (u) at (0,0) {x};\node[circle, draw, minimum size=8mm] (v) at (2,0) {y};\draw[-latex, thick] (u) -- (v);\end{tikzpicture}
 body impl \begin{tikzpicture}\draw (0,0) to[out=90,in=180] (1,1);\end{tikzpicture}
 body impl \begin{tikzpicture}\draw (0,0) -- node {m} (2,0);\end{tikzpicture}
-body refuse:W0334 \begin{tikzpicture}\draw (0,0) circle (1);\end{tikzpicture}
+body impl \begin{tikzpicture}\draw (0,0) circle (1);\end{tikzpicture}
 body refuse:W0301 \tikz{\fill (0,0) rectangle (1,1);}
-pre refuse:W0301 \tikzset{zz/.style={}}
-pre refuse:W0301 \usetikzlibrary{arrows}
-# §53 (externalizing graphics): \tikzexternalize — and the native
-# \pictures{ tool = lualatex } door — send a picture the rendered subset
-# refuses whole to pinned lualatex + standalone; it returns as an opaque
-# measured vector box (N0023 says so). The set lines then belong to the
-# boundary's standalone and are consumed silently.
+pre impl \tikzset{zz/.style={}}
+pre impl \usetikzlibrary{arrows}
 pre impl \tikzexternalize
 pre impl \pictures{ tool = lualatex }
+pre impl \pictures{ tool = none }
 pre impl \pictures{ tool = lualatex }\tikzset{zz/.style={}}
 pre impl \pictures{ tool = lualatex }\usetikzlibrary{arrows}

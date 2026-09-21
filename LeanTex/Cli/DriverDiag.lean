@@ -98,12 +98,15 @@ def imageUndecodable (src err : String) : Diag :=
   Diag.of .W0602 s!"cannot use image '{src}': {err}; a placeholder box holds its place"
     (help := "PNG, JPEG, and PDF embed natively: re-export the image as one")
 
-/-- W0378: the boundary tool is not runnable at all. -/
-def boundaryToolMissing (tool err : String) : Diag :=
-  Diag.of .W0378
-    s!"cannot run the boundary tool '{tool}': {err}; a placeholder box marks each picture"
-    (help := s!"install {tool}, or remove the \\pictures declaration; a warm \
-cache needs no tool")
+/-- W0379: a picture outside the rendered subset states a boundary request,
+and no tool on this machine can fulfil it — nothing pinned is runnable and
+the cache holds no earlier render. The placeholder box ships. -/
+def boundaryToolUnavailable (tool : String) : Diag :=
+  Diag.of .W0379
+    s!"no boundary tool is available for a picture outside the rendered \
+subset; a placeholder box marks each picture"
+    (help := s!"install {tool}, or \\pictures\{ tool = none } accepts the \
+placeholder; a warm cache needs no tool")
 
 /-- W0378: the boundary tool ran and failed on one picture; `logTail` is
 the tool's own last words, and `span` is where the picture stands. -/
