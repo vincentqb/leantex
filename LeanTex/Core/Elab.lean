@@ -170,6 +170,20 @@ structure AlgSt where
   numbered : Bool := false
   deriving Repr, BEq
 
+/-- The spans the reporting layer reads back out of elaboration — the
+`AlgSt` shape: one field on `ESt`, so the elaboration knot's state stays
+narrow. `bib` is where each `\bibliography` marker stands (E0503's `-->`);
+`images` each image source's first span, file images and boundary pictures
+alike (the alt judge's `-->`, the driver's per-picture diagnostics);
+`cites` each citation key's first `\cite` (the no-bibliography judge:
+with no `\bibliography` anywhere, `Bib.apply` never runs and nothing else
+explains the '?' the mark ships). -/
+structure SpanRecords where
+  bib : Array (String × Span) := #[]
+  images : Array (String × Span) := #[]
+  cites : Array (String × Span) := #[]
+  deriving Repr, BEq
+
 structure ESt where
   diags : Array Diag := #[]
   /-- Warn-once keys already fired: a macro used forty times is one problem,
@@ -215,14 +229,6 @@ structure ESt where
   before the .aux is written; here the `\bibliography` marker met later
   carries it, so the declared name reaches resolution with the block. -/
   bibStyle : Option String := none
-  /-- Where each `\bibliography` marker stands: delivered beside the `Doc`
-  (`ReqSpans.bib`), so the driver's E0503 names the line that asked. -/
-  bibSpans : Array (String × Span) := #[]
-  /-- Each image source's first span — file images and boundary pictures
-  alike: the alt judge's `-->`, and where the driver's per-picture
-  diagnostics point. Reporting metadata, delivered beside the `Doc`
-  (`ReqSpans.images`), never on it. -/
-  imageSpans : Array (String × Span) := #[]
   /-- The palette in force in flow order — the last body `\palette` state,
   written by the declaration arm and read back at the top of every
   `elabBlocks` iteration, so a declaration inside a nested scope reaches
@@ -295,11 +301,12 @@ structure ESt where
   whole table is known: a reference may point forward, so it cannot be
   judged where it stands. -/
   refSites : Array (String × Ir.RefForm × Pos) := #[]
-  /-- Every citation key with its first `\cite`'s span, for the
-  no-bibliography judge once the whole document is known: with no
-  `\bibliography` anywhere, `Bib.apply` never runs and nothing else
-  explains the '?' the mark ships. -/
-  citeSites : Array (String × Span) := #[]
+  /-- The spans the reporting layer reads, packed as one field: the state
+  is copied at every `{ st with ... }` across the elaboration knots, and
+  the knots' compile cost scales with the field count, so the three
+  span records ride together. Reporting metadata, delivered beside the
+  `Doc` (`ReqSpans`), never on it. -/
+  spans : SpanRecords := {}
   /-- The document-global algorithm state the preamble declared. -/
   alg : AlgSt := {}
 
@@ -403,6 +410,27 @@ private def warnOnce (ctx : Ctx) (key : String) (code : DiagCode) (msg : String)
     modify fun st => { st with warnedUnknown := st.warnedUnknown.push key }
     let d := diagOf ctx code msg (some pos) help
     modify fun st => { st with diags := st.diags.push (if demote then d.demote else d) }
+
+/-- Record a citation group's keys with their `\cite`'s span, first
+occurrence per key: the no-bibliography judge's sites (elabDoc). A
+top-level helper so the inline knot carries a call, not a closure. -/
+private def recordCiteSites (ctx : Ctx) (keys : List String) (pos : Pos) : EM Unit :=
+  modify fun st => { st with spans := keys.foldl (fun sp k =>
+    if sp.cites.any (·.1 == k) then sp
+    else { sp with cites := sp.cites.push (k, ⟨ctx.file, pos⟩) }) st.spans }
+
+/-- Record an image source's span, first occurrence per source: the alt
+judge's `-->` and the driver's per-picture diagnostics read it. -/
+private def recordImageSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
+  modify fun st =>
+    if st.spans.images.any (·.1 == src) then st
+    else { st with spans :=
+      { st.spans with images := st.spans.images.push (src, ⟨ctx.file, pos⟩) } }
+
+/-- Record a `\bibliography` marker's span: E0503's `-->` (ReqSpans.bib). -/
+private def recordBibSpan (ctx : Ctx) (src : String) (pos : Pos) : EM Unit :=
+  modify fun st => { st with spans :=
+    { st.spans with bib := st.spans.bib.push (src, ⟨ctx.file, pos⟩) } }
 
 /-- Reserved control words, and the code each skip earns — W0307 (pending,
 a warning: a milestone owns the construct) when the skipped arguments carry
@@ -3033,9 +3061,7 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             -- Recorded for the no-bibliography judge (elabDoc): a
             -- citation cannot be judged where it stands, because its
             -- `\bibliography` may follow it.
-            modify fun st => keys.foldl (fun st k =>
-              if st.citeSites.any (·.1 == k) then st
-              else { st with citeSites := st.citeSites.push (k, ⟨ctx.file, pos⟩) }) st
+            recordCiteSites ctx keys pos
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
@@ -3073,9 +3099,7 @@ def elabInlinesCtrl (ctx : Ctx) (raws : Array Raw) (i : Nat)
     | some (.group pathRaw _) =>
       have hjlt := getElem?_lt hj
       let src := argText ctx pathRaw
-      modify fun st =>
-        if st.imageSpans.any (·.1 == src) then st
-        else { st with imageSpans := st.imageSpans.push (src, ⟨ctx.file, pos⟩) }
+      recordImageSpan ctx src pos
       have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
         sliceWeight_lt raws h (by omega)
       elabInlinesFrom ctx raws (j + 1)
@@ -5770,11 +5794,9 @@ formula is set as source text")])
     let wrapped := Ir.wrapStandalone ctx.picPreamble (Parse.rawSrc body)
     let hash := Ir.picHash wrapped
     modify fun st =>
-      let st := if st.pictures.any (fun p => p.1 == hash) then st
-        else { st with pictures := st.pictures.push (hash, wrapped) }
-      let src := Ir.picSrcPrefix ++ hash
-      if st.imageSpans.any (·.1 == src) then st
-      else { st with imageSpans := st.imageSpans.push (src, ⟨ctx.file, pos⟩) }
+      if st.pictures.any (fun p => p.1 == hash) then st
+      else { st with pictures := st.pictures.push (hash, wrapped) }
+    recordImageSpan ctx (Ir.picSrcPrefix ++ hash) pos
     warnOnce ctx ("picture:boundary:" ++ hash) .N0023
       s!"this picture is drawn by {tool} at the boundary; its text is not \
 in the document's census" pos
@@ -8144,7 +8166,7 @@ a side channel, never slide content" cpos
         | some (.group body _) =>
           let src := (rawSrc body).trimAscii.toString
           let style := (← get).bibStyle
-          modify fun st => { st with bibSpans := st.bibSpans.push (src, ⟨ctx'.file, cpos⟩) }
+          recordBibSpan ctx' src cpos
           -- \refname is locale data (babel ini captions): the heading is
           -- worded in the document's declared language.
           let blocks := blocks.push
@@ -10272,7 +10294,7 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
   -- entry); the message and help name this cause. One diagnostic per
   -- distinct key, at its first `\cite`.
   if (Ir.bibRefsBlocks blocks).isEmpty then
-    for (key, span) in stRefs.citeSites do
+    for (key, span) in stRefs.spans.cites do
       modify fun st => { st with diags := st.diags.push (Diag.of .W0351
         s!"citation '{key}' has no bibliography to resolve against; it shows as '?'"
         (some span)
@@ -10409,11 +10431,11 @@ def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #
   let outline := Ir.outlineDiags doc
   -- The file-image face only: boundary pictures are judged by the driver
   -- after fulfilment (`Ir.picAltDiags`), where W0378's outcome is known.
-  let alt := Ir.altDiags doc fun src => (st.imageSpans.find? (·.1 == src)).map (·.2)
+  let alt := Ir.altDiags doc fun src => (st.spans.images.find? (·.1 == src)).map (·.2)
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc
   (doc, earlier ++ compatDiags ++ st.diags ++ contrast ++ outline ++ alt ++ links ++ sequences,
-    { bib := st.bibSpans, images := st.imageSpans })
+    { bib := st.spans.bib, images := st.spans.images })
 
 /-- The span-free face: what every caller that fulfils no file requests
 reads. -/
