@@ -22,6 +22,7 @@ so a shipped locale answers every site; this closes the loop by pinning
 that no generated value is empty either. -/
 theorem builtin_total : builtin.all (fun l =>
     !l.tag.isEmpty && !l.figure.isEmpty && !l.table.isEmpty &&
+    !l.algorithm.isEmpty &&
     !l.abstract.isEmpty && !l.references.isEmpty &&
     l.months.size == 12 && l.months.all (!·.isEmpty) &&
     !l.quoteOpen.isEmpty && !l.quoteClose.isEmpty &&

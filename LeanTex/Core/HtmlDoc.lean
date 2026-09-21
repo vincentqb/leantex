@@ -2558,6 +2558,19 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   -- Float and caption gaps: the same tokens the PDF path reads, the
   -- defaults this context's own rhythm multiples of the declared rows
   -- (`Ir.rhythmGapQuanta`; the boundary rules live in `blockGapCss`).
+  -- Pseudocode lists: nesting indents by the same token the PDF path
+  -- reads (`--algindent`; algorithm2e's \SetInd{0.5em}{1em} + 0.4pt,
+  -- ≈1.5em, following the type), and the declared line numbers are one
+  -- CSS counter over every <li>, nested levels included — generated
+  -- furniture, never content.
+  "ol.algorithm { list-style: none; padding-left: 0; counter-reset: algline; }\n" ++
+  "ol.algorithm ol { list-style: none; padding-left: var(--algindent, 1.5em); }\n" ++
+  "ol.algorithm.numbered { padding-left: 2em; }\n" ++
+  "ol.algorithm.numbered li { counter-increment: algline; }\n" ++
+  "ol.algorithm.numbered li::before { content: counter(algline);\n" ++
+  "  color: var(--muted); font-size: 0.8em; width: 1.5em;\n" ++
+  "  margin-left: -2em; margin-right: 0.5em;\n" ++
+  "  display: inline-block; text-align: right; }\n" ++
   "figure.float { margin: 0 auto; }\n" ++
   "figure.float > table { margin-left: auto; margin-right: auto; }\n" ++
   "figure.float > img { display: block; margin: 0 auto; }\n" ++
@@ -3139,6 +3152,62 @@ def blockNode (cfg : Config) (b : Block) : Node :=
           pre]
         #[("class", "listing")]
     | none => pre
+  | .algorithm numbered semis lines =>
+    -- Pseudocode as nested ordered lists: one <ol> per block, depth from
+    -- nesting, line numbers by a CSS counter when declared (declarative,
+    -- no script). Every line — openers, closers, statements — is one
+    -- <li>, through the shared rendering `Ir.AlgLine.rendered`, the site
+    -- the PDF paragraphs read too (`algorithm_lines_agree`): keywords
+    -- bold, the comment in the muted role. Native list semantics carry
+    -- the structure; no role attribute is needed.
+    let words := Ir.algWords cfg.locale.tag
+    let muted := Ir.mutedOf cfg.pal
+    let liOf (l : Ir.AlgLine) : Node :=
+      Html.elem "li" (inlines cfg (Ir.AlgLine.rendered words semis muted l)) #[]
+    -- One pass with a stack of open levels: an opener starts a level, its
+    -- closer pops the finished <ol> into the opener's own <li> and the
+    -- closer line follows at the opener's level. The parser balances
+    -- openers and closers by construction; the final unwind makes the
+    -- builder total anyway (never a lost line).
+    Id.run do
+      let mut levels : Array (Array Node) := #[#[]]
+      let mut openers : Array (Array Node) := #[]
+      let close (levels : Array (Array Node)) (openers : Array (Array Node))
+          (closerLi : Option Node) :
+          Array (Array Node) × Array (Array Node) := Id.run do
+        let inner := levels.back?.getD #[]
+        let mut levels := levels.pop
+        let opener := openers.back?.getD #[]
+        let openers := openers.pop
+        let li := Html.elem "li"
+          (opener.push (Html.elem "ol" inner #[])) #[]
+        let mut top := (levels.back?.getD #[]).push li
+        if let some c := closerLi then
+          top := top.push c
+        levels := levels.pop.push top
+        return (levels, openers)
+      for l in lines do
+        match l.kind with
+        | .opener _ =>
+          openers := openers.push
+            (inlines cfg (Ir.AlgLine.rendered words semis muted l))
+          levels := levels.push #[]
+        | .closer _ =>
+          if levels.size > 1 then
+            let (ls, os) := close levels openers (some (liOf l))
+            levels := ls
+            openers := os
+          else
+            levels := levels.pop.push ((levels.back?.getD #[]).push (liOf l))
+        | _ =>
+          levels := levels.pop.push ((levels.back?.getD #[]).push (liOf l))
+      for _ in [0:levels.size] do
+        if levels.size > 1 then
+          let (ls, os) := close levels openers none
+          levels := ls
+          openers := os
+      return Html.elem "ol" (levels.back?.getD #[])
+        #[("class", if numbered then "algorithm numbered" else "algorithm")]
   | .rule color name thickness =>
     -- The title page's separator: an <hr> carrying the palette variable,
     -- so a host page can override it as it can any colour.
@@ -3383,6 +3452,7 @@ height: {decMilli (deckStageMilli h cfg.page.height)}dvh")]
       | .table => "float table-float"
       | .figure => "float"
       | .sub => "float subfloat"
+      | .algorithm => "float algorithm-float"
     Html.elem "figure" (if capAbove then capNode ++ kids else kids ++ capNode)
       #[("class", cls)]
   -- The reference list: one item per resolved entry, carrying the anchor

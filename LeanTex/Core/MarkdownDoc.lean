@@ -175,6 +175,15 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
         ind ++ inlineText (Ir.listingCaption loc n c) ++ "\n\n"
       | none => ""
     acc ++ cap ++ "```\n" ++ lines ++ "\n```\n\n"
+  -- Pseudocode as a fence: each line with its generated keywords rendered
+  -- to plain text (`AlgLine.rendered`, the site both artifact backends
+  -- read too), depth as two spaces — code for a text twin, as verbatim.
+  | .algorithm _ semis lines =>
+    let words := Ir.algWords loc.tag
+    let txt := String.intercalate "\n" (lines.toList.map fun l =>
+      String.ofList (List.replicate (2 * l.depth) ' ') ++
+        Ir.plainText (Ir.AlgLine.rendered words semis Ir.Color.black l))
+    acc ++ "```\n" ++ txt ++ "\n```\n\n"
   | .columns cols => columnsInto loc summary ind acc cols.toList
   | .step _ _ body => blocksInto loc summary ind acc body.toList
   -- `emit` already kept this node for markdown (`Ir.keepFor "md"`): by here
@@ -414,6 +423,9 @@ private theorem blockInto_extends (loc : Locale) (summary ind acc : String) :
   | .verbatim _ _ spec => by
     simp only [blockInto]
     cases spec.caption <;> exact append_chain₄ _ _ _ _ _
+  | .algorithm _ _ _ => by
+    simp only [blockInto]
+    exact append_chain₃ _ _ _ _
   | .columns cols => columnsInto_extends loc summary ind acc cols.toList
   | .step _ _ body => blocksInto_extends loc summary ind acc body.toList
   | .only _ body => blocksInto_extends loc summary ind acc body.toList
@@ -664,6 +676,7 @@ private theorem headingLevelOne_mem (x : Nat) :
   | .frame _ _ _ body, out, h => headingLevelList_mem x body.toList out h
   | .note _, _, h => h
   | .verbatim _ _ _, _, h => h
+  | .algorithm _ _ _, _, h => h
   | .bibliography _ _ _, _, h => h
   | .framefoot _, _, h => h
   | .setPalette _, _, h => h

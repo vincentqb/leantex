@@ -35,6 +35,11 @@ structure Locale where
   tag : String
   figure : String
   table : String
+  /-- The algorithm float's caption word ("Algorithm 1: …"). Not in the
+  babel inis: sourced from algorithm2e's own language options
+  (`\algorithmcfname` under `english`/`french`/`german`,
+  algorithm2e.sty), carried by the generator's hand-cited table. -/
+  algorithm : String
   abstract : String
   references : String
   /-- The twelve wide month names, January first (`months.wide.*`). -/
@@ -58,6 +63,10 @@ structure Locale where
   crefEquation : CrefName
   crefFigure : CrefName
   crefTable : CrefName
+  /-- cleveref's algorithm names (cleveref.sty v0.21.4, the english,
+  french and german `\crefname{algorithm}` lines — cleveref carries the
+  kind itself; algorithm2e aliases its `algocf` counter onto it). -/
+  crefAlgorithm : CrefName
   /-- `\crefrange`'s conjunction word (`\crefrangeconjunction` without its
   no-break space: "to", "bis", "à"). -/
   crefRangeTo : String

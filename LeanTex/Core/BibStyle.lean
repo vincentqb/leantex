@@ -768,6 +768,12 @@ private def resolveBlock (style : Style) (find : Resolver)
   | .table cols pl pr rows rules =>
     out.push (.table cols pl pr
       (rows.map fun row => row.map (resolveArr style.cite find)) rules)
+  -- A citation resolves inside a line and its comment, as in a cell.
+  | .algorithm n sm lines =>
+    out.push (.algorithm n sm (lines.map fun l =>
+      { l with
+        content := resolveArr style.cite find l.content
+        comment := l.comment.map (resolveArr style.cite find) }))
   | .logo content => out.push (.logo (resolveArr style.cite find content))
   | .verbatim c s sp => out.push (.verbatim c s sp)
   | .setPalette p => out.push (.setPalette p)

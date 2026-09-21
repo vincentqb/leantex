@@ -1830,7 +1830,239 @@ inductive FloatKind where
   | figure
   | table
   | sub
+  /-- An `{algorithm}` float: numbered by its own counter, captioned with
+  the locale's algorithm word (`Locale.algorithm`, algorithm2e's
+  `\algorithmcfname`). -/
+  | algorithm
   deriving Repr, BEq, DecidableEq, Inhabited
+
+/-- What an algorithm's input/output line declares (algorithm2e's
+`\SetKwInput` defaults: `\KwIn`/`\KwOut`/`\KwData`/`\KwResult`,
+algorithm2e.sty §defaults; algorithmicx's `\Require`/`\Ensure` land on
+`input`/`output`). `named` is a document-defined `\SetKwInOut` label —
+the author's own word, carried as declared. -/
+inductive AlgIo where
+  | input
+  | output
+  | data
+  | result
+  | named (label : String)
+  deriving Repr, BEq, Inhabited
+
+/-- The block forms an algorithm line can open, closed: algorithm2e's
+`\SetKwFor`/`\SetKwIF`/`\SetKwRepeat` defaults and algorithmicx's
+`\For`…`\EndFor` family both parse onto these. The opener selects the
+keyword pair the backends generate (`AlgWords`); a closer carries its
+opener so `repeat` can close on `until` with its condition while every
+other block closes on `end`. -/
+inductive AlgOpen where
+  | forLoop
+  | forEach
+  | whileLoop
+  | ifThen
+  | elseIf
+  | elseBranch
+  | repeatLoop
+  | function
+  | procedure
+  deriving Repr, BEq, Inhabited
+
+/-- One pseudocode line's kind. The keywords a kind implies are generated
+text from the locale keyword table (`algWords`), like caption prefixes —
+never stored in the line, so the census reads declarations only. -/
+inductive AlgKind where
+  | statement
+  | io (kind : AlgIo)
+  | opener (o : AlgOpen)
+  | closer (o : AlgOpen)
+  | ret
+  deriving Repr, BEq, Inhabited
+
+/-- One pseudocode line: its nesting depth, its kind, the author's content
+(a `\For` condition, a statement's text), and an optional end-of-line
+comment (`\tcc`/`\tcp`, algorithmicx `\Comment`). Content and comment are
+document text and censused; the kind's keywords are generated. -/
+structure AlgLine where
+  depth : Nat
+  kind : AlgKind
+  content : Array Inline
+  comment : Option (Array Inline)
+  deriving Repr, BEq, Inhabited
+
+/-- The algorithm keyword table for one language: the words the backends
+generate around a line's declared content. Sourced from algorithm2e's own
+keyword defaults — English from `\algocf@defaults@common`
+(`\SetKwFor{For}{for}{do}{end for}`, `\SetKwIF{If}{ElseIf}{Else}{if}{then}
+{else if}{else}{end if}`, `\SetKwRepeat{Repeat}{repeat}{until}`,
+`\SetKwInput{KwIn}{Input}` and family, `\SetKw{Return}{return}`), French
+and German from the sty's `french`/`german` keyword blocks, and the
+function/procedure words from the language options' `\@algocf@procname`/
+`\@algocf@funcname`. Closers are the `shortend` form ("end"), the
+package's own default option set (`\ExecuteOptions{…,lined,shortend}`). -/
+structure AlgWords where
+  forKw : String
+  foreachKw : String
+  whileKw : String
+  doKw : String
+  ifKw : String
+  thenKw : String
+  elseIfKw : String
+  elseKw : String
+  repeatKw : String
+  untilKw : String
+  endKw : String
+  returnKw : String
+  inputKw : String
+  outputKw : String
+  dataKw : String
+  resultKw : String
+  functionKw : String
+  procedureKw : String
+  deriving Repr, BEq, Inhabited
+
+/-- The keyword table a locale tag selects — en, fr, de, per the sources
+on `AlgWords`; any other tag reads English, exactly the caption-word
+fallback W0368 already names for the locale record itself. -/
+def algWords (tag : String) : AlgWords :=
+  match (tag.splitOn "-").headD tag with
+  | "fr" =>
+    { forKw := "pour", foreachKw := "pour chaque", whileKw := "tant que"
+      doKw := "faire", ifKw := "si", thenKw := "alors"
+      elseIfKw := "sinon si", elseKw := "sinon", repeatKw := "répéter"
+      untilKw := "jusqu'à", endKw := "fin", returnKw := "retourner"
+      inputKw := "Entrées", outputKw := "Sorties", dataKw := "Données"
+      resultKw := "Résultat", functionKw := "Fonction"
+      procedureKw := "Procédure" }
+  | "de" =>
+    { forKw := "für", foreachKw := "für jedes", whileKw := "solange"
+      doKw := "tue", ifKw := "wenn", thenKw := "dann"
+      elseIfKw := "sonst wenn", elseKw := "sonst", repeatKw := "wiederhole"
+      untilKw := "bis", endKw := "Ende", returnKw := "zurück"
+      inputKw := "Eingabe", outputKw := "Ausgabe", dataKw := "Daten"
+      resultKw := "Ergebnis", functionKw := "Funktion"
+      procedureKw := "Prozedur" }
+  | _ =>
+    { forKw := "for", foreachKw := "foreach", whileKw := "while"
+      doKw := "do", ifKw := "if", thenKw := "then"
+      elseIfKw := "else if", elseKw := "else", repeatKw := "repeat"
+      untilKw := "until", endKw := "end", returnKw := "return"
+      inputKw := "Input", outputKw := "Output", dataKw := "Data"
+      resultKw := "Result", functionKw := "Function"
+      procedureKw := "Procedure" }
+
+/-- Every word a keyword table can generate, for the font-coverage
+precompute: the faces must cover the generated keywords exactly as they
+cover generated caption prefixes. -/
+def AlgWords.all (w : AlgWords) : List String :=
+  [w.forKw, w.foreachKw, w.whileKw, w.doKw, w.ifKw, w.thenKw, w.elseIfKw,
+   w.elseKw, w.repeatKw, w.untilKw, w.endKw, w.returnKw, w.inputKw,
+   w.outputKw, w.dataKw, w.resultKw, w.functionKw, w.procedureKw]
+
+/-- The opener's keyword pair: the word before the condition and the word
+after it (`for … do`, `if … then`; `else` and `repeat` stand alone). -/
+def AlgOpen.words (w : AlgWords) : AlgOpen → String × Option String
+  | .forLoop => (w.forKw, some w.doKw)
+  | .forEach => (w.foreachKw, some w.doKw)
+  | .whileLoop => (w.whileKw, some w.doKw)
+  | .ifThen => (w.ifKw, some w.thenKw)
+  | .elseIf => (w.elseIfKw, some w.thenKw)
+  | .elseBranch => (w.elseKw, none)
+  | .repeatLoop => (w.repeatKw, none)
+  | .function => (w.functionKw, none)
+  | .procedure => (w.procedureKw, none)
+
+/-- The io line's label word. A `named` label is the author's declared
+word, kept as declared. -/
+def AlgIo.word (w : AlgWords) : AlgIo → String
+  | .input => w.inputKw
+  | .output => w.outputKw
+  | .data => w.dataKw
+  | .result => w.resultKw
+  | .named label => label
+
+/-- The opener's dump spelling, for goldens. -/
+def AlgOpen.name : AlgOpen → String
+  | .forLoop => "for"
+  | .forEach => "foreach"
+  | .whileLoop => "while"
+  | .ifThen => "if"
+  | .elseIf => "elseif"
+  | .elseBranch => "else"
+  | .repeatLoop => "repeat"
+  | .function => "function"
+  | .procedure => "procedure"
+
+/-- The io kind's dump spelling, for goldens. -/
+def AlgIo.name : AlgIo → String
+  | .input => "input"
+  | .output => "output"
+  | .data => "data"
+  | .result => "result"
+  | .named label => s!"named {label.quote}"
+
+/-- The line kind's dump spelling, for goldens. -/
+def AlgKind.name : AlgKind → String
+  | .statement => "statement"
+  | .io k => s!"io {k.name}"
+  | .opener o => s!"open {o.name}"
+  | .closer o => s!"close {o.name}"
+  | .ret => "return"
+
+/-- The muted role's one resolving chain (`Design.ofDoc` reads the same
+chain): the palette's `muted`, else its `fg`, else black — quieted
+secondary ink. Spelled once so a walk reading the epoch palette in force
+(algorithm comments, line numbers) resolves exactly as the document
+design does. -/
+def mutedOf (pal : Palette) : Color :=
+  (pal.find? "muted").getD ((pal.find? "fg").getD Color.black)
+
+/-- One algorithm line as display inlines — the one site both backends
+read, so the page and the HTML list item spell a line identically
+(`algorithm_lines_agree` is the statement). Keywords set bold
+(algorithm2e's `\KwSty` default `\textbf`); the comment sets in the muted
+role between algorithm2e's own `/* … */` fences (`\tcc`'s default
+comment style); `semis` closes statement, io and return lines with the
+`;` algorithm2e prints for `\;` unless `\DontPrintSemicolon`. -/
+def AlgLine.rendered (w : AlgWords) (semis : Bool) (muted : Color)
+    (l : AlgLine) : Array Inline := Id.run do
+  let bold (s : String) : Inline := .styled .bold #[.text s]
+  let mut out : Array Inline := #[]
+  let mut semi := false
+  match l.kind with
+  | .statement =>
+    out := l.content
+    semi := true
+  | .io k =>
+    out := #[bold (k.word w ++ ":"), .text " "] ++ l.content
+    semi := true
+  | .opener o =>
+    let (lead, trail) := o.words w
+    out := #[bold lead]
+    unless l.content.isEmpty do
+      out := out.push (.text " ") ++ l.content
+    if let some t := trail then
+      out := out ++ #[.text " ", bold t]
+  | .closer o =>
+    if o matches .repeatLoop then
+      out := #[bold w.untilKw]
+      unless l.content.isEmpty do
+        out := out.push (.text " ") ++ l.content
+      semi := true
+    else
+      out := #[bold w.endKw]
+  | .ret =>
+    out := #[bold w.returnKw]
+    unless l.content.isEmpty do
+      out := out.push (.text " ") ++ l.content
+    semi := true
+  if semi && semis then
+    out := out.push (.text ";")
+  if let some c := l.comment then
+    unless out.isEmpty do
+      out := out.push (.text " ")
+    out := out.push (.colored muted (some "muted")
+      (#[Inline.text "/* "] ++ c ++ #[Inline.text " */"]))
+  return out
 
 /-- Pad each table row to `n` cells with empty cells, the door elaboration
 takes to the rectangularity `.table` declares. The same statement shape as
@@ -2006,6 +2238,19 @@ inductive Block where
   listing environment declares beside the content (`ListingSpec`): the
   numbered caption and the line-number flag. -/
   | verbatim (covered : Option Color) (content : String) (spec : ListingSpec)
+  /-- Pseudocode as a value: the lines of an `{algorithm}`/`{algorithmic}`
+  environment, algorithm2e and algorithmicx parsed onto this one node.
+  Lines are rich text with math and generated bold keywords, nested by
+  `depth`; the keywords are the locale table's (`algWords`), generated by
+  `AlgLine.rendered` — the one site both backends read. `numbered` is
+  algorithm2e's `\LinesNumbered` (off by default) or algorithmic's `[1]`;
+  `semis` prints the `;` each `\;` terminates (on by default,
+  `\DontPrintSemicolon` clears it) — both from algorithm2e's own default
+  option set (`\ExecuteOptions{english,plain,resetcount,titlenotnumbered,
+  lined,shortend}`, algorithm2e.sty). The node usually stands inside a
+  `.float` of kind `.algorithm`, which carries the caption and the
+  number; a bare `{algorithmic}` stands alone, uncaptioned. -/
+  | algorithm (numbered : Bool) (semis : Bool) (lines : Array AlgLine)
   /-- Side-by-side columns (`{columns}`/`{column}`): each column carries its
   declared width as per mille of the text width, or `none` to share the
   leftover equally. Columns are top-aligned; the alignment options and
@@ -2286,17 +2531,20 @@ structure FloatCtr where
   fig : Nat := 0
   tab : Nat := 0
   sub : Nat := 0
+  alg : Nat := 0
   deriving Repr, BEq
 
 def FloatCtr.get : FloatCtr → FloatKind → Nat
   | c, .figure => c.fig
   | c, .table => c.tab
   | c, .sub => c.sub
+  | c, .algorithm => c.alg
 
 def FloatCtr.bump : FloatCtr → FloatKind → FloatCtr
   | c, .figure => { c with fig := c.fig + 1 }
   | c, .table => { c with tab := c.tab + 1 }
   | c, .sub => { c with sub := c.sub + 1 }
+  | c, .algorithm => { c with alg := c.alg + 1 }
 
 mutual
 
@@ -2364,13 +2612,15 @@ def numberFloatOne (c : FloatCtr) : Block → FloatCtr × Block
   | .rule col nm th => (c, .rule col nm th)
   | .picture p => (c, .picture p)
   | .table cols pl pr rows rules => (c, .table cols pl pr rows rules)
+  -- Lines hold inlines: no float can nest in an algorithm.
+  | .algorithm n sm lines => (c, .algorithm n sm lines)
   -- A reference list is not a float: it consumes no number and holds none.
   | .bibliography src style items => (c, .bibliography src style items)
   | .float kind _ capAbove body caption =>
     let cAfter := if caption.isEmpty then c else c.bump kind
     let num := if caption.isEmpty then none else some (c.get kind + 1)
     let (cBody, body2) := numberFloatList { cAfter with sub := 0 } #[] body.toList
-    (⟨cBody.fig, cBody.tab, cAfter.sub⟩, .float kind num capAbove body2 caption)
+    (⟨cBody.fig, cBody.tab, cAfter.sub, cBody.alg⟩, .float kind num capAbove body2 caption)
 
 def numberFloatItems (c : FloatCtr) (out : Array (Array Block)) :
     List (Array Block) → FloatCtr × Array (Array Block)
@@ -2430,6 +2680,7 @@ def floatNumsOne (k : FloatKind) (out : List Nat) : Block → List Nat
   | .rule _ _ _ => out
   | .picture _ => out
   | .table _ _ _ _ _ => out
+  | .algorithm _ _ _ => out
   | .bibliography _ _ _ => out
   | .float kind num _ body _ =>
     let out := match num with
@@ -2499,6 +2750,7 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
         = out ++ List.range' (c.get k + 1) n := by
   match b with
   | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
+  | .algorithm _ _ _
   | .bibliography _ _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ =>
@@ -2572,6 +2824,11 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
         · simpa [numberFloatOne, hcap, FloatCtr.get] using hc
         · simpa [numberFloatOne, floatNumsOne, floatNumsList, hcap,
             FloatCtr.get] using hn
+      | algorithm =>
+        refine ⟨n, ?_, ?_⟩
+        · simpa [numberFloatOne, hcap, FloatCtr.get] using hc
+        · simpa [numberFloatOne, floatNumsOne, floatNumsList, hcap,
+            FloatCtr.get] using hn
     · cases k with
       | sub =>
         -- The collector reads only this float's own letter; the walk
@@ -2587,6 +2844,10 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
           · simp [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump]
           · simp [numberFloatOne, floatNumsOne, hcap]
         | table =>
+          refine ⟨0, ?_, ?_⟩
+          · simp [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump]
+          · simp [numberFloatOne, floatNumsOne, hcap]
+        | algorithm =>
           refine ⟨0, ?_, ?_⟩
           · simp [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump]
           · simp [numberFloatOne, floatNumsOne, hcap]
@@ -2620,6 +2881,13 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
           · simpa [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump] using hc
           · simpa [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
               FloatCtr.bump, floatNumsList] using hn
+        | algorithm =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .figure
+            { c.bump .algorithm with sub := 0 } #[] out body.toList
+          refine ⟨n, ?_, ?_⟩
+          · simpa [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump] using hc
+          · simpa [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList] using hn
       | table =>
         cases kind with
         | table =>
@@ -2645,6 +2913,50 @@ theorem numberFloatOne_exact (k : FloatKind) (c : FloatCtr) (out : List Nat)
               FloatCtr.bump, floatNumsList] using hn
         | sub =>
           obtain ⟨n, hc, hn⟩ := numberFloatList_exact .table
+            { c.bump .sub with sub := 0 } #[] out body.toList
+          refine ⟨n, ?_, ?_⟩
+          · simpa [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump] using hc
+          · simpa [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList] using hn
+        | algorithm =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .table
+            { c.bump .algorithm with sub := 0 } #[] out body.toList
+          refine ⟨n, ?_, ?_⟩
+          · simpa [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump] using hc
+          · simpa [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList] using hn
+      | algorithm =>
+        cases kind with
+        | algorithm =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .algorithm
+            { c.bump .algorithm with sub := 0 } #[] (out ++ [c.get .algorithm + 1])
+            body.toList
+          refine ⟨n + 1, ?_, ?_⟩
+          · have := hc
+            simp only [FloatCtr.get, FloatCtr.bump] at this ⊢
+            simp [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump, this]
+            omega
+          · have := hn
+            simp only [FloatCtr.get, FloatCtr.bump] at this
+            simp [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList, this, List.append_assoc]
+            rw [List.range'_succ]
+        | figure =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .algorithm
+            { c.bump .figure with sub := 0 } #[] out body.toList
+          refine ⟨n, ?_, ?_⟩
+          · simpa [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump] using hc
+          · simpa [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList] using hn
+        | table =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .algorithm
+            { c.bump .table with sub := 0 } #[] out body.toList
+          refine ⟨n, ?_, ?_⟩
+          · simpa [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump] using hc
+          · simpa [numberFloatOne, floatNumsOne, hcap, FloatCtr.get,
+              FloatCtr.bump, floatNumsList] using hn
+        | sub =>
+          obtain ⟨n, hc, hn⟩ := numberFloatList_exact .algorithm
             { c.bump .sub with sub := 0 } #[] out body.toList
           refine ⟨n, ?_, ?_⟩
           · simpa [numberFloatOne, hcap, FloatCtr.get, FloatCtr.bump] using hc
@@ -2768,6 +3080,7 @@ def captionPrefix (loc : Locale) (kind : FloatKind) (num : Option Nat) : Option 
     match kind with
     | .figure => s!"{loc.figure} {n}: "
     | .table => s!"{loc.table} {n}: "
+    | .algorithm => s!"{loc.algorithm} {n}: "
     | .sub => s!"({subLetter n}) "
 
 /-- A caption with its number prefix set in front: what a backend hands
@@ -3559,6 +3872,16 @@ def foldTableCells (fi : α → Inline → α) (acc : α) : List (Array Inline) 
   | [] => acc
   | cell :: rest => foldTableCells fi (foldInlineList fi acc cell.toList) rest
 
+/-- `foldInline` over algorithm lines: each line's content, then its
+comment, in reading order — one spelling for every collector, so no two
+can disagree on what an algorithm declares. -/
+def foldAlgLines (fi : α → Inline → α) (acc : α) : List AlgLine → α
+  | [] => acc
+  | l :: rest =>
+    foldAlgLines fi (match l.comment with
+      | some c => foldInlineList fi (foldInlineList fi acc l.content.toList) c.toList
+      | none => foldInlineList fi acc l.content.toList) rest
+
 def foldTableRows (fi : α → Inline → α) (acc : α) :
     List (Array (Array Inline)) → α
   | [] => acc
@@ -3595,6 +3918,7 @@ def foldBlock (fb : α → Block → α) (fi : α → Inline → α) (acc : α) 
   | .float _ _ _ body caption =>
     foldBlockList fb fi (foldInlineList fi (fb acc b) caption.toList) body.toList
   | .table _ _ _ rows _ => foldTableRows fi (fb acc b) rows.toList
+  | .algorithm _ _ lines => foldAlgLines fi (fb acc b) lines.toList
   | .logo content => foldInlineList fi (fb acc b) content.toList
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .bibliography _ _ _ => fb acc b
@@ -3765,6 +4089,7 @@ def navLinkOne (out : Array (String × String)) : Block → Array (String × Str
   | .frame title _ _ body => navLinkList (navLinkInlineList out title.toList) body.toList
   | .table _ _ _ rows _ => navLinkRows out rows.toList
   | .float _ _ _ body caption => navLinkInlineList (navLinkList out body.toList) caption.toList
+  | .algorithm _ _ lines => navLinkAlgLines out lines.toList
   -- a resolved entry's content carries its URL and anchor links
   | .bibliography _ _ items => navLinkBibItems out items.toList
 
@@ -3792,6 +4117,14 @@ def navLinkColumns (out : Array (String × String)) :
     List (Option Nat × Array Block) → Array (String × String)
   | [] => out
   | (_, body) :: rest => navLinkColumns (navLinkList out body.toList) rest
+
+def navLinkAlgLines (out : Array (String × String)) :
+    List AlgLine → Array (String × String)
+  | [] => out
+  | l :: rest =>
+    navLinkAlgLines (match l.comment with
+      | some c => navLinkInlineList (navLinkInlineList out l.content.toList) c.toList
+      | none => navLinkInlineList out l.content.toList) rest
 
 def navLinkInlineList (out : Array (String × String)) :
     List Inline → Array (String × String)
@@ -4108,6 +4441,14 @@ def dumpBlock (ind : String) (b : Block) : String :=
       | none => "") ++
     String.join ((verbatimLines s).toList.map
       fun l => s!"{ind}  {l.quote}\n")
+  | .algorithm numbered semis lines =>
+    s!"{ind}algorithm{if numbered then " numbered" else ""}{if semis then "" else " nosemi"}\n" ++
+    String.join (lines.toList.map fun l =>
+      s!"{ind}  line {l.depth} {l.kind.name}\n" ++
+      dumpInlines (ind ++ "    ") l.content ++
+      (match l.comment with
+       | some c => s!"{ind}    comment\n" ++ dumpInlines (ind ++ "      ") c
+       | none => ""))
   | .frame title standout valign body =>
     let va := match valign with
       | .center => ""
@@ -4178,6 +4519,7 @@ def dumpBlock (ind : String) (b : Block) : String :=
       | .figure => "figure"
       | .table => "table"
       | .sub => "sub"
+      | .algorithm => "algorithm"
     let n := match num with
       | some n => s!" {n}"
       | none => ""
@@ -4407,6 +4749,7 @@ def maxStepBlock : Block → Nat
   | .nav _ body => maxStepBlockList body.toList
   | .section _ _ _ _ => 1
   | .verbatim _ _ _ => 1
+  | .algorithm _ _ lines => maxStepAlgLines lines.toList
   | .note _ => 1
   | .frame _ _ _ _ => 1
   | .framefoot _ => 1
@@ -4439,6 +4782,15 @@ def maxStepItems : List (Array Block) → Nat
 def maxStepColumns : List (Option Nat × Array Block) → Nat
   | [] => 1
   | (_, body) :: rest => max (maxStepBlockList body.toList) (maxStepColumns rest)
+
+def maxStepAlgLines : List AlgLine → Nat
+  | [] => 1
+  | l :: rest =>
+    max (max (maxStepInlineList l.content.toList)
+      (match l.comment with
+       | some c => maxStepInlineList c.toList
+       | none => 1))
+      (maxStepAlgLines rest)
 
 def maxStepInlines (xs : Array Inline) : Nat := maxStepInlineList xs.toList
 
@@ -4525,6 +4877,9 @@ def dimBlock (cover : Cover) (k : Nat) (pending : Bool) : Block → Block
     .verbatim (if pending then some cover.plain else c) s
       { spec with caption := spec.caption.map fun (n, cap) =>
           (n, dimInlineList cover k pending #[] cap.toList) }
+  -- Lines cover and dim as paragraphs do, comment included: only colours
+  -- change, so no step can reflow the pseudocode.
+  | .algorithm n sm lines => .algorithm n sm (dimAlgLines cover k pending #[] lines.toList)
   | .note body => .note body
   | .frame t st v body => .frame t st v body
   | .framefoot content => .framefoot content
@@ -4583,6 +4938,27 @@ def dimColumns (cover : Cover) (k : Nat) (pending : Bool)
   | [] => out
   | (w, body) :: rest =>
     dimColumns cover k pending (out.push (w, dimBlockList cover k pending #[] body.toList)) rest
+
+def dimAlgLines (cover : Cover) (k : Nat) (pending : Bool) (out : Array AlgLine) :
+    List AlgLine → Array AlgLine
+  | [] => out
+  | l :: rest =>
+    let content := if pending then
+        (if l.content.isEmpty then l.content
+         else #[.colored cover.plain none (dimInlineList cover k true #[] l.content.toList)])
+      else dimInlineList cover k false #[] l.content.toList
+    let comment := match l.comment with
+      | some c =>
+        some (if pending then
+            (if c.isEmpty then c
+             else #[Inline.colored cover.plain none (dimInlineList cover k true #[] c.toList)])
+          else dimInlineList cover k false #[] c.toList)
+      | none => Option.none
+    dimAlgLines cover k pending (out.push
+      { depth := l.depth
+        kind := l.kind
+        content := content
+        comment := comment }) rest
 
 def dimInlineList (cover : Cover) (k : Nat) (pending : Bool) (out : Array Inline) :
     List Inline → Array Inline
@@ -4671,6 +5047,7 @@ def unwrapItemStep : Block → Block
   | .equation n content => .equation n content
   | .section l st num title => .section l st num title
   | .verbatim c s sp => .verbatim c s sp
+  | .algorithm n sm lines => .algorithm n sm lines
   | .note body => .note body
   | .framefoot content => .framefoot content
   | .setPalette pal => .setPalette pal
@@ -4758,6 +5135,19 @@ def ListingSpec.capText (spec : ListingSpec) : String :=
   | some (_, cap) => plainText cap
   | none => ""
 
+/-- The algorithm lines' census: each line's declared content, then its
+comment — the keywords a kind implies are generated by the backends
+(`AlgLine.rendered`) and never counted, exactly as caption prefixes are
+not (`algorithm_text` is the statement). -/
+def algLineText (acc : String) : List AlgLine → String
+  | [] => acc
+  | l :: rest =>
+    algLineText (match l.comment with
+      | some c =>
+        let pc := plainText c
+        (acc ++ plainText l.content) ++ pc
+      | none => acc ++ plainText l.content) rest
+
 mutual
 
 /-- The characters of block content with every mark stripped: the block
@@ -4799,6 +5189,8 @@ def blockTextOne (acc : String) : Block → String
   | .nav _ body => blockTextList acc body.toList
   | .note body => blockTextList acc body.toList
   | .verbatim _ s spec => acc ++ spec.capText ++ s
+  -- Content and comment count; generated keywords never do (algorithm_text).
+  | .algorithm _ _ lines => algLineText acc lines.toList
   | .logo content => acc ++ plainText content
   | .frame title _ _ body => blockTextList (acc ++ plainText title) body.toList
   | .framefoot content => acc ++ plainText content
@@ -4983,6 +5375,8 @@ def headingLevelOne (out : Array Nat) : Block → Array Nat
   | .frame _ _ _ body => headingLevelList out body.toList
   | .note _ => out
   | .verbatim _ _ _ => out
+  -- Lines hold inline content; no heading can stand in an algorithm.
+  | .algorithm _ _ _ => out
   | .framefoot _ => out
   | .setPalette _ => out
   | .setTokens _ => out
@@ -5052,6 +5446,7 @@ def footnoteBlockOne (out : Array (Option Nat × Array Inline)) :
   | .rule _ _ _ => out
   | .picture _ => out
   | .table _ _ _ rows _ => footnoteTableRows out rows.toList
+  | .algorithm _ _ lines => footnoteAlgLines out lines.toList
   -- the caption counts with its float, before the body, as its text does
   | .float _ _ _ body caption =>
     footnoteBlockList (footnoteInlineList out caption.toList) body.toList
@@ -5076,6 +5471,14 @@ def footnoteColumns (out : Array (Option Nat × Array Inline)) :
     List (Option Nat × Array Block) → Array (Option Nat × Array Inline)
   | [] => out
   | (_, body) :: rest => footnoteColumns (footnoteBlockList out body.toList) rest
+
+def footnoteAlgLines (out : Array (Option Nat × Array Inline)) :
+    List AlgLine → Array (Option Nat × Array Inline)
+  | [] => out
+  | l :: rest =>
+    footnoteAlgLines (match l.comment with
+      | some c => footnoteInlineList (footnoteInlineList out l.content.toList) c.toList
+      | none => footnoteInlineList out l.content.toList) rest
 
 def footnoteInlineList (out : Array (Option Nat × Array Inline)) :
     List Inline → Array (Option Nat × Array Inline)
@@ -5322,6 +5725,12 @@ private theorem blockTextList_chain (l1 l2 : List Block) (acc : String) :
   | nil => simp [blockTextList]
   | cons b rest ih => simp [blockTextList, ih]
 
+private theorem algLineText_chain (l1 l2 : List AlgLine) (acc : String) :
+    algLineText acc (l1 ++ l2) = algLineText (algLineText acc l1) l2 := by
+  induction l1 generalizing acc with
+  | nil => simp [algLineText]
+  | cons l rest ih => cases hc : l.comment <;> simp [algLineText, hc, ih]
+
 private theorem blockTextItems_chain (l1 l2 : List (Array Block)) (acc : String) :
     blockTextItems acc (l1 ++ l2) = blockTextItems (blockTextItems acc l1) l2 := by
   induction l1 generalizing acc with
@@ -5409,6 +5818,45 @@ theorem dimInline_text (cover : Cover) (k : Nat) (pending : Bool) (x : Inline) :
     rfl
 
 end
+
+/-- A covered or dimmed line keeps every character, comment included: the
+cover's wrapper recolours, as a paragraph's does. -/
+private theorem dimAlgLines_text (cover : Cover) (k : Nat) (pending : Bool)
+    (ls : List AlgLine) (out : Array AlgLine) (acc : String) :
+    algLineText acc (dimAlgLines cover k pending out ls).toList
+      = algLineText (algLineText acc out.toList) ls := by
+  match ls with
+  | [] => simp [dimAlgLines, algLineText]
+  | l :: rest =>
+    rw [dimAlgLines, dimAlgLines_text cover k pending rest]
+    rw [Array.toList_push, algLineText_chain]
+    by_cases h : pending = true
+    · cases hc : l.comment with
+      | none =>
+        by_cases he : l.content.isEmpty
+        · simp [h, hc, he, algLineText]
+        · simp [h, hc, he, algLineText, plainText, plainTextList, plainTextOne,
+            dimInlineList_text cover k true l.content.toList #[]]
+      | some c =>
+        by_cases he : l.content.isEmpty
+        · by_cases hce : c.isEmpty
+          · simp [h, hc, he, hce, algLineText]
+          · simp [h, hc, he, hce, algLineText, plainText, plainTextList,
+              plainTextOne, dimInlineList_text cover k true c.toList #[]]
+        · by_cases hce : c.isEmpty
+          · simp [h, hc, he, hce, algLineText, plainText, plainTextList,
+              plainTextOne, dimInlineList_text cover k true l.content.toList #[]]
+          · simp [h, hc, he, hce, algLineText, plainText, plainTextList,
+              plainTextOne, dimInlineList_text cover k true l.content.toList #[],
+              dimInlineList_text cover k true c.toList #[]]
+    · cases hc : l.comment with
+      | none =>
+        simp [h, hc, algLineText, plainText, plainTextList,
+          dimInlineList_text cover k false l.content.toList #[]]
+      | some c =>
+        simp [h, hc, algLineText, plainText, plainTextList,
+          dimInlineList_text cover k false l.content.toList #[],
+          dimInlineList_text cover k false c.toList #[]]
 
 /-- A covered or dimmed cell keeps every character: the cover's cell wrapper
 recolours, as a paragraph's does. -/
@@ -5533,6 +5981,11 @@ theorem dimBlock_text (cover : Cover) (k : Nat) (pending : Bool) (b : Block)
   | .section _ _ _ _ | .note _ | .frame _ _ _ _ | .framefoot _
   | .setPalette _ | .setTokens _
   | .rule _ _ _ | .picture _ | .pagebreak | .bibliography _ _ _ => rfl
+  | .algorithm n sm lines =>
+    rw [dimBlock]
+    show algLineText acc (dimAlgLines cover k pending #[] lines.toList).toList = _
+    rw [dimAlgLines_text cover k pending lines.toList #[] acc]
+    rfl
   | .table cols pl pr rows rules =>
     rw [dimBlock]
     simp [blockTextOne, dimTableRows_text cover k pending rows.toList #[] acc,
@@ -5584,6 +6037,14 @@ theorem dimBlocks_text (cover : Cover) (k : Nat) :
     Conserves blocksText (dimBlocks cover k) := fun xs => by
   simp [blocksText, dimBlocks, dimBlockList_text cover k false xs.toList #[] "",
     blockTextList]
+
+/-- `algorithm_text`: the algorithm block's census is exactly its lines'
+declared content and comments — display flags are settings and the
+keywords a kind implies are generated by the backends (`AlgLine.rendered`),
+so neither is ever counted, exactly as caption prefixes are not. -/
+theorem algorithm_text (numbered semis : Bool) (lines : Array AlgLine) :
+    blocksText #[Block.algorithm numbered semis lines]
+      = algLineText "" lines.toList := rfl
 
 -- The item-step flatten: unwrapping loses no text. A leading `\item<2->`
 -- wrapper opens into its item, nothing recoloured, nothing reordered, so
@@ -5679,7 +6140,7 @@ theorem unwrapItemStep_text (b : Block) (acc : String) :
       blockTextList]
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .note _ | .framefoot _
   | .pagebreak
-  | .setPalette _ | .setTokens _
+  | .setPalette _ | .setTokens _ | .algorithm _ _ _
   | .logo _ | .rule _ _ _ | .picture _ | .table _ _ _ _ _
   | .bibliography _ _ _ => rfl
 
@@ -5746,7 +6207,7 @@ theorem numberFloatOne_text (c : FloatCtr) (b : Block) (s : String) :
     blockTextOne s (numberFloatOne c b).2 = blockTextOne s b := by
   match b with
   | .para _ | .equation _ _ | .section _ _ _ _ | .note _ | .verbatim _ _ _ | .logo _
-  | .bibliography _ _ _
+  | .bibliography _ _ _ | .algorithm _ _ _
   | .framefoot _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ => rfl
   | .list o items =>
@@ -5924,6 +6385,10 @@ def recolorRolesBlock (repal : Palette → Palette) (recolor : RoleRecolor)
   -- none of them, so the walk leaves each whole.
   | .note body => (.note body, pal)
   | .verbatim c s sp => (.verbatim c s sp, pal)
+  -- Lines are judged where they stand (`Contrast.usesBlock` descends into
+  -- content and comment), so the realizer rewrites exactly there.
+  | .algorithm n sm lines =>
+    (.algorithm n sm (recolorRolesAlgLines recolor pal ground #[] lines.toList), pal)
   | .logo content => (.logo content, pal)
   | .rule c nm th => (.rule c nm th, pal)
   | .picture p => (.picture p, pal)
@@ -5978,6 +6443,18 @@ def recolorRolesBibItems (recolor : RoleRecolor) (pal : Palette)
     recolorRolesBibItems recolor pal ground
       (out.push { item with
         content := recolorRolesInlines recolor pal ground #[] item.content.toList }) rest
+
+def recolorRolesAlgLines (recolor : RoleRecolor) (pal : Palette)
+    (ground : Option Color) (out : Array AlgLine) : List AlgLine → Array AlgLine
+  | [] => out
+  | l :: rest =>
+    recolorRolesAlgLines recolor pal ground (out.push
+      { depth := l.depth
+        kind := l.kind
+        content := recolorRolesInlines recolor pal ground #[] l.content.toList
+        comment := match l.comment with
+          | some c => some (recolorRolesInlines recolor pal ground #[] c.toList)
+          | none => Option.none }) rest
 
 def recolorRolesInlines (recolor : RoleRecolor) (pal : Palette)
     (ground : Option Color) (out : Array Inline) : List Inline → Array Inline
@@ -6113,6 +6590,25 @@ theorem recolorRolesBibItems_text (recolor : RoleRecolor) (pal : Palette)
     simp [blockTextBibItems, blockTextBibItems_chain, plainText,
       recolorRolesInlines_text recolor pal ground item.content.toList #[], plainTextList]
 
+private theorem recolorRolesAlgLines_text (recolor : RoleRecolor) (pal : Palette)
+    (ground : Option Color) (ls : List AlgLine) (out : Array AlgLine)
+    (acc : String) :
+    algLineText acc (recolorRolesAlgLines recolor pal ground out ls).toList
+      = algLineText (algLineText acc out.toList) ls := by
+  match ls with
+  | [] => simp [recolorRolesAlgLines, algLineText]
+  | l :: rest =>
+    rw [recolorRolesAlgLines, recolorRolesAlgLines_text recolor pal ground rest]
+    rw [Array.toList_push, algLineText_chain]
+    cases hc : l.comment with
+    | none =>
+      simp [algLineText, hc, plainText, plainTextList,
+        recolorRolesInlines_text recolor pal ground l.content.toList #[]]
+    | some c =>
+      simp [algLineText, hc, plainText, plainTextList,
+        recolorRolesInlines_text recolor pal ground l.content.toList #[],
+        recolorRolesInlines_text recolor pal ground c.toList #[]]
+
 mutual
 
 theorem recolorRolesList_text (repal : Palette → Palette) (recolor : RoleRecolor)
@@ -6210,6 +6706,12 @@ theorem recolorRolesBlock_text (repal : Palette → Palette) (recolor : RoleReco
       recolorRolesInlines_text recolor pal ground content.toList #[], plainTextList]
   | .setPalette _ | .setTokens _ | .pagebreak | .note _ | .verbatim _ _ _
   | .logo _ | .rule _ _ _ | .picture _ => rfl
+  | .algorithm n sm lines =>
+    rw [recolorRolesBlock]
+    show algLineText acc
+      (recolorRolesAlgLines recolor pal ground #[] lines.toList).toList = _
+    rw [recolorRolesAlgLines_text recolor pal ground lines.toList #[] acc]
+    rfl
   | .table cols pl pr rows rules =>
     rw [recolorRolesBlock]
     simp [blockTextOne,
@@ -6284,7 +6786,7 @@ def keptBy (t : String) : Block → Bool
   | .spaced _ _
   | .verbatim _ _ _ | .columns _ | .step _ _ _ | .note _ | .logo _
   | .frame _ _ _ _ | .framefoot _ | .setPalette _ | .setTokens _
-  | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak
+  | .rule _ _ _ | .nav _ _ | .picture _ | .pagebreak | .algorithm _ _ _
   | .table _ _ _ _ _ | .float _ _ _ _ _ | .bibliography _ _ _ => true
 
 mutual
@@ -6323,6 +6825,8 @@ def keepForOne (t : String) : Block → Block
   -- Cells hold inlines: no conditional can nest in a table. A float's
   -- body is blocks, so the walk carries in, as through a frame.
   | .table c pl pr rows rules => .table c pl pr rows rules
+  -- Lines hold inlines: no conditional can nest in an algorithm.
+  | .algorithm n sm lines => .algorithm n sm lines
   | .float k n ca body caption => .float k n ca (keepForList t body.toList).toArray caption
   -- Entries hold inlines: no conditional can nest in a reference list.
   | .bibliography src style items => .bibliography src style items
@@ -6347,6 +6851,16 @@ end
 
 def keepFor (t : String) (xs : Array Block) : Array Block :=
   (keepForList t xs.toList).toArray
+
+/-- Algorithm text leaves: each line's declared content is one leaf, its
+comment another — a line survives a backend's view whole or not at all,
+as a cell does. -/
+def algTextLeaves (acc : List String) : List AlgLine → List String
+  | [] => acc
+  | l :: rest =>
+    algTextLeaves (match l.comment with
+      | some c => plainText c :: plainText l.content :: acc
+      | none => plainText l.content :: acc) rest
 
 mutual
 
@@ -6397,6 +6911,7 @@ def textLeavesOne (acc : List String) : Block → List String
   -- all, which is what the conservation theorem needs to range over. The
   -- caption is a leaf beside its float's body, as a frame's title is.
   | .table _ _ _ rows _ => textLeavesTableRows acc rows.toList
+  | .algorithm _ _ lines => algTextLeaves acc lines.toList
   | .float _ _ _ body caption => textLeavesList (plainText caption :: acc) body.toList
   -- Each entry is one leaf, as a cell is: it survives a backend's view
   -- whole or not at all.
@@ -6459,7 +6974,7 @@ def orphanFreeOne (avail : List String) : Block → Bool
   | .nav _ body => orphanFreeList avail body.toList
   | .frame _ _ _ body => orphanFreeList avail body.toList
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _ | .framefoot _
-  | .setPalette _ | .setTokens _
+  | .setPalette _ | .setTokens _ | .algorithm _ _ _
   | .rule _ _ _ | .picture _ | .table _ _ _ _ _ | .pagebreak
   | .bibliography _ _ _ => true
   | .float _ _ _ body _ => orphanFreeList avail body.toList
@@ -6481,6 +6996,24 @@ def orphanFree (avail : List String) (xs : Array Block) : Bool :=
 
 -- The accumulator lemmas: a leaf census over `acc` is the census over `[]`
 -- appended to `acc`, so membership statements can be read off `mem_append`.
+
+private theorem algTextLeaves_acc (acc : List String) (ls : List AlgLine) :
+    algTextLeaves acc ls = algTextLeaves [] ls ++ acc := by
+  induction ls generalizing acc with
+  | nil => simp [algTextLeaves]
+  | cons l rest ih =>
+    cases hc : l.comment with
+    | none =>
+      rw [algTextLeaves, algTextLeaves]
+      simp only [hc]
+      rw [ih (plainText l.content :: acc), ih [plainText l.content]]
+      simp
+    | some c =>
+      rw [algTextLeaves, algTextLeaves]
+      simp only [hc]
+      rw [ih (plainText c :: plainText l.content :: acc),
+        ih [plainText c, plainText l.content]]
+      simp
 
 private theorem textLeavesTableCells_acc (acc : List String)
     (cells : List (Array Inline)) :
@@ -6531,6 +7064,9 @@ private theorem textLeavesOne_acc (acc : List String) (b : Block) :
   | .pagebreak => simp [textLeavesOne]
   | .rule c n th => simp [textLeavesOne]
   | .picture p => simp [textLeavesOne]
+  | .algorithm n sm lines =>
+    rw [textLeavesOne, textLeavesOne]
+    exact algTextLeaves_acc acc lines.toList
   | .list o items =>
     rw [textLeavesOne, textLeavesOne]
     exact textLeavesItems_acc acc items.toList
@@ -6707,6 +7243,10 @@ theorem keepForOne_covers (avail : List String) (t0 : String) (h0 : t0 ∈ avail
     simp [textLeavesOne] at hs
   | .table c pl pr rows rules =>
     -- kept whole by every backend: its own leaves survive untouched
+    intro s hs
+    exact ⟨t0, h0, rfl, hs⟩
+  | .algorithm n sm lines =>
+    -- kept whole by every backend, as a table is
     intro s hs
     exact ⟨t0, h0, rfl, hs⟩
   | .bibliography src style items =>
@@ -6939,7 +7479,7 @@ def onlyFreeOne : Block → Bool
   | .frame _ _ _ body => onlyFreeList body.toList
   | .float _ _ _ body _ => onlyFreeList body.toList
   | .para _ | .equation _ _ | .section _ _ _ _ | .verbatim _ _ _ | .logo _ | .framefoot _
-  | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _
+  | .setPalette _ | .setTokens _ | .rule _ _ _ | .picture _ | .algorithm _ _ _
   | .table _ _ _ _ _ | .pagebreak | .bibliography _ _ _ => true
 
 def onlyFreeItems : List (Array Block) → Bool
@@ -6985,6 +7525,7 @@ theorem keepForOne_id (t : String) (b : Block)
   | .rule c n th => rfl
   | .picture p => rfl
   | .table c pl pr rows rules => rfl
+  | .algorithm n sm lines => rfl
   | .bibliography src style items => rfl
   | .list o items =>
     rw [onlyFreeOne] at h
@@ -7406,6 +7947,16 @@ running furniture — is mapped, and every block wrapper keeps its shape.
 One descent for the whole leaf-rewrite family, so a rewrite cannot
 silently skip a region a sibling walk reaches: two of the three hand-rolled
 copies this map replaced skipped real ones. -/
+def mapAlgLines (f : Inline → Inline) (out : Array AlgLine) :
+    List AlgLine → Array AlgLine
+  | [] => out
+  | l :: rest =>
+    mapAlgLines f (out.push
+      { depth := l.depth
+        kind := l.kind
+        content := mapInlines f l.content
+        comment := l.comment.map (mapInlines f) }) rest
+
 def mapBlocks (f : Inline → Inline) (xs : Array Block) : Array Block :=
   mapBlockList f #[] xs.toList
 
@@ -7438,6 +7989,7 @@ def mapBlock (f : Inline → Inline) : Block → Block
     .float k num ca (mapBlockList f #[] body.toList) (mapInlines f caption)
   | .table c pl pr rows rules =>
     .table c pl pr (mapTableRows f #[] rows.toList) rules
+  | .algorithm n sm lines => .algorithm n sm (mapAlgLines f #[] lines.toList)
   | .logo content => .logo (mapInlines f content)
   | .bibliography src style items =>
     .bibliography src style (mapBibItems f #[] items.toList)
@@ -7529,6 +8081,20 @@ theorem mapInlines_text (f : Inline → Inline)
   show plainTextList (mapInlineList f #[] xs.toList).toList = _
   rw [mapInlineList_text f hf xs.toList #[]]
   simp [plainTextList, plainText]
+
+private theorem mapAlgLines_text (f : Inline → Inline)
+    (hf : ∀ x, plainTextOne (f x) = plainTextOne x) (ls : List AlgLine)
+    (out : Array AlgLine) (acc : String) :
+    algLineText acc (mapAlgLines f out ls).toList
+      = algLineText (algLineText acc out.toList) ls := by
+  match ls with
+  | [] => simp [mapAlgLines, algLineText]
+  | l :: rest =>
+    rw [mapAlgLines, mapAlgLines_text f hf rest]
+    rw [Array.toList_push, algLineText_chain]
+    have hm : ∀ xs, plainText (mapInlines f xs) = plainText xs := mapInlines_text f hf
+    cases hc : l.comment <;> simp [algLineText, hc, hm]
+
 
 mutual
 
@@ -7765,6 +8331,10 @@ theorem mapBlock_text (f : Inline → Inline)
     show blockTextTableRows acc (mapTableRows f #[] rows.toList).toList = _
     rw [mapTableRows_text f hf rows.toList #[]]
     rfl
+  | .algorithm n sm lines =>
+    show algLineText acc (mapAlgLines f #[] lines.toList).toList = _
+    rw [mapAlgLines_text f hf lines.toList #[]]
+    rfl
   | .logo content => simp [mapBlock, blockTextOne, mapInlines_text f hf content]
   | .bibliography src style items =>
     show blockTextBibItems acc (mapBibItems f #[] items.toList).toList = _
@@ -7910,7 +8480,7 @@ are its headings, its display equations, and its captioned floats — a
 label under a subfloat takes the parent float's kind, as cleveref's
 subfigure names are the figure's. -/
 inductive RefKind where
-  | heading | equation | figure | table
+  | heading | equation | figure | table | algorithm
   deriving Repr, BEq
 
 /-- One label's binding: the number it bound to, with the kind of the
@@ -7940,11 +8510,13 @@ def crefNameOf (loc : Locale) : RefKind → CrefName
   | .equation => loc.crefEquation
   | .figure => loc.crefFigure
   | .table => loc.crefTable
+  | .algorithm => loc.crefAlgorithm
 
 /-- Every kind, for the coverage contract: an added constructor fails
 `all_complete` until it is listed, and listed is covered
 (`crefNameOf_covers`) — the DiagCode registry's shape. -/
-def RefKind.all : List RefKind := [.heading, .equation, .figure, .table]
+def RefKind.all : List RefKind :=
+  [.heading, .equation, .figure, .table, .algorithm]
 
 theorem RefKind.all_complete (k : RefKind) : RefKind.all.contains k := by
   cases k <;> rfl
@@ -8083,6 +8655,18 @@ private def floatLabelPush (float : Option RefBinding)
   | .label k => out.push (k, float)
   | _ => out
 
+/-- Labels inside algorithm lines, bound to the binding in force — a
+`\label` under a captioned algorithm float resolves to its number. -/
+private def algFloatLabels (float : Option RefBinding)
+    (out : Array (String × Option RefBinding)) :
+    List AlgLine → Array (String × Option RefBinding)
+  | [] => out
+  | l :: rest =>
+    algFloatLabels float (match l.comment with
+      | some c => foldInlineList (floatLabelPush float)
+          (foldInlineList (floatLabelPush float) out l.content.toList) c.toList
+      | none => foldInlineList (floatLabelPush float) out l.content.toList) rest
+
 mutual
 
 /-- The float binding in force at every `.label` of the numbered IR, in
@@ -8134,9 +8718,11 @@ def floatLabelOne (float : Option RefBinding) (out : Array (String × Option Ref
                          num := ((float.map (·.num)).getD "") ++ subLetter m }
         | .figure => some { kind := some .figure, num := toString m }
         | .table => some { kind := some .table, num := toString m }
+        | .algorithm => some { kind := some .algorithm, num := toString m }
     floatLabelList mine (foldInlineList (floatLabelPush mine) out caption.toList)
       body.toList
   | .table _ _ _ rows _ => foldTableRows (floatLabelPush float) out rows.toList
+  | .algorithm _ _ lines => algFloatLabels float out lines.toList
   | .logo content => foldInlineList (floatLabelPush float) out content.toList
   | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .bibliography _ _ _ => out

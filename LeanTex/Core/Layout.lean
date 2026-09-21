@@ -1417,8 +1417,23 @@ private def scalarTextOne (out : ScalarAcc) (itemD enumD : Nat) :
   -- Every cell's text, and a caption's, reaches the scalar census: the
   -- fallback scan must see a glyph before layout asks a face for it.
   | .table _ _ _ rows _ => scalarTextTableRows out rows.toList
+  -- The generated keyword words, the io/comment punctuation, and — when
+  -- lines are numbered — the digits, plus each line's own content and
+  -- comment: generated text must be covered exactly as caption prefixes.
+  | .algorithm numbered _ lines =>
+    let words := Ir.algWords out.locale.tag
+    let texts := (out.texts ++ (Ir.AlgWords.all words).toArray).push ":; /**/"
+    let texts := if numbered then texts.push "0123456789" else texts
+    scalarTextAlgLines { out with texts := texts } lines.toList
   | .float _ _ _ body caption =>
     scalarTextList (textAndMath out caption) itemD enumD body.toList
+
+private def scalarTextAlgLines (out : ScalarAcc) : List Ir.AlgLine → ScalarAcc
+  | [] => out
+  | l :: rest =>
+    scalarTextAlgLines (match l.comment with
+      | some c => textAndMath (textAndMath out l.content) c
+      | none => textAndMath out l.content) rest
 
 private def scalarTextTableRows (out : ScalarAcc) :
     List (Array (Array Inline)) → ScalarAcc
@@ -5241,6 +5256,32 @@ private def collectBlock (r : Rd) (a : Acc)
       | none => inner
     collectPara { r with pats := none } a inner indent false
       (Ir.scaleStep r.geom.fontSize "footnotesize")
+  | .algorithm numbered semis lines =>
+    -- Pseudocode: each line one display-type paragraph at the body size —
+    -- never hyphenated (the engine must not invent a hyphen inside an
+    -- identifier), never justified (a short pseudocode line stretched
+    -- across the measure is the two-word display line) — indented one
+    -- `algindent` step per depth. The step's default is algorithm2e's own
+    -- indent, `\SetInd{0.5em}{1em}` plus its 0.4pt rule allowance
+    -- (algorithm2e.sty:1604,1622), ≈1.5em, following the type; the token
+    -- overrides it. Keywords, io labels, semicolons and the muted comment
+    -- come generated from `Ir.AlgLine.rendered` — the one site both
+    -- backends read (`algorithm_lines_agree`). A line number is a marker
+    -- in the muted role: the list-marker furniture shape, so numbers
+    -- right-align against the text edge as bullets do.
+    let words := Ir.algWords r.locale.tag
+    let muted := Ir.mutedOf a.pal
+    let stepInd := (r.resolve ((a.tokens.find? "algindent").getD
+      { width := { em := 1500 } })).width
+    let rAlg := { r with pats := none, geom := { r.geom with justify := false } }
+    (lines.foldl (fun (ai : Acc × Nat) l =>
+      let (a, i) := ai
+      let content := Ir.AlgLine.rendered words semis muted l
+      let marker : Option (Array Ir.Inline) := if numbered then
+          some #[Ir.Inline.colored muted (some "muted") #[.text s!"{i}"]]
+        else none
+      (collectPara rAlg a content (indent + stepInd * (l.depth : Int)) false
+        r.geom.fontSize (marker := marker), i + 1)) (a, 1)).1
   | .framefoot content =>
     -- Not a line, a state change: the note the following frames' footers
     -- carry. Empty clears back to the chrome default.

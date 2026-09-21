@@ -104,8 +104,11 @@ and `french` option blocks, under the package's own defaults — `abbrev`
 on (`\@cref@abbrevtrue`), `capitalise` off (`\@cref@capitalisefalse`).
 This is package data, not babel ini data, so the table lives here and
 regenerates with the rest. Order per language: section, equation,
-figure, table, then `\crefrangeconjunction`'s word. -/
-def crefData : List (String × (CrefGen × CrefGen × CrefGen × CrefGen × String)) :=
+figure, table, algorithm (cleveref carries `\crefname{algorithm}`
+itself; algorithm2e aliases its `algocf` counter onto it), then
+`\crefrangeconjunction`'s word. -/
+def crefData :
+    List (String × (CrefGen × CrefGen × CrefGen × CrefGen × CrefGen × String)) :=
   [("en", ({ one := "section", many := "sections",
              capOne := "Section", capMany := "Sections" },
            { one := "eq.", many := "eqs.",
@@ -113,7 +116,9 @@ def crefData : List (String × (CrefGen × CrefGen × CrefGen × CrefGen × Stri
            { one := "fig.", many := "figs.",
              capOne := "Figure", capMany := "Figures" },
            { one := "table", many := "tables",
-             capOne := "Table", capMany := "Tables" }, "to")),
+             capOne := "Table", capMany := "Tables" },
+           { one := "algorithm", many := "algorithms",
+             capOne := "Algorithm", capMany := "Algorithms" }, "to")),
    ("fr", ({ one := "section", many := "sections",
              capOne := "Section", capMany := "Sections" },
            { one := "équation", many := "équations",
@@ -121,7 +126,9 @@ def crefData : List (String × (CrefGen × CrefGen × CrefGen × CrefGen × Stri
            { one := "figure", many := "figures",
              capOne := "Figure", capMany := "Figures" },
            { one := "tableau", many := "tableaux",
-             capOne := "Tableau", capMany := "Tableaux" }, "à")),
+             capOne := "Tableau", capMany := "Tableaux" },
+           { one := "algorithme", many := "algorithmes",
+             capOne := "Algorithme", capMany := "Algorithmes" }, "à")),
    ("de", ({ one := "Abschnitt", many := "Abschnitte",
              capOne := "Abschnitt", capMany := "Abschnitte" },
            { one := "Gleichung", many := "Gleichungen",
@@ -129,7 +136,9 @@ def crefData : List (String × (CrefGen × CrefGen × CrefGen × CrefGen × Stri
            { one := "Abb.", many := "Abb.",
              capOne := "Abbildung", capMany := "Abbildungen" },
            { one := "Tabelle", many := "Tabellen",
-             capOne := "Tabelle", capMany := "Tabellen" }, "bis"))]
+             capOne := "Tabelle", capMany := "Tabellen" },
+           { one := "Algorithmus", many := "Algorithmen",
+             capOne := "Algorithmus", capMany := "Algorithmen" }, "bis"))]
 
 def emitCref (c : CrefGen) : String :=
   s!"\{ one := {leanStr c.one}, many := {leanStr c.many}, " ++
@@ -159,6 +168,18 @@ is siunitx's, whose default `group-separator` is `\,`, the thin space
 def groupOf (tag iniGroup : String) : String :=
   if tag == "en" then "\u2009" else iniGroup
 
+/-- The algorithm caption word per language. Not CLDR data: the babel ini
+files caption figures and tables but not algorithms, so the word comes
+from the package that owns the convention — algorithm2e's own language
+options (`\renewcommand{\algorithmcfname}{…}` under `english`, `french`,
+and `german`; algorithm2e.sty rev. 5.3). Hand-cited here, emitted with
+the ini data so `Locale` stays total. -/
+def algorithmName (lang : String) : String :=
+  match lang with
+  | "fr" => "Algorithme"
+  | "de" => "Algorithmus"
+  | _ => "Algorithm"
+
 def quoteAt (s : String) (i : Nat) : String :=
   match s.toList[i]? with
   | some c => String.ofList [c]
@@ -169,13 +190,15 @@ def emit (name : String) (l : IniLocale) : String :=
     ({ one := "", many := "", capOne := "", capMany := "" },
      { one := "", many := "", capOne := "", capMany := "" },
      { one := "", many := "", capOne := "", capMany := "" },
+     { one := "", many := "", capOne := "", capMany := "" },
      { one := "", many := "", capOne := "", capMany := "" }, "")
-  let (sec, eq, fig, tab, to) := cref
+  let (sec, eq, fig, tab, alg, to) := cref
   s!"/-- {name}: babel-{l.tag}.ini; cref names from cleveref.sty v0.21.4. -/
 def {name} : Locale := \{
   tag := {leanStr l.tag}
   figure := {leanStr l.figure}
   table := {leanStr l.table}
+  algorithm := {leanStr (algorithmName l.tag)}
   abstract := {leanStr l.abstract}
   references := {leanStr l.references}
   months := #[{String.intercalate ", " (l.months.toList.map leanStr)}]
@@ -189,6 +212,7 @@ def {name} : Locale := \{
   crefEquation := {emitCref eq}
   crefFigure := {emitCref fig}
   crefTable := {emitCref tab}
+  crefAlgorithm := {emitCref alg}
   crefRangeTo := {leanStr to}
   listing := {leanStr ((listingWord.lookup l.tag).getD "Listing")}
   decimal := {leanStr l.decimal}

@@ -24,6 +24,7 @@ def en : Locale := {
   tag := "en"
   figure := "Figure"
   table := "Table"
+  algorithm := "Algorithm"
   abstract := "Abstract"
   references := "References"
   months := #["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"]
@@ -37,6 +38,7 @@ def en : Locale := {
   crefEquation := { one := "eq.", many := "eqs.", capOne := "Equation", capMany := "Equations" }
   crefFigure := { one := "fig.", many := "figs.", capOne := "Figure", capMany := "Figures" }
   crefTable := { one := "table", many := "tables", capOne := "Table", capMany := "Tables" }
+  crefAlgorithm := { one := "algorithm", many := "algorithms", capOne := "Algorithm", capMany := "Algorithms" }
   crefRangeTo := "to"
   listing := "Listing"
   decimal := "."
@@ -47,6 +49,7 @@ def fr : Locale := {
   tag := "fr"
   figure := "Figure"
   table := "Table"
+  algorithm := "Algorithme"
   abstract := "Résumé"
   references := "Références"
   months := #["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"]
@@ -60,6 +63,7 @@ def fr : Locale := {
   crefEquation := { one := "équation", many := "équations", capOne := "Équation", capMany := "Équations" }
   crefFigure := { one := "figure", many := "figures", capOne := "Figure", capMany := "Figures" }
   crefTable := { one := "tableau", many := "tableaux", capOne := "Tableau", capMany := "Tableaux" }
+  crefAlgorithm := { one := "algorithme", many := "algorithmes", capOne := "Algorithme", capMany := "Algorithmes" }
   crefRangeTo := "à"
   listing := "Liste"
   decimal := ","
@@ -70,6 +74,7 @@ def de : Locale := {
   tag := "de"
   figure := "Abbildung"
   table := "Tabelle"
+  algorithm := "Algorithmus"
   abstract := "Zusammenfassung"
   references := "Literatur"
   months := #["Januar", "Februar", "März", "April", "Mai", "Juni", "Juli", "August", "September", "Oktober", "November", "Dezember"]
@@ -83,6 +88,7 @@ def de : Locale := {
   crefEquation := { one := "Gleichung", many := "Gleichungen", capOne := "Gleichung", capMany := "Gleichungen" }
   crefFigure := { one := "Abb.", many := "Abb.", capOne := "Abbildung", capMany := "Abbildungen" }
   crefTable := { one := "Tabelle", many := "Tabellen", capOne := "Tabelle", capMany := "Tabellen" }
+  crefAlgorithm := { one := "Algorithmus", many := "Algorithmen", capOne := "Algorithmus", capMany := "Algorithmen" }
   crefRangeTo := "bis"
   listing := "Listing"
   decimal := ","
