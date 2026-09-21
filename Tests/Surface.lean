@@ -509,6 +509,21 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat helvet names its dropped scale option"
     ((elabStr (pre "\\usepackage[scaled=0.9]{helvet}")).2.any fun d =>
       d.code == "W0101" && hasStr d.message "scaled")
+  -- \xspace: a space unless punctuation follows (xspace documentation) —
+  -- the lexer has already eaten any typed space after the control word,
+  -- so dropping it would silently glue words. Through a macro, the
+  -- body-end boundary takes the package's default action (a space).
+  let paraText (body : String) : String :=
+    match (elabStr ("\\documentclass{article}\n\\begin{document}\n" ++ body ++
+      "\n\\end{document}")).1.body with
+    | #[.para xs] => Ir.plainText xs
+    | _ => "<not one para>"
+  t "compat xspace inserts the space a word needs"
+    (paraText "a\\xspace b" == "a b")
+  t "compat xspace stays out before punctuation"
+    (paraText "a\\xspace." == "a.")
+  t "compat xspace through a macro keeps the word boundary"
+    (paraText "\\define \\foo {ab\\xspace}\\foo c" == "ab c")
   -- The picture subset renders, so loading tikz loses nothing at the load:
   -- a shape outside the subset is named where it is drawn (W0334, E0333),
   -- never at the `\usepackage` line.

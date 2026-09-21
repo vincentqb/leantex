@@ -1,0 +1,7 @@
+# source: xspace documentation (\xspace: a space unless the next token is in
+# the exception list of punctuation). Implemented as lookahead in the
+# rewrite walk; at a group or macro-body end, where the use site is
+# unknowable at rewrite time, the space (the package's default action) is
+# emitted.
+body impl a\xspace b
+body impl a\xspace.

@@ -39,7 +39,7 @@ def nativePackages : List String :=
    "caption", "subcaption", "nicefrac", "multirow",
    "appendixnumberbeamer", "natbib",
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
-   "libertine", "carlito"]
+   "libertine", "carlito", "xspace"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=
@@ -1148,6 +1148,25 @@ private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
     let native := s!"\\page\{ leading = {rawSrc (args.getD 0 #[])} }"
     became s!"\\{name}" native pos
     return some (← synthAt native pos, k)
+  | "xspace" =>
+    -- xspace package: a space unless punctuation follows (xspace
+    -- documentation, the exception list — TeX's tokenizer has already
+    -- eaten the space the author typed after the control word, here as
+    -- there). The walk reads the next parsed element; at the end of a
+    -- group or macro body, where the following context is the use
+    -- site's and unknowable at rewrite time, the space — the package's
+    -- default action — is emitted. It is emitted as control-space, which
+    -- survives a macro body's trailing-space trim; a bare interword
+    -- space would be dropped there and glue the words after all.
+    let punct (c : Char) : Bool :=
+      c == '.' || c == ',' || c == '\'' || c == '/' || c == '?' ||
+      c == ';' || c == ':' || c == '!' || c == '~' || c == '-' || c == ')'
+    let noSpace := match raws[start]? with
+      | some (.word w _) => (w.toList.head?.map punct).getD false
+      | some (.sym c _) => punct c
+      | some .space | some (.par _) => true
+      | _ => false
+    return some (if noSpace then #[] else #[.ctrl " " pos], start)
   | "selectlanguage" =>
     -- babel's mid-document switch: from here on, in flow order (babel
     -- manual §1.5). The marker is unforgeable (`@` never lexes into a
