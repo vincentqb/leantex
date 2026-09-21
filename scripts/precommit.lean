@@ -78,6 +78,35 @@ def conflictMarkers (diff : String) : Array (String × Nat × String) := Id.run 
       line := line + 1
   return out
 
+/-- A path spelled only in ASCII letters, digits, `.`, `_`, `/` and `-` —
+the alphabet every shell,
+git, and `lake` pass through unquoted. A file a mangled command produces
+is named by that command's own text (`sed -n "…",+12p` once created a
+zero-byte `arnings name the native spelling",+12p` at the root, and a
+blanket `git add -A` staged it): spaces, quotes, commas, `+`, `=`, and
+non-ASCII are exactly the debris alphabet. -/
+def plainPath (p : String) : Bool :=
+  !p.isEmpty && p.toList.all fun c =>
+    c.isAlphanum || c == '.' || c == '_' || c == '/' || c == '-'
+
+/-- Faults among the staged added files, each with the rule it breaks,
+from `git diff --cached --numstat --diff-filter=A -z`: one NUL-terminated
+`added<TAB>deleted<TAB>path` record per file, the path raw (no quoting).
+Zero lines both ways is an empty file, and no convention in this tree
+wants one (no `.gitkeep`) — it is debris too. A binary counts `-`, so a
+zero-byte file is the only `0 0` record. -/
+def addedPathFaults (numstat : String) : Array (String × String) := Id.run do
+  let mut out : Array (String × String) := #[]
+  for rec in numstat.splitOn "\x00" do
+    match rec.splitOn "\t" with
+    | [add, del, path] =>
+      if !plainPath path then
+        out := out.push (path, "characters outside [A-Za-z0-9._/-]")
+      if add == "0" && del == "0" then
+        out := out.push (path, "empty file")
+    | _ => pure ()
+  return out
+
 def tokens (s : String) : List String :=
   (s.split Char.isWhitespace).toList.map (·.toString) |>.filter (!·.isEmpty)
 
@@ -879,6 +908,27 @@ def selftest : IO UInt32 := do
       ("docs/log.md", 7, mkTheirs ++ " wt/slice")] then
     fails.modify ("conflictMarkers on the diff3 Markdown case: wrong hits or a setext fire" :: ·)
 
+  expect "plainPath" plainPath [
+    -- the tree's own spellings
+    ("tests/corpus/a-b_c.tex", true),
+    ("scripts/hooks/pre-commit", true),
+    ("LeanTex/Core/Oklab.lean", true),
+    -- the debris alphabet: a space, the escape itself (quote, comma, plus),
+    -- an `=`, non-ASCII, a newline, the empty name
+    ("tests/corpus/a b.tex", false),
+    ("arnings name the native spelling\",+12p", false),
+    ("notes=draft.md", false),
+    ("tests/corpus/r\u00e9sum\u00e9.tex", false),
+    ("a\nb.tex", false),
+    ("", false)]
+  -- the numstat walker: an empty file fires, a mangled name fires, a
+  -- content-bearing plain path and a binary pass
+  let ns := "0\t0\tempty.txt\x00" ++ "12\t0\ttests/corpus/a-b_c.tex\x00"
+    ++ "0\t0\ta b\x00" ++ "-\t-\ttests/corpus/pic.png\x00"
+  if addedPathFaults ns != #[("empty.txt", "empty file"),
+      ("a b", "characters outside [A-Za-z0-9._/-]"), ("a b", "empty file")] then
+    fails.modify ("addedPathFaults: wrong hits on the empty/mangled/plain/binary case" :: ·)
+
   expect "bannedWord" (bannedWord kwPartial) [
     -- a declaration must still fire, wherever it stands on the line
     ("+" ++ kwPartial ++ " def foo : Nat := 0", true),
@@ -1139,6 +1189,17 @@ def main (args : List String) : IO UInt32 := do
 {hits}
   Fix: resolve the conflict -- keep the side you mean, delete the marker
   lines -- then re-stage the file."
+
+  -- Also over every staged file, before the relevance gate: the checks
+  -- above read content, and the debris that escaped had none — a
+  -- zero-byte file named by a mangled shell command's own text.
+  let faults := addedPathFaults (← git #["diff", "--cached", "--numstat", "--diff-filter=A", "-z"])
+  if !faults.isEmpty then
+    let hits := String.intercalate "\n" (faults.toList.map fun (p, rule) => s!"  {p}: {rule}")
+    say s!"pre-commit: a staged added file is debris:
+{hits}
+  Fix: git rm --cached -- '<path>' and delete the file; stage files by name,
+  never with -A or ."
 
   if !staged.any relevant then
     return (if ← failed.get then 1 else 0)
