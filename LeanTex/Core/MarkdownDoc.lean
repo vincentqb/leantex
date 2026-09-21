@@ -171,11 +171,13 @@ private def blockInto (loc : Locale) (summary ind acc : String) : Block → Stri
     let lines := String.intercalate "\n" (verbatimLines s).toList
     -- The numbered caption leads the fence, as the twin sets a float's
     -- caption; line numbers are page furniture a text stream cannot carry.
+    -- The declared language is the fence's info string, read from the one
+    -- IR projection the HTML class reads too (`listing_language_agree`).
     let cap := match spec.caption with
       | some (n, c) =>
         ind ++ inlineText (Ir.listingCaption loc n c) ++ "\n\n"
       | none => ""
-    acc ++ cap ++ "```\n" ++ lines ++ "\n```\n\n"
+    acc ++ cap ++ ("```" ++ spec.fenceInfo ++ "\n") ++ lines ++ "\n```\n\n"
   -- Pseudocode as a fence: each line with its generated keywords rendered
   -- to plain text (`AlgLine.rendered`, the site both artifact backends
   -- read too), depth as two spaces — code for a text twin, as verbatim.

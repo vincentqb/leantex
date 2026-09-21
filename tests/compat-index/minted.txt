@@ -7,6 +7,8 @@
 # refuse by name.
 body impl \begin{minted}{python} print(1) \end{minted}
 body impl \begin{minted}[linenos]{python} print(1) \end{minted}
+body impl \begin{minted}{C++} int x; \end{minted}
+body refuse:W0110 \begin{minted}{Python 3} print(1) \end{minted}
 body refuse:W0301 \mint{python}|print(1)|
 body refuse:W0301 \mintinline{python}|print(1)|
 body refuse:W0301 \inputminted{python}{example.py}

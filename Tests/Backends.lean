@@ -2327,3 +2327,83 @@ def algorithmBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
     (((deep.splitOn "<ol").length - 1) == 3 &&
       inOrder deep ["<strong>for</strong>", "<strong>while</strong>",
         "step;", "<strong>end</strong>", "<strong>end</strong>"])
+
+mutual
+
+/-- Every `code` element's `class` attribute in the typed tree, in document
+order — `none` for a `code` that carries no class. The listing-language
+oracle reads the attribute the tree carries, never the printed string. -/
+def codeClassesOne (acc : Array (Option String)) : Html.Node → Array (Option String)
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem t attrs kids =>
+    let acc := if t == "code" then acc.push ((attrs.find? (·.1 == "class")).map (·.2)) else acc
+    codeClassesList acc kids.toList
+
+def codeClassesList (acc : Array (Option String)) : List Html.Node → Array (Option String)
+  | [] => acc
+  | k :: rest => codeClassesList (codeClassesOne acc k) rest
+
+end
+
+/-- `listing_language_agree`'s executable oracle over the two text artifacts:
+one declared language reaches the HTML `code` element's `language-…` class
+and the markdown fence's info string; a listing without one reaches neither;
+a spelling outside the token grammar is named W0110 and reaches neither. The
+typed tree is read for the class, the emitted twin for the fence. -/
+def listingLanguageChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let docOf (body : String) : Ir.Doc × Array Diag := elabStr (dvDoc "" body)
+  let classesOf (doc : Ir.Doc) : Array (Option String) :=
+    let (head, body, _) := HtmlDoc.emitTree {} doc
+    codeClassesList (codeClassesList #[] head.toList) body.toList
+  let fencesOf (doc : Ir.Doc) : List String :=
+    ((MarkdownDoc.emit doc).splitOn "```").zipIdx.filterMap fun (seg, i) =>
+      -- opening fences stand at odd positions between the delimiters; the
+      -- info string is the opener's first line
+      if i % 2 == 1 then some ((seg.splitOn "\n").headD "") else none
+  let (lst, _) := docOf "\\begin{lstlisting}[language=Python]\nx = 1\n\\end{lstlisting}"
+  t "html: a listings language reaches the code element's class"
+    (classesOf lst == #[some "language-python"])
+  t "markdown: a listings language reaches the fence info string"
+    (fencesOf lst == ["python"])
+  let (mnt, _) := docOf "\\begin{minted}{Python}\nprint(1)\n\\end{minted}"
+  t "html: minted's language argument reaches the code element's class"
+    (classesOf mnt == #[some "language-python"])
+  t "markdown: minted's language argument reaches the fence info string"
+    (fencesOf mnt == ["python"])
+  let (bare, _) := docOf "\\begin{lstlisting}\nx = 1\n\\end{lstlisting}"
+  t "html: a listing without a language carries no class"
+    (classesOf bare == #[none])
+  t "markdown: a listing without a language opens a bare fence"
+    (fencesOf bare == [""])
+  let (verb, _) := docOf "\\begin{verbatim}\nx = 1\n\\end{verbatim}"
+  t "html: verbatim carries no class"
+    (classesOf verb == #[none])
+  t "markdown: verbatim opens a bare fence"
+    (fencesOf verb == [""])
+  -- listings' dialect spelling is outside the token grammar: named, and the
+  -- raw text reaches neither artifact
+  let (dialect, ds) := docOf "\\begin{lstlisting}[language={[LaTeX]TeX}]\nx\n\\end{lstlisting}"
+  t "an invalid language spelling is named W0110"
+    (ds.any (·.code == "W0110"))
+  t "html: an invalid language spelling reaches no class"
+    (classesOf dialect == #[none])
+  t "markdown: an invalid language spelling reaches no fence info"
+    (fencesOf dialect == [""])
+  -- the class survives the caption and line-number apparatus around it
+  let (full, _) := docOf ("\\begin{lstlisting}[language=C++, caption={An invented probe}, " ++
+    "numbers=left]\nint x;\n\\end{lstlisting}")
+  let fullHtml := (HtmlDoc.emit {} full).1
+  t "html: a captioned, numbered listing keeps its language class"
+    (classesOf full == #[some "language-c++"] &&
+      (fullHtml.splitOn "<figure class=\"listing\">").length == 2 &&
+      (fullHtml.splitOn "class=\"numbered\"").length == 2)
+  t "markdown: a captioned listing's fence carries the info string after the caption"
+    (fencesOf full == ["c++"] &&
+      ((MarkdownDoc.emit full).splitOn "Listing 1: An invented probe\n\n```c++\n").length == 2)
+  -- the attribute goes through the escaper as every attribute does: a
+  -- token cannot carry a quote, and the printed class is exactly the token
+  t "html: the printed class is the token, escaped by construction"
+    ((fullHtml.splitOn "<code class=\"language-c++\">").length == 2)

@@ -3181,13 +3181,19 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     -- wraps the block in the figure-caption shape, the caption above
     -- (listings.sty: `\lst@Key{captionpos}{t}` — above is the default),
     -- numbered from the one site both backends read (`Ir.listingCaption`).
+    -- A declared language is the `code` element's class, read from the one
+    -- IR projection the markdown fence reads too (`listing_language_agree`);
+    -- the attribute value goes through the escaper as every attribute does.
     let lines := (verbatimLines s).toList
+    let codeAttrs : Array (String × String) := match spec.htmlClass with
+      | some c => #[("class", c)]
+      | none => #[]
     let code :=
       if spec.numbers then
         Html.elem "code" ((lines.map fun l =>
-          Html.elem "span" #[Html.text (l ++ "\n")] #[("class", "line")]).toArray)
+          Html.elem "span" #[Html.text (l ++ "\n")] #[("class", "line")]).toArray) codeAttrs
       else
-        Html.elem "code" #[Html.text (String.intercalate "\n" lines)]
+        Html.elem "code" #[Html.text (String.intercalate "\n" lines)] codeAttrs
     let pre := Html.elem "pre" #[code]
       ((if spec.numbers then #[("class", "numbered")] else #[]) ++
        (match covered with

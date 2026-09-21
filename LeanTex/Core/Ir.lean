@@ -2255,6 +2255,33 @@ def TitledKind.name : TitledKind → String
   | .alert => "alert"
   | .example => "example"
 
+/-- The token grammar a listing's declared language must fit before either
+text artifact may carry it: an ASCII lowercase letter, then lowercase
+letters, digits, `+`, `#`, `-`, `.` — `python`, `c++`, `c#`, `objective-c`.
+Small on purpose: the token lands in an HTML class attribute and in a
+CommonMark fence info string (§4.5: no backtick), and a spelling outside
+the grammar — listings' `[LaTeX]TeX` dialect form, a space, a brace — is
+named at elaboration and reaches neither, never as raw attribute text. -/
+def listingLangOk (s : String) : Bool :=
+  match s.toList with
+  | [] => false
+  | c :: rest =>
+    c.isLower && rest.all fun d =>
+      d.isLower || d.isDigit || d == '+' || d == '#' || d == '-' || d == '.'
+
+/-- A listing language the grammar admits: the IR cannot hold a token
+`listingLangOk` rejects, so every construction is validated by its type.
+`listingLang?` is the one site that mints one from an author's spelling. -/
+abbrev ListingLang := { s : String // listingLangOk s = true }
+
+/-- An author's language spelling normalized to the token both artifacts
+carry: trimmed, ASCII-lowercased (`Python` and `python` name one language,
+as listings' case-insensitive `language=` key does), and admitted only when
+the grammar holds — `none` names the spelling the caller diagnoses. -/
+def listingLang? (raw : String) : Option ListingLang :=
+  let s := raw.trimAscii.toString.toLower
+  if h : listingLangOk s = true then some ⟨s, h⟩ else none
+
 /-- What a code listing declares beside its content — the delta between
 `{verbatim}` and listings' `{lstlisting}` / minted's `{minted}` (listings
 manual: the `caption` key, lstmisc's `numbers` key; minted's `linenos`).
@@ -2266,11 +2293,50 @@ beside the declared text, never inside it — the "Listing n: " prefix is
 backend furniture spelled at `Ir.listingCaption`, one site for both
 artifacts. `numbers` is `numbers=left` / `linenos`: each line's number as
 furniture beside it, generated ink outside the census as a list's markers
-are. A bare `{verbatim}` is the default value everywhere. -/
+are. `language` is listings' `language=` key or minted's mandatory
+argument, normalized (`listingLang?`): one fact the HTML `code` element's
+class and the markdown fence's info string both project (`htmlClass`,
+`fenceInfo`, `listing_language_agree`); the PDF names no language — the
+engine colours nothing by it. A bare `{verbatim}` is the default value
+everywhere. -/
 structure ListingSpec where
   caption : Option (Nat × Array Inline) := none
   numbers : Bool := false
+  language : Option ListingLang := none
   deriving Repr, BEq, Inhabited
+
+/-- The declared language as the bare token, `none` when none is declared:
+the one IR fact both text projections below read. -/
+def ListingSpec.langToken (spec : ListingSpec) : Option String :=
+  spec.language.map (·.val)
+
+/-- The HTML projection of the declared language: the `code` element's
+class under the HTML standard's own convention (§4.5.15 `code`: a class
+prefixed `language-` names the computer language). `none` when no language
+is declared — the element then carries no class at all. -/
+def ListingSpec.htmlClass (spec : ListingSpec) : Option String :=
+  spec.langToken.map ("language-" ++ ·)
+
+/-- The markdown projection of the declared language: the fenced code
+block's info string (CommonMark §4.5), empty when no language is declared —
+the fence then opens bare. -/
+def ListingSpec.fenceInfo (spec : ListingSpec) : String :=
+  spec.langToken.getD ""
+
+/-- One declared language, two projections of one IR value: a declared
+token reaches the HTML class as `language-<token>` and the markdown info
+string as the token itself; an absent language reaches neither. Both
+backends read `htmlClass` and `fenceInfo` and nothing else, so an artifact
+that carried a language the other did not is unrepresentable. -/
+theorem listing_language_agree (spec : ListingSpec) :
+    (spec.language = none → spec.htmlClass = none ∧ spec.fenceInfo = "") ∧
+    (∀ l, spec.language = some l →
+      spec.htmlClass = some ("language-" ++ l.val) ∧ spec.fenceInfo = l.val) := by
+  constructor
+  · intro h
+    simp [ListingSpec.htmlClass, ListingSpec.fenceInfo, ListingSpec.langToken, h]
+  · intro l h
+    simp [ListingSpec.htmlClass, ListingSpec.fenceInfo, ListingSpec.langToken, h]
 
 inductive Block where
   | para (content : Array Inline)
@@ -4599,6 +4665,9 @@ def dumpBlock (ind : String) (b : Block) : String :=
 {if spec.numbers then " numbers" else ""}" ++
     (match spec.caption with
       | some (n, _) => s!" listing {n}"
+      | none => "") ++
+    (match spec.langToken with
+      | some l => s!" language {l}"
       | none => "") ++ "\n" ++
     (match spec.caption with
       | some (_, cap) => s!"{ind}  caption\n" ++ dumpInlines (ind ++ "    ") cap

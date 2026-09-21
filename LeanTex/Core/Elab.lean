@@ -5679,7 +5679,10 @@ keys from its option head, `{minted}` its option head and its mandatory
 language argument. Honoured keys: `caption` (numbered in flow order — the
 listing counter steps exactly as the equation counter does), `label`
 (bound to the caption's number), `numbers=left`/`none` and minted's
-`linenos`, `language` (named data the engine does not colour by), and a
+`linenos`, `language` (named data the engine does not colour by: the
+spelling normalizes through `Ir.listingLang?` to the one token both text
+artifacts carry, and a spelling outside the token grammar is named W0110
+and carries nothing — never raw text into an attribute), and a
 `basicstyle` at the engine's own listing step (mono at footnotesize —
 the code-frame convention Layout sets). Every other key, and a value
 asking for what the engine does not draw, is named W0110 — never a
@@ -5693,6 +5696,15 @@ private def listingBlock (ctx : Ctx) (env s : String) (pos : Pos) : EM Block := 
   let mut caption : Option String := none
   let mut label : Option String := none
   let mut numbers := false
+  let mut language : Option Ir.ListingLang := none
+  let langOf (raw : String) : EM (Option Ir.ListingLang) := do
+    match Ir.listingLang? raw with
+    | some l => pure (some l)
+    | none =>
+      diag ctx .W0110 s!"listing language '{raw.trimAscii.toString}' is not a plain name; the \
+listing carries no language" (some pos)
+        (help := "spell it as letters, digits, +, #, - or . (python, c++, c#)")
+      pure none
   for entry in Decl.splitEntries opts do
     let bare := entry.trimAscii.toString
     if bare.isEmpty then
@@ -5712,7 +5724,7 @@ does not draw; lines keep no numbers" (some pos)
           (help := "numbers=left draws them")
     | some ("linenos", v) =>
       numbers := v.trimAscii.toString != "false"
-    | some ("language", _) => pure ()
+    | some ("language", v) => language ← langOf (listingVal v)
     | some ("basicstyle", v) =>
       match Ir.sizeScale.find? (fun p => p.1 != "footnotesize"
           && (v.splitOn ("\\" ++ p.1)).length > 1) with
@@ -5726,7 +5738,9 @@ the engine's own step, mono at footnotesize" (some pos)
       if bare == "linenos" then numbers := true
       else diag ctx .W0110 s!"listing key '{bare}' is not honoured; ignored" (some pos)
   if env == "minted" then
-    if (mintedLangHead s afterOpt).isNone then
+    match mintedLangHead s afterOpt with
+    | some (lang, _) => language ← langOf lang
+    | none =>
       diag ctx .E0304 s!"'\\begin\{minted}' needs its \{language} argument" (some pos)
     content := (s.drop (listingContentStart env s)).toString
   else
@@ -5743,13 +5757,15 @@ the engine's own step, mono at footnotesize" (some pos)
         -- prefix is the resolver slice's): a \cref meanwhile sets the
         -- plain number, named W0380 — degraded, never silently wrong.
         recordLabel ctx key (some { kind := none, num := toString num }) pos
-        pure { caption := some (num, #[.label key, .text cap]), numbers := numbers }
+        pure { caption := some (num, #[.label key, .text cap]), numbers := numbers,
+               language := language }
       | none =>
-        pure { caption := some (num, #[.text cap]), numbers := numbers }
+        pure { caption := some (num, #[.text cap]), numbers := numbers,
+               language := language }
     | none => do
       if let some key := label then
         recordLabel ctx key (← get).refTarget pos
-      pure { numbers := numbers }
+      pure { caption := none, numbers := numbers, language := language }
   return .verbatim none content spec
 
 /-- A display-math environment, outside the knot to keep the pack small. -/

@@ -2,13 +2,13 @@ class article
 page 612x792 vmargin 72 hmargin 150
 para
   text "Prose before an invented listing."
-verbatim numbers listing 1
+verbatim numbers listing 1 language python
   caption
     label "lst:probe"
     text "An invented probe."
   "def probe(n):"
   "    return n + 1"
-verbatim
+verbatim language python
   "print(\"synthetic\")"
 para
   text "Listing "

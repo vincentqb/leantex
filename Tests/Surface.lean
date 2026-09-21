@@ -517,6 +517,38 @@ def listingChecks (ref : IO.Ref (List String)) : IO Unit := do
      | some (.verbatim _ s _) =>
        (s.splitOn "python").length == 1 && s.trimAscii.toString == "print(1)"
      | _ => false)
+  -- the language is one IR fact, normalized: listings' key and minted's
+  -- argument land on the same token; verbatim and a bare listing carry none
+  let langOf (src : String) : Option (Option String) :=
+    match firstBlock src with
+    | some (.verbatim _ _ spec) => some spec.langToken
+    | _ => none
+  t "language=Python normalizes to the token python"
+    (langOf (dvDoc "" "\\begin{lstlisting}[language=Python]\nx\n\\end{lstlisting}")
+      == some (some "python"))
+  t "\\lstset{language=Python} reaches the listings that follow"
+    (langOf (dvDoc "" "\\lstset{language=Python}\n\\begin{lstlisting}\nx\n\\end{lstlisting}")
+      == some (some "python"))
+  t "minted's {C++} normalizes to the same token shape"
+    (langOf (dvDoc "" "\\begin{minted}{C++}\nx\n\\end{minted}") == some (some "c++"))
+  t "a bare listing and verbatim carry no language"
+    (langOf (dvDoc "" "\\begin{lstlisting}\nx\n\\end{lstlisting}") == some none &&
+      langOf (dvDoc "" "\\begin{verbatim}\nx\n\\end{verbatim}") == some none)
+  -- a spelling outside the token grammar is named and carries nothing
+  t "a dialect spelling is named W0110 and carries no language"
+    (let src := dvDoc "" "\\begin{lstlisting}[language={[LaTeX]TeX}]\nx\n\\end{lstlisting}"
+     langOf src == some none && (warnCodes src).contains "W0110")
+  t "minted's spaced language is named W0110 and carries no language"
+    (let src := dvDoc "" "\\begin{minted}{Python 3}\nx\n\\end{minted}"
+     langOf src == some none && (warnCodes src).contains "W0110")
+  -- the grammar itself, at the one minting site
+  t "listingLang? admits the plain names and refuses the rest"
+    ((Ir.listingLang? " C++ ").map (·.val) == some "c++" &&
+      (Ir.listingLang? "F#").map (·.val) == some "f#" &&
+      (Ir.listingLang? "objective-c").map (·.val) == some "objective-c" &&
+      (Ir.listingLang? "").isNone && (Ir.listingLang? "1c").isNone &&
+      (Ir.listingLang? "[LaTeX]TeX").isNone && (Ir.listingLang? "c sharp").isNone &&
+      (Ir.listingLang? "a\"b").isNone && (Ir.listingLang? "a`b").isNone)
   -- siunitx: the digits of a rewritten number survive into the text —
   -- the census obligation, checked as an executable oracle
   t "\\num conserves its digits"
