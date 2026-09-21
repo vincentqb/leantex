@@ -1,0 +1,1430 @@
+import LeanTex.Core.Ir
+
+/-! # The structure tree
+
+The document's semantic structure as one backend-neutral value: what a
+tagged PDF's structure tree and an HTML page's element tree both say
+about the document, projected once from the IR so the two artifacts cannot
+disagree on it. Both backends may read it; neither owns it. The tree
+carries structure and text only — no geometry, no style, no ink — and its
+leaves are the atoms a page attributes ink to: text runs, images, diagram
+boxes. Each leaf bears its preorder index, the id a page line will name
+(`LineOut.leaf`, the attribution channel M7-18 adds) and a tagger keys
+its marked content by.
+
+Three census facts hold the tree to the IR: its leaf text is exactly
+`blocksText` (`structTree_text`), its outline headings are exactly
+`headingLevels` (`structTree_headings_covers`), and its images are exactly
+the generic fold's image census (`structTree_images_covers`) — so the walk
+here descends everywhere the one shared fold does, footnote bodies and
+role wrappers included. `structTree_leaves_id` pins the ids: the k-th leaf
+in preorder carries `k`.
+
+Every IR arm is classified here, explicitly. A *transparent* wrapper
+(`.center`, `.ragged`, `.spaced`, `.role`, `.columns`, `.step`, `.only`;
+inline `.styled` bar `.lang`, `.colored`, `.role`, `.underline`, `.step`)
+splices its body and invents no node — layout scope is not document
+structure. A *decorative* arm (`.rule`) and a *state-only* arm
+(`.setPalette`, `.setTokens`, `.pagebreak`; inline `.label`, `.fill`,
+`.strut`, `.pageNumber`, `.pageCount`) produces nothing: no text, no
+structure. Generated furniture the census still counts (`.logo`,
+`.framefoot`) sits under `.artifact`, so a tagger marks it as such. -/
+
+namespace LeanTex.Core.Struct
+
+open Ir
+
+/-- A structure node's kind: the standard structure types the IR can
+honestly fill (ISO 32000-2 §14.8.4; the HTML element each maps to is the
+one `HtmlDoc` already emits for the arm). -/
+inductive Kind where
+  /-- The root, one per document. -/
+  | document
+  /-- A titled region that is not an outline heading: an abstract, a
+  beamer block, a slide. Its title, when it has one, is a `.title` child. -/
+  | section
+  /-- The title of a `.section` region — a frame's or a block's title,
+  which `headingLevels` does not count. -/
+  | title
+  /-- An outline heading at its `\section` level. -/
+  | heading (level : Nat)
+  | paragraph
+  | list (ordered : Bool)
+  | item
+  /-- A list item's marker: generated ink, so it carries no leaf. -/
+  | label
+  /-- A list item's content. -/
+  | body
+  | table
+  | row
+  | cell
+  | caption
+  /-- A captioned object (`{figure}`, `{table}`, a captioned listing) and
+  a diagram: HTML's `<figure>`, PDF's `Figure`. -/
+  | figure
+  | formula
+  /-- A code listing or pseudocode. -/
+  | code
+  | quote
+  /-- A footnote's body. -/
+  | note
+  /-- A speaker note: a side channel, never page content. -/
+  | aside
+  /-- A navigation landmark. -/
+  | nav
+  /-- One reference-list entry. -/
+  | bibEntry
+  | link (url : String)
+  /-- A language span, the BCP 47 tag it declares. -/
+  | span (lang : String)
+  /-- A cross-reference and the anchor it resolved to. -/
+  | reference (target : Option String)
+  /-- Generated furniture the census counts: a deck logo, a frame footer. -/
+  | artifact
+  deriving Repr, BEq, Inhabited
+
+/-- What a leaf stands for: the ink-bearing atoms of the document. -/
+inductive Leaf where
+  | text (s : String)
+  /-- An image, its source and its text alternative. -/
+  | image (src : String) (alt : String)
+  /-- A diagram box: ink with no text alternative yet (`Pic.Picture` carries
+  none — a named gap, not a decision). -/
+  | picture
+  /-- A declared line break, worth the space `plainText` reads it as. -/
+  | linebreak
+  deriving Repr, BEq, Inhabited
+
+/-- A leaf's census text: exactly what `plainTextOne` says of the inline
+it came from. -/
+def Leaf.census : Leaf → String
+  | .text s => s
+  | .image _ _ => ""
+  | .picture => ""
+  | .linebreak => " "
+
+inductive Node where
+  | leaf (id : Nat) (l : Leaf)
+  | node (kind : Kind) (children : Array Node)
+  deriving Repr, BEq, Inhabited
+
+/-- The tree: a `.document` root over the body's nodes. -/
+structure Tree where
+  children : Array Node
+  deriving Repr, BEq, Inhabited
+
+-- The projection. A hand-rolled mutual walk rather than a `foldBlocks`
+-- leaf: the fold reads a node before its content and has no close event,
+-- so an accumulator cannot know where a container ends, and a tree is
+-- exactly that nesting. Structural recursion through `List`, an `Array`
+-- accumulator threaded through, one explicit arm per constructor. Leaf ids
+-- are placeholders here; `number` assigns the preorder index once.
+
+mutual
+
+def inlinesRaw (out : Array Node) : List Inline → Array Node
+  | [] => out
+  | x :: rest => inlinesRaw (inlineRaw out x) rest
+
+def inlineRaw (out : Array Node) : Inline → Array Node
+  | .text s => out.push (.leaf 0 (.text s))
+  | .math _ src => out.push (.node .formula #[.leaf 0 (.text src)])
+  | .formula _ src _ => out.push (.node .formula #[.leaf 0 (.text src)])
+  | .styled style body =>
+    match style with
+    | .lang tag => out.push (.node (.span tag) (inlinesRaw #[] body.toList))
+    | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
+    | .medium | .series _ | .upright | .size _ => inlinesRaw out body.toList
+  | .colored _ _ body => inlinesRaw out body.toList
+  | .role _ body => inlinesRaw out body.toList
+  | .link url body => out.push (.node (.link url) (inlinesRaw #[] body.toList))
+  | .label _ => out
+  | .ref _ _ text target => out.push (.node (.reference target) #[.leaf 0 (.text text)])
+  | .underline body => inlinesRaw out body.toList
+  | .fill => out
+  | .pageNumber => out
+  | .pageCount => out
+  | .linebreak _ => out.push (.leaf 0 .linebreak)
+  | .strut _ => out
+  | .step _ _ body => inlinesRaw out body.toList
+  | .image src _ alt => out.push (.leaf 0 (.image src alt))
+  | .icon _ label => out.push (.leaf 0 (.text label))
+  | .cite _ keys => out.push (.leaf 0 (.text (citeMarks keys)))
+  | .footnote _ body => out.push (.node .note (inlinesRaw #[] body.toList))
+
+end
+
+/-- A title region's node, when the title is not empty: an empty title is
+beamer's untitled block or a bare frame, and no node is invented for it. -/
+def titleRaw (title : Array Inline) : Array Node :=
+  if title.isEmpty then #[] else #[.node .title (inlinesRaw #[] title.toList)]
+
+/-- A caption's node, when there is one to caption with. -/
+def captionRaw (caption : Array Inline) : Array Node :=
+  if caption.isEmpty then #[] else #[.node .caption (inlinesRaw #[] caption.toList)]
+
+/-- Table cells, each its own `.cell` over its inline content. -/
+def cellsRaw (out : Array Node) : List (Array Inline) → Array Node
+  | [] => out
+  | cell :: rest => cellsRaw (out.push (.node .cell (inlinesRaw #[] cell.toList))) rest
+
+def rowsRaw (out : Array Node) : List (Array (Array Inline)) → Array Node
+  | [] => out
+  | row :: rest => rowsRaw (out.push (.node .row (cellsRaw #[] row.toList))) rest
+
+/-- Reference-list entries: one leaf each, the entry's whole text, as
+`textLeaves` reads them — the entries are the style's renderings, not
+authored content, and no walk descends them. -/
+def bibRaw (out : Array Node) : List BibItem → Array Node
+  | [] => out
+  | item :: rest =>
+    bibRaw (out.push (.node .bibEntry #[.leaf 0 (.text (plainText item.content))])) rest
+
+/-- Pseudocode lines: each line's content then its comment, in reading
+order — the order `algLineText` and `foldAlgLines` both read. -/
+def algRaw (out : Array Node) : List AlgLine → Array Node
+  | [] => out
+  | l :: rest =>
+    algRaw (match l.comment with
+      | some c => inlinesRaw (inlinesRaw out l.content.toList) c.toList
+      | none => inlinesRaw out l.content.toList) rest
+
+mutual
+
+def blocksRaw (out : Array Node) : List Block → Array Node
+  | [] => out
+  | b :: rest => blocksRaw (blockRaw out b) rest
+
+def blockRaw (out : Array Node) : Block → Array Node
+  | .para content => out.push (.node .paragraph (inlinesRaw #[] content.toList))
+  | .section level _ _ title => out.push (.node (.heading level) (inlinesRaw #[] title.toList))
+  | .list ordered items => out.push (.node (.list ordered) (itemsRaw #[] items.toList))
+  | .center body => blocksRaw out body.toList
+  | .ragged body => blocksRaw out body.toList
+  | .spaced _ body => blocksRaw out body.toList
+  | .role _ body => blocksRaw out body.toList
+  | .quote body => out.push (.node .quote (blocksRaw #[] body.toList))
+  | .abstract body => out.push (.node .section (blocksRaw #[] body.toList))
+  | .titled _ title body =>
+    out.push (.node .section (blocksRaw (titleRaw title) body.toList))
+  -- the number is census text, set beside the formula in every backend
+  | .equation number content =>
+    out.push (.node .formula
+      ((inlinesRaw #[] content.toList).push (.node .label #[.leaf 0 (.text number)])))
+  -- a listing's caption is one leaf, as `textLeaves` and the shared fold
+  -- read it (the fold does not descend a `.verbatim`)
+  | .verbatim _ content spec =>
+    match spec.caption with
+    | some (_, cap) =>
+      out.push (.node .figure
+        #[.node .caption #[.leaf 0 (.text (plainText cap))],
+          .node .code #[.leaf 0 (.text content)]])
+    | none => out.push (.node .code #[.leaf 0 (.text content)])
+  | .algorithm _ _ lines => out.push (.node .code (algRaw #[] lines.toList))
+  | .columns cols => colsRaw out cols.toList
+  | .step _ _ body => blocksRaw out body.toList
+  | .note body => out.push (.node .aside (blocksRaw #[] body.toList))
+  | .only _ body => blocksRaw out body.toList
+  | .nav _ body => out.push (.node .nav (blocksRaw #[] body.toList))
+  | .logo content => out.push (.node .artifact (inlinesRaw #[] content.toList))
+  | .pagebreak => out
+  | .frame title _ _ body =>
+    out.push (.node .section (blocksRaw (titleRaw title) body.toList))
+  | .framefoot content => out.push (.node .artifact (inlinesRaw #[] content.toList))
+  | .setPalette _ => out
+  | .setTokens _ => out
+  | .rule _ _ _ => out
+  | .picture _ => out.push (.node .figure #[.leaf 0 .picture])
+  | .table _ _ _ rows _ => out.push (.node .table (rowsRaw #[] rows.toList))
+  -- the caption stands first whatever `capAbove` says: census order is
+  -- `blocksText`'s, and a caption's placement is the page's, not the tree's
+  | .float _ _ _ body caption =>
+    out.push (.node .figure (blocksRaw (captionRaw caption) body.toList))
+  | .bibliography _ _ items => bibRaw out items.toList
+
+def itemsRaw (out : Array Node) : List (Array Block) → Array Node
+  | [] => out
+  | item :: rest =>
+    itemsRaw (out.push (.node .item
+      #[.node .label #[], .node .body (blocksRaw #[] item.toList)])) rest
+
+def colsRaw (out : Array Node) : List (Option Nat × Array Block) → Array Node
+  | [] => out
+  | (_, body) :: rest => colsRaw (blocksRaw out body.toList) rest
+
+end
+
+-- The numbering pass: leaf ids are the preorder index, assigned once over
+-- the built shape. Structural recursion through `List`, the counter and
+-- the accumulator threaded together.
+
+mutual
+
+def numberList (k : Nat) (out : Array Node) : List Node → Array Node × Nat
+  | [] => (out, k)
+  | n :: rest =>
+    let r := numberOne k n
+    numberList r.2 (out.push r.1) rest
+
+def numberOne (k : Nat) : Node → Node × Nat
+  | .leaf _ l => (.leaf k l, k + 1)
+  | .node kind kids =>
+    let r := numberList k #[] kids.toList
+    (.node kind r.1, r.2)
+
+end
+
+/-- Number a shape's leaves in preorder from `k`. -/
+def number (k : Nat) (ns : Array Node) : Array Node := (numberList k #[] ns.toList).1
+
+/-- The structure of a block sequence, leaves numbered from 0. -/
+def ofBlocks (bs : Array Block) : Array Node := number 0 (blocksRaw #[] bs.toList)
+
+/-- The document's structure tree: its body under one `.document` root.
+The furniture regions (`Doc.head`, `foot`, `logo`, the headline band) are
+page artifacts the furniture pass writes and flags as such; they are not
+document structure and have no node here. -/
+def ofDoc (doc : Doc) : Tree := { children := ofBlocks doc.body }
+
+-- Censuses over the tree, each a `List` companion with an accumulator.
+
+mutual
+
+/-- The tree's text census: every leaf's text, in preorder. -/
+def leafTextList (acc : String) : List Node → String
+  | [] => acc
+  | n :: rest => leafTextList (leafTextOne acc n) rest
+
+def leafTextOne (acc : String) : Node → String
+  | .leaf _ l => acc ++ l.census
+  | .node _ kids => leafTextList acc kids.toList
+
+end
+
+def leafText (ns : Array Node) : String := leafTextList "" ns.toList
+
+def Tree.text (t : Tree) : String := leafText t.children
+
+mutual
+
+/-- Every leaf with its id, in preorder. -/
+def leavesList (out : Array (Nat × Leaf)) : List Node → Array (Nat × Leaf)
+  | [] => out
+  | n :: rest => leavesList (leavesOne out n) rest
+
+def leavesOne (out : Array (Nat × Leaf)) : Node → Array (Nat × Leaf)
+  | .leaf id l => out.push (id, l)
+  | .node _ kids => leavesList out kids.toList
+
+end
+
+def leaves (ns : Array Node) : Array (Nat × Leaf) := leavesList #[] ns.toList
+
+def Tree.leaves (t : Tree) : Array (Nat × Leaf) := Struct.leaves t.children
+
+mutual
+
+/-- The outline headings, in preorder: every `.heading`'s level. An
+`.aside` is a side channel and never ships a heading, as `headingLevels`
+reads the speaker note it comes from. -/
+def headingsList (out : Array Nat) : List Node → Array Nat
+  | [] => out
+  | n :: rest => headingsList (headingsOne out n) rest
+
+def headingsOne (out : Array Nat) : Node → Array Nat
+  | .leaf _ _ => out
+  | .node kind kids =>
+    match kind with
+    | .heading level => headingsList (out.push level) kids.toList
+    | .aside => out
+    | .document | .section | .title | .paragraph | .list _ | .item | .label | .body
+    | .table | .row | .cell | .caption | .figure | .formula | .code | .quote | .note
+    | .nav | .bibEntry | .link _ | .span _ | .reference _ | .artifact =>
+      headingsList out kids.toList
+
+end
+
+def headings (ns : Array Node) : Array Nat := headingsList #[] ns.toList
+
+def Tree.headings (t : Tree) : Array Nat := Struct.headings t.children
+
+mutual
+
+/-- Every image leaf's source and text alternative, in preorder. -/
+def imagesList (out : Array (String × String)) : List Node → Array (String × String)
+  | [] => out
+  | n :: rest => imagesList (imagesOne out n) rest
+
+def imagesOne (out : Array (String × String)) : Node → Array (String × String)
+  | .leaf _ l =>
+    match l with
+    | .image src alt => out.push (src, alt)
+    | .text _ | .picture | .linebreak => out
+  | .node _ kids => imagesList out kids.toList
+
+end
+
+def images (ns : Array Node) : Array (String × String) := imagesList #[] ns.toList
+
+def Tree.images (t : Tree) : Array (String × String) := Struct.images t.children
+
+/-- The IR's image census through the shared fold: every `.image`'s source
+and alternative, in the fold's document order — the descent `imageRefs`
+uses, declared once. -/
+def imageAltPush (out : Array (String × String)) (x : Inline) : Array (String × String) :=
+  match x with
+  | .image src _ alt => out.push (src, alt)
+  | _ => out
+
+def irImages (bs : Array Block) : Array (String × String) :=
+  foldBlocks (fun out _ => out) imageAltPush #[] bs
+
+-- The census lemmas the projection theorems stand on: each census over an
+-- appended list folds the halves in turn, so a pushed node is the census
+-- of the array then of the node.
+
+theorem leafTextList_append (acc : String) (a b : List Node) :
+    leafTextList acc (a ++ b) = leafTextList (leafTextList acc a) b := by
+  induction a generalizing acc with
+  | nil => rfl
+  | cons n rest ih => rw [List.cons_append, leafTextList, leafTextList, ih]
+
+theorem leafTextList_snoc (acc : String) (l : List Node) (n : Node) :
+    leafTextList acc (l ++ [n]) = leafTextOne (leafTextList acc l) n := by
+  rw [leafTextList_append]
+  rfl
+
+theorem leafTextList_push (acc : String) (out : Array Node) (n : Node) :
+    leafTextList acc (out.push n).toList = leafTextOne (leafTextList acc out.toList) n := by
+  rw [Array.toList_push, leafTextList_snoc]
+
+theorem headingsList_append (out : Array Nat) (a b : List Node) :
+    headingsList out (a ++ b) = headingsList (headingsList out a) b := by
+  induction a generalizing out with
+  | nil => rfl
+  | cons n rest ih => rw [List.cons_append, headingsList, headingsList, ih]
+
+theorem headingsList_snoc (out : Array Nat) (l : List Node) (n : Node) :
+    headingsList out (l ++ [n]) = headingsOne (headingsList out l) n := by
+  rw [headingsList_append]
+  rfl
+
+theorem headingsList_push (out : Array Nat) (ns : Array Node) (n : Node) :
+    headingsList out (ns.push n).toList = headingsOne (headingsList out ns.toList) n := by
+  rw [Array.toList_push, headingsList_snoc]
+
+theorem imagesList_append (out : Array (String × String)) (a b : List Node) :
+    imagesList out (a ++ b) = imagesList (imagesList out a) b := by
+  induction a generalizing out with
+  | nil => rfl
+  | cons n rest ih => rw [List.cons_append, imagesList, imagesList, ih]
+
+theorem imagesList_snoc (out : Array (String × String)) (l : List Node) (n : Node) :
+    imagesList out (l ++ [n]) = imagesOne (imagesList out l) n := by
+  rw [imagesList_append]
+  rfl
+
+theorem imagesList_push (out : Array (String × String)) (ns : Array Node) (n : Node) :
+    imagesList out (ns.push n).toList = imagesOne (imagesList out ns.toList) n := by
+  rw [Array.toList_push, imagesList_snoc]
+
+theorem leavesList_append (out : Array (Nat × Leaf)) (a b : List Node) :
+    leavesList out (a ++ b) = leavesList (leavesList out a) b := by
+  induction a generalizing out with
+  | nil => rfl
+  | cons n rest ih => rw [List.cons_append, leavesList, leavesList, ih]
+
+theorem leavesList_snoc (out : Array (Nat × Leaf)) (l : List Node) (n : Node) :
+    leavesList out (l ++ [n]) = leavesOne (leavesList out l) n := by
+  rw [leavesList_append]
+  rfl
+
+theorem leavesList_push (out : Array (Nat × Leaf)) (ns : Array Node) (n : Node) :
+    leavesList out (ns.push n).toList = leavesOne (leavesList out ns.toList) n := by
+  rw [Array.toList_push, leavesList_snoc]
+
+/-- An empty inline array has no list: the shape the empty-title and
+empty-caption splits reduce to. -/
+theorem toList_of_isEmpty (xs : Array Inline) (h : xs.isEmpty = true) : xs.toList = [] := by
+  rw [Array.isEmpty_iff] at h
+  rw [h]
+
+-- **The tree's text is the IR's** (`structTree_text`). The projection drops
+-- and invents no character: every leaf's census text in preorder is
+-- `blocksText`, the same string the overlay and conditional walks
+-- conserve. Stated with the accumulators generalized, one arm per
+-- constructor, the inline walk first.
+
+mutual
+
+theorem inlinesRaw_text (acc : String) (out : Array Node) (xs : List Inline) :
+    leafTextList acc (inlinesRaw out xs).toList
+      = leafTextList acc out.toList ++ plainTextList xs := by
+  match xs with
+  | [] => simp [inlinesRaw, plainTextList]
+  | x :: rest =>
+    rw [inlinesRaw, inlinesRaw_text acc (inlineRaw out x) rest, inlineRaw_text acc out x,
+      plainTextList, String.append_assoc]
+
+theorem inlineRaw_text (acc : String) (out : Array Node) (x : Inline) :
+    leafTextList acc (inlineRaw out x).toList
+      = leafTextList acc out.toList ++ plainTextOne x := by
+  match x with
+  | .text s => simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
+  | .math d src =>
+    simp [inlineRaw, leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, plainTextOne]
+  | .formula d src body =>
+    simp [inlineRaw, leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, plainTextOne]
+  | .styled style body =>
+    match style with
+    | .lang tag =>
+      simp only [inlineRaw, leafTextList_push, leafTextOne, plainTextOne]
+      rw [inlinesRaw_text (leafTextList acc out.toList) #[] body.toList]
+      rfl
+    | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
+    | .medium | .series _ | .upright | .size _ =>
+      simp only [inlineRaw, plainTextOne]
+      exact inlinesRaw_text acc out body.toList
+  | .colored c n body =>
+    simp only [inlineRaw, plainTextOne]
+    exact inlinesRaw_text acc out body.toList
+  | .role n body =>
+    simp only [inlineRaw, plainTextOne]
+    exact inlinesRaw_text acc out body.toList
+  | .link url body =>
+    simp only [inlineRaw, leafTextList_push, leafTextOne, plainTextOne]
+    rw [inlinesRaw_text (leafTextList acc out.toList) #[] body.toList]
+    rfl
+  | .label key => simp [inlineRaw, plainTextOne]
+  | .ref key form text target =>
+    simp [inlineRaw, leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, plainTextOne]
+  | .underline body =>
+    simp only [inlineRaw, plainTextOne]
+    exact inlinesRaw_text acc out body.toList
+  | .fill => simp [inlineRaw, plainTextOne]
+  | .pageNumber => simp [inlineRaw, plainTextOne]
+  | .pageCount => simp [inlineRaw, plainTextOne]
+  | .linebreak extra => simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
+  | .strut h => simp [inlineRaw, plainTextOne]
+  | .step n l body =>
+    simp only [inlineRaw, plainTextOne]
+    exact inlinesRaw_text acc out body.toList
+  | .image src size alt =>
+    simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
+  | .icon sc label => simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
+  | .cite tx keys => simp [inlineRaw, leafTextList_snoc, leafTextOne, Leaf.census, plainTextOne]
+  | .footnote num body =>
+    simp only [inlineRaw, leafTextList_push, leafTextOne, plainTextOne]
+    rw [inlinesRaw_text (leafTextList acc out.toList) #[] body.toList]
+    rfl
+
+end
+
+/-- Inline content built onto an empty accumulator: its census is exactly
+the content's plain text — the shape every node-opening arm reduces to. -/
+theorem inlinesRaw_text_nil (acc : String) (xs : Array Inline) :
+    leafTextList acc (inlinesRaw #[] xs.toList).toList = acc ++ plainText xs := by
+  rw [inlinesRaw_text]
+  rfl
+
+theorem titleRaw_text (acc : String) (title : Array Inline) :
+    leafTextList acc (titleRaw title).toList = acc ++ plainText title := by
+  unfold titleRaw
+  split
+  · rename_i h
+    simp [plainText, toList_of_isEmpty title h, plainTextList, leafTextList]
+  · simp only [leafTextList, leafTextOne]
+    exact inlinesRaw_text_nil acc title
+
+theorem captionRaw_text (acc : String) (caption : Array Inline) :
+    leafTextList acc (captionRaw caption).toList = acc ++ plainText caption := by
+  unfold captionRaw
+  split
+  · rename_i h
+    simp [plainText, toList_of_isEmpty caption h, plainTextList, leafTextList]
+  · simp only [leafTextList, leafTextOne]
+    exact inlinesRaw_text_nil acc caption
+
+theorem cellsRaw_text (acc : String) (out : Array Node) (cells : List (Array Inline)) :
+    leafTextList acc (cellsRaw out cells).toList
+      = blockTextTableCells (leafTextList acc out.toList) cells := by
+  induction cells generalizing out with
+  | nil => rfl
+  | cons cell rest ih =>
+    rw [cellsRaw, ih, leafTextList_push, blockTextTableCells]
+    simp only [leafTextOne]
+    rw [inlinesRaw_text_nil]
+
+theorem rowsRaw_text (acc : String) (out : Array Node) (rows : List (Array (Array Inline))) :
+    leafTextList acc (rowsRaw out rows).toList
+      = blockTextTableRows (leafTextList acc out.toList) rows := by
+  induction rows generalizing out with
+  | nil => rfl
+  | cons row rest ih =>
+    rw [rowsRaw, ih, leafTextList_push, blockTextTableRows]
+    simp only [leafTextOne]
+    rw [cellsRaw_text]
+    rfl
+
+theorem bibRaw_text (acc : String) (out : Array Node) (items : List BibItem) :
+    leafTextList acc (bibRaw out items).toList
+      = blockTextBibItems (leafTextList acc out.toList) items := by
+  induction items generalizing out with
+  | nil => rfl
+  | cons item rest ih =>
+    rw [bibRaw, ih, leafTextList_push, blockTextBibItems]
+    simp [leafTextOne, leafTextList, Leaf.census]
+
+theorem algRaw_text (acc : String) (out : Array Node) (lines : List AlgLine) :
+    leafTextList acc (algRaw out lines).toList
+      = algLineText (leafTextList acc out.toList) lines := by
+  induction lines generalizing out with
+  | nil => rfl
+  | cons l rest ih =>
+    rw [algRaw, ih, algLineText]
+    cases l.comment with
+    | none => simp only [inlinesRaw_text, plainText]
+    | some c => simp only [inlinesRaw_text, plainText]
+
+mutual
+
+theorem blocksRaw_text (acc : String) (out : Array Node) (bs : List Block) :
+    leafTextList acc (blocksRaw out bs).toList
+      = blockTextList (leafTextList acc out.toList) bs := by
+  match bs with
+  | [] => rfl
+  | b :: rest =>
+    rw [blocksRaw, blocksRaw_text acc (blockRaw out b) rest, blockRaw_text acc out b,
+      blockTextList]
+
+theorem blockRaw_text (acc : String) (out : Array Node) (b : Block) :
+    leafTextList acc (blockRaw out b).toList
+      = blockTextOne (leafTextList acc out.toList) b := by
+  match b with
+  | .para content =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    exact inlinesRaw_text_nil _ content
+  | .section level st num title =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    exact inlinesRaw_text_nil _ title
+  | .list ordered items =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    rw [itemsRaw_text]
+    rfl
+  | .center body =>
+    simp only [blockRaw, blockTextOne]
+    exact blocksRaw_text acc out body.toList
+  | .ragged body =>
+    simp only [blockRaw, blockTextOne]
+    exact blocksRaw_text acc out body.toList
+  | .spaced g body =>
+    simp only [blockRaw, blockTextOne]
+    exact blocksRaw_text acc out body.toList
+  | .role n body =>
+    simp only [blockRaw, blockTextOne]
+    exact blocksRaw_text acc out body.toList
+  | .quote body =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    rw [blocksRaw_text]
+    rfl
+  | .abstract body =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    rw [blocksRaw_text]
+    rfl
+  | .titled kind title body =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    rw [blocksRaw_text, titleRaw_text]
+  | .equation number content =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    rw [inlinesRaw_text_nil]
+    simp [leafTextList, leafTextOne, Leaf.census]
+  | .verbatim covered content spec =>
+    simp only [blockRaw, blockTextOne]
+    split
+    · rename_i n cap h
+      simp [leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, ListingSpec.capText, h]
+    · rename_i h
+      simp [leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, ListingSpec.capText, h]
+  | .algorithm n sm lines =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    rw [algRaw_text]
+    rfl
+  | .columns cols =>
+    simp only [blockRaw, blockTextOne]
+    exact colsRaw_text acc out cols.toList
+  | .step n l body =>
+    simp only [blockRaw, blockTextOne]
+    exact blocksRaw_text acc out body.toList
+  | .note body =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    rw [blocksRaw_text]
+    rfl
+  | .only targets body =>
+    simp only [blockRaw, blockTextOne]
+    exact blocksRaw_text acc out body.toList
+  | .nav spec body =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    rw [blocksRaw_text]
+    rfl
+  | .logo content =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    exact inlinesRaw_text_nil _ content
+  | .pagebreak => simp [blockRaw, blockTextOne]
+  | .frame title st v body =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    rw [blocksRaw_text, titleRaw_text]
+  | .framefoot content =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    exact inlinesRaw_text_nil _ content
+  | .setPalette pal => simp [blockRaw, blockTextOne]
+  | .setTokens tk => simp [blockRaw, blockTextOne]
+  | .rule c n th => simp [blockRaw, blockTextOne]
+  | .picture pic =>
+    simp [blockRaw, leafTextList_snoc, leafTextOne, leafTextList, Leaf.census, blockTextOne]
+  | .table cols pl pr rows rules =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    rw [rowsRaw_text]
+    rfl
+  | .float k n ca body caption =>
+    simp only [blockRaw, leafTextList_push, leafTextOne, blockTextOne]
+    rw [blocksRaw_text, captionRaw_text]
+  | .bibliography src style items =>
+    simp only [blockRaw, blockTextOne]
+    exact bibRaw_text acc out items.toList
+
+theorem itemsRaw_text (acc : String) (out : Array Node) (items : List (Array Block)) :
+    leafTextList acc (itemsRaw out items).toList
+      = blockTextItems (leafTextList acc out.toList) items := by
+  match items with
+  | [] => rfl
+  | item :: rest =>
+    rw [itemsRaw, itemsRaw_text acc _ rest, leafTextList_push, blockTextItems]
+    simp only [leafTextOne, leafTextList]
+    rw [blocksRaw_text]
+    rfl
+
+theorem colsRaw_text (acc : String) (out : Array Node) (cols : List (Option Nat × Array Block)) :
+    leafTextList acc (colsRaw out cols).toList
+      = blockTextColumns (leafTextList acc out.toList) cols := by
+  match cols with
+  | [] => rfl
+  | (w, body) :: rest =>
+    rw [colsRaw, colsRaw_text acc _ rest, blocksRaw_text, blockTextColumns]
+
+end
+
+-- Numbering is markup: the pass rewrites ids and nothing else, so every
+-- census over the shape is fixed under it. Structural recursion through
+-- `List`, the numbering's own shape.
+
+mutual
+
+theorem numberList_text (acc : String) (k : Nat) (out : Array Node) (ns : List Node) :
+    leafTextList acc (numberList k out ns).1.toList
+      = leafTextList (leafTextList acc out.toList) ns := by
+  match ns with
+  | [] => rfl
+  | n :: rest =>
+    rw [numberList, leafTextList, numberList_text acc _ _ rest, leafTextList_push,
+      numberOne_text]
+
+theorem numberOne_text (acc : String) (k : Nat) (n : Node) :
+    leafTextOne acc (numberOne k n).1 = leafTextOne acc n := by
+  match n with
+  | .leaf id l => rfl
+  | .node kind kids =>
+    simp only [numberOne, leafTextOne]
+    rw [numberList_text]
+    rfl
+
+end
+
+/-- **Numbering conserves the text**: the ids pass is a `Conserves`
+instance over the tree's own census. -/
+theorem number_text (k : Nat) : Conserves leafText (number k) := fun ns => by
+  unfold leafText number
+  rw [numberList_text]
+  rfl
+
+/-- **The tree's text is the IR's.** The projection of a block sequence has
+exactly `blocksText`'s characters in its leaves, in preorder: nothing
+dropped, nothing invented, the ids added on top. The census equality of
+the `_text` shape; not a `Conserves` instance itself because the walk is
+IR → tree, not IR → IR — `number_text` is the instance the tree-side pass
+owes, and `structTree_text` composes it with the raw walk's equality. -/
+theorem structTree_text (bs : Array Block) : leafText (ofBlocks bs) = blocksText bs := by
+  unfold ofBlocks
+  rw [number_text, leafText, blocksRaw_text]
+  rfl
+
+/-- The document face: the tree's text is the body's. -/
+theorem ofDoc_text (doc : Doc) : (ofDoc doc).text = blocksText doc.body :=
+  structTree_text doc.body
+
+-- **The outline is the IR's** (`structTree_headings_covers`): the tree's
+-- `.heading` levels in preorder are `headingLevels`. Inline content opens
+-- no heading, so the inline walk is fixed; the block walk mirrors
+-- `headingLevelOne` arm for arm.
+
+mutual
+
+theorem inlinesRaw_headings (hs : Array Nat) (out : Array Node) (xs : List Inline) :
+    headingsList hs (inlinesRaw out xs).toList = headingsList hs out.toList := by
+  match xs with
+  | [] => rfl
+  | x :: rest =>
+    rw [inlinesRaw, inlinesRaw_headings hs (inlineRaw out x) rest, inlineRaw_headings]
+
+theorem inlineRaw_headings (hs : Array Nat) (out : Array Node) (x : Inline) :
+    headingsList hs (inlineRaw out x).toList = headingsList hs out.toList := by
+  match x with
+  | .text s => simp [inlineRaw, headingsList_snoc, headingsOne]
+  | .math d src => simp [inlineRaw, headingsList_snoc, headingsOne, headingsList]
+  | .formula d src body => simp [inlineRaw, headingsList_snoc, headingsOne, headingsList]
+  | .styled style body =>
+    match style with
+    | .lang tag =>
+      simp only [inlineRaw, headingsList_push, headingsOne]
+      rw [inlinesRaw_headings]
+      rfl
+    | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
+    | .medium | .series _ | .upright | .size _ =>
+      simp only [inlineRaw]
+      exact inlinesRaw_headings hs out body.toList
+  | .colored c n body =>
+    simp only [inlineRaw]
+    exact inlinesRaw_headings hs out body.toList
+  | .role n body =>
+    simp only [inlineRaw]
+    exact inlinesRaw_headings hs out body.toList
+  | .link url body =>
+    simp only [inlineRaw, headingsList_push, headingsOne]
+    rw [inlinesRaw_headings]
+    rfl
+  | .label key => rfl
+  | .ref key form text target => simp [inlineRaw, headingsList_snoc, headingsOne, headingsList]
+  | .underline body =>
+    simp only [inlineRaw]
+    exact inlinesRaw_headings hs out body.toList
+  | .fill => rfl
+  | .pageNumber => rfl
+  | .pageCount => rfl
+  | .linebreak extra => simp [inlineRaw, headingsList_snoc, headingsOne]
+  | .strut h => rfl
+  | .step n l body =>
+    simp only [inlineRaw]
+    exact inlinesRaw_headings hs out body.toList
+  | .image src size alt => simp [inlineRaw, headingsList_snoc, headingsOne]
+  | .icon sc label => simp [inlineRaw, headingsList_snoc, headingsOne]
+  | .cite tx keys => simp [inlineRaw, headingsList_snoc, headingsOne]
+  | .footnote num body =>
+    simp only [inlineRaw, headingsList_push, headingsOne]
+    rw [inlinesRaw_headings]
+    rfl
+
+end
+
+theorem inlinesRaw_headings_nil (hs : Array Nat) (xs : Array Inline) :
+    headingsList hs (inlinesRaw #[] xs.toList).toList = hs := by
+  rw [inlinesRaw_headings]
+  rfl
+
+theorem titleRaw_headings (hs : Array Nat) (title : Array Inline) :
+    headingsList hs (titleRaw title).toList = hs := by
+  unfold titleRaw
+  split
+  · rfl
+  · simp only [headingsList, headingsOne]
+    exact inlinesRaw_headings_nil hs title
+
+theorem captionRaw_headings (hs : Array Nat) (caption : Array Inline) :
+    headingsList hs (captionRaw caption).toList = hs := by
+  unfold captionRaw
+  split
+  · rfl
+  · simp only [headingsList, headingsOne]
+    exact inlinesRaw_headings_nil hs caption
+
+theorem cellsRaw_headings (hs : Array Nat) (out : Array Node) (cells : List (Array Inline)) :
+    headingsList hs (cellsRaw out cells).toList = headingsList hs out.toList := by
+  induction cells generalizing out with
+  | nil => rfl
+  | cons cell rest ih =>
+    rw [cellsRaw, ih, headingsList_push]
+    simp only [headingsOne]
+    rw [inlinesRaw_headings_nil]
+
+theorem rowsRaw_headings (hs : Array Nat) (out : Array Node) (rows : List (Array (Array Inline))) :
+    headingsList hs (rowsRaw out rows).toList = headingsList hs out.toList := by
+  induction rows generalizing out with
+  | nil => rfl
+  | cons row rest ih =>
+    rw [rowsRaw, ih, headingsList_push]
+    simp only [headingsOne]
+    rw [cellsRaw_headings]
+    rfl
+
+theorem bibRaw_headings (hs : Array Nat) (out : Array Node) (items : List BibItem) :
+    headingsList hs (bibRaw out items).toList = headingsList hs out.toList := by
+  induction items generalizing out with
+  | nil => rfl
+  | cons item rest ih =>
+    rw [bibRaw, ih, headingsList_push]
+    simp [headingsOne, headingsList]
+
+theorem algRaw_headings (hs : Array Nat) (out : Array Node) (lines : List AlgLine) :
+    headingsList hs (algRaw out lines).toList = headingsList hs out.toList := by
+  induction lines generalizing out with
+  | nil => rfl
+  | cons l rest ih =>
+    rw [algRaw, ih]
+    cases l.comment with
+    | none => simp only [inlinesRaw_headings]
+    | some c => simp only [inlinesRaw_headings]
+
+mutual
+
+theorem blocksRaw_headings (hs : Array Nat) (out : Array Node) (bs : List Block) :
+    headingsList hs (blocksRaw out bs).toList
+      = headingLevelList (headingsList hs out.toList) bs := by
+  match bs with
+  | [] => rfl
+  | b :: rest =>
+    rw [blocksRaw, blocksRaw_headings hs (blockRaw out b) rest, blockRaw_headings hs out b,
+      headingLevelList]
+
+theorem blockRaw_headings (hs : Array Nat) (out : Array Node) (b : Block) :
+    headingsList hs (blockRaw out b).toList
+      = headingLevelOne (headingsList hs out.toList) b := by
+  match b with
+  | .para content =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    exact inlinesRaw_headings_nil _ content
+  | .section level st num title =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    exact inlinesRaw_headings_nil _ title
+  | .list ordered items =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    rw [itemsRaw_headings]
+    rfl
+  | .center body =>
+    simp only [blockRaw, headingLevelOne]
+    exact blocksRaw_headings hs out body.toList
+  | .ragged body =>
+    simp only [blockRaw, headingLevelOne]
+    exact blocksRaw_headings hs out body.toList
+  | .spaced g body =>
+    simp only [blockRaw, headingLevelOne]
+    exact blocksRaw_headings hs out body.toList
+  | .role n body =>
+    simp only [blockRaw, headingLevelOne]
+    exact blocksRaw_headings hs out body.toList
+  | .quote body =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    rw [blocksRaw_headings]
+    rfl
+  | .abstract body =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    rw [blocksRaw_headings]
+    rfl
+  | .titled kind title body =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    rw [blocksRaw_headings, titleRaw_headings]
+  | .equation number content =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    rw [inlinesRaw_headings_nil]
+    simp [headingsList, headingsOne]
+  | .verbatim covered content spec =>
+    simp only [blockRaw, headingLevelOne]
+    split
+    · simp [headingsList_snoc, headingsOne, headingsList]
+    · simp [headingsList_snoc, headingsOne, headingsList]
+  | .algorithm n sm lines =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    rw [algRaw_headings]
+    rfl
+  | .columns cols =>
+    simp only [blockRaw, headingLevelOne]
+    exact colsRaw_headings hs out cols.toList
+  | .step n l body =>
+    simp only [blockRaw, headingLevelOne]
+    exact blocksRaw_headings hs out body.toList
+  | .note body => simp [blockRaw, headingsList_snoc, headingsOne, headingLevelOne]
+  | .only targets body =>
+    simp only [blockRaw, headingLevelOne]
+    exact blocksRaw_headings hs out body.toList
+  | .nav spec body =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    rw [blocksRaw_headings]
+    rfl
+  | .logo content =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    exact inlinesRaw_headings_nil _ content
+  | .pagebreak => rfl
+  | .frame title st v body =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    rw [blocksRaw_headings, titleRaw_headings]
+  | .framefoot content =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    exact inlinesRaw_headings_nil _ content
+  | .setPalette pal => rfl
+  | .setTokens tk => rfl
+  | .rule c n th => rfl
+  | .picture pic => simp [blockRaw, headingsList_snoc, headingsOne, headingsList, headingLevelOne]
+  | .table cols pl pr rows rules =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    rw [rowsRaw_headings]
+    rfl
+  | .float k n ca body caption =>
+    simp only [blockRaw, headingsList_push, headingsOne, headingLevelOne]
+    rw [blocksRaw_headings, captionRaw_headings]
+  | .bibliography src style items =>
+    simp only [blockRaw, headingLevelOne]
+    exact bibRaw_headings hs out items.toList
+
+theorem itemsRaw_headings (hs : Array Nat) (out : Array Node) (items : List (Array Block)) :
+    headingsList hs (itemsRaw out items).toList
+      = headingLevelItems (headingsList hs out.toList) items := by
+  match items with
+  | [] => rfl
+  | item :: rest =>
+    rw [itemsRaw, itemsRaw_headings hs _ rest, headingsList_push, headingLevelItems]
+    simp only [headingsOne, headingsList]
+    rw [blocksRaw_headings]
+    rfl
+
+theorem colsRaw_headings (hs : Array Nat) (out : Array Node)
+    (cols : List (Option Nat × Array Block)) :
+    headingsList hs (colsRaw out cols).toList
+      = headingLevelColumns (headingsList hs out.toList) cols := by
+  match cols with
+  | [] => rfl
+  | (w, body) :: rest =>
+    rw [colsRaw, colsRaw_headings hs _ rest, blocksRaw_headings, headingLevelColumns]
+
+end
+
+mutual
+
+theorem numberList_headings (hs : Array Nat) (k : Nat) (out : Array Node) (ns : List Node) :
+    headingsList hs (numberList k out ns).1.toList
+      = headingsList (headingsList hs out.toList) ns := by
+  match ns with
+  | [] => rfl
+  | n :: rest =>
+    rw [numberList, headingsList, numberList_headings hs _ _ rest, headingsList_push,
+      numberOne_headings]
+
+theorem numberOne_headings (hs : Array Nat) (k : Nat) (n : Node) :
+    headingsOne hs (numberOne k n).1 = headingsOne hs n := by
+  match n with
+  | .leaf id l => rfl
+  | .node kind kids =>
+    simp only [numberOne, headingsOne]
+    split <;> first | rfl | (rw [numberList_headings]; rfl)
+
+end
+
+/-- **The outline is the IR's.** The tree's heading levels in preorder are
+exactly `headingLevels`: every `\section` at its level, in order, and no
+heading the outline does not know — the fact the outline diagnostics, the
+markdown preamble, and a tagger's `H<n>` sequence all read. -/
+theorem structTree_headings_covers (bs : Array Block) :
+    headings (ofBlocks bs) = headingLevels bs := by
+  unfold ofBlocks headings headingLevels
+  rw [number, numberList_headings, blocksRaw_headings]
+  rfl
+
+-- **The images are the IR's** (`structTree_images_covers`): the tree's
+-- image leaves are the shared fold's image census, source and alternative,
+-- in the fold's order — so the hand-rolled walk here descends exactly where
+-- the fold does (footnote bodies, roles, columns, cells), and no image is
+-- attributed nowhere.
+
+mutual
+
+theorem inlinesRaw_images (is : Array (String × String)) (out : Array Node) (xs : List Inline) :
+    imagesList is (inlinesRaw out xs).toList
+      = foldInlineList imageAltPush (imagesList is out.toList) xs := by
+  match xs with
+  | [] => rfl
+  | x :: rest =>
+    rw [inlinesRaw, inlinesRaw_images is (inlineRaw out x) rest, inlineRaw_images,
+      foldInlineList]
+
+theorem inlineRaw_images (is : Array (String × String)) (out : Array Node) (x : Inline) :
+    imagesList is (inlineRaw out x).toList = foldInline imageAltPush (imagesList is out.toList) x := by
+  match x with
+  | .text s => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
+  | .math d src =>
+    simp [inlineRaw, imagesList_snoc, imagesOne, imagesList, foldInline, imageAltPush]
+  | .formula d src body =>
+    simp [inlineRaw, imagesList_snoc, imagesOne, imagesList, foldInline, imageAltPush]
+  | .styled style body =>
+    match style with
+    | .lang tag =>
+      simp only [inlineRaw, imagesList_push, imagesOne, foldInline, imageAltPush]
+      rw [inlinesRaw_images]
+      rfl
+    | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
+    | .medium | .series _ | .upright | .size _ =>
+      simp only [inlineRaw, foldInline, imageAltPush]
+      exact inlinesRaw_images is out body.toList
+  | .colored c n body =>
+    simp only [inlineRaw, foldInline, imageAltPush]
+    exact inlinesRaw_images is out body.toList
+  | .role n body =>
+    simp only [inlineRaw, foldInline, imageAltPush]
+    exact inlinesRaw_images is out body.toList
+  | .link url body =>
+    simp only [inlineRaw, imagesList_push, imagesOne, foldInline, imageAltPush]
+    rw [inlinesRaw_images]
+    rfl
+  | .label key => simp [inlineRaw, foldInline, imageAltPush]
+  | .ref key form text target =>
+    simp [inlineRaw, imagesList_snoc, imagesOne, imagesList, foldInline, imageAltPush]
+  | .underline body =>
+    simp only [inlineRaw, foldInline, imageAltPush]
+    exact inlinesRaw_images is out body.toList
+  | .fill => simp [inlineRaw, foldInline, imageAltPush]
+  | .pageNumber => simp [inlineRaw, foldInline, imageAltPush]
+  | .pageCount => simp [inlineRaw, foldInline, imageAltPush]
+  | .linebreak extra => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
+  | .strut h => simp [inlineRaw, foldInline, imageAltPush]
+  | .step n l body =>
+    simp only [inlineRaw, foldInline, imageAltPush]
+    exact inlinesRaw_images is out body.toList
+  | .image src size alt => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
+  | .icon sc label => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
+  | .cite tx keys => simp [inlineRaw, imagesList_snoc, imagesOne, foldInline, imageAltPush]
+  | .footnote num body =>
+    simp only [inlineRaw, imagesList_push, imagesOne, foldInline, imageAltPush]
+    rw [inlinesRaw_images]
+    rfl
+
+end
+
+theorem inlinesRaw_images_nil (is : Array (String × String)) (xs : Array Inline) :
+    imagesList is (inlinesRaw #[] xs.toList).toList = foldInlineList imageAltPush is xs.toList := by
+  rw [inlinesRaw_images]
+  rfl
+
+theorem titleRaw_images (is : Array (String × String)) (title : Array Inline) :
+    imagesList is (titleRaw title).toList = foldInlineList imageAltPush is title.toList := by
+  unfold titleRaw
+  split
+  · rename_i h
+    rw [toList_of_isEmpty title h]
+    rfl
+  · simp only [imagesList, imagesOne]
+    exact inlinesRaw_images_nil is title
+
+theorem captionRaw_images (is : Array (String × String)) (caption : Array Inline) :
+    imagesList is (captionRaw caption).toList = foldInlineList imageAltPush is caption.toList := by
+  unfold captionRaw
+  split
+  · rename_i h
+    rw [toList_of_isEmpty caption h]
+    rfl
+  · simp only [imagesList, imagesOne]
+    exact inlinesRaw_images_nil is caption
+
+theorem cellsRaw_images (is : Array (String × String)) (out : Array Node)
+    (cells : List (Array Inline)) :
+    imagesList is (cellsRaw out cells).toList
+      = foldTableCells imageAltPush (imagesList is out.toList) cells := by
+  induction cells generalizing out with
+  | nil => rfl
+  | cons cell rest ih =>
+    rw [cellsRaw, ih, imagesList_push, foldTableCells]
+    simp only [imagesOne]
+    rw [inlinesRaw_images_nil]
+
+theorem rowsRaw_images (is : Array (String × String)) (out : Array Node)
+    (rows : List (Array (Array Inline))) :
+    imagesList is (rowsRaw out rows).toList
+      = foldTableRows imageAltPush (imagesList is out.toList) rows := by
+  induction rows generalizing out with
+  | nil => rfl
+  | cons row rest ih =>
+    rw [rowsRaw, ih, imagesList_push, foldTableRows]
+    simp only [imagesOne]
+    rw [cellsRaw_images]
+    rfl
+
+theorem bibRaw_images (is : Array (String × String)) (out : Array Node) (items : List BibItem) :
+    imagesList is (bibRaw out items).toList = imagesList is out.toList := by
+  induction items generalizing out with
+  | nil => rfl
+  | cons item rest ih =>
+    rw [bibRaw, ih, imagesList_push]
+    simp [imagesOne, imagesList]
+
+theorem algRaw_images (is : Array (String × String)) (out : Array Node) (lines : List AlgLine) :
+    imagesList is (algRaw out lines).toList
+      = foldAlgLines imageAltPush (imagesList is out.toList) lines := by
+  induction lines generalizing out with
+  | nil => rfl
+  | cons l rest ih =>
+    rw [algRaw, ih, foldAlgLines]
+    cases l.comment with
+    | none => simp only [inlinesRaw_images]
+    | some c => simp only [inlinesRaw_images]
+
+mutual
+
+theorem blocksRaw_images (is : Array (String × String)) (out : Array Node) (bs : List Block) :
+    imagesList is (blocksRaw out bs).toList
+      = foldBlockList (fun out _ => out) imageAltPush (imagesList is out.toList) bs := by
+  match bs with
+  | [] => rfl
+  | b :: rest =>
+    rw [blocksRaw, blocksRaw_images is (blockRaw out b) rest, blockRaw_images is out b,
+      foldBlockList]
+
+theorem blockRaw_images (is : Array (String × String)) (out : Array Node) (b : Block) :
+    imagesList is (blockRaw out b).toList
+      = foldBlock (fun out _ => out) imageAltPush (imagesList is out.toList) b := by
+  match b with
+  | .para content =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    exact inlinesRaw_images_nil _ content
+  | .section level st num title =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    exact inlinesRaw_images_nil _ title
+  | .list ordered items =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    rw [itemsRaw_images]
+    rfl
+  | .center body =>
+    simp only [blockRaw, foldBlock]
+    exact blocksRaw_images is out body.toList
+  | .ragged body =>
+    simp only [blockRaw, foldBlock]
+    exact blocksRaw_images is out body.toList
+  | .spaced g body =>
+    simp only [blockRaw, foldBlock]
+    exact blocksRaw_images is out body.toList
+  | .role n body =>
+    simp only [blockRaw, foldBlock]
+    exact blocksRaw_images is out body.toList
+  | .quote body =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    rw [blocksRaw_images]
+    rfl
+  | .abstract body =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    rw [blocksRaw_images]
+    rfl
+  | .titled kind title body =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    rw [blocksRaw_images, titleRaw_images]
+  | .equation number content =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    rw [inlinesRaw_images_nil]
+    simp [imagesList, imagesOne]
+  | .verbatim covered content spec =>
+    simp only [blockRaw, foldBlock]
+    split
+    · simp [imagesList_snoc, imagesOne, imagesList]
+    · simp [imagesList_snoc, imagesOne, imagesList]
+  | .algorithm n sm lines =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    rw [algRaw_images]
+    rfl
+  | .columns cols =>
+    simp only [blockRaw, foldBlock]
+    exact colsRaw_images is out cols.toList
+  | .step n l body =>
+    simp only [blockRaw, foldBlock]
+    exact blocksRaw_images is out body.toList
+  | .note body =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    rw [blocksRaw_images]
+    rfl
+  | .only targets body =>
+    simp only [blockRaw, foldBlock]
+    exact blocksRaw_images is out body.toList
+  | .nav spec body =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    rw [blocksRaw_images]
+    rfl
+  | .logo content =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    exact inlinesRaw_images_nil _ content
+  | .pagebreak => rfl
+  | .frame title st v body =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    rw [blocksRaw_images, titleRaw_images]
+  | .framefoot content =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    exact inlinesRaw_images_nil _ content
+  | .setPalette pal => rfl
+  | .setTokens tk => rfl
+  | .rule c n th => rfl
+  | .picture pic => simp [blockRaw, imagesList_snoc, imagesOne, imagesList, foldBlock]
+  | .table cols pl pr rows rules =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    rw [rowsRaw_images]
+    rfl
+  | .float k n ca body caption =>
+    simp only [blockRaw, imagesList_push, imagesOne, foldBlock]
+    rw [blocksRaw_images, captionRaw_images]
+  | .bibliography src style items =>
+    simp only [blockRaw, foldBlock]
+    exact bibRaw_images is out items.toList
+
+theorem itemsRaw_images (is : Array (String × String)) (out : Array Node)
+    (items : List (Array Block)) :
+    imagesList is (itemsRaw out items).toList
+      = foldBlockItems (fun out _ => out) imageAltPush (imagesList is out.toList) items := by
+  match items with
+  | [] => rfl
+  | item :: rest =>
+    rw [itemsRaw, itemsRaw_images is _ rest, imagesList_push, foldBlockItems]
+    simp only [imagesOne, imagesList]
+    rw [blocksRaw_images]
+    rfl
+
+theorem colsRaw_images (is : Array (String × String)) (out : Array Node)
+    (cols : List (Option Nat × Array Block)) :
+    imagesList is (colsRaw out cols).toList
+      = foldBlockCols (fun out _ => out) imageAltPush (imagesList is out.toList) cols := by
+  match cols with
+  | [] => rfl
+  | (w, body) :: rest =>
+    rw [colsRaw, colsRaw_images is _ rest, blocksRaw_images, foldBlockCols]
+
+end
+
+mutual
+
+theorem numberList_images (is : Array (String × String)) (k : Nat) (out : Array Node)
+    (ns : List Node) :
+    imagesList is (numberList k out ns).1.toList
+      = imagesList (imagesList is out.toList) ns := by
+  match ns with
+  | [] => rfl
+  | n :: rest =>
+    rw [numberList, imagesList, numberList_images is _ _ rest, imagesList_push,
+      numberOne_images]
+
+theorem numberOne_images (is : Array (String × String)) (k : Nat) (n : Node) :
+    imagesOne is (numberOne k n).1 = imagesOne is n := by
+  match n with
+  | .leaf id l => rfl
+  | .node kind kids =>
+    simp only [numberOne, imagesOne]
+    rw [numberList_images]
+    rfl
+
+end
+
+/-- **The images are the IR's.** Every image leaf of the tree, source and
+text alternative, in preorder, is the shared fold's image census over the
+blocks — the descent `imageRefs` uses, so an image the driver fetches is
+an image the tree attributes, wherever the body put it. -/
+theorem structTree_images_covers (bs : Array Block) : images (ofBlocks bs) = irImages bs := by
+  unfold ofBlocks images irImages foldBlocks
+  rw [number, numberList_images, blocksRaw_images]
+  rfl
+
+-- **Ids are the preorder index** (`structTree_leaves_id`): the k-th leaf
+-- in preorder carries `k`, so the attribution channel's `Option Nat` and a
+-- tagger's `/K` both index one array.
+
+mutual
+
+/-- `leaves` builds onto its accumulator: the census of a list is the
+accumulator, then the list's own. -/
+theorem leavesList_acc (out : Array (Nat × Leaf)) (ns : List Node) :
+    leavesList out ns = out ++ leavesList #[] ns := by
+  match ns with
+  | [] => simp [leavesList]
+  | n :: rest =>
+    rw [leavesList, leavesList_acc _ rest, leavesOne_acc out n, leavesList,
+      leavesList_acc (leavesOne #[] n) rest, Array.append_assoc]
+
+theorem leavesOne_acc (out : Array (Nat × Leaf)) (n : Node) :
+    leavesOne out n = out ++ leavesOne #[] n := by
+  match n with
+  | .leaf id l => simp [leavesOne]
+  | .node kind kids =>
+    simp only [leavesOne]
+    exact leavesList_acc out kids.toList
+
+end
+
+/-- `numberList` builds onto its accumulator and counts independently of it. -/
+theorem numberList_acc (k : Nat) (out : Array Node) (ns : List Node) :
+    (numberList k out ns).1 = out ++ (numberList k #[] ns).1
+      ∧ (numberList k out ns).2 = (numberList k #[] ns).2 := by
+  induction ns generalizing k out with
+  | nil => simp [numberList]
+  | cons n rest ih =>
+    simp only [numberList]
+    obtain ⟨h1, h2⟩ := ih (numberOne k n).2 (out.push (numberOne k n).1)
+    obtain ⟨h1', h2'⟩ := ih (numberOne k n).2 (#[].push (numberOne k n).1)
+    refine ⟨?_, by rw [h2, h2']⟩
+    rw [h1, h1']
+    simp
+
+/-- Two adjacent ranges join: the numbering's induction step. -/
+theorem range'_join {a b c : Nat} (hab : a ≤ b) (hbc : b ≤ c) :
+    List.range' a (b - a) ++ List.range' b (c - b) = List.range' a (c - a) := by
+  obtain ⟨m, rfl⟩ : ∃ m, b = a + m := ⟨b - a, by omega⟩
+  obtain ⟨n, rfl⟩ : ∃ n, c = a + m + n := ⟨c - (a + m), by omega⟩
+  rw [Nat.add_sub_cancel_left, Nat.add_sub_cancel_left, List.range'_append_1]
+  congr 1
+  omega
+
+mutual
+
+theorem numberList_id (k : Nat) (ns : List Node) :
+    (leavesList #[] (numberList k #[] ns).1.toList).toList.map Prod.fst
+        = List.range' k ((numberList k #[] ns).2 - k)
+      ∧ k ≤ (numberList k #[] ns).2 := by
+  match ns with
+  | [] => simp [numberList, leavesList]
+  | n :: rest =>
+    obtain ⟨hn, hkn⟩ := numberOne_id k n
+    obtain ⟨hr, hkr⟩ := numberList_id (numberOne k n).2 rest
+    obtain ⟨h1, h2⟩ := numberList_acc (numberOne k n).2 (#[].push (numberOne k n).1) rest
+    simp only [numberList]
+    rw [h1, h2, Array.toList_append, leavesList_append, leavesList_acc, Array.toList_append,
+      List.map_append, hr]
+    refine ⟨?_, by omega⟩
+    have hone : (leavesList #[] (#[].push (numberOne k n).1).toList).toList.map Prod.fst
+        = List.range' k ((numberOne k n).2 - k) := by
+      rw [Array.toList_push]
+      simpa [leavesList] using hn
+    rw [hone]
+    exact range'_join hkn hkr
+
+theorem numberOne_id (k : Nat) (n : Node) :
+    (leavesOne #[] (numberOne k n).1).toList.map Prod.fst
+        = List.range' k ((numberOne k n).2 - k)
+      ∧ k ≤ (numberOne k n).2 := by
+  match n with
+  | .leaf id l => simp [numberOne, leavesOne]
+  | .node kind kids =>
+    simp only [numberOne, leavesOne]
+    exact numberList_id k kids.toList
+
+end
+
+/-- **Ids are the preorder index.** The leaves of a projected block
+sequence, in preorder, carry `0, 1, …, n − 1`: the k-th leaf is the one
+whose id is `k`, so `leaves t` is the one array the attribution channel's
+`Option Nat` and a tagger's marked-content keys both index. -/
+theorem structTree_leaves_id (bs : Array Block) :
+    (leaves (ofBlocks bs)).toList.map Prod.fst = List.range (leaves (ofBlocks bs)).size := by
+  unfold ofBlocks number leaves
+  obtain ⟨h, _⟩ := numberList_id 0 (blocksRaw #[] bs.toList).toList
+  rw [List.range_eq_range', h]
+  congr 1
+  have := congrArg List.length h
+  simp only [List.length_map, Array.length_toList, List.length_range'] at this
+  omega
+
+end LeanTex.Core.Struct

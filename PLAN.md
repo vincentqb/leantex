@@ -162,6 +162,50 @@ emission (wave 3, `pdf-tag-lists-tables-notes`, reads this number) and a
 head detected past a leading `\hline` frame (the second `mid` would be
 the classic-table head; not the brief's semantics, named for a follow-up).
 
+2026-09-21 — the structure tree as an IR projection (struct-tree-ir slice,
+M7-09). What both a tagged PDF and an HTML page say about a document's
+*structure* — sections, headings, paragraphs, lists with their labels and
+bodies, tables with rows and cells, captioned figures, formulas, code,
+quotes, notes, links, language spans, cross-references — is now one value
+computed once from the IR: `Struct.ofDoc : Doc → Struct.Tree`
+(`LeanTex/Core/Struct.lean`, pure). Neither backend reads it yet; the
+consumer is the attribution channel (M7-18: `LineOut.leaf` indexes the
+tree's leaf array) and the PDF tag skeleton behind it (M7-19), so this
+slice ships the value and its contract, and no artifact byte moves. The
+tree carries structure and text only, and its leaves are the atoms a page
+attributes ink to — text runs, images, diagram boxes — each bearing its
+preorder index as an id. Every IR arm is classified where the walk is
+written: a transparent wrapper (`.center`, `.ragged`, `.spaced`, `.role`,
+`.columns`, `.step`, `.only`; inline styles bar `.lang`, `.colored`,
+`.underline`) splices and invents no node; `.rule` is decorative and the
+state doors (`.setPalette`, `.setTokens`, `.pagebreak`; inline `.label`,
+`.fill`, `.strut`, the page placeholders) produce nothing; `.logo` and
+`.framefoot` are `.artifact`, so a tagger marks them as such and the census
+still counts their text. Three decisions the census forced: a float's
+caption stands first whatever `capAbove` says (the order `blocksText`
+reads; placement is the page's); a listing's caption is one leaf (the
+shared fold does not descend a `.verbatim`, and `textLeaves` reads it the
+same way); a speaker `.note` is an `.aside` whose headings the outline
+census does not count (`headingLevels` never descended one). The walk is
+hand-rolled, with its reason beside the def: the fold reads a node before
+its content and has no close event, so a tree cannot be a fold leaf. Four
+theorems close, none staged: `structTree_text` (the leaves' text in
+preorder is exactly `blocksText` — a census equality, not a `Conserves`
+instance, because the walk is IR → tree; `number_text` is the instance
+the tree-side numbering pass owes), `structTree_headings_covers` (the
+`.heading` levels are `headingLevels`), `structTree_images_covers` (the
+image leaves are the generic fold's image census — the descent `imageRefs`
+uses — so the hand-rolled walk provably reaches every body the fold does,
+footnotes and roles included), and `structTree_leaves_id` (the leaves
+carry `0, 1, …, n−1`). The proofs were cheap for the reason the AGENTS
+factorization rule predicts: numbering is a second pass over the small
+`Node` type rather than a counter threaded through the thirty-arm walk,
+so the id theorem is a two-constructor induction and the three census
+theorems mirror `blockTextOne`/`headingLevelOne`/`foldBlock` arm for arm.
+`Tests/Struct.lean` witnesses the four statements over every golden fixture
+and breaks each arm's classification once (a footnote made transparent
+keeps every theorem and fails two tests by name). Owed ratchet unchanged.
+
 2026-09-21 — a listing's language is one IR fact both text artifacts
 project (listing-language-ir, M7-11). `Ir.ListingSpec` carried a caption
 and a line-number flag; listings' `language=` key and minted's mandatory

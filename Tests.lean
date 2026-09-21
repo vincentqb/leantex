@@ -6,6 +6,7 @@ import Tests.Backends
 import Tests.Diag
 import Tests.Themes
 import Tests.FontMath
+import Tests.Struct
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
@@ -197,6 +198,7 @@ def main (args : List String) : IO UInt32 := do
   walkChecks ref
   diagChecks ref
   pendingChecks ref
+  structChecks ref
   pictureElabChecks ref
   diagVoiceChecks ref update
   allowChecks ref
