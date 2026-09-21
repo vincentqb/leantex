@@ -1213,6 +1213,15 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr "\\url{https://example.org/a_b}").1.body ==
       #[.para #[.link "https://example.org/a_b"
         #[.styled .mono #[.text "https://example.org/a_b"]]]])
+  -- \urlstyle{tt} is that default said back (a note); any other face is a
+  -- refusal whose help names the door that exists — \href's text half is
+  -- set in the running face — because a URL is not a styleable element.
+  t "urlstyle tt is agreement; another face is refused with the href door"
+    (let tt := (elabStr (dvDoc "\\urlstyle{tt}" "x")).2
+     let same := (elabStr (dvDoc "\\urlstyle{same}" "x")).2
+     tt.all (·.severity != .warning) &&
+       same.any (fun d => d.code == "W0104" &&
+         (d.help.map (hasStr · "\\href{url}{url}")).getD false))
   -- A definition standing between paragraphs binds from there on (the
   -- corpus's mid-document \newcommand); inline positions keep E0312.
   t "body define binds for the rest of the flow"

@@ -2126,8 +2126,11 @@ and 'transparent=<n>' are understood")
   | "urlstyle" =>
     -- url.sty's face selector. The engine's `\url` is set mono — url.sty's
     -- own tt default (url package documentation, \urlstyle) — so `tt` is
-    -- agreement said as a note, and any other style asks for a face
-    -- change the URL setting does not take.
+    -- agreement said as a note. Any other style asks for a URL face, and a
+    -- URL is not a styleable element (`Ir.styleableElements`): the face is
+    -- fixed where `\url` elaborates, so the refusal stands and the help
+    -- names the door that exists — `\href`'s text half is set in the
+    -- running face, and takes a family switch.
     let (args, k) := takeGroups raws start 1
     let v := (rawSrc (args.getD 0 #[])).trimAscii.toString
     if v == "tt" then
@@ -2136,6 +2139,8 @@ and 'transparent=<n>' are understood")
       sayOnce "ctrl:urlstyle" .W0104
         s!"'\\urlstyle\{{v}}' asks for a URL face; URLs are set mono here \
 (url.sty's own default)" pos
+        (help := "\\href{url}{url} sets a URL in the running face; \
+\\href{url}{\\textsf{url}} picks a family")
     return some (#[], k)
   | "KOMAoptions" =>
     -- KOMA's runtime option setter (KOMA-Script manual, \KOMAoptions;
