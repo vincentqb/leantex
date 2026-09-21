@@ -1,0 +1,12 @@
+# source: float manual (the [H] placement specifier and the \newfloat,
+# \floatstyle, \restylefloat, \listof commands). [H] is impl by agreement,
+# not by code: floats here always stand where declared — the package's
+# "put it HERE" is the engine's only placement model — so loading the
+# package changes nothing and its specifier is honoured by construction.
+# New float classes and float styles stay refused by name.
+body impl \begin{figure}[H]\caption{a caption}\end{figure}
+body impl \begin{figure}[htbp]\caption{a caption}\end{figure}
+body refuse:W0301 \newfloat{program}{tbp}{lop}
+body refuse:W0301 \floatstyle{ruled}
+body refuse:W0301 \restylefloat{table}
+body refuse:W0301 \listof{program}{List of Programs}

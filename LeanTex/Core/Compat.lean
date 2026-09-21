@@ -39,7 +39,7 @@ def nativePackages : List String :=
    "caption", "subcaption", "nicefrac", "multirow",
    "appendixnumberbeamer", "natbib",
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
-   "libertine", "carlito", "xspace"]
+   "libertine", "carlito", "xspace", "float"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=

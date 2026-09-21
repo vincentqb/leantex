@@ -1,0 +1,10 @@
+# source: todonotes manual §3 (the command list: \todo, \missingfigure,
+# \listoftodos). Draft apparatus, refused deliberately: margin notes and
+# their list are review furniture, not document content. The package stays
+# OFF nativePackages — its load warns W0103 and every use is named where
+# it stands — and this file records that stance so it is a decision, not
+# an accident.
+body refuse:W0301 \todo{fix this}
+body refuse:W0301 \todo[inline]{fix this}
+body refuse:W0301 \missingfigure{a sketch}
+body refuse:W0301 \listoftodos

@@ -1209,15 +1209,18 @@ place `pre` | `body`, annotation `impl` | `refuse:<code>`. An `impl` call
 elaborates without W0301/W0302; a `refuse:` call fires exactly its named
 code, so a refusal that silently stops warning fails too. Adding a package
 to the list without its index file fails: the claim and its evidence
-arrive together. -/
+arrive together. Every file in the directory is probed, not only the
+native list's: a deliberately refused package (todonotes) records its
+stance as refuse rows, and those rows are load-bearing the same way. -/
 def compatIndexChecks (ref : IO.Ref (List String)) : IO Unit := do
   let dir : System.FilePath := "tests/compat-index"
   for pkg in Compat.nativePackages do
-    let path := dir / (pkg ++ ".txt")
-    let found ← path.pathExists
+    let found ← (dir / (pkg ++ ".txt")).pathExists
     check ref s!"compat index: '{pkg}' is claimed native but has no index file" found
-    unless found do continue
-    let content ← IO.FS.readFile path
+  for entry in (← dir.readDir).map (·.fileName) |>.qsort (· < ·) do
+    unless entry.endsWith ".txt" do continue
+    let pkg := (entry.dropEnd ".txt".length).toString
+    let content ← IO.FS.readFile (dir / entry)
     for line in content.splitOn "\n" do
       let line := line.trimAscii.toString
       if line.isEmpty || line.startsWith "#" then continue
