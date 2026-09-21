@@ -2135,3 +2135,45 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
      | .ok inf, #[(some 0, w, h)] =>
        w == Dim.pt 100 && h == Dim.pt 100 * inf.height / inf.width
      | _, _ => false)
+
+/-- `algorithm_lines_agree`'s executable oracle: the HTML list-item text
+census equals the PDF's line census. Both backends read one line spelling
+(`Ir.AlgLine.rendered`), so what remains checkable is the HTML nesting
+builder itself — that grouping lines into nested `<ol>`s loses no line and
+reorders none, over the shapes that exercise it: the `\eIf` else standing
+at its if's own level (the double-nesting defect this pins), and a plain
+loop. The census texts are checked in emission order, one `<li>` per
+line. -/
+def algorithmBackendChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let emitOf (body : String) : String :=
+    (HtmlDoc.emit {} (elabStr (dvDoc "" body)).1).1
+  let html := emitOf ("\\begin{algorithm}\n\\caption{An invented check.}\n" ++
+    "\\eIf{$a > 0$}{one\\;}{two\\;}\n\\Return{$r$}\\;\n\\end{algorithm}")
+  -- one <li> per line: if, one, else, two, end, return
+  t "algorithm html: one list item per line"
+    (((html.splitOn "<li>").length - 1) == 6)
+  -- the outer list plus one nested list per branch body
+  t "algorithm html: eIf nests each branch once"
+    (((html.splitOn "<ol").length - 1) == 3)
+  -- the census in emission order — no line lost, none reordered
+  let inOrder (hay : String) (needles : List String) : Bool := Id.run do
+    let mut rest := hay
+    for n in needles do
+      match rest.splitOn n with
+      | _ :: t1 :: ts => rest := String.intercalate n (t1 :: ts)
+      | _ => return false
+    return true
+  t "algorithm html: the list-item census keeps line order"
+    (inOrder html ["<strong>if</strong>", "<strong>then</strong>", "one;",
+      "<strong>else</strong>", "two;", "<strong>end</strong>",
+      "<strong>return</strong>"])
+  -- the else stands at its if's level: the nested <ol> before it closed
+  t "algorithm html: the else closes its then-branch first"
+    (inOrder html ["one;", "</ol>", "<strong>else</strong>"])
+  let deep := emitOf ("\\begin{algorithm}\n" ++
+    "\\For{$i$}{\\While{$c$}{step\\;}}\n\\end{algorithm}")
+  t "algorithm html: nested loops nest their lists"
+    (((deep.splitOn "<ol").length - 1) == 3 &&
+      inOrder deep ["<strong>for</strong>", "<strong>while</strong>",
+        "step;", "<strong>end</strong>", "<strong>end</strong>"])

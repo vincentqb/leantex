@@ -24,6 +24,7 @@ def backendSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   argTokenChecks ref
   anchorChecks ref
   markdownChecks ref
+  algorithmBackendChecks ref
   mdPreambleChecks ref
   backendChecks ref
   landmarkChecks ref
