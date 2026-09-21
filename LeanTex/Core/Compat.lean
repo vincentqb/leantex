@@ -59,10 +59,14 @@ furniture defaults to the empty state this engine starts from;
 sets uniformly either way; `raggedbottom`/`flushbottom` pick a vertical
 distribution the page-opening `vdist` obligation will own (AGENTS table);
 `noindent` and `urlstyle` adjust detail the engine does not yet
-style. Table rules (`midrule`, `toprule`, …) are NOT here: they are the
+style; `nointerlineskip` suppresses the interline glue TeX inserts above
+the next box, and vertical space here is declared per block and per page
+opening, never accumulated interline glue, so there is nothing to
+suppress. Table rules (`midrule`, `toprule`, …) are NOT here: they are the
 table elaborator's vocabulary and must reach it. -/
 def meaningFree : List (String × Nat) :=
   [("makeatletter", 0), ("makeatother", 0), ("relax", 0), ("noindent", 0),
+   ("nointerlineskip", 0),
    ("clearpairofpagestyles", 0), ("urlstyle", 1),
    ("KOMAoptions", 1), ("newlength", 1), ("frenchspacing", 0),
    ("nonfrenchspacing", 0),
@@ -942,6 +946,52 @@ private def hypersetup (opts : String) (pos : Pos) : M (Array Raw) := do
   became "\\hypersetup" native pos
   synthAt native pos
 
+/-- `\DocumentMetadata{...}` (usrguide, "Document metadata"; ltdocinit):
+`lang` is the document's language and lands on the same `\pdfmeta{
+language }` door babel's main language uses. The writer keys
+(`pdfversion`, `pdfstandard`, `uncompress`, `testphase`, …) configure a
+PDF writer the engine is not — it writes PDF 2.0 — so each is dropped by
+name, never silently, and never as page content. -/
+private def documentMetadata (opts : String) (pos : Pos) : M (Array Raw) := do
+  let mut lang : Option String := none
+  let mut dropped : Array String := #[]
+  for e in Decl.splitEntries opts do
+    match Decl.splitEntry e with
+    | some ("lang", v) => lang := some v
+    | some (key, _) => if !key.isEmpty then dropped := dropped.push key
+    | none =>
+      let key := e.trimAscii.toString
+      if !key.isEmpty then dropped := dropped.push key
+  unless dropped.isEmpty do
+    say .W0101 s!"\\DocumentMetadata keys without a native equivalent were \
+dropped: {String.intercalate ", " dropped.toList}" pos
+      (help := "the engine always writes PDF 2.0; version, standard, and \
+compression keys have no effect here")
+  match lang with
+  | some tag =>
+    let native := s!"\\pdfmeta\{ language = \"{tag}\" }"
+    became "\\DocumentMetadata" native pos
+    synthAt native pos
+  | none => return #[]
+
+/-- `\AddToHook{hook}[label]{code}` (usrguide, "Hooks"): code onto a kernel
+hook. The engine has no hook machinery — what a page shows is declared,
+not accumulated by hook code — so the construct skips whole: hook name,
+label, and body, never leaking the code as text. -/
+private def addToHook (pos : Pos) : M Unit :=
+  sayOnce "ctrl:AddToHook" .W0104
+    "'\\AddToHook' registers code on a kernel hook; the engine has no \
+hook machinery; skipped" pos
+
+/-- `\pagecolor[model]{colour}` sets the page background from here on
+(xcolor manual §2.6); the engine's page background is the palette's `bg`
+role, the one resolving site both backends read, so the contrast contracts
+judge text against the colour the page actually paints. -/
+private def pageColor (value : String) (pos : Pos) : M (Array Raw) := do
+  let native := s!"\\palette\{ bg = {value} }"
+  became "\\pagecolor" native pos
+  synthAt native pos
+
 private def color (model value : String) (pos : Pos) : M (Option String) := do
   match model with
   | "HTML" => return some s!"#{value}"
@@ -1061,502 +1111,13 @@ private def simpleNative : List (String × String) :=
    ("onehalfspacing", "\\page{ leading = 1.25 }"),
    ("doublespacing", "\\page{ leading = 1.667 }")]
 
-/-- Rewrite the control sequence `name` given what follows it. Returns the
-replacement and how many following elements it consumed, or `none` to leave
-the command alone. -/
-private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
-    M (Option (Array Raw × Nat)) := do
-  let consumed ← rewriteCtrlAt name pos raws start
-  return consumed.map fun (repl, k) => (repl, k - start)
-where
-  rewriteCtrlAt (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
-      M (Option (Array Raw × Nat)) := do
-  if let some tok := literalReplace.lookup name then
-    return some (#[tok pos], start)
-  if let some native := simpleNative.lookup name then
-    became s!"\\{name}" native pos
-    return some (← synthAt native pos, start)
+/-- The later half of `rewriteCtrl`'s dispatch, split out so neither
+half's `match` exhausts the LCNF compiler's heartbeat budget — one
+logical dispatcher, two compilation units. `rewriteCtrl`'s own match
+falls through to here for every name it does not claim. -/
+private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
+    (start : Nat) : M (Option (Array Raw × Nat)) := do
   match name with
-  | "usepackage" | "RequirePackage" =>
-    -- One dispatch for both spellings: `\RequirePackage` is `\usepackage`
-    -- for package writers (ltclass.dtx), and a local `.sty` spliced into
-    -- the preamble spells its loads that way.
-    if (← get).inDoc then
-      -- LaTeX's own rule: "\usepackage can be used only in preamble"
-      -- (ltclass.dtx \@onlypreamble) — in the body the placement is the
-      -- defect, whatever the package's support, so the W0103 dispatch
-      -- below never judges it.
-      let (_, j) := takeOpt raws start
-      let (_, k) := takeGroups raws j 1
-      sayOnce ("ctrl:" ++ name) .W0340
-        s!"'\\{name}' is a preamble declaration; in the body it is ignored" pos
-        (help := "load the package in the preamble, before '\\begin{document}'")
-      return some (#[], k)
-    let (opt, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    if args.isEmpty then return none
-    let pkgs := (rawSrc (args.getD 0 #[])).splitOn "," |>.map (·.trimAscii.toString)
-    let mut out : Array Raw := #[]
-    for p in pkgs do
-      if p == "geometry" then
-        out := out ++ (← geometry (opt.getD "") pos)
-      else if p == "beamerposter" then
-        out := out ++ (← beamerposter (opt.getD "") pos)
-      else if p == "parskip" then
-        -- The package sets `\parskip` to half a line plus 2pt and drops the
-        -- indent; the half line is what changes the page.
-        let native := "\\page{ parskip = 0.6em plus 2pt }"
-        became "\\usepackage{parskip}" native pos
-        out := out ++ (← synthAt native pos)
-      else if (p == "caption" || p == "subcaption") && opt.isSome then
-        -- The package options are `\captionsetup` keys (caption manual
-        -- §1.3): route them to the one site that judges caption keys, so
-        -- `[tableposition=top]` is honoured or named exactly as the
-        -- command form is.
-        let native := s!"\\captionsetup\{{opt.getD ""}}"
-        became s!"\\usepackage[{opt.getD ""}]\{{p}}" native pos
-        out := out ++ (← synthAt native pos)
-      else if p == "babel" then
-        -- babel's package options are its language list, and "the last
-        -- language option is the main one" (babel manual §1.2). The main
-        -- language becomes document metadata (`\pdfmeta{ language }`);
-        -- the locale record then words captions, selects hyphenation
-        -- patterns, and shapes `\enquote`. Non-language options carry
-        -- `=` and are configuration, skipped as before.
-        let names := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
-          |>.filter (fun o => !o.isEmpty && !o.contains '=')
-        match names.reverse.head? with
-        | some main =>
-          let tag := Locale.babelTagOf main
-          if (Locale.forTag tag).isSome then
-            let native := s!"\\pdfmeta\{ language = \"{tag}\" }"
-            became s!"\\usepackage[{main}]\{babel}" native pos
-            modify fun st => { st with mainLang := tag }
-            out := out ++ (← synthAt native pos)
-          else
-            say .W0368 s!"no locale for language '{main}'; English \
-captions and patterns stand in" pos
-              (help := "the engine ships locale records for: en, fr, de")
-        | none =>
-          became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
-      else if nativePackages.contains p then
-        became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
-      else
-        say .W0103 s!"package '{p}' is not supported; skipped" pos
-    return some (out, k)
-  | "documentclass" =>
-    let (opt, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    let cls := rawSrc (args.getD 0 #[])
-    if articleClasses.contains cls || resumeClasses.contains cls then
-      let native0 := if resumeClasses.contains cls then "resume" else "article"
-      let o := match opt with | some o => s!"[{o}]" | none => ""
-      -- A LaTeX class separates paragraphs by indent, not by a skip: its
-      -- `\parskip` is zero unless the KOMA `parskip=` option asks for half a
-      -- line or a full one. The engine's own default is a skip, so the
-      -- class declares what LaTeX would have.
-      let komaSkip := (opt.getD "").splitOn "," |>.findSome? fun kv =>
-        match (kv.splitOn "=").map (·.trimAscii.toString) with
-        | ["parskip", v] =>
-          if v.startsWith "full" then some "1.2em plus 0.24em"
-          else if v.startsWith "half" then some "0.6em plus 0.12em"
-          else if v == "false" || v == "never" then some "0pt"
-          else some "0.6em plus 0.12em"
-        | ["parskip"] => some "1.2em plus 0.24em"
-        | _ => none
-      let native := s!"\\documentclass{o}\{{native0}}\\page\{ parskip = {komaSkip.getD "0pt"} }"
-      became s!"\\documentclass\{{cls}}" native pos
-      return some (← synthAt native pos, k)
-    else if cls == "beamer" then
-      let o := match opt with | some o => s!"[{o}]" | none => ""
-      became "\\documentclass{beamer}" s!"\\documentclass{o}\{slides}" pos
-      return some (← synthAt s!"\\documentclass{o}\{slides}" pos, k)
-    else return none
-  | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont" =>
-    -- `\babelfont[lang]{slot}{font}` binds a font per language (babel
-    -- manual §1.8). The option parses first — it stands before the slot —
-    -- and the binding is then dropped by name (W0369): one Latin body
-    -- face covers en/fr/de, and a per-language face buys nothing until a
-    -- non-Latin document exists. The unoptioned form is the main font.
-    let (langOpt, j0) := if name == "babelfont" then takeOpt raws start else (none, start)
-    let (slotArgs, j) := if name == "babelfont" then takeGroups raws j0 1 else (#[], start)
-    let (optBefore, j) := takeOpt raws j
-    let (args, k) := takeGroups raws j 1
-    -- fontspec takes its features before the name or after it.
-    let (optAfter, k) := takeOpt raws k
-    let slot := match name with
-      | "babelfont" => match rawSrc (slotArgs.getD 0 #[]) with
-        | "rm" => "body" | "sf" => "sans" | "tt" => "mono" | s => s
-      | "setmainfont" => "body" | "setsansfont" => "sans" | _ => "mono"
-    let family := rawSrc (args.getD 0 #[])
-    -- fontspec features that matter here are the ones that name fonts rather
-    -- than shape them: `Path=` says where the fonts live, and the per-variant
-    -- faces (`BoldFont=` and siblings) say exactly which file or name serves
-    -- each variant. Everything else is a shaping feature and is dropped.
-    let feature (k : String) : Option String :=
-      ([optBefore, optAfter].filterMap id).findSome? fun opts =>
-        (Decl.splitEntries opts).findSome? fun kv =>
-          match Decl.splitEntry kv with
-          | some (key, v) =>
-            if key == k then
-              some (if v.startsWith "{" && v.endsWith "}" then
-                ((v.drop 1).toString.dropEnd 1).toString.trimAscii.toString
-              else v)
-            else none
-          | none => none
-    let dirPart := match feature "Path" with
-      | some d => s!"dir = \"{d}\", "
-      | none => ""
-    let mut parts := #[s!"{slot} = \"{family}\""]
-    for (opt, variant) in [("UprightFont", "upright"), ("BoldFont", "bold"),
-        ("ItalicFont", "italic"), ("BoldItalicFont", "bolditalic")] do
-      if let some f := feature opt then
-        -- fontspec's `*` stands for the family name (fontspec manual,
-        -- "Choosing additional fonts": "may be replaced by *"):
-        -- `UprightFont = *-Medium` under `{Inter}` names "Inter-Medium".
-        let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
-        parts := parts.push s!"{slot}.{variant} = \"{f}\""
-    if name == "babelfont" then
-      if let some l := langOpt then
-        say .W0369 s!"'\\babelfont[{l}]' binds a font per language; one \
-face serves every language, so the binding is dropped" pos
-          (help := "\\fonts{ body = \"...\" } names the face every language uses")
-        return some (#[], k)
-    let native := s!"\\fonts\{ {dirPart}{String.intercalate ", " parts.toList} }"
-    became s!"\\{name}" native pos
-    return some (← synthAt native pos, k)
-  | "definecolor" =>
-    let (args, k) := takeGroups raws start 3
-    if h : args.size = 3 then
-      let n := rawSrc args[0]
-      match ← color (rawSrc args[1]) (rawSrc args[2]) pos with
-      | some hex =>
-        let native := s!"\\palette\{ {n} = {hex} }"
-        became s!"\\definecolor\{{n}}" native pos
-        return some (← synthAt native pos, k)
-      | none => return some (#[], k)
-    else return none
-  | "colorlet" =>
-    let (args, k) := takeGroups raws start 2
-    if h : args.size = 2 then
-      -- xcolor's `.` names the current colour (xcolor manual §2.3, the
-      -- colour expression grammar); in the preamble that is the initial
-      -- colour, black.
-      let src := if (rawSrc args[1]).trimAscii.toString == "." then "#000000"
-        else rawSrc args[1]
-      let native := s!"\\palette\{ {rawSrc args[0]} = {src} }"
-      became "\\colorlet" native pos
-      return some (← synthAt native pos, k)
-    else return none
-  | "pagecolor" =>
-    -- `\pagecolor{colour}` sets the page background from here on (xcolor
-    -- manual §2.6); the engine's page background is the palette's `bg`
-    -- role, the one resolving site both backends read, so the contrast
-    -- contracts judge text against the colour the page actually paints.
-    let (opt, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    if h : args.size = 1 then
-      let value ← match opt with
-        | some model => color model (rawSrc args[0]) pos
-        | none => pure (some (rawSrc args[0]))
-      match value with
-      | some v =>
-        let native := s!"\\palette\{ bg = {v} }"
-        became "\\pagecolor" native pos
-        return some (← synthAt native pos, k)
-      | none => return some (#[], k)
-    else return none
-  | "geometry" | "newgeometry" =>
-    -- The command forms: the same keys the package options carry
-    -- (geometry manual §5: `\newgeometry` is `\geometry` restricted to
-    -- the layout keys). One door for every spelling, so a key is honoured
-    -- or named (W0101) identically wherever it was written.
-    let (args, k) := takeGroups raws start 1
-    if args.isEmpty then return none
-    return some (← geometry (rawSrc (args.getD 0 #[])) pos s!"\\{name}", k)
-  | "microtypesetup" =>
-    -- microtype's switchboard (manual §3.1): `protrusion` and `expansion`
-    -- reach the native gates, and `activate` — the manual's shorthand for
-    -- both — sets the pair. A key the engine does not perform is dropped
-    -- named (W0101), never silently; a bare key means `=true`, as in the
-    -- manual.
-    let (args, k) := takeGroups raws start 1
-    if args.isEmpty then return none
-    let mut keys : Array String := #[]
-    let mut dropped : Array String := #[]
-    for e in Decl.splitEntries (rawSrc (args.getD 0 #[])) do
-      match e.splitOn "=" with
-      | [] => pure ()
-      | key :: v =>
-        let key := key.trimAscii.toString
-        let v := (String.intercalate "=" v).trimAscii.toString
-        let native := if key == "activate" then ["protrusion", "expansion"]
-          else if key == "protrusion" || key == "expansion" then [key]
-          else []
-        if native.isEmpty then
-          if !key.isEmpty then dropped := dropped.push key
-        else
-          match v with
-          | "" | "true" | "compatibility" | "nocompatibility" =>
-            keys := keys ++ (native.map (s!"{·} = on")).toArray
-          | "false" => keys := keys ++ (native.map (s!"{·} = off")).toArray
-          | _ => dropped := dropped.push key
-    unless dropped.isEmpty do
-      say .W0101 s!"microtype keys without a native equivalent were dropped: \
-{String.intercalate ", " dropped.toList}" pos
-    if keys.isEmpty then return some (#[], k)
-    let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
-    became "\\microtypesetup" native pos
-    return some (← synthAt native pos, k)
-  | "newlength" =>
-    -- `\newlength{\x}` allocates a length register at 0pt (usrguide,
-    -- "Defining lengths"); the native store is a token, so a later
-    -- `\setlength{\x}` and references to `\x` in other lengths resolve.
-    let (args, k) := takeGroups raws start 1
-    let some n := ctrlName (args.getD 0 #[]) | return none
-    let native := s!"\\tokens\{ {n} = 0pt }"
-    became s!"\\newlength\{\\{n}}" native pos
-    return some (← synthAt native pos, k)
-  | "setlength" =>
-    let (args, k) := takeGroups raws start 2
-    if h : args.size = 2 then
-      -- e-TeX's `\dimexpr` division rounds to the nearest multiple (e-TeX
-      -- manual §3.5); the native language truncates toward zero as TeX's
-      -- `\divide` does. Mapping the spelling would mis-round silently, so
-      -- it is refused by name instead.
-      if (args[1].any fun r => match r with | .ctrl "dimexpr" _ => true | _ => false)
-          && (lengthSrc args[1]).toList.contains '/' then
-        say .E0375 "'\\dimexpr' division rounds to nearest; this engine's length \
-arithmetic truncates toward zero as TeX's '\\divide' does" pos
-          (help := "divide outside '\\dimexpr': '(\\a - \\b) / 2' truncates as TeX does")
-        return some (#[], k)
-      match ctrlName args[0] with
-      | some "abovecaptionskip" =>
-        -- The object-side caption gap (classes.dtx `\@makecaption`:
-        -- `\abovecaptionskip` stands between the object and its caption):
-        -- exactly the engine's `captionsep` token.
-        let native := s!"\\tokens\{ captionsep = {lengthSrc args[1]} }"
-        became "\\setlength{\\abovecaptionskip}" native pos
-        return some (← synthAt native pos, k)
-      | some "belowcaptionskip" =>
-        -- The caption's text side: in this engine that is the float
-        -- separation (`floatsep`), not a caption property; the LaTeX
-        -- default here is 0pt for the same reason.
-        say .N0102 "'\\belowcaptionskip' is not a knob here: the caption's \
-text side is the float separation ('\\tokens{ floatsep = ... }')" pos
-        return some (#[], k)
-      | some "parskip" =>
-        -- TeX's own paragraph glue is a page property here, not a token.
-        let native := s!"\\page\{ parskip = {lengthSrc args[1]} }"
-        became "\\setlength{\\parskip}" native pos
-        return some (← synthAt native pos, k)
-      | some n =>
-        let native := s!"\\tokens\{ {n} = {lengthSrc args[1]} }"
-        became s!"\\setlength\{\\{n}}" native pos
-        return some (← synthAt native pos, k)
-      | none => return none
-    else return none
-  | "advance" | "multiply" | "divide" =>
-    -- TeX's register arithmetic (TeXbook ch. 24: ⟨advance⟩⟨numeric
-    -- variable⟩⟨by⟩⟨value⟩): the engine keeps no registers, so the whole
-    -- statement is named and skipped — the `by` and the value go with the
-    -- command, never left behind as stray content (a bare `by` in the
-    -- preamble was an E0313 cascade from one skipped name).
-    let j0 := skipSpaces raws start
-    match raws[j0]? with
-    | some (.ctrl _ _) =>
-      let j1 := skipSpaces raws (j0 + 1)
-      let j2 := match raws[j1]? with
-        | some (.word "by" _) => skipSpaces raws (j1 + 1)
-        | _ => j1
-      -- The value: one word (`2pt`), or a register chain of one or two
-      -- control words (`\ht\strutbox`).
-      let k := match raws[j2]? with
-        | some (.word _ _) => j2 + 1
-        | some (.ctrl _ _) =>
-          match raws[j2 + 1]? with
-          | some (.ctrl _ _) => j2 + 2
-          | _ => j2 + 1
-        | _ => j2
-      sayOnce ("ctrl:" ++ name) .W0104
-        s!"TeX register arithmetic ('\\{name}') is not supported; skipped" pos
-        (demote := styInternal (← get).file name)
-      return some (#[], k)
-    | _ => return none
-  | "NewDocumentCommand" | "newcommand" | "providecommand" | "renewcommand"
-  | "DeclareDocumentCommand" | "RenewDocumentCommand" | "DeclareRobustCommand" =>
-    -- One arm for the whole definer family. LaTeX's documented triple
-    -- (usrguide, "Defining commands": new must not exist, renew must
-    -- exist, provide keeps an existing definition) collapses here to the
-    -- one policy that changes what a correct document *means*: a
-    -- `\providecommand` of a name this document already bound keeps the
-    -- first definition, so its body is consumed whole. The two error
-    -- halves are LaTeX's to check — kernel and package names are
-    -- invisible to this pass, so checking them would misfire on every
-    -- `\renewcommand` of a kernel command. The native store stays
-    -- last-wins, the layering mechanism.
-    let xparse := name.endsWith "DocumentCommand"
-    let start := skipStar raws start
-    let (nameArgs, j) := takeGroups raws start 1
-    let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
-    if !xparse && cmd == "sectionlinesformat" then
-      -- `\renewcommand\sectionlinesformat[4]{...}` is the spelling KOMA
-      -- documents: the rule idiom, not a definition.
-      let (_, j) := takeOpt raws j
-      let (args, k) := takeGroups raws j 1
-      return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
-    let (spec, j) ← if xparse then
-        let (a, j) := takeGroups raws j 1
-        pure (signature (rawSrc (a.getD 0 #[])), j)
-      else
-        let (n, j) := takeOpt raws j
-        let count := (n.bind String.toNat?).getD 0
-        let (dflt, j) := takeOpt raws j
-        let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (count - 1) 'm')
-          else String.ofList (List.replicate count 'm')
-        pure (signature spec, j)
-    -- The sectioning idiom: a body that is one \@startsection call is a
-    -- declarative rule over an existing heading, read as \style.
-    let js := skipSpaces raws j
-    if let some (.group sbody _) := raws[js]? then
-      if let some out ← startSection? cmd sbody pos then
-        return some (out, js + 1)
-    -- The size idiom: a venue class's `\renewcommand\normalsize` whose
-    -- body opens with `\@setfontsize\normalsize<size><leading>` (fntguide
-    -- §"\@setfontsize"; size10.clo is where `\@xpt`/`\@xipt` get their
-    -- values) declares the document's body size and leading. Both are the
-    -- page's to carry: the leading lands as the factor over the engine's
-    -- 6/5 base (`Ir.leadingMilli`), so a spliced .sty's 10/10.95 sets
-    -- baselines at 10.95pt and the rhythm unit follows. The body's
-    -- trailing display-skip internals are TeX the engine does not run;
-    -- the translation note names what was taken.
-    if !xparse && cmd == "normalsize" then
-      if let some (.group sbody _) := raws[js]? then
-        let b := skipSpaces sbody 0
-        if let some (.ctrl "@setfontsize" _) := sbody[b]? then
-          let (fsArgs, _) := takeGroups sbody (b + 1) 3
-          if h : fsArgs.size ≥ 3 then
-            if let (some sz, some ld) := (ptMacroArg fsArgs[1], ptMacroArg fsArgs[2]) then
-              if sz > 0 && ld > 0 then
-                let factor := (ld * 1000000 + sz * 600) / (sz * 1200)
-                let native := s!"\\page\{ fontsize = {milliStr sz}pt, \
-leading = {milliStr factor} }"
-                became "\\renewcommand{\\normalsize}" native pos
-                return some (← synthAt native pos, js + 1)
-    if name == "providecommand" && (← get).bound.contains cmd then
-      let (_, k) := takeGroups raws j 1
-      became s!"\\providecommand\{\\{cmd}}"
-        s!"nothing: '\\{cmd}' is already defined and the existing definition is kept" pos
-      return some (#[], k)
-    modify fun st => { st with
-      bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
-    let native := s!"\\define \\{cmd}({spec})"
-    became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
-    modify fun st => { st with bodyNext := 1 }
-    return some (← synthAt native pos, j)
-  | "DeclareMathOperator" =>
-    -- `\DeclareMathOperator{\f}{name}` declares an operator name: upright,
-    -- with an Op atom's spacing (amsldoc §5.1). The native spelling is a
-    -- definition whose body is `\operatorname{name}`; math expansion then
-    -- renders every use. The starred form's above/below display limits are
-    -- not modelled — the operator still sets, its scripts beside it.
-    let start := skipStar raws start
-    let (args, k) := takeGroups raws start 2
-    let some cmd := ctrlName (args.getD 0 #[]) | return none
-    if args.size < 2 then return none
-    let body := args.getD 1 #[]
-    became s!"\\DeclareMathOperator\{\\{cmd}}"
-      s!"\\define \\{cmd}() \{\\operatorname\{...}}" pos
-    let head ← synthAt s!"\\define \\{cmd}()" pos
-    return some (head.push (.group #[.ctrl "operatorname" pos, .group body pos] pos), k)
-  | "hypersetup" =>
-    let (args, k) := takeGroups raws start 1
-    return some (← hypersetup (rawSrc (args.getD 0 #[])) pos, k)
-  | "ihead" | "chead" | "ohead" | "ifoot" | "cfoot" | "ofoot"
-  | "lhead" | "rhead" | "lfoot" | "rfoot" =>
-    let (args, k) := takeGroups raws start 1
-    let src := rawSrc (args.getD 0 #[])
-    let slot := if name.startsWith "i" || name.startsWith "l" then 0
-      else if name.startsWith "c" then 1 else 2
-    modify fun st =>
-      let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := pos } else st
-      if name.endsWith "head" then
-        { st with head := (st.head.filter (·.1 != slot)).push (slot, src) }
-      else
-        { st with foot := (st.foot.filter (·.1 != slot)).push (slot, src) }
-    return some (#[], k)
-  | "fancyhead" | "fancyfoot" | "fancyhf" =>
-    -- fancyhdr's primary interface (manual §2): `[places]` crosses L/C/R
-    -- with E/O (even/odd). The engine has one page sequence, so E and O
-    -- collapse onto the slot letter, said once; no `[places]` means every
-    -- field, and an empty field clears its slots — both as the manual
-    -- defines (`\fancyhf{}` is its own idiom for clearing the style).
-    -- Slots land in the same gathered fields as `\lhead`'s family, so the
-    -- same-slot replace policy is one policy.
-    let (opt, j) := takeOpt raws start
-    let (args, k) := takeGroups raws j 1
-    let src := rawSrc (args.getD 0 #[])
-    let mut slots : Array Nat := #[]
-    let mut evenOdd := false
-    for e in (opt.getD "LCR").splitOn "," do
-      for c in e.toList do
-        let c := c.toUpper
-        if c == 'L' && !slots.contains 0 then slots := slots.push 0
-        else if c == 'C' && !slots.contains 1 then slots := slots.push 1
-        else if c == 'R' && !slots.contains 2 then slots := slots.push 2
-        else if c == 'E' || c == 'O' then evenOdd := true
-    if evenOdd then
-      sayOnce "fancyhdr:evenodd" .N0102
-        "even and odd pages are one sequence here; the field applies to every page" pos
-    let toHead := name != "fancyfoot"
-    let toFoot := name != "fancyhead"
-    modify fun st =>
-      let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := pos } else st
-      let put (parts : Array (Nat × String)) : Array (Nat × String) :=
-        slots.foldl (init := parts) fun parts slot =>
-          let parts := parts.filter (·.1 != slot)
-          if src.trimAscii.toString.isEmpty then parts else parts.push (slot, src)
-      { st with
-        head := if toHead then put st.head else st.head
-        foot := if toFoot then put st.foot else st.foot }
-    return some (#[], k)
-  | "pagestyle" =>
-    let (args, k) := takeGroups raws start 1
-    let v := (rawSrc (args.getD 0 #[])).trimAscii.toString
-    match v with
-    | "fancy" | "scrheadings" =>
-      -- The styles that mean "the declared running fields apply" — which
-      -- they already do here: gathered fields land as `\runninghead` /
-      -- `\runningfoot` by themselves. Agreement, not a missing model (the
-      -- old warning said "not modelled" about exactly what is modelled).
-      became s!"\\pagestyle\{{v}}" "nothing: declared running fields apply by themselves" pos
-      return some (#[], k)
-    | "plain" =>
-      -- article's own initial style (classes.dtx: article.cls sets
-      -- \pagestyle{plain}): the centred page number in the foot, which
-      -- \page{ numbers = on } spells natively — already the flow
-      -- default, and the explicit form takes control under a class
-      -- whose record declines it.
-      became "\\pagestyle{plain}" "\\page{ numbers = on }" pos
-      return some (← synthAt "\\page{ numbers = on }" pos, k)
-    | "empty" =>
-      modify fun st => { st with head := #[], foot := #[] }
-      became "\\pagestyle{empty}" "\\page{ numbers = off }, and no running fields" pos
-      return some (← synthAt "\\page{ numbers = off }" pos, k)
-    | _ =>
-      sayOnce "ctrl:pagestyle" .W0104
-        s!"'\\pagestyle\{{v}}' names running furniture the engine does not model; ignored" pos
-        (help := "plain, empty, and fancy are modelled; \\runninghead / \\runningfoot \
-declare the furniture directly")
-      return some (#[], k)
-  | "thispagestyle" =>
-    -- Only the opening page can be meant from the preamble or the document's
-    -- first line; anywhere else it would need a page model we do not have.
-    let (args, k) := takeGroups raws start 1
-    if rawSrc (args.getD 0 #[]) == "empty" then
-      modify fun st => { st with runFrom := 2 }
-      became "\\thispagestyle{empty}" "\\runninghead[from = 2]{...}" pos
-    return some (#[], k)
   | "linespread" | "setstretch" =>
     -- setspace's parameterised form is \linespread by another name
     -- (setspace.sty: both set \baselinestretch).
@@ -2053,6 +1614,506 @@ and \\tokens declare the design directly")
       let (_, k) := takeGroups raws start n
       return some (#[], k)
     | none => return none
+
+/-- Rewrite the control sequence `name` given what follows it. Returns the
+replacement and how many following elements it consumed, or `none` to leave
+the command alone. -/
+private def rewriteCtrl (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+    M (Option (Array Raw × Nat)) := do
+  let consumed ← rewriteCtrlAt name pos raws start
+  return consumed.map fun (repl, k) => (repl, k - start)
+where
+  rewriteCtrlAt (name : String) (pos : Pos) (raws : Array Raw) (start : Nat) :
+      M (Option (Array Raw × Nat)) := do
+  if let some tok := literalReplace.lookup name then
+    return some (#[tok pos], start)
+  if let some native := simpleNative.lookup name then
+    became s!"\\{name}" native pos
+    return some (← synthAt native pos, start)
+  match name with
+  | "usepackage" | "RequirePackage" =>
+    -- One dispatch for both spellings: `\RequirePackage` is `\usepackage`
+    -- for package writers (ltclass.dtx), and a local `.sty` spliced into
+    -- the preamble spells its loads that way.
+    if (← get).inDoc then
+      -- LaTeX's own rule: "\usepackage can be used only in preamble"
+      -- (ltclass.dtx \@onlypreamble) — in the body the placement is the
+      -- defect, whatever the package's support, so the W0103 dispatch
+      -- below never judges it.
+      let (_, j) := takeOpt raws start
+      let (_, k) := takeGroups raws j 1
+      sayOnce ("ctrl:" ++ name) .W0340
+        s!"'\\{name}' is a preamble declaration; in the body it is ignored" pos
+        (help := "load the package in the preamble, before '\\begin{document}'")
+      return some (#[], k)
+    let (opt, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    if args.isEmpty then return none
+    let pkgs := (rawSrc (args.getD 0 #[])).splitOn "," |>.map (·.trimAscii.toString)
+    let mut out : Array Raw := #[]
+    for p in pkgs do
+      if p == "geometry" then
+        out := out ++ (← geometry (opt.getD "") pos)
+      else if p == "beamerposter" then
+        out := out ++ (← beamerposter (opt.getD "") pos)
+      else if p == "parskip" then
+        -- The package sets `\parskip` to half a line plus 2pt and drops the
+        -- indent; the half line is what changes the page.
+        let native := "\\page{ parskip = 0.6em plus 2pt }"
+        became "\\usepackage{parskip}" native pos
+        out := out ++ (← synthAt native pos)
+      else if (p == "caption" || p == "subcaption") && opt.isSome then
+        -- The package options are `\captionsetup` keys (caption manual
+        -- §1.3): route them to the one site that judges caption keys, so
+        -- `[tableposition=top]` is honoured or named exactly as the
+        -- command form is.
+        let native := s!"\\captionsetup\{{opt.getD ""}}"
+        became s!"\\usepackage[{opt.getD ""}]\{{p}}" native pos
+        out := out ++ (← synthAt native pos)
+      else if p == "babel" then
+        -- babel's package options are its language list, and "the last
+        -- language option is the main one" (babel manual §1.2). The main
+        -- language becomes document metadata (`\pdfmeta{ language }`);
+        -- the locale record then words captions, selects hyphenation
+        -- patterns, and shapes `\enquote`. Non-language options carry
+        -- `=` and are configuration, skipped as before.
+        let names := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+          |>.filter (fun o => !o.isEmpty && !o.contains '=')
+        match names.reverse.head? with
+        | some main =>
+          let tag := Locale.babelTagOf main
+          if (Locale.forTag tag).isSome then
+            let native := s!"\\pdfmeta\{ language = \"{tag}\" }"
+            became s!"\\usepackage[{main}]\{babel}" native pos
+            modify fun st => { st with mainLang := tag }
+            out := out ++ (← synthAt native pos)
+          else
+            say .W0368 s!"no locale for language '{main}'; English \
+captions and patterns stand in" pos
+              (help := "the engine ships locale records for: en, fr, de")
+        | none =>
+          became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
+      else if nativePackages.contains p then
+        became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
+      else
+        say .W0103 s!"package '{p}' is not supported; skipped" pos
+    return some (out, k)
+  | "documentclass" =>
+    let (opt, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    let cls := rawSrc (args.getD 0 #[])
+    if articleClasses.contains cls || resumeClasses.contains cls then
+      let native0 := if resumeClasses.contains cls then "resume" else "article"
+      let o := match opt with | some o => s!"[{o}]" | none => ""
+      -- A LaTeX class separates paragraphs by indent, not by a skip: its
+      -- `\parskip` is zero unless the KOMA `parskip=` option asks for half a
+      -- line or a full one. The engine's own default is a skip, so the
+      -- class declares what LaTeX would have.
+      let komaSkip := (opt.getD "").splitOn "," |>.findSome? fun kv =>
+        match (kv.splitOn "=").map (·.trimAscii.toString) with
+        | ["parskip", v] =>
+          if v.startsWith "full" then some "1.2em plus 0.24em"
+          else if v.startsWith "half" then some "0.6em plus 0.12em"
+          else if v == "false" || v == "never" then some "0pt"
+          else some "0.6em plus 0.12em"
+        | ["parskip"] => some "1.2em plus 0.24em"
+        | _ => none
+      let native := s!"\\documentclass{o}\{{native0}}\\page\{ parskip = {komaSkip.getD "0pt"} }"
+      became s!"\\documentclass\{{cls}}" native pos
+      return some (← synthAt native pos, k)
+    else if cls == "beamer" then
+      let o := match opt with | some o => s!"[{o}]" | none => ""
+      became "\\documentclass{beamer}" s!"\\documentclass{o}\{slides}" pos
+      return some (← synthAt s!"\\documentclass{o}\{slides}" pos, k)
+    else return none
+  | "babelfont" | "setmainfont" | "setsansfont" | "setmonofont" =>
+    -- `\babelfont[lang]{slot}{font}` binds a font per language (babel
+    -- manual §1.8). The option parses first — it stands before the slot —
+    -- and the binding is then dropped by name (W0369): one Latin body
+    -- face covers en/fr/de, and a per-language face buys nothing until a
+    -- non-Latin document exists. The unoptioned form is the main font.
+    let (langOpt, j0) := if name == "babelfont" then takeOpt raws start else (none, start)
+    let (slotArgs, j) := if name == "babelfont" then takeGroups raws j0 1 else (#[], start)
+    let (optBefore, j) := takeOpt raws j
+    let (args, k) := takeGroups raws j 1
+    -- fontspec takes its features before the name or after it.
+    let (optAfter, k) := takeOpt raws k
+    let slot := match name with
+      | "babelfont" => match rawSrc (slotArgs.getD 0 #[]) with
+        | "rm" => "body" | "sf" => "sans" | "tt" => "mono" | s => s
+      | "setmainfont" => "body" | "setsansfont" => "sans" | _ => "mono"
+    let family := rawSrc (args.getD 0 #[])
+    -- fontspec features that matter here are the ones that name fonts rather
+    -- than shape them: `Path=` says where the fonts live, and the per-variant
+    -- faces (`BoldFont=` and siblings) say exactly which file or name serves
+    -- each variant. Everything else is a shaping feature and is dropped.
+    let feature (k : String) : Option String :=
+      ([optBefore, optAfter].filterMap id).findSome? fun opts =>
+        (Decl.splitEntries opts).findSome? fun kv =>
+          (Decl.splitEntry kv).bind fun (key, v) =>
+            if key == k then
+              some (if v.startsWith "{" && v.endsWith "}" then
+                ((v.drop 1).toString.dropEnd 1).toString.trimAscii.toString
+              else v)
+            else none
+    let dirPart := match feature "Path" with
+      | some d => s!"dir = \"{d}\", "
+      | none => ""
+    let mut parts := #[s!"{slot} = \"{family}\""]
+    for (opt, variant) in [("UprightFont", "upright"), ("BoldFont", "bold"),
+        ("ItalicFont", "italic"), ("BoldItalicFont", "bolditalic")] do
+      if let some f := feature opt then
+        -- fontspec's `*` stands for the family name (fontspec manual,
+        -- "Choosing additional fonts": "may be replaced by *"):
+        -- `UprightFont = *-Medium` under `{Inter}` names "Inter-Medium".
+        let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
+        parts := parts.push s!"{slot}.{variant} = \"{f}\""
+    if name == "babelfont" then
+      if let some l := langOpt then
+        say .W0369 s!"'\\babelfont[{l}]' binds a font per language; one \
+face serves every language, so the binding is dropped" pos
+          (help := "\\fonts{ body = \"...\" } names the face every language uses")
+        return some (#[], k)
+    let native := s!"\\fonts\{ {dirPart}{String.intercalate ", " parts.toList} }"
+    became s!"\\{name}" native pos
+    return some (← synthAt native pos, k)
+  | "definecolor" =>
+    let (args, k) := takeGroups raws start 3
+    if h : args.size = 3 then
+      let n := rawSrc args[0]
+      match ← color (rawSrc args[1]) (rawSrc args[2]) pos with
+      | some hex =>
+        let native := s!"\\palette\{ {n} = {hex} }"
+        became s!"\\definecolor\{{n}}" native pos
+        return some (← synthAt native pos, k)
+      | none => return some (#[], k)
+    else return none
+  | "colorlet" =>
+    let (args, k) := takeGroups raws start 2
+    if h : args.size = 2 then
+      -- xcolor's `.` names the current colour (xcolor manual §2.3, the
+      -- colour expression grammar); in the preamble that is the initial
+      -- colour, black.
+      let src := if (rawSrc args[1]).trimAscii.toString == "." then "#000000"
+        else rawSrc args[1]
+      let native := s!"\\palette\{ {rawSrc args[0]} = {src} }"
+      became "\\colorlet" native pos
+      return some (← synthAt native pos, k)
+    else return none
+  | "pagecolor" =>
+    let (opt, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    if h : args.size = 1 then
+      let value ← match opt with
+        | some model => color model (rawSrc args[0]) pos
+        | none => pure (some (rawSrc args[0]))
+      match value with
+      | some v => return some (← pageColor v pos, k)
+      | none => return some (#[], k)
+    else return none
+  | "geometry" | "newgeometry" =>
+    -- The command forms: the same keys the package options carry
+    -- (geometry manual §5: `\newgeometry` is `\geometry` restricted to
+    -- the layout keys). One door for every spelling, so a key is honoured
+    -- or named (W0101) identically wherever it was written.
+    let (args, k) := takeGroups raws start 1
+    if args.isEmpty then return none
+    return some (← geometry (rawSrc (args.getD 0 #[])) pos s!"\\{name}", k)
+  | "microtypesetup" =>
+    -- microtype's switchboard (manual §3.1): `protrusion` and `expansion`
+    -- reach the native gates, and `activate` — the manual's shorthand for
+    -- both — sets the pair. A key the engine does not perform is dropped
+    -- named (W0101), never silently; a bare key means `=true`, as in the
+    -- manual.
+    let (args, k) := takeGroups raws start 1
+    if args.isEmpty then return none
+    let mut keys : Array String := #[]
+    let mut dropped : Array String := #[]
+    for e in Decl.splitEntries (rawSrc (args.getD 0 #[])) do
+      match e.splitOn "=" with
+      | [] => pure ()
+      | key :: v =>
+        let key := key.trimAscii.toString
+        let v := (String.intercalate "=" v).trimAscii.toString
+        let native := if key == "activate" then ["protrusion", "expansion"]
+          else if key == "protrusion" || key == "expansion" then [key]
+          else []
+        if native.isEmpty then
+          if !key.isEmpty then dropped := dropped.push key
+        else
+          match v with
+          | "" | "true" | "compatibility" | "nocompatibility" =>
+            keys := keys ++ (native.map (s!"{·} = on")).toArray
+          | "false" => keys := keys ++ (native.map (s!"{·} = off")).toArray
+          | _ => dropped := dropped.push key
+    unless dropped.isEmpty do
+      say .W0101 s!"microtype keys without a native equivalent were dropped: \
+{String.intercalate ", " dropped.toList}" pos
+    if keys.isEmpty then return some (#[], k)
+    let native := s!"\\page\{ {String.intercalate ", " keys.toList} }"
+    became "\\microtypesetup" native pos
+    return some (← synthAt native pos, k)
+  | "DocumentMetadata" =>
+    let (args, k) := takeGroups raws start 1
+    if h : args.size = 1 then
+      return some (← documentMetadata (rawSrc args[0]) pos, k)
+    else return none
+  | "AddToHook" =>
+    let (_, j) := takeGroups raws start 1
+    let (_, j) := takeOpt raws j
+    let (_, k) := takeGroups raws j 1
+    addToHook pos
+    return some (#[], k)
+  | "newlength" =>
+    -- `\newlength{\x}` allocates a length register at 0pt (usrguide,
+    -- "Defining lengths"); the native store is a token, so a later
+    -- `\setlength{\x}` and references to `\x` in other lengths resolve.
+    let (args, k) := takeGroups raws start 1
+    let some n := ctrlName (args.getD 0 #[]) | return none
+    let native := s!"\\tokens\{ {n} = 0pt }"
+    became s!"\\newlength\{\\{n}}" native pos
+    return some (← synthAt native pos, k)
+  | "setlength" =>
+    let (args, k) := takeGroups raws start 2
+    if h : args.size = 2 then
+      -- e-TeX's `\dimexpr` division rounds to the nearest multiple (e-TeX
+      -- manual §3.5); the native language truncates toward zero as TeX's
+      -- `\divide` does. Mapping the spelling would mis-round silently, so
+      -- it is refused by name instead.
+      if (args[1].any fun r => match r with | .ctrl "dimexpr" _ => true | _ => false)
+          && (lengthSrc args[1]).toList.contains '/' then
+        say .E0375 "'\\dimexpr' division rounds to nearest; this engine's length \
+arithmetic truncates toward zero as TeX's '\\divide' does" pos
+          (help := "divide outside '\\dimexpr': '(\\a - \\b) / 2' truncates as TeX does")
+        return some (#[], k)
+      match ctrlName args[0] with
+      | some "abovecaptionskip" =>
+        -- The object-side caption gap (classes.dtx `\@makecaption`:
+        -- `\abovecaptionskip` stands between the object and its caption):
+        -- exactly the engine's `captionsep` token.
+        let native := s!"\\tokens\{ captionsep = {lengthSrc args[1]} }"
+        became "\\setlength{\\abovecaptionskip}" native pos
+        return some (← synthAt native pos, k)
+      | some "belowcaptionskip" =>
+        -- The caption's text side: in this engine that is the float
+        -- separation (`floatsep`), not a caption property; the LaTeX
+        -- default here is 0pt for the same reason.
+        say .N0102 "'\\belowcaptionskip' is not a knob here: the caption's \
+text side is the float separation ('\\tokens{ floatsep = ... }')" pos
+        return some (#[], k)
+      | some "parskip" =>
+        -- TeX's own paragraph glue is a page property here, not a token.
+        let native := s!"\\page\{ parskip = {lengthSrc args[1]} }"
+        became "\\setlength{\\parskip}" native pos
+        return some (← synthAt native pos, k)
+      | some n =>
+        let native := s!"\\tokens\{ {n} = {lengthSrc args[1]} }"
+        became s!"\\setlength\{\\{n}}" native pos
+        return some (← synthAt native pos, k)
+      | none => return none
+    else return none
+  | "advance" | "multiply" | "divide" =>
+    -- TeX's register arithmetic (TeXbook ch. 24: ⟨advance⟩⟨numeric
+    -- variable⟩⟨by⟩⟨value⟩): the engine keeps no registers, so the whole
+    -- statement is named and skipped — the `by` and the value go with the
+    -- command, never left behind as stray content (a bare `by` in the
+    -- preamble was an E0313 cascade from one skipped name).
+    let j0 := skipSpaces raws start
+    match raws[j0]? with
+    | some (.ctrl _ _) =>
+      let j1 := skipSpaces raws (j0 + 1)
+      let j2 := match raws[j1]? with
+        | some (.word "by" _) => skipSpaces raws (j1 + 1)
+        | _ => j1
+      -- The value: one word (`2pt`), or a register chain of one or two
+      -- control words (`\ht\strutbox`).
+      let k := match raws[j2]? with
+        | some (.word _ _) => j2 + 1
+        | some (.ctrl _ _) =>
+          match raws[j2 + 1]? with
+          | some (.ctrl _ _) => j2 + 2
+          | _ => j2 + 1
+        | _ => j2
+      sayOnce ("ctrl:" ++ name) .W0104
+        s!"TeX register arithmetic ('\\{name}') is not supported; skipped" pos
+        (demote := styInternal (← get).file name)
+      return some (#[], k)
+    | _ => return none
+  | "NewDocumentCommand" | "newcommand" | "providecommand" | "renewcommand"
+  | "DeclareDocumentCommand" | "RenewDocumentCommand" | "DeclareRobustCommand" =>
+    -- One arm for the whole definer family. LaTeX's documented triple
+    -- (usrguide, "Defining commands": new must not exist, renew must
+    -- exist, provide keeps an existing definition) collapses here to the
+    -- one policy that changes what a correct document *means*: a
+    -- `\providecommand` of a name this document already bound keeps the
+    -- first definition, so its body is consumed whole. The two error
+    -- halves are LaTeX's to check — kernel and package names are
+    -- invisible to this pass, so checking them would misfire on every
+    -- `\renewcommand` of a kernel command. The native store stays
+    -- last-wins, the layering mechanism.
+    let xparse := name.endsWith "DocumentCommand"
+    let start := skipStar raws start
+    let (nameArgs, j) := takeGroups raws start 1
+    let some cmd := ctrlName (nameArgs.getD 0 #[]) | return none
+    if !xparse && cmd == "sectionlinesformat" then
+      -- `\renewcommand\sectionlinesformat[4]{...}` is the spelling KOMA
+      -- documents: the rule idiom, not a definition.
+      let (_, j) := takeOpt raws j
+      let (args, k) := takeGroups raws j 1
+      return some (← sectionRule (rawSrc (args.getD 0 #[])) pos, k)
+    let (spec, j) ← if xparse then
+        let (a, j) := takeGroups raws j 1
+        pure (signature (rawSrc (a.getD 0 #[])), j)
+      else
+        let (n, j) := takeOpt raws j
+        let count := (n.bind String.toNat?).getD 0
+        let (dflt, j) := takeOpt raws j
+        let spec := if dflt.isSome then "o" ++ String.ofList (List.replicate (count - 1) 'm')
+          else String.ofList (List.replicate count 'm')
+        pure (signature spec, j)
+    -- The sectioning idiom: a body that is one \@startsection call is a
+    -- declarative rule over an existing heading, read as \style.
+    let js := skipSpaces raws j
+    if let some (.group sbody _) := raws[js]? then
+      if let some out ← startSection? cmd sbody pos then
+        return some (out, js + 1)
+    -- The size idiom: a venue class's `\renewcommand\normalsize` whose
+    -- body opens with `\@setfontsize\normalsize<size><leading>` (fntguide
+    -- §"\@setfontsize"; size10.clo is where `\@xpt`/`\@xipt` get their
+    -- values) declares the document's body size and leading. Both are the
+    -- page's to carry: the leading lands as the factor over the engine's
+    -- 6/5 base (`Ir.leadingMilli`), so a spliced .sty's 10/10.95 sets
+    -- baselines at 10.95pt and the rhythm unit follows. The body's
+    -- trailing display-skip internals are TeX the engine does not run;
+    -- the translation note names what was taken.
+    if !xparse && cmd == "normalsize" then
+      if let some (.group sbody _) := raws[js]? then
+        let b := skipSpaces sbody 0
+        if let some (.ctrl "@setfontsize" _) := sbody[b]? then
+          let (fsArgs, _) := takeGroups sbody (b + 1) 3
+          if h : fsArgs.size ≥ 3 then
+            if let (some sz, some ld) := (ptMacroArg fsArgs[1], ptMacroArg fsArgs[2]) then
+              if sz > 0 && ld > 0 then
+                let factor := (ld * 1000000 + sz * 600) / (sz * 1200)
+                let native := s!"\\page\{ fontsize = {milliStr sz}pt, \
+leading = {milliStr factor} }"
+                became "\\renewcommand{\\normalsize}" native pos
+                return some (← synthAt native pos, js + 1)
+    if name == "providecommand" && (← get).bound.contains cmd then
+      let (_, k) := takeGroups raws j 1
+      became s!"\\providecommand\{\\{cmd}}"
+        s!"nothing: '\\{cmd}' is already defined and the existing definition is kept" pos
+      return some (#[], k)
+    modify fun st => { st with
+      bound := if st.bound.contains cmd then st.bound else st.bound.push cmd }
+    let native := s!"\\define \\{cmd}({spec})"
+    became s!"\\{name}\{\\{cmd}}" (native ++ " {...}") pos
+    modify fun st => { st with bodyNext := 1 }
+    return some (← synthAt native pos, j)
+  | "DeclareMathOperator" =>
+    -- `\DeclareMathOperator{\f}{name}` declares an operator name: upright,
+    -- with an Op atom's spacing (amsldoc §5.1). The native spelling is a
+    -- definition whose body is `\operatorname{name}`; math expansion then
+    -- renders every use. The starred form's above/below display limits are
+    -- not modelled — the operator still sets, its scripts beside it.
+    let start := skipStar raws start
+    let (args, k) := takeGroups raws start 2
+    let some cmd := ctrlName (args.getD 0 #[]) | return none
+    if args.size < 2 then return none
+    let body := args.getD 1 #[]
+    became s!"\\DeclareMathOperator\{\\{cmd}}"
+      s!"\\define \\{cmd}() \{\\operatorname\{...}}" pos
+    let head ← synthAt s!"\\define \\{cmd}()" pos
+    return some (head.push (.group #[.ctrl "operatorname" pos, .group body pos] pos), k)
+  | "hypersetup" =>
+    let (args, k) := takeGroups raws start 1
+    return some (← hypersetup (rawSrc (args.getD 0 #[])) pos, k)
+  | "ihead" | "chead" | "ohead" | "ifoot" | "cfoot" | "ofoot"
+  | "lhead" | "rhead" | "lfoot" | "rfoot" =>
+    let (args, k) := takeGroups raws start 1
+    let src := rawSrc (args.getD 0 #[])
+    let slot := if name.startsWith "i" || name.startsWith "l" then 0
+      else if name.startsWith "c" then 1 else 2
+    modify fun st =>
+      let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := pos } else st
+      if name.endsWith "head" then
+        { st with head := (st.head.filter (·.1 != slot)).push (slot, src) }
+      else
+        { st with foot := (st.foot.filter (·.1 != slot)).push (slot, src) }
+    return some (#[], k)
+  | "fancyhead" | "fancyfoot" | "fancyhf" =>
+    -- fancyhdr's primary interface (manual §2): `[places]` crosses L/C/R
+    -- with E/O (even/odd). The engine has one page sequence, so E and O
+    -- collapse onto the slot letter, said once; no `[places]` means every
+    -- field, and an empty field clears its slots — both as the manual
+    -- defines (`\fancyhf{}` is its own idiom for clearing the style).
+    -- Slots land in the same gathered fields as `\lhead`'s family, so the
+    -- same-slot replace policy is one policy.
+    let (opt, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    let src := rawSrc (args.getD 0 #[])
+    let mut slots : Array Nat := #[]
+    let mut evenOdd := false
+    for e in (opt.getD "LCR").splitOn "," do
+      for c in e.toList do
+        let c := c.toUpper
+        if c == 'L' && !slots.contains 0 then slots := slots.push 0
+        else if c == 'C' && !slots.contains 1 then slots := slots.push 1
+        else if c == 'R' && !slots.contains 2 then slots := slots.push 2
+        else if c == 'E' || c == 'O' then evenOdd := true
+    if evenOdd then
+      sayOnce "fancyhdr:evenodd" .N0102
+        "even and odd pages are one sequence here; the field applies to every page" pos
+    let toHead := name != "fancyfoot"
+    let toFoot := name != "fancyhead"
+    modify fun st =>
+      let st := if st.head.isEmpty && st.foot.isEmpty then { st with runPos := pos } else st
+      let put (parts : Array (Nat × String)) : Array (Nat × String) :=
+        slots.foldl (init := parts) fun parts slot =>
+          let parts := parts.filter (·.1 != slot)
+          if src.trimAscii.toString.isEmpty then parts else parts.push (slot, src)
+      { st with
+        head := if toHead then put st.head else st.head
+        foot := if toFoot then put st.foot else st.foot }
+    return some (#[], k)
+  | "pagestyle" =>
+    let (args, k) := takeGroups raws start 1
+    let v := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    match v with
+    | "fancy" | "scrheadings" =>
+      -- The styles that mean "the declared running fields apply" — which
+      -- they already do here: gathered fields land as `\runninghead` /
+      -- `\runningfoot` by themselves. Agreement, not a missing model (the
+      -- old warning said "not modelled" about exactly what is modelled).
+      became s!"\\pagestyle\{{v}}" "nothing: declared running fields apply by themselves" pos
+      return some (#[], k)
+    | "plain" =>
+      -- article's own initial style (classes.dtx: article.cls sets
+      -- \pagestyle{plain}): the centred page number in the foot, which
+      -- \page{ numbers = on } spells natively — already the flow
+      -- default, and the explicit form takes control under a class
+      -- whose record declines it.
+      became "\\pagestyle{plain}" "\\page{ numbers = on }" pos
+      return some (← synthAt "\\page{ numbers = on }" pos, k)
+    | "empty" =>
+      modify fun st => { st with head := #[], foot := #[] }
+      became "\\pagestyle{empty}" "\\page{ numbers = off }, and no running fields" pos
+      return some (← synthAt "\\page{ numbers = off }" pos, k)
+    | _ =>
+      sayOnce "ctrl:pagestyle" .W0104
+        s!"'\\pagestyle\{{v}}' names running furniture the engine does not model; ignored" pos
+        (help := "plain, empty, and fancy are modelled; \\runninghead / \\runningfoot \
+declare the furniture directly")
+      return some (#[], k)
+  | "thispagestyle" =>
+    -- Only the opening page can be meant from the preamble or the document's
+    -- first line; anywhere else it would need a page model we do not have.
+    let (args, k) := takeGroups raws start 1
+    if rawSrc (args.getD 0 #[]) == "empty" then
+      modify fun st => { st with runFrom := 2 }
+      became "\\thispagestyle{empty}" "\\runninghead[from = 2]{...}" pos
+    return some (#[], k)
+  | _ => rewriteCtrlLater name pos raws start
 
 mutual
 

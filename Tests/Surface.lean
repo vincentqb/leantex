@@ -467,6 +467,30 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((bodyUse "pgfplots").any (·.code == "W0340") &&
      (bodyUse "pgfplots").all (·.code != "W0103") &&
      (bodyUse "geometry").any (·.code == "W0340"))
+  -- Kernel machinery is consumed whole, never leaked as page content:
+  -- \DocumentMetadata's key list and \AddToHook's code once printed on
+  -- the page as text. The one modelled key (`lang`) lands on the
+  -- \pdfmeta door; the writer keys and the hook are dropped by name.
+  let onlyX (d : Ir.Doc) : Bool :=
+    match d.body with | #[.para xs] => Ir.plainText xs == "x" | _ => false
+  let (dmDoc, dmDs) := elabStr ("\\DocumentMetadata{lang=en, pdfversion=1.7, uncompress}\n" ++
+    "\\documentclass{article}\n\\begin{document}\nx\n\\end{document}")
+  t "compat DocumentMetadata: lang lands on pdfmeta, nothing leaks"
+    (dmDoc.info.language == some "en" && onlyX dmDoc &&
+      dmDs.all (·.severity != .error))
+  t "compat DocumentMetadata names the writer keys it drops"
+    (dmDs.any fun d => d.code == "W0101" &&
+      hasStr d.message "pdfversion" && hasStr d.message "uncompress")
+  let (hookDoc, hookDs) := elabStr ("\\documentclass{article}\n" ++
+    "\\AddToHook{shipout/background}[me]{\\put(0,0){leak}}\n" ++
+    "\\begin{document}\nx\n\\end{document}")
+  t "compat AddToHook skips whole, named W0104"
+    (onlyX hookDoc && (hookDs.map (·.code)).contains "W0104" &&
+      hookDs.all (·.severity != .error))
+  let (nisDoc, nisDs) := elabStr
+    "\\documentclass{article}\n\\begin{document}\n\\nointerlineskip x\n\\end{document}"
+  t "compat nointerlineskip is meaning-free: no warning, no content"
+    (onlyX nisDoc && nisDs.all (fun d => d.code != "W0301" && d.code != "W0104"))
   -- The picture subset renders, so loading tikz loses nothing at the load:
   -- a shape outside the subset is named where it is drawn (W0334, E0333),
   -- never at the `\usepackage` line.
