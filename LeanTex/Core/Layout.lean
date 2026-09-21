@@ -1280,13 +1280,27 @@ private def interword (size : Sp) (font : Font) : Glue :=
   { width := w, stretch := w / 2, shrink := w / 3 }
 
 /-- Ragged setting as an item transform, leaving the breaker untouched:
-every glue keeps its natural width and gains fil, so an underfull line is
-free and shrink is never spent — `\raggedright`'s glue model. The lines are
-then set unjustified, so the fil never stretches a rendered space. -/
+interword glue keeps its natural width, never shrinks, and gains *finite*
+stretch — six times its own width, `displayItems`' em-relative pricing, so
+the two ragged tiers share one scale. Finite is the point: fil hides all
+looseness from the badness function (TeXbook ch. 14), so under fil glue
+every same-line-count break sequence ties at demerits and the tie-break
+decides the paragraph's shape — packing lines from the end and dumping the
+slack on the first line. Plain TeX's `\raggedright` prices looseness
+finitely for exactly this reason (TeXbook App. B, p. 356: `\rightskip 0pt
+plus2em`, fixed `\spaceskip`); LaTeX's `1fil` `\@flushglue` version is the
+documented wart ragged2e exists to fix (ragged2e manual §1, its
+`\RaggedRightRightskip 0pt plus 2em`). The paragraph's closing parfill and
+an author's own `\hfill` keep their fil: a body paragraph's last line is
+free (`\parfillskip 0pt plus 1fil`), and a declared fill means the margin.
+The lines are then set unjustified, so the stretch never widens a rendered
+space — it only prices the break. -/
 def raggedItems (items : Array Item) : Array Item :=
   items.map fun it =>
     match it with
-    | .glue g => .glue { width := g.width, fil := true, parfill := g.parfill }
+    | .glue g =>
+      if g.fil then it
+      else .glue { width := g.width, stretch := g.width * 6 }
     | .box .. | .pen .. | .img .. | .rule .. => it
 
 /-- Ragged setting for display lines — titles and headings: interword glue
@@ -1300,8 +1314,9 @@ balances the lines instead of packing every line but the last. A display
 break never strands one word on a line: a title is not a paragraph. Fil
 hides all looseness from the badness function; a finite stretch prices it
 (TeXbook ch. 14 on ragged setting). An author's own `\hfill` keeps its
-fil. Body ragged setting stays `raggedItems`' free fil: paragraphs are
-reading, not display. -/
+fil. Body ragged setting (`raggedItems`) shares the interword pricing but
+keeps the parfill free: paragraphs are reading, not display, and a body
+paragraph's last line owes no minimum. -/
 def displayItems (target : Sp) (items : Array Item) : Array Item :=
   items.map fun it =>
     match it with

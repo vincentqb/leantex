@@ -74,6 +74,13 @@ private def seqCost (items : Array Item) (target : Dim.Sp)
   let mut total : Int := 0
   for b in breaks do
     let a := if first then lineStart items 0 else lineStart items (prev + 1)
+    -- A line holds content: when the start (past the previous break's
+    -- discardables) passes the break, the "line" would be empty — `kp`'s
+    -- own `a ≤ j` gate refuses it, so the oracle must too, or a break at
+    -- the terminator fil glue right before the forced pen reads as a
+    -- cheaper empty last line no rendering could ship.
+    if a > b then
+      return none
     for k in [a:b] do
       if isForced items k then
         return none

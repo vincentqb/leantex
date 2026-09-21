@@ -118,6 +118,24 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — ragged looseness is priced, never free (fix-firstline): body
+ragged setting (`raggedItems`) now gives interword glue finite stretch —
+`displayItems`' six-times-its-width pricing, one scale for both ragged
+tiers — instead of fil. Fil hides all looseness from badness (TeXbook
+ch. 14), so every minimal-line-count break sequence tied and the DP's
+tie-break packed lines from the paragraph's end, dumping the slack on the
+first line: on a beamerposter every paragraph's first line broke at
+roughly half its column. Plain TeX prices `\raggedright` finitely for
+exactly this reason (TeXbook App. B: `\rightskip 0pt plus2em`); LaTeX's
+`1fil` version is the wart ragged2e documents and fixes. The parfill and
+an author's `\hfill` keep their fil (a last line is free; a declared fill
+means the margin), and ragged lines still set unjustified, so the stretch
+prices the break and never widens a rendered space. The oracle's empty
+last line — a break at the terminator glue right before the forced pen,
+which `kp`'s `a ≤ j` gate refuses — is now refused by `seqCost` in
+kp-fuzz and Tests/Layout.lean too; the ragged-plus-protrusion shape the
+finite glue newly exposes holds at 1000 fuzz cases.
+
 2026-09-21 — weight is an axis, not a flag (font-weights slice): every
 font key is now `(slot, weight, italic)`, weight the CSS/OpenType number
 of an NFSS series (`Ir.Weight`, the nine LaTeX News 31 values; `m` = 400,

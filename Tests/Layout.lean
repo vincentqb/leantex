@@ -38,6 +38,10 @@ def seqCost (items : Array Layout.Item) (target : Dim.Sp) (breaks : List Nat) :
   let mut total : Int := 0
   for b in breaks do
     let a := if first then Layout.lineStart items 0 else Layout.lineStart items (prev + 1)
+    -- `kp`'s own `a ≤ j` gate: a "line" whose start passes its break is
+    -- empty and no rendering ships it, so the oracle refuses it too.
+    if a > b then
+      return none
     for k in [a:b] do
       if Layout.isForced items k then
         return none
@@ -2221,6 +2225,32 @@ def kpChecks (ref : IO.Ref (List String)) : IO Unit := do
     let kpCost := seqCost items target kpBreaks
     let brute := bruteBest items target
     t s!"kp optimal ({name})" (kpCost.isSome && kpCost == brute && !kpBreaks.isEmpty)
+  -- Ragged setting prices looseness: under fil interword glue every
+  -- minimal-line-count break sequence ties at zero badness (fil hides all
+  -- looseness from the badness function, TeXbook ch. 14), and the DP's
+  -- tie-break packs lines from the paragraph's end — ten equal words at a
+  -- three-word measure broke 1/3/3/3, the whole slack dumped on the first
+  -- line (the beamerposter first-line defect). Finite stretch makes the
+  -- packed shape strictly cheaper: every line but the last fills.
+  let ragged := Layout.raggedItems
+    (mkItems (List.intersperse G (List.replicate 10 (W 50))))
+  let rNats : Array Dim.Sp := Id.run do
+    let mut prev := 0
+    let mut first := true
+    let mut nats : Array Dim.Sp := #[]
+    for b in Layout.kp ragged (Dim.pt 200) do
+      let a := if first then Layout.lineStart ragged 0
+        else Layout.lineStart ragged (prev + 1)
+      nats := nats.push (Layout.measure ragged a b).natural
+      prev := b
+      first := false
+    return nats
+  t "ragged breaking fills every line but the last"
+    (rNats.size == 4 && rNats.pop.all (· ≥ Dim.pt 150))
+  t "ragged glue is finite; a declared fil stays free"
+    ((Layout.raggedItems (mkItems [W 50, G, W 50])).all fun it => match it with
+      | .glue g => (g.fil && g.stretch == 0) || (!g.fil && g.stretch == g.width * 6)
+      | _ => true)
 
 def hyphenChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
@@ -2638,6 +2668,36 @@ def posterChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit
   t "an enumerate at poster size keeps its marker inside the print margin"
     ((judge (poster "" "\\begin{enumerate}\n\\item one\n\\item two\n\\end{enumerate}")).all
       fun d => (d.message.splitOn "text.in_area").length == 1)
+  -- The first line of a column paragraph fills the column: ragged glue
+  -- prices looseness finitely (`Layout.raggedItems`), so the breaker can
+  -- no longer dump a paragraph's whole slack on its first line — the
+  -- beamerposter defect where every paragraph's first line broke at
+  -- roughly half the measure while the lines below filled it. Judged over
+  -- `Layout.Out` (the page-claim rule), never a raster or an IR dump.
+  let colPoster :=
+    "\\documentclass[final]{beamer}\n" ++
+    "\\usepackage[size=custom,width=100,height=80,scale=1.2]{beamerposter}\n" ++
+    "\\begin{document}\n\\begin{frame}[t]\n\\begin{columns}[t]\n" ++
+    "\\begin{column}{0.3\\textwidth}\n" ++
+    "Placeholder prose long enough to wrap over several lines inside the " ++
+    "column so the breaker has real choices about where every line ends " ++
+    "and the ragged edge stays quiet under the reading.\n" ++
+    "\\end{column}\n\\begin{column}{0.3\\textwidth}\n" ++
+    "Second column filler words that also wrap onto a handful of lines " ++
+    "to check the same fact against a second measure, with a few extra " ++
+    "words added so the wrap onto a third line is certain.\n" ++
+    "\\end{column}\n\\end{columns}\n\\end{frame}\n\\end{document}"
+  let cDoc := (elabStr colPoster).1
+  let cLines := bodyLines (layoutOf oneFace cDoc (Layout.Geom.ofPage cDoc.page))
+  let colXs := (cLines.map (·.x)).foldl (fun acc x =>
+    if acc.contains x then acc else acc.push x) #[]
+  t "the column fixture ships two columns of several lines each at one left edge"
+    (colXs.size == 2 && colXs.all fun x => (cLines.filter (·.x == x)).size ≥ 3)
+  t "every ragged column line but the last fills its measure"
+    (colXs.all fun x =>
+      let ls := cLines.filter (·.x == x)
+      let full := ls.foldl (fun m l => max m l.setWidth) 0
+      ls.pop.all fun l => l.setWidth * 10 ≥ full * 7)
 
 /-- The picture block through layout: shapes land as fills and label runs
 through one `Pic.Place` transform. The transform and bounding-box facts are
