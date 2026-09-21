@@ -6555,9 +6555,10 @@ private def runPost (sh : Shipped) : Out := Id.run do
   -- block in the body changes it for the pages from that point on — an
   -- empty one clears it, which is how a deck scopes a logo to one frame
   -- (`\logo{...}` before it, `\logo{}` after). One line per state, laid
-  -- out once — a logo names no page number — and placed at the lower-right
-  -- corner, its right edge on the margin, its box standing on the bottom
-  -- margin line.
+  -- out once — a logo names no page number — and placed in the furniture
+  -- band at the page bottom, at the declared alignment (`Ir.logoAlign`:
+  -- right, beamer's default corner, unless the document styles it), its
+  -- box standing on the bottom margin line.
   let mkLogoLine (content : Array Inline) (cache0 : Std.HashMap String (Array Nat)) :
       Option LineOut × Array Diag × Std.HashMap String (Array Nat) :=
     let (items, ds, c, _) :=
@@ -6568,7 +6569,11 @@ private def runPost (sh : Shipped) : Out := Id.run do
     | none => (none, ds, c)
     | some brk =>
       let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
-      (some { x := geom.pageW - geom.hmargin - w
+      let x := match Ir.logoAlign doc.styles with
+        | "left" => geom.hmargin
+        | "center" => (geom.pageW - w) / 2
+        | _ => geom.pageW - geom.hmargin - w
+      (some { x := x
               y := geom.pageH - geom.vmargin
               size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
   let furnishPage (i : Nat) (page : PageOut)
@@ -6638,9 +6643,7 @@ yields, painted over by {hi.label}"
 slot yields in place: shorten the content or drop a slot"))
       for p in slots.qsort (fun a b => a.1.rank < b.1.rank) do
         lines := lines.push p.2
-    let logoContent := logoSpans.foldl
-      (fun acc (span : Nat × Array Inline) => if span.1 ≤ i then some span.2 else acc)
-      doc.logo
+    let logoContent := Ir.logoInForce doc.logo logoSpans i
     if headOn && footOn then
       if let some content := logoContent then
         unless content.isEmpty do

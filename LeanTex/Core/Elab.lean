@@ -7596,7 +7596,7 @@ private def applyStyle (ctx : Ctx) (styles : Styles) (element src : String) (pos
         !(e.startsWith "enumerate" && e != "enumerate")
     diag ctx .E0328 s!"'{element}' is not a styleable element or a '\\define'd name" pos
       (help := s!"elements: {String.intercalate ", " named}; \
-a list level styles as itemize2..4 / enumerate2..4")
+list levels: itemize2..4, enumerate2..4")
     return styles
   let mut st : ElementStyle := (styles.find? element).getD {}
   for entry in Decl.splitEntries src do
@@ -7661,8 +7661,9 @@ a list level styles as itemize2..4 / enumerate2..4")
         match valueSrc.trimAscii.toString with
         | "left" => st := { st with align := some "left" }
         | "center" => st := { st with align := some "center" }
+        | "right" => st := { st with align := some "right" }
         | v =>
-          diag ctx .E0323 s!"'align' in '\\style' expects left or center, got '{v}'" pos
+          diag ctx .E0323 s!"'align' in '\\style' expects left, center, or right, got '{v}'" pos
       | "hover" =>
         if let some v ← asColor then st := { st with hover := some v }
       | "focus" =>

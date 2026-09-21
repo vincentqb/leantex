@@ -2689,14 +2689,16 @@ nesting level, and `itemize2`..`itemize4` / `enumerate2`..`enumerate4`
 override one level, the way `\labelitemii` or `\setlist[itemize,2]` does;
 `frametitle`, `sectionpage`, `standout`, and `titlepage` are the slides
 furniture (their `font` is read; `titlepage` also reads `align` and
-`separator`; the other keys have no meaning there yet). Beyond this list, a
+`separator`; the other keys have no meaning there yet); `logo` reads
+`align` only — where the logo stands in the furniture band (`logoAlign`,
+both backends). Beyond this list, a
 `\define`d name is styleable too (the elaborator admits it once the
 `\define` stands): the role's rhythm rides `before`/`after` on the page,
 and the whole style addresses the `u-<name>` class hook in HTML. -/
 def styleableElements : List String :=
   ["section", "subsection", "subsubsection", "abstract", "itemize", "enumerate",
    "itemize2", "itemize3", "itemize4", "enumerate2", "enumerate3", "enumerate4",
-   "frametitle", "sectionpage", "standout", "titlepage", "nav"]
+   "frametitle", "sectionpage", "standout", "titlepage", "nav", "logo"]
 
 structure Styles where
   entries : Array (String × ElementStyle) := #[]
@@ -6917,6 +6919,85 @@ def pictureRefs (doc : Doc) : Array (String × String) :=
   let srcs := imageRefs doc
   doc.pictureSrcs.filter fun (h, _) => srcs.contains (picSrcPrefix ++ h)
 
+-- The logo: one resolving site for its state sequence and its alignment,
+-- read by both backends.
+
+/-- The logo in force at position `k` of a keyed declaration sequence: the
+last span whose key is at or before `k`, else the initial state `init` (the
+preamble `\logo`) — beamer's stateful declaration, where an empty body
+clears (`\logo{}` after a frame is how a deck scopes a logo to one frame).
+The one resolving site: the PDF's furniture pass keys the spans by page
+index and reads each page's logo here, and the HTML deck walk keys them by
+body position and reads each frame's logo here — never a second
+interpretation of the sequence (`logo_frames_agree`). -/
+def logoInForce (init : Option (Array Inline))
+    (spans : Array (Nat × Array Inline)) (k : Nat) : Option (Array Inline) :=
+  spans.foldl (fun acc s => if s.1 ≤ k then some s.2 else acc) init
+
+/-- The list spine of `logo_frames_agree`: the fold reads a key only
+through its comparison against the read point, so any rekeying that
+preserves those comparisons preserves the fold. -/
+private theorem logoInForceList_rekey (f : Nat → Nat) (k : Nat) :
+    ∀ (l : List (Nat × Array Inline)),
+      (∀ s ∈ l, (f s.1 ≤ f k) ↔ (s.1 ≤ k)) →
+      ∀ (init : Option (Array Inline)),
+        l.foldl (fun acc s => if f s.1 ≤ f k then some s.2 else acc) init =
+          l.foldl (fun acc s => if s.1 ≤ k then some s.2 else acc) init := by
+  intro l
+  induction l with
+  | nil => intro _ _; rfl
+  | cons s rest ih =>
+    intro h init
+    simp only [List.foldl_cons]
+    have hs := h s (List.mem_cons_self ..)
+    have hrest := fun t ht => h t (List.mem_cons_of_mem _ ht)
+    simp only [hs]
+    exact ih hrest _
+
+/-- The cross-backend agreement, stated over the shared resolving function:
+`logoInForce` is invariant under any rekeying that preserves each
+declaration's position relative to the read point. The PDF keys the spans
+by page index and reads at a page; the HTML deck keys the same declarations
+by body position and reads at a frame — the map from body position to page
+index preserves order against every declaration (a `\logo` before a frame
+is placed before the frame's page opens, a clear after it only after the
+page closed), so the two projections resolve the same state, frame for
+page. The artifact-level census over a deck (Tests, `deckLogoChecks`)
+holds the rendered halves to this. -/
+theorem logo_frames_agree (init : Option (Array Inline))
+    (spans : Array (Nat × Array Inline)) (f : Nat → Nat) (k : Nat)
+    (h : ∀ s ∈ spans, (f s.1 ≤ f k) ↔ (s.1 ≤ k)) :
+    logoInForce init (spans.map fun s => (f s.1, s.2)) (f k) =
+      logoInForce init spans k := by
+  unfold logoInForce
+  rw [← Array.foldl_toList, ← Array.foldl_toList, Array.toList_map,
+    List.foldl_map]
+  exact logoInForceList_rekey f k spans.toList
+    (fun s hs => h s (by simpa using hs)) init
+
+/-- The logo's declared alignment in the furniture band — the one resolving
+site both backends read: the document's `\style{logo}{ align = ... }`,
+else `right`, the beamer default placement the engine keeps (beamer's
+default outer theme hangs `\insertlogo` at the lower-right corner:
+beamerouterthemedefault.sty, the `sidebar right` template's
+`\llap{\insertlogo\hskip0.1cm}` at the sidebar's bottom). Vertical
+placement is not a knob: the logo rides the furniture band at the page
+bottom, as the foot does. -/
+def logoAlign (styles : Styles) : String :=
+  ((styles.find? "logo").bind (·.align)).getD "right"
+
+/-- Every image source the logo state ships — the preamble `\logo` and each
+body declaration's content. A logo is decorative furniture by role
+(WCAG 2.2 SC 1.1.1: content that is pure decoration needs no text
+alternative and is implemented so assistive technology can ignore it — the
+HTML backend ships `alt=""` on these), so the no-alternative census counts
+these sources as decorative, never as missing. -/
+def logoImageSrcs (doc : Doc) : Array String :=
+  let out := foldBlocks (fun out b => match b with
+    | .logo c => imageSrcsInlines out c
+    | _ => out) (fun out _ => out) #[] doc.body
+  match doc.logo with | some l => imageSrcsInlines out l | none => out
+
 /-- One image node's contribution to the no-alternative census: an
 `.image` whose `alt` is empty, its `src` collected once. A leaf
 projection of the shared fold — the fold recurses, so this leaf reads
@@ -6929,15 +7010,18 @@ private def sansAltStep (out : Array String)
   | _ => out
 
 /-- Every image the artifacts ship with no text alternative, deduplicated,
-in document order: the backends read the body, the running head and foot,
-and the logo, so the census reads the same regions (`imageRefs`' scope for
-shipped ink). A figure's caption has already become its image's `alt` by
-elaboration (`setAltBlocks`), so a captioned figure is not counted. -/
+in document order: the backends read the body and the running head and
+foot, so the census reads the same regions (`imageRefs`' scope for shipped
+ink). A figure's caption has already become its image's `alt` by
+elaboration (`setAltBlocks`), so a captioned figure is not counted — and a
+logo's images are not counted either: a logo is decorative furniture by
+role (`logoImageSrcs`), so its missing alternative is the conforming state,
+never a defect. -/
 def imagesSansAlt (doc : Doc) : Array String :=
   let out := foldBlocks (fun out _ => out) sansAltStep #[] doc.body
   let out := match doc.head with | some h => foldInlines sansAltStep out h | none => out
   let out := match doc.foot with | some f => foldInlines sansAltStep out f | none => out
-  match doc.logo with | some l => foldInlines sansAltStep out l | none => out
+  out.filter (fun src => !(logoImageSrcs doc).contains src)
 
 /-- The text-alternative judge (WCAG 2.2 SC 1.1.1, Non-text Content: non-text
 content has a text alternative that serves the equivalent purpose; sufficient
