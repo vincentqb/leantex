@@ -870,6 +870,14 @@ def selftest : IO UInt32 := do
   let d := "+++ b/PLAN.md\n@@ -3,0 +4,3 @@\n+prose\n+" ++ mkOurs ++ " HEAD\n+more"
   if conflictMarkers d != #[("PLAN.md", 5, mkOurs ++ " HEAD")] then
     fails.modify ("conflictMarkers missed or misattributed the PLAN.md case" :: ·)
+  -- the escape itself: a diff3 base marker in a hand-resolved Markdown log,
+  -- beside its two siblings, under a setext underline that must stay legal
+  let base := mkBase ++ " parent of 0123abc (Land the slice)"
+  let md := "+++ b/docs/log.md\n@@ -0,0 +1,7 @@\n+Title\n+=======\n+" ++ mkOurs ++ " HEAD\n+ours\n+"
+    ++ base ++ "\n+theirs\n+" ++ mkTheirs ++ " wt/slice"
+  if conflictMarkers md != #[("docs/log.md", 3, mkOurs ++ " HEAD"), ("docs/log.md", 5, base),
+      ("docs/log.md", 7, mkTheirs ++ " wt/slice")] then
+    fails.modify ("conflictMarkers on the diff3 Markdown case: wrong hits or a setext fire" :: ·)
 
   expect "bannedWord" (bannedWord kwPartial) [
     -- a declaration must still fire, wherever it stands on the line
