@@ -1393,6 +1393,8 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((elabStr (pre "\\ihead{L}\\clearpairofpagestyles")).1.head == none)
   t "compat fields declared after clearpairofpagestyles apply"
     ((elabStr (pre "\\clearpairofpagestyles\\ihead{L}")).1.head != none)
+  t "a bare note with no body is named, never silent"
+    (errCodes (dvDeck "" "\\begin{frame}{T}\nx \\note\n\\end{frame}") == ["E0304"])
 
   -- A diagnostic inside an \input file names that file, not the including
   -- one, in the body and in the preamble both.

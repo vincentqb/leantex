@@ -3359,6 +3359,9 @@ a side channel, never slide content" pos
           sliceWeight_lt raws h (by omega)
         elabInlinesFrom ctx raws (j2 + 1) acc sb
       | _ =>
+        -- No body: malformed, and said so — a bare `\note` once vanished
+        -- with no word at all (the silence-is-fidelity audit).
+        noteNeedsGroup ctx "note" pos
         have hadv : sliceWeight raws (js + 1) < sliceWeight raws i :=
           sliceWeight_lt raws h (by omega)
         elabInlinesFrom ctx raws (js + 1) acc sb
@@ -3370,6 +3373,7 @@ a side channel, never slide content" pos
           sliceWeight_lt raws h (by omega)
         elabInlinesFrom ctx raws (js + 1) acc sb
       | _ =>
+        noteNeedsGroup ctx "note" pos
         have hadv : sliceWeight raws j < sliceWeight raws i :=
           sliceWeight_lt raws h (by omega)
         elabInlinesFrom ctx raws j acc sb
