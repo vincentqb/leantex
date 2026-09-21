@@ -92,22 +92,6 @@ theorem emission_conservation_paras
     outInk (Layout.run geom fs none doc) = docInk doc := by
   sorry
 
--- owed: page_background_survives
--- owner: LeanTex.Core.Layout
--- source: arch-provable I5 (page conservation; the fill-vanishing bug — B.commit rebuilt the page with only its lines, PLAN 2026-09-16 themed entry — is its counterexample)
--- blocker: this is the weak observable form. The strong form — lines+fills committed to `B` equal lines+fills in `B.pages` after the final finishPage — is unstatable outside Layout.lean: `B` is private and has grown to 24 fields, with `pageShrink` maintained half in placeLine and half in commit (still true). Provable once `B`'s writers are the named trio.
--- goldens: no
-/-- Every page of a document that declares a `bg` palette entry ships a
-full-page fill: what the walk attaches to a page survives to that page's
-output, observed at the page background. -/
-theorem page_background_survives
-    (geom : Geom) (fs : Font.FontSet) (pats : Option Hyphen.Patterns)
-    (doc : Ir.Doc) (hbg : (doc.palette.find? "bg").isSome = true) :
-    ∀ p ∈ (Layout.run geom fs pats doc).pages,
-      ∃ f ∈ p.fills.toList,
-        f.x = 0 ∧ f.y = 0 ∧ f.w = geom.pageW ∧ f.h = geom.pageH := by
-  sorry
-
 /-- A deck whose top level is only countable frames in audit-numbering's
 sense: non-standout, not the golden-valign title page, visibly titled.
 What the numbering statements range over. -/

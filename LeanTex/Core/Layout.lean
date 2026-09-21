@@ -5519,6 +5519,127 @@ private structure StepSt where
   logoSpans : Array (Nat × Array Ir.Inline) := #[]
   prose : Nat := 0
 
+/-- Fit and place one picture: `placeLine`'s fit-or-spill for a box of
+the picture's height, then every shape through one affine transform —
+fills and paths as riders, label lines riding the picture's own shrink
+(`pushSibling`, `pushLabels`). Its own definition so the placement-step
+case analysis stays inside the elaboration budget and the page facts
+(`placePicture_extends`, `bgStep_placePicture`) cost one unfold each. -/
+private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
+    (x : Sp) (pic : Ir.Pic.Picture) : B := Id.run do
+  let mut b := b0
+  -- Fit the picture's box the way `placeLine` fits a line of height
+  -- `h` and no depth: at the top of a fresh page, else below the last
+  -- line's depth, breaking to a new page when even the shrink above
+  -- cannot absorb the overflow.
+  let ((px0, py0), (_px1, py1)) := pic.bbox
+  let h := py1 - py0
+  let bottom := b.geom.bodyBottom
+  let mut yTop := b.geom.vmargin
+  let mut above : Sp := 0
+  let mut overflow : Sp := 0
+  if !(b.cur.lines.isEmpty || b.freshStart) then
+    let y := b.y + b.prevDepth + b.skip.width + inkClearance
+    overflow := y + h - bottom
+    above := b.pageShrink + b.skip.shrink
+    if overflow ≤ above ∨ b.noBreak then
+      yTop := y
+      overflow := min overflow above
+    else
+      b := b.spillPage
+      if !b.cur.lines.isEmpty then
+        yTop := b.y + b.prevDepth + inkClearance
+      overflow := 0
+      above := 0
+  -- One transform for everything the picture ships: `Pic.Place` is the
+  -- affine map the invertibility and containment theorems range over.
+  let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
+  let mut fills : Array Fill := #[]
+  let mut lines : Array LineOut := #[]
+  let mut paths : Array PathOut := #[]
+  for shape in pic.shapes do
+    match shape with
+    | .rect rx ry rw rh color =>
+      -- The fill's top-left corner is the rect's (min x, max y) corner
+      -- through the transform; a negative extent keeps its sorted box.
+      let (fx, fy) := place.toPage (min rx (rx + rw), max ry (ry + rh))
+      fills := fills.push { x := fx, y := fy,
+                            w := max rw (-rw), h := max rh (-rh), color := color }
+    | .circle sx sy r st fl =>
+      let (pcx, pcy) := place.toPage (sx, sy)
+      paths := paths.push { path := .circle pcx pcy (max r (-r))
+                            stroke := st, fill := fl }
+    | .frame fx fy fw fh st fl =>
+      let (qx, qy) := place.toPage (min fx (fx + fw), max fy (fy + fh))
+      paths := paths.push { path := .rect qx qy (max fw (-fw)) (max fh (-fh))
+                            stroke := st, fill := fl }
+    | .edge segs st tip =>
+      let pt := place.toPage
+      let mapped := segs.map fun sg => match sg with
+        | .line x1 y1 x2 y2 =>
+          let (a1, b1) := pt (x1, y1)
+          let (a2, b2) := pt (x2, y2)
+          Ir.Pic.PathSeg.line a1 b1 a2 b2
+        | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
+          let (a1, b1) := pt (x1, y1)
+          let (u1, v1) := pt (c1x, c1y)
+          let (u2, v2) := pt (c2x, c2y)
+          let (a2, b2) := pt (x2, y2)
+          Ir.Pic.PathSeg.cubic a1 b1 u1 v1 u2 v2 a2 b2
+      paths := paths.push { path := .segs mapped, stroke := some st }
+      if let some t := tip then
+        let (a1, b1) := pt (t.x1, t.y1)
+        let (a2, b2) := pt (t.x2, t.y2)
+        let (a3, b3) := pt (t.x3, t.y3)
+        paths := paths.push { path := .tri a1 b1 a2 b2 a3 b3
+                              fill := some st.color }
+    | .label lx ly content color scale align =>
+      let size := b.geom.fontSize * (scale : Int) / 1000
+      let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}
+        #[.colored color none content] {} imgs b.geom.textWidth b.geom.textHeight
+      let breaks := kp items b.geom.textWidth
+      if let some brk := breaks[0]? then
+        let (segs, w, _, _) := setLine items (lineStart items 0) brk b.geom.textWidth false
+        -- The node's box centres on its anchor, as TikZ anchors a node:
+        -- the baseline sits below the centre by half the ink height
+        -- less half the depth.
+        let (hgt, dep) := segs.foldl (fun (acc : Sp × Sp) seg => match seg with
+          | .run idx _ _ _ _ sz _ raise _ =>
+            let font := fs.get idx
+            let sz := if sz == 0 then size else sz
+            (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
+             max acc.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
+          | _ => acc) (0, 0)
+        let (cx, cy) := place.toPage (lx, ly)
+        -- The anchor decides which point of the label's box sits on
+        -- (cx, cy): the centre by default, an edge under a placement
+        -- option (pgf §17.5.2).
+        let x := match align with
+          | .center => cx - w / 2
+          | .west => cx
+          | .east => cx - w
+          | .south | .north => cx - w / 2
+        let y := match align with
+          | .center | .west | .east => cy + (hgt - dep) / 2
+          | .south => cy - dep
+          | .north => cy + hgt
+        -- Label lines ride with the picture: they share the shrink
+        -- above it, so a page set short moves the diagram as one
+        -- (pushed below through `pushLabels`, the rider door).
+        lines := lines.push { x := x, y := y,
+                              size := size, segs := segs, setWidth := w }
+  b := (b.pushSibling (fills := fills) (paths := paths)).pushLabels lines above
+  b := { b with
+    pageShrink := above
+    needed := max b.needed overflow
+    y := yTop + h
+    prevDepth := 0
+    prevBelow := 0
+    prevRuleOnly := false
+    skip := {}
+    freshStart := false }
+  return b
+
 /-- Place one staged op. `floatOpen`/`floatClose` are inert here: the
 driver loop consumes the outermost pair (`runFloat`), and an inner pair —
 a subfigure inside its parent — is already kept whole by the enclosing
@@ -5648,116 +5769,7 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
       prose := max prose breaks.size
     b := placePara fs b j breaks
   | .picture x pic =>
-    -- Fit the picture's box the way `placeLine` fits a line of height
-    -- `h` and no depth: at the top of a fresh page, else below the last
-    -- line's depth, breaking to a new page when even the shrink above
-    -- cannot absorb the overflow.
-    let ((px0, py0), (_px1, py1)) := pic.bbox
-    let h := py1 - py0
-    let bottom := b.geom.bodyBottom
-    let mut yTop := b.geom.vmargin
-    let mut above : Sp := 0
-    let mut overflow : Sp := 0
-    if !(b.cur.lines.isEmpty || b.freshStart) then
-      let y := b.y + b.prevDepth + b.skip.width + inkClearance
-      overflow := y + h - bottom
-      above := b.pageShrink + b.skip.shrink
-      if overflow ≤ above ∨ b.noBreak then
-        yTop := y
-        overflow := min overflow above
-      else
-        b := b.spillPage
-        if !b.cur.lines.isEmpty then
-          yTop := b.y + b.prevDepth + inkClearance
-        overflow := 0
-        above := 0
-    -- One transform for everything the picture ships: `Pic.Place` is the
-    -- affine map the invertibility and containment theorems range over.
-    let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
-    let mut fills : Array Fill := #[]
-    let mut lines : Array LineOut := #[]
-    let mut paths : Array PathOut := #[]
-    for shape in pic.shapes do
-      match shape with
-      | .rect rx ry rw rh color =>
-        -- The fill's top-left corner is the rect's (min x, max y) corner
-        -- through the transform; a negative extent keeps its sorted box.
-        let (fx, fy) := place.toPage (min rx (rx + rw), max ry (ry + rh))
-        fills := fills.push { x := fx, y := fy,
-                              w := max rw (-rw), h := max rh (-rh), color := color }
-      | .circle sx sy r st fl =>
-        let (pcx, pcy) := place.toPage (sx, sy)
-        paths := paths.push { path := .circle pcx pcy (max r (-r))
-                              stroke := st, fill := fl }
-      | .frame fx fy fw fh st fl =>
-        let (qx, qy) := place.toPage (min fx (fx + fw), max fy (fy + fh))
-        paths := paths.push { path := .rect qx qy (max fw (-fw)) (max fh (-fh))
-                              stroke := st, fill := fl }
-      | .edge segs st tip =>
-        let pt := place.toPage
-        let mapped := segs.map fun sg => match sg with
-          | .line x1 y1 x2 y2 =>
-            let (a1, b1) := pt (x1, y1)
-            let (a2, b2) := pt (x2, y2)
-            Ir.Pic.PathSeg.line a1 b1 a2 b2
-          | .cubic x1 y1 c1x c1y c2x c2y x2 y2 =>
-            let (a1, b1) := pt (x1, y1)
-            let (u1, v1) := pt (c1x, c1y)
-            let (u2, v2) := pt (c2x, c2y)
-            let (a2, b2) := pt (x2, y2)
-            Ir.Pic.PathSeg.cubic a1 b1 u1 v1 u2 v2 a2 b2
-        paths := paths.push { path := .segs mapped, stroke := some st }
-        if let some t := tip then
-          let (a1, b1) := pt (t.x1, t.y1)
-          let (a2, b2) := pt (t.x2, t.y2)
-          let (a3, b3) := pt (t.x3, t.y3)
-          paths := paths.push { path := .tri a1 b1 a2 b2 a3 b3
-                                fill := some st.color }
-      | .label lx ly content color scale align =>
-        let size := b.geom.fontSize * (scale : Int) / 1000
-        let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}
-          #[.colored color none content] {} imgs b.geom.textWidth b.geom.textHeight
-        let breaks := kp items b.geom.textWidth
-        if let some brk := breaks[0]? then
-          let (segs, w, _, _) := setLine items (lineStart items 0) brk b.geom.textWidth false
-          -- The node's box centres on its anchor, as TikZ anchors a node:
-          -- the baseline sits below the centre by half the ink height
-          -- less half the depth.
-          let (hgt, dep) := segs.foldl (fun (acc : Sp × Sp) seg => match seg with
-            | .run idx _ _ _ _ sz _ raise _ =>
-              let font := fs.get idx
-              let sz := if sz == 0 then size else sz
-              (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
-               max acc.2 (scaledAt sz font (-font.descent).toNat + max 0 (-raise)))
-            | _ => acc) (0, 0)
-          let (cx, cy) := place.toPage (lx, ly)
-          -- The anchor decides which point of the label's box sits on
-          -- (cx, cy): the centre by default, an edge under a placement
-          -- option (pgf §17.5.2).
-          let x := match align with
-            | .center => cx - w / 2
-            | .west => cx
-            | .east => cx - w
-            | .south | .north => cx - w / 2
-          let y := match align with
-            | .center | .west | .east => cy + (hgt - dep) / 2
-            | .south => cy - dep
-            | .north => cy + hgt
-          -- Label lines ride with the picture: they share the shrink
-          -- above it, so a page set short moves the diagram as one
-          -- (pushed below through `pushLabels`, the rider door).
-          lines := lines.push { x := x, y := y,
-                                size := size, segs := segs, setWidth := w }
-    b := (b.pushSibling (fills := fills) (paths := paths)).pushLabels lines above
-    b := { b with
-      pageShrink := above
-      needed := max b.needed overflow
-      y := yTop + h
-      prevDepth := 0
-      prevBelow := 0
-      prevRuleOnly := false
-      skip := {}
-      freshStart := false }
+    b := placePicture fs imgs b x pic
   return { b := b, colSaves := colSaves, logoSpans := logoSpans, prose := prose }
 
 /-- Place a float group whole: a float is unbreakable, as LaTeX's floats
@@ -5852,6 +5864,76 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
   exact Array.foldl_induction (motive := fun _ (acc : B) => acc.noBreak = b.noBreak)
     rfl (fun _ acc h => by rw [pushSibling_noBreak]; exact h)
 
+@[simp] private theorem commit_geom (b : B) (l : LineOut) (d bl : Sp)
+    (r c : Bool) (o : Sp) : (b.commit l d bl r c o).geom = b.geom := rfl
+@[simp] private theorem commit_docBg (b : B) (l : LineOut) (d bl : Sp)
+    (r c : Bool) (o : Sp) : (b.commit l d bl r c o).docBg = b.docBg := rfl
+@[simp] private theorem pushSibling_geom (b : B) (l? : Option LineOut)
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) :
+    (b.pushSibling l? fills paths shrink).geom = b.geom := by
+  cases l? <;> simp only [B.pushSibling] <;> split <;> rfl
+@[simp] private theorem pushSibling_docBg (b : B) (l? : Option LineOut)
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) :
+    (b.pushSibling l? fills paths shrink).docBg = b.docBg := by
+  cases l? <;> simp only [B.pushSibling] <;> split <;> rfl
+@[simp] private theorem pushLabels_geom (b : B) (ls : Array LineOut) (sh : Sp) :
+    (b.pushLabels ls sh).geom = b.geom := by
+  unfold B.pushLabels
+  exact Array.foldl_induction (motive := fun _ (acc : B) => acc.geom = b.geom)
+    rfl (fun _ acc h => by rw [pushSibling_geom]; exact h)
+@[simp] private theorem pushLabels_docBg (b : B) (ls : Array LineOut) (sh : Sp) :
+    (b.pushLabels ls sh).docBg = b.docBg := by
+  unfold B.pushLabels
+  exact Array.foldl_induction (motive := fun _ (acc : B) => acc.docBg = b.docBg)
+    rfl (fun _ acc h => by rw [pushSibling_docBg]; exact h)
+@[simp] private theorem attachNotes_geom (b : B) (ns : Array NoteBlock) :
+    (b.attachNotes ns).geom = b.geom := by
+  unfold B.attachNotes
+  split
+  · rfl
+  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.geom = b.geom)
+      rfl (fun _ _ h => h)
+@[simp] private theorem attachNotes_docBg (b : B) (ns : Array NoteBlock) :
+    (b.attachNotes ns).docBg = b.docBg := by
+  unfold B.attachNotes
+  split
+  · rfl
+  · exact Array.foldl_induction (motive := fun _ (acc : B) => acc.docBg = b.docBg)
+      rfl (fun _ _ h => h)
+@[simp] private theorem warnNoteOverrun_geom (b : B) (y d : Sp) :
+    (b.warnNoteOverrun y d).geom = b.geom := by
+  simp only [B.warnNoteOverrun]; split <;> rfl
+@[simp] private theorem warnNoteOverrun_docBg (b : B) (y d : Sp) :
+    (b.warnNoteOverrun y d).docBg = b.docBg := by
+  simp only [B.warnNoteOverrun]; split <;> rfl
+@[simp] private theorem warnOverfull_geom (b : B) : b.warnOverfull.geom = b.geom := rfl
+@[simp] private theorem warnOverfull_docBg (b : B) :
+    b.warnOverfull.docBg = b.docBg := rfl
+@[simp] private theorem finishPage_geom (b : B) : b.finishPage.geom = b.geom := rfl
+@[simp] private theorem finishPage_docBg (b : B) :
+    b.finishPage.docBg = b.docBg := rfl
+@[simp] private theorem reopenChrome_geom (b : B) : b.reopenChrome.geom = b.geom := by
+  unfold B.reopenChrome; split <;> rfl
+@[simp] private theorem reopenChrome_docBg (b : B) :
+    b.reopenChrome.docBg = b.docBg := by
+  unfold B.reopenChrome; split <;> rfl
+@[simp] private theorem spillPage_geom (b : B) : b.spillPage.geom = b.geom := by
+  simp [B.spillPage]
+@[simp] private theorem spillPage_docBg (b : B) : b.spillPage.docBg = b.docBg := by
+  simp [B.spillPage]
+@[simp] private theorem placeParaTrailer_geom (fs : FontSet) (j : ParaJob)
+    (brk : Nat) (segs : Array Seg) (b : B) :
+    (placeParaTrailer fs j brk segs b).geom = b.geom := by
+  simp only [placeParaTrailer]
+  repeat' split
+  all_goals first | rfl | simp
+@[simp] private theorem placeParaTrailer_docBg (fs : FontSet) (j : ParaJob)
+    (brk : Nat) (segs : Array Seg) (b : B) :
+    (placeParaTrailer fs j brk segs b).docBg = b.docBg := by
+  simp only [placeParaTrailer]
+  repeat' split
+  all_goals first | rfl | simp
+
 private theorem finishPage_extends (b : B) : PagesExtend b b.finishPage :=
   ⟨#[_], rfl⟩
 
@@ -5911,6 +5993,32 @@ private theorem fitCommit_note_with_mark (b : B) (mk : Sp → LineOut)
     | (rw [warnNoteOverrun_pendingNotes]
        exact attachNotes_mem _ ns nb hnb l hl)
     | exact attachNotes_mem _ ns nb hnb l hl
+
+private theorem placePicture_extends (fs : FontSet) (imgs : Image.Store)
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) :
+    PagesExtend b (placePicture fs imgs b x pic) := by
+  simp only [placePicture, Id.run, Id, pure, bind]
+  repeat' split
+  all_goals first
+    | (refine pagesExtend_of_eq ?_
+       simp
+       done)
+    | (refine pagesExtend_trans
+        (pagesExtend_congr (spillPage_pages b) (finishPage_extends b))
+        (pagesExtend_of_eq ?_)
+       simp
+       done)
+
+private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) (h : b.noBreak = true) :
+    (placePicture fs imgs b x pic).pages = b.pages ∧
+      (placePicture fs imgs b x pic).noBreak = true := by
+  simp only [placePicture, Id.run, Id, pure, bind]
+  repeat' split
+  all_goals first
+    | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
+    | (constructor <;> simp [h]
+       done)
 
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
     (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) :
@@ -5997,12 +6105,13 @@ in `runFloat`, this is what makes "no page was closed" mean "the shipped
 pages are exactly what they were". -/
 private theorem stepStaged_extends (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (s : StagedOp) : PagesExtend st.b (stepStaged fs imgs st s).b := by
-  cases s <;> simp only [stepStaged, Id.run, Id, pure, bind] <;> repeat' split
+  cases s <;> simp only [stepStaged, Id.run, Id, pure] <;> repeat' split
   all_goals first
     | (refine pagesExtend_of_eq ?_; simp; done)
     | exact fitCommit_extends ..
     | exact placeLine_extends ..
     | exact placePara_extends ..
+    | exact placePicture_extends ..
     | (refine pagesExtend_congr ?_ (finishPage_extends _); simp; done)
     | (refine pagesExtend_congr ?_
         (pagesExtend_trans (finishPage_extends _) (pagesExtend_of_eq ?_)) <;> simp <;> done)
@@ -6013,7 +6122,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     (st : StepSt) (s : StagedOp) (h : st.b.noBreak = true) (hs : s ≠ .brk) :
     (stepStaged fs imgs st s).b.pages = st.b.pages ∧
     (stepStaged fs imgs st s).b.noBreak = true := by
-  cases s <;> simp only [stepStaged, Id.run, Id, pure, bind] <;> repeat' split
+  cases s <;> simp only [stepStaged, Id.run, Id, pure] <;> repeat' split
   all_goals first
     | exact absurd rfl hs
     | (exfalso; exact ‹¬(_ ∨ _ = true)› (Or.inr h))
@@ -6022,6 +6131,7 @@ private theorem stepStaged_noBreak (fs : FontSet) (imgs : Image.Store)
     | exact ⟨placeLine_pages_noBreak _ _ _ _ _ _ _ _ _ h,
         placeLine_keeps_noBreak _ _ _ _ _ _ _ _ _ h⟩
     | exact placePara_noBreak _ _ _ _ h
+    | exact placePicture_noBreak _ _ _ _ _ h
     | (refine ⟨?_, ?_⟩ <;> simp [h]; done)
 
 private theorem foldSteps_extends (fs : FontSet) (imgs : Image.Store)
@@ -6044,6 +6154,155 @@ private theorem foldSteps_noBreak (fs : FontSet) (imgs : Image.Store)
       have step := stepStaged_noBreak fs imgs acc group[i] hacc.2
         (hg group[i] (Array.getElem_mem i.2))
       ⟨step.1.trans hacc.1, step.2⟩)
+
+/-- The full-page background fill `page_background_survives` looks for:
+what `finishPage` prepends when the page (or the document) declared a
+background. -/
+private def bgFilled (g : Geom) (p : PageOut) : Prop :=
+  ∃ f ∈ p.fills.toList, f.x = 0 ∧ f.y = 0 ∧ f.w = g.pageW ∧ f.h = g.pageH
+
+/-- One placement step, seen by the background invariant: geometry and
+the declared document background ride through untouched, and — when a
+background is declared — every page the step ships beyond its input's
+is `bgFilled`. Composes (`BgStep.trans`); `finishPage` is the one step
+that ships, and it ships filled (`finishPage_bg`). -/
+private def BgStep (b b' : B) : Prop :=
+  b'.geom = b.geom ∧ b'.docBg = b.docBg ∧
+    (b.docBg.isSome = true → ∀ p ∈ b'.pages, p ∈ b.pages ∨ bgFilled b.geom p)
+
+private theorem BgStep.refl (b : B) : BgStep b b :=
+  ⟨rfl, rfl, fun _ _p hp => Or.inl hp⟩
+
+private theorem BgStep.of_eq {b c : B} (hg : c.geom = b.geom)
+    (hd : c.docBg = b.docBg) (hp : c.pages = b.pages) : BgStep b c :=
+  ⟨hg, hd, fun _ _p hpp => Or.inl (hp ▸ hpp)⟩
+
+private theorem BgStep.trans {a b c : B} (h1 : BgStep a b) (h2 : BgStep b c) :
+    BgStep a c := by
+  obtain ⟨hg1, hd1, hp1⟩ := h1
+  obtain ⟨hg2, hd2, hp2⟩ := h2
+  refine ⟨hg2.trans hg1, hd2.trans hd1, fun hs p hp => ?_⟩
+  rcases hp2 (hd1 ▸ hs) p hp with h | h
+  · exact hp1 hs p h
+  · exact Or.inr (hg1 ▸ h)
+
+/-- The one shipping step ships filled: the page `finishPage` pushes
+carries the full-page background fill whenever the document declared
+one — `pageBg.orElse docBg` is some either way, and the fill it selects
+is prepended whole, before anything can shift it. -/
+private theorem finishPage_bg (b : B) :
+    b.docBg.isSome = true → ∀ p ∈ b.finishPage.pages,
+      p ∈ b.pages ∨ bgFilled b.geom p := by
+  intro hd p hp
+  simp only [B.finishPage, Array.mem_push] at hp
+  rcases hp with hp | rfl
+  · exact Or.inl hp
+  · right
+    unfold bgFilled
+    dsimp only
+    rcases hpb : b.pageBg with _ | c
+    · rcases hdb : b.docBg with _ | c'
+      · rw [hdb] at hd; simp at hd
+      · refine ⟨{ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
+                  color := c' }, ?_, rfl, rfl, rfl, rfl⟩
+        simp [Option.orElse]
+    · refine ⟨{ x := 0, y := 0, w := b.geom.pageW, h := b.geom.pageH,
+                color := c }, ?_, rfl, rfl, rfl, rfl⟩
+      simp
+
+private theorem bgStep_finishPage (b : B) : BgStep b b.finishPage :=
+  ⟨rfl, rfl, finishPage_bg b⟩
+
+private theorem bgStep_spillPage (b : B) : BgStep b b.spillPage :=
+  (bgStep_finishPage b).trans
+    (BgStep.of_eq (reopenChrome_geom _) (reopenChrome_docBg _) (reopenChrome_pages _))
+
+private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
+    (firstY stepY retryY : B → Sp) (depth below : Sp) (rl : Bool)
+    (inkBelow bottom : Sp) (ns : Array NoteBlock) :
+    BgStep b (b.fitCommit mk firstY stepY retryY depth below rl inkBelow bottom ns) := by
+  simp only [B.fitCommit]
+  repeat' split
+  all_goals first
+    | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
+       done)
+    | (refine (bgStep_spillPage b).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+       done)
+
+private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) :
+    BgStep b (b.placeLine fs x size segs w hang ex ns) := by
+  simp only [B.placeLine]
+  exact bgStep_fitCommit ..
+
+private theorem bgStep_placePicture (fs : FontSet) (imgs : Image.Store)
+    (b : B) (x : Sp) (pic : Ir.Pic.Picture) :
+    BgStep b (placePicture fs imgs b x pic) := by
+  simp only [placePicture, Id.run, Id, pure, bind]
+  repeat' split
+  all_goals first
+    | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
+       done)
+    | (refine (bgStep_spillPage b).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+       done)
+
+private theorem bgStep_placeParaLine (fs : FontSet) (j : ParaJob)
+    (st : B × Nat × Bool) (brk : Nat) :
+    BgStep st.1 (placeParaLine fs j st brk).1 := by
+  simp only [placeParaLine]
+  refine BgStep.trans (BgStep.trans ?_ (bgStep_placeLine ..))
+    (BgStep.of_eq (placeParaTrailer_geom ..) (placeParaTrailer_docBg ..)
+      (placeParaTrailer_pages ..))
+  split <;> exact BgStep.of_eq (by simp) (by simp) (by simp)
+
+private theorem bgStep_placePara (fs : FontSet) (b : B) (j : ParaJob)
+    (breaks : Array Nat) : BgStep b (placePara fs b j breaks) := by
+  unfold placePara
+  exact Array.foldl_induction
+    (motive := fun _ (acc : B × Nat × Bool) => BgStep b acc.1)
+    (BgStep.of_eq rfl rfl (by simp))
+    (fun _ acc hacc => hacc.trans (bgStep_placeParaLine ..))
+
+private theorem bgStep_stepStaged (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (op : StagedOp) : BgStep st.b (stepStaged fs imgs st op).b := by
+  cases op <;> simp only [stepStaged, Id.run, Id, pure] <;> repeat' split
+  all_goals first
+    | (refine BgStep.of_eq ?_ ?_ ?_ <;> simp
+       done)
+    | exact bgStep_fitCommit ..
+    | exact bgStep_placeLine ..
+    | exact bgStep_placePara ..
+    | exact bgStep_placePicture ..
+    | (refine (bgStep_finishPage _).trans (BgStep.of_eq ?_ ?_ ?_) <;> simp
+       done)
+
+private theorem bgStep_foldSteps (fs : FontSet) (imgs : Image.Store)
+    (group : Array StagedOp) (st : StepSt) :
+    BgStep st.b (group.foldl (stepStaged fs imgs) st).b :=
+  Array.foldl_induction
+    (motive := fun _ (acc : StepSt) => BgStep st.b acc.b)
+    (BgStep.refl st.b)
+    (fun _ _acc hacc => hacc.trans (bgStep_stepStaged ..))
+
+private theorem bgStep_runFloat (fs : FontSet) (imgs : Image.Store)
+    (st : StepSt) (group : Array StagedOp) :
+    BgStep st.b (runFloat fs imgs st group).b := by
+  simp only [LeanTex.Core.Layout.runFloat]
+  split
+  · exact bgStep_foldSteps ..
+  · have h1 : BgStep st.b (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty
+        then st.b else st.b.finishPage) := by
+      split
+      · exact BgStep.refl _
+      · exact bgStep_finishPage _
+    have h2 := bgStep_foldSteps fs imgs group
+      { st with b :=
+        { (if st.b.cur.lines.isEmpty && st.b.cur.fills.isEmpty then st.b
+           else st.b.finishPage) with noBreak := true } }
+    refine (h1.trans ((BgStep.of_eq rfl rfl rfl).trans
+      (h2.trans (BgStep.of_eq ?_ ?_ ?_))))
+    all_goals repeat' split
+    all_goals simp
 
 /-- The index just past the ops of the float group opening before `j`:
 the position of the close that returns the nesting `depth` to zero, or
@@ -6088,6 +6347,21 @@ private def placeFrom (fs : FontSet) (imgs : Image.Store)
 termination_by staged.size - si
 decreasing_by all_goals omega
 
+private theorem bgStep_placeFrom (fs : FontSet) (imgs : Image.Store)
+    (staged : Array StagedOp) (st : StepSt) (si : Nat) :
+    BgStep st.b (placeFrom fs imgs staged st si).b := by
+  rw [placeFrom]
+  split
+  · rename_i h
+    have hj : si + 1 ≤ matchingClose staged (si + 1) 1 :=
+      matchingClose_ge staged (si + 1) 1
+    split
+    · exact (bgStep_runFloat ..).trans (bgStep_placeFrom ..)
+    · exact (bgStep_stepStaged ..).trans (bgStep_placeFrom ..)
+  · exact BgStep.refl _
+termination_by staged.size - si
+decreasing_by all_goals omega
+
 theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     (group : Array StagedOp) (hg : ∀ s ∈ group, s ≠ StagedOp.brk) :
     (runFloat fs imgs st group).b.pages = st.b.pages ∨
@@ -6119,6 +6393,32 @@ theorem runFloat_whole (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     · right
       repeat' split
       all_goals simp_all
+
+/-- What placement ships, with everything the postlude (furniture,
+diagnostic dedup, the outline) still needs: the seam that lets a page
+fact proved over the builder cross into `Out` without a proof ever
+opening the driver — `runPost_pages` is the crossing. -/
+private structure Shipped where
+  b : B
+  /-- The diagnostics as of shipping — the builder's own plus the
+  measure-band check's, carried beside `b` so the builder the page
+  facts range over is the bare final close. -/
+  diags : Array Diag
+  doc : Doc
+  geom : Geom
+  xHeight : Sp
+  pats : Option Hyphen.Patterns
+  fs : FontSet
+  imgs : Image.Store
+  hyphCache : Std.HashMap String (Array Nat)
+  navEntries : Array (String × String)
+  logoSpans : Array (Nat × Array Ir.Inline)
+  plainFoot : Bool
+  footSize : Sp
+  headY : Sp
+  footY : Sp
+  chromeFootY : Sp
+  muted : Ir.Color
 
 /-- The furniture pass's spine: page `i` gains the running lines its
 step computes — and only lines. Everything else on the page (fills,
@@ -6167,6 +6467,230 @@ private theorem furnishFrom_keeps {σ : Type}
     rw [furnishFrom] at hp
     simp only [h, reduceDIte] at hp
     exact ⟨p, hp, rfl, rfl, rfl, rfl⟩
+
+/-- The postlude: running furniture per page (through `furnishFrom`, so
+it can only add lines — `furnishFrom_keeps`), one report per problem,
+and the resolved outline. Everything it reads arrives in `Shipped`; the
+pages of its result are the builder's pages with furniture lines added
+and nothing else touched (`runPost_pages`). -/
+private def runPost (sh : Shipped) : Out := Id.run do
+  let doc := sh.doc
+  let geom := sh.geom
+  let xHeight := sh.xHeight
+  let pats := sh.pats
+  let fs := sh.fs
+  let imgs := sh.imgs
+  let footSize := sh.footSize
+  let plainFoot := sh.plainFoot
+  let logoSpans := sh.logoSpans
+  let headY := sh.headY
+  let footY := sh.footY
+  let chromeFootY := sh.chromeFootY
+  let mutedC := sh.muted
+  let b := sh.b
+  let pages := b.pages
+  -- Running content is laid out per page once the count is known, into the
+  -- margin, so it never disturbs the body it annotates.
+  let total := pages.size
+  let furnGround := doc.palette.find? "bg"
+  let runLine (content : Array Inline) (n : Nat) (y size : Sp) (baseStyle : TextStyle)
+      (cache : _) :
+      Option LineOut × Array Diag × _ :=
+    let sub := substPage n total content
+    let (items, ds, cache, _) :=
+      itemsOfInlines pats size xHeight fs { baseStyle with ground := furnGround } sub cache
+        imgs geom.textWidth geom.textHeight
+    let target := geom.textWidth
+    let breaks := kp items target
+    -- A running line is one line by construction — the band reserves one
+    -- line's ink (`furnitureBand`). Content that wraps would silently lose
+    -- every line but its first, so losing it is a named diagnostic instead.
+    let ds := if breaks.size > 1 then ds.push (Diag.of .W0328
+        "running content wraps at the text width; only its first line is kept"
+        (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
+      else ds
+    match breaks[0]? with
+    | none => (none, ds, cache)
+    | some brk =>
+      -- A running line is not a broken-off paragraph line: its leading glue
+      -- is content, not break residue. `lineStart` would discard a leading
+      -- fill — `\runningfoot{\hfill right}` says the content stands at the
+      -- right edge — and the line would collapse to the left margin. Only
+      -- leading interword space is skipped; a fill stays and takes the
+      -- line's slack.
+      let start := Id.run do
+        let mut k := 0
+        for _ in [0:items.size] do
+          match items[k]? with
+          | some (Item.glue g) => if g.fil then break else k := k + 1
+          | _ => break
+        return k
+      let (segs, w, _) := setLine items start brk target true
+      (some { x := geom.hmargin, y := y, size := size, segs := segs,
+              setWidth := w }, ds, cache)
+  -- A band slot is a line of its own at natural width, positioned by its
+  -- declared side and the geometry alone (`bandSlotX`): nothing another
+  -- slot contains enters its box.
+  let slotLine (side : Ir.BandSide) (content : Array Inline) (n : Nat)
+      (y size : Sp) (baseStyle : TextStyle) (cache : _) :
+      Option LineOut × Array Diag × _ :=
+    let sub := substPage n total content
+    let (items, ds, cache, _) :=
+      itemsOfInlines pats size xHeight fs { baseStyle with ground := furnGround } sub cache
+        imgs geom.textWidth geom.textHeight
+    let breaks := kp items geom.textWidth
+    -- The band holds one line, as the running bands do: a slot that wraps
+    -- loses every line but its first, named, never silent.
+    let ds := if breaks.size > 1 then ds.push (Diag.of .W0328
+        "running content wraps at the text width; only its first line is kept"
+        (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
+      else ds
+    match breaks[0]? with
+    | none => (none, ds, cache)
+    | some brk =>
+      let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
+      (some { x := bandSlotX geom side w, y := y, size := size, segs := segs,
+              setWidth := w }, ds, cache)
+  -- The logo: the preamble `\logo` is the initial state, and a `\logo`
+  -- block in the body changes it for the pages from that point on — an
+  -- empty one clears it, which is how a deck scopes a logo to one frame
+  -- (`\logo{...}` before it, `\logo{}` after). One line per state, laid
+  -- out once — a logo names no page number — and placed at the lower-right
+  -- corner, its right edge on the margin, its box standing on the bottom
+  -- margin line.
+  let mkLogoLine (content : Array Inline) (cache0 : Std.HashMap String (Array Nat)) :
+      Option LineOut × Array Diag × Std.HashMap String (Array Nat) :=
+    let (items, ds, c, _) :=
+      itemsOfInlines pats geom.fontSize xHeight fs { ground := furnGround } content cache0
+        imgs geom.textWidth geom.textHeight
+    let breaks := kp items geom.textWidth
+    match breaks[0]? with
+    | none => (none, ds, c)
+    | some brk =>
+      let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
+      (some { x := geom.pageW - geom.hmargin - w
+              y := geom.pageH - geom.vmargin
+              size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
+  let furnishPage (i : Nat) (page : PageOut)
+      (st0 : Array Diag × Std.HashMap String (Array Nat)) :
+      Array LineOut × Array Diag × Std.HashMap String (Array Nat) := Id.run do
+    let mut diags := st0.1
+    let mut cache := st0.2
+    let mut lines := page.lines
+    -- Pages before a declaration's own `from` carry none of it: an opening
+    -- page reads as a title page, not as page one of a run. Each gate is
+    -- the physical-page model's and each declaration's own
+    -- (`\runninghead[from = 2]` gates the head, never its sibling foot), so
+    -- it governs only the physical furniture — head, foot, and the logo,
+    -- which rides the running band and waits for the later of the two. The
+    -- chrome footer is frame furniture on the frame model: whether a page
+    -- carries it is decided by its frame's number, and a physical
+    -- declaration must not silently gate it.
+    let headOn := doc.headFrom ≤ i + 1
+    let footOn := doc.footFrom ≤ i + 1
+    if headOn then
+      if let some content := doc.head then
+        let (l?, ds, c) := runLine content (i + 1) headY geom.fontSize {} cache
+        diags := diags ++ ds
+        cache := c
+        if let some l := l? then lines := #[{ l with furniture := true }] ++ lines
+    if footOn then
+      if let some content := doc.foot then
+        let (l?, ds, c) := runLine content (i + 1) footY geom.fontSize {} cache
+        diags := diags ++ ds
+        cache := c
+        if let some l := l? then lines := lines.push { l with furniture := true }
+      else if plainFoot then
+        -- plain's foot, by content: the page number between two fills is
+        -- the engine's spelling of `\hfil\thepage\hfil` (ltpage.dtx,
+        -- `\ps@plain`), centred by the same setter every declared foot
+        -- runs through.
+        let (l?, ds, c) := runLine #[.fill, .pageNumber, .fill] (i + 1) footY
+          geom.fontSize {} cache
+        diags := diags ++ ds
+        cache := c
+        if let some l := l? then lines := lines.push { l with furniture := true }
+    -- The chrome footer the page's frame gave it, slot by slot: the muted
+    -- key at the scale's small step, both from declarations. Positions are
+    -- fixed (`bandSlotX`); when two boxes collide the lower-rank slot
+    -- yields — painted first, so every higher slot paints over it — and the
+    -- yield is reported by name (W0333). No box moves: yielding is by ink,
+    -- never by position.
+    if let some band := page.foot then
+      let mut placed : Array (Ir.BandSlot × LineOut) := #[]
+      for slot in band do
+        let (l?, ds, c) := slotLine slot.side slot.content (i + 1) chromeFootY
+          footSize { color := mutedC } cache
+        diags := diags ++ ds
+        cache := c
+        if let some l := l? then placed := placed.push (slot, { l with furniture := true })
+      let slots := placed
+      for hj : j in [0:slots.size] do
+        for hk : k in [j+1:slots.size] do
+          let (a, la) := slots[j]
+          let (bs, lb) := slots[k]
+          if la.x < lb.x + lb.setWidth && lb.x < la.x + la.setWidth then
+            let (lo, hi) := if a.rank < bs.rank then (a, bs) else (bs, a)
+            diags := diags.push (Diag.of .W0333
+              s!"the footer's slots collide on page {i + 1}: {lo.label} \
+yields, painted over by {hi.label}"
+              (help := "slot positions are fixed and the lower-priority \
+slot yields in place: shorten the content or drop a slot"))
+      for p in slots.qsort (fun a b => a.1.rank < b.1.rank) do
+        lines := lines.push p.2
+    let logoContent := logoSpans.foldl
+      (fun acc (span : Nat × Array Inline) => if span.1 ≤ i then some span.2 else acc)
+      doc.logo
+    if headOn && footOn then
+      if let some content := logoContent then
+        unless content.isEmpty do
+          let (l?, ds, c) := mkLogoLine content cache
+          diags := diags ++ ds
+          cache := c
+          if let some l := l? then lines := lines.push { l with furniture := true }
+    return (lines, diags, cache)
+  let fout := furnishFrom furnishPage pages (sh.diags, sh.hyphCache) 0
+  let out := fout.1
+  let diags := fout.2.1
+  -- One report per problem: the same missing glyph or overfull shape in
+  -- thirty code blocks is one thing to fix, not thirty lines of console.
+  -- W0005 is spanless and always the same words, so its collapse keeps the
+  -- count: the number is the only signal of scale the warning has.
+  let mut seen : Std.HashSet (String × String) := {}
+  let mut unique : Array Diag := #[]
+  let overfull := diags.foldl (fun n d => if d.code == "W0005" then n + 1 else n) 0
+  for d in diags do
+    let key := (d.code, d.message)
+    unless seen.contains key do
+      seen := seen.insert key
+      if d.code == "W0005" && overfull > 1 then
+        unique := unique.push
+          { d with message := s!"{overfull} overfull lines (no feasible break)" }
+      else
+        unique := unique.push d
+  -- The document outline, resolved: an in-document target (`#anchor`)
+  -- resolves against the level-1 heading anchors the builder recorded —
+  -- the first declaration wins, exactly the section an in-page `#anchor`
+  -- link reaches — and any other target rides as its URL.
+  let outline := sh.navEntries.map fun (title, target) =>
+    if target.startsWith "#" then
+      { title := title
+        page := (b.anchors.find? (·.1 == (target.drop 1).toString)).map (·.2) }
+    else ({ title := title, url := some target } : OutlineEntry)
+  return { pages := out, diags := unique, outline := outline }
+
+/-- The postlude only adds furniture lines: every page of `runPost`'s
+output carries the fills, paths, foot band, and frame attribution of a
+page the builder shipped — `furnishFrom_keeps` lifted over the whole
+postlude, the seam a builder invariant crosses into `Out` through. -/
+private theorem runPost_pages (sh : Shipped) :
+    ∀ p ∈ (runPost sh).pages, ∃ q ∈ sh.b.pages,
+      p.fills = q.fills ∧ p.paths = q.paths ∧ p.foot = q.foot ∧
+        p.frame = q.frame := by
+  intro p hp
+  unfold runPost at hp
+  dsimp only [Id.run, bind, pure, Id] at hp
+  exact furnishFrom_keeps _ _ _ _ p hp
 
 /-- Typeset a document body into positioned pages. Geometry is resolved by
 the caller via `Geom.ofPage`, so layout has one source of truth. -/
@@ -6288,12 +6812,13 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- Trailing fil glue stretches on the page it ends (a \vfill nothing
   -- follows is how a page bottom-flushes its leftover), so it must reach
   -- placement; trailing finite glue stays invisible and stays dropped.
-  if acc.owed.any (·.fil) then
-    acc := { acc with ops := acc.ops.push (.skip (acc.owed.foldl Glue.add {})) }
+  let accF := if acc.owed.any (·.fil) then
+      { acc with ops := acc.ops.push (.skip (acc.owed.foldl Glue.add {})) }
+    else acc
   -- Break every paragraph in parallel: `kp` is pure and each job independent,
   -- so the tasks race on nothing; joining in document order below keeps the
   -- output independent of scheduling.
-  let staged : Array StagedOp := acc.ops.map fun op =>
+  let staged : Array StagedOp := accF.ops.map fun op =>
     match op with
     | .skip g => .skip g
     | .brk => .brk
@@ -6382,7 +6907,7 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
   -- L₄₅ = 1.415α + 23.03 pt). Slides are display text, not continuous
   -- reading, and are out of the rule's own scope; `\page{ measure = free }`
   -- declares the document takes responsibility.
-  let b :=
+  let shipDiags :=
     if doc.docClass.record.measureBand && doc.page.measureChecked
         && prose ≥ 4 then
       let alphabet := (List.range 26).foldl (fun acc k =>
@@ -6393,205 +6918,83 @@ def run (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns) (doc : Doc)
         let cpl10 := 450 + 200 * (geom.textWidth - l45) / (l65 - l45)
         if cpl10 < 450 || cpl10 > 900 then
           let dir := if cpl10 > 900 then "narrow" else "widen"
-          { b with diags := b.diags.push (Diag.of .W0201
+          b.diags.push (Diag.of .W0201
             (s!"the measure holds about {(cpl10 + 5) / 10} characters " ++
               "per line, outside the readable 45\u201390 band")
             (help := s!"{dir} the text block (\\page\{ hmargin = ... }; 66 characters " ++
-              "is the ideal) or declare \\page{ measure = free }")) }
-        else b
-      else b
-    else b
-  let pages := b.pages
-  -- Running content is laid out per page once the count is known, into the
-  -- margin, so it never disturbs the body it annotates.
-  let total := pages.size
-  let furnGround := doc.palette.find? "bg"
-  let runLine (content : Array Inline) (n : Nat) (y size : Sp) (baseStyle : TextStyle)
-      (cache : _) :
-      Option LineOut × Array Diag × _ :=
-    let sub := substPage n total content
-    let (items, ds, cache, _) :=
-      itemsOfInlines pats size xHeight fs { baseStyle with ground := furnGround } sub cache
-        imgs geom.textWidth geom.textHeight
-    let target := geom.textWidth
-    let breaks := kp items target
-    -- A running line is one line by construction — the band reserves one
-    -- line's ink (`furnitureBand`). Content that wraps would silently lose
-    -- every line but its first, so losing it is a named diagnostic instead.
-    let ds := if breaks.size > 1 then ds.push (Diag.of .W0328
-        "running content wraps at the text width; only its first line is kept"
-        (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
-      else ds
-    match breaks[0]? with
-    | none => (none, ds, cache)
-    | some brk =>
-      -- A running line is not a broken-off paragraph line: its leading glue
-      -- is content, not break residue. `lineStart` would discard a leading
-      -- fill — `\runningfoot{\hfill right}` says the content stands at the
-      -- right edge — and the line would collapse to the left margin. Only
-      -- leading interword space is skipped; a fill stays and takes the
-      -- line's slack.
-      let start := Id.run do
-        let mut k := 0
-        for _ in [0:items.size] do
-          match items[k]? with
-          | some (Item.glue g) => if g.fil then break else k := k + 1
-          | _ => break
-        return k
-      let (segs, w, _) := setLine items start brk target true
-      (some { x := geom.hmargin, y := y, size := size, segs := segs,
-              setWidth := w }, ds, cache)
-  -- A band slot is a line of its own at natural width, positioned by its
-  -- declared side and the geometry alone (`bandSlotX`): nothing another
-  -- slot contains enters its box.
-  let slotLine (side : Ir.BandSide) (content : Array Inline) (n : Nat)
-      (y size : Sp) (baseStyle : TextStyle) (cache : _) :
-      Option LineOut × Array Diag × _ :=
-    let sub := substPage n total content
-    let (items, ds, cache, _) :=
-      itemsOfInlines pats size xHeight fs { baseStyle with ground := furnGround } sub cache
-        imgs geom.textWidth geom.textHeight
-    let breaks := kp items geom.textWidth
-    -- The band holds one line, as the running bands do: a slot that wraps
-    -- loses every line but its first, named, never silent.
-    let ds := if breaks.size > 1 then ds.push (Diag.of .W0328
-        "running content wraps at the text width; only its first line is kept"
-        (help := "the head, foot, and chrome bands hold one line each: shorten the content"))
-      else ds
-    match breaks[0]? with
-    | none => (none, ds, cache)
-    | some brk =>
-      let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
-      (some { x := bandSlotX geom side w, y := y, size := size, segs := segs,
-              setWidth := w }, ds, cache)
-  let headY := furnHeadY headFurn (scale font.ascent)
-  let footY := furnFootY footFurn geom.pageH (scale (-font.descent))
-  let chromeFootY := furnFootY chromeFurn geom.pageH (chromeScale (-font.descent))
-  let mutedC := design.muted
-  -- The logo: the preamble `\logo` is the initial state, and a `\logo`
-  -- block in the body changes it for the pages from that point on — an
-  -- empty one clears it, which is how a deck scopes a logo to one frame
-  -- (`\logo{...}` before it, `\logo{}` after). One line per state, laid
-  -- out once — a logo names no page number — and placed at the lower-right
-  -- corner, its right edge on the margin, its box standing on the bottom
-  -- margin line.
-  let mkLogoLine (content : Array Inline) (cache0 : Std.HashMap String (Array Nat)) :
-      Option LineOut × Array Diag × Std.HashMap String (Array Nat) :=
-    let (items, ds, c, _) :=
-      itemsOfInlines pats geom.fontSize xHeight fs { ground := furnGround } content cache0
-        imgs geom.textWidth geom.textHeight
-    let breaks := kp items geom.textWidth
-    match breaks[0]? with
-    | none => (none, ds, c)
-    | some brk =>
-      let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
-      (some { x := geom.pageW - geom.hmargin - w
-              y := geom.pageH - geom.vmargin
-              size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
-  let furnishPage (i : Nat) (page : PageOut)
-      (st0 : Array Diag × Std.HashMap String (Array Nat)) :
-      Array LineOut × Array Diag × Std.HashMap String (Array Nat) := Id.run do
-    let mut diags := st0.1
-    let mut cache := st0.2
-    let mut lines := page.lines
-    -- Pages before a declaration's own `from` carry none of it: an opening
-    -- page reads as a title page, not as page one of a run. Each gate is
-    -- the physical-page model's and each declaration's own
-    -- (`\runninghead[from = 2]` gates the head, never its sibling foot), so
-    -- it governs only the physical furniture — head, foot, and the logo,
-    -- which rides the running band and waits for the later of the two. The
-    -- chrome footer is frame furniture on the frame model: whether a page
-    -- carries it is decided by its frame's number, and a physical
-    -- declaration must not silently gate it.
-    let headOn := doc.headFrom ≤ i + 1
-    let footOn := doc.footFrom ≤ i + 1
-    if headOn then
-      if let some content := doc.head then
-        let (l?, ds, c) := runLine content (i + 1) headY geom.fontSize {} cache
-        diags := diags ++ ds
-        cache := c
-        if let some l := l? then lines := #[{ l with furniture := true }] ++ lines
-    if footOn then
-      if let some content := doc.foot then
-        let (l?, ds, c) := runLine content (i + 1) footY geom.fontSize {} cache
-        diags := diags ++ ds
-        cache := c
-        if let some l := l? then lines := lines.push { l with furniture := true }
-      else if plainFoot then
-        -- plain's foot, by content: the page number between two fills is
-        -- the engine's spelling of `\hfil\thepage\hfil` (ltpage.dtx,
-        -- `\ps@plain`), centred by the same setter every declared foot
-        -- runs through.
-        let (l?, ds, c) := runLine #[.fill, .pageNumber, .fill] (i + 1) footY
-          geom.fontSize {} cache
-        diags := diags ++ ds
-        cache := c
-        if let some l := l? then lines := lines.push { l with furniture := true }
-    -- The chrome footer the page's frame gave it, slot by slot: the muted
-    -- key at the scale's small step, both from declarations. Positions are
-    -- fixed (`bandSlotX`); when two boxes collide the lower-rank slot
-    -- yields — painted first, so every higher slot paints over it — and the
-    -- yield is reported by name (W0333). No box moves: yielding is by ink,
-    -- never by position.
-    if let some band := page.foot then
-      let mut placed : Array (Ir.BandSlot × LineOut) := #[]
-      for slot in band do
-        let (l?, ds, c) := slotLine slot.side slot.content (i + 1) chromeFootY
-          footSize { color := mutedC } cache
-        diags := diags ++ ds
-        cache := c
-        if let some l := l? then placed := placed.push (slot, { l with furniture := true })
-      let slots := placed
-      for hj : j in [0:slots.size] do
-        for hk : k in [j+1:slots.size] do
-          let (a, la) := slots[j]
-          let (bs, lb) := slots[k]
-          if la.x < lb.x + lb.setWidth && lb.x < la.x + la.setWidth then
-            let (lo, hi) := if a.rank < bs.rank then (a, bs) else (bs, a)
-            diags := diags.push (Diag.of .W0333
-              s!"the footer's slots collide on page {i + 1}: {lo.label} \
-yields, painted over by {hi.label}"
-              (help := "slot positions are fixed and the lower-priority \
-slot yields in place: shorten the content or drop a slot"))
-      for p in slots.qsort (fun a b => a.1.rank < b.1.rank) do
-        lines := lines.push p.2
-    let logoContent := logoSpans.foldl
-      (fun acc (span : Nat × Array Inline) => if span.1 ≤ i then some span.2 else acc)
-      doc.logo
-    if headOn && footOn then
-      if let some content := logoContent then
-        unless content.isEmpty do
-          let (l?, ds, c) := mkLogoLine content cache
-          diags := diags ++ ds
-          cache := c
-          if let some l := l? then lines := lines.push { l with furniture := true }
-    return (lines, diags, cache)
-  let (out, diags, _) := furnishFrom furnishPage pages (b.diags, acc.hyphCache) 0
-  -- One report per problem: the same missing glyph or overfull shape in
-  -- thirty code blocks is one thing to fix, not thirty lines of console.
-  -- W0005 is spanless and always the same words, so its collapse keeps the
-  -- count: the number is the only signal of scale the warning has.
-  let mut seen : Std.HashSet (String × String) := {}
-  let mut unique : Array Diag := #[]
-  let overfull := diags.foldl (fun n d => if d.code == "W0005" then n + 1 else n) 0
-  for d in diags do
-    let key := (d.code, d.message)
-    unless seen.contains key do
-      seen := seen.insert key
-      if d.code == "W0005" && overfull > 1 then
-        unique := unique.push
-          { d with message := s!"{overfull} overfull lines (no feasible break)" }
-      else
-        unique := unique.push d
-  -- The document outline, resolved: an in-document target (`#anchor`)
-  -- resolves against the level-1 heading anchors the builder recorded —
-  -- the first declaration wins, exactly the section an in-page `#anchor`
-  -- link reaches — and any other target rides as its URL.
-  let outline := acc.navEntries.map fun (title, target) =>
-    if target.startsWith "#" then
-      { title := title
-        page := (b.anchors.find? (·.1 == (target.drop 1).toString)).map (·.2) }
-    else ({ title := title, url := some target } : OutlineEntry)
-  { pages := out, diags := unique, outline := outline }
+              "is the ideal) or declare \\page{ measure = free }"))
+        else b.diags
+      else b.diags
+    else b.diags
+  runPost { b := b
+            diags := shipDiags
+            doc := doc
+            geom := geom
+            xHeight := xHeight
+            pats := pats
+            fs := fs
+            imgs := imgs
+            hyphCache := acc.hyphCache
+            navEntries := acc.navEntries
+            logoSpans := logoSpans
+            plainFoot := plainFoot
+            footSize := footSize
+            headY := furnHeadY headFurn (scale font.ascent)
+            footY := furnFootY footFurn geom.pageH (scale (-font.descent))
+            chromeFootY := furnFootY chromeFurn geom.pageH
+              (chromeScale (-font.descent))
+            muted := design.muted }
+
+/-- Every page of a document that declares a `bg` palette entry ships a
+full-page fill: what the walk attaches to a page survives to that page's
+output, observed at the page background. Discharged from `Obligations`
+(arch-provable I5; the fill-vanishing bug — `B.commit` once rebuilt the
+page with only its lines, PLAN 2026-09-16 — is its counterexample). The
+proof is three seams: `finishPage_bg` (the one shipping door prepends
+the fill whole), `bgStep_placeFrom` (every placement step preserves the
+invariant), and `runPost_pages` (the furniture pass cannot touch
+fills). -/
+theorem page_background_survives
+    (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
+    (doc : Ir.Doc) (imgs : Image.Store)
+    (hbg : (doc.palette.find? "bg").isSome = true) :
+    ∀ p ∈ (run geom fs pats doc imgs).pages,
+      ∃ f ∈ p.fills.toList,
+        f.x = 0 ∧ f.y = 0 ∧ f.w = geom.pageW ∧ f.h = geom.pageH := by
+  have key : ∀ (b0 c : B), BgStep b0 c →
+      b0.docBg.isSome = true → b0.pages = #[] →
+      ∀ x ∈ c.pages, bgFilled b0.geom x := by
+    intro b0 c hc hd hemp x hx
+    rcases hc.2.2 hd x hx with h | h
+    · rw [hemp] at h
+      simp at h
+    · exact h
+  intro p hp
+  unfold run at hp
+  dsimp only [Id.run, bind, pure, Id] at hp
+  obtain ⟨q, hq, hfills, -, -, -⟩ := runPost_pages _ p hp
+  have fin : ∀ (b0 : B), bgFilled b0.geom q →
+      b0.geom.pageW = geom.pageW → b0.geom.pageH = geom.pageH →
+      ∃ f ∈ p.fills.toList,
+        f.x = 0 ∧ f.y = 0 ∧ f.w = geom.pageW ∧ f.h = geom.pageH := by
+    intro b0 h hW hH
+    obtain ⟨f, hf, hx, hy, hw, hh⟩ := h
+    exact ⟨f, hfills ▸ hf, hx, hy, hW ▸ hw, hH ▸ hh⟩
+  -- the final close, taken abstractly: splitting the giant term is the
+  -- wall, so the ite is covered by a lemma over an opaque condition
+  have bgStep_close : ∀ (c : Prop) [inst : Decidable c] (b0 X : B),
+      BgStep b0 X → BgStep b0 (if c then X.finishPage else X) := by
+    intro c inst b0 X h
+    split
+    · exact h.trans (bgStep_finishPage _)
+    · exact h
+  refine fin _ (key _ _ (bgStep_close _ _ _ (bgStep_placeFrom ..)) ?_ rfl q hq)
+    ?_ ?_
+  all_goals first
+    | (simp [Ir.Design.ofDoc, hbg]
+       done)
+    | (try dsimp only
+       repeat' split
+       all_goals rfl)
 
 end LeanTex.Core.Layout

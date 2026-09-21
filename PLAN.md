@@ -88,9 +88,6 @@ list.
 - `emission_conservation_paras` — weak public form of arch-provable I4:
   plain paragraphs ship exactly their declared ink or a diagnostic names
   the drop. The strong per-block form waits on the `Acc` split.
-- `page_background_survives` — weak observable form of arch-provable I5
-  (page conservation); the fill-vanishing `B.commit` bug was its
-  counterexample.
 - `pages_partition_frames` — numbering as a partition over the page→frame
   attribution `PageOut.frame` now carries (written at `finishPage`): every
   page of a framed deck is attributed, and frame k's pages number exactly
