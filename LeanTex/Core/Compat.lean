@@ -935,6 +935,7 @@ private def geometry (opts : String) (pos : Pos)
     (spelling : String := "\\usepackage{geometry}") : M (Array Raw) := do
   let mut keys : Array String := #[]
   let mut dropped : Array String := #[]
+  let mut droppedExpr : Array String := #[]
   let mut sides : Array (String × String) := #[]
   for e in Decl.splitEntries opts do
     match e.splitOn "=" with
@@ -952,11 +953,14 @@ private def geometry (opts : String) (pos : Pos)
       -- geometry's width/height size the text block, paperwidth/paperheight
       -- the page (geometry manual §5.2); \page speaks in page dimensions.
       let k := if k == "paperwidth" then "width" else if k == "paperheight" then "height" else k
-      -- A `\dimexpr` is TeX arithmetic `lengthOfTeX` cannot carry: mapping
-      -- it would synthesize an unreadable `\page` value and turn a named
-      -- drop into an error. It stays a drop, named.
+      -- A `\dimexpr` is TeX arithmetic `lengthOfTeX` cannot carry (its
+      -- operands may be registers, `\ht\strutbox` in the wild): mapping it
+      -- would synthesize an unreadable `\page` value and turn a named drop
+      -- into an error. It stays a drop, and the warning names the spelling
+      -- — for a key the engine otherwise reads, "footskip" alone would
+      -- point the author at the wrong half of the assignment.
       if v.startsWith "\\dimexpr" then
-        dropped := dropped.push k
+        droppedExpr := droppedExpr.push s!"{k} = {v}"
       else if ["margin", "vmargin", "hmargin", "width", "height",
           "textwidth", "textheight", "headsep", "footskip"].contains k then
         keys := keys.push s!"{k} = {lengthOfTeX v}"
@@ -985,6 +989,11 @@ private def geometry (opts : String) (pos : Pos)
   unless dropped.isEmpty do
     say .W0101 s!"geometry keys without a native equivalent were dropped: \
 {String.intercalate ", " dropped.toList}" pos
+  unless droppedExpr.isEmpty do
+    say .W0101 s!"geometry values the engine cannot evaluate were dropped: \
+{String.intercalate ", " droppedExpr.toList}" pos
+      (help := "TeX register arithmetic has no value here; write the \
+length as one literal")
   synthAt native pos
 
 /-- `\usepackage[opts]{crop}` and `\crop[opts]` → `\page{ marks = cut }`.

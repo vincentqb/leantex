@@ -6,3 +6,4 @@ body refuse:W0301 \restoregeometry
 body refuse:W0301 \savegeometry{a}
 body refuse:W0301 \loadgeometry{a}
 pre impl \newgeometry{textwidth=5in}
+pre refuse:W0101 \geometry{footskip=\dimexpr 0.25in + \ht\strutbox\relax}
