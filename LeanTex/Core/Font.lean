@@ -1099,6 +1099,13 @@ structure FontSet where
   /-- Index of the document's math face: declared, resolved, and carrying a
   MATH table. `none` sets math as source text with the W0003 warning. -/
   math : Option Nat := none
+  /-- Per-face deflated file bytes, filled by the driver through its
+  content-hash cache (`deflateCached` in the driver): `zdata[i]`, when
+  present, is the compressed stream the PDF embeds for `fonts[i].data` —
+  a font's bytes never change between builds, so its deflate is paid once
+  per content, not per build. Empty (the default; every test constructor)
+  means the PDF writer compresses inline. -/
+  zdata : Array (Option ByteArray) := #[]
   deriving Inhabited
 
 namespace FontSet

@@ -55,11 +55,13 @@ structure Info where
   /-- PNG colour type 3: the PLTE payload, RGB triples. -/
   palette : ByteArray := ByteArray.empty
   data : ByteArray := ByteArray.empty
-  /-- PNG only: `data` is the raw IDAT stream, PNG-predicted, and the PDF
-  dictionary must declare the predictor. False for a re-encoded plane. -/
+  /-- PNG only: `data` is PNG-predicted zlib — a pass-through IDAT
+  stream, or a re-encoded plane the engine Up-filtered before deflating —
+  and the PDF dictionary must declare the predictor. -/
   predictor : Bool := false
-  /-- An alpha channel, as its own zlib-compressed 8-bit gray plane: the PDF
-  soft mask. Empty when the image is opaque. -/
+  /-- An alpha channel, as its own Up-filtered, zlib-compressed 8-bit
+  gray plane: the PDF soft mask, Predictor 15 declared. Empty when the
+  image is opaque. -/
   smask : ByteArray := ByteArray.empty
   /-- A PDF page read as a form XObject (`format == .pdf`): the box, the
   content, and the copied resource graph. The `wf` witness rides with it —
@@ -216,7 +218,9 @@ re-export at 8 bits or flatten it"
              data := idat, predictor := true }
   | some channels =>
     -- The samples cannot pass through: inflate against the size the
-    -- geometry declares, unfilter, split, re-encode each plane.
+    -- geometry declares, unfilter, split — then each plane is Up-filtered
+    -- and really compressed, so the embedded object costs on the order of
+    -- what the source cost, never what the raw samples weigh.
     let rowBytes := pxW * channels
     let raw ← Flate.inflate idat (pxH * (1 + rowBytes))
     if raw.size != pxH * (1 + rowBytes) then
@@ -224,8 +228,9 @@ re-export at 8 bits or flatten it"
     let px ← Flate.pngUnfilter raw pxH rowBytes channels
     let (color, alphaPlane) := splitAlpha px channels
     return { format := .png, pxW, pxH, dpiX, dpiY, bitDepth := 8, space,
-             data := Flate.deflateStored color
-             smask := Flate.deflateStored alphaPlane }
+             data := Flate.deflate (Flate.upFilter color pxH (pxW * (channels - 1)))
+             predictor := true
+             smask := Flate.deflate (Flate.upFilter alphaPlane pxH pxW) }
 
 /-! ## JPEG
 
@@ -313,6 +318,81 @@ def decode (b : ByteArray) : Except String Info :=
              pxH := (max 0 f.val.h / spPerPt).toNat
              form := some f }
   else .error "not a PNG, JPEG, or PDF file (unrecognised signature)"
+
+/-- Does decoding these bytes do real work — inflate, unfilter, split,
+recompress? True exactly for the PNG colour types with an alpha channel
+(4 and 6, ISO/IEC 15948 §11.2.2): what the driver's image cache keys on,
+since a pass-through decode is cheaper than any cache read. -/
+def decodeRecodes (b : ByteArray) : Bool :=
+  sliceEq b 0 pngSig && (u8? b 25 == some 4 || u8? b 25 == some 6)
+
+/-! ## The driver's image cache: serialization
+
+A decoded image object as bytes: the value the driver files under the
+source's content key, so the expensive decode (inflate, unfilter, split,
+deflate) runs once per content. Only raster fields ride — a form XObject
+never enters the cache; its decode is cheap and its `wf` witness cannot
+be serialized. Transparency is `decodeBin_encodeBin_id` (staged in
+`Obligations/`, exercised in `lake test`): a cache hit *is* the
+recomputation's value, keeping the artifact a function of the document
+and the font environment. The magic carries a format version: a change
+here orphans old entries rather than misreading them. -/
+
+private def pushU32 (b : ByteArray) (v : Nat) : ByteArray :=
+  ((((b.push (UInt8.ofNat (v / 16777216 % 256))).push
+    (UInt8.ofNat (v / 65536 % 256))).push
+    (UInt8.ofNat (v / 256 % 256))).push (UInt8.ofNat (v % 256)))
+
+/-- `LTIMG1`, the magic-and-format-version the decoder checks. -/
+private def binMagic : List Nat := [76, 84, 73, 77, 71, 49]
+
+/-- Serialize a raster `Info` (`form` is dropped; the cache never holds
+one — `decodeRecodes` gates what is cached). -/
+def encodeBin (i : Info) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity (41 + i.palette.size + i.data.size + i.smask.size)
+  for v in binMagic do
+    out := out.push (UInt8.ofNat v)
+  out := out.push (match i.format with | .png => 0 | .jpeg => 1 | .pdf => 2)
+  out := out.push (match i.space with | .gray => 0 | .rgb => 1 | .indexed => 2)
+  out := out.push (if i.predictor then 1 else 0)
+  out := pushU32 out i.pxW
+  out := pushU32 out i.pxH
+  out := pushU32 out i.dpiX
+  out := pushU32 out i.dpiY
+  out := pushU32 out i.bitDepth
+  out := pushU32 out i.palette.size
+  out := pushU32 out i.data.size
+  out := pushU32 out i.smask.size
+  return out ++ i.palette ++ i.data ++ i.smask
+
+/-- Read `encodeBin`'s bytes back; `none` for anything else — a foreign,
+truncated, or older-format file is a cache miss, never a wrong image. -/
+def decodeBin (b : ByteArray) : Option Info := do
+  guard (sliceEq b 0 binMagic)
+  let format ← match ← u8? b 6 with
+    | 0 => some Format.png
+    | 1 => some Format.jpeg
+    | _ => none
+  let space ← match ← u8? b 7 with
+    | 0 => some Space.gray
+    | 1 => some Space.rgb
+    | 2 => some Space.indexed
+    | _ => none
+  let pr ← u8? b 8
+  let pxW ← u32be? b 9
+  let pxH ← u32be? b 13
+  let dpiX ← u32be? b 17
+  let dpiY ← u32be? b 21
+  let bitDepth ← u32be? b 25
+  let pLen ← u32be? b 29
+  let dLen ← u32be? b 33
+  let sLen ← u32be? b 37
+  guard (b.size == 41 + pLen + dLen + sLen)
+  return { format, pxW, pxH, dpiX, dpiY, bitDepth, space
+           palette := b.extract 41 (41 + pLen)
+           data := b.extract (41 + pLen) (41 + pLen + dLen)
+           predictor := pr == 1
+           smask := b.extract (41 + pLen + dLen) (41 + pLen + dLen + sLen) }
 
 /-! ## The store: effects as data
 

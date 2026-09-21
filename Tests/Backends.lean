@@ -1256,7 +1256,7 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
         "href=\"profile.md\">")).length == 2 &&
      !has "rel=\"alternate\"")
   let md := (MarkdownDoc.emit doc)
-  let pdf := Pdf.write geom oneFace (layoutOf oneFace doc geom).pages doc.info
+  let pdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace doc geom).pages doc.info)
   t "the one declared title reaches all three surfaces"
     (has "<title>Alex Doe, PhD</title>" &&
      md.startsWith "# Alex Doe, PhD\n" &&
@@ -1267,7 +1267,7 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- (ISO 32000-2 §7.9.2.2): raw UTF-8 in an Info string is read as
   -- PDFDocEncoding, and an 'é' displayed as 'Ã©' in the document panel.
   let accDoc := { doc with info := { doc.info with title := some "Bélair Résumé" } }
-  let accPdf := Pdf.write geom oneFace (layoutOf oneFace accDoc geom).pages accDoc.info
+  let accPdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace accDoc geom).pages accDoc.info)
   t "an accented Info title is a UTF-16BE hex string with the BOM"
     (bytesContain accPdf
       "/Title <FEFF004200E9006C0061006900720020005200E900730075006D00E9>")
@@ -1282,7 +1282,7 @@ def webMetaChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     "\\usepackage[french]{babel}\n\\begin{document}\n" ++
     "texte \\foreignlanguage{english}{words}\n\\end{document}")
   let frPage := (HtmlDoc.emit {} frDoc).1
-  let frPdf := Pdf.write geom oneFace (layoutOf oneFace frDoc geom).pages frDoc.info
+  let frPdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace frDoc geom).pages frDoc.info)
   t "both artifacts carry the declared language"
     ((frPage.splitOn "<html lang=\"fr\">").length == 2 &&
      bytesContain frPdf "/Lang (fr)")
@@ -1355,7 +1355,7 @@ def pdfStreamChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO U
   -- page number would add its own Tm.
   let (gapDoc0, _) := Elab.run "t" "a\\hfill b\n\n\\underline{x}"
   let gapDoc := { gapDoc0 with page := { gapDoc0.page with numbers := some false } }
-  let gapText := asciiText (Pdf.write wide oneFace (layoutOf oneFace gapDoc wide).pages)
+  let gapText := asciiText (pdfText (Pdf.write wide oneFace (layoutOf oneFace gapDoc wide).pages))
   let (adjs, empties) := tjNumbers gapText
   t "pdf never writes a TJ adjustment past sixteen bits"
     (adjs.all fun n => n.natAbs ≤ 32767)
@@ -1381,13 +1381,13 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let (bigDoc, bigDs) := Elab.run "t"
     "plain {\\sffamily other face} and {\\Huge big} and {\\small little}"
   t "size scale source clean" bigDs.isEmpty
-  let bigPdf := Pdf.write geom twoFace (layoutOf twoFace bigDoc geom).pages
+  let bigPdf := pdfText (Pdf.write geom twoFace (layoutOf twoFace bigDoc geom).pages)
   t "pdf references a second face" (bytesContain bigPdf "/F2 ")
   t "pdf sets Huge at 2.488x" (bytesContain bigPdf "24.88 Tf")
   t "pdf sets small at 0.9x" (bytesContain bigPdf "9 Tf")
   t "pdf keeps the body size" (bytesContain bigPdf "10 Tf")
   -- One face only: nothing unused is embedded, so no /F2 exists.
-  let plainPdf := Pdf.write geom oneFace (layoutOf oneFace bigDoc geom).pages
+  let plainPdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace bigDoc geom).pages)
   t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
   -- The descriptor states the parsed metrics (ISO 32000-2 §9.8.1:
   -- CapHeight is the cap height), never a stand-in: the fixture face
@@ -1667,19 +1667,67 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     [1, 5, 5, 5, 7, 1, 2, 3, 9])
   let rgbaPng := mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++
     chunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ chunk "IEND" [])
-  t "png alpha decodes to colour plus smask"
+  t "png alpha decodes to colour plus smask, planes filtered and compressed"
     (match Image.decodePng rgbaPng with
      | .ok inf =>
-       inf.space == .rgb && !inf.predictor && !inf.smask.isEmpty &&
-       Flate.inflate inf.data 12 ==
+       inf.space == .rgb && inf.predictor && !inf.smask.isEmpty &&
+       ((Flate.inflate inf.data 14).bind fun rows =>
+         Flate.pngUnfilter rows 2 6 3) ==
          .ok (bytes [10, 20, 30, 40, 50, 60, 5, 5, 5, 6, 7, 8]) &&
-       Flate.inflate inf.smask 4 == .ok (bytes [255, 128, 7, 16])
+       ((Flate.inflate inf.smask 6).bind fun rows =>
+         Flate.pngUnfilter rows 2 2 1) == .ok (bytes [255, 128, 7, 16])
      | .error _ => false)
   -- The inflate under it round-trips its own stored encoder, and reads a
   -- real compressor's stream: rects.png's IDAT is zlib at level 9, and its
   -- unfiltered scanlines are 40 rows of 1+192 bytes.
   t "flate roundtrip on stored blocks"
     (Flate.inflate (Flate.deflateStored rgbaRaw) rgbaRaw.size == .ok rgbaRaw)
+  -- The real compressor: `inflate_deflate_id`'s statement, witnessed on
+  -- the shapes a block must survive — empty, tiny, a run, a period-3
+  -- repetition, text, and the raw plane above (`scripts/flate-fuzz.lean`
+  -- is the deep oracle, with a foreign inflater as second judge).
+  let rt (b : ByteArray) : Bool := Flate.inflate (Flate.deflate b) b.size == .ok b
+  t "deflate roundtrip: empty" (rt ByteArray.empty)
+  t "deflate roundtrip: one byte" (rt (bytes [42]))
+  t "deflate roundtrip: a run" (rt (ByteArray.mk (Array.replicate 70000 7)))
+  t "deflate roundtrip: period 3"
+    (rt (ByteArray.mk (Array.ofFn (n := 999) fun i => UInt8.ofNat (i.val % 3))))
+  t "deflate roundtrip: text"
+    (rt "pack my box with five dozen liquor jugs, again and again and again".toUTF8)
+  t "deflate roundtrip: the raw plane" (rt rgbaRaw)
+  t "deflate really compresses a run"
+    ((Flate.deflate (ByteArray.mk (Array.replicate 70000 7))).size < 1000)
+  -- A deflate-compressed IDAT decodes through the dynamic-Huffman path:
+  -- the engine reads its own compressor's output inside a PNG too.
+  t "png alpha decodes from a deflate-compressed IDAT"
+    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++
+      chunk "IDAT" (Flate.deflate rgbaRaw).toList ++ chunk "IEND" [])) with
+     | .ok inf => inf.space == .rgb && !inf.smask.isEmpty
+     | .error _ => false)
+  -- The driver's image-cache serialization inverts exactly
+  -- (`decodeBin_encodeBin_id`'s statement, witnessed on a real decode).
+  t "image cache serialization round-trips a decoded alpha png"
+    (match Image.decodePng rgbaPng with
+     | .ok inf =>
+       (match Image.decodeBin (Image.encodeBin inf) with
+        | some back =>
+          back.format == inf.format && back.pxW == inf.pxW && back.pxH == inf.pxH &&
+          back.dpiX == inf.dpiX && back.dpiY == inf.dpiY &&
+          back.bitDepth == inf.bitDepth && back.space == inf.space &&
+          back.palette == inf.palette && back.data == inf.data &&
+          back.predictor == inf.predictor && back.smask == inf.smask &&
+          back.form.isNone
+        | none => false)
+     | .error _ => false)
+  t "image cache decode rejects foreign bytes"
+    ((Image.decodeBin (bytes [1, 2, 3])).isNone &&
+     (Image.decodeBin ByteArray.empty).isNone)
+  t "image cache decode rejects a truncated entry"
+    (match Image.decodePng rgbaPng with
+     | .ok inf =>
+       let blob := Image.encodeBin inf
+       (Image.decodeBin (blob.extract 0 (blob.size - 1))).isNone
+     | .error _ => false)
   t "png interlace refused"
     (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 2 1) ++
       chunk "IDAT" [0] ++ chunk "IEND" [])) with
@@ -1754,7 +1802,8 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     (match alphaInfo with
      | .ok inf =>
        inf.pxW == 48 && inf.pxH == 32 && inf.space == .rgb && !inf.smask.isEmpty &&
-       (match Flate.inflate inf.smask (48 * 32) with
+       (match (Flate.inflate inf.smask (32 * 49)).bind fun rows =>
+          Flate.pngUnfilter rows 32 48 1 with
         | .ok mask => mask.size == 48 * 32 && mask[0]?.getD 1 == 0 &&
             (mask[4 * 48 + 4]?.getD 0) == 255 && (mask[4 * 48 + 43]?.getD 0) == 21
         | .error _ => false)
@@ -1871,7 +1920,8 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     "\\includegraphics{rects.png} and \\includegraphics{rects.jpg} and \
 \\includegraphics{rects-alpha.png}"
   let pdfOut := layoutOf oneFace pdfDoc geom none store
-  let pdf := Pdf.write geom oneFace pdfOut.pages {} store
+  let pdfRaw := Pdf.write geom oneFace pdfOut.pages {} store
+  let pdf := pdfText pdfRaw
   t "pdf embeds the png as flate with the predictor"
     (bytesContain pdf "/Subtype /Image" && bytesContain pdf "/FlateDecode" &&
      bytesContain pdf "/Predictor 15")
@@ -1884,7 +1934,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "pdf image matrix carries the placed size"
     (bytesContain pdf "q 64 0 0 40 ")
   t "pdf page resources name the xobjects" (bytesContain pdf "/XObject <<")
-  match checkXref pdf with
+  match checkXref pdfRaw with
   | .ok n => t "pdf xref valid with images" (n > 0)
   | .error e => failures ref s!"pdf xref with images: {e}"
   -- The raw IDAT bytes must reach the file unchanged: the stream is the
@@ -1906,10 +1956,11 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- The placeholder: an outlined box, no image object, a valid file.
   let missOut := layoutOf oneFace
     ((Elab.run "t" "\\includegraphics[width=50pt]{missing.png}").1) geom none store
-  let missPdf := Pdf.write geom oneFace missOut.pages {} store
+  let missRaw := Pdf.write geom oneFace missOut.pages {} store
+  let missPdf := pdfText missRaw
   t "pdf placeholder draws an outline, embeds nothing"
     (bytesContain missPdf "re S" && !(bytesContain missPdf "/Subtype /Image"))
-  match checkXref missPdf with
+  match checkXref missRaw with
   | .ok _ => pure ()
   | .error e => failures ref s!"pdf xref with placeholder: {e}"
 

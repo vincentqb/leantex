@@ -203,4 +203,36 @@ theorem contrast_judged_complete
         (Contrast.judgedPairs doc).contains pr = true := by
   sorry
 
+-- owed: inflate_deflate_id
+-- owner: LeanTex.Core.Flate
+-- source: the build-cache slice (2026-09-21 survey wave): the engine grew a real compressor, and it owns both halves of the round trip — deflate emits only symbols inflate's tables decode, so the identity is the engine's to prove, not an interop hope. The executable oracle is scripts/flate-fuzz.lean (adversarial and random inputs, the fixtures' decoded planes, every stream cross-checked against a foreign inflater); the in-suite witnesses are the deflate-roundtrip rows in Tests/Backends.
+-- blocker: both sides are imperative loops (`Id.run`/`forIn` on the inflate side, fuel-shaped tail recursion on the deflate side) with no equational theory the round-trip induction can use. The factorization it needs: the encoder split into the block-structure functions the proof can walk (header emission, one Huffman-coded token, the code-length prelude), each with an emit/decode commutation lemma, and a bit-reader/bit-writer adjunction (`Br.bits` after `Bw.push`) at the bottom.
+-- goldens: no
+/-- The engine's inflate inverts its deflate on every input: the compressed
+streams the PDF writer emits (content, fonts, image planes, metadata, the
+object and cross-reference streams) decode back to exactly the bytes the
+engine meant, by the engine's own decoder. -/
+theorem inflate_deflate_id (b : ByteArray) :
+    Flate.inflate (Flate.deflate b) b.size = .ok b := by
+  sorry
+
+-- owed: decodeBin_encodeBin_id
+-- owner: LeanTex.Core.Image
+-- source: the build-cache slice (2026-09-21 survey wave): the driver's image cache files `Image.encodeBin`'s bytes under the source's content key, and transparency — a cache hit *is* the recomputation's value, keeping the artifact a function of the document and the font environment — is exactly this inversion. The in-suite witnesses are the image-cache serialization rows in Tests/Backends (a real decoded alpha PNG round-trips; foreign and truncated bytes refuse).
+-- blocker: the codec is fixed-offset field reads over `ByteArray.push`/`append`/`extract`, and the standard library's equational coverage for those (get-of-append, extract-of-append) is not yet enough to push the eleven field reads through; the statement also needs its honest side conditions spelled (each Nat field under 2³², `form = none`) before the per-field lemmas can compose.
+-- goldens: no
+/-- The image cache's serialization inverts: reading back `encodeBin`'s
+bytes yields the decoded object itself, field for field, for every raster
+`Info` the cache can hold (`form = none`; every scalar field within the
+u32 the format spells — both true of everything `Image.decode` produces).
+A cache hit therefore equals a recomputation. -/
+theorem decodeBin_encodeBin_id (i : Image.Info) (hf : i.form = none)
+    (hw : i.pxW < 4294967296) (hh : i.pxH < 4294967296)
+    (hx : i.dpiX < 4294967296) (hy : i.dpiY < 4294967296)
+    (hb : i.bitDepth < 4294967296)
+    (hp : i.palette.size < 4294967296) (hd : i.data.size < 4294967296)
+    (hs : i.smask.size < 4294967296) :
+    Image.decodeBin (Image.encodeBin i) = some i := by
+  sorry
+
 end Obligations

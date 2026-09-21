@@ -636,7 +636,7 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   t "the cmyk screen preview is the CSS device-cmyk conversion"
     (Ir.Color.ofCmyk 0 830 760 70 ==
       { r := 237, g := 40, b := 57, cmyk := some (0, 830, 760, 70) })
-  let cpdf := Pdf.write geom oneFace (layoutOf oneFace cdoc geom).pages cdoc.info
+  let cpdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace cdoc geom).pages cdoc.info)
   t "the pdf paints a cmyk colour in DeviceCMYK, components as declared"
     (bytesContain cpdf "0 0.83 0.76 0.07 k")
   t "the html backend converts, explicitly, to the preview"
@@ -649,7 +649,7 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   let (bdoc, bds) := elabStr
     "\\documentclass{card}\\page{ bleed = 3mm }\\begin{document}x\\end{document}"
   let bgeom := Layout.Geom.ofPage bdoc.page
-  let bpdf := Pdf.write bgeom oneFace (layoutOf oneFace bdoc bgeom).pages bdoc.info
+  let bpdf := pdfText (Pdf.write bgeom oneFace (layoutOf oneFace bdoc bgeom).pages bdoc.info)
   let (media, bleedBox, trim) := Pdf.pageBoxes bgeom.pageW bgeom.pageH bgeom.bleed
   t "a declared bleed writes trim, bleed and art boxes as consequences"
     (bds.all (·.severity != .error) &&
@@ -660,7 +660,7 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
   t "zero bleed writes no boxes: the defaults already say all boxes coincide"
     (let (zdoc, _) := elabStr "\\documentclass{card}\\begin{document}x\\end{document}"
      let zgeom := Layout.Geom.ofPage zdoc.page
-     let zpdf := Pdf.write zgeom oneFace (layoutOf oneFace zdoc zgeom).pages zdoc.info
+     let zpdf := pdfText (Pdf.write zgeom oneFace (layoutOf oneFace zdoc zgeom).pages zdoc.info)
      !bytesContain zpdf "/TrimBox" && !bytesContain zpdf "/BleedBox")
 
 /-- The band projection over synthetic outlines: the invariant is that no
@@ -2504,7 +2504,7 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "bleed reaches the page spec" (bDoc.page.bleed == Dim.mm 3)
   let bGeom := Layout.Geom.ofPage bDoc.page
   let bOut := layoutOf oneFace bDoc bGeom
-  let bPdf := Pdf.write bGeom oneFace bOut.pages
+  let bPdf := pdfText (Pdf.write bGeom oneFace bOut.pages)
   t "bleed writes a TrimBox 3mm in from the medium corner"
     (bytesContain bPdf "/TrimBox [8.504 8.504 251.15 161.518]")
   t "bleed grows the MediaBox by twice itself"
@@ -2514,8 +2514,8 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   t "bleed shifts the content with the trim box"
     (bytesContain bPdf "1 0 0 1 22.677 ")
   let plainGeom := Layout.Geom.ofPage cDoc.page
-  let plainPdf := Pdf.write plainGeom oneFace
-    (layoutOf oneFace cDoc plainGeom).pages
+  let plainPdf := pdfText (Pdf.write plainGeom oneFace
+    (layoutOf oneFace cDoc plainGeom).pages)
   t "no bleed, no TrimBox" (!bytesContain plainPdf "/TrimBox")
   -- What the class guarantees, stated as the assertions the engine already
   -- enforces. Declaring an assertion of the same form is intent and takes
@@ -2847,7 +2847,7 @@ def navLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- The emission itself, on the shipped bytes: the outline objects and the
   -- catalog's reference; a document with no nav ships neither, so an
   -- outline-free file is unchanged.
-  let pdf := Pdf.write geom oneFace out.pages {} {} out.outline
+  let pdf := pdfText (Pdf.write geom oneFace out.pages {} {} out.outline)
   t "the PDF carries the outline"
     (bytesContain pdf "/Outlines" && bytesContain pdf "/Title (One)" &&
      bytesContain pdf "/Title (Two)" && bytesContain pdf "/Dest [" &&
@@ -2856,7 +2856,7 @@ def navLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let plainOut := layoutOf oneFace plainDoc geom
   t "no nav, no outline, nothing emitted"
     (plainOut.outline.isEmpty &&
-      !bytesContain (Pdf.write geom oneFace plainOut.pages {} {} plainOut.outline)
+      !bytesContain (pdfText (Pdf.write geom oneFace plainOut.pages {} {} plainOut.outline))
         "/Outlines")
   t "the xref survives the outline objects"
     (match checkXref (Pdf.write geom oneFace out.pages {} {} out.outline) with

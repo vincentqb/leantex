@@ -113,6 +113,16 @@ list.
   the frame-title bar, and the standout inversion are resolved), lands in
   `Contrast.judgedPairs`. The geometric recovery is gone with refactor 2;
   what remains is the collect-walk induction behind the `Acc` split.
+- `inflate_deflate_id` — the engine's inflate inverts its deflate on every
+  input: the round trip the compressed PDF streams ride on, provable
+  because the engine owns both halves. Blocked on the encoder's shape
+  (imperative loops with no equational theory); the oracle meanwhile is
+  `scripts/flate-fuzz.lean`, with a foreign inflater as second judge.
+- `decodeBin_encodeBin_id` — the driver's image cache is transparent: its
+  serialization inverts exactly, so a cache hit is the recomputation's
+  value. Blocked on ByteArray equational coverage for the fixed-offset
+  codec; the in-suite witnesses are the serialization rows in
+  Tests/Backends.
 
 ### Log
 
@@ -220,6 +230,31 @@ is the acceptance.
   warnings and N0023 once, its tree drawn by the real genealogytree with
   its `\gtrset` highlight style applied; the four reference documents
   and the poster are byte-identical.
+
+2026-09-21 — a real deflate, image streams that compress, content-hash
+caches (build-cache slice): `Flate.deflate` is a true RFC 1951 compressor
+(LZ77 over a hash chain, one dynamic-Huffman block whose code sets come
+from boundary package-merge in the counting formulation), and every
+stream the PDF writer owns — content, ToUnicode, font files, XMP, the
+object and cross-reference streams — now rides compressed when that is
+smaller. An alpha PNG's decoded planes are Up-filtered and really
+deflated (Predictor 15 declared on both the image and its SMask), so the
+one deck whose 4575×4575 RGBA figure used to ship as 84 MB of stored
+blocks writes a 2.2 MB PDF (85,340,066 → 2,221,643 bytes); the paper
+drops 1,149,515 → ~643 KB, the résumé 1,617,002 → ~1,032 KB, the card
+1,234,712 → ~519 KB. The round trip is the engine's own to prove —
+deflate emits only symbols inflate's tables decode — and is owed as
+`inflate_deflate_id` (fuzz oracle `scripts/flate-fuzz.lean`, every stream
+cross-checked against a foreign inflater). Two content-hash caches join
+the boundary cache's pattern under `~/.cache/leantex`: `imgs/` holds the
+decoded-and-re-encoded image object (`Image.encodeBin`, transparency owed
+as `decodeBin_encodeBin_id`), `flate/` the deflated font files
+(`FontSet.zdata`, filled by the driver; the writer only picks the smaller
+spelling). Warm rebuilds: the deck 4010 → ~200 ms, the paper ~151 →
+~220 ms (the residual is the per-build deflate of content and metadata
+streams, ~60 ms — measured, kept for the 44 % size win). The reference
+PDFs are deliberately not byte-identical; equivalence is checked by
+`pdftotext`, `pdfimages -list`, and pixel-identical 100 dpi rasters.
 
 2026-09-21 — ragged looseness is priced, never free (fix-firstline): body
 ragged setting (`raggedItems`) now gives interword glue finite stretch —

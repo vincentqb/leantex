@@ -110,6 +110,45 @@ def bytesContain (hay : ByteArray) (needle : String) : Bool := Id.run do
     if ok then return true
   return false
 
+/-- The written PDF with every `/FlateDecode` stream the writer emitted
+inflated and appended: the view a `bytesContain` assertion reads now that
+content, object and metadata streams really compress. Raw facts (header,
+xref spelling, filter names) stay visible — the raw bytes lead — and
+every compressed stream's plain text follows. The writer's own spelling
+(`/Length {n} >>\nstream\n`) is the anchor; a stream whose dictionary
+names no flate filter is skipped as already plain. -/
+def pdfText (pdf : ByteArray) : ByteArray := Id.run do
+  let pat := " >>\nstream\n".toUTF8
+  let mut out := pdf
+  let mut i := 0
+  for _ in [0:pdf.size] do
+    if i + pat.size > pdf.size then break
+    let mut ok := true
+    for k in [0:pat.size] do
+      if pdf[i + k]! != pat[k]! then
+        ok := false
+        break
+    if !ok then
+      i := i + 1
+    else
+      -- Walk back over the dictionary to `obj` for the filter and length.
+      let dictStart := if i > 400 then i - 400 else 0
+      let head := String.ofList (((pdf.extract dictStart i).toList).map fun v =>
+        Char.ofNat (min v.toNat 127))
+      let dataOff := i + pat.size
+      let len? := do
+        let part ← (head.splitOn " /Length ").getLast?
+        (part.splitOn " ").head?.bind (·.toNat?)
+      match len? with
+      | none => i := i + 1
+      | some len =>
+        if (head.splitOn "/FlateDecode").length ≥ 2 then
+          let z := pdf.extract dataOff (dataOff + len)
+          if let .ok plain := LeanTex.Core.Flate.inflate z (len * 400 + 65536) then
+            out := out ++ plain
+        i := dataOff + len
+  return out
+
 /-- Re-verify a produced PDF's cross-reference stream: every type-1 entry
 must point at `N 0 obj`. Returns the number of verified offsets. -/
 def checkXref (pdf : ByteArray) : Except String Nat := do
@@ -153,13 +192,21 @@ def checkXref (pdf : ByteArray) : Except String Nat := do
   let some size := (sizePart.splitOn " ").head?.bind (·.toNat?) | throw "bad /Size"
   let some streamAbs := find xrefOff "stream\n" | throw "no stream data"
   let dataOff := streamAbs + "stream\n".length
+  -- The xref stream compresses like any writer-owned stream: the rows are
+  -- read through the declared filter.
+  let some lenPart := (head.splitOn " /Length ").getLast? | throw "no /Length"
+  let some dataLen := (lenPart.splitOn " ").head?.bind (·.toNat?) | throw "bad /Length"
+  let rows ← if (head.splitOn "/FlateDecode").length ≥ 2 then
+      LeanTex.Core.Flate.inflate (pdf.extract dataOff (dataOff + dataLen)) (7 * size)
+    else
+      pure (pdf.extract dataOff (dataOff + dataLen))
   let mut verified := 0
   for id in [1:size] do
-    let row := dataOff + 7 * id
-    let kind := (pdf[row]!).toNat
+    let row := 7 * id
+    let kind := (rows[row]!).toNat
     if kind == 1 then
-      let off := ((pdf[row+1]!).toNat * 256 + (pdf[row+2]!).toNat) * 65536 +
-        (pdf[row+3]!).toNat * 256 + (pdf[row+4]!).toNat
+      let off := ((rows[row+1]!).toNat * 256 + (rows[row+2]!).toNat) * 65536 +
+        (rows[row+3]!).toNat * 256 + (rows[row+4]!).toNat
       let expect := s!"{id} 0 obj"
       let got := ascii off (off + expect.utf8ByteSize)
       unless got == expect do

@@ -1,4 +1,5 @@
 import LeanTex.Core.Dim
+import LeanTex.Core.Flate
 import LeanTex.Core.Font
 import LeanTex.Core.HtmlDoc
 import LeanTex.Core.Layout
@@ -77,12 +78,6 @@ private def pdfName (s : String) : String := Id.run do
       out := out ++ "#" ++ String.ofList [hexDigit (c.toNat / 16), hexDigit c.toNat]
   return if out == "" then "Embedded" else out
 
-private def fnv64 (seed : UInt64) (b : ByteArray) : UInt64 := Id.run do
-  let mut h := seed
-  for byte in b do
-    h := (h ^^^ byte.toUInt64) * 1099511628211
-  return h
-
 /-- A rational `p / q` (`q > 0`) as a decimal, rounded once at the ninth
 digit: the precision a form's `/Matrix` needs — its scale entries are the
 reciprocal of a page box in points, and one rounding at 1e-9 lands the
@@ -111,14 +106,6 @@ private def renderChunks (base : Nat) (cs : Array PdfRead.Chunk) : ByteArray := 
     | .bytes bs => out := out ++ bs
     | .ref l => out := out ++ (s!"{base + l} 0 R").toUTF8
   return out
-
-private def hex16 (x : UInt64) : String := Id.run do
-  let mut s := ""
-  let mut v := x
-  for _ in [0:16] do
-    s := String.ofList [hexDigit (v % 16).toNat] ++ s
-    v := v / 16
-  return s
 
 /-- Used glyphs for one font: one char witness per gid, ascending gid. Mark
 array — the glyph stream is large (every glyph on every page), so no sorting. -/
@@ -755,10 +742,21 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     let w := w.putB data
     let w := w.put "\nendstream\nendobj\n"
     (w, off)
+  -- The same, compressed: every stream this writer owns (content,
+  -- ToUnicode, font files, XMP, the object and cross-reference streams)
+  -- rides as a real deflate whenever that is smaller, filter declared.
+  -- Image payloads and copied form graphs carry their own filters and
+  -- stay on `putStream`.
+  let putFlate (w : Wr) (id : Nat) (dict : String) (data : ByteArray) : Wr × Nat :=
+    let z := Flate.deflate data
+    if z.size < data.size then
+      putStream w id (dict ++ " /Filter /FlateDecode") z
+    else
+      putStream w id dict data
 
   for i in [0:np] do
     let data := (contentStream geom remap imgMap pages[i]!).toUTF8
-    let (w', off) := putStream w (contentId i) "" data
+    let (w', off) := putFlate w (contentId i) "" data
     w := w'
     locs := locs.set! (contentId i) (1, off)
 
@@ -836,8 +834,12 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         w := w'
         locs := locs.set! (imgId n) (1, off)
         if let some mid := smaskIds[n]?.getD none then
+          -- The alpha plane is Up-filtered before its deflate
+          -- (`Image.decodePng`), so the mask declares the same PNG
+          -- predictor its colour plane does (ISO 32000-2 §7.4.4.4).
           let mdict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
-/Height {inf.pxH} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode"
+/Height {inf.pxH} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode \
+/DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns {inf.pxW} >>"
           let (w'', moff) := putStream w mid mdict inf.smask
           w := w''
           locs := locs.set! mid (1, moff)
@@ -845,20 +847,28 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   for k in [0:nf] do
     let font := fs.get keep[k]!
     let tuData := (toUnicode usedPerFont[k]!).toUTF8
-    let (w', tuOff) := putStream w (toUniId k) "" tuData
+    let (w', tuOff) := putFlate w (toUniId k) "" tuData
     w := w'
     locs := locs.set! (toUniId k) (1, tuOff)
     let ffDict := if font.isCff then "/Subtype /OpenType" else s!"/Length1 {font.data.size}"
-    let (w'', ffOff) := putStream w (fileId k) ffDict font.data
+    -- The driver may have deflated this face already, through its
+    -- content-hash cache; the writer then only picks the smaller spelling.
+    let (w'', ffOff) := match fs.zdata[keep[k]!]?.getD none with
+      | some z =>
+        if z.size < font.data.size then
+          putStream w (fileId k) (ffDict ++ " /Filter /FlateDecode") z
+        else
+          putStream w (fileId k) ffDict font.data
+      | none => putFlate w (fileId k) ffDict font.data
     w := w''
     locs := locs.set! (fileId k) (1, ffOff)
 
-  let (wx, xmpOff) := putStream w xmpId "/Type /Metadata /Subtype /XML"
+  let (wx, xmpOff) := putFlate w xmpId "/Type /Metadata /Subtype /XML"
     (xmpPacket info).toUTF8
   w := wx
   locs := locs.set! xmpId (1, xmpOff)
 
-  let (w3, osOff) := putStream w objStmId
+  let (w3, osOff) := putFlate w objStmId
     s!"/Type /ObjStm /N {compressed.length} /First {first}" objStmData.toUTF8
   w := w3
   locs := locs.set! objStmId (1, osOff)
@@ -889,10 +899,10 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         rows := rows ++ ⟨#[UInt8.ofNat (objStmId / 16777216), UInt8.ofNat (objStmId / 65536 % 256),
           UInt8.ofNat (objStmId / 256 % 256), UInt8.ofNat (objStmId % 256)]⟩
         rows := rows ++ ⟨#[UInt8.ofNat (v / 256 % 256), UInt8.ofNat (v % 256)]⟩
-  let idA := hex16 (fnv64 14695981039346656037 w.out)
-  let idB := hex16 (fnv64 1099511628211 w.out)
+  let idA := Flate.hex16 (Flate.fnv64 14695981039346656037 w.out)
+  let idB := Flate.hex16 (Flate.fnv64 1099511628211 w.out)
   let xrefDict := s!"/Type /XRef /Size {size} /W [1 4 2] /Index [0 {size}] /Root 1 0 R /Info {infoId} 0 R /ID [<{idA}> <{idB}>]"
-  let w4 := (putStream w xrefId xrefDict rows).1
+  let w4 := (putFlate w xrefId xrefDict rows).1
   w := w4
   w := w.put s!"startxref\n{xrefOff}\n%%EOF\n"
   return w.out
