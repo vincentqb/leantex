@@ -324,25 +324,41 @@ def Color.ofCmyk (c m y k : Nat) : Color :=
     UInt8.ofNat (255 * (1000 - min 1000 (v * (1000 - min 1000 k) / 1000 + k)) / 1000)
   { r := ch c, g := ch m, b := ch y, cmyk := some (c, m, y, k) }
 
-/-- Thousandths as a PDF decimal: 830 ↦ "0.83". -/
+/-- The colour model a colour was declared in — read off the rider, never
+stored twice. Every colour operation is closed in its first operand's
+model (`mix_model_exact`), so a print colour reaches the PDF in the model
+the document wrote it in, whatever expression it travelled through. -/
+inductive Color.Model where
+  | srgb
+  | cmyk
+  deriving Repr, BEq, DecidableEq, Inhabited
+
+def Color.model (c : Color) : Color.Model :=
+  match c.cmyk with
+  | some _ => .cmyk
+  | none => .srgb
+
+/-- Thousandths as a PDF decimal: 830 ↦ "0.83". Built structurally over the
+digit list so a statement over the printed form can close by evaluation
+(`pdfMilli_decode`): `String.dropEndWhile`'s position recursion blocks
+kernel reduction. -/
 def Color.pdfMilli (v : Nat) : String :=
   let v := min v 1000
   if v == 0 then "0" else if v == 1000 then "1"
   else
-    let frac := toString v
-    let frac := ("".pushn '0' (3 - frac.length)) ++ frac
-    "0." ++ (frac.dropEndWhile (· == '0')).toString
+    let ds := Nat.toDigits 10 v
+    let ds := List.replicate (3 - ds.length) '0' ++ ds
+    "0." ++ String.ofList (ds.reverse.dropWhile (· == '0')).reverse
+
+/-- An 8-bit channel in thousandths, rounded half up: the one quantization
+between the IR's sRGB bytes and the PDF's decimals. 256 values land on 256
+distinct thousandths (`milli_inj`), so the PDF never merges two inks the
+HTML keeps apart. -/
+def Color.milli (v : UInt8) : Nat := (v.toNat * 1000 + 127) / 255
 
 /-- PDF wants components in 0–1; three decimals is finer than 8-bit input. -/
 def Color.pdfComponents (c : Color) : String :=
-  let f (v : UInt8) : String :=
-    let milli := (v.toNat * 1000 + 127) / 255
-    if milli == 0 then "0" else if milli == 1000 then "1"
-    else
-      let frac := toString milli
-      let frac := ("".pushn '0' (3 - frac.length)) ++ frac
-      "0." ++ (frac.dropEndWhile (· == '0')).toString
-  s!"{f c.r} {f c.g} {f c.b}"
+  pdfMilli (milli c.r) ++ " " ++ pdfMilli (milli c.g) ++ " " ++ pdfMilli (milli c.b)
 
 /-- The fill-colour operation for this colour: a CMYK declaration paints in
 `DeviceCMYK` with its own components (`k` sets fill colour in DeviceCMYK,
@@ -371,6 +387,85 @@ theorem Color.cmyk_components_kept (c m y k : Nat) :
     (Color.ofCmyk c m y k).pdfFill
       = s!"{pdfMilli c} {pdfMilli m} {pdfMilli y} {pdfMilli k} k" := by
   exact ⟨rfl, rfl⟩
+
+/-- An RGB declaration paints in `DeviceRGB` from its thousandths: the
+`rg` half of the one emission site, by definition. -/
+theorem Color.pdfFill_srgb (c : Color) (h : c.cmyk = none) :
+    c.pdfFill = s!"{c.pdfComponents} rg" := by
+  simp [Color.pdfFill, h]
+
+/-- The reader of `pdfMilli`'s output: `"1"` ↦ 1000, `"0.d…"` ↦ the digits
+padded to three, anything else 0. Exists for `pdfMilli_decode`. -/
+def Color.decodeMilli (s : String) : Nat :=
+  match s.toList with
+  | '0' :: '.' :: ds =>
+    (ds ++ List.replicate (3 - ds.length) '0').foldl
+      (fun acc d => acc * 10 + (d.toNat - '0'.toNat)) 0
+  | cs => if cs == ['1'] then 1000 else 0
+
+/-- Every thousandth the PDF can print reads back as itself. -/
+theorem Color.pdfMilli_decode : ∀ v < 1001, decodeMilli (pdfMilli v) = v := by
+  decide +kernel
+
+/-- No printed thousandth contains the separator the components are
+joined with — what lets `pdfComponents_inj` split the string. -/
+theorem Color.pdfMilli_no_space :
+    ∀ v < 1001, (pdfMilli v).toList.all (· != ' ') = true := by
+  decide +kernel
+
+/-- 256 channel values land on 256 distinct thousandths. -/
+theorem Color.milli_inj (a b : UInt8) (h : milli a = milli b) : a = b := by
+  have ha : a.toNat < 256 := a.toNat_lt
+  have hb : b.toNat < 256 := b.toNat_lt
+  simp only [milli] at h
+  exact UInt8.toNat_inj.mp (by omega)
+
+theorem Color.milli_lt (a : UInt8) : milli a < 1001 := by
+  have := a.toNat_lt
+  simp only [milli]
+  omega
+
+private theorem sep_inj (a a' r r' : List Char)
+    (ha : a.all (· != ' ') = true) (ha' : a'.all (· != ' ') = true)
+    (h : a ++ ' ' :: r = a' ++ ' ' :: r') : a = a' ∧ r = r' := by
+  induction a generalizing a' with
+  | nil =>
+    cases a' with
+    | nil => simpa using h
+    | cons c cs =>
+      simp only [List.nil_append, List.cons_append, List.cons.injEq] at h
+      simp [← h.1] at ha'
+  | cons c cs ih =>
+    cases a' with
+    | nil =>
+      simp only [List.cons_append, List.nil_append, List.cons.injEq] at h
+      simp [h.1] at ha
+    | cons c' cs' =>
+      simp only [List.cons_append, List.cons.injEq] at h
+      simp only [List.all_cons, Bool.and_eq_true] at ha ha'
+      have := ih cs' ha.2 ha'.2 h.2
+      exact ⟨by rw [h.1, this.1], this.2⟩
+
+/-- Two colours never share a printed component triple unless they agree
+as sRGB: the PDF twin of `cssColor_inj`, so the two backends keep apart
+exactly the same inks. The CMYK rider is not determined and not claimed:
+it is the `k` operator's channel (`cmyk_components_kept`), never printed
+through `pdfComponents`. -/
+theorem Color.pdfComponents_inj (a b : Color) (h : a.pdfComponents = b.pdfComponents) :
+    a.r = b.r ∧ a.g = b.g ∧ a.b = b.b := by
+  have hl := congrArg String.toList h
+  have hs : " ".toList = [' '] := rfl
+  simp only [pdfComponents, String.toList_append, List.append_assoc, hs,
+    List.singleton_append] at hl
+  have ns (v : UInt8) := pdfMilli_no_space (milli v) (milli_lt v)
+  obtain ⟨h1, hl⟩ := sep_inj _ _ _ _ (ns a.r) (ns b.r) hl
+  obtain ⟨h2, h3⟩ := sep_inj _ _ _ _ (ns a.g) (ns b.g) hl
+  have dec (x y : UInt8) (e : (pdfMilli (milli x)).toList = (pdfMilli (milli y)).toList) :
+      x = y := by
+    have e' := congrArg decodeMilli (String.ext e)
+    rw [pdfMilli_decode _ (milli_lt x), pdfMilli_decode _ (milli_lt y)] at e'
+    exact milli_inj _ _ e'
+  exact ⟨dec _ _ h1, dec _ _ h2, dec _ _ h3⟩
 
 /-- The colour printer's marks paint in. ISO 32000-2 §8.6.6.4 names the
 special colorant `All` — "useful for purposes such as painting
@@ -818,12 +913,71 @@ theorem declare_decorative_names (p : Palette) (k : String) (c : Color) :
 
 def Color.white : Color := { r := 255, g := 255, b := 255 }
 
-/-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`,
-per sRGB channel, rounded. -/
-def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
-  let ch (x y : UInt8) : UInt8 :=
-    UInt8.ofNat ((x.toNat * pct + y.toNat * (100 - pct) + 50) / 100)
+/-- `pct`% of `x` over the rest of `y`, rounded half up — the one mixing
+step, in whichever unit the model's components come in. -/
+def Color.mixStep (x y pct : Nat) : Nat := (x * pct + y * (100 - pct) + 50) / 100
+
+/-- xcolor's `!` mix in sRGB: per 8-bit channel, rounded. The RGB path
+of `mix`, bytewise the function every theme bundle was mixed with. -/
+def Color.mixSrgb (a : Color) (pct : Nat) (b : Color) : Color :=
+  let ch (x y : UInt8) : UInt8 := UInt8.ofNat (mixStep x.toNat y.toNat pct)
   { r := ch a.r b.r, g := ch a.g b.g, b := ch a.b b.b }
+
+/-- A colour's components in the CMYK model: its own when declared there,
+otherwise xcolor's rgb→cmy→cmyk conversion (manual §6.2: `cmy = 1 − rgb`,
+`k = min(c, m, y)`, then each of c, m, y less `k`), over the same
+thousandths `pdfComponents` prints — so white is `(0,0,0,0)` and the
+conversion is exact on the quantized channels. -/
+def Color.toCmyk (c : Color) : Nat × Nat × Nat × Nat :=
+  match c.cmyk with
+  | some q => q
+  | none =>
+    let cy := 1000 - milli c.r
+    let m := 1000 - milli c.g
+    let y := 1000 - milli c.b
+    let k := min cy (min m y)
+    (cy - k, m - k, y - k, k)
+
+/-- xcolor's `!` mix in CMYK: per declared component, exactly, the second
+operand brought into the model by `toCmyk`. The result is a CMYK
+declaration (`ofCmyk`), so its preview and its PDF paint follow the same
+two rules every declared print colour follows. -/
+def Color.mixCmyk (a : Nat × Nat × Nat × Nat) (pct : Nat) (b : Color) : Color :=
+  let q := b.toCmyk
+  Color.ofCmyk (mixStep a.1 q.1 pct) (mixStep a.2.1 q.2.1 pct)
+    (mixStep a.2.2.1 q.2.2.1 pct) (mixStep a.2.2.2 q.2.2.2 pct)
+
+/-- One step of xcolor's `!` mix: `pct`% of `a` over the rest of `b`, in
+`a`'s model (xcolor manual §2.3.2: an expression is evaluated in the model
+of its first colour). -/
+def Color.mix (a : Color) (pct : Nat) (b : Color) : Color :=
+  match a.cmyk with
+  | some q => mixCmyk q pct b
+  | none => mixSrgb a pct b
+
+/-- Mixing is closed in the first operand's model: a CMYK-first expression
+stays CMYK, an RGB-first one stays RGB — the xcolor rule as an equation
+over the engine's `mix`. -/
+theorem Color.mix_model_exact (a b : Color) (pct : Nat) :
+    (a.mix pct b).model = a.model := by
+  unfold Color.mix Color.model
+  cases a.cmyk <;> rfl
+
+/-- On the sRGB path `mix` is `mixSrgb`, bytewise the per-channel function
+of before — what keeps every RGB-only theme bundle's value, and so every
+contrast contract's `decide`, exactly where it was. -/
+theorem Color.mix_srgb_id (a b : Color) (pct : Nat) (h : a.cmyk = none) :
+    a.mix pct b = a.mixSrgb pct b := by
+  simp [Color.mix, h]
+
+/-- A CMYK-first mix keeps every component the arithmetic says, exactly:
+the rider of the result is the per-component step over the declared
+operands. -/
+theorem Color.mix_cmyk_exact (a b : Color) (pct : Nat) (q : Nat × Nat × Nat × Nat)
+    (h : a.cmyk = some q) :
+    (a.mix pct b).cmyk = some (mixStep q.1 b.toCmyk.1 pct, mixStep q.2.1 b.toCmyk.2.1 pct,
+      mixStep q.2.2.1 b.toCmyk.2.2.1 pct, mixStep q.2.2.2 b.toCmyk.2.2.2 pct) := by
+  simp [Color.mix, h, Color.mixCmyk, Color.ofCmyk]
 
 /-- The `!`-separated parts of a palette expression, each trimmed of ASCII
 whitespace: structural recursion the kernel evaluates, so a contract over
@@ -870,6 +1024,11 @@ def xcolorBase (s : String) : Option Color :=
   | "lightgray" => some { r := 191, g := 191, b := 191 }
   | _ => none
 
+/-- One atom of a palette expression: a declared entry first, then xcolor's
+base colours — the single reader every name in an expression goes through. -/
+def Palette.atom (p : Palette) (s : String) : Option Color :=
+  (p.find? s).orElse fun _ => xcolorBase s
+
 /-- A palette expression: a name, or xcolor's `!` mix folding left —
 `a!30!b` is 30% of `a` over `b`, and a trailing `a!30` mixes toward white,
 so `black!2` is a near-white. xcolor's base colours are always available
@@ -881,8 +1040,6 @@ an entry `black` painted the declared colour where `find?` resolved and
 pure black where a mix or `\textcolor` did
 (`role_resolves_at_one_site` is the contract). -/
 def Palette.resolve (p : Palette) (expr : String) : Option Color :=
-  let atom (s : String) : Option Color :=
-    (p.find? s).orElse fun _ => xcolorBase s
   let rec go (c : Color) : List String → Option Color
     | [] => some c
     | pctS :: rest =>
@@ -893,15 +1050,60 @@ def Palette.resolve (p : Palette) (expr : String) : Option Color :=
         else match rest with
           | [] => some (c.mix pct Color.white)
           | name :: rest' =>
-            match atom name with
+            match p.atom name with
             | some b => go (c.mix pct b) rest'
             | none => none
   match bangParts [] expr.toList with
   | [] => none
   | first :: rest =>
-    match atom first with
+    match p.atom first with
     | some c => go c rest
     | none => none
+
+/-- The mixing fold never leaves the model it started in: every step is a
+`mix` whose first operand is the accumulator (`mix_model_exact`). -/
+theorem Palette.resolve_go_model_exact (p : Palette) :
+    ∀ (parts : List String) (c c' : Color), Palette.resolve.go p c parts = some c' →
+      c'.model = c.model
+  | [], c, c', h => by
+    simp only [Palette.resolve.go, Option.some.injEq] at h
+    rw [h]
+  | [pctS], c, c', h => by
+    simp only [Palette.resolve.go] at h
+    split at h
+    · exact absurd h (by simp)
+    · split at h
+      · exact absurd h (by simp)
+      · simp only [Option.some.injEq] at h
+        rw [← h, Color.mix_model_exact]
+  | pctS :: name :: rest', c, c', h => by
+    simp only [Palette.resolve.go] at h
+    split at h
+    · exact absurd h (by simp)
+    · split at h
+      · exact absurd h (by simp)
+      · split at h
+        · have := Palette.resolve_go_model_exact p rest' _ _ h
+          rw [this, Color.mix_model_exact]
+        · exact absurd h (by simp)
+
+/-- A palette expression resolves in the model of its first atom, whatever
+the expression mixes in after it: `press!50!ink2` is a CMYK colour when
+`press` is, `brand!50!press` an RGB one when `brand` is (xcolor manual
+§2.3.2). Stated over the expression's own head, as `bangParts` splits it,
+and over `atom`, the reader `resolve` itself uses for it. -/
+theorem Palette.resolve_model_exact (p : Palette) (expr : String) (c : Color)
+    (h : p.resolve expr = some c) :
+    ∃ first rest a, bangParts [] expr.toList = first :: rest ∧
+      p.atom first = some a ∧ c.model = a.model := by
+  unfold Palette.resolve at h
+  split at h
+  · exact absurd h (by simp)
+  · rename_i first rest hparts
+    split at h
+    · rename_i a ha
+      exact ⟨first, rest, a, hparts, ha, Palette.resolve_go_model_exact p rest a c h⟩
+    · exact absurd h (by simp)
 
 /-- Font families a document asks for, as declared by `\fonts`. `dirs` are
 directories of font files the document ships, relative to the document, so a

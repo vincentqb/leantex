@@ -548,6 +548,22 @@ def centeringChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a table's center group is transparent: same Ir and diagnostics"
     (tg == tf && sig tgDs == sig tfDs && tgDs.all (·.code != "W0301"))
 
+/-- Both backends print one triple for an RGB colour: the HTML hex and the
+PDF `rg` operands are two projections of the one `Ir.Color` — and both are
+injective (`cssColor_inj`, `pdfComponents_inj`), so the two artifacts keep
+apart exactly the same inks. A projection corollary in the shape of
+`Pdf.html_fonts_cover_pdf`; it stands beside the tests rather than in a
+backend module because it names both backends and neither imports the
+other's colour printer. -/
+theorem backend_rgb_exact (c : Ir.Color) (h : c.cmyk = none) :
+    HtmlDoc.cssColor c =
+        "#" ++ Ir.Color.hexByte c.r false ++ Ir.Color.hexByte c.g false ++
+          Ir.Color.hexByte c.b false ∧
+      c.pdfFill = Ir.Color.pdfMilli (Ir.Color.milli c.r) ++ " " ++
+        Ir.Color.pdfMilli (Ir.Color.milli c.g) ++ " " ++
+        Ir.Color.pdfMilli (Ir.Color.milli c.b) ++ " rg" :=
+  ⟨rfl, by rw [Ir.Color.pdfFill_srgb c h]; rfl⟩
+
 /-- `\vspace{\fill}` and `\vfill`: TeX's first-order infinite glue, whose
 share of the page's leftover is what places the content. Asserted over
 `Layout.Out` — the claim is about where lines land, never about an IR
@@ -651,6 +667,32 @@ def filChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit :=
     (((HtmlDoc.emit {} cdoc).1.splitOn
         (HtmlDoc.cssColor (Ir.Color.ofCmyk 0 830 760 70))).length ≥ 2 &&
       HtmlDoc.cssColor (Ir.Color.ofCmyk 0 830 760 70) == "#ed2839")
+  -- A colour expression keeps its model (xcolor §2.3.2: evaluated in the
+  -- first colour's model). Before `mix` dispatched on the model, a
+  -- CMYK-first mix was repainted as DeviceRGB — `0 0.502 0.502 rg` for
+  -- `press!50!ink2` — and `cmyk_components_kept` covered atoms only.
+  let (mdoc, mds) := elabStr
+    "\\documentclass{article}\\definecolor{press}{cmyk}{1,0,0,0}\
+\\definecolor{ink2}{cmyk}{0,0,0,1}\\definecolor{brand}{HTML}{336699}\
+\\begin{document}\\textcolor{press!50!ink2}{x}\\end{document}"
+  t "a cmyk-first mix of two cmyk atoms stays cmyk with exact components"
+    (mds.all (·.severity != .error) &&
+      (mdoc.palette.resolve "press!50!ink2").map (·.cmyk) == some (some (500, 0, 0, 500)))
+  t "a trailing percentage mixes a cmyk colour toward cmyk white, exactly"
+    ((mdoc.palette.resolve "press!50").map (·.cmyk) == some (some (500, 0, 0, 0)) &&
+      (mdoc.palette.resolve "press!30!ink2!50").map (·.cmyk) == some (some (150, 0, 0, 350)))
+  t "an rgb-first mix stays rgb whatever it mixes in"
+    ((mdoc.palette.resolve "brand!50!press").map (·.cmyk) == some none &&
+      (mdoc.palette.resolve "brand!50!press").map (·.model) == some Ir.Color.Model.srgb)
+  t "an rgb atom enters a cmyk mix through xcolor's rgb→cmy→cmyk conversion"
+    ((mdoc.palette.resolve "press!50!brand").map (·.cmyk) ==
+      some (some (700, 100, 0, 200)) &&
+      (mdoc.palette.resolve "press!50!brand").map (·.model) == some Ir.Color.Model.cmyk)
+  t "the mixed cmyk colour's preview is its own declared-model preview"
+    ((mdoc.palette.resolve "press!50!ink2") == some (Ir.Color.ofCmyk 500 0 0 500))
+  let mpdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace mdoc geom).pages mdoc.info)
+  t "the pdf paints a cmyk-first mix in DeviceCMYK, never as an rgb repaint"
+    (bytesContain mpdf "0.5 0 0 0.5 k" && !bytesContain mpdf "0 0.502 0.502 rg")
   -- The print boxes follow from the declared bleed: pageBoxes_nest proves
   -- TrimBox ⊆ BleedBox ⊆ MediaBox with the trim at the declared size;
   -- this pins that the written page dictionary carries all three.

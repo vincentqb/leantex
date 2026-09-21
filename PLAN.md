@@ -141,6 +141,40 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — a colour expression keeps its model (color-model-exact, S1 of
+the modern-output wave 1). `Color.mix` mixed per sRGB channel whatever its
+operands were declared in, so a CMYK-first expression — `press!50!ink2`,
+both atoms CMYK — lost its rider and repainted as `0 0.502 0.502 rg`
+while `cmyk_components_kept` covered atoms alone. Now `mix` dispatches on
+its first operand's model (xcolor manual §2.3.2: an expression is
+evaluated in the model of its first colour): `mixCmyk` steps each
+declared component exactly, the second operand brought into the model by
+`toCmyk` (its own rider, else xcolor's rgb→cmy→cmyk over the thousandths
+`pdfComponents` prints), and the result is an `ofCmyk` declaration, so
+its preview and its `k` follow the two rules every declared print colour
+already follows; `mixSrgb` is the old function, bytewise. Theorems:
+`Color.mix_model_exact`, `Color.mix_cmyk_exact`, `Color.mix_srgb_id`
+(every RGB-only bundle's value is where it was, which is why no contrast
+contract moved), `Color.pdfComponents_inj` (the PDF twin of
+`cssColor_inj`, through `milli_inj` and a decoder of `pdfMilli`'s output
+closed by `decide +kernel`), and `backend_rgb_exact` beside the tests.
+`Palette.resolve_model_exact` closed rather than staged: the ratification
+named `resolve.go`'s interleaving of parsing and mixing as its blocker,
+but `go` is a `let rec` over the already-split parts list, so structural
+induction on that list reaches `mix_model_exact` at every step
+(`resolve_go_model_exact`) and the `evalExpr ∘ parseExpr` factorization
+is not needed — § Owed obligations is unchanged at seven rows. Evidence:
+five new Layout checks red at the old `mix` (the RGB-first check passed
+before and after, a regression guard); goldens unchanged, and no corpus
+fixture declares a `cmyk` colour at all; `Contrast.lean` 24.9 s against
+24.5 s and `Theme.lean` 4.1 s against 3.9 s, single-file compiles on the
+same host; a `\pagecolor{press!50!ink2}` swatch renders `#3E7C94` under
+Ghostscript 10.08 and `#49768D` under Poppler 26.09 — two managed CMYK
+conversions, neither the `#008080` an `rg` repaint would give — while
+`\pagecolor{brand!50!press}` renders `#1AB3CC` under both, the IR's own
+preview. Not in this slice: `Color.registration` still reads the palette,
+not shipped inks (W2.4 with `colorModels`).
+
 2026-09-21 — table header rows: one IR fact, `<thead>`/`<th>` in HTML
 (M7-08, `table-header-ir`). booktabs' head was knowable at elaboration
 — the rows before the first `\midrule` — and recorded nowhere, so the
