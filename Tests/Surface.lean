@@ -1307,6 +1307,37 @@ def classOptionChecks (ref : IO.Ref (List String)) : IO Unit := do
     (errCodes ("\\documentclass{slides}\\page{ size = 17:9 }" ++
       "\\begin{document}x\\end{document}") == ["E0324"])
 
+/-- The lineno page keys at the elaboration tier: the declared flag and
+its modulus land on the spec, the LaTeX spellings translate onto them, and
+a bad value is refused by name. The drawn contract — every counted line
+numbered at its baseline, consecutively across pages — lives in the census
+(`censusTable`'s lineno rows), never here: goldens and specs witness
+elaboration only. -/
+def linenoChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pageOf (pre : String) : Ir.PageSpec :=
+    (elabStr s!"\\documentclass\{article}{pre}\\begin\{document}x\\end\{document}").1.page
+  t "the declared flag lands on the spec"
+    ((pageOf "\\page{ linenumbers = on }").linenumbers == some true)
+  t "linenumbers translates on, nolinenumbers off, the last declaration wins"
+    ((pageOf "\\usepackage{lineno}\\linenumbers").linenumbers == some true &&
+     (pageOf "\\usepackage{lineno}\\linenumbers\\nolinenumbers").linenumbers
+       == some false)
+  t "modulolinenumbers lands its modulus; the bare form is the documented five"
+    ((pageOf "\\usepackage{lineno}\\modulolinenumbers[4]").lineModulo == some 4 &&
+     (pageOf "\\usepackage{lineno}\\modulolinenumbers").lineModulo == some 5)
+  t "the modulo package option is the same five"
+    ((pageOf "\\usepackage[modulo]{lineno}").lineModulo == some 5)
+  t "a bad flag and a zero modulus are refused by name"
+    (errCodes ("\\documentclass{article}\\page{ linenumbers = maybe, modulo = 0 }" ++
+      "\\begin{document}x\\end{document}") == ["E0323", "E0323"])
+  t "the pagewise option is refused named"
+    ((warnCodes ("\\documentclass{article}\\usepackage[pagewise]{lineno}" ++
+      "\\begin{document}x\\end{document}")) == ["W0101"])
+  t "no class turns line numbers on"
+    ((pageOf "").linenumbers == none &&
+     !(elabStr "\\documentclass{article}\\begin{document}x\\end{document}").1.lineNumbersOn)
+
 /-- The package-claim index: every package in `Compat.nativePackages` ships
 `tests/compat-index/<pkg>.txt`, its user-facing command surface as
 reviewable data — one line per command, `<place> <annotation> <call>`,

@@ -2,6 +2,71 @@ import Tests.Support
 
 open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
+/-- The margin number column of a page census: furniture lines standing
+left of the measure. The plain foot's page number is furniture too, but
+it centres inside the measure, so the x test tells them apart. -/
+def marginNumbers (geom : Layout.Geom) (c : Array CensusPage) :
+    Array (Array CensusLine) :=
+  c.map fun p => p.lines.filter fun l =>
+    l.furniture && l.x + l.width ≤ geom.hmargin
+
+/-- The shipped-page rule for `\page{ linenumbers = on }`: on a numbered
+page every counted body line carries exactly one margin number at its own
+baseline, and the numbers run consecutively across pages from 1. -/
+def linenoCensus (geom : Layout.Geom) (c : Array CensusPage) :
+    List (String × Bool) :=
+  let margin := marginNumbers geom c
+  let counted := c.map fun p => p.lines.filter (·.counted)
+  [("the article spans two pages", c.size ≥ 2),
+   ("every counted body line carries exactly one margin number at its \
+baseline, consecutively from 1 across pages",
+     Id.run do
+       let mut k := 0
+       let mut ok := true
+       for (cl, ml) in counted.zip margin do
+         ok := ok && ml.size == cl.size
+         for l in cl do
+           k := k + 1
+           ok := ok && (ml.filter fun m =>
+             m.y == l.y && m.text.trimAscii.toString == toString k).size == 1
+       return ok && k > 0),
+   ("the heading line is counted",
+     ((c[0]?.bind fun p => p.lines.find? fun l =>
+       hasStr l.text "Numbered galley").map (·.counted)).getD false),
+   ("the display formula's line is counted — numbered like every line \
+here, where lineno's default is not (the recorded divergence)",
+     ((c[0]?.bind fun p => p.lines.find? fun l =>
+       hasStr l.text "=").map (·.counted)).getD false),
+   ("the float's body and caption are box content, not counted",
+     c.toList.all fun p => p.lines.all fun l =>
+       !(hasStr l.text "floated caption" && l.counted) &&
+       !(hasStr l.text "float body" && l.counted)),
+   ("the footnote is an insertion, not counted",
+     c.toList.all fun p => p.lines.all fun l =>
+       !(hasStr l.text "insertion" && l.counted)),
+   ("the numbers set at the footnotesize step, right-aligned with the \
+undeclared column hanging from half the margin",
+     (margin.toList.all fun ml => ml.toList.all fun m =>
+       m.size == Ir.scaleStep geom.fontSize "footnotesize" &&
+       m.x + m.width == geom.hmargin / 2) &&
+     margin.toList.any (!·.isEmpty))]
+
+/-- The modulo half of the rule: the count advances on every counted
+line, and the modulus filters what prints — multiples only, in order,
+each at a counted line's own baseline. -/
+def linenoModuloCensus (geom : Layout.Geom) (c : Array CensusPage) :
+    List (String × Bool) :=
+  let margin := (marginNumbers geom c).foldl (· ++ ·) #[]
+  let countedLines := c.foldl (fun a p => a ++ p.lines.filter (·.counted)) #[]
+  [("one page", c.size == 1),
+   ("the count crosses the second modulus", countedLines.size ≥ 10),
+   ("only multiples of five print, in order — the count still advances \
+on every counted line",
+     margin.map (·.text.trimAscii.toString) ==
+       (Array.range (countedLines.size / 5)).map fun i => toString ((i + 1) * 5)),
+   ("each printed number stands at a counted line's own baseline",
+     margin.all fun m => countedLines.any fun l => l.y == m.y)]
+
 /-- Census assertions, one row per golden fixture: what each fixture's
 shipped pages must show, judged from `Layout.Out` — never from the IR dump,
 which witnesses elaboration only. `censusChecks` fails when a fixture in
@@ -702,7 +767,9 @@ def censusTable :
             r.2.1 < cc.2 + geom.markGap ∧ cc.2 - geom.markGap < r.2.1 + r.2.2.2)),
     ("the marks are duplex-symmetric: the horizontal flip maps each onto a mark",
       c.all fun p => p.fillRects.all fun r =>
-        p.fillRects.contains (geom.pageW - r.1 - r.2.2.1, r.2.1, r.2.2.1, r.2.2.2))])]
+        p.fillRects.contains (geom.pageW - r.1 - r.2.2.1, r.2.1, r.2.2.1, r.2.2.2))]),
+  ("lineno", linenoCensus),
+  ("lineno-modulo", linenoModuloCensus)]
 
 /-- The outline tier of the census: the PDF document outline is backend
 emission (an unpinned nav's paged rendering, ISO 32000-2 §12.3.3), so a

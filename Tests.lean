@@ -118,6 +118,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   compatConservationChecks ref
   crefChecks ref
   classOptionChecks ref
+  linenoChecks ref
   footnoteChecks ref
   mathChecks ref
   bibChecks ref

@@ -79,7 +79,7 @@ def goldenNames : List String :=
    "tables", "tables-ragged", "subfigures", "float-center",
    "math-companion", "math-first", "abstract", "crossref", "eqnum", "footnotes",
    "redefine", "titlebars", "daylight", "blocks", "poster", "listings",
-   "algorithm"]
+   "algorithm", "lineno", "lineno-modulo"]
 
 -- KP test helpers: word/glue/forced-break item builders and a brute-force
 -- optimum to cross-check the DP against.
@@ -250,6 +250,13 @@ structure CensusLine where
   footer's right slot must sit whatever the left slot holds. -/
   width : Dim.Sp
   text : String
+  /-- The line stands in the reserved margin band by design
+  (`Layout.LineOut.furniture`): running head and foot, chrome slots, the
+  logo — and the margin line numbers. -/
+  furniture : Bool := false
+  /-- A counted body line (`Layout.LineOut.counted`): a galley text line
+  the line-number census counts — what a margin number attaches to. -/
+  counted : Bool := false
 
 structure CensusPage where
   lines : Array CensusLine
@@ -317,7 +324,8 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
       -- line reports its measure edge: the ink deliberately hangs
       -- `l.hang` left of it (`Layout.protrudeLeft`).
       lines := lines.push { x := l.x + l.hang, y := l.y, size := runSize
-                            width := l.setWidth, text := chars }
+                            width := l.setWidth, text := chars
+                            furniture := l.furniture, counted := l.counted }
       covered := covered.push ' '
     pages := pages.push { lines := lines
                           covered := covered

@@ -1,0 +1,8 @@
+class article
+page 420x595 vmargin 72 hmargin 72
+para
+  text "One long invented paragraph of entirely synthetic prose, written only so that it wraps across at least ten full lines of the page measure: the modulo option prints a number on every fifth line while the count still advances on every counted line, so the margin must show five and ten and nothing between them. More filler continues here, saying nothing at all in particular, sentence after invented sentence, until the paragraph has comfortably crossed the tenth line of the galley and the second printed number has an anchor to stand beside, with a little slack to spare so a font metric change does not drop the line count below the bound."
+-- diagnostics
+note[N0100] 2:1 '\usepackage[modulo]{lineno}' → \page{ modulo = 5 }
+note[N0100] 2:1 '\usepackage{lineno}' → nothing: \page{ linenumbers = on } turns line numbers on
+note[N0100] 3:1 '\linenumbers' → \page{ linenumbers = on }

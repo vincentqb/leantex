@@ -1,0 +1,25 @@
+\documentclass{article}
+\usepackage{lineno}
+\linenumbers
+\page{ size = a5, height = 300pt, measure = free }
+\begin{document}
+\section{Numbered galley}
+An invented opening paragraph, set long enough that it wraps across
+several lines of the narrow synthetic page it stands on, so the margin
+count has body lines to attach to.
+\begin{equation*}
+e = m c^2
+\end{equation*}
+A second paragraph carries a mark.\footnote{The note is an insertion
+and carries no number.}
+\begin{figure}
+A synthetic float body line.
+\caption{A floated caption carries no number.}
+\end{figure}
+A third paragraph continues the invented prose so that the galley runs
+past the first page boundary and the count is seen to continue rather
+than restart.
+
+A closing paragraph on the far side of the break, still counted in the
+same running sequence from one.
+\end{document}

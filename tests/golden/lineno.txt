@@ -1,0 +1,26 @@
+class article
+page 420x300 vmargin 72 hmargin 72
+section 1 number "1"
+  text "Numbered galley"
+para
+  text "An invented opening paragraph, set long enough that it wraps across several lines of the narrow synthetic page it stands on, so the margin count has body lines to attach to."
+center
+  para
+    formula display "e = m c^2"
+      ord:𝑒 rel:= ord:𝑚 ord:𝑐^{ord:2}
+para
+  text "A second paragraph carries a mark."
+  footnote 1
+    text "The note is an insertion and carries no number."
+float figure 1
+  caption
+    text "A floated caption carries no number."
+  para
+    text "A synthetic float body line."
+para
+  text "A third paragraph continues the invented prose so that the galley runs past the first page boundary and the count is seen to continue rather than restart."
+para
+  text "A closing paragraph on the far side of the break, still counted in the same running sequence from one."
+-- diagnostics
+note[N0100] 2:1 '\usepackage{lineno}' → nothing: the engine does this itself
+note[N0100] 3:1 '\linenumbers' → \page{ linenumbers = on }
