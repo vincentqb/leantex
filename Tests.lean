@@ -3,6 +3,7 @@ import Tests.Surface
 import Tests.Layout
 import Tests.Census
 import Tests.Backends
+import Tests.Images
 import Tests.Diag
 import Tests.Themes
 import Tests.FontMath

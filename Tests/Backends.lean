@@ -1208,7 +1208,7 @@ def sizeLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let out := layoutOf oneFace doc
   let sizes := (bodyLines out).flatMap fun l => l.segs.filterMap fun s =>
     match s with
-    | .run _ _ _ _ _ size _ _ _ _ => some size
+    | .run _ _ _ _ _ size _ _ _ => some size
     | _ => none
   t "the venue tiny sets at 0.6 of the body on the shipped page"
     (sizes.contains (doc.page.fontSize * 600 / 1000) &&
@@ -1223,7 +1223,7 @@ def sizeLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let psizes := (bodyLines (layoutOf oneFace plain)).flatMap fun l =>
     l.segs.filterMap fun s =>
       match s with
-      | .run _ _ _ _ _ size _ _ _ _ => some size
+      | .run _ _ _ _ _ size _ _ _ => some size
       | _ => none
   t "an undeclared document keeps the engine ladder on the page"
     (psizes.contains (plain.page.fontSize * 500 / 1000))
@@ -1638,592 +1638,6 @@ def linkHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     #[.para #[.text "a ", .fill, .text "b"]])
   t "thin space escape" ((elabStr "a\\,b").1.body ==
     #[.para #[.text "a b"]])
-
-/-- `splitPredictedAlpha_exact`, executed: over seeded random pixels with a
-random filter type per row, for grey+alpha and RGBA at several geometries
-(one-pixel rows, one-row images, wide rows), unfiltering the two residual
-planes equals projecting the unfiltered pixels, and the split keeps every
-row's filter byte. Alongside, the unfilter inverts the forward filter of
-every type. -/
-def alphaSplitChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t := check ref
-  let mut s : UInt64 := 0x2545F4914F6CDD1D
-  let mut n := 0
-  let mut allExact := true
-  let mut allKeepFilter := true
-  let mut allInvert := true
-  let mut sawFilter : Array Bool := Array.replicate 5 false
-  for (pxH, w, chs) in [(1, 1, 4), (1, 1, 2), (1, 7, 4), (3, 1, 2), (2, 2, 4), (5, 9, 4),
-      (4, 6, 2), (7, 3, 4)] do
-    for _ in [0:6] do
-      let rowBytes := w * chs
-      let mut px := ByteArray.emptyWithCapacity (pxH * rowBytes)
-      for _ in [0:pxH * rowBytes] do
-        let (v, s') := rand s 256
-        s := s'
-        px := px.push (UInt8.ofNat v)
-      let mut fts : Array Nat := #[]
-      for _ in [0:pxH] do
-        let (f, s') := rand s 5
-        s := s'
-        fts := fts.push f
-        sawFilter := sawFilter.setIfInBounds f true
-      let ft (r : Nat) : Nat := fts[r]?.getD 0
-      let raw := pngFilter px pxH rowBytes chs ft
-      unless Flate.pngUnfilter raw pxH rowBytes chs == .ok px do allInvert := false
-      let (color, alpha) := Image.splitPredictedAlpha raw pxH w chs
-      let (colorPx, alphaPx) := Image.splitAlpha px chs
-      unless Flate.pngUnfilter color pxH (w * (chs - 1)) (chs - 1) == .ok colorPx &&
-          Flate.pngUnfilter alpha pxH w 1 == .ok alphaPx do allExact := false
-      for r in [0:pxH] do
-        unless color[r * (1 + w * (chs - 1))]? == some (UInt8.ofNat (ft r)) &&
-            alpha[r * (1 + w)]? == some (UInt8.ofNat (ft r)) do allKeepFilter := false
-      n := n + 1
-  t s!"residual split unfilters to the pixel projections ({n} cases)" allExact
-  t "residual split keeps every row's filter byte" allKeepFilter
-  t "pngUnfilter inverts the forward filter of every type" allInvert
-  t "the random rows exercised all five filter types" (sawFilter.all id)
-
-/-- Images: the decoders' verdicts over synthetic bytes and the shipped
-fixtures, the sizing contract on placed pages, the placeholder path, the PDF
-embedding, and the HTML emit. Decoder totality over truncations and random
-bytes is fuzzed deeper in `scripts/img-fuzz.lean` (an oracle, not a
-theorem). -/
-def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
-  let t := check ref
-  -- Synthetic PNGs through the shared synthesizer (Tests/Support).
-  let chunk := pngChunk
-  let ihdr := pngIhdr
-  let plain := mkPng (chunk "IHDR" (ihdr 64 40 8 2 0) ++ chunk "IDAT" [1, 2, 3] ++
-    chunk "IEND" [])
-  match Image.decodePng plain with
-  | .error e => failures ref s!"png decode: {e}"
-  | .ok inf =>
-    t "png dimensions" (inf.pxW == 64 && inf.pxH == 40)
-    t "png default density is one pixel per point"
-      (inf.dpiX == 72 && inf.width == Dim.pt 64 && inf.height == Dim.pt 40)
-    t "png space and depth" (inf.space == .rgb && inf.bitDepth == 8)
-    t "png idat survives" (inf.data == bytes [1, 2, 3])
-  -- pHYs at 5906 pixels per metre is 150 dpi to the spec's own rounding.
-  let physed := mkPng (chunk "IHDR" (ihdr 64 40 8 2 0) ++
-    chunk "pHYs" (be32 5906 ++ be32 5906 ++ [1]) ++ chunk "IDAT" [0] ++ chunk "IEND" [])
-  t "png pHYs density read"
-    (match Image.decodePng physed with
-     | .ok inf => inf.dpiX == 150 && inf.width == Dim.pt 64 * 72 / 150
-     | .error _ => false)
-  -- Refusals and the decode path, each with its reason: 16-bit alpha and
-  -- interlace refuse; 8-bit alpha inflates and splits its filtered rows —
-  -- never its pixels — and the alpha plane comes back as an SMask.
-  t "png 16-bit alpha refused"
-    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 16 6 0) ++
-      chunk "IDAT" [0] ++ chunk "IEND" [])) with
-     | .error e => (e.splitOn "16-bit").length == 2
-     | .ok _ => false)
-  -- 2×2 RGBA, row 0 filter None, row 1 filter Sub: known planes out.
-  let rgbaRaw := bytes ([0, 10, 20, 30, 255, 40, 50, 60, 128] ++
-    [1, 5, 5, 5, 7, 1, 2, 3, 9])
-  let rgbaPng := mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++
-    chunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ chunk "IEND" [])
-  t "png alpha decodes to colour plus smask, planes filtered and compressed"
-    (match Image.decodePng rgbaPng with
-     | .ok inf =>
-       inf.space == .rgb && inf.predictor && !inf.smask.isEmpty &&
-       ((Flate.inflate inf.data 14).bind fun rows =>
-         Flate.pngUnfilter rows 2 6 3) ==
-         .ok (bytes [10, 20, 30, 40, 50, 60, 5, 5, 5, 6, 7, 8]) &&
-       ((Flate.inflate inf.smask 6).bind fun rows =>
-         Flate.pngUnfilter rows 2 2 1) == .ok (bytes [255, 128, 7, 16])
-     | .error _ => false)
-  -- The planes are the source's residuals under the source's own filters
-  -- (None, then Sub), not a re-filtering: the split never saw a pixel.
-  t "png alpha planes keep the source rows' filter bytes"
-    (match Image.decodePng rgbaPng with
-     | .ok inf =>
-       Flate.inflate inf.data 14 == .ok (bytes [0, 10, 20, 30, 40, 50, 60, 1, 5, 5, 5, 1, 2, 3]) &&
-       Flate.inflate inf.smask 6 == .ok (bytes [0, 255, 128, 1, 7, 9])
-     | .error _ => false)
-  -- The inflate under it round-trips its own stored encoder, and reads a
-  -- real compressor's stream: rects.png's IDAT is zlib at level 9, and its
-  -- unfiltered scanlines are 40 rows of 1+192 bytes.
-  t "flate roundtrip on stored blocks"
-    (Flate.inflate (Flate.deflateStored rgbaRaw) rgbaRaw.size == .ok rgbaRaw)
-  -- The real compressor: `inflate_deflate_id`'s statement, witnessed on
-  -- the shapes a block must survive — empty, tiny, a run, a period-3
-  -- repetition, text, and the raw plane above (`scripts/flate-fuzz.lean`
-  -- is the deep oracle, with a foreign inflater as second judge).
-  let rt (b : ByteArray) : Bool := Flate.inflate (Flate.deflate b) b.size == .ok b
-  t "deflate roundtrip: empty" (rt ByteArray.empty)
-  t "deflate roundtrip: one byte" (rt (bytes [42]))
-  t "deflate roundtrip: a run" (rt (ByteArray.mk (Array.replicate 70000 7)))
-  t "deflate roundtrip: period 3"
-    (rt (ByteArray.mk (Array.ofFn (n := 999) fun i => UInt8.ofNat (i.val % 3))))
-  t "deflate roundtrip: text"
-    (rt "pack my box with five dozen liquor jugs, again and again and again".toUTF8)
-  t "deflate roundtrip: the raw plane" (rt rgbaRaw)
-  t "deflate really compresses a run"
-    ((Flate.deflate (ByteArray.mk (Array.replicate 70000 7))).size < 1000)
-  -- A deflate-compressed IDAT decodes through the dynamic-Huffman path:
-  -- the engine reads its own compressor's output inside a PNG too.
-  t "png alpha decodes from a deflate-compressed IDAT"
-    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++
-      chunk "IDAT" (Flate.deflate rgbaRaw).toList ++ chunk "IEND" [])) with
-     | .ok inf => inf.space == .rgb && !inf.smask.isEmpty
-     | .error _ => false)
-  -- The driver's image-cache serialization inverts exactly
-  -- (`decodeBin_encodeBin_id`'s statement, witnessed on a real decode).
-  t "image cache serialization round-trips a decoded alpha png"
-    (match Image.decodePng rgbaPng with
-     | .ok inf =>
-       (match Image.decodeBin (Image.encodeBin inf) with
-        | some back =>
-          back.format == inf.format && back.pxW == inf.pxW && back.pxH == inf.pxH &&
-          back.dpiX == inf.dpiX && back.dpiY == inf.dpiY &&
-          back.bitDepth == inf.bitDepth && back.space == inf.space &&
-          back.palette == inf.palette && back.data == inf.data &&
-          back.predictor == inf.predictor && back.smask == inf.smask &&
-          back.form.isNone
-        | none => false)
-     | .error _ => false)
-  t "image cache decode rejects foreign bytes"
-    ((Image.decodeBin (bytes [1, 2, 3])).isNone &&
-     (Image.decodeBin ByteArray.empty).isNone)
-  t "image cache decode rejects a truncated entry"
-    (match Image.decodePng rgbaPng with
-     | .ok inf =>
-       let blob := Image.encodeBin inf
-       (Image.decodeBin (blob.extract 0 (blob.size - 1))).isNone
-     | .error _ => false)
-  t "png interlace refused"
-    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 2 1) ++
-      chunk "IDAT" [0] ++ chunk "IEND" [])) with
-     | .error e => (e.splitOn "interlaced").length == 2
-     | .ok _ => false)
-  t "png indexed without PLTE refused"
-    ((Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 3 0) ++
-      chunk "IDAT" [0] ++ chunk "IEND" []))).isOk == false)
-  t "png indexed with PLTE carries the palette"
-    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 3 0) ++
-      chunk "PLTE" [0, 0, 0, 255, 255, 255] ++ chunk "IDAT" [0] ++ chunk "IEND" [])) with
-     | .ok inf => inf.space == .indexed && inf.palette.size == 6
-     | .error _ => false)
-  t "png zero size refused"
-    ((Image.decodePng (mkPng (chunk "IHDR" (ihdr 0 8 8 2 0) ++
-      chunk "IDAT" [0] ++ chunk "IEND" []))).isOk == false)
-  t "png lying chunk length refused"
-    ((Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 2 0) ++
-      be32 99999 ++ ("IDAT".toList.map fun c => UInt8.ofNat c.toNat) ++ [0]))).isOk
-      == false)
-  -- A synthetic JPEG: SOI, JFIF APP0 declaring 144 dpi, SOF0 10×20 in three
-  -- components, SOS. The scan data never has to exist for the header walk.
-  let jfif (unit dx dy : Nat) : List UInt8 :=
-    [0xFF, 0xE0, 0, 16, 0x4A, 0x46, 0x49, 0x46, 0, 1, 1, UInt8.ofNat unit,
-     UInt8.ofNat (dx / 256), UInt8.ofNat (dx % 256),
-     UInt8.ofNat (dy / 256), UInt8.ofNat (dy % 256), 0, 0]
-  let sof0 (w h ncomp : Nat) : List UInt8 :=
-    [0xFF, 0xC0, 0, UInt8.ofNat (8 + 3 * ncomp), 8,
-     UInt8.ofNat (h / 256), UInt8.ofNat (h % 256),
-     UInt8.ofNat (w / 256), UInt8.ofNat (w % 256), UInt8.ofNat ncomp] ++
-     (List.range ncomp).flatMap fun k => [UInt8.ofNat (k + 1), 0x11, 0]
-  let jpg := bytes ([0xFF, 0xD8] ++ jfif 1 144 144 ++ sof0 10 20 3 ++ [0xFF, 0xDA])
-  match Image.decodeJpeg jpg with
-  | .error e => failures ref s!"jpeg decode: {e}"
-  | .ok inf =>
-    t "jpeg dimensions" (inf.pxW == 10 && inf.pxH == 20)
-    t "jpeg jfif density read" (inf.dpiX == 144 && inf.width == Dim.pt 10 * 72 / 144)
-    t "jpeg embeds whole" (inf.data.size == jpg.size)
-  t "jpeg cmyk refused"
-    (match Image.decodeJpeg (bytes ([0xFF, 0xD8] ++ sof0 4 4 4 ++ [0xFF, 0xDA])) with
-     | .error e => (e.splitOn "CMYK").length == 2
-     | .ok _ => false)
-  t "jpeg aspect-only density keeps the default"
-    (match Image.decodeJpeg (bytes ([0xFF, 0xD8] ++ jfif 0 1 1 ++ sof0 4 4 1 ++
-      [0xFF, 0xDA])) with
-     | .ok inf => inf.dpiX == 72 && inf.space == .gray
-     | .error _ => false)
-  t "decode rejects foreign bytes" ((Image.decode (bytes [0, 1, 2, 3])).isOk == false)
-  t "decode rejects empty" ((Image.decode (bytes [])).isOk == false)
-
-  -- The shipped fixtures: what `lake test` sees on every host.
-  let pngData ← IO.FS.readBinFile "tests/corpus/rects.png"
-  let jpgData ← IO.FS.readBinFile "tests/corpus/rects.jpg"
-  let alphaData ← IO.FS.readBinFile "tests/corpus/rects-alpha.png"
-  let pngInfo := Image.decode pngData
-  let jpgInfo := Image.decode jpgData
-  let alphaInfo := Image.decode alphaData
-  t "shipped png decodes 64x40 rgb"
-    (match pngInfo with
-     | .ok inf => inf.format == .png && inf.pxW == 64 && inf.pxH == 40 &&
-        inf.space == .rgb && inf.width == Dim.pt 64
-     | .error _ => false)
-  t "shipped jpeg decodes 64x40"
-    (match jpgInfo with
-     | .ok inf => inf.format == .jpeg && inf.pxW == 64 && inf.pxH == 40 &&
-        inf.width == Dim.pt 64
-     | .error _ => false)
-  -- The RGBA fixture went through a real compressor (zlib level 9), so
-  -- decoding it exercises the Huffman paths of the inflater; its alpha
-  -- fades 255 down to 15 across the rectangle and vanishes outside it.
-  t "shipped alpha png decodes with its mask"
-    (match alphaInfo with
-     | .ok inf =>
-       inf.pxW == 48 && inf.pxH == 32 && inf.space == .rgb && !inf.smask.isEmpty &&
-       (match (Flate.inflate inf.smask (32 * 49)).bind fun rows =>
-          Flate.pngUnfilter rows 32 48 1 with
-        | .ok mask => mask.size == 48 * 32 && mask[0]?.getD 1 == 0 &&
-            (mask[4 * 48 + 4]?.getD 0) == 255 && (mask[4 * 48 + 43]?.getD 0) == 21
-        | .error _ => false)
-     | .error _ => false)
-  -- Totality over truncations of both, as for fonts: reaching the count is
-  -- the property — a panic would take the run down.
-  t "png decode total over truncations"
-    (((List.range 64).map fun k =>
-      (Image.decode (pngData.extract 0 (pngData.size * k / 64))).isOk).length == 64)
-  t "jpeg decode total over truncations"
-    (((List.range 64).map fun k =>
-      (Image.decode (jpgData.extract 0 (jpgData.size * k / 64))).isOk).length == 64)
-
-  let store : Image.Store := { entries := #[
-    { src := "rects.png", info := pngInfo.toOption },
-    { src := "rects.jpg", info := jpgInfo.toOption },
-    { src := "rects-alpha.png", info := alphaInfo.toOption }] }
-  let geom : Layout.Geom := {}
-  let imageSegs (out : Layout.Out) : Array (Option Nat × Dim.Sp × Dim.Sp) := Id.run do
-    let mut acc : Array (Option Nat × Dim.Sp × Dim.Sp) := #[]
-    for p in out.pages do
-      for l in p.lines do
-        for s in l.segs do
-          if let .image idx w h := s then acc := acc.push (idx, w, h)
-    return acc
-  let layoutSrc (src : String) : Layout.Out :=
-    let (doc, _) := Elab.run "t" src
-    layoutOf oneFace doc geom none store
-
-  -- Intrinsic: no keys, the box is the file's physical size.
-  let outIntrinsic := layoutSrc "\\includegraphics{rects.png}"
-  t "layout intrinsic size"
-    (imageSegs outIntrinsic == #[(some 0, Dim.pt 64, Dim.pt 40)])
-  -- `width = 0.8\textwidth`: the spelling every deck sizes a figure with.
-  let outTw := layoutSrc "\\includegraphics[width=0.8\\textwidth]{rects.png}"
-  let expectW := geom.textWidth * 800 / 1000
-  t "layout width fraction of the measure"
-    (imageSegs outTw == #[(some 0, expectW, expectW * Dim.pt 40 / Dim.pt 64)])
-  -- Both dimensions declared win exactly.
-  let outBoth := layoutSrc "\\includegraphics[width=32pt, height=40pt]{rects.png}"
-  t "layout declared size wins"
-    (imageSegs outBoth == #[(some 0, Dim.pt 32, Dim.pt 40)])
-  -- keepaspectratio fits inside the declared box: width binds (the image is
-  -- wider than tall), the height follows the intrinsic ratio.
-  let outKeep :=
-    layoutSrc "\\includegraphics[width=32pt, height=32pt, keepaspectratio]{rects.jpg}"
-  t "layout keepaspect fits the box"
-    (imageSegs outKeep == #[(some 1, Dim.pt 32, Dim.pt 32 * 40 / 64)])
-  -- The mirror bound, in the poster's own spelling: with `width` and
-  -- `totalheight` both given, `keepaspectratio` takes the smaller of the
-  -- two scales so neither bound is exceeded (graphicx.sty, the `Gin@iso`
-  -- branch of `\Gin@req@sizes`; `resolveSize_keepAspect_fits` is the
-  -- engine's statement). Here the height is the binding bound: the width
-  -- follows the intrinsic ratio, never the declared 60pt.
-  let outKeepH :=
-    layoutSrc "\\includegraphics[width=60pt, totalheight=20pt, keepaspectratio]{rects.jpg}"
-  t "layout keepaspect picks the binding bound"
-    (imageSegs outKeepH == #[(some 1, Dim.pt 20 * 64 / 40, Dim.pt 20)])
-  -- A source the store has no entry for is a placeholder box: the document
-  -- still compiles, at the requested size.
-  let outMissing := layoutSrc "\\includegraphics[width=50pt]{missing.png}"
-  t "layout missing image keeps requested width"
-    (imageSegs outMissing == #[(none, Dim.pt 50, Dim.pt 50)] &&
-     outMissing.pages.size == 1)
-  t "layout missing image without a size is an inch square"
-    (imageSegs (layoutSrc "\\includegraphics{missing.png}") ==
-      #[(none, Dim.inch 1, Dim.inch 1)])
-
-  -- The figure environment: a float standing where written, the caption on
-  -- its source side (below here) and the alt of the image it captions.
-  let (figDoc, figDiags) := Elab.run "t"
-    "\\begin{figure}[t]\\centering\\includegraphics{rects.png}\\caption{A mark}\\end{figure}"
-  t "figure elaborates with its placement registered as a note"
-    (figDiags.all (·.severity == .note) && figDiags.any (·.code == "N0102"))
-  t "figure elaborates to a float carrying its caption"
-    (match figDoc.body.toList with
-     | [.float .figure _ false inner cap] =>
-       match inner.toList with
-       | [.para xs] =>
-         (xs.any fun x => match x with
-           | .image "rects.png" _ alt => alt == "A mark"
-           | _ => false) &&
-         Ir.plainText cap == "A mark"
-       | _ => false
-     | _ => false)
-  t "figure image reaches the page"
-    ((imageSegs (layoutOf oneFace figDoc geom none store)).size == 1)
-  -- An image in a slide: the frame's page carries it.
-  let (slideDoc, _) := Elab.run "t"
-    "\\documentclass{slides}\\begin{document}\\begin{frame}{T}\\includegraphics{rects.png}\\end{frame}\\end{document}"
-  let slideGeom := Layout.Geom.ofPage slideDoc.page
-  t "slide image reaches the frame page"
-    ((imageSegs (layoutOf oneFace slideDoc slideGeom none store)).size == 1)
-  -- The deck logo: same image node, placed at the lower-right corner of
-  -- every page, its right edge on the margin.
-  let (logoDoc, logoDiags) := Elab.run "t"
-    "\\documentclass{slides}\\logo{\\includegraphics[height=8pt, alt={A synthetic mark}]{rects.png}}\
-\\begin{document}\\begin{frame}{A}x\\end{frame}\\begin{frame}{B}y\\end{frame}\\end{document}"
-  t "logo declaration elaborates clean" (logoDiags.isEmpty)
-  let logoGeom := Layout.Geom.ofPage logoDoc.page
-  let logoOut := layoutOf oneFace logoDoc logoGeom none store
-  let logoW := Dim.pt 8 * Dim.pt 64 / Dim.pt 40
-  t "logo placed on every page at the right margin"
-    (logoOut.pages.size == 2 && logoOut.pages.all fun p =>
-      p.lines.any fun l =>
-        l.x + l.setWidth == logoGeom.pageW - logoGeom.hmargin &&
-        l.segs.any fun s => match s with
-          | .image _ w h => w == logoW && h == Dim.pt 8
-          | _ => false)
-
-  -- The PDF: an XObject per used image, painted by a cm+Do pair; the xref
-  -- theorem-test still holds with the new objects in the file.
-  let (pdfDoc, _) := Elab.run "t"
-    "\\includegraphics{rects.png} and \\includegraphics{rects.jpg} and \
-\\includegraphics{rects-alpha.png}"
-  let pdfOut := layoutOf oneFace pdfDoc geom none store
-  let pdfRaw := Pdf.write geom oneFace pdfOut.pages {} store
-  let pdf := pdfText pdfRaw
-  t "pdf embeds the png as flate with the predictor"
-    (bytesContain pdf "/Subtype /Image" && bytesContain pdf "/FlateDecode" &&
-     bytesContain pdf "/Predictor 15")
-  t "pdf embeds the jpeg as dct" (bytesContain pdf "/DCTDecode")
-  t "pdf gives the alpha image a soft mask" (bytesContain pdf "/SMask")
-  t "pdf paints all three images" (bytesContain pdf "/Im1 Do" &&
-    bytesContain pdf "/Im2 Do" && bytesContain pdf "/Im3 Do")
-  -- The cm matrix must carry the placed size: a Do behind a degenerate
-  -- matrix is a blank box that every structural check would miss.
-  t "pdf image matrix carries the placed size"
-    (bytesContain pdf "q 64 0 0 40 ")
-  t "pdf page resources name the xobjects" (bytesContain pdf "/XObject <<")
-  match checkXref pdfRaw with
-  | .ok n => t "pdf xref valid with images" (n > 0)
-  | .error e => failures ref s!"pdf xref with images: {e}"
-  -- The raw IDAT bytes must reach the file unchanged: the stream is the
-  -- pass-through, not a re-encoding.
-  t "pdf carries the png stream verbatim"
-    (match pngInfo with
-     | .ok inf => containsBytes pdf inf.data
-     | .error _ => false)
-  -- The placeholder: an outlined box, no image object, a valid file.
-  let missOut := layoutOf oneFace
-    ((Elab.run "t" "\\includegraphics[width=50pt]{missing.png}").1) geom none store
-  let missRaw := Pdf.write geom oneFace missOut.pages {} store
-  let missPdf := pdfText missRaw
-  t "pdf placeholder draws an outline, embeds nothing"
-    (bytesContain missPdf "re S" && !(bytesContain missPdf "/Subtype /Image"))
-  match checkXref missRaw with
-  | .ok _ => pure ()
-  | .error e => failures ref s!"pdf xref with placeholder: {e}"
-
-  -- The HTML: an <img> through the typed tree, intrinsic pixel size as
-  -- attributes so the page never reflows, the caption as alt, the requested
-  -- fraction as a percentage.
-  let hcfg : HtmlDoc.Config := { imgs := store }
-  let (figHtml, _) := HtmlDoc.emit hcfg figDoc
-  t "html figure image with alt and intrinsic size"
-    ((figHtml.splitOn "<img src=\"assets/i0-rects.png\" alt=\"A mark\" width=\"64\" height=\"40\">").length == 2)
-  let (twDoc, _) := Elab.run "t" "\\includegraphics[width=0.8\\textwidth]{rects.png}"
-  let (twHtml, _) := HtmlDoc.emit hcfg twDoc
-  t "html width fraction becomes a percentage"
-    ((twHtml.splitOn "style=\"width: 80%; height: auto\"").length == 2)
-  let (missHtml, _) := HtmlDoc.emit hcfg
-    ((Elab.run "t" "\\includegraphics{missing.png}").1)
-  t "html missing image still emits the img with alt"
-    ((missHtml.splitOn "<img src=\"missing.png\"").length == 2)
-
-  -- The surface diagnostics: a length that does not parse, an option the
-  -- engine does not model.
-  t "includegraphics bad length is E0331"
-    (errCodes "\\includegraphics[width=banana]{x.png}" == ["E0331"])
-  t "includegraphics em length is E0331"
-    (errCodes "\\includegraphics[width=2em]{x.png}" == ["E0331"])
-  t "includegraphics unknown option warns W0110"
-    (warnCodes "\\includegraphics[angle=45, alt={A box}]{x.png}" == ["W0110"])
-  t "includegraphics without a file group is E0304"
-    (errCodes "\\includegraphics[width=3cm]" == ["E0304"])
-  -- totalheight is height plus depth and an image has no depth: one key.
-  t "includegraphics totalheight is height"
-    (match (elabStr "\\includegraphics[totalheight=8pt]{x.png}").1.body.toList with
-     | [.para xs] => xs.any fun x => match x with
-        | .image _ spec _ => spec.height == some { sp := Dim.pt 8 }
-        | _ => false
-     | _ => false)
-  -- \logo is a declaration in the body too, and it is stateful there, as
-  -- in beamer: a deck scopes a logo to one frame with `\logo{...}` before
-  -- it and `\logo{}` after.
-  let (bodyLogoDoc, bodyLogoDiags) := Elab.run "t"
-    "\\documentclass{slides}\\begin{document}\\logo{\\includegraphics[height=8pt, alt={A synthetic mark}]{rects.png}}\
-\\begin{frame}{A}x\\end{frame}\\logo{}\\begin{frame}{B}y\\end{frame}\\end{document}"
-  t "logo declared in the body binds" (bodyLogoDiags.isEmpty && bodyLogoDoc.logo.isNone)
-  let blOut := layoutOf oneFace bodyLogoDoc (pats := none) (imgs := store)
-  let pageHasImage (p : Layout.PageOut) : Bool :=
-    p.lines.any fun l => l.segs.any fun s => match s with
-      | .image .. => true
-      | _ => false
-  t "body logo scopes to its frame's page"
-    (blOut.pages.size == 2 && pageHasImage blOut.pages[0]! &&
-     !pageHasImage blOut.pages[1]!)
-  -- A bare graphicx name gains the extension the file on disk has; the
-  -- candidate order tries the name as written first, then `.pdf` —
-  -- graphicx's own order under pdfTeX.
-  t "source candidates try the written name first"
-    ((Image.sourceCandidates "figures/plot").take 3 ==
-      ["figures/plot", "figures/plot.pdf", "figures/plot.png"])
-  t "html names the resolved file's copy, not the bare spelling"
-    (let store2 : Image.Store := { entries := #[
-      { src := "figures/plot", href := "figures/plot.png", info := pngInfo.toOption }] }
-     let (h, _) := HtmlDoc.emit { imgs := store2 }
-       ((Elab.run "t" "\\includegraphics{figures/plot}").1)
-     (h.splitOn "<img src=\"assets/i0-plot.png\"").length == 2)
-
-/-- Colour-key transparency: a PNG `tRNS` chunk on the pass-through colour
-types (greyscale, truecolour, indexed) is either exactly the PDF `/Mask`
-ranges in sample units or a refusal the driver names — never an opaque
-embed. Every bit depth, the indexed edge cases (interval, prefix, all
-opaque, fractional, scattered, over-long), chunk order and duplicates, the
-image dictionary, and the cache codec's new field. -/
-def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
-  let t := check ref
-  let chunk := pngChunk
-  let ihdr := pngIhdr
-  -- A PNG of colour type `ct` at bit depth `bd`, its PLTE and tRNS as given
-  -- (an empty list omits the chunk), IDAT arbitrary.
-  let png (bd ct : Nat) (plte trns : List UInt8) (idat : List UInt8 := [0]) : ByteArray :=
-    mkPng (chunk "IHDR" (ihdr 4 4 bd ct 0) ++
-      (if plte.isEmpty then [] else chunk "PLTE" plte) ++
-      (if trns.isEmpty then [] else chunk "tRNS" trns) ++
-      chunk "IDAT" idat ++ chunk "IEND" [])
-  let keyOf (b : ByteArray) : Option (Array Nat) :=
-    match Image.decodePng b with
-    | .ok inf => some inf.colorKey
-    | .error _ => none
-  let refusedNaming (b : ByteArray) (word : String) : Bool :=
-    match Image.decodePng b with
-    | .error e => (e.splitOn word).length == 2
-    | .ok _ => false
-  -- Greyscale: one two-byte sample, in range for the bit depth.
-  t "grey 8-bit key is the sample twice" (keyOf (png 8 0 [] [0, 7]) == some #[7, 7])
-  -- 16-bit keys: exact in the pure mapping, refused by the decoder — two of
-  -- the four target readers (Poppler, PDFium) paint the keyed pixels.
-  t "grey 16-bit key is exact in the mapping"
-    (Image.colorKeyRanges .gray 16 (bytes [1, 2]) ByteArray.empty == .ok #[258, 258])
-  t "grey 16-bit key refused by the decoder, naming the readers"
-    (refusedNaming (png 16 0 [] [1, 2]) "readers")
-  t "grey 4-bit key at the top value" (keyOf (png 4 0 [] [0, 15]) == some #[15, 15])
-  t "grey 2-bit key" (keyOf (png 2 0 [] [0, 3]) == some #[3, 3])
-  t "grey 1-bit key" (keyOf (png 1 0 [] [0, 1]) == some #[1, 1])
-  t "grey 4-bit key out of range refused" (refusedNaming (png 4 0 [] [0, 16]) "tRNS")
-  t "grey 8-bit key out of range refused" (refusedNaming (png 8 0 [] [1, 0]) "tRNS")
-  t "grey key of the wrong length refused"
-    (refusedNaming (png 8 0 [] [7]) "tRNS" && refusedNaming (png 8 0 [] [0, 7, 0]) "tRNS")
-  -- Truecolour: three two-byte samples.
-  t "rgb 8-bit key is each sample twice"
-    (keyOf (png 8 2 [] [0, 10, 0, 20, 0, 30]) == some #[10, 10, 20, 20, 30, 30])
-  t "rgb 16-bit key is exact in the mapping"
-    (Image.colorKeyRanges .rgb 16 (bytes [1, 0, 2, 0, 3, 0]) ByteArray.empty ==
-      .ok #[256, 256, 512, 512, 768, 768])
-  t "rgb 16-bit key refused by the decoder" (refusedNaming (png 16 2 [] [1, 0, 2, 0, 3, 0]) "16-bit")
-  t "rgb 16-bit without a key still passes through"
-    (keyOf (png 16 2 [] []) == some #[])
-  t "rgb 8-bit key out of range refused" (refusedNaming (png 8 2 [] [1, 0, 0, 0, 0, 0]) "tRNS")
-  t "rgb key of the wrong length refused" (refusedNaming (png 8 2 [] [0, 10]) "tRNS")
-  -- Indexed: the transparent entries one interval, the rest opaque.
-  let pal2 : List UInt8 := [0, 0, 0, 255, 255, 255]
-  let pal4 : List UInt8 := pal2 ++ [255, 0, 0, 0, 255, 0]
-  t "indexed key on entry 0" (keyOf (png 8 3 pal2 [0, 255]) == some #[0, 0])
-  t "indexed key on entry 1" (keyOf (png 8 3 pal2 [255, 0]) == some #[1, 1])
-  t "indexed key on an interior interval" (keyOf (png 8 3 pal4 [255, 0, 0, 255]) == some #[1, 2])
-  t "indexed key on a prefix interval" (keyOf (png 8 3 pal4 [0, 0]) == some #[0, 1])
-  t "indexed key reaching the last entry" (keyOf (png 8 3 pal4 [255, 255, 0, 0]) == some #[2, 3])
-  t "indexed all-opaque tRNS is no mask" (keyOf (png 8 3 pal4 [255, 255]) == some #[])
-  t "indexed at bit depth 1" (keyOf (png 1 3 pal2 [0]) == some #[0, 0])
-  t "indexed at bit depth 2" (keyOf (png 2 3 pal4 [255, 255, 255, 0]) == some #[3, 3])
-  t "indexed at bit depth 4" (keyOf (png 4 3 pal4 [0, 255]) == some #[0, 0])
-  t "indexed partial alpha refused" (refusedNaming (png 8 3 pal4 [0, 128, 255]) "partial")
-  t "indexed scattered transparency refused" (refusedNaming (png 8 3 pal4 [0, 255, 0]) "partial")
-  t "indexed tRNS longer than the palette refused"
-    (refusedNaming (png 8 3 pal2 [255, 255, 0]) "tRNS")
-  t "indexed tRNS beyond the bit depth refused"
-    (refusedNaming (png 1 3 pal4 [255, 255, 0]) "tRNS")
-  -- Order and multiplicity: one tRNS, after PLTE, before IDAT.
-  t "tRNS on an alpha type refused"
-    (refusedNaming (mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++ chunk "tRNS" [0, 0, 0, 0, 0, 0] ++
-      chunk "IDAT" (Flate.deflateStored (bytes (List.replicate 18 0))).toList ++
-      chunk "IEND" [])) "tRNS")
-  t "duplicate tRNS refused"
-    (refusedNaming (mkPng (chunk "IHDR" (ihdr 4 4 8 0 0) ++ chunk "tRNS" [0, 1] ++
-      chunk "tRNS" [0, 2] ++ chunk "IDAT" [0] ++ chunk "IEND" [])) "tRNS")
-  t "tRNS after IDAT refused"
-    (refusedNaming (mkPng (chunk "IHDR" (ihdr 4 4 8 0 0) ++ chunk "IDAT" [0] ++
-      chunk "tRNS" [0, 1] ++ chunk "IEND" [])) "tRNS")
-  t "indexed tRNS before PLTE refused"
-    (refusedNaming (mkPng (chunk "IHDR" (ihdr 4 4 8 3 0) ++ chunk "tRNS" [0] ++
-      chunk "PLTE" pal2 ++ chunk "IDAT" [0] ++ chunk "IEND" [])) "tRNS")
-  t "no tRNS is no key" (keyOf (png 8 2 [] []) == some #[])
-  -- The pure ranges, exercised beside their theorems on shapes the
-  -- decoder cannot reach (a tRNS array with no palette behind it).
-  t "colorKeyRanges: empty indexed tRNS is no mask"
-    (Image.colorKeyRanges .indexed 8 ByteArray.empty (bytes pal4) == .ok #[])
-  t "colorKeyRanges: grey ignores the palette"
-    (Image.colorKeyRanges .gray 8 (bytes [0, 9]) (bytes pal4) == .ok #[9, 9])
-  -- The PDF: the raster dictionary carries `/Mask` in sample units, the
-  -- IDAT still passes through verbatim, and an unkeyed image has no mask.
-  let idxPng := png 8 3 pal2 [0, 255] (idat := (Flate.deflateStored (bytes
-    (List.replicate 4 [0, 0, 1, 1, 0]).flatten)).toList)
-  let rgbPng := png 8 2 [] [0, 10, 0, 20, 0, 30]
-    (idat := (Flate.deflateStored (bytes (List.replicate (4 * 13) 0))).toList)
-  let plainPng := png 8 2 [] [] (idat := (Flate.deflateStored (bytes
-    (List.replicate (4 * 13) 0))).toList)
-  let idxInfo := Image.decode idxPng
-  let store : Image.Store := { entries := #[
-    { src := "key-idx.png", info := idxInfo.toOption },
-    { src := "key-rgb.png", info := (Image.decode rgbPng).toOption },
-    { src := "plain.png", info := (Image.decode plainPng).toOption }] }
-  t "keyed fixtures decode" (store.entries.all (·.info.isSome))
-  let geom : Layout.Geom := {}
-  let (doc, _) := Elab.run "t"
-    "\\includegraphics{key-idx.png} \\includegraphics{key-rgb.png} \\includegraphics{plain.png}"
-  let out := layoutOf oneFace doc geom none store
-  let pdfRaw := Pdf.write geom oneFace out.pages {} store
-  let pdf := pdfText pdfRaw
-  t "pdf indexed image carries its colour-key mask" (bytesContain pdf "/Mask [0 0]")
-  t "pdf rgb image carries its colour-key mask" (bytesContain pdf "/Mask [10 10 20 20 30 30]")
-  t "pdf keyed images stay pass-through"
-    (match idxInfo with
-     | .ok inf => containsBytes pdf inf.data && bytesContain pdf "/Predictor 15"
-     | .error _ => false)
-  t "pdf unkeyed image has no mask"
-    (bytesContain pdf "/BitsPerComponent 8 /Filter /FlateDecode")
-  match checkXref pdfRaw with
-  | .ok n => t "pdf xref valid with keyed images" (n > 0)
-  | .error e => failures ref s!"pdf xref with keyed images: {e}"
-  -- The cache codec: the key rides, the format version moved, and the
-  -- old magic is a miss.
-  match idxInfo with
-  | .error e => failures ref s!"keyed png decode: {e}"
-  | .ok inf =>
-    let blob := Image.encodeBin inf
-    t "image cache serialization round-trips the colour key"
-      (match Image.decodeBin blob with
-       | some back => back.colorKey == inf.colorKey && back.colorKey == #[0, 0] &&
-           back.palette == inf.palette && back.data == inf.data && back.space == .indexed &&
-           back.bitDepth == inf.bitDepth && back.pxW == 4 && back.pxH == 4
-       | none => false)
-    t "image cache magic is LTIMG2" (blob.extract 0 6 == "LTIMG2".toUTF8)
-    t "image cache rejects a stale LTIMG1 entry" ((Image.decodeBin (blob.set! 5 49)).isNone)
-    t "image cache rejects a lying key count"
-      ((Image.decodeBin (blob.set! 44 (blob[44]! + 1))).isNone)
-  -- A wide key (the truecolour ranges) round-trips too.
-  t "image cache round-trips a six-range key"
-    (match Image.decode rgbPng with
-     | .ok inf => (Image.decodeBin (Image.encodeBin inf)).map (·.colorKey) ==
-         some #[10, 10, 20, 20, 30, 30]
-     | .error _ => false)
-
 
 /-- The page ships the faces it names — the census of the `@font-face`
 emission (the same obligation every backend emission carries): one rule per
@@ -3073,29 +2487,24 @@ def contentOpsCyan : Ir.Color := Ir.Color.ofCmyk 1000 0 0 0
 
 def contentOpsRun (idx : Nat) (color : Ir.Color) (w : Dim.Sp) (glyphs : List (Nat × Char))
     (size : Dim.Sp := 0) (raise : Dim.Sp := 0) : Layout.Seg :=
-  .run idx color none w glyphs.toArray size false raise none (.leaf 0)
-
-/-- The leaf tags the synthetic pages are marked under: leaf 0 a paragraph,
-leaf 1 a heading, leaf 2 a leaf no element holds. -/
-def contentOpsTags : Array (Option String) := #[some "P", some "H2", none]
+  .run idx color none w glyphs.toArray size false raise none
 
 def contentOpsTextPage : Layout.PageOut := {
   lines := #[
-    { x := Dim.pt 10, y := Dim.pt 20, size := Dim.pt 12, setWidth := Dim.pt 100, leaf := some 0, segs := #[
+    { x := Dim.pt 10, y := Dim.pt 20, size := Dim.pt 12, setWidth := Dim.pt 100, segs := #[
         contentOpsRun 0 Ir.Color.black (Dim.pt 30) [(36, 'A'), (37, 'B')],
-        .gap (Dim.pt 5) true,
+        .gap (Dim.pt 5),
         contentOpsRun 0 Ir.Color.black (Dim.pt 20) [(38, 'C')],
         contentOpsRun 1 contentOpsRed (Dim.pt 20) [(39, 'D')] (Dim.pt 9) (Dim.pt 3),
         contentOpsRun 1 contentOpsRed (Dim.pt 20) [(40, 'E')] (Dim.pt 9) (Dim.pt 3) ] },
-    { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 12, setWidth := Dim.pt 100, expand := 20,
-      leaf := some 1, segs := #[
+    { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 12, setWidth := Dim.pt 100, expand := 20, segs := #[
         contentOpsRun 0 contentOpsCyan (Dim.pt 30) [(70000, 'x'), (4096, 'y')],
-        .gap (Dim.pt 5) true,
+        .gap (Dim.pt 5),
         contentOpsRun 0 contentOpsCyan (Dim.pt 30) [(1, 'z')] ] },
-    { x := Dim.pt 10, y := Dim.pt 60, size := Dim.pt 12, setWidth := Dim.pt 100, leaf := some 2, segs := #[
+    { x := Dim.pt 10, y := Dim.pt 60, size := Dim.pt 12, setWidth := Dim.pt 100, segs := #[
         contentOpsRun 0 Ir.Color.black (Dim.pt 2) [],
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(50, 'a')],
-        .gap (Dim.pt 500) true,
+        .gap (Dim.pt 500),
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(51, 'b')],
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(52, 'c')] (Dim.pt 12) (Dim.pt (-3)),
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(53, 'd')] (Dim.pt 12) (Dim.pt (-3)) ] },
@@ -3109,22 +2518,18 @@ def contentOpsTextPage : Layout.PageOut := {
   fills := #[{ x := 0, y := 0, w := Dim.pt 200, h := Dim.pt 100, color := contentOpsGrey },
              { x := Dim.pt 5, y := Dim.pt 5, w := Dim.pt 50, h := Dim.pt 10, color := contentOpsCyan }] }
 
-/-- Two pictures' paths: the first three stamped with leaf 0, the last two
-with leaf 1 (`contentOpsTags` gives both a holder), so the writer groups
-them as two figures. -/
 def contentOpsPathPage : Layout.PageOut := {
   paths := #[
     { path := .circle (Dim.pt 50) (Dim.pt 50) (Dim.pt 20),
-      stroke := some { color := contentOpsRed, dash := .dashed }, leaf := some 0 },
+      stroke := some { color := contentOpsRed, dash := .dashed } },
     { path := .rect (Dim.pt 10) (Dim.pt 10) (Dim.pt 30) (Dim.pt 20), stroke := some { dash := .dotted, width := Dim.pt 1 },
-      fill := some contentOpsGrey, leaf := some 0 },
+      fill := some contentOpsGrey },
     { path := .segs #[.line (Dim.pt 1) (Dim.pt 2) (Dim.pt 3) (Dim.pt 4), .line (Dim.pt 3) (Dim.pt 4) (Dim.pt 5) (Dim.pt 6),
         .cubic (Dim.pt 7) (Dim.pt 8) (Dim.pt 9) (Dim.pt 10) (Dim.pt 11) (Dim.pt 12) (Dim.pt 13) (Dim.pt 14),
         .cubic (Dim.pt 13) (Dim.pt 14) (Dim.pt 1) (Dim.pt 1) (Dim.pt 2) (Dim.pt 2) (Dim.pt 3) (Dim.pt 3)],
-      stroke := some {}, leaf := some 0 },
-    { path := .tri (Dim.pt 1) (Dim.pt 2) (Dim.pt 3) (Dim.pt 4) (Dim.pt 5) (Dim.pt 6), fill := some contentOpsRed,
-      leaf := some 1 },
-    { path := .rect (Dim.pt 1) (Dim.pt 1) (Dim.pt 2) (Dim.pt 2), leaf := some 1 } ] }
+      stroke := some {} },
+    { path := .tri (Dim.pt 1) (Dim.pt 2) (Dim.pt 3) (Dim.pt 4) (Dim.pt 5) (Dim.pt 6), fill := some contentOpsRed },
+    { path := .rect (Dim.pt 1) (Dim.pt 1) (Dim.pt 2) (Dim.pt 2) } ] }
 
 /-- The streams the writer produced for these pages before the typed
 layer existed — captured from `Pdf.pageStreams`, and the spelling the
@@ -3187,13 +2592,12 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let bleed : Layout.Geom := { geom with bleed := Dim.pt 3 }
   let remap : Array Nat := #[0, 1]
   let imgMap : Array (Option Nat) := #[some 0, none]
-  let tags := contentOpsTags
   let plain (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    Pdf.render (Pdf.contentOpsPlain g remap imgMap tags p)
+    Pdf.render (Pdf.contentOpsPlain g remap imgMap p)
   let stripped (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    stripMarkLines (Pdf.render (Pdf.contentOps g remap imgMap tags p))
+    stripMarkLines (Pdf.render (Pdf.contentOps g remap imgMap p))
   let ink (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    Pdf.render (Pdf.inkOps (Pdf.contentOps g remap imgMap tags p))
+    Pdf.render (Pdf.inkOps (Pdf.contentOps g remap imgMap p))
   t "content ops: text, fills, images and rules render to the recorded stream"
     (plain geom contentOpsTextPage == contentOpsTextExpected)
   t "content ops: every path shape and paint renders to the recorded stream"
@@ -3212,7 +2616,7 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
       && ink bleed contentOpsTextPage == contentOpsBleedExpected)
   -- The executable twin of `contentOps_text`, on the synthetic pages.
   t "content ops: the glyph census is the page's runs"
-    (Pdf.runsOf (Pdf.contentOps geom remap imgMap tags contentOpsTextPage)
+    (Pdf.runsOf (Pdf.contentOps geom remap imgMap contentOpsTextPage)
       == Pdf.pageRuns contentOpsTextPage)
   -- Two spellings that coincide: the honest bound on injectivity.
   t "content ops: a fill and a fill-only rectangle path spell the same"
@@ -3369,13 +2773,13 @@ def outputContractChecks (ref : IO.Ref (List String)) : IO Unit := do
 object table exists for: the ids are pairwise distinct (`objTable_inj`)
 and are exactly `[1, size)` (`objTable_covers` with `objTable_between`). -/
 theorem objTable_ids_set_eq (keep : Array Nat) (imgs : Image.Store) (usedImgs : Array Nat)
-    (np nOut nElems : Nat) :
-    (Pdf.objTable keep imgs usedImgs np nOut nElems).ids.toList.Nodup ∧
-    ∀ id, id ∈ (Pdf.objTable keep imgs usedImgs np nOut nElems).ids ↔
-      1 ≤ id ∧ id < (Pdf.objTable keep imgs usedImgs np nOut nElems).size :=
-  ⟨Pdf.objTable_inj keep imgs usedImgs np nOut nElems, fun id =>
-    ⟨Pdf.objTable_between keep imgs usedImgs np nOut nElems id,
-     fun h => Pdf.objTable_covers keep imgs usedImgs np nOut nElems id h.1 h.2⟩⟩
+    (np nOut : Nat) :
+    (Pdf.objTable keep imgs usedImgs np nOut).ids.toList.Nodup ∧
+    ∀ id, id ∈ (Pdf.objTable keep imgs usedImgs np nOut).ids ↔
+      1 ≤ id ∧ id < (Pdf.objTable keep imgs usedImgs np nOut).size :=
+  ⟨Pdf.objTable_inj keep imgs usedImgs np nOut, fun id =>
+    ⟨Pdf.objTable_between keep imgs usedImgs np nOut id,
+     fun h => Pdf.objTable_covers keep imgs usedImgs np nOut id h.1 h.2⟩⟩
 
 /-- Every object id the writer's cross-reference lists is allocated by one
 table (`Pdf.objTable`), read back through the engine's own reader: the
@@ -3385,25 +2789,23 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   let t := check ref
   -- One face, one page, nothing else: 1 catalog, 2 pages, four font ids,
   -- the file, the page pair, then Info, XMP, the object stream, the xref.
-  -- The structure block sits between the outline and XMP: root, parent
-  -- tree, namespace, then one id per element (here the `Document` alone).
-  let t0 := Pdf.objTable #[0] {} #[] 1 0 1
+  let t0 := Pdf.objTable #[0] {} #[] 1 0
   t "table: the font block is four ids then the file"
     (Pdf.ObjTable.type0Id 0 == 3 && Pdf.ObjTable.cidId 0 == 4 && Pdf.ObjTable.fdId 0 == 5 &&
      Pdf.ObjTable.toUniId 0 == 6 && t0.fileId 0 == 7)
-  t "table: one face, one page, no outline, one structure element"
-    (t0.pageId 0 == 8 && t0.contentId 0 == 9 && t0.infoId == 10 && t0.structTreeRoot == 11 &&
-     t0.parentTree == 12 && t0.namespaceId == 13 && t0.structElemId 0 == 14 && t0.xmpId == 15 &&
-     t0.objStmId == 16 && t0.xrefId == 17 && t0.size == 18 && t0.nf == 1 && t0.np == 1)
+  t "table: one face, one page, no outline"
+    (t0.pageId 0 == 8 && t0.contentId 0 == 9 && t0.infoId == 10 && t0.xmpId == 11 &&
+     t0.objStmId == 12 && t0.xrefId == 13 && t0.size == 14 && t0.nf == 1 && t0.np == 1)
   t "table: the conditional families allocate nothing yet"
-    (t0.outputIntent.isNone && t0.icc.isNone)
+    (t0.outputIntent.isNone && t0.icc.isNone && t0.structTreeRoot.isNone &&
+     t0.parentTree.isNone)
   -- Two faces, three pages, a two-item outline: the root then its items
-  -- sit between Info and the structure block.
-  let t1 := Pdf.objTable #[0, 2] {} #[] 3 2 0
+  -- sit between Info and XMP.
+  let t1 := Pdf.objTable #[0, 2] {} #[] 3 2
   t "table: two faces, three pages, an outline"
     (t1.fileId 1 == 12 && t1.pageId 2 == 17 && t1.contentId 2 == 18 && t1.infoId == 19 &&
-     t1.outlineRootId == 20 && t1.outlineItemId 1 == 22 && t1.structTreeRoot == 23 &&
-     t1.structBase == 26 && t1.xmpId == 26 && t1.xrefId == 28 && t1.size == 29)
+     t1.outlineRootId == 20 && t1.outlineItemId 1 == 22 && t1.xmpId == 23 &&
+     t1.xrefId == 25 && t1.size == 26)
   -- Images: a plain raster is one id; an alpha raster brings its SMask; a
   -- copied page brings its resource graph, one id per object; a placeholder
   -- (no info) brings nothing beyond its own slot.
@@ -3422,14 +2824,14 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       | none => 0
     | none => 0
   t "table: the copied page brings its font dictionary" (formN == 1)
-  let ti := Pdf.objTable #[0] store #[0, 1, 2, 3] 2 0 0
+  let ti := Pdf.objTable #[0] store #[0, 1, 2, 3] 2 0
   t "table: an XObject per image, then what it brings"
     (ti.imgIds == #[8, 9, 11, 12 + formN] && ti.smaskIds == #[none, some 10, none, none] &&
      ti.formBases == #[none, none, some 12, none] && ti.formSizes == #[0, 0, formN, 0] &&
      ti.ni == 4)
   t "table: the pages follow the last image block"
     (ti.pageId 0 == 13 + formN && ti.contentId 1 == 16 + formN && ti.infoId == 17 + formN &&
-     ti.size == 24 + formN)
+     ti.size == 21 + formN)
   -- The executable twin of `objTable_ids_set_eq`, on the shapes above.
   for (name, tb) in [("plain", t0), ("outline", t1), ("images", ti)] do
     t s!"table {name}: the ids are exactly [1, size)"
@@ -3448,11 +2850,10 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     let geom := Layout.Geom.ofPage doc.page
     let store ← corpusStore doc
     let out := layoutOf oneFace doc geom none store
-    let tree := Struct.ofDoc (Layout.pdfView doc)
-    let tb := Pdf.tableOf oneFace out.pages store out.outline tree
+    let tb := Pdf.tableOf oneFace out.pages store out.outline
     t s!"table {n}: nodup, covering [1, size)"
       (tb.ids.toList.Nodup && tb.ids.size + 1 == tb.size)
-    let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline (tree := tree)
+    let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline
     match PdfRead.objects pdf with
     | .error e => t s!"table {n}: objects: {e}" false
     | .ok es =>
@@ -3461,128 +2862,26 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
         ((((PdfRead.trailer pdf).toOption.bind (·.get? "Size")).bind PdfRead.Obj.int?)
           == some (tb.size : Int))
 
-/-- One page placing the store's first image: the shape whose store
-decides the census's image rows. -/
-def featurePlacingPages : Array Layout.PageOut :=
-  #[{ lines := #[
-    { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 10, setWidth := Dim.pt 100,
-      segs := #[.image (some 0) (Dim.pt 20) (Dim.pt 15)] }] }]
-
-/-- The typed feature census: the registry (`Feature.all` derived and
-closed, names one-to-one with rows), `features` on the shapes that decide
-each row — a soft-mask image says `smask`, a plain one does not, a copied
-page says `formXObject` and `copiedGraph`, a JPEG says `dct` — and, over
-every corpus fixture, the four unemitted features stay unreached while
-the bookkeeping five — the structure tree among them — are always
-reached. -/
-def featureCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
-  let t := check ref
-  t "features: the registry counts its constructors"
-    (Pdf.Feature.all.length == Pdf.Feature.count && Pdf.Feature.all.Nodup)
-  t "features: every row name reads back to its feature"
-    (Pdf.Feature.all.all fun f => Pdf.Feature.ofName? f.name == some f)
-  t "features: row names are distinct" ((Pdf.Feature.all.map Pdf.Feature.name).Nodup)
-  t "features: an unknown row name is nobody's" (Pdf.Feature.ofName? "hologram").isNone
-  -- One page placing one image; the store decides the row.
-  let png ← IO.FS.readBinFile "tests/corpus/rects.png"
-  let jpg ← IO.FS.readBinFile "tests/corpus/rects.jpg"
-  let rgbaRaw := bytes ([0, 10, 20, 30, 255, 40, 50, 60, 128] ++ [1, 5, 5, 5, 7, 1, 2, 3, 9])
-  let rgbaPng := mkPng (pngChunk "IHDR" (pngIhdr 2 2 8 6 0) ++
-    pngChunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ pngChunk "IEND" [])
-  let geom : Layout.Geom := {}
-  let placing := featurePlacingPages
-  let storeOf (src : String) (data : ByteArray) : Image.Store :=
-    { entries := #[{ src, info := (Image.decode data).toOption }] }
-  let feats (src : String) (data : ByteArray) : Array Pdf.Feature :=
-    Pdf.features geom oneFace placing (storeOf src data)
-  let alpha := feats "alpha.png" rgbaPng
-  t s!"features: an alpha PNG reaches smask and the predictor: {repr alpha}"
-    (alpha.contains .smask && alpha.contains .flatePredictor15 && !alpha.contains .dct)
-  let plain := feats "plain.png" png
-  t s!"features: an opaque PNG reaches the predictor and no smask: {repr plain}"
-    (!plain.contains .smask && plain.contains .flatePredictor15 && !plain.contains .dct)
-  let jpeg := feats "photo.jpg" jpg
-  t s!"features: a JPEG reaches dct alone: {repr jpeg}"
-    (jpeg.contains .dct && !jpeg.contains .smask && !jpeg.contains .flatePredictor15)
-  let form := feats "page.pdf" unembeddedProbePdf
-  t s!"features: a copied page reaches the form and its graph: {repr form}"
-    (form.contains .formXObject && form.contains .copiedGraph && !form.contains .dct)
-  let missing := Pdf.features geom oneFace placing { entries := #[{ src := "gone.png" }] }
-  t s!"features: a placeholder reaches no image feature: {repr missing}"
-    (!missing.contains .smask && !missing.contains .formXObject && !missing.contains .dct &&
-     !missing.contains .flatePredictor15)
-  -- Every placing is under a wrapper (pdf-tag-skeleton): the placeholder's
-  -- box a layout artifact, the loaded image of a leafless line a bare one.
-  t "features: a placed image reaches marked content, loaded or not"
-    (missing.contains .markedContent && plain.contains .markedContent)
-  let bare := Pdf.features geom oneFace #[]
-  t s!"features: no pages reach the bookkeeping three, the stand-in face, and the structure tree: {repr bare}"
-    (bare == #[.xrefStream, .objStm, .cidFontType2, .xmp, .structTree])
-  t "features: a bleed reaches the trim box"
-    ((Pdf.features { geom with bleed := Dim.pt 3 } oneFace #[]).contains .trimBox &&
-     !bare.contains .trimBox)
-  t "features: an outline reaches outlines; a URI-only item reaches link-uri too"
-    (let o := Pdf.features geom oneFace #[] {} #[{ title := "a", page := some 0 }]
-     let u := Pdf.features geom oneFace #[] {} #[{ title := "a", url := some "https://example.org" }]
-     o.contains .outlines && !o.contains .linkURI && u.contains .outlines && u.contains .linkURI)
-  -- The census over the corpus: the four unemitted features never, the
-  -- bookkeeping five always, and the census is in registry order.
-  for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
-    let geom := Layout.Geom.ofPage doc.page
-    let store ← corpusStore doc
-    let out := layoutOf oneFace doc geom none store
-    let fs := Pdf.features geom oneFace out.pages store out.outline
-    t s!"features {n}: never tabs, transparency groups, Brotli or JPX"
-      (!fs.contains .tabs && !fs.contains .transparencyGroup && !fs.contains .brotli &&
-       !fs.contains .jpx)
-    t s!"features {n}: always the cross-reference stream, the object stream, XMP, the structure tree, one CIDFontType2"
-      (fs.contains .xrefStream && fs.contains .objStm && fs.contains .xmp &&
-       fs.contains .structTree && fs.contains .cidFontType2 && !fs.contains .cidFontType0)
-    t s!"features {n}: in registry order, once each"
-      (fs.toList == Pdf.Feature.all.filter fs.contains)
-
-/-- The recorded text page under the marking layer: the fills as one bare
-`/Artifact` block, the paragraph and heading lines as `/P` and `/H2`
-sequences numbered 0 and 1, the line whose leaf no element holds and the
-leafless line as bare artifacts, the loaded image of the leafless line a
-bare artifact, each placeholder under `/Layout`, the rules as one
-`/Layout` block. -/
+/-- The recorded text page under the artifact layer: the fills as one bare
+`/Artifact` block, each placeholder under `/Layout`, the rules as one
+`/Layout` block, the loaded image and the text object bare. -/
 def artifactTextExpected : String :=
   "/Artifact BMC\nq 0.941 0.941 0.941 rg 0 0 200 100 re f Q\n" ++
   "q 1 0 0 0 k 5 85 50 10 re f Q\nEMC\n" ++
-  "BT\n/P << /MCID 0 >> BDC\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025>-416<0026>] TJ\n" ++
-  "1 0 0 1 65 83 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027><0028>] TJ\nEMC\n" ++
-  "/H2 << /MCID 1 >> BDC\n102.0 Tz\n1 0 0 1 10 60 Tm\n/F1 12 Tf\n1 0 0 0 k\n" ++
-  "[<11701000>-407<0001>] TJ\nEMC\n" ++
-  "/Artifact BMC\n100.0 Tz\n1 0 0 1 12 40 Tm\n0 0 0 rg\n[<0032>] TJ\n1 0 0 1 522 40 Tm\n" ++
-  "[<0033>] TJ\n1 0 0 1 532 37 Tm\n[<0034><0035>] TJ\nEMC\n" ++
-  "/Artifact BMC\n1 0 0 1 100 20 Tm\n[<0036>] TJ\nEMC\nET\n" ++
-  "/Artifact BMC\nq 20 0 0 15 50 20 cm /Im1 Do Q\nEMC\n" ++
+  "BT\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025>-416<0026>] TJ\n" ++
+  "1 0 0 1 65 83 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027><0028>] TJ\n" ++
+  "102.0 Tz\n1 0 0 1 10 60 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000>-407<0001>] TJ\n" ++
+  "100.0 Tz\n1 0 0 1 12 40 Tm\n0 0 0 rg\n[<0032>] TJ\n1 0 0 1 522 40 Tm\n[<0033>] TJ\n" ++
+  "1 0 0 1 532 37 Tm\n[<0034><0035>] TJ\n1 0 0 1 100 20 Tm\n[<0036>] TJ\nET\n" ++
+  "q 20 0 0 15 50 20 cm /Im1 Do Q\n" ++
   "/Artifact << /Type /Layout >> BDC\nq 0.62 0.62 0.66 RG 0.75 w 70 20 20 15 re S Q\nEMC\n" ++
   "/Artifact << /Type /Layout >> BDC\nq 0.62 0.62 0.66 RG 0.75 w 90 20 10 5 re S Q\nEMC\n" ++
   "/Artifact << /Type /Layout >> BDC\nq 0.784 0.118 0.118 rg 10 22 40 1 re f Q\n" ++
   "q 0 0 0 rg 110 20 10 2 re f Q\nEMC"
 
-/-- The path page: two pictures, each its paths under one `/P` sequence
-(the tag is whatever type holds the leaf — here the synthetic tags'), the
-text object empty. -/
-def artifactPathExpected : String :=
-  "/P << /MCID 0 >> BDC\n" ++
-  "q 0.784 0.118 0.118 RG 0.4 w [3 3] 0 d 70 50 m 70 61.046 61.046 70 50 70 c " ++
-  "38.954 70 30 61.046 30 50 c 30 38.954 38.954 30 50 30 c 61.046 30 70 38.954 70 50 c h S Q\n" ++
-  "q 0.941 0.941 0.941 rg 0 0 0 RG 1 w [1 1] 0 d 10 70 30 20 re B Q\n" ++
-  "q 0 0 0 RG 0.4 w 1 98 m 3 96 l 5 94 l 7 92 m 9 90 11 88 13 86 c 1 99 2 98 3 97 c S Q\nEMC\n" ++
-  "/H2 << /MCID 1 >> BDC\n" ++
-  "q 0.784 0.118 0.118 rg 1 98 m 3 96 l 5 94 l h f Q\n" ++
-  "q 1 97 2 2 re n Q\nEMC\n" ++
-  "BT\nET"
-
 /-- Two furniture lines around a flow line, the second furniture line
 carrying a rule: the furniture groups are pagination artifacts inside the
-text object, the flow line — no leaf — a bare artifact, the rule a layout
-artifact after `ET`. -/
+text object, the flow line is bare, the rule a layout artifact after `ET`. -/
 def artifactFurniturePage : Layout.PageOut := {
   lines := #[
     { x := Dim.pt 10, y := Dim.pt 20, size := Dim.pt 12, setWidth := Dim.pt 100, furniture := true,
@@ -3595,94 +2894,64 @@ def artifactFurniturePage : Layout.PageOut := {
 
 def artifactFurnitureExpected : String :=
   "BT\n/Artifact << /Type /Pagination >> BDC\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<0024>] TJ\nEMC\n" ++
-  "/Artifact BMC\n1 0 0 1 10 60 Tm\n[<0025>] TJ\nEMC\n" ++
+  "1 0 0 1 10 60 Tm\n[<0025>] TJ\n" ++
   "/Artifact << /Type /Pagination >> BDC\n1 0 0 1 10 40 Tm\n[<0026>] TJ\nEMC\nET\n" ++
   "/Artifact << /Type /Layout >> BDC\nq 0 0 0 rg 40 40 10 1 re f Q\nEMC"
 
-/-- A line whose operators paint: a run with glyphs. Rules and images
-gather for painting after `ET`, a kern only moves, so a line of those
-alone puts nothing in the text object — unless it resets the expansion
-the line before it set (`lineSt`'s `Tz`), which `expectedArtifacts`
-tracks. -/
-def lineInks (l : Layout.LineOut) : Bool :=
-  l.segs.any fun s => match s with
-    | .run _ _ _ _ glyphs _ _ _ _ _ => !glyphs.isEmpty
-    | .image _ _ _ | .rule _ _ _ _ | .gap _ _ => false
-
-/-- The artifact count a page owes, read from `Layout.PageOut` and the leaf
-tags, not from the stream: one block for its fills when it has any, one
-for its rules when it has any, one per image segment (the corpus is laid
-out here with no store, so every image is a placeholder), one per
-furniture line, one per line no element holds whose operators are not
-empty — a glyph run, or the expansion reset a rules-only line inherits
-from the expanded line before it. -/
-def expectedArtifacts (page : Layout.PageOut) (tags : Array (Option String)) : Nat :=
+/-- The artifact count a page owes, read from `Layout.PageOut` and not from
+the stream: one block for its fills when it has any, one for its rules
+when it has any, one per image segment (missing from an empty store, so a
+placeholder), one per furniture line. -/
+def expectedArtifacts (page : Layout.PageOut) : Nat :=
   let rules := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
       | .rule _ _ _ _ => acc + 1
-      | .image _ _ _ | .run _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
-  let images := page.lines.foldl (init := 0) fun acc l =>
+      | .image _ _ _ | .run _ _ _ _ _ _ _ _ _ | .gap _ => acc
+  let placeholders := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
       | .image _ _ _ => acc + 1
-      | .rule _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
-  let (unattributed, _) := page.lines.foldl (init := ((0 : Nat), (0 : Int))) fun (acc, tz) l =>
-    let nonEmpty := lineInks l || l.expand != tz
-    (if Pdf.Origin.of tags l == .unattributed && nonEmpty then acc + 1 else acc, l.expand)
-  (if page.fills.isEmpty then 0 else 1) + (if rules == 0 then 0 else 1) + images
-    + (page.lines.filter (·.furniture)).size + unattributed
+      | .rule _ _ _ _ | .run _ _ _ _ _ _ _ _ _ | .gap _ => acc
+  (if page.fills.isEmpty then 0 else 1) + (if rules == 0 then 0 else 1) + placeholders
+    + (page.lines.filter (·.furniture)).size
 
-/-- The runs under the pagination wrappers of a text object: what the
-furniture artifacts hide from a reader of real content — exactly the
-furniture lines' runs, no others. -/
-def paginationRuns (ops : Array Pdf.TextOp) : List (Array Nat) :=
+/-- The runs a text operator paints under a marked sequence: what the
+artifact wrappers inside the text object hide from a reader of real
+content — exactly the furniture lines' runs, no others. -/
+def markedRuns (ops : Array Pdf.TextOp) : List (Array Nat) :=
   ops.toList.flatMap fun o =>
     match o with
-    | .marked (.artifact (some .pagination)) body => Pdf.TextOp.runsList body.toList
-    | .marked (.artifact (some .layout)) _ | .marked (.artifact (some .page)) _
-    | .marked (.artifact none) _ | .marked (.content _ _ _) _
+    | .marked _ body => Pdf.TextOp.runsList body.toList
     | .scale _ | .move _ _ | .font _ _ | .color _ | .show _ => []
 
 def furnitureRuns (page : Layout.PageOut) : List (Array Nat) :=
   page.lines.toList.flatMap fun l =>
     if l.furniture then l.segs.toList.flatMap Pdf.segRuns else []
 
-/-- The lines of a stream that open an artifact sequence. -/
-def isArtifactOpen (l : Pdf.Line) : Bool :=
-  match l with
-  | .open (.artifact _) => true
-  | .open (.content _ _ _) => false
-  | .op _ | .emc => false
-
-/-- Every painting operator sits inside a wrapper, and the ink is provably
-unmoved: the theorems (`mark_ink_exact`, `wrapped_covers`,
-`furniture_covers`, `numberMarks_mcids_exact`, `lines_marked_balanced`,
-`render_lines_exact`) judged executably on synthetic pages and on every
-corpus fixture — the spelling of the wrappers, the string-level strip
-equal to the typed strip, the artifact count against the page, the
-identifiers `0 … n−1` in stream order, balance, and no flow run under a
-pagination wrapper. -/
+/-- Every non-real painting operator sits inside `/Artifact`, and the ink
+is provably unmoved: the theorems (`mark_ink_exact`, `artifacts_covers`,
+`furniture_covers`, `lines_marked_balanced`, `render_lines_exact`) judged
+executably on synthetic pages and on every corpus fixture — the spelling
+of the wrappers, the string-level strip equal to the typed strip, the
+artifact count against the page, balance, and no flow run under a
+wrapper. -/
 def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (pats : Hyphen.Patterns) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := { pageW := Dim.pt 200, pageH := Dim.pt 100 }
   let remap : Array Nat := #[0, 1]
   let imgMap : Array (Option Nat) := #[some 0, none]
-  let tags := contentOpsTags
-  let ops (p : Layout.PageOut) := Pdf.contentOps geom remap imgMap tags p
-  t "artifacts: the fill block, the rule block and each placeholder wrap as recorded; leaves under their types"
+  let ops (p : Layout.PageOut) := Pdf.contentOps geom remap imgMap p
+  t "artifacts: the fill block, the rule block and each placeholder wrap as recorded; image and text bare"
     (Pdf.render (ops contentOpsTextPage) == artifactTextExpected)
-  t "artifacts: furniture lines are pagination groups inside the text object, a leafless line a bare one"
+  t "artifacts: furniture lines are pagination groups inside the text object, flow lines bare"
     (Pdf.render (ops artifactFurniturePage) == artifactFurnitureExpected)
   t "artifacts: the furniture page strips to its plain twin"
     (stripMarkLines artifactFurnitureExpected
-      == Pdf.render (Pdf.contentOpsPlain geom remap imgMap tags artifactFurniturePage))
-  t "artifacts: picture paths are grouped per picture under the holder's type"
-    (Pdf.render (ops contentOpsPathPage) == artifactPathExpected)
-  t "artifacts: the marks of the text page are its two leaves, numbered in stream order"
-    (Pdf.pageMarks (ops contentOpsTextPage) == #[(0, 0), (1, 1)]
-      && Pdf.pageMarks (ops contentOpsPathPage) == #[(0, 0), (1, 1)])
+      == Pdf.render (Pdf.contentOpsPlain geom remap imgMap artifactFurniturePage))
+  t "artifacts: picture paths are not wrapped (real content pending the structure slice)"
+    (Pdf.render (ops contentOpsPathPage) == contentOpsPathExpected)
   -- Well-nesting is a type: a hand-built nest renders balanced, and strips
   -- to its innermost body.
   let nest : Array Pdf.ContentOp :=
@@ -3697,48 +2966,31 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       && Pdf.render (Pdf.inkOps nest) == stripMarkLines (Pdf.render nest))
   t "artifacts: an empty wrapper is one opening line and one EMC line"
     (Pdf.render #[.marked (.artifact none) #[]] == "/Artifact BMC\nEMC")
-  -- Numbering descends every body and hands out `0 … n−1` in stream order,
-  -- however the construction nested.
-  let nested : Array Pdf.ContentOp :=
-    #[.marked (.content "P" 9 0) #[.fill contentOpsRed 1 2 3 4,
-        .marked (.content "Span" 9 1) #[.fill contentOpsRed 5 6 7 8]],
-      .text #[.marked (.artifact none) #[.scale 0], .marked (.content "H1" 9 2) #[.scale 1]],
-      .marked (.artifact (some .layout)) #[.marked (.content "Figure" 9 3) #[.imageMissing 1 1 1 1]]]
-  t "artifacts: numbering hands out 0 … n−1 in stream order through every body, leaves kept"
-    (Pdf.pageMarks (Pdf.numberMarks nested) == #[(0, 0), (1, 1), (2, 2), (3, 3)]
-      && Pdf.inkOps (Pdf.numberMarks nested) == Pdf.inkOps nested)
   -- `BDC` takes two operands, `BMC` one: a bare tag before `BDC` is a
   -- syntax error on which poppler drops the rest of the page (found by
   -- `pdftotext`, not by any spelling test — the reason this row exists).
   t "artifacts: every opener is a legal operator — BMC alone, BDC with its dictionary"
     (Pdf.MarkTag.opener (.artifact none) == "/Artifact BMC"
-      && [Pdf.ArtifactKind.pagination, .layout, .page].all (fun k =>
+      && [Pdf.ArtifactKind.pagination, .layout, .page].all fun k =>
         let o := Pdf.MarkTag.opener (.artifact (some k))
         o.startsWith "/Artifact << /Type /" && o.endsWith " >> BDC")
-      && Pdf.MarkTag.opener (.content "P" 7 3) == "/P << /MCID 7 >> BDC")
-  -- The corpus: every fixture's every page, under the fixture's own
-  -- structure tree.
+  -- The corpus: every fixture's every page.
   let mut pages := 0
   let mut wrappers := 0
-  let mut marks := 0
   let mut furniture := 0
   for n in goldenNames do
     let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
     let (doc, _) ← elabFixture n src
     let geom := Layout.Geom.ofPage doc.page
     let out := layoutOf oneFace doc geom (some pats)
-    let tree := Struct.ofDoc (Layout.pdfView doc)
-    let tags := Pdf.tagsOf tree
-    let all := Pdf.pageOps geom oneFace out.pages {} tree
+    let all := Pdf.pageOps geom oneFace out.pages
     for i in [0:out.pages.size] do
       let page := out.pages[i]!
       let ops := all[i]!
       let s := Pdf.render ops
       let ls := Pdf.lines ops
-      let pm := Pdf.pageMarks ops
       pages := pages + 1
       wrappers := wrappers + ls.countP Pdf.Line.isOpen
-      marks := marks + pm.size
       furniture := furniture + (page.lines.filter (·.furniture)).size
       -- The string-level strip is the typed strip (`render_inkOps_exact`
       -- reaches `joinLines (stripMarks (lines ops))`; this closes the gap
@@ -3746,31 +2998,23 @@ def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
       t s!"artifacts {n} p{i}: stripping the marked-content lines of the file is stripping the typed lines"
         (stripMarkLines s == Pdf.render (Pdf.inkOps ops)
           && stripMarkLines s == Pdf.joinLines (Pdf.stripMarks ls))
-      t s!"artifacts {n} p{i}: one artifact per fill block, rule block, placeholder, furniture line, and leafless inked line"
-        (ls.countP isArtifactOpen == expectedArtifacts page tags)
-      t s!"artifacts {n} p{i}: one pagination artifact per furniture line"
-        (ls.countP Pdf.Line.isPaginationOpen == (page.lines.filter (·.furniture)).size)
-      t s!"artifacts {n} p{i}: the identifiers are 0 … n−1 in stream order"
-        (pm.toList.map Prod.fst == List.range pm.size)
-      t s!"artifacts {n} p{i}: every mark's tag is the type of the element holding its leaf"
-        ((Pdf.contentOpens ls).length == pm.size && ls.all fun l => match l with
-          | .open (.content s _ k) => tags[k]?.join == some s
-          | .open (.artifact _) | .op _ | .emc => true)
+      t s!"artifacts {n} p{i}: one wrapper per fill block, rule block, placeholder, and furniture line"
+        (ls.countP Pdf.Line.isOpen == expectedArtifacts page)
       t s!"artifacts {n} p{i}: BDC and EMC lines pair off"
         (ls.countP Pdf.Line.isOpen == ls.countP Pdf.Line.isEmc
           && ((s.splitOn "\n").filter fun l => l.endsWith " BDC" || l.endsWith " BMC").length
             == ls.countP Pdf.Line.isOpen
           && ((s.splitOn "\n").filter (· == "EMC")).length == ls.countP Pdf.Line.isEmc)
-      t s!"artifacts {n} p{i}: the runs under pagination wrappers are the furniture runs, no flow run"
+      t s!"artifacts {n} p{i}: the runs under text wrappers are the furniture runs, no flow run"
         ((ops.toList.flatMap fun o => match o with
-            | .text tops => paginationRuns tops
+            | .text tops => markedRuns tops
             | .fill _ _ _ _ _ | .path _ _ _ | .image _ _ _ _ _ | .imageMissing _ _ _ _
             | .marked _ _ => []) == furnitureRuns page)
-      t s!"artifacts {n} p{i}: every operation at the top of the stream is wrapped, or the text object with every operator wrapped"
-        (ops.all Pdf.ContentOp.wrapped)
+      t s!"artifacts {n} p{i}: nothing bare is decoration at the top of the stream"
+        (ops.all fun o => !o.decoration)
   t s!"artifacts: the corpus exercised the layer ({pages} pages, {wrappers} wrappers, \
-{marks} marks, {furniture} furniture lines)"
-    (pages > 0 && wrappers > 0 && marks > 0 && furniture > 0)
+{furniture} furniture lines)"
+    (pages > 0 && wrappers > 0 && furniture > 0)
 
 /-- The profile grammar and the contract algebra: a declared conformance
 name is a set element implying exactly one assertion, judged on the census
@@ -3881,12 +3125,10 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     t "violations: today's file satisfies plain" ((rules PdfContract.plain).isEmpty)
     t "violations: archive fails on Info and the missing intent, nothing else"
       (rules PdfContract.archive == #["6.1.3-4", "6.2.4.3"])
-    -- Every PDF is tagged (pdf-tag-skeleton): the structure and mark rules
-    -- hold of the written file; what accessible still lacks is declared.
-    t "violations: accessible fails on language and title, the tree and the mark being present"
-      (rules PdfContract.accessible == #["8.4.4-1", "8.11.1-1"])
+    t "violations: accessible fails on structure, mark, language, title"
+      (rules PdfContract.accessible == #["8.2.1-1", "6.2-1", "8.4.4-1", "8.11.1-1"])
     t "violations: a title turns the title rule off (needsTitle_accounts, executable)"
-      (rules PdfContract.accessible (some "T") == #["8.4.4-1"] &&
+      (rules PdfContract.accessible (some "T") == #["8.2.1-1", "6.2-1", "8.4.4-1"] &&
        !(PdfContract.violations PdfContract.accessible c none).isEmpty)
     t "violations: print fails on the intent and the boxes"
       (rules PdfContract.print == #["6.2.4.3", "trim-xor-art"])
@@ -3904,7 +3146,7 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   | .error e => t s!"contract: census of the language file: {e}" false
   | .ok c =>
     t "violations: a declared language turns the /Lang rule off"
-      ((PdfContract.violations PdfContract.accessible c none).map (·.rule) == #["8.11.1-1"])
+      ((PdfContract.violations PdfContract.accessible c none).map (·.rule) == #["8.2.1-1", "6.2-1", "8.11.1-1"])
   -- The corpus: every fixture satisfies plain, every monotone instance
   -- holds, and no file carries an identification — the writer is
   -- untouched by this slice.
@@ -3959,10 +3201,9 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
       (code != 0 && hasStr log "E0321" && hasStr log "pdf/a-4, pdf/ua-2, pdf/x-6" &&
        !(← outDir.pathExists))
     let (code, log, outDir) ← run "ua2" "\\output{ formats = pdf, profiles = pdf/ua-2 }\n"
-    t s!"driver: pdf/ua-2 fails honestly on language and title, the tree and the mark present: {log}"
-      (code == 2 && hasStr log "pdf.profile = pdf/ua-2" && !hasStr log "no structure tree" &&
-       !hasStr log "no MarkInfo" && hasStr log "no /Lang" && hasStr log "no title" &&
-       !(← outDir.pathExists))
+    t s!"driver: pdf/ua-2 fails honestly on structure, mark, language: {log}"
+      (code == 2 && hasStr log "pdf.profile = pdf/ua-2" && hasStr log "no structure tree" &&
+       hasStr log "no MarkInfo" && hasStr log "no /Lang" && !(← outDir.pathExists))
     let (code, log, outDir) ← run "html" "\\output{ formats = html, profiles = pdf/a-4 }\n"
     t s!"driver: profiles with no PDF emitted fails loud: {log}"
       (code == 2 && hasStr log "no emitted artifact carries this measurement" &&
@@ -3974,357 +3215,4 @@ def pdfContractChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
     let (code, log, outDir) ← run "none" "\\output{ formats = pdf }\n"
     t s!"driver: no profile, no judgement, the file ships: {log}"
       (code == 0 && (← (outDir / "none.pdf").pathExists))
-    IO.FS.removeDirAll dir
-
-/-! ## The structure tree, read back -/
-
-/-- One structure element as the reader sees it: its object number, type,
-parent reference, child element numbers in `/K` order, and the
-`(page object, mcid)` pairs of its marked-content references. -/
-structure ReadElem where
-  num : Nat
-  s : String
-  parent : Option Nat
-  kids : Array Nat
-  mcids : Array (Nat × Nat)
-  ns : Option Nat
-  deriving Repr, Inhabited
-
-/-- The reader's view of a file's structure tree: the root's `/K` chain,
-walked in preorder. `pageOf` maps a page object number to its index in
-the page tree. -/
-def readStructTree (es : Array PdfRead.Entry) (root : PdfRead.Obj) : Array ReadElem := Id.run do
-  let byNum (n : Nat) : Option PdfRead.Obj := (es.find? (·.num == n)).map (·.val)
-  let mut out : Array ReadElem := #[]
-  let mut stack : List Nat := match root.get? "K" with
-    | some (.arr xs) => xs.toList.filterMap fun o => match o with
-      | .ref n _ => some n
-      | _ => none
-    | some (.ref n _) => [n]
-    | _ => []
-  -- A tree visits each object once: the object count bounds the walk.
-  for _ in [0:es.size + 1] do
-    match stack with
-    | [] => break
-    | n :: rest =>
-      stack := rest
-      match byNum n with
-      | none => pure ()
-      | some d =>
-        let s := match d.get? "S" with | some (.name s) => s | _ => ""
-        let parent := match d.get? "P" with | some (.ref p _) => some p | _ => none
-        let ns := match d.get? "NS" with | some (.ref p _) => some p | _ => none
-        let kidObjs : List PdfRead.Obj := match d.get? "K" with
-          | some (.arr xs) => xs.toList
-          | some (.ref n g) => [.ref n g]
-          | some (.dict es) => [.dict es]
-          | _ => []
-        let kids := kidObjs.filterMap fun o => match o with
-          | .ref n _ => some n
-          | _ => none
-        let mcids := kidObjs.filterMap fun o => match o with
-          | .dict _ =>
-            match o.get? "Pg", (o.get? "MCID").bind PdfRead.Obj.int? with
-            | some (.ref pg _), some m => some (pg, m.toNat)
-            | _, _ => none
-          | _ => none
-        out := out.push { num := n, s, parent, kids := kids.toArray, mcids := mcids.toArray, ns }
-        stack := kids ++ stack
-  return out
-
-/-- The `/MCID n` identifiers a decoded content stream opens, in stream order. -/
-def streamMcids (data : ByteArray) : List Nat :=
-  ((String.fromUTF8! data).splitOn "\n").filterMap fun l =>
-    if l.endsWith " BDC" then
-      match (l.splitOn "/MCID ").drop 1 with
-      | rest :: _ => (rest.splitOn " ").head?.bind (·.toNat?)
-      | [] => none
-    else none
-
-/-- **Every PDF is tagged.** The catalog carries `/MarkInfo << /Marked true >>`
-and a `/StructTreeRoot`; the tree read back through the engine's reader lists
-every marked-content identifier the page streams open, once, with the parent
-tree mapping each back to its element; the heading elements are exactly
-`Ir.headingLevels`; the typed model agrees with itself (tags, parent tree,
-leaf placeholders each held once). Every corpus fixture. -/
-def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
-  let t := check ref
-  -- The typed model on a synthetic tree: kinds to types, holders, inline
-  -- elements empty, an image its own Figure with /Alt, headings the census.
-  let tree : Struct.Tree := { children := #[
-    .node (.heading 0) #[.leaf 0 (.text "Title")],
-    .node .paragraph #[.leaf 1 (.text "Read "), .node (.link "https://example.org") #[.leaf 2 (.text "this")],
-      .leaf 3 (.image "a.png" "An image"), .node .formula #[.leaf 4 (.text "x")]],
-    .node (.list false) #[.node .item #[.node .label #[], .node .body #[.node .paragraph #[.leaf 5 (.text "item")]]]],
-    .node .aside #[.node .paragraph #[.leaf 6 (.text "speaker")]],
-    .node .bibEntry #[.leaf 7 (.text "[1] A")], .node .bibEntry #[.leaf 8 (.text "[2] B")],
-    .node .figure #[.node .caption #[.leaf 9 (.text "Cap")], .node .paragraph #[.leaf 10 (.image "b.png" "")]],
-    .node .code #[.leaf 11 (.text "code")] ] }
-  let sk := Pdf.skeleton tree
-  let names := sk.map (·.s)
-  t "struct: the skeleton spells the types in preorder, inline elements included, the aside and label absent"
-    (names == #["Document", "H1", "P", "Link", "Figure", "Formula", "L", "LI", "LBody", "P",
-      "L", "LI", "LBody", "LI", "LBody", "Figure", "Caption", "P", "Figure", "Code"])
-  t "struct: the parent of every element but the root is the element before it in its branch"
-    (sk[0]!.parent == none && sk[1]!.parent == some 0 && sk[3]!.parent == some 2 &&
-     sk[4]!.parent == some 2 && sk[8]!.parent == some 7 && sk[13]!.parent == some 10 &&
-     sk[18]!.parent == some 17)
-  t "struct: a link's leaf lands in the paragraph, an image is its own Figure with /Alt, an empty alt is none"
-    (sk[2]!.kids == #[.leaf 1, .elem 3, .leaf 2, .elem 4, .elem 5, .leaf 4] &&
-     sk[4]!.kids == #[.leaf 3] && sk[4]!.alt == some "An image" && sk[18]!.alt == none &&
-     sk[5]!.kids == #[])
-  t "struct: two reference entries share one L; Code is a 1.7 type, the rest 2.0"
-    (sk[10]!.s == "L" && sk[11]!.parent == some 10 && sk[13]!.parent == some 10 &&
-     sk[19]!.ns20 == false && sk[2]!.ns20 && sk[0]!.ns20)
-  let tags := Pdf.leafTags sk 12
-  t "struct: leaf tags are the holders' types; the aside's leaf has none"
-    (tags == #[some "H1", some "P", some "P", some "Figure", some "P", some "P", none,
-      some "LBody", some "LBody", some "Caption", some "Figure", some "Code"])
-  t "struct: the heading census is the tree's" (Pdf.headingsOf sk == [0] && tree.headings == #[0])
-  -- fill and the parent tree on two synthetic pages: leaf 1 on page 0 as
-  -- mcid 0 and 1, leaf 5 on page 1 as mcid 0.
-  let marks : Array (Array (Nat × Nat)) := #[#[(0, 1), (1, 1)], #[(0, 5)]]
-  let filled := Pdf.fill sk (Pdf.leafPagesOf 12 marks)
-  t "struct: fill puts each mark in the element holding its leaf, in page order"
-    (filled[2]!.kids == #[.mcid 0 0, .mcid 0 1, .elem 3, .elem 4, .elem 5] &&
-     filled[9]!.kids == #[.mcid 1 0])
-  t "struct: the parent tree maps every mark back to the element that lists it"
-    (Pdf.parentTreeOf marks (Pdf.leafOwners sk 12) == #[#[some 2, some 2], #[some 9]])
-  -- The Struct projection of an elaborated document is a Document over Sect/H/P.
-  let (doc, _) := elabStr (dvDoc "" "\\section{Head}\n\nText\\footnote{note body} more.\n\n\\begin{itemize}\\item one\\end{itemize}")
-  let esk := Pdf.skeleton (Struct.ofDoc (Layout.pdfView doc))
-  t "struct: an elaborated section, footnote and list project to H2, P with FENote, L/LI/LBody/P"
-    (esk.map (·.s) == #["Document", "H2", "P", "FENote", "L", "LI", "LBody", "P"])
-  -- Every corpus fixture, written and read back.
-  let mut elems := 0
-  let mut mcids := 0
-  for n in goldenNames do
-    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
-    let (doc, _) ← elabFixture n src
-    let geom := Layout.Geom.ofPage doc.page
-    let store ← corpusStore doc
-    let out := layoutOf oneFace doc geom none store
-    let tree := Struct.ofDoc (Layout.pdfView doc)
-    let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline (tree := tree)
-    let text := pdfText pdf
-    t s!"struct {n}: the catalog declares marked content and a structure tree root"
-      (bytesContain text "/MarkInfo << /Marked true >>" && bytesContain text "/StructTreeRoot"
-        && bytesContain text "/S /Document")
-    -- The typed model: placeholders held once, tags from the holders.
-    let sk := Pdf.skeleton tree
-    -- The executable witness of the owed `skeleton_leafKids_nodup`, and of
-    -- `parentTree_covers`'s hypothesis.
-    t s!"struct {n}: every leaf placeholder is held by exactly one element" (Pdf.leafKids sk).Nodup
-    match PdfRead.objects pdf with
-    | .error e => t s!"struct {n}: objects: {e}" false
-    | .ok es =>
-      let es := es.val
-      let trailer := (PdfRead.trailer pdf).toOption.getD (.dict #[])
-      let catalog := PdfCensus.catalogOf es trailer
-      let census := PdfCensus.ofEntries trailer es
-      t s!"struct {n}: the census sees MarkInfo and StructTreeRoot" (census.markInfo && census.structTreeRoot)
-      let rootNum := match catalog.get? "StructTreeRoot" with
-        | some (.ref r _) => r
-        | _ => 0
-      let root := PdfCensus.deref es ((catalog.get? "StructTreeRoot").getD .null)
-      let pagesObj := PdfCensus.deref es ((catalog.get? "Pages").getD .null)
-      let pageNums : Array Nat := match pagesObj.get? "Kids" with
-        | some (.arr xs) => xs.filterMap fun o => match o with
-          | .ref n _ => some n
-          | _ => none
-        | _ => #[]
-      let pageOf (pg : Nat) : Nat := (pageNums.findIdx? (· == pg)).getD 999
-      let tree := readStructTree es root
-      elems := elems + tree.size
-      t s!"struct {n}: the root's one kid is the Document, in the PDF 2.0 namespace"
-        (tree.size > 0 && tree[0]!.s == "Document" && tree[0]!.ns.isSome &&
-          (match tree[0]!.ns with
-            | some nsNum => match PdfCensus.deref es (.ref nsNum 0) |>.get? "NS" with
-              | some (.str raw) => String.fromUTF8! raw == "(http://iso.org/pdf2/ssn)"
-              | _ => false
-            | none => false))
-      t s!"struct {n}: every element names its parent, the root the structure tree root"
-        (tree.all fun e => match e.parent with
-          | some p => (p == rootNum && e.num == tree[0]!.num)
-            || tree.any fun q => q.num == p && q.kids.contains e.num
-          | none => false)
-      -- The streams' identifiers against the tree's, as multisets.
-      let mut streamPairs : Array (Nat × Nat) := #[]
-      let mut perPageOk := true
-      for (pg, i) in pageNums.zipIdx do
-        let pageDict := PdfCensus.deref es (.ref pg 0)
-        let ids := match pageDict.get? "Contents" with
-          | some (.ref c _) => match es.find? (·.num == c) with
-            | some e => match e.decoded with
-              | .ok (some data) => streamMcids data
-              | _ => []
-            | none => []
-          | _ => []
-        perPageOk := perPageOk && ids == List.range ids.length
-          && (pageDict.get? "StructParents").bind PdfRead.Obj.int? == some (i : Int)
-        streamPairs := streamPairs ++ (ids.map fun m => (i, m)).toArray
-      let treePairs := tree.flatMap fun e => e.mcids.map fun (pg, m) => (pageOf pg, m)
-      mcids := mcids + treePairs.size
-      let sortPairs (xs : Array (Nat × Nat)) := xs.qsort fun a b => a.1 < b.1 || (a.1 == b.1 && a.2 < b.2)
-      t s!"struct {n}: the identifiers each page opens are 0 … n−1 and its /StructParents is its index"
-        perPageOk
-      t s!"struct {n}: the tree lists every identifier the streams open, once, and no other"
-        (sortPairs treePairs == sortPairs streamPairs)
-      -- The parent tree: entry [page][mcid] is the element listing it.
-      let ptObj := PdfCensus.deref es ((root.get? "ParentTree").getD .null)
-      let nums : Array PdfRead.Obj := match ptObj.get? "Nums" with
-        | some (.arr xs) => xs
-        | _ => #[]
-      let ptOk := tree.all fun e => e.mcids.all fun (pg, m) =>
-        let i := pageOf pg
-        match nums[2 * i + 1]? with
-        | some (.arr refs) => match refs[m]? with
-          | some (.ref en _) => en == e.num
-          | _ => false
-        | _ => false
-      t s!"struct {n}: the parent tree maps every identifier back to the element listing it"
-        (ptOk && (root.get? "ParentTreeNextKey").bind PdfRead.Obj.int? == some (pageNums.size : Int))
-      -- The heading census: H<n> elements in preorder are the document's levels + 1.
-      let hs := tree.filterMap fun e =>
-        if e.s.startsWith "H" && e.s.length > 1 then (e.s.drop 1).toString.toNat? else none
-      t s!"struct {n}: the heading elements are Ir.headingLevels, each one level up"
-        (hs == (Ir.headingLevels (Layout.pdfView doc).body).map (· + 1))
-      t s!"struct {n}: every element with a 2.0 type names the namespace"
-        (tree.all fun e => e.ns.isSome || e.s == "Code" || e.s == "BlockQuote" || e.s == "Reference")
-  t s!"struct: the corpus exercised the tree ({elems} elements, {mcids} marks)"
-    (elems > 0 && mcids > 0)
-
-mutual
-
-/-- Every `img` element's `src` attribute in the typed tree, in document
-order. The self-contained-page oracle reads the attribute the tree
-carries, never the printed string. -/
--- conserves: none — a src census, not text
-def imgSrcs (acc : Array String) : Html.Node → Array String
-  | .text _ => acc
-  | .style _ => acc
-  | .script _ _ => acc
-  | .elem t attrs kids =>
-    let acc := if t == "img" then
-        match attrs.find? (·.1 == "src") with
-        | some (_, s) => acc.push s
-        | none => acc
-      else acc
-    imgSrcsList acc kids.toList
-
-def imgSrcsList (acc : Array String) : List Html.Node → Array String
-  | [] => acc
-  | k :: rest => imgSrcsList (imgSrcs acc k) rest
-
-end
-
-/-- The self-contained page: every `<img src>` a loaded raster entry
-produces names a file `publish` writes under `<stem>.assets/`, and nothing
-under that directory exists before the assertion gate. A fact of the
-artifact, not the IR — file placement is where a page lives — so the
-in-memory half reads the typed tree (`imgSrcs`) and the on-disk half runs
-this tree's own binary, on a document that ships its face and its raster
-from the corpus. -/
-def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
-  let t := check ref
-  let png : Image.Info := { format := .png, pxW := 64, pxH := 40 }
-  let srcsOf (store : Image.Store) (doc : Ir.Doc) : Array String :=
-    let (head, body, _) := HtmlDoc.emitTree { imgs := store, assetsDir := "out.assets" } doc
-    imgSrcsList (imgSrcsList #[] head.toList) body.toList
-  let docOf (body : String) : IO Ir.Doc := do
-    let (doc, ds) := elabStr (dvDoc "" body)
-    t s!"html assets: fixture elaborates clean: {body}" ds.isEmpty
-    return doc
-  -- Red 1: a loaded raster links the copy beside the page, and the asset
-  -- list names that copy with the store index it came from.
-  let doc ← docOf "\\includegraphics[alt={A box}]{rects.png}"
-  let one : Image.Store := { entries := #[{ src := "rects.png", info := some png }] }
-  t "html assets: a loaded raster's src names its copy under the assets directory"
-    (srcsOf one doc == #["out.assets/i0-rects.png"])
-  t "html assets: imageAssets names the copy with its store index"
-    (HtmlDoc.imageAssets one == #[{ file := "i0-rects.png", srcIndex := 0 }])
-  -- Red 2: two sources sharing a basename in different directories take
-  -- distinct names — the index prefix, not the basename, carries identity.
-  let doc2 ← docOf "\\includegraphics[alt={A}]{a/plot.png} and \\includegraphics[alt={B}]{b/plot.png}"
-  let two : Image.Store := { entries := #[{ src := "a/plot.png", info := some png },
-                                          { src := "b/plot.png", info := some png }] }
-  t "html assets: two rasters sharing a basename take distinct asset names"
-    (srcsOf two doc2 == #["out.assets/i0-plot.png", "out.assets/i1-plot.png"])
-  t "html assets: imageAssets covers both, in store order"
-    ((HtmlDoc.imageAssets two).map (·.srcIndex) == #[0, 1] &&
-     (HtmlDoc.imageAssets two).map (·.file) == #["i0-plot.png", "i1-plot.png"])
-  -- Red 3: an entry that did not load keeps the source spelling (the
-  -- placeholder, already diagnosed) and has no asset row.
-  let unloaded : Image.Store := { entries := #[{ src := "rects.png" }] }
-  t "html assets: an unloaded entry keeps its source spelling and ships no copy"
-    (srcsOf unloaded doc == #["rects.png"] && (HtmlDoc.imageAssets unloaded).isEmpty)
-  -- graphicx's extension resolution: the entry's href names the file on
-  -- disk, and the copy takes that name, not the bare spelling.
-  let bare ← docOf "\\includegraphics[alt={A box}]{rects}"
-  let resolved : Image.Store :=
-    { entries := #[{ src := "rects", href := "rects.png", info := some png }] }
-  t "html assets: a bare graphicx name copies under its resolved file name"
-    (srcsOf resolved bare == #["out.assets/i0-rects.png"] &&
-     HtmlDoc.imageAssets resolved == #[{ file := "i0-rects.png", srcIndex := 0 }])
-  -- A PDF source is a form XObject in the PDF and no browser image either
-  -- way: it keeps today's src and ships no copy (named-next for html-oracle).
-  let pdfDoc ← docOf "\\includegraphics[alt={A page}]{box.pdf}"
-  let pdfStore : Image.Store :=
-    { entries := #[{ src := "box.pdf", info := some { format := .pdf, pxW := 10, pxH := 10 } }] }
-  t "html assets: a PDF source keeps its spelling and ships no copy"
-    (srcsOf pdfStore pdfDoc == #["box.pdf"] && (HtmlDoc.imageAssets pdfStore).isEmpty)
-  -- A boundary picture publishes as SVG through its own list already; its
-  -- entry keeps the href the conversion set.
-  let picSrc := Ir.picSrcPrefix ++ "abc"
-  let picStore : Image.Store :=
-    { entries := #[{ src := picSrc, href := "out.assets/abc.svg"
-                     info := some { format := .pdf, pxW := 10, pxH := 10 } }] }
-  t "html assets: a boundary picture keeps its SVG href and has no raster row"
-    (HtmlDoc.imageHref "out.assets" picStore picSrc == "out.assets/abc.svg" &&
-     (HtmlDoc.imageAssets picStore).isEmpty)
-  -- The name's index is recoverable whatever the basename (the executable
-  -- twin of `imageAssetName_inj`).
-  t "html assets: equal names mean equal indices"
-    (HtmlDoc.imageAssetName 3 "a/x.png" == "i3-x.png" &&
-     HtmlDoc.imageAssetName 3 "a/x.png" != HtmlDoc.imageAssetName 13 "x.png" &&
-     HtmlDoc.imageAssetName 12 "x.png" != HtmlDoc.imageAssetName 1 "2-x.png")
-  -- Red 4 and 5, the driver end to end: the copy lands beside the page
-  -- named by `-o`, byte for byte the source; a failing assertion leaves no
-  -- `-o` directory and no `.assets/` anywhere — the copies are phase-3
-  -- lines, after the gate.
-  let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
-  t s!"leantex builds for the asset checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
-  if build.exitCode == 0 then
-    let dir ← IO.FS.createTempDir
-    IO.FS.createDirAll (dir / "fonts")
-    IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
-      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
-    let rects ← IO.FS.readBinFile "tests/corpus/rects.png"
-    IO.FS.writeBinFile (dir / "rects.png") rects
-    let pre := "\\documentclass{article}\n\\usepackage{graphicx}\n\
-\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n\\output{ formats = html }\n"
-    let body := "\\begin{document}\nA box: \\includegraphics[alt={A box}]{rects.png}.\n\\end{document}\n"
-    IO.FS.writeFile (dir / "doc.tex") (pre ++ body)
-    IO.FS.createDirAll (dir / "out")
-    let r ← IO.Process.output {
-      cmd := ".lake/build/bin/leantex"
-      args := #[(dir / "doc.tex").toString, "-o", (dir / "out" / "x.html").toString] }
-    t s!"driver: the page builds under -o out/x.html: {r.stdout}{r.stderr}" (r.exitCode == 0)
-    let copy := dir / "out" / "x.assets" / "i0-rects.png"
-    let copied ← copy.pathExists
-    t "driver: the raster is published beside the page under <stem>.assets" copied
-    t "driver: the published raster is the source, byte for byte"
-      (copied && (← if copied then IO.FS.readBinFile copy else pure ByteArray.empty) == rects)
-    let page ← IO.FS.readFile (dir / "out" / "x.html")
-    t "driver: the page links the copy, not the source spelling"
-      (hasStr page "src=\"x.assets/i0-rects.png\"" && !hasStr page "src=\"rects.png\"")
-    IO.FS.writeFile (dir / "fail.tex") (pre ++ "\\assert{ pages == 99 }\n" ++ body)
-    let r2 ← IO.Process.output {
-      cmd := ".lake/build/bin/leantex"
-      args := #[(dir / "fail.tex").toString, "-o", (dir / "out2").toString ++ "/"] }
-    let assetDirs := (← System.FilePath.walkDir dir).filter fun p =>
-      p.toString.endsWith ".assets"
-    t "driver: a failing assertion publishes no page, no -o directory, and no .assets/ anywhere"
-      (r2.exitCode != 0 && !(← (dir / "out2").pathExists) &&
-       assetDirs == #[dir / "out" / "x.assets"])
     IO.FS.removeDirAll dir
