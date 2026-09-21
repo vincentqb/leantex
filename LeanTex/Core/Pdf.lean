@@ -394,6 +394,14 @@ private def imgMapOf (imgs : Image.Store) (used : Array Nat) : Array (Option Nat
     m := m.set! k (some n)
   return m
 
+/-- Each page's typed operators, resolved against the faces and images the
+document actually uses: what `pageStreams` renders, before spelling. -/
+def pageOps (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+    (imgs : Image.Store := {}) : Array (Array ContentOp) :=
+  let remap := remapOf fs (keepFaces fs pages)
+  let imgMap := imgMapOf imgs (usedImagesOf imgs pages)
+  pages.map (contentOps geom remap imgMap)
+
 /-- The per-page content streams `write` embeds, uncompressed: the same
 bytes `write` computes for itself, exposed so the driver can deflate them
 through its content-hash cache (the font files' shape — a page whose
@@ -401,9 +409,7 @@ content is unchanged since the last build reads its stream instead of
 compressing it) and hand them back as `write`'s `streams`. -/
 def pageStreams (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (imgs : Image.Store := {}) : Array ByteArray :=
-  let remap := remapOf fs (keepFaces fs pages)
-  let imgMap := imgMapOf imgs (usedImagesOf imgs pages)
-  pages.map fun p => (contentStream geom remap imgMap p).toUTF8
+  (pageOps geom fs pages imgs).map fun ops => (render ops).toUTF8
 
 -- ## The object table
 

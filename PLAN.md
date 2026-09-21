@@ -169,6 +169,62 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — every non-real painting operator sits inside `/Artifact`, and
+the ink is provably unmoved (pdf-tag-artifacts, M7-19a; feature — PDF
+bytes gain marked-content lines, rasters and text extraction identical).
+Marked content is one constructor, `marked (tag) (body)`, on `TextOp`
+(inside `BT … ET`, where a furniture line's `Tm/Tf/TJ` group lives) and on
+`ContentOp` (around page operations): the only spelling of an open/close
+pair, so an unbalanced one is unrepresentable, and the compiler named
+every `render`/`runs`/`lines`/`ink` site it had to reach. `MarkTag` is
+`artifact (kind : Option ArtifactKind)` — `Pagination`/`Layout`/`Page`
+after ISO 32000-2 Table 363; the `content … MCID` constructor is 19b's,
+one arm each when it lands. Marking happens where the origin is known and
+nowhere else: `stepLine` wraps a furniture line's operators as one
+pagination artifact (`lineSt` walks the line from an empty `ops`, so the
+group is exactly the line's own), `contentOps` puts a page's fills under
+one bare `/Artifact` block (the layout ships backgrounds, bars and cut
+marks in one array, and the writer will not guess `/Layout` from `/Page`
+— a `Fill` origin bit is named-next), its rules under one `/Layout`
+block, and a missing image's placeholder box under `/Layout`; loaded
+images and picture paths stay bare — real content, 19b's to tag with
+MCIDs; wrapping a diagram as an artifact would hide it to pass a rule. A
+block, not one wrapper per rule: per-operation wrapping cost the
+48,000-rule bench document 7 % of its size and a fifth of its writing time
+for no reader's benefit. The opener is `BMC` when the tag has no
+properties — `BDC` takes two operands, and poppler drops the rest of the
+page on a bare `/Artifact BDC`; found by `pdftotext` over the corpus, not
+by any spelling test, which is why "every opener is a legal operator" is
+now a row. `contentOpsPlain`/`stepLinePlain` are the specification twins —
+the writer before this layer, kept for the statement; 19b may delete them
+if `mcids_partition_covers` subsumes it. Proved, no `sorry`, ratchet
+unchanged: `mark_ink_exact` — `inkOps (contentOps …) = contentOpsPlain …`,
+the wrappers dropped are exactly the pre-slice operators in order (through
+`TextSt.plain`, the fold seen under `inkText`, and the leaf chain
+`op`/`closeTJ`/`toPen`/`setFace`/`stepRun`/`stepSeg`/`lineSt` showing the
+plain walk pushes no wrapper); `render_lines_exact` — `render` is
+`joinLines (lines ops)`, the typed line list where opening and closing
+lines are constructors, so a fact about which lines the strip removes
+reaches the bytes; `inkOps_lines_exact`/`render_inkOps_exact` — the ink's
+stream is the stream with its marked-content lines stripped;
+`lines_marked_balanced` — openers and `EMC`s pair off on every array;
+`artifacts_covers` — nothing bare at the top of a stream is a fill or a
+placeholder; `furniture_covers` — the text object carries exactly one
+wrapper per furniture line and none per flow line. Red: the new block
+failed 345 rows against a stub that wrapped nothing (fills bare, furniture
+plain), the spelling rows passing as the pre-slice contract. Evidence:
+72 corpus PDFs, 143 pages — `pdftoppm -r 72` rasters identical, `pdftotext
+-layout` identical, the content stream with `BDC`/`BMC`/`EMC` lines
+removed byte-identical to main's stream on every page, 70 files changed
+bytes (the two with no fill, rule or furniture line did not), total size
++0.02 %; veraPDF 1.30 `-df ua2` on paragraphs/furniture/chrome/tables/deck:
+`8.2.2-1` falls 23→22, 35→23, 25→9, 38→31, 40→38 — by exactly the wrapped
+painting operators the typed census counts (1, 12, 16, 7, 2), the residue
+being the real-content operators 19b tags;
+`5-1`, `6.2-1`, `8.2.1-1`, `8.4.4-1` unchanged, `-df 4` rows unchanged;
+bench neutral within host noise (underline 446–450 ms against 455).
+Unlocks 19b (`pdf-tag-skeleton`).
+
 2026-09-21 — every body line knows the structure leaf it paints
 (tag-layout-attribution, M7-18a, W2.8's block half). `LineOut.leaf :
 Option Nat` and `ParaJob.leaf` name the preorder index into

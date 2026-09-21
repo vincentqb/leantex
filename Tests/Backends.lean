@@ -3159,25 +3159,46 @@ def contentOpsBleedExpected : String :=
   "q 0.784 0.118 0.118 rg 13 25 40 1 re f Q\n" ++
   "q 0 0 0 rg 113 23 10 2 re f Q"
 
-/-- The typed content operators render byte for byte to the stream the
-writer wrote before they existed, on every operator (`contentOps_text`
-holds the glyph census; this block holds the spelling). -/
+/-- The stream with its marked-content lines removed: what the artifact
+acceptance strips from the file, spelled on the string. `Pdf.stripMarks`
+is the same operation on the typed line list; `stripEqualsInk` below is
+the bridge between them, judged on every page. -/
+def stripMarkLines (s : String) : String :=
+  "\n".intercalate ((s.splitOn "\n").filter fun l =>
+    !(l == "EMC" || l.endsWith " BDC" || l.endsWith " BMC"))
+
+/-- The typed content operators render, with their marked-content lines
+removed, byte for byte to the stream the writer wrote before they existed
+(`contentOps_text` holds the glyph census, `mark_ink_exact` the ink; this
+block holds the spelling). -/
 def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref
   let geom : Layout.Geom := { pageW := Dim.pt 200, pageH := Dim.pt 100 }
   let bleed : Layout.Geom := { geom with bleed := Dim.pt 3 }
   let remap : Array Nat := #[0, 1]
   let imgMap : Array (Option Nat) := #[some 0, none]
-  let stream (g : Layout.Geom) (p : Layout.PageOut) : String :=
-    Pdf.render (Pdf.contentOps g remap imgMap p)
+  let plain (g : Layout.Geom) (p : Layout.PageOut) : String :=
+    Pdf.render (Pdf.contentOpsPlain g remap imgMap p)
+  let stripped (g : Layout.Geom) (p : Layout.PageOut) : String :=
+    stripMarkLines (Pdf.render (Pdf.contentOps g remap imgMap p))
+  let ink (g : Layout.Geom) (p : Layout.PageOut) : String :=
+    Pdf.render (Pdf.inkOps (Pdf.contentOps g remap imgMap p))
   t "content ops: text, fills, images and rules render to the recorded stream"
-    (stream geom contentOpsTextPage == contentOpsTextExpected)
+    (plain geom contentOpsTextPage == contentOpsTextExpected)
   t "content ops: every path shape and paint renders to the recorded stream"
-    (stream geom contentOpsPathPage == contentOpsPathExpected)
+    (plain geom contentOpsPathPage == contentOpsPathExpected)
   t "content ops: an empty page is one empty text object"
-    (stream geom {} == "BT\nET")
+    (plain geom {} == "BT\nET" && stripped geom {} == "BT\nET")
   t "content ops: the bleed shifts every coordinate and nothing else"
-    (stream bleed contentOpsTextPage == contentOpsBleedExpected)
+    (plain bleed contentOpsTextPage == contentOpsBleedExpected)
+  t "content ops: the marked stream stripped of its marked-content lines is the recorded stream"
+    (stripped geom contentOpsTextPage == contentOpsTextExpected
+      && stripped geom contentOpsPathPage == contentOpsPathExpected
+      && stripped bleed contentOpsTextPage == contentOpsBleedExpected)
+  t "content ops: the ink under the wrappers renders to the recorded stream"
+    (ink geom contentOpsTextPage == contentOpsTextExpected
+      && ink geom contentOpsPathPage == contentOpsPathExpected
+      && ink bleed contentOpsTextPage == contentOpsBleedExpected)
   -- The executable twin of `contentOps_text`, on the synthetic pages.
   t "content ops: the glyph census is the page's runs"
     (Pdf.runsOf (Pdf.contentOps geom remap imgMap contentOpsTextPage)
@@ -3195,8 +3216,9 @@ def contentOpsChecks (ref : IO.Ref (List String)) : IO Unit := do
   let store : Image.Store := { entries := #[
     { src := "a.png", info := (Image.decode png).toOption }, { src := "b.png" }] }
   let streams := Pdf.pageStreams geom twoFace #[contentOpsTextPage, contentOpsPathPage] store
-  t "content ops: pageStreams is the typed render"
-    (streams.map (String.fromUTF8! ·) == #[contentOpsTextExpected, contentOpsPathExpected])
+  t "content ops: pageStreams is the typed render, stripped to the recorded stream"
+    (streams.map (stripMarkLines <| String.fromUTF8! ·)
+      == #[contentOpsTextExpected, contentOpsPathExpected])
 
 /-- The output contract: declared facts held against each artifact's
 realization record (one W0701 per unmet fact per artifact), the font
@@ -3424,3 +3446,157 @@ def objTableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       t s!"table {n}: the trailer's /Size is the table's"
         ((((PdfRead.trailer pdf).toOption.bind (·.get? "Size")).bind PdfRead.Obj.int?)
           == some (tb.size : Int))
+
+/-- The recorded text page under the artifact layer: the fills as one bare
+`/Artifact` block, each placeholder under `/Layout`, the rules as one
+`/Layout` block, the loaded image and the text object bare. -/
+def artifactTextExpected : String :=
+  "/Artifact BMC\nq 0.941 0.941 0.941 rg 0 0 200 100 re f Q\n" ++
+  "q 1 0 0 0 k 5 85 50 10 re f Q\nEMC\n" ++
+  "BT\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<00240025>-416<0026>] TJ\n" ++
+  "1 0 0 1 65 83 Tm\n/F2 9 Tf\n0.784 0.118 0.118 rg\n[<0027><0028>] TJ\n" ++
+  "102.0 Tz\n1 0 0 1 10 60 Tm\n/F1 12 Tf\n1 0 0 0 k\n[<11701000>-407<0001>] TJ\n" ++
+  "100.0 Tz\n1 0 0 1 12 40 Tm\n0 0 0 rg\n[<0032>] TJ\n1 0 0 1 522 40 Tm\n[<0033>] TJ\n" ++
+  "1 0 0 1 532 37 Tm\n[<0034><0035>] TJ\n1 0 0 1 100 20 Tm\n[<0036>] TJ\nET\n" ++
+  "q 20 0 0 15 50 20 cm /Im1 Do Q\n" ++
+  "/Artifact << /Type /Layout >> BDC\nq 0.62 0.62 0.66 RG 0.75 w 70 20 20 15 re S Q\nEMC\n" ++
+  "/Artifact << /Type /Layout >> BDC\nq 0.62 0.62 0.66 RG 0.75 w 90 20 10 5 re S Q\nEMC\n" ++
+  "/Artifact << /Type /Layout >> BDC\nq 0.784 0.118 0.118 rg 10 22 40 1 re f Q\n" ++
+  "q 0 0 0 rg 110 20 10 2 re f Q\nEMC"
+
+/-- Two furniture lines around a flow line, the second furniture line
+carrying a rule: the furniture groups are pagination artifacts inside the
+text object, the flow line is bare, the rule a layout artifact after `ET`. -/
+def artifactFurniturePage : Layout.PageOut := {
+  lines := #[
+    { x := Dim.pt 10, y := Dim.pt 20, size := Dim.pt 12, setWidth := Dim.pt 100, furniture := true,
+      segs := #[contentOpsRun 0 Ir.Color.black (Dim.pt 30) [(36, 'A')]] },
+    { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 12, setWidth := Dim.pt 100,
+      segs := #[contentOpsRun 0 Ir.Color.black (Dim.pt 30) [(37, 'B')]] },
+    { x := Dim.pt 10, y := Dim.pt 60, size := Dim.pt 12, setWidth := Dim.pt 100, furniture := true,
+      segs := #[contentOpsRun 0 Ir.Color.black (Dim.pt 30) [(38, 'C')],
+                .rule (Dim.pt 10) (Dim.pt 1) 0 Ir.Color.black] } ] }
+
+def artifactFurnitureExpected : String :=
+  "BT\n/Artifact << /Type /Pagination >> BDC\n1 0 0 1 10 80 Tm\n/F1 12 Tf\n[<0024>] TJ\nEMC\n" ++
+  "1 0 0 1 10 60 Tm\n[<0025>] TJ\n" ++
+  "/Artifact << /Type /Pagination >> BDC\n1 0 0 1 10 40 Tm\n[<0026>] TJ\nEMC\nET\n" ++
+  "/Artifact << /Type /Layout >> BDC\nq 0 0 0 rg 40 40 10 1 re f Q\nEMC"
+
+/-- The artifact count a page owes, read from `Layout.PageOut` and not from
+the stream: one block for its fills when it has any, one for its rules
+when it has any, one per image segment (missing from an empty store, so a
+placeholder), one per furniture line. -/
+def expectedArtifacts (page : Layout.PageOut) : Nat :=
+  let rules := page.lines.foldl (init := 0) fun acc l =>
+    acc + l.segs.foldl (init := 0) fun acc s =>
+      match s with
+      | .rule _ _ _ _ => acc + 1
+      | .image _ _ _ | .run _ _ _ _ _ _ _ _ _ | .gap _ => acc
+  let placeholders := page.lines.foldl (init := 0) fun acc l =>
+    acc + l.segs.foldl (init := 0) fun acc s =>
+      match s with
+      | .image _ _ _ => acc + 1
+      | .rule _ _ _ _ | .run _ _ _ _ _ _ _ _ _ | .gap _ => acc
+  (if page.fills.isEmpty then 0 else 1) + (if rules == 0 then 0 else 1) + placeholders
+    + (page.lines.filter (·.furniture)).size
+
+/-- The runs a text operator paints under a marked sequence: what the
+artifact wrappers inside the text object hide from a reader of real
+content — exactly the furniture lines' runs, no others. -/
+def markedRuns (ops : Array Pdf.TextOp) : List (Array Nat) :=
+  ops.toList.flatMap fun o =>
+    match o with
+    | .marked _ body => Pdf.TextOp.runsList body.toList
+    | .scale _ | .move _ _ | .font _ _ | .color _ | .show _ => []
+
+def furnitureRuns (page : Layout.PageOut) : List (Array Nat) :=
+  page.lines.toList.flatMap fun l =>
+    if l.furniture then l.segs.toList.flatMap Pdf.segRuns else []
+
+/-- Every non-real painting operator sits inside `/Artifact`, and the ink
+is provably unmoved: the theorems (`mark_ink_exact`, `artifacts_covers`,
+`furniture_covers`, `lines_marked_balanced`, `render_lines_exact`) judged
+executably on synthetic pages and on every corpus fixture — the spelling
+of the wrappers, the string-level strip equal to the typed strip, the
+artifact count against the page, balance, and no flow run under a
+wrapper. -/
+def artifactMarkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (pats : Hyphen.Patterns) : IO Unit := do
+  let t := check ref
+  let geom : Layout.Geom := { pageW := Dim.pt 200, pageH := Dim.pt 100 }
+  let remap : Array Nat := #[0, 1]
+  let imgMap : Array (Option Nat) := #[some 0, none]
+  let ops (p : Layout.PageOut) := Pdf.contentOps geom remap imgMap p
+  t "artifacts: the fill block, the rule block and each placeholder wrap as recorded; image and text bare"
+    (Pdf.render (ops contentOpsTextPage) == artifactTextExpected)
+  t "artifacts: furniture lines are pagination groups inside the text object, flow lines bare"
+    (Pdf.render (ops artifactFurniturePage) == artifactFurnitureExpected)
+  t "artifacts: the furniture page strips to its plain twin"
+    (stripMarkLines artifactFurnitureExpected
+      == Pdf.render (Pdf.contentOpsPlain geom remap imgMap artifactFurniturePage))
+  t "artifacts: picture paths are not wrapped (real content pending the structure slice)"
+    (Pdf.render (ops contentOpsPathPage) == contentOpsPathExpected)
+  -- Well-nesting is a type: a hand-built nest renders balanced, and strips
+  -- to its innermost body.
+  let nest : Array Pdf.ContentOp :=
+    #[.marked (.artifact none) #[.marked (.artifact (some .page)) #[.fill contentOpsRed 1 2 3 4],
+        .imageMissing 5 6 7 8], .fill contentOpsRed 9 9 9 9]
+  let nestLines := (Pdf.render nest).splitOn "\n"
+  t "artifacts: a nested wrapper renders two opening lines and two EMC lines, ink between"
+    ((nestLines.filter fun l => l.endsWith " BDC" || l.endsWith " BMC").length == 2
+      && (nestLines.filter (· == "EMC")).length == 2
+      && stripMarkLines (Pdf.render nest)
+          == Pdf.render #[.fill contentOpsRed 1 2 3 4, .imageMissing 5 6 7 8, .fill contentOpsRed 9 9 9 9]
+      && Pdf.render (Pdf.inkOps nest) == stripMarkLines (Pdf.render nest))
+  t "artifacts: an empty wrapper is one opening line and one EMC line"
+    (Pdf.render #[.marked (.artifact none) #[]] == "/Artifact BMC\nEMC")
+  -- `BDC` takes two operands, `BMC` one: a bare tag before `BDC` is a
+  -- syntax error on which poppler drops the rest of the page (found by
+  -- `pdftotext`, not by any spelling test — the reason this row exists).
+  t "artifacts: every opener is a legal operator — BMC alone, BDC with its dictionary"
+    (Pdf.MarkTag.opener (.artifact none) == "/Artifact BMC"
+      && [Pdf.ArtifactKind.pagination, .layout, .page].all fun k =>
+        let o := Pdf.MarkTag.opener (.artifact (some k))
+        o.startsWith "/Artifact << /Type /" && o.endsWith " >> BDC")
+  -- The corpus: every fixture's every page.
+  let mut pages := 0
+  let mut wrappers := 0
+  let mut furniture := 0
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, _) ← elabFixture n src
+    let geom := Layout.Geom.ofPage doc.page
+    let out := layoutOf oneFace doc geom (some pats)
+    let all := Pdf.pageOps geom oneFace out.pages
+    for i in [0:out.pages.size] do
+      let page := out.pages[i]!
+      let ops := all[i]!
+      let s := Pdf.render ops
+      let ls := Pdf.lines ops
+      pages := pages + 1
+      wrappers := wrappers + ls.countP Pdf.Line.isOpen
+      furniture := furniture + (page.lines.filter (·.furniture)).size
+      -- The string-level strip is the typed strip (`render_inkOps_exact`
+      -- reaches `joinLines (stripMarks (lines ops))`; this closes the gap
+      -- between a line of the file and a `Line`).
+      t s!"artifacts {n} p{i}: stripping the marked-content lines of the file is stripping the typed lines"
+        (stripMarkLines s == Pdf.render (Pdf.inkOps ops)
+          && stripMarkLines s == Pdf.joinLines (Pdf.stripMarks ls))
+      t s!"artifacts {n} p{i}: one wrapper per fill block, rule block, placeholder, and furniture line"
+        (ls.countP Pdf.Line.isOpen == expectedArtifacts page)
+      t s!"artifacts {n} p{i}: BDC and EMC lines pair off"
+        (ls.countP Pdf.Line.isOpen == ls.countP Pdf.Line.isEmc
+          && ((s.splitOn "\n").filter fun l => l.endsWith " BDC" || l.endsWith " BMC").length
+            == ls.countP Pdf.Line.isOpen
+          && ((s.splitOn "\n").filter (· == "EMC")).length == ls.countP Pdf.Line.isEmc)
+      t s!"artifacts {n} p{i}: the runs under text wrappers are the furniture runs, no flow run"
+        ((ops.toList.flatMap fun o => match o with
+            | .text tops => markedRuns tops
+            | .fill _ _ _ _ _ | .path _ _ _ | .image _ _ _ _ _ | .imageMissing _ _ _ _
+            | .marked _ _ => []) == furnitureRuns page)
+      t s!"artifacts {n} p{i}: nothing bare is decoration at the top of the stream"
+        (ops.all fun o => !o.decoration)
+  t s!"artifacts: the corpus exercised the layer ({pages} pages, {wrappers} wrappers, \
+{furniture} furniture lines)"
+    (pages > 0 && wrappers > 0 && furniture > 0)
