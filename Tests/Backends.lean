@@ -1179,6 +1179,43 @@ def deckProgressChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "no other class ships the hairline"
     (!has (HtmlDoc.emit {} artDoc).1 "deck-progress")
 
+/-- The read size ladder reaches both artifacts: the PDF sets a named size
+run at the venue's step — judged on the shipped lines' own segments, never
+an IR dump — and the HTML stylesheet's `.size-` rules carry the same
+ladder, so the two backends cannot disagree on what a venue's `\tiny`
+means (`sizeRules`' docstring promise). An undeclared document keeps the
+engine's scale in both. -/
+def sizeLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  let venue := dvDoc
+    ("\\renewcommand{\\normalsize}{\\@setfontsize\\normalsize\\@xpt\\@xipt}" ++
+     "\\renewcommand{\\tiny}{\\@setfontsize\\tiny\\@vipt\\@viipt}\n")
+    "x {\\tiny y}"
+  let (doc, _) := elabStr venue
+  let out := layoutOf oneFace doc
+  let sizes := (bodyLines out).flatMap fun l => l.segs.filterMap fun s =>
+    match s with
+    | .run _ _ _ _ _ size _ _ _ => some size
+    | _ => none
+  t "the venue tiny sets at 0.6 of the body on the shipped page"
+    (sizes.contains (doc.page.fontSize * 600 / 1000) &&
+     !sizes.contains (doc.page.fontSize * 500 / 1000))
+  let html := (HtmlDoc.emit {} doc).1
+  t "the html size rule carries the venue step"
+    ((html.splitOn ".size-tiny { font-size: 0.600em; }").length == 2)
+  let (plain, _) := elabStr (dvDoc "" "x {\\tiny y}")
+  t "an undeclared document keeps the engine ladder in the stylesheet"
+    ((((HtmlDoc.emit {} plain).1).splitOn
+      ".size-tiny { font-size: 0.500em; }").length == 2)
+  let psizes := (bodyLines (layoutOf oneFace plain)).flatMap fun l =>
+    l.segs.filterMap fun s =>
+      match s with
+      | .run _ _ _ _ _ size _ _ _ => some size
+      | _ => none
+  t "an undeclared document keeps the engine ladder on the page"
+    (psizes.contains (plain.page.fontSize * 500 / 1000))
+
 /-- Declared once, derived everywhere: every metadata fact lives in the one
 `Ir.Meta` record and each surface derives its own rendering of it — the HTML
 head, the llms.txt preamble, and the PDF's Info dictionary and XMP read the

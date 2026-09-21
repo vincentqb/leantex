@@ -276,7 +276,8 @@ structure MarkerCss where
 600, the same weight the base stylesheet's level-2 dash carries. An unknown
 size name resolves to nothing, which makes the whole marker inexpressible
 rather than silently unsized. -/
-private def markerStyleDecls : Style → Option (Array String)
+private def markerStyleDecls (scale : List (String × Nat)) :
+    Style → Option (Array String)
   | .bold => some #["font-weight: 600;"]
   | .italic => some #["font-style: italic;"]
   | .emph => some #["font-style: italic;"]
@@ -288,7 +289,7 @@ private def markerStyleDecls : Style → Option (Array String)
   | .series w => some #[s!"font-weight: {w.css};"]
   | .upright => some #["font-style: normal;", "font-variant-caps: normal;"]
   | .normal => some #[]
-  | .size name => (Ir.sizeScale.lookup name).map fun k =>
+  | .size name => (scale.lookup name).map fun k =>
       #[s!"font-size: {decMilli k}em;"]
   -- a language changes no marker styling; the wrapper is expressible as
   -- nothing rather than inexpressible
@@ -338,17 +339,18 @@ whole marker — or plain text. `none` is the inexpressible remainder, which
 the emitter must diagnose, never silently default (`styleRules`): the same
 declaration then reaches both backends or the difference has a name.
 Explicit arms (the obligation table; no wildcard in a backend's IR walk). -/
-def markerCssOne (decls : Array String) : Inline → Option MarkerCss
+def markerCssOne (scale : List (String × Nat)) (decls : Array String) :
+    Inline → Option MarkerCss
   | .text s => some { text := s, decls := decls }
   | .styled st body =>
-    match markerStyleDecls st with
-    | some ds => markerCssList (decls ++ ds) body.toList
+    match markerStyleDecls scale st with
+    | some ds => markerCssList scale (decls ++ ds) body.toList
     | _ => none
   | .colored c name body =>
-    markerCssList (decls.push (markerColorDecl c name)) body.toList
+    markerCssList scale (decls.push (markerColorDecl c name)) body.toList
   -- a role's class has no ::marker expression; the content passes through,
   -- as it does on the PDF marker path
-  | .role _ body => markerCssList decls body.toList
+  | .role _ body => markerCssList scale decls body.toList
   | .math _ _ => none
   | .formula _ _ _ => none
   | .link _ _ => none
@@ -366,14 +368,16 @@ def markerCssOne (decls : Array String) : Inline → Option MarkerCss
   | .cite _ _ => none
   | .footnote _ _ => none
 
-def markerCssList (decls : Array String) : List Inline → Option MarkerCss
-  | [x] => markerCssOne decls x
+def markerCssList (scale : List (String × Nat)) (decls : Array String) :
+    List Inline → Option MarkerCss
+  | [x] => markerCssOne scale decls x
   | xs => (markerTextInto "" xs).map fun t => { text := t, decls := decls }
 
 end
 
-def markerCss? (m : Array Inline) : Option MarkerCss :=
-  markerCssList #[] m.toList
+def markerCss? (m : Array Inline)
+    (scale : List (String × Nat) := Ir.sizeScale) : Option MarkerCss :=
+  markerCssList scale #[] m.toList
 
 private theorem markerTextInto_text (xs : List Inline) :
     ∀ acc t, markerTextInto acc xs = some t → t = acc ++ Ir.plainTextList xs := by
@@ -394,8 +398,9 @@ mutual
 the emitted `content` is the marker's own plain text, so the HTML marker and
 the PDF marker (which sets the same declared content as a line of its own)
 can only differ where a diagnostic already names the substitution. -/
-theorem markerCssOne_text (decls : Array String) (x : Inline) (r : MarkerCss)
-    (h : markerCssOne decls x = some r) : r.text = Ir.plainTextOne x := by
+theorem markerCssOne_text (scale : List (String × Nat)) (decls : Array String)
+    (x : Inline) (r : MarkerCss)
+    (h : markerCssOne scale decls x = some r) : r.text = Ir.plainTextOne x := by
   match x with
   | .text s =>
     simp [markerCssOne] at h
@@ -404,28 +409,29 @@ theorem markerCssOne_text (decls : Array String) (x : Inline) (r : MarkerCss)
     rw [markerCssOne] at h
     split at h
     · rw [Ir.plainTextOne]
-      exact markerCssList_text _ body.toList r h
+      exact markerCssList_text scale _ body.toList r h
     · exact absurd h (by simp)
   | .colored c name body =>
     rw [markerCssOne] at h
     rw [Ir.plainTextOne]
-    exact markerCssList_text _ body.toList r h
+    exact markerCssList_text scale _ body.toList r h
   | .role n body =>
     rw [markerCssOne] at h
     rw [Ir.plainTextOne]
-    exact markerCssList_text _ body.toList r h
+    exact markerCssList_text scale _ body.toList r h
   | .math _ _ | .formula _ _ _ | .link _ _ | .underline _ | .fill
   | .strut _ | .pageNumber | .pageCount | .linebreak _ | .step _ _ _
   | .image _ _ _ | .icon _ _ | .label _ | .ref _ _ _ _ =>
     simp [markerCssOne] at h
 
-theorem markerCssList_text (decls : Array String) (xs : List Inline)
-    (r : MarkerCss) (h : markerCssList decls xs = some r) :
+theorem markerCssList_text (scale : List (String × Nat)) (decls : Array String)
+    (xs : List Inline)
+    (r : MarkerCss) (h : markerCssList scale decls xs = some r) :
     r.text = Ir.plainTextList xs := by
   match xs with
   | [x] =>
     rw [markerCssList] at h
-    simp [Ir.plainTextList, markerCssOne_text decls x r h]
+    simp [Ir.plainTextList, markerCssOne_text scale decls x r h]
   | [] =>
     simp [markerCssList, markerTextInto] at h
     simp [← h, Ir.plainTextList]
@@ -440,8 +446,9 @@ theorem markerCssList_text (decls : Array String) (xs : List Inline)
 end
 
 theorem markerCss?_text (m : Array Inline) (r : MarkerCss)
-    (h : markerCss? m = some r) : r.text = Ir.plainText m :=
-  Ir.plainText.eq_def m ▸ markerCssList_text #[] m.toList r h
+    (scale : List (String × Nat) := Ir.sizeScale)
+    (h : markerCss? m scale = some r) : r.text = Ir.plainText m :=
+  Ir.plainText.eq_def m ▸ markerCssList_text scale #[] m.toList r h
 
 /-- A CSS string value: the two characters that could end the string or
 start an escape are escaped (CSS Syntax 3 §4.3.7), so a declared marker's
@@ -502,7 +509,7 @@ def styleRules (doc : Doc) : String × Array Diag :=
     let mut liDecls :=
       (st.gap.map fun g => s!"{tag} > li \{ margin-top: {cssLength g.width}; }\n").toList
     if let some m := st.marker then
-      match markerCss? m with
+      match markerCss? m doc.page.scale with
       | some r =>
         let body := String.join (r.decls.toList.map (" " ++ ·))
         liDecls := liDecls ++
@@ -1117,10 +1124,12 @@ never a re-spelled decimal. -/
 private def scaleSize (name : String) (unit : String) : String :=
   milliFactor ((Ir.sizeScale.lookup name).getD 1000) ++ unit
 
-/-- Size rules generated from the IR's scale, so the two backends cannot drift
-apart on what `\Huge` means. `em` rather than `rem`: sizes nest. -/
-private def sizeRules : String :=
-  String.join (Ir.sizeScale.map fun (name, k) =>
+/-- Size rules generated from the document's ladder (`Ir.PageSpec.scale`),
+so the two backends cannot drift apart on what `\Huge` means — the PDF
+resolves the same runs through the same ladder (`Layout`'s flatten state).
+`em` rather than `rem`: sizes nest. -/
+private def sizeRules (scale : List (String × Nat)) : String :=
+  String.join (scale.map fun (name, k) =>
     s!".size-{name} \{ font-size: {milliFactor k}em; }\n")
 
 /-! ### The deck stylesheet, as typed rules
@@ -2598,7 +2607,7 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   "  color: var(--standoutfg, var(--bg, #fafaf9)); text-align: center;\n" ++
   s!"  font-size: {scaleSize "Large" "em"}; font-weight: 600;\n" ++
   "  display: flex; flex-direction: column; justify-content: center; }\n" ++
-  sizeRules ++
+  sizeRules doc.page.scale ++
   -- The math face the document resolved, through its token — the `math`
   -- element selector reaches native MathML, whose engine default is the
   -- `math` generic family (MathML Core, user agent stylesheet); Chromium's

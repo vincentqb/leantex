@@ -53,6 +53,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   let geom : Layout.Geom := {}
   pdfFaceChecks ref geom oneFace font
   webMetaChecks ref geom oneFace
+  sizeLadderChecks ref oneFace
 
   lineChecks ref geom oneFace
   footnoteLayoutChecks ref oneFace

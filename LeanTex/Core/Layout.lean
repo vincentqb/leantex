@@ -74,6 +74,13 @@ structure Geom where
   `Layout.run` computes it (`furnitureBand`); everything else reads it only
   through `bodyTop`. -/
   headBand : Sp := 0
+  /-- The size ladder in force (`Ir.PageSpec.scale`): what a named size
+  run (`.styled (.size n)`) resolves through, so a venue's read-out ladder
+  reaches the set text. Engine-derived default sizes (`sectionSize`, the
+  footnote mark and body, chrome) stay steps of the engine's own scale:
+  they are the engine's design, not the document's declarations, and the
+  HTML backend keeps the same split. -/
+  scale : List (String × Nat) := Ir.sizeScale
   deriving Repr
 
 def Geom.textWidth (g : Geom) : Sp := g.pageW - 2 * g.hmargin
@@ -303,7 +310,8 @@ def Geom.ofPage (spec : Ir.PageSpec) (base : Geom := {}) : Geom :=
     bleed := spec.bleed
     marks := spec.marks
     markGap := spec.markGap
-    markThick := spec.markThickness }
+    markThick := spec.markThickness
+    scale := spec.scale }
 
 /-- The slides stage carries a readable number of text lines. Tantau's rule
 for presentations is lines, not points: "between 10 and 20 lines should fit
@@ -837,6 +845,8 @@ private structure FlattenSt where
   toks : Array Tk := #[]
   warnedMath : Bool := false
   diags : Array Diag := #[]
+  /-- The size ladder named runs resolve through (`Geom.scale`). -/
+  ladder : List (String × Nat) := Ir.sizeScale
 
 private def warn (st : FlattenSt) (code : DiagCode) (msg : String)
     (help : Option String := none) : FlattenSt :=
@@ -915,7 +925,8 @@ private def pushText (st : FlattenSt) (sty : TextStyle) (s : String) : FlattenSt
 
 /-- Apply one markup style to the active text style. Size-only styles do not
 change the face; `\normalfont` resets to the body face. -/
-private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
+private def applyStyle (ladder : List (String × Nat)) (sty : TextStyle) :
+    Ir.Style → TextStyle
   | .bold => { sty with weight := .b }
   | .italic => { sty with italic := true }
   | .emph => { sty with italic := !sty.italic }
@@ -929,7 +940,7 @@ private def applyStyle (sty : TextStyle) : Ir.Style → TextStyle
   | .upright => { sty with italic := false, smallcaps := false }
   | .normal => {}
   | .lang tag => { sty with lang := some tag }
-  | .size n => match Ir.sizeScale.lookup n with
+  | .size n => match ladder.lookup n with
     | some k => { sty with scale := k }
     | none => sty
 
@@ -939,10 +950,11 @@ so the face a run selects is one function of `(slot, weight, italic)`
 in both backends: the PDF resolves it through `FontSet.lookup`, the
 HTML emits `weight.css` and ships each face under its own
 `font-weight` (`html_fonts_cover_pdf` carries the coverage half). -/
-theorem weight_agree (sty : TextStyle) (s : Ir.Style) :
-    (applyStyle sty s).weight = (s.weight?).getD sty.weight := by
+theorem weight_agree (ladder : List (String × Nat)) (sty : TextStyle)
+    (s : Ir.Style) :
+    (applyStyle ladder sty s).weight = (s.weight?).getD sty.weight := by
   cases s <;> simp [applyStyle, Ir.Style.weight?]
-  case size n => cases Ir.sizeScale.lookup n <;> simp
+  case size n => cases ladder.lookup n <;> simp
 
 mutual
 
@@ -989,7 +1001,7 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
                  (some "declare \\fonts{ math = \"...\" } naming an installed \
 OpenType math face; `leantex fonts` lists families") with warnedMath := true }
       pushText st sty src
-  | .styled s body => flatten mathOk noteOk st (applyStyle sty s) body
+  | .styled s body => flatten mathOk noteOk st (applyStyle st.ladder sty s) body
   | .colored c _ body => flatten mathOk noteOk st { sty with color := c } body
   -- A role is a name, pure grouping: zero metric impact, no style change
   -- (role_transparent_layout is the statement).
@@ -1574,7 +1586,9 @@ mutual
 private def weightKeysInline (acc : Array (Nat × Nat × Bool)) (sty : TextStyle) :
     Ir.Inline → Array (Nat × Nat × Bool)
   | .styled st body =>
-    let sty := applyStyle sty st
+    -- the ladder never moves a weight (`weight_agree`), so the census may
+    -- pass the engine scale
+    let sty := applyStyle Ir.sizeScale sty st
     weightKeysInlineList (pushWeightKey acc sty) sty body.toList
   | .colored _ _ body => weightKeysInlineList acc sty body.toList
   | .role _ body => weightKeysInlineList acc sty body.toList
@@ -2511,10 +2525,11 @@ page builder reads. -/
 private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (imgs : Image.Store := {})
-    (textW : Sp := 0) (textH : Sp := 0) (noteOk : Bool := false) :
+    (textW : Sp := 0) (textH : Sp := 0) (noteOk : Bool := false)
+    (ladder : List (String × Nat) := Ir.sizeScale) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
       Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline) := Id.run do
-  let st := flatten (fs.mathFont?.isSome) noteOk {} baseStyle xs
+  let st := flatten (fs.mathFont?.isSome) noteOk { ladder := ladder } baseStyle xs
   let acc := st.toks.foldl (itemsOfTok pats size xHeight fs imgs textW textH)
     { cache := cache }
   let mut items := acc.items
@@ -4358,7 +4373,7 @@ private def collectPara (r : Rd) (a : Acc)
   let baseStyle := { baseStyle with ground := a.ground }
   let (items, ds, cache, extras, rawNotes) :=
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache r.imgs
-      measure r.geom.textHeight (noteOk := true)
+      measure r.geom.textHeight (noteOk := true) (ladder := r.geom.scale)
   let items :=
     if r.geom.justify then items
     else if display then
@@ -4384,7 +4399,7 @@ private def collectPara (r : Rd) (a : Acc)
     for (markIdx, num, body) in rawNotes do
       let (nitems0, nds, cache2, _, _) :=
         itemsOfInlines r.pats noteSize r.xHeight r.fs { color := a.fg, ground := a.ground } body
-          cache r.imgs r.geom.textWidth r.geom.textHeight
+          cache r.imgs r.geom.textWidth r.geom.textHeight (ladder := r.geom.scale)
       ds := ds ++ nds
       cache := cache2
       let (mk, miss) := markBox r.fs { color := a.fg, ground := a.ground } noteSize num
@@ -4426,7 +4441,7 @@ private def collectPara (r : Rd) (a : Acc)
     | some m =>
       let (mi, mds, cache, _, _) :=
         itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } m cache
-          r.imgs measure r.geom.textHeight
+          r.imgs measure r.geom.textHeight (ladder := r.geom.scale)
       let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) r.geom.textWidth false
       (some (segs, w), ds ++ mds, cache)
     | none => (none, ds, cache)
@@ -4587,7 +4602,7 @@ private def collectTable (r : Rd) (a0 : Acc)
     for cell in row do
       let (items, _, c, _) :=
         itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } cell cache
-          r.imgs r.geom.textWidth r.geom.textHeight
+          r.imgs r.geom.textWidth r.geom.textHeight (ladder := r.geom.scale)
       cache := c
       rowNats := rowNats.push (itemsNaturalWidth items)
     nats := nats.push rowNats
@@ -4987,10 +5002,10 @@ private def collectBlock (r : Rd) (a : Acc)
     let target := (a.measure.getD r.geom.textWidth) - indent
     let (citems, ds1, cache1, extras, _) :=
       itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
-        a.hyphCache r.imgs target r.geom.textHeight
+        a.hyphCache r.imgs target r.geom.textHeight (ladder := r.geom.scale)
     let (nitems, ds2, cache2, _, _) :=
       itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle #[.text num]
-        cache1 r.imgs target r.geom.textHeight
+        cache1 r.imgs target r.geom.textHeight (ladder := r.geom.scale)
     -- both walks close with parfill glue and a forced pen; the assembled
     -- line supplies its own ending
     let strip (xs : Array Item) : Array Item :=
@@ -5295,7 +5310,7 @@ private def collectBlock (r : Rd) (a : Acc)
         let (items, _, cache, _) :=
           itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs
             { color := a.fg, ground := a.ground } caption
-            a.hyphCache r.imgs avail r.geom.textHeight
+            a.hyphCache r.imgs avail r.geom.textHeight (ladder := r.geom.scale)
         let a := { a with hyphCache := cache }
         let fits := itemsNaturalWidth items ≤ avail
         let a := collectPara r a caption indent fits r.geom.fontSize
@@ -5415,7 +5430,7 @@ private def collectBlock (r : Rd) (a : Acc)
       let avail := (a.measure.getD r.geom.textWidth) - indent - 2 * cmargin
       let (items, _, cache, _) :=
         itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs { color := a.fg, ground := a.ground } caption
-          a.hyphCache r.imgs avail r.geom.textHeight
+          a.hyphCache r.imgs avail r.geom.textHeight (ladder := r.geom.scale)
       let a := { a with hyphCache := cache }
       let fits := itemsNaturalWidth items ≤ avail
       let saved := a.measure
@@ -6074,6 +6089,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
       let size := b.geom.fontSize * (scale : Int) / 1000
       let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}
         #[.colored color none content] {} imgs b.geom.textWidth b.geom.textHeight
+        (ladder := b.geom.scale)
       let breaks := kp items b.geom.textWidth
       if let some brk := breaks[0]? then
         let (segs, w, _, _) := setLine items (lineStart items 0) brk b.geom.textWidth false
@@ -6989,7 +7005,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
     let sub := substPage n total content
     let (items, ds, cache, _) :=
       itemsOfInlines pats size xHeight fs { baseStyle with ground := furnGround } sub cache
-        imgs geom.textWidth geom.textHeight
+        imgs geom.textWidth geom.textHeight (ladder := geom.scale)
     let target := geom.textWidth
     let breaks := kp items target
     -- A running line is one line by construction — the band reserves one
@@ -7027,7 +7043,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
     let sub := substPage n total content
     let (items, ds, cache, _) :=
       itemsOfInlines pats size xHeight fs { baseStyle with ground := furnGround } sub cache
-        imgs geom.textWidth geom.textHeight
+        imgs geom.textWidth geom.textHeight (ladder := geom.scale)
     let breaks := kp items geom.textWidth
     -- The band holds one line, as the running bands do: a slot that wraps
     -- loses every line but its first, named, never silent.
@@ -7053,7 +7069,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
       Option LineOut × Array Diag × Std.HashMap String (Array Nat) :=
     let (items, ds, c, _) :=
       itemsOfInlines pats geom.fontSize xHeight fs { ground := furnGround } content cache0
-        imgs geom.textWidth geom.textHeight
+        imgs geom.textWidth geom.textHeight (ladder := geom.scale)
     let breaks := kp items geom.textWidth
     match breaks[0]? with
     | none => (none, ds, c)
@@ -7086,6 +7102,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
               itemsOfInlines pats numSize xHeight fs
                 { color := mutedC, ground := furnGround }
                 #[.text (toString count)] cache imgs geom.textWidth geom.textHeight
+                (ladder := geom.scale)
             diags := diags ++ ds
             cache := c
             let breaks := kp items geom.textWidth
