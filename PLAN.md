@@ -118,6 +118,37 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — the deck's logo is frame furniture in HTML too (html-logo):
+W0007's "paged-media furniture" claim was wrong for a deck, where a frame
+*is* a page and the logo is the frame's furniture exactly as the footer
+is.
+
+- One resolving site: `Ir.logoInForce` is the fold both backends read —
+  the PDF's furniture pass keys the `\logo` spans by page index, the HTML
+  deck walk keys the same declarations by body position, and
+  `logo_frames_agree` states the invariance under the rekeying (the
+  order-preserving map between the two key sequences), so neither backend
+  carries a second interpretation. The census half is executable
+  (`deckLogoChecks`): the frames whose section carries the `.slide-logo`
+  strip are exactly the pages whose `Layout.Out` carries the furniture
+  line.
+- The alignment is declared, not hard-coded — the furniture-rule debt the
+  AGENTS table names: `logo` is a styleable element whose `align` both
+  backends read through `Ir.logoAlign` (the PDF as the line's x, HTML as
+  the strip's flex distribution), defaulting to `right` — beamer's own
+  lower-right corner (beamerouterthemedefault's `sidebar right` template).
+  `\style{...}{align=right}` becomes sayable alongside left/center.
+- The strip is decorative furniture (WCAG 2.2 SC 1.1.1, pure decoration):
+  images ship `alt=""`, the carrier leaves the accessibility tree, and
+  the no-alt census (`imagesSansAlt`) counts logo sources as decorative
+  rather than missing — W0376 no longer flags a deck's logo image.
+- In flow and face classes the logo stays paged-media furniture and
+  W0007 keeps firing with its old words, now true everywhere it appears;
+  the deck's W0007 is gone. In print the logo rides its handout card
+  (furniture on paper too). Reference PDFs and the webpage fixture
+  byte-identical; the deck's page census and stylesheet theorems restated
+  over the extended rule set.
+
 2026-09-21 — the graphics boundary is live (tikz-boundary): heavy TikZ
 runs in real TeX at the edge; the engine places a measured vector box.
 
