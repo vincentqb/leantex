@@ -264,6 +264,403 @@ def deflateStored (raw : ByteArray) : ByteArray := Id.run do
   out := out.push (UInt8.ofNat (a % 256))
   return out
 
+/-! ## Deflate: a real compressor (RFC 1951)
+
+LZ77 over a hash chain in the 32 KiB window (§2, "distances up to 32K
+bytes and lengths up to 258 bytes"), then one dynamic-Huffman block
+(§3.2.7) whose two code sets are optimal length-limited Huffman codes
+built by boundary package-merge. The engine owns both halves of the round
+trip — `deflate` emits only symbols `inflate`'s tables decode — and the
+statement is `inflate_deflate_id` (staged in `Obligations/`; the
+executable oracle is `scripts/flate-fuzz.lean`, which also cross-checks
+every stream against a foreign inflater). Pure and total: every loop is
+bounded by the input size or a table's length. -/
+
+/-- A bit writer, LSB-first within each byte (RFC 1951 §3.1.1: "bits of
+each byte starting with the least-significant"). Huffman codes arrive
+already bit-reversed (`canonCodes`), so one writer serves codes and extra
+bits alike. -/
+private structure Bw where
+  out : ByteArray
+  bits : Nat
+  nbits : Nat
+
+/-- Append `n` bits of `v` (`n ≤ 16`). -/
+private def Bw.push (w : Bw) (v n : Nat) : Bw := Id.run do
+  let mut bits := w.bits ||| ((v &&& ((1 <<< n) - 1)) <<< w.nbits)
+  let mut nbits := w.nbits + n
+  let mut out := w.out
+  for _ in [0:4] do
+    if nbits ≥ 8 then
+      out := out.push (UInt8.ofNat (bits &&& 255))
+      bits := bits >>> 8
+      nbits := nbits - 8
+  return { out, bits, nbits }
+
+private def Bw.flush (w : Bw) : ByteArray :=
+  if w.nbits == 0 then w.out else w.out.push (UInt8.ofNat (w.bits &&& 255))
+
+/-- Optimal length-limited Huffman code lengths by boundary package-merge
+(Larmore & Hirschberg 1990): lengths ≤ `limit`, zero for a symbol never
+seen, and a single-symbol alphabet gets the one-bit code RFC 1951 §3.2.7
+expects. Sound whenever the live alphabet fits the limit (`n ≤ 2^limit`;
+286 ≤ 2¹⁵ and 19 ≤ 2⁷ for the two uses here). The counting formulation:
+with items sorted ascending and a leaf preferred on weight ties, the
+leaves inside any package-list prefix are the rarest symbols, so each
+level only records which of its packages are leaves, and the walk back
+from the solution prefix (2n−2 packages) adds one bit to the `leaves`
+rarest symbols per level — no symbol sets, no per-level sort. -/
+private def pmLengths (freqs : Array Nat) (limit : Nat) : Array Nat := Id.run do
+  let syms := (Array.range freqs.size).filter fun s => freqs[s]?.getD 0 > 0
+  let n := syms.size
+  if n == 0 then
+    return Array.replicate freqs.size 0
+  if n == 1 then
+    return (Array.replicate freqs.size 0).set! (syms[0]?.getD 0) 1
+  let sorted := syms.qsort fun a b => (freqs[a]?.getD 0) < (freqs[b]?.getD 0)
+  let itemW := sorted.map fun s => freqs[s]?.getD 0
+  let mut weights : Array Nat := itemW
+  let mut leafFlags : Array Bool := Array.replicate n true
+  let mut levels : Array (Array Bool) := #[]
+  for _ in [1:limit] do
+    levels := levels.push leafFlags
+    let mut mw : Array Nat := #[]
+    let mut k := 0
+    for _ in [0:weights.size / 2] do
+      mw := mw.push ((weights[k]?.getD 0) + (weights[k + 1]?.getD 0))
+      k := k + 2
+    -- Merge the (sorted) items back in, leaf first on ties.
+    let mut w2 : Array Nat := Array.mkEmpty (n + mw.size)
+    let mut f2 : Array Bool := Array.mkEmpty (n + mw.size)
+    let mut a := 0
+    let mut b := 0
+    for _ in [0:n + mw.size] do
+      if a < n && (b ≥ mw.size || itemW[a]?.getD 0 ≤ mw[b]?.getD 0) then
+        w2 := w2.push (itemW[a]?.getD 0)
+        f2 := f2.push true
+        a := a + 1
+      else if b < mw.size then
+        w2 := w2.push (mw[b]?.getD 0)
+        f2 := f2.push false
+        b := b + 1
+    weights := w2
+    leafFlags := f2
+  levels := levels.push leafFlags
+  let mut lens := Array.replicate freqs.size 0
+  let mut take := 2 * n - 2
+  for li in [0:levels.size] do
+    let flags := levels[levels.size - 1 - li]?.getD #[]
+    let mut leaves := 0
+    let mut merged := 0
+    for j in [0:take] do
+      if flags[j]?.getD true then leaves := leaves + 1 else merged := merged + 1
+    for j in [0:leaves] do
+      let s := sorted[j]?.getD 0
+      lens := lens.set! s (lens[s]?.getD 0 + 1)
+    take := 2 * merged
+    if take == 0 then break
+  return lens
+
+/-- Canonical codes from lengths — the same assignment `mkHuff` decodes
+(RFC 1951 §3.2.2), each code's bits reversed so the LSB-first writer
+emits them most-significant first as §3.1.1 requires. -/
+private def canonCodes (lengths : Array Nat) : Array Nat := Id.run do
+  let mut blCount := Array.replicate 16 0
+  for l in lengths do
+    if l > 0 && l < 16 then
+      blCount := blCount.set! l (blCount[l]?.getD 0 + 1)
+  let mut nextCode := Array.replicate 16 0
+  let mut code := 0
+  for b in [1:16] do
+    code := (code + blCount[b - 1]?.getD 0) <<< 1
+    nextCode := nextCode.set! b code
+  let mut codes := Array.replicate lengths.size 0
+  for s in [0:lengths.size] do
+    let l := lengths[s]?.getD 0
+    if l > 0 then
+      let c := nextCode[l]?.getD 0
+      nextCode := nextCode.set! l (c + 1)
+      let mut rev := 0
+      let mut v := c
+      for _ in [0:l] do
+        rev := (rev <<< 1) ||| (v &&& 1)
+        v := v >>> 1
+      codes := codes.set! s rev
+  return codes
+
+/-- Largest length code whose base is ≤ `len` — code 285 alone covers 258
+(RFC 1951 §3.2.5's table). -/
+private def lenSymOf (len : Nat) : Nat := Id.run do
+  let mut sym := 0
+  for k in [0:lenBase.size] do
+    if lenBase[k]?.getD 999 ≤ len then sym := k
+  return sym
+
+private def distSymOf (d : Nat) : Nat := Id.run do
+  let mut sym := 0
+  for k in [0:distBase.size] do
+    if distBase[k]?.getD 99999 ≤ d then sym := k
+  return sym
+
+/-- `len → length code`, indexed directly by the length (3–258). -/
+private def lenSymTab : Array Nat := (Array.range 259).map lenSymOf
+
+/-- `dist → distance code` for distances ≤ 256. -/
+private def distSymTab1 : Array Nat := (Array.range 257).map distSymOf
+
+/-- Distances past 256 bucket by `(d-1) >>> 7`: every base past 256 is
+≡ 1 (mod 128), so a bucket never straddles two codes. -/
+private def distSymTab2 : Array Nat := (Array.range 256).map fun k => distSymOf (k * 128 + 1)
+
+/-- One LZ77 token: a literal byte, or bit 31 set with `(len-3) <<< 15`
+and `dist-1` packed beside it. -/
+private def matchToken (len dist : Nat) : UInt32 :=
+  UInt32.ofNat ((1 <<< 31) ||| ((len - 3) <<< 15) ||| (dist - 1))
+
+/-- The three-byte rolling hash: Knuth's multiplicative constant over the
+window the next match must open with. -/
+private def hash3 (raw : ByteArray) (mask i : Nat) : Nat :=
+  ((((raw[i]?.getD 0).toNat <<< 16) ^^^ ((raw[i + 1]?.getD 0).toNat <<< 8) ^^^
+    (raw[i + 2]?.getD 0).toNat) * 2654435761) >>> 17 &&& mask
+
+/-- Longest common run at `c`/`i`, `fuel` the caller's bound (`limit ≤
+258`, in range by the caller's `c < i` and `limit ≤ raw.size - i`). Tail
+recursion: the byte loop carries no boxed loop state — this is the
+innermost loop of the compressor. -/
+private def matchLen (raw : ByteArray) (c i : Nat) : Nat → Nat → Nat
+  | 0, l => l
+  | fuel + 1, l =>
+    if raw[c + l]?.getD 0 == raw[i + l]?.getD 1 then matchLen raw c i fuel (l + 1)
+    else l
+
+/-- Walk the hash chain for the best match at `i`: candidates verified
+byte-wise (a stale ring entry can only cost a candidate, never
+correctness), the walk cut short by a match of 64+ (zlib's `good_length`
+shape). -/
+private def bestMatch (raw : ByteArray) (prev : Array Nat) (mask i limit : Nat) :
+    Nat → Nat → Nat → Nat → Nat × Nat
+  | 0, _, best, bestDist => (best, bestDist)
+  | fuel + 1, c, best, bestDist =>
+    if c ≥ i || i - c > 32768 || best ≥ 64 || best == limit then (best, bestDist)
+    else
+      -- A longer match must extend past `best`: one compare rejects most.
+      let next := prev[c &&& mask]?.getD i
+      if raw[c + best]?.getD 0 == raw[i + best]?.getD 0 then
+        let l := matchLen raw c i limit 0
+        if l > best then bestMatch raw prev mask i limit fuel next l (i - c)
+        else bestMatch raw prev mask i limit fuel next best bestDist
+      else bestMatch raw prev mask i limit fuel next best bestDist
+
+/-- Enter positions `j, j+1, …` (`fuel` many) into the hash tables. -/
+private def insertHashes (raw : ByteArray) (mask : Nat) :
+    Nat → Nat → Array Nat → Array Nat → Array Nat × Array Nat
+  | 0, _, head, prev => (head, prev)
+  | fuel + 1, j, head, prev =>
+    if j + 3 ≤ raw.size then
+      let hj := hash3 raw mask j
+      let old := head[hj]?.getD j
+      insertHashes raw mask fuel (j + 1) (head.set! hj j) (prev.set! (j &&& mask) old)
+    else
+      (head, prev)
+
+/-- One LZ77 step per call, `fuel` bounding the walk (every step advances
+`i` by at least one): greedy longest-match, and the interior positions of
+a long match left out of the table (zlib's fast strategy) so runs cost
+O(1) per match, not per byte. -/
+private def tokGo (raw : ByteArray) (mask : Nat) :
+    Nat → Nat → Array Nat → Array Nat → Array UInt32 → Array UInt32
+  | 0, _, _, _, tokens => tokens
+  | fuel + 1, i, head, prev, tokens =>
+    let n := raw.size
+    if i ≥ n then tokens
+    else if i + 3 > n then
+      tokGo raw mask fuel (i + 1) head prev (tokens.push (raw[i]?.getD 0).toUInt32)
+    else
+      let h := hash3 raw mask i
+      let limit := min 258 (n - i)
+      let (best, bestDist) := bestMatch raw prev mask i limit 32 (head[h]?.getD i) 0 0
+      if best ≥ 3 then
+        let (head, prev) := insertHashes raw mask (if best ≤ 32 then best else 1) i head prev
+        tokGo raw mask fuel (i + best) head prev (tokens.push (matchToken best bestDist))
+      else
+        let old := head[h]?.getD i
+        tokGo raw mask fuel (i + 1) (head.set! h i) (prev.set! (i &&& mask) old)
+          (tokens.push (raw[i]?.getD 0).toUInt32)
+
+/-- LZ77 over a hash chain, chain bounded at 32 candidates. The tables
+scale with the input — allocating and zeroing two 32K-entry arrays is the
+whole cost of deflating a 2 KiB content stream — and a smaller ring only
+ever loses candidates, never correctness. `raw.size` is the sentinel: no
+position yet under this hash. -/
+private def tokenize (raw : ByteArray) : Array UInt32 :=
+  let n := raw.size
+  let mask := if n ≥ 65536 then 32767 else 4095
+  tokGo raw mask n 0 (Array.replicate (mask + 1) n) (Array.replicate (mask + 1) n) #[]
+
+/-- The code-length sequence's run-length form (RFC 1951 §3.2.7): symbols
+0–18 with each one's extra-bits payload. -/
+private def clRle (seq : Array Nat) : Array (Nat × Nat × Nat) := Id.run do
+  let mut rle : Array (Nat × Nat × Nat) := #[]
+  let mut p := 0
+  for _ in [0:seq.size] do
+    if p ≥ seq.size then break
+    let v := seq[p]?.getD 0
+    let mut r := 1
+    for _ in [0:seq.size] do
+      if p + r < seq.size && seq[p + r]?.getD 99 == v then r := r + 1 else break
+    if v == 0 then
+      if r < 3 then
+        for _ in [0:r] do
+          rle := rle.push (0, 0, 0)
+        p := p + r
+      else if r ≤ 10 then
+        rle := rle.push (17, r - 3, 3)
+        p := p + r
+      else
+        let take := min r 138
+        rle := rle.push (18, take - 11, 7)
+        p := p + take
+    else
+      rle := rle.push (v, 0, 0)
+      p := p + 1
+      let mut left := r - 1
+      for _ in [0:seq.size] do
+        if left ≥ 3 then
+          let take := min left 6
+          rle := rle.push (16, take - 3, 2)
+          left := left - take
+          p := p + take
+        else break
+      for _ in [0:2] do
+        if left > 0 then
+          rle := rle.push (v, 0, 0)
+          p := p + 1
+          left := left - 1
+  return rle
+
+/-- Compress to a zlib stream (RFC 1950 wrapping RFC 1951): LZ77 tokens in
+one dynamic-Huffman block, both code sets optimal for this data. Any
+inflater accepts the result; the engine's own `inflate` inverting it is
+`inflate_deflate_id` (staged; fuzz-checked by `scripts/flate-fuzz.lean`).
+`deflateStored` stays for callers that must never pay compression time. -/
+def deflate (raw : ByteArray) : ByteArray := Id.run do
+  let tokens := tokenize raw
+  -- Frequencies; end-of-block is always sent exactly once.
+  let mut litFreq : Array Nat := Array.replicate 286 0
+  let mut distFreq : Array Nat := Array.replicate 30 0
+  for t in tokens do
+    let t := t.toNat
+    if t < 256 then
+      litFreq := litFreq.set! t (litFreq[t]?.getD 0 + 1)
+    else
+      let len := ((t >>> 15) &&& 255) + 3
+      let dist := (t &&& 32767) + 1
+      let ls := 257 + (lenSymTab[len]?.getD 0)
+      litFreq := litFreq.set! ls (litFreq[ls]?.getD 0 + 1)
+      let ds := if dist ≤ 256 then distSymTab1[dist]?.getD 0
+        else distSymTab2[(dist - 1) >>> 7]?.getD 0
+      distFreq := distFreq.set! ds (distFreq[ds]?.getD 0 + 1)
+  litFreq := litFreq.set! 256 1
+  let litLens := pmLengths litFreq 15
+  let distLens := pmLengths distFreq 15
+  let litCodes := canonCodes litLens
+  let distCodes := canonCodes distLens
+  let mut nlit := 257
+  for s in [0:litLens.size] do
+    if litLens[s]?.getD 0 > 0 then nlit := max nlit (s + 1)
+  let mut ndist := 1
+  for s in [0:distLens.size] do
+    if distLens[s]?.getD 0 > 0 then ndist := max ndist (s + 1)
+  let rle := clRle (litLens.extract 0 nlit ++ distLens.extract 0 ndist)
+  let mut clFreq : Array Nat := Array.replicate 19 0
+  for (s, _, _) in rle do
+    clFreq := clFreq.set! s (clFreq[s]?.getD 0 + 1)
+  let clLens := pmLengths clFreq 7
+  let clCodes := canonCodes clLens
+  let mut nclen := 4
+  for k in [0:clOrder.size] do
+    if clLens[clOrder[k]?.getD 0]?.getD 0 > 0 then nclen := k + 1
+  -- 0x78 0x9C: deflate, 32 KiB window, no preset dictionary, and
+  -- (CMF·256 + FLG) ≡ 0 (mod 31) as RFC 1950 §2.2 requires.
+  let mut w : Bw := { out := (ByteArray.empty.push 0x78).push 0x9C, bits := 0, nbits := 0 }
+  w := w.push 1 1
+  w := w.push 2 2
+  w := w.push (nlit - 257) 5
+  w := w.push (ndist - 1) 5
+  w := w.push (nclen - 4) 4
+  for k in [0:nclen] do
+    w := w.push (clLens[clOrder[k]?.getD 0]?.getD 0) 3
+  for (s, ev, eb) in rle do
+    w := w.push (clCodes[s]?.getD 0) (clLens[s]?.getD 0)
+    if eb > 0 then
+      w := w.push ev eb
+  for t in tokens do
+    let t := t.toNat
+    if t < 256 then
+      w := w.push (litCodes[t]?.getD 0) (litLens[t]?.getD 0)
+    else
+      let len := ((t >>> 15) &&& 255) + 3
+      let dist := (t &&& 32767) + 1
+      let li := lenSymTab[len]?.getD 0
+      w := w.push (litCodes[257 + li]?.getD 0) (litLens[257 + li]?.getD 0)
+      let leb := lenExtra[li]?.getD 0
+      if leb > 0 then
+        w := w.push (len - (lenBase[li]?.getD 0)) leb
+      let di := if dist ≤ 256 then distSymTab1[dist]?.getD 0
+        else distSymTab2[(dist - 1) >>> 7]?.getD 0
+      w := w.push (distCodes[di]?.getD 0) (distLens[di]?.getD 0)
+      let deb := distExtra[di]?.getD 0
+      if deb > 0 then
+        w := w.push (dist - (distBase[di]?.getD 0)) deb
+  w := w.push (litCodes[256]?.getD 0) (litLens[256]?.getD 0)
+  let mut out := w.flush
+  let a := adler32 raw
+  out := out.push (UInt8.ofNat (a / 16777216 % 256))
+  out := out.push (UInt8.ofNat (a / 65536 % 256))
+  out := out.push (UInt8.ofNat (a / 256 % 256))
+  out := out.push (UInt8.ofNat (a % 256))
+  return out
+
+/-- Apply the PNG Up filter (type 2, ISO/IEC 15948 §9.2) to every row:
+each byte becomes its difference from the byte above, and each row opens
+with its filter type — the shape `pngUnfilter` inverts and a PDF reader's
+Predictor 15 undoes (ISO 32000-2 §7.4.4.4). Re-encoded image planes go
+through this before `deflate`: sample deltas compress far better than
+samples. -/
+def upFilter (px : ByteArray) (pxH rowBytes : Nat) : ByteArray := Id.run do
+  let mut out := ByteArray.emptyWithCapacity (px.size + pxH)
+  for r in [0:pxH] do
+    out := out.push 2
+    for k in [0:rowBytes] do
+      let x := (px[r * rowBytes + k]?.getD 0).toNat
+      let up := if r == 0 then 0 else (px[(r - 1) * rowBytes + k]?.getD 0).toNat
+      out := out.push (UInt8.ofNat ((x + 256 - up) % 256))
+  return out
+
+/-- FNV-1a over bytes: the content hash the PDF trailer ID and the
+driver's content-keyed caches share. Not cryptographic — a fingerprint
+for change detection, as ISO 32000-2 §14.4 asks of the file ID. -/
+def fnv64 (seed : UInt64) (b : ByteArray) : UInt64 := Id.run do
+  let mut h := seed
+  for byte in b do
+    h := (h ^^^ byte.toUInt64) * 1099511628211
+  return h
+
+/-- Sixteen hex digits of a 64-bit hash. -/
+def hex16 (x : UInt64) : String := Id.run do
+  let digits := "0123456789ABCDEF".toList.toArray
+  let mut s := ""
+  let mut v := x
+  for _ in [0:16] do
+    s := String.ofList [digits[(v % 16).toNat]?.getD '0'] ++ s
+    v := v / 16
+  return s
+
+/-- A 128-bit content key: two independent FNV-64 passes, hex. The key a
+content-addressed cache files a value under — 32 filename-safe chars. -/
+def contentKey (b : ByteArray) : String :=
+  hex16 (fnv64 14695981039346656037 b) ++ hex16 (fnv64 1099511628211 b)
+
 /-- Reverse the per-scanline PNG filters (ISO/IEC 15948 §9): each row opens
 with its filter type, predicting from the left, above, and above-left bytes
 at `bpp` distance. Total: bounds-checked reads, loops bounded by the
