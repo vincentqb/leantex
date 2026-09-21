@@ -367,11 +367,13 @@ def dvHasAction (s : String) : Bool :=
 /-- Message and help bounds, in characters, taken from the two longest
 texts that read well rather than from a round number: the message bound is
 W0315's fired message (121 characters, one clause with the ratio, the
-threshold, and the source), the help bound E0328's list of every styleable
-element (181 characters, generated from `styleableElements`; growing that
-list means deciding this bound again). -/
+threshold, and the source), the help bound E0322's list of every advertised
+page key (187 characters, generated from `pageKeys`, decided again when the
+cut-mark and line-number keys joined it; E0328's styleable-element list
+stands at 181 beneath it; growing either list means deciding this bound
+again). -/
 def dvMsgMax : Nat := 121
-def dvHelpMax : Nat := 181
+def dvHelpMax : Nat := 187
 
 /-- Sentence case: a message opens lowercase (or with a quoted construct)
 unless its first word is a proper noun the engine speaks of. -/
