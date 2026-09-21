@@ -7653,13 +7653,32 @@ theorem labelAnchor_single_token (key : String) :
     have h6 := labelAnchorChar_not a '\'' (by decide)
     simp [h1, h2, h3, h4, h5, h6]
 
-/-- The label table resolution spends: each key with the number its
-`\label` bound to in flow order (`none`: the label stood where nothing
+/-- What a label names: the kind of the numbered thing it bound to, read
+by cleveref's name prefixes (`crefNameOf`). The engine's numbered things
+are its headings, its display equations, and its captioned floats — a
+label under a subfloat takes the parent float's kind, as cleveref's
+subfigure names are the figure's. -/
+inductive RefKind where
+  | heading | equation | figure | table
+  deriving Repr, BEq
+
+/-- One label's binding: the number it bound to, with the kind of the
+numbered thing when elaboration made one. A binding the engine numbers
+without a node of any kind — a bare `\refstepcounter` — carries `none`:
+what such a label names has no kind, so a `\cref` to it sets the plain
+number, named (W0380). -/
+structure RefBinding where
+  kind : Option RefKind
+  num : String
+  deriving Repr, BEq
+
+/-- The label table resolution spends: each key with the binding its
+`\label` took in flow order (`none`: the label stood where nothing
 numbers). Elaboration builds it — the first declaration of a key wins,
 W0350 names the rest — and `resolveRefs` is the single pass over the IR
 that resolves every reference against it, so no backend re-scans for
 labels. -/
-abbrev RefTable := Array (String × Option String)
+abbrev RefTable := Array (String × Option RefBinding)
 
 /-- One reference against the table. A key bound to a number takes exactly
 that number — parenthesised for `\eqref` — and the label's anchor; a key
@@ -7667,8 +7686,9 @@ the table cannot number keeps LaTeX's own `??` and no target (the
 elaborator has already named it, W0349). -/
 def resolveOneRef (table : RefTable) (key : String) (paren : Bool) : Inline :=
   match table.find? (·.1 == key) with
-  | some (_, some n) =>
-    .ref key paren (if paren then "(" ++ n ++ ")" else n) (some (labelAnchor key))
+  | some (_, some b) =>
+    .ref key paren (if paren then "(" ++ b.num ++ ")" else b.num)
+      (some (labelAnchor key))
   | _ => .ref key paren "??" none
 
 /-- Resolution's one rewrite: every `.ref` is rewritten from the table
@@ -7697,10 +7717,10 @@ exactly `n` (parenthesised for `\eqref`) and targets exactly that label's
 anchor. The `\ref` and the `\label` cannot disagree, because both read
 this one entry. -/
 theorem resolveOneRef_exact (table : RefTable) (key : String) (paren : Bool)
-    (n : String) (h : ∃ e ∈ table, e.1 = key ∧ e.2 = some n)
-    (huniq : ∀ e ∈ table, e.1 = key → e.2 = some n) :
+    (b : RefBinding) (h : ∃ e ∈ table, e.1 = key ∧ e.2 = some b)
+    (huniq : ∀ e ∈ table, e.1 = key → e.2 = some b) :
     resolveOneRef table key paren =
-      .ref key paren (if paren then "(" ++ n ++ ")" else n)
+      .ref key paren (if paren then "(" ++ b.num ++ ")" else b.num)
         (some (labelAnchor key)) := by
   unfold resolveOneRef
   obtain ⟨e, hmem, hkey, hval⟩ := h
@@ -7714,7 +7734,7 @@ theorem resolveOneRef_exact (table : RefTable) (key : String) (paren : Bool)
   have hfkey : f.1 = key := by
     have := Array.find?_some hf
     simpa using this
-  have hfval : f.2 = some n := huniq f hfmem hfkey
+  have hfval : f.2 = some b := huniq f hfmem hfkey
   obtain ⟨fk, fv⟩ := f
   simp only at hfval
   subst hfval
@@ -7740,8 +7760,8 @@ theorem resolveOneRef_missing (table : RefTable) (key : String) (paren : Bool)
 -- could only hope for).
 
 /-- One label leaf into the rows, bound to the float binding in force. -/
-private def floatLabelPush (float : Option String)
-    (out : Array (String × Option String)) : Inline → Array (String × Option String)
+private def floatLabelPush (float : Option RefBinding)
+    (out : Array (String × Option RefBinding)) : Inline → Array (String × Option RefBinding)
   | .label k => out.push (k, float)
   | _ => out
 
@@ -7762,8 +7782,8 @@ unbound here. The IR keeps a float body's labels but not their side of
 the caption, so a label anywhere under a captioned float binds to it —
 LaTeX documents `\label` before `\caption` as a user error (clsguide §"The
 label commands"); here it resolves to the number the author captioned. -/
-def floatLabelOne (float : Option String) (out : Array (String × Option String)) :
-    Block → Array (String × Option String)
+def floatLabelOne (float : Option RefBinding) (out : Array (String × Option RefBinding)) :
+    Block → Array (String × Option RefBinding)
   | .para content => foldInlineList (floatLabelPush float) out content.toList
   | .equation _ content => foldInlineList (floatLabelPush none) out content.toList
   | .section _ _ _ title => foldInlineList (floatLabelPush none) out title.toList
@@ -7790,8 +7810,12 @@ def floatLabelOne (float : Option String) (out : Array (String × Option String)
       | none => float
       | some m =>
         match kind with
-        | .sub => some (float.getD "" ++ subLetter m)
-        | _ => some (toString m)
+        -- A subfloat letters under its parent: the binding keeps the
+        -- parent's kind, as cleveref's subfigure names are the figure's.
+        | .sub => some { kind := float.bind (·.kind)
+                         num := ((float.map (·.num)).getD "") ++ subLetter m }
+        | .figure => some { kind := some .figure, num := toString m }
+        | .table => some { kind := some .table, num := toString m }
     floatLabelList mine (foldInlineList (floatLabelPush mine) out caption.toList)
       body.toList
   | .table _ _ _ rows _ => foldTableRows (floatLabelPush float) out rows.toList
@@ -7799,18 +7823,18 @@ def floatLabelOne (float : Option String) (out : Array (String × Option String)
   | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .picture _ | .bibliography _ _ _ => out
 
-def floatLabelList (float : Option String) (out : Array (String × Option String)) :
-    List Block → Array (String × Option String)
+def floatLabelList (float : Option RefBinding) (out : Array (String × Option RefBinding)) :
+    List Block → Array (String × Option RefBinding)
   | [] => out
   | b :: rest => floatLabelList float (floatLabelOne float out b) rest
 
-def floatLabelItems (float : Option String) (out : Array (String × Option String)) :
-    List (Array Block) → Array (String × Option String)
+def floatLabelItems (float : Option RefBinding) (out : Array (String × Option RefBinding)) :
+    List (Array Block) → Array (String × Option RefBinding)
   | [] => out
   | item :: rest => floatLabelItems float (floatLabelList float out item.toList) rest
 
-def floatLabelCols (float : Option String) (out : Array (String × Option String)) :
-    List (Option Nat × Array Block) → Array (String × Option String)
+def floatLabelCols (float : Option RefBinding) (out : Array (String × Option RefBinding)) :
+    List (Option Nat × Array Block) → Array (String × Option RefBinding)
   | [] => out
   | (_, body) :: rest => floatLabelCols float (floatLabelList float out body.toList) rest
 
@@ -7835,18 +7859,18 @@ def withFloatRows (labels rows : RefTable) : RefTable :=
 /-- The merge keeps keys and takes exactly the collect's binding: when the
 collect's first row for `key` carries a number and elaboration recorded
 the key at all, the merged table's answer for `key` is that number. -/
-theorem withFloatRows_finds (labels rows : RefTable) (key : String) (n : String)
-    (hrow : rows.find? (·.1 == key) = some (key, some n))
+theorem withFloatRows_finds (labels rows : RefTable) (key : String) (b : RefBinding)
+    (hrow : rows.find? (·.1 == key) = some (key, some b))
     (hkey : (labels.find? (·.1 == key)).isSome) :
-    (withFloatRows labels rows).find? (·.1 == key) = some (key, some n) := by
+    (withFloatRows labels rows).find? (·.1 == key) = some (key, some b) := by
   unfold withFloatRows
   obtain ⟨e, he⟩ := Option.isSome_iff_exists.mp hkey
   have hekey : e.1 = key := by simpa using Array.find?_some he
   rw [Array.find?_map]
-  have hp : ((fun x : String × Option String => x.1 == key) ∘ fun e =>
+  have hp : ((fun x : String × Option RefBinding => x.1 == key) ∘ fun e =>
       match rows.find? (·.1 == e.1) with
       | some (_, some n) => (e.1, some n)
-      | _ => e) = fun e : String × Option String => e.1 == key := by
+      | _ => e) = fun e : String × Option RefBinding => e.1 == key := by
     funext x
     cases hx : rows.find? (·.1 == x.1) with
     | none => simp [Function.comp, hx]
@@ -7866,15 +7890,15 @@ label's anchor. Before this pipeline, elaboration *predicted* the number
 and nothing related predictor to assigner; now there is no predictor, and
 the agreement is this theorem, stated over the engine's own functions. -/
 theorem refs_agree_with_numbering (labels : RefTable) (xs : Array Block)
-    (key : String) (n : String) (paren : Bool) (t : String) (a : Option String)
+    (key : String) (b : RefBinding) (paren : Bool) (t : String) (a : Option String)
     (hrow : (floatLabelRows (numberFloats xs)).find? (·.1 == key)
-      = some (key, some n))
+      = some (key, some b))
     (hkey : (labels.find? (·.1 == key)).isSome) :
     resolveRefInline (withFloatRows labels (floatLabelRows (numberFloats xs)))
         (.ref key paren t a)
-      = .ref key paren (if paren then "(" ++ n ++ ")" else n)
+      = .ref key paren (if paren then "(" ++ b.num ++ ")" else b.num)
         (some (labelAnchor key)) := by
-  have h := withFloatRows_finds labels _ key n hrow hkey
+  have h := withFloatRows_finds labels _ key b hrow hkey
   show resolveOneRef _ key paren = _
   unfold resolveOneRef
   rw [h]

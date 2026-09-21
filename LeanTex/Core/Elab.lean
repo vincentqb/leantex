@@ -238,16 +238,18 @@ structure ESt where
   Per-chapter numbering waits for a real report class (a `ClassRecord`
   field then). -/
   fnNum : Nat := 0
-  /-- The number of the nearest preceding numbered thing — what a `\label`
-  declared here binds to. A heading sets it for the flow after it. A
-  captioned float never writes here: its number exists only after
+  /-- The binding of the nearest preceding numbered thing — what a `\label`
+  declared here binds to: the rendered number with the kind of what it
+  names (`Ir.RefBinding`). A heading sets it for the flow after it; a bare
+  `\refstepcounter` sets a kindless binding (`applyCounter`). A captioned
+  float never writes here: its number exists only after
   `Ir.numberFloats` runs on the finished body, so the labels under it are
   bound from the numbered IR (`Ir.floatLabelRows`), never predicted. -/
-  refTarget : Option String := none
-  /-- The label table in flow order: each key with the number it bound to.
+  refTarget : Option Ir.RefBinding := none
+  /-- The label table in flow order: each key with the binding it took.
   The first declaration of a key wins (LaTeX's behaviour); a second is
   W0350 at its own position. -/
-  labels : Array (String × Option String) := #[]
+  labels : Array (String × Option Ir.RefBinding) := #[]
   /-- Every `\ref`/`\eqref` site, for W0349 once the whole table is known:
   a reference may point forward, so it cannot be judged where it stands. -/
   refSites : Array (String × Pos) := #[]
@@ -1543,7 +1545,7 @@ private def needsSep (acc : Array Inline) (sb : String) : Bool :=
 
 /-- Record one `\label` binding. The first declaration of a key wins,
 LaTeX's behaviour; a second is W0350 where it stands and binds nothing. -/
-private def recordLabel (ctx : Ctx) (key : String) (target : Option String)
+private def recordLabel (ctx : Ctx) (key : String) (target : Option Ir.RefBinding)
     (pos : Pos) : EM Unit := do
   let st ← get
   if st.labels.any (·.1 == key) then
@@ -2114,7 +2116,9 @@ private def applyCounter (name : String) (lvl : Nat) (n : Int) : EM Unit := do
   modify fun st => { st with secNums := nums }
   if name == "refstepcounter" then
     let num := renderSecLevel st.secFmts nums st.inAppendix secFmtFuel lvl
-    modify fun st => { st with refTarget := some num }
+    -- A bare counter step numbers no node: what a label here names has no
+    -- kind, so the binding is kindless — a `\cref` to it is W0380.
+    modify fun st => { st with refTarget := some { kind := none, num := num } }
 
 /-- One counter command with its arguments starting at `i` (just past
 the control word): scan, apply over the section counters, name any
@@ -3545,8 +3549,10 @@ private def sectionNumber (ctx : Ctx) (level : Nat) (starred : Bool) :
     | _ => (s1, s2, s3 + 1)
   let num := renderSecLevel st.secFmts nums st.inAppendix secFmtFuel level
   -- The heading is the numbered thing in force from here on: a \label in
-  -- the flow after it binds to this number.
-  modify fun st => { st with secNums := nums, refTarget := some num }
+  -- the flow after it binds to this number, as a heading (`\cref` says
+  -- "section").
+  modify fun st => { st with secNums := nums
+                             refTarget := some { kind := some .heading, num := num } }
   return some num
 
 /-- A declaration standing in a group applies to the rest of the group:
@@ -5411,7 +5417,7 @@ private def displayMathArm (ctx : Ctx) (numbered : Bool) (body : Array Raw) (pos
     let num := (← get).eqNum + 1
     modify fun st => { st with eqNum := num }
     for key in keys do
-      recordLabel ctx key (some (toString num)) pos
+      recordLabel ctx key (some { kind := some .equation, num := toString num }) pos
     let content := keys.map (Ir.Inline.label ·) |>.push inl
     blocks := blocks.push (.equation s!"({num})" content)
   else
