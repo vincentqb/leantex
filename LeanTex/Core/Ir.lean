@@ -3675,6 +3675,11 @@ structure ClassRecord where
   pageNumbers : Bool := false
   /-- The chrome band and the slides furniture styles draw. -/
   chrome : Bool := false
+  /-- The class draws the `\title` family as a page-top headline band —
+  poster furniture (the gemini lineage's headline template draws the
+  declarations without a `\maketitle`); every other class waits for
+  `\maketitle`. -/
+  headline : Bool := false
   /-- Implied contract, checked against the shipped pages exactly as a
   declared `\assert` is; a document declaring an assertion of the same
   form is intent and takes control. The help beside each value is the
@@ -3807,6 +3812,7 @@ distance (Legge & Bigelow 2011); declare \\assert{ text.xheight >= ... } to take
   | .poster =>
     { model := .face
       fontSize := some posterFontSize
+      headline := true
       pagesBound := some .faces
       inkInArea := some "the margins are the print safe zone: ink past them risks \
 the trim; declare \\assert{ text.in_area } to take control"
@@ -3825,6 +3831,21 @@ calibration reads fluently; declare \
 printed, trimmed surface — by the record, definitionally. -/
 theorem poster_model_face : (DocClass.poster).record.model = .face := rfl
 
+/-- The poster's headline band: title, authors, institute — the `\title`
+family read as class furniture, the way the gemini lineage's headline
+template reads the declarations without a `\maketitle`
+(beamerthemegemini.sty, the headline template over `\inserttitle`,
+`\insertauthor`, `\insertinstitute`). One value both backends consume:
+the PDF lays it as the face's page-top band in the `frametitle` roles,
+HTML as the page's `<header>`. Assembled once, at `Elab`'s document
+assembly, only for a class whose record declares the band
+(`ClassRecord.headline`). -/
+structure Headline where
+  title : Array Inline
+  author : Array Inline := #[]
+  institute : Array Inline := #[]
+  deriving Repr, BEq, Inhabited
+
 structure Doc where
   docClass : DocClass := .article
   classOptions : String := ""
@@ -3840,6 +3861,17 @@ structure Doc where
   placed at the lower-right corner of every page carrying running content,
   the way the head and foot are placed. -/
   logo : Option (Array Inline) := none
+  /-- The headline band a headline class draws (`ClassRecord.headline`;
+  the poster today): the `\title` family as furniture. `none` on every
+  other class and when no title is declared. -/
+  headline : Option Headline := none
+  /-- `\logoleft` / `\logoright`: the headline band's two corner slots
+  (the gemini lineage's own commands), each one piece of inline content —
+  normally an image — placed by the furniture pass in the band's corner,
+  the `\logo` machinery's shape. Only a page carrying the band draws
+  them. -/
+  logoLeft : Option (Array Inline) := none
+  logoRight : Option (Array Inline) := none
   /-- First page that carries the running head (`\runninghead[from = 2]`
   keeps the opening page clean, as a title page is). The gate is the
   declaration's own: each `\runninghead` sets it — to its `[from]`, or back
@@ -7829,6 +7861,12 @@ def imageRefs (doc : Doc) : Array String := Id.run do
   if let some h := doc.head then out := imageSrcsInlines out h
   if let some f := doc.foot then out := imageSrcsInlines out f
   if let some l := doc.logo then out := imageSrcsInlines out l
+  if let some hl := doc.headline then
+    out := imageSrcsInlines out hl.title
+    out := imageSrcsInlines out hl.author
+    out := imageSrcsInlines out hl.institute
+  if let some l := doc.logoLeft then out := imageSrcsInlines out l
+  if let some r := doc.logoRight then out := imageSrcsInlines out r
   for (_, st) in doc.styles.entries do
     if let some tpl := st.font then out := imageSrcsInlines out tpl
     if let some m := st.marker then out := imageSrcsInlines out m
@@ -7968,7 +8006,9 @@ def logoImageSrcs (doc : Doc) : Array String :=
   let out := foldBlocks (fun out b => match b with
     | .logo c => imageSrcsInlines out c
     | _ => out) (fun out _ => out) #[] doc.body
-  match doc.logo with | some l => imageSrcsInlines out l | none => out
+  let out := match doc.logo with | some l => imageSrcsInlines out l | none => out
+  let out := match doc.logoLeft with | some l => imageSrcsInlines out l | none => out
+  match doc.logoRight with | some r => imageSrcsInlines out r | none => out
 
 /-- One image node's contribution to the no-alternative census: an
 `.image` whose `alt` is empty, its `src` collected once. A leaf
@@ -9132,6 +9172,19 @@ def dump (doc : Doc) (diags : Array Diag) : String :=
      else "") ++
     (match doc.logo with
      | some xs => "logo\n" ++ dumpInlines "  " xs
+     | none => "") ++
+    (match doc.headline with
+     | some hl =>
+       "headline\n  title\n" ++ dumpInlines "    " hl.title ++
+       (if hl.author.isEmpty then "" else "  author\n" ++ dumpInlines "    " hl.author) ++
+       (if hl.institute.isEmpty then "" else
+         "  institute\n" ++ dumpInlines "    " hl.institute)
+     | none => "") ++
+    (match doc.logoLeft with
+     | some xs => "logoleft\n" ++ dumpInlines "  " xs
+     | none => "") ++
+    (match doc.logoRight with
+     | some xs => "logoright\n" ++ dumpInlines "  " xs
      | none => "")
   let infoLines :=
     metaLine "title" doc.info.title ++ metaLine "author" doc.info.author ++

@@ -3501,3 +3501,21 @@ def posterChromeCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((Compat.localStyCandidates docRaws).contains "beamercolorthemeinvented")
   t "usecolortheme with no file beside the document keeps its warning"
     (warnCodes (pre "\\usecolortheme{nothere}") == ["W0104"])
+  -- The headline band's declarations: the title family becomes furniture
+  -- on a headline class; the corner slots ride only with the band.
+  let full := pre ("\\title{An Invented Poster}\\author{Alex Doe}" ++
+    "\\institute{Nowhere U}\\logoright{\\includegraphics[totalheight=2cm]{lg.png}}")
+  let (hDoc, hDs) := elabStr full
+  t "a poster reads the title family as its headline band"
+    (hDs.all (·.severity == .note) &&
+     (hDoc.headline.map fun hl => Ir.plainText hl.title) == some "An Invented Poster" &&
+     (hDoc.headline.map fun hl => Ir.plainText hl.institute) == some "Nowhere U" &&
+     hDoc.logoRight.isSome)
+  t "a corner logo under a class with no band is dropped by name"
+    (warnCodes ("\\documentclass{article}\\logoright{x}" ++
+      "\\begin{document}y\\end{document}") == ["W0317"])
+  t "a corner logo without a declared title is dropped by name"
+    ((elabStr (pre "\\logoright{x}")).2.any (·.code == "W0309") &&
+     (elabStr (pre "\\logoright{x}")).1.logoRight.isNone)
+  t "no title, no band"
+    ((elabStr (pre "")).1.headline.isNone)

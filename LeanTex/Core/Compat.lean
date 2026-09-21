@@ -1982,6 +1982,19 @@ the definition is skipped" pos
         became s!"\\setbeamercolor\{{element}}" native pos
         return some (← synthAt native pos, k)
     else return none
+  | "mbox" | "makebox" =>
+    -- LaTeX's unbreakable box: its content is content and stays in the
+    -- stream; the box itself — `\makebox`'s declared width and alignment —
+    -- is not modelled, and dropping that silently would move ink, so the
+    -- drop is named once. `\mbox` declares no width and loses nothing.
+    let (w, j) := takeOpt raws start
+    let (_, k) := takeOpt raws j
+    if name == "makebox" && w.isSome then
+      sayOnce "ctrl:makebox" .W0104
+        "'\\makebox' width and alignment are dropped; its content is kept" pos
+        (help := "\\hfill spaces content apart; \\allow{W0104} accepts the drop")
+    became s!"\\{name}" "its content, kept in the line" pos
+    return some (#[], k)
   | "footercontent" =>
     -- The gemini poster lineage's footer declaration
     -- (beamerthemegemini.sty, footline template: one centred line of the

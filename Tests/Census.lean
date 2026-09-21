@@ -273,6 +273,40 @@ def censusTable :
     ("no page number ships on a poster",
       ((c[0]?.bind fun p => p.lines.back?).map
         (·.text.trimAscii.toString != "1")).getD false)]),
+  ("poster-headline", fun geom c => [
+    -- The band: the title family ships as page-top furniture, its bar
+    -- painted from the page top at full width (distinct from the page
+    -- ground, which spans the whole face), the title matter centred (the
+    -- gemini bundle's declared titlepage alignment), the body below it.
+    ("one face ships as one page", c.size == 1),
+    ("the band ships the title family",
+      hasStr (censusText c) "An Invented Band Title" &&
+      hasStr (censusText c) "Alex Placeholder" &&
+      hasStr (censusText c) "Sam Example" &&
+      hasStr (censusText c) "An Invented Institute"),
+    ("the band bar paints from the page top, full width, above the ground",
+      ((c[0]?.map (·.fillRects)).getD #[]).any fun r =>
+        r.1 == 0 && r.2.1 == 0 && r.2.2.1 == geom.pageW && r.2.2.2 < geom.pageH),
+    ("the title matter centres on the declared alignment",
+      ((c[0]?.bind fun p => p.lines.find? fun l =>
+        hasStr l.text "An Invented Band Title").map fun l =>
+          decide ((2 * l.x + l.width - geom.pageW).natAbs ≤ 1)).getD false),
+    ("the body columns start below the band",
+      (((c[0]?.bind fun p => p.lines.find? fun l =>
+          hasStr l.text "An Invented Band Title").map (·.y)).bind fun ty =>
+        ((c[0]?.bind fun p => p.lines.find? fun l =>
+          hasStr l.text "First Invented Panel").map (·.y)).map fun by_ =>
+            decide (ty < by_)).getD false),
+    ("the themed alert panel ships its title on a bar",
+      hasStr (censusText c) "Second Invented Panel" &&
+      (c[0]?.map (·.fills)).getD 0 ≥ 3),
+    ("the footercontent line ships as foot furniture",
+      ((c[0]?.bind fun p => p.lines.find? fun l =>
+        hasStr l.text "An Invented Workshop 2099").map (·.furniture)).getD false),
+    ("the corner logo stands as furniture on the band's right",
+      (c[0]?.map fun p => p.lines.any fun l =>
+        l.furniture && l.text.trimAscii.toString.isEmpty &&
+          l.x > geom.pageW / 2).getD false)]),
   ("titlebars", fun geom c =>
     let bars := pageRuleSegs c 0
     let titleY := (lineYOf c 0 "Bars Probe Title").getD 0

@@ -768,6 +768,33 @@ def themeCss (doc : Doc) : String :=
       s!"  margin: calc(-1 * {safeareaVar}) calc(-1 * {safeareaVar}) 0;\n" ++
       s!"  padding: {quantaRem 1} {safeareaVar}; } }\n"
      else "") else "") ++
+  -- The headline band: the poster page's <header>, a flex row of the two
+  -- corner-logo slots around the title matter. Colours are the same
+  -- frametitle tokens the PDF band resolves (one resolving site per
+  -- backend, one declared pair), gated on the pair as the slide bar's
+  -- rule is; the matter's alignment is the `titlepage` style's declared
+  -- token (undeclared centres, `\@maketitle`'s own rule).
+  (match doc.headline with
+   | some _ =>
+     let tpsAlign := ((doc.styles.find? "titlepage").bind (·.align)).getD "center"
+     s!"body > header.headline \{ display: flex; align-items: center;
+" ++
+     s!"  gap: {quantaRem 2}; padding: {quantaRem 2} {quantaRem 3}; }
+" ++
+     s!"body > header.headline .headline-matter \{ flex: 1; text-align: " ++
+     (if tpsAlign == "left" then "left" else "center") ++ "; }
+" ++
+     "body > header.headline h1 { margin: 0; }
+" ++
+     (if d.frametitle.isSome then
+       "body > header.headline { background: var(--frametitlebg);
+" ++
+       "  color: var(--frametitlefg, var(--bg, #fff)); }
+" ++
+       "body > header.headline h1 { color: inherit; }
+"
+      else "")
+   | none => "") ++
   -- A role names a hue; the contract chooses its lightness on each ground
   -- (`Contrast.realize`, the same solver `Contrast.realizeDoc` ships the
   -- PDF's runs through): on the frame-title bar and the standout
@@ -4065,7 +4092,31 @@ first; retitle one frame, or link to '#{id}'"))
       #[("role", "doc-endnotes")])
   let main := Html.elem "main" inner (if bodyClass.isEmpty then #[]
     else #[("class", bodyClass)])
-  let mut body : Array Node := #[main]
+  -- The headline band: the page's own <header> before <main> (the banner
+  -- landmark — the HTML poster is a page, and the band is its header),
+  -- title as the one h1, authors and institute as their own lines, the
+  -- corner logos in the flex slots the stylesheet lays around the matter.
+  let headerNode : Array Node := match doc.headline with
+    | some hl =>
+      let slot (c : Option (Array Ir.Inline)) : Array Html.Node :=
+        match c with
+        | some xs =>
+          #[Html.elem "div" (inlineNodesInto cfg #[] xs.toList)
+            #[("class", "headline-logo")]]
+        | none => #[]
+      let line (cls : String) (xs : Array Ir.Inline) : Array Html.Node :=
+        if xs.isEmpty then #[] else
+          #[Html.elem "p" (inlineNodesInto cfg #[] xs.toList) #[("class", cls)]]
+      let matter := #[Html.elem "h1" (inlineNodesInto cfg #[] hl.title.toList)] ++
+        line "headline-author" hl.author ++
+        line "headline-institute" hl.institute
+      #[Html.elem "header"
+        (slot doc.logoLeft ++
+          #[Html.elem "div" matter #[("class", "headline-matter")]] ++
+          slot doc.logoRight)
+        #[("class", "headline")]]
+    | none => #[]
+  let mut body : Array Node := headerNode ++ #[main]
   -- The deck's progress hairline, emitted exactly when the deck draws
   -- progress at all (`themedSections`, the section-page gate): an inert
   -- marker div the class-gated stylesheet scales by scroll position.

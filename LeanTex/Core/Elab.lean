@@ -224,6 +224,10 @@ structure ESt where
   /-- beamer's `\logo`, a declaration legal in the preamble and the body
   alike; the last one wins, as in beamer. -/
   logo : Option (Array Inline) := none
+  /-- `\logoleft` / `\logoright`: the headline band's corner slots, the
+  gemini lineage's declarations; the last of each wins, as `\logo`'s does. -/
+  logoLeft : Option (Array Inline) := none
+  logoRight : Option (Array Inline) := none
   /-- Boundary picture requests met in the body: content hash of each
   wrapped standalone source, with the source — deduplicated, so one
   picture repeated is one request. Assembled onto `Doc.pictureSrcs`. -/
@@ -1987,6 +1991,23 @@ private def readBreakLen (ctx : Ctx) (src : String) (pos : Pos) : EM SymGlue := 
       (help := "lengths look like 10pt or 1.5ex, or name a token")
     pure {}
 
+/-- An image length that resolves only through the token environment: an
+expression over declared and engine tokens (`0.5\\colwidth`,
+`0.2\\paperheight`) is a document constant, resolved eagerly at the
+declaration — the `\\setlength` rule. Tried after `imageLen`, so the
+measure-relative spellings (`0.8\\textwidth`) stay fractions: a column
+resolves those against itself. -/
+private def imageLenOf (ctx : Ctx) (v : String) : Option Image.Len :=
+  imageLen v <|>
+    -- The expression grammar spells tokens bare (`0.5colwidth`, as the
+    -- `\setlength` rewrite already spells them); the graphicx spelling
+    -- carries the backslash, dropped here.
+    match Decl.parseLengthExpr (ctx.tokens.entries ++ ctx.engineTokens)
+        (String.join ((v.splitOn "\\"))) with
+    | .ok g => if g.width.em == 0 && g.width.ex == 0 then some { sp := g.width.sp }
+               else none
+    | .error _ => none
+
 /-- `\\includegraphics`' option run: the modelled keys — width, height,
 scale, keepaspectratio, alt — and a name for everything else. -/
 private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
@@ -1997,7 +2018,7 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
     for e in Decl.splitEntries (rawSrc src) do
       match Decl.splitEntry e with
       | some ("width", v) =>
-        match imageLen v with
+        match imageLenOf ctx v with
         | some l => spec := { spec with width := some l }
         | none =>
           diag ctx .E0331 s!"cannot read a length from '{v}'" pos
@@ -2005,7 +2026,7 @@ private def readImageOpts (ctx : Ctx) (optSrc : Option (Array Raw))
       | some ("height", v) | some ("totalheight", v) =>
         -- totalheight is height plus depth, and an image has no
         -- depth, so the two keys coincide here.
-        match imageLen v with
+        match imageLenOf ctx v with
         | some l => spec := { spec with height := some l }
         | none =>
           diag ctx .E0331 s!"cannot read a length from '{v}'" pos
@@ -8972,6 +8993,9 @@ inductive PDecl where
   | running (name : String) (opts : Option (Array Raw))
       (body : Option (Array Raw)) (pos : Pos)
   | logo (body : Option (Array Raw)) (pos : Pos)
+  /-- `\logoleft`/`\logoright` (the gemini poster lineage's commands):
+  one piece of inline content each, the headline band's corner slots. -/
+  | logoSlot (left : Bool) (body : Option (Array Raw)) (pos : Pos)
   | palette (opts : Option (Array Raw)) (body : Option String) (pos : Pos)
   | style (args : Option (String × String)) (pos : Pos)
   | allow (body : Option String) (pos : Pos)
@@ -9149,6 +9173,14 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
             out := out.push (.logo (some body) pos)
           | _ =>
             out := out.push (.logo none pos)
+        else if name == "logoleft" || name == "logoright" then
+          let j := skipSpaces preamble i
+          match preamble[j]? with
+          | some (.group body _) =>
+            i := j + 1
+            out := out.push (.logoSlot (name == "logoleft") (some body) pos)
+          | _ =>
+            out := out.push (.logoSlot (name == "logoleft") none pos)
         else if name == "palette" then
           let (opts, k) := takeOptRun preamble (skipSpaces preamble i)
           let j := skipSpaces preamble k
@@ -9527,6 +9559,27 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
       return s
     | none =>
       diag s.ctx .E0304 "'\\logo' needs one group of inline content" pos
+      return s
+  | .logoSlot left body pos =>
+    -- The gemini lineage's `\logoleft`/`\logoright`: one piece of inline
+    -- content — normally an image — for the headline band's corner slot.
+    -- The band itself is class furniture (`ClassRecord.headline`); a
+    -- declaration a class cannot draw is dropped by name at assembly.
+    let cmd := if left then "logoleft" else "logoright"
+    match body with
+    | some b =>
+      -- The logo's image sizes read the same token environment a
+      -- `\\setlength` reads (`0.2\\paperheight` names the page the class
+      -- and the declarations so far have fixed).
+      let ctx := { s.ctx with
+        engineTokens := engineLengthTokens s.docClass s.classOptions s.page }
+      let content ← elabInlines ctx b
+      let v := if content.isEmpty then none else some content
+      modify fun st =>
+        if left then { st with logoLeft := v } else { st with logoRight := v }
+      return s
+    | none =>
+      diag s.ctx .E0304 s!"'\\{cmd}' needs one group of inline content" pos
       return s
   | .palette opts body pos =>
     -- `\palette[decorative]{...}`: options read by the one door
@@ -10342,6 +10395,36 @@ names the .bib file")) }
     diag ctx .W0317
       "a card carries no logo; the declaration is dropped" none
     logo := none
+  -- The headline band: a headline class (`ClassRecord.headline`) reads
+  -- the `\title` family as furniture, the gemini lineage's headline rule.
+  -- The corner slots ride only with the band: under a class with no band
+  -- they are dropped by name (the card-logo rule), and under a headline
+  -- class with no declared `\title` there is no band for them to stand
+  -- in, so that is said too rather than dropped silently.
+  let stH ← get
+  let nonEmpty (v : Option (Array Inline)) : Option (Array Inline) :=
+    v.bind fun xs => if xs.isEmpty then none else some xs
+  let headline : Option Ir.Headline := if record.headline then
+      (nonEmpty stH.title).map fun t =>
+        { title := t
+          author := (nonEmpty stH.author).getD #[]
+          institute := (nonEmpty stH.institute).getD #[] }
+    else none
+  let mut logoLeft := stH.logoLeft
+  let mut logoRight := stH.logoRight
+  if logoLeft.isSome || logoRight.isSome then
+    if !record.headline then
+      diag ctx .W0317
+        s!"the {docClass.name} class draws no headline band; the corner logo declaration is dropped"
+        none
+      logoLeft := none
+      logoRight := none
+    else if headline.isNone then
+      diag ctx .W0309
+        "a corner logo is declared but no '\\title' is; the headline band and its logos do not draw"
+        none (help := "declare \\title{...} (and \\author, \\institute) in the preamble")
+      logoLeft := none
+      logoRight := none
   -- The class's implied contract, stated as the assertions the engine
   -- already enforces against the shipped pages (the card's: content fits
   -- its faces, ink respects the safe margin, the smallest type clears the
@@ -10395,6 +10478,9 @@ declare \\assert\{ pages <= N } to take control" }
     head := head
     foot := foot
     logo := logo
+    headline := headline
+    logoLeft := logoLeft
+    logoRight := logoRight
     headFrom := headFrom
     footFrom := footFrom
     chrome := chrome

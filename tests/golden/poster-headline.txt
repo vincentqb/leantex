@@ -1,0 +1,50 @@
+class poster
+page 3370.394x2383.937 vmargin 28.346 hmargin 28.346 fontsize 24.88 hyphenate off justify off
+palette fg #000000
+palette bg #FFFFFF
+palette alert #EE0000
+palette example #008000
+palette muted #4D4D4D
+palette frametitlefg #F5F6FA
+palette frametitlebg #40739E
+palette blocktitlefg #40739E
+palette alerttitlefg #F5F6FA
+palette alerttitlebg #40739E
+palette exampletitlefg #40739E
+palette exampletitlebg #F5F6FA
+palette standoutfg #FFFFFF
+palette standoutbg #000000
+palette separator #273C75
+palette covered 30%
+runningfoot
+  text "An Invented Workshop 2099"
+headline
+  title
+    text "An Invented Band Title"
+  author
+    text "Alex Placeholder  Sam Example"
+  institute
+    text "An Invented Institute"
+logoright
+  image "rects.png" height 113.386pt
+meta title "An Invented Band Title"
+meta author "Alex Placeholder  Sam Example"
+assert pages <= 1
+assert text.in_area
+assert text.xheight >= 9.921pt
+frame
+  columns
+    column 480/1000
+      titled block
+        title
+          text "First Invented Panel"
+        para
+          text "Body text in the first column, entirely synthetic."
+    column 480/1000
+      titled alert
+        title
+          text "Second Invented Panel"
+        para
+          text "Body text in the second column, likewise synthetic."
+-- diagnostics
+note[N0100] 12:1 '\footercontent' → \runningfoot{...}

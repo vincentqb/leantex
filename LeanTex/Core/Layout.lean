@@ -763,6 +763,10 @@ structure PageOut where
   flow-class document: the page→frame attribution the partition statement
   `pages_partition_frames` (Obligations) ranges over. -/
   frame : Option Nat := none
+  /-- The bottom edge of this page's page-top chrome bar (`.titleBar`),
+  when one painted: the extent the furniture pass lays the headline
+  band's corner logos into. -/
+  band : Option Sp := none
   deriving Repr, Inhabited
 
 /-- One entry of the PDF document outline (ISO 32000-2 §12.3.3): a link of
@@ -1524,6 +1528,15 @@ private def docScalarAcc (doc : Doc) : ScalarAcc := Id.run do
     -- Margin line numbers ship digits the same way: engine-generated
     -- text the fallback scan must cover before layout asks a face.
     acc := { acc with texts := acc.texts.push "0123456789" }
+  if let some hl := doc.headline then
+    -- The headline band is furniture from the `\title` family: its text
+    -- must be covered exactly as the head's and foot's is.
+    acc := textAndMath acc hl.title
+    acc := textAndMath acc hl.author
+    acc := textAndMath acc hl.institute
+  for slot in [doc.logoLeft, doc.logoRight] do
+    if let some content := slot then
+      acc := textAndMath acc content
   for (_, st) in doc.styles.entries do
     if let some tpl := st.font then
       acc := { acc with texts := acc.texts.push (Ir.plainText tpl) }
@@ -3248,6 +3261,9 @@ private structure B where
   filsAbove : Array Nat := #[]
   /-- The chrome footer for pages closed from here on, from `.foot` ops. -/
   curFoot : Option (Array Ir.BandSlot) := none
+  /-- The bottom edge of the open page's `.titleBar` fill, for
+  `PageOut.band`: written where the bar paints, cleared with the page. -/
+  curBand : Option Sp := none
   /-- The countable frame owning pages closed from here on, from the same
   `.foot` ops: written onto each closing page (`finishPage`), so the
   attribution and the footer can only move together. -/
@@ -3485,8 +3501,8 @@ private def B.finishPage (b : B) : B :=
   -- the distribution can never move a note.
   { b with pages := b.pages.push { lines := lines ++ b.noteLines, fills := fills,
                                    paths := paths, foot := b.curFoot,
-                                   frame := b.curFrame },
-           cur := {},
+                                   frame := b.curFrame, band := b.curBand },
+           cur := {}, curBand := none,
            shrinkAbove := #[], pageShrink := 0, needed := 0, skip := {},
            pageBg := none, vdist := .top, pageFils := 0, filsAbove := #[],
            pinnedLines := 0, pinnedFills := 0,
@@ -4183,6 +4199,10 @@ private structure Rd where
   content, marked uncounted for the line-number census (`ParaJob.inFloat`,
   `LineOut.counted`). -/
   inFloat : Bool := false
+  /-- The headline band a headline class draws on each frame page
+  (`Doc.headline`, the poster record's furniture): title, authors,
+  institute in the `frametitle` roles at the page top, the body below. -/
+  headline : Option Ir.Headline := none
 
 /-- The threaded state of the block walk, now only what the walk actually
 writes; everything it merely reads rides in `Rd`, passed to every
@@ -5488,6 +5508,49 @@ private def collectBlock (r : Rd) (a : Acc)
       a.pageBreak
     else
     let a := { a with ops := a.ops.push (.pageStyle none (VDist.of valign)) }
+    -- The headline band: a headline class's `\title` family as page-top
+    -- furniture (the gemini lineage's headline template), in the
+    -- `frametitle` roles the deck bar resolves — the one resolving site —
+    -- with the sizes the lineage's own font templates declare
+    -- (beamerthemegemini.sty: headline title \Huge bold, author \Large,
+    -- institute \normalsize — scale steps, never point literals). The
+    -- alignment is the `titlepage` style's declared token (gemini
+    -- declares centred; undeclared centres, `\@maketitle`'s own rule),
+    -- and a declared `titlepage` font template wraps the title as it
+    -- wraps `\maketitle`'s. The `.pin` makes the band page-top chrome:
+    -- the frame's distribution moves the body below it, never the band.
+    let a := match r.headline with
+      | some hl =>
+        let bar := a.pal.find? "frametitlebg"
+        let saved := (a.fg, a.ground)
+        let a := match bar with
+          | some barBg =>
+            { a with fg := (a.pal.find? "frametitlefg").getD
+                       ((a.pal.find? "bg").getD Ir.Color.white)
+                     ground := some barBg }
+          | none => a
+        let tps := r.style "titlepage"
+        let center := tps.align != some "left"
+        let a := match tps.font with
+          | some tpl =>
+            collectDisplay r a (Ir.fillTemplate tpl hl.title) 0 center r.geom.fontSize
+          | none =>
+            collectDisplay r a hl.title 0 center
+              (Ir.scaleStep r.geom.fontSize "Huge") (baseStyle := { weight := .b })
+        let a := if hl.author.isEmpty then a else
+          collectDisplay r a hl.author 0 center (Ir.scaleStep r.geom.fontSize "Large")
+        let a := if hl.institute.isEmpty then a else
+          collectDisplay r a hl.institute 0 center r.geom.fontSize
+        let a := match bar with
+          | some barBg =>
+            { a with fg := saved.1, ground := saved.2
+                     ops := a.ops.push (.titleBar barBg (r.geom.fontSize / 2)) }
+          | none => a
+        -- The band-to-body gap is the frame title's own (`wantDefault`):
+        -- without it the first block's title bar pad reaches into the
+        -- band's fill.
+        { a with ops := a.ops.push .pin, wantDefault := true }
+      | none => a
     let a := if title.isEmpty then a else
       match a.pal.find? "frametitlebg" with
       | some barBg =>
@@ -6217,11 +6280,14 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
                     freshStart := false }
   | .titleBar color pad =>
     -- The bar sits behind the line just placed: full page width, page
-    -- top to `pad` below the line's depth.
+    -- top to `pad` below the line's depth. Its bottom edge rides onto
+    -- the page (`PageOut.band`) for the corner-logo furniture.
     b := match b.cur.lines.back? with
       | some l =>
-        b.pushSibling (fills := #[{ x := 0, y := 0, w := b.geom.pageW,
-                                    h := l.y + b.prevDepth + pad, color := color }])
+        let h := l.y + b.prevDepth + pad
+        { b.pushSibling (fills := #[{ x := 0, y := 0, w := b.geom.pageW,
+                                      h := h, color := color }]) with
+          curBand := some (max h (b.curBand.getD 0)) }
       | none => b
   | .blockBar color pad x w =>
     -- The bar sits behind the line just placed: the measure across, one
@@ -7157,6 +7223,35 @@ private def runPost (sh : Shipped) : Out := Id.run do
         diags := diags ++ ds
         cache := c
         if let some l := l? then lines := lines.push { l with furniture := true }
+    -- The headline band's corner logos (`\logoleft`/`\logoright`): laid
+    -- once per page carrying a page-top bar (`PageOut.band`), the `\logo`
+    -- machinery's shape — one set line of inline content, x pinned to the
+    -- safe margin on the declared side, the ink centred in the band's
+    -- fill (the lineage's own vertical centring). Content wider than the
+    -- band's corner is the document's to judge; the logo is furniture and
+    -- stands outside the body-ink census.
+    if let some bandB := page.band then
+      for (content?, left) in [(doc.logoLeft, true), (doc.logoRight, false)] do
+        if let some content := content? then
+          let (items, lds, c, _) :=
+            itemsOfInlines pats geom.fontSize xHeight fs { ground := furnGround }
+              content cache imgs geom.textWidth geom.textHeight
+          diags := diags ++ lds
+          cache := c
+          let breaks := kp items geom.textWidth
+          if let some brk := breaks[0]? then
+            let (segs, w, _) := setLine items (lineStart items 0) brk geom.textWidth false
+            -- Ink above the baseline: an image's declared height; a glyph
+            -- run's size stands in for its ascent (the band centring's
+            -- only consumer of the estimate).
+            let inkH := segs.foldl (init := (0 : Sp)) fun m sg => match sg with
+              | .image _ _ h => max m h
+              | .run _ _ _ _ _ size _ raise _ => max m (size + raise)
+              | _ => m
+            let x := if left then geom.hmargin else geom.pageW - geom.hmargin - w
+            lines := lines.push { x := x, y := (bandB + inkH) / 2,
+                                  size := geom.fontSize, segs := segs,
+                                  setWidth := w, furniture := true }
     -- The chrome footer the page's frame gave it, slot by slot: the muted
     -- key at the scale's small step, both from declarations. Positions are
     -- fixed (`bandSlotX`); when two boxes collide the lower-rank slot
@@ -7343,7 +7438,8 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
                    styles := doc.styles
                    locale := doc.info.locale
                    slides := doc.docClass.record.model == .frame
-                   imgs := imgs }
+                   imgs := imgs
+                   headline := doc.headline }
   let acc0 : Acc := { pal := doc.palette
                       tokens := doc.tokens
                       frameCount := doc.frameCount
