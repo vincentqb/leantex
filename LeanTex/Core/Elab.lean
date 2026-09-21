@@ -5543,8 +5543,11 @@ the engine's own step, mono at footnotesize" (some pos)
       match label with
       | some key =>
         -- The anchor rides in the caption, as an equation's rides in its
-        -- content: the reference's target must ship on the page.
-        recordLabel ctx key (some (toString num)) pos
+        -- content: the reference's target must ship on the page. The kind
+        -- is `none` until RefKind grows a listing constructor (the cref
+        -- prefix is the resolver slice's): a \cref meanwhile sets the
+        -- plain number, named W0380 — degraded, never silently wrong.
+        recordLabel ctx key (some { kind := none, num := toString num }) pos
         pure { caption := some (num, #[.label key, .text cap]), numbers := numbers }
       | none =>
         pure { caption := some (num, #[.text cap]), numbers := numbers }
