@@ -290,6 +290,11 @@ structure ESt where
   whole table is known: a reference may point forward, so it cannot be
   judged where it stands. -/
   refSites : Array (String × Ir.RefForm × Pos) := #[]
+  /-- Every citation key with its first `\cite`'s span, for the
+  no-bibliography judge once the whole document is known: with no
+  `\bibliography` anywhere, `Bib.apply` never runs and nothing else
+  explains the '?' the mark ships. -/
+  citeSites : Array (String × Span) := #[]
   /-- The document-global algorithm state the preamble declared. -/
   alg : AlgSt := {}
 
@@ -3020,6 +3025,12 @@ def elabInlinesFrom (ctx : Ctx) (raws : Array Raw) (i : Nat)
             have hjlt := getElem?_lt hj
             let keys := (((argText ctx keysRaw).splitOn ",").map
               (·.trimAscii.toString)).filter (!·.isEmpty)
+            -- Recorded for the no-bibliography judge (elabDoc): a
+            -- citation cannot be judged where it stands, because its
+            -- `\bibliography` may follow it.
+            modify fun st => keys.foldl (fun st k =>
+              if st.citeSites.any (·.1 == k) then st
+              else { st with citeSites := st.citeSites.push (k, ⟨ctx.file, pos⟩) }) st
             have hadv : sliceWeight raws (j + 1) < sliceWeight raws i :=
               sliceWeight_lt raws h (by omega)
             elabInlinesFrom ctx raws (j + 1)
@@ -10242,6 +10253,19 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
         warnedRefs := warnedRefs.push key
         diag ctx .W0349 s!"no \\label\{{key}} in the document; set as '??'" (some rpos)
           (help := s!"declare \\label\{{key}} after the numbered thing it names")
+  -- A citation with no bibliography anywhere: `Bib.apply` never runs
+  -- (`Ir.bibRefs` stays empty — nothing requests a file), the
+  -- missing-file diagnostic has no file to miss, and the mark ships '?'
+  -- unexplained. The loss is W0351's (a citation names no bibliography
+  -- entry); the message and help name this cause. One diagnostic per
+  -- distinct key, at its first `\cite`.
+  if (Ir.bibRefsBlocks blocks).isEmpty then
+    for (key, span) in stRefs.citeSites do
+      modify fun st => { st with diags := st.diags.push (Diag.of .W0351
+        s!"citation '{key}' has no bibliography to resolve against; it shows as '?'"
+        (some span)
+        (help := "the document declares no bibliography; \\bibliography{file} \
+names the .bib file")) }
   -- Body declarations do NOT displace the document state: `doc.palette`
   -- and `doc.tokens` stay the preamble+theme state — epoch 0 — and each
   -- body declaration rides its own `.setPalette`/`.setTokens` block, so a

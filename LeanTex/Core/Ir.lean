@@ -7770,14 +7770,19 @@ theorem keepFor_id (t : String) (xs : Array Block) (h : onlyFree xs = true) :
   rw [keepFor, keepForList_id t xs.toList h]
 
 
+/-- The block face of `bibRefs`: the same leaf over a body not yet
+assembled onto a `Doc` — the no-bibliography citation judge (Elab) reads
+it where only the blocks exist. -/
+def bibRefsBlocks (blocks : Array Block) : Array String :=
+  foldBlocks (fun out b => match b with
+    | .bibliography src _ _ => if out.contains src then out else out.push src
+    | _ => out) (fun out _ => out) #[] blocks
+
 /-- Every `.bib` source the document's `\bibliography` markers name, in
 document order, deduplicated: the request value the CLI driver fulfils by
 reading each file beside the document and handing its text to `Bib.apply`.
 Files are effects, so the core never opens one — `imageRefs`' shape. -/
-def bibRefs (doc : Doc) : Array String :=
-  foldBlocks (fun out b => match b with
-    | .bibliography src _ _ => if out.contains src then out else out.push src
-    | _ => out) (fun out _ => out) #[] doc.body
+def bibRefs (doc : Doc) : Array String := bibRefsBlocks doc.body
 
 /-- The document's declared bibliography style: the first
 `\bibliographystyle` in document order, `none` when nothing declared —

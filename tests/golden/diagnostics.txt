@@ -368,6 +368,8 @@ warning[W0350]: 'twice' is already a \label'ed key; the first wins
 ── W0351 (degraded) a citation names no bibliography entry; its mark shows as ?
 warning[W0351]: citation 'ghost' has no entry in the bibliography; it shows as '?'
   help: add an entry with key 'ghost' to the .bib file, or fix the spelling in \cite
+warning[W0351]: citation 'ghost' has no bibliography to resolve against; it shows as '?'
+  help: the document declares no bibliography; \bibliography{file} names the .bib file
 ── W0352 (degraded) a malformed .bib entry is skipped; the rest of the file is kept
 warning[W0352]: malformed .bib entry: in 'broken': unreadable value for 'year'; the entry is skipped and the rest of 'refs' is kept
 ── W0353 (degraded) an unknown bibliography style; the reference list is set as unsrtnat

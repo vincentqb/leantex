@@ -3130,6 +3130,26 @@ def missingFileSpanChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the bibliography marker records its span for E0503"
     (reqsB.bib.any fun (s, sp) => s == "refs" && sp.file == "t" && sp.pos.col == 1)
 
+/-- The no-bibliography citation judge. The invariant: no '?' ships
+silent — a `\cite` in a document that declares no `\bibliography` is
+unresolvable, `Bib.apply` never runs, and no file is missing, so the
+judge in elabDoc is the only voice left. W0351 fires at the `\cite`, once
+per distinct key; a declared bibliography hands the judging to
+resolution (its own W0351 per missing key, the m2 shape). -/
+def citeNoBibChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let ds := dvE (dvDoc "" "Hello \\cite{nokey}.")
+  t "a cite with no bibliography fires W0351 at the cite"
+    ((ds.filter (·.code == "W0351")).size == 1 &&
+     ds.any fun d => d.code == "W0351" && d.span == some ⟨"t", ⟨3, 7⟩⟩)
+  t "one diagnostic per distinct key, at its first cite"
+    (((dvE (dvDoc "" "\\cite{a} and \\cite{a,b} again \\cite{b}")).filter
+      (·.code == "W0351")).size == 2)
+  t "a declared bibliography silences the no-bibliography judge"
+    ((dvE (dvDoc "" "x \\cite{k}\n\\bibliography{refs}")).all (·.code != "W0351"))
+  t "a document with no citations stays silent"
+    ((dvE (dvDoc "" "plain text")).all (·.code != "W0351"))
+
 /-- Elaboration terminates — checked under a wall clock, because the
 guarantee once lived only as prose and broke silently: the body-`\define`
 arm of cffb141 (2026-09-19 01:56) re-exposed a command being expanded to

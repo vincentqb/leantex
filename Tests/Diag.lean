@@ -243,7 +243,8 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0354 => dvE (dvDoc
       "\\usepackage[tableposition=top]{caption}\n\\captionsetup[table]{labelfont=bf}\n" "x")
   | .W0355 => dvE (dvDoc "\\theme{moloch}\n" "x")
-  | .W0351 => dvBib "@misc{real, year = 2024}" "ghost" none
+  | .W0351 => dvBib "@misc{real, year = 2024}" "ghost" none ++
+      dvE (dvDoc "" "x \\cite{ghost}")
   | .W0352 => dvBib "@misc{broken, year = ?}\n@misc{kept, year = 2024}" "kept" none
   | .W0353 => dvBib "@misc{k, year = 2024}" "k" (some "mystery")
   | .W0332 => dvE (dvDeck "\\theme{moloch}\n"
