@@ -119,9 +119,6 @@ def configSkip : List (String × Nat × String × Option String) :=
    ("raggedleft", 0,
     "'\\raggedleft' asks for right-aligned ragged setting; content keeps its alignment",
     none),
-   ("fontseries", 1,
-    "'\\fontseries' selects a font series; the family's regular weight is used",
-    none),
    ("sloppy", 0,
     "'\\sloppy' loosens TeX's line-breaking tolerance; the breaker keeps \
 its own and an overfull line warns by itself", none)]
@@ -311,6 +308,73 @@ private def sayOnce (key : String) (code : DiagCode) (msg : String) (pos : Pos)
 of things the document could say directly. -/
 private def became (what native : String) (pos : Pos) : M Unit :=
   say .N0100 s!"'{what}' → {native}" pos
+
+/-- The top-level brace groups of a feature value:
+`{l}{n}{*-Light}` → `#["l", "n", "*-Light"]`. Text outside any group is
+dropped; unbalanced closers saturate at depth zero. -/
+private def braceGroups (s : String) : Array String := Id.run do
+  let mut out : Array String := #[]
+  let mut cur : Array Char := #[]
+  let mut depth := 0
+  for c in s.toList do
+    if c == '{' then
+      if depth != 0 then cur := cur.push c
+      depth := depth + 1
+    else if c == '}' then
+      depth := depth - 1
+      if depth == 0 then
+        out := out.push (String.ofList cur.toList)
+        cur := #[]
+      else if depth != 0 then
+        cur := cur.push c
+    else if depth != 0 then
+      cur := cur.push c
+  return out
+
+/-- One `FontFace = {series}{shape}{font}` entry, validated: the native
+`slot.<series>[.italic] = "face"` part it becomes, or `none` after a
+warning naming exactly what could not be honoured — a shape off the
+upright/italic model, a feature list in place of a name, a value that is
+no series. The slanted shape sets italic, the substitution NFSS itself
+makes when a face has no slanted shape; a width half is honoured for its
+weight and named for its width, as `\fontseries`'s is. -/
+private def fontFacePart (family slot v : String) (pos : Pos) :
+    M (Option String) := do
+  match (braceGroups v).toList with
+  | [code, shape, f] =>
+    match Ir.Weight.parseSeries code.trimAscii.toString,
+        shape.trimAscii.toString with
+    | some (w, width), sh =>
+      let ital := sh == "it" || sh == "sl"
+      if !(sh == "n" || ital) then
+        sayOnce ("fontface:shape:" ++ sh) .W0104
+          s!"'FontFace' names the '{sh}' shape; the face model \
+carries upright and italic only, so this declaration is skipped" pos
+        return none
+      if f.contains '=' then
+        sayOnce "fontface:features" .W0104
+          s!"'FontFace = \{{code}}\{{sh}}...' gives a feature list \
+in place of a font name; only named faces are read, so this declaration \
+is skipped" pos
+        return none
+      if !width.isEmpty then
+        sayOnce ("fontface:width:" ++ width) .W0104
+          s!"'FontFace = \{{code}}...' also asks for the \
+'{width}' width; there is no width axis, so only the weight is honoured" pos
+      -- fontspec's `*` stands for the family name, as in `UprightFont`.
+      let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
+      let ext := if ital then ".italic" else ""
+      return some s!"{slot}.{w.series}{ext} = \"{f}\""
+    | none, _ =>
+      sayOnce ("fontface:series:" ++ code) .W0104
+        s!"'FontFace = \{{code}}...' names no NFSS series; \
+this declaration is skipped" pos
+      return none
+  | _ =>
+    sayOnce "fontface:form" .W0104
+      "'FontFace' is read as {series}{shape}{font name}; \
+another form is skipped" pos
+    return none
 
 private def synth (s : String) : M (Array Raw) := do
   let file := (← get).file
@@ -1280,6 +1344,28 @@ were dropped: {o}" pos
     -- cleveref's range form: desugared by `crefRangeArm` (its docstring
     -- carries the shape and the source).
     crefRangeArm name pos raws start
+  | "fontseries" =>
+    -- NFSS's series declaration (fntguide §2.2): the weight half rides the
+    -- unforgeable `@series:` marker into elaboration (`declStyleOf`, the
+    -- `@lang:` door), where it styles the rest of the scope as `\bfseries`
+    -- does. The width half names an axis the engine does not have; it is
+    -- warned by name rather than silently dropped with the weight.
+    let (args, k) := takeGroups raws start 1
+    if args.isEmpty then return none
+    let code := (rawSrc (args.getD 0 #[])).trimAscii.toString
+    match Ir.Weight.parseSeries code with
+    | some (w, width) =>
+      if !width.isEmpty then
+        sayOnce ("ctrl:fontseries:" ++ width) .W0104
+          s!"'\\fontseries\{{code}}' also asks for the '{width}' width; \
+the engine has no width axis, so only the weight is honoured" pos
+      became s!"\\fontseries\{{code}}" s!"the {w.series} series" pos
+      return some (#[.ctrl ("@series:" ++ w.series) pos], k)
+    | none =>
+      sayOnce "ctrl:fontseries" .W0104
+        s!"'\\fontseries\{{code}}' names no NFSS series; \
+the weight in force stands" pos
+      return some (#[], k)
   | "selectlanguage" =>
     -- babel's mid-document switch: from here on, in flow order (babel
     -- manual §1.5). The marker is unforgeable (`@` never lexes into a
@@ -1970,6 +2056,18 @@ dropped: {String.intercalate ", " dropped}" pos
         -- `UprightFont = *-Medium` under `{Inter}` names "Inter-Medium".
         let f := if f.startsWith "*" then family ++ (f.drop 1).toString else f
         parts := parts.push s!"{slot}.{variant} = \"{f}\""
+    -- fontspec's `FontFace = {series}{shape}{font}`: one declared face per
+    -- NFSS series/shape pair (fontspec sources: the `fontspec-preparse`
+    -- FontFace key feeds `\__fontspec_add_nfssfont:nnnn` series, shape,
+    -- font, features). Each entry becomes the native
+    -- `slot.<series>[.italic]` declaration, so `\fontseries{l}` selects
+    -- exactly the face the document named. What the engine has no axis or
+    -- shape for is named, never silently dropped.
+    for opts in [optBefore, optAfter].filterMap id do
+      for kv in Decl.splitEntries opts do
+        if let some ("FontFace", v) := Decl.splitEntry kv then
+          if let some part := ← fontFacePart family slot v pos then
+            parts := parts.push part
     if name == "babelfont" then
       if let some l := langOpt then
         say .W0369 s!"'\\babelfont[{l}]' binds a font per language; one \

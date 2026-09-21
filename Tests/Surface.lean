@@ -1396,7 +1396,9 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
       wrap "\\style{itemize}{ indent = 2em }" "x"),
     ("biblatex", wrap "\\usepackage[style=numeric]{biblatex}\\addbibresource{refs.bib}"
       "\\autocite{k}\n\n\\printbibliography",
-      wrap "" "\\citep{k}\n\n\\bibliographystyle{plain}\\bibliography{refs}")]
+      wrap "" "\\citep{k}\n\n\\bibliographystyle{plain}\\bibliography{refs}"),
+    ("fontface", wrap "\\setmainfont{Alpha Serif}[FontFace={l}{n}{Alpha Serif Light}]" "x",
+      wrap "\\fonts{ body = \"Alpha Serif\", body.l = \"Alpha Serif Light\" }" "x")]
   for (nm, latex, native) in pairs do
     t s!"conserves {nm}" ((elabStr latex).1 == (elabStr native).1)
 

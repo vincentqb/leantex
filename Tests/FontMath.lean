@@ -132,6 +132,26 @@ def weightResolveChecks (ref : IO.Ref (List String)) : IO Unit := do
     (Layout.docWeightKeys doc == #[(0, 300, false), (0, 300, true)])
   let corner : Ir.Doc := { body := #[.para #[.styled .bold #[.text "x"]]] }
   t "corner weights collect no extra keys" ((Layout.docWeightKeys corner).isEmpty)
+  -- The surface, end to end: \fontseries rides Compat's @series marker
+  -- through declStyleOf into a .series style the collector then sees.
+  let (fsDoc, fsDs) := elabStr (pre ++ "\\begin{document}{\\fontseries{l}\\selectfont x}\\end{document}")
+  t "fontseries elaborates clean" (fsDs.filter (·.severity == .error) |>.isEmpty)
+  t "fontseries reaches the key census"
+    (Layout.docWeightKeys fsDoc == #[(0, 300, false)])
+  t "a width half warns by name and keeps its weight"
+    ((elabStr (pre ++ "\\begin{document}{\\fontseries{bx}\\selectfont x}\\end{document}")).2.map
+      (·.code) |>.contains "W0104")
+  t "an unknown series warns and stands down"
+    ((elabStr (pre ++ "\\begin{document}{\\fontseries{zz}\\selectfont x}\\end{document}")).2.map
+      (·.code) |>.contains "W0104")
+  -- FontFace lands as the native declaration, * expanding to the family.
+  let ff := (elabStr (pre ++ "\\setmainfont{Alpha Sans}[UprightFont=*-Medium, " ++
+    "FontFace={l}{n}{*-Light}]" ++ post)).1.fonts
+  t "FontFace declares the series face" (ff.faceFor 0 300 false == some "Alpha Sans-Light")
+  t "FontFace rides beside UprightFont" (ff.faceFor 0 400 false == some "Alpha Sans-Medium")
+  t "a FontFace shape off the model is named"
+    ((elabStr (pre ++ "\\setmainfont{Alpha Sans}[FontFace={l}{sc}{*-Light}]" ++ post)).2.map
+      (·.code) |>.contains "W0104")
 
 /-- fontspec's per-variant face options (`BoldFont=` and siblings) reach the
 font spec and win over the family's own variant; a declared face the host

@@ -1574,7 +1574,7 @@ private def weightKeysBlock (acc : Array (Nat × Nat × Bool)) :
   | .logo content => weightKeysInlineList acc {} content.toList
   | .picture pic =>
     pic.labelContents.foldl (fun a c => weightKeysInlineList a {} c.toList) acc
-  | .verbatim _ _ | .setPalette _ | .setTokens _ | .pagebreak
+  | .verbatim _ _ _ | .setPalette _ | .setTokens _ | .pagebreak
   | .rule _ _ _ | .bibliography _ _ _ => acc
 
 private def weightKeysBlockList (acc : Array (Nat × Nat × Bool)) :
