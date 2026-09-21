@@ -3163,16 +3163,45 @@ only seeds the next page's `cur`, so every pages-extension fact about
   unfold B.spillPage
   simp
 
-/-- A line that shares its baseline with the last one (underline rules)
-rides with it, including its share of the page's shrink and of its fil
-glue. -/
-private def B.pushSibling (b : B) (l : LineOut) : B :=
-  { b with cur := { b.cur with lines := b.cur.lines.push l },
-           shrinkAbove := b.shrinkAbove.push (b.shrinkAbove.back?.getD 0)
-           filsAbove := b.filsAbove.push (b.filsAbove.back?.getD 0) }
+/-- The rider door: content that joins the open page with no vertical
+negotiation — no skip, no depth, no page close. A sibling `line` shares
+its baseline with the last committed one (an underline row, a picture's
+label) and rides with it when the page is set short: its share of the
+page's shrink is the last line's unless the rider declares its own
+(`shrink` — a picture's label rides the picture's), and a
+declared-shrink rider, like the picture it rides, holds no fil entry.
+`fills` and `paths` paint behind what already stands (a title or block
+bar, a progress track, a picture's shapes). With `commit` and
+`finishPage` this is the third and last writer of the page being built:
+`cur.lines`, `cur.fills`, and `cur.paths` grow nowhere else
+(`reopenChrome` seeds a fresh page's repeated chrome whole; it appends
+to nothing). -/
+private def B.pushSibling (b : B) (line : Option LineOut := none)
+    (fills : Array Fill := #[]) (paths : Array PathOut := #[])
+    (shrink : Option Sp := none) : B :=
+  let b := match line with
+    | some l =>
+      { b with cur := { b.cur with lines := b.cur.lines.push l },
+               shrinkAbove := b.shrinkAbove.push
+                 (shrink.getD (b.shrinkAbove.back?.getD 0))
+               filsAbove := if shrink.isSome then b.filsAbove
+                 else b.filsAbove.push (b.filsAbove.back?.getD 0) }
+    | none => b
+  if fills.isEmpty && paths.isEmpty then b
+  else { b with cur := { b.cur with fills := b.cur.fills ++ fills,
+                                    paths := b.cur.paths ++ paths } }
+
+/-- Push a picture's label lines: each a rider on the picture's own
+shrink, through the one rider door. -/
+private def B.pushLabels (b : B) (ls : Array LineOut) (shrink : Sp) : B :=
+  ls.foldl (fun b l => b.pushSibling (some l) (shrink := some shrink)) b
 
 private def B.commit (b : B) (line : LineOut) (depth below : Sp)
-    (ruleLine : Bool) (above overflow : Sp) : B :=
+    (ruleLine : Bool) (consume : Bool) (overflow : Sp) : B :=
+  -- The page's shrink ledger is maintained here and nowhere else: a line
+  -- that consumed the pending skip banks its shrink (the fit test in
+  -- `fitCommit` read the same sum); a line opening a page owes none.
+  let above := if consume then b.pageShrink + b.skip.shrink else 0
   -- The consumed skip's fil counts here, page top included: an author's
   -- \vspace*{\fill} above the first line is what the star means (the
   -- space survives the break), and fil width is zero, so counting it
@@ -3202,9 +3231,9 @@ is unrepresentable on the way to `Out`. The body door for geometry does
 not exist, and this is the statement that keeps it that way: a step that
 started writing `geom` would fail here at build time. -/
 private theorem doc_geometry_uniform (b : B) (l line : LineOut)
-    (depth below : Sp) (ruleLine : Bool) (above overflow : Sp) :
-    b.finishPage.geom = b.geom ∧ (b.pushSibling l).geom = b.geom ∧
-      (b.commit line depth below ruleLine above overflow).geom = b.geom :=
+    (depth below : Sp) (ruleLine consume : Bool) (overflow : Sp) :
+    b.finishPage.geom = b.geom ∧ (b.pushSibling (some l)).geom = b.geom ∧
+      (b.commit line depth below ruleLine consume overflow).geom = b.geom :=
   ⟨rfl, rfl, rfl⟩
 
 /-- A run emptied of its glyph payload, every metric field kept: the
@@ -3433,21 +3462,21 @@ private def B.fitCommit (b : B) (mk : Sp → LineOut) (firstY stepY retryY : B �
     (depth below : Sp) (rl : Bool) (inkBelow bottom : Sp)
     (notes : Array NoteBlock := #[]) : B :=
   if b.cur.lines.isEmpty || b.freshStart then
-    ((b.commit (mk (firstY b)) depth below rl 0 0).attachNotes
+    ((b.commit (mk (firstY b)) depth below rl false 0).attachNotes
       notes).warnNoteOverrun (firstY b) inkBelow
   else
     let y := stepY b
     let overflow := y + inkBelow - bottom
     let above := b.pageShrink + b.skip.shrink
     if overflow ≤ above ∨ b.noBreak then
-      (b.commit (mk y) depth below rl above (min overflow above)).attachNotes notes
+      (b.commit (mk y) depth below rl true (min overflow above)).attachNotes notes
     else
       let b := b.spillPage
       if b.cur.lines.isEmpty then
-        ((b.commit (mk (firstY b)) depth below rl 0 0).attachNotes
+        ((b.commit (mk (firstY b)) depth below rl false 0).attachNotes
           notes).warnNoteOverrun (firstY b) inkBelow
       else
-        ((b.commit (mk (retryY b)) depth below rl 0 0).attachNotes
+        ((b.commit (mk (retryY b)) depth below rl false 0).attachNotes
           notes).warnNoteOverrun (retryY b) inkBelow
 
 /-- Place one line. Its box follows the tallest run on it (`lineExtent`),
@@ -5319,8 +5348,8 @@ private def placeParaTrailer (fs : FontSet) (j : ParaJob) (brk : Nat)
   let b3 :=
     if uSegs.isEmpty then b
     else match b.cur.lines.back? with
-      | some last => b.pushSibling
-          { x := last.x, y := last.y, size := last.size, segs := uSegs, setWidth := 0 }
+      | some last => b.pushSibling (some
+          { x := last.x, y := last.y, size := last.size, segs := uSegs, setWidth := 0 })
       | none => b
   match j.extras[brk]? with
   | some extra => { b3 with skip := { b3.skip with width := b3.skip.width + extra } }
@@ -5533,9 +5562,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- top to `pad` below the line's depth.
     b := match b.cur.lines.back? with
       | some l =>
-        let fill : Fill := { x := 0, y := 0, w := b.geom.pageW,
-                             h := l.y + b.prevDepth + pad, color := color }
-        { b with cur := { b.cur with fills := b.cur.fills.push fill } }
+        b.pushSibling (fills := #[{ x := 0, y := 0, w := b.geom.pageW,
+                                    h := l.y + b.prevDepth + pad, color := color }])
       | none => b
   | .blockBar color pad x w =>
     -- The bar sits behind the line just placed: the measure across, one
@@ -5545,9 +5573,8 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     b := match b.cur.lines.back? with
       | some l =>
         let asc := b.ascent * l.size / b.geom.fontSize
-        let fill : Fill := { x := x, y := l.y - asc - pad, w := w,
-                             h := asc + b.prevDepth + 2 * pad, color := color }
-        { b with cur := { b.cur with fills := b.cur.fills.push fill } }
+        b.pushSibling (fills := #[{ x := x, y := l.y - asc - pad, w := w,
+                                    h := asc + b.prevDepth + 2 * pad, color := color }])
       | none => b
   | .hrule color th =>
     -- A line whose only seg is the rule: the full line machinery decides
@@ -5574,11 +5601,11 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- spaces below it.
     let gap := b.geom.fontSize / 2
     let y := b.y + b.prevDepth + gap
-    let fills := b.cur.fills.push { x := x, y := y, w := w, h := thick, color := bg }
-    let fills := if num == 0 then fills else
-      fills.push { x := x, y := y, w := w * (num : Int) / (den : Int), h := thick,
-                   color := fg }
-    b := { b with cur := { b.cur with fills := fills },
+    let track : Fill := { x := x, y := y, w := w, h := thick, color := bg }
+    let fills := if num == 0 then #[track] else
+      #[track, { x := x, y := y, w := w * (num : Int) / (den : Int), h := thick,
+                 color := fg }]
+    b := { b.pushSibling (fills := fills) with
                   prevDepth := b.prevDepth + gap + thick
                   prevBelow := b.prevBelow + gap + thick }
   | .para j t =>
@@ -5616,10 +5643,9 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
     -- One transform for everything the picture ships: `Pic.Place` is the
     -- affine map the invertibility and containment theorems range over.
     let place : Ir.Pic.Place := { x0 := x, yTop := yTop, xmin := px0, ymax := py1 }
-    let mut fills := b.cur.fills
-    let mut lines := b.cur.lines
-    let mut paths := b.cur.paths
-    let mut shrinks := b.shrinkAbove
+    let mut fills : Array Fill := #[]
+    let mut lines : Array LineOut := #[]
+    let mut paths : Array PathOut := #[]
     for shape in pic.shapes do
       match shape with
       | .rect rx ry rw rh color =>
@@ -5686,14 +5712,13 @@ private def stepStaged (fs : FontSet) (imgs : Image.Store) (st : StepSt)
             | .center | .west | .east => cy + (hgt - dep) / 2
             | .south => cy - dep
             | .north => cy + hgt
+          -- Label lines ride with the picture: they share the shrink
+          -- above it, so a page set short moves the diagram as one
+          -- (pushed below through `pushLabels`, the rider door).
           lines := lines.push { x := x, y := y,
                                 size := size, segs := segs, setWidth := w }
-          -- Label lines ride with the picture: they share the shrink
-          -- above it, so a page set short moves the diagram as one.
-          shrinks := shrinks.push above
+    b := (b.pushSibling (fills := fills) (paths := paths)).pushLabels lines above
     b := { b with
-      cur := { b.cur with fills := fills, lines := lines, paths := paths }
-      shrinkAbove := shrinks
       pageShrink := above
       needed := max b.needed overflow
       y := yTop + h
@@ -5768,19 +5793,33 @@ private theorem pagesExtend_congr {b b' c : B} (h : c.pages = b'.pages)
   he.imp fun _ hs => h ▸ hs
 
 @[simp] private theorem commit_pages (b : B) (l : LineOut) (d bl : Sp)
-    (r : Bool) (a o : Sp) :
-    (b.commit l d bl r a o).pages = b.pages := rfl
+    (r c : Bool) (o : Sp) :
+    (b.commit l d bl r c o).pages = b.pages := rfl
 @[simp] private theorem commit_noBreak (b : B) (l : LineOut) (d bl : Sp)
-    (r : Bool) (a o : Sp) :
-    (b.commit l d bl r a o).noBreak = b.noBreak := rfl
+    (r c : Bool) (o : Sp) :
+    (b.commit l d bl r c o).noBreak = b.noBreak := rfl
 @[simp] private theorem warnOverfull_pages (b : B) :
     b.warnOverfull.pages = b.pages := rfl
 @[simp] private theorem warnOverfull_noBreak (b : B) :
     b.warnOverfull.noBreak = b.noBreak := rfl
-@[simp] private theorem pushSibling_pages (b : B) (l : LineOut) :
-    (b.pushSibling l).pages = b.pages := rfl
-@[simp] private theorem pushSibling_noBreak (b : B) (l : LineOut) :
-    (b.pushSibling l).noBreak = b.noBreak := rfl
+@[simp] private theorem pushSibling_pages (b : B) (l? : Option LineOut)
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) :
+    (b.pushSibling l? fills paths shrink).pages = b.pages := by
+  cases l? <;> simp only [B.pushSibling] <;> split <;> rfl
+@[simp] private theorem pushSibling_noBreak (b : B) (l? : Option LineOut)
+    (fills : Array Fill) (paths : Array PathOut) (shrink : Option Sp) :
+    (b.pushSibling l? fills paths shrink).noBreak = b.noBreak := by
+  cases l? <;> simp only [B.pushSibling] <;> split <;> rfl
+@[simp] private theorem pushLabels_pages (b : B) (ls : Array LineOut) (sh : Sp) :
+    (b.pushLabels ls sh).pages = b.pages := by
+  unfold B.pushLabels
+  exact Array.foldl_induction (motive := fun _ (acc : B) => acc.pages = b.pages)
+    rfl (fun _ acc h => by rw [pushSibling_pages]; exact h)
+@[simp] private theorem pushLabels_noBreak (b : B) (ls : Array LineOut) (sh : Sp) :
+    (b.pushLabels ls sh).noBreak = b.noBreak := by
+  unfold B.pushLabels
+  exact Array.foldl_induction (motive := fun _ (acc : B) => acc.noBreak = b.noBreak)
+    rfl (fun _ acc h => by rw [pushSibling_noBreak]; exact h)
 
 private theorem finishPage_extends (b : B) : PagesExtend b b.finishPage :=
   ⟨#[_], rfl⟩
