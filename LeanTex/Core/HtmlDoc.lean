@@ -2575,22 +2575,29 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   -- from the sourced constants in Ir (booktabs.dtx §The code), emitted
   -- here so the two backends cannot drift; each is overridable through
   -- its token (`--heavyrulewidth` etc. land in `tokenVars` when declared).
-  -- Borders take `currentColor`, as the PDF path draws rules in `fg`.
+  -- Borders take `currentColor`, as the PDF path draws rules in `fg`. A
+  -- header cell is a `th` for meaning only (`Ir.tableHeaderRows`): every
+  -- cell rule addresses both tags, and the UA's bold, centred `th` is
+  -- inherited away so the head sets exactly as its `td` did — the
+  -- authored `\textbf` is what makes a head bold, in both backends.
   "table.booktabs { border-collapse: collapse; }\n" ++
-  s!"table.booktabs td \{ padding: 0 var(--tabcolsep, {cssLength Ir.tabColSep});\n" ++
+  s!"table.booktabs td, table.booktabs th \{ padding: 0 var(--tabcolsep, {cssLength Ir.tabColSep});\n" ++
   "  vertical-align: top; }\n" ++
-  "table.booktabs.nopadl tr > td:first-child { padding-left: 0; }\n" ++
-  "table.booktabs.nopadr tr > td:last-child { padding-right: 0; }\n" ++
-  s!"tr.bt-heavy-above > td \{ border-top: var(--heavyrulewidth, {cssLength Ir.heavyRuleWidth}) solid;\n" ++
+  "table.booktabs th { font-weight: inherit; text-align: inherit; }\n" ++
+  "table.booktabs.nopadl tr > td:first-child,\n" ++
+  "table.booktabs.nopadl tr > th:first-child { padding-left: 0; }\n" ++
+  "table.booktabs.nopadr tr > td:last-child,\n" ++
+  "table.booktabs.nopadr tr > th:last-child { padding-right: 0; }\n" ++
+  s!"tr.bt-heavy-above > td, tr.bt-heavy-above > th \{ border-top: var(--heavyrulewidth, {cssLength Ir.heavyRuleWidth}) solid;\n" ++
   s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
-  s!"tr.bt-light-above > td \{ border-top: var(--lightrulewidth, {cssLength Ir.lightRuleWidth}) solid;\n" ++
+  s!"tr.bt-light-above > td, tr.bt-light-above > th \{ border-top: var(--lightrulewidth, {cssLength Ir.lightRuleWidth}) solid;\n" ++
   s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
-  s!"tr.bt-heavy-below > td \{ border-bottom: var(--heavyrulewidth, {cssLength Ir.heavyRuleWidth}) solid;\n" ++
+  s!"tr.bt-heavy-below > td, tr.bt-heavy-below > th \{ border-bottom: var(--heavyrulewidth, {cssLength Ir.heavyRuleWidth}) solid;\n" ++
   s!"  padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
-  s!"tr.bt-light-below > td \{ border-bottom: var(--lightrulewidth, {cssLength Ir.lightRuleWidth}) solid;\n" ++
+  s!"tr.bt-light-below > td, tr.bt-light-below > th \{ border-bottom: var(--lightrulewidth, {cssLength Ir.lightRuleWidth}) solid;\n" ++
   s!"  padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
-  s!"tr.bt-pre > td \{ padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
-  s!"td.bt-cmid \{ border-top: var(--cmidrulewidth, {cssLength Ir.cmidRuleWidth}) solid;\n" ++
+  s!"tr.bt-pre > td, tr.bt-pre > th \{ padding-bottom: var(--aboverulesep, {cssLength Ir.aboveRuleSep}); }\n" ++
+  s!"td.bt-cmid, th.bt-cmid \{ border-top: var(--cmidrulewidth, {cssLength Ir.cmidRuleWidth}) solid;\n" ++
   s!"  padding-top: var(--belowrulesep, {cssLength Ir.belowRuleSep}); }\n" ++
   -- Float and caption gaps: the same tokens the PDF path reads, the
   -- defaults this context's own rhythm multiples of the declared rows
@@ -2897,6 +2904,109 @@ end
 
 private def inlines (cfg : Config) (xs : Array Inline) : Array Node :=
   inlineNodesInto cfg #[] xs.toList
+
+/-- The tag of a table cell: `th` in the header prefix `Ir.tableHeaderRows`
+names, `td` below it. -/
+def tableCellTag (headerRows i : Nat) : String :=
+  if i < headerRows then "th" else "td"
+
+theorem tableCellTag_th_iff (headerRows i : Nat) :
+    tableCellTag headerRows i = "th" ↔ i < headerRows := by
+  unfold tableCellTag
+  split
+  · simp_all
+  · simp_all
+
+/-- One table cell: its column's alignment as inline style (the PDF path
+reads the same `ColSpec.align`), the `bt-cmid` class when a `\cmidrule`
+spans its column, and — for a header cell — `scope=col`, the one scope a
+booktabs head declares (HTML §4.9.10: a `th` heading the cells below it).
+The cell's children are the same `inlines` a `td` carried. -/
+def tableCellNode (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
+    (headerRows i j : Nat) (cell : Array Inline) : Node :=
+  let al := match (cols[j]?.map (·.align)).getD .left with
+    | .center => #[("style", "text-align: center")]
+    | .right => #[("style", "text-align: right")]
+    | .left => #[]
+  let attrs := if cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b)
+    then al.push ("class", "bt-cmid") else al
+  let attrs := if i < headerRows then attrs.push ("scope", "col") else attrs
+  Html.elem (tableCellTag headerRows i) (inlines cfg cell) attrs
+
+/-- The cells of row `i`, in column order. -/
+def tableRowCells (cfg : Config) (cols : Array Ir.ColSpec) (cmids : Array (Nat × Nat))
+    (headerRows i : Nat) (row : Array (Array Inline)) : Array Node :=
+  row.mapIdx fun j cell => tableCellNode cfg cols cmids headerRows i j cell
+
+/-- A cell is a `th` exactly when its row lies in the header prefix — the
+HTML projection of `Ir.tableHeaderRows`, stated over the typed tree the
+table arm builds: the tag at every cell position of row `i` is `th` iff
+`i < headerRows`, whatever the column, the alignment, or the cmid spans. -/
+theorem th_iff_header_row (cfg : Config) (cols : Array Ir.ColSpec)
+    (cmids : Array (Nat × Nat)) (headerRows i : Nat) (row : Array (Array Inline))
+    (j : Nat) (hj : j < row.size) :
+    ((tableRowCells cfg cols cmids headerRows i row)[j]'(by
+        simp [tableRowCells, hj])).tag? = some "th" ↔ i < headerRows := by
+  simp only [tableRowCells, Array.getElem_mapIdx, tableCellNode, Html.elem, Html.Node.tag?,
+    Option.some.injEq]
+  exact tableCellTag_th_iff headerRows i
+
+/-- booktabs' formal table. Rules land as border classes on the row they
+precede (`-below` on the last row for a rule written after it), and the
+stylesheet draws each class at the sourced weight with its declared
+padding — `Ir.heavyRuleWidth` and friends drive both backends from one
+site. The rows before the first `\midrule` (`Ir.tableHeaderRows`) are the
+head: they ship under `<thead>` as `<th scope=col>`, the rest under
+`<tbody>` as `<td>`; a table with no head has no `<thead>`, one that is
+all head has no `<tbody>`. The grouping is semantic only — the stylesheet
+neutralises the UA's bold, centred `th` so the raster is the `td` one. A
+`gap` rule and `\cmidrule` end-trimming have no HTML spelling yet; the
+PDF path carries both. -/
+def tableNode (cfg : Config) (cols : Array Ir.ColSpec) (padL padR : Bool)
+    (rows : Array (Array (Array Inline))) (rules : Array (Nat × Ir.TableRule)) : Node :=
+  let headerRows := Ir.tableHeaderRows rows rules
+  let ruleAt (i : Nat) : Array Ir.TableRule :=
+    rules.foldl (fun out (k, r) => if k == i then out.push r else out) #[]
+  let drawn (r : Ir.TableRule) : Bool := match r with
+    | .gap _ => false
+    | .top | .mid | .bottom | .cmid .. => true
+  let colEls := cols.filterMap fun c =>
+    match c.width with
+    | .frac f => some (Html.elem "col" #[] #[("style", s!"width: {decMilli (f * 100)}%")])
+    | .abs w => some (Html.elem "col" #[] #[("style", s!"width: {w.toPtString}pt")])
+    | .natural => some (Html.elem "col" #[] #[])
+  let rowEls := rows.mapIdx fun i row =>
+    let cls := Id.run do
+      let mut cls : Array String := #[]
+      for r in ruleAt i do
+        match r with
+        | .top | .bottom => cls := cls.push "bt-heavy-above"
+        | .mid => cls := cls.push "bt-light-above"
+        | .cmid .. | .gap _ => pure ()
+      if i + 1 == rows.size then
+        for r in ruleAt rows.size do
+          match r with
+          | .top | .bottom => cls := cls.push "bt-heavy-below"
+          | .mid => cls := cls.push "bt-light-below"
+          | .cmid .. | .gap _ => pure ()
+      else if (ruleAt (i + 1)).any drawn then
+        cls := cls.push "bt-pre"
+      return String.intercalate " " cls.toList
+    let cmids := (ruleAt i).foldl (fun out r => match r with
+      | .cmid a b _ _ => out.push (a, b)
+      | .top | .mid | .bottom | .gap _ => out) (#[] : Array (Nat × Nat))
+    Html.elem "tr" (tableRowCells cfg cols cmids headerRows i row)
+      (if cls.isEmpty then #[] else #[("class", cls)])
+  let cls := "booktabs" ++ (if padL then "" else " nopadl")
+    ++ (if padR then "" else " nopadr")
+  let kids := Id.run do
+    let mut kids := #[Html.elem "colgroup" colEls]
+    if 0 < headerRows then
+      kids := kids.push (Html.elem "thead" (rowEls.extract 0 headerRows))
+    if headerRows < rows.size then
+      kids := kids.push (Html.elem "tbody" (rowEls.extract headerRows rowEls.size))
+    return kids
+  Html.elem "table" kids #[("class", cls)]
 
 /-- A use of a role in the artifact references the role, not only its frozen
 value: the emitted span's colour is `var(--n, …)`, resolved against the
@@ -3431,55 +3541,9 @@ height: {decMilli (deckStageMilli h cfg.page.height)}dvh")]
         #[("width", s!"{w.toPtString}pt"), ("height", s!"{h.toPtString}pt")]) ++ #[
       ("role", "img"),
       ("class", "picture")])
-  -- booktabs' formal table. Rules land as border classes on the row they
-  -- precede (`-below` on the last row for a rule written after it), and
-  -- the stylesheet draws each class at the sourced weight with its
-  -- declared padding — `Ir.heavyRuleWidth` and friends drive both
-  -- backends from one site. A `gap` rule and `\cmidrule` end-trimming
-  -- have no HTML spelling yet; the PDF path carries both.
-  | .table cols padL padR rows rules =>
-    let ruleAt (i : Nat) : Array Ir.TableRule :=
-      rules.foldl (fun out (k, r) => if k == i then out.push r else out) #[]
-    let drawn (r : Ir.TableRule) : Bool := match r with
-      | .gap _ => false
-      | _ => true
-    let colEls := cols.filterMap fun c =>
-      match c.width with
-      | .frac f => some (Html.elem "col" #[] #[("style", s!"width: {decMilli (f * 100)}%")])
-      | .abs w => some (Html.elem "col" #[] #[("style", s!"width: {w.toPtString}pt")])
-      | .natural => some (Html.elem "col" #[] #[])
-    let rowEls := rows.mapIdx fun i row =>
-      let cls := Id.run do
-        let mut cls : Array String := #[]
-        for r in ruleAt i do
-          match r with
-          | .top | .bottom => cls := cls.push "bt-heavy-above"
-          | .mid => cls := cls.push "bt-light-above"
-          | _ => pure ()
-        if i + 1 == rows.size then
-          for r in ruleAt rows.size do
-            match r with
-            | .top | .bottom => cls := cls.push "bt-heavy-below"
-            | .mid => cls := cls.push "bt-light-below"
-            | _ => pure ()
-        else if (ruleAt (i + 1)).any drawn then
-          cls := cls.push "bt-pre"
-        return String.intercalate " " cls.toList
-      let cmids := (ruleAt i).foldl (fun out r => match r with
-        | .cmid a b _ _ => out.push (a, b)
-        | _ => out) (#[] : Array (Nat × Nat))
-      let cells := row.mapIdx fun j cell =>
-        let al := match (cols[j]?.map (·.align)).getD .left with
-          | .center => #[("style", "text-align: center")]
-          | .right => #[("style", "text-align: right")]
-          | .left => #[]
-        let attrs := if cmids.any (fun (a, b) => a ≤ j + 1 && j + 1 ≤ b)
-          then al.push ("class", "bt-cmid") else al
-        Html.elem "td" (inlines cfg cell) attrs
-      Html.elem "tr" cells (if cls.isEmpty then #[] else #[("class", cls)])
-    let cls := "booktabs" ++ (if padL then "" else " nopadl")
-      ++ (if padR then "" else " nopadr")
-    Html.elem "table" (#[Html.elem "colgroup" colEls] ++ rowEls) #[("class", cls)]
+  -- booktabs' formal table: `tableNode` above, where the header projection
+  -- theorem (`th_iff_header_row`) can read the row builder.
+  | .table cols padL padR rows rules => tableNode cfg cols padL padR rows rules
   -- `<figure>`/`<figcaption>` is HTML's own construct for a captioned
   -- object; the caption keeps its source-order side. The gaps are the
   -- same tokens the PDF path reads (`--floatsep`, `--captionsep`), with

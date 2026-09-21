@@ -1918,6 +1918,63 @@ inductive TableRule where
   | gap (space : SymGlue)
   deriving Repr, BEq, Inhabited
 
+/-- The row index of the first `mid` rule in document order, if any: the
+List companion of the header scan below, so the two facts about it are
+inductions. -/
+def firstMidRow : List (Nat × TableRule) → Option Nat
+  | [] => none
+  | (k, .mid) :: _ => some k
+  | _ :: rest => firstMidRow rest
+
+/-- booktabs' head, as one IR fact both backends read: the rows before the
+first `\midrule` (booktabs.dtx §Rules: "\midrule … separates the header
+from the body"). A table with no mid rule declares no header; a mid rule
+written before the first row (`\hline`'s frame) heads nothing; a mid
+rule index beyond the rows clamps, so the count is a prefix length of
+`rows`. `cmid` and `gap` never count — a `\cmidrule` groups columns and
+`\addlinespace` is air. The HTML backend ships exactly this prefix as
+`<thead>`/`<th>` (`HtmlDoc.th_iff_header_row`); the tagged-PDF `/TH` cells
+read the same number. -/
+def tableHeaderRows (rows : Array (Array (Array Inline)))
+    (rules : Array (Nat × TableRule)) : Nat :=
+  ((firstMidRow rules.toList).map fun k => min k rows.size).getD 0
+
+theorem firstMidRow_eq_none_of_no_mid (rules : List (Nat × TableRule))
+    (h : ∀ p ∈ rules, p.2 ≠ .mid) : firstMidRow rules = none := by
+  induction rules with
+  | nil => rfl
+  | cons p rest ih =>
+    obtain ⟨k, r⟩ := p
+    have hp := h (k, r) (List.mem_cons_self ..)
+    have hrest : ∀ q ∈ rest, q.2 ≠ .mid := fun q hq => h q (List.mem_cons_of_mem _ hq)
+    cases r with
+    | mid => exact absurd rfl hp
+    | top => exact ih hrest
+    | bottom => exact ih hrest
+    | cmid a b l rt => exact ih hrest
+    | gap s => exact ih hrest
+
+/-- The header count is a prefix length of `rows`: never below zero (a
+`Nat`), never past the last row. -/
+theorem tableHeaderRows_between (rows : Array (Array (Array Inline)))
+    (rules : Array (Nat × TableRule)) :
+    0 ≤ tableHeaderRows rows rules ∧ tableHeaderRows rows rules ≤ rows.size := by
+  refine ⟨Nat.zero_le _, ?_⟩
+  unfold tableHeaderRows
+  cases firstMidRow rules.toList with
+  | none => exact Nat.zero_le _
+  | some k => exact Nat.min_le_right _ _
+
+/-- No mid rule, no header: a `\toprule`/`\bottomrule` frame, a
+`\cmidrule`, or an `\addlinespace` alone never promotes a row. -/
+theorem tableHeaderRows_zero_of_no_mid (rows : Array (Array (Array Inline)))
+    (rules : Array (Nat × TableRule)) (h : ∀ p ∈ rules, p.2 ≠ .mid) :
+    tableHeaderRows rows rules = 0 := by
+  unfold tableHeaderRows
+  rw [firstMidRow_eq_none_of_no_mid rules.toList
+    (fun p hp => h p (Array.mem_toList_iff.mp hp))]
+  rfl
+
 /-- What a float wraps: `{figure}` or `{table}`, or a `{subfigure}`/
 `{subtable}` box inside one (`sub`). The kinds differ in name and in which
 counter numbers them (`numberFloats`); the caption and separation

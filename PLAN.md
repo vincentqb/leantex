@@ -132,6 +132,36 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — table header rows: one IR fact, `<thead>`/`<th>` in HTML
+(M7-08, `table-header-ir`). booktabs' head was knowable at elaboration
+— the rows before the first `\midrule` — and recorded nowhere, so the
+HTML shipped `<td>` throughout (no `th`, `thead`, or `scope` in the
+backend) and the tagged-PDF `/TH` cells had nothing honest to read. The
+fact now lives beside `TableRule`: `Ir.tableHeaderRows rows rules` is
+zero without a `mid` rule, else the first mid rule's row index clamped
+to `[0, rows.size]` — `tableHeaderRows_between`,
+`tableHeaderRows_zero_of_no_mid` (a `\toprule`/`\bottomrule` frame, a
+`\cmidrule`, `\addlinespace`, or `\\[len]` alone promotes nothing); a
+`mid` written before the first row (`\hline`'s frame) heads nothing, by
+the same rule. The HTML arm factored out of `blockNode` into
+`HtmlDoc.tableNode` so a theorem can read its row builder: exactly the
+header prefix ships under `<thead>` as `<th scope=col>`, the rest under
+`<tbody>` as `<td>`, a table with no head has no `<thead>` and one that is
+all head no `<tbody>` — `th_iff_header_row` over the typed tree (the tag
+at every cell of row `i` is `th` iff `i < tableHeaderRows`). Cell text
+and order, the `bt-*` row classes and the `bt-cmid` cell class are
+unchanged, pinned by `tableHtmlChecks`. The regrouping is semantic only:
+every cell rule in the stylesheet now addresses `th` beside `td`, and the
+UA's bold, centred `th` is inherited away — Chromium renders the tables
+fixtures and a plain-head probe pixel-identical before and after (AE 0
+at 1280 px, fonts shipped), and the probe with that one neutraliser line
+removed moves 4174 pixels, so the line is load-bearing. PDF bytes are
+identical on the same three documents against the previous main binary;
+goldens (IR dumps) unchanged. Not done here: the PDF `/TH`/`/Scope`
+emission (wave 3, `pdf-tag-lists-tables-notes`, reads this number) and a
+head detected past a leading `\hline` frame (the second `mid` would be
+the classic-table head; not the brief's semantics, named for a follow-up).
+
 2026-09-21 — a listing's language is one IR fact both text artifacts
 project (listing-language-ir, M7-11). `Ir.ListingSpec` carried a caption
 and a line-number flag; listings' `language=` key and minted's mandatory

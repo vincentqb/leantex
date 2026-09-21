@@ -207,6 +207,14 @@ def elem (tag : String) (kids : Array Node := #[])
 
 def text (s : String) : Node := .text s
 
+/-- The tag of an element node; `none` for text, style, and script. What a
+statement about which element a tree ships at a position reads. -/
+def Node.tag? : Node → Option String
+  | .elem tag _ _ => some tag
+  | .text _ => none
+  | .style _ => none
+  | .script _ _ => none
+
 private def attrString (attrs : Array (String × String)) : String :=
   String.join (attrs.toList.map fun (k, v) =>
     if v.isEmpty then s!" {k}" else s!" {k}=\"{escapeAttr v}\"")

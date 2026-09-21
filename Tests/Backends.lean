@@ -2407,3 +2407,186 @@ def listingLanguageChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- token cannot carry a quote, and the printed class is exactly the token
   t "html: the printed class is the token, escaped by construction"
     ((fullHtml.splitOn "<code class=\"language-c++\">").length == 2)
+
+/-- One cell of an emitted table, as the facts the header contract judges:
+the row group it sits in (`thead`/`tbody`, or `""` when the table has
+none), its tag, its `scope`, its `class`, and its text. -/
+structure CellFact where
+  group : String
+  tag : String
+  scope : String
+  cls : String
+  text : String
+  deriving BEq, Repr
+
+mutual
+
+/-- Every `th`/`td` of a typed tree in document order, each with the row
+group above it — the HTML side of `Ir.tableHeaderRows`. -/
+def cellFactsOne (group : String) (acc : Array CellFact) : Html.Node → Array CellFact
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem tag attrs kids =>
+    let attr (k : String) : String := ((attrs.find? (·.1 == k)).map (·.2)).getD ""
+    if tag == "th" || tag == "td" then
+      acc.push {
+        group := group
+        tag := tag
+        scope := attr "scope"
+        cls := attr "class"
+        text := nodeTextOne "" (.elem tag attrs kids) }
+    else
+      let group := if tag == "thead" || tag == "tbody" then tag else group
+      cellFactsList group acc kids.toList
+
+def cellFactsList (group : String) (acc : Array CellFact) : List Html.Node → Array CellFact
+  | [] => acc
+  | k :: rest => cellFactsList group (cellFactsOne group acc k) rest
+
+end
+
+mutual
+
+/-- Every `tr`'s `class` value in document order (`""` when unclassed): the
+rule classes the stylesheet draws, which the header regrouping may not move. -/
+def rowClassesOne (acc : Array String) : Html.Node → Array String
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem tag attrs kids =>
+    if tag == "tr" then
+      acc.push (((attrs.find? (·.1 == "class")).map (·.2)).getD "")
+    else rowClassesList acc kids.toList
+
+def rowClassesList (acc : Array String) : List Html.Node → Array String
+  | [] => acc
+  | k :: rest => rowClassesList (rowClassesOne acc k) rest
+
+end
+
+mutual
+
+/-- The tags of a table's direct children — `colgroup`, `thead`, `tbody`
+— so a test can state which row groups a table ships. -/
+def tableGroupsOne (acc : Array (Array String)) : Html.Node → Array (Array String)
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem tag _ kids =>
+    if tag == "table" then
+      acc.push (kids.filterMap fun k => match k with
+        | .elem t _ _ => some t
+        | _ => none)
+    else tableGroupsList acc kids.toList
+
+def tableGroupsList (acc : Array (Array String)) : List Html.Node → Array (Array String)
+  | [] => acc
+  | k :: rest => tableGroupsList (tableGroupsOne acc k) rest
+
+end
+
+/-- One header fact for both artifacts: `Ir.tableHeaderRows` names
+booktabs' head — the rows before the first `\midrule` — and the HTML arm
+ships exactly those rows as `<thead>`/`<th scope=col>`, the rest as
+`<tbody>`/`<td>`. Cell text and order, the rule classes on each row, and
+the `bt-cmid` cell class are unchanged by the regrouping: the header is a
+semantic fact, not a visual one (the stylesheet neutralises `th`'s UA bold
+and centring so the raster cannot move). Invented content. -/
+def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let rows3 : Array (Array (Array Ir.Inline)) :=
+    #[#[#[.text "a"]], #[#[.text "b"]], #[#[.text "c"]]]
+  let hdr := Ir.tableHeaderRows rows3
+  t "no rules: zero header rows" (hdr #[] == 0)
+  t "toprule alone: zero header rows" (hdr #[(0, .top), (3, .bottom)] == 0)
+  t "one row before the midrule: one header row"
+    (hdr #[(0, .top), (1, .mid), (3, .bottom)] == 1)
+  t "two rows before the midrule: two header rows"
+    (hdr #[(0, .top), (2, .mid), (3, .bottom)] == 2)
+  t "the first midrule decides, later ones do not"
+    (hdr #[(0, .top), (1, .mid), (2, .mid), (3, .bottom)] == 1)
+  t "a midrule written before any row (an \\hline frame) heads nothing"
+    (hdr #[(0, .mid), (3, .mid)] == 0)
+  t "cmidrule, cline, addlinespace and \\\\[len] are not midrules"
+    (hdr #[(0, .top), (1, .cmid 1 2 true true), (2, .gap {}),
+      (2, .cmid 1 1 false false), (3, .bottom)] == 0)
+  t "a midrule index past the rows clamps to the row count"
+    (hdr #[(7, .mid)] == 3)
+  t "an empty table has zero header rows whatever its rules"
+    (Ir.tableHeaderRows #[] #[(0, .mid), (1, .mid)] == 0)
+  -- The typed tree: one header row.
+  let tree (src : String) : Html.Node :=
+    HtmlDoc.blockNode {} (elabStr (dvDoc "" src)).1.body[0]!
+  let one := tree ("\\begin{tabular}{lcr}\\toprule Left & Centre & Right \\\\ " ++
+    "\\midrule a & b & c \\\\ d & e & f \\\\ \\bottomrule\\end{tabular}")
+  let oneCells := cellFactsOne "" #[] one
+  t "one header row: three th under thead, six td under tbody"
+    (oneCells.map (fun c => (c.group, c.tag)) ==
+      #[("thead", "th"), ("thead", "th"), ("thead", "th"),
+        ("tbody", "td"), ("tbody", "td"), ("tbody", "td"),
+        ("tbody", "td"), ("tbody", "td"), ("tbody", "td")])
+  t "every th declares scope=col and no td carries a scope"
+    (oneCells.all fun c => (c.tag == "th") == (c.scope == "col") &&
+      (c.tag == "td") == (c.scope == ""))
+  t "cell text and order survive the regrouping"
+    (oneCells.map (·.text) == #["Left", "Centre", "Right", "a", "b", "c", "d", "e", "f"])
+  t "the rule classes stand on the same rows as before"
+    (rowClassesOne #[] one == #["bt-heavy-above bt-pre", "bt-light-above", "bt-heavy-below"])
+  t "the table ships colgroup, thead, tbody in that order"
+    (tableGroupsOne #[] one == #[#["colgroup", "thead", "tbody"]])
+  -- Two header rows.
+  let two := tree ("\\begin{tabular}{ll}\\toprule A & B \\\\ C & D \\\\ " ++
+    "\\midrule e & f \\\\ \\bottomrule\\end{tabular}")
+  let twoCells := cellFactsOne "" #[] two
+  t "two header rows: four th, two td"
+    ((twoCells.filter (·.tag == "th")).size == 4 &&
+      (twoCells.filter (·.tag == "td")).size == 2 &&
+      (twoCells.filter (·.group == "thead")).size == 4)
+  -- No midrule: a cmidrule and a gap must not be mistaken for one.
+  let cmid := tree ("\\begin{tabular}{lcr}\\toprule left & centre & right \\\\ " ++
+    "\\cmidrule(lr){1-2} a & b & c \\\\ \\addlinespace d & e & f \\\\ " ++
+    "\\bottomrule\\end{tabular}")
+  let cmidCells := cellFactsOne "" #[] cmid
+  t "cmidrule and addlinespace head nothing: nine td, no th, no thead"
+    (cmidCells.size == 9 && cmidCells.all (fun c => c.tag == "td" && c.group == "tbody"))
+  t "the cmid cell class is where it was"
+    (cmidCells.map (·.cls) == #["", "", "", "bt-cmid", "bt-cmid", "", "", "", ""])
+  t "no header: colgroup and tbody only"
+    (tableGroupsOne #[] cmid == #[#["colgroup", "tbody"]])
+  -- Bare tabular, no rules at all.
+  let bare := tree "\\begin{tabular}{ll}a & b \\\\ c & d\\end{tabular}"
+  t "a rule-less table has no th"
+    ((cellFactsOne "" #[] bare).all fun c => c.tag == "td" && c.group == "tbody")
+  -- Every row a header row: the midrule stands after the last row.
+  let allHead := tree "\\begin{tabular}{ll}\\toprule a & b \\\\ \\midrule\\end{tabular}"
+  t "a midrule after the last row heads every row: thead and no tbody"
+    (tableGroupsOne #[] allHead == #[#["colgroup", "thead"]] &&
+      (cellFactsOne "" #[] allHead).all (·.tag == "th"))
+  -- The empty table: nothing to group.
+  let empty := HtmlDoc.blockNode {} (.table #[default, default] true true #[] #[(0, .mid)])
+  t "an empty table ships its colgroup and no row group"
+    (tableGroupsOne #[] empty == #[#["colgroup"]])
+  -- The fixture's census: the first table heads one row of three, the
+  -- second (cmidrule) none; every declared cell ships once.
+  let src ← IO.FS.readFile "tests/corpus/tables.tex"
+  let (fixture, _) ← elabFixture "tables" src
+  let (_, body, _) := HtmlDoc.emitTree {} fixture
+  let cells := cellFactsList "" #[] body.toList
+  let declared := Ir.foldBlocks (fun n b => match b with
+    | .table _ _ _ rows _ => n + rows.foldl (fun m r => m + r.size) 0
+    | _ => n) (fun n _ => n) 0 fixture.body
+  t "tables fixture: every declared cell ships once"
+    (cells.size == declared && declared == 18)
+  t "tables fixture: three th, all under thead with scope=col"
+    ((cells.filter (·.tag == "th")).size == 3 &&
+      (cells.filter (·.tag == "th")).all (fun c => c.group == "thead" && c.scope == "col") &&
+      (cells.filter (·.tag == "td")).all (·.group == "tbody"))
+  -- The stylesheet's half of "no movement": each cell rule the header
+  -- cells left as `td` addresses `th` too, and the UA's bold/centred
+  -- `th` defaults are neutralised.
+  let css := HtmlDoc.baseCss {} fixture
+  t "the table stylesheet addresses th beside td"
+    (hasStr css "table.booktabs th" && hasStr css "tr.bt-heavy-above > th" &&
+      hasStr css "tr.bt-light-above > th" && hasStr css "th.bt-cmid" &&
+      hasStr css "font-weight: inherit")
