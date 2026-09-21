@@ -41,7 +41,7 @@ def nativePackages : List String :=
    "appendixnumberbeamer", "natbib",
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
-   "cleveref"]
+   "cleveref", "listings", "minted", "siunitx"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=
@@ -2936,7 +2936,7 @@ private def siCtrl (loc : Locale) (n : String) (pos : Pos) (raws : Array Raw)
     let (args, k) := takeGroups raws j 2
     return (#[word (fmtNum loc (rawSrc (args.getD 0 #[]))), .space, word "to",
       .space, word (fmtNum loc (rawSrc (args.getD 1 #[])))], k)
-  | "qtyrange" =>
+  | "qtyrange" | "SIrange" =>
     let (args, k) := takeGroups raws j 3
     let u ← fmtUnit (args.getD 2 #[]) pos
     return (#[word (fmtNum loc (rawSrc (args.getD 0 #[])) ++ "\u202F" ++ u),
@@ -2946,7 +2946,7 @@ private def siCtrl (loc : Locale) (n : String) (pos : Pos) (raws : Array Raw)
 
 /-- The siunitx command names this pass answers. -/
 private def siCtrls : List String :=
-  ["num", "ang", "si", "unit", "SI", "qty", "numrange", "qtyrange"]
+  ["num", "ang", "si", "unit", "SI", "qty", "numrange", "qtyrange", "SIrange"]
 
 mutual
 
@@ -3029,10 +3029,29 @@ private def declaredTagOne : Raw → Option String
 
 end
 
+mutual
+
+/-- Whether the pass has anything to do: a `\lstset` or a siunitx command
+anywhere. A read-only scan, so the common document — which has neither —
+never pays for the rebuilding walk (`scripts/bench.lean` is the check). -/
+private def textNeededList : List Raw → Bool
+  | [] => false
+  | .ctrl n _ :: rest =>
+    n == "lstset" || siCtrls.contains n || textNeededList rest
+  | r :: rest => textNeededOne r || textNeededList rest
+
+private def textNeededOne : Raw → Bool
+  | .group b _ => textNeededList b.toList
+  | .env _ b _ => textNeededList b.toList
+  | _ => false
+
+end
+
 /-- The listings/siunitx pass, run right after `rewrite`: `\lstset` folds
 into the listings that follow it, and the siunitx commands become their
 spelled text under the document's own locale. -/
 def rewriteText (file : String) (raws : Array Raw) : Array Raw × Array Diag :=
+  if !textNeededList raws.toList then (raws, #[]) else
   let loc := ((declaredTagList raws.toList).bind Locale.forTag).getD Locale.en
   let go : M (Array Raw) := do
     let (out, _) ← textList loc {} raws #[] raws.toList 0 0

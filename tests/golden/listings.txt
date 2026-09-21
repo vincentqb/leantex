@@ -1,0 +1,25 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+para
+  text "Prose before an invented listing."
+verbatim numbers listing 1
+  caption
+    label "lst:probe"
+    text "An invented probe."
+  "def probe(n):"
+  "    return n + 1"
+verbatim
+  "print(\"synthetic\")"
+para
+  text "Listing "
+  ref "lst:probe" shows "1" -> #lst:probe
+  text " adds one. A mass of 12 345.6 kg moves at m s⁻¹ across 45°; about 1 × 10⁵ samples, 5 to 10 runs."
+-- diagnostics
+note[N0100] 2:1 '\usepackage{listings}' → nothing: the engine does this itself
+note[N0100] 3:1 '\usepackage{minted}' → nothing: the engine does this itself
+note[N0100] 4:1 '\usepackage{siunitx}' → nothing: the engine does this itself
+note[N0100] 19:45 '\SI' spells its text natively: locale digits and unit symbols (siunitx)
+note[N0100] 20:10 '\si' spells its text natively: locale digits and unit symbols (siunitx)
+note[N0100] 20:40 '\ang' spells its text natively: locale digits and unit symbols (siunitx)
+note[N0100] 20:56 '\num' spells its text natively: locale digits and unit symbols (siunitx)
+note[N0100] 21:10 '\numrange' spells its text natively: locale digits and unit symbols (siunitx)

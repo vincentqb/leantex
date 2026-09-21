@@ -1,0 +1,15 @@
+# source: minted manual (v3.7), Commands and environments: the minted
+# environment with its mandatory {language} argument and linenos option;
+# \mint, \mintinline, \inputminted; \setminted and \usemintedstyle
+# configuration. The environment is lexically blind, its language named
+# data the engine does not colour by. \inputminted reads a file — a
+# driver request later; the short forms and the Pygments style machinery
+# refuse by name.
+body impl \begin{minted}{python} print(1) \end{minted}
+body impl \begin{minted}[linenos]{python} print(1) \end{minted}
+body refuse:W0301 \mint{python}|print(1)|
+body refuse:W0301 \mintinline{python}|print(1)|
+body refuse:W0301 \inputminted{python}{example.py}
+pre refuse:W0301 \setminted{linenos}
+pre refuse:W0301 \usemintedstyle{tango}
+pre refuse:W0301 \newminted{python}{linenos}

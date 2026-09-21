@@ -937,6 +937,7 @@ drops the space that `\,` asked for. `\!`-style negative kerns are not here
 because there is no Unicode character for them. -/
 def fixedSpace (c : Char) : Option (Nat × Nat) :=
   if c == '\u2009' then some (1, 6)        -- thin space, TeX's \,
+  else if c == '\u202F' then some (1, 6)   -- narrow no-break: siunitx's \, between number and unit
   else if c == '\u2005' then some (1, 4)   -- four-per-em, \:
   else if c == '\u2004' then some (1, 3)   -- three-per-em, \;
   else if c == '\u2007' then some (1, 2)   -- figure space

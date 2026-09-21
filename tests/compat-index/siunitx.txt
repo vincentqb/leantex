@@ -1,0 +1,34 @@
+# source: siunitx.sty v3 command declarations (\NewDocumentCommand: \num,
+# \ang, \unit, \qty, \si, \SI, \numrange, \qtyrange, \SIrange, \numlist,
+# \qtylist, \numproduct, \qtyproduct, \complexnum, \complexqty, \tablenum,
+# \sisetup, \DeclareSIUnit) — the implementation of the manual's command
+# reference — and its unit/prefix declarations, the manual's unit tables.
+# Numbers spell with the locale's digit grouping and decimal marker; units
+# from the transcribed symbol table, powers as real superscripts; a unit
+# outside the table is W0381, set as its ASCII spelling. The list, product,
+# complex, table and declaration forms refuse by name.
+body impl \num{12345}
+body impl \num{3.14159}
+body impl \num{1e6}
+body impl \num{-2.5e-3}
+body impl \SI{1.5}{\kilo\gram}
+body impl \qty{1.5}{\kilo\gram}
+body impl \qty{9.81}{\metre\per\second\squared}
+body impl \si{\metre\per\second}
+body impl \unit{\ohm}
+body impl \unit{\square\centi\metre}
+body impl \ang{45}
+body impl \ang{1;2;3}
+body impl \numrange{5}{10}
+body impl \qtyrange{1}{2}{\metre}
+body impl \SIrange{1}{2}{\metre}
+body refuse:W0381 \qty{1}{\banana}
+body refuse:W0301 \numlist{1;2;3}
+body refuse:W0301 \qtylist{1;2;3}{\metre}
+body refuse:W0301 \numproduct{2 x 3}
+body refuse:W0301 \qtyproduct{2 x 3}{\metre}
+body refuse:W0301 \complexnum{1+2i}
+body refuse:W0301 \complexqty{1+2i}{\ohm}
+body refuse:W0301 \tablenum{1.5}
+pre refuse:W0301 \sisetup{per-mode=symbol}
+pre refuse:W0301 \DeclareSIUnit\px{px}

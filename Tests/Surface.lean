@@ -448,6 +448,61 @@ def posterCompatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a body \\setlength resolves textwidth from the finished page"
     (!db.any (·.code == "E0321"))
 
+/-- Listings apparatus and the siunitx spellings: \lstset propagation and
+precedence, listing numbering, minted's language argument, and the number
+and unit texts under each locale — including the digit-conservation
+oracle the census obligation names. -/
+def listingChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let firstBlock (src : String) : Option Ir.Block := ((elabStr src).1.body)[0]?
+  let bodyText (src : String) : String := Ir.blocksText (elabStr src).1.body
+  -- \lstset travels into the listings that follow; the environment's own
+  -- keys win, listings' precedence.
+  t "\\lstset{numbers=left} numbers the next listing"
+    (match firstBlock (dvDoc "" "\\lstset{numbers=left}\n\\begin{lstlisting}\nx = 1\n\\end{lstlisting}") with
+     | some (.verbatim _ _ spec) => spec.numbers
+     | _ => false)
+  t "the environment's own numbers=none overrides \\lstset"
+    (match firstBlock (dvDoc "" "\\lstset{numbers=left}\n\\begin{lstlisting}[numbers=none]\nx = 1\n\\end{lstlisting}") with
+     | some (.verbatim _ _ spec) => !spec.numbers
+     | _ => false)
+  -- captioned listings number in flow order; a captionless one takes none
+  t "captioned listings number 1, 2 and a captionless takes no number"
+    (let body : Array Ir.Block := (elabStr (dvDoc "" ("\\begin{lstlisting}[caption={A}]\na\n\\end{lstlisting}\n" ++
+      "\\begin{lstlisting}\nb\n\\end{lstlisting}\n" ++
+      "\\begin{lstlisting}[caption={B}]\nc\n\\end{lstlisting}"))).1.body
+     match body[0]?, body[1]?, body[2]? with
+     | some (Ir.Block.verbatim _ _ s1), some (Ir.Block.verbatim _ _ s2),
+         some (Ir.Block.verbatim _ _ s3) =>
+       (s1.caption.map (·.1)) == some 1 && s2.caption == none
+         && (s3.caption.map (·.1)) == some 2
+     | _, _, _ => false)
+  -- minted: the language argument is data, never body text
+  t "minted's language argument never reaches the code body"
+    (match firstBlock (dvDoc "" "\\begin{minted}{python}\nprint(1)\n\\end{minted}") with
+     | some (.verbatim _ s _) =>
+       (s.splitOn "python").length == 1 && s.trimAscii.toString == "print(1)"
+     | _ => false)
+  -- siunitx: the digits of a rewritten number survive into the text —
+  -- the census obligation, checked as an executable oracle
+  t "\\num conserves its digits"
+    ((bodyText (dvDoc "" "\\num{12345.678}")).toList.filter (·.isDigit)
+      == "12345678".toList)
+  t "\\num groups by the locale and keeps the en decimal point"
+    (bodyText (dvDoc "" "\\num{12345.678}") == "12\u2009345.678")
+  t "a french document takes its comma and narrow-space grouping"
+    (bodyText ("\\documentclass{article}\n\\usepackage[french]{babel}\n" ++
+      "\\begin{document}\n\\num{12345.678}\n\\end{document}")
+      == "12\u202F345,678")
+  t "an e exponent sets as ×10ⁿ with a real superscript"
+    (bodyText (dvDoc "" "\\num{1e5}") == "1\u2009×\u200910⁵")
+  t "a quantity joins number and unit by a no-break thin space"
+    (bodyText (dvDoc "" "\\qty{1.5}{\\kilo\\gram}") == "1.5\u202Fkg")
+  t "per-mode power: a rate sets with a superscript minus"
+    (bodyText (dvDoc "" "\\si{\\metre\\per\\second}") == "m\u2009s⁻¹")
+  t "a document's own \\num definition wins over the rewrite"
+    ((bodyText (dvDoc "\\newcommand{\\num}[1]{N#1}\n" "\\num{7}")) == "N7")
+
 /-- LaTeX idioms translate to native declarations. Own function, same reason. -/
 def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   let t := check ref

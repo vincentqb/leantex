@@ -1,0 +1,23 @@
+# source: listings manual, Main reference §Typesetting listings
+# (rTypesettingListings: the lstlisting environment, \lstset, \lstinline,
+# \lstinputlisting, \lstnewenvironment) with §Line numbers (uLineNumbers)
+# for the numbers key and the caption/label keys judged per environment.
+# The environment is lexically blind (code is never tokenized); its keys
+# are honoured or named W0110 at the one validation site. \lstinputlisting
+# reads a file — a driver request later — and \lstinline's free-form
+# delimiter has no lexer door; both refuse by name.
+pre impl \lstset{language=Python}
+pre impl \lstset{numbers=left}
+pre impl \lstset{caption={An invented default}}
+pre impl \lstset{basicstyle=\ttfamily\footnotesize}
+body impl \begin{lstlisting} x = 1 \end{lstlisting}
+body impl \begin{lstlisting}[caption={An invented probe}] x = 1 \end{lstlisting}
+body impl \begin{lstlisting}[caption={A labelled probe}, label=lst:p] x = 1 \end{lstlisting}
+body impl \begin{lstlisting}[numbers=left] x = 1 \end{lstlisting}
+body impl \begin{lstlisting}[language=Python] x = 1 \end{lstlisting}
+body refuse:W0301 \lstinline|x|
+body refuse:W0301 \lstinputlisting{example.py}
+pre refuse:W0301 \lstnewenvironment{code}{}{}
+pre refuse:W0301 \lstdefinestyle{plain}{numbers=none}
+pre refuse:W0301 \lstdefinelanguage{invented}{keywords={probe}}
+body refuse:W0301 \lstlistoflistings

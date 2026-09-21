@@ -191,6 +191,7 @@ def main (args : List String) : IO UInt32 := do
   declChecks ref
   tokensChecks ref
   compatChecks ref
+  listingChecks ref
   posterCompatChecks ref
   styParityChecks ref
   surfaceSuiteChecks ref

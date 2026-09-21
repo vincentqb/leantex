@@ -11,6 +11,25 @@ shipped (or deliberately not, for a note), covered-coloured runs on step
 pages, rules and fills drawn, line positions for centring and columns. -/
 def censusTable :
     List (String × (Layout.Geom → Array CensusPage → List (String × Bool))) := [
+  ("listings", fun geom c => [
+    ("one page", c.size == 1),
+    -- a no-break space ships as a glyphless box, so the census text of a
+    -- code line reads glued ("1defprobe(n):"), exactly as "Equation(1)"
+    ("the caption ships numbered with the locale's listing word, above the code",
+      hasStr (censusText c) "Listing 1: An invented probe." &&
+      ((lineYOf c 0 "An invented probe").bind fun cy =>
+        (lineYOf c 0 "defprobe(n):").map fun ly => decide (cy < ly)).getD false),
+    ("the declared line numbers ship as furniture beside their lines",
+      pageHas c 0 "1defprobe(n):" && pageHas c 0 "2returnn+1"),
+    ("the minted body ships its code and never its language argument",
+      pageHas c 0 "print(\"synthetic\")" && !hasStr (censusText c) "python"),
+    ("the reference resolves to the listing's number",
+      hasStr (censusText c) "adds one"),
+    ("the quantity ships its unit symbols",
+      hasStr (censusText c) "345.6" && hasStr (censusText c) "kg"),
+    ("the code sets at the scale's footnotesize",
+      lineSizeOf c 0 "defprobe(n):" ==
+        some (geom.fontSize * ((Ir.sizeScale.lookup "footnotesize").getD 1000) / 1000))]),
   ("footnotes", fun geom c => [
     ("the article spans two pages", c.size ≥ 2),
     ("the first note ships at the foot of page one",

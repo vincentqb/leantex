@@ -1,0 +1,23 @@
+\documentclass{article}
+\usepackage{listings}
+\usepackage{minted}
+\usepackage{siunitx}
+\begin{document}
+
+Prose before an invented listing.
+
+\lstset{language=Python, numbers=left}
+\begin{lstlisting}[caption={An invented probe.}, label=lst:probe]
+def probe(n):
+    return n + 1
+\end{lstlisting}
+
+\begin{minted}{python}
+print("synthetic")
+\end{minted}
+
+Listing \ref{lst:probe} adds one. A mass of \SI{12345.6}{\kilo\gram}
+moves at \si{\metre\per\second} across \ang{45}; about \num{1e5}
+samples, \numrange{5}{10} runs.
+
+\end{document}
