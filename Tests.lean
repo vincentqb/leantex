@@ -126,6 +126,7 @@ def surfaceSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   exprChecks ref
   centeringChecks ref
   smartChecks ref
+  boundaryChecks ref
 
 /-- The theme, palette, and role blocks (Tests/Themes.lean), dispatched
 together so each stays a leaf and `main`'s spent elaboration budget stays

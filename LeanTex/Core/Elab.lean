@@ -113,6 +113,15 @@ structure Ctx where
   way in, so a nested conditional that empties the set is diagnosed where
   it stands (E0334) — the same walk `Ir.orphanFree` performs. -/
   backendTargets : List String := Ir.backendNames
+  /-- The declared boundary tool (`\pictures{ tool = lualatex }`, or
+  TikZ's own `\tikzexternalize` spelling): the pinned external TeX that
+  draws pictures outside the rendered subset. `none` keeps the boundary
+  closed. -/
+  picTool : Option String := none
+  /-- The preamble declarations a boundary standalone needs — non-native
+  package loads and the tikz-family set lines, as written
+  (`Compat.boundaryDecls`), plus the document's declared body family. -/
+  picPreamble : String := ""
 
 /-- The numeral spellings a counter format may use, LaTeX's own set
 (clsguide §Counters: `\arabic`, `\alph`, `\Alph`, `\roman`, `\Roman`);
@@ -169,6 +178,10 @@ structure ESt where
   /-- beamer's `\logo`, a declaration legal in the preamble and the body
   alike; the last one wins, as in beamer. -/
   logo : Option (Array Inline) := none
+  /-- Boundary picture requests met in the body: content hash of each
+  wrapped standalone source, with the source — deduplicated, so one
+  picture repeated is one request. Assembled onto `Doc.pictureSrcs`. -/
+  pictures : Array (String × String) := #[]
   /-- `\bibliographystyle`, wherever it appears — LaTeX reads it anywhere
   before the .aux is written; here the `\bibliography` marker met later
   carries it, so the declared name reaches resolution with the block. -/
@@ -309,7 +322,12 @@ def reservedCtrl : List (String × DiagCode) :=
 /-- Declarations that take a `{...}` block and are handled in the preamble. -/
 def declCtrl : List String :=
   ["page", "pdfmeta", "assert", "fonts", "palette", "tokens", "style", "output",
-   "theme", "chrome"]
+   "theme", "chrome", "pictures"]
+
+/-- The boundary tools the engine will run. A document declares *which* of
+these draws its pictures, never an arbitrary binary: the driver executes
+the named tool, so an open value would be a document running commands. -/
+def picTools : List String := ["lualatex"]
 
 /-- Preamble declarations that take one group of *inline content* rather than
 a key/value block: running head and foot. -/
@@ -5421,10 +5439,40 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
         #[(.W0012, s!"math with {what} is not rendered yet; the \
 formula is set as source text")])
   let (pic, pdiags) := Picture.elabPicture ctx.palette body mathOf
+  -- The boundary: with a declared tool, a picture the rendered subset
+  -- cannot fully draw runs whole under the real TikZ at the edge and
+  -- comes back as an opaque measured box (PLAN, Heavy machinery: isolate,
+  -- then absorb). The request rides the IR — content hash of the wrapped
+  -- standalone source — and the driver fulfils it, cached by content, so
+  -- a warm cache needs no TeX installed. The trust label: the engine
+  -- claims placement and measurement of the returned box, never its
+  -- contents.
+  if ctx.picTool.isSome && !body.isEmpty &&
+      (!pdiags.isEmpty || pic.shapes.isEmpty) then
+    let tool := ctx.picTool.getD "lualatex"
+    let wrapped := Ir.wrapStandalone ctx.picPreamble (Parse.rawSrc body)
+    let hash := Ir.picHash wrapped
+    modify fun st =>
+      if st.pictures.any (fun p => p.1 == hash) then st
+      else { st with pictures := st.pictures.push (hash, wrapped) }
+    warnOnce ctx ("picture:boundary:" ++ hash) .N0023
+      s!"this picture is drawn by {tool} at the boundary; its text is not \
+in the document's census" pos
+      (help := "the box is measured and placed by the engine; \\caption or \
+alt text names it for assistive technology")
+    return blocks.push (.para #[.image (Ir.picSrcPrefix ++ hash) {} ""])
   for (code, msg) in pdiags do
     warnOnce ctx ("picture:" ++ msg) code msg pos
       (help := "the rendered subset is \\fill...rectangle, \\node at, \
 \\foreach, and \\pgfmath(truncate)setmacro")
+  -- A construct the subset refused stays refused only while no boundary
+  -- tool is declared: the door is one declaration, named here.
+  if ctx.picTool.isNone && !pdiags.isEmpty then
+    warnOnce ctx "picture:door" .W0379
+      "a picture reaches outside the rendered subset and no boundary tool \
+is declared" pos
+      (help := "\\pictures{ tool = lualatex } draws such pictures whole \
+with a real TeX at the boundary")
   unless pic.shapes.isEmpty do
     blocks := blocks.push (.picture pic)
   -- An all-refused picture still owes the reader its place: the
@@ -7853,6 +7901,7 @@ stays sequential. Malformation facts met while finding extents (an unclosed
 and emits it in scan order. -/
 inductive PDecl where
   | docclass (options : Option String) (cls : Option String) (pos : Pos)
+  | pictures (src : Option String) (pos : Pos)
   | defineCmd (decl : Array Raw) (pos : Pos)
   | defineEnv (name : Option (String × Pos)) (sig : String)
       (beginB : Option (Array Raw)) (endB : Option (Array Raw)) (pos : Pos)
@@ -8053,6 +8102,14 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
             out := out.push (.allow (some (rawSrc body)) pos)
           | _ =>
             out := out.push (.allow none pos)
+        else if name == "tikzexternalize" then
+          -- TikZ's own externalization spelling (pgf manual §53): the
+          -- LaTeX-shaped door to the boundary, with the pinned default
+          -- tool. Its optional configuration is the external library's
+          -- own business and is consumed with it.
+          let (_, k) := takeOptRun preamble (skipSpaces preamble i)
+          i := k
+          out := out.push (.pictures (some "tool = lualatex") pos)
         else if declCtrl.contains name then
           let j := skipSpaces preamble i
           let src : Option String := match preamble[j]? with
@@ -8068,6 +8125,7 @@ def scanDecls (file : String) (pre : Array Raw) : Array PDecl := Id.run do
           | "chrome" => out := out.push (.chrome src pos)
           | "page" => out := out.push (.page src pos)
           | "fonts" => out := out.push (.fonts src pos)
+          | "pictures" => out := out.push (.pictures src pos)
           | _ => out := out.push (.pdfmeta src pos)
         else if name == "captionsetup" then
           let mut j := i
@@ -8492,6 +8550,31 @@ def applyDecl (s : PreState) (d : PDecl) : EM PreState := do
   | .page none pos => stepDone s.ctx (stepMissing s "page" "a {...} block" pos)
   | .fonts (some src) pos => stepDone s.ctx (stepFonts s src pos)
   | .fonts none pos => stepDone s.ctx (stepMissing s "fonts" "a {...} block" pos)
+  | .pictures body pos =>
+    match body with
+    | some src =>
+      -- The boundary door: which pinned tool draws pictures outside the
+      -- rendered subset. The value is drawn from `picTools`, never an
+      -- arbitrary binary (the driver executes it).
+      let mut s := s
+      for e in Decl.splitEntries src do
+        match Decl.splitEntry e with
+        | some ("tool", v) =>
+          let v := v.trimAscii.toString
+          if picTools.contains v then
+            s := { s with ctx := { s.ctx with picTool := some v } }
+          else
+            diag s.ctx .E0321
+              s!"cannot read a boundary tool for 'tool' in 'pictures': '{v}'" pos
+              (help := "the engine runs only the tools it pins: lualatex")
+        | some (key, _) =>
+          let d := Decl.unknownKey s.ctx.file "pictures" key ["tool"] pos
+          modify fun st => { st with diags := st.diags.push d }
+        | none => pure ()
+      return s
+    | none =>
+      diag s.ctx .E0304 "'\\pictures' needs a {...} block" pos
+      return s
   | .pdfmeta (some src) pos => stepDone s.ctx (stepPdfmeta s src pos)
   | .pdfmeta none pos => stepDone s.ctx (stepMissing s "pdfmeta" "a {...} block" pos)
   | .captionsetup unclosed body pos =>
@@ -8564,6 +8647,11 @@ its declared layout" pos
       warnUnclosed s.ctx s!"'\\{name}'" bpos
     return s
   | .unknownCmd name unclosed pos =>
+    -- With the boundary door open, a tikz-family set line is not unknown:
+    -- it rides into every wrapped standalone (`Compat.boundaryDecls`
+    -- collected it), where the real TikZ reads it.
+    if s.ctx.picTool.isSome && Compat.boundaryCtrls.contains name then
+      return s
     -- Unknown preamble commands are configuration, not content: their
     -- arguments are skipped with them, never elaborated as stray text.
     warnOnce s.ctx ("ctrl:" ++ name) .W0301
@@ -8788,7 +8876,8 @@ private def applyRefusedTitleStyle (s : PreState) : EM PreState := do
 
 /-- Elaborate the whole document: split preamble and body around the
 `document` environment, process declarations, then the body. -/
-def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
+def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
+    EM Doc := do
   let docIdx := raws.findIdx? fun r =>
     match r with
     | .env "document" _ _ => true
@@ -8805,7 +8894,23 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
   -- values, `applyDecl` applies each. The commutation statement (T1)
   -- quantifies over exactly these values; everything after the fold is a
   -- function of the fold's result.
-  let s ← (scanDecls file preamble).foldlM applyDecl { ctx := { file := file } }
+  let decls := scanDecls file preamble
+  -- The boundary door opens before the fold: a `\tikzset` above the
+  -- `\pictures` line is already the boundary's to keep, so the door is
+  -- read off the scanned declarations first, order-free. The apply arm
+  -- still owns every diagnostic for the block's contents.
+  let picTool0 := decls.findSome? fun d =>
+    match d with
+    | .pictures (some src) _ =>
+      (Decl.splitEntries src).findSome? fun e =>
+        match Decl.splitEntry e with
+        | some ("tool", v) =>
+          let v := v.trimAscii.toString
+          if picTools.contains v then some v else none
+        | _ => none
+    | _ => none
+  let s ← decls.foldlM applyDecl
+    { ctx := { file := file, picTool := picTool0, picPreamble := picPre } }
   -- What a refused `\maketitle` redefinition still declares, applied once
   -- the fold has bound everything its body names.
   let s ← applyRefusedTitleStyle s
@@ -8917,11 +9022,22 @@ def elabDoc (file : String) (raws : Array Raw) : EM Doc := do
       output := output.addFormat f
   if output.md.isNone then
     output := { output with md := record.mdName }
+  -- The document's declared body family rides into every wrapped
+  -- standalone, so the boundary's text matches the page. A family
+  -- declared as a file name resolves against the document's font dir,
+  -- which the boundary tool cannot see from its build directory; only a
+  -- named family travels.
+  let picFontLine := match fonts.body with
+    | some fam =>
+      if fam.endsWith ".ttf" || fam.endsWith ".otf" || fam.endsWith ".ttc" then ""
+      else s!"\\usepackage\{fontspec}\n\\setmainfont\{{fam}}\n"
+    | none => ""
   ctx := { ctx with slides := record.model == .frame
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
                     page := page
-                    engineTokens := engineLengthTokensOfPage page }
+                    engineTokens := engineLengthTokensOfPage page
+                    picPreamble := ctx.picPreamble ++ picFontLine }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's
   -- number in document order (`numberFloats_exact` is the fact `\ref`
@@ -9047,6 +9163,8 @@ declare \\assert\{ pages <= N } to take control" }
     output := output
     asserts := asserts
     allow := allow
+    pictureTool := ctx.picTool
+    pictureSrcs := (← get).pictures
     body := blocks
   }
 
@@ -9054,8 +9172,9 @@ declare \\assert\{ pages <= N } to take control" }
 written for another engine compiles as written. -/
 def runRaws (file : String) (raws : Array Raw) (earlier : Array Diag := #[]) :
     Doc × Array Diag :=
+  let picPre := Compat.boundaryDecls raws
   let (raws, compatDiags) := Compat.rewrite file raws
-  let (doc, st) := (elabDoc file raws).run {}
+  let (doc, st) := (elabDoc file raws picPre).run {}
   -- The realization pass rewrites the document where a (role, ground)
   -- pair fails and the solver can meet it (Core/Contrast.lean): both
   -- backends then read the realized values, and the diagnostics carry

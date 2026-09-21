@@ -155,6 +155,9 @@ note[N0020]: 'venueguide.sty' beside the document is read into the preamble — 
 note[N0021]: header and footer gaps differ by 10pt as declared; equal gaps are the default
 ── N0022 (info) a palette role is realized at a new lightness on one ground to meet its contrast requirement (WCAG 2.2)
 note[N0022]: 'alert' is realized lighter (#D8894A) on the frame-title bar (#23373B) to meet 4.50:1
+── N0023 (info) a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census
+note[N0023]: this picture is drawn by lualatex at the boundary; its text is not in the document's census
+  help: the box is measured and placed by the engine; \caption or alt text names it for assistive technology
 ── N0100 (info) LaTeX idiom translated to its native declaration
 note[N0100]: '\usepackage{geometry}' → \page{ margin = 1in }
 ── N0102 (info) option ignored: it configures machinery the engine does not model
@@ -437,10 +440,20 @@ warning[W0376]: image 'chart.png' ships no text alternative; assistive technolog
 ── W0377 (degraded) a link carries no text to name its purpose (WCAG 2.2)
 warning[W0377]: link 'https://example.org/x' carries no text; assistive technology reads nothing to name its purpose (WCAG 2.2 SC 2.4.4)
   help: give the link visible text — \href{...}{words} — or an image with alt inside it
+── W0378 (degraded) the boundary tool failed; a placeholder box marks the picture
+warning[W0378]: cannot run the boundary tool 'lualatex': not found; a placeholder box marks each picture
+  help: install lualatex, or remove the \pictures declaration; a warm cache needs no tool
+warning[W0378]: 'lualatex' failed on a picture; a placeholder box marks its place
+  help: lualatex says: ! Undefined control sequence. · l.7 \nope
+warning[W0378]: cannot run 'pdftocairo' to convert boundary pictures for the HTML artifact: not found (error code: 2)
+  help: install poppler's pdftocairo, or \allow{W0378} accepts the loss; the PDF artifact is unaffected
+── W0379 (config) no boundary tool declared for a picture outside the rendered subset
+warning[W0379]: a picture reaches outside the rendered subset and no boundary tool is declared
+  help: \pictures{ tool = lualatex } draws such pictures whole with a real TeX at the boundary
 ── W0601 (degraded) image unreadable or not found; placeholder box placed
 warning[W0601]: image file not found: 'figures/plot.png'; a placeholder box holds its place
-  help: looked at: /documents/figures/plot.png, also with .png/.jpg/.jpeg added
+  help: looked at: /documents/figures/plot.png, also with .pdf/.png/.jpg/.jpeg added
 warning[W0601]: cannot read image 'figures/plot.png': permission denied (error code: 13); a placeholder box holds its place
 ── W0602 (degraded) image format unusable; placeholder box placed
-warning[W0602]: cannot use image 'figures/plot.gif': not a PNG or JPEG file; a placeholder box holds its place
-  help: PNG and JPEG embed natively: re-export the image as one
+warning[W0602]: cannot use image 'figures/plot.gif': not a PNG, JPEG, or PDF file; a placeholder box holds its place
+  help: PNG, JPEG, and PDF embed natively: re-export the image as one

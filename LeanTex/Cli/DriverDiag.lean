@@ -91,12 +91,36 @@ def imageUnreadable (src err : String) : Diag :=
 /-- W0601: no file answers the image source. -/
 def imageMissing (src looked : String) : Diag :=
   Diag.of .W0601 s!"image file not found: '{src}'; a placeholder box holds its place"
-    (help := s!"looked at: {looked}, also with .png/.jpg/.jpeg added")
+    (help := s!"looked at: {looked}, also with .pdf/.png/.jpg/.jpeg added")
 
 /-- W0602: the image bytes are not a format the engine embeds. -/
 def imageUndecodable (src err : String) : Diag :=
   Diag.of .W0602 s!"cannot use image '{src}': {err}; a placeholder box holds its place"
-    (help := "PNG and JPEG embed natively: re-export the image as one")
+    (help := "PNG, JPEG, and PDF embed natively: re-export the image as one")
+
+/-- W0378: the boundary tool is not runnable at all. -/
+def boundaryToolMissing (tool err : String) : Diag :=
+  Diag.of .W0378
+    s!"cannot run the boundary tool '{tool}': {err}; a placeholder box marks each picture"
+    (help := s!"install {tool}, or remove the \\pictures declaration; a warm \
+cache needs no tool")
+
+/-- W0378: the boundary tool ran and failed on one picture; `logTail` is
+the tool's own last words. -/
+def boundaryFailed (tool : String) (logTail : String) : Diag :=
+  Diag.of .W0378
+    s!"'{tool}' failed on a picture; a placeholder box marks its place"
+    (help := if logTail.isEmpty then s!"{tool}'s log says nothing usable"
+      else s!"{tool} says: {logTail}")
+
+/-- W0378: the PDF→SVG converter for the HTML artifact is not runnable;
+the page shows each picture's text alternative instead. -/
+def boundarySvgMissing (err : String) : Diag :=
+  Diag.of .W0378
+    s!"cannot run 'pdftocairo' to convert boundary pictures for the HTML \
+artifact: {err}"
+    (help := "install poppler's pdftocairo, or \\allow{W0378} accepts the \
+loss; the PDF artifact is unaffected")
 
 /-- E0502: an `\input` file is not there; its content is absent. -/
 def inputMissing (name : String) (span : Option Span) : Diag :=

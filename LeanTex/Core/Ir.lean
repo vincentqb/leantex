@@ -3234,6 +3234,17 @@ structure Doc where
   accepts. The driver downgrades those errors to warnings and always prints
   the acceptance, so it is declared and visible, never ambient. -/
   allow : Array String := #[]
+  /-- The declared boundary tool (`\pictures{ tool = lualatex }`, or the
+  `\tikzexternalize` spelling): the pinned external TeX that draws pictures
+  outside the rendered subset. `none` keeps the boundary closed. -/
+  pictureTool : Option String := none
+  /-- The boundary requests this document states: content hash of each
+  wrapped standalone source, with the source itself — the `bibRefs` shape.
+  The driver fulfils each by running the declared tool (cached under the
+  hash), and the result embeds through the image path as a measured form
+  XObject. The trust label: the engine claims the *box*, never the
+  contents. -/
+  pictureSrcs : Array (String × String) := #[]
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
 
@@ -6862,6 +6873,49 @@ def imageRefs (doc : Doc) : Array String := Id.run do
     if let some tpl := st.font then out := imageSrcsInlines out tpl
     if let some m := st.marker then out := imageSrcsInlines out m
   return out
+
+/-- The image-source spelling of a boundary picture: an `.image` whose
+source is this prefix plus the request's content hash. The driver fulfils
+it from the boundary cache instead of the filesystem. -/
+def picSrcPrefix : String := "leantex-pic:"
+
+/-- FNV-1a over the wrapped source, two seeds, 32 hex digits: the boundary
+cache key. A content hash, so an unchanged picture never re-runs the tool
+and a changed one always does. -/
+def picHash (s : String) : String := Id.run do
+  let hex (x : UInt64) : String := Id.run do
+    let digits := "0123456789abcdef".toList
+    let mut out := ""
+    let mut v := x
+    for _ in [0:16] do
+      out := String.ofList [(digits[(v % 16).toNat]?.getD '0')] ++ out
+      v := v / 16
+    return out
+  let fnv (seed : UInt64) : UInt64 := Id.run do
+    let mut h := seed
+    for byte in s.toUTF8 do
+      h := (h ^^^ byte.toUInt64) * 1099511628211
+    return h
+  return hex (fnv 14695981039346656037) ++ hex (fnv 1099511628211)
+
+/-- Wrap one picture body for the boundary: `\documentclass{standalone}`,
+the preamble declarations a standalone needs (collected from the document
+by the elaborator's closed list), and the picture as written. The request
+is a pure function of the document — `boundary_request_deterministic`
+holds by that purity: two runs over one document state byte-identical
+requests, so the cache key means something. -/
+def wrapStandalone (preamble : String) (body : String) : String :=
+  "\\documentclass{standalone}\n\\usepackage{tikz}\n" ++ preamble ++
+    "\\begin{document}\n\\begin{tikzpicture}" ++ body ++
+    "\\end{tikzpicture}\n\\end{document}\n"
+
+/-- The boundary requests the shipped tree actually states: `pictureSrcs`
+filtered to the hashes an `.image` node still references — a picture
+pruned with its frame asks for nothing, exactly as a pruned
+`\bibliography` does. -/
+def pictureRefs (doc : Doc) : Array (String × String) :=
+  let srcs := imageRefs doc
+  doc.pictureSrcs.filter fun (h, _) => srcs.contains (picSrcPrefix ++ h)
 
 /-- One image node's contribution to the no-alternative census: an
 `.image` whose `alt` is empty, its `src` collected once. A leaf

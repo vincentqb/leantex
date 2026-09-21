@@ -402,17 +402,144 @@ def mdOutPath (output : Option String) (outputIsDir : Bool) (source : String)
   | none => base
 
 
+/-- One fulfilled boundary picture: its image-source spelling, the drawn
+PDF's bytes, and where the cache holds it (the HTML branch converts from
+that file). -/
+structure PicResult where
+  src : String
+  bytes : ByteArray
+  cached : System.FilePath
+
+/-- Run one process with a wall-clock budget: poll-and-sleep, kill on
+overrun. The boundary tool is external and a runaway TeX must not hang the
+build. -/
+def runBounded (cmd : String) (args : Array String) (cwd : System.FilePath)
+    (budgetMs : Nat) : IO (Except String Unit) := do
+  let child ← IO.Process.spawn {
+    cmd := cmd
+    args := args
+    cwd := cwd
+    stdout := .null
+    stderr := .null
+    stdin := .null }
+  let mut waited := 0
+  for _ in [0:budgetMs / 50 + 1] do
+    match ← child.tryWait with
+    | some 0 => return .ok ()
+    | some code => return .error s!"exit code {code}"
+    | none =>
+      IO.sleep 50
+      waited := waited + 50
+  child.kill
+  let _ ← child.wait
+  return .error s!"no result within {budgetMs / 1000} s; killed"
+
+/-- The last words of a batchmode log: the `!` error lines, else the last
+line — what W0378's help shows so the failure is diagnosable without
+opening the temp directory. -/
+def logTail (log : String) : String :=
+  let lines := (log.splitOn "\n").filter (!·.trimAscii.toString.isEmpty)
+  let bangs := lines.filter (·.startsWith "!")
+  let picked := if bangs.isEmpty then lines.reverse.take 1 else bangs.take 3
+  String.intercalate " · " (picked.map (·.trimAscii.toString))
+
+/-- The boundary requests an elaborated document states (`Ir.pictureRefs`),
+fulfilled: each wrapped standalone runs under the declared pinned tool in a
+scratch directory, and the drawn PDF lands in the cache beside the font
+cache, keyed by the content hash *and the tool's version string* — an
+upgraded TeX re-renders, an unchanged picture never re-runs, and a warm
+cache needs no TeX installed. Failures are W0378 with the tool's own last
+words; the picture then ships as the placeholder box the diagnostic names.
+The inventory (`-v` and the porcelain phases) says per picture what came
+through the boundary: tool, version, hash, size. -/
+def resolvePictures (ui : Ui) (doc : Ir.Doc) :
+    IO (Array PicResult × Array Diag) := do
+  let refs := Ir.pictureRefs doc
+  if refs.isEmpty then return (#[], #[])
+  let tool := doc.pictureTool.getD "lualatex"
+  let t0 ← IO.monoMsNow
+  -- The tool's identity: first line of `--version`, part of the cache key.
+  let version? ← try
+    let out ← IO.Process.output { cmd := tool, args := #["--version"] }
+    pure (some (((out.stdout.splitOn "\n").headD "").trimAscii.toString))
+  catch _ =>
+    pure (none : Option String)
+  let cacheRoot ← FontDb.cacheDir
+  let picDir := (cacheRoot.getD "/tmp") / "pics"
+  IO.FS.createDirAll picDir
+  let mut results : Array PicResult := #[]
+  let mut diags : Array Diag := #[]
+  for (hash, wrapped) in refs do
+    let src := Ir.picSrcPrefix ++ hash
+    let key := hash ++ "-" ++ Ir.picHash (version?.getD "") ++ ".pdf"
+    let cached := picDir / key
+    if ← cached.pathExists then
+      let bytes ← IO.FS.readBinFile cached
+      results := results.push { src, bytes, cached }
+      ui.phase "boundary"
+        s!"{tool} ({version?.getD "?"}), {hash.take 16}, {bytes.size} bytes (cached)"
+        (← since t0)
+      continue
+    match version? with
+    | none =>
+      diags := diags.push (DriverDiag.boundaryToolMissing tool "not found")
+      break
+    | some version =>
+      let work := picDir / s!"work-{hash}"
+      IO.FS.createDirAll work
+      IO.FS.writeFile (work / "pic.tex") wrapped
+      let r ← try
+        runBounded tool #["-interaction=batchmode", "-halt-on-error", "pic.tex"]
+          work 120000
+      catch e =>
+        pure (.error (toString e))
+      let produced := work / "pic.pdf"
+      match r with
+      | .ok _ =>
+        if ← produced.pathExists then
+          let bytes ← IO.FS.readBinFile produced
+          IO.FS.writeBinFile cached bytes
+          results := results.push { src, bytes, cached }
+          ui.phase "boundary"
+            s!"{tool} ({version}), {hash.take 16}, {bytes.size} bytes" (← since t0)
+        else
+          diags := diags.push (DriverDiag.boundaryFailed tool "no PDF was produced")
+      | .error err =>
+        let log ← try IO.FS.readFile (work / "pic.log") catch _ => pure ""
+        let tail := logTail log
+        diags := diags.push (DriverDiag.boundaryFailed tool
+          (if tail.isEmpty then err else tail))
+      -- The scratch directory is per-content and spent either way.
+      try IO.FS.removeDirAll work catch _ => pure ()
+  return (results, diags)
+
 /-- The image request an elaborated document states (`Ir.imageRefs`),
 fulfilled: each path resolves against the document's own directory, like
-`\input`, and decodes in the pure core. A file that is missing or refuses
+`\input`, and decodes in the pure core. A boundary picture's source
+(`Ir.picSrcPrefix`) is fulfilled from the resolved boundary results
+instead of the filesystem. A file that is missing or refuses
 to decode keeps its entry with no payload — layout places a placeholder box
 of the requested size, so the document still compiles and the diagnostic
 here says why the figure is a box. -/
-def loadImages (file : String) (doc : Ir.Doc) : IO (Image.Store × Array Diag) := do
+def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[]) :
+    IO (Image.Store × Array Diag) := do
   let dir := (System.FilePath.mk file).parent.getD "."
   let mut entries : Array Image.Loaded := #[]
   let mut diags : Array Diag := #[]
   for src in Ir.imageRefs doc do
+    if src.startsWith Ir.picSrcPrefix then
+      -- A boundary picture: the driver has already run (or refused) the
+      -- tool, and W0378 has spoken for any failure — an empty entry here
+      -- is the placeholder box that diagnostic named.
+      match pics.find? (·.src == src) with
+      | some r =>
+        match Image.decode r.bytes with
+        | .ok info => entries := entries.push { src, info := some info }
+        | .error e =>
+          entries := entries.push { src }
+          diags := diags.push (DriverDiag.imageUndecodable src (toString e))
+      | none => entries := entries.push { src }
+      continue
     -- The name as written, then graphicx's extension resolution: a deck
     -- says `figures/plot` and means the `figures/plot.png` beside it.
     let mut hit : Option (String × System.FilePath) := none
@@ -449,6 +576,50 @@ def loadImages (file : String) (doc : Ir.Doc) : IO (Image.Store × Array Diag) :
 
 def countErrors (diags : Array Diag) : Nat :=
   diags.foldl (fun n d => if d.severity == .error then n + 1 else n) 0
+
+/-- The HTML face of the boundary: each drawn picture converts once, at the
+boundary too, by pinned `pdftocairo -svg` into an asset beside the page
+(the font-shipping shape), and the store's `href` points the `<img>` at
+it. `pdftocairo` missing or failing is W0378 for this artifact only — the
+PDF is unaffected — and the page then shows the picture's text
+alternative. -/
+def picsToSvg (ui : Ui) (htmlPath : String) (pics : Array PicResult)
+    (imgs : Image.Store) : IO (Image.Store × Array Diag) := do
+  if pics.isEmpty then return (imgs, #[])
+  let t0 ← IO.monoMsNow
+  let assetsDir := ((System.FilePath.mk htmlPath).fileStem.getD "out") ++ ".assets"
+  let dir := ((System.FilePath.mk htmlPath).parent.getD ".") / assetsDir
+  IO.FS.createDirAll dir
+  let mut entries := imgs.entries
+  let mut diags : Array Diag := #[]
+  let mut converted := 0
+  for r in pics do
+    let hash := (r.src.drop Ir.picSrcPrefix.length).toString
+    let svgName := hash ++ ".svg"
+    let svgPath := dir / svgName
+    let ok ← do
+      if ← svgPath.pathExists then pure true
+      else
+        try
+          let out ← IO.Process.output { cmd := "pdftocairo"
+                                        args := #["-svg", r.cached.toString,
+                                          svgPath.toString] }
+          if out.exitCode == 0 then pure true
+          else do
+            diags := diags.push (DriverDiag.boundarySvgMissing
+              s!"exit code {out.exitCode}")
+            pure false
+        catch e =>
+          diags := diags.push (DriverDiag.boundarySvgMissing (toString e))
+          pure false
+    if ok then
+      converted := converted + 1
+      entries := entries.map fun en =>
+        if en.src == r.src then { en with href := assetsDir ++ "/" ++ svgName }
+        else en
+  if converted > 0 then
+    ui.phase "boundary-svg" s!"{converted} pictures ({assetsDir})" (← since t0)
+  return ({ entries }, diags)
 
 /-- Read and decode the file, then run the front end, reporting phases.
 Returns the document, all diagnostics, and whether reading itself failed. -/
@@ -533,7 +704,12 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let names := ", ".intercalate (fs.fonts.toList.map (·.psName))
       ui.phase "font" s!"{names} ({paths})" (← since t)
       let t ← IO.monoMsNow
-      let (imgs, imgDiags) ← loadImages file doc
+      let (pics, picDiags) ← resolvePictures ui doc
+      let rB ← ui.resolve doc.allow allowAll picDiags
+      fired := fired ++ rB.fired
+      accepted := accepted ++ rB.accepted
+      warnings := warnings + rB.warnings
+      let (imgs, imgDiags) ← loadImages file doc pics
       let r2 ← ui.resolve doc.allow allowAll imgDiags
       fired := fired ++ r2.fired
       accepted := accepted ++ r2.accepted
@@ -602,6 +778,14 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           | .bulma => HtmlDoc.CssMode.bulma
           | .none => HtmlDoc.CssMode.none
         let htmlPath := outPath ui.cfg.output outIsDir file .html
+        -- The boundary pictures' HTML face: the cached PDFs convert to
+        -- SVG assets beside the page, and the store's hrefs point at
+        -- them (`picsToSvg`; W0378 names a converter this host lacks).
+        let (imgs, svgDiags) ← picsToSvg ui htmlPath pics imgs
+        let rS ← ui.resolve doc.allow allowAll svgDiags
+        fired := fired ++ rS.fired
+        accepted := accepted ++ rS.accepted
+        warnings := warnings + rS.warnings
         -- The artifact ships the faces the document resolved, as the PDF
         -- embeds them — unless the document declared its `css =` story
         -- (the site port's `css = own`): then its stylesheet owns fonts

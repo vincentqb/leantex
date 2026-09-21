@@ -1973,7 +1973,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   -- cannot render is named per construct instead of dropped whole; an
   -- all-refused picture adds the placeholder's W0362.
   t "elab tikzpicture no longer earns the blanket W0307"
-    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0362"] &&
+    (warnCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["W0379", "W0362"] &&
      errCodes "\\begin{tikzpicture}\\draw (0,0);\\end{tikzpicture}" == ["E0333"])
   -- The boundary is named, never silent — for the option bracket too: a
   -- picture option outside the subset is W0334, an unusable value inside
@@ -1981,7 +1981,7 @@ def elabDocChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "elab picture option outside the subset is named"
     (warnCodes
       "\\begin{tikzpicture}[banana]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}"
-      == ["W0334"])
+      == ["W0334", "W0379"])
   t "elab picture scale that cannot hold is named"
     (errCodes
       "\\begin{tikzpicture}[scale=0]\\fill (0,0) rectangle (1,1);\\end{tikzpicture}"
@@ -2246,7 +2246,7 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
       some #[.rect cm cm cm cm Ir.Color.black])
   t "a construct outside the subset is W0334, and the rest still draws"
     (warnCodes (wrap "\\draw (0,0) circle (1);\\fill (0,0) rectangle (1,1);") ==
-        ["W0334"] &&
+        ["W0334", "W0379"] &&
       (picOf (wrap "\\draw (0,0) circle (1);\\fill (0,0) rectangle (1,1);")).map
         (·.shapes.size) == some 1)
   t "a zero-step range is E0333, not a hang"
@@ -2266,7 +2266,7 @@ def pictureElabChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "an unknown macro is E0333"
     (errCodes (wrap "\\fill (\\nope,0) rectangle (1,1);") == ["E0333"])
   t "an unsupported node option loses only the option"
-    (warnCodes (wrap "\\node[ellipse] at (1,1) {x};") == ["W0334"] &&
+    (warnCodes (wrap "\\node[ellipse] at (1,1) {x};") == ["W0334", "W0379"] &&
       (picOf (wrap "\\node[ellipse] at (1,1) {x};")).map (·.shapes.size) == some 1)
   -- Node outlines: circle/rectangle with draw/fill and a declared minimum
   -- (pgf manual §"Shapes": extent = max(minimum, text + 2·inner sep);
@@ -2289,7 +2289,7 @@ minimum width=10mm, minimum height=6mm] at (1,1) {x};")).map (·.shapes) ==
           (some Ir.Color.white),
         .label cm cm #[.text "x"] Ir.Color.black 1000 .center]))
   t "a drawn node without a minimum names the loss and keeps its label"
-    (warnCodes (wrap "\\node[circle, draw] at (0,0) {x};") == ["W0334"] &&
+    (warnCodes (wrap "\\node[circle, draw] at (0,0) {x};") == ["W0334", "W0379"] &&
       (picOf (wrap "\\node[circle, draw] at (0,0) {x};")).map (·.shapes.size) == some 1)
   t "a shape option without draw or fill draws nothing and warns nothing"
     ((elabStr (wrap "\\node[circle, minimum size=8mm] at (0,0) {x};")).2.isEmpty &&
@@ -2355,7 +2355,7 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
           | .edge segs _ _ => segs == #[.line 0 0 cm cm]
           | _ => false) == some true)
   t "a to with only one tangent names the loss and draws straight"
-    (warnCodes (wrap "\\draw (0,0) to[out=90] (1,1);") == ["W0334"] &&
+    (warnCodes (wrap "\\draw (0,0) to[out=90] (1,1);") == ["W0334", "W0379"] &&
       (picOf (wrap "\\draw (0,0) to[out=90] (1,1);")).map (·.shapes.size) == some 1)
   t "a mid-path node labels the segment at its midpoint"
     ((picOf (wrap "\\draw (0,0) -- node {mid} (2,0);")).map (fun p =>
@@ -2374,7 +2374,7 @@ minimum size=8mm] at (0,0) {x};")).map (·.shapes[0]?) ==
         | _ => false) == some true)
   t "one construct looped forty times is one diagnostic, not forty"
     (warnCodes (wrap "\\foreach \\x in {1,...,40}{\\draw (\\x,0) circle (1);}") ==
-      ["W0334", "W0362"])
+      ["W0334", "W0379", "W0362"])
   t "an empty tikzpicture ships no block and no diagnostic"
     ((elabStr (wrap "")).2.isEmpty && (picOf (wrap "")).isNone)
 
@@ -2897,3 +2897,65 @@ def footnoteChecks (ref : IO.Ref (List String)) : IO Unit := do
        ((Ir.blocksText doc.body).splitOn "an aside").length == 2)
   t "a footnote in an article stays silent on W0374"
     ((dvE (dvDoc "" "x\\footnote{y}")).all (·.code != "W0374"))
+
+/-- The TikZ boundary's elaboration half: with a declared tool, a picture
+outside the rendered subset becomes a request on the IR (`Ir.pictureRefs`,
+the `bibRefs` shape) and an image node the driver fulfils; without one the
+constructs stay refused and W0379 names the door. The wrapped standalone
+carries the preamble's closed list; the request is a pure function of the
+document (`boundary_request_deterministic` by that purity — checked here
+as bytewise agreement across two runs). -/
+def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let pic := "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}"
+  let door := "\\pictures{ tool = lualatex }\n\\usetikzlibrary{arrows}\n" ++
+    "\\tikzset{zz/.style={}}\n\\usepackage{pgfplots}\n"
+  let (doc, ds) := elabStr (dvDoc door pic)
+  t "the door opens: the declared tool rides the IR"
+    (doc.pictureTool == some "lualatex")
+  t "a refused picture becomes one request"
+    (doc.pictureSrcs.size == 1 && (Ir.pictureRefs doc).size == 1)
+  t "the request's image node stands where the picture stood"
+    ((Ir.imageRefs doc).any (·.startsWith Ir.picSrcPrefix))
+  t "N0023 names the boundary, once, and nothing warns W0334"
+    ((ds.filter (·.code == "N0023")).size == 1 &&
+     ds.all (·.code != "W0334") && ds.all (·.code != "W0379"))
+  t "the wrapped standalone carries the closed list"
+    (match doc.pictureSrcs[0]? with
+     | some (_, w) =>
+       hasStr w "\\documentclass{standalone}" && hasStr w "\\usepackage{tikz}" &&
+       hasStr w "\\usetikzlibrary{arrows}" && hasStr w "\\tikzset{zz/.style={}}" &&
+       hasStr w "\\usepackage{pgfplots}" && hasStr w "\\draw (0,0) circle (1);"
+     | none => false)
+  t "the set lines are the boundary's: no W0301 for them"
+    (ds.all (·.code != "W0301"))
+  -- Determinism by purity: two elaborations of one document state
+  -- byte-identical requests, so the cache key means something.
+  t "the request is deterministic"
+    (doc.pictureSrcs == (elabStr (dvDoc door pic)).1.pictureSrcs)
+  -- TikZ's own spelling opens the same door with the pinned default.
+  t "tikzexternalize is the LaTeX-shaped door"
+    ((elabStr (dvDoc "\\usepackage{tikz}\\tikzexternalize\n" pic)).1.pictureTool
+      == some "lualatex")
+  -- A picture the subset draws whole stays native: the boundary is for
+  -- what the subset refuses, never a detour for what the engine owns.
+  let native := (elabStr (dvDoc "\\pictures{ tool = lualatex }\n"
+    "\\begin{tikzpicture}\\fill (0,0) rectangle (1,1);\\end{tikzpicture}")).1
+  t "an in-subset picture never routes to the boundary"
+    (native.pictureSrcs.isEmpty &&
+     native.body.any fun b => match b with | .picture _ => true | _ => false)
+  -- The closed door: the constructs stay refused and W0379 names the one
+  -- declaration that would draw them.
+  let (closedDoc, closedDs) := elabStr (dvDoc "" pic)
+  t "door closed: W0334 stays and W0379 names the door"
+    (closedDs.any (·.code == "W0334") && closedDs.any (·.code == "W0379") &&
+     closedDoc.pictureSrcs.isEmpty)
+  -- An unpinned tool is refused: the driver executes the named binary, so
+  -- the value is drawn from the engine's own list, never the document's.
+  let (badDoc, badDs) := elabStr (dvDoc "\\pictures{ tool = rm }\n" pic)
+  t "an unpinned tool is refused by name and the door stays closed"
+    (badDs.any (·.code == "E0321") && badDoc.pictureTool.isNone)
+  -- A pruned picture asks for nothing: the request follows the tree, as a
+  -- pruned bibliography's does.
+  t "pictureRefs follows the shipped tree"
+    ((Ir.pictureRefs { pictureSrcs := #[("h", "src")] } : Array _).isEmpty)

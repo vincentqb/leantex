@@ -289,7 +289,15 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
   | .W0362 => dvE (dvDoc "" ("\\begin{tikzpicture}\n" ++
       "\\shade (0,0) rectangle (1,1);\n\\end{tikzpicture}"))
   | .W0602 => #[DriverDiag.imageUndecodable "figures/plot.gif"
-      "not a PNG or JPEG file"]
+      "not a PNG, JPEG, or PDF file"]
+  | .N0023 => dvE (dvDoc "\\pictures{ tool = lualatex }\n"
+      "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
+  | .W0379 => dvE (dvDoc ""
+      "\\begin{tikzpicture}\\draw (0,0) circle (1);\\end{tikzpicture}")
+  | .W0378 => #[DriverDiag.boundaryToolMissing "lualatex" "not found",
+      DriverDiag.boundaryFailed "lualatex"
+        "! Undefined control sequence. · l.7 \\nope",
+      DriverDiag.boundarySvgMissing "not found (error code: 2)"]
   | .W0349 => dvE "\\ref{nowhere}"
   | .W0350 => dvE "\\section{A}\\label{twice}\\label{twice}"
   | .W0356 =>

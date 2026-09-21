@@ -331,6 +331,55 @@ private def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat
     | _ => break
   return (out, j)
 
+/-- The boundary's set-line vocabulary: with a declared boundary tool these
+preamble lines are the standalone's, collected as written and consumed
+silently — the real TikZ reads them where the engine's subset cannot. -/
+def boundaryCtrls : List String :=
+  ["usetikzlibrary", "tikzset", "gtrset", "pgfplotsset", "definecolor"]
+
+/-- The preamble declarations a boundary standalone needs, collected from
+the *unrewritten* tree — the compat rewrite folds `\definecolor` into the
+palette and drops package loads, so collection precedes it. Every
+non-native `\usepackage` rides with its options (pgfplots, genealogytree,
+circuitikz — whatever the pictures need), and each closed-list set line is
+reconstructed as written. Pure and total; `\input` wrappers splice open in
+place, as `scanDecls` opens them. -/
+def boundaryDecls (raws0 : Array Raw) : String := Id.run do
+  let mut raws := raws0
+  let mut out := ""
+  let mut i := 0
+  repeat
+    if h : i < raws.size then
+      match raws[i] with
+      | .env "document" _ _ => break
+      | .env n wrapped _ =>
+        if (Parse.inputEnvFile? n).isSome then
+          raws := raws.extract 0 i ++ wrapped ++ raws.extract (i + 1) raws.size
+        else
+          i := i + 1
+      | .ctrl name _ =>
+        if name == "usepackage" || name == "RequirePackage" then
+          let (opt, j) := takeOpt raws (i + 1)
+          let (args, k) := takeGroups raws j 1
+          let pkgs := ((rawSrc (args.getD 0 #[])).splitOn ",").map (·.trimAscii.toString)
+            |>.filter (fun p => !p.isEmpty && !nativePackages.contains p)
+          if !pkgs.isEmpty then
+            let o := match opt with | some o => s!"[{o}]" | none => ""
+            out := out ++ s!"\\usepackage{o}\{{String.intercalate "," pkgs}}\n"
+          i := max k (i + 1)
+        else if boundaryCtrls.contains name then
+          let n := if name == "definecolor" then 3 else 1
+          let (args, k) := takeGroups raws (i + 1) n
+          out := out ++ s!"\\{name}" ++
+            String.join (args.toList.map fun g => s!"\{{rawSrc g}}") ++ "\n"
+          i := max k (i + 1)
+        else
+          i := i + 1
+      | _ => i := i + 1
+    else
+      break
+  return out
+
 /-- The `*` of a starred LaTeX form, standing between the command and its
 arguments. In LaTeX the star on the definers (`\newcommand*` and siblings)
 makes the arguments "short" — `\par` is forbidden in them (LaTeX2e
