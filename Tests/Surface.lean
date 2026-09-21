@@ -1240,13 +1240,19 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "compat expl3 is skipped whole"
     (warnCodes (pre "\\ExplSyntaxOn \\cs_new:Npn \\x { } \\ExplSyntaxOff") == ["W0106"])
   -- Inert commands vanish from the output but never wordlessly: a drop
-  -- that is the construct's whole meaning is a note (\relax), one the
-  -- engine simply does not act on is the guard's W0387 (\noindent) —
-  -- rewriteCtrl_accounts is the contract.
+  -- that is the construct's whole meaning is a note (\relax; \noindent,
+  -- which asks for the no-indent every paragraph here already has), one
+  -- the engine simply does not act on is the guard's W0387
+  -- (\thispagestyle{plain}) — rewriteCtrl_accounts is the contract.
   t "compat inert commands vanish, accounted"
-    (let ds := (elabStr "a\\noindent\\relax b").2
+    (let ds := (elabStr "a\\noindent\\relax\\thispagestyle{plain} b").2
      ds.all (fun d => d.code == "N0100" || d.code == "W0387") &&
-     ds.any (fun d => d.code == "W0387") && ds.any (fun d => d.code == "N0100"))
+     ds.any (fun d => d.code == "W0387") &&
+     (ds.filter (·.code == "N0100")).size == 2)
+  t "compat noindent is agreement, never the guard's W0387"
+    (let ds := (elabStr (dvDoc "" "\\noindent x")).2
+     ds.all (·.code != "W0387") &&
+     ds.any (fun d => d.code == "N0100" && hasStr d.message "noindent"))
   -- The silent list is only for constructs that change nothing the engine
   -- models; one that does (justification, hyphenation language, furniture)
   -- must name its loss instead of vanishing — or, once implemented, map.
@@ -1425,7 +1431,7 @@ def compatChecks (ref : IO.Ref (List String)) : IO Unit := do
     (warnCodes (pre "\\RedeclareSectionCommand[font=\\large]{section}") == ["W0101"])
   t "compat silence guard warns W0387 once per name"
     (warnCodes ("\\documentclass{article}\\thispagestyle{plain}\\begin{document}" ++
-      "\\noindent a \\noindent b\\end{document}") == ["W0387", "W0387"])
+      "a \\thispagestyle{plain} b\\end{document}") == ["W0387"])
   t "compat relax and makeatletter earn their silence as notes"
     (let ds := (elabStr (pre "\\makeatletter\\relax\\makeatother")).2
      ds.all (·.severity != .warning) && (ds.filter (·.code == "N0100")).size ≥ 3)

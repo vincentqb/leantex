@@ -85,19 +85,23 @@ the engine sets uniformly either way; `nointerlineskip` suppresses
 interline glue that is never accumulated here; lineno's `linenomath`
 pair wraps displays that are numbered like every galley line already
 (the recorded divergence in tests/compat-index/lineno.txt);
-`selectfont` commits NFSS declarations that apply where they stand here.
-An entry whose drop is NOT its full meaning carries `none` — `noindent`
-(a first-line indent ask, the paragraph model's to answer when a
-first-line indent exists to suppress): it stays consumed, and the
-dispatcher's guard names it (W0387, `\allow`-acceptable) instead of
-this table earning it silence it has not paid for. Table rules
+`selectfont` commits NFSS declarations that apply where they stand here;
+`noindent` suppresses a first-line indent no paragraph here carries —
+paragraphs are set space-separated, with no indent in any class
+(`Ir.Block.quote` records the same fact for `\listparindent`), so the
+ask is met before it is made; were a first-line indent ever declared,
+this entry would become an arm emitting the paragraph's suppression.
+An entry whose drop is NOT its full meaning carries `none`: it stays
+consumed, and the dispatcher's guard names it (W0387,
+`\allow`-acceptable) instead of this table earning it silence it has
+not paid for — no entry needs that today. Table rules
 (`midrule`, `toprule`, …) are NOT here: they are the table elaborator's
 vocabulary and must reach it. -/
 def meaningFree : List (String × Nat × Option String) :=
   [("makeatletter", 0, some "@-names are always readable here"),
    ("makeatother", 0, some "@-names are always readable here"),
    ("relax", 0, some "it means do nothing"),
-   ("noindent", 0, none),
+   ("noindent", 0, some "no paragraph carries a first-line indent here"),
    ("nointerlineskip", 0,
     some "vertical space is declared per block, never accumulated interline glue"),
    ("frenchspacing", 0, some "inter-sentence space is uniform here either way"),

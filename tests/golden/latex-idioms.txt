@@ -115,10 +115,12 @@ note[N0100] 45:1 '\setlist[itemize]' → \style{itemize}{ indent = 1.2em, before
 note[N0100] 46:1 '\thispagestyle{empty}' → \runninghead[from = 2]{...}
 note[N0100] 48:1 '\NewDocumentCommand{\dotsep}' → \define \dotsep() {...}
 note[N0100] 49:1 '\NewDocumentCommand{\role}' → \define \role(a1: content, a2: content, a3: content, a4?: content) {...}
-warning[W0387] 50:5 '\noindent' was read and had no effect | help: \allow{W0387} accepts the skip
+note[N0100] 50:5 '\noindent' → nothing: no paragraph carries a first-line indent here
 note[N0100] 50:56 '\color{muted}' → \muted
+note[N0100] 51:19 '\noindent' → nothing: no paragraph carries a first-line indent here
 note[N0100] 51:29 '\color{muted}' → \muted
 note[N0100] 53:1 '\newcommand{\degree}' → \define \degree(a1: content, a2: content) {...}
+note[N0100] 53:25 '\noindent' → nothing: no paragraph carries a first-line indent here
 note[N0100] 54:1 '\makeatletter' → nothing: @-names are always readable here
 note[N0100] 55:1 '\makeatother' → nothing: @-names are always readable here
 note[N0100] 58:1 '\color{primary}' → \primary

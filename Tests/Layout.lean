@@ -215,6 +215,14 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   t "tilde does not break the line" (widthOf "a~b" == widthOf "a\u00a0b")
   t "escaped tilde is a literal tilde"
     ((Elab.run "t" "a\\~b").1.body == #[.para #[.text "a~b"]])
+  -- `\noindent` asks for what every paragraph here already has — no
+  -- first-line indent, in any class — so its arm answers with a note and
+  -- the page shows the first line at the margin with it and without it.
+  let firstX (src : String) : Option Dim.Sp :=
+    ((bodyLines (layoutOf oneFace (Elab.run "t" src).1 geom))[0]?).map (·.x)
+  t "noindent's first line stands at the margin, as every first line does"
+    (firstX "\\noindent alpha beta" == some geom.hmargin &&
+     firstX "alpha beta" == some geom.hmargin)
 
   -- Small caps on a face without smcp+c2sc are synthesised UNIFORM: every
   -- letter its capital form, the whole word at one reduced size — mixed
