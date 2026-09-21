@@ -539,6 +539,18 @@ structure LineOut where
   the furniture band — marked so the census can tell the note apparatus
   from the flow structurally. -/
   note : Bool := false
+  /-- A counted body line: a text line the paragraph pipeline laid in the
+  galley, outside any float — what `\page{ linenumbers = on }`'s margin
+  numbers attach to. The scope is lineno's own (lineno.sty, the
+  introduction: "line numbers on paragraphs", attached by the output
+  routine to the lines of every paragraph of the main text): paragraphs,
+  headings, list items and display math are all galley paragraph lines
+  here — display math is numbered like every line, where lineno's default
+  linenomath does not (the recorded divergence,
+  tests/compat-index/lineno.txt) — while a float's caption and body (a
+  floated box, not galley lines), footnotes (insertions), bare rule ink,
+  picture labels and furniture are not counted. -/
+  counted : Bool := false
   deriving Repr, Inhabited
 
 /-- A filled rectangle behind a page's text: the page background, a frame
@@ -1479,6 +1491,10 @@ private def docScalarAcc (doc : Doc) : ScalarAcc := Id.run do
     -- The class-default plain foot ships digits nobody declared: the
     -- precompute must cover them exactly as it covers a declared
     -- `\pagenumber`'s.
+    acc := { acc with texts := acc.texts.push "0123456789" }
+  if doc.lineNumbersOn then
+    -- Margin line numbers ship digits the same way: engine-generated
+    -- text the fallback scan must cover before layout asks a face.
     acc := { acc with texts := acc.texts.push "0123456789" }
   for (_, st) in doc.styles.entries do
     if let some tpl := st.font then
@@ -3859,7 +3875,7 @@ discarded as TeX discards glue at the top of a page. Glue is never
 stretched: the bottom is ragged. -/
 private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Array Seg)
     (w : Sp) (hang : Sp := 0) (expand : Int := 0)
-    (notes : Array NoteBlock := #[]) : B :=
+    (notes : Array NoteBlock := #[]) (counted : Bool := false) : B :=
   let box := lineExtent fs b.geom.fontSize b.ascent b.capHeight b.descent
     b.geom.leading size segs
   let rl := ruleOnly segs
@@ -3876,7 +3892,7 @@ private def B.placeLine (fs : FontSet) (b : B) (x : Sp) (size : Sp) (segs : Arra
   let bottom := noteFloor b.geom b.footins (b.notesH + need)
   let mk (y : Sp) : LineOut :=
     { x := x, y := y, size := size, segs := segs, setWidth := w
-      hang := hang, expand := expand }
+      hang := hang, expand := expand, counted := counted }
   -- The first baseline is the body top plus the larger of the body's
   -- metric ascent and the line's own leaded above (`first_baseline_declared`).
   b.fitCommit mk
@@ -4018,6 +4034,10 @@ private structure ParaJob where
   its mark's box, so placement can hand a line exactly the notes whose
   marks it carries. -/
   notes : Array (Nat × NoteBlock) := #[]
+  /-- The paragraph stands inside a float: its lines are box content, not
+  galley lines, and the line-number census must not count them
+  (`LineOut.counted`). -/
+  inFloat : Bool := false
 
 /-- The block walk emits vertical skips and paragraph jobs; placement replays
 them in document order, so the page builder stays sequential and the output
@@ -4114,6 +4134,10 @@ private structure Rd where
   /-- The document's loaded images, from the driver: layout only measures
   and places them; the bytes ride to the backends. -/
   imgs : Image.Store := {}
+  /-- The walk is inside a float: every paragraph collected here is box
+  content, marked uncounted for the line-number census (`ParaJob.inFloat`,
+  `LineOut.counted`). -/
+  inFloat : Bool := false
 
 /-- The threaded state of the block walk, now only what the walk actually
 writes; everything it merely reads rides in `Rd`, passed to every
@@ -4399,7 +4423,8 @@ private def collectPara (r : Rd) (a : Acc)
       protrude := r.geom.protrude
       expand := r.geom.expand
       markerSegs := markerSegs, markerIndent := markerIndent, rule := rule
-      notes := noteBlocks }) }
+      notes := noteBlocks
+      inFloat := r.inFloat }) }
 
 /-- The weight of a heading's declared rule: 0.06 em of the base — the
 0.6 pt the engine shipped at the 10 pt base where it was picked, now
@@ -5342,6 +5367,10 @@ private def collectBlock (r : Rd) (a : Acc)
     let capSep := r.resolve ((a.tokens.find? "captionsep").getD
       (Ir.captionSepDefault r.geom.fontSize))
     let a := a.pushOp .floatOpen
+    -- The float's caption and body are box content, not galley lines: the
+    -- sub-walk runs under a marked reader so no line of them is counted
+    -- by the line-number census (`Rd.inFloat`).
+    let rf := { r with inFloat := true }
     -- classes.dtx `\@makecaption`: a caption that fits one line centres; a
     -- longer one sets as an ordinary paragraph.
     let setCaption (a : Acc) : Acc :=
@@ -5352,12 +5381,12 @@ private def collectBlock (r : Rd) (a : Acc)
           a.hyphCache r.imgs avail r.geom.textHeight
       let a := { a with hyphCache := cache }
       let fits := itemsNaturalWidth items ≤ avail
-      collectPara r a caption indent fits r.geom.fontSize
+      collectPara rf a caption indent fits r.geom.fontSize
     let a := (floatPlan capAbove (!caption.isEmpty) floatSep capSep).foldl
       (fun a slot => match slot with
         | .gap g => a.addvspace g
         | .caption => setCaption a
-        | .object => collectCentered r a body.toList indent) a
+        | .object => collectCentered rf a body.toList indent) a
     a.pushOp .floatClose
   | .frame title standout valign body =>
     -- A frame is a page boundary, not an article paragraph. Content past
@@ -5838,7 +5867,8 @@ private def placeParaLine (fs : FontSet) (j : ParaJob)
   let ns := if j.notes.isEmpty then #[] else
     (j.notes.filter fun n => (st.2.2 || st.2.1 < n.1) && n.1 < brk).map (·.2)
   (placeParaTrailer fs j brk g.1
-    (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns), brk, false)
+    (b1.placeLine fs g.2.1 j.size g.1 g.2.2.1 g.2.2.2.2.1 g.2.2.2.2.2 ns
+      (counted := !j.inFloat)), brk, false)
 
 private def placePara (fs : FontSet) (b : B) (j : ParaJob) (breaks : Array Nat) : B :=
   (breaks.foldl (placeParaLine fs j)
@@ -6428,33 +6458,33 @@ private theorem placePicture_noBreak (fs : FontSet) (imgs : Image.Store)
        done)
 
 private theorem placeLine_extends (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) :
-    PagesExtend b (b.placeLine fs x size segs w hang ex ns) := by
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool) :
+    PagesExtend b (b.placeLine fs x size segs w hang ex ns c) := by
   simp only [B.placeLine]
   exact fitCommit_extends ..
 
 /-- Under `noBreak` a placed line never closes a page and never clears
 the flag: the group's one legal position has already been decided. -/
 private theorem placeLine_pages_noBreak (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock)
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns).pages = b.pages := by
+    (b.placeLine fs x size segs w hang ex ns c).pages = b.pages := by
   simp only [B.placeLine]
   exact fitCommit_pages_noBreak (h := h) ..
 
 private theorem placeLine_keeps_noBreak (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock)
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (h : b.noBreak = true) :
-    (b.placeLine fs x size segs w hang ex ns).noBreak = true := by
+    (b.placeLine fs x size segs w hang ex ns c).noBreak = true := by
   simp only [B.placeLine]
   exact fitCommit_keeps_noBreak (h := h) ..
 
 /-- `footnote_with_mark`'s attach half: `fitCommit_note_with_mark` at
 `placeLine`'s band. -/
 private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock)
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool)
     (nb : NoteBlock) (hnb : nb ∈ ns) (l : LineOut) (hl : l ∈ nb.lines) :
-    ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns).pendingNotes,
+    ∃ l' ∈ (b.placeLine fs x size segs w hang ex ns c).pendingNotes,
       l'.segs = l.segs := by
   simp only [B.placeLine]
   exact fitCommit_note_with_mark (hnb := hnb) (hl := hl) ..
@@ -6463,8 +6493,8 @@ private theorem placeLine_note_with_mark (fs : FontSet) (b : B) (x size : Sp)
 extends `b0`'s shipped pages. -/
 private theorem placeLine_extends' (fs : FontSet) (b0 b1 : B)
     (hp : b1.pages = b0.pages) (x size : Sp) (segs : Array Seg) (w hang : Sp)
-    (ex : Int) (ns : Array NoteBlock) :
-    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns) :=
+    (ex : Int) (ns : Array NoteBlock) (c : Bool) :
+    PagesExtend b0 (b1.placeLine fs x size segs w hang ex ns c) :=
   pagesExtend_trans (pagesExtend_of_eq hp) (placeLine_extends ..)
 
 private theorem placeParaLine_extends (fs : FontSet) (j : ParaJob)
@@ -6637,8 +6667,8 @@ private theorem bgStep_fitCommit (b : B) (mk : Sp → LineOut)
        done)
 
 private theorem bgStep_placeLine (fs : FontSet) (b : B) (x size : Sp)
-    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) :
-    BgStep b (b.placeLine fs x size segs w hang ex ns) := by
+    (segs : Array Seg) (w hang : Sp) (ex : Int) (ns : Array NoteBlock) (c : Bool) :
+    BgStep b (b.placeLine fs x size segs w hang ex ns c) := by
   simp only [B.placeLine]
   exact bgStep_fitCommit ..
 
@@ -6900,6 +6930,19 @@ private def runPost (sh : Shipped) : Out := Id.run do
   -- margin, so it never disturbs the body it annotates.
   let total := pages.size
   let furnGround := doc.palette.find? "bg"
+  -- Margin line numbers (`\page{ linenumbers = on }`): furniture in the
+  -- muted role at the footnotesize step, laid here where the head and
+  -- foot are — engine-placed margin ink, never body flow. The column
+  -- right-aligns left of the measure: a declared `furnituregap` is exact
+  -- — the gap from the number's ink to the measure edge — and the
+  -- undeclared column hangs from half the margin, `furnEdge`'s own
+  -- default convention turned sideways.
+  let lineNumbersOn := doc.lineNumbersOn
+  let lineModulo := doc.lineModulo
+  let numSize := Ir.scaleStep geom.fontSize "footnotesize"
+  let numRight := match doc.page.furnitureGap with
+    | some g => geom.hmargin - g
+    | none => geom.hmargin / 2
   let runLine (content : Array Inline) (n : Nat) (y size : Sp) (baseStyle : TextStyle)
       (cache : _) :
       Option LineOut × Array Diag × _ :=
@@ -6984,11 +7027,33 @@ private def runPost (sh : Shipped) : Out := Id.run do
               y := geom.pageH - geom.vmargin
               size := geom.fontSize, segs := segs, setWidth := w }, ds, c)
   let furnishPage (i : Nat) (page : PageOut)
-      (st0 : Array Diag × Std.HashMap String (Array Nat)) :
-      Array LineOut × Array Diag × Std.HashMap String (Array Nat) := Id.run do
+      (st0 : Array Diag × Std.HashMap String (Array Nat) × Nat) :
+      Array LineOut × Array Diag × Std.HashMap String (Array Nat) × Nat := Id.run do
     let mut diags := st0.1
-    let mut cache := st0.2
+    let mut cache := st0.2.1
+    let mut count := st0.2.2
     let mut lines := page.lines
+    -- The margin line numbers, one per counted body line at its own
+    -- baseline, counting consecutively across pages from 1 — the count
+    -- advances on every counted line, and the modulus only filters what
+    -- prints (lineno's \modulolinenumbers, the user-commands section).
+    if lineNumbersOn then
+      for l in page.lines do
+        if l.counted then
+          count := count + 1
+          if count % lineModulo == 0 then
+            let (items, ds, c, _) :=
+              itemsOfInlines pats numSize xHeight fs
+                { color := mutedC, ground := furnGround }
+                #[.text (toString count)] cache imgs geom.textWidth geom.textHeight
+            diags := diags ++ ds
+            cache := c
+            let breaks := kp items geom.textWidth
+            if let some brk := breaks[0]? then
+              let (segs, w, _) := setLine items (lineStart items 0) brk
+                geom.textWidth false
+              lines := lines.push { x := numRight - w, y := l.y, size := numSize
+                                    segs := segs, setWidth := w, furniture := true }
     -- Pages before a declaration's own `from` carry none of it: an opening
     -- page reads as a title page, not as page one of a run. Each gate is
     -- the physical-page model's and each declaration's own
@@ -7058,8 +7123,8 @@ slot yields in place: shorten the content or drop a slot"))
           diags := diags ++ ds
           cache := c
           if let some l := l? then lines := lines.push { l with furniture := true }
-    return (lines, diags, cache)
-  let fout := furnishFrom furnishPage pages (sh.diags, sh.hyphCache) 0
+    return (lines, diags, cache, count)
+  let fout := furnishFrom furnishPage pages (sh.diags, sh.hyphCache, 0) 0
   let out := fout.1
   let diags := fout.2.1
   -- One report per problem: the same missing glyph or overfull shape in

@@ -411,7 +411,7 @@ def pageKeys : List String :=
   ["size", "width", "height", "margin", "vmargin", "hmargin",
    "textwidth", "textheight", "leading", "parskip",
    "measure", "fontsize", "bleed", "hyphenate", "justify", "protrusion",
-   "expansion", "numbers", "marks", "mark-gap", "mark-thickness",
+   "expansion", "numbers", "marks", "mark-gap", "mark-thickness", "linenumbers", "modulo",
    "furnituregap", "headsep", "footskip"]
 
 /-- The `\page` keys that declare the page's physical extent. Exactly these
@@ -8414,6 +8414,19 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
       | "off" | "false" => spec := { spec with numbers := some false }
       | _ =>
         evs := say evs .E0323 s!"'numbers' in '\\page' expects on or off, got '{v}'"
+    -- Margin line numbers: a declared page feature (the obligation-table
+    -- rule), lineno's \linenumbers natively. `modulo` beside it prints
+    -- only multiples while counting every line, lineno's
+    -- \modulolinenumbers[n].
+    | "linenumbers", .ident v =>
+      match v with
+      | "on" | "true" => spec := { spec with linenumbers := some true }
+      | "off" | "false" => spec := { spec with linenumbers := some false }
+      | _ =>
+        evs := say evs .E0323 s!"'linenumbers' in '\\page' expects on or off, got '{v}'"
+    | "modulo", .int n =>
+      if n ≥ 1 then spec := { spec with lineModulo := some n.toNat }
+      else evs := say evs .E0323 "'modulo' in '\\page' expects a count of at least 1"
     -- The furniture gaps: the native key speaks in ink terms and sets both
     -- sides; the LaTeX spellings carry their baseline semantics to the one
     -- correction site in Layout (`furnGapOfSep`).
@@ -8437,8 +8450,10 @@ private def applyPage (ctx : Ctx) (spec : PageSpec) (entries : Array Decl.Entry)
         let expected := if key == "size" then "a page size name"
           else if key == "measure" then "'checked' or 'free'"
           else if key == "marks" then "'cut' or 'none'"
+          else if key == "modulo" then "a count of at least 1"
           else if key == "hyphenate" || key == "justify" || key == "protrusion"
-            || key == "expansion" || key == "numbers" then "on or off"
+            || key == "expansion" || key == "numbers"
+            || key == "linenumbers" then "on or off"
           else "a dimension"
         evs := evs.push (.say (Decl.wrongType ctx.file "page" key expected v pos))
       else

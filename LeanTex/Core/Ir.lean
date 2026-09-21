@@ -161,6 +161,18 @@ structure PageSpec where
   LaTeX's `plain` page style, spelled natively: `\page{ numbers = on }`
   is `\pagestyle{plain}`, `off` is `\pagestyle{empty}`'s number half. -/
   numbers : Option Bool := none
+  /-- Whether counted body lines carry margin line numbers — lineno's
+  `\linenumbers`, spelled natively `\page{ linenumbers = on }`. A declared
+  flag, never a default: no class turns it on. Only the paged artifact
+  draws the numbers — a line is a paged-media fact, and the HTML twin has
+  no fixed lines to number, so it emits nothing (the recorded divergence;
+  tests/compat-index/lineno.txt carries it too). -/
+  linenumbers : Option Bool := none
+  /-- Print only line numbers divisible by this modulus, still counting
+  every line — lineno's `\modulolinenumbers[n]`, whose counter initialises
+  to 5 (lineno.sty, the user-commands section). `none` prints every
+  counted line. -/
+  lineModulo : Option Nat := none
   /-- The body-side furniture gap, in ink terms: the distance from the
   running head's and foot's body-side ink edge to the body area — one knob,
   both sides, which is what makes a flipped stack line up
@@ -3781,6 +3793,20 @@ its class record's default (`ClassRecord.pageNumbers`). One resolving site,
 read by layout's furniture pass and the driver's glyph precompute alike. -/
 def Doc.pageNumbersOn (doc : Doc) : Bool :=
   doc.page.numbers.getD doc.docClass.record.pageNumbers
+
+/-- Whether counted body lines carry margin line numbers: the document's
+own declaration and nothing else — no class default turns line numbers
+on (the page key is a declared flag, never a default). One resolving
+site, read by layout's furniture pass and the driver's glyph precompute
+alike. -/
+def Doc.lineNumbersOn (doc : Doc) : Bool :=
+  doc.page.linenumbers.getD false
+
+/-- The line-number modulus in force: 1 — every counted line — unless
+declared. Floored at 1 so the printing test `count % modulus == 0` is
+meaningful for every declaration that reached the spec. -/
+def Doc.lineModulo (doc : Doc) : Nat :=
+  max 1 (doc.page.lineModulo.getD 1)
 
 /-- Render a symbolic glue the way it was declared, so goldens show intent
 rather than a resolved number. -/
