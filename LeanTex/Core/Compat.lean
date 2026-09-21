@@ -2027,7 +2027,7 @@ captions and patterns stand in" pos
         | none =>
           say .W0353 s!"bibliography style '{style}' is not one the engine \
 knows; the reference list is set as 'unsrtnat'" pos
-            (help := "styles known: unsrtnat, unsrt, plainnat, plain")
+            (help := "styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv")
           modify fun st => { st with bibStyle := some "unsrtnat" }
       else if let some spec := fontPackages.lookup p then
         -- carlito's `sfdefault` promotes its sans face to the body slot

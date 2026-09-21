@@ -2,13 +2,16 @@ import LeanTex.Core.Bib
 import LeanTex.Core.Ir
 
 /-! A bibliography style, decomposed the way biblatex decomposed `.bst`
-files: four independent pure choices — how a citation renders inline, how
+files: five independent pure choices — how a citation renders inline, how
 the reference list is ordered, which fields each entry type contributes in
-what order, and how a name is written. `unsrtnat` is one record of the
-four; `plainnat` is another over the same field orders; a style the engine
-does not know falls back to a record, never to a separate code path. The
-formats themselves transcribe plainnat.bst (Daly, natbib's companion
-style), which `unsrtnat.bst` shares verbatim minus the SORT pass. -/
+what order, the order a name is written in, and whether first names
+abbreviate to initials (the last two carried by `NameFormat`). `unsrtnat`
+is one record of the five; `plainnat` is another over the same field
+orders; `abbrvnat` and `abbrv` set only the abbreviation axis; a style the
+engine does not know falls back to a record, never to a separate code
+path. The formats themselves transcribe plainnat.bst (Daly, natbib's
+companion style), which `unsrtnat.bst` shares verbatim minus the SORT
+pass. -/
 
 namespace LeanTex.Core.Bib
 
@@ -79,10 +82,12 @@ inductive Field where
 /-- How one name is written, used by the inline citation style and the
 entry format alike. plainnat prints full first-first names in the list
 (`{ff~}{vv~}{ll}{, jj}`, plainnat.bst FUNCTION {format.names}) and last
-names inline, so both shipped styles share the defaults; `initials` and
-`lastFirst` are the axes abbrv-shaped and alpha-shaped styles would set. -/
+names inline; `initials` is the axis the abbrv styles set, `lastFirst`
+the one alpha-shaped styles would. -/
 structure NameFormat where
   lastFirst : Bool := false
+  /-- Abbreviate first names to initials — plain.bst's `{f.~}` designator,
+  the one axis `abbrv`/`abbrvnat` set. -/
   initials : Bool := false
   /-- Truncate a list longer than this to its first name and `et al.`;
   `none` keeps every name, as plainnat does. -/
@@ -377,6 +382,24 @@ def Style.plain : Style where
   order := standardOrder
   names := {}
 
+/-- The name format the abbrv-shaped styles share: first names abbreviate
+to initials, first-first order — `{f.~}{vv~}{ll}{, jj}` in both abbrv.bst
+and abbrvnat.bst FUNCTION {format.names}, so "J. Smith", never
+"Smith, J.". The one axis the abbrv pair sets; everything else is
+`plain`/`plainnat` verbatim. -/
+def abbrvNames : NameFormat := { initials := true }
+
+/-- `abbrvnat`: `plainnat` with abbreviated first names — natbib ships
+abbrvnat.bst as plainnat.bst minus only the name designator (natbib
+manual §4 lists the three companion styles as one family). -/
+def Style.abbrvnat : Style :=
+  { Style.plainnat with names := abbrvNames }
+
+/-- `abbrv`: `plain` with abbreviated first names, the same relation
+abbrv.bst has to plain.bst. -/
+def Style.abbrv : Style :=
+  { Style.plain with names := abbrvNames }
+
 /-- The style a `\bibliographystyle` name selects. `none` is W0353's cue;
 the caller falls back to `unsrtnat` — a record, so the fallback loses the
 name, never the machinery. -/
@@ -385,6 +408,8 @@ def Style.named (name : String) : Option Style :=
   | "unsrtnat" | "unsrt" => some .unsrtnat
   | "plainnat" => some .plainnat
   | "plain" => some .plain
+  | "abbrvnat" => some .abbrvnat
+  | "abbrv" => some .abbrv
   | _ => none
 
 /-! ## Resolution
@@ -851,7 +876,7 @@ def apply (sources : Array (String × String)) (doc : Ir.Doc) :
       | none =>
         diags := diags.push (Diag.of .W0353 s!"bibliography style '{name}' is not \
           one the engine knows; the reference list is set as 'unsrtnat'"
-          (help := "styles known: unsrtnat, unsrt, plainnat, plain"))
+          (help := "styles known: unsrtnat, unsrt, plainnat, plain, abbrvnat, abbrv"))
         pure Style.unsrtnat
   let cited := citedKeys doc
   let findEntry (k : String) : Option Entry := (entries.find? (·.key == k)).map id

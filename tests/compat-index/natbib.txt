@@ -28,4 +28,6 @@ body refuse:W0301 \citepalias{k}
 pre refuse:W0301 \setcitestyle{square}
 pre refuse:W0301 \bibpunct{(}{)}{;}{a}{,}{,}
 body impl \bibliographystyle{plainnat}
+body impl \bibliographystyle{abbrvnat}
+body impl \bibliographystyle{abbrv}
 body impl \bibliography{refs}

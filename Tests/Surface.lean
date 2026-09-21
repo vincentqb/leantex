@@ -2749,6 +2749,18 @@ def bibStyleChecks (ref : IO.Ref (List String)) : IO Unit := do
       ((Bib.Style.named "plain").map (fun s => (s.cite, s.sort)))
         == some (.numeric, .authorYear) &&
       (Bib.Style.named "mystery").isNone)
+  -- abbrvnat/abbrv: plainnat/plain with only the abbreviation axis set
+  -- (abbrvnat.bst and abbrv.bst FUNCTION {format.names}: `{f.~}{vv~}{ll}{, jj}`
+  -- where the plain pair has `{ff~}` — the one designator that differs).
+  t "bibstyle: abbrv styles differ from the plain pair only in the name axis"
+    (((Bib.Style.named "abbrvnat").map (fun s => (s.cite, s.sort, s.names)))
+        == some (.authorYear, .authorYear, { initials := true }) &&
+      ((Bib.Style.named "abbrv").map (fun s => (s.cite, s.sort, s.names)))
+        == some (.numeric, .authorYear, { initials := true }))
+  t "bibstyle: abbrv names are J. Smith, never Smith, J."
+    (Bib.abbrvNames.render (Bib.parseName "Smith, Jane") == "J. Smith" &&
+      Bib.abbrvNames.renderList "Smith, Jane and Doe, Alex B." ==
+        "J. Smith and A. B. Doe")
   t "bibstyle: initials and last-first are name-format axes"
     (({ initials := true } : Bib.NameFormat).render (Bib.parseName "Doe, Alex B.")
         == "A. B. Doe" &&
@@ -2819,6 +2831,13 @@ def bibApplyChecks (ref : IO.Ref (List String)) : IO Unit := do
       (itemsOf outP).all (·.marker.isNone))
   t "apply: plainnat cites author-year"
     (paraText outP 0 == "x (Roe, 2020) y Doe (2024)")
+  -- abbrvnat: plainnat's ordering with initials in the list; a fourth
+  -- record, no new code path (W0353 stays silent for it).
+  let (outA, dsA) := run (some "abbrvnat")
+  t "apply: abbrvnat abbreviates list names and keeps plainnat's order"
+    (dsA.isEmpty && (itemsOf outA).map (·.key) == #["a", "c", "b"] &&
+      ((itemsOf outA).map fun i => Ir.plainText i.content) ==
+        #["A. Doe. First. 2024.", "K. Poe. Third. 2022.", "S. Roe. Second. 2020."])
   t "apply: style independence — each entry's content identical across styles"
     (dsP.isEmpty &&
       (itemsOf outU).all fun i =>
