@@ -1,0 +1,25 @@
+# source: biblatex manual §3.1.1 (the standard styles; style defaults to
+# numeric, sorting to nty), §3.7.1 (\addbibresource), §3.7.2
+# (\printbibliography), §3.8.2 (the citation commands). The spellings land
+# on the natbib door: styles onto the four-axis record
+# (numeric→plain, numeric+sorting=none→unsrt, authoryear→plainnat;
+# alphabetic labels are outside the record set, W0353 with unsrtnat
+# standing in), \parencite/\autocite onto \citep, \textcite onto \citet,
+# the resource onto \bibliography at the \printbibliography site. The
+# rest of the citation family stays refused by name, as natbib's is.
+pre impl \usepackage[style=numeric]{biblatex}
+pre impl \usepackage[style=numeric,sorting=none]{biblatex}
+pre impl \usepackage[style=authoryear]{biblatex}
+pre refuse:W0353 \usepackage[style=alphabetic]{biblatex}
+pre impl \addbibresource{refs.bib}
+body impl \printbibliography
+body impl \autocite{k}
+body impl \parencite{k}
+body impl \textcite{k}
+body refuse:W0301 \Textcite{k}
+body refuse:W0301 \footcite{k}
+body refuse:W0301 \fullcite{k}
+body refuse:W0301 \citeauthor{k}
+body refuse:W0301 \citeyear{k}
+body refuse:W0301 \nocite{k}
+body refuse:W0301 \citetitle{k}

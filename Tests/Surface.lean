@@ -1286,7 +1286,10 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
       wrap "" "\\href{https://example.org}{\\texttt{https://example.org}}"),
     ("enquote", wrap "" "\\enquote{x}", wrap "" "“x”"),
     ("setlist", wrap "\\setlist[itemize]{leftmargin=2em}" "x",
-      wrap "\\style{itemize}{ indent = 2em }" "x")]
+      wrap "\\style{itemize}{ indent = 2em }" "x"),
+    ("biblatex", wrap "\\usepackage[style=numeric]{biblatex}\\addbibresource{refs.bib}"
+      "\\autocite{k}\n\n\\printbibliography",
+      wrap "" "\\citep{k}\n\n\\bibliographystyle{plain}\\bibliography{refs}")]
   for (nm, latex, native) in pairs do
     t s!"conserves {nm}" ((elabStr latex).1 == (elabStr native).1)
 

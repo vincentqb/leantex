@@ -39,7 +39,7 @@ def nativePackages : List String :=
    "caption", "subcaption", "nicefrac", "multirow",
    "appendixnumberbeamer", "natbib",
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
-   "libertine", "carlito", "xspace", "float"]
+   "libertine", "carlito", "xspace", "float", "biblatex"]
 
 /-- Classes that are an `article` with different defaults. -/
 def articleClasses : List String :=
@@ -195,6 +195,15 @@ private structure St where
   before any rewrite runs — a policy about "before this point" cannot
   read a whole-document set. -/
   bound : Array String := #[]
+  /-- biblatex's declared resources (`\addbibresource`), preamble state the
+  `\printbibliography` arm reads: the natbib door (`\bibliography`) takes
+  its file where the list prints, biblatex names it where it is loaded. -/
+  bibResources : Array String := #[]
+  /-- The record name biblatex's style option mapped to, emitted as
+  `\bibliographystyle` beside the `\bibliography` the print site
+  synthesizes — the style is read anywhere before the list, and the
+  preamble elaborator does not take it. -/
+  bibStyle : Option String := none
 
 private abbrev M := StateM St
 
@@ -1114,7 +1123,16 @@ private def literalReplace : List (String × (Pos → Raw)) :=
    ("textendash", fun p => .ctrl "endash" p),
    ("textemdash", fun p => .ctrl "emdash" p),
    ("textbackslash", fun p => .word "\\" p),
-   ("textasciitilde", fun p => .word "~" p)]
+   ("textasciitilde", fun p => .word "~" p),
+   -- biblatex's citation spellings are natbib's by other names (biblatex
+   -- manual §3.8.2: \parencite is the parenthetical cite, \textcite the
+   -- textual, \autocite the context-dependent one that resolves to the
+   -- parenthetical in the shipped styles): the rename is the whole
+   -- translation, and the natbib door treats notes and stars identically
+   -- for both spellings.
+   ("autocite", fun p => .ctrl "citep" p),
+   ("parencite", fun p => .ctrl "citep" p),
+   ("textcite", fun p => .ctrl "citet" p)]
 
 /-- Commands whose whole meaning is one fixed native spelling, synthesised
 in place with a `became` note: each row is an argument-free rewrite.
@@ -1167,6 +1185,46 @@ private def rewriteCtrlLater (name : String) (pos : Pos) (raws : Array Raw)
       | some .space | some (.par _) => true
       | _ => false
     return some (if noSpace then #[] else #[.ctrl " " pos], start)
+  | "addbibresource" =>
+    -- biblatex's resource declaration (biblatex manual §3.7.1): the .bib
+    -- file, named at load time, that \printbibliography later prints. The
+    -- name rides the walk's state to that site; the natbib door
+    -- (\bibliography) takes its file where the list prints. The engine
+    -- reads one .bib per document, so a second resource is skipped named.
+    let (_, j) := takeOpt raws start
+    let (args, k) := takeGroups raws j 1
+    if h : args.size = 1 then
+      let src := (rawSrc args[0]).trimAscii.toString
+      let src := if src.endsWith ".bib" then (src.dropEnd 4).toString else src
+      if (← get).bibResources.isEmpty then
+        modify fun st => { st with bibResources := st.bibResources.push src }
+        became "\\addbibresource" s!"\\bibliography\{{src}}, at \\printbibliography" pos
+      else
+        say .W0104 s!"'\\addbibresource' names a second resource '{src}'; the \
+engine reads one .bib per document, so it is skipped" pos
+          (help := "merge the entries into the first .bib file")
+      return some (#[], k)
+    else return none
+  | "printbibliography" =>
+    -- The list prints here (biblatex manual §3.7.2), from the resources
+    -- declared above; its options (heading=, title=) restyle a heading
+    -- the locale already words, dropped named when given.
+    let (o, k) := takeOpt raws start
+    if let some o := o then
+      unless o.trimAscii.toString.isEmpty do
+        say .W0101 s!"\\printbibliography options without a native equivalent \
+were dropped: {o}" pos
+    match (← get).bibResources[0]? with
+    | some src =>
+      let stylePart := match (← get).bibStyle with
+        | some s => s!"\\bibliographystyle\{{s}}"
+        | none => ""
+      let native := s!"{stylePart}\\bibliography\{{src}}"
+      became "\\printbibliography" native pos
+      return some (← synthAt native pos, k)
+    | none =>
+      became "\\printbibliography" "nothing: no \\addbibresource declared a file" pos
+      return some (#[], k)
   | "selectlanguage" =>
     -- babel's mid-document switch: from here on, in flow order (babel
     -- manual §1.5). The marker is unforgeable (`@` never lexes into a
@@ -1734,6 +1792,36 @@ captions and patterns stand in" pos
               (help := "the engine ships locale records for: en, fr, de")
         | none =>
           became s!"\\{name}\{{p}}" "nothing: the engine does this itself" pos
+      else if p == "biblatex" then
+        -- biblatex's style options (biblatex manual §3.1.1: style defaults
+        -- to numeric, sorting to nty — name-title-year) select onto the
+        -- same four-axis record door natbib's \bibliographystyle opens:
+        -- numeric over a name-sorted list is `plain`, numeric over
+        -- citation order (sorting=none) is `unsrt`, authoryear is
+        -- `plainnat`. A style outside the record set (alphabetic labels)
+        -- is W0353's meaning, judged here where the author wrote the
+        -- name, with unsrtnat standing in.
+        let opts := ((opt.getD "").splitOn ",").map (·.trimAscii.toString)
+        let pick (key dflt : String) : String := opts.foldl (init := dflt) fun acc kv =>
+          match (kv.splitOn "=").map (·.trimAscii.toString) with
+          | [k, v] => if k == key then v else acc
+          | _ => acc
+        let style := pick "citestyle" (pick "style" "numeric")
+        let mapped :=
+          if style.startsWith "numeric" then
+            some (if pick "sorting" "nty" == "none" then "unsrt" else "plain")
+          else if style.startsWith "authoryear" then some "plainnat"
+          else none
+        match mapped with
+        | some s =>
+          became s!"\\usepackage[style={style}]\{biblatex}"
+            s!"\\bibliographystyle\{{s}}, at \\printbibliography" pos
+          modify fun st => { st with bibStyle := some s }
+        | none =>
+          say .W0353 s!"bibliography style '{style}' is not one the engine \
+knows; the reference list is set as 'unsrtnat'" pos
+            (help := "styles known: unsrtnat, unsrt, plainnat, plain")
+          modify fun st => { st with bibStyle := some "unsrtnat" }
       else if let some spec := fontPackages.lookup p then
         -- carlito's `sfdefault` promotes its sans face to the body slot
         -- (carlito README); every other option (psnfss's `scaled=`) asks
