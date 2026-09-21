@@ -118,6 +118,33 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — a venue's refused redefinitions are declarations; read them
+out (sty-readout slice). Rule (b) extended twice, in the maketitle
+precedent's shape. The size ladder: a refused size command whose body
+opens with `\@setfontsize\X<size><leading>` lands as a per-mille step of
+the body in force — the venue's own normalsize, already honoured by the
+Compat size idiom — on `Ir.PageSpec.sizes`, resolved by `PageSpec.scale`
+(the one resolving site) and read by both backends: the PDF through
+`Layout.Geom.scale` into the flatten state, the HTML through the `.size-`
+rules and `::marker` declarations (`sizeLadderChecks` judges both on
+shipped segments and the emitted stylesheet). The door is ordered by
+construction — `Ir.setStep`/`Ir.setStepsAll` with `size_ladder_monotone`
+and `size_ladder_monotone_all`; non-strict, because the NeurIPS lineage
+sets `\footnotesize` = `\small`, and judged whole-first because a venue's
+ladder is one declaration, not a sequence. A landed step drops its W0361
+for an N0100; a disordering step keeps the built-in, named. Not read:
+per-step leadings (the engine's leading is one page-level factor) and the
+engine-derived default sizes (`sectionSize`, footnote mark/body, chrome —
+reading the ladder there needs `heading_hierarchy` restated over any
+ordered ladder, left named). Alongside: `\providecommand` of an
+engine-defined name is LaTeX's no-op, kept silently (six venue shims had
+each earned a W0361 'renders nothing'), and a run-in `\paragraph`
+redefinition in the built-in's own font is satisfied by the built-in
+run-in heading rather than refused with a stale 'not modelled'. The
+reference venue paper: W0361 16 → 1 (the surviving one is `\maketitle`'s,
+genuinely refused and styled), byte-identical output, as are the four
+reference documents.
+
 2026-09-21 — ragged looseness is priced, never free (fix-firstline): body
 ragged setting (`raggedItems`) now gives interword glue finite stretch —
 `displayItems`' six-times-its-width pricing, one scale for both ragged
