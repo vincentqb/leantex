@@ -951,34 +951,43 @@ def deckCssChecks (ref : IO.Ref (List String)) : IO Unit := do
   let deckPage := (HtmlDoc.emit {} deckDoc).1
   let has := hasStr
   t "deck css fixture elaborates clean" deckDs.isEmpty
-  t "the deck pages vertically by scroll snap on the root"
-    (has deckPage "html { scroll-snap-type: y mandatory; }" &&
-     has deckPage "scroll-snap-align: start" &&
-     has deckPage "scroll-snap-stop: always")
-  t "the deck is a stack: main block flow, each section one viewport of it"
-    (has deckPage "main { max-width: none; margin: 0;" &&
-     !has deckPage "display: flex; align-items: flex-start" &&
-     has deckPage "section.slide, section.section-page { min-height: 100dvh;")
+  t "the deck pages horizontally by scroll snap on the root, no scrollbar stealing width"
+    (has deckPage "html { scroll-snap-type: x mandatory; overflow-y: clip; }" &&
+     has deckPage "[data-snap] { scroll-snap-align: start; scroll-snap-stop: always; }")
+  t "the deck is a row: main flex, each section one viewport of it"
+    (has deckPage ("main { max-width: none; margin: 0; display: flex; " ++
+       "align-items: flex-start;") &&
+     has deckPage ("section.slide, section.section-page { width: 100vw; " ++
+       "flex: 0 0 100vw; height: 100dvh; overflow-y: auto;"))
   t "the deck glide ships with its reduced-motion guard"
     (has deckPage "html { scroll-behavior: smooth; }" &&
      has deckPage "@media (prefers-reduced-motion: reduce) {" &&
      has deckPage "html { scroll-behavior: auto; }")
-  t "the deck slide fills the viewport as a column"
-    (has deckPage "min-height: 100dvh" &&
-     has deckPage "display: flex; flex-direction: column;")
+  t "the deck slide fills the viewport as an opaque column"
+    (has deckPage "background: var(--surface); display: flex; flex-direction: column;")
   t "the deck prints as the handout, one card per page"
     (has deckPage "@media print" &&
      has deckPage "break-inside: avoid" &&
      has deckPage "section.slide { break-after: page; }")
-  t "the push pins the stage and arrives sideways, guard attached"
-    (has deckPage "@supports (animation-timeline: view())" &&
-     has deckPage "@keyframes ltx-push { from { transform: translate(100vw, -100dvh); } }" &&
-     has deckPage "section.slide, section.section-page { position: sticky; top: 0;" &&
-     has deckPage "animation-timeline: view(y); animation-range: entry;" &&
-     has deckPage "html { overflow-x: clip; }" &&
-     has deckPage ("@media (prefers-reduced-motion: reduce) {\n" ++
-       "section.slide, section.section-page { animation: none; \
-position: static;"))
+  -- No push, no sticky stage, no view-timeline gate in a stepless deck:
+  -- the scroll itself is the motion, and the frame sections are the snap
+  -- pages on every path (the progress hairline's own scroll() gate is
+  -- the theme's, judged in deckProgressChecks).
+  t "a stepless deck ships no feature gate: the scroll is the motion"
+    (!has deckPage "@supports (animation-timeline: view())" &&
+     !has deckPage "@supports not" && !has deckPage "position: sticky" &&
+     !has deckPage "ltx-push" && !has deckPage "ltx-uncover" &&
+     !has deckPage "class=\"slide-track\"" && !has deckPage "class=\"snap\"" &&
+     has deckPage "data-snap>")
+  -- The constant keyboard script (`HtmlDoc.deckScript`), the slides
+  -- class's own: it queries the same `[data-snap]` selector the door
+  -- rule styles, marks `<html data-deck-script>`, and survives the
+  -- raw-payload guard verbatim (no `</script` in the constant).
+  t "the deck ships the constant keyboard script through the snap door"
+    ((deckPage.splitOn "<script").length == 2 &&
+     has deckPage "document.documentElement.dataset.deckScript" &&
+     has deckPage "document.querySelectorAll(\"[data-snap]\")" &&
+     has deckPage "scrollIntoView" && !has deckPage "/* removed */")
   t "the deck keeps the safe area and caps the title band"
     (has deckPage "padding: var(--safearea, 6vmin); }" &&
      has deckPage "max-height: var(--titleband, 12.5dvh)")
@@ -1015,22 +1024,24 @@ position: static;"))
      screenOf (deckAt "169") == screenOf (deckAt "149") &&
      screenOf (deckAt "169") != screenOf (deckAt "1610"))
   -- The other half of the uncover census: a stepless deck has nothing to
-  -- reveal and ships no timeline, uncover rule, or control — its frames
-  -- still ride tracks and spacers (the push's snap carriers).
-  t "a stepless deck ships no uncover rule and no control"
+  -- reveal and ships no timeline, uncover rule, track, or spacer — its
+  -- frames are their own snap pages.
+  t "a stepless deck ships no uncover rule and no track"
     (!has deckPage "ltx-uncover" && !has deckPage "--frame" &&
-     !has deckPage "step-nav" && !has deckPage "scroll-state" &&
-     has deckPage "class=\"slide-track\"" && has deckPage "class=\"snap\"")
-  -- The gate, both directions: no deck rule outside the slides class.
+     !has deckPage "data-snapped" && !has deckPage "scroll-state" &&
+     !has deckPage "class=\"slide-track\"" && !has deckPage "class=\"snap\"")
+  -- The gate, both directions: no deck rule and no script outside the
+  -- slides class.
   for (name, src) in [
       ("article", "\\documentclass{article}\\begin{document}x\\end{document}"),
       ("webpage", "\\documentclass{webpage}\\begin{document}x\\end{document}")] do
     let (doc, _) := elabStr src
     let page := (HtmlDoc.emit {} doc).1
-    t s!"{name} ships no deck rule"
+    t s!"{name} ships no deck rule and no deck script"
       (!has page "scroll-snap" && !has page "scroll-behavior" &&
        !has page "scroll-state" && !has page "ltx-uncover" &&
-       !has page "slide-track" &&
+       !has page "slide-track" && !has page "data-snap" &&
+       !has page "<script" &&
        has page "section.slide { border:")
 
   -- Every typed rule survives emission: the declaration multiset of the
@@ -1156,7 +1167,7 @@ def deckProgressChecks (ref : IO.Ref (List String)) : IO Unit := do
     (has html "class=\"deck-progress\"")
   t "the hairline scales by the root scroll's deck axis under supports"
     (has html "@supports (animation-timeline: scroll())" &&
-     has html "animation-timeline: scroll(root y)")
+     has html "animation-timeline: scroll(root x)")
   t "the hairline reads the tokens the PDF's bar reads"
     (has html (".deck-progress { position: fixed; top: 0; left: 0; width: 100%;\n" ++
       "  height: var(--progressheight, 1pt); background: var(--progressfg);"))

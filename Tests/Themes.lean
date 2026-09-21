@@ -2030,28 +2030,24 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count " hidden=\"hidden\"" == 0)
   t "the label anchor has its single site"
     ((html.splitOn s!"id=\"{Ir.labelAnchor "fr:steps"}\"").length == 2)
-  -- The frame structure: every frame (and the section page) rides a
-  -- `.slide-track` — one sticky stage over its snap spacers, one spacer
-  -- per overlay step, a stepless page keeping one — and the frame's
-  -- anchor rides the track (a pinned sticky stage reads as in view, so a
-  -- backward fragment jump onto it would not scroll). Spacer deep-link
-  -- anchors `<frame>-k` exist exactly where there are steps.
-  t "every frame is one stage over its snap spacers, anchors on stepped spacers only"
-    (count "class=\"slide-track\"" == 4 && count "class=\"snap\"" == 6 &&
-     count "--steps: 3" == 1 && count "--steps: 1" == 3 &&
+  -- The frame structure: only a stepped frame rides a `.slide-track` —
+  -- one sticky stage over its snap spacers, one spacer per overlay step,
+  -- each spacer a deep-link anchor and a `[data-snap]` snap point; a
+  -- stepless frame, the title page, and the section page are their own
+  -- snap pages, the door attribute on the section itself, the anchor
+  -- beside it.
+  t "only the stepped frame rides a track; every page carries the snap door"
+    (count "class=\"slide-track\"" == 1 && count "class=\"snap\"" == 3 &&
+     count "--steps: 3" == 1 && count "--steps: 1" == 0 &&
      count "id=\"steps-1\"" == 1 && count "id=\"steps-2\"" == 1 &&
-     count "id=\"steps-3\"" == 1)
-  t "frame tracks keep unique ids"
-    (count "id=\"steps\"" == 1 && count "id=\"plain\"" == 1)
-  -- The stepped frame's visible control: one `‹ k / N ›` cluster per
-  -- step linking the claimed spacer anchors; present exactly on the
-  -- stepped frame, absent from the plain one; hidden in print.
-  t "the step control is present exactly where there are steps"
-    (count "<nav class=\"step-nav size-small\" aria-label=\"steps\">" == 1 &&
-     count "class=\"cluster\"" == 3 &&
-     count "href=\"#steps-1\"" == 1 && count "href=\"#steps-2\"" == 2 &&
-     count "href=\"#steps-3\"" == 1 &&
-     count ".step-nav { display: none; }" == 1)
+     count "id=\"steps-3\"" == 1 &&
+     count "data-snap>" == 6)
+  t "frame anchors keep unique ids, on the track or the section"
+    (count "id=\"steps\"" == 1 && count "id=\"plain\" data-snap" == 1)
+  t "no step control ships: the constant script is the navigation"
+    (count "step-nav" == 0 && count "cluster" == 0 &&
+     count "<script" == 1 &&
+     count "document.querySelectorAll(\"[data-snap]\")" == 1)
   -- The spacer anchors claim through the same door as every id: a frame
   -- whose slug collides with a step anchor is renamed and named.
   let (cdoc, _) := elabStr (deck169 "\\title{T}\\author{A}"
@@ -2065,36 +2061,37 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   -- The uncover CSS census: the track declares the frame's view
   -- timeline; each step's range is its own snap interval; step 1 is
   -- never covered; the floors stand (no view() support, print, reduced
-  -- motion), and the from-state is the design's own fraction.
+  -- motion); the from-state is the design's own fraction and the
+  -- explicit `to` endpoint is declared (the user's own rule).
   t "the uncover rides the frame's view timeline between snap points"
-    (count "view-timeline: --frame y" == 1 &&
+    (count "view-timeline: --frame x" == 1 &&
      count "animation-timeline: --frame;" == 1 &&
-     count ".step:not([data-step=\"1\"])" == 2 &&
-     count ("animation-range: contain calc((var(--step) - 2) / var(--steps) * 100%) " ++
-       "contain calc((var(--step) - 1) / var(--steps) * 100%)") == 1)
-  t "the stage is sticky at the top and pushed in sideways; the spacers carry the snaps"
-    (count "section.slide, section.section-page { position: sticky; top: 0;" == 1 &&
-     count "@keyframes ltx-push { from { transform: translate(100vw, -100dvh); } }" == 1 &&
-     count "animation-timeline: view(y); animation-range: entry;" == 1 &&
-     count ".snap { height: 100dvh; scroll-snap-align: start; scroll-snap-stop: always; }" == 1 &&
-     count ".slide-track::after { content: \"\"; display: block; height: 100dvh; }" == 1)
-  t "the pre-reveal state is the design's own covered mix, offset in the direction of travel"
-    (count "@keyframes ltx-uncover { from { opacity: 31%; transform: translateX(var(--motiondistance, 1rem)); } }" == 1)
-  t "without view() timelines the spacers collapse and the fragment fallback uncovers"
-    (count "@supports not (animation-timeline: view()) {\n.snap { display: none; }" == 1 &&
-     count ".step:not([data-step=\"1\"]) { opacity: 31%; }" == 1 &&
-     count (".slide-track:has(.snap:nth-of-type(2):target) " ++
+     count ".step:not([data-step=\"1\"])" == 3 &&
+     count ("animation-range: contain calc((var(--step) - 2) / (var(--steps) - 1) * 100%) " ++
+       "contain calc((var(--step) - 1) / (var(--steps) - 1) * 100%)") == 1)
+  t "the stage is sticky over its spacers, snap on the door only"
+    (count ".slide-track > section.slide { position: sticky; left: 0; margin-right: -100vw; }" == 1 &&
+     count ".snap { flex: 0 0 100vw; height: 100dvh; }" == 1 &&
+     count "[data-snap] { scroll-snap-align: start; scroll-snap-stop: always; }" == 1 &&
+     count "ltx-push" == 0)
+  t "the covered from-state has its explicit active endpoint"
+    (count ("@keyframes ltx-uncover { to { opacity: 100%; transform: none } " ++
+       "from { opacity: 31%; transform: translateX(var(--motiondistance, 1rem)); } }") == 1)
+  t "without view() timelines the floor covers only under the script and uncovers by data-snapped"
+    (count ("@supports not (animation-timeline: view()) {\n" ++
+       "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 31%; }") == 1 &&
+     count (".slide-track[data-snapped=\"2\"] " ++
        ":is(.step[data-step=\"2\"]) { opacity: 100%; }") == 1 &&
-     count (".slide-track:has(.snap:nth-of-type(3):target) " ++
+     count (".slide-track[data-snapped=\"3\"] " ++
        ":is(.step[data-step=\"2\"], .step[data-step=\"3\"]) { opacity: 100%; }") == 1 &&
-     count ".step-nav > .cluster:first-child { display: inline; }" == 1 &&
-     count (".slide-track:has(.snap:nth-of-type(3):target) " ++
-       ".step-nav > .cluster:nth-child(3) { display: inline; }") == 1)
-  t "reduced motion is the plain snap stack at full colour"
-    (count ".step { animation: none; }" == 1 &&
-     count "section.slide, section.section-page { animation: none; position: static;" == 1 &&
-     count ".slide-track::after { content: none; }" == 1)
+     count ".slide-track > section.slide { scroll-snap-align: start; scroll-snap-stop: always; }" == 2)
+  t "reduced motion is the plain row at full colour, one page per frame"
+    (count ".step { opacity: 100%; animation: none; }" == 1 &&
+     count "html[data-deck-script] .step:not([data-step=\"1\"]) { opacity: 100%; }" == 1 &&
+     count ".slide-track { width: 100vw; flex: 0 0 100vw; }" == 1)
   t "print shows every step uncovered on one card, spacers hidden"
-    (count ".snap { display: none; }\n* + .slide-track { margin-top:" == 1 &&
+    (count ".snap { display: none; }" == 3 &&
+     count "* + .slide-track { margin-top:" == 1 &&
+     count ".step { opacity: 100%; }" == 1 &&
      (((html.splitOn "@media print").drop 1).all fun s =>
-      (s.splitOn "ltx-uncover").length == 1 && (s.splitOn ".step {").length == 1))
+      (s.splitOn "ltx-uncover").length == 1))
