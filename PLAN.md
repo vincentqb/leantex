@@ -158,12 +158,14 @@ reads are `embPlane_sub` at one pixel, one row, and both. `Flate.upFilter`
 and the imperative `splitAlpha` are gone. Measured on the 4575² RGBA
 deck asset (the theorem's real instance; `pdfimages` puts it at ~6512 ppi
 as placed — downsampling at source is the document's own, lossy call and
-was not made): cold image phase 6063 → 3929 ms median (inflate 1.56 s,
-split 0.87 s, deflate 1.47 s), PDF 2,226,899 → 2,182,614 bytes, RGB stream
-864 → 850 KiB, SMask 531 → 502 KiB, warm total unchanged (~185 ms); the
-four pages that place it raster pixel-identical, the extracted image and
-mask equal the source's channels byte for byte under a foreign decoder,
-and the résumé, card and paper are byte-identical. `Flate.build`'s inner
+was not made), against main with the deflate-fast slice landed: cold
+image phase 4768 → 2931 ms median (the split itself 0.87 s over 84 MB,
+where inflate is 1.56 s), cold build 5471 → 3654 ms, PDF 2,226,899 →
+2,182,614 bytes, RGB stream 864 → 850 KiB, SMask 531 → 502 KiB, warm
+build unchanged (~134 ms); the four pages that place it raster
+pixel-identical, the extracted image and mask equal the source's channels
+byte for byte under a foreign decoder, and the résumé, card and paper are
+byte-identical. `Flate.build`'s inner
 loop must be `@[specialize]`d itself, not only its wrapper: a closure call
 per byte cost 1047 ms over 84 MB against 223 ms specialized.
 
