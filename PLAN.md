@@ -118,6 +118,29 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-21 — appendix and cleveref are native (pkg-numbering, audit
+slices 3 and 4): `{appendices}` scopes the `\appendix` mark and restores
+the counters (appendix.sty v1.2c's save/restore), and the cleveref family
+resolves through the one label table.
+
+- The table carries the kind of what a label names (`Ir.RefBinding` over
+  `Ir.RefKind`: heading, equation, figure, table — a subfloat keeps its
+  parent's kind), `Inline.ref`'s eqref Bool became `Ir.RefForm`, and
+  `Ir.refText` is the one rendering site: kind name and number joined by
+  cleveref's no-break space, equation numbers parenthesised in every cref
+  form. `\crefrange` desugars in Compat to the pair the resolver reads.
+- The names are locale data: `CrefName` fields on `Locale` for the four
+  kinds plus the range conjunction, generated from cleveref.sty v0.21.4's
+  language blocks (cited in the generator), `crefNameOf_covers` pinning
+  every assigned kind named in every shipped record, complete by
+  `RefKind.all_complete`.
+- W0380 is the named refusal for the one kindless binding: a bare
+  `\refstepcounter` numbers no node, so a `\cref` to its label sets the
+  plain number, named. The appendix numbering contract is stated over the
+  assignment function (`defaultSecNum_appendix_exact`/`_inj`).
+- `{subequations}` (audit candidate 9) stays refused (amsmath.txt pins
+  W0302); its numbering-pass plan is in the slice's RESULT.
+
 2026-09-21 — the deck's logo is frame furniture in HTML too (html-logo):
 W0007's "paged-media furniture" claim was wrong for a deck, where a frame
 *is* a page and the logo is the frame's furniture exactly as the footer
