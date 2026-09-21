@@ -1,0 +1,20 @@
+# source: crop.dtx v1.10 (Melchior Franz) — the option table (mark styles
+# cam/cross/frame, sheet sizes, center, info/noinfo, axes/noaxes, off,
+# physical mirror/rotate/invert/notext, drivers) and the \crop command,
+# which takes the same option list per document state.
+# `cam` maps to the native \page{ marks = cut } (marks derived from the
+# trim and bleed, drawn inside the bleed strip — crop's enlarged-sheet
+# geometry is not representable, so sizes and center stay named drops).
+pre impl \usepackage[cam]{crop}
+pre impl \crop[cam]
+pre impl \crop[off]
+pre impl \crop
+pre refuse:W0101 \usepackage[cross]{crop}
+pre refuse:W0101 \usepackage[frame]{crop}
+pre refuse:W0101 \usepackage[a4]{crop}
+pre refuse:W0101 \usepackage[center]{crop}
+pre refuse:W0101 \usepackage[noinfo]{crop}
+pre refuse:W0101 \usepackage[mirror]{crop}
+pre refuse:W0101 \usepackage[rotate]{crop}
+pre refuse:W0101 \usepackage[invert]{crop}
+pre refuse:W0101 \crop[cross]

@@ -1366,6 +1366,8 @@ def compatConservationChecks (ref : IO.Ref (List String)) : IO Unit := do
       wrap "\\page{ size = a4, margin = 2cm }" "x"),
     ("geometry command", wrap "\\usepackage{geometry}\\geometry{margin=1in}" "x",
       wrap "\\page{  }\\page{ margin = 1in }" "x"),
+    ("crop cam", wrap "\\usepackage[cam]{crop}" "x",
+      wrap "\\page{ marks = cut }" "x"),
     ("linespread", wrap "\\linespread{1.05}" "x", wrap "\\page{ leading = 1.05 }" "x"),
     ("setstretch", wrap "\\setstretch{1.3}" "x", wrap "\\page{ leading = 1.3 }" "x"),
     ("onehalfspacing", wrap "\\onehalfspacing" "x", wrap "\\page{ leading = 1.25 }" "x"),

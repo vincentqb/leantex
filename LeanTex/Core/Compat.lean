@@ -37,7 +37,7 @@ def nativePackages : List String :=
    "amsmath", "amssymb", "amsfonts", "unicode-math", "parskip", "titlesec", "fancyhdr",
    "textcomp", "csquotes", "polyglossia", "graphicx", "booktabs", "array",
    "calc", "etoolbox", "xparse", "kvoptions", "setspace", "soul", "tikz",
-   "caption", "subcaption", "nicefrac", "multirow",
+   "caption", "subcaption", "nicefrac", "multirow", "crop",
    "appendixnumberbeamer", "natbib",
    "times", "mathptmx", "palatino", "mathpazo", "helvet", "courier",
    "libertine", "carlito", "xspace", "float", "biblatex", "appendix",
@@ -867,6 +867,40 @@ private def geometry (opts : String) (pos : Pos)
     say .W0101 s!"geometry keys without a native equivalent were dropped: \
 {String.intercalate ", " dropped.toList}" pos
   synthAt native pos
+
+/-- `\usepackage[opts]{crop}` and `\crop[opts]` → `\page{ marks = cut }`.
+crop's `cam` style is the one the engine draws — derived from the trim
+and bleed instead of enlarging the sheet, so a trim+bleed submission
+keeps its dimensions — and `off` is the declared way back
+(`marks = none`). Every other option is dropped named (W0101):
+`cross`/`frame` are mark styles the engine does not draw, the sheet
+sizes and `center` enlarge the medium around the page (this engine's
+medium is trim plus the declared `\page{ bleed }`), and `info`/`noinfo`,
+`axes`, the physical transforms (`mirror`, `rotate`, `invert`,
+`notext`), and the driver names configure machinery the engine does not
+model. `noaxes` asks for the state the engine is already in and passes
+silently. Option list: crop.dtx v1.10 (Melchior Franz). -/
+private def crop (opts : String) (pos : Pos)
+    (spelling : String := "\\usepackage{crop}") : M (Array Raw) := do
+  let mut mode : Option Bool := none
+  let mut dropped : Array String := #[]
+  for e in Decl.splitEntries opts do
+    let o := ((e.splitOn "=").headD "").trimAscii.toString
+    if o == "cam" then mode := some true
+    else if o == "off" then mode := some false
+    else if o == "noaxes" then pure ()
+    else if !o.isEmpty then dropped := dropped.push o
+  unless dropped.isEmpty do
+    say .W0101 s!"crop options without a native equivalent were dropped: \
+{String.intercalate ", " dropped.toList}" pos
+  match mode with
+  | some on =>
+    let native := s!"\\page\{ marks = {if on then "cut" else "none"} }"
+    became spelling native pos
+    synthAt native pos
+  | none =>
+    became spelling "nothing: crop draws no marks until an option asks for them" pos
+    return #[]
 
 /-- The beamerposter size table, read off beamerposter.sty v1.13's own
 size branch: name → board (w × h in mm, landscape as the sty spells it)
@@ -1774,6 +1808,8 @@ where
     for p in pkgs do
       if p == "geometry" then
         out := out ++ (← geometry (opt.getD "") pos)
+      else if p == "crop" then
+        out := out ++ (← crop (opt.getD "") pos)
       else if p == "beamerposter" then
         out := out ++ (← beamerposter (opt.getD "") pos)
       else if p == "parskip" then
@@ -1985,6 +2021,12 @@ face serves every language, so the binding is dropped" pos
     let (args, k) := takeGroups raws start 1
     if args.isEmpty then return none
     return some (← geometry (rawSrc (args.getD 0 #[])) pos s!"\\{name}", k)
+  | "crop" =>
+    -- The command form: the same options the package load carries, one
+    -- door for both spellings. A bare `\crop` is `[cam,noaxes]`, the
+    -- command's own default argument (crop.sty v1.10, `\newcommand*\crop`).
+    let (opt, k) := takeOpt raws start
+    return some (← crop (opt.getD "cam,noaxes") pos "\\crop", k)
   | "microtypesetup" =>
     -- microtype's switchboard (manual §3.1): `protrusion` and `expansion`
     -- reach the native gates, and `activate` — the manual's shorthand for
