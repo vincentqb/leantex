@@ -127,6 +127,15 @@ list.
   value. Blocked on ByteArray equational coverage for the fixed-offset
   codec; the in-suite witnesses are the serialization rows in
   Tests/Backends.
+- `write_fonts_embedded` — the writer's own output passes the census
+  `fonts.all_embedded` now reads: for an image-free document, every font
+  `Pdf.write` names is embedded by the bytes' own account
+  (`PdfCensus.census`). Blocked on the dictionary typing — `write` spells
+  its dictionaries as strings, and nothing equates a spelled `/FontFile2`
+  with the `Obj` the parser returns for it; the factorization is the
+  sites as `PdfRead.Obj` plus one `Obj.render` with `parseVal_render_id`.
+  The in-suite witness is the written-PDF census row in Tests/Backends,
+  the oracle `pdffonts` over the corpus.
 
 ### Log
 

@@ -2590,3 +2590,300 @@ def tableHtmlChecks (ref : IO.Ref (List String)) : IO Unit := do
     (hasStr css "table.booktabs th" && hasStr css "tr.bt-heavy-above > th" &&
       hasStr css "tr.bt-light-above > th" && hasStr css "th.bt-cmid" &&
       hasStr css "font-weight: inherit")
+
+/-- A five-object PDF whose one font is the standard `Helvetica`, no
+program embedded: the file `pdffonts` reports `emb no` for. Built here, in
+Lean, so no binary fixture is checked in — and so the census has a file
+the writer never produced to judge. -/
+def unembeddedProbePdf : ByteArray := Id.run do
+  let content := "BT /F1 12 Tf 10 20 Td (Probe) Tj ET"
+  let objs : Array String := #[
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 50] \
+/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+    s!"<< /Length {content.utf8ByteSize} >>\nstream\n{content}\nendstream",
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"]
+  let mut out := "%PDF-1.7\n"
+  let mut offs : Array Nat := #[]
+  for (o, i) in objs.zipIdx do
+    offs := offs.push out.utf8ByteSize
+    out := out ++ s!"{i + 1} 0 obj\n{o}\nendobj\n"
+  let xref := out.utf8ByteSize
+  let pad10 (n : Nat) : String :=
+    let s := toString n
+    String.ofList (List.replicate (10 - s.length) '0') ++ s
+  out := out ++ s!"xref\n0 {objs.size + 1}\n0000000000 65535 f \n"
+  for o in offs do
+    out := out ++ s!"{pad10 o} 00000 n \n"
+  out := out ++ s!"trailer\n<< /Size {objs.size + 1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n"
+  return out.toUTF8
+
+/-- A hand-built cross-reference-stream PDF whose catalog, pages and page
+ride in one *uncompressed* object stream: the smallest file on which an
+object stream's header can be permuted in place (`swap`), with every
+offset unchanged — the mutant that distinguishes a reader that checks the
+header's numbers from one that trusts the cross-reference. -/
+def objStmPdf (swap : Bool) : ByteArray := Id.run do
+  let o1 := "<< /Type /Catalog /Pages 2 0 R >>"
+  let o2 := "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"
+  let o3 := "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 50] /Contents 5 0 R >>"
+  let off2 := o1.length + 1
+  let off3 := off2 + o2.length + 1
+  let hdr := if swap then s!"2 0 1 {off2} 3 {off3}" else s!"1 0 2 {off2} 3 {off3}"
+  let stm := hdr ++ " " ++ o1 ++ " " ++ o2 ++ " " ++ o3
+  let content := "0 0 1 rg 0 0 50 25 re f"
+  let mut out := "%PDF-2.0\n"
+  let off4 := out.utf8ByteSize
+  out := out ++ s!"4 0 obj\n<< /Type /ObjStm /N 3 /First {hdr.length + 1} \
+/Length {stm.utf8ByteSize} >>\nstream\n{stm}\nendstream\nendobj\n"
+  let off5 := out.utf8ByteSize
+  out := out ++ s!"5 0 obj\n<< /Length {content.utf8ByteSize} >>\nstream\n{content}\nendstream\nendobj\n"
+  let off6 := out.utf8ByteSize
+  let row (kind f2 f3 : Nat) : ByteArray :=
+    ⟨#[UInt8.ofNat kind, UInt8.ofNat (f2 / 16777216), UInt8.ofNat (f2 / 65536 % 256),
+      UInt8.ofNat (f2 / 256 % 256), UInt8.ofNat (f2 % 256),
+      UInt8.ofNat (f3 / 256 % 256), UInt8.ofNat (f3 % 256)]⟩
+  let mut rows := ByteArray.empty
+  for r in [row 0 0 65535, row 2 4 0, row 2 4 1, row 2 4 2,
+      row 1 off4 0, row 1 off5 0, row 1 off6 0] do
+    rows := rows ++ r
+  let mut bytes := out.toUTF8
+  bytes := bytes ++ s!"6 0 obj\n<< /Type /XRef /Size 7 /W [1 4 2] /Root 1 0 R \
+/Length {rows.size} >>\nstream\n".toUTF8
+  bytes := bytes ++ rows
+  bytes := bytes ++ s!"\nendstream\nendobj\nstartxref\n{off6}\n%%EOF\n".toUTF8
+  return bytes
+
+/-- The first occurrence of `needle` in `hay`. -/
+def findBytes (hay : ByteArray) (needle : String) (from_ : Nat := 0) : Option Nat := Id.run do
+  let p := needle.toUTF8
+  if hay.size < p.size then return none
+  for i in [from_:hay.size - p.size + 1] do
+    let mut ok := true
+    for k in [0:p.size] do
+      if hay[i + k]? != p[k]? then
+        ok := false
+        break
+    if ok then return some i
+  return none
+
+/-- `hay` with the bytes at `[i, i + old.length)` — which must spell `old`
+— replaced by `new`. -/
+def spliceBytes (hay : ByteArray) (i : Nat) (old new : String) : ByteArray :=
+  hay.extract 0 i ++ new.toUTF8 ++ hay.extract (i + old.utf8ByteSize) hay.size
+
+/-- One byte of `hay` inverted. -/
+def flipByte (hay : ByteArray) (i : Nat) : ByteArray :=
+  match hay[i]? with
+  | some v => hay.set! i (v ^^^ 0xFF)
+  | none => hay
+
+/-- The corpus fixture's images, read from `tests/corpus/` the way the
+driver reads them beside the document (boundary pictures stay unfulfilled:
+their placeholder boxes are what an unconverted build ships). -/
+def corpusStore (doc : Ir.Doc) : IO Image.Store := do
+  let mut fetched : Array (String × Image.Fetch) := #[]
+  for src in Ir.imageRefs doc do
+    let mut f : Image.Fetch := .missing src
+    for cand in Image.sourceCandidates src do
+      let p := System.FilePath.mk "tests/corpus" / cand
+      if ← p.pathExists then
+        f := .decoded (if cand == src then "" else cand) (Image.decode (← IO.FS.readBinFile p))
+        break
+    fetched := fetched.push (src, f)
+  return (Image.fulfil fetched).1
+
+/-- What each golden fixture's PDF carries, read back from its bytes by the
+census: `(pages, type0Fonts, images, forms, smasks, linkAnnots,
+outlineItems, lang, filters)`. A fixture without a row fails the coverage
+check, so a new fixture states what its file carries before it enters —
+and a writer change that moves a count is visible here, per fixture. The
+PDF is built with the suite's one face and the fixture's own images; a
+boundary picture is a placeholder box (no converter runs in the suite). -/
+def pdfCensusTable :
+    List (String × (Nat × Nat × Nat × Nat × Nat × Nat × Nat × Option String × List String)) := [
+  ("paragraphs", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("layout", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("declared", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("fonts", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("palette", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("tokens", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("fill", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("links", (1, 1, 0, 0, 0, 3, 0, none, ["FlateDecode"])),
+  ("resume", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("talk", (6, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("deck", (8, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("deck1610", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("themed", (8, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("latex-idioms", (1, 1, 0, 0, 0, 0, 0, some "en", ["FlateDecode"])),
+  ("wrapper", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("centering", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("columns", (3, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("overlays", (5, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("overlays-blocks", (12, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("notes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("furniture", (6, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("chrome", (5, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("footer-left", (4, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("footer-mixed", (5, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("footer-collide", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("lists", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("lists-styled", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("lists-deck", (4, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("headroom", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("marker-styled", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("marker-content", (1, 1, 1, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("trio-page", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("trio-deck", (4, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("trio-card", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("valign", (6, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("images", (1, 1, 4, 0, 1, 0, 0, none, ["DCTDecode", "FlateDecode"])),
+  ("figures", (1, 3, 0, 2, 0, 0, 0, none, ["FlateDecode"])),
+  ("math", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("webpage", (1, 1, 0, 0, 0, 6, 0, none, ["FlateDecode"])),
+  ("quotes", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("quote-deck", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("outline", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("outline-gap", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("webnav", (1, 1, 0, 0, 0, 0, 3, none, ["FlateDecode"])),
+  ("bibliography", (1, 1, 0, 0, 0, 9, 0, none, ["FlateDecode"])),
+  ("resume-data", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("icons", (1, 1, 0, 0, 0, 2, 0, none, ["FlateDecode"])),
+  ("diagram", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("diagram-boundary", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("diagram-overflow", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("diagram-refused", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("diagram-scm", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("tables", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("tables-ragged", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("subfigures", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("float-center", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("math-companion", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("math-first", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("abstract", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("crossref", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("eqnum", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("footnotes", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("redefine", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("titlebars", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("daylight", (4, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("blocks", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("poster", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("poster-headline", (1, 1, 1, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("listings", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("algorithm", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("lineno", (2, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"])),
+  ("lineno-modulo", (1, 1, 0, 0, 0, 0, 0, none, ["FlateDecode"]))]
+
+/-- The read-side census (`PdfCensus`) and the checked reader beneath it
+(`PdfRead.objects`): the probe the writer never made judges as
+`pdffonts` does; a copied page carrying an unembedded face makes the
+written file's census say so (the fact `Check.Shipped.fontsEmbedded` now
+reads); six mutants each refuse by a distinct message; every golden
+fixture's PDF reads back with every object under its spelled number and a
+census row that matches. -/
+def pdfCensusChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  -- The probe: one font, no program.
+  let probe := unembeddedProbePdf
+  t "probe pdf reads as a form" (PdfRead.readForm probe).isOk
+  t "probe census: one unembedded font"
+    (match pdfCensusOf probe with
+     | .ok c => c.fonts == 1 && c.type0Fonts == 0 && !c.fontsEmbedded && c.pages == 1
+     | .error _ => false)
+  -- The written file: the suite's face embeds; a copied page's face is
+  -- judged from the bytes, where the writer's intent would have said yes.
+  let (doc, _) := Elab.run "t" "A line of text."
+  let out := layoutOf oneFace doc
+  let pdf := Pdf.write {} oneFace out.pages
+  t "written pdf census: fonts embedded" ((pdfCensusOf pdf).map (·.fontsEmbedded) == .ok true)
+  t "written pdf census: one page, one Type0 font"
+    ((pdfCensusOf pdf).map (fun c => (c.pages, c.type0Fonts)) == .ok (1, 1))
+  let probeStore : Image.Store := { entries := #[
+    { src := "probe.pdf", info := (Image.decode probe).toOption }] }
+  let (pdoc, _) := Elab.run "t"
+    "\\includegraphics[width=50pt, alt={A copied page}]{probe.pdf}"
+  let pout := layoutOf oneFace pdoc {} none probeStore
+  let ppdf := Pdf.write {} oneFace pout.pages (imgs := probeStore)
+  t "copied unembedded page: the census says not embedded"
+    ((pdfCensusOf ppdf).map (fun c => (c.fontsEmbedded, c.forms, c.fonts)) == .ok (false, 1, 3))
+  t "copied unembedded page: the xref still verifies" (checkXref ppdf).isOk
+  -- Mutants: each refuses, each by its own message — the judge breaks once.
+  let mutants : IO (Array (String × ByteArray)) := do
+    let some sx := findBytes pdf "startxref\n" | return #[]
+    let x ← match PdfRead.readXref pdf with
+      | .ok x => pure x
+      | .error _ => return #[]
+    let startStr := toString x.start
+    let some dataStart := (findBytes pdf "stream\n" x.start).map (· + 7) | return #[]
+    let es ← match PdfRead.objects pdf with
+      | .ok es => pure es.val
+      | .error _ => return #[]
+    -- A stream whose length keeps its digit count one shorter, so every
+    -- offset after it stands.
+    let some lenE := es.find? fun e =>
+        e.stream.isSome && (match e.val.get? "Length" with
+          | some (.int n) => n ≥ 11 && n % 10 != 0
+          | _ => false) | return #[]
+    let some (.int len) := lenE.val.get? "Length" | return #[]
+    let some lenAt := findBytes pdf s!"/Length {len} >>" | return #[]
+    -- A page's content stream: a bare deflated dictionary.
+    let some cE := es.reverse.find? fun e =>
+        e.stream.isSome && (e.val.get? "Type").isNone && (e.val.get? "Subtype").isNone &&
+          (e.val.get? "Length1").isNone &&
+          PdfCensus.filtersOf e.val == #["FlateDecode"] &&
+          (match e.loc with | .direct _ => true | _ => false) | return #[]
+    let cOff := match cE.loc with | .direct o => o | _ => 0
+    let some cData := (findBytes pdf "stream\n" cOff).map (· + 7) | return #[]
+    return #[
+      ("truncated", pdf.extract 0 (pdf.size - 40)),
+      ("startxref off by one", spliceBytes pdf (sx + 10) startStr (toString (x.start + 1))),
+      ("xref row byte flipped", flipByte pdf (dataStart + 10)),
+      ("/Length one short", spliceBytes pdf lenAt s!"/Length {len} >>" s!"/Length {len - 1} >>"),
+      ("content deflate byte corrupted", flipByte pdf (cData + 5)),
+      ("object stream ids swapped", objStmPdf true)]
+  let ms ← mutants
+  t "six mutants built" (ms.size == 6)
+  let mut msgs : Array String := #[]
+  for (name, m) in ms do
+    match checkXref m with
+    | .ok n => t s!"mutant {name} refused (accepted {n})" false
+    | .error e =>
+      t s!"mutant {name} refused" true
+      msgs := msgs.push e
+  t "the six refusals are six messages"
+    ((msgs.qsort (· < ·)).toList.eraseDups.length == 6)
+  t "swapped object stream ids are refused naming the object"
+    (match checkXref (objStmPdf true) with
+     | .error e => hasStr e "object stream 4" && hasStr e "names 1"
+     | .ok _ => false)
+  t "the unswapped object stream reads" (checkXref (objStmPdf false) == .ok 3)
+  t "startxref one byte early is refused too"
+    (match findBytes pdf "startxref\n", PdfRead.readXref pdf with
+     | some sx, .ok x =>
+       !(checkXref (spliceBytes pdf (sx + 10) (toString x.start) (toString (x.start - 1)))).isOk
+     | _, _ => false)
+  -- Every golden fixture's PDF, read back through the checked reader.
+  for n in goldenNames do
+    t s!"pdf census covers {n}" (pdfCensusTable.any (·.1 == n))
+  for (n, _) in pdfCensusTable do
+    t s!"pdf census row {n} names a golden fixture" (goldenNames.contains n)
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc, _) ← elabFixture n src
+    let geom := Layout.Geom.ofPage doc.page
+    let store ← corpusStore doc
+    let out := layoutOf oneFace doc geom none store
+    let pdf := Pdf.write geom oneFace out.pages doc.info store out.outline
+    match PdfRead.objects pdf with
+    | .error e => t s!"pdf objects {n}: {e}" false
+    | .ok es =>
+      let c := PdfCensus.ofEntries ((PdfRead.trailer pdf).toOption.getD (.dict #[])) es.val
+      t s!"pdf xref covers {n}" (PdfCensus.xrefCovers c es.val)
+      let row := (c.pages, c.type0Fonts, c.images, c.forms, c.smasks, c.linkAnnots,
+        c.outlineItems, c.lang, c.filters.toList)
+      match pdfCensusTable.find? (·.1 == n) with
+      | some (_, want) =>
+        t s!"pdf census row {n}: {repr row}" (row == want)
+      | none => pure ()

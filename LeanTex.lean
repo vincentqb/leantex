@@ -2,6 +2,7 @@ import LeanTex.Core.Diag
 import LeanTex.Core.Utf8
 import LeanTex.Core.Flate
 import LeanTex.Core.PdfRead
+import LeanTex.Core.PdfCensus
 import LeanTex.Core.Image
 import LeanTex.Core.NfcData
 import LeanTex.Core.Nfc

@@ -2,6 +2,8 @@ import LeanTex.Core.Layout
 import LeanTex.Core.Contrast
 import LeanTex.Core.Theme
 import LeanTex.Core.Elab
+import LeanTex.Core.Pdf
+import LeanTex.Core.PdfCensus
 
 /-!
 # The owed theorems: obligations stated, proofs open
@@ -233,6 +235,22 @@ theorem decodeBin_encodeBin_id (i : Image.Info) (hf : i.form = none)
     (hp : i.palette.size < 4294967296) (hd : i.data.size < 4294967296)
     (hs : i.smask.size < 4294967296) :
     Image.decodeBin (Image.encodeBin i) = some i := by
+  sorry
+
+-- owed: write_fonts_embedded
+-- owner: LeanTex.Core.Pdf
+-- source: the pdf-census slice (modern output, wave 1 S2; pdf-objects T3/T4): `fonts.all_embedded` now reads the census of the bytes, so the claim that the writer's own output passes that census is the writer's to prove — today it is the executable witness "written pdf census: fonts embedded" in Tests/Backends and the pdffonts oracle over the corpus.
+-- blocker: the statement crosses the string writer and the byte parser: `write` spells its twelve dictionaries as interpolated strings, and no equation connects a spelled `/FontFile2 n 0 R` to the `Obj` `parseVal` returns for it. The factorization: the dictionary sites typed as `PdfRead.Obj`, rendered by one `Obj.render`, with `parseVal_render_id` (`_id`, stated when `render` exists) — then the census over `write`'s output is the census over the values `write` built, and the font arm is a fold over `keepFaces`.
+-- goldens: no
+/-- The writer embeds every font it names: for an image-free document
+(no copied graph can bring a foreign face), the census of the bytes
+`Pdf.write` emits says every font is embedded — the internal check
+`fonts.all_embedded` reads, holding of the writer's own output by proof
+rather than by the corpus sweep. -/
+theorem write_fonts_embedded (geom : Layout.Geom) (fs : Font.FontSet)
+    (pages : Array PageOut) (info : Ir.Meta) (outline : Array OutlineEntry) :
+    (PdfCensus.census (Pdf.write geom fs pages info {} outline)).map (·.fontsEmbedded)
+      = .ok true := by
   sorry
 
 end Obligations

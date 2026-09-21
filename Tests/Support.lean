@@ -175,69 +175,26 @@ def pdfText (pdf : ByteArray) : ByteArray := Id.run do
         i := dataOff + len
   return out
 
-/-- Re-verify a produced PDF's cross-reference stream: every type-1 entry
-must point at `N 0 obj`. Returns the number of verified offsets. -/
+/-- Re-verify a produced PDF through the engine's own reader
+(`PdfRead.objects`): the cross-reference followed, every listed object
+fetched and checked against the number the file spells for it
+(`objects_num_covers` — direct offsets and object-stream headers alike,
+where the earlier byte walk read type-1 rows only), and every stream the
+reader can decode inflated. Returns the number of objects verified at a
+direct offset — the count the byte walk returned. -/
 def checkXref (pdf : ByteArray) : Except String Nat := do
-  let ascii (a b : Nat) : String :=
-    String.ofList (((pdf.extract a (min b pdf.size)).toList).map fun v =>
-      Char.ofNat (min v.toNat 127))
-  let findLast (pat : String) : Option Nat := Id.run do
-    let p := pat.toUTF8
-    if pdf.size < p.size then
-      return none
-    for back in [0:pdf.size - p.size + 1] do
-      let i := pdf.size - p.size - back
-      let mut ok := true
-      for k in [0:p.size] do
-        if pdf[i + k]! != p[k]! then
-          ok := false
-          break
-      if ok then
-        return some i
-    return none
-  let find (start : Nat) (pat : String) : Option Nat := Id.run do
-    let p := pat.toUTF8
-    for i in [start:pdf.size - p.size + 1] do
-      let mut ok := true
-      for k in [0:p.size] do
-        if pdf[i + k]! != p[k]! then
-          ok := false
-          break
-      if ok then
-        return some i
-    return none
-  let some sx := findLast "startxref" | throw "no startxref"
-  let numStr := (ascii (sx + 10) (sx + 30)).splitOn "\n" |>.head!
-  let some xrefOff := numStr.toNat? | throw s!"bad startxref '{numStr}'"
-  let head := ascii xrefOff (xrefOff + 300)
-  unless (head.splitOn " 0 obj").length ≥ 2 do
-    throw "startxref does not point at an object"
-  unless (head.splitOn "/Type /XRef").length ≥ 2 do
-    throw "xref object is not an XRef stream"
-  let some sizePart := (head.splitOn "/Size ").getLast? | throw "no /Size"
-  let some size := (sizePart.splitOn " ").head?.bind (·.toNat?) | throw "bad /Size"
-  let some streamAbs := find xrefOff "stream\n" | throw "no stream data"
-  let dataOff := streamAbs + "stream\n".length
-  -- The xref stream compresses like any writer-owned stream: the rows are
-  -- read through the declared filter.
-  let some lenPart := (head.splitOn " /Length ").getLast? | throw "no /Length"
-  let some dataLen := (lenPart.splitOn " ").head?.bind (·.toNat?) | throw "bad /Length"
-  let rows ← if (head.splitOn "/FlateDecode").length ≥ 2 then
-      LeanTex.Core.Flate.inflate (pdf.extract dataOff (dataOff + dataLen)) (7 * size)
-    else
-      pure (pdf.extract dataOff (dataOff + dataLen))
+  let es ← PdfRead.objects pdf
   let mut verified := 0
-  for id in [1:size] do
-    let row := 7 * id
-    let kind := (rows[row]!).toNat
-    if kind == 1 then
-      let off := ((rows[row+1]!).toNat * 256 + (rows[row+2]!).toNat) * 65536 +
-        (rows[row+3]!).toNat * 256 + (rows[row+4]!).toNat
-      let expect := s!"{id} 0 obj"
-      let got := ascii off (off + expect.utf8ByteSize)
-      unless got == expect do
-        throw s!"object {id}: offset {off} holds {got.quote}, expected {expect.quote}"
+  for e in es.val do
+    if let .direct _ := e.loc then
       verified := verified + 1
+    -- Streams under the filters the reader owns decode, or the file is
+    -- refused where the byte walk would have read past the fault. Foreign
+    -- filters (an image's DCT) are data the census records, not decodes.
+    let fs := PdfCensus.filtersOf e.val
+    if fs.all (· == "FlateDecode") then
+      if let .error err := e.decoded then
+        throw s!"object {e.num}: {err}"
   return verified
 
 /-- A fixture elaborated the way the driver builds it: the `\data` effect
@@ -694,3 +651,8 @@ def oneFaceOf (font : Font.Font) : Font.FontSet := {
      ((slot, 400, true), 0), ((slot, 700, true), 0)]).toArray
 }
 
+/-- The read-side census of produced PDF bytes, for a claim about what a
+file carries (fonts embedded, filters, page count) — `PdfCensus.census`
+with its refusal surfaced as the test's own failure text. -/
+def pdfCensusOf (pdf : ByteArray) : Except String PdfCensus.Census :=
+  PdfCensus.census pdf

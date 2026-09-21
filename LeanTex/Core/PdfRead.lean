@@ -351,17 +351,19 @@ inductive Loc where
   | inStm (stm : Nat) (idx : Nat)
   deriving Inhabited
 
-/-- `num gen obj <value>` at a byte offset (§7.3.10). Returns the value and
-the position after it, where `stream` may follow. -/
+/-- `num gen obj <value>` at a byte offset (§7.3.10). Returns the object
+number the file spells there, the value, and the position after it, where
+`stream` may follow. -/
 private def parseIndirectAt (b : ByteArray) (off : Nat) :
-    Except String (Obj × Nat) := do
-  let some (_, i) := parseUInt b (skipWs b off)
+    Except String (Nat × Obj × Nat) := do
+  let some (num, i) := parseUInt b (skipWs b off)
     | throw "malformed PDF: no object number at a cross-referenced offset"
   let some (_, j) := parseUInt b (skipWs b i)
     | throw "malformed PDF: no generation number at a cross-referenced offset"
   let some k := keywordAt b (skipWs b j) "obj"
     | throw "malformed PDF: 'obj' missing at a cross-referenced offset"
-  parseVal b k
+  let (v, after) ← parseVal b k
+  return (num, v, after)
 
 /-- Decode one stream's data by its declared filter: none, or
 `/FlateDecode`, with a PNG predictor honoured when `/DecodeParms` declares
@@ -383,6 +385,14 @@ def decodeStream (dict : Obj) (raw : ByteArray) : Except String ByteArray := do
     | some n => if 0 ≤ n && n.toNat ≤ maxDecoded then n.toNat else maxDecoded
     | none => maxDecoded
   let data ← Flate.inflate raw cap
+  -- The zlib trailer (RFC 1950 §2.2) is checked here, where the reader
+  -- judges a file: `Flate.inflate` leaves it to its callers, and a byte
+  -- corrupted inside a Huffman block otherwise decodes to quiet garbage.
+  let n := raw.size
+  let stated := (raw[n - 4]?.getD 0).toNat * 16777216 + (raw[n - 3]?.getD 0).toNat * 65536 +
+    (raw[n - 2]?.getD 0).toNat * 256 + (raw[n - 1]?.getD 0).toNat
+  if n < 4 || stated != Flate.adler32 data then
+    throw "malformed PDF: a stream's data does not match its Adler-32 checksum"
   match parms.bind (·.get? "Predictor") |>.bind Obj.int? with
   | some p =>
     if p ≥ 10 then
@@ -406,12 +416,26 @@ private def beField (data : ByteArray) (i w : Nat) : Nat := Id.run do
     v := v * 256 + (data[i + k]?.getD 0).toNat
   return v
 
-private structure Xref where
+/-- The cross-reference as read: where every listed object lives, the
+catalog's number, the newest section's trailer dictionary (a classic
+trailer, or the cross-reference stream's own dictionary — the two carry
+the same keys, §7.5.8.2), and the offset `startxref` named. -/
+structure Xref where
   locs : Std.HashMap Nat Loc := {}
   root : Option Nat := none
+  trailer : Option Obj := none
+  start : Nat := 0
 
 private def Xref.add (x : Xref) (num : Nat) (l : Loc) : Xref :=
   if x.locs.contains num then x else { x with locs := x.locs.insert num l }
+
+/-- The newest trailer wins: a section already recorded keeps its
+dictionary, as its entries keep their locations. -/
+private def Xref.seen (x : Xref) (trailer : Obj) : Xref :=
+  let x := if x.trailer.isNone then { x with trailer := some trailer } else x
+  if x.root.isNone then
+    if let some (.ref r _) := trailer.get? "Root" then { x with root := some r } else x
+  else x
 
 /-- One classic xref section (§7.5.4) at `off`: subsections of 20-byte
 entries, then the trailer dictionary. Returns the updated table and the
@@ -449,9 +473,7 @@ private def readClassicSection (b : ByteArray) (off : Nat) (x0 : Xref) :
   match parseVal b t with
   | .error e => return .error e
   | .ok (trailer, _) =>
-    if x.root.isNone then
-      if let some (.ref r _) := trailer.get? "Root" then
-        x := { x with root := some r }
+    x := x.seen trailer
     let prev := ((trailer.get? "Prev").bind Obj.int?).map (·.toNat)
     let xstm := ((trailer.get? "XRefStm").bind Obj.int?).map (·.toNat)
     return .ok (x, prev, xstm)
@@ -459,7 +481,7 @@ private def readClassicSection (b : ByteArray) (off : Nat) (x0 : Xref) :
 /-- One cross-reference stream (§7.5.8) at `off`. -/
 private def readStreamSection (b : ByteArray) (off : Nat) (x0 : Xref) :
     Except String (Xref × Option Nat) := do
-  let (dict, j) ← parseIndirectAt b off
+  let (_, dict, j) ← parseIndirectAt b off
   let some k := keywordAt b (skipWs b j) "stream"
     | throw "malformed PDF: a cross-reference stream has no stream"
   let dataStart := if at? b k == 13 && at? b (k + 1) == 10 then k + 2
@@ -482,10 +504,7 @@ private def readStreamSection (b : ByteArray) (off : Nat) (x0 : Xref) :
   let index : Array Int := match dict.get? "Index" with
     | some (.arr xs) => xs.filterMap Obj.int?
     | _ => #[0, size]
-  let mut x := x0
-  if x.root.isNone then
-    if let some (.ref r _) := dict.get? "Root" then
-      x := { x with root := some r }
+  let mut x := x0.seen dict
   let mut row := 0
   for p in [0:index.size / 2] do
     let start := ((index[2 * p]?).getD 0).toNat
@@ -522,7 +541,7 @@ def readXref (b : ByteArray) : Except String Xref := Id.run do
     | return .error "malformed PDF: unreadable startxref offset"
   let mut work : Array Nat := #[off0]
   let mut seen : Array Nat := #[]
-  let mut x : Xref := {}
+  let mut x : Xref := { start := off0 }
   for _ in [0:64] do
     let some off := work.back? | break
     work := work.pop
@@ -556,9 +575,60 @@ private structure Reader where
 one): a single extra hop, never a chain. -/
 private def Reader.intAt (r : Reader) (num : Nat) : Option Int := do
   if let some (.direct off) := r.locs.get? num then
-    if let .ok (.int n, _) := parseIndirectAt r.b off then
+    if let .ok (_, .int n, _) := parseIndirectAt r.b off then
       return n
   none
+
+/-- The raw (still encoded) stream bytes after an object's value at `j`,
+when `stream` stands there (§7.3.8): `/Length` direct or one indirect hop,
+and `endstream` where the length says it ends — a length that stops short
+or overruns is refused, never read through. -/
+private def Reader.streamAfter (r : Reader) (v : Obj) (j : Nat) :
+    Except String (Option ByteArray) := do
+  let k := skipWs r.b j
+  match keywordAt r.b k "stream" with
+  | none => return none
+  | some m =>
+    let dataStart := if at? r.b m == 13 && at? r.b (m + 1) == 10 then m + 2
+      else if at? r.b m == 10 then m + 1 else m
+    let len ← match (v.get? "Length") with
+      | some (.int n) => pure n
+      | some (.ref ln _) =>
+        match r.intAt ln with
+        | some n => pure n
+        | none => throw "malformed PDF: an indirect /Length does not resolve"
+      | _ => throw "malformed PDF: a stream has no /Length"
+    if len < 0 || dataStart + len.toNat > r.b.size then
+      throw "truncated PDF: a stream overruns the file"
+    let dataEnd := dataStart + len.toNat
+    unless (keywordAt r.b (skipWs r.b dataEnd) "endstream").isSome do
+      throw "malformed PDF: a stream's /Length does not reach its endstream"
+    return some (r.b.extract dataStart dataEnd)
+
+/-- An object stream (§7.5.7) decoded: its data, the header's
+`(objnum, offset)` pairs in order, and `/First`. -/
+private def Reader.objStm (r : Reader) (stm : Nat) :
+    Except String (ByteArray × Array (Nat × Nat) × Nat) := do
+  let some (.direct off) := r.locs.get? stm
+    | throw "malformed PDF: an object stream is not at a direct offset"
+  let (_, sd, j) ← parseIndirectAt r.b off
+  let some raw ← r.streamAfter sd j
+    | throw "malformed PDF: an object stream has no data"
+  let data ← decodeStream sd raw
+  let some n := (sd.get? "N").bind Obj.int?
+    | throw "malformed PDF: an object stream has no /N"
+  let some first := (sd.get? "First").bind Obj.int?
+    | throw "malformed PDF: an object stream has no /First"
+  let mut i := 0
+  let mut pairs : Array (Nat × Nat) := #[]
+  for _ in [0:n.toNat] do
+    let some (onum, j1) := parseUInt data (skipWs data i)
+      | throw "malformed PDF: unreadable object stream header"
+    let some (ooff, j2) := parseUInt data (skipWs data j1)
+      | throw "malformed PDF: unreadable object stream header"
+    i := j2
+    pairs := pairs.push (onum, ooff)
+  return (data, pairs, first.toNat)
 
 /-- Fetch object `num`: its value, and its raw (still encoded) stream bytes
 when it carries a stream. An object the table does not list is the null
@@ -568,69 +638,13 @@ private def Reader.get (r : Reader) (num : Nat) :
   match r.locs.get? num with
   | none => return (.null, none)
   | some (.direct off) =>
-    let (v, j) ← parseIndirectAt r.b off
-    let k := skipWs r.b j
-    match keywordAt r.b k "stream" with
-    | none => return (v, none)
-    | some m =>
-      let dataStart := if at? r.b m == 13 && at? r.b (m + 1) == 10 then m + 2
-        else if at? r.b m == 10 then m + 1 else m
-      let len ← match (v.get? "Length") with
-        | some (.int n) => pure n
-        | some (.ref ln _) =>
-          match r.intAt ln with
-          | some n => pure n
-          | none => throw "malformed PDF: an indirect /Length does not resolve"
-        | _ => throw "malformed PDF: a stream has no /Length"
-      if len < 0 || dataStart + len.toNat > r.b.size then
-        throw "truncated PDF: a stream overruns the file"
-      return (v, some (r.b.extract dataStart (dataStart + len.toNat)))
+    let (_, v, j) ← parseIndirectAt r.b off
+    return (v, ← r.streamAfter v j)
   | some (.inStm stm idx) =>
-    let (sd, raw?) ← do
-      match r.locs.get? stm with
-      | some (.direct off) =>
-        let (v, j) ← parseIndirectAt r.b off
-        let k := skipWs r.b j
-        match keywordAt r.b k "stream" with
-        | none => throw "malformed PDF: an object stream has no stream"
-        | some m =>
-          let dataStart := if at? r.b m == 13 && at? r.b (m + 1) == 10 then m + 2
-            else if at? r.b m == 10 then m + 1 else m
-          let len ← match v.get? "Length" with
-            | some (.int n) => pure n
-            | some (.ref ln _) =>
-              match r.intAt ln with
-              | some n => pure n
-              | none => throw "malformed PDF: an indirect /Length does not resolve"
-            | _ => throw "malformed PDF: an object stream has no /Length"
-          if len < 0 || dataStart + len.toNat > r.b.size then
-            throw "truncated PDF: an object stream overruns the file"
-          pure (v, some (r.b.extract dataStart (dataStart + len.toNat)))
-      | _ => throw "malformed PDF: an object stream is not at a direct offset"
-    let some raw := raw?
-      | throw "malformed PDF: an object stream has no data"
-    let data ← decodeStream sd raw
-    let some n := (sd.get? "N").bind Obj.int?
-      | throw "malformed PDF: an object stream has no /N"
-    let some first := (sd.get? "First").bind Obj.int?
-      | throw "malformed PDF: an object stream has no /First"
-    if idx ≥ n.toNat then
-      throw "malformed PDF: an object stream index is out of range"
-    -- The header: N pairs of `objnum offset`.
-    let mut i := 0
-    let mut objOff : Option Nat := none
-    for k in [0:n.toNat] do
-      let some (onum, j1) := parseUInt data (skipWs data i)
-        | throw "malformed PDF: unreadable object stream header"
-      let some (ooff, j2) := parseUInt data (skipWs data j1)
-        | throw "malformed PDF: unreadable object stream header"
-      i := j2
-      if k == idx then
-        let _ := onum
-        objOff := some ooff
-    let some ooff := objOff
-      | throw "malformed PDF: unreadable object stream header"
-    let (v, _) ← parseVal data (first.toNat + ooff)
+    let (data, pairs, first) ← r.objStm stm
+    let some (_, ooff) := pairs[idx]?
+      | throw "malformed PDF: an object stream index is out of range"
+    let (v, _) ← parseVal data (first + ooff)
     return (v, none)
 
 /-- One level of indirection: a `ref` fetched, anything else unchanged. -/
@@ -638,6 +652,106 @@ private def Reader.deref (r : Reader) (o : Obj) : Except String Obj := do
   match o with
   | .ref n _ => return (← r.get n).1
   | _ => return o
+
+-- ## Every object (§7.5.4, §7.5.7): the substrate a census reads
+
+/-- One object the cross-reference lists, fetched: where the table put it,
+the number the file spells beside it — `num gen obj` at a direct offset,
+or its object stream's header pair — its value, and its raw (still
+encoded) stream bytes when it carries one. `header` is data the reader
+keeps rather than a check it made, so `wf` below can restate the check as
+a property the type carries. -/
+structure Entry where
+  num : Nat
+  loc : Loc
+  header : Nat
+  val : Obj
+  stream : Option ByteArray
+  deriving Inhabited
+
+/-- The file spells the object under the number the table lists it by. -/
+def Entry.wf (e : Entry) : Bool := e.header == e.num
+
+def entriesWf (es : Array Entry) : Bool := es.all Entry.wf
+
+/-- **`objects_num_covers`** (the `_covers` statement, artifact-specific:
+a fact of the file's own bookkeeping, with no IR statement behind it):
+every object `objects` hands back is spelled in the file under the number
+the cross-reference lists it by — at its offset, or in its object stream's
+header. A cross-reference row pointing at the wrong object, or an object
+stream whose header pairs were permuted, is refused by name before this
+value exists; the subtype carries the property, as `readForm`'s does. -/
+theorem objects_num_covers (es : { es : Array Entry // entriesWf es }) :
+    ∀ e ∈ es.val, e.header = e.num := by
+  intro e he
+  have h := es.property
+  simp only [entriesWf, Array.all_eq_true_iff_forall_mem, Entry.wf, beq_iff_eq] at h
+  exact h e he
+
+/-- Decode an entry's stream through its declared filter. -/
+def Entry.decoded (e : Entry) : Except String (Option ByteArray) :=
+  match e.stream with
+  | none => pure none
+  | some raw => (decodeStream e.val raw).map some
+
+/-- Every object a read cross-reference lists, in object-number order,
+each fetched and checked against the number the file spells for it. The
+strict reading the engine applies to its own output and a census applies
+to any: `startxref` must name the exact start of a section (§7.5.5 — a
+tolerant reader skips whitespace, and would pass an offset off by one),
+every number lies below the trailer's `/Size`, every object stream's
+header agrees with the table, every stream's `/Length` reaches its
+`endstream`. Object streams are decoded once each. -/
+def objectsOf (b : ByteArray) (x : Xref) :
+    Except String { es : Array Entry // entriesWf es } := do
+  let s := x.start
+  if isWs (at? b s) || at? b s == 256 ||
+      (s > 0 && !(isWs (at? b (s - 1)) || isDelim (at? b (s - 1)))) then
+    throw "malformed PDF: startxref does not point at the start of a cross-reference section"
+  let size? := ((x.trailer.bind (·.get? "Size")).bind Obj.int?).map (·.toNat)
+  let r : Reader := { b, locs := x.locs }
+  let nums := x.locs.keysArray.qsort (· < ·)
+  let mut stms : Std.HashMap Nat (ByteArray × Array (Nat × Nat) × Nat) := {}
+  let mut es : Array Entry := #[]
+  for num in nums do
+    if let some size := size? then
+      if num ≥ size then
+        throw s!"malformed PDF: object {num} lies beyond the trailer's /Size {size}"
+    match x.locs.get? num with
+    | none => pure ()
+    | some (.direct off) =>
+      let (header, val, j) ← parseIndirectAt b off
+      if header != num then
+        throw s!"malformed PDF: object {num} is not at its cross-referenced offset (the file spells {header} there)"
+      let stream ← r.streamAfter val j
+      es := es.push { num, loc := .direct off, header, val, stream }
+    | some (.inStm stm idx) =>
+      let (data, pairs, first) ← match stms.get? stm with
+        | some t => pure t
+        | none =>
+          let t ← r.objStm stm
+          stms := stms.insert stm t
+          pure t
+      let some (header, ooff) := pairs[idx]?
+        | throw s!"malformed PDF: object {num} is indexed beyond object stream {stm}'s header"
+      if header != num then
+        throw s!"malformed PDF: object stream {stm} lists {header} where the cross-reference names {num}"
+      let (val, _) ← parseVal data (first + ooff)
+      es := es.push { num, loc := .inStm stm idx, header, val, stream := none }
+  if h : entriesWf es then
+    return ⟨es, h⟩
+  else
+    throw "malformed PDF: an object's spelled number disagrees with the cross-reference"
+
+def objects (b : ByteArray) : Except String { es : Array Entry // entriesWf es } := do
+  unless at? b 0 == 37 && at? b 1 == 80 && at? b 2 == 68 && at? b 3 == 70 do
+    throw "not a PDF file (no %PDF header)"
+  objectsOf b (← readXref b)
+
+/-- The newest trailer dictionary (§7.5.5): `/Root`, `/Info`, `/Size`. -/
+def trailer (b : ByteArray) : Except String Obj := do
+  let x ← readXref b
+  return x.trailer.getD (.dict #[])
 
 -- ## Page 1 (§7.7.3)
 

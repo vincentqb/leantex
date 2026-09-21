@@ -332,6 +332,20 @@ def surfaceReach (l : String) : Bool :=
     || (t.startsWith "open " && surfaceMods.any (hasWord t ·))
     || surfaceMods.any (usesQualified l ·)
 
+/-- The census reaching into the writer: an import, an `open`, or a
+qualified use of `Pdf` in PdfCensus.lean. The census judges a file's
+bytes through the reader alone — a census that could read the writer's
+spellings would report what the writer meant, not what the file carries,
+which is the defect (an unembedded copied face passing
+`fonts.all_embedded`) it replaced. `PdfRead.` is a different module and
+does not match. -/
+def writerReach (l : String) : Bool :=
+  let l := stripLineComment l
+  let t := l.trimAscii.toString
+  t == "import LeanTex.Core.Pdf"
+    || (t.startsWith "open " && hasWord t "Pdf")
+    || usesQualified l "Pdf"
+
 /-- HTML built by concatenating tag strings: the exact shape AGENTS.md bans
 (`"<" ++ …`) everywhere but the typed tree's own renderer (Html.lean, which
 the caller exempts by file). A multi-character tag literal (`"<div>" ++`)
@@ -698,6 +712,14 @@ def gates : List Gate := [
     help := "  Backends consume the IR and nothing else; a backend that re-parses is how
   md→PDF and tex→HTML decay into N×M special cases (AGENTS.md, Conventions).
   Fix: put what the backend needs on the IR." },
+  { applies := (· == "LeanTex/Core/PdfCensus.lean")
+    flag := writerReach
+    what := fun f => s!"the census reaches into the writer, in {f}"
+    help := "  PdfCensus judges what a PDF's bytes carry, through PdfRead alone; a
+  census that can see Pdf.lean's spellings reports the writer's intent,
+  which is how an unembedded copied face once passed fonts.all_embedded.
+  Fix: read the fact off the parsed objects; a spelling the census needs
+  is a fact of ISO 32000-2, stated in PdfCensus with its section." },
   { applies := (backendFiles.contains ·)
     flag := dimLiteral
     what := fun f => s!"bare dimension literal in {f}"
@@ -785,6 +807,17 @@ def selftest : IO UInt32 := do
     ("  let s := Ir.scaleStep base n", false),
     ("  -- sizeScale.lookup … .getD quoted in a comment", false),
     ("  say s!\"a message naming sizeScale.lookup and .getD\"", false)]
+
+  expect "writerReach" writerReach [
+    ("import LeanTex.Core.Pdf", true),
+    ("open LeanTex.Core.Pdf in", true),
+    ("  let s := Pdf.write geom fs pages", true),
+    ("  let s := LeanTex.Core.Pdf.keepFaces fs pages", true),
+    -- the reader is a different module; comments and prose stay legal
+    ("import LeanTex.Core.PdfRead", false),
+    ("open LeanTex.Core.PdfRead", false),
+    ("  let es ← PdfRead.objects b", false),
+    ("  -- Pdf.write spells its dictionaries as strings", false)]
 
   expect "bareStateMutation" bareStateMutation [
     -- the mutations the door rule routes: statement-initial modify/set
