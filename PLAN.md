@@ -119,6 +119,56 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-20 — the deck stylesheet is typed rules; the browser floors are
+theorems (deck-css-typed). The user's charge: theorems that the deck
+works in both Firefox and Chromium with minimal changes.
+
+- The engine cannot prove what a browser does; it proves what it emits,
+  and emits so that correctness does not depend on which features a
+  browser has. Each deck rule is a `DeckRule` value (selector chunks,
+  declarations, feature gate, media partition); `Feature` carries each
+  gate's `@supports` test, its sourced support note (caniuse/MDN, read
+  2026-09-20), and its dependency table; one grouping emitter
+  (`emitDeckRules`) realizes the `@supports` blocks, the reduced-motion
+  partition after the blocks it reverts, and the print partition.
+- The guarantees, quantified over the rule set so a new rule is in the
+  contract the moment it is written: `deck_css_partition` (a rule using
+  a feature-dependent property or selector fragment sits in that
+  feature's supported block and nowhere else — a browser lacking F
+  never parses a rule that needs it, never loses one that does not);
+  `floor_is_baseline` (every property in the base, the `not` blocks,
+  the reduce and print partitions is in a declared, sourced Baseline
+  list — the "works in Firefox" statement in the only form the engine
+  can make it); `floor_hides_nothing` with `floor_opacity_mem` (no
+  partition hides content; every opacity a rule sets is full or the
+  design's covered fraction); `guards_by_construction` (every motion
+  rule has a reduce counterpart in the same emitted set — subsumes the
+  three per-definition guard lemmas, now deleted);
+  `fallback_uncovers_every_step` (step n's uncover rule exists at
+  target n, the uncover set being the selector's own data);
+  `snap_pages_partition_frames` (both paths' snap carriers by
+  membership in the right gate; counts via `track_snaps_exact`);
+  `deck_text_path_free` (no rule ships text, so the census cannot
+  depend on the path a browser takes).
+- Minimal changes by construction: adding or dropping a feature
+  dependency is one `requires` field; adding a browser fact is one
+  `Feature` row; nothing else moves. What stays measured, never proved:
+  Chromium's directional snapping, Firefox's lack of timelines, the
+  page-scroll fraction — the dated Playwright probes of the
+  vertical-deck entry are the oracle.
+- Grouping is the only stylesheet change: the `:has()` floor rules move
+  into a `selector(:has(a))` block (behaviour-neutral — an engine
+  without `:has()` dropped the unparseable selectors before, and in a
+  timeline engine the target rules are inert, animation declarations
+  overriding normal ones), and the guards merge into one reduce block.
+  A test pins the emitted declaration multiset to the typed set.
+- Verified: gates green; three reference PDFs byte-identical vs main's
+  binary; the reference deck's before/after stylesheets carry equal
+  declaration and selector multisets (379 = 379); Playwright renders of
+  frame 1 and a stepped frame's snaps 1–2 byte-identical to main's;
+  bench themed 83/85 ms pdf/html, paper 154/153 (medians of 5) — at
+  baseline.
+
 2026-09-20 — the deck stacks vertically; the motion stays horizontal
 (slides-vertical). Supersedes the horizontal row's axis and the entry
 fade; the step-uncover construction rotates with it.
