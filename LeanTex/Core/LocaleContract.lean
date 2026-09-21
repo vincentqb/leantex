@@ -26,7 +26,9 @@ theorem builtin_total : builtin.all (fun l =>
     l.months.size == 12 && l.months.all (!·.isEmpty) &&
     !l.quoteOpen.isEmpty && !l.quoteClose.isEmpty &&
     !l.quoteInnerOpen.isEmpty && !l.quoteInnerClose.isEmpty &&
-    l.leftMin > 0 && l.rightMin > 0) = true := by decide +kernel
+    l.leftMin > 0 && l.rightMin > 0 &&
+    !l.listing.isEmpty && !l.decimal.isEmpty && !l.group.isEmpty) = true := by
+  decide +kernel
 
 /-- One record per tag: `forTag` is unambiguous. -/
 theorem builtin_tags_nodup : (builtin.map (·.tag)).Nodup := by decide +kernel

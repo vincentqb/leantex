@@ -53,6 +53,8 @@ structure IniLocale where
   quotes : String := ""
   leftMin : Nat := 0
   rightMin : Nat := 0
+  decimal : String := ""
+  group : String := ""
 
 def parseIni (text : String) : IniLocale := Id.run do
   let mut loc : IniLocale := {}
@@ -80,6 +82,9 @@ def parseIni (text : String) : IniLocale := Id.run do
         else if k == "righthyphenmin" then loc := { loc with rightMin := v.toNat?.getD 0 }
       else if sec == "characters" && k == "delimiters.quotes" then
         loc := { loc with quotes := v }
+      else if sec == "numbers" then
+        if k == "decimal" then loc := { loc with decimal := v }
+        else if k == "group" then loc := { loc with group := v }
   return loc
 
 def leanStr (s : String) : String :=
@@ -130,6 +135,30 @@ def emitCref (c : CrefGen) : String :=
   s!"\{ one := {leanStr c.one}, many := {leanStr c.many}, " ++
   s!"capOne := {leanStr c.capOne}, capMany := {leanStr c.capMany} }"
 
+/-- Invisible separators spelled as escapes, so the generated file shows
+which space a locale groups by rather than an unreadable blank. -/
+def leanStrVis (s : String) : String :=
+  if s == "\u2009" then "\"\\u2009\""
+  else if s == "\u202F" then "\"\\u202F\""
+  else if s == "\u00A0" then "\"\\u00A0\""
+  else leanStr s
+
+/-- The listing caption word per tag. Not CLDR data — the babel inis carry
+no listing caption — so this table is embedded here with its sources:
+English is listings' own default (listings.sty,
+`\lst@UserCommand\lstlistingname{Listing}`); French and German are
+cleveref's language definitions (cleveref.sty, `\crefname{listing}`:
+french "Liste", ngerman "Listing"). -/
+def listingWord : List (String × String) :=
+  [("en", "Listing"), ("fr", "Liste"), ("de", "Listing")]
+
+/-- The digit-group separator per tag: the ini's `[numbers] group`, except
+English, whose ini groups by "," — plain-prose grouping. `\num`'s spelling
+is siunitx's, whose default `group-separator` is `\,`, the thin space
+(siunitx manual §"Printing numbers"), so en groups by U+2009. -/
+def groupOf (tag iniGroup : String) : String :=
+  if tag == "en" then "\u2009" else iniGroup
+
 def quoteAt (s : String) (i : Nat) : String :=
   match s.toList[i]? with
   | some c => String.ofList [c]
@@ -160,7 +189,10 @@ def {name} : Locale := \{
   crefEquation := {emitCref eq}
   crefFigure := {emitCref fig}
   crefTable := {emitCref tab}
-  crefRangeTo := {leanStr to} }
+  crefRangeTo := {leanStr to}
+  listing := {leanStr ((listingWord.lookup l.tag).getD "Listing")}
+  decimal := {leanStr l.decimal}
+  group := {leanStrVis (groupOf l.tag l.group)} }
 
 "
 
@@ -176,6 +208,8 @@ def main (args : List String) : IO UInt32 := do
       die s!"babel-{lang}.ini: {loc.months.size} months"
     if (crefData.lookup loc.tag).isNone then
       die s!"no cref names for '{loc.tag}': add its cleveref.sty language block to crefData"
+    if loc.decimal.isEmpty || loc.group.isEmpty then
+      die s!"babel-{lang}.ini: missing [numbers] decimal or group"
     body := body ++ emit lang loc
   let content := notice
     ++ "import LeanTex.Core.Locale\n\n"

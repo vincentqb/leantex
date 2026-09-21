@@ -61,6 +61,24 @@ structure Locale where
   /-- `\crefrange`'s conjunction word (`\crefrangeconjunction` without its
   no-break space: "to", "bis", "à"). -/
   crefRangeTo : String
+  /-- The word before a numbered code listing's caption ("Listing 1: …",
+  read at `Ir.listingCaption`). Not CLDR data — the babel inis carry no
+  listing caption — so the generator embeds its own cited table: English
+  is listings' own `\lstlistingname` default (listings.sty,
+  `\lst@UserCommand\lstlistingname{Listing}`); French and German are
+  cleveref's language definitions (cleveref.sty, `\crefname{listing}`:
+  french "Liste", ngerman "Listing"). -/
+  listing : String
+  /-- The decimal marker (`[numbers] decimal` in the ini, CLDR's number
+  symbols): what `\num{1.5}` prints between integer and fraction. -/
+  decimal : String
+  /-- The digit-group separator `\num` sets every three digits. fr and de
+  take the ini's `[numbers] group` (fr U+202F narrow no-break space, de
+  "."); en takes the thin space U+2009 — siunitx's own default
+  `group-separator = \,` (siunitx manual §"Printing numbers") — rather
+  than the ini's ",", which is plain-prose grouping, not the scientific
+  spelling `\num` exists for. -/
+  group : String
   deriving Repr, BEq
 
 namespace Locale

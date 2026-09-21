@@ -37,7 +37,10 @@ def en : Locale := {
   crefEquation := { one := "eq.", many := "eqs.", capOne := "Equation", capMany := "Equations" }
   crefFigure := { one := "fig.", many := "figs.", capOne := "Figure", capMany := "Figures" }
   crefTable := { one := "table", many := "tables", capOne := "Table", capMany := "Tables" }
-  crefRangeTo := "to" }
+  crefRangeTo := "to"
+  listing := "Listing"
+  decimal := "."
+  group := "\u2009" }
 
 /-- fr: babel-fr.ini; cref names from cleveref.sty v0.21.4. -/
 def fr : Locale := {
@@ -57,7 +60,10 @@ def fr : Locale := {
   crefEquation := { one := "équation", many := "équations", capOne := "Équation", capMany := "Équations" }
   crefFigure := { one := "figure", many := "figures", capOne := "Figure", capMany := "Figures" }
   crefTable := { one := "tableau", many := "tableaux", capOne := "Tableau", capMany := "Tableaux" }
-  crefRangeTo := "à" }
+  crefRangeTo := "à"
+  listing := "Liste"
+  decimal := ","
+  group := "\u202F" }
 
 /-- de: babel-de.ini; cref names from cleveref.sty v0.21.4. -/
 def de : Locale := {
@@ -77,7 +83,10 @@ def de : Locale := {
   crefEquation := { one := "Gleichung", many := "Gleichungen", capOne := "Gleichung", capMany := "Gleichungen" }
   crefFigure := { one := "Abb.", many := "Abb.", capOne := "Abbildung", capMany := "Abbildungen" }
   crefTable := { one := "Tabelle", many := "Tabellen", capOne := "Tabelle", capMany := "Tabellen" }
-  crefRangeTo := "bis" }
+  crefRangeTo := "bis"
+  listing := "Listing"
+  decimal := ","
+  group := "." }
 
 /-- The shipped locales. Contracts quantify over this list — adding
 a locale is entering the contract (the `Theme.builtin` pattern). -/
