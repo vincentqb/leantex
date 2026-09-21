@@ -157,6 +157,35 @@ resolution layer — no unresolved `\cite`/`\ref`/image reaches a backend
 unnamed — is the next slice of the same theorem.
 
 
+2026-09-21 — a poster carries its title band and footer; the theme
+carries the look (poster-chrome slice): the poster record gains a
+headline (`ClassRecord.headline`), and a headline class draws the
+`\title` family as a full-width band at the top of each face — the
+gemini lineage's rule (its headline template reads the declarations
+without a `\maketitle`) — title `\Huge` bold, author `\Large`, institute
+`\normalsize` (the lineage's own font templates, as scale steps), in the
+`frametitle` roles the deck bar already resolves at one site, aligned by
+the `titlepage` style's declared token, the body's columns below.
+`\logoleft`/`\logoright` are the band's two corner slots
+(`Doc.logoLeft`/`logoRight`, the `\logo` machinery's shape), laid by the
+furniture pass with their ink centred in the bar's recorded extent
+(`PageOut.band`), decorative by role. HTML: the band is the page's own
+`<header>` before `<main>`, the title its one h1, the same frametitle
+tokens. The `gemini` bundle ships (beamercolorthemegemini.sty's values
+onto the semantic keys; covered = 30%, the largest fraction where its
+alert and example clear the 3:1 state change), `\usecolortheme{n}` reads
+`beamercolortheme<n>.sty` beside the document through the `\usepackage`
+splice, and `\setbeamercolor` maps the elements the engine has roles for
+onto the palette — an element with no role keeps its named warning.
+Image sizes now read the token environment (`0.2\paperheight`,
+`0.5\colwidth` — the `\setlength` rule, eager); `\footercontent` is the
+running foot; `\makebox` keeps its content and names its dropped box.
+Known remainder: the private poster sets one line past its single face
+(E0330) — every paragraph's first line breaks early (the fix-firstline
+slice's defect) and the machine substitutes a wider default sans for the
+document's absent brand face; the band itself fits with ~10 pt to spare
+once either resolves.
+
 2026-09-21 — a venue's refused redefinitions are declarations; read them
 out (sty-readout slice). Rule (b) extended twice, in the maketitle
 precedent's shape. The size ladder: a refused size command whose body
@@ -274,6 +303,7 @@ which `kp`'s `a ≤ j` gate refuses — is now refused by `seqCost` in
 kp-fuzz and Tests/Layout.lean too; the ragged-plus-protrusion shape the
 finite glue newly exposes holds at 1000 fuzz cases.
 
+||||||| parent of b7b5174 (Record the poster-chrome slice in the PLAN log)
 2026-09-21 — weight is an axis, not a flag (font-weights slice): every
 font key is now `(slot, weight, italic)`, weight the CSS/OpenType number
 of an NFSS series (`Ir.Weight`, the nine LaTeX News 31 values; `m` = 400,
