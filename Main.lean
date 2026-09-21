@@ -154,11 +154,14 @@ def deflateCached (bytes : ByteArray) : IO ByteArray := do
   catch _ => pure ()
   return z
 
-/-- The per-face deflated streams `Pdf.write` embeds, through the cache. -/
-def fontZdata (fonts : Array Font.Font) : IO (Array (Option ByteArray)) := do
-  let mut zdata : Array (Option ByteArray) := #[]
-  for f in fonts do
-    zdata := zdata.push (some (← deflateCached f.data))
+/-- The per-face deflated streams `Pdf.write` embeds, through the cache —
+for the faces it will embed (`Pdf.keepFaces`) and no other: hashing a
+face the file never carries is the whole cost of a one-page build. -/
+def fontZdata (fs : Font.FontSet) (keep : Array Nat) : IO (Array (Option ByteArray)) := do
+  let mut zdata : Array (Option ByteArray) := Array.replicate fs.fonts.size none
+  for k in keep do
+    if let some f := fs.fonts[k]? then
+      zdata := zdata.set! k (some (← deflateCached f.data))
   return zdata
 
 /-- Every face a document can reach: the three family slots crossed with the
@@ -187,8 +190,7 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
       match ← loadOverride path with
       | .error d => return .error d
       | .ok (f, path) =>
-        return .ok ({ fonts := #[f], index := singleFaceIndex
-                      zdata := ← fontZdata #[f] }, #[], path)
+        return .ok ({ fonts := #[f], index := singleFaceIndex }, #[], path)
   let mut diags : Array Diag := #[]
   let mut docDirs : List String := []
   for d in spec.dirs do
@@ -355,8 +357,7 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
       match Font.parse data with
       | .error _ => return .error ((diags.find? (·.severity == .error)).getD noFontDiag)
       | .ok f =>
-        return .ok ({ fonts := #[f], index := singleFaceIndex
-                      zdata := ← fontZdata #[f] }, diags, face.path)
+        return .ok ({ fonts := #[f], index := singleFaceIndex }, diags, face.path)
   -- Per-glyph fallback: map every scalar the document uses to the first
   -- declared face covering it; scalars none covers go to the scan.
   let mut fallback : Array (Char × Nat) := #[]
@@ -385,8 +386,7 @@ def buildFontSet (ui : Ui) (file : String) (doc : Ir.Doc) :
     fonts := fonts
     index := index
     fallback := fallback
-    math := mathIdx
-    zdata := ← fontZdata fonts }
+    math := mathIdx }
   return .ok (set, diags, String.intercalate ", " paths.toList)
 
 /-- The bibliography request an elaborated document states (`Ir.bibRefs`),
@@ -957,7 +957,14 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         ui.phase "markdown" s!"{md.utf8ByteSize} bytes" (← since t)
       if emit.contains .pdf then
         let t ← IO.monoMsNow
-        let pdf := Pdf.write geom fs out.pages doc.info imgs out.outline
+        -- Font files and content streams deflate through the content-hash
+        -- cache: a face, or a page unchanged since the last build, reads
+        -- its stream back instead of compressing it.
+        let fs := { fs with zdata := ← fontZdata fs (Pdf.keepFaces fs out.pages) }
+        let mut streams : Array (ByteArray × Option ByteArray) := #[]
+        for data in Pdf.pageStreams geom fs out.pages imgs do
+          streams := streams.push (data, some (← deflateCached data))
+        let pdf := Pdf.write geom fs out.pages doc.info imgs out.outline streams
         let pdfPath := outPath ui.cfg.output outIsDir file .pdf
         IO.FS.writeBinFile pdfPath pdf
         written := written.push pdfPath

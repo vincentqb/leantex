@@ -1389,6 +1389,15 @@ def pdfFaceChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   -- One face only: nothing unused is embedded, so no /F2 exists.
   let plainPdf := pdfText (Pdf.write geom oneFace (layoutOf oneFace bigDoc geom).pages)
   t "pdf embeds no unused face" (!bytesContain plainPdf "/F2 ")
+  -- The driver's cached spellings are transparent: pre-deflated content
+  -- streams and face files (the cache's shape) write the file the writer
+  -- compresses for itself, byte for byte.
+  let bigPages := (layoutOf twoFace bigDoc geom).pages
+  let cached := (Pdf.pageStreams geom twoFace bigPages).map fun d => (d, some (Flate.deflate d))
+  let zFaces := twoFace.fonts.map fun f => some (Flate.deflate f.data)
+  t "pdf with cached streams and faces is the pdf without"
+    (Pdf.write geom { twoFace with zdata := zFaces } bigPages (streams := cached) ==
+      Pdf.write geom twoFace bigPages)
   -- The descriptor states the parsed metrics (ISO 32000-2 §9.8.1:
   -- CapHeight is the cap height), never a stand-in: the fixture face
   -- declares a cap height under its ascent, so the old CapHeight := ascent

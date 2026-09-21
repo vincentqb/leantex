@@ -526,6 +526,43 @@ theorem pdf_lang_declared (outlinesRef : String) (xmpId : Nat) (lang : Option St
   ⟨s!"<< /Type /Catalog /Pages 2 0 R{outlinesRef} /Metadata {xmpId} 0 R",
    " /ViewerPreferences << /DisplayDocTitle true >> >>", rfl⟩
 
+/-- Face index → resource number, over the faces `keepFaces` embeds. -/
+private def remapOf (fs : FontSet) (keep : Array Nat) : Array Nat := Id.run do
+  let mut r : Array Nat := Array.replicate fs.fonts.size 0
+  for (old, new) in keep.zipIdx do
+    r := r.set! old new
+  return r
+
+/-- Images actually placed and loaded become XObjects, one per file however
+often it is placed; a placeholder is drawn inline and needs no object. -/
+private def usedImagesOf (imgs : Image.Store) (pages : Array PageOut) : Array Nat := Id.run do
+  let mut out : Array Nat := #[]
+  for p in pages do
+    for l in p.lines do
+      for s in l.segs do
+        if let .image (some k) _ _ := s then
+          if ((imgs.get? k).bind (·.info)).isSome && !out.contains k then
+            out := out.push k
+  return out
+
+/-- Image index → XObject number, over `usedImagesOf`. -/
+private def imgMapOf (imgs : Image.Store) (used : Array Nat) : Array (Option Nat) := Id.run do
+  let mut m : Array (Option Nat) := Array.replicate imgs.entries.size none
+  for (k, n) in used.zipIdx do
+    m := m.set! k (some n)
+  return m
+
+/-- The per-page content streams `write` embeds, uncompressed: the same
+bytes `write` computes for itself, exposed so the driver can deflate them
+through its content-hash cache (the font files' shape — a page whose
+content is unchanged since the last build reads its stream instead of
+compressing it) and hand them back as `write`'s `streams`. -/
+def pageStreams (geom : Geom) (fs : FontSet) (pages : Array PageOut)
+    (imgs : Image.Store := {}) : Array ByteArray :=
+  let remap := remapOf fs (keepFaces fs pages)
+  let imgMap := imgMapOf imgs (usedImagesOf imgs pages)
+  pages.map fun p => (contentStream geom remap imgMap p).toUTF8
+
 /-- Serialize positioned pages into a PDF 2.0 file: cross-reference stream,
 object streams, one Identity-H CID font per face actually used (fully
 embedded, with its own ToUnicode), image XObjects for every image actually
@@ -533,7 +570,8 @@ placed, and the document information the source declared (Info dictionary
 plus XMP). -/
 def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     (info : Ir.Meta := {}) (imgs : Image.Store := {})
-    (outline : Array OutlineEntry := #[]) : ByteArray := Id.run do
+    (outline : Array OutlineEntry := #[])
+    (streams : Array (ByteArray × Option ByteArray) := #[]) : ByteArray := Id.run do
   let np := pages.size
   -- Only faces that actually contribute glyphs are embedded — `keepFaces`,
   -- the very function `html_fonts_cover_pdf` quantifies over, so the
@@ -542,30 +580,12 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   let allUsed : Array (Array (Nat × Char)) :=
     (Array.range fs.fonts.size).map fun k => usedGlyphs k (fs.get k).numGlyphs pages
   let keep : Array Nat := keepFaces fs pages
-  let remap : Array Nat := Id.run do
-    let mut r : Array Nat := Array.replicate fs.fonts.size 0
-    for (old, new) in keep.zipIdx do
-      r := r.set! old new
-    return r
+  let remap := remapOf fs keep
   let usedPerFont : Array (Array (Nat × Char)) := keep.map fun k => allUsed[k]!
   let nf := keep.size
-  -- Images actually placed and loaded become XObjects, one per file however
-  -- often it is placed; a placeholder is drawn inline and needs no object.
-  let usedImgs : Array Nat := Id.run do
-    let mut out : Array Nat := #[]
-    for p in pages do
-      for l in p.lines do
-        for s in l.segs do
-          if let .image (some k) _ _ := s then
-            if ((imgs.get? k).bind (·.info)).isSome && !out.contains k then
-              out := out.push k
-    return out
+  let usedImgs := usedImagesOf imgs pages
   let ni := usedImgs.size
-  let imgMap : Array (Option Nat) := Id.run do
-    let mut m : Array (Option Nat) := Array.replicate imgs.entries.size none
-    for (k, n) in usedImgs.zipIdx do
-      m := m.set! k (some n)
-    return m
+  let imgMap := imgMapOf imgs usedImgs
   -- Object ids are laid out in fixed blocks so the xref can be built without
   -- a second pass: 1 catalog, 2 pages, then four ids per font, one file per
   -- font, then per image an XObject plus an SMask when it has an alpha
@@ -747,16 +767,24 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
   -- rides as a real deflate whenever that is smaller, filter declared.
   -- Image payloads and copied form graphs carry their own filters and
   -- stay on `putStream`.
-  let putFlate (w : Wr) (id : Nat) (dict : String) (data : ByteArray) : Wr × Nat :=
-    let z := Flate.deflate data
+  let putZ (w : Wr) (id : Nat) (dict : String) (data z : ByteArray) : Wr × Nat :=
     if z.size < data.size then
       putStream w id (dict ++ " /Filter /FlateDecode") z
     else
       putStream w id dict data
+  let putFlate (w : Wr) (id : Nat) (dict : String) (data : ByteArray) : Wr × Nat :=
+    putZ w id dict data (Flate.deflate data)
 
+  -- A page's stream, and its deflate when the driver already holds one
+  -- (`pageStreams`): the choice of spelling is `putZ`'s either way, so a
+  -- cache hit and a recomputation write the same bytes.
   for i in [0:np] do
-    let data := (contentStream geom remap imgMap pages[i]!).toUTF8
-    let (w', off) := putFlate w (contentId i) "" data
+    let (data, z?) := match streams[i]? with
+      | some s => s
+      | none => ((contentStream geom remap imgMap pages[i]!).toUTF8, none)
+    let (w', off) := match z? with
+      | some z => putZ w (contentId i) "" data z
+      | none => putFlate w (contentId i) "" data
     w := w'
     locs := locs.set! (contentId i) (1, off)
 
@@ -854,11 +882,7 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
     -- The driver may have deflated this face already, through its
     -- content-hash cache; the writer then only picks the smaller spelling.
     let (w'', ffOff) := match fs.zdata[keep[k]!]?.getD none with
-      | some z =>
-        if z.size < font.data.size then
-          putStream w (fileId k) (ffDict ++ " /Filter /FlateDecode") z
-        else
-          putStream w (fileId k) ffDict font.data
+      | some z => putZ w (fileId k) ffDict font.data z
       | none => putFlate w (fileId k) ffDict font.data
     w := w''
     locs := locs.set! (fileId k) (1, ffOff)
