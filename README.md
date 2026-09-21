@@ -70,6 +70,9 @@ frame is one `<section>` of the HTML deck and one page of the PDF handout.
 `icons.tex` shows the fontawesome5 spellings
 (`\faGithub`, `\faIcon{arrow-up}`): each icon is a glyph in whatever
 installed or shipped face covers it, with a required text alternative.
+`listings.tex` shows `{lstlisting}` and `{minted}` — numbered captions,
+`\lstset`, line numbers — beside the siunitx spellings (`\num`, `\qty`,
+`\si`, `\ang`): locale-grouped digits, real superscripts, unit symbols.
 `themed.tex` selects the built-in `moloch` theme (`leantex themes` in help:
 `\usetheme{moloch}` or `\theme{moloch}`; `plain` is the quieter bundle) and
 shows the frame-title bar, a section page with its progress bar, and a
