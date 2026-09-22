@@ -79,7 +79,7 @@ def mathmlChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "a numbered display keeps its number beside the math, never inside"
     (let p := page "\\begin{equation} e = mc^2 \\end{equation}"
      let inMath := (((p.splitOn "<math").getD 1 "").splitOn "</math>").headD ""
-     ((p.splitOn "class=\"equation\"").length ≥ 2) &&
+     ((p.splitOn "class=\"equation display\"").length ≥ 2) &&
        ((p.splitOn "eqnum").length ≥ 2) &&
        ((inMath.splitOn "eqnum").length == 1))
   t "an explicit space is mspace at its mu width"
@@ -385,6 +385,29 @@ def htmlLayoutChecks (ref : IO.Ref (List String)) : IO Unit := do
      (fromFontPage.splitOn "text-underline-position: from-font").length == 3 &&
      (fromFontPage.splitOn "text-underline-offset").length == 1)
 
+mutual
+
+/-- The flow's shape as `tag.class` tokens, in document order: every `<p>`
+and every element carrying the `display` class, with `>math` when a
+`<math>` child stands directly inside — the typed-tree fact a display
+formula's block placement is judged on, never the serialized page. -/
+def flowShapeOne (acc : Array String) : Html.Node → Array String
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem tag attrs kids =>
+    let cls := ((attrs.find? (·.1 == "class")).map (·.2)).getD ""
+    if tag == "p" || (cls.splitOn " ").contains "display" then
+      acc.push (tag ++ "." ++ cls ++
+        (if kids.any (fun k => k matches .elem "math" _ _) then ">math" else ""))
+    else flowShapeList acc kids.toList
+
+def flowShapeList (acc : Array String) : List Html.Node → Array String
+  | [] => acc
+  | k :: rest => flowShapeList (flowShapeOne acc k) rest
+
+end
+
 /-- The HTML rhythm realization, censused over emitted sheets: every default
 vertical gap is one emission — the below element's `margin-top`, computed
 from the declared table (`Ir.rhythmGapQuanta`) in the screen context's
@@ -431,6 +454,28 @@ def htmlRhythmChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "html float owns the boundary below it"
     ((plainPage.splitOn
       ":where(figure.float + *) { margin-top: var(--floatsep, 1.450rem); }").length == 2)
+  -- The display formula's block owns both its boundaries through the two
+  -- display tokens the PDF walk reads, over the same rhythm row; the
+  -- formula element itself carries no margin, so the boundary has one
+  -- emitter. Typed-tree half: paragraph, display, paragraph emits the
+  -- `.display` element between two `<p>`s, and the numbered equation
+  -- joins the same class.
+  t "html display skips are the two tokens over the display row"
+    ((plainPage.splitOn
+      ":where(* + .display) { margin-top: var(--abovedisplayskip, 1.450rem); }").length == 2 &&
+     (plainPage.splitOn
+      ":where(.display + *) { margin-top: var(--belowdisplayskip, 1.450rem); }").length == 2 &&
+     (plainPage.splitOn ".math-display { margin").length == 1)
+  let (dispDoc, dispDs) := elabStr
+    "\\documentclass{article}\\begin{document}a\n\n\\[ x = 1 \\]\n\nb\n\n\\begin{equation} y \\end{equation}\n\\end{document}"
+  let dispPage := (HtmlDoc.emit {} dispDoc).1
+  t "html display fixture elaborates clean" dispDs.isEmpty
+  let (_, dispBody, _) := HtmlDoc.emitTree {} dispDoc
+  t "html display formula is its own .display block between the paragraphs"
+    (flowShapeList #[] dispBody.toList ==
+      #["p.", "p.display>math", "p.", "div.equation display>math"])
+  t "html display page has no centered wrapper around the formula"
+    (!hasStr dispPage "class=\"centered\"")
   let (themedDoc, themedDs) := elabStr ("\\documentclass{beamer}\\usetheme{moloch}" ++
     "\\begin{document}\\section{s}\\begin{frame}{t}x\\end{frame}\\end{document}")
   let themedPage := (HtmlDoc.emit {} themedDoc).1

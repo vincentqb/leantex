@@ -664,6 +664,62 @@ theorem footins_within_glue :
     (footinsDefault baseFontSize).width.sp ≤ Dim.pt 13 := by
   refine ⟨rfl, ?_, ?_⟩ <;> decide
 
+/-- The space a display formula opens against the text above and below
+it: LaTeX's `\abovedisplayskip` and `\belowdisplayskip` — one body size
+with rubber (size10.clo: 10pt plus 2pt minus 5pt; size11.clo: 11pt plus
+3pt minus 6pt; size12.clo: 12pt plus 3pt minus 7pt; `\belowdisplayskip`
+is `\abovedisplayskip` in all three) — quantized to the rhythm as the
+footnote skip is: two quanta, one full leading, inside the source glue's
+own range at the base (`display_between`). The rubber keeps the source's
+proportions of the body size (a fifth of stretch, half of shrink), so a
+page may take up the slack LaTeX's glue allows. Overridable as
+`\tokens{ abovedisplayskip = ... }` and `belowdisplayskip`, or
+`\setlength` on either. The short forms (`\abovedisplayshortskip`) are
+never selected: TeX chooses them by measuring the preceding line against
+the display's left edge, a fact the block walk does not measure, so the
+long skip is the one honest reading. -/
+def displaySkipDefault (size : Sp) : SymGlue :=
+  { width := { sp := 2 * rhythmQuantum size }
+    stretch := { sp := size / 5 }
+    shrink := { sp := size / 2 } }
+
+/-- The two display-skip token names, above and below, as `\tokens` and
+`\setlength` spell them. -/
+def displaySkipAbove : String := "abovedisplayskip"
+def displaySkipBelow : String := "belowdisplayskip"
+
+/-- The one resolving site for the skip above a display formula: the
+document's token where declared, else the rhythm default at the governing
+size. Both backends read it (`Layout`'s display arm; the HTML base sheet
+emits the same token with the same default as its `var()` fallback). -/
+def displayAbove (tokens : Tokens) (size : Sp) : SymGlue :=
+  (tokens.find? displaySkipAbove).getD (displaySkipDefault size)
+
+/-- The skip below a display formula; see `displayAbove`. -/
+def displayBelow (tokens : Tokens) (size : Sp) : SymGlue :=
+  (tokens.find? displaySkipBelow).getD (displaySkipDefault size)
+
+/-- The quantized display skip lies between LaTeX's own bounds at the base
+it was sourced at — the glue `10pt plus 2pt minus 5pt` can set any
+length in 5..12pt, and one full leading at the 10pt body is 12pt — and
+its rubber is the source's: a fifth of the body stretch, half of it
+shrink. An edit that moves the default off the rhythm or outside what
+LaTeX's glue could legally set fails the build here. -/
+theorem display_between :
+    (displaySkipDefault baseFontSize).width.sp = 2 * rhythmQuantum baseFontSize ∧
+    Dim.pt 5 ≤ (displaySkipDefault baseFontSize).width.sp ∧
+    (displaySkipDefault baseFontSize).width.sp ≤ Dim.pt 12 ∧
+    (displaySkipDefault baseFontSize).stretch.sp = Dim.pt 2 ∧
+    (displaySkipDefault baseFontSize).shrink.sp = Dim.pt 5 := by
+  refine ⟨rfl, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- An undeclared document resolves both display skips to the default:
+the token layer adds nothing of its own, so a backend reading
+`displayAbove {}` reads exactly the sourced value. -/
+theorem displaySkips_default_exact (size : Sp) :
+    displayAbove {} size = displaySkipDefault size ∧
+    displayBelow {} size = displaySkipDefault size := ⟨rfl, rfl⟩
+
 /-- The heading's default spaces, their own tokens rather than the
 parskip's doubles: article.cls pairs a zero `\parskip` with 3.5ex above /
 2.3ex below a `\section` (classes.dtx `\@startsection`), so a class that
@@ -829,7 +885,7 @@ theorem covers. The quantum differs per context (the print leading against
 the screen leading), which is exactly the statement: a boundary's multiple
 is declared once; each backend realizes it in its own context's unit. -/
 def rhythmGapQuanta : List (String × Nat) :=
-  [("peer", 1), ("heading", 2), ("caption", 1), ("float", 2)]
+  [("peer", 1), ("heading", 2), ("caption", 1), ("float", 2), ("display", 2)]
 
 /-- The table and the tokens agree: each declared default gap is its row's
 multiple of the quantum, and the heading row is twice the peer row — the
@@ -845,11 +901,13 @@ theorem rhythm_table_exact (size : Sp) :
       = (floatSepDefault size).width.sp ∧
     ((rhythmGapQuanta.lookup "heading").getD 0 : Int) * rhythmQuantum size
       = (headingBeforeDefault size).width.sp ∧
+    ((rhythmGapQuanta.lookup "display").getD 0 : Int) * rhythmQuantum size
+      = (displaySkipDefault size).width.sp ∧
     (rhythmGapQuanta.lookup "heading").getD 0
       = 2 * (rhythmGapQuanta.lookup "peer").getD 0 := by
-  refine ⟨?_, ?_, ?_, ?_, by decide⟩ <;>
+  refine ⟨?_, ?_, ?_, ?_, ?_, by decide⟩ <;>
     simp [rhythmGapQuanta, parskipDefault, captionSepDefault, floatSepDefault,
-      headingBeforeDefault, Dim.Length.ofSp, List.lookup]
+      headingBeforeDefault, displaySkipDefault, Dim.Length.ofSp, List.lookup]
 
 /-- Named colours declared by `\palette`. -/
 structure Palette where
@@ -3054,6 +3112,43 @@ inductive Block where
   | bibliography (src : String) (style : Option String) (items : Array BibItem)
   deriving Repr, BEq, Inhabited
 
+
+/-- Is this inline a display formula — `\[…\]`, `{equation*}`, an
+alignment — whether modelled or carried as source? -/
+def Inline.isDisplayFormula : Inline → Bool
+  | .formula true _ _ | .math true _ => true
+  | _ => false
+
+/-- A centred block's body that is one display formula and nothing else,
+labels aside — the shape `\[…\]` and the unnumbered display environments
+elaborate to (`.center #[.para content]`), and the one reading both
+backends share when they open the display skips around it: `Layout`'s
+display arm pays `displayAbove`/`displayBelow` as its own space, and the
+HTML backend emits the `.display` element the base sheet's display rules
+address. A display formula standing among text (a caption's, an item
+label's) is inline content and opens nothing here — as a numbered
+`.equation` is its own block and opens the same skips at its own arm. -/
+def displayContent? (body : Array Block) : Option (Array Inline) :=
+  match body.toList with
+  | [.para content] =>
+    if content.any Inline.isDisplayFormula &&
+        content.all (fun x => x.isDisplayFormula || x matches .label _) then
+      some content
+    else none
+  | _ => none
+
+/-- The display reading is a projection of the body: what it returns is the
+centred paragraph's own content, so the leaves both backends set are the
+leaves `Struct` counts — no content is invented or dropped at the seam. -/
+theorem displayContent_projects (body : Array Block) (content : Array Inline)
+    (h : displayContent? body = some content) : body.toList = [.para content] := by
+  unfold displayContent? at h
+  split at h
+  · rename_i heq
+    split at h
+    · simp only [Option.some.injEq] at h; subst h; exact heq
+    · exact absurd h (by simp)
+  · exact absurd h (by simp)
 /-- The frames the deck numbers: a `.frame` that is neither standout nor
 golden. Only `\maketitle` produces `.golden`, and moloch's `\maketitle` is
 `\frame[plain,noframenumbering]{\titlepage}` (beamerinnerthememoloch.dtx:314-320);

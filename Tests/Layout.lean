@@ -1293,6 +1293,32 @@ def spacingChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
   let commented := ysOf geom "a\n  % an aside\n\n  b"
   t "peers stay peers across a comment line before the blank line"
     (commented.size == 2 && commented[1]! - commented[0]! == plain[1]! - plain[0]!)
+  -- A display formula stands inside the display skips, not the peer gap:
+  -- paragraph, display, paragraph places three baselines whose two gaps
+  -- each exceed the leading by the resolved `abovedisplayskip` /
+  -- `belowdisplayskip` — the default at the governing size, the token
+  -- where the document declares one, and the numbered `{equation}` the
+  -- same. Asserted over `Layout.Out`, never the IR (AGENTS).
+  let dispSkip := (Ir.displaySkipDefault body).resolve body 0
+  let disp := ysOf geom "a\n\n\\[ x = 1 \\]\n\nb"
+  t "a display formula opens the display skip above and below"
+    (disp.size == 3 && disp[1]! - disp[0]! == leading + dispSkip.width &&
+      disp[2]! - disp[1]! == leading + dispSkip.width)
+  t "the display skip is not the peer gap"
+    (dispSkip.width != (geom.parskip.resolve body 0).width)
+  let eqn := ysOf geom "a\n\n\\begin{equation} x = 1 \\end{equation}\n\nb"
+  t "a numbered equation opens the same display skips"
+    (eqn.size == 3 && eqn[1]! - eqn[0]! == leading + dispSkip.width &&
+      eqn[2]! - eqn[1]! == leading + dispSkip.width)
+  let declared := ysOf geom
+    "\\tokens{ abovedisplayskip = 30pt, belowdisplayskip = 3pt }a\n\n\\[ x = 1 \\]\n\nb"
+  t "declared display skips are the ones paid, above and below apart"
+    (declared.size == 3 && declared[1]! - declared[0]! == leading + Dim.pt 30 &&
+      declared[2]! - declared[1]! == leading + Dim.pt 3)
+  let inlineDisp := ysOf geom "a $x$ b\n\nc"
+  t "an inline formula opens no display skip"
+    (inlineDisp.size == 2 &&
+      inlineDisp[1]! - inlineDisp[0]! == leading + (geom.parskip.resolve body 0).width)
   let huge := ysOf geom "{\\Huge Title \\par}\n\nbody"
   let hugeSize := body * 2488 / 1000
   t "a Huge title ends one paragraph, not two lines" (huge.size == 2)

@@ -112,7 +112,7 @@ builders, `styleClass`, and the `size-` names `styleClass` derives from
 `Ir.sizeScale`; `roleClass_engine_disjoint` is the reason the list exists. -/
 def engineClasses : List String :=
   ["abstract", "b", "i", "mono", "sc", "em", "sans", "normal", "rm", "md", "up",
-   "section-number", "equation", "eqnum",
+   "section-number", "display", "equation", "eqnum",
    "band-left", "band-right", "booktabs", "bt-cmid", "bt-heavy-above",
    "bt-light-above", "centered", "ragged", "column", "columns", "content",
    "deck-progress", "entry",
@@ -642,7 +642,7 @@ The float's rules stand outside `blockGapKinds` (they carry the
 `--floatsep` token), so its row is its own conjunct. -/
 theorem blockGap_kinds_covers :
     (blockGapKinds.all fun e => 0 < gapK e.2) = true ∧ 0 < gapK "float" ∧
-    0 < gapK "caption" := by decide
+    0 < gapK "caption" ∧ 0 < gapK "display" := by decide
 
 /-- The gap rules, one adjacent-sibling rule per block element, each inside
 `:where()`: the base sheet's defaults carry zero specificity, so any
@@ -661,6 +661,15 @@ def blockGapCss : String :=
     s!":where(* + {sel}) \{ margin-top: {quantaRem (gapK kind)}; }\n") ++
   s!":where(* + figure.float) \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n" ++
   s!":where(figure.float + *) \{ margin-top: var(--floatsep, {quantaRem (gapK "float")}); }\n" ++
+  -- A display formula's block owns both its boundaries, the float's shape:
+  -- the skip above is its own `margin-top`, the skip below the follower's
+  -- (the pair rule, standing after the follower's own default so it wins
+  -- the boundary at equal specificity). The tokens are the ones the PDF
+  -- walk reads (`Ir.displayAbove`/`displayBelow`), the fallback the same
+  -- rhythm row (`display`); the `<math>` element inside carries no margin
+  -- of its own, so the boundary has exactly one emitter.
+  s!":where(* + .display) \{ margin-top: var(--{Ir.displaySkipAbove}, {quantaRem (gapK "display")}); }\n" ++
+  s!":where(.display + *) \{ margin-top: var(--{Ir.displaySkipBelow}, {quantaRem (gapK "display")}); }\n" ++
   -- The heading's band below is the heading's own (`blockGapKinds`): the
   -- follower's default top margin is suppressed, standing last so it wins
   -- every zero-specificity default above, and the heading rule's
@@ -680,6 +689,7 @@ private def pdfGapSp : String → Dim.Sp
   | "heading" => 2 * (Ir.parskipDefault Ir.baseFontSize).width.sp
   | "caption" => (Ir.captionSepDefault Ir.baseFontSize).width.sp
   | "float" => (Ir.floatSepDefault Ir.baseFontSize).width.sp
+  | "display" => (Ir.displaySkipDefault Ir.baseFontSize).width.sp
   | _ => 0
 
 /-- The screen backend's emitted default gap, in milli-rem: the number
@@ -2820,10 +2830,12 @@ def baseCss (cfg : Config) (doc : Doc) : String :=
   -- MathML Core reads the web font's MATH table. The stack behind the var
   -- is the degraded state for a page with no shipped face.
   "math, .math { font-family: var(--font-math, \"Latin Modern Math\", \"STIX Two Math\", math); }\n" ++
-  -- Display math opens the page's own block rhythm above and below — the
-  -- declared peer multiple, the boundary a paragraph pays — no new
-  -- constant.
-  s!".math-display \{ margin: {quantaRem (gapK "peer")} 0; }\n" ++
+  -- A display formula's block centres its line; the skips around it are
+  -- the block boundary's (`blockGapCss`'s display rules, the tokens the
+  -- PDF walk reads), never a margin on the formula element itself — one
+  -- emitter per boundary, so a flex or block container realizes the same
+  -- gap (`single_owner_gap_exact`).
+  ".display { text-align: center; }\n" ++
   -- The numbered display: the formula's box takes the measure and centres
   -- its own text; the tag sits on the right edge, vertically centred on
   -- the formula (amsmath's equation shape).
@@ -3381,7 +3393,16 @@ def blockNode (cfg : Config) (b : Block) : Node :=
     let tag := if ordered then "ol" else "ul"
     Html.elem tag (listItemsInto cfg.into #[] items.toList)
   | .center body =>
-    Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "centered")]
+    -- A display formula's block is the `.display` paragraph the base
+    -- sheet's display rules address — the same shape the PDF walk reads
+    -- (`Ir.displayContent?`); a `<p>`, as a display formula is phrasing
+    -- content standing in one, and its display rule outranks the peer
+    -- rule by standing later at equal specificity. Any other centred
+    -- scope is a `.centered` div.
+    match Ir.displayContent? body with
+    | some content => Html.elem "p" (inlines cfg content) #[("class", "display")]
+    | none =>
+      Html.elem "div" (blockNodesInto cfg.into #[] body.toList) #[("class", "centered")]
   -- Ragged-left is HTML text's resting state; the class re-declares it so
   -- the setting survives a centred ancestor (text-align inherits).
   | .ragged body =>
@@ -3405,12 +3426,13 @@ def blockNode (cfg : Config) (b : Block) : Node :=
       #[("class", s!"block block-{kind.name}")]
   -- The equation's number is a structural element beside the formula,
   -- never text glued into it: a flex row whose math child takes the
-  -- measure and whose tag sits right, the amsmath shape.
+  -- measure and whose tag sits right, the amsmath shape. `display` puts
+  -- it inside the display skips, as the PDF's `.equation` arm does.
   | .equation num content =>
     let kids := inlines cfg content
     Html.elem "div"
       (kids.push (Html.elem "span" #[Html.text num] #[("class", "eqnum")]))
-      #[("class", "equation")]
+      #[("class", "equation display")]
   -- The abstract is HTML's own titled region: a <section> with a heading,
   -- exactly the thing a reader's tooling looks for. The heading word is
   -- class furniture (article.cls's \abstractname), generated here as the

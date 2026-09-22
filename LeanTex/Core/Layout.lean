@@ -5477,6 +5477,49 @@ private def statefulBlock : Block → Bool
   | .setPalette _ | .setTokens _ => true
   | _ => false
 
+/-- The display skips, resolved at the walk's governing size from the one
+resolving site (`Ir.displayAbove`/`Ir.displayBelow`): the document's
+tokens, else the rhythm default. -/
+private def Acc.displaySkips (a : Acc) (r : Rd) : Glue × Glue :=
+  (r.resolve (Ir.displayAbove a.tokens r.geom.fontSize),
+   r.resolve (Ir.displayBelow a.tokens r.geom.fontSize))
+
+/-- A display formula's block: its centred line stands inside the display
+skips, paid as the formula's own space — `\addvspace`, so the skip above
+takes the larger of itself and whatever is already owed (a heading's
+`after`, a `\vspace`) and never stacks onto the peer gap (`flushGap`
+pays owed glue instead of the default: `display_skip_single_emitter`),
+and the skip below is owed to whatever line follows, as TeX's
+`\belowdisplayskip` is glue on the vertical list the next paragraph
+sits after. Both the unnumbered shape (`Ir.displayContent?`) and the
+numbered `.equation` come through here. -/
+private def Acc.openDisplay (a : Acc) (r : Rd) : Acc :=
+  a.addvspace (a.displaySkips r).1
+
+private def Acc.closeDisplay (a : Acc) (r : Rd) : Acc :=
+  a.addvspace (a.displaySkips r).2
+
+/-- The unnumbered display: the formula's paragraph centred on the
+measure, between the skips. -/
+private def collectDisplayFormula (r : Rd) (a : Acc)
+    (content : Array Inline) (indent : Sp) : Acc :=
+  let a := a.openDisplay r
+  let (a, leaf) := a.leafRange (leafCount content)
+  let a := collectPara r a content indent true r.geom.fontSize
+    (leaf := leaf) (span := leafCount content)
+  a.closeDisplay r
+
+/-- With nothing else owed, opening a display owes exactly the resolved
+`abovedisplayskip`, and the line that follows pays it alone — one `.skip`
+of that glue, the peer default standing aside (`flushGap`'s owed arm):
+the PDF side of "one emitter per boundary", the twin of the base sheet's
+single-owner display rules. -/
+private theorem display_skip_single_emitter (a : Acc) (r : Rd)
+    (howed : a.owed = #[]) :
+    ((a.openDisplay r).flushGap r).ops = a.ops.push (.skip (a.displaySkips r).1) := by
+  simp [Acc.openDisplay, Acc.addvspace, Acc.flushGap, howed, Glue.add, Acc.displaySkips,
+    Rd.resolve, SymGlue.resolve]
+
 mutual
 
 /-- Walk a block sequence, spacing peers by `parskip`. -/
@@ -5634,8 +5677,9 @@ private def collectBlock (r : Rd) (a : Acc)
     -- line the fil between them is the legal break, so the tag drops to
     -- its own right-aligned line rather than overprinting (TeX moves the
     -- number down in the same overlap). Justified whatever the page
-    -- declares: the fils are the alignment.
-    let a := a.flushGap r
+    -- declares: the fils are the alignment. The display skips stand
+    -- above and below, the formula's own space (`Acc.openDisplay`).
+    let a := (a.openDisplay r).flushGap r
     -- The formula's leaves, then the number's `.label` leaf (`Struct`'s shape).
     let (a, leaf) := a.leafRange (leafCount content + 1)
     let baseStyle : TextStyle := { color := a.fg, ground := a.ground }
@@ -5667,7 +5711,7 @@ private def collectBlock (r : Rd) (a : Acc)
     items := items.push (.glue { fil := true })
     items := items ++ nitems
     items := items.push (.pen 0 forcedCost false 0 Ir.Color.black #[])
-    return { a with
+    return ({ a with
       hyphCache := cache2
       ops := a.ops.push (.para {
         items := items, extras := extras, diags := ds1 ++ ds2
@@ -5675,7 +5719,7 @@ private def collectBlock (r : Rd) (a : Acc)
         indent := indent, center := false, size := r.geom.fontSize
         justify := true
         markerSegs := none, rule := none
-        leaf := leaf }) }
+        leaf := leaf }) } : Acc).closeDisplay r
   | .section level _ num title =>
     if level == 0 then
       -- The document title, a heading at level 0, through the one title
@@ -5814,7 +5858,12 @@ private def collectBlock (r : Rd) (a : Acc)
     | some g => a.addvspace (r.resolve g)
     | none => a
   | .center body =>
-    collectCentered r a body.toList indent
+    -- A display formula's block reads through the shared shape
+    -- (`Ir.displayContent?`) and opens the display skips; any other
+    -- centred content is the scope's.
+    match Ir.displayContent? body with
+    | some content => collectDisplayFormula r a content indent
+    | none => collectCentered r a body.toList indent
   -- Ragged-left setting for the scope: the sub-walk reads the same
   -- geometry with justification off (raggedItems' free-fil line ends,
   -- TeXbook ch. 14), the reader flip the ragged title door already uses.

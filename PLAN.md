@@ -241,6 +241,59 @@ with a comment line before the blank — both equal to the same source
 without the comment. No golden moved; `\input` splice, Compat, and Elab
 were traced and preserve the boundary they are given.
 
+2026-09-22 — a display formula stands inside declared display skips, in
+both artifacts (display-math-skips, causal-render-audit fix 5; missing
+capability — before this a `\[…\]` or `{equation}` line sat at the peer
+gap like any paragraph, the page-7 finding of the 24-page deck audit;
+goldens unchanged, they witness elaboration and the IR does not move).
+`Ir.displaySkipDefault` is LaTeX's `\abovedisplayskip`/`\belowdisplayskip`
+(size10/11/12.clo: one body size plus a fifth minus a half) quantized to
+the rhythm as `footinsDefault` is — two quanta, one leading, the new
+`display` row of `rhythmGapQuanta` — with the source's rubber
+proportions kept; `display_between` (`_between`) holds the default
+inside the source glue's own 5..12pt at the base with the 2pt/5pt rubber,
+`rhythm_table_exact` gains the row, and `backend_gaps_agree` covers it
+because `pdfGapSp` grew the arm (the `decide` fails without it — which is
+how the HTML side cannot forget a row). The tokens are `abovedisplayskip`
+and `belowdisplayskip`, declared through `\tokens{…}` or `\setlength` on
+either (the generic `\setlength` arm already maps them); `Ir.displayAbove`
+/`displayBelow` is the one resolving site, token else default
+(`displaySkips_default_exact`). The short skips are deliberately never
+selected: TeX chooses them by measuring the preceding line against the
+display's left edge, which the block walk does not measure, so the long
+skip is the one honest reading — stated at the default, not silently
+approximated. The shared reading of the block is `Ir.displayContent?`
+(a centred body that is one display formula, labels aside — the shape
+`\[…\]` and the unnumbered environments elaborate to), a projection of
+the body (`displayContent_projects`), and both backends read it: the PDF
+walk's `.center` arm pays the skips as `\addvspace` around the centred
+line (`Acc.openDisplay`/`closeDisplay`; the numbered `.equation` arm the
+same), so the skip above takes the larger of itself and any owed glue and
+never stacks on the peer gap — `display_skip_single_emitter` is the
+statement, the twin of `flushGap_default_exact`; the HTML backend emits
+the block as `<p class="display">` and the base sheet gives it the
+float's shape of ownership (`* + .display` carries `--abovedisplayskip`,
+`.display + *` carries `--belowdisplayskip`, both with the row's quantum
+as fallback), the `.math-display` margin rule is gone, and the numbered
+equation joins the class — one emitter per boundary, so a flex container
+realizes the same gap (`single_owner_gap_exact`). An inline formula opens
+nothing; a display standing inside a caption or an item label is inline
+content and opens nothing either. Red/green over `Layout.Out` (Tests/
+Layout.lean `spacingChecks`: paragraph–display–paragraph baselines each
+a leading plus the resolved skip apart, the numbered form the same,
+declared tokens paid above and below apart, an inline formula at the
+peer gap) and the typed tree (Tests/Backends.lean `htmlRhythmChecks`: the
+two rules, the absent margin rule, the flow shape `p, p.display>math, p,
+div.equation display>math`); the three layout rows failed on the walk
+without the arm. Local acceptance on the private deck: 24 pages before
+and after, diagnostics identical by code and count, exactly the two
+display pages differ at 60 dpi, and on each the ink gaps either side of
+the display grew from 12–13 px to 22–24 px at 120 dpi (the display line
+held, its neighbours moved out: the frame's vertical distribution
+recentring), the reference's 23–32 px bracketing it; the source-text
+display of the Greek finding gets the same skips, independently of that
+fix.
+
 2026-09-22 — literal Unicode Greek in math is the same atom as its control
 word (greek-literal-math, M6; missing capability — `$λ$`, `$M_θ$`, `$φ$`,
 `$Ω$` used to degrade the whole formula to source text under W0012 while
