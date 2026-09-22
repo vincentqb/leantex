@@ -367,7 +367,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
       let mut runSize : Dim.Sp := 0
       for seg in l.segs do
         match seg with
-        | .run _ color _ _ glyphs size _ _ _ =>
+        | .run _ color _ _ glyphs size _ _ _ _ =>
           runSize := max runSize size
           if coveredColors.contains color then
             for (_, c) in glyphs do
@@ -377,7 +377,7 @@ def censusOf (coveredColors : Array Ir.Color) (out : Layout.Out) :
             for (_, c) in glyphs do
               chars := chars.push c
             covered := covered.push ' '
-        | .gap _ =>
+        | .gap _ _ =>
           chars := chars.push ' '
           covered := covered.push ' '
         | .rule _ th _ _ =>
@@ -445,8 +445,8 @@ a gap as one space (`gapAsSpace := false` reads the bare glyphs — a page
 number's centring gaps are not its text). -/
 def lineText (l : Layout.LineOut) (gapAsSpace : Bool := true) : String :=
   l.segs.foldl (fun s seg => match seg with
-    | .run _ _ _ _ glyphs _ _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
-    | .gap _ => if gapAsSpace then s.push ' ' else s
+    | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
+    | .gap _ _ => if gapAsSpace then s.push ' ' else s
     | _ => s) ""
 
 /-- The furniture baselines (head y, foot y) a geometry owes under `font`'s

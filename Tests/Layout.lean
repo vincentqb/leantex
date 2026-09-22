@@ -13,7 +13,7 @@ def mkItems (ps : List Piece) : Array Layout.Item := Id.run do
   let mut items : Array Layout.Item := #[]
   for p in ps do
     match p with
-    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10) false 0 none)
+    | .W w => items := items.push (.box (Dim.pt w) 0 Ir.Color.black none #[] (Dim.pt 10) false 0 none (.leaf 0))
     | .G => items := items.push (.glue { width := Dim.pt 10, stretch := Dim.pt 5, shrink := Dim.pt 3 })
     | .H w => items := items.push (.pen (Dim.pt w) Layout.hyphenPenalty true 0 Ir.Color.black #[])
     | .B =>
@@ -96,7 +96,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     (bodyLines out, out.diags)
   let markerOf (l : Layout.LineOut) : String :=
     match l.segs[0]? with
-    | some (Layout.Seg.run _ _ _ _ glyphs _ _ _ _) => String.ofList (glyphs.toList.map (·.2))
+    | some (Layout.Seg.run _ _ _ _ glyphs _ _ _ _ _) => String.ofList (glyphs.toList.map (·.2))
     | _ => ""
   -- The numbering functions and their decoders (`\labelenum*`, classes.dtx).
   t "enum labels match the class defaults"
@@ -146,7 +146,7 @@ def listChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
   -- the second item is covered, marker included.
   let markerColor (l : Layout.LineOut) : Option Ir.Color :=
     match l.segs[0]? with
-    | some (Layout.Seg.run _ c _ _ _ _ _ _ _) => some c
+    | some (Layout.Seg.run _ c _ _ _ _ _ _ _ _) => some c
     | _ => none
   t "a covered item's marker dims with it"
     (markerColor stepLines[1]! == some (Ir.Design.ofDoc {}).cover.plain &&
@@ -231,7 +231,7 @@ def lineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom) (oneFace : Font
   let scOut := layoutOf oneFace (Elab.run "t" "\\scshape aB").1 geom
   let scRuns := (bodyLines scOut).flatMap (·.segs.filterMap fun s =>
     match s with
-    | .run _ _ _ _ glyphs size _ _ _ => some (glyphs.map (·.2), size)
+    | .run _ _ _ _ glyphs size _ _ _ _ => some (glyphs.map (·.2), size)
     | _ => none)
   t "synthesised small caps carry no lowercase form"
     (!scRuns.isEmpty && scRuns.all fun (cs, _) => cs.all fun c => !c.isLower)
@@ -951,7 +951,7 @@ def linkSignalChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     (Elab.run "t" "see \\href{https://example.org/}{the example} here").1 geom
   let segs := (out.pages.flatMap (·.lines)).flatMap (·.segs)
   let linkRuns := segs.filterMap fun s => match s with
-    | .run _ _ (some _) _ _ _ ul _ _ => some ul
+    | .run _ _ (some _) _ _ _ ul _ _ _ => some ul
     | _ => none
   t "pdf link runs exist" (!linkRuns.isEmpty)
   t "pdf link runs are underlined" (linkRuns.all (· == true))
@@ -1109,7 +1109,7 @@ def underlineChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
             let lines := ((outOf mixedSet src).pages.flatMap (·.lines))
             let runW := ((lines[0]?.map (·.segs)).getD #[]).filterMap fun s =>
               match s with
-              | .run _ _ _ w _ _ _ _ _ => some w
+              | .run _ _ _ w _ _ _ _ _ _ => some w
               | _ => none
             let ruleW := ((lines[1]?.map (·.segs)).getD #[]).filterMap fun s =>
               match s with
@@ -1788,7 +1788,7 @@ def pageNumberChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
     (((out.pages[0]?.map (·.lines)).getD #[]).any fun l =>
       l.furniture && l.segs.any fun s =>
         match s with
-        | .gap w => w > (geom.textWidth - Dim.pt 20) / 2
+        | .gap w _ => w > (geom.textWidth - Dim.pt 20) / 2
         | _ => false)
   let (offOut, offGeom) := build (dvDoc "\\page{ numbers = off }" threeBody)
   t "numbers = off ships no number on any page"
@@ -1917,7 +1917,7 @@ def scopeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
     out.pages.flatMap fun p => p.lines.map fun l =>
       (lineText l,
        (l.segs.findSome? fun seg => match seg with
-        | .run _ color _ _ _ _ _ _ _ => some color
+        | .run _ color _ _ _ _ _ _ _ _ => some color
         | _ => none).getD Ir.Color.black)
   let colorOf (runs : Array (String × Ir.Color)) (needle : String) : Option Ir.Color :=
     (runs.find? fun (text, _) => hasStr text needle).map (·.2)
@@ -2091,7 +2091,7 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let pageTexts (out : Layout.Out) : Array String :=
     out.pages.map fun p => String.join (p.lines.toList.map fun l =>
       String.join (l.segs.toList.map fun s => match s with
-        | .run _ _ _ _ glyphs _ _ _ _ => String.ofList (glyphs.toList.map (·.2))
+        | .run _ _ _ _ glyphs _ _ _ _ _ => String.ofList (glyphs.toList.map (·.2))
         | _ => " "))
   let samePage (src : String) (marks : List String) : Bool :=
     let texts := pageTexts (layoutOut src)
@@ -2286,8 +2286,8 @@ def tableChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
           | .rule w _ _ _ =>
             acc := acc.push (x, w)
             x := x + w
-          | .gap g => x := x + g
-          | .run _ _ _ w _ _ _ _ _ => x := x + w
+          | .gap g _ => x := x + g
+          | .run _ _ _ w _ _ _ _ _ _ => x := x + w
           | .image _ w _ => x := x + w
     return acc
   t "the three rules ship" (ruleSegs.size == 3)
@@ -2568,8 +2568,8 @@ def cardChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
     let out := layoutOf oneFace doc (pats := some pats)
     out.pages.any fun p => p.lines.any fun l =>
       l.segs.any fun s => match s with
-        | .run _ _ _ _ glyphs _ _ _ _ => glyphs.any (·.2 == '-')
-        | .gap _ | .rule .. | .image .. => false
+        | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.any (·.2 == '-')
+        | .gap _ _ | .rule .. | .image .. => false
   let narrowPage := "\\page{ width = 90pt, height = 400pt, margin = 10pt }\n"
   let word := "incomprehensibility incomprehensibility"
   t "an article at this measure does hyphenate"
@@ -2818,7 +2818,7 @@ def pictureLayoutChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : 
       match (p.lines.filter (!·.furniture)).toList with
       | [l] =>
         (match l.segs.toList with
-         | [Layout.Seg.run _ _ _ _ glyphs _ _ _ _] =>
+         | [Layout.Seg.run _ _ _ _ glyphs _ _ _ _ _] =>
            String.ofList (glyphs.toList.map (·.2)) == "7"
          | _ => false)
         && l.x + l.setWidth / 2 == geom.hmargin + Dim.pt 10
@@ -2878,8 +2878,8 @@ def roleLayoutChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
     let (d, _) := elabStr src
     (layoutOf oneFace d geom).pages.flatMap fun p =>
       p.lines.map fun l => (l.segs.foldl (fun s seg => match seg with
-        | .run _ _ _ _ glyphs _ _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
-        | .gap _ => s.push ' '
+        | .run _ _ _ _ glyphs _ _ _ _ _ => glyphs.foldl (fun s (_, c) => s.push c) s
+        | .gap _ _ => s.push ' '
         | _ => s) "", l.y)
   let doc (pre body : String) : String :=
     s!"\\documentclass\{article}\\define \\entry(a: content) \{\\a\\par}{pre}" ++
@@ -3025,11 +3025,11 @@ def bodyColorChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let charcoal : Ir.Color := { r := 0x18, g := 0x18, b := 0x1B }
   t "the declared body colour reaches the shipped runs"
     ((out.pages.flatMap (·.lines)).any fun l => l.segs.any fun s => match s with
-      | .run _ c _ _ glyphs _ _ _ _ => c == charcoal && !glyphs.isEmpty
+      | .run _ c _ _ glyphs _ _ _ _ _ => c == charcoal && !glyphs.isEmpty
       | _ => false)
   t "no body run stayed silently pure black"
     ((bodyLines out).all fun l => l.segs.all fun s => match s with
-      | .run _ c _ _ glyphs _ _ _ _ => glyphs.isEmpty || c != Ir.Color.black
+      | .run _ c _ _ glyphs _ _ _ _ _ => glyphs.isEmpty || c != Ir.Color.black
       | _ => true)
 
 /-- The page-1 fix, judged on shipped pages, never on the IR dump: the
@@ -3043,7 +3043,7 @@ def footnoteLayoutChecks (ref : IO.Ref (List String))
   let t := check ref
   let hasMarkRun (geom : Layout.Geom) (l : Layout.LineOut) : Bool :=
     l.segs.any fun s => match s with
-      | .run _ _ _ _ _ sz _ raise _ => raise > 0 && sz > 0 && sz < geom.fontSize
+      | .run _ _ _ _ _ sz _ raise _ _ => raise > 0 && sz > 0 && sz < geom.fontSize
       | _ => false
   let src := dvDoc "" "A first sentence\\footnote{a note body} continues here."
   let (doc, _) := elabStr src
@@ -3189,9 +3189,10 @@ def leafRows (t : Struct.Tree) : Array LeafRow :=
 
 /-- The ink the comparison reads: `Obligations.inkChars`'s exclusions plus
 every fixed-space character (a kern, no glyph) and the hyphen — an
-authored hyphen at a line end is indistinguishable from the breaker's
-until 18b's `.hyphen` run names it — case-folded, since a declared case
-transform repaints a leaf's letters in another case. -/
+this block-level census joins a line-end hyphen away whatever its origin
+(the run channel names the breaker's `.hyphen` apart; `leafInk` below
+keeps the authored one) — case-folded, since a declared case transform
+repaints a leaf's letters in another case. -/
 def attrInk (s : String) : Array Char :=
   (s.toList.toArray.filter fun c =>
     !(c.isWhitespace || c == '\u00a0' || c == '\u00ad' || c == '-'
@@ -3202,14 +3203,14 @@ skipped — a footnote mark (generated ink) or a math script (a formula group
 is compared by containment only). -/
 def attrLineText (l : Layout.LineOut) : String :=
   l.segs.foldl (fun s seg => match seg with
-    | .run _ _ _ _ glyphs _ _ raise _ =>
+    | .run _ _ _ _ glyphs _ _ raise _ _ =>
       if raise != 0 then s else glyphs.foldl (fun s (_, c) => s.push c) s
-    | .gap _ => s.push ' '
+    | .gap _ _ => s.push ' '
     | _ => s) ""
 
 def hasGlyphRun (l : Layout.LineOut) : Bool :=
   l.segs.any fun s => match s with
-    | .run _ _ _ _ glyphs _ _ _ _ => !glyphs.isEmpty
+    | .run _ _ _ _ glyphs _ _ _ _ _ => !glyphs.isEmpty
     | _ => false
 
 /-- The text of a block's lines, in page order: gaps as spaces, a line-end
@@ -3366,3 +3367,304 @@ got {(String.ofList actual.toList).quote}"
   t "leaf synthetic: note names leaf 2" (leafOf "note body" == some 2)
   t "leaf synthetic: the tree has four leaves"
     ((Struct.ofDoc (Layout.pdfView sdoc)).leaves.size == 4)
+
+/-! ## Inline attribution (M7-18b)
+
+The invariant: every glyph run on a non-furniture line carries an
+`Attribution` other than `.unattributed` unless the site names why (the
+abstract heading and the headline band, 18a's `none` lines); the runs
+attributed `.leaf k`, concatenated in page order with word gaps as spaces
+and `.hyphen` runs dropped, equal `leaves[k].census` exactly (ink-normalised:
+whitespace and the no-break/fixed spaces are glyphless boxes, case folded
+for a declared case transform, uncovered characters dropped and named by
+E0405); `.block k` names generated ink of the block opening at `k`;
+`.label` runs are the marker line's and stand before its text; `.noteMark
+n` runs are exactly the marks of the footnotes numbered `n`
+(`Ir.footnotesOf`); a `gap _ true` stands only between two runs of one
+line, and a plain paragraph's word gaps plus its glue breaks are its
+census spaces. The theorem behind the walk is `flatten_attr_covers`
+(Layout.lean: a counting walk never emits `.unattributed`); these rows are
+the executable census over the corpus. Exclusions, each a sentence:
+- `.formula` leaves: the leaf is the source, the page paints the rendering
+  (M7-24 owns the run channel);
+- an icon's leaf is its text alternative, its run a glyph (M7-22a);
+- a verbatim block, a listing caption and a bibliography entry are one
+  flat leaf each (`Struct`'s shape): their runs are `.block k`, never
+  `.leaf`;
+- `.aside`, `.nav`, `.artifact`, `.picture`, `.image`, `.linebreak`
+  leaves ship no run. -/
+
+/-- A run's attribution, `none` for any other segment. -/
+def segAttr : Layout.Seg → Option Layout.Attribution
+  | .run _ _ _ _ _ _ _ _ _ a => some a
+  | _ => none
+
+def segGlyphText : Layout.Seg → String
+  | .run _ _ _ _ glyphs _ _ _ _ _ => String.ofList (glyphs.toList.map (·.2))
+  | _ => ""
+
+def isGlyphRun : Layout.Seg → Bool
+  | .run _ _ _ _ glyphs _ _ _ _ _ => !glyphs.isEmpty
+  | _ => false
+
+def isInkSeg : Layout.Seg → Bool
+  | .run _ _ _ _ glyphs _ _ _ _ _ => !glyphs.isEmpty
+  | .image _ _ _ => true
+  | _ => false
+
+def isWordGap : Layout.Seg → Bool
+  | .gap _ word => word
+  | _ => false
+
+/-- Ink for the exact census: whitespace, the no-break space and the fixed
+spaces (glyphless boxes) and the soft hyphen dropped, case folded. The
+hyphen stays: the breaker's own is named `.hyphen` and dropped by the
+caller, so an authored hyphen counts. -/
+def leafInk (s : String) : Array Char :=
+  (s.toList.toArray.filter fun c =>
+    !(c.isWhitespace || c == '\u00a0' || c == '\u00ad' || (Layout.fixedSpace c).isSome)).map
+    Char.toLower
+
+/-- The text the runs attributed `.leaf k` paint on one line, `.hyphen`
+runs dropped; a word gap between two of them reads as a space. -/
+def leafLineText (l : Layout.LineOut) (k : Nat) : String := Id.run do
+  let mut s := ""
+  let mut pendingGap := false
+  for seg in l.segs do
+    match segAttr seg with
+    | some (.leaf j) =>
+      if j == k then
+        if pendingGap && !s.isEmpty then s := s.push ' '
+        s := s ++ segGlyphText seg
+      pendingGap := false
+    | some .hyphen => pendingGap := false
+    | some _ => pendingGap := false
+    | none => if isWordGap seg then pendingGap := true
+  return s
+
+def inlineAttributionChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet)
+    (pats : Hyphen.Patterns) : IO Unit := do
+  let t := check ref
+  let mathSet ← mathSetOf oneFace
+  let shipped ← FontDb.scanRoots [testFonts]
+  let mut labelFixtures : Array String := #[]
+  for n in goldenNames do
+    let src ← IO.FS.readFile s!"tests/corpus/{n}.tex"
+    let (doc0, _) ← elabFixture n src
+    let doc := Layout.pdfView doc0
+    let fs ← fixtureFontSet oneFace mathSet shipped doc
+    let out := layoutOf fs doc (Layout.Geom.ofPage doc.page) (some pats)
+    let tree := Struct.ofDoc doc
+    let rows := leafRows tree
+    let size := rows.size
+    let covered (c : Char) : Bool := fs.fonts.any fun f => (f.gid c).isSome
+    let lines := allLines out
+    let body := lines.filter fun l => !l.furniture && hasGlyphRun l
+    let generated : Array String := #[doc.info.locale.abstract] ++
+      (match doc.headline with
+        | some hl => #[Ir.plainText hl.title, Ir.plainText hl.author, Ir.plainText hl.institute]
+        | none => #[])
+    -- 1. no unattributed run off the furniture, except the enumerated lines
+    let mut unattributed : Array String := #[]
+    let mut outOfRange : Array String := #[]
+    for l in body do
+      let txt := attrInk (lineText l)
+      let exempt := generated.any (fun g => attrInk g == txt)
+      for seg in l.segs do
+        if isGlyphRun seg then
+          match segAttr seg with
+          | some .unattributed => unless exempt do unattributed := unattributed.push (lineText l)
+          | some (.leaf k) | some (.block k) =>
+            unless k < size do outOfRange := outOfRange.push s!"{k} on {lineText l}"
+          | _ => pure ()
+    t s!"attr {n}: no unattributed run on a body line ({unattributed.toList.take 3})"
+      unattributed.isEmpty
+    t s!"attr {n}: every leaf and block index is below {size} ({outOfRange.toList.take 3})"
+      outOfRange.isEmpty
+    -- a `.leaf` run names a text leaf: images, pictures and breaks ship no run
+    let leafRunIds := body.flatMap fun l => l.segs.filterMap fun seg =>
+      match segAttr seg with
+      | some (.leaf k) => if isGlyphRun seg then some k else none
+      | _ => none
+    t s!"attr {n}: a leaf run names a text leaf"
+      (leafRunIds.all fun k => (rows[k]?.map fun r => r.leaf matches .text _).getD false)
+    -- 2. exact census per counted text leaf
+    let iconAlts := Ir.foldBlocks (fun out _ => out) (fun out x => match x with
+      | .icon _ label => out.push label
+      | _ => out) (#[] : Array String) doc.body
+    let flatBlocks := Ir.foldBlocks (fun out b => match b with
+      | .verbatim _ s spec =>
+        let out := out.push s
+        match spec.caption with
+        | some (_, cap) => out.push (Ir.plainText cap)
+        | none => out
+      | _ => out) (fun out _ => out) (#[] : Array String) doc.body
+    let excluded (r : LeafRow) : Bool :=
+      unshippedKind r || r.path.contains .bibEntry || (match r.leaf with
+        | .text s => iconAlts.contains s || flatBlocks.contains s
+        | _ => false)
+    let mut exactFail : Option String := none
+    let mut exactLeaves := 0
+    for r in rows do
+      if excluded r then continue
+      match r.leaf with
+      | .text s =>
+        let expected := (leafInk s).filter covered
+        let painted := out.pages.foldl (fun acc p =>
+          p.lines.foldl (fun acc l =>
+            if l.furniture then acc else
+            let part := leafLineText l r.id
+            if part.isEmpty then acc else acc.push part) acc) (#[] : Array String)
+        -- a stepped frame paints its blocks once per step page: the parts
+        -- are the same text repeated; a flow paragraph's parts join
+        let actual := leafInk (" ".intercalate painted.toList)
+        let repeated := !painted.isEmpty && painted.all fun p => leafInk p == expected
+        if !expected.isEmpty then exactLeaves := exactLeaves + 1
+        if actual != expected && !repeated && exactFail.isNone then
+          exactFail := some s!"leaf {r.id}: expected {(String.ofList expected.toList).quote} \
+got {(String.ofList actual.toList).quote}"
+      | _ => pure ()
+    t s!"attr {n}: every counted leaf's runs are exactly its census \
+({exactLeaves} leaves; {exactFail.getD ""})" exactFail.isNone
+    -- 4. a word gap stands inside its line's ink — a run or an image on
+    -- each side of it (a fill's gap may sit between: `a \hfill b` sets
+    -- space, fill, space) — and two word gaps never meet: a space is one
+    -- glue
+    let mut badGap : Option String := none
+    for l in lines do
+      for i in [0:l.segs.size] do
+        if isWordGap l.segs[i]! then
+          let before := (l.segs.extract 0 i).any isInkSeg
+          let after := (l.segs.extract (i + 1) l.segs.size).any isInkSeg
+          let lone := i + 1 == l.segs.size || !isWordGap l.segs[i + 1]!
+          unless before && after && lone do
+            if badGap.isNone then badGap := some (lineText l)
+    t s!"attr {n}: a word gap stands inside its line's ink, alone ({badGap.getD ""})"
+      badGap.isNone
+    -- 5. note marks are exactly the document's footnotes
+    let marks := (body.flatMap fun l => l.segs.filterMap fun seg =>
+      match segAttr seg with
+      | some (.noteMark num) => some num
+      | _ => none).qsort (· < ·) |>.foldl
+        (fun (acc : Array Nat) k => if acc.back? == some k then acc else acc.push k) #[]
+    let notes := ((Ir.footnotesOf doc.body).map fun (num, _) => num.getD 0).qsort (· < ·)
+      |>.foldl (fun (acc : Array Nat) k => if acc.back? == some k then acc else acc.push k) #[]
+    t s!"attr {n}: note marks are the footnotes {notes} (got {marks})" (marks == notes)
+    -- 6. labels: the marker runs lead their line, and there is one marker
+    -- line per list item opening with a paragraph and per numbered
+    -- algorithm line
+    let mut labelOff : Option String := none
+    let mut labelLines := 0
+    for l in body do
+      let attrs := l.segs.filterMap fun seg => if isGlyphRun seg then segAttr seg else none
+      let labels := attrs.filter (· matches .label)
+      unless labels.isEmpty do
+        labelLines := labelLines + 1
+        -- every label run precedes every other run
+        let firstOther := attrs.findIdx? (fun a => !(a matches .label))
+        let lastLabel := attrs.size - 1 - ((attrs.reverse.findIdx? (· matches .label)).getD 0)
+        match firstOther with
+        | some j => if j < lastLabel && labelOff.isNone then labelOff := some (lineText l)
+        | none => pure ()
+    let expectedMarkers := Ir.foldBlocks (fun acc b => match b with
+      | .list _ items => acc + (items.filter fun item =>
+          match (item.toList.dropWhile fun blk =>
+              blk matches .setPalette _ | .setTokens _).head? with
+          | some (.para _) => true
+          | _ => false).size
+      | .algorithm numbered _ ls => if numbered then acc + ls.size else acc
+      | _ => acc) (fun acc _ => acc) 0 doc.body
+    -- a stepped frame repeats its lines per page, and a declared marker may
+    -- be an image (no run): the count is compared only where every page is
+    -- the document's one flow and every marker is the class's text
+    let declaredMarker := doc.styles.entries.any fun (_, st) => st.marker.isSome
+    if (out.pages.size == 1 || !(doc.body.any fun b => b matches .frame ..)) && !declaredMarker then
+      t s!"attr {n}: one marker line per item and numbered line ({labelLines} vs \
+{expectedMarkers})" (labelLines == expectedMarkers)
+    t s!"attr {n}: label runs lead their line ({labelOff.getD ""})" labelOff.isNone
+    if labelLines > 0 then labelFixtures := labelFixtures.push n
+    -- 3. hyphens: a `.hyphen` run ends its line, paints a hyphen, and the
+    -- word it splits reads whole in the census once the hyphen is dropped
+    let mut hyphens := 0
+    let mut badHyphen : Option String := none
+    let census := tree.text
+    for p in out.pages do
+      for i in [0:p.lines.size] do
+        let l := p.lines[i]!
+        for j in [0:l.segs.size] do
+          if segAttr l.segs[j]! == some .hyphen then
+            hyphens := hyphens + 1
+            let last := j + 1 == l.segs.size
+            let glyph := segGlyphText l.segs[j]! == "-"
+            let before := if j > 0 then segGlyphText l.segs[j - 1]! else ""
+            -- the next line of the block in page order (an underline
+            -- sibling is pushed between and carries no run)
+            let after := match (p.lines.extract (i + 1) p.lines.size).find?
+                (fun nl => !nl.furniture && hasGlyphRun nl && nl.leaf == l.leaf) with
+              | some nl => (nl.segs.find? isGlyphRun).map segGlyphText |>.getD ""
+              | none => ""
+            let joined := before ++ after
+            let whole := !before.isEmpty && !after.isEmpty && hasStr census joined
+            unless last && glyph && whole do
+              if badHyphen.isNone then badHyphen := some s!"{lineText l} | {joined}"
+    t s!"attr {n}: a hyphen run ends its line and its word reads whole \
+({hyphens} hyphens; {badHyphen.getD ""})" badHyphen.isNone
+    if n == "paragraphs" then
+      t "attr paragraphs: the breaker hyphenates at least once" (hyphens > 0)
+      -- word gaps + glue breaks = census spaces, per plain paragraph: a
+      -- break at glue consumes one space, a break at a hyphen (the
+      -- breaker's or an authored one) none
+      let mut arith : Option String := none
+      let groups := (body.filterMap (·.leaf)).qsort (· < ·) |>.foldl
+        (fun (acc : Array Nat) k => if acc.back? == some k then acc else acc.push k) #[]
+      for k in groups do
+        let ls := body.filter (·.leaf == some k)
+        let owned := rows.filter fun r => (match r.path.getLast? with
+          | some .paragraph => true | _ => false) && k ≤ r.id &&
+          (groups.filter fun g => g ≤ r.id).back? == some k
+        if owned.isEmpty || ls.isEmpty then continue
+        -- every space of the paragraph's text atoms is one glue (a formula's
+        -- source spaces are math, not glue)
+        let spaces := owned.foldl (fun acc r => match r.leaf with
+          | .text s => acc + (s.toList.filter (· == ' ')).length
+          | _ => acc) 0
+        let wordGaps := ls.foldl (fun acc l => acc + (l.segs.filter isWordGap).size) 0
+        let hyphenEnds := ls.foldl (fun acc l =>
+          match l.segs.back? with
+          | some seg => if segAttr seg == some .hyphen || (segGlyphText seg).endsWith "-"
+              then acc + 1 else acc
+          | none => acc) 0
+        let glueBreaks := ls.size - 1 - hyphenEnds
+        if wordGaps + glueBreaks != spaces && arith.isNone then
+          arith := some s!"group {k}: {wordGaps} gaps + {glueBreaks} breaks vs {spaces} spaces"
+      t s!"attr paragraphs: word gaps and glue breaks are the census spaces ({arith.getD ""})"
+        arith.isNone
+  t s!"attr: lists, algorithm and lists-styled carry label runs ({labelFixtures})"
+    (["lists", "algorithm", "lists-styled"].all labelFixtures.contains)
+  -- the indices, concretely: a link, a language span, a reference and a
+  -- footnote each carry their atoms' leaves; the mark is `.noteMark`
+  let (sdoc, _) := elabStr (dvDoc ""
+    "\\section{Head}\n\nSee \\href{https://example.org}{the site} and \
+\\foreignlanguage{french}{bonjour}\\footnote{note body} here.")
+  let sout := layoutOf oneFace sdoc
+  let slines := (allLines sout).filter fun l => !l.furniture && hasGlyphRun l
+  let attrOf (needle : String) : Option Layout.Attribution :=
+    slines.findSome? fun l => l.segs.findSome? fun seg =>
+      if hasStr (segGlyphText seg) needle then segAttr seg else none
+  let stree := Struct.ofDoc (Layout.pdfView sdoc)
+  let leafNamed (needle : String) : Option Nat :=
+    (stree.leaves.find? fun (_, l) => match l with
+      | .text s => hasStr s needle
+      | _ => false).map (·.1)
+  t "attr synthetic: the heading's run is its leaf" (attrOf "Head" == (leafNamed "Head").map .leaf)
+  t "attr synthetic: the link's run is its body's leaf"
+    (attrOf "site" == (leafNamed "the site").map .leaf)
+  t "attr synthetic: the language span's run is its leaf"
+    (attrOf "bonjour" == (leafNamed "bonjour").map .leaf)
+  t "attr synthetic: the note body's run is its leaf"
+    (attrOf "body" == (leafNamed "note body").map .leaf)
+  t "attr synthetic: the tail after the note resumes past the note's leaves"
+    (attrOf "here" == (leafNamed " here").map .leaf)
+  t "attr synthetic: the mark's digit is a note mark, in the text and leading the note"
+    ((slines.filter fun l => l.segs.any fun seg =>
+      segAttr seg == some (.noteMark 1) && segGlyphText seg == "1").size == 2)

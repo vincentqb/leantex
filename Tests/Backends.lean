@@ -1208,7 +1208,7 @@ def sizeLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let out := layoutOf oneFace doc
   let sizes := (bodyLines out).flatMap fun l => l.segs.filterMap fun s =>
     match s with
-    | .run _ _ _ _ _ size _ _ _ => some size
+    | .run _ _ _ _ _ size _ _ _ _ => some size
     | _ => none
   t "the venue tiny sets at 0.6 of the body on the shipped page"
     (sizes.contains (doc.page.fontSize * 600 / 1000) &&
@@ -1223,7 +1223,7 @@ def sizeLadderChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
   let psizes := (bodyLines (layoutOf oneFace plain)).flatMap fun l =>
     l.segs.filterMap fun s =>
       match s with
-      | .run _ _ _ _ _ size _ _ _ => some size
+      | .run _ _ _ _ _ size _ _ _ _ => some size
       | _ => none
   t "an undeclared document keeps the engine ladder on the page"
     (psizes.contains (plain.page.fontSize * 500 / 1000))
@@ -3073,7 +3073,7 @@ def contentOpsCyan : Ir.Color := Ir.Color.ofCmyk 1000 0 0 0
 
 def contentOpsRun (idx : Nat) (color : Ir.Color) (w : Dim.Sp) (glyphs : List (Nat × Char))
     (size : Dim.Sp := 0) (raise : Dim.Sp := 0) : Layout.Seg :=
-  .run idx color none w glyphs.toArray size false raise none
+  .run idx color none w glyphs.toArray size false raise none (.leaf 0)
 
 /-- The leaf tags the synthetic pages are marked under: leaf 0 a paragraph,
 leaf 1 a heading, leaf 2 a leaf no element holds. -/
@@ -3083,19 +3083,19 @@ def contentOpsTextPage : Layout.PageOut := {
   lines := #[
     { x := Dim.pt 10, y := Dim.pt 20, size := Dim.pt 12, setWidth := Dim.pt 100, leaf := some 0, segs := #[
         contentOpsRun 0 Ir.Color.black (Dim.pt 30) [(36, 'A'), (37, 'B')],
-        .gap (Dim.pt 5),
+        .gap (Dim.pt 5) true,
         contentOpsRun 0 Ir.Color.black (Dim.pt 20) [(38, 'C')],
         contentOpsRun 1 contentOpsRed (Dim.pt 20) [(39, 'D')] (Dim.pt 9) (Dim.pt 3),
         contentOpsRun 1 contentOpsRed (Dim.pt 20) [(40, 'E')] (Dim.pt 9) (Dim.pt 3) ] },
     { x := Dim.pt 10, y := Dim.pt 40, size := Dim.pt 12, setWidth := Dim.pt 100, expand := 20,
       leaf := some 1, segs := #[
         contentOpsRun 0 contentOpsCyan (Dim.pt 30) [(70000, 'x'), (4096, 'y')],
-        .gap (Dim.pt 5),
+        .gap (Dim.pt 5) true,
         contentOpsRun 0 contentOpsCyan (Dim.pt 30) [(1, 'z')] ] },
     { x := Dim.pt 10, y := Dim.pt 60, size := Dim.pt 12, setWidth := Dim.pt 100, leaf := some 2, segs := #[
         contentOpsRun 0 Ir.Color.black (Dim.pt 2) [],
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(50, 'a')],
-        .gap (Dim.pt 500),
+        .gap (Dim.pt 500) true,
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(51, 'b')],
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(52, 'c')] (Dim.pt 12) (Dim.pt (-3)),
         contentOpsRun 0 Ir.Color.black (Dim.pt 10) [(53, 'd')] (Dim.pt 12) (Dim.pt (-3)) ] },
@@ -3621,12 +3621,12 @@ def expectedArtifacts (page : Layout.PageOut) (tags : Array (Option String)) : N
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
       | .rule _ _ _ _ => acc + 1
-      | .image _ _ _ | .run _ _ _ _ _ _ _ _ _ | .gap _ => acc
+      | .image _ _ _ | .run _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
   let images := page.lines.foldl (init := 0) fun acc l =>
     acc + l.segs.foldl (init := 0) fun acc s =>
       match s with
       | .image _ _ _ => acc + 1
-      | .rule _ _ _ _ | .run _ _ _ _ _ _ _ _ _ | .gap _ => acc
+      | .rule _ _ _ _ | .run _ _ _ _ _ _ _ _ _ _ | .gap _ _ => acc
   let (unattributed, _) := page.lines.foldl (init := ((0 : Nat), (0 : Int))) fun (acc, tz) l =>
     let nonEmpty := lineInks l || l.expand != tz
     (if Pdf.Origin.of tags l == .unattributed && nonEmpty then acc + 1 else acc, l.expand)

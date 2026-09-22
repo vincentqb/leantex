@@ -62,7 +62,7 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
       let mut x := l.x
       for seg in l.segs do
         match seg with
-        | .gap w => x := x + w
+        | .gap w _ => x := x + w
         | .image _ w h =>
           -- The image box is ink: its full rectangle must respect the area.
           unless l.furniture do
@@ -94,7 +94,7 @@ def Shipped.ofOut (geom : Geom) (fs : Font.FontSet) (out : Out)
               worst := l.y - raise - bottom
               worstEdge := "bottom"
           x := x + w
-        | .run idx _ _ w glyphs size _ raise _ =>
+        | .run idx _ _ w glyphs size _ raise _ _ =>
           unless glyphs.isEmpty do
             let font := fs.get idx
             let sz := if size == 0 then l.size else size

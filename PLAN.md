@@ -333,6 +333,78 @@ recorded, the two rows joined. Firefox itself stays untested on this host
 UA judge is named next, after the tag skeleton. Unlocks M7-25, M7-26,
 M7-33.
 
+2026-09-21 — every glyph run knows the leaf it paints, and generated ink
+is named apart (tag-inline-attribution, M7-18b, the second half of M7-18;
+refactor, artifact-preserving — every corpus PDF and HTML byte-identical,
+`censusOf` identical, goldens unchanged, bench within host noise).
+`Attribution` (Layout.lean, beside `Seg`) is a last positional field on
+`Item.box` and `Seg.run`: `leaf k` paints `Struct` leaf `k` — the atom's
+own leaf, since struct-tree-ir made a leaf per inline atom (a link's or a
+language span's runs carry their body atoms' leaves; the node above them
+is the tagger's to find); `block k` is generated ink of the block opening
+at `k` (a section number, a caption prefix, an algorithm keyword, a
+picture label, a block the tree flattened to one leaf — a listing, a
+bibliography entry — and a placeholder set outside running content), the
+constructor the brief's model did not need and this shape does, so the
+census over `leaf` runs can be exact; `hyphen` is the discretionary the
+breaker set; `label` the marker line's runs; `noteMark n` the footnote
+mark's digits, in the text and leading the note block; `unattributed`
+only where the site says why (furniture, a measuring pass that never
+ships, the abstract heading and headline band 18a already left `none`).
+`Seg.gap w word` and `Glue.word` (Dim.lean, default `false`): `true` for
+`interword` alone (`interword_word_exact`, `rfl`), copied by the ragged
+and display transforms, `false` at every other gap. The counter is
+`LeafCtr` in `FlattenSt`, advanced at exactly the arms `Struct.inlineRaw`
+gives a leaf (the order contract, stated once beside it): `counting k
+next` when the inlines a block hands `itemsOfInlines` are its declared
+content (`leafCount = span`), `riding k next` when the walk decorated them
+— every atom `block k` until the Layout-private `.role leafRole` marker
+(a NUL-prefixed name no document spells; a role is transparent to layout,
+so the marker moves no ink) around the declared content, inside which the
+atoms count. Positional rules were rejected: `AlgLine.rendered` puts
+keywords before and after the content, and a prefix rule would tag a
+trailing `then` into the next line's leaf. The decorating sites mark their
+content (the section number, `numberedCaption`, the algorithm's content
+and comment — wrapped only when the `.statement` arm's semicolon test and
+the `.opener` arm's emptiness test read the same answer through it); the
+footnote body's first leaf is read off the counter where the mark stands,
+so 18a's `noteLeafStarts` prefix arithmetic is gone. Proved, no `sorry`,
+ratchet unchanged: `flatten_attr_covers` (`_covers`, a mutual induction
+over `flatten`/`flattenList`/`flattenOne` with `pushChars` made
+structural over the character list for it) — a walk whose counter stands
+in a block emits no `.unattributed` token and leaves the counter standing;
+`itemsOfTok` copies each token's attribution onto every box (one `attr`
+per arm) and `setLine` a box's onto its run, so the statement is over the
+walk that decides. `role_transparent_layout` gains the hypothesis `n ≠
+leafRole`. Evidence: `inlineAttributionChecks` over every golden fixture —
+no `.unattributed` run on a body line but the enumerated two (12 runs:
+abstract 1, poster-headline 11); every `leaf`/`block` index below the
+array; a `leaf` run names a text leaf; every counted text leaf's runs, in
+page order with word gaps as spaces and `hyphen` runs dropped, are exactly
+its census (737 leaves exact, 0 mismatches; exclusions each a sentence:
+formula leaves, icon alternatives, the flattened blocks, the unshipped
+kinds); a word gap stands inside its line's ink and never beside another;
+note marks are exactly `Ir.footnotesOf`'s numbers; label runs lead their
+line and there is one marker line per item opening with a paragraph and
+per numbered algorithm line where every marker is the class's text; a
+`hyphen` run ends its line, paints `-`, and its word reads whole in the
+census (21 on the corpus; `paragraphs` has at least one); on `paragraphs`
+every plain paragraph's word gaps plus its glue breaks are its census
+spaces; the synthetic link / `\foreignlanguage` / footnote document puts
+each atom on its own leaf and the mark on `noteMark 1` twice. Corpus:
+6751 body runs, 6204 `leaf`, 365 `block`, 21 `hyphen`, 141 `label`, 8
+`noteMark`, 3681 word gaps of 3848. Red: the block failed 154 rows (71
+fixtures × 2 plus 18a's note rows and the synthetic) with the counter
+fixed unattributed; mutations — the hyphen run unattributed 11, the
+marker unattributed 33, the algorithm content unmarked 1 (`swap` grew the
+comment), `interword` without `word` a compile error at
+`interword_word_exact` (and 1 row with the theorem removed). Unlocks
+21a, 22a, 22b, 23a, 23c, 24; no later tagging slice opens `Seg`, `Item`
+or `TextStyle`. Named-next: the `.ref` internal-target channel (21b),
+`Attribution.leaf` on picture labels once pictures carry a figure node
+(`image-alt-policy`); the two owed 18a rows now have a sharper executable
+witness (the exact per-leaf row) and the same blocker.
+
 2026-09-21 — a conformance profile is a set element that implies exactly
 one assertion, judged on the census of the bytes just built, and no claim
 is written (pdf-profile-grammar, M7-13, W2.3a; feature — grammar, pure

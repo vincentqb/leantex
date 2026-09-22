@@ -77,6 +77,12 @@ structure Glue where
   paragraph. It yields to an author's `\hfill`: a row that says "name, then
   dates at the margin" means the margin, not halfway to it. -/
   parfill : Bool := false
+  /-- Interword glue: the space between two words of set text, set only by
+  the token→item path for a space (`Layout.interword`) and copied by the
+  glue transforms (`raggedItems`, `displayItems`). Every other glue —
+  indent, alignment, kern, fill — is `false`. Read by the line setter onto
+  `Seg.gap`'s `word`, the tagger's interword channel. -/
+  word : Bool := false
   deriving Repr, BEq, Inhabited
 
 def Glue.add (a b : Glue) : Glue :=

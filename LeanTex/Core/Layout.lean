@@ -480,10 +480,38 @@ deck's spacers. `golden` is the moloch title page's 2618:1000. -/
 def VDist.of (v : Ir.VAlign) : VDist :=
   ⟨v.shares.1, v.shares.2⟩
 
+/-- Where a run's ink comes from, for the backends' marked content. No
+default: a construction must say. The tagger keys a run by the structure
+leaf it names (`Struct.leaves (Struct.ofDoc (pdfView doc))`, 18a's array);
+the other constructors name the generated ink apart, so a census over
+`.leaf` runs can be exact. -/
+inductive Attribution where
+  /-- Paints Struct leaf `k`: one inline atom's text — a `.text` run, an
+  icon's glyph (its leaf is the alternative), a reference's number, a
+  formula's rendering (its leaf is the source), a citation's marks. -/
+  | leaf (k : Nat)
+  /-- Generated ink of the block whose first leaf is `k`, owned by no one
+  leaf: a section number, a caption prefix, an algorithm keyword, a
+  picture's label, a block the tree flattened to one leaf (a listing, a
+  bibliography entry), a placeholder set outside running content. -/
+  | block (k : Nat)
+  /-- The discretionary hyphen the breaker set at a line end. -/
+  | hyphen
+  /-- Generated marker ink: a list bullet or number, an algorithm line
+  number — the marker line's runs. -/
+  | label
+  /-- The footnote mark's digits, in the text and leading the note block. -/
+  | noteMark (num : Nat)
+  /-- Ink the projection does not census: furniture, a measuring pass that
+  never ships, the abstract heading and the headline band (18a's `none`
+  lines). Every construction site says which. -/
+  | unattributed
+  deriving Repr, BEq, Inhabited
+
 inductive Item where
   | box (w : Sp) (fontIdx : Nat) (color : Ir.Color) (link : Option String)
       (glyphs : Array (Nat × Char × Sp)) (size : Sp) (underline : Bool) (raise : Sp)
-      (ground : Option Ir.Color)
+      (ground : Option Ir.Color) (attr : Attribution)
   | glue (g : Glue)
   | pen (w : Sp) (cost : Int) (flagged : Bool) (fontIdx : Nat) (color : Ir.Color)
       (glyphs : Array (Nat × Char × Sp))
@@ -507,11 +535,16 @@ inductive Seg where
   /-- A glyph run. `width` is carried so link rectangles and alignment can be
   computed without re-measuring against the font. `raise` lifts the run's
   baseline above the line's (negative sinks it): a superscript is a raised
-  run at script size. -/
+  run at script size. `attr` names the structure leaf (or the generated
+  kind) the ink stands for. -/
   | run (fontIdx : Nat) (color : Ir.Color) (link : Option String) (width : Sp)
       (glyphs : Array (Nat × Char)) (size : Sp) (underline : Bool) (raise : Sp)
-      (ground : Option Ir.Color)
-  | gap (w : Sp)
+      (ground : Option Ir.Color) (attr : Attribution)
+  /-- Horizontal space. `word` is true exactly for glue that came from
+  `interword` — the space between two words of one leaf's text, what the
+  tagger's interword policy reads; an indent, an alignment gap, a kern, the
+  marker column and a rule's clearance are `false`. -/
+  | gap (w : Sp) (word : Bool)
   /-- A horizontal rule, `w` wide and `thickness` thick, on the baseline plus
   `raise`. The heading rule of a designed section, filling its line. -/
   | rule (w : Sp) (thickness : Sp) (raise : Sp) (color : Ir.Color)
@@ -566,8 +599,9 @@ structure LineOut where
   lines its picture leaf). `none` on furniture, rules-only lines, and
   generated ink the structure tree does not census (the abstract heading,
   the headline band). Decoration the walk adds to a block — a section
-  number, a list marker, a caption prefix — rides the block's leaf; 18b's
-  run channel names it apart. -/
+  number, a list marker, a caption prefix — rides the block's leaf here;
+  the run channel (`Seg.run`'s `Attribution`) names it apart, atom by
+  atom. -/
   leaf : Option Nat := none
   deriving Repr, Inhabited
 
@@ -837,7 +871,7 @@ structure TextStyle where
   deriving Repr, BEq, Inhabited
 
 private inductive Tk where
-  | word (style : TextStyle) (chars : Array Char)
+  | word (style : TextStyle) (chars : Array Char) (attr : Attribution)
   | space (style : TextStyle)
   | fill
   /-- A strut: zero width, this much height above the baseline. -/
@@ -846,18 +880,127 @@ private inductive Tk where
   /-- An image reference, resolved against the store when items are built. -/
   | img (src : String) (spec : Image.SizeSpec)
   /-- An elaborated formula, measured against the math face by
-  `itemsOfInlines`: one unbreakable run of boxes and kerns. -/
-  | formula (display : Bool) (style : TextStyle) (body : Math.MList)
+  `itemsOfInlines`: one unbreakable run of boxes and kerns, every box
+  attributed `attr` (the formula's one leaf is its source). -/
+  | formula (display : Bool) (style : TextStyle) (body : Math.MList) (attr : Attribution)
   /-- An icon: one scalar whose face is whichever the per-scalar fallback
   chain covers it with — an icon face is chosen by coverage, so landing on
   a fallback face is the declared path, not a degradation, and earns no
   W0009. A scalar no face covers is the ordinary coverage loss (E0405). -/
-  | icon (style : TextStyle) (c : Char)
+  | icon (style : TextStyle) (c : Char) (attr : Attribution)
   /-- A footnote mark with the note body it owes: the mark sets as a raised
   run at the scriptsize step (`Ir.markRaise` holds the raise); the body is
-  staged as its own pre-broken note block whose page is the mark's. -/
-  | note (num : Nat) (style : TextStyle) (body : Array Ir.Inline)
+  staged as its own pre-broken note block whose page is the mark's.
+  `bodyLeaf` is the note node's first leaf — the counter's value where the
+  mark stands, since `Struct` numbers the note's leaves there — or `none`
+  when the context owns no leaf. -/
+  | note (num : Nat) (style : TextStyle) (body : Array Ir.Inline) (bodyLeaf : Option Nat)
   deriving Repr
+
+/-- The attribution a token's ink carries, `none` for a token that ships no
+run of its own (a space, a fill, a strut, a break, an image). -/
+private def Tk.attr? : Tk → Option Attribution
+  | .word _ _ a => some a
+  | .icon _ _ a => some a
+  | .formula _ _ _ a => some a
+  | .note num _ _ _ => some (.noteMark num)
+  | .space _ | .fill | .strut _ | .brk _ | .img _ _ => none
+
+/-- The Layout-private marker a decorating site wraps its declared content
+in: `.role leafRole content`. A role is transparent to layout
+(`role_transparent_layout`), so wrapping moves no ink; the flatten counter
+reads it as "the tree's leaves resume here". A NUL cannot come from source
+text, so no document role can collide. -/
+private def leafRole : String := "\u0000content"
+
+/-- A decorating site's declared content, marked for the counter. Empty
+content stays empty: there is no leaf to count, and no empty body for a
+template hole to mistake. -/
+private def markContent (xs : Array Inline) : Array Inline :=
+  if xs.isEmpty then xs else #[.role leafRole xs]
+
+/-- The inline counter: which leaf the next atom takes. Set by
+`itemsOfInlines` from the block's `(leaf, span)` and the inlines it was
+handed, and advanced by `flatten` at exactly the arms `Struct.inlineRaw`
+gives a leaf — the same order contract as 18a's `Acc.leafRange`, stated
+here once: `.text`, `.math`, `.formula`, `.ref`, `.icon`, `.cite`,
+`.image`, `.linebreak` each take one id; `.link`, `.styled`, `.colored`,
+`.role`, `.underline`, `.step` recurse; `.footnote`'s body is numbered
+where the mark stands; `.label`, `.fill`, `.strut`, `.pageNumber`,
+`.pageCount` take none. -/
+private inductive LeafCtr where
+  /-- Every atom takes `a`: generated ink with no leaf behind it
+  (`.unattributed` for furniture and measuring passes, `.label` for the
+  marker line). -/
+  | fixed (a : Attribution)
+  /-- The block opening at `k` sets exactly its declared content
+  (`leafCount inlines = span`): each atom takes `next`, a placeholder set
+  outside running content is the block's. -/
+  | counting (k next : Nat)
+  /-- The block opening at `k` sets decorated content (`leafCount inlines ≠
+  span`): every atom is `.block k` until a `leafRole` marker, whose body
+  counts from `next`; a block the tree flattened to one leaf never carries
+  a marker and is `.block k` throughout. -/
+  | riding (k next : Nat)
+  deriving Repr, BEq, Inhabited
+
+/-- The attribution the next atom takes, and the counter past it. -/
+private def LeafCtr.take : LeafCtr → Attribution × LeafCtr
+  | .fixed a => (a, .fixed a)
+  | .counting k next => (.leaf next, .counting k (next + 1))
+  | .riding k next => (.block k, .riding k next)
+
+/-- The attribution for generated ink at the counter's position: the
+block's, with no leaf consumed. -/
+private def LeafCtr.generated : LeafCtr → Attribution
+  | .fixed a => a
+  | .counting k _ => .block k
+  | .riding k _ => .block k
+
+/-- The leaf the counter stands at, when it counts: where a footnote's
+body numbering begins. -/
+private def LeafCtr.next? : LeafCtr → Option Nat
+  | .fixed _ => none
+  | .counting _ next => some next
+  | .riding _ _ => none
+
+/-- Step over `n` leaves that ship no run of their own (an image, a line
+break, an inlined note's body already counted). -/
+private def LeafCtr.skip (n : Nat) : LeafCtr → LeafCtr
+  | .fixed a => .fixed a
+  | .counting k next => .counting k (next + n)
+  | .riding k next => .riding k next
+
+/-- Entering the content marker: a riding counter counts its body. -/
+private def LeafCtr.enter : LeafCtr → LeafCtr
+  | .fixed a => .fixed a
+  | .counting k next => .counting k next
+  | .riding k next => .counting k next
+
+/-- Leaving the content marker: `inner` is the counter the body left, `outer`
+the one that entered. A counter that was riding rides again, past the
+leaves the body took. -/
+private def LeafCtr.leave (inner outer : LeafCtr) : LeafCtr :=
+  match inner, outer with
+  | .counting k next, .riding _ _ => .riding k next
+  | .counting k next, .counting _ _ | .counting k next, .fixed _ => .counting k next
+  | .fixed a, _ => .fixed a
+  | .riding k next, _ => .riding k next
+
+/-- The leaves `Struct` gives an inline sequence: the count the walk claims
+for one block of set text. Counted by the projection's own walk, never a
+second enumeration of the inline arms. -/
+private def leafCount (xs : Array Inline) : Nat :=
+  (Struct.leaves (Struct.inlinesRaw #[] xs.toList)).size
+
+/-- The counter a block's inlines start from: no leaf, no attribution;
+otherwise counting when the inlines are exactly the declared content
+(`Struct`'s own count of them is the block's `span`), riding when the
+walk decorated them. -/
+private def LeafCtr.of (leaf : Option Nat) (span : Nat) (xs : Array Inline) : LeafCtr :=
+  match leaf with
+  | none => .fixed .unattributed
+  | some k => if leafCount xs == span then .counting k k else .riding k k
 
 private structure FlattenSt where
   toks : Array Tk := #[]
@@ -865,6 +1008,8 @@ private structure FlattenSt where
   diags : Array Diag := #[]
   /-- The size ladder named runs resolve through (`Geom.scale`). -/
   ladder : List (String × Nat) := Ir.sizeScale
+  /-- The inline leaf counter (`LeafCtr`). -/
+  ctr : LeafCtr := .fixed .unattributed
 
 private def warn (st : FlattenSt) (code : DiagCode) (msg : String)
     (help : Option String := none) : FlattenSt :=
@@ -923,23 +1068,32 @@ def smallCapSynth (scale : Nat) (sty : TextStyle) (chars : Array Char) :
     TextStyle × Array Char :=
   ({ sty with scale := sty.scale * scale / 1000 }, chars.map (·.toUpper))
 
-private def pushWord (st : FlattenSt) (sty : TextStyle) (cur : Array Char) : FlattenSt :=
-  { st with toks := st.toks.push (.word sty cur) }
+private def pushWord (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
+    (attr : Attribution) : FlattenSt :=
+  { st with toks := st.toks.push (.word sty cur attr) }
 
-private def pushText (st : FlattenSt) (sty : TextStyle) (s : String) : FlattenSt := Id.run do
-  let mut st := st
-  let mut cur : Array Char := #[]
-  for c in s.toList do
+/-- One text atom's characters into words and spaces, `cur` the word under
+construction: a space flushes the word and sets a space token, the end
+flushes. Every word carries `attr`; the counter is untouched. Structural
+over the character list so `pushChars_toks` can induct on it. -/
+private def pushChars (sty : TextStyle) (attr : Attribution) (st : FlattenSt)
+    (cur : Array Char) : List Char → FlattenSt
+  | [] => if cur.isEmpty then st else pushWord st sty cur attr
+  | c :: rest =>
     if c == ' ' then
-      if !cur.isEmpty then
-        st := pushWord st sty cur
-        cur := #[]
-      st := { st with toks := st.toks.push (.space sty) }
-    else
-      cur := cur.push c
-  if !cur.isEmpty then
-    st := pushWord st sty cur
-  return st
+      let st := if cur.isEmpty then st else pushWord st sty cur attr
+      pushChars sty attr { st with toks := st.toks.push (.space sty) } #[] rest
+    else pushChars sty attr st (cur.push c) rest
+
+/-- One text atom's words and spaces, every word carrying `attr`. -/
+private def pushTextAttr (st : FlattenSt) (sty : TextStyle) (s : String)
+    (attr : Attribution) : FlattenSt :=
+  pushChars sty attr st #[] s.toList
+
+/-- One leaf-bearing text atom: takes the counter's next leaf. -/
+private def pushText (st : FlattenSt) (sty : TextStyle) (s : String) : FlattenSt :=
+  let (attr, ctr) := st.ctr.take
+  pushTextAttr { st with ctr := ctr } sty s attr
 
 /-- Apply one markup style to the active text style. Size-only styles do not
 change the face; `\normalfont` resets to the body face. -/
@@ -1000,11 +1154,21 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   -- (a paragraph of a paged flow); where none exists — furniture, markers,
   -- captions, a card face — the body stays inline, the declared refusal.
   | .footnote num body =>
-    if noteOk then { st with toks := st.toks.push (.note (num.getD 0) sty body) }
+    if noteOk then
+      -- The body's leaves are numbered where the mark stands
+      -- (`Struct.inlineRaw`'s `.note` node sits in the sequence): the
+      -- counter steps over them here, and the note block counts them from
+      -- `bodyLeaf` when it is set.
+      { st with toks := st.toks.push (.note (num.getD 0) sty body st.ctr.next?)
+                ctr := st.ctr.skip (leafCount body) }
     else flatten mathOk noteOk st sty body
-  | .icon c _ => { st with toks := st.toks.push (.icon sty c) }
-  | .image src spec _ => { st with toks := st.toks.push (.img src spec) }
-  | .linebreak extra => { st with toks := st.toks.push (.brk extra) }
+  | .icon c _ =>
+    let (attr, ctr) := st.ctr.take
+    { st with toks := st.toks.push (.icon sty c attr), ctr := ctr }
+  -- an image and a line break are leaves that ship no run: the counter
+  -- steps over them
+  | .image src spec _ => { st with toks := st.toks.push (.img src spec), ctr := st.ctr.skip 1 }
+  | .linebreak extra => { st with toks := st.toks.push (.brk extra), ctr := st.ctr.skip 1 }
   | .fill => { st with toks := st.toks.push .fill }
   | .strut h => { st with toks := st.toks.push (.strut h) }
   -- Math carried as source (the constructs M6 still owes): the elaborator
@@ -1012,7 +1176,8 @@ private def flattenOne (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
   | .math _ src => pushText st sty src
   | .formula display src body =>
     if mathOk then
-      { st with toks := st.toks.push (.formula display sty body) }
+      let (attr, ctr) := st.ctr.take
+      { st with toks := st.toks.push (.formula display sty body attr), ctr := ctr }
     else
       let st := if st.warnedMath then st
         else { warn st .W0003 "no math font is available; math is set as plain text"
@@ -1022,8 +1187,15 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
   | .styled s body => flatten mathOk noteOk st (applyStyle st.ladder sty s) body
   | .colored c _ body => flatten mathOk noteOk st { sty with color := c } body
   -- A role is a name, pure grouping: zero metric impact, no style change
-  -- (role_transparent_layout is the statement).
-  | .role _ body => flatten mathOk noteOk st sty body
+  -- (role_transparent_layout is the statement). The one Layout-private
+  -- role, `leafRole`, is the decorating walk's marker for its declared
+  -- content: the counter counts the body's leaves, and the tokens are the
+  -- same ink under another attribution.
+  | .role n body =>
+    if n == leafRole then
+      let inner := flatten mathOk noteOk { st with ctr := st.ctr.enter } sty body
+      { inner with ctr := LeafCtr.leave inner.ctr st.ctr }
+    else flatten mathOk noteOk st sty body
   -- The underline is the link's affordance in both backends (the HTML
   -- anchor keeps the browser's): never colour alone, and never nothing
   -- (WCAG 2.2 SC 1.4.1, use of colour).
@@ -1033,9 +1205,10 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
   -- recolouring copies before layout (`run`'s step driver), never by metrics.
   | .step _ _ body => flatten mathOk noteOk st sty body
   -- Placeholders are substituted before layout; reaching here means the
-  -- document used one outside running content.
-  | .pageNumber => pushText st sty "?"
-  | .pageCount => pushText st sty "?"
+  -- document used one outside running content: generated ink of the block,
+  -- no leaf of its own (`Struct.inlineRaw` gives it none).
+  | .pageNumber => pushTextAttr st sty "?" st.ctr.generated
+  | .pageCount => pushTextAttr st sty "?" st.ctr.generated
 
 end
 
@@ -1043,12 +1216,238 @@ end
 body with the state and the style unchanged, so wrapping content in a role
 moves no ink and no metric — the `.step` property, and the reason the PDF
 page is byte-identical with and without the annotation. The block half is
-`collectRole_transparent`, over the collector's own arm. -/
+`collectRole_transparent`, over the collector's own arm. The one exception
+is the walk's own `leafRole` marker (a NUL-prefixed name no document can
+spell), which changes the attribution the body's tokens carry and nothing
+else. -/
 theorem role_transparent_layout (mathOk noteOk : Bool) (st : FlattenSt)
-    (sty : TextStyle) (n : String) (body : Array Inline) :
+    (sty : TextStyle) (n : String) (body : Array Inline) (h : n ≠ leafRole) :
     flattenOne mathOk noteOk st sty (.role n body)
       = flatten mathOk noteOk st sty body := by
-  simp [flattenOne]
+  simp [flattenOne, h]
+
+-- The attribution covers the walk: a counter standing in a block hands out
+-- nothing but that block's leaves, the block itself, and note marks. The
+-- statement is over the tokens `flatten` decides attribution for;
+-- `itemsOfTok` copies each token's attribution onto every box it builds
+-- (one `attr` per arm, by inspection of the arms), and `setLine` copies a
+-- box's onto its run.
+
+/-- A token's ink names a leaf, a block or a note mark — never
+`.unattributed`; a token with no run of its own passes. -/
+private def Attribution.named (a : Attribution) : Bool :=
+  a matches .leaf _ | .block _ | .noteMark _
+
+private def Tk.attributed (tk : Tk) : Bool :=
+  match tk.attr? with
+  | none => true
+  | some a => a.named
+
+/-- A counter standing in a block: what it hands out names that block. -/
+private def LeafCtr.attributes : LeafCtr → Bool
+  | .fixed _ => false
+  | .counting _ _ | .riding _ _ => true
+
+theorem LeafCtr.take_attributes (c : LeafCtr) (h : c.attributes = true) :
+    c.take.1.named = true ∧ c.take.2.attributes = true := by
+  cases c <;> simp_all [take, attributes, Attribution.named]
+
+theorem LeafCtr.generated_attributes (c : LeafCtr) (h : c.attributes = true) :
+    c.generated.named = true := by
+  cases c <;> simp_all [generated, attributes, Attribution.named]
+
+theorem LeafCtr.skip_attributes (n : Nat) (c : LeafCtr) :
+    (c.skip n).attributes = c.attributes := by
+  cases c <;> rfl
+
+theorem LeafCtr.enter_attributes (c : LeafCtr) : c.enter.attributes = c.attributes := by
+  cases c <;> rfl
+
+theorem LeafCtr.leave_attributes (inner outer : LeafCtr) :
+    (LeafCtr.leave inner outer).attributes = inner.attributes := by
+  cases inner <;> cases outer <;> rfl
+
+theorem pushWord_toks (st : FlattenSt) (sty : TextStyle) (cur : Array Char)
+    (attr : Attribution) (h : attr.named = true) :
+    (pushWord st sty cur attr).ctr = st.ctr ∧
+      ∀ tk ∈ (pushWord st sty cur attr).toks, tk ∈ st.toks ∨ tk.attributed = true := by
+  refine ⟨rfl, fun tk hm => ?_⟩
+  simp only [pushWord, Array.mem_push] at hm
+  rcases hm with hm | hm
+  · exact Or.inl hm
+  · subst hm
+    exact Or.inr (by simpa [Tk.attributed, Tk.attr?] using h)
+
+theorem pushChars_toks (sty : TextStyle) (attr : Attribution) (h : attr.named = true)
+    (cs : List Char) : ∀ (st : FlattenSt) (cur : Array Char),
+    (pushChars sty attr st cur cs).ctr = st.ctr ∧
+      ∀ tk ∈ (pushChars sty attr st cur cs).toks, tk ∈ st.toks ∨ tk.attributed = true := by
+  induction cs with
+  | nil =>
+    intro st cur
+    simp only [pushChars]
+    split
+    · exact ⟨rfl, fun tk hm => Or.inl hm⟩
+    · exact pushWord_toks st sty cur attr h
+  | cons c rest ih =>
+    intro st cur
+    simp only [pushChars]
+    split
+    · -- a space: flush, then the space token, then the rest
+      have hflush := show ∀ st', st' = (if cur.isEmpty then st else pushWord st sty cur attr) →
+          st'.ctr = st.ctr ∧ ∀ tk ∈ st'.toks, tk ∈ st.toks ∨ tk.attributed = true from
+        fun st' he => by
+          subst he
+          split
+          · exact ⟨rfl, fun tk hm => Or.inl hm⟩
+          · exact pushWord_toks st sty cur attr h
+      obtain ⟨hc, hm⟩ := hflush _ rfl
+      obtain ⟨hc', hm'⟩ := ih { (if cur.isEmpty then st else pushWord st sty cur attr) with
+        toks := (if cur.isEmpty then st else pushWord st sty cur attr).toks.push (.space sty) } #[]
+      refine ⟨by rw [hc']; exact hc, fun tk htk => ?_⟩
+      rcases hm' tk htk with h1 | h1
+      · simp only [Array.mem_push] at h1
+        rcases h1 with h1 | h1
+        · exact hm tk h1
+        · subst h1
+          exact Or.inr rfl
+      · exact Or.inr h1
+    · exact ih st (cur.push c)
+
+theorem pushTextAttr_toks (st : FlattenSt) (sty : TextStyle) (s : String)
+    (attr : Attribution) (h : attr.named = true) :
+    (pushTextAttr st sty s attr).ctr = st.ctr ∧
+      ∀ tk ∈ (pushTextAttr st sty s attr).toks, tk ∈ st.toks ∨ tk.attributed = true :=
+  pushChars_toks sty attr h s.toList st #[]
+
+theorem pushText_toks (st : FlattenSt) (sty : TextStyle) (s : String)
+    (h : st.ctr.attributes = true) :
+    (pushText st sty s).ctr.attributes = true ∧
+      ∀ tk ∈ (pushText st sty s).toks, tk ∈ st.toks ∨ tk.attributed = true := by
+  obtain ⟨hn, ha⟩ := LeafCtr.take_attributes st.ctr h
+  obtain ⟨hc, hm⟩ := pushTextAttr_toks { st with ctr := st.ctr.take.2 } sty s st.ctr.take.1 hn
+  exact ⟨by simp only [pushText]; rw [hc]; exact ha, by simpa [pushText] using hm⟩
+
+theorem warn_toks (st : FlattenSt) (code : DiagCode) (msg : String) (help : Option String) :
+    (warn st code msg help).toks = st.toks ∧ (warn st code msg help).ctr = st.ctr :=
+  ⟨rfl, rfl⟩
+
+mutual
+
+/-- `flatten_attr_covers` (`_covers`): a walk whose counter stands in a
+block emits no `.unattributed` token — every new token names a leaf, the
+block, or a note mark — and leaves the counter standing in a block. The
+arms that own a leaf take it (`LeafCtr.take`); the generated placeholders
+take the block; the marker enters and leaves without losing the block. -/
+theorem flatten_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
+    (xs : Array Inline) (h : st.ctr.attributes = true) :
+    (flatten mathOk noteOk st sty xs).ctr.attributes = true ∧
+      ∀ tk ∈ (flatten mathOk noteOk st sty xs).toks, tk ∈ st.toks ∨ tk.attributed = true := by
+  simp only [flatten]
+  exact flattenList_attr_covers mathOk noteOk st sty xs.toList h
+
+theorem flattenList_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
+    (xs : List Inline) (h : st.ctr.attributes = true) :
+    (flattenList mathOk noteOk st sty xs).ctr.attributes = true ∧
+      ∀ tk ∈ (flattenList mathOk noteOk st sty xs).toks, tk ∈ st.toks ∨ tk.attributed = true := by
+  match xs with
+  | [] => exact ⟨h, fun tk hm => Or.inl hm⟩
+  | x :: rest =>
+    obtain ⟨h1, m1⟩ := flattenOne_attr_covers mathOk noteOk st sty x h
+    obtain ⟨h2, m2⟩ := flattenList_attr_covers mathOk noteOk
+      (flattenOne mathOk noteOk st sty x) sty rest h1
+    refine ⟨by simpa [flattenList] using h2, fun tk hm => ?_⟩
+    rcases m2 tk (by simpa [flattenList] using hm) with hm' | hm'
+    · exact m1 tk hm'
+    · exact Or.inr hm'
+
+theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : TextStyle)
+    (x : Inline) (h : st.ctr.attributes = true) :
+    (flattenOne mathOk noteOk st sty x).ctr.attributes = true ∧
+      ∀ tk ∈ (flattenOne mathOk noteOk st sty x).toks, tk ∈ st.toks ∨ tk.attributed = true := by
+  match x with
+  | .text s => exact pushText_toks st sty s h
+  | .label _ => exact ⟨h, fun tk hm => Or.inl hm⟩
+  | .ref _ _ text _ => exact pushText_toks st sty text h
+  | .cite _ keys => exact pushText_toks st sty (Ir.citeMarks keys) h
+  | .footnote num body =>
+    simp only [flattenOne]
+    split
+    · refine ⟨by rw [LeafCtr.skip_attributes]; exact h, fun tk hm => ?_⟩
+      simp only [Array.mem_push] at hm
+      rcases hm with hm | hm
+      · exact Or.inl hm
+      · subst hm; exact Or.inr rfl
+    · exact flatten_attr_covers mathOk noteOk st sty body h
+  | .icon c _ =>
+    obtain ⟨hn, ha⟩ := LeafCtr.take_attributes st.ctr h
+    refine ⟨by simpa [flattenOne] using ha, fun tk hm => ?_⟩
+    simp only [flattenOne, Array.mem_push] at hm
+    rcases hm with hm | hm
+    · exact Or.inl hm
+    · subst hm
+      exact Or.inr (by simpa [Tk.attributed, Tk.attr?] using hn)
+  | .image src spec _ =>
+    refine ⟨by simp only [flattenOne]; rw [LeafCtr.skip_attributes]; exact h, fun tk hm => ?_⟩
+    simp only [flattenOne, Array.mem_push] at hm
+    rcases hm with hm | hm
+    · exact Or.inl hm
+    · subst hm; exact Or.inr rfl
+  | .linebreak extra =>
+    refine ⟨by simp only [flattenOne]; rw [LeafCtr.skip_attributes]; exact h, fun tk hm => ?_⟩
+    simp only [flattenOne, Array.mem_push] at hm
+    rcases hm with hm | hm
+    · exact Or.inl hm
+    · subst hm; exact Or.inr rfl
+  | .fill =>
+    refine ⟨h, fun tk hm => ?_⟩
+    simp only [flattenOne, Array.mem_push] at hm
+    rcases hm with hm | hm
+    · exact Or.inl hm
+    · subst hm; exact Or.inr rfl
+  | .strut hg =>
+    refine ⟨h, fun tk hm => ?_⟩
+    simp only [flattenOne, Array.mem_push] at hm
+    rcases hm with hm | hm
+    · exact Or.inl hm
+    · subst hm; exact Or.inr rfl
+  | .math _ src => exact pushText_toks st sty src h
+  | .formula display src body =>
+    simp only [flattenOne]
+    split
+    · obtain ⟨hn, ha⟩ := LeafCtr.take_attributes st.ctr h
+      refine ⟨ha, fun tk hm => ?_⟩
+      simp only [Array.mem_push] at hm
+      rcases hm with hm | hm
+      · exact Or.inl hm
+      · subst hm
+        exact Or.inr (by simpa [Tk.attributed, Tk.attr?] using hn)
+    · -- the W0003 warning changes diagnostics only; the source then sets as text
+      split
+      · exact pushText_toks st sty src h
+      · exact pushText_toks _ sty src h
+  | .styled s body => exact flatten_attr_covers mathOk noteOk st _ body h
+  | .colored c _ body => exact flatten_attr_covers mathOk noteOk st _ body h
+  | .role n body =>
+    simp only [flattenOne]
+    split
+    · obtain ⟨h1, m1⟩ := flatten_attr_covers mathOk noteOk { st with ctr := st.ctr.enter } sty body
+        (by rw [LeafCtr.enter_attributes]; exact h)
+      exact ⟨by rw [LeafCtr.leave_attributes]; exact h1, m1⟩
+    · exact flatten_attr_covers mathOk noteOk st sty body h
+  | .link url body => exact flatten_attr_covers mathOk noteOk st _ body h
+  | .underline body => exact flatten_attr_covers mathOk noteOk st _ body h
+  | .step _ _ body => exact flatten_attr_covers mathOk noteOk st sty body h
+  | .pageNumber =>
+    obtain ⟨hc, hm⟩ := pushTextAttr_toks st sty "?" st.ctr.generated
+      (LeafCtr.generated_attributes st.ctr h)
+    exact ⟨by simp only [flattenOne]; rw [hc]; exact h, hm⟩
+  | .pageCount =>
+    obtain ⟨hc, hm⟩ := pushTextAttr_toks st sty "?" st.ctr.generated
+      (LeafCtr.generated_attributes st.ctr h)
+    exact ⟨by simp only [flattenOne]; rw [hc]; exact h, hm⟩
+
+end
 
 -- Items -----------------------------------------------------------------------
 
@@ -1175,7 +1574,7 @@ word otherwise. -/
 private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
     (size : Sp) (fontIdx : Nat)
     (color : Ir.Color) (ground : Option Ir.Color) (link : Option String)
-    (underline : Bool) (smallcaps : Bool)
+    (underline : Bool) (smallcaps : Bool) (attr : Attribution)
     (fs : FontSet) (font : Font) (chars : Array Char) (missing : Array (Nat × Char))
     (substs : Array (Nat × Char × Nat)) (cache : Std.HashMap String (Array Nat)) :
     Array Item × Array (Nat × Char) × Array (Nat × Char × Nat) ×
@@ -1188,7 +1587,8 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
   let mut box : Array (Nat × Char × Sp) := #[]
   let mut boxW : Sp := 0
   let flush (items : Array Item) (box : Array (Nat × Char × Sp)) (w : Sp) : Array Item :=
-    if box.isEmpty then items else items.push (.box w fontIdx color link box size underline 0 ground)
+    if box.isEmpty then items
+    else items.push (.box w fontIdx color link box size underline 0 ground attr)
   let mut i := 0
   for _ in [0:chars.size + 1] do
     if h : i < chars.size then
@@ -1240,7 +1640,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
               items := flush items box boxW
               box := #[]
               boxW := 0
-              items := items.push (.box g.2.2 fb color link #[g] size underline 0 ground)
+              items := items.push (.box g.2.2 fb color link #[g] size underline 0 ground attr)
               unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c') do
                 substs := substs.push (fontIdx, c', fb)
             | none =>
@@ -1255,7 +1655,8 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
           items := flush items box boxW
           box := #[]
           boxW := 0
-          items := items.push (.box (size * num / den) fontIdx color link #[] size underline 0 ground)
+          items := items.push
+            (.box (size * num / den) fontIdx color link #[] size underline 0 ground attr)
           i := i + 1
         | none =>
         if c == '\u00a0' then
@@ -1264,7 +1665,8 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
           box := #[]
           boxW := 0
           items := items.push
-            (.box (scaledAt size font font.spaceAdvance) fontIdx color link #[] size underline 0 ground)
+            (.box (scaledAt size font font.spaceAdvance) fontIdx color link #[] size underline 0
+              ground attr)
           i := i + 1
         else
         match glyphOfSc smallcaps size font c with
@@ -1279,7 +1681,7 @@ private def wordItems (pats : Option Hyphen.Patterns) (langKey : String)
             items := flush items box boxW
             box := #[]
             boxW := 0
-            items := items.push (.box g.2.2 fb color link #[g] size underline 0 ground)
+            items := items.push (.box g.2.2 fb color link #[g] size underline 0 ground attr)
             unless substs.any (fun e => e.1 == fontIdx && e.2.1 == c) do
               substs := substs.push (fontIdx, c, fb)
           | none =>
@@ -1307,7 +1709,15 @@ from `Font.spaceAdvance`, never zero even for a face with no space
 glyph. -/
 private def interword (size : Sp) (font : Font) : Glue :=
   let w := scaledAt size font font.spaceAdvance
-  { width := w, stretch := w / 2, shrink := w / 3 }
+  { width := w, stretch := w / 2, shrink := w / 3, word := true }
+
+/-- `interword_word_exact`: interword glue is the word gap, and the glue
+transforms below keep the flag — so `Seg.gap _ true` on a set line stands
+exactly where the token walk met a space between words. No other `Glue`
+construction in this module writes `word`; the structure's default is
+`false`. -/
+theorem interword_word_exact (size : Sp) (font : Font) :
+    (interword size font).word = true := rfl
 
 /-- Ragged setting as an item transform, leaving the breaker untouched:
 interword glue keeps its natural width, never shrinks, and gains *finite*
@@ -1330,7 +1740,7 @@ def raggedItems (items : Array Item) : Array Item :=
     match it with
     | .glue g =>
       if g.fil then it
-      else .glue { width := g.width, stretch := g.width * 6 }
+      else .glue { width := g.width, stretch := g.width * 6, word := g.word }
     | .box .. | .pen .. | .img .. | .rule .. => it
 
 /-- Ragged setting for display lines — titles and headings: interword glue
@@ -1355,7 +1765,7 @@ def displayItems (target : Sp) (items : Array Item) : Array Item :=
       else if g.parfill then .glue { width := g.width,
                                      stretch := max 0 (target / 2),
                                      parfill := true }
-      else .glue { width := g.width, stretch := g.width * 6 }
+      else .glue { width := g.width, stretch := g.width * 6, word := g.word }
     | .box .. | .pen .. | .img .. | .rule .. => it
 
 -- The document's scalars, for the driver's per-glyph fallback ------------------
@@ -1739,6 +2149,10 @@ private structure MathEnv where
   underline : Bool
   base : Sp
   ground : Option Ir.Color := none
+  /-- The formula's attribution: its one `Struct` leaf (the source), on
+  every box the assembly builds. No default: the one construction site
+  says. -/
+  attr : Attribution
 
 /-- Font size at a style: base for display and text, the face's declared
 percentages for the script styles (`Math.sizeFor`, clamped on parse). -/
@@ -1762,7 +2176,7 @@ private def MathEnv.glyphExtent (e : MathEnv) (size : Sp) (g : Nat) : Sp × Sp :
 
 /-- A kern in the math stream: width, no glyphs, never a breakpoint. -/
 private def mathKern (e : MathEnv) (size w : Sp) : Item :=
-  .box w e.idx e.color e.link #[] size e.underline 0 e.ground
+  .box w e.idx e.color e.link #[] size e.underline 0 e.ground e.attr
 
 /-- Width of assembled math items: boxes only ever enter the stream, so the
 advance of a math box is the sum of what it contains plus the kerns the
@@ -1770,7 +2184,7 @@ spacing table put between them — `mathBoxChecks` holds the two ways of
 computing it equal in sp. -/
 def mathItemsWidth (items : Array Item) : Sp :=
   items.foldl (fun w it => match it with
-    | .box bw _ _ _ _ _ _ _ _ => w + bw
+    | .box bw _ _ _ _ _ _ _ _ _ => w + bw
     | _ => w) 0
 
 private abbrev MAcc := Array Item × Array (Nat × Char)
@@ -1786,7 +2200,7 @@ private def mathItemsExtent (font : Font) (items : Array Item) : Sp × Sp := Id.
   let upem : Int := font.unitsPerEm
   for it in items do
     match it with
-    | .box _ _ _ _ glyphs size _ raise _ =>
+    | .box _ _ _ _ glyphs size _ raise _ _ =>
       for (g, _, _) in glyphs do
         match font.yExtent g with
         | some (lo, hi) =>
@@ -1805,7 +2219,7 @@ private def mathItemsExtent (font : Font) (items : Array Item) : Sp × Sp := Id.
 private def raiseItems (delta : Sp) (items : Array Item) : Array Item :=
   if delta == 0 then items else
   items.map fun it => match it with
-    | .box w i c l g s u r gr => .box w i c l g s u (r + delta) gr
+    | .box w i c l g s u r gr a => .box w i c l g s u (r + delta) gr a
     | .rule w t r c => .rule w t (r + delta) c
     | .glue g => .glue g
     | .pen w c f i col g => .pen w c f i col g
@@ -1817,8 +2231,8 @@ size) plus its raise, so a 1 sp box raised to `top` (and one sunk to `bot`)
 tells the line builder exactly the room an assembled construction needs —
 the fraction hanging above and below, the grown delimiter's reach. -/
 private def struts (e : MathEnv) (top bot : Sp) : Array Item :=
-  #[.box 0 e.idx e.color e.link #[] 1 false (max 0 top) e.ground,
-    .box 0 e.idx e.color e.link #[] 1 false (min 0 bot) e.ground]
+  #[.box 0 e.idx e.color e.link #[] 1 false (max 0 top) e.ground e.attr,
+    .box 0 e.idx e.color e.link #[] 1 false (min 0 bot) e.ground e.attr]
 
 /-- The size ladder a glyph grows through: its vertical variants, or just
 itself when the face grows it no further. -/
@@ -1856,7 +2270,7 @@ private def delimAssemble (e : MathEnv) (size raise : Sp) (l r : Option Char)
       let (vTop, vBot) := e.glyphExtent size gv
       let w := scaledAt size e.font (e.font.widths[gv]?.getD 0)
       let dRaise := raise + axis - (vTop + vBot) / 2
-      (items.push (Item.box w e.idx e.color e.link #[(gv, c, w)] size e.underline dRaise e.ground),
+      (items.push (Item.box w e.idx e.color e.link #[(gv, c, w)] size e.underline dRaise e.ground e.attr),
        missing, dRaise - raise + vTop, dRaise - raise + vBot)
     | none =>
       (items, if missing.contains (e.idx, c) then missing else missing.push (e.idx, c),
@@ -2029,7 +2443,7 @@ private def radAssemble (e : MathEnv) (size : Sp) (display : Bool) (raise : Sp)
         return (#[mathKern e size kernB] ++ raiseItems degRaise degItems).push
           (mathKern e size kernA)
     let items := (degPrefix.push
-        (.box surdW e.idx e.color e.link #[(gv, '\u221A', surdW)] size e.underline surdRaise e.ground)
+        (.box surdW e.idx e.color e.link #[(gv, '\u221A', surdW)] size e.underline surdRaise e.ground e.attr)
       |>.push (Item.rule bodyW θ (raise + ruleBot) e.color)
       |>.push (mathKern e size (-bodyW)))
       ++ raisedBody
@@ -2072,9 +2486,9 @@ private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
     -- glyph of the math face; else the assembled width's centre.
     let baseTA :=
       match bItems.filter (fun it => match it with
-        | .box _ _ _ _ glyphs _ _ _ _ => !glyphs.isEmpty
+        | .box _ _ _ _ glyphs _ _ _ _ _ => !glyphs.isEmpty
         | _ => false) with
-      | #[.box _ fi _ _ #[(bg, _, _)] bsize _ _ _] =>
+      | #[.box _ fi _ _ #[(bg, _, _)] bsize _ _ _ _] =>
         if fi == e.idx then e.constAt bsize (e.font.topAccentX bg) else baseW / 2
       | _ => baseW / 2
     let gv :=
@@ -2090,7 +2504,7 @@ private def accentAssemble (e : MathEnv) (size raise : Sp) (mark : Char)
       max 0 (bTop - e.constAt size e.consts.accentBaseHeight)
     let (mTop, mBot) := e.glyphExtent size gv
     let items := ((raisedBody.push (mathKern e size (-baseW + shift))).push
-        (Item.box wAcc e.idx e.color e.link #[(gv, mark, wAcc)] size e.underline accRaise e.ground)
+        (Item.box wAcc e.idx e.color e.link #[(gv, mark, wAcc)] size e.underline accRaise e.ground e.attr)
       |>.push (mathKern e size (baseW - shift - wAcc)))
       ++ struts e (max (raise + bTop) (accRaise + mTop))
         (min (raise + bBot) (accRaise + mBot))
@@ -2161,7 +2575,7 @@ private def layMathItem (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
           let (vTop, vBot) := e.glyphExtent size gv
           let axis := e.constAt size e.consts.axisHeight
           let vRaise := raise + axis - (vTop + vBot) / 2
-          (#[(Item.box w e.idx e.color e.link #[(gv, c, w)] size e.underline vRaise e.ground)]
+          (#[(Item.box w e.idx e.color e.link #[(gv, c, w)] size e.underline vRaise e.ground e.attr)]
             ++ struts e (vRaise + vTop) (vRaise + vBot), acc.2)
         | none =>
           if acc.2.contains (e.idx, c) then (#[], acc.2)
@@ -2231,7 +2645,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
     let size := e.sizeAt st
     match glyphOf size e.font c with
     | some g =>
-      ((acc.1.push (.box g.2.2 e.idx e.color e.link #[g] size e.underline raise e.ground)), acc.2)
+      ((acc.1.push (.box g.2.2 e.idx e.color e.link #[g] size e.underline raise e.ground e.attr)), acc.2)
     | none =>
       -- A scalar the math face lacks goes through the per-scalar chain the
       -- driver precomputed for text (`FontSet.fallback`) — one mechanism,
@@ -2239,7 +2653,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       match e.fs.fallbackFor c |>.bind fun fb =>
           (glyphOf size (e.fs.get fb) c).map (fb, ·) with
       | some (fb, g) =>
-        ((acc.1.push (.box g.2.2 fb e.color e.link #[g] size e.underline raise e.ground)), acc.2)
+        ((acc.1.push (.box g.2.2 fb e.color e.link #[g] size e.underline raise e.ground e.attr)), acc.2)
       | none =>
         -- A math alphabet's scalar uncovered everywhere: the base letter
         -- stands in — bold/italic from the text face where that is the
@@ -2254,7 +2668,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
           return (fi, g)
         match synth with
         | some (fi, g) =>
-          ((acc.1.push (.box g.2.2 fi e.color e.link #[g] size e.underline raise e.ground)), acc.2)
+          ((acc.1.push (.box g.2.2 fi e.color e.link #[g] size e.underline raise e.ground e.attr)), acc.2)
         | none =>
           if acc.2.contains (e.idx, c) then acc
           else (acc.1, acc.2.push (e.idx, c))
@@ -2275,7 +2689,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       match hit with
       | some (fi, g) =>
         if fi != cur && !glyphs.isEmpty then
-          items := items.push (.box w cur e.color e.link glyphs size e.underline raise e.ground)
+          items := items.push (.box w cur e.color e.link glyphs size e.underline raise e.ground e.attr)
           glyphs := #[]
           w := 0
         cur := fi
@@ -2284,7 +2698,7 @@ private def layMathNucleus (e : MathEnv) (st : Math.MathStyle) (raise : Sp)
       | none =>
         unless missing.contains (e.idx, c) do
           missing := missing.push (e.idx, c)
-    return (items.push (.box w cur e.color e.link glyphs size e.underline raise e.ground), missing)
+    return (items.push (.box w cur e.color e.link glyphs size e.underline raise e.ground e.attr), missing)
   | .list body =>
     layMathTail e st raise (Math.degrade body.classes) none acc body
   | .frac num den =>
@@ -2384,6 +2798,7 @@ part the mark from the word it follows. Digits the face lacks return
 beside the box for the caller's E0405. -/
 private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp) (num : Nat) :
     Item × Array (Nat × Char) := Id.run do
+  let attr : Attribution := .noteMark num
   let idx := fs.lookup sty.slot sty.weight.css sty.italic
   let font := fs.get idx
   let markSize := Ir.scaleStep around "scriptsize"
@@ -2397,7 +2812,7 @@ private def markBox (fs : FontSet) (sty : TextStyle) (around : Sp) (num : Nat) :
       gs := gs.push g
       w := w + g.2.2
     | none => miss := miss.push (idx, c)
-  return (.box w idx sty.color sty.link gs markSize sty.underline raise sty.ground, miss)
+  return (.box w idx sty.color sty.link gs markSize sty.underline raise sty.ground attr, miss)
 
 /-- The token fold's state: what the walk has built, and what it has
 lost beside it. `dropped` is the never-silent ledger — a (face, char)
@@ -2407,7 +2822,9 @@ user. `substs` (W0009) and `unstyled` (N0018) are the reported
 substitutions: set from another face, never lost. -/
 private structure ItemsAcc where
   items : Array Item := #[]
-  notes : Array (Nat × Nat × Array Inline) := #[]
+  /-- Each footnote met: the index of its mark item, its number, its body,
+  and the body's first leaf (`Tk.note`'s `bodyLeaf`). -/
+  notes : Array (Nat × Nat × Array Inline × Option Nat) := #[]
   dropped : Array (Nat × Char) := #[]
   substs : Array (Nat × Char × Nat) := #[]
   unstyled : Array (Nat × Char × Math.MathAlphabet × Char) := #[]
@@ -2422,7 +2839,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (imgs : Image.Store) (textW textH : Sp)
     (acc : ItemsAcc) (tk : Tk) : ItemsAcc :=
   match tk with
-  | .word sty chars =>
+  | .word sty chars attr =>
     let idx := fs.lookup sty.slot sty.weight.css sty.italic
     let font := fs.get idx
     -- Small caps: the face's own `smcp`+`c2sc` when it carries them — the
@@ -2436,10 +2853,10 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     let sz := size * sty.scale / 1000
     let (ws, m, s, c') :=
       wordItems (patsOf pats sty.lang) (sty.lang.getD "") sz idx sty.color
-        sty.ground sty.link sty.underline useGsub fs font chars
+        sty.ground sty.link sty.underline useGsub attr fs font chars
         acc.dropped acc.substs acc.cache
     { acc with items := acc.items ++ ws, dropped := m, substs := s, cache := c' }
-  | .icon sty c =>
+  | .icon sty c attr =>
     -- The styled face first (an icon font declared as the body face is
     -- legal), then the fallback chain; either hit is the icon's own face
     -- by design. Only total absence is a loss (E0405, rendered by the
@@ -2455,19 +2872,19 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     match hit with
     | some (fb, g) =>
       let box : Item := .box g.2.2 fb sty.color sty.link #[g] sz sty.underline 0
-        sty.ground
+        sty.ground attr
       { acc with items := acc.items.push box }
     | none =>
       if acc.dropped.contains (idx, c) then acc
       else { acc with dropped := acc.dropped.push (idx, c) }
-  | .note num sty body =>
+  | .note num sty body bodyLeaf =>
     let (mk, miss) := markBox fs sty (size * sty.scale / 1000) num
     let acc := miss.foldl (fun acc m =>
       if acc.dropped.contains m then acc
       else { acc with dropped := acc.dropped.push m }) acc
-    { acc with notes := acc.notes.push (acc.items.size, num, body)
+    { acc with notes := acc.notes.push (acc.items.size, num, body, bodyLeaf)
                items := acc.items.push mk }
-  | .formula display sty body =>
+  | .formula display sty body attr =>
     -- The flatten pass pushes a formula token only when a math face with
     -- constants is present.
     match fs.mathFont? with
@@ -2483,6 +2900,7 @@ private def itemsOfTok (pats : Option Hyphen.Patterns) (size xHeight : Sp)
         link := sty.link
         underline := sty.underline
         ground := sty.ground
+        attr := attr
         base := (Math.mathSize runSize.toNat around.xHeightOptical
           around.unitsPerEm font.xHeightOptical font.unitsPerEm : Nat) }
       let (ms, m) := mathItems e display body acc.dropped
@@ -2564,12 +2982,12 @@ putting it in `Item` would make every pattern carry a field only the
 page builder reads. -/
 private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
-    (cache : Std.HashMap String (Array Nat)) (imgs : Image.Store := {})
+    (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store := {})
     (textW : Sp := 0) (textH : Sp := 0) (noteOk : Bool := false)
     (ladder : List (String × Nat) := Ir.sizeScale) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
-      Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline) := Id.run do
-  let st := flatten (fs.mathFont?.isSome) noteOk { ladder := ladder } baseStyle xs
+      Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline × Option Nat) := Id.run do
+  let st := flatten (fs.mathFont?.isSome) noteOk { ladder := ladder, ctr := ctr } baseStyle xs
   let acc := st.toks.foldl (itemsOfTok pats size xHeight fs imgs textW textH)
     { cache := cache }
   let mut items := acc.items
@@ -2623,7 +3041,7 @@ def canBreakAt (items : Array Item) (j : Nat) : Bool :=
   match items[j]? with
   | some (.glue _) =>
     match items[j-1]? with
-    | some (.box _ _ _ _ _ _ _ _ _) => j > 0
+    | some (.box _ _ _ _ _ _ _ _ _ _) => j > 0
     | some (.img _ _ _) => j > 0
     | some (.rule _ _ _ _) => j > 0
     | _ => false
@@ -2727,7 +3145,7 @@ every candidate the breaker evaluates. -/
 def protrudeLeft (items : Array Item) (a j : Nat) : Sp := Id.run do
   for k in [a:j] do
     match items[k]? with
-    | some (.box _ _ _ _ glyphs _ _ _ _) =>
+    | some (.box _ _ _ _ glyphs _ _ _ _ _) =>
       if let some (_, c, adv) := glyphs[0]? then
         return adv * (protrusionLR c).1 / 1000
     | some (.img ..) | some (.rule ..) => return 0
@@ -2744,7 +3162,7 @@ def protrudeRight (items : Array Item) (a j : Nat) : Sp := Id.run do
       return adv * (protrusionLR c).2 / 1000
   for i in [0:j - a] do
     match items[j - 1 - i]? with
-    | some (.box _ _ _ _ glyphs _ _ _ _) =>
+    | some (.box _ _ _ _ glyphs _ _ _ _ _) =>
       if let some (_, c, adv) := glyphs.back? then
         return adv * (protrusionLR c).2 / 1000
     | some (.img ..) | some (.rule ..) => return 0
@@ -2759,7 +3177,7 @@ def maxProtrudeRight (items : Array Item) : Sp := Id.run do
   let mut best : Sp := 0
   for it in items do
     match it with
-    | .box _ _ _ _ glyphs _ _ _ _ =>
+    | .box _ _ _ _ glyphs _ _ _ _ _ =>
       if let some (_, c, adv) := glyphs.back? then
         best := max best (adv * (protrusionLR c).2 / 1000)
     | .pen _ _ _ _ _ glyphs =>
@@ -2782,7 +3200,7 @@ def measure (items : Array Item) (a j : Nat) (protrude : Bool := false) :
   let mut m : Measure := {}
   for k in [a:j] do
     match items[k]! with
-    | .box w _ _ _ _ _ _ _ _ =>
+    | .box w _ _ _ _ _ _ _ _ _ =>
       m := { m with natural := m.natural + w, boxW := m.boxW + w }
     | .img _ w _ => m := { m with natural := m.natural + w }
     | .rule w _ _ _ => m := { m with natural := m.natural + w }
@@ -2886,7 +3304,7 @@ def kpSums (items : Array Item) : KpSums := Id.run do
   pb := pb.push 0
   for k in [0:n] do
     let (dw, dst, dsh, dfil, db) : Sp × Sp × Sp × Nat × Sp := match items[k]! with
-      | .box w _ _ _ _ _ _ _ _ => (w, 0, 0, 0, w)
+      | .box w _ _ _ _ _ _ _ _ _ => (w, 0, 0, 0, w)
       | .img _ w _ => (w, 0, 0, 0, 0)
       | .rule w _ _ _ => (w, 0, 0, 0, 0)
       | .glue g => (g.width, g.stretch, g.shrink, if g.fil then 1 else 0, 0)
@@ -3099,7 +3517,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let mut boxTaken : Sp := 0
   if f != 0 then
     for k in [a:j] do
-      if let some (.box w _ _ _ _ _ _ _ _) := items[k]? then
+      if let some (.box w _ _ _ _ _ _ _ _ _) := items[k]? then
         boxTaken := boxTaken + w * f / 1000
     if let some (.pen w _ _ _ _ _) := items[j]? then
       boxTaken := boxTaken + w * f / 1000
@@ -3122,7 +3540,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
   let mut width : Sp := 0
   for k in [a:j] do
     match items[k]! with
-    | .box w fontIdx color link glyphs size underline raise ground =>
+    | .box w fontIdx color link glyphs size underline raise ground attr =>
       -- The declared width is authoritative, as it already is in `measure`: a
       -- kern is a box with a width and no glyphs, and recomputing from the
       -- advances would silently set it to zero. Expansion rescales the box
@@ -3131,7 +3549,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
       let w := w + w * f / 1000
       segs := segs.push
         (.run fontIdx color link w (glyphs.map fun (g, c, _) => (g, c)) size underline raise
-          ground)
+          ground attr)
       width := width + w
     | .img idx w h =>
       segs := segs.push (.image idx w h)
@@ -3160,7 +3578,7 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
             g.width
       if m.shrink < -delta then
         overfull := true
-      segs := segs.push (.gap (max 0 setW))
+      segs := segs.push (.gap (max 0 setW) g.word)
       width := width + max 0 setW
     | .pen _ _ _ _ _ _ => pure ()
   -- breaking at a penalty appends its glyphs (the hyphen)
@@ -3168,20 +3586,21 @@ private def setLine (items : Array Item) (a j : Nat) (target : Sp)
     if !glyphs.isEmpty then
       -- A hyphenation point sits inside a word, so the hyphen is set at the
       -- size (and under the underline) of the run it interrupts — and under
-      -- the line's expansion factor, like any glyph.
+      -- the line's expansion factor, like any glyph. Its attribution is
+      -- `.hyphen`: the breaker's ink, not the leaf's text.
       let w := w + w * f / 1000
       let (inherited, inheritedUl, inheritedGr) := segs.foldl (fun acc s => match s with
-        | .run _ _ _ _ _ sz ul _ gr => (if sz != 0 then sz else acc.1, ul, gr)
+        | .run _ _ _ _ _ sz ul _ gr _ => (if sz != 0 then sz else acc.1, ul, gr)
         | _ => acc) ((0 : Sp), false, (none : Option Ir.Color))
       segs := segs.push
         (.run fontIdx color none w (glyphs.map fun (g, c, _) => (g, c)) inherited inheritedUl 0
-          inheritedGr)
+          inheritedGr .hyphen)
       width := width + w
   -- drop trailing gaps (paragraph-final fill)
   let mut segs' := segs
   repeat
     match segs'.back? with
-    | some (.gap w) =>
+    | some (.gap w _) =>
       segs' := segs'.pop
       width := width - w
     | _ => break
@@ -3689,9 +4108,9 @@ private theorem doc_geometry_uniform (b : B) (l line : LineOut)
 /-- A run emptied of its glyph payload, every metric field kept: the
 transformation `line_box_glyph_free` quantifies over. -/
 def Seg.stripGlyphs : Seg → Seg
-  | .run idx color link w _ size underline raise ground =>
-    .run idx color link w #[] size underline raise ground
-  | .gap w => .gap w
+  | .run idx color link w _ size underline raise ground attr =>
+    .run idx color link w #[] size underline raise ground attr
+  | .gap w word => .gap w word
   | .rule w t r c => .rule w t r c
   | .image s w h => .image s w h
 
@@ -3768,7 +4187,7 @@ def lineExtent (fs : FontSet) (fontSize bodyAscent bodyCap bodyDescent : Sp)
        bodyDescent * nominal / fontSize⟩
     else ⟨0, 0, 0, 0⟩
   segs.foldl (fun (acc : LineBox) s => match s with
-    | .run idx _ _ _ _ sz _ raise _ =>
+    | .run idx _ _ _ _ sz _ raise _ _ =>
       let font := fs.get idx
       let sz := if sz == 0 then nominal else sz
       let box := leadedBox (scaledAt sz font font.ascent.toNat)
@@ -4317,12 +4736,6 @@ private structure Acc where
   decides only where a block's range starts. -/
   leafNext : Nat := 0
 
-/-- The leaves `Struct` gives an inline sequence: the count the walk claims
-for one block of set text. Counted by the projection's own walk, never a
-second enumeration of the inline arms. -/
-private def leafCount (xs : Array Inline) : Nat :=
-  (Struct.leaves (Struct.inlinesRaw #[] xs.toList)).size
-
 /-- The leaves `Struct` gives a block sequence the page ships no ink for (a
 speaker note, an unpinned nav), so the counter steps over them. -/
 private def blockLeafCount (bs : Array Block) : Nat :=
@@ -4333,41 +4746,6 @@ leaf (what its lines name) — `none` when it owns no leaf: generated ink the
 tree does not census — and the counter past them. -/
 private def Acc.leafRange (a : Acc) (n : Nat) : Acc × Option Nat :=
   ({ a with leafNext := a.leafNext + n }, if n == 0 then none else some a.leafNext)
-
-mutual
-
-private def noteStartsList (out : Array (Option Nat)) :
-    List Struct.Node → Array (Option Nat)
-  | [] => out
-  | n :: rest => noteStartsList (noteStartsOne out n) rest
-
-/-- Each `.note` node's first leaf id, in preorder; a note is not entered
-(a note inside a note is the outer note's text to the page). -/
-private def noteStartsOne (out : Array (Option Nat)) : Struct.Node → Array (Option Nat)
-  | .leaf _ _ => out
-  | .node kind kids =>
-    match kind with
-    | .note => out.push ((Struct.leaves kids)[0]?.map (·.1))
-    | .document | .section | .title | .heading _ | .paragraph | .list _ | .item | .label
-    | .body | .table | .row | .cell | .caption | .figure | .formula | .code | .quote
-    | .aside | .nav | .bibEntry | .link _ | .span _ | .reference _ | .artifact =>
-      noteStartsList out kids.toList
-
-end
-
-/-- The first leaf of every footnote in a block's content, in the order the
-flatten meets them: the content's shape numbered from `k`, each `.note`
-node's first leaf. Decoration the walk prepended to the content — a section
-number, a caption prefix, a bibliography marker — is not in the tree, so the
-ids shift back by the leaves the content carries beyond its `span`; a note
-whose leaf then falls outside `[k, k + span)` has no node of its own (the
-tree flattened its block: a bibliography entry, a listing caption) and gets
-`none`. -/
-private def noteLeafStarts (k span : Nat) (inlines : Array Inline) : Array (Option Nat) :=
-  let shape := Struct.number k (Struct.inlinesRaw #[] inlines.toList)
-  let extra := (Struct.leaves shape).size - span
-  (noteStartsList #[] shape.toList).map fun s =>
-    s.bind fun s => if k + extra ≤ s && s - extra < k + span then some (s - extra) else none
 
 /-- A declared length with its rubber: `1.8ex plus 0.8ex minus 0.4ex` keeps
 all three parts, so a page can take up the slack the author allowed. -/
@@ -4508,8 +4886,9 @@ private def collectPara (r : Rd) (a : Acc)
       { baseStyle with color := a.fg } else baseStyle
   let baseStyle := { baseStyle with ground := a.ground }
   let (items, ds, cache, extras, rawNotes) :=
-    itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache r.imgs
-      measure r.geom.textHeight (noteOk := true) (ladder := r.geom.scale)
+    itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
+      (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
+      (ladder := r.geom.scale)
   let items :=
     if r.geom.justify then items
     else if display then
@@ -4532,16 +4911,13 @@ private def collectPara (r : Rd) (a : Acc)
     let bodyFont := r.fs.get (r.fs.lookup 0 400 false)
     let scaleB (v : Int) : Sp := v * r.geom.fontSize / bodyFont.unitsPerEm
     let target := r.geom.textWidth
-    let noteLeaves := match leaf with
-      | some k => noteLeafStarts k span inlines
-      | none => #[]
-    let mut i := 0
-    for (markIdx, num, body) in rawNotes do
-      let noteLeaf := (noteLeaves[i]?).getD none
-      i := i + 1
+    -- the note's leaves count from the note node's first leaf, read off the
+    -- counter where the mark stood (`Tk.note`'s `bodyLeaf`)
+    for (markIdx, num, body, noteLeaf) in rawNotes do
       let (nitems0, nds, cache2, _, _) :=
         itemsOfInlines r.pats noteSize r.xHeight r.fs { color := a.fg, ground := a.ground } body
-          cache r.imgs r.geom.textWidth r.geom.textHeight (ladder := r.geom.scale)
+          cache (LeafCtr.of noteLeaf (leafCount body) body) r.imgs r.geom.textWidth
+          r.geom.textHeight (ladder := r.geom.scale)
       ds := ds ++ nds
       cache := cache2
       let (mk, miss) := markBox r.fs { color := a.fg, ground := a.ground } noteSize num
@@ -4579,11 +4955,12 @@ private def collectPara (r : Rd) (a : Acc)
   -- A marker is content: set as a line of its own, unjustified, so it can
   -- carry any style the document gave it. Its diagnostics ride with the
   -- paragraph's — a marker glyph no face covers must warn, not vanish.
+  -- Its runs are `.label`: generated marker ink, the tree's `.label` node.
   let (markerSegs, ds, cache) := match marker with
     | some m =>
       let (mi, mds, cache, _, _) :=
         itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } m cache
-          r.imgs measure r.geom.textHeight (ladder := r.geom.scale)
+          (.fixed .label) r.imgs measure r.geom.textHeight (ladder := r.geom.scale)
       let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) r.geom.textWidth false
       (some (segs, w), ds ++ mds, cache)
     | none => (none, ds, cache)
@@ -4746,9 +5123,11 @@ private def collectTable (r : Rd) (a0 : Acc)
   for row in rows do
     let mut rowNats : Array Sp := #[]
     for cell in row do
+      -- a measuring pass: these items never ship, so they carry no attribution
       let (items, _, c, _) :=
         itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } cell cache
-          r.imgs r.geom.textWidth r.geom.textHeight (ladder := r.geom.scale)
+          (.fixed .unattributed) r.imgs r.geom.textWidth r.geom.textHeight
+          (ladder := r.geom.scale)
       cache := c
       rowNats := rowNats.push (itemsNaturalWidth items)
     nats := nats.push rowNats
@@ -4844,7 +5223,7 @@ private def collectTable (r : Rd) (a0 : Acc)
                   lineX := l'
                   x := l'
                   first := false
-                if l' > x then segs := segs.push (.gap (l' - x))
+                if l' > x then segs := segs.push (.gap (l' - x) false)
                 segs := segs.push (.rule w cmidW 0 fg)
                 x := max x (l' + w)
                 hi := hi + 1
@@ -5166,10 +5545,14 @@ private def collectBlock (r : Rd) (a : Acc)
     let target := (a.measure.getD r.geom.textWidth) - indent
     let (citems, ds1, cache1, extras, _) :=
       itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
-        a.hyphCache r.imgs target r.geom.textHeight (ladder := r.geom.scale)
+        a.hyphCache (LeafCtr.of leaf (leafCount content) content) r.imgs target
+        r.geom.textHeight (ladder := r.geom.scale)
+    -- the number is the `.label` leaf after the content's
+    let numLeaf := leaf.map (· + leafCount content)
     let (nitems, ds2, cache2, _, _) :=
       itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle #[.text num]
-        cache1 r.imgs target r.geom.textHeight (ladder := r.geom.scale)
+        cache1 (LeafCtr.of numLeaf 1 #[.text num]) r.imgs target r.geom.textHeight
+        (ladder := r.geom.scale)
     -- both walks close with parfill glue and a forced pen; the assembled
     -- line supplies its own ending
     let strip (xs : Array Item) : Array Item :=
@@ -5177,8 +5560,11 @@ private def collectBlock (r : Rd) (a : Acc)
     let citems := strip citems
     let nitems := strip nitems
     let numW := (measure nitems 0 nitems.size).natural
+    -- the mirror box is a glyphless kern: generated, the equation's
+    let mirrorAttr : Attribution := (leaf.map .block).getD .unattributed
     let mut items : Array Item :=
-      #[.box numW 0 a.fg none #[] r.geom.fontSize false 0 a.ground, .glue { fil := true }]
+      #[.box numW 0 a.fg none #[] r.geom.fontSize false 0 a.ground mirrorAttr,
+        .glue { fil := true }]
     items := items ++ citems
     items := items.push (.glue { fil := true })
     items := items ++ nitems
@@ -5264,8 +5650,11 @@ private def collectBlock (r : Rd) (a : Acc)
     -- The resolved number stands before the title with a \quad between
     -- (classes.dtx \@seccntformat: `\csname the#1\endcsname\quad`),
     -- carried as the em-quad kern so no face is asked for a glyph.
+    -- The number is generated: the heading's `.block`; the title's atoms
+    -- keep their leaves behind the marker.
+    let marked := markContent title
     let title := match num with
-      | some n => #[Ir.Inline.text (n ++ "\u2003")] ++ title
+      | some n => #[Ir.Inline.text (n ++ "\u2003")] ++ marked
       | none => title
     -- Undeclared, a heading stands one full rhythm unit above its body
     -- and half below (`Ir.heading_space_above_ge_below` holds the shape:
@@ -5493,10 +5882,12 @@ private def collectBlock (r : Rd) (a : Acc)
       | some (n, cap) =>
         let caption := Ir.listingCaption r.locale n cap
         let avail := (a.measure.getD r.geom.textWidth) - indent
+        -- measured only (does it fit one line?), never shipped: no attribution
         let (items, _, cache, _) :=
           itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs
             { color := a.fg, ground := a.ground } caption
-            a.hyphCache r.imgs avail r.geom.textHeight (ladder := r.geom.scale)
+            a.hyphCache (.fixed .unattributed) r.imgs avail r.geom.textHeight
+            (ladder := r.geom.scale)
         let a := { a with hyphCache := cache }
         let fits := itemsNaturalWidth items ≤ avail
         -- one flat caption leaf (`Struct`'s listing shape), the prefix generated
@@ -5558,6 +5949,16 @@ private def collectBlock (r : Rd) (a : Acc)
       then some a.leafNext else none
     (lines.foldl (fun (ai : Acc × Nat) l =>
       let (a, i) := ai
+      -- The line's content and comment are marked as its leaves; the
+      -- keywords, io labels and semicolons around them are the line's
+      -- `.block`. The content is wrapped only when it holds a non-anchor:
+      -- `rendered` asks `content.all (· matches .label _)` for the
+      -- semicolon and `content.isEmpty` for the space, and both must read
+      -- the same answer through the marker.
+      let l := { l with
+        content := if l.content.all (· matches Inline.label _) then l.content
+          else markContent l.content
+        comment := l.comment.map fun c => if leafCount c == 0 then c else markContent c }
       let content := Ir.AlgLine.rendered words semis muted l
       let marker : Option (Array Ir.Inline) := if numbered then
           some #[Ir.Inline.colored muted (some "muted") #[.text s!"{i}"]]
@@ -5617,7 +6018,9 @@ private def collectBlock (r : Rd) (a : Acc)
     -- Counted on the declared caption: the number prefix is generated.
     let capSpan := leafCount caption
     let (a, capLeaf) := a.leafRange capSpan
-    let caption := Ir.numberedCaption r.locale kind num caption
+    -- The declared caption is marked as the block's content so its atoms
+    -- take their leaves and the prefix is the caption's `.block`.
+    let caption := Ir.numberedCaption r.locale kind num (markContent caption)
     let floatSep := r.resolve ((a.tokens.find? "floatsep").getD
       (Ir.floatSepDefault r.geom.fontSize))
     let capSep := r.resolve ((a.tokens.find? "captionsep").getD
@@ -5637,9 +6040,11 @@ private def collectBlock (r : Rd) (a : Acc)
       let cmargin := ((a.tokens.find? "captionmargin").map
         (fun g => (r.resolve g).width)).getD 0
       let avail := (a.measure.getD r.geom.textWidth) - indent - 2 * cmargin
+      -- measured only (does it fit one line?), never shipped: no attribution
       let (items, _, cache, _) :=
         itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs { color := a.fg, ground := a.ground } caption
-          a.hyphCache r.imgs avail r.geom.textHeight (ladder := r.geom.scale)
+          a.hyphCache (.fixed .unattributed) r.imgs avail r.geom.textHeight
+          (ladder := r.geom.scale)
       let a := { a with hyphCache := cache }
       let fits := itemsNaturalWidth items ≤ avail
       let saved := a.measure
@@ -6000,7 +6405,7 @@ nothing. -/
 private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
     Array Seg := Id.run do
   unless segs.any (fun s => match s with
-      | .run _ _ _ _ _ _ true _ _ => true
+      | .run _ _ _ _ _ _ true _ _ _ => true
       | _ => false) do
     return #[]
   -- Pass 1: obstruction intervals in line coordinates, each glyph's
@@ -6009,10 +6414,10 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
   let mut x : Sp := 0
   for seg in segs do
     match seg with
-    | .gap w => x := x + w
+    | .gap w _ => x := x + w
     | .rule w _ _ _ => x := x + w
     | .image _ w _ => x := x + w
-    | .run fontIdx _ _ w glyphs size _ _ _ =>
+    | .run fontIdx _ _ w glyphs size _ _ _ _ =>
       let font := fs.get fontIdx
       let sz := if size == 0 then lineSize else size
       let upem : Int := font.unitsPerEm
@@ -6031,18 +6436,18 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
   x := 0
   for seg in segs do
     match seg with
-    | .gap w =>
-      out := out.push (.gap w)
+    | .gap w _ =>
+      out := out.push (.gap w false)
       x := x + w
     | .rule w _ _ _ =>
-      out := out.push (.gap w)
+      out := out.push (.gap w false)
       x := x + w
     | .image _ w _ =>
-      out := out.push (.gap w)
+      out := out.push (.gap w false)
       x := x + w
-    | .run fontIdx color _ w _ size underline _ _ =>
+    | .run fontIdx color _ w _ size underline _ _ _ =>
       if !underline then
-        out := out.push (.gap w)
+        out := out.push (.gap w false)
       else
         let font := fs.get fontIdx
         let sz := if size == 0 then lineSize else size
@@ -6054,11 +6459,11 @@ private def underlineSegs (fs : FontSet) (lineSize : Sp) (segs : Array Seg) :
         let mut cur : Sp := x
         for (plo, phi) in subtract x (x + w) merged do
           if plo > cur then
-            out := out.push (.gap (plo - cur))
+            out := out.push (.gap (plo - cur) false)
           out := out.push (.rule (phi - plo) thick raise color)
           cur := phi
         if x + w > cur then
-          out := out.push (.gap (x + w - cur))
+          out := out.push (.gap (x + w - cur) false)
       x := x + w
   return out
 
@@ -6088,8 +6493,8 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
           -- line's own depth indent on top of `\labelsep`.
           let base := b.geom.hmargin + mi
           let x1 := base - mw - sep
-          (ms ++ #[Seg.gap (x0 - base + sep)] ++ segs0, x1, w0 + (x0 - x1))
-        | none => (ms ++ #[Seg.gap sep] ++ segs0, x0 - mw - sep, w0 + mw + sep)
+          (ms ++ #[Seg.gap (x0 - base + sep) false] ++ segs0, x1, w0 + (x0 - x1))
+        | none => (ms ++ #[Seg.gap sep false] ++ segs0, x0 - mw - sep, w0 + mw + sep)
       | none => (segs0, x0, w0)
     else (segs0, x0, w0)
   -- The rule fills what the heading left of its line, a word-space away
@@ -6110,13 +6515,13 @@ private def paraLineGeom (fs : FontSet) (j : ParaJob) (b : B) (first : Bool)
           let xHeight := match segs1.find? (fun s => match s with
             | .run .. => true
             | _ => false) with
-            | some (.run idx _ _ _ _ sz _ _ _) =>
+            | some (.run idx _ _ _ _ sz _ _ _ _) =>
               let font := fs.get idx
               let sz := if sz == 0 then j.size else sz
               scaledAt sz font font.xHeightOptical
             | _ => b.xHeight
           let raise := rule.position.raise xHeight
-          (segs1 ++ #[Seg.gap gap, Seg.rule ruleW rule.thickness raise rule.color], width)
+          (segs1 ++ #[Seg.gap gap false, Seg.rule ruleW rule.thickness raise rule.color], width)
         else (segs1, w1)
       | none => (segs1, w1)
     else (segs1, w1)
@@ -6349,9 +6754,12 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
                               fill := some st.color, leaf := leaf }
     | .label lx ly content color scale align =>
       let size := b.geom.fontSize * (scale : Int) / 1000
+      -- A label is generated ink of the picture (its one leaf has no
+      -- census text): `.block` of the picture leaf, `.unattributed` when
+      -- the picture owns none.
       let (items, _, _, _) := itemsOfInlines none size b.xHeight fs {}
-        #[.colored color none content] {} imgs b.geom.textWidth b.geom.textHeight
-        (ladder := b.geom.scale)
+        #[.colored color none content] {} (.fixed ((leaf.map .block).getD .unattributed)) imgs
+        b.geom.textWidth b.geom.textHeight (ladder := b.geom.scale)
       let breaks := kp items b.geom.textWidth
       if let some brk := breaks[0]? then
         let (segs, w, _, _) := setLine items (lineStart items 0) brk b.geom.textWidth false
@@ -6359,7 +6767,7 @@ private def placePicture (fs : FontSet) (imgs : Image.Store) (b0 : B)
         -- the baseline sits below the centre by half the ink height
         -- less half the depth.
         let (hgt, dep) := segs.foldl (fun (acc : Sp × Sp) seg => match seg with
-          | .run idx _ _ _ _ sz _ raise _ =>
+          | .run idx _ _ _ _ sz _ raise _ _ =>
             let font := fs.get idx
             let sz := if sz == 0 then size else sz
             (max acc.1 (scaledAt sz font font.capHeight.toNat + max 0 raise),
@@ -7232,7 +7640,9 @@ private theorem furnishFrom_keeps {σ : Type}
 it can only add lines — `furnishFrom_keeps`), one report per problem,
 and the resolved outline. Everything it reads arrives in `Shipped`; the
 pages of its result are the builder's pages with furniture lines added
-and nothing else touched (`runPost_pages`). -/
+and nothing else touched (`runPost_pages`). Every run this pass sets is
+`.unattributed`: furniture is a page artifact the tree has no node for,
+and the lines it lands on are flagged `furniture`. -/
 private def runPost (sh : Shipped) : Out := Id.run do
   let doc := sh.doc
   let geom := sh.geom
@@ -7272,7 +7682,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
     let sub := substPage n total content
     let (items, ds, cache, _) :=
       itemsOfInlines pats size xHeight fs { baseStyle with ground := furnGround } sub cache
-        imgs geom.textWidth geom.textHeight (ladder := geom.scale)
+        (.fixed .unattributed) imgs geom.textWidth geom.textHeight (ladder := geom.scale)
     let target := geom.textWidth
     let breaks := kp items target
     -- A running line is one line by construction — the band reserves one
@@ -7310,7 +7720,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
     let sub := substPage n total content
     let (items, ds, cache, _) :=
       itemsOfInlines pats size xHeight fs { baseStyle with ground := furnGround } sub cache
-        imgs geom.textWidth geom.textHeight (ladder := geom.scale)
+        (.fixed .unattributed) imgs geom.textWidth geom.textHeight (ladder := geom.scale)
     let breaks := kp items geom.textWidth
     -- The band holds one line, as the running bands do: a slot that wraps
     -- loses every line but its first, named, never silent.
@@ -7336,7 +7746,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
       Option LineOut × Array Diag × Std.HashMap String (Array Nat) :=
     let (items, ds, c, _) :=
       itemsOfInlines pats geom.fontSize xHeight fs { ground := furnGround } content cache0
-        imgs geom.textWidth geom.textHeight (ladder := geom.scale)
+        (.fixed .unattributed) imgs geom.textWidth geom.textHeight (ladder := geom.scale)
     let breaks := kp items geom.textWidth
     match breaks[0]? with
     | none => (none, ds, c)
@@ -7368,8 +7778,8 @@ private def runPost (sh : Shipped) : Out := Id.run do
             let (items, ds, c, _) :=
               itemsOfInlines pats numSize xHeight fs
                 { color := mutedC, ground := furnGround }
-                #[.text (toString count)] cache imgs geom.textWidth geom.textHeight
-                (ladder := geom.scale)
+                #[.text (toString count)] cache (.fixed .unattributed) imgs geom.textWidth
+                geom.textHeight (ladder := geom.scale)
             diags := diags ++ ds
             cache := c
             let breaks := kp items geom.textWidth
@@ -7423,7 +7833,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
         if let some content := content? then
           let (items, lds, c, _) :=
             itemsOfInlines pats geom.fontSize xHeight fs { ground := furnGround }
-              content cache imgs geom.textWidth geom.textHeight
+              content cache (.fixed .unattributed) imgs geom.textWidth geom.textHeight
           diags := diags ++ lds
           cache := c
           let breaks := kp items geom.textWidth
@@ -7434,7 +7844,7 @@ private def runPost (sh : Shipped) : Out := Id.run do
             -- only consumer of the estimate).
             let inkH := segs.foldl (init := (0 : Sp)) fun m sg => match sg with
               | .image _ _ h => max m h
-              | .run _ _ _ _ _ size _ raise _ => max m (size + raise)
+              | .run _ _ _ _ _ size _ raise _ _ => max m (size + raise)
               | _ => m
             let x := if left then geom.hmargin else geom.pageW - geom.hmargin - w
             lines := lines.push { x := x, y := (bandB + inkH) / 2,
