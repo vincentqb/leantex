@@ -591,34 +591,42 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
       try IO.FS.removeDirAll work catch _ => pure ()
   return (results, refused)
 
-/-- Where the image cache files a decoded object: beside the font and
-boundary caches, keyed by the *content* (so a re-exported file under the
-same name re-decodes and an unchanged one never does) and by the engine
-version (an upgraded decoder re-decodes; `Image.decodeBin`'s magic
-already orphans a format change). -/
-def imageCachePath (bytes : ByteArray) : IO (Option System.FilePath) := do
+/-- Where the image cache files a plan: beside the font and boundary
+caches, keyed by the *content* (so a re-exported file under the same name
+re-plans and an unchanged one never does), by the plan parameters (every
+non-source input to `Image.plan`, so two plans that could differ never
+share an entry — `planParams_serialize_inj`), and by the engine version
+(an upgraded planner re-plans; `Image.decodeBin`'s magic already orphans a
+format change). No document or output path enters the key. -/
+def imageCachePath (params : Image.PlanParams) (bytes : ByteArray) :
+    IO (Option System.FilePath) := do
   let some root ← FontDb.cacheDir | return none
-  return some (root / "imgs" / s!"{Flate.contentKey bytes}-{LeanTex.version}.img")
+  return some (root / "imgs" / s!"{Flate.contentKey bytes}-{params.key}-{LeanTex.version}.img")
 
-/-- Decode through the image cache. Only the decode that does real work —
-an alpha PNG's inflate, unfilter, split, deflate (`Image.decodeRecodes`) —
-is worth a disk read; everything else decodes directly. The cached value
-is the pure decode's own output (`Image.encodeBin`), so a hit equals a
+/-- Plan through the image cache. The header is probed first; only a plan
+the planner itself says does real work — an alpha PNG's inflate, split,
+deflate (`Image.Plan.recodes`, `recodes_iff`) — is worth a disk read, and
+everything else plans directly from the probe. The cached value is the
+pure plan's own output (`Image.encodeBin`), so a hit equals a
 recomputation — `decodeBin_encodeBin_id`, the transparency statement.
 Returns whether this was a hit, for the phase line. -/
-def decodeImageCached (bytes : ByteArray) : IO (Except String Image.Info × Bool) := do
-  unless Image.decodeRecodes bytes do return (Image.decode bytes, false)
-  let path? ← imageCachePath bytes
+def decodeImageCached (params : Image.PlanParams) (bytes : ByteArray) :
+    IO (Except String Image.Plan × Bool) := do
+  let src ← match Image.probe bytes with
+    | .error e => return (.error e, false)
+    | .ok src => pure src
+  unless Image.Plan.recodes params src do return (Image.plan params src, false)
+  let path? ← imageCachePath params bytes
   if let some path := path? then
     if let .ok blob ← IO.FS.readBinFile path |>.toBaseIO then
-      if let some info := Image.decodeBin blob then
-        return (.ok info, true)
-  let res := Image.decode bytes
+      if let some pl := Image.decodeBin blob then
+        return (.ok pl, true)
+  let res := Image.plan params src
   if let some path := path? then
-    if let .ok info := res then
+    if let .ok pl := res then
       try
         if let some parent := path.parent then IO.FS.createDirAll parent
-        IO.FS.writeBinFile path (Image.encodeBin info)
+        IO.FS.writeBinFile path (Image.encodeBin pl)
       catch _ => pure ()
   return (res, false)
 
@@ -630,10 +638,11 @@ like `\input`, then through graphicx's extension resolution (a deck says
 the pure core through the content-hash cache when the decode is the
 expensive kind. Returns whether the cache answered, for the phase line. -/
 def fetchImage (dir : System.FilePath) (pics : Array PicResult)
-    (refused : Array (String × Diag)) (src : String) : IO (Image.Fetch × Bool) := do
+    (refused : Array (String × Diag)) (params : Image.PlanParams) (src : String) :
+    IO (Image.Fetch × Bool) := do
   if src.startsWith Ir.picSrcPrefix then
     match pics.find? (·.src == src) with
-    | some r => return (.decoded "" (Image.decode r.bytes), false)
+    | some r => return (.decoded "" (Image.probe r.bytes >>= Image.plan params), false)
     | none =>
       match refused.find? (·.1 == src) with
       | some (_, why) => return (.refused why, false)
@@ -656,26 +665,34 @@ def fetchImage (dir : System.FilePath) (pics : Array PicResult)
     match bytes with
     | .error e => return (.unreadable e, false)
     | .ok bytes =>
-      let (res, fromCache) ← decodeImageCached bytes
+      let (res, fromCache) ← decodeImageCached params bytes
       return (.decoded (if cand == src then "" else cand) res, fromCache)
 
 /-- The image request an elaborated document states (`Ir.imageRefs`),
 fulfilled: the driver reads each source (`fetchImage`) and the pure core
 decides what each read means (`Image.fulfil`) — an entry with a payload,
 or a placeholder box with the diagnostic that names it (`fulfil_named`),
-one entry per requested source (`fulfil_covers`). The `Nat` returned is
-the cache-hit count, for the phase line. -/
+one entry per requested source (`fulfil_covers`) — and every fact a plan
+did not carry is named after it (`Image.lossDiags`, W0603/W0604;
+`plan_losses_accounts` says the ledger is complete). The plan parameters
+are the defaults until a declaration projects them (the profile slices'
+one line). The `Nat` returned is the cache-hit count, for the phase line. -/
 def loadImages (file : String) (doc : Ir.Doc) (pics : Array PicResult := #[])
     (refused : Array (String × Diag) := #[]) :
     IO (Image.Store × Array Diag × Nat) := do
   let dir := (System.FilePath.mk file).parent.getD "."
+  let params := Image.PlanParams.default
   let mut fetched : Array (String × Image.Fetch) := #[]
   let mut hits := 0
   for src in Ir.imageRefs doc do
-    let (f, fromCache) ← fetchImage dir pics refused src
+    let (f, fromCache) ← fetchImage dir pics refused params src
     if fromCache then hits := hits + 1
     fetched := fetched.push (src, f)
   let (store, diags) := Image.fulfil fetched
+  let mut diags := diags
+  for en in store.entries do
+    if let some pl := en.info then
+      diags := diags ++ Image.lossDiags en.src pl
   return (store, diags, hits)
 
 def countErrors (diags : Array Diag) : Nat :=

@@ -123,10 +123,14 @@ list.
   between pushes, so `Bw.pushU` is a pure two-case function) — the base
   of the writer/reader adjunction the record names.
 - `decodeBin_encodeBin_id` — the driver's image cache is transparent: its
-  serialization inverts exactly, so a cache hit is the recomputation's
-  value. Blocked on ByteArray equational coverage for the fixed-offset
-  codec; the in-suite witnesses are the serialization rows in
-  Tests/Backends.
+  serialization inverts exactly on every raster `Plan` inside the format's
+  bounds (`binBounded`), so a cache hit is the recomputation's value.
+  Restated over the typed plan by image-plan-factor (the three sums as
+  tag bytes, the ledger as one byte per entry). Blocked on ByteArray
+  equational coverage for the fixed-offset codec; the in-suite witnesses
+  are the serialization rows in Tests/Images (a plan per alpha and colour
+  constructor round-trips; foreign, truncated and older-magic bytes
+  refuse).
 - `write_fonts_embedded` — the writer's own output passes the census
   `fonts.all_embedded` now reads: for an image-free document, every font
   `Pdf.write` names is embedded by the bytes' own account
@@ -404,6 +408,83 @@ or `TextStyle`. Named-next: the `.ref` internal-target channel (21b),
 `Attribution.leaf` on picture labels once pictures carry a figure node
 (`image-alt-policy`); the two owed 18a rows now have a sharper executable
 witness (the exact per-leaf row) and the same blocker.
+
+2026-09-21 — the image embedding decision is a pure match, and every
+source fact it drops is a diagnostic (image-plan-factor, M7-15, M11 wave
+2's W2.5; refactor with two accounted losses — artifact bytes unchanged on
+every corpus and reference document). `Image.decode` fused a header walk
+with the embedding decision in one loop, so every statement one wanted
+about the *decision* (pass-through byte identity, an unaccounted drop)
+was stated against an imperative loop and resisted; the cache gate
+`decodeRecodes` was a second copy of the planner's knowledge as a byte
+peek, tied to it by nothing; and two source facts the walk skipped —
+an embedded colour profile (PNG `iCCP`, JPEG `APP2`) and an Exif
+orientation — vanished without a word while the HTML `<img>` honoured
+both, two projections of one node disagreeing. The factorization: `probe :
+ByteArray → Except String Source` is the one loop, reading every header
+fact cheaply (dimensions, density, bit depth, colour type, interlace,
+palette, `tRNS`, `iCCP`/`sRGB`/`gAMA`/`cHRM`, Exif 0x0112 in either byte
+order, `APP2` profile pieces concatenated in sequence order, `APP14`, and
+the payload as a slice, never a decoded surface — plus the signatures and
+dimensions of WebP, AVIF, JPEG XL and JPEG 2000, recognised so the refusal
+can name them); `plan : PlanParams → Source → Except String Plan` is the
+decision, spelled as matches, with `Plan` today's `Info` typed as three
+sums (`color : ColorSpaceDecl`, `filter : FilterDecl`, `alpha : Alpha`),
+a `recoded` flag, and a `losses` ledger; `decode := plan default ∘ probe`
+so no consumer moved. Invariants stated first: (i) a `Source` fact the
+`Plan` does not carry is a `losses` entry — `plan_losses_accounts`
+(`_accounts`: under the dropping policy a profile is `.iccDropped` in the
+ledger and the colour is a device space; an orientation other than 1 is
+`.orientationDropped`; every accepting arm writes the one `lossesOf`
+ledger, which is what made the proof a case split); (ii) the cache gate
+is the planner's own decision — `recodes_iff` (`_exact`: on every plan
+the planner accepts, `recoded` equals the header-only `Plan.recodes`,
+both reading the one colour-type table `pngSpace`; stated under
+`plan p s = .ok pl` because an inflate failure cannot be foreseen from a
+header); (iii) every non-source input to `plan` is in the cache key —
+`PlanParams` (`jpxPermitted`, `softMaskPermitted`, `maxBpc`, `iccPolicy`)
+serializes fixed-width and `planParams_serialize_inj` (`_inj`) says two
+records with one serialization are one record, so the key
+`imgs/{contentKey}-{hex params}-{version}.img` never shares an entry
+between plans that could differ and no document or output path enters
+it; also `plan_passthrough_exact` (`_exact`: a colour type 0/2/3 plan's
+`data` is the source payload and `recoded = false`) and
+`plan_refuses_named` (`_accounts`: WebP, AVIF and JPEG XL are refused
+with a message opening with `Format.name`, the one constant). All proved,
+no `sorry`. The two losses are **W0603** (`.degraded`: an embedded colour
+profile dropped, read as device colour — until the emission slice carries
+it) and **W0604** (`.degraded`: an orientation tag dropped, the stored
+orientation shown — until the rotation arm lands), reserved in the M7
+synthesis and registered here with witnesses; the driver maps the ledger
+to one diagnostic per entry after `Image.fulfil`, the ledger order the
+diagnostic order. `IccPolicy.carry` plans `.iccBased n profile` (the
+iCCP zlib bytes verbatim, a JPEG's pieces deflated; an indexed base is
+dropped with the loss until `/Indexed [/ICCBased]` exists); the writer's
+arm writes the alternate device space until the emission slice allocates
+the stream, and only the default policy reaches it from the driver. The
+parameters the arms honour today: a forbidden soft mask refuses the alpha
+PNG by name instead of flattening; a depth over `maxBpc` refuses instead
+of downsampling; JPEG 2000 refuses under every value (pass-through is a
+later slice). The magic moved to `LTIMG3` (four tag bytes, the ledger,
+the orientation), so every `LTIMG1`/`LTIMG2` entry and every pre-params
+key is a miss, never a misread — nothing is deleted; eviction is the
+cache-gc slice's. `Tests/Images.lean` holds the image blocks (moved whole
+first, in their own commit) and the new `planChecks` (51 rows, the
+driver end to end among them). Red at HEAD, through the binaries: a
+profiled PNG and an oriented JPEG built in silence, a WebP was "not a
+PNG, JPEG, or PDF file (unrecognised signature)"; after: one W0603, one
+W0604, "WebP images cannot be embedded in a PDF". Load-bearing: deleting
+the orientation clause of `lossesOf` fails `mem_lossesOf_orientation` at
+compile time. Evidence: the 72 corpus PDFs and 72 HTML pages that build
+(`theme-modern` refuses under both) `cmp`-identical to HEAD's, logs
+identical; the four private references byte-identical with identical
+logs; cold image phase on the alpha-PNG deck 3352 ms median against
+HEAD's 3294 (runs 2996–4410 either way), warm 8–10 ms against 5–25;
+`scripts/img-fuzz.lean` 92,871 inputs (was 44,339) over
+`probe` and `plan`, anchored on the profiled, oriented, ancillary and
+container synthetics, no crash, no lie. `decodeBin_encodeBin_id` is
+restated over `Plan` with `binBounded` (same row, same blocker). Unlocks
+M7-16 `image-icc-emission`, the M7-29 image slices, M7-31 `cache-gc`.
 
 2026-09-21 — a conformance profile is a set element that implies exactly
 one assertion, judged on the census of the bytes just built, and no claim

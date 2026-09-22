@@ -468,6 +468,12 @@ warning[W0601]: cannot read image 'figures/plot.png': permission denied (error c
 ── W0602 (degraded) image format unusable; placeholder box placed
 warning[W0602]: cannot use image 'figures/plot.gif': not a PNG, JPEG, or PDF file; a placeholder box holds its place
   help: PNG, JPEG, and PDF embed natively: re-export the image as one
+── W0603 (degraded) an image's embedded colour profile is dropped; the page reads it as device colour
+warning[W0603]: image 'figures/plot.png' carries an embedded colour profile; the page reads its samples as device colour
+  help: re-export the image without the profile, or accept the device reading with \allow{W0603}
+── W0604 (degraded) an image's orientation tag is dropped; the page shows the stored orientation
+warning[W0604]: image 'figures/photo.jpg' carries orientation tag 6; the page shows the stored orientation
+  help: rotate the pixels and re-export with orientation tag 1, or accept it with \allow{W0604}
 ── W0701 (pending) an output contract fact this artifact does not yet realize
 warning[W0701]: output contract: 'alternatives = required' is declared and this artifact carries no alternative channel
   help: drop 'alternatives = required' from '\output', or build a format that carries it

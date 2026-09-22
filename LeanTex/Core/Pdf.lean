@@ -477,7 +477,11 @@ def imgExtraOf (imgs : Image.Store) (k : Nat) : ImgExtra :=
   | some inf =>
     match inf.form with
     | some f => .form f.val.objects.size
-    | none => if inf.smask.isEmpty then .plain else .alpha
+    | none =>
+      match inf.alpha with
+      | .soft _ _ => .alpha
+      | .opaque => .plain
+      | .colorKey _ => .plain
   | none => .plain
 
 /-- Where each of a run of consecutive blocks starts: `base`, then each
@@ -1179,34 +1183,37 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
             w := w.put "\nendobj\n"
           offs := offs.set! (base + l) (some ooff)
       | _, _ =>
-        let colorSpace := match inf.space with
+        -- The plan's three sums, spelled (ISO 32000-2 §8.9.5 Table 87).
+        -- `iccBased` writes its alternate device space until the
+        -- emission slice allocates the profile stream; the default
+        -- parameters never plan it (`Image.plan_losses_accounts`).
+        let deviceOf (n : Nat) : String :=
+          if n == 1 then "/DeviceGray" else if n == 4 then "/DeviceCMYK" else "/DeviceRGB"
+        let colorSpace := match inf.color with
           | .gray => "/DeviceGray"
           | .rgb => "/DeviceRGB"
-          | .indexed => Id.run do
+          | .indexed palette => Id.run do
             let mut hex := ""
-            for byte in inf.palette do
+            for byte in palette do
               hex := hex.push (hexDigit (byte.toNat / 16))
               hex := hex.push (hexDigit byte.toNat)
-            return s!"[/Indexed /DeviceRGB {inf.palette.size / 3 - 1} <{hex}>]"
-        let filter := match inf.format with
-          | .png =>
-            if inf.predictor then
-              s!"/Filter /FlateDecode /DecodeParms << /Predictor 15 \
-/Colors {inf.space.components} /BitsPerComponent {inf.bitDepth} /Columns {inf.pxW} >>"
-            else "/Filter /FlateDecode"
-          | .jpeg => "/Filter /DCTDecode"
-          -- Unreachable through `Image.decode`: a `.pdf` Info carries its
-          -- form and takes the arm above. The raster dictionary it would
-          -- describe does not exist.
-          | .pdf => ""
+            return s!"[/Indexed /DeviceRGB {palette.size / 3 - 1} <{hex}>]"
+          | .iccBased n _ => deviceOf n
+        let filter := match inf.filter with
+          | .flatePredictor =>
+            s!"/Filter /FlateDecode /DecodeParms << /Predictor 15 \
+/Colors {inf.color.components} /BitsPerComponent {inf.bitDepth} /Columns {inf.pxW} >>"
+          | .dct => "/Filter /DCTDecode"
         let smaskRef := match (t.smaskIds[n]?).join with
           | some mid => s!" /SMask {mid} 0 R"
           | none => ""
         -- Colour-key masking (ISO 32000-2 §8.9.6.4): the ranges in sample
         -- units, a PNG tRNS carried exactly (`Image.colorKeyRanges_between`
         -- keeps every value inside the bit depth).
-        let maskRef := if inf.colorKey.isEmpty then ""
-          else s!" /Mask [{" ".intercalate (inf.colorKey.toList.map toString)}]"
+        let maskRef := match inf.alpha with
+          | .colorKey ranges => s!" /Mask [{" ".intercalate (ranges.toList.map toString)}]"
+          | .opaque => ""
+          | .soft _ _ => ""
         let dict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
 /Height {inf.pxH} /ColorSpace {colorSpace} /BitsPerComponent {inf.bitDepth}\
 {smaskRef}{maskRef} {filter}"
@@ -1214,15 +1221,16 @@ def write (geom : Geom) (fs : FontSet) (pages : Array PageOut)
         w := w'
         offs := offs.set! imgId (some off)
         if let some mid := (t.smaskIds[n]?).join then
-          -- The alpha plane is the source's own filtered rows, deinterleaved
-          -- (`Image.splitPredictedAlpha`), so the mask declares the same PNG
-          -- predictor its colour plane does (ISO 32000-2 §7.4.4.4).
-          let mdict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
-/Height {inf.pxH} /ColorSpace /DeviceGray /BitsPerComponent 8 /Filter /FlateDecode \
-/DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent 8 /Columns {inf.pxW} >>"
-          let (w'', moff) := putStream w mid mdict inf.smask
-          w := w''
-          offs := offs.set! mid (some moff)
+          if let .soft plane bpc := inf.alpha then
+            -- The alpha plane is the source's own filtered rows, deinterleaved
+            -- (`Image.splitPredictedAlpha`), so the mask declares the same PNG
+            -- predictor its colour plane does (ISO 32000-2 §7.4.4.4).
+            let mdict := s!"/Type /XObject /Subtype /Image /Width {inf.pxW} \
+/Height {inf.pxH} /ColorSpace /DeviceGray /BitsPerComponent {bpc} /Filter /FlateDecode \
+/DecodeParms << /Predictor 15 /Colors 1 /BitsPerComponent {bpc} /Columns {inf.pxW} >>"
+            let (w'', moff) := putStream w mid mdict plane
+            w := w''
+            offs := offs.set! mid (some moff)
 
   for k in [0:nf] do
     let font := fs.get keep[k]!

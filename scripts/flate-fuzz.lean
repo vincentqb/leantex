@@ -93,12 +93,13 @@ def main : IO Unit := do
   -- The shipped alpha fixture's planes: the exact bytes the PDF writer embeds.
   let alpha ← IO.FS.readBinFile "tests/corpus/rects-alpha.png"
   match Image.decode alpha with
-  | .ok inf =>
-    match Flate.inflate inf.data (32 * (1 + 48 * 3)), Flate.inflate inf.smask (32 * (1 + 48)) with
+  | .ok { data, alpha := .soft smask _, .. } =>
+    match Flate.inflate data (32 * (1 + 48 * 3)), Flate.inflate smask (32 * (1 + 48)) with
     | .ok c, .ok a =>
       check dir "fixture colour plane (filtered)" c
       check dir "fixture alpha plane (filtered)" a
     | _, _ => die "fixture planes did not inflate"
+  | .ok _ => die "fixture planned without a soft mask"
   | .error e => die s!"fixture refused: {e}"
   -- The bench's underline document: 45 pages of content streams, the
   -- text-shaped input the compressor is tuned on — every stream the

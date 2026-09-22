@@ -3550,7 +3550,7 @@ def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
   let (fitDoc, _) := elabStr (dvDoc ""
     "\\begin{tikzpicture}\\draw (0,0) circle (40);\\end{tikzpicture}")
   let fitSrc := ((Ir.imageRefs fitDoc).find? (·.startsWith Ir.picSrcPrefix)).getD ""
-  let wideInfo : Image.Info := { format := .png, pxW := 2000, pxH := 200 }
+  let wideInfo : Image.Plan := { pxW := 2000, pxH := 200 }
   let store : Image.Store := { entries := #[{ src := fitSrc, info := some wideInfo }] }
   let out := layoutOf oneFace fitDoc (imgs := store)
   let geom := Layout.Geom.ofPage fitDoc.page

@@ -295,6 +295,10 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
       "\\shade (0,0) rectangle (1,1);\n\\end{tikzpicture}"))
   | .W0602 => #[Image.imageUndecodable "figures/plot.gif"
       "not a PNG, JPEG, or PDF file"]
+  -- The two ledger entries a plan can carry (`Image.plan_losses_accounts`),
+  -- as the driver names them after `Image.fulfil`.
+  | .W0603 => #[Image.imageIccDropped "figures/plot.png"]
+  | .W0604 => #[Image.imageOrientationDropped "figures/photo.jpg" 6]
   -- The boundary is open by default: no declaration, and the picture
   -- routes; the trust label names it.
   | .N0023 => dvE (dvDoc ""

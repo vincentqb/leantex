@@ -385,7 +385,7 @@ def altWalkChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   t "an image inside a defined role is requested"
     ((Ir.imageRefs idoc).contains "rolefig.png")
   let store : Image.Store := { entries := (Ir.imageRefs idoc).map fun s =>
-    { src := s, info := some { format := .png, pxW := 64, pxH := 64 } } }
+    { src := s, info := some { pxW := 64, pxH := 64 } } }
   let out := layoutOf oneFace idoc (imgs := store)
   let imgSegs := out.pages.flatMap fun p => p.lines.flatMap fun l =>
     l.segs.filterMap fun s => match s with

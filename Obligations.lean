@@ -274,24 +274,33 @@ theorem inflate_deflate_id (b : ByteArray) :
     Flate.inflate (Flate.deflate b) b.size = .ok b := by
   sorry
 
+/-- Every count the cache format spells as a u32 is inside it, and no form
+rides: what `Image.decode` produces (the ranges by
+`colorKeyRanges_between`). -/
+def binBounded (i : Image.Plan) : Prop :=
+  i.form = none ∧ i.pxW < 4294967296 ∧ i.pxH < 4294967296 ∧
+    i.dpiX < 4294967296 ∧ i.dpiY < 4294967296 ∧ i.bitDepth < 4294967296 ∧
+    i.orientation < 4294967296 ∧ i.data.size < 4294967296 ∧ i.losses.size < 4294967296 ∧
+    (match i.color with
+      | .gray => True
+      | .rgb => True
+      | .indexed palette => palette.size < 4294967296
+      | .iccBased n profile => n < 4294967296 ∧ profile.size < 4294967296) ∧
+    (match i.alpha with
+      | .opaque => True
+      | .colorKey ranges => ranges.size < 4294967296 ∧ ∀ v ∈ ranges, v < 4294967296
+      | .soft plane bpc => plane.size < 4294967296 ∧ bpc < 4294967296)
+
 -- owed: decodeBin_encodeBin_id
 -- owner: LeanTex.Core.Image
--- source: the build-cache slice (2026-09-21 survey wave): the driver's image cache files `Image.encodeBin`'s bytes under the source's content key, and transparency — a cache hit *is* the recomputation's value, keeping the artifact a function of the document and the font environment — is exactly this inversion. The in-suite witnesses are the image-cache serialization rows in Tests/Backends (a real decoded alpha PNG round-trips; foreign and truncated bytes refuse).
--- blocker: the codec is fixed-offset field reads over `ByteArray.push`/`append`/`extract`, and the standard library's equational coverage for those (get-of-append, extract-of-append) is not yet enough to push the twelve field reads and the key loop through; the statement also needs its honest side conditions spelled (each Nat field under 2³², every colour-key value under 2³², `form = none`) before the per-field lemmas can compose.
+-- source: the build-cache slice (2026-09-21 survey wave): the driver's image cache files `Image.encodeBin`'s bytes under the source's content key and the plan parameters' key, and transparency — a cache hit *is* the recomputation's value, keeping the artifact a function of the document and the font environment — is exactly this inversion. Restated over the typed `Plan` by image-plan-factor (the three sums ride as tag bytes, the ledger as one byte per entry). The in-suite witnesses are the image-cache serialization rows in Tests/Images (a plan per alpha and colour constructor round-trips; foreign, truncated, and older-magic bytes refuse).
+-- blocker: the codec is fixed-offset field reads over `ByteArray.push`/`append`/`extract`, and the standard library's equational coverage for those (get-of-append, extract-of-append) is not yet enough to push the eighteen header reads, the key loop, and the tag dispatch through; the statement carries its honest side conditions (`binBounded`: each Nat field and each length under 2³², every colour-key value under 2³², `form = none`) so the per-field lemmas can compose once they exist.
 -- goldens: no
 /-- The image cache's serialization inverts: reading back `encodeBin`'s
-bytes yields the decoded object itself, field for field, for every raster
-`Info` the cache can hold (`form = none`; every scalar field and every
-colour-key range value within the u32 the format spells — all true of
-everything `Image.decode` produces, the ranges by
-`colorKeyRanges_between`). A cache hit therefore equals a recomputation. -/
-theorem decodeBin_encodeBin_id (i : Image.Info) (hf : i.form = none)
-    (hw : i.pxW < 4294967296) (hh : i.pxH < 4294967296)
-    (hx : i.dpiX < 4294967296) (hy : i.dpiY < 4294967296)
-    (hb : i.bitDepth < 4294967296)
-    (hp : i.palette.size < 4294967296) (hd : i.data.size < 4294967296)
-    (hs : i.smask.size < 4294967296)
-    (hk : i.colorKey.size < 4294967296) (hkv : ∀ v ∈ i.colorKey, v < 4294967296) :
+bytes yields the plan itself, field for field, for every raster `Plan` the
+cache can hold (`binBounded`). A cache hit therefore equals a
+recomputation. -/
+theorem decodeBin_encodeBin_id (i : Image.Plan) (hb : binBounded i) :
     Image.decodeBin (Image.encodeBin i) = some i := by
   sorry
 

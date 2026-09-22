@@ -4,8 +4,31 @@ open LeanTex.Core LeanTex.Core.Utf8 LeanTex.Cli
 
 /-! # Images
 
-The image blocks, one file per the by-phase split: the decoders, the
-alpha split, and colour-key transparency. -/
+The image blocks, one file per the by-phase split: the probe and the
+planner, the alpha split, colour-key transparency, and the plan's own
+contract (`planChecks`). -/
+
+/-- The colour-key ranges a plan carries, empty when none. -/
+def planKey (pl : Image.Plan) : Array Nat :=
+  match pl.alpha with
+  | .colorKey ks => ks
+  | .opaque => #[]
+  | .soft _ _ => #[]
+
+/-- The soft-mask plane a plan carries, empty when none. -/
+def planSoft (pl : Image.Plan) : ByteArray :=
+  match pl.alpha with
+  | .soft plane _ => plane
+  | .opaque => ByteArray.empty
+  | .colorKey _ => ByteArray.empty
+
+/-- The palette an indexed plan carries, empty otherwise. -/
+def planPalette (pl : Image.Plan) : ByteArray :=
+  match pl.color with
+  | .indexed pal => pal
+  | .gray => ByteArray.empty
+  | .rgb => ByteArray.empty
+  | .iccBased _ _ => ByteArray.empty
 
 /-- `splitPredictedAlpha_exact`, executed: over seeded random pixels with a
 random filter type per row, for grey+alpha and RGBA at several geometries
@@ -64,26 +87,26 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let ihdr := pngIhdr
   let plain := mkPng (chunk "IHDR" (ihdr 64 40 8 2 0) ++ chunk "IDAT" [1, 2, 3] ++
     chunk "IEND" [])
-  match Image.decodePng plain with
+  match Image.decode plain with
   | .error e => failures ref s!"png decode: {e}"
   | .ok inf =>
     t "png dimensions" (inf.pxW == 64 && inf.pxH == 40)
     t "png default density is one pixel per point"
       (inf.dpiX == 72 && inf.width == Dim.pt 64 && inf.height == Dim.pt 40)
-    t "png space and depth" (inf.space == .rgb && inf.bitDepth == 8)
+    t "png space and depth" (inf.color == .rgb && inf.bitDepth == 8)
     t "png idat survives" (inf.data == bytes [1, 2, 3])
   -- pHYs at 5906 pixels per metre is 150 dpi to the spec's own rounding.
   let physed := mkPng (chunk "IHDR" (ihdr 64 40 8 2 0) ++
     chunk "pHYs" (be32 5906 ++ be32 5906 ++ [1]) ++ chunk "IDAT" [0] ++ chunk "IEND" [])
   t "png pHYs density read"
-    (match Image.decodePng physed with
+    (match Image.decode physed with
      | .ok inf => inf.dpiX == 150 && inf.width == Dim.pt 64 * 72 / 150
      | .error _ => false)
   -- Refusals and the decode path, each with its reason: 16-bit alpha and
   -- interlace refuse; 8-bit alpha inflates and splits its filtered rows —
   -- never its pixels — and the alpha plane comes back as an SMask.
   t "png 16-bit alpha refused"
-    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 16 6 0) ++
+    (match Image.decode (mkPng (chunk "IHDR" (ihdr 8 8 16 6 0) ++
       chunk "IDAT" [0] ++ chunk "IEND" [])) with
      | .error e => (e.splitOn "16-bit").length == 2
      | .ok _ => false)
@@ -93,22 +116,22 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let rgbaPng := mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++
     chunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ chunk "IEND" [])
   t "png alpha decodes to colour plus smask, planes filtered and compressed"
-    (match Image.decodePng rgbaPng with
+    (match Image.decode rgbaPng with
      | .ok inf =>
-       inf.space == .rgb && inf.predictor && !inf.smask.isEmpty &&
+       inf.color == .rgb && inf.filter == .flatePredictor && !(planSoft inf).isEmpty &&
        ((Flate.inflate inf.data 14).bind fun rows =>
          Flate.pngUnfilter rows 2 6 3) ==
          .ok (bytes [10, 20, 30, 40, 50, 60, 5, 5, 5, 6, 7, 8]) &&
-       ((Flate.inflate inf.smask 6).bind fun rows =>
+       ((Flate.inflate (planSoft inf) 6).bind fun rows =>
          Flate.pngUnfilter rows 2 2 1) == .ok (bytes [255, 128, 7, 16])
      | .error _ => false)
   -- The planes are the source's residuals under the source's own filters
   -- (None, then Sub), not a re-filtering: the split never saw a pixel.
   t "png alpha planes keep the source rows' filter bytes"
-    (match Image.decodePng rgbaPng with
+    (match Image.decode rgbaPng with
      | .ok inf =>
        Flate.inflate inf.data 14 == .ok (bytes [0, 10, 20, 30, 40, 50, 60, 1, 5, 5, 5, 1, 2, 3]) &&
-       Flate.inflate inf.smask 6 == .ok (bytes [0, 255, 128, 1, 7, 9])
+       Flate.inflate (planSoft inf) 6 == .ok (bytes [0, 255, 128, 1, 7, 9])
      | .error _ => false)
   -- The inflate under it round-trips its own stored encoder, and reads a
   -- real compressor's stream: rects.png's IDAT is zlib at level 9, and its
@@ -133,52 +156,52 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   -- A deflate-compressed IDAT decodes through the dynamic-Huffman path:
   -- the engine reads its own compressor's output inside a PNG too.
   t "png alpha decodes from a deflate-compressed IDAT"
-    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++
+    (match Image.decode (mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++
       chunk "IDAT" (Flate.deflate rgbaRaw).toList ++ chunk "IEND" [])) with
-     | .ok inf => inf.space == .rgb && !inf.smask.isEmpty
+     | .ok inf => inf.color == .rgb && !(planSoft inf).isEmpty
      | .error _ => false)
   -- The driver's image-cache serialization inverts exactly
   -- (`decodeBin_encodeBin_id`'s statement, witnessed on a real decode).
   t "image cache serialization round-trips a decoded alpha png"
-    (match Image.decodePng rgbaPng with
+    (match Image.decode rgbaPng with
      | .ok inf =>
        (match Image.decodeBin (Image.encodeBin inf) with
         | some back =>
-          back.format == inf.format && back.pxW == inf.pxW && back.pxH == inf.pxH &&
+          back.pxW == inf.pxW && back.pxH == inf.pxH &&
           back.dpiX == inf.dpiX && back.dpiY == inf.dpiY &&
-          back.bitDepth == inf.bitDepth && back.space == inf.space &&
-          back.palette == inf.palette && back.data == inf.data &&
-          back.predictor == inf.predictor && back.smask == inf.smask &&
-          back.form.isNone
+          back.bitDepth == inf.bitDepth && back.color == inf.color &&
+          back.data == inf.data && back.filter == inf.filter && back.alpha == inf.alpha &&
+          back.recoded == inf.recoded && back.losses == inf.losses &&
+          back.orientation == inf.orientation && back.form.isNone
         | none => false)
      | .error _ => false)
   t "image cache decode rejects foreign bytes"
     ((Image.decodeBin (bytes [1, 2, 3])).isNone &&
      (Image.decodeBin ByteArray.empty).isNone)
   t "image cache decode rejects a truncated entry"
-    (match Image.decodePng rgbaPng with
+    (match Image.decode rgbaPng with
      | .ok inf =>
        let blob := Image.encodeBin inf
        (Image.decodeBin (blob.extract 0 (blob.size - 1))).isNone
      | .error _ => false)
   t "png interlace refused"
-    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 2 1) ++
+    (match Image.decode (mkPng (chunk "IHDR" (ihdr 8 8 8 2 1) ++
       chunk "IDAT" [0] ++ chunk "IEND" [])) with
      | .error e => (e.splitOn "interlaced").length == 2
      | .ok _ => false)
   t "png indexed without PLTE refused"
-    ((Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 3 0) ++
+    ((Image.decode (mkPng (chunk "IHDR" (ihdr 8 8 8 3 0) ++
       chunk "IDAT" [0] ++ chunk "IEND" []))).isOk == false)
   t "png indexed with PLTE carries the palette"
-    (match Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 3 0) ++
+    (match Image.decode (mkPng (chunk "IHDR" (ihdr 8 8 8 3 0) ++
       chunk "PLTE" [0, 0, 0, 255, 255, 255] ++ chunk "IDAT" [0] ++ chunk "IEND" [])) with
-     | .ok inf => inf.space == .indexed && inf.palette.size == 6
+     | .ok inf => (planPalette inf).size == 6 && inf.color == .indexed (planPalette inf)
      | .error _ => false)
   t "png zero size refused"
-    ((Image.decodePng (mkPng (chunk "IHDR" (ihdr 0 8 8 2 0) ++
+    ((Image.decode (mkPng (chunk "IHDR" (ihdr 0 8 8 2 0) ++
       chunk "IDAT" [0] ++ chunk "IEND" []))).isOk == false)
   t "png lying chunk length refused"
-    ((Image.decodePng (mkPng (chunk "IHDR" (ihdr 8 8 8 2 0) ++
+    ((Image.decode (mkPng (chunk "IHDR" (ihdr 8 8 8 2 0) ++
       be32 99999 ++ ("IDAT".toList.map fun c => UInt8.ofNat c.toNat) ++ [0]))).isOk
       == false)
   -- A synthetic JPEG: SOI, JFIF APP0 declaring 144 dpi, SOF0 10×20 in three
@@ -193,20 +216,20 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
      UInt8.ofNat (w / 256), UInt8.ofNat (w % 256), UInt8.ofNat ncomp] ++
      (List.range ncomp).flatMap fun k => [UInt8.ofNat (k + 1), 0x11, 0]
   let jpg := bytes ([0xFF, 0xD8] ++ jfif 1 144 144 ++ sof0 10 20 3 ++ [0xFF, 0xDA])
-  match Image.decodeJpeg jpg with
+  match Image.decode jpg with
   | .error e => failures ref s!"jpeg decode: {e}"
   | .ok inf =>
     t "jpeg dimensions" (inf.pxW == 10 && inf.pxH == 20)
     t "jpeg jfif density read" (inf.dpiX == 144 && inf.width == Dim.pt 10 * 72 / 144)
     t "jpeg embeds whole" (inf.data.size == jpg.size)
   t "jpeg cmyk refused"
-    (match Image.decodeJpeg (bytes ([0xFF, 0xD8] ++ sof0 4 4 4 ++ [0xFF, 0xDA])) with
+    (match Image.decode (bytes ([0xFF, 0xD8] ++ sof0 4 4 4 ++ [0xFF, 0xDA])) with
      | .error e => (e.splitOn "CMYK").length == 2
      | .ok _ => false)
   t "jpeg aspect-only density keeps the default"
-    (match Image.decodeJpeg (bytes ([0xFF, 0xD8] ++ jfif 0 1 1 ++ sof0 4 4 1 ++
+    (match Image.decode (bytes ([0xFF, 0xD8] ++ jfif 0 1 1 ++ sof0 4 4 1 ++
       [0xFF, 0xDA])) with
-     | .ok inf => inf.dpiX == 72 && inf.space == .gray
+     | .ok inf => inf.dpiX == 72 && inf.color == .gray
      | .error _ => false)
   t "decode rejects foreign bytes" ((Image.decode (bytes [0, 1, 2, 3])).isOk == false)
   t "decode rejects empty" ((Image.decode (bytes [])).isOk == false)
@@ -220,12 +243,12 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let alphaInfo := Image.decode alphaData
   t "shipped png decodes 64x40 rgb"
     (match pngInfo with
-     | .ok inf => inf.format == .png && inf.pxW == 64 && inf.pxH == 40 &&
-        inf.space == .rgb && inf.width == Dim.pt 64
+     | .ok inf => inf.filter == .flatePredictor && inf.pxW == 64 && inf.pxH == 40 &&
+        inf.color == .rgb && inf.width == Dim.pt 64
      | .error _ => false)
   t "shipped jpeg decodes 64x40"
     (match jpgInfo with
-     | .ok inf => inf.format == .jpeg && inf.pxW == 64 && inf.pxH == 40 &&
+     | .ok inf => inf.filter == .dct && inf.pxW == 64 && inf.pxH == 40 &&
         inf.width == Dim.pt 64
      | .error _ => false)
   -- The RGBA fixture went through a real compressor (zlib level 9), so
@@ -234,8 +257,8 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "shipped alpha png decodes with its mask"
     (match alphaInfo with
      | .ok inf =>
-       inf.pxW == 48 && inf.pxH == 32 && inf.space == .rgb && !inf.smask.isEmpty &&
-       (match (Flate.inflate inf.smask (32 * 49)).bind fun rows =>
+       inf.pxW == 48 && inf.pxH == 32 && inf.color == .rgb && !(planSoft inf).isEmpty &&
+       (match (Flate.inflate (planSoft inf) (32 * 49)).bind fun rows =>
           Flate.pngUnfilter rows 32 48 1 with
         | .ok mask => mask.size == 48 * 32 && mask[0]?.getD 1 == 0 &&
             (mask[4 * 48 + 4]?.getD 0) == 255 && (mask[4 * 48 + 43]?.getD 0) == 21
@@ -466,11 +489,11 @@ def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
       (if trns.isEmpty then [] else chunk "tRNS" trns) ++
       chunk "IDAT" idat ++ chunk "IEND" [])
   let keyOf (b : ByteArray) : Option (Array Nat) :=
-    match Image.decodePng b with
-    | .ok inf => some inf.colorKey
+    match Image.decode b with
+    | .ok inf => some (planKey inf)
     | .error _ => none
   let refusedNaming (b : ByteArray) (word : String) : Bool :=
-    match Image.decodePng b with
+    match Image.decode b with
     | .error e => (e.splitOn word).length == 2
     | .ok _ => false
   -- Greyscale: one two-byte sample, in range for the bit depth.
@@ -577,18 +600,350 @@ def colorKeyChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
     let blob := Image.encodeBin inf
     t "image cache serialization round-trips the colour key"
       (match Image.decodeBin blob with
-       | some back => back.colorKey == inf.colorKey && back.colorKey == #[0, 0] &&
-           back.palette == inf.palette && back.data == inf.data && back.space == .indexed &&
+       | some back => planKey back == planKey inf && planKey back == #[0, 0] &&
+           back.color == inf.color && back.data == inf.data &&
+           planPalette back == bytes pal2 &&
            back.bitDepth == inf.bitDepth && back.pxW == 4 && back.pxH == 4
        | none => false)
-    t "image cache magic is LTIMG2" (blob.extract 0 6 == "LTIMG2".toUTF8)
+    t "image cache magic is LTIMG3" (blob.extract 0 6 == "LTIMG3".toUTF8)
     t "image cache rejects a stale LTIMG1 entry" ((Image.decodeBin (blob.set! 5 49)).isNone)
+    t "image cache rejects a stale LTIMG2 entry" ((Image.decodeBin (blob.set! 5 50)).isNone)
     t "image cache rejects a lying key count"
-      ((Image.decodeBin (blob.set! 44 (blob[44]! + 1))).isNone)
+      ((Image.decodeBin (blob.set! 49 (blob[49]! + 1))).isNone)
   -- A wide key (the truecolour ranges) round-trips too.
   t "image cache round-trips a six-range key"
     (match Image.decode rgbPng with
-     | .ok inf => (Image.decodeBin (Image.encodeBin inf)).map (·.colorKey) ==
+     | .ok inf => (Image.decodeBin (Image.encodeBin inf)).map planKey ==
          some #[10, 10, 20, 20, 30, 30]
      | .error _ => false)
 
+
+/-- A JPEG header from segments: SOI, the given APP segments, a baseline
+SOF0 of the given geometry, and SOS — the scan never has to exist for the
+probe. -/
+def jpegOf (apps : List UInt8) (w h ncomp : Nat) : ByteArray :=
+  let sof0 : List UInt8 :=
+    [0xFF, 0xC0, 0, UInt8.ofNat (8 + 3 * ncomp), 8,
+     UInt8.ofNat (h / 256), UInt8.ofNat (h % 256),
+     UInt8.ofNat (w / 256), UInt8.ofNat (w % 256), UInt8.ofNat ncomp] ++
+     (List.range ncomp).flatMap fun k => [UInt8.ofNat (k + 1), 0x11, 0]
+  bytes ([0xFF, 0xD8] ++ apps ++ sof0 ++ [0xFF, 0xDA])
+
+/-- One marker segment: `FF m`, then the length (its own two bytes
+included), then the payload. -/
+def jpegSeg (m : Nat) (payload : List UInt8) : List UInt8 :=
+  let len := payload.length + 2
+  [0xFF, UInt8.ofNat m, UInt8.ofNat (len / 256), UInt8.ofNat (len % 256)] ++ payload
+
+/-- An APP1 Exif segment carrying one IFD0 entry: orientation `o`, in the
+given byte order. -/
+def exifApp1 (o : Nat) (bigEndian : Bool) : List UInt8 :=
+  let u16 (v : Nat) : List UInt8 :=
+    if bigEndian then [UInt8.ofNat (v / 256), UInt8.ofNat (v % 256)]
+    else [UInt8.ofNat (v % 256), UInt8.ofNat (v / 256)]
+  let u32 (v : Nat) : List UInt8 :=
+    if bigEndian then be32 v else (be32 v).reverse
+  let tiff := [if bigEndian then [0x4D, 0x4D] else [0x49, 0x49], u16 42, u32 8,
+    u16 1, u16 0x0112, u16 3, u32 1, u16 o, u16 0, u32 0].flatten
+  jpegSeg 0xE1 ([0x45, 0x78, 0x69, 0x66, 0, 0] ++ tiff)
+
+/-- An APP2 `ICC_PROFILE` piece `seq` of `count`. -/
+def iccApp2 (seq count : Nat) (data : List UInt8) : List UInt8 :=
+  jpegSeg 0xE2 ([0x49, 0x43, 0x43, 0x5F, 0x50, 0x52, 0x4F, 0x46, 0x49, 0x4C, 0x45, 0] ++
+    [UInt8.ofNat seq, UInt8.ofNat count] ++ data)
+
+/-- The probe and the planner: every `Source` fact the plan does not carry
+is a ledger entry (`plan_losses_accounts`), the refusals name their
+format (`plan_refuses_named`), the cache gate is the planner's
+(`recodes_iff`), the parameters key the cache
+(`planParams_serialize_inj`), the codec inverts on every constructor, and
+the driver turns the ledger into one diagnostic per entry. -/
+def planChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let chunk := pngChunk
+  let ihdr := pngIhdr
+  let idat2 := (Flate.deflateStored (bytes (List.replicate 2 [0, 1, 2, 3, 4, 5, 6]).flatten)).toList
+  let profile : List UInt8 := (List.range 40).map fun k => UInt8.ofNat (k * 7 % 256)
+  let iccpChunk := chunk "iCCP" ([0x69, 0x63, 0x63, 0, 0] ++ (Flate.deflateStored (bytes profile)).toList)
+  let pngIccp := mkPng (chunk "IHDR" (ihdr 2 2 8 2 0) ++ iccpChunk ++ chunk "IDAT" idat2 ++
+    chunk "IEND" [])
+  let pngPlain := mkPng (chunk "IHDR" (ihdr 2 2 8 2 0) ++ chunk "IDAT" idat2 ++ chunk "IEND" [])
+  let pngAncillary := mkPng (chunk "IHDR" (ihdr 2 2 8 2 0) ++ chunk "sRGB" [1] ++
+    chunk "gAMA" (be32 45455) ++ chunk "cHRM" ((List.range 8).flatMap fun k => be32 (1000 * (k + 1))) ++
+    chunk "IDAT" idat2 ++ chunk "IEND" [])
+  let default := Image.PlanParams.default
+  let planOf (b : ByteArray) (p : Image.PlanParams := default) : Except String Image.Plan :=
+    Image.probe b >>= Image.plan p
+  -- Red 1: the profile is read, dropped under the default policy, and the
+  -- drop is in the ledger; the IDAT still passes through.
+  t "probe reads an iCCP profile as zlib bytes"
+    (match Image.probe pngIccp with
+     | .ok s => s.iccIsZlib && s.icc == Flate.deflateStored (bytes profile) && s.format == .png
+     | .error _ => false)
+  t "plan drops the profile under the default policy and says so"
+    (match planOf pngIccp with
+     | .ok pl => pl.color == .rgb && pl.losses == #[.iccDropped] && pl.data == bytes idat2
+     | .error _ => false)
+  t "plan carries the profile under the carry policy, no loss"
+    (match planOf pngIccp { default with iccPolicy := .carry } with
+     | .ok pl => pl.color == .iccBased 3 (Flate.deflateStored (bytes profile)) && pl.losses.isEmpty
+     | .error _ => false)
+  t "an indexed profile is dropped even under carry, and says so"
+    (match planOf (mkPng (chunk "IHDR" (ihdr 2 2 8 3 0) ++ iccpChunk ++
+        chunk "PLTE" [0, 0, 0, 255, 255, 255] ++ chunk "IDAT" idat2 ++ chunk "IEND" []))
+        { default with iccPolicy := .carry } with
+     | .ok pl => pl.color == .indexed (bytes [0, 0, 0, 255, 255, 255]) && pl.losses == #[.iccDropped]
+     | .error _ => false)
+  t "the ledger names exactly one W0603 for a profiled source"
+    (match planOf pngIccp with
+     | .ok pl => (Image.lossDiags "figures/a.png" pl).map (·.code) == #["W0603"] &&
+         (Image.lossDiags "figures/a.png" pl).all (·.subject == some "figures/a.png")
+     | .error _ => false)
+  t "a plain PNG has an empty ledger"
+    (match planOf pngPlain with
+     | .ok pl => pl.losses.isEmpty && (Image.lossDiags "a.png" pl).isEmpty
+     | .error _ => false)
+  t "probe reads sRGB, gAMA and cHRM as source facts; the plan has no loss for them"
+    (match Image.probe pngAncillary, planOf pngAncillary with
+     | .ok s, .ok pl => s.srgbIntent == some 1 && s.gamma == some 45455 &&
+         s.chrm == some #[1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000] && pl.losses.isEmpty
+     | _, _ => false)
+  t "a corrupt iCCP (no name) is refused as corrupt"
+    (match Image.probe (mkPng (chunk "IHDR" (ihdr 2 2 8 2 0) ++ chunk "iCCP" [0, 0, 1, 2] ++
+        chunk "IDAT" idat2 ++ chunk "IEND" [])) with
+     | .error e => hasStr e "iCCP"
+     | .ok _ => false)
+  -- Red 2: orientation, both byte orders, in the ledger and one W0604.
+  let jpgExif6 := jpegOf (exifApp1 6 true) 2 1 3
+  let jpgExif8le := jpegOf (exifApp1 8 false) 2 1 3
+  t "probe reads Exif orientation 6 (big-endian TIFF)"
+    (match Image.probe jpgExif6 with
+     | .ok s => s.orientation == 6 && s.format == .jpeg && s.colorType == 3 && s.pxW == 2
+     | .error _ => false)
+  t "probe reads Exif orientation 8 (little-endian TIFF)"
+    ((Image.probe jpgExif8le).toOption.map (·.orientation) == some 8)
+  t "plan drops the orientation and says so"
+    (match planOf jpgExif6 with
+     | .ok pl => pl.orientation == 6 && pl.losses == #[.orientationDropped] &&
+         pl.filter == .dct && pl.data == jpgExif6
+     | .error _ => false)
+  t "the ledger names exactly one W0604 with the tag"
+    (match planOf jpgExif6 with
+     | .ok pl => (Image.lossDiags "p.jpg" pl).map (·.code) == #["W0604"] &&
+         (Image.lossDiags "p.jpg" pl).all fun d => d.subject == some "p.jpg" && hasStr d.message "tag 6"
+     | .error _ => false)
+  t "orientation 1 and an absent tag are no loss"
+    ((planOf (jpegOf (exifApp1 1 true) 2 1 3)).toOption.map (·.losses) == some #[] &&
+     (planOf (jpegOf [] 2 1 3)).toOption.map (·.losses) == some #[])
+  t "an orientation outside 1–8 is the default"
+    ((Image.probe (jpegOf (exifApp1 9 true) 2 1 3)).toOption.map (·.orientation) == some 1)
+  -- A JPEG profile in two APP2 pieces, out of file order, concatenates in
+  -- sequence order; a profiled JPEG with orientation carries two losses.
+  let jpgIcc := jpegOf (iccApp2 2 2 [4, 5, 6] ++ iccApp2 1 2 [1, 2, 3] ++ exifApp1 3 true) 2 1 3
+  t "probe concatenates APP2 profile pieces in sequence order, raw"
+    (match Image.probe jpgIcc with
+     | .ok s => s.icc == bytes [1, 2, 3, 4, 5, 6] && !s.iccIsZlib
+     | .error _ => false)
+  t "a profiled, oriented JPEG carries both losses, in ledger order"
+    (match planOf jpgIcc with
+     | .ok pl => pl.losses == #[.iccDropped, .orientationDropped] &&
+         (Image.lossDiags "p.jpg" pl).map (·.code) == #["W0603", "W0604"]
+     | .error _ => false)
+  t "carry deflates a raw JPEG profile"
+    (match planOf jpgIcc { default with iccPolicy := .carry } with
+     | .ok pl => pl.color == .iccBased 3 (Flate.deflate (bytes [1, 2, 3, 4, 5, 6])) &&
+         pl.losses == #[.orientationDropped]
+     | .error _ => false)
+  t "probe reads the APP14 Adobe transform"
+    ((Image.probe (jpegOf (jpegSeg 0xEE [0x41, 0x64, 0x6F, 0x62, 0x65, 0, 100, 0, 0, 0, 0, 1])
+        2 1 3)).toOption.bind (·.adobeTransform) == some 1)
+  -- Red 3: the unembeddable formats are recognised, sized, and refused by name.
+  let le24 (n : Nat) : List UInt8 :=
+    [UInt8.ofNat (n % 256), UInt8.ofNat (n / 256 % 256), UInt8.ofNat (n / 65536 % 256)]
+  let webpX := bytes ([0x52, 0x49, 0x46, 0x46] ++ (be32 30).reverse ++ [0x57, 0x45, 0x42, 0x50] ++
+    [0x56, 0x50, 0x38, 0x58] ++ (be32 10).reverse ++ [0, 0, 0, 0] ++ le24 (300 - 1) ++ le24 (200 - 1))
+  let webpL := bytes ([0x52, 0x49, 0x46, 0x46] ++ (be32 30).reverse ++ [0x57, 0x45, 0x42, 0x50] ++
+    [0x56, 0x50, 0x38, 0x4C] ++ (be32 10).reverse ++ [0x2F] ++
+    -- 14 bits width-1 = 15, 14 bits height-1 = 9: 15 + 9·2¹⁴, little-endian.
+    (be32 (15 + 9 * 16384)).reverse)
+  let webp8 := bytes ([0x52, 0x49, 0x46, 0x46] ++ (be32 30).reverse ++ [0x57, 0x45, 0x42, 0x50] ++
+    [0x56, 0x50, 0x38, 0x20] ++ (be32 10).reverse ++ [0, 0, 0, 0x9D, 0x01, 0x2A] ++
+    [64, 0, 40, 0])
+  let refusedNaming (b : ByteArray) (name : String) : Bool :=
+    match planOf b with
+    | .error e => e.startsWith name
+    | .ok _ => false
+  t "probe sizes a VP8X WebP"
+    ((Image.probe webpX).toOption.map (fun s => (s.format, s.pxW, s.pxH)) == some (.webp, 300, 200))
+  t "probe sizes a VP8L WebP"
+    ((Image.probe webpL).toOption.map (fun s => (s.pxW, s.pxH)) == some (16, 10))
+  t "probe sizes a VP8 WebP"
+    ((Image.probe webp8).toOption.map (fun s => (s.pxW, s.pxH)) == some (64, 40))
+  t "plan refuses WebP by name" (refusedNaming webpX "WebP" && refusedNaming webpL "WebP")
+  let avif := bytes ((be32 20) ++ [0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66] ++ be32 0 ++
+    [0x6D, 0x69, 0x66, 0x31, 0x61, 0x76, 0x69, 0x66] ++
+    be32 20 ++ [0x69, 0x73, 0x70, 0x65] ++ be32 0 ++ be32 640 ++ be32 480)
+  t "probe sizes an AVIF from ispe"
+    ((Image.probe avif).toOption.map (fun s => (s.format, s.pxW, s.pxH)) == some (.avif, 640, 480))
+  t "plan refuses AVIF by name" (refusedNaming avif "AVIF")
+  -- JPEG XL: small size header, 8×8 at ratio 1:1 (bits LSB-first: small=1,
+  -- ysize_div8_minus_1=0, ratio=1), and a non-small 300×200 header.
+  let jxlSmall := bytes [0xFF, 0x0A, 0x41, 0]
+  t "probe sizes a small JPEG XL header"
+    ((Image.probe jxlSmall).toOption.map (fun s => (s.format, s.pxW, s.pxH)) == some (.jxl, 8, 8))
+  -- non-small: bit0 small=0; U32 selector 0 (2 bits) then 9 bits = 199 (h=200);
+  -- ratio 0 (3 bits); U32 selector 0 then 9 bits = 299 (w=300).
+  let bitsToBytes (bs : List Nat) : List UInt8 := Id.run do
+    let mut out : Array UInt8 := #[]
+    let mut cur := 0
+    let mut n := 0
+    for b in bs do
+      cur := cur + b * 2 ^ n
+      n := n + 1
+      if n == 8 then
+        out := out.push (UInt8.ofNat cur)
+        cur := 0
+        n := 0
+    if n > 0 then out := out.push (UInt8.ofNat cur)
+    return out.toList
+  let lsb (v n : Nat) : List Nat := (List.range n).map fun k => v / 2 ^ k % 2
+  let jxlBig := bytes ([0xFF, 0x0A] ++ bitsToBytes ([0] ++ lsb 0 2 ++ lsb 199 9 ++ lsb 0 3 ++
+    lsb 0 2 ++ lsb 299 9))
+  t "probe sizes a non-small JPEG XL header"
+    ((Image.probe jxlBig).toOption.map (fun s => (s.pxW, s.pxH)) == some (300, 200))
+  let jxlBox := bytes ([0, 0, 0, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A] ++
+    be32 12 ++ [0x6A, 0x78, 0x6C, 0x63] ++ [0xFF, 0x0A, 0x41, 0])
+  t "probe sizes a JPEG XL container through its jxlc box"
+    ((Image.probe jxlBox).toOption.map (fun s => (s.pxW, s.pxH)) == some (8, 8))
+  t "plan refuses JPEG XL by name" (refusedNaming jxlSmall "JPEG XL" && refusedNaming jxlBox "JPEG XL")
+  let jp2 := bytes ([0, 0, 0, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A] ++
+    be32 22 ++ [0x69, 0x68, 0x64, 0x72] ++ be32 3 ++ be32 4 ++ [0, 3, 7, 7, 0, 0])
+  let j2k := bytes ([0xFF, 0x4F, 0xFF, 0x51, 0, 41, 0, 0] ++ be32 10 ++ be32 6 ++ be32 2 ++ be32 1)
+  t "probe sizes a JP2 container from ihdr"
+    ((Image.probe jp2).toOption.map (fun s => (s.format, s.pxW, s.pxH)) == some (.jpx, 4, 3))
+  t "probe sizes a raw J2K codestream from SIZ"
+    ((Image.probe j2k).toOption.map (fun s => (s.format, s.pxW, s.pxH)) == some (.jpx, 8, 5))
+  t "plan refuses JPEG 2000 by name under every permission"
+    (refusedNaming jp2 "JPEG 2000" && refusedNaming j2k "JPEG 2000" &&
+     (match planOf jp2 { default with jpxPermitted := true } with
+      | .error e => e.startsWith "JPEG 2000"
+      | .ok _ => false))
+  t "a foreign signature is still the old refusal"
+    (match Image.probe (bytes [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]) with
+     | .error e => hasStr e "unrecognised signature"
+     | .ok _ => false)
+  -- Red 4: the gate agrees with the planner on the shipped fixtures and a
+  -- synthetic colour type 6; the recoded flag is exactly the alpha arm's.
+  let pngData ← IO.FS.readBinFile "tests/corpus/rects.png"
+  let jpgData ← IO.FS.readBinFile "tests/corpus/rects.jpg"
+  let alphaData ← IO.FS.readBinFile "tests/corpus/rects-alpha.png"
+  let rgbaRaw := bytes ([0, 10, 20, 30, 255, 40, 50, 60, 128] ++ [1, 5, 5, 5, 7, 1, 2, 3, 9])
+  let rgbaPng := mkPng (chunk "IHDR" (ihdr 2 2 8 6 0) ++
+    chunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ chunk "IEND" [])
+  let agrees (b : ByteArray) : Bool :=
+    match Image.probe b with
+    | .ok s => (match Image.plan default s with
+      | .ok pl => pl.recoded == Image.Plan.recodes default s
+      | .error _ => false)
+    | .error _ => false
+  t "recodes agrees with the planner on every fixture"
+    (agrees pngData && agrees jpgData && agrees alphaData && agrees rgbaPng && agrees pngIccp)
+  t "only the alpha PNGs recode"
+    ((Image.probe alphaData).toOption.map (Image.Plan.recodes default) == some true &&
+     (Image.probe rgbaPng).toOption.map (Image.Plan.recodes default) == some true &&
+     (Image.probe pngData).toOption.map (Image.Plan.recodes default) == some false &&
+     (Image.probe jpgData).toOption.map (Image.Plan.recodes default) == some false)
+  t "an interlaced alpha PNG is refused, so the gate's answer never reaches a cache"
+    ((planOf (mkPng (chunk "IHDR" (ihdr 2 2 8 6 1) ++
+      chunk "IDAT" (Flate.deflateStored rgbaRaw).toList ++ chunk "IEND" []))).isOk == false)
+  -- The parameters the alpha arm honours.
+  t "a forbidden soft mask refuses the alpha PNG by name"
+    (match planOf rgbaPng { default with softMaskPermitted := false } with
+     | .error e => hasStr e "soft mask"
+     | .ok _ => false)
+  t "a depth over the declared limit refuses the pass-through"
+    (match planOf (mkPng (chunk "IHDR" (ihdr 2 2 16 0 0) ++ chunk "IDAT" idat2 ++ chunk "IEND" []))
+        { default with maxBpc := 8 } with
+     | .error e => hasStr e "16 bits"
+     | .ok _ => false)
+  t "the default limit passes 16-bit samples through"
+    ((planOf (mkPng (chunk "IHDR" (ihdr 2 2 16 0 0) ++ chunk "IDAT" idat2 ++ chunk "IEND" []))).isOk)
+  -- Red 5: the serialization is injective over the parameter product, and
+  -- two records differing only in the policy key two cache paths.
+  let params : List Image.PlanParams := Id.run do
+    let mut out : List Image.PlanParams := []
+    for j in [false, true] do
+      for sm in [false, true] do
+        for bpc in [8, 16, 4294967295] do
+          for pol in [Image.IccPolicy.dropWithDiag, .carry] do
+            out := { jpxPermitted := j, softMaskPermitted := sm, maxBpc := bpc, iccPolicy := pol } :: out
+    return out
+  t "params serialize injectively over the product (24 records)"
+    (params.length == 24 && params.all fun a => params.all fun b =>
+      (a.serialize == b.serialize) == (a == b))
+  t "params serialize fixed-width" (params.all fun p => p.serialize.size == 7)
+  t "two policies key two cache paths"
+    (default.key != ({ default with iccPolicy := .carry } : Image.PlanParams).key &&
+     default.key.length == 14)
+  -- Red 6: the codec inverts on a plan per alpha and colour constructor;
+  -- the older magics are misses.
+  let rt (pl : Image.Plan) : Bool :=
+    match Image.decodeBin (Image.encodeBin pl) with
+    | some back => back.pxW == pl.pxW && back.pxH == pl.pxH && back.dpiX == pl.dpiX &&
+        back.dpiY == pl.dpiY && back.bitDepth == pl.bitDepth && back.color == pl.color &&
+        back.filter == pl.filter && back.data == pl.data && back.alpha == pl.alpha &&
+        back.recoded == pl.recoded && back.losses == pl.losses &&
+        back.orientation == pl.orientation && back.form.isNone
+    | none => false
+  let base : Image.Plan :=
+    { pxW := 3, pxH := 2, dpiX := 150, dpiY := 96, bitDepth := 4, data := bytes [9, 8, 7],
+      orientation := 6, losses := #[.orientationDropped, .iccDropped] }
+  t "codec round-trips every alpha constructor"
+    (rt base && rt { base with alpha := .colorKey #[1, 1, 2, 2, 3, 3] } &&
+     rt { base with alpha := .soft (bytes [0, 1, 2]) 8, recoded := true })
+  t "codec round-trips every colour constructor"
+    (rt { base with color := .gray } && rt { base with color := .rgb } &&
+     rt { base with color := .indexed (bytes [0, 0, 0, 255, 255, 255]) } &&
+     rt { base with color := .iccBased 3 (bytes [1, 2, 3, 4]) } &&
+     rt { base with color := .iccBased 1 ByteArray.empty, alpha := .colorKey #[5, 5] })
+  t "codec round-trips both filters and an empty ledger"
+    (rt { base with filter := .dct, losses := #[] } && rt { base with filter := .flatePredictor })
+  let blob := Image.encodeBin base
+  t "LTIMG1 and LTIMG2 bytes are misses"
+    ((Image.decodeBin (blob.set! 5 49)).isNone && (Image.decodeBin (blob.set! 5 50)).isNone &&
+     (Image.decodeBin blob).isSome)
+  t "a foreign colour tag is a miss" ((Image.decodeBin (blob.set! 6 9)).isNone)
+  t "a foreign loss tag is a miss"
+    ((Image.decodeBin (blob.set! 66 7)).isNone)
+  -- The driver, end to end: one W0603 and one W0604 per source, the PDF still
+  -- built, and the two images embedded pass-through.
+  let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
+  t s!"leantex builds for the plan checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
+  if build.exitCode == 0 then
+    let dir ← IO.FS.createTempDir
+    IO.FS.createDirAll (dir / "fonts")
+    IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
+      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
+    IO.FS.writeBinFile (dir / "profiled.png") pngIccp
+    IO.FS.writeBinFile (dir / "oriented.jpg") jpgExif6
+    IO.FS.writeBinFile (dir / "plain.png") pngPlain
+    IO.FS.writeBinFile (dir / "photo.webp") webpX
+    IO.FS.writeFile (dir / "d.tex") "\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n\
+\\begin{document}\n\\includegraphics{profiled.png} \\includegraphics{oriented.jpg} \
+\\includegraphics{plain.png} \\includegraphics{oriented.jpg} \\includegraphics{photo.webp}\n\
+\\end{document}\n"
+    let r ← IO.Process.output {
+      cmd := ".lake/build/bin/leantex"
+      args := #[(dir / "d.tex").toString, "-o", (dir / "out").toString ++ "/"] }
+    let log := r.stdout ++ r.stderr
+    let count (needle : String) : Nat := (log.splitOn needle).length - 1
+    t s!"driver: a profiled PNG is one W0603, an oriented JPEG one W0604, per source: {log}"
+      (r.exitCode == 0 && count "warning[W0603]" == 1 && count "warning[W0604]" == 1 &&
+       hasStr log "profiled.png" && hasStr log "oriented.jpg" && hasStr log "tag 6")
+    t "driver: the WebP is refused by name as W0602"
+      (count "warning[W0602]" == 1 && hasStr log "WebP images cannot be embedded")
+    let pdf ← IO.FS.readBinFile (dir / "out" / "d.pdf")
+    let text := pdfText pdf
+    t "driver: the profiled PNG and the oriented JPEG embed pass-through"
+      (containsBytes text (bytes idat2) && containsBytes text jpgExif6 &&
+       bytesContain text "/DeviceRGB")

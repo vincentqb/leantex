@@ -9,21 +9,27 @@ open LeanTex.Core.Dim
 
 /-! # External images
 
-Pure decoders for the two formats a first slice needs: PNG and JPEG. Reading
-the file is the driver's effect; everything here is a total function over a
+Two pure halves. `probe` reads a file's header into a `Source` — every fact
+the embedding decision can read cheaply: dimensions, density, sample
+layout, the palette, a colour key, an embedded profile, an orientation tag,
+and the compressed payload as a slice of the input, never a decoded
+surface. `plan` is a pure match from a `Source` and the `PlanParams` a
+declaration projects onto images to the `Plan` the PDF writer embeds: the
+colour space, filter, and alpha as three sums, the stream bytes, and a
+`losses` ledger naming every `Source` fact the plan does not carry
+(`plan_losses_accounts` — the planner never drops a fact wordlessly).
+Reading the file is the driver's effect; everything here is total over a
 `ByteArray` — a truncated or foreign file yields an error value, never a
-crash and never a wrong number. The decoders read only what placement and
-embedding need: the pixel dimensions, the declared physical density, and
-enough of the header to hand the compressed data to the PDF writer
-(`/FlateDecode` with PNG prediction, `/DCTDecode`). Opaque and indexed PNGs
-pass their IDAT through untouched; a PNG with an alpha channel inflates
-once and deinterleaves its filtered rows into a colour stream and a
-soft-mask stream — never its pixels — since a PDF image holds exactly its
-colour space's samples and carries opacity as a separate `/SMask` image.
-A `tRNS` chunk on the pass-through types becomes the exact colour-key
-`/Mask`, or a refusal where no single range can carry it.
-Interlaced and 16-bit-alpha PNGs are refused with a reason the driver can
-show. -/
+crash and never a wrong number. Opaque and indexed PNGs pass their IDAT
+through untouched (`plan_passthrough_exact`); a PNG with an alpha channel
+inflates once and deinterleaves its filtered rows into a colour stream and
+a soft-mask stream — never its pixels — since a PDF image holds exactly
+its colour space's samples and carries opacity as a separate `/SMask`
+image. A `tRNS` chunk on the pass-through types becomes the exact
+colour-key `/Mask`, or a refusal where no single range can carry it.
+Interlaced and 16-bit-alpha PNGs, CMYK JPEGs, and the formats no PDF
+filter decodes (WebP, AVIF, JPEG XL) are refused with a reason that names
+them. `decode` is `plan PlanParams.default ∘ probe`. -/
 
 /-- Both specs can leave the physical size undeclared — PNG's pHYs is
 optional and "the physical size of each pixel is unknown" without it
@@ -32,14 +38,35 @@ optional and "the physical size of each pixel is unknown" without it
 `\pdfimageresolution` default, so one pixel is one point. -/
 def defaultDpi : Nat := 72
 
+/-- What the signature says a file is. The last four are recognised so the
+refusal can name them — no PDF filter decodes WebP, AVIF, or JPEG XL (ISO
+32000-2 Table 6), and a JPEG 2000 codestream passes through only under a
+permitting declaration, a later slice's arm. -/
 inductive Format where
   | png
   | jpeg
   /-- Page 1 of a PDF, embedded as a form XObject: vector stays vector. -/
   | pdf
+  | webp
+  | avif
+  | jxl
+  /-- JPEG 2000: a JP2 container or a raw J2K codestream. -/
+  | jpx
   deriving Repr, BEq, Inhabited
 
-/-- The colour interpretation the PDF image dictionary needs. -/
+/-- The name a refusal shows the reader: the one constant
+`plan_refuses_named` is stated over. -/
+def Format.name : Format → String
+  | .png => "PNG"
+  | .jpeg => "JPEG"
+  | .pdf => "PDF"
+  | .webp => "WebP"
+  | .avif => "AVIF"
+  | .jxl => "JPEG XL"
+  | .jpx => "JPEG 2000"
+
+/-- The colour interpretation a PNG declares: what `colorKeyRanges` judges
+a `tRNS` chunk against. -/
 inductive Space where
   | gray
   | rgb
@@ -47,65 +74,113 @@ inductive Space where
   | indexed
   deriving Repr, BEq, Inhabited
 
-/-- What placement and embedding read from a decoded file. `data` is the
-stream the PDF writer embeds as-is: a PNG's concatenated IDAT zlib stream
-(legal as `/FlateDecode` with the PNG predictor declared, ISO 32000-2
-§7.4.4.4), a JPEG's whole file (`/DCTDecode`). -/
-structure Info where
-  format : Format
-  pxW : Nat
-  pxH : Nat
-  dpiX : Nat := defaultDpi
-  dpiY : Nat := defaultDpi
-  bitDepth : Nat := 8
-  space : Space := .rgb
-  /-- PNG colour type 3: the PLTE payload, RGB triples. -/
-  palette : ByteArray := ByteArray.empty
-  data : ByteArray := ByteArray.empty
-  /-- PNG only: `data` is PNG-predicted zlib — a pass-through IDAT
-  stream, or the colour plane deinterleaved from an alpha PNG's filtered
-  rows and deflated again — and the PDF dictionary must declare the
-  predictor. -/
-  predictor : Bool := false
-  /-- An alpha channel, as its own zlib-compressed 8-bit gray plane under
-  the source rows' own filters: the PDF soft mask, Predictor 15 declared.
-  Empty when the image is opaque. -/
-  smask : ByteArray := ByteArray.empty
-  /-- Colour-key transparency (ISO 32000-2 §8.9.6.4): the `/Mask` ranges,
-  two per component in sample units at `bitDepth`, a pixel inside every
-  range not painted — a PNG `tRNS` chunk mapped exactly (`colorKeyRanges`).
-  Empty when no sample is keyed. -/
-  colorKey : Array Nat := #[]
-  /-- A PDF page read as a form XObject (`format == .pdf`): the box, the
-  content, and the copied resource graph. The `wf` witness rides with it —
-  `PdfRead.resources_closed` — so the writer never meets a dangling
-  reference. -/
-  form : Option { f : PdfRead.Form // f.wf } := none
-  deriving Inhabited
-
 /-- Samples per pixel, for `/DecodeParms /Colors`. -/
 def Space.components : Space → Nat
   | .gray => 1
   | .rgb => 3
   | .indexed => 1
 
+/-- The `/ColorSpace` a plan declares (ISO 32000-2 §8.6). `iccBased` is
+produced only under `IccPolicy.carry` and carries the profile as zlib
+bytes for a `/FlateDecode` stream; its alternate is the device space of
+`n` components. The writer's `/ICCBased` emission is a later slice's —
+until then the arm writes the alternate, and the default policy never
+plans it (`plan_losses_accounts`). -/
+inductive ColorSpaceDecl where
+  | gray
+  | rgb
+  /-- `[/Indexed /DeviceRGB hival <palette>]`: the PLTE payload, RGB triples. -/
+  | indexed (palette : ByteArray)
+  | iccBased (n : Nat) (profile : ByteArray)
+  deriving BEq, Inhabited
+
+/-- Samples per pixel, for `/DecodeParms /Colors`. -/
+def ColorSpaceDecl.components : ColorSpaceDecl → Nat
+  | .gray => 1
+  | .rgb => 3
+  | .indexed _ => 1
+  | .iccBased n _ => n
+
+/-- The `/Filter` a plan declares. `flatePredictor` is a PNG-predicted zlib
+stream — a pass-through IDAT, or the colour plane deinterleaved from an
+alpha PNG's filtered rows and deflated again — legal as `/FlateDecode`
+with Predictor 15 declared (ISO 32000-2 §7.4.4.4); `dct` is a whole JPEG
+file. -/
+inductive FilterDecl where
+  | flatePredictor
+  | dct
+  deriving Repr, BEq, Inhabited
+
+/-- How a plan carries transparency, or that it has none. -/
+inductive Alpha where
+  | opaque
+  /-- Colour-key masking (ISO 32000-2 §8.9.6.4): the `/Mask` ranges, two
+  per component in sample units at the plan's bit depth, a pixel inside
+  every range not painted — a PNG `tRNS` chunk mapped exactly
+  (`colorKeyRanges`). -/
+  | colorKey (ranges : Array Nat)
+  /-- An alpha channel as its own zlib-compressed gray plane under the
+  source rows' own filters: the PDF soft mask, Predictor 15 declared, at
+  `bpc` bits per sample. -/
+  | soft (plane : ByteArray) (bpc : Nat)
+  deriving BEq, Inhabited
+
+/-- A `Source` fact the plan does not carry: the ledger the driver turns
+into diagnostics, one per entry. -/
+inductive PlanLoss where
+  /-- An embedded colour profile (PNG `iCCP`, JPEG `APP2`) dropped; the
+  page reads the samples as device colour. -/
+  | iccDropped
+  /-- An Exif orientation other than 1 dropped; the page shows the stored
+  orientation. -/
+  | orientationDropped
+  deriving Repr, DecidableEq, Inhabited
+
+/-- What the PDF writer embeds and placement reads. `data` is the stream
+the writer embeds as-is: a PNG's concatenated IDAT zlib stream, a JPEG's
+whole file, or the recoded colour plane of an alpha PNG. -/
+structure Plan where
+  pxW : Nat
+  pxH : Nat
+  dpiX : Nat := defaultDpi
+  dpiY : Nat := defaultDpi
+  bitDepth : Nat := 8
+  color : ColorSpaceDecl := .rgb
+  filter : FilterDecl := .flatePredictor
+  data : ByteArray := ByteArray.empty
+  alpha : Alpha := .opaque
+  /-- Did the plan do real work — inflate, split, recompress? The driver's
+  cache gate, declared by the planner (`recodes_iff`), never peeked from
+  the bytes. -/
+  recoded : Bool := false
+  losses : Array PlanLoss := #[]
+  /-- The Exif orientation the source declared, 1–8; carried for the
+  rotation arm a later slice adds, dropped meanwhile (`.orientationDropped`). -/
+  orientation : Nat := 1
+  /-- A PDF page read as a form XObject: the box, the content, and the
+  copied resource graph. The `wf` witness rides with it —
+  `PdfRead.resources_closed` — so the writer never meets a dangling
+  reference. -/
+  form : Option { f : PdfRead.Form // f.wf } := none
+  deriving Inhabited
+
 /-- Intrinsic physical width: pixels over density, in sp — and for a PDF
 page, its box, exact to the sp (the `form_bbox_exact` half of the story:
 the intrinsic size *is* the page box). -/
-def Info.width (i : Info) : Sp :=
+def Plan.width (i : Plan) : Sp :=
   match i.form with
   | some f => f.val.w
   | none => (i.pxW : Int) * 72 * spPerPt / max i.dpiX 1
 
-def Info.height (i : Info) : Sp :=
+def Plan.height (i : Plan) : Sp :=
   match i.form with
   | some f => f.val.h
   | none => (i.pxH : Int) * 72 * spPerPt / max i.dpiY 1
 
 /-- At the default density one pixel is one point: the convention is not
-just a comment, it is what `Info.width` computes. -/
+just a comment, it is what `Plan.width` computes. -/
 theorem width_at_default_dpi (px : Nat) :
-    Info.width { format := .png, pxW := px, pxH := px } = Dim.pt px := by
+    Plan.width { pxW := px, pxH := px } = Dim.pt px := by
   show ((px : Int) * 72 * 65536) / (((72 : Nat) : Int)) = (px : Int) * 65536
   omega
 
@@ -120,6 +195,22 @@ private def u16be? (b : ByteArray) (i : Nat) : Option Nat := do
 
 private def u32be? (b : ByteArray) (i : Nat) : Option Nat := do
   return (← u16be? b i) * 65536 + (← u16be? b (i + 2))
+
+private def u16le? (b : ByteArray) (i : Nat) : Option Nat := do
+  return (← u8? b i) + (← u8? b (i + 1)) * 256
+
+private def u24le? (b : ByteArray) (i : Nat) : Option Nat := do
+  return (← u16le? b i) + (← u8? b (i + 2)) * 65536
+
+private def u32le? (b : ByteArray) (i : Nat) : Option Nat := do
+  return (← u16le? b i) + (← u16le? b (i + 2)) * 65536
+
+/-- A 16-bit read in the byte order a TIFF header declares (`le`). -/
+private def u16? (le : Bool) (b : ByteArray) (i : Nat) : Option Nat :=
+  if le then u16le? b i else u16be? b i
+
+private def u32? (le : Bool) (b : ByteArray) (i : Nat) : Option Nat :=
+  if le then u32le? b i else u32be? b i
 
 private def sliceEq (b : ByteArray) (i : Nat) (pat : List Nat) : Bool :=
   pat.zipIdx.all fun (v, k) => u8? b (i + k) == some v
@@ -837,7 +928,76 @@ theorem colorKeyRanges_partial_accounts (bitDepth : Nat) (trns palette : ByteArr
     · exact hz hent
     · exact ho hent
 
-def decodePng (b : ByteArray) : Except String Info := do
+/-! ## The source: what a header says
+
+`Source` is every fact the embedding decision can read from a file's
+header, format by format, plus the compressed payload as a slice of the
+input. Nothing here is a decision: a `Source` may describe an interlaced
+PNG, a CMYK JPEG, or a WebP file — `plan` is where each is embedded or
+refused by name. `probe` is the one loop over the bytes; its totality is
+the fuzz oracle's claim (`scripts/img-fuzz.lean`), not a theorem, and the
+theorems live on `plan`, the pure match after it. -/
+
+structure Source where
+  format : Format
+  pxW : Nat
+  pxH : Nat
+  dpiX : Nat := defaultDpi
+  dpiY : Nat := defaultDpi
+  /-- PNG bit depth; a JPEG's sample precision. -/
+  bitDepth : Nat := 8
+  /-- PNG colour type (0, 2, 3, 4, 6); a JPEG's component count (1, 3, 4). -/
+  colorType : Nat := 2
+  /-- PNG Adam7 interlacing declared. -/
+  interlace : Bool := false
+  /-- PNG PLTE payload, RGB triples. -/
+  palette : ByteArray := ByteArray.empty
+  /-- PNG tRNS payload, verbatim; `none` when the chunk is absent (an empty
+  chunk is a present, all-opaque one). -/
+  trns : Option ByteArray := none
+  /-- An embedded colour profile: a PNG iCCP's compressed bytes (zlib,
+  `iccIsZlib`), or a JPEG's APP2 `ICC_PROFILE` segments concatenated in
+  sequence order (raw). Empty when none. -/
+  icc : ByteArray := ByteArray.empty
+  iccIsZlib : Bool := false
+  /-- PNG sRGB chunk: the rendering intent. -/
+  srgbIntent : Option Nat := none
+  /-- PNG gAMA: gamma × 100000. -/
+  gamma : Option Nat := none
+  /-- PNG cHRM: the eight chromaticity values × 100000. -/
+  chrm : Option (Array Nat) := none
+  /-- Exif orientation (tag 0x0112), 1–8; 1 when undeclared. -/
+  orientation : Nat := 1
+  /-- JPEG APP14 Adobe segment: the colour transform flag. -/
+  adobeTransform : Option Nat := none
+  /-- The stream a pass-through plan embeds: a PNG's concatenated IDAT, a
+  JPEG's whole file. Empty for a PDF page. -/
+  payload : ByteArray := ByteArray.empty
+  /-- A PDF's page 1 as a form XObject, with its closure witness. -/
+  form : Option { f : PdfRead.Form // f.wf } := none
+  deriving Inhabited
+
+/-- The PNG colour type table (ISO/IEC 15948 §11.2.2): the sample
+interpretation and, for the alpha types, the channel count that must
+really decode. The one place the type numbers are spelled — `plan` and
+`Plan.recodes` both read it, which is what ties the cache gate to the
+planner (`recodes_iff`). -/
+def pngSpace : Nat → Option (Space × Option Nat)
+  | 0 => some (.gray, none)
+  | 2 => some (.rgb, none)
+  | 3 => some (.indexed, none)
+  | 4 => some (.gray, some 2)
+  | 6 => some (.rgb, some 4)
+  | _ => none
+
+/-- A PNG header into a `Source`: signature, IHDR first, then chunks of
+`length type data crc` — pHYs, PLTE, tRNS, iCCP, sRGB, gAMA, cHRM read,
+IDAT concatenated, IEND ends the walk. Structural corruption is refused
+here (a lying length, a chunk out of order, a colour type the spec has
+no row for); what the spec allows but the engine does not embed
+(interlace, a 16-bit alpha) is a fact on the `Source` for `plan` to
+refuse by name. -/
+def probePng (b : ByteArray) : Except String Source := do
   unless sliceEq b 0 pngSig do
     throw "not a PNG file (bad signature)"
   -- IHDR must be first (ISO/IEC 15948 §5.6).
@@ -850,23 +1010,14 @@ def decodePng (b : ByteArray) : Except String Info := do
   let some interlace := u8? b 28 | throw "truncated PNG: no IHDR interlace flag"
   if pxW == 0 || pxH == 0 then
     throw "corrupt PNG: zero width or height"
-  if interlace != 0 then
-    throw "interlaced (Adam7) PNG is not supported; re-export without interlacing"
-  -- `alpha` is the channel count of a type that must really decode.
-  let (space, alpha) ← match colorType with
-    | 0 => pure (Space.gray, none)
-    | 2 => pure (Space.rgb, none)
-    | 3 => pure (Space.indexed, none)
-    | 4 => pure (Space.gray, some 2)
-    | 6 => pure (Space.rgb, some 4)
-    | t => throw s!"corrupt PNG: colour type {t}"
+  let some (space, alpha) := pngSpace colorType
+    | throw s!"corrupt PNG: colour type {colorType}"
   unless [1, 2, 4, 8, 16].contains bitDepth do
     throw s!"corrupt PNG: bit depth {bitDepth}"
   if space == .rgb && alpha.isNone && bitDepth < 8 then
     throw s!"corrupt PNG: truecolour at bit depth {bitDepth}"
-  if alpha.isSome && bitDepth != 8 then
-    throw s!"PNG with a {bitDepth}-bit alpha channel is not supported; \
-re-export at 8 bits or flatten it"
+  if alpha.isSome && bitDepth < 8 then
+    throw s!"corrupt PNG: an alpha channel at bit depth {bitDepth}"
   -- Walk the chunks. `i` advances by at least 12 per step, so the loop over
   -- `b.size` iterations covers every well-formed file; a lying length that
   -- points past the end is caught by the bounds-checked reads.
@@ -874,6 +1025,10 @@ re-export at 8 bits or flatten it"
   let mut dpiY := defaultDpi
   let mut palette := ByteArray.empty
   let mut trns : Option ByteArray := none
+  let mut icc := ByteArray.empty
+  let mut srgbIntent : Option Nat := none
+  let mut gamma : Option Nat := none
+  let mut chrm : Option (Array Nat) := none
   let mut idat := ByteArray.empty
   let mut sawEnd := false
   let mut i := 8
@@ -909,6 +1064,31 @@ re-export at 8 bits or flatten it"
       if space == .indexed && palette.isEmpty then
         throw "corrupt PNG: tRNS before PLTE"
       trns := some (b.extract (i + 8) (i + 8 + len))
+    else if t0 == 105 && sliceEq b (i + 4) [105, 67, 67, 80] then  -- iCCP
+      -- Profile name (1–79 bytes, null-terminated), compression method
+      -- (0 = zlib, the only one defined), then the compressed profile
+      -- (ISO/IEC 15948 §11.3.3.3).
+      if !icc.isEmpty then
+        throw "corrupt PNG: more than one iCCP chunk"
+      let mut nameEnd := i + 8
+      for _ in [0:80] do
+        if u8? b nameEnd == some 0 || nameEnd ≥ i + 8 + len then break
+        nameEnd := nameEnd + 1
+      if u8? b nameEnd != some 0 || nameEnd == i + 8 then
+        throw "corrupt PNG: iCCP chunk without a profile name"
+      if u8? b (nameEnd + 1) != some 0 then
+        throw "corrupt PNG: iCCP chunk with an unknown compression method"
+      icc := b.extract (nameEnd + 2) (i + 8 + len)
+    else if t0 == 115 && sliceEq b (i + 4) [115, 82, 71, 66] then  -- sRGB
+      if len == 1 then srgbIntent := u8? b (i + 8)
+    else if t0 == 103 && sliceEq b (i + 4) [103, 65, 77, 65] then  -- gAMA
+      if len == 4 then gamma := u32be? b (i + 8)
+    else if t0 == 99 && sliceEq b (i + 4) [99, 72, 82, 77] then  -- cHRM
+      if len == 32 then
+        let mut vals : Array Nat := #[]
+        for k in [0:8] do
+          if let some v := u32be? b (i + 8 + 4 * k) then vals := vals.push v
+        if vals.size == 8 then chrm := some vals
     else if t0 == 73 && sliceEq b (i + 4) [73, 68, 65, 84] then  -- IDAT
       idat := idat ++ b.extract (i + 8) (i + 8 + len)
     else if t0 == 73 && sliceEq b (i + 4) [73, 69, 78, 68] then  -- IEND
@@ -921,61 +1101,59 @@ re-export at 8 bits or flatten it"
     throw "corrupt PNG: no image data (IDAT)"
   if space == .indexed && (palette.isEmpty || palette.size % 3 != 0) then
     throw "corrupt PNG: indexed colour without a usable PLTE"
-  match alpha with
-  | none =>
-    let colorKey ← match trns with
-      | none => pure #[]
-      | some tr => colorKeyRanges space bitDepth tr palette
-    -- A 16-bit colour key is exact by the spec (`colorKeyRanges_rgb_exact`)
-    -- and ignored by two of the four target readers, measured: Poppler
-    -- and PDFium reduce the samples to 8 bits and compare the key
-    -- unscaled, so the keyed pixels paint. Ghostscript and pdf.js honour
-    -- it. A mask half the readers drop is the silent loss moved into the
-    -- reader, so it is refused until the reader matrix says otherwise or
-    -- the soft-mask arm carries it as an 8-bit `/SMask`.
-    if bitDepth == 16 && !colorKey.isEmpty then
-      throw "PNG with a 16-bit colour key (tRNS) is not shown transparent by common PDF \
-readers; re-export at 8 bits or with a full alpha channel"
-    return { format := .png, pxW, pxH, dpiX, dpiY, bitDepth, space, palette,
-             data := idat, predictor := true, colorKey }
-  | some channels =>
-    -- The samples cannot pass through as one stream: inflate against the
-    -- size the geometry declares, then deinterleave the filtered residuals
-    -- into the colour plane and the alpha plane — each row's own filter
-    -- kept, no pixel ever reconstructed (`splitPredictedAlpha_exact`) —
-    -- and deflate each, so the embedded object costs on the order of what
-    -- the source cost, never what the raw samples weigh.
-    let rowBytes := pxW * channels
-    let raw ← Flate.inflate idat (pxH * (1 + rowBytes))
-    if raw.size != pxH * (1 + rowBytes) then
-      throw "corrupt PNG: sample data does not match the declared size"
-    let (color, alphaPlane) := splitPredictedAlpha raw pxH pxW channels
-    return { format := .png, pxW, pxH, dpiX, dpiY, bitDepth := 8, space,
-             data := Flate.deflate color
-             predictor := true
-             smask := Flate.deflate alphaPlane }
+  return { format := .png, pxW, pxH, dpiX, dpiY, bitDepth, colorType,
+           interlace := interlace != 0, palette, trns, icc, iccIsZlib := true,
+           srgbIntent, gamma, chrm, payload := idat }
 
 /-! ## JPEG
 
 A marker stream: `FF xx`, most segments carrying a big-endian length that
 includes its own two bytes. `SOFn` carries the dimensions (ISO/IEC 10918-1
-§B.2.2), the JFIF `APP0` the density. The entropy-coded data after `SOS`
-never contains a bare `FF xx` marker except via `FF 00` stuffing and the
-restart markers, so the header walk stops there — the dimensions must have
-appeared first for the file to be an image at all. -/
+§B.2.2), the JFIF `APP0` the density, an `APP1` Exif block the orientation
+(tag 0x0112 in IFD0, CIPA DC-008), `APP2 ICC_PROFILE` segments the colour
+profile in numbered pieces (ICC.1 Annex B.4), `APP14 Adobe` the colour
+transform flag. The entropy-coded data after `SOS` never contains a bare
+`FF xx` marker except via `FF 00` stuffing and the restart markers, so the
+header walk stops there — the dimensions must have appeared first for the
+file to be an image at all. -/
 
 /-- Is this marker byte an SOFn frame header? DHT (C4), JPG (C8) and DAC
 (CC) share the Cx block and are not. -/
 private def isSof (m : Nat) : Bool :=
   0xC0 ≤ m && m ≤ 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC
 
-def decodeJpeg (b : ByteArray) : Except String Info := do
+/-- The Exif orientation an APP1 segment at `t` (the TIFF header) states:
+byte order, the 42, IFD0's offset, then its entries — tag, type, count,
+value — read for tag 0x0112 as a SHORT. Only a value in 1–8 counts;
+anything else, or no tag, is the default orientation. Every read stays
+inside `end_`, the segment's end. -/
+private def exifOrientation (b : ByteArray) (t end_ : Nat) : Nat := Id.run do
+  let le := u8? b t == some 0x49 && u8? b (t + 1) == some 0x49
+  let be := u8? b t == some 0x4D && u8? b (t + 1) == some 0x4D
+  unless le || be do return 1
+  unless u16? le b (t + 2) == some 42 do return 1
+  let some ifd := u32? le b (t + 4) | return 1
+  let some count := u16? le b (t + ifd) | return 1
+  for k in [0:count] do
+    let e := t + ifd + 2 + 12 * k
+    if e + 12 > end_ then return 1
+    if u16? le b e == some 0x0112 && u16? le b (e + 2) == some 3 then
+      let some v := u16? le b (e + 8) | return 1
+      return if 1 ≤ v && v ≤ 8 then v else 1
+  return 1
+
+def probeJpeg (b : ByteArray) : Except String Source := do
   unless sliceEq b 0 [0xFF, 0xD8] do
     throw "not a JPEG file (no SOI marker)"
   let mut i := 2
   let mut dpiX := defaultDpi
   let mut dpiY := defaultDpi
   let mut dims : Option (Nat × Nat × Nat × Nat) := none
+  let mut orientation := 1
+  let mut adobeTransform : Option Nat := none
+  -- ICC pieces by sequence number (1-based), the count from the first
+  -- piece seen: concatenated in sequence order whatever the file order.
+  let mut iccPieces : Array ByteArray := #[]
   for _ in [0:b.size] do
     -- Fill bytes: any number of FFs may precede a marker.
     unless u8? b i == some 0xFF do
@@ -1012,26 +1190,167 @@ def decodeJpeg (b : ByteArray) : Except String Info := do
         else if unit == 2 then  -- dots per centimetre
           dpiX := max 1 ((dx * 254 + 50) / 100)
           dpiY := max 1 ((dy * 254 + 50) / 100)
+    else if m == 0xE1 && sliceEq b (j + 3) [0x45, 0x78, 0x69, 0x66, 0, 0] then
+      -- APP1 Exif: "Exif\0\0" then the TIFF header.
+      orientation := exifOrientation b (j + 9) (j + 1 + len)
+    else if m == 0xE2 && sliceEq b (j + 3)
+        [0x49, 0x43, 0x43, 0x5F, 0x50, 0x52, 0x4F, 0x46, 0x49, 0x4C, 0x45, 0] then
+      -- APP2 "ICC_PROFILE\0" seq(1) count(1) data.
+      let some seq := u8? b (j + 15) | throw "truncated JPEG: APP2 too short"
+      let some count := u8? b (j + 16) | throw "truncated JPEG: APP2 too short"
+      if iccPieces.isEmpty then
+        iccPieces := Array.replicate count ByteArray.empty
+      if 1 ≤ seq then
+        iccPieces := iccPieces.setIfInBounds (seq - 1) (b.extract (j + 17) (j + 1 + len))
+    else if m == 0xEE && sliceEq b (j + 3) [0x41, 0x64, 0x6F, 0x62, 0x65] && len ≥ 12 then
+      -- APP14 "Adobe": version(2) flags0(2) flags1(2) transform(1).
+      adobeTransform := u8? b (j + 14)
     i := j + 1 + len
   let some (pxW, pxH, precision, ncomp) := dims
     | throw "corrupt JPEG: no frame header (SOFn) before the scan"
   if pxW == 0 || pxH == 0 then
     throw "corrupt JPEG: zero width or height"
-  unless precision == 8 do
-    throw s!"JPEG sample precision {precision} is not supported (8 expected)"
-  let space ← match ncomp with
-    | 1 => pure Space.gray
-    | 3 => pure Space.rgb
-    | 4 => throw "four-component (CMYK) JPEG is not supported; re-export as RGB"
-    | n => throw s!"corrupt JPEG: {n} components"
-  return { format := .jpeg, pxW, pxH, dpiX, dpiY, bitDepth := 8, space,
-           data := b }
+  unless ncomp == 1 || ncomp == 3 || ncomp == 4 do
+    throw s!"corrupt JPEG: {ncomp} components"
+  let mut icc := ByteArray.empty
+  for piece in iccPieces do
+    icc := icc ++ piece
+  return { format := .jpeg, pxW, pxH, dpiX, dpiY, bitDepth := precision, colorType := ncomp,
+           icc, orientation, adobeTransform, payload := b }
 
-/-- Decode any embeddable asset, told apart by signature: PNG, JPEG, or a
-PDF whose page 1 embeds as a form XObject. -/
-def decode (b : ByteArray) : Except String Info :=
-  if sliceEq b 0 pngSig then decodePng b
-  else if sliceEq b 0 [0xFF, 0xD8] then decodeJpeg b
+/-! ## The formats no PDF filter decodes
+
+Recognised by signature, their dimensions read from the container so a
+later HTML-only path can size an `<img>`, and refused for the PDF by name
+(`plan_refuses_named`). Nothing here decodes a pixel. -/
+
+/-- WebP (RIFF `WEBP`): a `VP8 ` key frame's 14-bit dimensions, a `VP8L`
+header's packed 14-bit dimensions plus one, or a `VP8X` canvas's 24-bit
+dimensions plus one. -/
+def probeWebp (b : ByteArray) : Except String Source := do
+  unless sliceEq b 0 [0x52, 0x49, 0x46, 0x46] && sliceEq b 8 [0x57, 0x45, 0x42, 0x50] do
+    throw "not a WebP file (no RIFF WEBP header)"
+  let dims : Option (Nat × Nat) :=
+    if sliceEq b 12 [0x56, 0x50, 0x38, 0x20] then  -- "VP8 "
+      if sliceEq b 23 [0x9D, 0x01, 0x2A] then do
+        return ((← u16le? b 26) % 16384, (← u16le? b 28) % 16384)
+      else none
+    else if sliceEq b 12 [0x56, 0x50, 0x38, 0x4C] then  -- "VP8L"
+      if u8? b 20 == some 0x2F then do
+        let bits ← u32le? b 21
+        return (bits % 16384 + 1, bits / 16384 % 16384 + 1)
+      else none
+    else if sliceEq b 12 [0x56, 0x50, 0x38, 0x58] then do  -- "VP8X"
+      return ((← u24le? b 24) + 1, (← u24le? b 27) + 1)
+    else none
+  let some (pxW, pxH) := dims | throw "truncated WebP file: no readable image header"
+  return { format := .webp, pxW, pxH }
+
+/-- Find a four-byte box or chunk tag in the first `limit` bytes. -/
+private def findTag (b : ByteArray) (tag : List Nat) (limit : Nat) : Option Nat := Id.run do
+  for i in [0:min b.size limit] do
+    if sliceEq b i tag then return some i
+  return none
+
+/-- The bytes a header scan reads before giving up: the boxes that carry
+dimensions sit inside the first few kilobytes of every container; the
+bound keeps the probe a header walk on a large file. -/
+private def headerScanLimit : Nat := 65536
+
+/-- AVIF (ISOBMFF, `ftyp` brand `avif`/`avis`): dimensions from the `ispe`
+item property — version/flags, then width and height as u32. -/
+def probeAvif (b : ByteArray) : Except String Source := do
+  unless sliceEq b 4 [0x66, 0x74, 0x79, 0x70] &&
+      (sliceEq b 8 [0x61, 0x76, 0x69, 0x66] || sliceEq b 8 [0x61, 0x76, 0x69, 0x73]) do
+    throw "not an AVIF file (no ftyp avif brand)"
+  let some i := findTag b [0x69, 0x73, 0x70, 0x65] headerScanLimit
+    | throw "truncated AVIF file: no image spatial extents (ispe)"
+  let some pxW := u32be? b (i + 8) | throw "truncated AVIF file: ispe too short"
+  let some pxH := u32be? b (i + 12) | throw "truncated AVIF file: ispe too short"
+  return { format := .avif, pxW, pxH }
+
+/-- Bit `k` of a little-endian bit stream starting at byte `off`
+(ISO/IEC 18181-1 reads its headers LSB first). -/
+private def bitAt (b : ByteArray) (off k : Nat) : Option Nat := do
+  return (← u8? b (off + k / 8)) / 2 ^ (k % 8) % 2
+
+/-- `n` bits from bit position `k`, LSB first. -/
+private def bitsAt (b : ByteArray) (off k n : Nat) : Option Nat := Id.run do
+  let mut v := 0
+  for j in [0:n] do
+    let some bit := bitAt b off (k + j) | return none
+    v := v + bit * 2 ^ j
+  return some v
+
+/-- A JPEG XL `SizeHeader` at byte `off`: `small` picks 5-bit multiples of
+eight, else a `U32` with selectors for 9, 13, 18, or 30 bits (each plus
+one); a 3-bit aspect ratio replaces the width when non-zero (the table is
+the codec's `FixedAspectRatios`). Returns width and height. -/
+private def jxlSize (b : ByteArray) (off : Nat) : Option (Nat × Nat) := do
+  let small ← bitAt b off 0
+  -- (value, bits consumed) for one U32.
+  let u32At (k : Nat) : Option (Nat × Nat) := do
+    let sel ← bitsAt b off k 2
+    let n := match sel with | 0 => 9 | 1 => 13 | 2 => 18 | _ => 30
+    let v ← bitsAt b off (k + 2) n
+    return (v + 1, 2 + n)
+  let (h, k) ← (if small == 1 then (bitsAt b off 1 5).map fun y => ((y + 1) * 8, 6)
+    else (u32At 1).map fun (v, n) => (v, 1 + n) : Option (Nat × Nat))
+  let ratio ← bitsAt b off k 3
+  let w ← (match ratio with
+    | 0 => if small == 1 then (bitsAt b off (k + 3) 5).map fun x => (x + 1) * 8
+           else (u32At (k + 3)).map (·.1)
+    | 1 => some h
+    | 2 => some (h * 12 / 10)
+    | 3 => some (h * 4 / 3)
+    | 4 => some (h * 3 / 2)
+    | 5 => some (h * 16 / 9)
+    | 6 => some (h * 5 / 4)
+    | _ => some (h * 2) : Option Nat)
+  return (w, h)
+
+/-- JPEG XL: a bare codestream (`FF 0A`) or the ISOBMFF container (the
+`JXL ` signature box), whose codestream sits in a `jxlc` box or begins in
+the first `jxlp` box after its 4-byte index. -/
+def probeJxl (b : ByteArray) : Except String Source := do
+  let codestream : Option Nat :=
+    if sliceEq b 0 [0xFF, 0x0A] then some 0
+    else if sliceEq b 0 [0, 0, 0, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A] then
+      match findTag b [0x6A, 0x78, 0x6C, 0x63] headerScanLimit with  -- jxlc
+      | some i => some (i + 4)
+      | none => (findTag b [0x6A, 0x78, 0x6C, 0x70] headerScanLimit).map (· + 8)  -- jxlp
+    else none
+  let some cs := codestream | throw "not a JPEG XL file (no signature)"
+  unless sliceEq b cs [0xFF, 0x0A] do
+    throw "truncated JPEG XL file: no codestream header"
+  let some (pxW, pxH) := jxlSize b (cs + 2) | throw "truncated JPEG XL file: size header cut"
+  return { format := .jxl, pxW, pxH }
+
+/-- JPEG 2000: a JP2 container (signature box, dimensions from `ihdr` —
+height then width) or a raw J2K codestream (`SOC SIZ`, dimensions
+`Xsiz − XOsiz` by `Ysiz − YOsiz`, ISO/IEC 15444-1 Annex A.5.1). -/
+def probeJpx (b : ByteArray) : Except String Source := do
+  if sliceEq b 0 [0, 0, 0, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A] then
+    let some i := findTag b [0x69, 0x68, 0x64, 0x72] headerScanLimit
+      | throw "truncated JPEG 2000 file: no image header box (ihdr)"
+    let some pxH := u32be? b (i + 4) | throw "truncated JPEG 2000 file: ihdr too short"
+    let some pxW := u32be? b (i + 8) | throw "truncated JPEG 2000 file: ihdr too short"
+    return { format := .jpx, pxW, pxH }
+  else if sliceEq b 0 [0xFF, 0x4F, 0xFF, 0x51] then
+    let some xsiz := u32be? b 8 | throw "truncated JPEG 2000 codestream: SIZ too short"
+    let some ysiz := u32be? b 12 | throw "truncated JPEG 2000 codestream: SIZ too short"
+    let some xo := u32be? b 16 | throw "truncated JPEG 2000 codestream: SIZ too short"
+    let some yo := u32be? b 20 | throw "truncated JPEG 2000 codestream: SIZ too short"
+    return { format := .jpx, pxW := xsiz - xo, pxH := ysiz - yo }
+  else throw "not a JPEG 2000 file (no signature)"
+
+/-- Read any asset's header, told apart by signature: PNG, JPEG, a PDF
+whose page 1 reads as a form XObject, and the recognised-but-unembeddable
+containers. Total over every input — the fuzz oracle's claim, not a
+theorem: the loops are bounded by the file and every read is checked. -/
+def probe (b : ByteArray) : Except String Source :=
+  if sliceEq b 0 pngSig then probePng b
+  else if sliceEq b 0 [0xFF, 0xD8] then probeJpeg b
   else if sliceEq b 0 [0x25, 0x50, 0x44, 0x46] then do
     let f ← PdfRead.readForm b
     -- The pixel fields are the box rounded to whole points: only the dump
@@ -1040,22 +1359,440 @@ def decode (b : ByteArray) : Except String Info :=
              pxW := (max 0 f.val.w / spPerPt).toNat
              pxH := (max 0 f.val.h / spPerPt).toNat
              form := some f }
+  else if sliceEq b 0 [0x52, 0x49, 0x46, 0x46] && sliceEq b 8 [0x57, 0x45, 0x42, 0x50] then
+    probeWebp b
+  else if sliceEq b 4 [0x66, 0x74, 0x79, 0x70] &&
+      (sliceEq b 8 [0x61, 0x76, 0x69, 0x66] || sliceEq b 8 [0x61, 0x76, 0x69, 0x73]) then
+    probeAvif b
+  else if sliceEq b 0 [0xFF, 0x0A] ||
+      sliceEq b 0 [0, 0, 0, 0x0C, 0x4A, 0x58, 0x4C, 0x20, 0x0D, 0x0A, 0x87, 0x0A] then
+    probeJxl b
+  else if sliceEq b 0 [0, 0, 0, 0x0C, 0x6A, 0x50, 0x20, 0x20, 0x0D, 0x0A, 0x87, 0x0A] ||
+      sliceEq b 0 [0xFF, 0x4F, 0xFF, 0x51] then
+    probeJpx b
   else .error "not a PNG, JPEG, or PDF file (unrecognised signature)"
 
-/-- Does decoding these bytes do real work — inflate, unfilter, split,
-recompress? True exactly for the PNG colour types with an alpha channel
-(4 and 6, ISO/IEC 15948 §11.2.2): what the driver's image cache keys on,
-since a pass-through decode is cheaper than any cache read. -/
-def decodeRecodes (b : ByteArray) : Bool :=
-  sliceEq b 0 pngSig && (u8? b 25 == some 4 || u8? b 25 == some 6)
+/-! ## The plan: a pure match
+
+Every non-source input to the embedding decision is a `PlanParams` field —
+the projection of a declared output contract onto images (a later slice
+wires it; the driver passes `default` today) — and every field is in the
+cache key (`PlanParams.key`, injective by `planParams_serialize_inj`), so
+two plans that could differ never share a cache entry and nothing that is
+not a plan input (a document path, an output path) enters the key. -/
+
+/-- What to do with an embedded colour profile: carry it as `/ICCBased`
+(the emission is a later slice's; the plan is typed for it), or drop it
+and say so (`.iccDropped`, the driver's W0603). -/
+inductive IccPolicy where
+  | dropWithDiag
+  | carry
+  deriving Repr, DecidableEq, Inhabited
+
+structure PlanParams where
+  /-- May a JPEG 2000 codestream pass through as `/JPXDecode`? The arm is a
+  later slice's; every value refuses today, and the key already carries it. -/
+  jpxPermitted : Bool := false
+  /-- May a plan carry a soft mask (`/SMask`)? A profile that forbids
+  transparency says no, and the alpha arm then refuses instead of
+  flattening. -/
+  softMaskPermitted : Bool := true
+  /-- The deepest sample a pass-through may declare; deeper refuses (never
+  downsampled). -/
+  maxBpc : Nat := 16
+  iccPolicy : IccPolicy := .dropWithDiag
+  deriving Repr, DecidableEq, Inhabited
+
+/-- The parameters the driver passes until a declaration projects them. -/
+def PlanParams.default : PlanParams := {}
+
+/-- Fixed-width bytes: two flags, `maxBpc` as u32, the policy tag. The
+shape `planParams_serialize_inj` reads. -/
+def PlanParams.serialize (p : PlanParams) : ByteArray :=
+  ⟨#[cond p.jpxPermitted 1 0, cond p.softMaskPermitted 1 0,
+     UInt8.ofNat (p.maxBpc / 16777216 % 256), UInt8.ofNat (p.maxBpc / 65536 % 256),
+     UInt8.ofNat (p.maxBpc / 256 % 256), UInt8.ofNat (p.maxBpc % 256),
+     match p.iccPolicy with | .dropWithDiag => 0 | .carry => 1]⟩
+
+private theorem ofNat_inj_of_lt (x y : Nat) (hx : x < 256) (hy : y < 256)
+    (h : UInt8.ofNat x = UInt8.ofNat y) : x = y := by
+  have := congrArg UInt8.toNat h
+  simpa [UInt8.toNat_ofNat, Nat.mod_eq_of_lt hx, Nat.mod_eq_of_lt hy] using this
+
+/-- **The key tells plans apart.** Two parameter records with the same
+serialization are the same record (for a `maxBpc` inside the u32 the
+format spells — every declared depth is). -/
+theorem planParams_serialize_inj (a b : PlanParams)
+    (ha : a.maxBpc < 4294967296) (hb : b.maxBpc < 4294967296)
+    (h : a.serialize = b.serialize) : a = b := by
+  obtain ⟨aj, as_, am, ai⟩ := a
+  obtain ⟨bj, bs, bm, bi⟩ := b
+  simp only at ha hb
+  have hm : am = bm := by
+    unfold PlanParams.serialize at h
+    simp only [ByteArray.mk.injEq] at h
+    have h := List.toArray_inj h
+    simp only [List.cons.injEq, and_true] at h
+    obtain ⟨-, -, h3, h4, h5, h6, -⟩ := h
+    have e3 := ofNat_inj_of_lt _ _ (Nat.mod_lt _ (by omega)) (Nat.mod_lt _ (by omega)) h3
+    have e4 := ofNat_inj_of_lt _ _ (Nat.mod_lt _ (by omega)) (Nat.mod_lt _ (by omega)) h4
+    have e5 := ofNat_inj_of_lt _ _ (Nat.mod_lt _ (by omega)) (Nat.mod_lt _ (by omega)) h5
+    have e6 := ofNat_inj_of_lt _ _ (Nat.mod_lt _ (by omega)) (Nat.mod_lt _ (by omega)) h6
+    omega
+  subst hm
+  cases aj <;> cases bj <;> cases as_ <;> cases bs <;> cases ai <;> cases bi <;>
+    simp_all [PlanParams.serialize]
+
+/-- The cache-key segment: the serialization in hex. -/
+def PlanParams.key (p : PlanParams) : String := Id.run do
+  let digits := "0123456789ABCDEF".toList.toArray
+  let mut s := ""
+  for byte in p.serialize do
+    s := s.push (digits[byte.toNat / 16]?.getD '0')
+    s := s.push (digits[byte.toNat % 16]?.getD '0')
+  return s
+
+/-- The refusal for a format no PDF filter decodes: the format's own name
+opens it (`plan_refuses_named`). -/
+def unembeddableMsg (f : Format) : String :=
+  f.name ++ " images cannot be embedded in a PDF (no PDF filter decodes the format); \
+re-export as PNG or JPEG"
+
+def jpxRefusedMsg : String :=
+  Format.jpx.name ++ " images are not passed through yet; re-export as PNG or JPEG"
+
+/-- Is the source's profile dropped by this plan? Yes under the dropping
+policy, and for an indexed image under either (an `/Indexed` base of
+`/ICCBased` is the emission slice's). -/
+def iccDropped (p : PlanParams) (s : Source) (space : Space) : Bool :=
+  s.icc.size != 0 && (p.iccPolicy matches .dropWithDiag || space matches .indexed)
+
+/-- The ledger every successful plan carries: each `Source` fact this
+slice's plans do not carry, named once. -/
+def lossesOf (p : PlanParams) (s : Source) (space : Space) : Array PlanLoss :=
+  (if iccDropped p s space then #[.iccDropped] else #[]) ++
+    (if s.orientation != 1 then #[.orientationDropped] else #[])
+
+/-- The profile as `/FlateDecode` bytes: an iCCP payload is zlib already, a
+JPEG's concatenated segments deflate here. -/
+def iccZlib (s : Source) : ByteArray :=
+  if s.iccIsZlib then s.icc else Flate.deflate s.icc
+
+/-- The colour space a plan declares for `space`, the profile carried only
+when the policy says so and the base is a device space. -/
+def colorOf (p : PlanParams) (s : Source) (space : Space) : ColorSpaceDecl :=
+  match space, iccDropped p s space || s.icc.size == 0 with
+  | .indexed, _ => .indexed s.palette
+  | .gray, true => .gray
+  | .rgb, true => .rgb
+  | .gray, false => .iccBased 1 (iccZlib s)
+  | .rgb, false => .iccBased 3 (iccZlib s)
+
+/-- The PNG arm: pass-through for colour types 0/2/3 (`plan_passthrough_exact`),
+the alpha split for 4/6, and the named refusals — interlace, a 16-bit
+alpha, a depth over the declared limit, a colour key the readers drop, a
+soft mask the declaration forbids. Spelled as matches, not a `do` block, so
+each theorem is a case split. -/
+def planPng (p : PlanParams) (s : Source) : Except String Plan :=
+  if s.interlace then .error "interlaced (Adam7) PNG is not supported; re-export without interlacing"
+  else match pngSpace s.colorType with
+  | none => .error s!"corrupt PNG: colour type {s.colorType}"
+  | some (space, none) =>
+    if p.maxBpc < s.bitDepth then
+      .error s!"PNG at {s.bitDepth} bits per sample is deeper than the declared output allows \
+({p.maxBpc}); re-export at a lower depth"
+    else match (match s.trns with
+        | none => .ok #[]
+        | some tr => colorKeyRanges space s.bitDepth tr s.palette : Except String (Array Nat)) with
+    | .error e => .error e
+    | .ok key =>
+      -- A 16-bit colour key is exact by the spec (`colorKeyRanges_rgb_exact`)
+      -- and ignored by two of the four target readers, measured: Poppler
+      -- and PDFium reduce the samples to 8 bits and compare the key
+      -- unscaled, so the keyed pixels paint. Ghostscript and pdf.js honour
+      -- it. A mask half the readers drop is the silent loss moved into the
+      -- reader, so it is refused until the reader matrix says otherwise or
+      -- the soft-mask arm carries it as an 8-bit `/SMask`.
+      if s.bitDepth == 16 && !key.isEmpty then
+        .error "PNG with a 16-bit colour key (tRNS) is not shown transparent by common PDF \
+readers; re-export at 8 bits or with a full alpha channel"
+      else .ok { pxW := s.pxW, pxH := s.pxH, dpiX := s.dpiX, dpiY := s.dpiY,
+                 bitDepth := s.bitDepth, color := colorOf p s space,
+                 filter := .flatePredictor, data := s.payload,
+                 alpha := if key.isEmpty then .opaque else .colorKey key,
+                 recoded := false, losses := lossesOf p s space,
+                 orientation := s.orientation }
+  | some (space, some channels) =>
+    if s.bitDepth != 8 then
+      .error s!"PNG with a {s.bitDepth}-bit alpha channel is not supported; \
+re-export at 8 bits or flatten it"
+    else if !p.softMaskPermitted then
+      .error "PNG with an alpha channel needs a soft mask, which the declared output forbids; \
+flatten it onto a background and re-export"
+    else
+      -- The samples cannot pass through as one stream: inflate against the
+      -- size the geometry declares, then deinterleave the filtered residuals
+      -- into the colour plane and the alpha plane — each row's own filter
+      -- kept, no pixel ever reconstructed (`splitPredictedAlpha_exact`) —
+      -- and deflate each, so the embedded object costs on the order of what
+      -- the source cost, never what the raw samples weigh.
+      let rowBytes := s.pxW * channels
+      match Flate.inflate s.payload (s.pxH * (1 + rowBytes)) with
+      | .error e => .error e
+      | .ok raw =>
+        if raw.size != s.pxH * (1 + rowBytes) then
+          .error "corrupt PNG: sample data does not match the declared size"
+        else
+          let planes := splitPredictedAlpha raw s.pxH s.pxW channels
+          .ok { pxW := s.pxW, pxH := s.pxH, dpiX := s.dpiX, dpiY := s.dpiY, bitDepth := 8,
+                color := colorOf p s space, filter := .flatePredictor,
+                data := Flate.deflate planes.1, alpha := .soft (Flate.deflate planes.2) 8,
+                recoded := true, losses := lossesOf p s space, orientation := s.orientation }
+
+/-- The JPEG arm: the whole file as `/DCTDecode`, one or three components
+at 8 bits; CMYK and other precisions refused by name. -/
+def planJpeg (p : PlanParams) (s : Source) : Except String Plan :=
+  if s.bitDepth != 8 then
+    .error s!"JPEG sample precision {s.bitDepth} is not supported (8 expected)"
+  else match s.colorType with
+  | 1 => .ok { pxW := s.pxW, pxH := s.pxH, dpiX := s.dpiX, dpiY := s.dpiY, bitDepth := 8,
+               color := colorOf p s .gray, filter := .dct, data := s.payload,
+               losses := lossesOf p s .gray, orientation := s.orientation }
+  | 3 => .ok { pxW := s.pxW, pxH := s.pxH, dpiX := s.dpiX, dpiY := s.dpiY, bitDepth := 8,
+               color := colorOf p s .rgb, filter := .dct, data := s.payload,
+               losses := lossesOf p s .rgb, orientation := s.orientation }
+  | 4 => .error "four-component (CMYK) JPEG is not supported; re-export as RGB"
+  | n => .error s!"corrupt JPEG: {n} components"
+
+/-- The embedding decision, a pure match over the source's format. -/
+def plan (p : PlanParams) (s : Source) : Except String Plan :=
+  match s.format with
+  | .png => planPng p s
+  | .jpeg => planJpeg p s
+  | .pdf => .ok { pxW := s.pxW, pxH := s.pxH, form := s.form, losses := lossesOf p s .rgb,
+                  orientation := s.orientation }
+  | .webp => .error (unembeddableMsg .webp)
+  | .avif => .error (unembeddableMsg .avif)
+  | .jxl => .error (unembeddableMsg .jxl)
+  | .jpx => .error jpxRefusedMsg
+
+/-- Does planning this source do real work — inflate, split, recompress?
+True exactly for the PNG colour types with an alpha channel (4 and 6): what
+the driver's image cache keys on, decided from the header alone and agreeing
+with the planner on every plan that succeeds (`recodes_iff`). -/
+def Plan.recodes (_p : PlanParams) (s : Source) : Bool :=
+  match s.format, pngSpace s.colorType with
+  | .png, some (_, some _) => true
+  | _, _ => false
+
+/-- Decode any embeddable asset under the default parameters: today's one
+call for every consumer. -/
+def decode (b : ByteArray) : Except String Plan :=
+  probe b >>= plan PlanParams.default
+
+/-- **Pass-through is verbatim.** A plan for a PNG of colour type 0, 2, or 3
+embeds the source's IDAT bytes as they stand and recodes nothing — for
+every parameter record and every source the planner accepts. -/
+theorem plan_passthrough_exact (p : PlanParams) (s : Source) (pl : Plan)
+    (hf : s.format = .png) (hct : s.colorType = 0 ∨ s.colorType = 2 ∨ s.colorType = 3)
+    (h : plan p s = .ok pl) : pl.data = s.payload ∧ pl.recoded = false := by
+  simp only [plan, hf, planPng] at h
+  split at h
+  · exact absurd h (by simp)
+  · have hsp : ∃ space, pngSpace s.colorType = some (space, none) := by
+      rcases hct with h0 | h2 | h3
+      · exact ⟨.gray, by rw [h0]; rfl⟩
+      · exact ⟨.rgb, by rw [h2]; rfl⟩
+      · exact ⟨.indexed, by rw [h3]; rfl⟩
+    obtain ⟨space, hspace⟩ := hsp
+    rw [hspace] at h
+    simp only at h
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · exact absurd h (by simp)
+    · simp only [Except.ok.injEq] at h
+      subst h
+      exact ⟨rfl, rfl⟩
+
+/-- `.iccDropped` sits in the ledger whenever the policy drops. -/
+theorem mem_lossesOf_icc (p : PlanParams) (s : Source) (space : Space)
+    (hp : p.iccPolicy = .dropWithDiag) (hi : s.icc.size ≠ 0) :
+    PlanLoss.iccDropped ∈ lossesOf p s space := by
+  have hd : iccDropped p s space = true := by
+    simp [iccDropped, hp, hi]
+  simp [lossesOf, hd]
+
+/-- `.orientationDropped` sits in the ledger whenever the tag is not 1. -/
+theorem mem_lossesOf_orientation (p : PlanParams) (s : Source) (space : Space)
+    (ho : s.orientation ≠ 1) :
+    PlanLoss.orientationDropped ∈ lossesOf p s space := by
+  simp [lossesOf, ho]
+
+/-- Under the dropping policy no plan's colour carries a profile. -/
+theorem colorOf_dropWithDiag (p : PlanParams) (s : Source) (space : Space)
+    (hp : p.iccPolicy = .dropWithDiag) (n : Nat) (prof : ByteArray) :
+    colorOf p s space ≠ .iccBased n prof := by
+  have hd : iccDropped p s space = true ∨ s.icc.size = 0 := by
+    by_cases hi : s.icc.size = 0
+    · exact .inr hi
+    · exact .inl (by simp [iccDropped, hp, hi])
+  unfold colorOf
+  rcases hd with hd | hd <;> cases space <;> simp [hd]
+
+/-- **No fact is dropped wordlessly.** Every plan the planner accepts
+carries in `losses` each `Source` fact this slice does not embed: an
+embedded profile under the dropping policy (and the plan's colour is then
+a device space — the profile went nowhere else), and an orientation other
+than 1. The driver maps each entry to its diagnostic (W0603, W0604). -/
+theorem plan_losses_accounts (p : PlanParams) (s : Source) (pl : Plan)
+    (h : plan p s = .ok pl) :
+    (p.iccPolicy = .dropWithDiag → s.icc.size ≠ 0 →
+      PlanLoss.iccDropped ∈ pl.losses ∧ ∀ n prof, pl.color ≠ .iccBased n prof) ∧
+    (s.orientation ≠ 1 → PlanLoss.orientationDropped ∈ pl.losses) := by
+  -- Every accepting arm writes `losses := lossesOf p s space` and
+  -- `color := colorOf p s space` (or a device space), so the two ledger
+  -- lemmas close each.
+  have arm : ∀ space, pl.losses = lossesOf p s space →
+      (∀ n prof, pl.color ≠ .iccBased n prof ∨ pl.color = colorOf p s space) →
+      (p.iccPolicy = .dropWithDiag → s.icc.size ≠ 0 →
+        PlanLoss.iccDropped ∈ pl.losses ∧ ∀ n prof, pl.color ≠ .iccBased n prof) ∧
+      (s.orientation ≠ 1 → PlanLoss.orientationDropped ∈ pl.losses) := by
+    intro space hl hc
+    refine ⟨fun hp hi => ⟨hl ▸ mem_lossesOf_icc p s space hp hi, fun n prof => ?_⟩,
+      fun ho => hl ▸ mem_lossesOf_orientation p s space ho⟩
+    rcases hc n prof with hne | heq
+    · exact hne
+    · rw [heq]; exact colorOf_dropWithDiag p s space hp n prof
+  unfold plan at h
+  split at h
+  · -- PNG
+    unfold planPng at h
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · exact absurd h (by simp)
+    · next space _ =>
+      split at h
+      · exact absurd h (by simp)
+      split at h
+      · exact absurd h (by simp)
+      split at h
+      · exact absurd h (by simp)
+      simp only [Except.ok.injEq] at h
+      subst h
+      exact arm space rfl (fun _ _ => .inr rfl)
+    · next space _ _ =>
+      split at h
+      · exact absurd h (by simp)
+      split at h
+      · exact absurd h (by simp)
+      simp only at h
+      split at h
+      · exact absurd h (by simp)
+      split at h
+      · exact absurd h (by simp)
+      simp only [Except.ok.injEq] at h
+      subst h
+      exact arm space rfl (fun _ _ => .inr rfl)
+  · -- JPEG
+    unfold planJpeg at h
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · simp only [Except.ok.injEq] at h
+      subst h
+      exact arm .gray rfl (fun _ _ => .inr rfl)
+    · simp only [Except.ok.injEq] at h
+      subst h
+      exact arm .rgb rfl (fun _ _ => .inr rfl)
+    · exact absurd h (by simp)
+    · exact absurd h (by simp)
+  · -- PDF
+    simp only [Except.ok.injEq] at h
+    subst h
+    exact arm .rgb rfl (fun _ _ => .inl (by simp))
+  · exact absurd h (by simp)
+  · exact absurd h (by simp)
+  · exact absurd h (by simp)
+  · exact absurd h (by simp)
+
+/-- **The cache gate is the planner's decision.** On every plan the planner
+accepts, `recoded` and the header-only `Plan.recodes` agree — the two read
+the one colour-type table. -/
+theorem recodes_iff (p : PlanParams) (s : Source) (pl : Plan) (h : plan p s = .ok pl) :
+    pl.recoded = true ↔ Plan.recodes p s = true := by
+  unfold plan at h
+  unfold Plan.recodes
+  split at h
+  · next hf =>
+    unfold planPng at h
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · exact absurd h (by simp)
+    · next space hsp =>
+      split at h
+      · exact absurd h (by simp)
+      split at h
+      · exact absurd h (by simp)
+      split at h
+      · exact absurd h (by simp)
+      simp only [Except.ok.injEq] at h
+      subst h
+      simp [hf, hsp]
+    · next space channels hsp =>
+      split at h
+      · exact absurd h (by simp)
+      split at h
+      · exact absurd h (by simp)
+      simp only at h
+      split at h
+      · exact absurd h (by simp)
+      split at h
+      · exact absurd h (by simp)
+      simp only [Except.ok.injEq] at h
+      subst h
+      simp [hf, hsp]
+  · next hf =>
+    unfold planJpeg at h
+    split at h
+    · exact absurd h (by simp)
+    split at h
+    · simp only [Except.ok.injEq] at h
+      subst h
+      simp [hf]
+    · simp only [Except.ok.injEq] at h
+      subst h
+      simp [hf]
+    · exact absurd h (by simp)
+    · exact absurd h (by simp)
+  · next hf =>
+    simp only [Except.ok.injEq] at h
+    subst h
+    simp [hf]
+  · exact absurd h (by simp)
+  · exact absurd h (by simp)
+  · exact absurd h (by simp)
+  · exact absurd h (by simp)
+
+/-- **A refusal names the format.** A source whose signature said WebP,
+AVIF, or JPEG XL is refused, and the refusal opens with the format's own
+name — stated over `Format.name`, the one constant the message reads. -/
+theorem plan_refuses_named (p : PlanParams) (s : Source)
+    (hf : s.format = .webp ∨ s.format = .avif ∨ s.format = .jxl) :
+    ∃ rest, plan p s = .error (s.format.name ++ rest) := by
+  rcases hf with hf | hf | hf <;> exact ⟨_, by unfold plan; rw [hf]; rfl⟩
 
 /-! ## The driver's image cache: serialization
 
-A decoded image object as bytes: the value the driver files under the
-source's content key, so the expensive decode (inflate, unfilter, split,
-deflate) runs once per content. Only raster fields ride — a form XObject
-never enters the cache; its decode is cheap and its `wf` witness cannot
-be serialized. Transparency is `decodeBin_encodeBin_id` (staged in
+A plan as bytes: the value the driver files under the source's content key
+and the parameters' key, so the expensive plan (inflate, split, deflate)
+runs once per content and parameters. Only raster fields ride — a form
+XObject never enters the cache; its plan is cheap and its `wf` witness
+cannot be serialized. Transparency is `decodeBin_encodeBin_id` (staged in
 `Obligations/`, exercised in `lake test`): a cache hit *is* the
 recomputation's value, keeping the artifact a function of the document
 and the font environment. The magic carries a format version: a change
@@ -1066,70 +1803,135 @@ private def pushU32 (b : ByteArray) (v : Nat) : ByteArray :=
     (UInt8.ofNat (v / 65536 % 256))).push
     (UInt8.ofNat (v / 256 % 256))).push (UInt8.ofNat (v % 256)))
 
-/-- `LTIMG2`, the magic-and-format-version the decoder checks: version 2
-added the colour-key ranges, so every `LTIMG1` entry is a miss. -/
-private def binMagic : List Nat := [76, 84, 73, 77, 71, 50]
+/-- `LTIMG3`, the magic-and-format-version the decoder checks: version 3 is
+the typed plan (three tag bytes for the three sums, the ledger, the
+orientation), so every `LTIMG1` and `LTIMG2` entry is a miss. -/
+private def binMagic : List Nat := [76, 84, 73, 77, 71, 51]
 
-/-- Serialize a raster `Info` (`form` is dropped; the cache never holds
-one — `decodeRecodes` gates what is cached). Layout: magic, three tag
-bytes, nine u32 fields (the last the colour-key count), the key values as
-u32s, then the palette, data, and soft-mask bytes. -/
-def encodeBin (i : Info) : ByteArray := Id.run do
+private def colorTag : ColorSpaceDecl → UInt8
+  | .gray => 0
+  | .rgb => 1
+  | .indexed _ => 2
+  | .iccBased _ _ => 3
+
+private def filterTag : FilterDecl → UInt8
+  | .flatePredictor => 0
+  | .dct => 1
+
+private def alphaTag : Alpha → UInt8
+  | .opaque => 0
+  | .colorKey _ => 1
+  | .soft _ _ => 2
+
+private def lossTag : PlanLoss → UInt8
+  | .iccDropped => 0
+  | .orientationDropped => 1
+
+/-- The fixed header's length: magic, four tag bytes, fourteen u32 fields. -/
+private def binHeader : Nat := 6 + 4 + 4 * 14
+
+/-- Serialize a raster `Plan` (`form` is dropped; the cache never holds
+one — `Plan.recodes` gates what is cached). Layout: magic; the colour,
+filter, alpha tags and the recoded flag; u32s for the geometry (width,
+height, two densities, bit depth, orientation), then the variable parts'
+sizes (profile components, palette, profile, key count, soft-mask depth,
+plane, data, losses); then the key values as u32s, the loss tags, and the
+palette, profile, plane and data bytes. -/
+def encodeBin (i : Plan) : ByteArray := Id.run do
+  let (palette, iccN, profile) := match i.color with
+    | .gray => (ByteArray.empty, 0, ByteArray.empty)
+    | .rgb => (ByteArray.empty, 0, ByteArray.empty)
+    | .indexed pal => (pal, 0, ByteArray.empty)
+    | .iccBased n prof => (ByteArray.empty, n, prof)
+  let (keys, softBpc, plane) := match i.alpha with
+    | .opaque => (#[], 0, ByteArray.empty)
+    | .colorKey ks => (ks, 0, ByteArray.empty)
+    | .soft pl bpc => (#[], bpc, pl)
   let mut out := ByteArray.emptyWithCapacity
-    (45 + 4 * i.colorKey.size + i.palette.size + i.data.size + i.smask.size)
+    (binHeader + 4 * keys.size + i.losses.size + palette.size + profile.size + plane.size +
+      i.data.size)
   for v in binMagic do
     out := out.push (UInt8.ofNat v)
-  out := out.push (match i.format with | .png => 0 | .jpeg => 1 | .pdf => 2)
-  out := out.push (match i.space with | .gray => 0 | .rgb => 1 | .indexed => 2)
-  out := out.push (if i.predictor then 1 else 0)
+  out := out.push (colorTag i.color)
+  out := out.push (filterTag i.filter)
+  out := out.push (alphaTag i.alpha)
+  out := out.push (if i.recoded then 1 else 0)
   out := pushU32 out i.pxW
   out := pushU32 out i.pxH
   out := pushU32 out i.dpiX
   out := pushU32 out i.dpiY
   out := pushU32 out i.bitDepth
-  out := pushU32 out i.palette.size
+  out := pushU32 out i.orientation
+  out := pushU32 out iccN
+  out := pushU32 out palette.size
+  out := pushU32 out profile.size
+  out := pushU32 out keys.size
+  out := pushU32 out softBpc
+  out := pushU32 out plane.size
   out := pushU32 out i.data.size
-  out := pushU32 out i.smask.size
-  out := pushU32 out i.colorKey.size
-  for v in i.colorKey do
+  out := pushU32 out i.losses.size
+  for v in keys do
     out := pushU32 out v
-  return out ++ i.palette ++ i.data ++ i.smask
+  for l in i.losses do
+    out := out.push (lossTag l)
+  return out ++ palette ++ profile ++ plane ++ i.data
 
 /-- Read `encodeBin`'s bytes back; `none` for anything else — a foreign,
 truncated, or older-format file is a cache miss, never a wrong image. -/
-def decodeBin (b : ByteArray) : Option Info := do
+def decodeBin (b : ByteArray) : Option Plan := do
   guard (sliceEq b 0 binMagic)
-  let format ← match ← u8? b 6 with
-    | 0 => some Format.png
-    | 1 => some Format.jpeg
+  let cTag ← u8? b 6
+  let filter ← match ← u8? b 7 with
+    | 0 => some FilterDecl.flatePredictor
+    | 1 => some FilterDecl.dct
     | _ => none
-  let space ← match ← u8? b 7 with
-    | 0 => some Space.gray
-    | 1 => some Space.rgb
-    | 2 => some Space.indexed
-    | _ => none
-  let pr ← u8? b 8
-  let pxW ← u32be? b 9
-  let pxH ← u32be? b 13
-  let dpiX ← u32be? b 17
-  let dpiY ← u32be? b 21
-  let bitDepth ← u32be? b 25
-  let pLen ← u32be? b 29
-  let dLen ← u32be? b 33
-  let sLen ← u32be? b 37
-  let kLen ← u32be? b 41
-  -- The size check first: it bounds the key loop below by the file.
-  guard (b.size == 45 + 4 * kLen + pLen + dLen + sLen)
-  let mut colorKey : Array Nat := Array.emptyWithCapacity kLen
+  let aTag ← u8? b 8
+  let rc ← u8? b 9
+  let pxW ← u32be? b 10
+  let pxH ← u32be? b 14
+  let dpiX ← u32be? b 18
+  let dpiY ← u32be? b 22
+  let bitDepth ← u32be? b 26
+  let orientation ← u32be? b 30
+  let iccN ← u32be? b 34
+  let pLen ← u32be? b 38
+  let prLen ← u32be? b 42
+  let kLen ← u32be? b 46
+  let softBpc ← u32be? b 50
+  let plLen ← u32be? b 54
+  let dLen ← u32be? b 58
+  let lLen ← u32be? b 62
+  -- The size check first: it bounds the loops below by the file.
+  guard (b.size == binHeader + 4 * kLen + lLen + pLen + prLen + plLen + dLen)
+  let mut keys : Array Nat := Array.emptyWithCapacity kLen
   for j in [0:kLen] do
-    colorKey := colorKey.push (← u32be? b (45 + 4 * j))
-  let base := 45 + 4 * kLen
-  return { format, pxW, pxH, dpiX, dpiY, bitDepth, space
-           palette := b.extract base (base + pLen)
-           data := b.extract (base + pLen) (base + pLen + dLen)
-           predictor := pr == 1
-           smask := b.extract (base + pLen + dLen) (base + pLen + dLen + sLen)
-           colorKey }
+    keys := keys.push (← u32be? b (binHeader + 4 * j))
+  let lossBase := binHeader + 4 * kLen
+  let mut losses : Array PlanLoss := Array.emptyWithCapacity lLen
+  for j in [0:lLen] do
+    losses := losses.push (← match ← u8? b (lossBase + j) with
+      | 0 => some PlanLoss.iccDropped
+      | 1 => some PlanLoss.orientationDropped
+      | _ => none)
+  let base := lossBase + lLen
+  let palette := b.extract base (base + pLen)
+  let profile := b.extract (base + pLen) (base + pLen + prLen)
+  let plane := b.extract (base + pLen + prLen) (base + pLen + prLen + plLen)
+  let data := b.extract (base + pLen + prLen + plLen) (base + pLen + prLen + plLen + dLen)
+  let color ← match cTag with
+    | 0 => some ColorSpaceDecl.gray
+    | 1 => some ColorSpaceDecl.rgb
+    | 2 => some (ColorSpaceDecl.indexed palette)
+    | 3 => some (ColorSpaceDecl.iccBased iccN profile)
+    | _ => none
+  let alpha ← match aTag with
+    | 0 => some Alpha.opaque
+    | 1 => some (Alpha.colorKey keys)
+    | 2 => some (Alpha.soft plane softBpc)
+    | _ => none
+  return { pxW, pxH, dpiX, dpiY, bitDepth, color, filter, data, alpha
+           recoded := rc == 1, losses, orientation }
+
 
 /-! ## The store: effects as data
 
@@ -1145,7 +1947,7 @@ structure Loaded where
   bare graphicx name (`figures/plot`) gains the extension the file on disk
   has, and an HTML link must name it. -/
   href : String := ""
-  info : Option Info := none
+  info : Option Plan := none
   deriving Inhabited
 
 /-- graphicx resolves an extensionless name against its extension list; the
@@ -1168,7 +1970,7 @@ def Store.get? (s : Store) (i : Nat) : Option Loaded :=
 /-- The decoded image behind a source, when the driver loaded one: the one
 resolving question a consumer asks of the store — `none` is the placeholder
 box, whatever the reason (`Ir.pending` counts exactly these). -/
-def Store.info? (s : Store) (src : String) : Option Info :=
+def Store.info? (s : Store) (src : String) : Option Plan :=
   (s.entries.find? (·.src == src)).bind (·.info)
 
 /-! ## Fulfilment: the decision half of the image effect
@@ -1196,6 +1998,31 @@ def imageUndecodable (src err : String) : Diag :=
     (help := "PNG, JPEG, and PDF embed natively: re-export the image as one")
     (subject := some src)
 
+/-- W0603: the source carries a colour profile the plan did not. -/
+def imageIccDropped (src : String) : Diag :=
+  Diag.of .W0603
+    s!"image '{src}' carries an embedded colour profile; the page reads its samples as device colour"
+    (help := "re-export the image without the profile, or accept the device reading with \
+\\allow{W0603}")
+    (subject := some src)
+
+/-- W0604: the source carries an orientation tag the plan did not apply. -/
+def imageOrientationDropped (src : String) (orientation : Nat) : Diag :=
+  Diag.of .W0604
+    s!"image '{src}' carries orientation tag {orientation}; the page shows the stored orientation"
+    (help := "rotate the pixels and re-export with orientation tag 1, or accept it with \
+\\allow{W0604}")
+    (subject := some src)
+
+/-- The diagnostic one ledger entry names, for the plan that carries it. -/
+def lossDiag (src : String) (pl : Plan) : PlanLoss → Diag
+  | .iccDropped => imageIccDropped src
+  | .orientationDropped => imageOrientationDropped src pl.orientation
+
+/-- Every diagnostic a loaded plan's ledger names, in ledger order. -/
+def lossDiags (src : String) (pl : Plan) : Array Diag :=
+  pl.losses.map (lossDiag src pl)
+
 /-- What the driver found for one image source, before the pure decision
 names it: a file (or a boundary picture's drawn PDF) decoded — through the
 driver's content cache, which equals the pure decode
@@ -1204,7 +2031,7 @@ file; a file that would not read; or a boundary picture nothing drew,
 carrying the boundary's own diagnostic (W0378, W0379), whose subject
 `fulfil` sets so the refusal names the picture whatever words it chose. -/
 inductive Fetch where
-  | decoded (href : String) (res : Except String Info)
+  | decoded (href : String) (res : Except String Plan)
   | missing (looked : String)
   | unreadable (err : String)
   | refused (why : Diag)

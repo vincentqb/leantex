@@ -1090,8 +1090,7 @@ def deckImageChecks (ref : IO.Ref (List String)) : IO Unit := do
     "\\includegraphics[scale=0.5, alt={A synthetic box}]{a.png}\n\n" ++
     "\\begin{tikzpicture}\n\\fill (0,0) rectangle (2,1);\n\\end{tikzpicture}"
   -- 144 px at the default density is 144 pt intrinsic width.
-  let info : Image.Info := { format := .png
-                             pxW := 144
+  let info : Image.Plan := { pxW := 144
                              pxH := 72 }
   let store : Image.Store := { entries := #[{ src := "a.png"
                                               info := some info }] }
@@ -1778,7 +1777,7 @@ def pdfFormChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Uni
   let inf? := Image.decode pdfData
   t "shipped pdf decodes as a form"
     (match inf? with
-     | .ok inf => inf.format == .pdf && inf.form.isSome
+     | .ok inf => inf.form.isSome && inf.data.isEmpty
      | .error _ => false)
   -- The intrinsic size is the page box (`form_bbox_exact`'s other half):
   -- the card declared 90 × 54 mm, and the writer's `Sp.toPtString`
