@@ -490,45 +490,56 @@ def alertStyled (themed : Bool) (body : Array Raw) (pos : Pos) : Array Raw :=
       .group #[.ctrl "textbf" pos, .group body pos] pos]
   else #[.ctrl "textbf" pos, .group body pos]
 
-/-- `\alert<spec>{body}` is `\uncover<spec>{\alert{body}}`: ONE copy of the
-body, the alert style on it throughout, and the spec selecting the step the
-run turns crisp on. Not `\alt<spec>{styled}{body}` — two alternatives under
-dim-not-hide are both on the page, the pending one covered rather than
-gone, so the reader saw the body twice on every step. The spec word travels
-as written for the elaborator's one overlay reader (`overlayCtrls`' arm
-numbers it or keeps the honest W0105), so there is still no second overlay
-implementation.
+/-- `\alert<spec>{body}` is beamer's own equation,
+`\alt<spec>{\alert{body}}{body}`: the alert style on the spec's steps, the
+plain body on every other step, and nothing covered — alternation, not
+transparency. The stopgap it replaces was `\uncover<spec>{\alert{body}}`,
+taken when no IR constructor could vary style per step: one copy carrying
+the alert style throughout, dimmed before its step, so the run was alert
+from step one and the reader saw the change as undimming rather than as
+becoming alert. `Ir.Inline.alt` varies content per step page and both
+backends select one group from it (`alt_backend_agree`), so the faithful
+rewrite costs nothing the census would call a doubling: the two
+alternatives are declared once each and exactly one is inked per page.
 
-The divergence from beamer is the model's, and named: beamer sets the run
-plain off its steps, this engine dims it (PLAN M5, as `\uncover`), so the
-alert colour is present from step one and turns crisp on the spec's. Plain
-before the step would be a style that varies per step, which the IR has no
-constructor for — `Inline.step` wraps content, not style. -/
+The spec word travels as written for the elaborator's one overlay reader
+(its `\alt` arm numbers it or keeps the honest W0105 and shows the
+alternatives), so there is still no second overlay implementation here.
+The styled alternative comes first because that is the order the arm reads:
+`\alt<spec>{active}{otherwise}`. -/
 def alertOverlay (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) : Array Raw :=
-  #[.ctrl "uncover" pos, spec, .group (alertStyled themed body pos) pos]
+  #[.ctrl "alt" pos, spec, .group (alertStyled themed body pos) pos, .group body pos]
 
 /-- Text conservation for the two `\alert` spellings is stated where text
 exists: a raw has no text census (which words are content and which are a
 colour name is the elaborator's knowledge), so the fact is over the
-elaborated inlines — `alertOverlayChecks` holds `Ir.plainText` of the
-elaborated overlay equal to the plain rewrite's, once and not twice, and
-the shipped-page census holds the body's text appearing exactly once on
-every step page. On the raws the statement is structural: the body is
-carried whole, untouched, by the one wrapped alternative
-(`alertOverlay_styled_exact`), and the overlay is those three raws and no
-fourth (`alertOverlay_exact`) — a second alternative is what doubled the
-page, so its absence is pinned rather than left to the definition. -/
+elaborated inlines — `alertOverlayChecks` holds the shipped-page census of
+the styled and the plain alternative, the body's text appearing exactly
+once on every step page and covered on none. On the raws the statement is
+structural: the body is carried whole, untouched, by the styled
+alternative (`alertOverlay_styled_exact`) and by the plain one
+(`alertOverlay_plain_exact`), and the overlay is those four raws and no
+fifth (`alertOverlay_exact`) — so the two alternatives are the only copies
+of the body, which is what the doubling defect needs pinned rather than
+left to the definition. -/
 theorem alertOverlay_exact (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
     alertOverlay themed spec body pos =
-      #[.ctrl "uncover" pos, spec, .group (alertStyled themed body pos) pos] := rfl
+      #[.ctrl "alt" pos, spec, .group (alertStyled themed body pos) pos,
+        .group body pos] := rfl
 
 theorem alertOverlay_styled_exact (themed : Bool) (spec : Raw) (body : Array Raw)
     (pos : Pos) :
     (alertOverlay themed spec body pos)[2]? = some (.group (alertStyled themed body pos) pos) :=
   rfl
 
+/-- The other alternative is the body itself, plain: what every step
+outside the spec shows, unstyled and uncovered. -/
+theorem alertOverlay_plain_exact (themed : Bool) (spec : Raw) (body : Array Raw)
+    (pos : Pos) :
+    (alertOverlay themed spec body pos)[3]? = some (.group body pos) := rfl
+
 /-- The spec reaches the elaborator as written: the overlay carries it at
-the position the overlay arm reads, so a spec the step model cannot number
+the position the `\alt` arm reads, so a spec the step model cannot number
 is judged there (W0105), never silently dropped here. -/
 theorem alertOverlay_spec_id (themed : Bool) (spec : Raw) (body : Array Raw) (pos : Pos) :
     (alertOverlay themed spec body pos)[1]? = some spec := rfl
@@ -1994,11 +2005,12 @@ the definition is skipped" pos
     return none
   | "alert" =>
     -- Themed, alert is the theme's colour AND bold (`alertStyled` says
-    -- why). With an overlay spec the command is `\uncover<spec>{styled}`:
-    -- one copy of the body, crisp on the spec's step — the spec used to
-    -- fall through, and `\textcolor{alert}` then read `<2>` as its content
-    -- and failed E0304 (unthemed, `\textbf` set the spec as text), and the
-    -- `\alt` rewrite that replaced it put the body on the page twice.
+    -- why). With an overlay spec the command is beamer's own
+    -- `\alt<spec>{styled}{body}`: styled on the spec's steps, plain on
+    -- every other, nothing covered — the spec used to fall through, and
+    -- `\textcolor{alert}` then read `<2>` as its content and failed E0304
+    -- (unthemed, `\textbf` set the spec as text), and the `\uncover`
+    -- stopgap that replaced it carried the alert style on every step.
     -- Without a spec the plain rewrite stands untouched.
     let j := skipSpaces raws start
     match raws[j]? with
@@ -2007,7 +2019,7 @@ the definition is skipped" pos
         let (args, k) := takeGroups raws (j + 1) 1
         match args[0]? with
         | some body =>
-          became s!"\\alert{w}" s!"\\uncover{w}\{...}" pos
+          became s!"\\alert{w}" s!"\\alt{w}\{...}\{...}" pos
           return some (alertOverlay (← get).themed spec body pos, k)
         | none => alertPlain pos raws (j + 1)
       else alertPlain pos raws start

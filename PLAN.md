@@ -187,6 +187,63 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-22 — `\alert<spec>{body}` is beamer's own equation (alert-flip, M5; a
+correction of the alert-overlay-once entry below, which records the
+`\uncover` stopgap as the rewrite and the divergence from beamer as the
+model's). The stopgap was `\uncover<spec>{\alert{body}}`: one copy of the
+body with the alert style on it throughout, dimmed before its step. It was
+the most dim-not-hide could express while no IR constructor varied style per
+step, and it said the wrong thing — the document says the run *becomes*
+alert, the artifact said it *stops being dim*, with the alert colour present
+from step one and transparency standing in for the change. `Ir.Inline.alt`
+varies content per step page and both backends select one group from it
+(`alt_backend_agree`, the entry above), so the faithful rewrite no longer
+costs what it used to: `\alert<spec>{body}` is
+`\alt<spec>{\alert{body}}{body}` — styled on the spec's steps, the plain
+body on every other, nothing covered anywhere, and one copy of the body
+inked per page as before.
+
+The theorems are restated on the new shape rather than dropped:
+`alertOverlay_exact` pins those four raws and no fifth,
+`alertOverlay_styled_exact` the styled alternative and the new
+`alertOverlay_plain_exact` the plain one, so the two alternatives are the
+only copies of the body — the doubling defect's invariant, now stated over
+a form that has two alternatives by design. `alertOverlay_spec_id` stands
+unchanged in force: the spec still travels as written at the index the one
+overlay reader reads, so `\alert` grew no second overlay implementation —
+the elaborator's `\alt` arm numbers the spec or keeps the honest W0105.
+
+Evidence, the artifact and the shipped-page census, not the IR: a rendered
+two-step deck reads "Put it place here." once on each page (`pdftotext` per
+page), and the content streams say which ink — page 1 sets the whole
+sentence in the theme's foreground, page 2 splits it into foreground, the
+palette's alert colour, foreground, and neither page carries a cover
+colour. The HTML flow declares both groups once each and shows the plain
+one, the alert colour riding the crisp group alone behind `hidden`, with no
+step wrapper in the body at all. `alertOverlayChecks` holds that as census:
+`pageOccurs == 1` on every step page (the row that caught the doubling,
+kept), `pageAllRevealed` on both pages (new — no transparency anywhere),
+the alert ink read through the census's colour channel absent from page 1
+and on the body on page 2, `treeOccurs`/`treeShownOccurs` two declared and
+one shown, and `altShownFirstAt` agreeing with the inked page step by step.
+Against the stopgap those rows fail eight ways; goldens did not move, since
+no corpus fixture spells `\alert<spec>`.
+
+Judgment calls. An unnumberable spec now degrades the way `\alt`'s does:
+W0105, and BOTH alternatives shown — so `\alert<+->{x}` reads "xx" on every
+page, where the stopgap showed the one styled copy. Left as it is here and
+recorded instead of hidden: the fix belongs to the shared `\alt` fallback
+(show the active alternative alone), which changes `\alt`'s declared
+behaviour and its message, and this unit is the flip. Compat cannot decide
+numberability itself without a second `overlayFrom`, which is the rule this
+change is careful to keep. The plain `\alert{body}` arm is byte for byte
+what it was, so the themed golden still witnesses it.
+
+Residual: as the entry above leaves it — the `Ir.select*` family and
+`Ir.hasAlt` still stand for their own commit, and the recover path's
+browser measurement is still owed. Nothing measured here about a browser:
+the evidence is a rendered PDF, the emitted HTML, and the census.
+
 2026-09-22 — HTML selects an alternation's group, and a step covers past its
 range end (alt-html-selection, M5; `alt_backend_agree` discharged, a
 correction of the entry below, which records it as owed and blocked). Two

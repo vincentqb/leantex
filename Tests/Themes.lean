@@ -351,28 +351,32 @@ def overlayBlockChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     ((uDs.map (·.code)) == #["W0105"] && uDoc.body == #[.frame #[] false .center false #[
       .list false #[#[.para #[.text "shown anyway"]]]]])
 
-/-- `\alert<spec>{body}`: beamer's overlay form of alert is
-`\uncover<spec>{\alert{body}}` — ONE copy of the body, the alert style on
-it throughout, crisp on the selected step (`Compat.alertOverlay`). Red: the
-spec fell through, themed `\textcolor{alert}` read `<2>` as its content and
-E0304 fired, unthemed `\textbf` set the spec as text; then the `\alt`
-rewrite that replaced it shipped the body TWICE on every page — under
-dim-not-hide both alternatives are on the page, the pending one covered,
-and a rendered deck read "placeplace". The invariant this block holds is
-that census: the body's text appears exactly once per step page, and the
-elaborated paragraph's `plainText` is the plain sentence, not a doubled
-one. The plain `\alert{...}` rewrite stands byte for byte (the themed
-golden is the witness). -/
+/-- `\alert<spec>{body}` is beamer's own equation,
+`\alt<spec>{\alert{body}}{body}` (`Compat.alertOverlay`): the alert style on
+the spec's steps, the plain body on every other, and NOTHING covered. Red,
+in order — the spec fell through, themed `\textcolor{alert}` read `<2>` as
+its content and E0304 fired, unthemed `\textbf` set the spec as text; the
+first `\alt` rewrite shipped the body TWICE on every page, because
+dim-not-hide kept both alternatives on it and a rendered deck read
+"placeplace"; the `\uncover<spec>{\alert{body}}` stopgap that replaced it
+kept one copy but carried the alert style on every step and dimmed it
+before, so the reader saw undimming where the document said becoming
+alert. The invariants this block holds are census ones over the artifacts:
+the body's text is inked exactly once per step page, NO page covers it (no
+transparency anywhere), the alert ink is painted only on the spec's step
+page, and the other page carries the body plain. The plain `\alert{...}`
+rewrite stands byte for byte (the themed golden is the witness). -/
 def alertOverlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
   let t := check ref
   let themedDeck (body : String) : String :=
     deck169 "\\usetheme{moloch}" ("\\begin{frame}\n" ++ body ++ "\n\\end{frame}")
-  -- The one step of an `\alert<spec>` frame, and the one styled run of a
-  -- plain `\alert` frame, read off the same sentence shape.
-  let stepOf (doc : Ir.Doc) :
-      Option (Nat × Option Nat × Array Ir.Inline) :=
+  -- The one alternation of an `\alert<spec>` frame, and the one styled run
+  -- of a plain `\alert` frame, read off the same sentence shape.
+  let altOf (doc : Ir.Doc) :
+      Option (Nat × Option Nat × Array Ir.Inline × Array Ir.Inline) :=
     match doc.body with
-    | #[.frame _ _ _ _ #[.para #[.text _, .step n last s, .text _]]] => some (n, last, s)
+    | #[.frame _ _ _ _ #[.para #[.text _, .alt n last onFirst onOther, .text _]]] =>
+      some (n, last, onFirst, onOther)
     | _ => none
   let plainOf (doc : Ir.Doc) : Option Ir.Inline :=
     match doc.body with
@@ -383,21 +387,25 @@ def alertOverlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     let (aDoc, aDs) := elabStr (deck "One \\alert<2>{apple} here.")
     t s!"{mode} alert<2> raises no error and no warning"
       (aDs.all (·.severity == .note) && pDs.all (·.severity == .note))
-    match stepOf aDoc, plainOf pDoc with
-    | some (n, last, s), some ps =>
-      t s!"{mode} alert<2> selects step 2 alone" (n == 2 && last == some 2)
-      t s!"{mode} alert<2> styles its one copy as plain alert does" (s == #[ps])
-      t s!"{mode} alert<2> conserves the body text once, not twice"
-        (Ir.plainText s == "apple" &&
-          Ir.blocksText aDoc.body == Ir.blocksText pDoc.body)
-    | _, _ => t s!"{mode} alert<2> elaborates to one styled step" false
-  -- The range spellings reach the step model as the overlay arm reads them.
+    match altOf aDoc, plainOf pDoc with
+    | some (n, last, onFirst, onOther), some ps =>
+      t s!"{mode} alert<2> alternates on step 2 alone" (n == 2 && last == some 2)
+      -- Page order: step 1 is outside the spec, so the group stored first
+      -- is the plain body — bare text, no style node around it.
+      t s!"{mode} alert<2> shows the body plain off its step"
+        (onFirst == #[Ir.Inline.text "apple"] && Ir.altShowsFirst n last 1)
+      t s!"{mode} alert<2> styles its other alternative as plain alert does"
+        (onOther == #[ps])
+      t s!"{mode} alert<2> conserves the body text once per alternative"
+        (Ir.plainText onFirst == "apple" && Ir.plainText onOther == "apple")
+    | _, _ => t s!"{mode} alert<2> elaborates to one alternation" false
+  -- The range spellings reach the step model as the `\alt` arm reads them.
   let (oDoc, _) := elabStr (themedDeck "One \\alert<2->{apple} here.")
-  t "alert<2-> is crisp from step 2 on"
-    ((stepOf oDoc).map (fun (n, last, _) => n == 2 && last.isNone) == some true)
+  t "alert<2-> is alert from step 2 on"
+    ((altOf oDoc).map (fun (n, last, _, _) => n == 2 && last.isNone) == some true)
   let (rDoc, _) := elabStr (themedDeck "One \\alert<2-3>{apple} here.")
-  t "alert<2-3> is crisp within its range"
-    ((stepOf rDoc).map (fun (n, last, _) => n == 2 && last == some 3) == some true)
+  t "alert<2-3> is alert within its range"
+    ((altOf rDoc).map (fun (n, last, _, _) => n == 2 && last == some 3) == some true)
   -- A spec the model cannot number: the honest W0105, content still shown.
   let (uDoc, uDs) := elabStr (themedDeck "One \\alert<+->{apple} here.")
   t "an unnumberable alert spec warns W0105 once"
@@ -406,24 +414,51 @@ def alertOverlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     (match uDoc.body with
      | #[.frame _ _ _ _ #[.para xs]] => hasStr (Ir.plainText xs) "apple"
      | _ => false)
-  -- Shipped pages: steps are pages, and the body is inked ONCE on each —
-  -- covered before its step, crisp on it, never doubled.
+  -- Shipped pages: steps are pages, the body is inked ONCE on each, and
+  -- no page covers it — alternation replaces, it never dims.
   let (cDoc, _) := elabStr (deck169Frame "One \\alert<2>{apple} here.")
   let c := censusOf (coveredColorsOf cDoc) (layoutOf oneFace cDoc)
   t "alert<2> ships one handout page per step" (c.size == 2)
   t "the body is inked exactly once on every step page"
     (pageOccurs c 0 "apple" == 1 && pageOccurs c 1 "apple" == 1)
-  t "the body is covered before its step and crisp on it"
-    (pageCovered c 0 "apple" && !pageCovered c 1 "apple" && pageAllRevealed c 1)
-  -- HTML: one step wrapper, the body and the alert colour named once each.
+  t "no step page covers the body: alternation carries no transparency"
+    (!pageCovered c 0 "apple" && !pageCovered c 1 "apple" &&
+      pageAllRevealed c 0 && pageAllRevealed c 1)
+  -- Which page carries the alert ink: the census reads a run's own colour
+  -- through the same channel it reads covering by, given the palette's
+  -- alert colour instead of the cover colours.
+  let (tDoc, _) := elabStr (themedDeck "One \\alert<2>{apple} here.")
+  let alertInk := ((tDoc.palette.entries.find? (·.1 == "alert")).map (·.2))
+  let tc := censusOf ((alertInk.map (#[·])).getD #[]) (layoutOf oneFace tDoc)
+  let tCov := censusOf (coveredColorsOf tDoc) (layoutOf oneFace tDoc)
+  t "the theme declares an alert colour for the census to read" alertInk.isSome
+  t "the alert ink is painted on the spec's step page alone"
+    (tc.size == 2 && pageAllRevealed tc 0 && pageCovered tc 1 "apple")
+  t "the off-step page still inks the body, plain and uncovered"
+    (pageOccurs tc 0 "apple" == 1 && pageOccurs tc 1 "apple" == 1 &&
+      pageAllRevealed tCov 0 && pageAllRevealed tCov 1)
+  -- HTML: both alternatives declared once each, one shown — and the alert
+  -- colour rides the crisp group alone. No step wrapper: nothing is
+  -- covered, so the covering mechanism is not involved at all.
   let (hDoc, _) := elabStr (themedDeck "One \\alert<2>{quince} here.")
   let html := (HtmlDoc.emit {} hDoc).1
-  t "html carries the selected step alone"
-    (hasStr html "data-step=\"2\" data-step-last=\"2\"" &&
-     !hasStr html "data-step=\"1\" data-step-last=\"1\"")
-  t "html names the body once, inside the alert role"
-    ((html.splitOn "quince").length == 2 &&
-      (html.splitOn "color: var(--alert, ").length == 2)
+  let (_, hBody, _) := HtmlDoc.emitTree {} hDoc
+  t "html declares both alternatives once each and shows one"
+    (treeOccurs hBody "quince" == 2 && treeShownOccurs hBody "quince" == 1)
+  t "html shows the plain body off the step and hides the styled one"
+    (hasStr html "<span class=\"alt alt-pending\" data-step=\"2\" data-step-last=\"2\">quince</span>" &&
+      hasStr html ("<span class=\"alt alt-crisp\" data-step=\"2\" data-step-last=\"2\" " ++
+        "hidden=\"hidden\"><span style=\"color: var(--alert, "))
+  t "html names the alert colour once, on the styled alternative alone"
+    ((html.splitOn "color: var(--alert, ").length == 2)
+  t "html wraps the alert in no step: an alternation is never covered"
+    (!hasStr html "class=\"step\"")
+  -- The step-by-step agreement on this fixture: the rules select the group
+  -- the shipped page inks (`alt_backend_agree`, read off the artifacts).
+  t "alert<2>: the html rules select the group the handout page inks"
+    ((List.range 2).all fun i =>
+      HtmlDoc.altShownFirstAt 2 2 (some 2) (i + 1) == (pageOccurs tc i "apple" == 1 &&
+        !pageCovered tc i "apple"))
 
 /-- The caption-to-alt walk reaches every image of a float's body: a figure
 whose body holds its image inside a list still names it by its caption.
