@@ -730,6 +730,18 @@ def picsToSvg (pics : Array PicResult) (assetsDir : String) (imgs : Image.Store)
         else en
   return ({ entries }, pubs, diags)
 
+/-- The raster copies a page requests (`HtmlDoc.imageAssets`), each with the
+path its bytes are read from: the entry's resolved spelling against the
+document's directory — what `fetchImage` resolved, so the bytes copied are
+the bytes decoded. Pure: the plan of the copies, which `publish` performs
+after the gate. -/
+def rasterCopies (file : String) (imgs : Image.Store) : Array (System.FilePath × String) :=
+  let dir := (System.FilePath.mk file).parent.getD "."
+  (HtmlDoc.imageAssets imgs).filterMap fun a =>
+    (imgs.get? a.srcIndex).map fun en =>
+      let p := System.FilePath.mk (HtmlDoc.resolvedSrc en)
+      (if p.isAbsolute then p else dir / p, a.file)
+
 /-- Phase 3's single write site, after the assertion gate: the only code in
 the driver that brings an output location into existence — the `-o`
 directory, the page with its asset and font directories, the markdown
@@ -738,13 +750,14 @@ so a failing document reaches none of this and leaves nothing behind; an
 artifact absent from the plan creates nothing, not even its directory.
 Returns the paths written, for the verdict line. -/
 def publish (ui : Ui) (outDir : Option String) (assetsDir fontsDir : String)
-    (html : Option (String × String × Array Publication × Option (Array HtmlDoc.FontAsset)))
+    (html : Option (String × String × Array Publication × Array (System.FilePath × String) ×
+      Option (Array HtmlDoc.FontAsset)))
     (md : Option (String × String)) (pdf : Option (String × ByteArray)) :
     IO (Array String) := do
   let mut written : Array String := #[]
   if let some o := outDir then
     IO.FS.createDirAll o
-  if let some (path, page, pubs, fonts?) := html then
+  if let some (path, page, pubs, rasters, fonts?) := html then
     let parent := (System.FilePath.mk path).parent.getD "."
     unless pubs.isEmpty do
       let t ← IO.monoMsNow
@@ -753,6 +766,18 @@ def publish (ui : Ui) (outDir : Option String) (assetsDir fontsDir : String)
       for pub in pubs do
         IO.FS.writeBinFile (dir / pub.name) (← IO.FS.readBinFile pub.cached)
       ui.phase "boundary-svg" s!"{pubs.size} pictures ({assetsDir})" (← since t)
+    -- The page's rasters, copied beside it under the names `imageHref`
+    -- linked: byte for byte the source files the store decoded.
+    unless rasters.isEmpty do
+      let t ← IO.monoMsNow
+      let dir := parent / assetsDir
+      IO.FS.createDirAll dir
+      let mut bytes := 0
+      for (src, name) in rasters do
+        let data ← IO.FS.readBinFile src
+        IO.FS.writeBinFile (dir / name) data
+        bytes := bytes + data.size
+      ui.phase "assets" s!"{rasters.size} images, {bytes} bytes ({assetsDir})" (← since t)
     IO.FS.writeFile path page
     written := written.push path
     -- The emission's font-file requests, fulfilled beside the page: the
@@ -943,7 +968,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       fired := fired ++ rC.fired
       accepted := accepted ++ rC.accepted
       warnings := warnings + rC.warnings
-      let mut htmlBuilt : Option (String × Array Publication) := none
+      let mut htmlBuilt : Option (String × Array Publication × Array (System.FilePath × String)) :=
+        none
       if emit.contains .html then
         let t ← IO.monoMsNow
         let cssMode := match css with
@@ -965,6 +991,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
           imgs := imgs
           fonts := if shipFonts then some fs else none
           fontsDir := fontsDir
+          assetsDir := assetsDir
           -- The markdown twin, when one is being written beside the page,
           -- is linked from the head as the alternate representation.
           mdHref := if emit.contains .md then (System.FilePath.mk mdPath).fileName
@@ -976,7 +1003,9 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         accepted := accepted ++ r4.accepted
         warnings := warnings + r4.warnings
         ui.phase "html" s!"{html.utf8ByteSize} bytes" (← since t)
-        htmlBuilt := some (html, pubs)
+        -- The page's raster copies, planned here (pure) and performed by
+        -- `publish`: the files every loaded raster's `src` links.
+        htmlBuilt := some (html, pubs, rasterCopies file imgs)
       let mut mdBuilt : Option String := none
       if emit.contains .md then
         let t ← IO.monoMsNow
@@ -1068,8 +1097,8 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
         ui.summary file failures.size (← since t0)
         return exitFor 0 failures.size warnings ui.cfg.werror
       let written ← publish ui outDir assetsDir fontsDir
-        (htmlBuilt.map fun (html, pubs) =>
-          (htmlPath, html, pubs, if shipFonts then some (HtmlDoc.fontAssets fs) else none))
+        (htmlBuilt.map fun (html, pubs, rasters) =>
+          (htmlPath, html, pubs, rasters, if shipFonts then some (HtmlDoc.fontAssets fs) else none))
         (mdBuilt.map (mdPath, ·)) (pdfBuilt.map (pdfPath, ·))
       -- The hatch's other teeth: an `\allow` that never fired is stale
       -- acceptance and warns; what was accepted always prints.

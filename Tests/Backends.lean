@@ -2025,7 +2025,7 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   let hcfg : HtmlDoc.Config := { imgs := store }
   let (figHtml, _) := HtmlDoc.emit hcfg figDoc
   t "html figure image with alt and intrinsic size"
-    ((figHtml.splitOn "<img src=\"rects.png\" alt=\"A mark\" width=\"64\" height=\"40\">").length == 2)
+    ((figHtml.splitOn "<img src=\"assets/i0-rects.png\" alt=\"A mark\" width=\"64\" height=\"40\">").length == 2)
   let (twDoc, _) := Elab.run "t" "\\includegraphics[width=0.8\\textwidth]{rects.png}"
   let (twHtml, _) := HtmlDoc.emit hcfg twDoc
   t "html width fraction becomes a percentage"
@@ -2073,12 +2073,12 @@ def imageChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit 
   t "source candidates try the written name first"
     ((Image.sourceCandidates "figures/plot").take 3 ==
       ["figures/plot", "figures/plot.pdf", "figures/plot.png"])
-  t "html names the resolved file, not the bare spelling"
+  t "html names the resolved file's copy, not the bare spelling"
     (let store2 : Image.Store := { entries := #[
       { src := "figures/plot", href := "figures/plot.png", info := pngInfo.toOption }] }
      let (h, _) := HtmlDoc.emit { imgs := store2 }
        ((Elab.run "t" "\\includegraphics{figures/plot}").1)
-     (h.splitOn "<img src=\"figures/plot.png\"").length == 2)
+     (h.splitOn "<img src=\"assets/i0-plot.png\"").length == 2)
 
 /-- Colour-key transparency: a PNG `tRNS` chunk on the pass-through colour
 types (greyscale, truecolour, indexed) is either exactly the PDF `/Mask`
@@ -4193,3 +4193,138 @@ def structTreeChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO 
         (tree.all fun e => e.ns.isSome || e.s == "Code" || e.s == "BlockQuote" || e.s == "Reference")
   t s!"struct: the corpus exercised the tree ({elems} elements, {mcids} marks)"
     (elems > 0 && mcids > 0)
+
+mutual
+
+/-- Every `img` element's `src` attribute in the typed tree, in document
+order. The self-contained-page oracle reads the attribute the tree
+carries, never the printed string. -/
+-- conserves: none — a src census, not text
+def imgSrcs (acc : Array String) : Html.Node → Array String
+  | .text _ => acc
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem t attrs kids =>
+    let acc := if t == "img" then
+        match attrs.find? (·.1 == "src") with
+        | some (_, s) => acc.push s
+        | none => acc
+      else acc
+    imgSrcsList acc kids.toList
+
+def imgSrcsList (acc : Array String) : List Html.Node → Array String
+  | [] => acc
+  | k :: rest => imgSrcsList (imgSrcs acc k) rest
+
+end
+
+/-- The self-contained page: every `<img src>` a loaded raster entry
+produces names a file `publish` writes under `<stem>.assets/`, and nothing
+under that directory exists before the assertion gate. A fact of the
+artifact, not the IR — file placement is where a page lives — so the
+in-memory half reads the typed tree (`imgSrcs`) and the on-disk half runs
+this tree's own binary, on a document that ships its face and its raster
+from the corpus. -/
+def htmlAssetChecks (ref : IO.Ref (List String)) : IO Unit := do
+  let t := check ref
+  let png : Image.Info := { format := .png, pxW := 64, pxH := 40 }
+  let srcsOf (store : Image.Store) (doc : Ir.Doc) : Array String :=
+    let (head, body, _) := HtmlDoc.emitTree { imgs := store, assetsDir := "out.assets" } doc
+    imgSrcsList (imgSrcsList #[] head.toList) body.toList
+  let docOf (body : String) : IO Ir.Doc := do
+    let (doc, ds) := elabStr (dvDoc "" body)
+    t s!"html assets: fixture elaborates clean: {body}" ds.isEmpty
+    return doc
+  -- Red 1: a loaded raster links the copy beside the page, and the asset
+  -- list names that copy with the store index it came from.
+  let doc ← docOf "\\includegraphics[alt={A box}]{rects.png}"
+  let one : Image.Store := { entries := #[{ src := "rects.png", info := some png }] }
+  t "html assets: a loaded raster's src names its copy under the assets directory"
+    (srcsOf one doc == #["out.assets/i0-rects.png"])
+  t "html assets: imageAssets names the copy with its store index"
+    (HtmlDoc.imageAssets one == #[{ file := "i0-rects.png", srcIndex := 0 }])
+  -- Red 2: two sources sharing a basename in different directories take
+  -- distinct names — the index prefix, not the basename, carries identity.
+  let doc2 ← docOf "\\includegraphics[alt={A}]{a/plot.png} and \\includegraphics[alt={B}]{b/plot.png}"
+  let two : Image.Store := { entries := #[{ src := "a/plot.png", info := some png },
+                                          { src := "b/plot.png", info := some png }] }
+  t "html assets: two rasters sharing a basename take distinct asset names"
+    (srcsOf two doc2 == #["out.assets/i0-plot.png", "out.assets/i1-plot.png"])
+  t "html assets: imageAssets covers both, in store order"
+    ((HtmlDoc.imageAssets two).map (·.srcIndex) == #[0, 1] &&
+     (HtmlDoc.imageAssets two).map (·.file) == #["i0-plot.png", "i1-plot.png"])
+  -- Red 3: an entry that did not load keeps the source spelling (the
+  -- placeholder, already diagnosed) and has no asset row.
+  let unloaded : Image.Store := { entries := #[{ src := "rects.png" }] }
+  t "html assets: an unloaded entry keeps its source spelling and ships no copy"
+    (srcsOf unloaded doc == #["rects.png"] && (HtmlDoc.imageAssets unloaded).isEmpty)
+  -- graphicx's extension resolution: the entry's href names the file on
+  -- disk, and the copy takes that name, not the bare spelling.
+  let bare ← docOf "\\includegraphics[alt={A box}]{rects}"
+  let resolved : Image.Store :=
+    { entries := #[{ src := "rects", href := "rects.png", info := some png }] }
+  t "html assets: a bare graphicx name copies under its resolved file name"
+    (srcsOf resolved bare == #["out.assets/i0-rects.png"] &&
+     HtmlDoc.imageAssets resolved == #[{ file := "i0-rects.png", srcIndex := 0 }])
+  -- A PDF source is a form XObject in the PDF and no browser image either
+  -- way: it keeps today's src and ships no copy (named-next for html-oracle).
+  let pdfDoc ← docOf "\\includegraphics[alt={A page}]{box.pdf}"
+  let pdfStore : Image.Store :=
+    { entries := #[{ src := "box.pdf", info := some { format := .pdf, pxW := 10, pxH := 10 } }] }
+  t "html assets: a PDF source keeps its spelling and ships no copy"
+    (srcsOf pdfStore pdfDoc == #["box.pdf"] && (HtmlDoc.imageAssets pdfStore).isEmpty)
+  -- A boundary picture publishes as SVG through its own list already; its
+  -- entry keeps the href the conversion set.
+  let picSrc := Ir.picSrcPrefix ++ "abc"
+  let picStore : Image.Store :=
+    { entries := #[{ src := picSrc, href := "out.assets/abc.svg"
+                     info := some { format := .pdf, pxW := 10, pxH := 10 } }] }
+  t "html assets: a boundary picture keeps its SVG href and has no raster row"
+    (HtmlDoc.imageHref "out.assets" picStore picSrc == "out.assets/abc.svg" &&
+     (HtmlDoc.imageAssets picStore).isEmpty)
+  -- The name's index is recoverable whatever the basename (the executable
+  -- twin of `imageAssetName_inj`).
+  t "html assets: equal names mean equal indices"
+    (HtmlDoc.imageAssetName 3 "a/x.png" == "i3-x.png" &&
+     HtmlDoc.imageAssetName 3 "a/x.png" != HtmlDoc.imageAssetName 13 "x.png" &&
+     HtmlDoc.imageAssetName 12 "x.png" != HtmlDoc.imageAssetName 1 "2-x.png")
+  -- Red 4 and 5, the driver end to end: the copy lands beside the page
+  -- named by `-o`, byte for byte the source; a failing assertion leaves no
+  -- `-o` directory and no `.assets/` anywhere — the copies are phase-3
+  -- lines, after the gate.
+  let build ← IO.Process.output { cmd := "lake", args := #["build", "leantex", "-q"] }
+  t s!"leantex builds for the asset checks:\n{build.stdout}{build.stderr}" (build.exitCode == 0)
+  if build.exitCode == 0 then
+    let dir ← IO.FS.createTempDir
+    IO.FS.createDirAll (dir / "fonts")
+    IO.FS.writeBinFile (dir / "fonts" / "SourceSerifPro-Regular.otf")
+      (← IO.FS.readBinFile (testFonts ++ "/SourceSerifPro-Regular.otf"))
+    let rects ← IO.FS.readBinFile "tests/corpus/rects.png"
+    IO.FS.writeBinFile (dir / "rects.png") rects
+    let pre := "\\documentclass{article}\n\\usepackage{graphicx}\n\
+\\fonts{ dir = \"fonts\", body = \"Source Serif Pro\" }\n\\output{ formats = html }\n"
+    let body := "\\begin{document}\nA box: \\includegraphics[alt={A box}]{rects.png}.\n\\end{document}\n"
+    IO.FS.writeFile (dir / "doc.tex") (pre ++ body)
+    IO.FS.createDirAll (dir / "out")
+    let r ← IO.Process.output {
+      cmd := ".lake/build/bin/leantex"
+      args := #[(dir / "doc.tex").toString, "-o", (dir / "out" / "x.html").toString] }
+    t s!"driver: the page builds under -o out/x.html: {r.stdout}{r.stderr}" (r.exitCode == 0)
+    let copy := dir / "out" / "x.assets" / "i0-rects.png"
+    let copied ← copy.pathExists
+    t "driver: the raster is published beside the page under <stem>.assets" copied
+    t "driver: the published raster is the source, byte for byte"
+      (copied && (← if copied then IO.FS.readBinFile copy else pure ByteArray.empty) == rects)
+    let page ← IO.FS.readFile (dir / "out" / "x.html")
+    t "driver: the page links the copy, not the source spelling"
+      (hasStr page "src=\"x.assets/i0-rects.png\"" && !hasStr page "src=\"rects.png\"")
+    IO.FS.writeFile (dir / "fail.tex") (pre ++ "\\assert{ pages == 99 }\n" ++ body)
+    let r2 ← IO.Process.output {
+      cmd := ".lake/build/bin/leantex"
+      args := #[(dir / "fail.tex").toString, "-o", (dir / "out2").toString ++ "/"] }
+    let assetDirs := (← System.FilePath.walkDir dir).filter fun p =>
+      p.toString.endsWith ".assets"
+    t "driver: a failing assertion publishes no page, no -o directory, and no .assets/ anywhere"
+      (r2.exitCode != 0 && !(← (dir / "out2").pathExists) &&
+       assetDirs == #[dir / "out" / "x.assets"])
+    IO.FS.removeDirAll dir

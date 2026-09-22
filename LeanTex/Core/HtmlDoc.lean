@@ -71,6 +71,10 @@ structure Config where
   /-- The sibling directory the driver writes the shipped faces into,
   relative to the page — what every `src: url(...)` references. -/
   fontsDir : String := "fonts"
+  /-- The sibling directory the driver publishes the page's rasters (and
+  the boundary pictures' SVGs) into, relative to the page — what every
+  loaded raster's `<img src>` references (`imageHref`). -/
+  assetsDir : String := "assets"
 
 def cssColor (c : Color) : String :=
   let r := Color.hexByte c.r false
@@ -1100,6 +1104,143 @@ theorem shipFaces_src_shipped (fs : Font.FontSet) :
   refine ⟨{ file := fontFileName i (fs.get i), data := (fs.get i).data }, ?_, rfl⟩
   simp only [fontAssets, Array.mem_map]
   exact ⟨i, hi, rfl⟩
+
+/-! ## Rasters beside the page
+
+A loaded PNG or JPEG is published under `<stem>.assets/` beside the page,
+as the faces are under `<stem>.fonts/`, so the page is self-contained
+wherever `-o` puts it: `src` once kept the source-relative spelling, and a
+page built outside its source directory showed broken images. Phase 2
+decides the names and the `src` strings here, purely; `publish` is the
+only code that puts a byte under the directory, after the gate. The proof
+stops at the emitted `src` and the asset list — that a browser resolves
+the relative URL and decodes the bytes is the oracle. -/
+
+/-- One raster the page links: the file name it takes beside the page and
+the store index it came from — a copy request for the driver (effects as
+data), the source path being the store entry's. -/
+structure ImageAsset where
+  file : String
+  srcIndex : Nat
+  deriving Repr, BEq
+
+/-- The last path segment of a source spelling. -/
+def basename (p : String) : String := (p.splitOn "/").getLastD p
+
+/-- The path the driver resolved for an entry: graphicx's extension
+resolution recorded in `href` when the spelling was bare, else the spelling
+itself — the file whose bytes were decoded. -/
+def resolvedSrc (en : Image.Loaded) : String :=
+  if en.href.isEmpty then en.src else en.href
+
+/-- Which entries copy: a loaded PNG or JPEG that is not a boundary picture.
+A picture publishes as SVG through `picsToSvg`'s own list; a PDF source is a
+form XObject in the PDF and no browser image either way, so it keeps its
+spelling. -/
+def rasterShips (en : Image.Loaded) : Bool :=
+  !en.src.startsWith Ir.picSrcPrefix &&
+  match en.info with
+  | some i => i.format == .png || i.format == .jpeg
+  | none => false
+
+/-- The copy's file name: the store index, then the source's basename. The
+index prefix makes the name collision-free whatever the sources are called
+(`imageAssetName_inj`: two plots named `plot.png` in two directories keep
+apart); the basename keeps it readable. -/
+def imageAssetName (k : Nat) (href : String) : String :=
+  let base := basename href
+  "i" ++ ListMark.arabicN k ++ "-" ++ base
+
+/-- The copy requests of the page: one per shipping entry, in store order. -/
+def imageAssets (imgs : Image.Store) : Array ImageAsset :=
+  (Array.range imgs.entries.size).filterMap fun k =>
+    (imgs.get? k).bind fun en =>
+      if rasterShips en then some { file := imageAssetName k (resolvedSrc en), srcIndex := k }
+      else none
+
+/-- What an `<img>` for `src` links: the copy under `assetsDir` when the
+entry ships, else the resolved spelling (the placeholder of an unloaded
+entry, a PDF source, a boundary picture's SVG href). -/
+def imageHref (assetsDir : String) (imgs : Image.Store) (src : String) : String :=
+  match imgs.find? src with
+  | some k =>
+    match imgs.get? k with
+    | some en =>
+      if rasterShips en then assetsDir ++ "/" ++ imageAssetName k (resolvedSrc en)
+      else resolvedSrc en
+    | none => src
+  | none => src
+
+/-- No decimal digit is the separator the asset name is split on. -/
+private theorem arabicN_no_dash (k : Nat) : ∀ c ∈ (ListMark.arabicN k).toList, c ≠ '-' := by
+  intro c hc heq
+  simp only [ListMark.arabicN, String.toList_ofList, List.mem_reverse] at hc
+  have := ListMark.digitsRev_digits hc
+  subst heq
+  simp at this
+
+private theorem dash_split (a a' r r' : List Char)
+    (ha : ∀ c ∈ a, c ≠ '-') (ha' : ∀ c ∈ a', c ≠ '-')
+    (h : a ++ '-' :: r = a' ++ '-' :: r') : a = a' := by
+  induction a generalizing a' with
+  | nil =>
+    cases a' with
+    | nil => rfl
+    | cons c cs =>
+      simp only [List.nil_append, List.cons_append, List.cons.injEq] at h
+      exact absurd h.1.symm (ha' c (List.mem_cons_self ..))
+  | cons c cs ih =>
+    cases a' with
+    | nil =>
+      simp only [List.cons_append, List.nil_append, List.cons.injEq] at h
+      exact absurd h.1 (ha c (List.mem_cons_self ..))
+    | cons c' cs' =>
+      simp only [List.cons_append, List.cons.injEq] at h
+      have := ih cs' (fun x hx => ha x (List.mem_cons_of_mem _ hx))
+        (fun x hx => ha' x (List.mem_cons_of_mem _ hx)) h.2
+      rw [h.1, this]
+
+/-- Equal asset names come from equal store indices (`_inj`): the index
+prefix carries identity, so two sources with one basename in two
+directories never collide beside the page. Basenames need not be distinct
+and are not claimed to be. -/
+theorem imageAssetName_inj {k k' : Nat} {h h' : String}
+    (e : imageAssetName k h = imageAssetName k' h') : k = k' := by
+  have hl := congrArg String.toList e
+  have hi : "i".toList = ['i'] := rfl
+  have hd : "-".toList = ['-'] := rfl
+  simp only [imageAssetName, String.toList_append, List.append_assoc, hi, hd,
+    List.singleton_append] at hl
+  exact ListMark.arabicN_inj (String.ext
+    (dash_split _ _ _ _ (arabicN_no_dash k) (arabicN_no_dash k') (List.cons.inj hl).2))
+
+/-- Every shipping entry has an asset row (`_covers`): for each store index
+whose entry is a loaded raster, `imageAssets` carries a request naming it —
+the `shipFaces_covers` shape. -/
+theorem imageAssets_covers (imgs : Image.Store) {k : Nat} {en : Image.Loaded}
+    (hen : imgs.get? k = some en) (hr : rasterShips en = true) :
+    ∃ a ∈ imageAssets imgs, a.srcIndex = k := by
+  refine ⟨{ file := imageAssetName k (resolvedSrc en), srcIndex := k }, ?_, rfl⟩
+  simp only [imageAssets, Array.mem_filterMap]
+  refine ⟨k, Array.mem_range.mpr ?_, ?_⟩
+  · exact (Array.getElem?_eq_some_iff.mp hen).1
+  · simp [hen, hr]
+
+/-- Every `src` a loaded raster entry produces is a file the driver is asked
+to copy: `imageHref` and `imageAssets` are projections of one decision
+(`rasterShips`), so the page cannot link a copy that was never requested —
+the `shipFaces_src_shipped` shape. A fact of the artifact, not the IR: file
+placement is where a page lives. That the browser resolves the relative URL
+and decodes the bytes is the oracle, never this theorem. -/
+theorem img_src_shipped (assetsDir : String) (imgs : Image.Store) (src : String)
+    {k : Nat} {en : Image.Loaded} (hk : imgs.find? src = some k)
+    (hen : imgs.get? k = some en) (hr : rasterShips en = true) :
+    ∃ a ∈ imageAssets imgs, imageHref assetsDir imgs src = assetsDir ++ "/" ++ a.file := by
+  refine ⟨{ file := imageAssetName k (resolvedSrc en), srcIndex := k }, ?_, ?_⟩
+  · simp only [imageAssets, Array.mem_filterMap]
+    refine ⟨k, Array.mem_range.mpr (Array.getElem?_eq_some_iff.mp hen).1, ?_⟩
+    simp [hen, hr]
+  · simp [imageHref, hk, hen, hr]
 
 def fontFaceRule (dir : String) (ff : FontFace) : String :=
   s!"@font-face \{ font-family: \"{ff.family}\"; font-weight: {ff.weight}; " ++
@@ -2753,11 +2894,11 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- the browser on the intrinsic ratio, the same invariant the PDF path
     -- proves.
     let info? := (cfg.imgs.find? src).bind fun k => (cfg.imgs.get? k).bind (·.info)
-    -- A bare graphicx name resolved to a file with an extension: the link
-    -- must name the file on disk, not the spelling in the source.
-    let href := match (cfg.imgs.find? src).bind fun k => cfg.imgs.get? k with
-      | some entry => if entry.href.isEmpty then src else entry.href
-      | none => src
+    -- The link names the copy published beside the page (`imageHref`) —
+    -- or, for an entry that ships none, the file on disk: a bare graphicx
+    -- name resolved to a file with an extension must name that file, not
+    -- the spelling in the source.
+    let href := imageHref cfg.assetsDir cfg.imgs src
     let cssDim (l : Image.Len) : Option String :=
       if l.tw != 0 && l.sp == 0 && l.th == 0 then
         some (decMilli (l.tw * 100) ++ "%")
