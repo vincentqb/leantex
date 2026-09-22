@@ -9569,6 +9569,117 @@ theorem setAltBlocks_text (alt : String) :
     Conserves blocksText (setAltBlocks alt) :=
   mapBlocks_text _ (fun x => by cases x <;> rfl)
 
+/-- A declaration met between blocks: `\footnotesize`, `\bfseries`, or a
+bare palette name standing where a block could, with no argument. It
+scopes every block after it in its group — the rest-of-group reading
+`\centering` already has (ltmiscen.dtx: every declaration form scopes to
+the group) — and the elaborator carries the open declarations, outermost
+first, to every inline region it builds in that scope (a paragraph, a
+table cell), where `wrapDecls` puts them around the region. So a table or
+list standing next receives the declaration, no empty styled paragraph is
+set in its place, and a later `\normalsize` inside resets because it
+stands innermost and sizes are absolute (`Layout.applyStyle`). -/
+inductive Decl where
+  | style (s : Style)
+  | color (c : Color) (name : Option String)
+  deriving Repr, BEq
+
+/-- One declaration around a region: exactly the node its grouped
+spelling elaborates to (`{\footnotesize B}` is `.styled (size) B`). -/
+def Decl.wrap : Decl → Array Inline → Array Inline
+  | .style s, xs => #[.styled s xs]
+  | .color c n, xs => #[.colored c n xs]
+
+/-- The open declarations around a region, outermost first. -/
+def wrapDecls (ds : List Decl) (xs : Array Inline) : Array Inline :=
+  match ds with
+  | [] => xs
+  | d :: rest => d.wrap (wrapDecls rest xs)
+
+theorem Decl.wrap_text (d : Decl) (xs : Array Inline) :
+    plainText (d.wrap xs) = plainText xs := by
+  cases d <;> simp [Decl.wrap, plainText, plainTextList, plainTextOne]
+
+/-- A declaration is markup, never content: the region ships exactly the
+census it had. -/
+theorem wrapDecls_text (ds : List Decl) : Conserves plainText (wrapDecls ds) := fun xs => by
+  induction ds with
+  | nil => rfl
+  | cons d rest ih => simp only [wrapDecls, Decl.wrap_text, ih]
+
+mutual
+
+-- conserves: none — a census, not a rewrite: it reads the tree and returns
+-- the text standing under a style the predicate accepts.
+/-- The text of inline content that stands under some `.styled st` with
+`p st`: what a size or weight declaration is worth on the page. Under an
+accepted style everything counts; elsewhere the walk reads through the
+wrappers to the styled runs below. The list face threads its
+accumulator. -/
+def textUnder (p : Style → Bool) (x : Inline) : String :=
+  match x with
+  | .styled st body =>
+    if p st then plainTextList body.toList else textUnderList p "" body.toList
+  | .colored _ _ body => textUnderList p "" body.toList
+  | .role _ body => textUnderList p "" body.toList
+  | .link _ body => textUnderList p "" body.toList
+  | .underline body => textUnderList p "" body.toList
+  | .step _ _ body => textUnderList p "" body.toList
+  | .footnote _ body => textUnderList p "" body.toList
+  | .text _ | .math _ _ | .formula _ _ _ | .image _ _ _ | .icon _ _
+  | .label _ | .ref _ _ _ _ | .cite _ _ | .fill | .strut _
+  | .pageNumber | .pageCount | .linebreak _ => ""
+
+def textUnderList (p : Style → Bool) (acc : String) (xs : List Inline) : String :=
+  match xs with
+  | [] => acc
+  | x :: rest => textUnderList p (acc ++ textUnder p x) rest
+
+end
+
+/-- Whether some open declaration is a style the predicate accepts. -/
+def Decl.anyStyle (p : Style → Bool) : List Decl → Bool
+  | [] => false
+  | .style s :: rest => p s || Decl.anyStyle p rest
+  | .color _ _ :: rest => Decl.anyStyle p rest
+
+/-- A declaration standing between blocks scopes every following block of
+its group: once a style the predicate accepts is among the open
+declarations, the text standing under it in any region built in that
+scope is the region's whole census — no character of the scope escapes
+the declaration, and none is added. This is how the `\footnotesize`
+before a tabular reaches the cells, where the inline reading left an
+empty styled paragraph beside a body-size table. Shape `_covers`. -/
+theorem decl_between_blocks_covers (p : Style → Bool) (ds : List Decl)
+    (hd : Decl.anyStyle p ds = true) (xs : Array Inline) :
+    textUnderList p "" (wrapDecls ds xs).toList = plainText xs := by
+  induction ds with
+  | nil => simp [Decl.anyStyle] at hd
+  | cons d rest ih =>
+    cases d with
+    | style s =>
+      simp only [Decl.anyStyle, Bool.or_eq_true] at hd
+      simp only [wrapDecls, Decl.wrap]
+      have hw : plainTextList (wrapDecls rest xs).toList = plainText xs :=
+        wrapDecls_text rest xs
+      show textUnderList p ("" ++ textUnder p (.styled s _)) [] = _
+      rcases hd with h | h
+      · simp [textUnderList, textUnder, h, hw]
+      · cases hp : p s
+        · simp [textUnderList, textUnder, hp, ih h]
+        · simp [textUnderList, textUnder, hp, hw]
+    | color c n =>
+      simp only [Decl.anyStyle] at hd
+      simp only [wrapDecls, Decl.wrap]
+      show textUnderList p ("" ++ textUnder p (.colored c n _)) [] = _
+      simp [textUnderList, textUnder, ih hd]
+
+/-- The two spellings agree: the declaration read between blocks wraps a
+region in exactly the node the grouped spelling `{\footnotesize B}`
+elaborates to. Shape `_agree`. -/
+theorem decl_spellings_agree (s : Style) (xs : Array Inline) :
+    wrapDecls [.style s] xs = #[.styled s xs] := rfl
+
 /-- One character of a label's anchor: word characters and the punctuation
 label keys conventionally carry (`fig:scm`, `eq.1`, `a-b`, `x_y`) survive
 verbatim; anything else — whitespace included — folds to a hyphen. -/

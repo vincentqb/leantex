@@ -260,6 +260,13 @@ structure ESt where
   flow state `inAppendix` uses. Paragraphs formed under it carry the
   attribute (`mkPara`). -/
   flowLang : Option String := none
+  /-- The declarations met between blocks in the enclosing scopes,
+  outermost first (`Ir.Decl`), threaded as the flow language is: every
+  inline region built under them — a paragraph, a table cell — is wrapped
+  in them (`Ir.wrapDecls`), which is how `\footnotesize` before a tabular
+  reaches its cells (`Ir.decl_between_blocks_covers`). The declaration
+  arm pushes on entering the rest of its scope and restores on leaving. -/
+  blockDecls : List Ir.Decl := []
   /-- Bumped by each body declaration: the cheap guard that lets the block
   loop skip re-reading the flow state per raw item. -/
   flowGen : Nat := 0
@@ -3840,6 +3847,58 @@ private def inkFlowPalette (ctx : Ctx) (marker : String) : Option Ir.Palette :=
   (ctx.palette.resolve ((marker.drop "@ink:".length).toString)).map fun c =>
     ctx.palette.declare "fg" c
 
+/-- The block reading of a declaration met between blocks — the `isB` row
+and its arm's one computation: the `Ir.Decl` the rest of the scope is
+elaborated under, when `n` is a style declaration or a bare palette name
+and the open paragraph holds nothing but space. Bare: `\accent{word}`
+opening a paragraph keeps its argument reading. Mid-paragraph a
+declaration keeps the inline reading, as the ink marker does.
+`\centering` keeps its block wrapper, the `@lang:` marker its
+flow-state arm, and `\ttfamily` its inline arm. -/
+private def declBlockOf (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
+    (cur : Array Raw) : Option Ir.Decl :=
+  -- `\ttfamily` keeps its inline reading: its literal treatment of
+  -- punctuation lives on the inline context, not in the flow state.
+  if !cur.all isSpaceOrPar || n.startsWith "@lang:" || n == "ttfamily" then none
+  else match declStyleOf n with
+    | some s => some (.style s)
+    | none =>
+      (ctx.palette.find? n).bind fun c =>
+        match raws[skipSpaces raws (i + 1)]? with
+        | some (.group _ _) => none
+        | _ => some (.color c (some n))
+
+/-- The `isB` row of the declaration's block reading: one Bool for the
+knot, computed outside it. -/
+private def isDeclBlock (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
+    (cur : Array Raw) : Bool :=
+  (declBlockOf ctx n raws i cur).isSome
+
+/-- Enter the rest of a declaration's scope: the declaration joins the open
+ones innermost (unchanged for `\centering` and the ragged pair). Returns
+the list to restore on leaving. -/
+private def enterBlockDecl (ctx : Ctx) (n : String) (raws : Array Raw) (i : Nat)
+    (cur : Array Raw) : EM (List Ir.Decl) := do
+  let saved := (← get).blockDecls
+  match declBlockOf ctx n raws i cur with
+  | some d => modify fun st => { st with blockDecls := saved ++ [d] }
+  | none => pure ()
+  return saved
+
+/-- Leave the scope: restore what `enterBlockDecl` saved. -/
+private def leaveBlockDecl (saved : List Ir.Decl) : EM Unit :=
+  modify fun st => { st with blockDecls := saved }
+
+/-- The declaration arm's whole effect but the recursion: the elaborated
+rest of the scope, centred or ragged as one block wrapper (an empty scope
+wraps nothing); a style or colour declaration already reached every
+region inside through `ctx.blockDecls`. -/
+private def declScopeWrap (n : String) (inner : Array Block) : Array Block :=
+  if n == "centering" then (if inner.isEmpty then #[] else #[.center inner])
+  else if n == "flushleft" || n == "raggedright" then
+    (if inner.isEmpty then #[] else #[.ragged inner])
+  else inner
+
 /-- The W0304 the inline colour arm speaks, for the block form. -/
 private def warnInkUnknown (ctx : Ctx) (marker : String) (pos : Pos) : EM Unit :=
   warnPaletteMiss ctx ((marker.drop "@ink:".length).toString) pos
@@ -4207,7 +4266,7 @@ private def mkPara (ctx : Ctx) (cur : Array Raw) : EM (Option Block) := do
         break
     | _ => break
   if inlines.isEmpty then return none
-  return some (paraUnder (← get).flowLang inlines)
+  return some (paraUnder (← get).flowLang (Ir.wrapDecls (← get).blockDecls inlines))
 
 /-- Store one `\title`-family part; both doors — the body's
 `takeTitleDecl` and the preamble's `.titleDecl` arm — write through
@@ -5585,7 +5644,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
     if h' : j < body.size then
       match body[j] with
       | .ctrl "\\" bpos =>
-        cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
+        cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
         cellRaws := #[]
         rows := rows.push cells
         cells := #[]
@@ -5605,7 +5664,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
             j := j'
         | _ => pure ()
       | .sym '&' _ =>
-        cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
+        cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
         cellRaws := #[]
         j := j + 1
       | .ctrl name rpos =>
@@ -5657,7 +5716,7 @@ private def tabularArm (ctx : Ctx) (n : String) (body : Array Raw)
         j := j + 1
     else break
   if cellRaws.any (!isSpaceOrPar ·) || !cells.isEmpty then
-    cells := cells.push (← elabInlines ctx (trimRawEdges cellRaws))
+    cells := cells.push (Ir.wrapDecls (← get).blockDecls (← elabInlines ctx (trimRawEdges cellRaws)))
     rows := rows.push cells
   -- Rectangularity: every walk below trusts `cols.size`.
   let widest := rows.foldl (fun m r => max m r.size) cols.size
@@ -6054,6 +6113,7 @@ seal enterAppendicesIf leaveAppendices wrapScopedEnv
 seal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 seal theCounterLevel? String.toInt? String.toNat?
 seal Ir.padTableRows Ir.setAltBlocks Ir.plainText
+seal declBlockOf isDeclBlock enterBlockDecl leaveBlockDecl declScopeWrap
 seal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 seal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
 seal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv
@@ -7876,6 +7936,10 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
           || n == "framefoot" || n == "pagebreak" || n == "appendix"
           || n == "bibliography" || n == "bibliographystyle"
           || (n == "note" && cur.isEmpty)
+          -- A declaration met between blocks scopes the rest of the group,
+          -- as `\centering` does (the arm below); mid-paragraph it keeps
+          -- the inline reading.
+          || isDeclBlock ctx' n raws i cur
           -- `\color{n}`'s block form: a flow ink declaration (the arm
           -- below). Mid-paragraph the marker keeps the inline reading —
           -- splitting the paragraph there would move text.
@@ -7898,15 +7962,22 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
       let blocks ← flushPara ctx' blocks cur
       if n == "par" then
         elabBlocksGo ctx' raws (i + 1) blocks #[] gen'
-      else if n == "centering" || n == "flushleft" || n == "raggedright" then
+      else if n == "centering" || n == "flushleft" || n == "raggedright"
+          || isDeclBlock ctx' n raws i cur then
         -- The declaration form of \begin{center} / \begin{flushleft}
         -- (ltmiscen.dtx: flushleft is a trivlist under \raggedright, and
         -- \raggedright is the same declaration bare): the rest of this
         -- scope centres, or sets ragged left. Text flushed just above
         -- stays unaligned — LaTeX would re-align the whole broken
-        -- paragraph; this engine aligns from the declaration on. One arm
-        -- for the family: the elabBlocks termination burden is per
-        -- recursive call, and the constructor is the only difference.
+        -- paragraph; this engine aligns from the declaration on. The
+        -- style and colour declarations met between blocks take the same
+        -- rest-of-scope reading, pushed onto the scope's leaves
+        -- (`Ir.styleBlocks`, `Ir.decl_between_blocks_covers`), so a table
+        -- or list standing next receives them and no empty styled
+        -- paragraph is set in the declaration's place. One arm for the
+        -- family: the elabBlocks termination burden is per recursive
+        -- call, and the wrapper (`declScopeWrap`) and the state
+        -- (`enterBlockDecl`) are the only differences.
         have hxw : rawWeightList (raws.extract (i + 1) raws.size).toList
             ≤ sliceWeight raws (i + 1) := extract_slice_le ..
         have hxp : nestedParsList (raws.extract (i + 1) raws.size).toList
@@ -7917,11 +7988,11 @@ private def elabBlocksGo (ctx : Ctx) (raws : Array Raw) (i : Nat)
         have hx1 : slicePars (raws.extract (i + 1) raws.size) 0
             = nestedParsList (raws.extract (i + 1) raws.size).toList :=
           slicePars_zero _
+        let saved ← enterBlockDecl ctx' n raws i cur
         let inner ← elabBlocksGo ctx' (raws.extract (i + 1) raws.size) 0
           #[] #[] (← get).flowGen
-        let blocks := if inner.isEmpty then blocks
-          else blocks.push
-            (if n == "centering" then .center inner else .ragged inner)
+        leaveBlockDecl saved
+        let blocks := blocks ++ declScopeWrap n inner
         have hend : sliceWeight raws raws.size = 0 :=
           sliceWeight_end raws (Nat.le_refl _)
         have hendp : slicePars raws raws.size = 0 :=
@@ -8350,6 +8421,7 @@ unseal recordLabel refuseRedef dropEnvArgs skipReservedArgs takeDefine
 unseal secFmtDefine? secFmtOfBody applySecFmt applyCounter counterCtrl counterArm
 unseal theCounterLevel? String.toInt? String.toNat?
 unseal Ir.padTableRows Ir.setAltBlocks Ir.plainText
+unseal declBlockOf isDeclBlock enterBlockDecl leaveBlockDecl declScopeWrap
 unseal bodyIsBlock bodyIsBlockList bodyIsBlockOne overlayTakesBlocks
 unseal DiagCode.ofString? Diag.of renderedBuiltins structuralNames
 unseal declCtrl runningCtrl titleCtrls overlayCtrls blockEnvs reservedEnv

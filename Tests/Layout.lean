@@ -3668,3 +3668,44 @@ got {(String.ofList actual.toList).quote}"
   t "attr synthetic: the mark's digit is a note mark, in the text and leading the note"
     ((slines.filter fun l => l.segs.any fun seg =>
       segAttr seg == some (.noteMark 1) && segGlyphText seg == "1").size == 2)
+
+/-- A declaration standing between blocks scopes every following block of
+its group — size and colour like `\centering` — and never sets an empty
+styled paragraph in its place. The page fact behind `decl_between_blocks_covers`:
+`\footnotesize` before a tabular sizes the cells at the footnotesize step,
+`\normalsize` after it returns the paragraph to the body size, and the
+lines in between hold only the table's text. -/
+def declBlockChecks (ref : IO.Ref (List String)) (geom : Layout.Geom)
+    (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let src := "\\footnotesize\n\\begin{tabular}{ll}\nalpha & beta \\\\\n" ++
+    "gamma & delta\n\\end{tabular}\n\\normalsize\nBody text after the table."
+  let (doc, diags) := Elab.run "t" src
+  let c := censusOf #[] (layoutOf oneFace doc geom)
+  let small := Ir.scaleStep geom.fontSize "footnotesize"
+  t "decl between blocks: the fixture elaborates clean" (diags.all (·.code.startsWith "N"))
+  t "decl between blocks: the table's cells set at the footnotesize step"
+    (lineSizeOf c 0 "alpha" == some small && lineSizeOf c 0 "gamma" == some small)
+  t "decl between blocks: the paragraph after \\normalsize sets at the body size"
+    (lineSizeOf c 0 "Body text" == some geom.fontSize)
+  t "decl between blocks: no empty styled paragraph stands before the table"
+    ((c[0]?.map fun p => p.lines.all fun l => !l.text.trimAscii.toString.isEmpty).getD false)
+  -- The grouped spelling and the declaration spelling agree on the page.
+  let grouped := "{\\footnotesize\n\\begin{tabular}{ll}\nalpha & beta \\\\\n" ++
+    "gamma & delta\n\\end{tabular}}\nBody text after the table."
+  let cg := censusOf #[] (layoutOf oneFace (Elab.run "t" grouped).1 geom)
+  t "decl between blocks: the grouped spelling sizes the cells the same way"
+    (lineSizeOf cg 0 "alpha" == some small && lineSizeOf cg 0 "Body text" == some geom.fontSize)
+  -- A bare palette name between blocks colours the blocks that follow.
+  let colored := "\\palette{ accent = #336699 }\n\\accent\n\\begin{itemize}\\item one\\end{itemize}"
+  let cout := layoutOf oneFace (Elab.run "t" colored).1 geom
+  -- The body `\palette` ships as a `setPalette` block, so the value is
+  -- spelled here rather than read from the preamble palette.
+  let accent : Ir.Color := { r := 51, g := 102, b := 153 }
+  let itemRuns := (bodyLines cout).flatMap (·.segs.filterMap fun s =>
+    match s with
+    | .run _ color _ _ glyphs _ _ _ _ _ =>
+      if glyphs.any (·.2 == 'o') then some color else none
+    | _ => none)
+  t "decl between blocks: a bare palette name colours the list after it"
+    (!itemRuns.isEmpty && itemRuns.all (· == accent))

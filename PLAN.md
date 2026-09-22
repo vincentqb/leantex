@@ -298,6 +298,43 @@ within noise. Unlocks 21a, 22a, 23a/b/c, 24,
 `Sect`s, `.float` over a table as `Table` + `Caption` rather than `Figure`,
 a `Fill` origin bit.
 
+2026-09-22 — a declaration standing between blocks scopes the rest of its
+group (decl-between-blocks; causal-render-audit fix 2; engine bug fix).
+`\footnotesize`, `\bfseries`, or a bare palette name met where a block
+could stand, with the open paragraph holding nothing but space, took the
+inline reading: `mkPara` flushed an empty styled paragraph and the tabular
+after it set at body size — the page-18 table of the 24-page reference
+deck, and its spill. Now the declaration is a block declaration the way
+`\centering` already was (one shared arm in the block knot; the knot's
+elaboration and compiler budgets hold — a `Ctx` field tipped the LCNF
+pass over 200k heartbeats, so the open declarations travel in the flow
+state as `flowLang` does, `ESt.blockDecls`, pushed on entering the rest of
+the scope and restored on leaving). Every inline region built under them
+is wrapped in `Ir.wrapDecls` — the paragraph in `mkPara`, each cell in the
+tabular arm — outermost first, so a later `\normalsize` stands innermost
+and resets. Region-level, not leaf-level: a leaf map (`mapBlocks`) inverts
+the nesting of an outer and an inner declaration, because the inner arm
+runs first and the outer's wrapper then lands inside it — the first
+attempt, caught by the synthetic red's `\normalsize` paragraph.
+`Ir.Decl` is the declaration as data; `Ir.wrapDecls_text` (a `Conserves`
+instance) says a declaration is markup; `decl_between_blocks_covers`
+(`_covers`) says that once an accepted style is among the open
+declarations, `textUnder` reads the region's whole census; and
+`decl_spellings_agree` (`_agree`) is `rfl`: the declaration read between
+blocks wraps a region in exactly the node `{\footnotesize B}` elaborates
+to, so single-paragraph goldens do not move (none did). Red/green in
+`declBlockChecks` (Tests/Layout): cells at `scaleStep body footnotesize`,
+the paragraph after `\normalsize` at the body size, a bare palette name
+colouring the list after it. Deck acceptance: 24 pages before and after,
+the same diagnostic set, 23 of 24 page rasters pixel-identical; on the
+table page the cell glyphs fall from 12 to 10 px at 120 dpi (the
+footnotesize step) while the row pitch stays at the body leading (21 px),
+so the table's height and the one-sentence spill to the next page remain
+— the row height is table-layout policy (a row's leading from its
+content's size), outside this slice and named next with the natural-width
+question. `\ttfamily` keeps its inline reading (its literal-punctuation
+flag lives on the inline context); `compose-fuzz` passes.
+
 2026-09-22 — the writer's features are a closed type, and two browser
 engines now sit on the reader matrix's `target:` line (pdf-browser-oracles,
 M7-20, W2.9; tooling plus one typed census; no byte of any PDF changes: 72
