@@ -187,6 +187,34 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-22 — literal Unicode Greek in math is the same atom as its control
+word (greek-literal-math, M6; missing capability — `$λ$`, `$M_θ$`, `$φ$`,
+`$Ω$` used to degrade the whole formula to source text under W0012 while
+`$\lambda$` set the italic scalar; two such sites on the reference deck,
+2 → 0 W0012, only the two frames' rasters move, page count unchanged).
+The invariant that was absent: *a literal character and a control word
+naming the same Unicode math scalar produce the same atom* — unicode-math
+keeps one table keyed by scalar with the literal and the `\name` as two
+spellings, and `charAtom`/`ctrlAtom` were two tables with nothing tying
+them. Greek is the one letter family where the literal (U+03B8) and the
+scalar set (U+1D703) differ, which is why identity scalars (`×`, `≤`, `∈`)
+never showed the gap. `MathParse.greekLiteral` is unicode-math's
+`math-style=TeX` mapping: α..ω onto the Mathematical Italic block in order
+(ε ↦ `\varepsilon`, φ ↦ `\varphi`, ς ↦ `\varsigma`), the six symbol-slot
+forms ϵ ϑ ϰ ϕ ϱ ϖ onto their italic slots, capitals upright; `charAtom`
+falls through to it. `greek_literal_agree` states the invariant over
+`greekSpellings` (every `ctrlAtom` Greek row with its literal spelling):
+`charAtom literal = ctrlAtom.lookup name`; `greek_literal_covers` pins both
+Greek blocks whole, ο and the control-word-less capitals included. Backend
+agreement is inherited, not re-proved: the change is upstream of `Ir`, so
+`mathml_glyphs_agree` and Layout read one `MList`. Fixture
+`greek-literal.tex` (Fira Math from the corpus fonts) pairs each literal
+with its control word; its census row asserts the italic scalars ship and
+no U+03xx Greek run does. Not taken: accepting every identity scalar of
+`ctrlAtom`'s image literally (`ℓ`, `∂`, `∇`, …) — a table-driven rule of
+the same shape, owed separately, not folded in here. The 2026-09-17 M6
+still-owed list did not name literal Greek; this entry closes it.
+
 2026-09-21 — every PDF is tagged: marked content on real content, a
 structure tree, a parent tree, `/MarkInfo` and `/StructTreeRoot` in every
 catalog, unconditionally (pdf-tag-skeleton, M7-19b; feature — PDF bytes

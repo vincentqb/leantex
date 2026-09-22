@@ -741,6 +741,17 @@ def censusTable :
     ("one page", c.size == 1),
     ("the inline formula ships italic math glyphs", hasStr (censusText c) "𝑥"),
     ("the display fraction bar ships as a rule", ((c[0]?.map (·.rules)).getD 0) == 1)]),
+  ("greek-literal", fun _ c => [
+    ("one page", c.size == 1),
+    ("lowercase literals ship the Mathematical Italic scalars",
+      ["𝜆", "𝜃", "𝜑", "𝜀", "𝛼", "𝛽", "𝛾", "𝜔"].all (hasStr (censusText c))),
+    ("the symbol slots ship their own scalars",
+      hasStr (censusText c) "𝜖" && hasStr (censusText c) "𝜙"),
+    ("capitals ship upright", hasStr (censusText c) "Ω" && hasStr (censusText c) "Φ"),
+    ("no Greek letter ships as body-face source text",
+      ["λ", "θ", "φ", "ε", "ϵ", "ϕ", "α", "β", "γ", "ω"].all fun g =>
+        !hasStr (censusText c) g),
+    ("the function name stays upright", hasStr (censusText c) "cos")]),
   ("quotes", fun geom c => [
     ("one page", c.size == 1),
     ("the quotation's text ships", hasStr (censusText c) "A short invented epigraph"),

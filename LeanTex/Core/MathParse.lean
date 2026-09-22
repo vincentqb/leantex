@@ -24,9 +24,29 @@ def italicVar (c : Char) : Char :=
   else if 'A' ≤ c && c ≤ 'Z' then Char.ofNat (0x1D434 + (c.toNat - 'A'.toNat))
   else c
 
+/-- Literal Greek in math is unicode-math's second spelling of the control
+words in `ctrlAtom` (`math-style=TeX`, unicode-math's default): the lowercase
+block α..ω maps onto the Mathematical Italic block in order (ο and ς
+included), the six symbol-slot forms ϵ ϑ ϰ ϕ ϱ ϖ onto their own italic
+slots, and the capitals stay upright. The literal and the control word
+denote one scalar — `greek_literal_agree` is the statement. -/
+def greekLiteral (c : Char) : Option Char :=
+  let n := c.toNat
+  if 0x3B1 ≤ n && n ≤ 0x3C9 then some (Char.ofNat (0x1D6FC + (n - 0x3B1)))
+  else if 0x391 ≤ n && n ≤ 0x3A9 && n != 0x3A2 then some c
+  else match c with
+    | 'ϵ' => some '𝜖'
+    | 'ϑ' => some '𝜗'
+    | 'ϰ' => some '𝜘'
+    | 'ϕ' => some '𝜙'
+    | 'ϱ' => some '𝜚'
+    | 'ϖ' => some '𝜛'
+    | _ => none
+
 /-- Characters that classify directly (TeX's mathcodes, plain format): the
 class and the scalar actually set — `-` is MINUS SIGN, `*` is ASTERISK
-OPERATOR. Letters and digits are handled before this table. -/
+OPERATOR. Digits and Latin letters classify after the table; a literal
+Greek letter is the second spelling of its `ctrlAtom` row (`greekLiteral`). -/
 def charAtom (c : Char) : Option (MathClass × Char) :=
   match c with
   | '+' => some (.bin, '+')
@@ -61,7 +81,21 @@ def charAtom (c : Char) : Option (MathClass × Char) :=
   | _ =>
     if c.isDigit then some (.ord, c)
     else if c.isAlpha && c.toNat < 128 then some (.ord, italicVar c)
-    else none
+    else (greekLiteral c).map ((.ord, ·))
+
+/-- The literal spellings of `ctrlAtom`'s Greek rows: unicode-math's one
+table keyed by scalar, read as (literal, name) pairs. -/
+def greekSpellings : List (Char × String) :=
+  [('α', "alpha"), ('β', "beta"), ('γ', "gamma"), ('δ', "delta"),
+   ('ϵ', "epsilon"), ('ε', "varepsilon"), ('ζ', "zeta"), ('η', "eta"),
+   ('θ', "theta"), ('ϑ', "vartheta"), ('ι', "iota"), ('κ', "kappa"),
+   ('λ', "lambda"), ('μ', "mu"), ('ν', "nu"), ('ξ', "xi"),
+   ('π', "pi"), ('ϖ', "varpi"), ('ρ', "rho"), ('ϱ', "varrho"),
+   ('σ', "sigma"), ('ς', "varsigma"), ('τ', "tau"), ('υ', "upsilon"),
+   ('ϕ', "phi"), ('φ', "varphi"), ('χ', "chi"), ('ψ', "psi"), ('ω', "omega"),
+   ('Γ', "Gamma"), ('Δ', "Delta"), ('Θ', "Theta"), ('Λ', "Lambda"),
+   ('Ξ', "Xi"), ('Π', "Pi"), ('Σ', "Sigma"), ('Υ', "Upsilon"),
+   ('Φ', "Phi"), ('Ψ', "Psi"), ('Ω', "Omega")]
 
 /-- Control words that are one symbol atom: `(class, scalar)`. Greek
 lowercase is italic (the Mathematical Italic block, with TeX's `\epsilon` ↦
@@ -150,6 +184,21 @@ def ctrlAtom : List (String × MathClass × Char) :=
    -- escapes: the reserved characters as content
    ("{", .opening, '{'), ("}", .closing, '}'), ("$", .ord, '$'),
    ("%", .ord, '%'), ("&", .ord, '&'), ("#", .ord, '#'), ("_", .ord, '_')]
+
+/-- Two spellings, one atom: every literal Greek letter classifies to exactly
+the atom its control word does. The invariant whose absence let `$λ$`
+degrade to source text while `$\lambda$` set the italic scalar. -/
+theorem greek_literal_agree :
+    ∀ p ∈ greekSpellings, charAtom p.1 = ctrlAtom.lookup p.2 := by
+  decide
+
+/-- Every letter of the lowercase and capital Greek blocks classifies —
+including ο, ς, and the capitals TeX has no control word for (Α, Β, …),
+which unicode-math sets from their literal spelling alone. -/
+theorem greek_literal_covers :
+    (∀ k < 25, (charAtom (Char.ofNat (0x3B1 + k))).isSome) ∧
+    (∀ k < 25, k ≠ 17 → (charAtom (Char.ofNat (0x391 + k))).isSome) := by
+  decide
 
 /-- The big operators whose scripts become above/below limits in display
 style — TeX's `\displaylimits` default for every `\mathop` except the

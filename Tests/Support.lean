@@ -133,7 +133,7 @@ def goldenNames : List String :=
    "icons",
    "diagram", "diagram-boundary", "diagram-overflow", "diagram-refused", "diagram-scm",
    "tables", "tables-ragged", "subfigures", "float-center",
-   "math-companion", "math-first", "abstract", "crossref", "eqnum", "footnotes",
+   "math-companion", "math-first", "greek-literal", "abstract", "crossref", "eqnum", "footnotes",
    "redefine", "titlebars", "daylight", "blocks", "poster", "poster-headline", "listings",
    "algorithm", "lineno", "lineno-modulo"]
 

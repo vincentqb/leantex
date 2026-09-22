@@ -1,0 +1,22 @@
+% Synthetic fixture: a literal Unicode Greek letter in math is
+% unicode-math's second spelling of its control word (math-style=TeX) and
+% sets the same scalar from the math face — lowercase italic, the variant
+% forms in their own symbol slots, capitals upright.
+\documentclass{article}
+\fonts{ dir = "fonts", body = "Source Serif Pro", math = "Fira Math" }
+
+\begin{document}
+
+\section{Two Spellings, One Atom}
+
+Lowercase pairs, literal then control word: A $λ$ B $\lambda$ C $M_θ$ D
+$M_\theta$ E $φ$ F $\varphi$ G $ε$ H $\varepsilon$.
+
+Capitals and the symbol slots: I $Ω$ J $\Omega$ K $ϵ$ L $\epsilon$ M $ϕ$ N
+$\phi$.
+
+A display with both spellings side by side:
+
+\[ Φ(α, β) = α^2 + β_γ - λ \cos ω \]
+
+\end{document}

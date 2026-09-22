@@ -1232,6 +1232,30 @@ def mathChecks (ref : IO.Ref (List String)) : IO Unit := do
           | .math false _ => true
           | _ => false
         | _ => false))
+  -- Literal Greek in math is unicode-math's second spelling of the control
+  -- word (math-style=TeX): the two spellings elaborate to one atom list
+  -- (the formula's source field alone differs), and the shipped glyph is
+  -- the Mathematical Italic scalar from the math face, never the body-face
+  -- U+03xx letter (`greek_literal_agree`).
+  let atomsOf (src : String) : Option Math.MList :=
+    (Elab.run "t" src).1.body.findSome? fun b => match b with
+      | .para xs => xs.findSome? fun x => match x with
+        | .formula _ _ ml => some ml
+        | _ => none
+      | _ => none
+  let sameFormula (a b : String) : Bool :=
+    warnCodes a == [] && (atomsOf a).isSome && atomsOf a == atomsOf b
+  t "literal lambda is the same atom as its control word"
+    (sameFormula "$λ$" "$\\lambda$" && glyphChars "$λ$" == #['𝜆'])
+  t "literal theta in a subscript is the same atom as its control word"
+    (sameFormula "$M_θ$" "$M_\\theta$")
+  t "literal φ and ε are the variant forms, ϕ and ϵ the symbol slots"
+    (sameFormula "$φ$" "$\\varphi$" && sameFormula "$ε$" "$\\varepsilon$" &&
+      sameFormula "$ϕ$" "$\\phi$" && sameFormula "$ϵ$" "$\\epsilon$")
+  t "a literal capital sets upright from the math face"
+    (sameFormula "$Ω$" "$\\Omega$" && glyphChars "$Ω$" == #['Ω'])
+  t "literal Greek never ships as body-face source text"
+    (glyphChars "$λ θ φ$" == #['𝜆', '𝜃', '𝜑'])
   -- Accents: TeXbook Appendix G rule 12 over MathTopAccentAttachment,
   -- pinned in sp over Layout's own output.
   let runXOf (src : String) (pick : Array (Nat × Char) → Bool) : Option Dim.Sp := Id.run do

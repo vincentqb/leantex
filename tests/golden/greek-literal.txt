@@ -1,0 +1,60 @@
+class article
+page 612x792 vmargin 72 hmargin 150
+font dir "fonts"
+font body "Source Serif Pro"
+section 1 number "1"
+  text "Two Spellings, One Atom"
+para
+  text "Lowercase pairs, literal then control word: A "
+  formula inline "λ"
+    ord:𝜆
+  text " B "
+  formula inline "\\lambda"
+    ord:𝜆
+  text " C "
+  formula inline "M_θ"
+    ord:𝑀_{ord:𝜃}
+  text " D "
+  formula inline "M_\\theta"
+    ord:𝑀_{ord:𝜃}
+  text " E "
+  formula inline "φ"
+    ord:𝜑
+  text " F "
+  formula inline "\\varphi"
+    ord:𝜑
+  text " G "
+  formula inline "ε"
+    ord:𝜀
+  text " H "
+  formula inline "\\varepsilon"
+    ord:𝜀
+  text "."
+para
+  text "Capitals and the symbol slots: I "
+  formula inline "Ω"
+    ord:Ω
+  text " J "
+  formula inline "\\Omega"
+    ord:Ω
+  text " K "
+  formula inline "ϵ"
+    ord:𝜖
+  text " L "
+  formula inline "\\epsilon"
+    ord:𝜖
+  text " M "
+  formula inline "ϕ"
+    ord:𝜙
+  text " N "
+  formula inline "\\phi"
+    ord:𝜙
+  text "."
+para
+  text "A display with both spellings side by side:"
+center
+  para
+    formula display "Φ(α, β) = α^2 + β_γ - λ \\cos ω"
+      ord:Φ open:( ord:𝛼 punct:, ord:𝛽 close:) rel:= ord:𝛼^{ord:2} bin:+ ord:𝛽_{ord:𝛾} bin:− ord:𝜆 op:"cos" ord:𝜔
+-- diagnostics
+(none)
