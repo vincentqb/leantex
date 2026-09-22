@@ -990,8 +990,7 @@ private def LeafCtr.leave (inner outer : LeafCtr) : LeafCtr :=
 /-- The leaves `Struct` gives an inline sequence: the count the walk claims
 for one block of set text. Counted by the projection's own walk, never a
 second enumeration of the inline arms. -/
-private def leafCount (xs : Array Inline) : Nat :=
-  (Struct.leaves (Struct.inlinesRaw #[] xs.toList)).size
+private def leafCount (xs : Array Inline) : Nat := Struct.leafCountInlines xs
 
 /-- The counter a block's inlines start from: no leaf, no attribution;
 otherwise counting when the inlines are exactly the declared content
@@ -1010,6 +1009,10 @@ private structure FlattenSt where
   ladder : List (String × Nat) := Ir.sizeScale
   /-- The inline leaf counter (`LeafCtr`). -/
   ctr : LeafCtr := .fixed .unattributed
+  /-- The overlay step this page sets, the number `Ir.altShowsFirst` reads to
+  say which group of an alternation the page inks. A path with no step page
+  behind it sets 1, the step every unstepped page is. -/
+  step : Nat := 1
 
 private def warn (st : FlattenSt) (code : DiagCode) (msg : String)
     (help : Option String := none) : FlattenSt :=
@@ -1204,8 +1207,17 @@ OpenType math face; `leantex fonts` lists families") with warnedMath := true }
   -- A step is pure grouping here: the PDF path dims pending content by
   -- recolouring copies before layout (`run`'s step driver), never by metrics.
   | .step _ _ body => flatten mathOk noteOk st sty body
-  | .alt _ _ active otherwise =>
-    flatten mathOk noteOk (flatten mathOk noteOk st sty active) sty otherwise
+  | .alt n last firstPage otherPage =>
+    -- One group per step page, and the leaf id is the tree's, not this
+    -- walk's: the counter steps over the group the page does not ink, so the
+    -- inked one lands on the id `Struct` numbered it (`alt_leaf_projects`).
+    -- Page-order storage decides which side the skip stands on.
+    if Ir.altShowsFirst n last st.step then
+      let inner := flatten mathOk noteOk st sty firstPage
+      { inner with ctr := inner.ctr.skip (leafCount otherPage) }
+    else
+      flatten mathOk noteOk { st with ctr := st.ctr.skip (leafCount firstPage) }
+        sty otherPage
   -- Placeholders are substituted before layout; reaching here means the
   -- document used one outside running content: generated ink of the block,
   -- no leaf of its own (`Struct.inlineRaw` gives it none).
@@ -1440,15 +1452,15 @@ theorem flattenOne_attr_covers (mathOk noteOk : Bool) (st : FlattenSt) (sty : Te
   | .link url body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .underline body => exact flatten_attr_covers mathOk noteOk st _ body h
   | .step _ _ body => exact flatten_attr_covers mathOk noteOk st sty body h
-  | .alt _ _ active otherwise =>
+  | .alt _ _ firstPage otherPage =>
     simp only [flattenOne]
-    obtain ⟨h1, m1⟩ := flatten_attr_covers mathOk noteOk st sty active h
-    obtain ⟨h2, m2⟩ := flatten_attr_covers mathOk noteOk
-      (flatten mathOk noteOk st sty active) sty otherwise h1
-    refine ⟨h2, fun tk hm => ?_⟩
-    rcases m2 tk hm with hm' | hm'
-    · exact m1 tk hm'
-    · exact Or.inr hm'
+    split
+    · obtain ⟨h1, m1⟩ := flatten_attr_covers mathOk noteOk st sty firstPage h
+      exact ⟨by simpa [LeafCtr.skip_attributes] using h1, fun tk hm => m1 tk (by simpa using hm)⟩
+    · obtain ⟨h2, m2⟩ := flatten_attr_covers mathOk noteOk
+        { st with ctr := st.ctr.skip (leafCount firstPage) } sty otherPage
+        (by simpa [LeafCtr.skip_attributes] using h)
+      exact ⟨h2, fun tk hm => m2 tk hm⟩
   | .pageNumber =>
     obtain ⟨hc, hm⟩ := pushTextAttr_toks st sty "?" st.ctr.generated
       (LeafCtr.generated_attributes st.ctr h)
@@ -3002,10 +3014,11 @@ private def itemsOfInlines (pats : Option Hyphen.Patterns) (size xHeight : Sp)
     (fs : FontSet) (baseStyle : TextStyle) (xs : Array Inline)
     (cache : Std.HashMap String (Array Nat)) (ctr : LeafCtr) (imgs : Image.Store := {})
     (textW : Sp := 0) (textH : Sp := 0) (noteOk : Bool := false)
-    (ladder : List (String × Nat) := Ir.sizeScale) :
+    (ladder : List (String × Nat) := Ir.sizeScale) (step : Nat := 1) :
     Array Item × Array Diag × Std.HashMap String (Array Nat) ×
       Std.HashMap Nat Sp × Array (Nat × Nat × Array Inline × Option Nat) := Id.run do
-  let st := flatten (fs.mathFont?.isSome) noteOk { ladder := ladder, ctr := ctr } baseStyle xs
+  let st := flatten (fs.mathFont?.isSome) noteOk
+    { ladder := ladder, ctr := ctr, step := step } baseStyle xs
   let acc := st.toks.foldl (itemsOfTok pats size xHeight fs imgs textW textH)
     { cache := cache }
   let mut items := acc.items
@@ -4781,6 +4794,11 @@ private structure Rd where
   (`Doc.headline`, the poster record's furniture): title, authors,
   institute in the `frametitle` roles at the page top, the body below. -/
   headline : Option Ir.Headline := none
+  /-- The overlay step the page being collected is: which group of an
+  alternation it inks (`Ir.altShowsFirst`), the one predicate both artifacts
+  read. `run`'s step driver sets it per step page; a page with no overlay
+  behind it is step 1. -/
+  step : Nat := 1
 
 /-- The threaded state of the block walk, now only what the walk actually
 writes; everything it merely reads rides in `Rd`, passed to every
@@ -4854,8 +4872,7 @@ private structure Acc where
 
 /-- The leaves `Struct` gives a block sequence the page ships no ink for (a
 speaker note, an unpinned nav), so the counter steps over them. -/
-private def blockLeafCount (bs : Array Block) : Nat :=
-  (Struct.leaves (Struct.blocksRaw #[] bs.toList)).size
+private def blockLeafCount (bs : Array Block) : Nat := Struct.leafCountBlocks bs
 
 /-- Claim the next `n` leaves for one block of set text: the block's first
 leaf (what its lines name) — `none` when it owns no leaf: generated ink the
@@ -5004,7 +5021,7 @@ private def collectPara (r : Rd) (a : Acc)
   let (items, ds, cache, extras, rawNotes) :=
     itemsOfInlines r.pats size r.xHeight r.fs baseStyle inlines a.hyphCache
       (LeafCtr.of leaf span inlines) r.imgs measure r.geom.textHeight (noteOk := true)
-      (ladder := r.geom.scale)
+      (ladder := r.geom.scale) (step := r.step)
   let items :=
     if r.geom.justify then items
     else if display then
@@ -5033,7 +5050,7 @@ private def collectPara (r : Rd) (a : Acc)
       let (nitems0, nds, cache2, _, _) :=
         itemsOfInlines r.pats noteSize r.xHeight r.fs { color := a.fg, ground := a.ground } body
           cache (LeafCtr.of noteLeaf (leafCount body) body) r.imgs r.geom.textWidth
-          r.geom.textHeight (ladder := r.geom.scale)
+          r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
       ds := ds ++ nds
       cache := cache2
       let (mk, miss) := markBox r.fs { color := a.fg, ground := a.ground } noteSize num
@@ -5077,6 +5094,7 @@ private def collectPara (r : Rd) (a : Acc)
       let (mi, mds, cache, _, _) :=
         itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } m cache
           (.fixed .label) r.imgs measure r.geom.textHeight (ladder := r.geom.scale)
+          (step := r.step)
       let (segs, w, _, _) := setLine mi (lineStart mi 0) (mi.size - 1) r.geom.textWidth false
       (some (segs, w), ds ++ mds, cache)
     | none => (none, ds, cache)
@@ -5243,7 +5261,7 @@ private def collectTable (r : Rd) (a0 : Acc)
       let (items, _, c, _) :=
         itemsOfInlines r.pats size r.xHeight r.fs { color := a.fg, ground := a.ground } cell cache
           (.fixed .unattributed) r.imgs r.geom.textWidth r.geom.textHeight
-          (ladder := r.geom.scale)
+          (ladder := r.geom.scale) (step := r.step)
       cache := c
       rowNats := rowNats.push (itemsNaturalWidth items)
     nats := nats.push rowNats
@@ -5706,7 +5724,7 @@ private def collectBlock (r : Rd) (a : Acc)
     let (citems, ds1, cache1, extras, _) :=
       itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs baseStyle content
         a.hyphCache (LeafCtr.of leaf (leafCount content) content) r.imgs target
-        r.geom.textHeight (ladder := r.geom.scale)
+        r.geom.textHeight (ladder := r.geom.scale) (step := r.step)
     -- the number is the `.label` leaf after the content's
     let numLeaf := leaf.map (· + leafCount content)
     let (nitems, ds2, cache2, _, _) :=
@@ -6001,10 +6019,18 @@ private def collectBlock (r : Rd) (a : Acc)
   | .step _ _ body =>
     -- Pure grouping: any dimming was painted into colours before layout.
     collectBlocks r a body indent
-  | .alt _ _ active otherwise =>
-    -- Outside a frame no step page selects, so both alternatives set, as
-    -- the document census carries both.
-    collectBlocks r (collectBlocks r a active indent) otherwise indent
+  | .alt n last firstPage otherPage =>
+    -- One group per step page. The leaf ids are the tree's: it declares both
+    -- groups, in page order, so the counter steps over the group this page
+    -- does not ink and the inked one lands on its own id
+    -- (`alt_leaf_projects`). Outside a stepped frame the step is 1, which
+    -- `Ir.altShowsFirst_id` sends to the group stored first.
+    if Ir.altShowsFirst n last r.step then
+      let a := collectBlocks r a firstPage indent
+      (a.leafRange (blockLeafCount otherPage)).1
+    else
+      let a := (a.leafRange (blockLeafCount firstPage)).1
+      collectBlocks r a otherPage indent
   | .only _ body =>
     -- `run` already kept this node for the PDF (`Ir.keepFor "pdf"`), so by
     -- here it is pure grouping, exactly as a resolved step is.
@@ -6056,7 +6082,7 @@ private def collectBlock (r : Rd) (a : Acc)
           itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs
             { color := a.fg, ground := a.ground } caption
             a.hyphCache (.fixed .unattributed) r.imgs avail r.geom.textHeight
-            (ladder := r.geom.scale)
+            (ladder := r.geom.scale) (step := r.step)
         let a := { a with hyphCache := cache }
         let fits := itemsNaturalWidth items ≤ avail
         -- one flat caption leaf (`Struct`'s listing shape), the prefix generated
@@ -6213,7 +6239,7 @@ private def collectBlock (r : Rd) (a : Acc)
       let (items, _, cache, _) :=
         itemsOfInlines r.pats r.geom.fontSize r.xHeight r.fs { color := a.fg, ground := a.ground } caption
           a.hyphCache (.fixed .unattributed) r.imgs avail r.geom.textHeight
-          (ladder := r.geom.scale)
+          (ladder := r.geom.scale) (step := r.step)
       let a := { a with hyphCache := cache }
       let fits := itemsNaturalWidth items ≤ avail
       let saved := a.measure
@@ -8284,13 +8310,16 @@ private def runCore (geom : Geom) (fs : FontSet) (pats : Option Hyphen.Patterns)
         -- leaves, so the counter rewinds to the frame's start per step
         -- (dimming recolours and unwrapping splices: neither moves a leaf).
         -- Alternation keeps the rewind: an `alt` node's two alternatives are
-        -- two leaves of the one frame, declared in page order
-        -- (`Struct.altStepOrder`), and each step page names the one it ships.
+        -- two leaves of the one frame, declared in page order, and the walk
+        -- references the id the tree gave the group it inks rather than
+        -- minting one — which is why the node survives into the walk
+        -- (`rd.step` carries the page, `alt_leaf_projects` the identity)
+        -- instead of being selected away before it.
         let leafStart := acc.leafNext
         for k in [1:steps + 1] do
-          acc := collectBlock rd { acc with leafNext := leafStart }
+          acc := collectBlock { rd with step := k } { acc with leafNext := leafStart }
             (.frame title standout valign breakable
-              (Ir.unwrapItemSteps (Ir.dimBlocks cover k (Ir.selectSteps k body)))) 0
+              (Ir.unwrapItemSteps (Ir.dimBlocks cover k body))) 0
     | other => acc := collectBlock rd acc (Ir.unwrapItemStep other) 0
   -- Trailing fil glue stretches on the page it ends (a \vfill nothing
   -- follows is how a page bottom-flushes its leftover), so it must reach

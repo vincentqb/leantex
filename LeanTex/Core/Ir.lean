@@ -2027,8 +2027,9 @@ inductive Inline where
   pages do, and the line reflows between steps when the groups differ in
   width — which is what replacement means. The document-level
   census carries both alternatives (`plainTextOne`), the page's carries
-  the one selected (`selectSteps`, which runs before the dim walk — dimming
-  recolours and never selects, so `dimInline_text` stays true). -/
+  the one the step inks (`altShowsFirst`, read by the layout walk beside the
+  dim walk — dimming recolours and never selects, so `dimInline_text` stays
+  true). -/
   | alt (n : Nat) (last : Option Nat) (firstPage : Array Inline)
       (otherPage : Array Inline)
   /-- An external image (`\includegraphics`, and what a `figure` or a deck
@@ -5725,9 +5726,10 @@ def stepPending (n : Nat) (last : Option Nat) (k : Nat) : Bool :=
 
 /-- Which group of an overlay alternation does step \`k\` ink: the one stored
 first, or the other? The ONE decision behind alternation, named so that every
-consumer reads the same answer — the PDF's page selection (\`selectSteps\`), the
-HTML deck's rules, and the census facts that hold the two artifacts to each
-other (the \`_agree\` shape). An artifact that decided this for itself could
+consumer reads the same answer — the PDF page's own alternation arms
+(\`Layout.collectBlock\` and the inline flatten walk, which reference the leaf
+the structure tree gave the group they ink), the HTML deck's rules, and the
+census facts that hold the two artifacts to each other (the \`_agree\` shape). An artifact that decided this for itself could
 disagree with the other and no theorem would notice, which is the whole reason
 this is a definition and not an inlined test.
 

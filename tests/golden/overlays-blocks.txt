@@ -70,10 +70,11 @@ frame
   title
     text "Alternation"
   para
-    step 2-2
-      text "The second beat."
-    step 1-1
-      text "The first beat."
+    alt 2-2
+      first page
+        text "The first beat."
+      other page
+        text "The second beat."
 frame
   title
     text "Incremental spec"

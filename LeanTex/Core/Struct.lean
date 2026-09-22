@@ -326,6 +326,14 @@ def leaves (ns : Array Node) : Array (Nat × Leaf) := leavesList #[] ns.toList
 
 def Tree.leaves (t : Tree) : Array (Nat × Leaf) := Struct.leaves t.children
 
+/-- How many leaves the tree gives an inline sequence: the projection's own
+count, so a consumer that has to step over a group it does not ship steps
+by exactly what the tree numbered. -/
+def leafCountInlines (xs : Array Inline) : Nat := (leaves (inlinesRaw #[] xs.toList)).size
+
+/-- How many leaves the tree gives a block sequence. -/
+def leafCountBlocks (bs : Array Block) : Nat := (leaves (blocksRaw #[] bs.toList)).size
+
 mutual
 
 /-- The outline headings, in preorder: every `.heading`'s level. An
@@ -1454,5 +1462,259 @@ theorem structTree_leaves_id (bs : Array Block) :
   have := congrArg List.length h
   simp only [List.length_map, Array.length_toList, List.length_range'] at this
   omega
+
+-- **A group's ids are the tree's** (`alt_leaf_projects`): where one node
+-- holds two alternatives and a page ships only one of them, the id the page
+-- references must be the one the tree assigned that alternative. The
+-- projection walks build onto their accumulator, so an alternation's node
+-- array is its two groups' arrays appended; numbering an append numbers the
+-- halves in turn; so the second group's ids begin exactly its sibling's leaf
+-- count later. That offset is what a page steps over, and stepping over it is
+-- what makes the reference a projection rather than a fresh mint.
+
+mutual
+
+/-- `inlinesRaw` builds onto its accumulator. -/
+theorem inlinesRaw_acc (out : Array Node) (xs : List Inline) :
+    inlinesRaw out xs = out ++ inlinesRaw #[] xs := by
+  match xs with
+  | [] => simp [inlinesRaw]
+  | x :: rest =>
+    rw [inlinesRaw, inlinesRaw_acc _ rest, inlineRaw_acc out x, inlinesRaw,
+      inlinesRaw_acc (inlineRaw #[] x) rest, Array.append_assoc]
+
+theorem inlineRaw_acc (out : Array Node) (x : Inline) :
+    inlineRaw out x = out ++ inlineRaw #[] x := by
+  match x with
+  | .text s => simp [inlineRaw]
+  | .math d src => simp [inlineRaw]
+  | .formula d src body => simp [inlineRaw]
+  | .styled style body =>
+    match style with
+    | .lang tag => simp [inlineRaw]
+    | .bold | .italic | .mono | .smallcaps | .emph | .sans | .normal | .roman
+    | .medium | .series _ | .upright | .size _ =>
+      simp only [inlineRaw]
+      exact inlinesRaw_acc out body.toList
+  | .colored c n body =>
+    simp only [inlineRaw]
+    exact inlinesRaw_acc out body.toList
+  | .role n body =>
+    simp only [inlineRaw]
+    exact inlinesRaw_acc out body.toList
+  | .link url body => simp [inlineRaw]
+  | .label key => simp [inlineRaw]
+  | .ref key form text target => simp [inlineRaw]
+  | .underline body =>
+    simp only [inlineRaw]
+    exact inlinesRaw_acc out body.toList
+  | .fill => simp [inlineRaw]
+  | .pageNumber => simp [inlineRaw]
+  | .pageCount => simp [inlineRaw]
+  | .linebreak extra => simp [inlineRaw]
+  | .strut h => simp [inlineRaw]
+  | .step n l body =>
+    simp only [inlineRaw]
+    exact inlinesRaw_acc out body.toList
+  | .alt n l active otherwise =>
+    simp only [inlineRaw]
+    rw [inlinesRaw_acc (inlinesRaw out active.toList) otherwise.toList,
+      inlinesRaw_acc (inlinesRaw #[] active.toList) otherwise.toList,
+      inlinesRaw_acc out active.toList, Array.append_assoc]
+  | .image src size alt => simp [inlineRaw]
+  | .icon sc label => simp [inlineRaw]
+  | .cite tx keys => simp [inlineRaw]
+  | .footnote num body => simp [inlineRaw]
+
+end
+
+/-- `bibRaw` builds onto its accumulator: the `.bibliography` arm's half. -/
+theorem bibRaw_acc (out : Array Node) (items : List BibItem) :
+    bibRaw out items = out ++ bibRaw #[] items := by
+  induction items generalizing out with
+  | nil => simp [bibRaw]
+  | cons it rest ih =>
+    rw [bibRaw, ih, bibRaw, ih (#[].push _)]
+    simp
+
+mutual
+
+/-- `blocksRaw` builds onto its accumulator. -/
+theorem blocksRaw_acc (out : Array Node) (bs : List Block) :
+    blocksRaw out bs = out ++ blocksRaw #[] bs := by
+  match bs with
+  | [] => simp [blocksRaw]
+  | b :: rest =>
+    rw [blocksRaw, blocksRaw_acc _ rest, blockRaw_acc out b, blocksRaw,
+      blocksRaw_acc (blockRaw #[] b) rest, Array.append_assoc]
+
+theorem blockRaw_acc (out : Array Node) (b : Block) :
+    blockRaw out b = out ++ blockRaw #[] b := by
+  match b with
+  | .para content => simp [blockRaw]
+  | .section level st num title => simp [blockRaw]
+  | .list ordered items => simp [blockRaw]
+  | .center body =>
+    simp only [blockRaw]; exact blocksRaw_acc out body.toList
+  | .ragged body =>
+    simp only [blockRaw]; exact blocksRaw_acc out body.toList
+  | .spaced g body =>
+    simp only [blockRaw]; exact blocksRaw_acc out body.toList
+  | .role nm body =>
+    simp only [blockRaw]; exact blocksRaw_acc out body.toList
+  | .quote body => simp [blockRaw]
+  | .abstract body => simp [blockRaw]
+  | .titled kind title body => simp [blockRaw]
+  | .equation number content => simp [blockRaw]
+  | .verbatim c content spec =>
+    simp only [blockRaw]
+    split <;> simp
+  | .algorithm nm sm lines => simp [blockRaw]
+  | .columns cols =>
+    simp only [blockRaw]; exact colsRaw_acc out cols.toList
+  | .step nn l body =>
+    simp only [blockRaw]; exact blocksRaw_acc out body.toList
+  | .alt nn l active otherwise =>
+    simp only [blockRaw]
+    rw [blocksRaw_acc (blocksRaw out active.toList) otherwise.toList,
+      blocksRaw_acc (blocksRaw #[] active.toList) otherwise.toList,
+      blocksRaw_acc out active.toList, Array.append_assoc]
+  | .note body => simp [blockRaw]
+  | .only targets body =>
+    simp only [blockRaw]; exact blocksRaw_acc out body.toList
+  | .nav spec body => simp [blockRaw]
+  | .logo content => simp [blockRaw]
+  | .pagebreak => simp [blockRaw]
+  | .frame title st v br body => simp [blockRaw]
+  | .framefoot content => simp [blockRaw]
+  | .setPalette pal => simp [blockRaw]
+  | .setTokens tk => simp [blockRaw]
+  | .rule c nm th => simp [blockRaw]
+  | .picture p => simp [blockRaw]
+  | .table cols pl pr rows rules => simp [blockRaw]
+  | .float fk num ca body caption => simp [blockRaw]
+  | .bibliography src style items =>
+    simp only [blockRaw]; exact bibRaw_acc out items.toList
+
+theorem colsRaw_acc (out : Array Node) (cols : List (Option Nat × Array Block)) :
+    colsRaw out cols = out ++ colsRaw #[] cols := by
+  match cols with
+  | [] => simp [colsRaw]
+  | (w, body) :: rest =>
+    rw [colsRaw, colsRaw_acc _ rest, blocksRaw_acc out body.toList, colsRaw,
+      colsRaw_acc (blocksRaw #[] body.toList) rest, Array.append_assoc]
+
+end
+
+mutual
+
+/-- Numbering moves no leaf: the numbered shape has exactly the leaves the
+shape had. -/
+theorem numberList_leafCount (k : Nat) (ns : List Node) :
+    (leavesList #[] (numberList k #[] ns).1.toList).size = (leavesList #[] ns).size := by
+  match ns with
+  | [] => simp [numberList, leavesList]
+  | n :: rest =>
+    obtain ⟨h1, h2⟩ := numberList_acc (numberOne k n).2 (#[].push (numberOne k n).1) rest
+    simp only [numberList]
+    rw [h1, Array.toList_append, leavesList_append, leavesList_acc, Array.size_append,
+      Array.toList_push, leavesList, leavesList_acc (leavesOne #[] n) rest,
+      Array.size_append]
+    rw [numberList_leafCount (numberOne k n).2 rest]
+    simp only [List.nil_append, leavesList]
+    rw [numberOne_leafCount k n]
+
+theorem numberOne_leafCount (k : Nat) (n : Node) :
+    (leavesOne #[] (numberOne k n).1).size = (leavesOne #[] n).size := by
+  match n with
+  | .leaf id l => simp [numberOne, leavesOne]
+  | .node kind kids =>
+    simp only [numberOne, leavesOne]
+    exact numberList_leafCount k kids.toList
+
+end
+
+/-- The counter a numbering leaves: the start plus the shape's leaf count. -/
+theorem numberList_count (k : Nat) (ns : List Node) :
+    (numberList k #[] ns).2 = k + (leavesList #[] ns).size := by
+  obtain ⟨hid, hle⟩ := numberList_id k ns
+  have hlen := congrArg List.length hid
+  rw [List.length_map, List.length_range'] at hlen
+  rw [← numberList_leafCount k ns]
+  have : (leavesList #[] (numberList k #[] ns).1.toList).size
+      = (leavesList #[] (numberList k #[] ns).1.toList).toList.length := by simp
+  omega
+
+/-- Numbering an append numbers the halves in turn: the second half starts
+where the first left the counter. -/
+theorem numberList_append (k : Nat) (a b : List Node) :
+    (numberList k #[] (a ++ b)).1
+        = (numberList k #[] a).1 ++ (numberList (numberList k #[] a).2 #[] b).1
+      ∧ (numberList k #[] (a ++ b)).2 = (numberList (numberList k #[] a).2 #[] b).2 := by
+  induction a generalizing k with
+  | nil => simp [numberList]
+  | cons n rest ih =>
+    obtain ⟨hr1, hr2⟩ := ih (numberOne k n).2
+    obtain ⟨hab1, hab2⟩ := numberList_acc (numberOne k n).2
+      (#[].push (numberOne k n).1) (rest ++ b)
+    obtain ⟨ha1, ha2⟩ := numberList_acc (numberOne k n).2
+      (#[].push (numberOne k n).1) rest
+    simp only [List.cons_append, numberList]
+    rw [hab1, hab2, ha1, ha2, hr1, hr2, Array.append_assoc]
+    exact ⟨rfl, rfl⟩
+
+/-- Two shapes numbered as one from `k`: the first takes `k …`, the second
+resumes at `k` plus the first's leaf count. -/
+theorem pair_leaf_ids (a b : Array Node) (k : Nat) :
+    (leaves (number k (a ++ b))).toList.map Prod.fst
+      = List.range' k (leaves a).size
+        ++ List.range' (k + (leaves a).size) (leaves b).size := by
+  have hfst := numberList_count k a.toList
+  have hoth := numberList_count (k + (leaves a).size) b.toList
+  obtain ⟨hidf, _⟩ := numberList_id k a.toList
+  obtain ⟨hido, _⟩ := numberList_id (k + (leaves a).size) b.toList
+  obtain ⟨happ, _⟩ := numberList_append k a.toList b.toList
+  have hca : (leavesList #[] a.toList).size = (leaves a).size := rfl
+  have hcb : (leavesList #[] b.toList).size = (leaves b).size := rfl
+  rw [hca] at hfst
+  rw [hcb] at hoth
+  rw [hfst] at happ hidf
+  simp only [leaves, number, Array.toList_append]
+  rw [happ, Array.toList_append, leavesList_append, leavesList_acc, Array.toList_append,
+    List.map_append, hidf, hido, hoth]
+  simp
+  omega
+
+/-- **`alt_leaf_projects`** (`_projects`): the ids the tree gives an overlay
+alternation's two groups, at both levels the IR carries one. The group stored
+first — the one step 1 inks (`Ir.altShowsFirst_id`) — is numbered from the
+node's own start; the other from that start plus the first group's leaf count.
+
+Layout's alternation arms are this projection: a page that inks the group
+stored first steps the counter over the other group *after* setting it, and a
+page that inks the other steps over the first group's `leafCountInlines` (or
+`leafCountBlocks`) *before* setting it, so in both orders the group lands on
+the id the tree already assigned it. That is what keeps one leaf per group
+across a frame's step pages — the id is the node's position in the document
+tree, not a count the walk accumulates, and nothing has to reconcile two
+counters after the fact. -/
+theorem alt_leaf_projects (n : Nat) (last : Option Nat)
+    (firstI otherI : Array Inline) (firstB otherB : Array Block) (k : Nat) :
+    (leaves (number k (inlineRaw #[] (Inline.alt n last firstI otherI)))).toList.map Prod.fst
+        = List.range' k (leafCountInlines firstI)
+          ++ List.range' (k + leafCountInlines firstI) (leafCountInlines otherI)
+      ∧ (leaves (number k (blockRaw #[] (Block.alt n last firstB otherB)))).toList.map Prod.fst
+        = List.range' k (leafCountBlocks firstB)
+          ++ List.range' (k + leafCountBlocks firstB) (leafCountBlocks otherB) := by
+  have hi : inlineRaw #[] (Inline.alt n last firstI otherI)
+      = inlinesRaw #[] firstI.toList ++ inlinesRaw #[] otherI.toList := by
+    simp only [inlineRaw]
+    exact inlinesRaw_acc (inlinesRaw #[] firstI.toList) otherI.toList
+  have hb : blockRaw #[] (Block.alt n last firstB otherB)
+      = blocksRaw #[] firstB.toList ++ blocksRaw #[] otherB.toList := by
+    simp only [blockRaw]
+    exact blocksRaw_acc (blocksRaw #[] firstB.toList) otherB.toList
+  rw [hi, hb, pair_leaf_ids, pair_leaf_ids]
+  exact ⟨rfl, rfl⟩
 
 end LeanTex.Core.Struct

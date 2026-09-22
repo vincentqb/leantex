@@ -187,6 +187,45 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-22 — `alt_leaf_projects` discharged: layout references leaf ids, it no
+longer mints them (alt-leaf-identity, M5; correction of the entry below, which
+lists it as owed). The blocker recorded there — "layout mints leaf ids by
+accumulation, so the statement has nothing to project from" — was the thing to
+remove, not to wait on. `runCore` stopped pre-selecting, so `alt` nodes survive
+into the layout walk; the current step rides in `Rd` (and in `FlattenSt`, since
+`flattenOne` never sees `Rd`); and layout's two `.alt` arms ink the group
+`Ir.altShowsFirst` names and advance the counter past the group they do not
+ink, so the inked group lands on the id the tree already gave it. The skip
+count is `Struct.leafCountInlines`/`leafCountBlocks` — ONE definition, read by
+the walk and by the theorem, so the two cannot drift, which was the whole
+failure mode of the three attempts. `alt_leaf_projects` is a real proof on the
+tree (both levels, with the walks' accumulator lemmas and `number`'s leaf-count
+invariance), layout's arms named in its docstring as the consumers.
+
+Measuring passes take the step too, at all seven `Rd`-carrying call sites: a
+width or fits-check over an unselected `alt` would measure BOTH groups and
+mis-size the column — a defect no census would have caught, since the ink is
+right and only the box is wrong.
+
+Evidence: the three leaf/attr census rows that named the defect now pass, the
+one that named it most precisely by its absence included (`leaf 16 ... "The
+second beat." not in ...` — leaf 16 is now named by the page that inks it), and
+the suite is fully green; the `overlays-blocks` golden moved by five lines
+(`step 2-2` to `alt 2-2` with its two page groups), regenerated through the
+harness.
+
+Residual: `alt_backend_agree` is still owed and still blocked on the same
+prerequisite — HTML does not alternate, and its step rules key only on
+`data-step`, never `data-step-last`, so it cannot re-cover past a range end.
+Until it does, `\alert<spec>{body}` must stay `\uncover<spec>{\alert{body}}`:
+the beamer-faithful `\alt<spec>{styled}{body}` is now expressible and is the
+right end state (plain off its steps, alert on them, no covering), but flipping
+it before HTML selects would put the body on an HTML page twice again — the
+original defect. The order is HTML first, then the flip. Dead since this entry:
+the whole `Ir.select*` family with `selectSteps_exact`, and `Ir.hasAlt` with
+`isAltBlock`/`isAltInline` (a leftover of attempt 1, whose docstring claimed
+`runCore` reads it); both kept so the removal is its own commit.
+
 2026-09-22 - a leaf id belongs to the tree, not to the walk (alt-leaf-identity,
 M5; design decision, taken after three attempts failed and recorded before the
 code that will honour it). Overlay alternation ships one of two groups per step
