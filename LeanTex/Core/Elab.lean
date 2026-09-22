@@ -122,9 +122,11 @@ structure Ctx where
   spelling) *pins* a tool, and `\pictures{ tool = none }` refuses the
   boundary: `none` here is the declared refusal. -/
   picTool : Option String := some "lualatex"
-  /-- The preamble declarations a boundary standalone needs — non-native
-  package loads and the tikz-family set lines, as written
-  (`Compat.boundaryDecls`), plus the document's declared body family. -/
+  /-- The preamble declarations a boundary standalone needs beyond the
+  document's design — non-native package loads and the tikz-family set
+  lines, as written (`Compat.boundaryDecls`). The font roles and the
+  palette are not carried here: the request site (`Ir.pictureRefs`) reads
+  them off the finished `Doc`, after contrast realization. -/
   picPreamble : String := ""
 
 /-- The numeral spellings a counter format may use, LaTeX's own set
@@ -5841,18 +5843,18 @@ formula is set as source text")])
   if ctx.picTool.isSome && !body.isEmpty &&
       (!pdiags.isEmpty || pic.shapes.isEmpty) then
     let tool := ctx.picTool.getD "lualatex"
-    let wrapped := Ir.wrapStandalone ctx.picPreamble (Parse.rawSrc body)
-    let hash := Ir.picHash wrapped
+    let body := Parse.rawSrc body
+    let id := Ir.picHash body
     modify fun st =>
-      if st.pictures.any (fun p => p.1 == hash) then st
-      else { st with pictures := st.pictures.push (hash, wrapped) }
-    recordImageSpan ctx (Ir.picSrcPrefix ++ hash) pos
-    warnOnce ctx ("picture:boundary:" ++ hash) .N0023
+      if st.pictures.any (fun p => p.1 == id) then st
+      else { st with pictures := st.pictures.push (id, body) }
+    recordImageSpan ctx (Ir.picSrcPrefix ++ id) pos
+    warnOnce ctx ("picture:boundary:" ++ id) .N0023
       s!"this picture is drawn by {tool} at the boundary; its text is not \
 in the document's census" pos
       (help := "the box is measured and placed by the engine; \\caption or \
 alt text names it for assistive technology")
-    return blocks.push (.para #[.image (Ir.picSrcPrefix ++ hash) {} ""])
+    return blocks.push (.para #[.image (Ir.picSrcPrefix ++ id) {} ""])
   for (code, msg) in pdiags do
     warnOnce ctx ("picture:" ++ msg) code msg pos
       (help := "the rendered subset is \\fill...rectangle, \\node at, \
@@ -10393,22 +10395,11 @@ def elabDoc (file : String) (raws : Array Raw) (picPre : String := "") :
       output := output.addFormat f
   if output.md.isNone then
     output := { output with md := record.mdName }
-  -- The document's declared body family rides into every wrapped
-  -- standalone, so the boundary's text matches the page. A family
-  -- declared as a file name resolves against the document's font dir,
-  -- which the boundary tool cannot see from its build directory; only a
-  -- named family travels.
-  let picFontLine := match fonts.body with
-    | some fam =>
-      if fam.endsWith ".ttf" || fam.endsWith ".otf" || fam.endsWith ".ttc" then ""
-      else s!"\\usepackage\{fontspec}\n\\setmainfont\{{fam}}\n"
-    | none => ""
   ctx := { ctx with slides := record.model == .frame
                     face := record.model == .face
                     numberHeadings := record.numberHeadings, styles := styles
                     page := page
-                    engineTokens := engineLengthTokensOfPage page
-                    picPreamble := ctx.picPreamble ++ picFontLine }
+                    engineTokens := engineLengthTokensOfPage page }
   -- Numbering is a property of the finished document, not of any one
   -- elaboration site: `Ir.numberFloats` fills every captioned float's
   -- number in document order (`numberFloats_exact` is the fact `\ref`
@@ -10601,6 +10592,7 @@ declare \\assert\{ pages <= N } to take control" }
     allow := allow
     pictureTool := ctx.picTool
     pictureSrcs := (← get).pictures
+    picturePreamble := ctx.picPreamble
     body := blocks
   }
   -- Cross-references resolve here, once, against the whole document's

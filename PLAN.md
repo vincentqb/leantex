@@ -1505,6 +1505,28 @@ is the acceptance.
   warnings and N0023 once, its tree drawn by the real genealogytree with
   its `\gtrset` highlight style applied; the four reference documents
   and the poster are byte-identical.
+- Addendum 2026-09-22 (boundary-design-projection): the request is closed
+  under the document's design. Every palette role a picture body spells
+  rides as a `\definecolor` with the palette's resolved value — the
+  moloch `alert` reached only through `\alert`'s rewrite, a `\colorlet`
+  mix, a `\palette` role, in its declared model — and the declared font
+  roles ride as fontspec's set lines with the math face through
+  `unicode-math`, so a picture's ink and letters are the page's
+  (`Design.ofDoc` reads the same palette and `fonts`). Formed at the
+  request site (`Ir.pictureRefs`, after contrast realization), never in
+  the picture arm: `paletteDecls_covers`/`_agree`/`_mem`,
+  `paletteDecls_local_exact` (an unmentioned role's edit leaves the
+  request, hence the cache key, byte-identical), and
+  `pictureRefs_design_projects`; `boundary_request_env_free` stays
+  `rfl`. A picture's identity (`pictureSrcs`, the image source) is now
+  the hash of the author's bytes; the cache keys the wrapped request plus
+  tool version. `\definecolor` left `boundaryCtrls`: the palette is the
+  one resolving site, and a `\definecolor` and its `\palette` spelling
+  state one request (the conservation oracle holds them equal). The
+  causal deck: W0378 1 → 0, three renders, no Computer Modern face in
+  the object table. Named-next: `\usepackage[<opts>]{xcolor}` options
+  riding to the boundary; `scripts/boundary-oracle.lean` running the
+  real tool over the synthetic requests.
 
 2026-09-21 — a real deflate, image streams that compress, content-hash
 caches (build-cache slice): `Flate.deflate` is a true RFC 1951 compressor

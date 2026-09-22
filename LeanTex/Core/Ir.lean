@@ -4495,13 +4495,20 @@ structure Doc where
   the engine default, the boundary being open by default. `none` is the
   declared refusal (`tool = none`): nothing routes, so no request rides. -/
   pictureTool : Option String := some "lualatex"
-  /-- The boundary requests this document states: content hash of each
-  wrapped standalone source, with the source itself — the `bibRefs` shape.
-  The driver fulfils each by running the declared tool (cached under the
-  hash), and the result embeds through the image path as a measured form
-  XObject. The trust label: the engine claims the *box*, never the
-  contents. -/
+  /-- The boundary requests this document states: `(id, body)` — the
+  picture's identity is the content hash of the author's bytes, and the
+  body is the picture as written — the `bibRefs` shape. The request the
+  driver fulfils is formed at the request site (`pictureRefs`): the body
+  wrapped with `picturePreamble`, the document's font roles, and exactly
+  the palette roles the body mentions, so a picture's colours and faces
+  are the page's (`Design.ofDoc` reads the same palette). The result
+  embeds through the image path as a measured form XObject. The trust
+  label: the engine claims the *box*, never the contents. -/
   pictureSrcs : Array (String × String) := #[]
+  /-- The preamble a boundary standalone needs beyond the document's
+  design: non-native package loads and the tikz-family set lines, as
+  written (`Compat.boundaryDecls`). Set once by the elaborator. -/
+  picturePreamble : String := ""
   body : Array Block := #[]
   deriving Repr, BEq, Inhabited
 
@@ -8572,9 +8579,10 @@ source is this prefix plus the request's content hash. The driver fulfils
 it from the boundary cache instead of the filesystem. -/
 def picSrcPrefix : String := "leantex-pic:"
 
-/-- FNV-1a over the wrapped source, two seeds, 32 hex digits: the boundary
-cache key. A content hash, so an unchanged picture never re-runs the tool
-and a changed one always does. -/
+/-- FNV-1a, two seeds, 32 hex digits. Over a picture body it is the
+picture's identity (`pictureSrcs`, the image source); over the wrapped
+request it is the boundary cache key — a content hash, so an unchanged
+request never re-runs the tool and a changed one always does. -/
 def picHash (s : String) : String := Id.run do
   let hex (x : UInt64) : String := Id.run do
     let digits := "0123456789abcdef".toList
@@ -8591,36 +8599,196 @@ def picHash (s : String) : String := Id.run do
     return h
   return hex (fnv 14695981039346656037) ++ hex (fnv 1099511628211)
 
+/-- xcolor's name grammar: a colour name is a maximal run of ASCII letters
+and digits. Every such run of a picture body, deduplicated in first-seen
+order. The over-approximation — a prose word spelled like a palette role
+— costs one harmless `\definecolor`, and is what keeps this a total
+tokenizer rather than a TikZ option parser. -/
+def colorNamesFlush (cur : String) (acc : Array String) : Array String :=
+  if cur.isEmpty || acc.contains cur then acc else acc.push cur
+
+def colorNamesGo : List Char → String → Array String → Array String
+  | [], cur, acc => colorNamesFlush cur acc
+  | c :: rest, cur, acc =>
+    if c.isAlphanum then colorNamesGo rest (cur.push c) acc
+    else colorNamesGo rest "" (colorNamesFlush cur acc)
+
+def colorNames (body : String) : Array String := colorNamesGo body.toList "" #[]
+
+/-- The palette roles a picture body mentions, each with the palette's
+value: exactly the names the body spells that the palette resolves
+(`paletteDecls_covers`, `_mem`), read from the same palette both backends
+read through `Design.ofDoc` (`paletteDecls_agree`). -/
+def paletteDecls (pal : Palette) (body : String) : Array (String × Color) :=
+  (colorNames body).filterMap fun n => (pal.find? n).map (n, ·)
+
+/-- A CMYK component in thousandths as xcolor's `0`–`1` real, shortest
+spelling (`0`, `0.83`, `1`). -/
+def cmykPart (v : Nat) : String :=
+  if v = 0 then "0"
+  else if v ≥ 1000 then "1"
+  else
+    let s := toString v
+    let padded := "".pushn '0' (3 - s.length) ++ s
+    "0." ++ String.ofList (padded.toList.reverse.dropWhile (· == '0')).reverse
+
+/-- One palette role as the `\definecolor` the boundary tool reads: the
+model the palette holds is the model the tool paints — a CMYK declaration
+rides as `cmyk` components (`Color.cmyk`, kept exactly as `Color.mix`
+keeps them), an RGB one as `RGB` bytes. -/
+def colorDeclLine : String × Color → String
+  | (n, c) => match c.cmyk with
+    | some (cy, m, y, k) =>
+      s!"\\definecolor\{{n}}\{cmyk}\{{cmykPart cy},{cmykPart m},{cmykPart y},{cmykPart k}}\n"
+    | none => s!"\\definecolor\{{n}}\{RGB}\{{c.r},{c.g},{c.b}}\n"
+
+/-- The document's declared font roles, projected into the standalone's
+preamble: fontspec's `\setmainfont`/`\setsansfont`/`\setmonofont` for the
+body, sans and mono families, and `unicode-math`'s `\setmathfont` for the
+math face — so a picture's text and formulas set in the page's own faces
+(`pictureRefs_design_projects`). A family declared as a file name resolves
+against the document's font dir, which the boundary tool cannot see from
+its build directory; only a named family travels. -/
+def fontLines (fonts : FontSpec) : String :=
+  let named (f : Option String) : Option String := f.filter fun fam =>
+    !(fam.endsWith ".ttf" || fam.endsWith ".otf" || fam.endsWith ".ttc")
+  let role (cmd : String) (f : Option String) : String :=
+    match named f with
+    | some fam => s!"\\{cmd}\{{fam}}\n"
+    | none => ""
+  let faces := role "setmainfont" fonts.body ++ role "setsansfont" fonts.sans ++
+    role "setmonofont" fonts.mono
+  let math := match named fonts.math with
+    | some fam => s!"\\usepackage\{unicode-math}\n\\setmathfont\{{fam}}\n"
+    | none => ""
+  if faces.isEmpty && math.isEmpty then "" else "\\usepackage{fontspec}\n" ++ faces ++ math
+
 /-- Wrap one picture body for the boundary: `\documentclass{standalone}`,
 the preamble declarations a standalone needs (collected from the document
-by the elaborator's closed list), and the picture as written. The request
-is a pure function of the document — `boundary_request_deterministic`
-holds by that purity: two runs over one document state byte-identical
-requests, so the cache key means something. -/
-def wrapStandalone (preamble : String) (body : String) : String :=
-  "\\documentclass{standalone}\n\\usepackage{tikz}\n" ++ preamble ++
+by the elaborator's closed list), the document's font roles
+(`fontLines`), the palette roles the body mentions (`paletteDecls`, as
+`colorDeclLine`s), and the picture as written. The request is a pure
+function of the document — `boundary_request_deterministic` holds by
+that purity: two runs over one document state byte-identical requests,
+so the cache key means something. -/
+def wrapStandalone (preamble fonts : String) (colors : Array (String × Color))
+    (body : String) : String :=
+  "\\documentclass{standalone}\n\\usepackage{tikz}\n" ++ preamble ++ fonts ++
+    colors.foldl (fun s c => s ++ colorDeclLine c) "" ++
     "\\begin{document}\n\\begin{tikzpicture}" ++ body ++
     "\\end{tikzpicture}\n\\end{document}\n"
 
+/-- The request one picture body states, formed from the finished
+document: the driver calls `pictureRefs` after contrast realization, so a
+role the realizer moved is moved in the picture too — the picture's
+`alert` is the page's `alert`. -/
+def pictureRequest (doc : Doc) (body : String) : String :=
+  wrapStandalone doc.picturePreamble (fontLines doc.fonts) (paletteDecls doc.palette body) body
+
 /-- The boundary requests the shipped tree actually states: `pictureSrcs`
-filtered to the hashes an `.image` node still references — a picture
-pruned with its frame asks for nothing, exactly as a pruned
-`\bibliography` does. -/
+filtered to the ids an `.image` node still references — a picture pruned
+with its frame asks for nothing, exactly as a pruned `\bibliography` does
+— each wrapped at this site (`pictureRequest`), so the request reads the
+document's design as both backends do. -/
 def pictureRefs (doc : Doc) : Array (String × String) :=
   let srcs := imageRefs doc
-  doc.pictureSrcs.filter fun (h, _) => srcs.contains (picSrcPrefix ++ h)
+  (doc.pictureSrcs.filter fun (h, _) => srcs.contains (picSrcPrefix ++ h)).map
+    fun (h, body) => (h, pictureRequest doc body)
+
+/-- **Referenced roles are covered.** A name the body spells that the
+palette resolves is declared in the request, with the palette's value. -/
+theorem paletteDecls_covers (pal : Palette) (body n : String) (c : Color)
+    (hn : n ∈ colorNames body) (hc : pal.find? n = some c) :
+    (n, c) ∈ paletteDecls pal body := by
+  unfold paletteDecls
+  rw [Array.mem_filterMap]
+  exact ⟨n, hn, by simp [hc]⟩
+
+/-- **The picture's colour is the page's.** Every value the standalone
+defines for a name is the value `Palette.find?` answers — the one read
+`Design.ofDoc` makes for both backends. -/
+theorem paletteDecls_agree (pal : Palette) (body n : String) (c : Color)
+    (h : (n, c) ∈ paletteDecls pal body) : pal.find? n = some c := by
+  unfold paletteDecls at h
+  rw [Array.mem_filterMap] at h
+  obtain ⟨m, _, hm⟩ := h
+  cases hf : pal.find? m with
+  | none => simp [hf] at hm
+  | some c' =>
+    simp only [hf, Option.map_some, Option.some.injEq, Prod.mk.injEq] at hm
+    obtain ⟨rfl, rfl⟩ := hm
+    exact hf
+
+/-- **Exactly the mentioned names.** No role rides that the body does not
+spell — the locality of the cache key (`paletteDecls_local_exact`) rests
+on it. -/
+theorem paletteDecls_mem (pal : Palette) (body n : String) (c : Color)
+    (h : (n, c) ∈ paletteDecls pal body) : n ∈ colorNames body := by
+  unfold paletteDecls at h
+  rw [Array.mem_filterMap] at h
+  obtain ⟨m, hm, he⟩ := h
+  cases hf : pal.find? m with
+  | none => simp [hf] at he
+  | some c' =>
+    simp only [hf, Option.map_some, Option.some.injEq, Prod.mk.injEq] at he
+    obtain ⟨rfl, -⟩ := he
+    exact hm
+
+theorem filterMap_congr_mem {α β : Type} (f g : α → Option β) : ∀ (l : List α),
+    (∀ a ∈ l, f a = g a) → l.filterMap f = l.filterMap g
+  | [], _ => rfl
+  | a :: l, h => by
+    simp only [List.filterMap_cons]
+    rw [h a (List.mem_cons_self ..),
+      filterMap_congr_mem f g l fun x hx => h x (List.mem_cons.mpr (Or.inr hx))]
+
+/-- **An unrelated palette edit leaves the request untouched.** Two
+palettes agreeing on every name the body spells produce one declaration
+list — so the request, hence the boundary cache key, moves only when a
+role the picture mentions moves. -/
+theorem paletteDecls_local_exact (pal pal' : Palette) (body : String)
+    (h : ∀ n ∈ colorNames body, pal.find? n = pal'.find? n) :
+    paletteDecls pal body = paletteDecls pal' body := by
+  unfold paletteDecls
+  apply Array.ext'
+  simp only [Array.toList_filterMap]
+  apply filterMap_congr_mem
+  intro n hn
+  rw [h n (Array.mem_def.mpr hn)]
+
+/-- **The boundary request projects the document's design.** Every
+request `pictureRefs` states is one picture body of `pictureSrcs`
+wrapped with the document's preamble, its declared font roles
+(`fontLines doc.fonts`), and the palette roles that body mentions
+(`paletteDecls doc.palette`) — the same `fonts` and `palette` both
+backends read through `Design.ofDoc`. No backend theorem stands behind
+this one: the PDF embeds the tool's drawing and the HTML embeds a
+rasterization of the same drawing — one fulfilment, two projections. -/
+theorem pictureRefs_design_projects (doc : Doc) (id w : String)
+    (h : (id, w) ∈ pictureRefs doc) :
+    ∃ body, (id, body) ∈ doc.pictureSrcs ∧
+      w = wrapStandalone doc.picturePreamble (fontLines doc.fonts)
+        (paletteDecls doc.palette body) body := by
+  unfold pictureRefs at h
+  rw [Array.mem_map] at h
+  obtain ⟨⟨id', body⟩, hmem, heq⟩ := h
+  simp only [Prod.mk.injEq] at heq
+  obtain ⟨rfl, rfl⟩ := heq
+  exact ⟨body, (Array.mem_filter.mp hmem).1, rfl⟩
 
 /-- **The boundary request is environment-free.** What a document requests
 at the boundary (`pictureRefs`) is a function of the document alone — the
-wrapped standalone sources and the shipped tree — never of the fulfilment
-side: repinning the tool field leaves every request untouched. The other
-half of the statement is structural, not provable here: the request is
-formed in the pure core (`Elab`'s picture arm routes on the door's
-presence — a declaration value — and `wrapStandalone`/`picHash` take no
-tool), which cannot read PATH, so whether a tool exists on the machine
-decides *fulfilment* only — run, serve from the warm cache, or W0379
-(`Main.resolvePictures`). The executable half — pinning the default tool
-elaborates to the identical `Doc` — runs in `boundaryChecks`. -/
+picture bodies, the shipped tree, and the document's own design (its
+preamble lines, font roles and palette, all declaration values) — never
+of the fulfilment side: repinning the tool field leaves every request
+untouched. The other half of the statement is structural, not provable
+here: the request is formed in the pure core (`Elab`'s picture arm routes
+on the door's presence — a declaration value — and
+`wrapStandalone`/`picHash` take no tool), which cannot read PATH, so
+whether a tool exists on the machine decides *fulfilment* only — run,
+serve from the warm cache, or W0379 (`Main.resolvePictures`). The
+executable half — pinning the default tool elaborates to the identical
+`Doc` — runs in `boundaryChecks`. -/
 theorem boundary_request_env_free (doc : Doc) (t : Option String) :
     pictureRefs { doc with pictureTool := t } = pictureRefs doc := rfl
 

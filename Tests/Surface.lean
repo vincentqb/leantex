@@ -3464,7 +3464,9 @@ decides fulfilment. `\pictures{ tool = ... }` pins a tool; `tool = none`
 is the declared refusal, keeping the subset's named diagnostics with no
 door warning (the declaration is the acceptance; W0379 is the driver's,
 for a stated request no available tool can fulfil). The wrapped standalone
-carries the preamble's closed list; the request is a pure function of the
+carries the preamble's closed list and projects the document's design —
+the palette roles the body mentions, the declared font roles
+(`Ir.pictureRefs_design_projects`); the request is a pure function of the
 document (`boundary_request_deterministic` by that purity — checked here
 as bytewise agreement across two runs — and `boundary_request_env_free`:
 the tool choice never shapes it, checked here as whole-`Doc` agreement
@@ -3485,12 +3487,76 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
     ((ds.filter (·.code == "N0023")).size == 1 &&
      ds.all (·.code != "W0334") && ds.all (·.code != "W0379"))
   t "the wrapped standalone carries the closed list"
-    (match doc.pictureSrcs[0]? with
+    (match (Ir.pictureRefs doc)[0]? with
      | some (_, w) =>
        hasStr w "\\documentclass{standalone}" && hasStr w "\\usepackage{tikz}" &&
        hasStr w "\\usetikzlibrary{arrows}" && hasStr w "\\tikzset{zz/.style={}}" &&
        hasStr w "\\usepackage{pgfplots}" && hasStr w "\\draw (0,0) circle (1);"
      | none => false)
+  t "the picture's identity is the author's bytes, not the request"
+    (match doc.pictureSrcs[0]? with
+     | some (id, body) => id == Ir.picHash body && !hasStr body "standalone"
+     | none => false)
+  -- The request is a projection of the document's design
+  -- (`Ir.pictureRefs_design_projects`): the palette roles the body
+  -- mentions ride with the palette's value, unmentioned roles do not, and
+  -- the declared font roles travel — the math face through unicode-math.
+  let reqOf (d : Ir.Doc) : String := ((Ir.pictureRefs d)[0]?.map (·.2)).getD ""
+  let pal := "\\palette{ ember = #C0431F, quietbg = #F2EEE8 }\n"
+  let picC := "\\begin{tikzpicture}\\node[fill=ember!20, text=ember] {x};" ++
+    "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
+  let (cdoc, _) := elabStr (dvDoc pal picC)
+  t "a palette role the picture mentions is declared in the standalone"
+    (hasStr (reqOf cdoc) "\\definecolor{ember}{RGB}{192,67,31}")
+  t "a palette role the picture never mentions does not ride"
+    (!hasStr (reqOf cdoc) "quietbg" && !hasStr (reqOf cdoc) "\\definecolor{fg}")
+  let (cdoc', _) := elabStr (dvDoc "\\palette{ ember = #C0431F, quietbg = #000000 }\n" picC)
+  t "an unmentioned palette edit leaves the request untouched"
+    (Ir.pictureRefs cdoc == Ir.pictureRefs cdoc' && !(Ir.pictureRefs cdoc).isEmpty)
+  let (cdoc'', _) := elabStr (dvDoc "\\palette{ ember = #000000, quietbg = #F2EEE8 }\n" picC)
+  t "a mentioned palette edit moves the request"
+    (Ir.pictureRefs cdoc != Ir.pictureRefs cdoc'' &&
+     (Ir.pictureRefs cdoc).map (·.1) == (Ir.pictureRefs cdoc'').map (·.1))
+  let (ldoc, _) := elabStr (dvDoc (pal ++ "\\colorlet{ember2}{ember!50!black}\n")
+    ("\\begin{tikzpicture}\\node[text=ember2] {x};" ++
+     "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"))
+  t "a colorlet role rides with its resolved value"
+    (match ldoc.palette.find? "ember2" with
+     | some c => hasStr (reqOf ldoc) (Ir.colorDeclLine ("ember2", c)) &&
+         hasStr (reqOf ldoc) "\\definecolor{ember2}{RGB}{"
+     | none => false)
+  let (kdoc, _) := elabStr (dvDoc "\\palette{ ink = cmyk(0, 0.83, 0.76, 0.07), key = cmyk(0, 1, 1, 0) }\n"
+    ("\\begin{tikzpicture}\\node[text=ink, fill=key] {x};" ++
+     "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"))
+  t "a cmyk role rides in its declared model"
+    ((kdoc.palette.find? "ink" |>.any (·.cmyk.isSome)) &&
+      hasStr (reqOf kdoc) "\\definecolor{ink}{cmyk}{0,0.83,0.76,0.07}" &&
+      hasStr (reqOf kdoc) "\\definecolor{key}{cmyk}{0,1,1,0}")
+  -- The deck's shape, invented text: a theme role reached only through
+  -- \alert's rewrite, and a formula in a node — red before this slice
+  -- (undefined colour `alert`, Computer Modern letters), green after.
+  let (tdoc, tds) := elabStr (dvDoc "\\theme{moloch}\n\\fonts{ math = \"Fira Math\" }\n"
+    ("\\begin{tikzpicture}\\node {\\alert{x} $y$};" ++
+     "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"))
+  t "a theme role reached through alert's rewrite is declared with the bundle's value"
+    (hasStr (reqOf tdoc) "\\textcolor {alert}" &&
+     hasStr (reqOf tdoc) "\\definecolor{alert}{RGB}{165,90,19}")
+  t "the declared math face rides through unicode-math"
+    (hasStr (reqOf tdoc) "\\usepackage{unicode-math}" &&
+     hasStr (reqOf tdoc) "\\setmathfont{Fira Math}")
+  t "a boundary picture with a formula stays one request with no W0378 of its own"
+    ((Ir.pictureRefs tdoc).size == 1 && tds.all (·.code != "W0378"))
+  let (fdoc, _) := elabStr (dvDoc
+    "\\fonts{ body = \"Source Serif Pro\", sans = \"Open Sans\", mono = \"Source Code Pro\" }\n"
+    picC)
+  t "the body, sans and mono roles ride as fontspec's three set lines"
+    (hasStr (reqOf fdoc) "\\setmainfont{Source Serif Pro}" &&
+     hasStr (reqOf fdoc) "\\setsansfont{Open Sans}" &&
+     hasStr (reqOf fdoc) "\\setmonofont{Source Code Pro}" &&
+     !hasStr (reqOf fdoc) "unicode-math")
+  t "a face declared by file name does not travel"
+    (!hasStr (reqOf (elabStr (dvDoc "\\fonts{ body = \"SourceSerifPro-Regular.otf\" }\n"
+      picC)).1) "\\setmainfont")
   t "the set lines are the boundary's: no W0301 for them"
     (ds.all (·.code != "W0301"))
   t "a picture package's load rides too: no W0103 for it"

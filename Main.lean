@@ -502,17 +502,19 @@ def logTail (log : String) : String :=
 fulfilled: each wrapped standalone runs under the pinned tool — or the
 default, the boundary being open by default (`boundary_request_env_free`:
 only fulfilment reads the environment) — in a scratch directory, and the
-drawn PDF lands in the cache beside the font cache, keyed by the content
-hash *and the tool's version string* — an upgraded TeX re-renders, an
-unchanged picture never re-runs, and a warm cache needs no TeX installed:
-with no tool at all, any earlier render of the same content serves. A
+drawn PDF lands in the cache beside the font cache, keyed by the request's
+content hash *and the tool's version string* — an upgraded TeX re-renders,
+an unchanged request never re-runs, and a warm cache needs no TeX
+installed: with no tool at all, any earlier render of the same request
+serves. A
 request nothing can fulfil is W0379, per picture; each such picture then
 ships as the placeholder box the diagnostic names. Failures of a tool that
 ran are W0378 with the tool's own last words. Refusals are returned keyed
 by the picture's image source, for `Image.fulfil` to name (the subject is
 set there, so the gate's match cannot depend on the words chosen here).
 The inventory (`-v` and the porcelain phases) says per picture what came
-through the boundary: tool, version, hash, size. -/
+through the boundary: tool, version, the picture's id and its request
+key, size. -/
 def resolvePictures (ui : Ui) (doc : Ir.Doc)
     (imageSpans : Array (String × Span) := #[]) :
     IO (Array PicResult × Array (String × Diag)) := do
@@ -533,36 +535,41 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
   IO.FS.createDirAll picDir
   let mut results : Array PicResult := #[]
   let mut refused : Array (String × Diag) := #[]
-  for (hash, wrapped) in refs do
-    let src := Ir.picSrcPrefix ++ hash
-    -- The cache: exact hash+version with a tool present; with none, any
-    -- earlier render of this content serves — the content hash is the
+  for (id, wrapped) in refs do
+    let src := Ir.picSrcPrefix ++ id
+    -- The cache key is the *request* — the body wrapped with the design it
+    -- reads — so a palette or font edit a picture mentions re-renders it
+    -- and one it does not mention leaves it warm
+    -- (`Ir.paletteDecls_local_exact`); the id stays the author's bytes.
+    let key := Ir.picHash wrapped
+    -- The cache: exact key+version with a tool present; with none, any
+    -- earlier render of this request serves — the content hash is the
     -- request's meaning, and the version in the key only forces a
     -- re-render on upgrade.
     let cached? ← do
       match version? with
       | some version =>
-        let c := picDir / (hash ++ "-" ++ Ir.picHash version ++ ".pdf")
+        let c := picDir / (key ++ "-" ++ Ir.picHash version ++ ".pdf")
         if ← c.pathExists then pure (some c) else pure (none : Option System.FilePath)
       | none =>
         let entries ← picDir.readDir
         pure <| entries.findSome? fun e =>
-          if e.fileName.startsWith (hash ++ "-") && e.fileName.endsWith ".pdf" then
+          if e.fileName.startsWith (key ++ "-") && e.fileName.endsWith ".pdf" then
             some e.path
           else none
     if let some cached := cached? then
       let bytes ← IO.FS.readBinFile cached
       results := results.push { src, bytes, cached }
       ui.phase "boundary"
-        s!"{tool} ({version?.getD "?"}), {hash.take 16}, {bytes.size} bytes (cached)"
+        s!"{tool} ({version?.getD "?"}), {id.take 16} as {key.take 16}, {bytes.size} bytes (cached)"
         (← since t0)
       continue
     match version? with
     | none =>
-      refused := refused.push (src, DriverDiag.boundaryToolUnavailable tool (spanFor hash))
+      refused := refused.push (src, DriverDiag.boundaryToolUnavailable tool (spanFor id))
     | some version =>
-      let cached := picDir / (hash ++ "-" ++ Ir.picHash version ++ ".pdf")
-      let work := picDir / s!"work-{hash}"
+      let cached := picDir / (key ++ "-" ++ Ir.picHash version ++ ".pdf")
+      let work := picDir / s!"work-{key}"
       IO.FS.createDirAll work
       IO.FS.writeFile (work / "pic.tex") wrapped
       let r ← try
@@ -578,15 +585,16 @@ def resolvePictures (ui : Ui) (doc : Ir.Doc)
           IO.FS.writeBinFile cached bytes
           results := results.push { src, bytes, cached }
           ui.phase "boundary"
-            s!"{tool} ({version}), {hash.take 16}, {bytes.size} bytes" (← since t0)
+            s!"{tool} ({version}), {id.take 16} as {key.take 16}, {bytes.size} bytes"
+            (← since t0)
         else
           refused := refused.push (src, DriverDiag.boundaryFailed tool "no PDF was produced"
-            (spanFor hash))
+            (spanFor id))
       | .error err =>
         let log ← try IO.FS.readFile (work / "pic.log") catch _ => pure ""
         let tail := logTail log
         refused := refused.push (src, DriverDiag.boundaryFailed tool
-          (if tail.isEmpty then err else tail) (spanFor hash))
+          (if tail.isEmpty then err else tail) (spanFor id))
       -- The scratch directory is per-content and spent either way.
       try IO.FS.removeDirAll work catch _ => pure ()
   return (results, refused)

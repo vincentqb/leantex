@@ -483,9 +483,13 @@ def takeGroups (raws : Array Raw) (i n : Nat) : Array (Array Raw) × Nat := Id.r
 default) these preamble lines are the standalone's, collected as written
 and consumed silently — the real TikZ reads them where the engine's subset
 cannot. A declared refusal (`\pictures{ tool = none }`) makes them unknown
-commands again. -/
+commands again. Colours are not on this list: `\definecolor` folds into
+the palette, and the palette is the one resolving site — the request
+carries the roles a picture mentions with their resolved values
+(`Ir.paletteDecls`), so a `\definecolor` and its `\palette` spelling
+state one request (the conservation oracle holds them equal). -/
 def boundaryCtrls : List String :=
-  ["usetikzlibrary", "tikzset", "gtrset", "pgfplotsset", "definecolor"]
+  ["usetikzlibrary", "tikzset", "gtrset", "pgfplotsset"]
 
 /-- Picture packages, whose whole meaning is drawing: with the boundary
 open (the default), their loads belong to the boundary standalone's
@@ -527,8 +531,8 @@ def boundaryRefused (raws0 : Array Raw) : Bool := Id.run do
   return false
 
 /-- The preamble declarations a boundary standalone needs, collected from
-the *unrewritten* tree — the compat rewrite folds `\definecolor` into the
-palette and drops package loads, so collection precedes it. Every
+the *unrewritten* tree — the compat rewrite drops package loads, so
+collection precedes it. Every
 non-native `\usepackage` rides with its options (pgfplots, genealogytree,
 circuitikz — whatever the pictures need), and each closed-list set line is
 reconstructed as written. Pure and total; `\input` wrappers splice open in
@@ -557,8 +561,7 @@ def boundaryDecls (raws0 : Array Raw) : String := Id.run do
             out := out ++ s!"\\usepackage{o}\{{String.intercalate "," pkgs}}\n"
           i := max k (i + 1)
         else if boundaryCtrls.contains name then
-          let n := if name == "definecolor" then 3 else 1
-          let (args, k) := takeGroups raws (i + 1) n
+          let (args, k) := takeGroups raws (i + 1) 1
           out := out ++ s!"\\{name}" ++
             String.join (args.toList.map fun g => s!"\{{rawSrc g}}") ++ "\n"
           i := max k (i + 1)
