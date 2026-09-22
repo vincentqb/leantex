@@ -367,12 +367,12 @@ def alertOverlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
   -- of a plain `\alert` frame, read off the same sentence shape.
   let altOf (doc : Ir.Doc) : Option (Nat × Option Nat × Array Ir.Inline × Array Ir.Inline) :=
     match doc.body with
-    | #[.frame _ _ _ #[.para #[.text _, .step n last s, .step 1 (some 1) o, .text _]]] =>
+    | #[.frame _ _ _ _ #[.para #[.text _, .step n last s, .step 1 (some 1) o, .text _]]] =>
       some (n, last, s, o)
     | _ => none
   let plainOf (doc : Ir.Doc) : Option Ir.Inline :=
     match doc.body with
-    | #[.frame _ _ _ #[.para #[.text _, s, .text _]]] => some s
+    | #[.frame _ _ _ _ #[.para #[.text _, s, .text _]]] => some s
     | _ => none
   for (mode, deck) in [("themed", themedDeck), ("unthemed", deck169Frame)] do
     let (pDoc, pDs) := elabStr (deck "One \\alert{apple} here.")
@@ -403,7 +403,7 @@ def alertOverlayChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : I
     ((uDs.filter (·.severity != .note)).map (·.code) == #["W0105"])
   t "an unnumberable alert spec keeps the body visible"
     (match uDoc.body with
-     | #[.frame _ _ _ #[.para xs]] => hasStr (Ir.plainText xs) "apple"
+     | #[.frame _ _ _ _ #[.para xs]] => hasStr (Ir.plainText xs) "apple"
      | _ => false)
   -- Shipped pages: steps are pages, and on each the pending twin is
   -- covered in place while the crisp one reads — the body is on every page.
