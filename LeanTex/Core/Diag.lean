@@ -129,6 +129,7 @@ inductive DiagCode where
   | N0023
   | W0378
   | W0379
+  | E0382
   | W0380
   | W0381
   | W0383
@@ -296,8 +297,9 @@ def DiagCode.spec : DiagCode → String × Loss × String
   | .N0022 => ("0022", .info, "a palette role is realized at a new lightness on one ground to meet its contrast requirement (WCAG 2.2)")
   | .W0377 => ("0377", .degraded, "a link carries no text to name its purpose (WCAG 2.2)")
   | .N0023 => ("0023", .info, "a picture is drawn by an external tool at the boundary; the engine measures its box, and its text is not in the document's census")
-  | .W0378 => ("0378", .degraded, "the boundary tool failed; a placeholder box marks the picture")
+  | .W0378 => ("0378", .degraded, "the PDF-to-SVG converter for boundary pictures is not runnable; the page shows their text alternatives")
   | .W0379 => ("0379", .degraded, "no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture")
+  | .E0382 => ("0382", .dropped, "the boundary tool ran and drew nothing for a picture; the page would carry an empty box")
   | .W0380 => ("0380", .degraded, "a \\cref target of unknown kind; the plain number is set")
   | .W0381 => ("0381", .degraded, "a unit outside the siunitx table; set as its ASCII spelling")
   | .W0383 => ("0383", .pending, "algorithm construct outside the modeled subset; kept as a plain line")
@@ -330,7 +332,7 @@ theorem DiagCode.code_letter (c : DiagCode) :
 `all_complete` makes an undercount a build failure; `all_nodup` an
 overcount (`ofNat` clamps out of range, so an overcount duplicates the
 last constructor). -/
-def DiagCode.count : Nat := 161
+def DiagCode.count : Nat := 162
 
 /-- Every code, for the registry checks in Tests.lean — derived from the
 type through the `ofNat` that `deriving DecidableEq` synthesises, never

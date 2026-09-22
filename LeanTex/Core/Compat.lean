@@ -595,47 +595,95 @@ def boundaryRefused (raws0 : Array Raw) : Bool := Id.run do
       break
   return false
 
+/-- The picture environments whose bodies ride to the boundary verbatim.
+A set line written *inside* one is already that standalone's, so the
+collector does not hoist it: hoisting would scope one picture's styling to
+every other picture in the document. -/
+def pictureEnvs : List String := ["tikzpicture", "external"]
+
+mutual
+
+/-- One level of the boundary-declaration walk. The list drives the
+recursion; the array gives `takeOpt`/`takeGroups` O(1) access to the
+siblings a set line's arguments are, and `skip` counts the siblings a
+line already consumed so its argument group is never walked as content.
+The string accumulates, so the standalone's preamble is built in one pass
+in source order. -/
+-- conserves: none — the walk's result is the standalone's preamble text,
+-- not a tree: it collects the subset of lines the real TeX must read and
+-- drops everything else by design, so no census equality can hold. What
+-- it must conserve is stated where it pays: `boundaryDecls_covers`.
+private def boundaryLevel (raws : Array Raw) (out : String) :
+    List Raw → Nat → Nat → String
+  | [], _, _ => out
+  | _ :: rest, i, skip + 1 => boundaryLevel raws out rest (i + 1) skip
+  | .ctrl name _ :: rest, i, 0 =>
+    if name == "usepackage" || name == "RequirePackage" then
+      let (opt, j) := takeOpt raws (i + 1)
+      let (args, k) := takeGroups raws j 1
+      let pkgs := ((rawSrc (args.getD 0 #[])).splitOn ",").map (·.trimAscii.toString)
+        |>.filter (fun p => !p.isEmpty && !nativePackages.contains p)
+      let out :=
+        if pkgs.isEmpty then out
+        else
+          let o := match opt with | some o => s!"[{o}]" | none => ""
+          out ++ s!"\\usepackage{o}\{{String.intercalate "," pkgs}}\n"
+      boundaryLevel raws out rest (i + 1) (k - (i + 1))
+    else if boundaryCtrls.contains name then
+      let (args, k) := takeGroups raws (i + 1) 1
+      let out := out ++ s!"\\{name}" ++
+        String.join (args.toList.map fun g => s!"\{{rawSrc g}}") ++ "\n"
+      boundaryLevel raws out rest (i + 1) (k - (i + 1))
+    else boundaryLevel raws out rest (i + 1) 0
+  | r :: rest, i, 0 => boundaryLevel raws (boundaryRaw out r) rest (i + 1) 0
+
+/-- Descend into a group or an environment. Split from the list walk so
+the recursion is structural on `Raw`: the body is a field of the head, not
+a tail of the list — `rewriteList`/`rewriteRaw`'s shape. -/
+private def boundaryRaw (out : String) : Raw → String
+  | .group body _ => boundaryLevel body out body.toList 0 0
+  | .env n body _ =>
+    if pictureEnvs.contains n then out
+    else boundaryLevel body out body.toList 0 0
+  | .math _ body _ => boundaryLevel body out body.toList 0 0
+  | .word _ _ => out
+  | .space => out
+  | .par _ => out
+  | .ctrl _ _ => out
+  | .sym _ _ => out
+  | .verb _ _ _ => out
+
+end
+
 /-- The preamble declarations a boundary standalone needs, collected from
 the *unrewritten* tree — the compat rewrite drops package loads, so
-collection precedes it. Every
-non-native `\usepackage` rides with its options (pgfplots, genealogytree,
-circuitikz — whatever the pictures need), and each closed-list set line is
-reconstructed as written. Pure and total; `\input` wrappers splice open in
-place, as `scanDecls` opens them. -/
-def boundaryDecls (raws0 : Array Raw) : String := Id.run do
-  let mut raws := raws0
-  let mut out := ""
-  let mut i := 0
-  repeat
-    if h : i < raws.size then
-      match raws[i] with
-      | .env "document" _ _ => break
-      | .env n wrapped _ =>
-        if (Parse.inputEnvFile? n).isSome then
-          raws := raws.extract 0 i ++ wrapped ++ raws.extract (i + 1) raws.size
-        else
-          i := i + 1
-      | .ctrl name _ =>
-        if name == "usepackage" || name == "RequirePackage" then
-          let (opt, j) := takeOpt raws (i + 1)
-          let (args, k) := takeGroups raws j 1
-          let pkgs := ((rawSrc (args.getD 0 #[])).splitOn ",").map (·.trimAscii.toString)
-            |>.filter (fun p => !p.isEmpty && !nativePackages.contains p)
-          if !pkgs.isEmpty then
-            let o := match opt with | some o => s!"[{o}]" | none => ""
-            out := out ++ s!"\\usepackage{o}\{{String.intercalate "," pkgs}}\n"
-          i := max k (i + 1)
-        else if boundaryCtrls.contains name then
-          let (args, k) := takeGroups raws (i + 1) 1
-          out := out ++ s!"\\{name}" ++
-            String.join (args.toList.map fun g => s!"\{{rawSrc g}}") ++ "\n"
-          i := max k (i + 1)
-        else
-          i := i + 1
-      | _ => i := i + 1
-    else
-      break
-  return out
+collection precedes it. Every non-native `\usepackage` rides with its
+options (pgfplots, genealogytree, circuitikz — whatever the pictures
+need), and each closed-list set line is reconstructed as written.
+
+**Wherever they stand.** A set line is a definition the pictures read, and
+where the author wrote it says nothing about which pictures need it: a
+figure kept in its own file carries its `\usetikzlibrary` and `\tikzset`
+just above its picture, inside the document body, and a collector that
+stopped at `\begin{document}` handed pgf a picture whose arrow tips and
+shapes were never defined — `Unknown arrow tip kind`, `Unknown shape` —
+so the boundary failed and the page shipped an empty box. The walk
+therefore descends the whole tree; only a picture environment is left
+closed (`pictureEnvs`), its body being its own standalone's already. Pure
+and total; `\input` wrappers open as any other environment does. -/
+def boundaryDecls (raws : Array Raw) : String :=
+  boundaryLevel raws "" raws.toList 0 0
+
+/-- **A set line reaches the boundary wherever it stands.** Wrapping a run
+of declarations in the document environment leaves the standalone's
+preamble exactly what it was — the invariant whose absence was the defect:
+the preamble-only walk returned nothing for this tree, so a `\tikzset`
+written beside its picture (a figure kept in its own file) never reached
+pgf, the boundary failed on an arrow tip or a shape it had no definition
+for, and the page shipped an empty box. -/
+theorem boundaryDecls_covers (raws : Array Raw) (p : Pos) :
+    boundaryDecls #[.env "document" raws p] = boundaryDecls raws := by
+  simp [boundaryDecls, boundaryLevel, boundaryRaw, pictureEnvs]
 
 /-- The `*` of a starred LaTeX form, standing between the command and its
 arguments. In LaTeX the star on the definers (`\newcommand*` and siblings)

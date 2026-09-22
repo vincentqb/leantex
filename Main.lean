@@ -490,7 +490,7 @@ def runBounded (cmd : String) (args : Array String) (cwd : System.FilePath)
   return .error s!"no result within {budgetMs / 1000} s; killed"
 
 /-- The last words of a batchmode log: the `!` error lines, else the last
-line — what W0378's help shows so the failure is diagnosable without
+line — what E0382's help shows so the failure is diagnosable without
 opening the temp directory. -/
 def logTail (log : String) : String :=
   let lines := (log.splitOn "\n").filter (!·.trimAscii.toString.isEmpty)
@@ -509,7 +509,7 @@ installed: with no tool at all, any earlier render of the same request
 serves. A
 request nothing can fulfil is W0379, per picture; each such picture then
 ships as the placeholder box the diagnostic names. Failures of a tool that
-ran are W0378 with the tool's own last words. Refusals are returned keyed
+ran are E0382 with the tool's own last words. Refusals are returned keyed
 by the picture's image source, for `Image.fulfil` to name (the subject is
 set there, so the gate's match cannot depend on the words chosen here).
 The inventory (`-v` and the porcelain phases) says per picture what came
@@ -914,7 +914,7 @@ def build (ui : Ui) (file : String) : IO UInt32 := do
       let (pics, refused) ← resolvePictures ui doc reqSpans.images
       let (imgs, imgDiags, imgHits) ← loadImages file doc pics refused
       -- The alt judge's picture face, after fulfilment: a picture the
-      -- tool failed on ships a placeholder box, not an image, and W0378
+      -- tool failed on ships a placeholder box, not an image, and E0382
       -- has named that loss — one loss, named once.
       let imgDiags := imgDiags ++ Ir.picAltDiags doc
         (fun src => (reqSpans.images.find? (·.1 == src)).map (·.2))

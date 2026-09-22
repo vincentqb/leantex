@@ -96,13 +96,26 @@ subset; a placeholder box marks its place"
     (help := s!"install {tool}, or \\pictures\{ tool = none } accepts the \
 placeholder; a warm cache needs no tool")
 
-/-- W0378: the boundary tool ran and failed on one picture; `logTail` is
-the tool's own last words, and `span` is where the picture stands. -/
+/-- **E0382: a boundary render that failed is a dropped loss, not a
+degraded one.** `degraded` is declared as *the reader sees "something
+stands here"* — a substituted face, source text, a box carrying its
+code — and that is the one thing a failed boundary picture does not do:
+the box it leaves is empty and unlabelled, so the page reads as
+intentional while a whole diagram is gone. The native subset is tried
+first now, so a picture reaches the boundary only when the engine drew
+nothing of it: no part of it was drawn, so there is nothing to fall back
+to, and nothing honest to put in the box that the engine did not invent. So
+the loss is loud where it can be loud without inventing ink — the run fails,
+and no artifact is written, which is the engine's standing contract for a
+dropped loss. `\allow{E0382}` is the declared door for a document that
+accepts the empty box. `logTail` is the tool's own last words, and `span`
+is where the picture stands. -/
 def boundaryFailed (tool : String) (logTail : String) (span : Option Span := none) : Diag :=
-  Diag.of .W0378
-    s!"'{tool}' failed on a picture; a placeholder box marks its place"
+  Diag.of .E0382
+    s!"'{tool}' drew nothing for this picture; the page would carry an empty box"
     span
-    (help := if logTail.isEmpty then s!"{tool}'s log says nothing usable"
+    (help := if logTail.isEmpty then
+        s!"{tool}'s log says nothing usable; \\allow\{E0382} accepts the empty box"
       else s!"{tool} says: {logTail}")
 
 /-- W0378: the PDF→SVG converter for the HTML artifact is not runnable;

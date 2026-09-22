@@ -318,9 +318,11 @@ def diagWitness (one mapped withMath : Font.FontSet) : DiagCode → Array Diag
     Ir.contractDiags (doc.output.contract.unmet Pdf.profile)
   -- W0379 is the driver's: a stated request no available tool can fulfil.
   | .W0379 => #[DriverDiag.boundaryToolUnavailable "lualatex"]
-  | .W0378 => #[DriverDiag.boundaryFailed "lualatex"
-        "! Undefined control sequence. · l.7 \\nope",
-      DriverDiag.boundarySvgMissing "not found (error code: 2)"]
+  -- E0382 is the driver's too: the tool ran and drew nothing, a dropped
+  -- loss, so the run fails unless the document declares acceptance.
+  | .E0382 => #[DriverDiag.boundaryFailed "lualatex"
+      "! Undefined control sequence. · l.7 \\nope"]
+  | .W0378 => #[DriverDiag.boundarySvgMissing "not found (error code: 2)"]
   | .W0349 => dvE "\\ref{nowhere}"
   | .W0350 => dvE "\\section{A}\\label{twice}\\label{twice}"
   | .W0380 => dvE "\\refstepcounter{section}\n\\label{stepped} see \\cref{stepped}"
@@ -696,7 +698,7 @@ def a11yChecks (ref : IO.Ref (List String)) : IO Unit := do
     (firedPic.size == 1 && firedPic.all fun d =>
       (d.message.splitOn "picture").length == 2 &&
       (d.message.splitOn Ir.picSrcPrefix).length == 1)
-  t "a picture the tool failed on is not double-named (W0378 spoke)"
+  t "a picture the tool failed on is not double-named (E0382 spoke)"
     ((Ir.picAltDiags picDoc (fun _ => none) (fun _ => false)).isEmpty)
   t "a captioned figure around the picture silences the picture face"
     ((Ir.picAltDiags (elabStr (dvDoc door ("\\begin{figure}" ++ pic ++
@@ -800,7 +802,7 @@ def pendingChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "pending_named: every pending node has a diagnostic naming it"
     (named (ds ++ bibDs ++ imgDs) pend)
   t "pending_named: the refusal's subject is set at the decision, not by its words"
-    (imgDs.any fun d => d.code == "W0378" && (picSrc.map fun s => d.subject == some s).getD false)
+    (imgDs.any fun d => d.code == "E0382" && (picSrc.map fun s => d.subject == some s).getD false)
   -- A resolved document is pending-free: with the label, the file, and no
   -- picture, the census is empty and nothing needs naming.
   let (ok, okDs) := elabStr (dvDoc "" "\\section{A}\\label{a} See \\ref{a}.")

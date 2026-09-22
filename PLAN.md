@@ -187,6 +187,64 @@ list.
 
 Newest first. Entries are immutable; corrections are new entries.
 
+2026-09-22 — a definition reaches its picture wherever it was written, and
+native draws before the boundary does (pic-boundary, M8/M8b). Three defects,
+one cause. A figure kept in its own file carries its `\usetikzlibrary` and
+`\tikzset` just above its picture, inside the document body;
+`Compat.boundaryDecls` stopped at `\begin{document}`, so those lines were
+collected for nobody. pgf then met a picture whose arrow tips and shapes had
+never been defined — `Unknown arrow tip kind`, `Unknown shape` — the boundary
+failed, and because the elaborator's arm that consumes a set line silently was
+preamble-only, the body-level line also fell to W0301 and printed the
+definition's own source into the paragraph. The page shipped an empty box with
+the definition's source above it, exit 0.
+
+The invariant the absence of which allowed it: **a definition a picture needs
+reaches that picture's renderer regardless of where in the document it was
+written.** `boundaryDecls_covers` states it — wrapping a run of declarations in
+the document environment leaves the standalone's preamble unchanged — and the
+collector is now a whole-tree walk (`boundaryLevel`/`boundaryRaw`,
+`rewriteList`'s mutual shape), closed only at a picture environment
+(`pictureEnvs`), whose body is its own standalone's already; hoisting from
+inside one would scope a single picture's styling to every other.
+
+Ordering is a decision, not an accident: native first, the boundary as the
+fallback for what native draws *nothing* of. `bd2650c` had made the boundary
+the route for any picture the subset drew imperfectly, which traded
+imperfect-but-visible output for an empty box the moment the boundary failed.
+The condition is now `pic.shapes.isEmpty` alone; a picture the subset draws
+partly ships those shapes with its refusals named beside them (W0334), exactly
+as a refused boundary always reported them.
+
+And a boundary failure is no longer a degraded loss. `degraded` is declared as
+*the reader sees "something stands here"*, and an empty unlabelled box is the
+one thing that does not do that. Since native is tried first, a picture only
+reaches the boundary when the engine drew nothing of it — there is no partial
+render to fall back to and nothing honest to put in the box — so E0382 carries
+a `dropped` loss: the run fails and no artifact is written, the standing
+contract for a dropped loss, with `\allow{E0382}` the declared door for a
+document that accepts the box. W0378 keeps one meaning, the PDF-to-SVG
+converter, which is what one-code-one-meaning asks.
+
+2026-09-22 — pgf is a specification, not a research problem: the M8b sizing is
+a port (plan refinement, no code). The prior framing — "native TikZ would
+require the full TeX macro machinery … there is no useful partial TikZ" —
+was wrong twice, and `Core/Picture.lean` had been refuting the second half for
+some time: ~1800 lines with an expression evaluator, `\foreach`, node
+anchoring by border intersection, arrow tips, curve controls, drawing real
+pictures. We do not implement TeX; we read pgf's algorithms and port them, and
+the TeX-specific half of its source — catcodes, registers, expansion control,
+the `\pgfutil@` multi-format shims — is exactly what does not get ported.
+Measured rather than guessed: 98.7k lines over 185 files, of which
+`systemlayer/` (4.1k) is not needed at all because we emit our own PDF and
+HTML, and `libraries/` (32.1k) is opt-in per document, leaving ≈34k lines of
+reading surface for the target subset. M8b now carries that table, five
+independently shippable coverage slices, and the honest naming of the two
+intricate subsystems — pgfmath's parser and function library, and shape anchor
+geometry with arrow-tip construction — which are intricate by volume and care,
+not by unknowns. Coverage becomes a number the suite prints, one
+`tests/compat-index/` row per documented construct, not an adjective.
+
 2026-09-22 — `\alert<spec>{body}` is beamer's own equation (alert-flip, M5; a
 correction of the alert-overlay-once entry below, which records the
 `\uncover` stopgap as the rewrite and the divergence from beamer as the
@@ -5577,12 +5635,23 @@ inventory: what on the page came through a boundary, from which tool.
 Absorbing a boundary swaps the external tool for a native Lean implementation
 behind the same type, so trust only ever grows and documents never notice.
 
-- Graphics (boundary first): native TikZ would require the full TeX macro
-  machinery — catcodes, `\expandafter`, registers — plus the pgf layers on
-  top; there is no useful partial TikZ. `external[tikz]` blocks go to pinned
-  lualatex + standalone and come back as opaque measured boxes. Cache-warm
-  builds need no TeX installed. Absorbed later by a typed native graphics
-  DSL (horizon, after M6).
+- Graphics (native first, boundary as the escape hatch): pgf is not a
+  research problem, it is a readable specification — 99k lines of TeX across
+  185 files in `texmf-dist/tex/generic/pgf`, and the relevant core is far
+  smaller than the total. What the earlier framing got wrong (and this entry
+  replaces) was "native TikZ would require the full TeX macro machinery —
+  catcodes, `\expandafter`, registers — plus the pgf layers on top; there is
+  no useful partial TikZ." Both halves are false here. We do not implement
+  TeX: we read pgf's algorithms and port them, and the TeX-specific half of
+  that source — catcode juggling, register allocation, the `\pgfutil@` shims
+  that keep one codebase working under latex, plain, and context — is
+  precisely what does not get ported. And the partial is not hypothetical:
+  `Core/Picture.lean` is ~1800 lines of it today, with an expression
+  evaluator, `\foreach`, node anchoring by rect/circle border intersection,
+  arrow tips, and curve controls. It draws real pictures now. The route is
+  therefore native first, with `external[tikz]` and the pinned-lualatex
+  boundary kept as the escape hatch for what the subset has not reached
+  (M8b). Cache-warm builds need no TeX installed either way.
 - Assets (native from the start): `\figure{...}` places external PDF pages
   (form XObjects — vector stays vector), PNG, and JPEG as measured boxes;
   the only boundary is the filesystem.
@@ -6042,19 +6111,59 @@ is evidence, not a theorem.
   remain), the external-render boundary with content-hash cache (TikZ),
   verbatim code blocks, per-glyph font fallback chains.
 - M8b native pictures: a TikZ/pgf subset in the engine, so `lualatex` stops
-  being a dependency. Today pictures are the one declared external boundary
-  (`Ir.Doc.pictureTool`, default `lualatex`, `picTools` in Elab), which makes
-  the engine's independence conditional and leaks pgf's diagnostics into an
-  otherwise self-contained log: a document whose picture source is missing a
-  definition gets W0378 reading like an engine failure, and a machine without
-  a TeX tree gets placeholder boxes for content the document declared. The
-  target is the path/node/arrow subset real decks use — coordinates, node
-  shapes and anchors, edges with arrow tips, `scope`, styles and keys —
-  elaborated to the same `Ir.picture` the boundary already produces, so both
-  backends and the census are unchanged and a picture becomes ink the engine
-  owns. Scope discipline: the subset is declared, not open-ended, and a
-  construct outside it keeps the external boundary as the escape hatch rather
-  than failing — the boundary stays supported, it stops being the default.
+  being a dependency. **Sized as a port, not an estimate.** pgf ships its own
+  specification: `texmf-dist/tex/generic/pgf`, 185 files, 98.7k lines, and the
+  subsystems split cleanly by whether we need them at all —
+
+  | pgf source | lines | what we do with it |
+  |---|---|---|
+  | `utilities/` (pgfkeys, pgffor) | 5.1k | port: the key/value system and `\foreach`; `Picture.lean` already has `\foreach` |
+  | `math/` (pgfmathparser, functions) | 8.9k | port: `evalExpr` is the start; the function library is the long tail |
+  | `basiclayer/` (paths, transforms, shapes, arrows core) | 10.1k | port: the geometry — this is the substance |
+  | `frontendlayer/tikz/tikz.code.tex` + its keys | ~10k of 24.8k | port: the surface parser and option keys |
+  | `systemlayer/` (driver back ends) | 4.1k | **do not port**: we emit our own PDF and HTML |
+  | `libraries/` (decorations, graphdrawing, plots, exotic shapes) | 32.1k | **opt-in**: each stays behind the boundary until a document needs it; graphdrawing is Lua and is not a porting target |
+
+  So the reading surface for the target subset is ≈34k lines, not 99k, and a
+  large fraction of those 34k is TeX plumbing that vanishes in Lean —
+  catcodes, register allocation, expansion control, the multi-format
+  `\pgfutil@` shims. What is left is ordinary geometry and parsing.
+
+  Two subsystems are genuinely intricate, and they are intricate by volume
+  and care, not by unknowns: pgfmath's parser plus its function library
+  (precedence, units, the `atan2`/`veclen`-class functions, fixed-point
+  behaviour we must decide deliberately rather than inherit), and node-shape
+  anchor geometry together with arrow-tip construction (every shape defines
+  its own anchor set and border-intersection rule; `rectBorder` and
+  `circleBorder` are two of them, `shapes.geometric` is dozens). Neither is
+  research; both are where a "trivial" reading would slip.
+
+  Coverage slices, each independently shippable, each keeping the boundary as
+  the escape hatch for what it has not reached:
+  1. **Keys and styles** — `pgfkeys` paths, `/.style`, `/.tip`, `\tikzset`
+     scoping. Unblocks the class of documents that only ever defined a style
+     (the 2026-09-22 defect's own shape).
+  2. **Paths** — `--`, `..controls`, `rectangle`, `circle`, `arc`, `grid`,
+     `cycle`, coordinate systems (canvas, polar, node-relative, `++`/`+`).
+  3. **Nodes and anchors** — the `basiclayer` shape core plus
+     `shapes.geometric`'s anchor rules, `label`/`pin`, `fit`.
+  4. **Arrows** — `arrows.meta` tip kinds and their scaling/rounding keys.
+  5. **pgfmath completion** — the remaining function library and
+     `\pgfmathsetmacro` forms.
+  Coverage is measured, not asserted: one `tests/compat-index/` row per
+  documented construct (as `nativePackages` entries owe), `impl` proved by no
+  W0301/W0302 and a refusal proved by its code firing, so the percentage of
+  pgf's documented surface the engine owns is a number the suite prints.
+
+  Today pictures are still a declared external boundary
+  (`Ir.Doc.pictureTool`, default `lualatex`, `picTools` in Elab) for what the
+  subset draws nothing of, which keeps the engine's independence conditional
+  and leaks pgf's diagnostics into an otherwise self-contained log. Native
+  output elaborates to the same `Ir.picture` the boundary already produces,
+  so both backends and the census are unchanged and a picture becomes ink the
+  engine owns. Scope discipline: the subset is declared, not open-ended, and a
+  construct outside it keeps the external boundary rather than failing — the
+  boundary stays supported, it stopped being the default on 2026-09-22.
   Owes the boundary's own census fact (a native picture and a rendered one
   agree on placement and on text alternative) and a per-construct
   compat-index file, as `nativePackages` entries do. Acceptance (local): the
@@ -6103,8 +6212,10 @@ is evidence, not a theorem.
 
 - Running latex.ltx or CTAN packages; byte or box compatibility with any
   engine.
-- Native TikZ/pgf — the graphics boundary covers it (see Heavy machinery); a
-  typed graphics DSL is the horizon replacement.
+- Native TikZ/pgf is **not** a non-goal (it was listed as one; M8b and
+  `Core/Picture.lean` already contradicted that). Porting pgf's algorithms is
+  the plan; running its TeX source is not. A typed graphics DSL is the
+  horizon spelling, above the ported subset, not instead of it.
 - Native bibliographies, indexing, glossaries: post-M6; a biber boundary can
   serve papers sooner if a document demands it.
 - Tagging that moves ink, or tags recovered from geometry. Tagged PDF

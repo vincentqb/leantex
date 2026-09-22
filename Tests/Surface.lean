@@ -3556,8 +3556,8 @@ def boundaryChecks (ref : IO.Ref (List String)) : IO Unit := do
   t "the declared math face rides through unicode-math"
     (hasStr (reqOf tdoc) "\\usepackage{unicode-math}" &&
      hasStr (reqOf tdoc) "\\setmathfont{Fira Math}")
-  t "a boundary picture with a formula stays one request with no W0378 of its own"
-    ((Ir.pictureRefs tdoc).size == 1 && tds.all (·.code != "W0378"))
+  t "a boundary picture with a formula stays one request with no E0382 of its own"
+    ((Ir.pictureRefs tdoc).size == 1 && tds.all (·.code != "E0382"))
   let (fdoc, _) := elabStr (dvDoc
     "\\fonts{ body = \"Source Serif Pro\", sans = \"Open Sans\", mono = \"Source Code Pro\" }\n"
     picC)
@@ -3649,6 +3649,81 @@ def boundaryFitChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO
         | .image _ w _ => some w
         | _ => none)) == #[Dim.pt 2000] &&
      imgOut.diags.any (·.code == "W0005"))
+
+/-- **A definition a picture needs reaches that picture's renderer
+regardless of where in the document it was written.** The invariant whose
+absence shipped three defects at once (PLAN, 2026-09-22 pic-boundary): a
+figure kept in its own file carries its `\usetikzlibrary` and `\tikzset`
+just above its picture, inside the body, and the collector stopped at
+`\begin{document}` — so pgf met a picture whose arrow tips and shapes had
+never been defined, the boundary failed, the body-level line fell to W0301
+and printed the definition's own source into the paragraph, and the page
+shipped an empty box with that source above it. The theorem over the
+collector is `Compat.boundaryDecls_covers`; these are the claims about the
+document and the page it produces. No `lualatex` is needed for any of
+them: the request is the elaborator's, and the ink the native subset's. -/
+def pictureDefnReachChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) :
+    IO Unit := do
+  let t := check ref
+  -- The set lines where a figure file puts them: in the body, above the
+  -- picture that reads them.
+  let sets := "\\usetikzlibrary{arrows.meta}\n\\tikzset{scmarrow/.tip={Latex[round]}}\n\n"
+  -- A picture the subset draws nothing of, so the boundary is its route.
+  let outside := "\\begin{tikzpicture}\\path[draw,-scmarrow] (0,0) -- (3,0);\\end{tikzpicture}"
+  let (bodyDoc, bodyDs) := elabStr (dvDoc "" (sets ++ outside))
+  let (preDoc, _) := elabStr (dvDoc sets outside)
+  let reqOf (d : Ir.Doc) : String := ((Ir.pictureRefs d)[0]?.map (·.2)).getD ""
+  t "a body-level set line reaches the standalone its picture renders in"
+    (hasStr (reqOf bodyDoc) "\\usetikzlibrary{arrows.meta}" &&
+     hasStr (reqOf bodyDoc) "\\tikzset{scmarrow/.tip={Latex[round]}}")
+  t "where a set line stands does not change the request"
+    (reqOf bodyDoc == reqOf preDoc && !(reqOf bodyDoc).isEmpty)
+  t "a body-level set line is not an unknown command"
+    (bodyDs.all (·.code != "W0301"))
+  -- Its group addresses pgf, never the sentence: kept as text it printed
+  -- the definition's own source into the paragraph.
+  let shippedText (d : Ir.Doc) : String :=
+    String.intercalate " "
+      ((censusOf (coveredColorsOf d) (layoutOf oneFace d)).toList.map (·.text))
+  let shipped := shippedText bodyDoc
+  t "the definition's source is not ink on the page"
+    (!hasStr shipped "scmarrow" && !hasStr shipped "arrows.meta" &&
+     !hasStr shipped "Latex")
+  -- The declared refusal is still the acceptance: with no boundary, a set
+  -- line is an unknown command again, arguments and all.
+  let (_, refusedDs) := elabStr (dvDoc "\\pictures{ tool = none }\n" (sets ++ outside))
+  t "tool = none makes a body-level set line an unknown command again"
+    (refusedDs.any (·.code == "W0301"))
+  -- Native first: what the subset draws, it draws, and what it refused is
+  -- named beside it. Only a picture it draws nothing of routes.
+  let partly := "\\begin{tikzpicture}\\node at (0,0) {Alpha};" ++
+    "\\shade (0,0) rectangle (1,1);\\end{tikzpicture}"
+  let (partDoc, partDs) := elabStr (dvDoc "" partly)
+  t "a picture the subset draws partly stays native, its refusal named"
+    (partDoc.pictureSrcs.isEmpty && partDs.any (·.code == "W0334") &&
+     partDoc.body.any fun b => match b with | .picture _ => true | _ => false)
+  t "the partly-drawn picture ships its ink"
+    (hasStr (shippedText partDoc) "Alpha")
+  t "a picture the subset draws nothing of still routes to the boundary"
+    ((Ir.pictureRefs bodyDoc).size == 1 && bodyDoc.pictureSrcs.size == 1)
+  -- A boundary failure is a dropped loss, not a degraded one: `degraded`
+  -- promises the reader sees "something stands here", and an empty
+  -- unlabelled box is the one thing that does not. Native is tried first,
+  -- so a picture only reaches the boundary when the engine drew nothing of
+  -- it — no part of it was drawn, so there is nothing to fall back to — and
+  -- the run fails rather than shipping a page that reads as intentional.
+  let failed := DriverDiag.boundaryFailed "lualatex"
+    "! Package pgf Error: Unknown arrow tip kind 'scmarrow'."
+  t "a boundary failure is an error the document must declare to accept"
+    (failed.code == "E0382" && failed.severity == .error &&
+     DiagCode.E0382.loss == .dropped)
+  t "the failure carries the tool's own last words"
+    (hasStr (failed.help.getD "") "Unknown arrow tip kind")
+  -- The converter gap keeps W0378, and keeps it a warning: the PDF is
+  -- unaffected and the HTML page shows each picture's alternative.
+  t "the HTML converter gap is a different code, and still a warning"
+    ((DriverDiag.boundarySvgMissing "not found").code == "W0378" &&
+     DiagCode.W0378.loss == .degraded)
 
 /-- The poster-chrome compat arms: `\setbeamercolor` maps the elements the
 engine has roles for onto the palette (and only those — an element with no

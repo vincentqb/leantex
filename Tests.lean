@@ -97,6 +97,7 @@ def layoutSuiteChecks (ref : IO.Ref (List String)) : IO Unit := do
   structTreeChecks ref oneFace
   pictureLayoutChecks ref oneFace
   boundaryFitChecks ref oneFace
+  pictureDefnReachChecks ref oneFace
   quoteChecks ref oneFace
   refChecks ref oneFace
   titleChecks ref

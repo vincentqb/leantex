@@ -109,6 +109,9 @@ error[E0365]: '\data' file 'records' is not there; its records are absent
 ── E0375 (dropped) \dimexpr division rounds to nearest, not this engine's truncation, so the statement is dropped
 error[E0375]: '\dimexpr' division rounds to nearest; this engine's length arithmetic truncates toward zero as TeX's '\divide' does
   help: divide outside '\dimexpr': '(\a - \b) / 2' truncates as TeX does
+── E0382 (dropped) the boundary tool ran and drew nothing for a picture; the page would carry an empty box
+error[E0382]: 'lualatex' drew nothing for this picture; the page would carry an empty box
+  help: lualatex says: ! Undefined control sequence. · l.7 \nope
 ── E0401 (dropped) no usable font found on the host
 error[E0401]: no usable font found
   help: install any TrueType/OpenType font, pass --font-dir, or set LEANTEX_FONT
@@ -442,9 +445,7 @@ warning[W0376]: this picture ships no text alternative; assistive technology rea
 ── W0377 (degraded) a link carries no text to name its purpose (WCAG 2.2)
 warning[W0377]: link 'https://example.org/x' carries no text; assistive technology reads nothing to name its purpose (WCAG 2.2 SC 2.4.4)
   help: give the link visible text — \href{...}{words} — or an image with alt inside it
-── W0378 (degraded) the boundary tool failed; a placeholder box marks the picture
-warning[W0378]: 'lualatex' failed on a picture; a placeholder box marks its place
-  help: lualatex says: ! Undefined control sequence. · l.7 \nope
+── W0378 (degraded) the PDF-to-SVG converter for boundary pictures is not runnable; the page shows their text alternatives
 warning[W0378]: cannot run 'pdftocairo' to convert boundary pictures for the HTML artifact: not found (error code: 2)
   help: install poppler's pdftocairo, or \allow{W0378} accepts the loss; the PDF artifact is unaffected
 ── W0379 (degraded) no boundary tool available for a picture outside the rendered subset; a placeholder box marks the picture

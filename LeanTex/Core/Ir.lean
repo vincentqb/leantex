@@ -9480,7 +9480,7 @@ def altDiags (doc : Doc) (spanOf : String → Option Span := fun _ => none) :
 
 /-- The judge's boundary-picture face, read by the driver after fulfilment:
 `shipped` says whether the picture's drawn box embeds — a picture the tool
-failed on ships a placeholder box, not an image, and W0378 has named that
+failed on ships a placeholder box, not an image, and E0382 has named that
 loss, so naming it here too would name one loss twice. The message speaks
 of a picture in the author's words — the source spelling is the engine's
 cache key (`picSrcPrefix`), never a word the author wrote — and the help
@@ -10501,7 +10501,7 @@ def resolveRefInlines (loc : Locale) (table : RefTable) (xs : Array Inline) :
 What the engine could not resolve and a backend would otherwise ship
 unnamed: a `\ref` no label numbers, a `\cite` no bibliography answered, an
 image no file or tool produced. Each resolver names what it leaves — W0349,
-W0351, W0601/W0602/W0378/W0379 — and `pending_named` (Pending.lean) holds
+W0351, W0601/W0602/E0382/W0379 — and `pending_named` (Pending.lean) holds
 the census to those diagnostics, so "a warning per misunderstood thing" is
 a theorem over the pipeline's pure tail, not a convention each resolver
 keeps by hand. The silent `\cite` with no bibliography was that convention

@@ -3561,6 +3561,21 @@ a side channel, never slide content" pos
       (help := "it is a block-level command: use it between paragraphs, " ++
         "not inside inline content")
     elabInlinesFrom ctx raws (i + 1) acc sb
+  else if ctx.picTool.isSome && Compat.boundaryCtrls.contains name then
+    -- With the boundary open (the default), a tikz-family set line is not
+    -- unknown wherever it stands: `Compat.boundaryDecls` collected it —
+    -- body-level lines included (`boundaryDecls_covers`) — and the real
+    -- TikZ reads it in every wrapped standalone. It is a definition, so
+    -- its group addresses pgf, never the sentence: kept as text it printed
+    -- the definition's own source into the paragraph. A declared refusal
+    -- (`tool = none`) makes it an unknown command again, arguments and all.
+    let jr := skipReservedArgs raws (i + 1) pos
+    if let some bpos := jr.2 then
+      warnUnclosed ctx s!"'\\{name}'" bpos
+    have hge : i + 1 ≤ jr.1 := skipReservedArgs_ge raws (i + 1) pos 1
+    have hadv : sliceWeight raws jr.1 < sliceWeight raws i :=
+      sliceWeight_lt raws h (by omega)
+    elabInlinesFrom ctx raws jr.1 acc sb
   else
     -- Best effort: the {...} arguments are content, and content is
     -- never dropped for want of a command. Only the formatting is lost.
@@ -5897,19 +5912,24 @@ private def tikzArm (ctx : Ctx) (body : Array Raw) (pos : Pos)
         #[(.W0012, s!"math with {what} is not rendered yet; the \
 formula is set as source text")])
   let (pic, pdiags) := Picture.elabPicture ctx.palette body mathOf
-  -- The boundary: open by default, a picture the rendered subset cannot
-  -- fully draw runs whole under the real TikZ at the edge and comes back
-  -- as an opaque measured box (PLAN, Heavy machinery: isolate, then
-  -- absorb). The tool is the build environment's, exactly as fonts are:
-  -- the request rides the IR — content hash of the wrapped standalone
-  -- source — and the driver fulfils it, cached by content, so a warm
-  -- cache needs no TeX installed and a machine with none gets the
-  -- driver's W0379 with the placeholder. `\pictures{ tool = none }` is
-  -- the declared refusal that keeps the subset's named diagnostics
-  -- instead. The trust label: the engine claims placement and measurement
-  -- of the returned box, never its contents.
-  if ctx.picTool.isSome && !body.isEmpty &&
-      (!pdiags.isEmpty || pic.shapes.isEmpty) then
+  -- **Native first; the boundary is the fallback.** What the engine's own
+  -- subset draws, it draws — imperfectly-but-visibly beats not at all, and
+  -- the constructs it refused are named beside the shapes that landed
+  -- (W0334), exactly as a refused boundary has always reported them. Only
+  -- a picture the subset draws *nothing* of goes whole to the real TikZ at
+  -- the edge and comes back as an opaque measured box (PLAN, Heavy
+  -- machinery: isolate, then absorb) — routing every imperfect picture
+  -- there instead turned visible output into an empty box the moment the
+  -- boundary failed, which is the trade this ordering refuses.
+  -- The tool is the build environment's, exactly as fonts are: the request
+  -- rides the IR — content hash of the wrapped standalone source — and the
+  -- driver fulfils it, cached by content, so a warm cache needs no TeX
+  -- installed and a machine with none gets the driver's W0379 with the
+  -- placeholder. `\pictures{ tool = none }` is the declared refusal that
+  -- keeps the subset's named diagnostics instead. The trust label: the
+  -- engine claims placement and measurement of the returned box, never its
+  -- contents.
+  if ctx.picTool.isSome && !body.isEmpty && pic.shapes.isEmpty then
     let tool := ctx.picTool.getD "lualatex"
     let body := Parse.rawSrc body
     let id := Ir.picHash body
@@ -10717,7 +10737,7 @@ structure ReqSpans where
   line E0503 names when the driver finds no file. -/
   bib : Array (String × Span) := #[]
   /-- Each image source's first span — file images and boundary pictures
-  alike: where the driver's per-picture W0376 and W0378 point. -/
+  alike: where the driver's per-picture W0376 and E0382 point. -/
   images : Array (String × Span) := #[]
   /-- Each reference key's first site: where W0349 points. -/
   refs : Array (String × Span) := #[]
@@ -10747,7 +10767,7 @@ def runRawsSpanned (file : String) (raws : Array Raw) (earlier : Array Diag := #
   let (doc, contrast) := Contrast.realizeDoc doc
   let outline := Ir.outlineDiags doc
   -- The file-image face only: boundary pictures are judged by the driver
-  -- after fulfilment (`Ir.picAltDiags`), where W0378's outcome is known.
+  -- after fulfilment (`Ir.picAltDiags`), where E0382's outcome is known.
   let alt := Ir.altDiags doc fun src => (st.spans.images.find? (·.1 == src)).map (·.2)
   let links := Ir.linkDiags doc
   let sequences := Ir.footerSequenceDiags doc

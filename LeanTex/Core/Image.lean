@@ -2028,7 +2028,7 @@ names it: a file (or a boundary picture's drawn PDF) decoded — through the
 driver's content cache, which equals the pure decode
 (`decodeBin_encodeBin_id`) — with the relative path an HTML link needs; no
 file; a file that would not read; or a boundary picture nothing drew,
-carrying the boundary's own diagnostic (W0378, W0379), whose subject
+carrying the boundary's own diagnostic (E0382, W0379), whose subject
 `fulfil` sets so the refusal names the picture whatever words it chose. -/
 inductive Fetch where
   | decoded (href : String) (res : Except String Plan)
