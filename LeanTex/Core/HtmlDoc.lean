@@ -1355,7 +1355,8 @@ theorems quantified over the rule set — `deck_css_partition`,
 `floor_is_baseline`, `floor_hides_nothing` with `floor_opacity_mem` and
 `floor_covered_script_gated`, `guards_by_construction`,
 `snapped_uncovers_every_step`, `snap_pages_partition_frames`,
-`deck_text_path_free` — so a new rule is
+`deck_text_path_free`, and the two cross-backend ones the overlay rules
+owe (`html_step_pending_agree`, `alt_backend_agree`) — so a new rule is
 in every contract the moment it is written. Minimal changes by
 construction: adding or dropping a feature dependency is one `requires`
 field; adding a browser fact is one `Feature` row; nothing else moves.
@@ -1460,6 +1461,14 @@ inductive SelChunk where
   list is the data (`fallback_uncovers_every_step` reads it), the
   template renders it. -/
   | stepAlts (js : List Nat)
+  /-- One compound per declared attribute value on a class:
+  `.step-end[data-step-last="j"], …`, the range ends a snap stands past,
+  and the alternation groups a snap selects. The class and the attribute
+  are the engine's own constants and digit-free, so the rendered
+  selector's syntax still lives whole in the literal chunks; the values
+  are the rule's data, read off `Ir.stepPending` (`endedBy`,
+  `startedBy`). -/
+  | attrAlts (cls attr : String) (js : List Nat)
   deriving Repr, DecidableEq
 
 /-- The literal syntax a chunk renders, ordinals excluded. -/
@@ -1467,12 +1476,15 @@ def SelChunk.lits : SelChunk → List String
   | .lit s => [s]
   | .num _ => []
   | .stepAlts _ => [".step[data-step=\"", "\"], "]
+  | .attrAlts cls attr _ => [".", cls, "[", attr, "=\"", "\"], "]
 
 def SelChunk.render : SelChunk → String
   | .lit s => s
   | .num n => toString n
   | .stepAlts js =>
     String.intercalate ", " (js.map fun j => s!".step[data-step=\"{j}\"]")
+  | .attrAlts cls attr js =>
+    String.intercalate ", " (js.map fun j => s!".{cls}[{attr}=\"{j}\"]")
 
 def renderSel (sel : List SelChunk) : String :=
   String.join (sel.map SelChunk.render)
@@ -1731,7 +1743,9 @@ takes `<length-percentage>`, explicitly including `calc()`, and the
 unitless-custom-property calc is verified against this engine's
 Chromium). So item n fades in *during* the smooth scroll from snap n−1
 to snap n and holds (fill-mode both). Step 1 items are never covered
-(`:not([data-step="1"])`). -/
+(`:not([data-step="1"])`). The range's *end* is not this rule's: a
+declared end covers again past itself, on the nested carrier
+(`stepRecoverRule`). -/
 def stepUncoverRule : DeckRule :=
   { selector := [.lit ".step:not([data-step=\"1\"])"]
     decls := [("animation", "ltx-uncover linear both"),
@@ -1792,6 +1806,140 @@ def stepSnappedRule (k : Nat) : DeckRule :=
 def stepSnapped (maxSteps : Nat) : List DeckRule :=
   (List.range (maxSteps - 1)).map fun i => stepSnappedRule (i + 2)
 
+/-! ### The range's other end
+
+`\uncover<2-3>` is pending past its end as much as before its start
+(`Ir.stepPending`), and the PDF handout dims it again on step 4. The
+uncover above reads the start alone, so until these rules the two
+artifacts disagreed on every declared end: crisp in HTML, dimmed on
+paper. The end's covering is a second wrapper, not a second declaration
+on the same one, because one element animates one property once — two
+opacity animations compose only by nesting, and opacities multiply, so
+covered-before-the-start times covered-again-past-the-end is exactly the
+predicate. -/
+
+/-- The recover's keyframes, gated with the timeline that plays them: the
+mirror of `stepKeyframes` with the offsets swapped — full colour at the
+range's end, the design's covered fraction past it. Opacity only: the
+step dims in place, as the PDF's per-run cover does, and the uncover's
+`transform` has already landed at `none` by the time this plays. -/
+def stepRecoverKeyframes (coveredPct : Nat) : DeckRule :=
+  { selector := [.lit "@keyframes ltx-recover { from { opacity: 100% } to"]
+    decls := [("opacity", s!"{coveredPct}%")]
+    requires := .supported .viewTimeline }
+
+/-- The declared end's carrier, paced by the same reader's key as the
+uncover: a `.step-end` (`--step-last: u`, the track `--steps: N`) dims
+over `animation-range: contain (u−1)/(N−1) → contain u/(N−1)` — the snap
+interval *after* the range's last step, so the step holds full colour
+through `u` and fades as the reader leaves it. An end at the deck's last
+step puts the range start at 100%: the animation then fills with its
+`from` state throughout and nothing dims, which is the honest reading —
+no step past it exists. -/
+def stepRecoverRule : DeckRule :=
+  { selector := [.lit ".step-end"]
+    decls := [("animation", "ltx-recover linear both"),
+      ("animation-timeline", "--frame"),
+      ("animation-range",
+        "contain calc((var(--step-last) - 1) / (var(--steps) - 1) * 100%) \
+contain calc(var(--step-last) / (var(--steps) - 1) * 100%)")]
+    requires := .supported .viewTimeline }
+
+/-- The `data-step-last` values a snap stands past, read off the predicate
+itself: `Ir.stepPending 1 (some u) k` is `k > u`, so the enumeration is
+the engine's own pending test and not a second spelling of it. Bounded by
+the deck's step count, which is what makes the enumeration complete
+(`html_step_pending_agree`). -/
+def endedBy (maxSteps k : Nat) : List Nat :=
+  ((List.range maxSteps).map (· + 1)).filter fun u => Ir.stepPending 1 (some u) k
+
+/-- The floor's recover for snap `k`: with no `view()` timeline the script's
+`data-snapped` is the deck's step state, and every declared end below `k`
+dims its wrapper again — the floor's mirror of `stepSnappedRule`.
+Script-gated like the covered default it completes: with scripting off no
+snap state exists, so nothing here is declared and the floor stands at full
+colour (`floor_covered_script_gated`). Outranks nothing and is outranked by
+nothing: the uncover it corrects addresses `.step`, this addresses the
+nested `.step-end`, and the two opacities multiply. -/
+def stepRecoverFloorRule (coveredPct maxSteps k : Nat) : DeckRule :=
+  { selector := [.lit "html[data-deck-script] .slide-track[data-snapped=\"", .num k,
+      .lit "\"] :is(", .attrAlts "step-end" "data-step-last" (endedBy maxSteps k),
+      .lit ")"]
+    decls := [("opacity", s!"{coveredPct}%")]
+    requires := .unsupported .viewTimeline }
+
+def stepRecovered (coveredPct maxSteps : Nat) : List DeckRule :=
+  (List.range (maxSteps - 1)).map fun i => stepRecoverFloorRule coveredPct maxSteps (i + 2)
+
+/-- The end carrier's reduced-motion guard, at its own selector: no
+animation, full colour (WCAG 2.2 SC 2.3.3), as `stepGuard` is the
+uncover's. -/
+def stepRecoverGuard : DeckRule :=
+  { selector := [.lit ".step-end"]
+    decls := [("opacity", "100%"), ("animation", "none")]
+    part := .reduce }
+
+/-- The floor recover's reduced-motion counterpart. Under reduce a stepped
+frame is one page, so its snap state is the frame's own and no end is past;
+this rule says so at the floor recover's own specificity — one element, one
+attribute, one class-and-attribute, one `:is()` compound — and the reduce
+partition is emitted after the blocks it reverts, so source order decides
+(CSS Cascade 5 §6.4). -/
+def stepRecoverFloorGuard : DeckRule :=
+  { selector := [.lit "html[data-deck-script] .slide-track[data-snapped] \
+:is(.step-end[data-step-last])"]
+    decls := [("opacity", "100%")]
+    part := .reduce }
+
+/-- Whether the emitted rules leave step `(n, last)` covered at snap `k`,
+from the selectors' own data and nothing else: the uncover has not reached
+its start (`n ∉ uncoveredBy k`, and step 1 is never covered) or the recover
+has passed its declared end (`endedBy`). The HTML side of the covering
+agreement — what a reader of the stylesheet can compute, against what the
+PDF page computes. -/
+def htmlStepPendingAt (maxSteps n : Nat) (last : Option Nat) (k : Nat) : Bool :=
+  (!(n == 1) && !((uncoveredBy k).contains n)) ||
+    (match last with
+     | some u => (endedBy maxSteps k).contains u
+     | none => false)
+
+/-- The covering agreement, one range at a time: on every step of a deck
+whose declared ends fit its step count, the HTML rules cover exactly the
+steps `Ir.stepPending` calls pending — the predicate the PDF handout dims
+by. Before these rules the two artifacts disagreed past every declared
+end, `\uncover<2-3>` standing crisp on step 4 in HTML and dimmed on paper.
+`_agree`'s grade: two projections of the one IR predicate, the enumeration
+bounds carried as the hypotheses that make the selectors' numeric spelling
+complete. -/
+theorem html_step_pending_agree (maxSteps n k : Nat) (last : Option Nat)
+    (hn : 1 ≤ n) (hk : 1 ≤ k)
+    (hlast : ∀ u, last = some u → 1 ≤ u ∧ u ≤ maxSteps) :
+    htmlStepPendingAt maxSteps n last k = Ir.stepPending n last k := by
+  have hstart : ∀ m, m ∈ uncoveredBy k ↔ (2 ≤ m ∧ m ≤ k) := by
+    intro m
+    simp only [uncoveredBy, List.mem_map, List.mem_range]
+    exact ⟨fun ⟨i, hi, hm⟩ => by omega, fun h => ⟨m - 2, by omega, by omega⟩⟩
+  have hend : ∀ u, u ∈ endedBy maxSteps k ↔ (1 ≤ u ∧ u ≤ maxSteps ∧ u < k) := by
+    intro u
+    simp only [endedBy, List.mem_filter, List.mem_map, List.mem_range,
+      Ir.stepPending, Bool.or_eq_true, decide_eq_true_eq]
+    exact ⟨fun ⟨⟨i, hi, hu⟩, hp⟩ => by omega,
+      fun h => ⟨⟨u - 1, by omega, by omega⟩, by omega⟩⟩
+  rw [Bool.eq_iff_iff]
+  cases last with
+  | none =>
+    simp only [htmlStepPendingAt, Ir.stepPending, Bool.or_eq_true, Bool.and_eq_true,
+      Bool.not_eq_true', decide_eq_true_eq, List.contains_eq_mem,
+      decide_eq_false_iff_not, beq_eq_false_iff_ne, ne_eq, hstart,
+      Bool.false_eq_true, or_false]
+    omega
+  | some u =>
+    have hu := hlast u rfl
+    simp only [htmlStepPendingAt, Ir.stepPending, Bool.or_eq_true, Bool.and_eq_true,
+      Bool.not_eq_true', decide_eq_true_eq, List.contains_eq_mem,
+      decide_eq_false_iff_not, beq_eq_false_iff_ne, ne_eq, hstart, hend]
+    omega
+
 /-- The steps' reduced-motion guard: no step animates and every step
 stands at full colour (WCAG 2.2 SC 2.3.3; the base sheet's global reduce
 block strips every animation with `!important` — the standing contract —
@@ -1827,18 +1975,130 @@ def stepTrackSnapReduce : DeckRule :=
     decls := [("scroll-snap-align", "start"), ("scroll-snap-stop", "always")]
     part := .reduce }
 
+/-! ### Alternation, selected declaratively
+
+`Ir.Inline.alt`/`Ir.Block.alt` hold two groups and the page inks one
+(`Ir.altShowsFirst`). Both groups stand in the tree — the document
+declares both, and a stylesheet cannot choose what was never emitted —
+so the deck selects one per step with `display`, which is a different
+mechanism from `step`'s covering and stays one: a covered step is
+content awaiting its turn, at the design's covered fraction; an
+unselected group is content this page does not have, and has no box at
+all. The group stored first needs no rule to be seen — step 1 inks it
+(`Ir.altShowsFirst_id`), so the emitter marks the other `hidden`, which
+is what a page with no snap state, no script, no stylesheet, or a print
+sheet shows. -/
+
+/-- The `data-step` values a snap has reached, read off the predicate
+itself: a start is reached at `k` exactly when nothing is pending before
+it (`Ir.stepPending n none k` is `k < n`). A start of 1 is in the set,
+unlike `uncoveredBy`'s — an alternation selects from step 1 on, where a
+step's covering has nothing to do. -/
+def startedBy (maxSteps k : Nat) : List Nat :=
+  ((List.range maxSteps).map (· + 1)).filter fun n => !Ir.stepPending n none k
+
+/-- Snap `k` shows the crisp side of every alternation whose start it has
+reached. `display: contents` rather than a box value: the wrapper is a
+carrier, and its group's content must flow exactly as it flows on the
+pages that need no rule at all. -/
+def altStartCrispRule (maxSteps k : Nat) : DeckRule :=
+  { selector := [.lit ".slide-track[data-snapped=\"", .num k, .lit "\"] :is(",
+      .attrAlts "alt-crisp" "data-step" (startedBy maxSteps k), .lit ")"]
+    decls := [("display", "contents")] }
+
+/-- The same snap hides the pending side of those alternations: exactly one
+group of a node is shown, by construction of the two selectors over one
+enumeration. -/
+def altStartPendingRule (maxSteps k : Nat) : DeckRule :=
+  { selector := [.lit ".slide-track[data-snapped=\"", .num k, .lit "\"] :is(",
+      .attrAlts "alt-pending" "data-step" (startedBy maxSteps k), .lit ")"]
+    decls := [("display", "none")] }
+
+/-- Past a declared end the sides swap back — the complement of a mid-deck
+range is two ranges, which is why alternation needs a node and not a pair
+of steps. The correction carries `html`, one element name more than the
+start rules, so it outranks them whatever order they are emitted in (CSS
+Selectors 4 §17). -/
+def altEndCrispRule (maxSteps k : Nat) : DeckRule :=
+  { selector := [.lit "html .slide-track[data-snapped=\"", .num k, .lit "\"] :is(",
+      .attrAlts "alt-crisp" "data-step-last" (endedBy maxSteps k), .lit ")"]
+    decls := [("display", "none")] }
+
+def altEndPendingRule (maxSteps k : Nat) : DeckRule :=
+  { selector := [.lit "html .slide-track[data-snapped=\"", .num k, .lit "\"] :is(",
+      .attrAlts "alt-pending" "data-step-last" (endedBy maxSteps k), .lit ")"]
+    decls := [("display", "contents")] }
+
+/-- The four rules one snap needs: the start reached, then the end passed. -/
+def altSnapRules (maxSteps k : Nat) : List DeckRule :=
+  [altStartCrispRule maxSteps k, altStartPendingRule maxSteps k,
+   altEndCrispRule maxSteps k, altEndPendingRule maxSteps k]
+
+def altSnapped (maxSteps : Nat) : List DeckRule :=
+  (List.range (maxSteps - 1)).flatMap fun i => altSnapRules maxSteps (i + 2)
+
+/-- Under reduce a stepped frame is one page (`stepSnapReduceHide`), so its
+alternations show step 1's reading: the `hidden` the emitter wrote,
+restored at the snap rules' own specificity — and the reduce partition
+stands after the blocks it reverts, so source order decides (CSS Cascade 5
+§6.4). -/
+def altReduceHiddenRule : DeckRule :=
+  { selector := [.lit "html .slide-track[data-snapped] .alt[hidden]"]
+    decls := [("display", "none")]
+    part := .reduce }
+
+def altReduceShownRule : DeckRule :=
+  { selector := [.lit "html .slide-track[data-snapped] .alt:not([hidden])"]
+    decls := [("display", "contents")]
+    part := .reduce }
+
+def altReduceFixed : List DeckRule := [altReduceHiddenRule, altReduceShownRule]
+
+/-- Every rule alternation adds, shipped with the step rules. -/
+def altRules (maxSteps : Nat) : List DeckRule :=
+  let snapped := altSnapped maxSteps
+  altReduceFixed ++ snapped
+
+/-- Which group the emitted rules select at snap `k`, from their own data
+and the side the emitter tagged the group with: the pending test the start
+and end families implement (`htmlStepPendingAt`), compared against
+`Ir.altFirstWhenPending`. The HTML projection of `Ir.altShowsFirst`. -/
+def altShownFirstAt (maxSteps n : Nat) (last : Option Nat) (k : Nat) : Bool :=
+  htmlStepPendingAt maxSteps n last k == Ir.altFirstWhenPending n last
+
+/-- **`alt_backend_agree`** (`_agree`): the two artifacts ink the same
+group on the same step. Both sides are projections of the one IR
+predicate — the PDF page tests `Ir.altShowsFirst` where it inks
+(`Layout.flattenOne` and `Layout.collectBlock`'s `.alt` arms, whose leaf
+identity is `Struct.alt_leaf_projects`), and the HTML deck tests
+`Ir.stepPending` in its per-snap selectors against the side page order
+put the group on, which is the predicate's own factorization
+(`Ir.altShowsFirst_side`). An artifact that decided this for itself could
+disagree with the other and no theorem would notice; this is why the
+decision is a definition and each backend reads it rather than repeating
+it. The bounds are the hypotheses that make the selectors' numeric
+spelling complete over the deck's steps. -/
+theorem alt_backend_agree (maxSteps n k : Nat) (last : Option Nat)
+    (hn : 1 ≤ n) (hk : 1 ≤ k)
+    (hlast : ∀ u, last = some u → 1 ≤ u ∧ u ≤ maxSteps) :
+    altShownFirstAt maxSteps n last k = Ir.altShowsFirst n last k := by
+  rw [altShownFirstAt, html_step_pending_agree maxSteps n k last hn hk hlast,
+    Ir.altShowsFirst_side]
+
 /-- The step rules with a closed spelling — every one whose value reads
 no parameter, checkable in one `decide`. -/
 def stepFixed : List DeckRule :=
   [stepTrackRule, stepStageRule, stepSnapSize, stepUncoverRule,
-   stepSnapHide, stepTrackFloorSnap, stepGuard, stepCoveredGuard,
+   stepRecoverRule, stepSnapHide, stepTrackFloorSnap, stepGuard,
+   stepRecoverGuard, stepCoveredGuard, stepRecoverFloorGuard,
    stepTrackWidthReduce, stepSnapReduceHide, stepTrackSnapReduce]
 
 /-- Every rule the steps add, shipped exactly when the deck has steps —
 a stepless deck has nothing to reveal and no track to lay out. -/
 def stepRules (coveredPct maxSteps : Nat) : List DeckRule :=
-  stepKeyframes coveredPct :: stepFloorCovered coveredPct ::
-    (stepFixed ++ stepSnapped maxSteps)
+  stepKeyframes coveredPct :: stepRecoverKeyframes coveredPct ::
+    stepFloorCovered coveredPct ::
+    (stepFixed ++ stepSnapped maxSteps ++ stepRecovered coveredPct maxSteps)
 
 /-- The print partition: the handout, one bordered card per frame
 (Tufte: the handout is the document) — the logo prints with its card,
@@ -1883,7 +2143,7 @@ parameters are the whole document-dependence: the stage-ratio type size,
 the design's covered fraction, and the deck's maximum step count. -/
 def deckRules (bodyVh : String) (coveredPct maxSteps : Nat) : List DeckRule :=
   deckBase bodyVh ++ deckReduce ++
-    (if 2 ≤ maxSteps then stepRules coveredPct maxSteps else []) ++
+    (if 2 ≤ maxSteps then stepRules coveredPct maxSteps ++ altRules maxSteps else []) ++
     deckPrint maxSteps
 
 /-- The one case split over the deck's rule set: every deck theorem
@@ -1895,9 +2155,13 @@ private theorem deckRules_forall {P : DeckRule → Prop} {v : String} {cp ms : N
     (hbase : ∀ r ∈ deckBase v, P r)
     (hreduce : ∀ r ∈ deckReduce, P r)
     (hkey : 2 ≤ ms → P (stepKeyframes cp))
+    (hrkey : 2 ≤ ms → P (stepRecoverKeyframes cp))
     (hcov : 2 ≤ ms → P (stepFloorCovered cp))
     (hfix : 2 ≤ ms → ∀ r ∈ stepFixed, P r)
     (hsnapped : 2 ≤ ms → ∀ k, P (stepSnappedRule k))
+    (hrecovered : 2 ≤ ms → ∀ k, P (stepRecoverFloorRule cp ms k))
+    (haltfix : 2 ≤ ms → ∀ r ∈ altReduceFixed, P r)
+    (haltsnap : 2 ≤ ms → ∀ k, ∀ r ∈ altSnapRules ms k, P r)
     (hprint : ∀ r ∈ deckPrint ms, P r) :
     ∀ r ∈ deckRules v cp ms, P r := by
   intro r hr
@@ -1907,15 +2171,43 @@ private theorem deckRules_forall {P : DeckRule → Prop} {v : String} {cp ms : N
   · exact hreduce r h
   · split at h
     case isTrue hms =>
-      simp only [stepRules, stepSnapped, List.mem_append, List.mem_cons,
-        List.mem_map, List.mem_range] at h
-      rcases h with rfl | rfl | h | ⟨i, -, rfl⟩
+      simp only [stepRules, stepSnapped, stepRecovered, altRules, altSnapped,
+        List.mem_append, List.mem_cons, List.mem_map, List.mem_flatMap,
+        List.mem_range] at h
+      rcases h with (rfl | rfl | rfl | ((h | ⟨i, -, rfl⟩) | ⟨i, -, rfl⟩)) |
+        (h | ⟨i, -, h⟩)
       · exact hkey hms
+      · exact hrkey hms
       · exact hcov hms
       · exact hfix hms r h
       · exact hsnapped hms _
+      · exact hrecovered hms _
+      · exact haltfix hms r h
+      · exact haltsnap hms _ r h
     case isFalse => cases h
   · exact hprint r h
+
+/-- The two reduce-partition alternation rules, as a case split: both are
+closed spellings, so a per-rule fact is two `rfl`s. -/
+private theorem altReduceFixed_cases {P : DeckRule → Prop}
+    (h1 : P altReduceHiddenRule) (h2 : P altReduceShownRule) :
+    ∀ r ∈ altReduceFixed, P r := by
+  intro r hr
+  simp only [altReduceFixed, List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with rfl | rfl
+  · exact h1
+  · exact h2
+
+/-- A decidable or propositional fact over one snap's alternation rules,
+from the four named rules: they share their spelling but for the data, and
+no per-rule check reads the data. -/
+private theorem altSnapRules_cases {P : DeckRule → Prop} {ms k : Nat}
+    (h1 : P (altStartCrispRule ms k)) (h2 : P (altStartPendingRule ms k))
+    (h3 : P (altEndCrispRule ms k)) (h4 : P (altEndPendingRule ms k)) :
+    ∀ r ∈ altSnapRules ms k, P r := by
+  intro r hr
+  simp only [altSnapRules, List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with rfl | rfl | rfl | rfl <;> assumption
 
 /-- Family memberships, spelled once against the append spine. -/
 private theorem mem_deckRules_base {r : DeckRule} {v : String} {cp ms : Nat}
@@ -1933,14 +2225,14 @@ private theorem mem_deckRules_step {r : DeckRule} {v : String} {cp ms : Nat}
   simp only [deckRules, List.mem_append]
   refine Or.inl (Or.inr ?_)
   split
-  · exact h
+  · exact List.mem_append_left _ h
   · omega
 
 /-- A closed step rule's membership, through the `stepFixed` spine. -/
 private theorem mem_stepRules_fixed {r : DeckRule} {cp ms : Nat}
     (h : r ∈ stepFixed) : r ∈ stepRules cp ms := by
   simp only [stepRules, List.mem_cons, List.mem_append]
-  exact Or.inr (Or.inr (Or.inl h))
+  exact Or.inr (Or.inr (Or.inr (Or.inl (Or.inl h))))
 
 /-- The print partition of a stepless deck is contained in the stepped
 one, so a decidable per-rule fact is checked once, on `deckPrint 2`. -/
@@ -1962,13 +2254,18 @@ private theorem deckRules_check {p : DeckRule → Bool} (v : String) (cp ms : Na
     (hbase : ∀ r ∈ deckBase v, p r = true)
     (hreduce : ∀ r ∈ deckReduce, p r = true)
     (hkey : p (stepKeyframes cp) = true)
+    (hrkey : p (stepRecoverKeyframes cp) = true)
     (hcov : p (stepFloorCovered cp) = true)
     (hfix : ∀ r ∈ stepFixed, p r = true)
     (hsnapped : ∀ k, p (stepSnappedRule k) = true)
+    (hrecovered : ∀ k, p (stepRecoverFloorRule cp ms k) = true)
+    (haltfix : ∀ r ∈ altReduceFixed, p r = true)
+    (haltsnap : ∀ k, ∀ r ∈ altSnapRules ms k, p r = true)
     (hprint : ∀ r ∈ deckPrint 2, p r = true) :
     ∀ r ∈ deckRules v cp ms, p r = true :=
-  deckRules_forall hbase hreduce (fun _ => hkey) (fun _ => hcov)
-    (fun _ => hfix) (fun _ _ => hsnapped _)
+  deckRules_forall hbase hreduce (fun _ => hkey) (fun _ => hrkey) (fun _ => hcov)
+    (fun _ => hfix) (fun _ _ => hsnapped _) (fun _ _ => hrecovered _)
+    (fun _ => haltfix) (fun _ k => haltsnap k)
     (fun r hr => hprint r (deckPrint_subset r hr))
 
 /-- Membership in the base family, for the rules with a parametric
@@ -2015,7 +2312,8 @@ theorem deck_css_partition (v : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v cp ms, gateRespects r = true :=
   deckRules_check v cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
-    (by decide) rfl rfl (by decide) (fun _ => rfl) (by decide)
+    (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (by decide)
 
 /-- The Baseline floor: the property names the base, the `@supports not`
 blocks, the reduced-motion partition and the print handout may use.
@@ -2059,7 +2357,8 @@ theorem floor_is_baseline (v : String) (cp ms : Nat) :
       (!(onFloor r) || r.decls.all fun d => baselineProps.contains d.1) = true :=
   deckRules_check v cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
-    (by decide) rfl rfl (by decide) (fun _ => rfl) (by decide)
+    (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (by decide)
 
 /-- Content, as the floor theorems see it: the frame stages and the
 steps — the fragments that address what the deck *shows*. -/
@@ -2074,7 +2373,16 @@ def targetsContent (r : DeckRule) : Bool :=
 *any* partition — sets `display: none` or `visibility: hidden` on
 content (`contentFrags`). What the guards and the print handout hide is
 only the spacers. `floor_opacity_mem` and `floor_covered_script_gated`
-are the dimming half. -/
+are the dimming half.
+
+One family stands deliberately outside `contentFrags`: an overlay
+alternation's group wrappers (`.alt-crisp`, `.alt-pending`), which the
+snap rules do hide with `display: none`. That is the point of the second
+mechanism — an unselected group is content this page does not have, and
+the page's other group is showing in its place, which is a contract about
+*which* of two, not about visibility. `alt_backend_agree` is that
+contract; extending `contentFrags` to cover the groups would make this
+theorem false while saying nothing truer. -/
 theorem floor_hides_nothing (v : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v cp ms,
       (!(targetsContent r) ||
@@ -2082,7 +2390,8 @@ theorem floor_hides_nothing (v : String) (cp ms : Nat) :
          !(r.decls.contains ("visibility", "hidden")))) = true :=
   deckRules_check v cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
-    (by decide) rfl rfl (by decide) (fun _ => rfl) (by decide)
+    (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (by decide)
 
 /-- The opacity values a rule sets. -/
 def opacityValues (r : DeckRule) : List String :=
@@ -2095,7 +2404,7 @@ drawn from the two the design allows. -/
 theorem floor_opacity_mem (v : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v cp ms, ∀ o ∈ opacityValues r,
       o = "100%" ∨ o = s!"{cp}%" := by
-  refine deckRules_forall ?_ ?_ ?_ ?_ ?_ ?_ ?_
+  refine deckRules_forall ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_ ?_
   · exact deckBase_cases (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
       (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
@@ -2108,13 +2417,21 @@ theorem floor_opacity_mem (v : String) (cp ms : Nat) :
     exact fun o ho => nomatch ho
   · exact fun _ o ho => Or.inr (List.mem_singleton.mp ho)
   · exact fun _ o ho => Or.inr (List.mem_singleton.mp ho)
+  · exact fun _ o ho => Or.inr (List.mem_singleton.mp ho)
   · intro _ r hr
     simp only [stepFixed, List.mem_cons, List.not_mem_nil, or_false] at hr
-    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+      rfl | rfl | rfl <;>
       first
         | exact fun o ho => Or.inl (List.mem_singleton.mp ho)
         | exact fun o ho => nomatch ho
   · exact fun _ k o ho => Or.inl (List.mem_singleton.mp ho)
+  · exact fun _ k o ho => Or.inr (List.mem_singleton.mp ho)
+  · intro _ r hr
+    simp only [altReduceFixed, List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl <;> exact fun o ho => nomatch ho
+  · exact fun _ k => altSnapRules_cases (fun o ho => nomatch ho)
+      (fun o ho => nomatch ho) (fun o ho => nomatch ho) (fun o ho => nomatch ho)
   · intro r hr
     have hr2 := deckPrint_subset r hr
     simp only [deckPrint, List.mem_append, List.mem_cons, List.not_mem_nil,
@@ -2150,7 +2467,8 @@ theorem floor_covered_script_gated (v : String) (cp ms : Nat) :
         r.decls.all fun d => d.1 != "opacity" || d.2 == "100%") = true :=
   deckRules_check v cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
-    (by decide) rfl rfl (by decide) (fun _ => rfl) (by decide)
+    (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (by decide)
 
 /-- The motion properties the reduced-motion contract covers: the base
 sheet's global reduce block strips `animation` and `transition`;
@@ -2205,8 +2523,9 @@ partition must contain, and the partition is emitted after the blocks it
 reverts (`emitDeckRules`; CSS Cascade 5 §6.4). `_contract`'s grade. -/
 theorem guards_by_construction (v : String) (cp ms : Nat) :
     ∀ r ∈ deckRules v cp ms, motionGuarded (deckRules v cp ms) r = true := by
-  refine deckRules_forall ?_ ?_ (fun _ => rfl) (fun _ => rfl) ?_
-    (fun _ _ => rfl) ?_
+  refine deckRules_forall ?_ ?_ (fun _ => rfl) (fun _ => rfl) (fun _ => rfl) ?_
+    (fun _ _ => rfl) (fun _ _ => rfl) (fun _ => altReduceFixed_cases rfl rfl)
+    (fun _ k => altSnapRules_cases rfl rfl rfl rfl) ?_
   · exact deckBase_cases rfl
       (motionGuarded_of_guard (g := deckGlideGuard)
         (mem_deckRules_reduce (by decide)) (by decide))
@@ -2219,10 +2538,15 @@ theorem guards_by_construction (v : String) (cp ms : Nat) :
   · intro hms r hr
     have hstep : stepGuard ∈ deckRules v cp ms :=
       mem_deckRules_step hms (mem_stepRules_fixed (by decide))
+    have hend : stepRecoverGuard ∈ deckRules v cp ms :=
+      mem_deckRules_step hms (mem_stepRules_fixed (by decide))
     simp only [stepFixed, List.mem_cons, List.not_mem_nil, or_false] at hr
-    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl |
+      rfl | rfl | rfl
     case inr.inr.inr.inl =>
       exact motionGuarded_of_guard hstep (by decide)
+    case inr.inr.inr.inr.inl =>
+      exact motionGuarded_of_guard hend (by decide)
     all_goals rfl
   · intro r hr
     have hr2 := deckPrint_subset r hr
@@ -2253,7 +2577,7 @@ theorem snapped_uncovers_every_step (v : String) (cp ms n : Nat)
   · refine mem_deckRules_step (Nat.le_trans h2 hn) ?_
     simp only [stepRules, stepSnapped, List.mem_cons, List.mem_append,
       List.mem_map, List.mem_range]
-    refine Or.inr (Or.inr (Or.inr ⟨n - 2, by omega, ?_⟩))
+    refine Or.inr (Or.inr (Or.inr (Or.inl (Or.inr ⟨n - 2, by omega, ?_⟩))))
     rw [Nat.sub_add_cancel h2]
   · simp only [uncoveredBy, List.mem_map, List.mem_range]
     exact ⟨n - 2, by omega, by omega⟩
@@ -2296,7 +2620,8 @@ theorem deck_text_path_free (v : String) (cp ms : Nat) :
         d.1 != "content" || (d.2 == "\"\"" || d.2 == "none")) = true :=
   deckRules_check v cp ms
     (deckBase_cases rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl rfl)
-    (by decide) rfl rfl (by decide) (fun _ => rfl) (by decide)
+    (by decide) rfl rfl rfl (by decide) (fun _ => rfl) (fun _ => rfl)
+    (by decide) (fun _ => altSnapRules_cases rfl rfl rfl rfl) (by decide)
 
 /-- A length's share of the deck stage, in milli-percent: the one
 projection every deck emission rides when it states a PDF stage length
@@ -2882,6 +3207,49 @@ Tests states the agreement. A page-opening path owes a declared
 distribution, never a default (the obligation table). -/
 def vdistShares : Ir.VAlign → Nat × Nat := Ir.VAlign.shares
 
+/-- The overlay attributes a step's wrapper carries: its range as data, and
+the `--step` index the uncover reads. -/
+def stepAttrs (n : Nat) (last : Option Nat) : Array (String × String) :=
+  (#[("class", "step"), ("data-step", toString n)] ++
+    (match last with
+     | some u => #[("data-step-last", toString u)]
+     | none => #[])) ++
+    #[("style", s!"--step: {n}")]
+
+/-- The declared end's own carrier, nested inside the step's wrapper when
+the range has one. Two wrappers rather than one because one element
+animates one property once: the start's uncover and the end's recover both
+ride `opacity`, and opacities multiply through nesting — covered before the
+start, full inside the range, covered again past the end, which is
+`Ir.stepPending` (`html_step_pending_agree`). A range with no declared end
+never covers again and gets no wrapper. -/
+def stepEndNodes (tag : String) (last : Option Nat) (kids : Array Node) : Array Node :=
+  match last with
+  | none => kids
+  | some u =>
+    #[Html.elem tag kids
+      #[("class", "step-end"), ("data-step-last", toString u),
+        ("style", s!"--step-last: {u}")]]
+
+/-- One alternation group, in its own wrapper. `first` is page order — the
+group step 1 inks (`Ir.altShowsFirst_id`), so the other carries `hidden`
+and every rendering with no snap state shows step 1's reading: the floor
+with scripting off, the print handout, a page shipped with no stylesheet
+at all. The class names which side of the spec the group stands on, read
+from `Ir.altFirstWhenPending`, so the deck's per-snap selectors decide by
+the same arithmetic the PDF page decides by (`alt_backend_agree`) instead
+of re-deriving the selection here or in CSS. -/
+def altGroupNode (tag : String) (n : Nat) (last : Option Nat) (first : Bool)
+    (kids : Array Node) : Node :=
+  let pendingSide := Ir.altFirstWhenPending n last == first
+  Html.elem tag kids
+    ((#[("class", if pendingSide then "alt alt-pending" else "alt alt-crisp"),
+        ("data-step", toString n)] ++
+      (match last with
+       | some u => #[("data-step-last", toString u)]
+       | none => #[])) ++
+      (if first then #[] else #[("hidden", "hidden")]))
+
 mutual
 
 /-- Inline content, pushed onto `acc`. Style maps onto the element that
@@ -3037,23 +3405,20 @@ private def inlineNodeInto (cfg : Config) (acc : Array Node) (x : Inline) : Arra
     -- stylesheet uncovers the step in place as the reader's arrow
     -- advances the frame's snap points (`deckStepCss`); the `--step`
     -- index names its snap point, and the range rides as data either way.
-    acc.push (Html.elem "span" (inlineNodesInto cfg #[] body.toList)
-      (#[("class", "step"), ("data-step", toString n)] ++
-        (match last with
-         | some u => #[("data-step-last", toString u)]
-         | none => #[]) ++
-        #[("style", s!"--step: {n}")]))
-  | .alt n last active otherwise =>
-    -- Both alternatives ride inside the step wrapper the `.step` arm gives:
-    -- one range on one element, everything visible — the handout floor.
-    -- Which alternative a step page shows is the deck stylesheet's to say.
+    -- A declared end rides its own nested carrier (`stepEndNodes`), which
+    -- is what covers the step again past it.
     acc.push (Html.elem "span"
-      (inlineNodesInto cfg (inlineNodesInto cfg #[] active.toList) otherwise.toList)
-      (#[("class", "step"), ("data-step", toString n)] ++
-        (match last with
-         | some u => #[("data-step-last", toString u)]
-         | none => #[]) ++
-        #[("style", s!"--step: {n}")]))
+      (stepEndNodes "span" last (inlineNodesInto cfg #[] body.toList))
+      (stepAttrs n last))
+  | .alt n last firstPage otherPage =>
+    -- One wrapper per group, each carrying the range and its side: the
+    -- deck's snap rules show exactly one (`alt_backend_agree`), and with
+    -- no snap state the group stored first is what shows. Both groups stay
+    -- in the tree because the document declares both; selection is
+    -- `display`-level, never `step`'s covering.
+    (acc.push (altGroupNode "span" n last true
+        (inlineNodesInto cfg #[] firstPage.toList))).push
+      (altGroupNode "span" n last false (inlineNodesInto cfg #[] otherPage.toList))
   | .icon c label =>
     -- The glyph is a Private Use Area scalar assistive technology cannot
     -- read, so it is hidden (`aria-hidden`) and the accessible name rides
@@ -3469,22 +3834,20 @@ def blockNode (cfg : Config) (b : Block) : Node :=
           "justify-content: space-between; column-gap: 0.75rem")]
   | .step n last body =>
     -- The block form of the inline step arm: visible — the handout floor —
-    -- with its `--step` index for the class-gated uncover, range as data.
-    Html.elem "div" (blockNodesInto cfg.into #[] body.toList)
-      (#[("class", "step"), ("data-step", toString n)] ++
-        (match last with
-         | some u => #[("data-step-last", toString u)]
-         | none => #[]) ++
-        #[("style", s!"--step: {n}")])
-  | .alt n last active otherwise =>
-    -- The block form of the inline alternation arm.
+    -- with its `--step` index for the class-gated uncover, range as data,
+    -- and the declared end on its own nested carrier.
     Html.elem "div"
-      (blockNodesInto cfg.into (blockNodesInto cfg.into #[] active.toList) otherwise.toList)
-      (#[("class", "step"), ("data-step", toString n)] ++
-        (match last with
-         | some u => #[("data-step-last", toString u)]
-         | none => #[]) ++
-        #[("style", s!"--step: {n}")])
+      (stepEndNodes "div" last (blockNodesInto cfg.into #[] body.toList))
+      (stepAttrs n last)
+  | .alt n last firstPage otherPage =>
+    -- The block form of the inline alternation arm. The groups need one
+    -- carrier each so a selector can reach each range (`alt_backend_agree`);
+    -- the pair rides a container of its own because a block arm ships one
+    -- node, and the container carries nothing — no range, no side, no rule.
+    Html.elem "div"
+      #[altGroupNode "div" n last true (blockNodesInto cfg.into #[] firstPage.toList),
+        altGroupNode "div" n last false (blockNodesInto cfg.into #[] otherPage.toList)]
+      #[("class", "alt-pair")]
   | .note body =>
     -- Inert and hidden: available to a speaker view, invisible in the deck
     -- and in print.

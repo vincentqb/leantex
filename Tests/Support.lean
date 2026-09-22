@@ -486,6 +486,40 @@ end
 
 mutual
 
+/-- The text an emitted page *shows*, as the artifact itself says it: the
+typed tree's characters with every `hidden` subtree dropped — what the UA
+stylesheet's `[hidden] { display: none }` removes, and so the HTML twin of
+a shipped PDF page's ink. `nodeTextOne` reads the whole tree, which is the
+declaration; this reads what a reader with no snap state sees, which is
+step 1. The distinction is what the census could not make when overlay
+alternation put both groups inside one visible wrapper. -/
+def shownTextOne (acc : String) : Html.Node → String
+  | .text s => acc ++ s
+  | .style _ => acc
+  | .script _ _ => acc
+  | .elem _ attrs kids =>
+    if attrs.any (fun (k, _) => k == "hidden") then acc
+    else shownTextList acc kids.toList
+
+def shownTextList (acc : String) : List Html.Node → String
+  | [] => acc
+  | k :: rest => shownTextList (shownTextOne acc k) rest
+
+end
+
+/-- How many times `needle` is declared in an emitted tree: `pageOccurs`'s
+twin over the HTML artifact. -/
+def treeOccurs (nodes : Array Html.Node) (needle : String) : Nat :=
+  ((nodeTextList "" nodes.toList).splitOn needle).length - 1
+
+/-- How many times `needle` is *shown* by an emitted tree, hidden subtrees
+excluded: the HTML side of `pageOccurs`, and the check that was missing
+when an alternation shipped both its groups on one page. -/
+def treeShownOccurs (nodes : Array Html.Node) (needle : String) : Nat :=
+  ((shownTextList "" nodes.toList).splitOn needle).length - 1
+
+mutual
+
 /-- Every chrome footer in the emitted deck, in document order, as its two
 slots' text: the HTML side of the footline fact. The spans carry their
 declared side as a class (`Ir.Chrome.footBand` through `emitTree`), and the

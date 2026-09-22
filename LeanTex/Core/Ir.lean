@@ -5745,6 +5745,26 @@ theorem altShowsFirst_id (n : Nat) (last : Option Nat) :
     altShowsFirst n last 1 = true := by
   simp [altShowsFirst]
 
+/-- Is the group stored first the one a *pending* step inks? The side of the
+spec page order put it on, and the only per-node fact an artifact needs
+beyond the range itself: a consumer that can test `stepPending` at a step
+recovers `altShowsFirst` from it (`altShowsFirst_side`). The HTML deck tags
+each group's wrapper with this, because a stylesheet can test the range but
+not read a node's two groups — so both artifacts decide from the one
+arithmetic instead of each re-deriving the selection. -/
+def altFirstWhenPending (n : Nat) (last : Option Nat) : Bool :=
+  stepPending n last 1
+
+/-- The predicate, factored the way a per-step consumer can use it: whether
+step `k` inks the group stored first is whether `k`'s pending state matches
+the side page order gave that group. The equation both artifacts read —
+the PDF page tests `altShowsFirst` directly at layout's arms, the HTML deck
+tests `stepPending` in its own per-snap selectors and compares against the
+tagged side (`HtmlDoc.alt_backend_agree`). -/
+theorem altShowsFirst_side (n : Nat) (last : Option Nat) (k : Nat) :
+    altShowsFirst n last k = (stepPending n last k == altFirstWhenPending n last) :=
+  rfl
+
 mutual
 
 /-- The last step a frame's body reaches: how many pages the PDF handout

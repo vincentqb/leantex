@@ -2150,7 +2150,8 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
   -- explicit `to` endpoint is declared (the user's own rule).
   t "the uncover rides the frame's view timeline between snap points"
     (count "view-timeline: --frame x" == 1 &&
-     count "animation-timeline: --frame;" == 1 &&
+     -- the uncover and the range end's recover each ride it once
+     count "animation-timeline: --frame;" == 2 &&
      count ".step:not([data-step=\"1\"])" == 3 &&
      count ("animation-range: contain calc((var(--step) - 2) / (var(--steps) - 1) * 100%) " ++
        "contain calc((var(--step) - 1) / (var(--steps) - 1) * 100%)") == 1)
@@ -2180,6 +2181,119 @@ def deckStepChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Un
      count ".step { opacity: 100%; }" == 1 &&
      (((html.splitOn "@media print").drop 1).all fun s =>
       (s.splitOn "ltx-uncover").length == 1))
+
+/-- The range's other end, in both artifacts. `\uncover<2-3>` in a
+four-step frame is pending on steps 1 and 4 and crisp on 2 and 3
+(`Ir.stepPending`), which the PDF handout has always dimmed by; until the
+recover rules the HTML deck read the start alone, so a step stayed crisp
+past its declared end on both the timeline path and the floor — a
+divergence independent of alternation, and the prerequisite for it. The
+PDF side is read off the shipped pages, the HTML side off the emitted
+stylesheet's own data (`HtmlDoc.htmlStepPendingAt`, held to the predicate
+by `html_step_pending_agree`), step by step. -/
+def deckRangeEndChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr (deck169Frame
+    "\\uncover<2-3>{Middle only.}\n\n\\uncover<4>{Fourth only.}")
+  t "range-end deck elaborates clean" (ds.all fun d => d.severity == .note)
+  let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  let (html, _) := HtmlDoc.emit {} doc
+  let has := hasStr html
+  t "one handout page per step" (c.size == 4)
+  t "the handout dims the range before its start and again past its end"
+    (pageCovered c 0 "Middle only." && !pageCovered c 1 "Middle only." &&
+     !pageCovered c 2 "Middle only." && pageCovered c 3 "Middle only.")
+  t "the range ships on every step, dimmed or crisp"
+    ((List.range 4).all fun i => pageOccurs c i "Middle only." == 1)
+  -- The agreement, step by step: what the stylesheet says about this range
+  -- at snap k and what the shipped page says about it at step k.
+  t "the HTML rules cover the range exactly where the handout page does"
+    ((List.range 4).all fun i =>
+      HtmlDoc.htmlStepPendingAt 4 2 (some 3) (i + 1) == pageCovered c i "Middle only.")
+  t "the declared end rides its own carrier in the markup"
+    (has "<span class=\"step-end\" data-step-last=\"3\" style=\"--step-last: 3\">" &&
+     has "<span class=\"step\" data-step=\"2\" data-step-last=\"3\" style=\"--step: 2\">")
+  t "the end carrier dims again past the range, on both paths"
+    (has "@keyframes ltx-recover { from { opacity: 100% } to { opacity: " &&
+     has ".step-end { animation: ltx-recover linear both; animation-timeline: --frame;" &&
+     has ("html[data-deck-script] .slide-track[data-snapped=\"4\"] " ++
+       ":is(.step-end[data-step-last=\"1\"], .step-end[data-step-last=\"2\"], " ++
+       ".step-end[data-step-last=\"3\"]) { opacity: "))
+  t "the floor recover is script-gated, as the covered default is"
+    (((html.splitOn "\n").filter fun l =>
+        hasStr l ".step-end[data-step-last=\"" && !hasStr l "opacity: 100%").all fun l =>
+      hasStr l "html[data-deck-script]")
+
+/-- Overlay alternation in HTML: exactly one group per step, selected by the
+same arithmetic the PDF page selects by. Before these rules the HTML arm
+put both groups inside one visible wrapper and a page read
+"applebanana" — green in every test, because no census could tell one copy
+from two on the HTML side (`treeShownOccurs` is that census now). The
+agreement row is `alt_backend_agree` read off the artifacts: the group the
+shipped page inks and the group the stylesheet selects, step by step. -/
+def deckAltChecks (ref : IO.Ref (List String)) (oneFace : Font.FontSet) : IO Unit := do
+  let t := check ref
+  let (doc, ds) := elabStr (deck169Frame
+    "\\alt<2-3>{Middle words.}{Outer words.}\n\n\\uncover<4>{Fourth only.}")
+  t "alternation deck elaborates clean" (ds.all fun d => d.severity == .note)
+  let c := censusOf (coveredColorsOf doc) (layoutOf oneFace doc)
+  let (_, body, _) := HtmlDoc.emitTree {} doc
+  let (html, _) := HtmlDoc.emit {} doc
+  let has := hasStr html
+  -- The PDF half, restated on this fixture: one alternative per page,
+  -- never both, and never covered — an alternative is replacement, not
+  -- dimming.
+  t "the handout inks exactly one alternative per step page"
+    (c.size == 4 &&
+     (List.range 4).all fun i =>
+       let first := Ir.altShowsFirst 2 (some 3) (i + 1)
+       pageOccurs c i "Outer words." == (if first then 1 else 0) &&
+         pageOccurs c i "Middle words." == (if first then 0 else 1))
+  -- The census that was missing: the HTML page shows one group, and the
+  -- tree declares both — each exactly once.
+  t "the HTML page shows one alternative, and the tree declares both once each"
+    (treeShownOccurs body "Outer words." == 1 &&
+     treeShownOccurs body "Middle words." == 0 &&
+     treeOccurs body "Outer words." == 1 &&
+     treeOccurs body "Middle words." == 1)
+  t "each group rides its own wrapper, with the range and its side"
+    (has ("<span class=\"alt alt-pending\" data-step=\"2\" data-step-last=\"3\">" ++
+       "Outer words.</span>") &&
+     has ("<span class=\"alt alt-crisp\" data-step=\"2\" data-step-last=\"3\" " ++
+       "hidden=\"hidden\">Middle words.</span>"))
+  -- The agreement, step by step, over the artifacts: `altShownFirstAt`
+  -- reads the emitted rules' data, `pageOccurs` the shipped page's ink.
+  t "alt_backend_agree on the artifacts: the rules select the group the page inks"
+    ((List.range 4).all fun i =>
+      HtmlDoc.altShownFirstAt 4 2 (some 3) (i + 1) ==
+        (pageOccurs c i "Outer words." == 1))
+  t "one snap rule per side, start then end correction"
+    (has (".slide-track[data-snapped=\"3\"] :is(.alt-crisp[data-step=\"1\"], " ++
+       ".alt-crisp[data-step=\"2\"], .alt-crisp[data-step=\"3\"]) { display: contents; }") &&
+     has (".slide-track[data-snapped=\"3\"] :is(.alt-pending[data-step=\"1\"], " ++
+       ".alt-pending[data-step=\"2\"], .alt-pending[data-step=\"3\"]) { display: none; }") &&
+     has ("html .slide-track[data-snapped=\"4\"] :is(.alt-crisp[data-step-last=\"1\"], " ++
+       ".alt-crisp[data-step-last=\"2\"], .alt-crisp[data-step-last=\"3\"]) " ++
+       "{ display: none; }") &&
+     has ("html .slide-track[data-snapped=\"4\"] :is(.alt-pending[data-step-last=\"1\"], " ++
+       ".alt-pending[data-step-last=\"2\"], .alt-pending[data-step-last=\"3\"]) " ++
+       "{ display: contents; }"))
+  -- Selection is display-level and stays out of the covering mechanism:
+  -- no alternation rule sets an opacity, no step rule sets a display.
+  t "the two mechanisms stay apart: alternation never dims, covering never hides"
+    ((((html.splitOn "\n").filter fun l =>
+         hasStr l ".alt-crisp" || hasStr l ".alt-pending").all fun l =>
+       !hasStr l "opacity") &&
+     (((html.splitOn "\n").filter fun l =>
+         hasStr l ".step-end[" || hasStr l ".step[data-step").all fun l =>
+       !hasStr l "display"))
+  -- No script path grows: alternation is CSS over the attribute the one
+  -- constant script already writes, and with scripting off the floor shows
+  -- step 1's reading, which is the group stored first.
+  t "alternation adds no script and degrades to step one's reading"
+    (((html.splitOn "<script").length - 1) == 1 &&
+     hasStr html HtmlDoc.deckScript &&
+     has "hidden=\"hidden\">Middle words.</span>")
 
 /-- The deck's logo is frame furniture in HTML too — the executable half
 of `logo_frames_agree`, over one deck: the frames whose HTML section
